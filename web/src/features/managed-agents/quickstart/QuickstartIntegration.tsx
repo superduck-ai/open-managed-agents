@@ -1,8 +1,7 @@
 import { QuickstartChat } from './QuickstartChat';
 import { useState } from 'react';
-import { ArrowUpRight, KeyRound, RotateCcw } from 'lucide-react';
+import { RotateCcw } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
-import { workspaceApiKeysPath } from '../../../shared/workspaces/presentation';
 import { Button, ButtonLink } from '../../../shared/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../../../shared/ui/accordion';
 import { Field, FieldLabel } from '../../../shared/ui/field';
@@ -12,6 +11,7 @@ import { quickstartCurl, RequestPreview } from './RequestPreview';
 import type { QuickstartWizard } from './useQuickstartWizard';
 import { useQuickstartConversation } from './useQuickstartConversation';
 import { QuickstartFooter } from './QuickstartFooter';
+import { QuickstartApiKey } from './QuickstartApiKey';
 
 export function QuickstartIntegration({
   wizard,
@@ -106,19 +106,7 @@ function QuickstartApiCalls({
   ];
   return (
     <aside className="min-h-0 min-w-0 space-y-5 rounded-xl bg-muted/50 p-4 min-[860px]:overflow-y-auto sm:p-6">
-      <div className="space-y-2">
-        <h2 className="font-semibold">{text.key}</h2>
-        <p className="text-sm leading-relaxed text-muted-foreground">{text.keyHint}</p>
-        <ButtonLink
-          href={workspaceApiKeysPath(workspaceID)}
-          variant="outline"
-          className="h-auto min-h-9 bg-background py-2 text-sm whitespace-normal"
-        >
-          <KeyRound />
-          {text.keyLink}
-          <ArrowUpRight />
-        </ButtonLink>
-      </div>
+      <QuickstartApiKey workspaceID={workspaceID} />
       <Accordion defaultValue={['create']} aria-label={text.apiCalls} className="gap-3">
         {calls.map((call, index) => (
           <AccordionItem

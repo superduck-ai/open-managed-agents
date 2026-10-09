@@ -15,6 +15,7 @@ import { quickstartAgentBody, quickstartScenarios } from './model';
 import { quickstartCurl, RequestPreview } from './RequestPreview';
 import type { QuickstartWizard } from './useQuickstartWizard';
 import { QuickstartFooter } from './QuickstartFooter';
+import { QuickstartApiKey } from './QuickstartApiKey';
 
 const scenarioIcons = {
   hello: Bot,
@@ -50,7 +51,7 @@ export function QuickstartStart({ wizard }: { wizard: QuickstartWizard }) {
               <FieldLabel
                 key={scenario.id}
                 htmlFor={`scenario-${scenario.id}`}
-                className={`flex w-full cursor-pointer flex-col items-stretch gap-3 rounded-xl border ${featured ? 'min-h-36 p-6 sm:col-span-2' : custom ? 'p-4 sm:col-span-2' : 'min-h-28 p-4'} ${wizard.progress.scenarioID === scenario.id ? 'border-foreground bg-accent/40' : featured ? 'border-primary/40 bg-primary/5 hover:bg-primary/10' : 'border-border bg-card hover:bg-accent/20'}`}
+                className={`flex w-full cursor-pointer flex-col items-stretch gap-3 rounded-xl border ${featured ? 'min-h-36 p-6 sm:col-span-2' : custom ? 'p-4 sm:col-span-2' : 'min-h-28 p-4'} ${wizard.progress.scenarioID === scenario.id ? 'border-foreground bg-accent/40' : 'border-border bg-card hover:bg-accent/20'}`}
               >
                 <div className="flex items-center gap-3">
                   <span
@@ -110,6 +111,7 @@ export function QuickstartAgent({
     : quickstartCurl('/v1/agents', workspaceID, quickstartAgentBody(draft));
   return (
     <ConfigurationLayout
+      workspaceID={workspaceID}
       title={text.agentTitle}
       subtitle={text.agentSubtitle}
       code={code}
@@ -140,7 +142,7 @@ export function QuickstartAgent({
             <p className="text-sm text-muted-foreground">{text.existingAgent}</p>
             <Select
               value={agent?.id ?? 'new'}
-              onValueChange={(id) => wizard.update((value) => ({ ...value, agentID: id === 'new' ? '' : (id ?? '') }))}
+              onValueChange={(id) => wizard.update((value) => ({ ...value, agentID: id ?? 'new' }))}
               disabled={disabled}
             >
               <SelectTrigger className="h-auto! min-h-10 w-full py-2.5" aria-label={text.reused}>
@@ -189,12 +191,12 @@ export function QuickstartAgent({
             disabled={disabled || Boolean(agent)}
             onValueChange={(value) => wizard.editDraft({ modelID: value ?? '' })}
           >
-            <SelectTrigger id="quickstart-model" className="w-full">
+            <SelectTrigger id="quickstart-model" className="h-auto! min-h-10 w-full py-2.5">
               <SelectValue>{draft.modelID}</SelectValue>
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent alignItemWithTrigger={false} align="start" className="max-h-80 p-1.5">
               {models.map((model) => (
-                <SelectItem key={model.id} value={model.id}>
+                <SelectItem key={model.id} value={model.id} className="py-3 pl-3">
                   {model.displayName}
                 </SelectItem>
               ))}
@@ -236,6 +238,7 @@ export function QuickstartEnvironment({ wizard, workspaceID }: { wizard: Quickst
     : quickstartCurl('/v1/environments', workspaceID, quickstartEnvironmentBody(progress.environmentName));
   return (
     <ConfigurationLayout
+      workspaceID={workspaceID}
       title={text.environmentTitle}
       subtitle={text.environmentSubtitle}
       code={code}
@@ -330,12 +333,14 @@ function ConfigurationActions({
 }
 
 function ConfigurationLayout({
+  workspaceID,
   title,
   subtitle,
   code,
   children,
   footer,
 }: {
+  workspaceID: string;
   title: string;
   subtitle: string;
   code: string;
@@ -354,8 +359,11 @@ function ConfigurationLayout({
         <div className="min-h-0 min-w-0 max-w-xl pr-1 min-[860px]:overflow-y-auto">{children}</div>
         <aside className="min-h-0 min-w-0 border-t border-muted-foreground/30 pt-6 min-[860px]:overflow-y-auto min-[860px]:border-t-0 min-[860px]:border-l min-[860px]:pt-0 min-[860px]:pl-6">
           <div className="rounded-xl bg-muted/50 p-4 sm:p-6">
-            <h2 className="mb-3 text-sm font-medium">{text.api}</h2>
-            <RequestPreview code={code} />
+            <QuickstartApiKey workspaceID={workspaceID} />
+            <div className="mt-5 border-t border-border pt-5">
+              <h2 className="mb-3 text-sm font-medium">{text.api}</h2>
+              <RequestPreview code={code} />
+            </div>
           </div>
         </aside>
       </div>

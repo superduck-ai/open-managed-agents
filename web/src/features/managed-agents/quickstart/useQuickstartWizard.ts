@@ -97,7 +97,11 @@ export function useQuickstartWizard(
       const preferred = active.find((item) => item.name === 'Default') ?? (active.length === 1 ? active[0] : undefined);
       if (preferred) update((value) => ({ ...value, environmentID: preferred.id }));
     }
-    if (current.current.agentID && !resources.data.agents.some((item) => item.id === current.current.agentID)) {
+    if (
+      current.current.agentID &&
+      current.current.agentID !== 'new' &&
+      !resources.data.agents.some((item) => item.id === current.current.agentID)
+    ) {
       update((value) => ({ ...value, agentID: '', sessionID: '', step: Math.min(value.step, 1) }));
       setError(text.restoreFailed);
     }
@@ -110,6 +114,11 @@ export function useQuickstartWizard(
       setError(text.restoreFailed);
     }
   }, [resources.data, text.restoreFailed, update]);
+
+  const defaultAgent = progress.step === 1 && !progress.agentID ? candidates[0] : undefined;
+  useEffect(() => {
+    if (defaultAgent && !busy && !progress.pending) update((value) => ({ ...value, agentID: defaultAgent.id }));
+  }, [defaultAgent, busy, progress.pending, update]);
 
   const addResource = (item: AgentApiResponse | EnvironmentApiResponse) => {
     client.setQueryData<Awaited<ReturnType<typeof loadQuickstartResources>>>(resourceKey, (value) => {

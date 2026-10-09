@@ -155,8 +155,8 @@ test('Agent candidates include later pages and an unavailable saved model cannot
     return baseFetch(input, init);
   }) as typeof fetch;
   renderManagedAgentsPage('quickstart');
-  await startAgentConfiguration();
-  await selectManagedComboboxOption(document.body, 'Use existing', /agent_later/);
+  fireEvent.click(await screen.findByRole('button', { name: 'Start configuring' }));
+  await waitFor(() => expect(screen.getByLabelText('Model').textContent).toContain('removed-model'));
   expect(screen.getByLabelText('Model').textContent).toContain('removed-model');
   expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Use existing and continue' }).disabled).toBe(true);
   expect(
@@ -166,7 +166,7 @@ test('Agent candidates include later pages and an unavailable saved model cannot
   ).toBeTruthy();
 });
 
-test('same-name Agents require an explicit choice and display the selected saved configuration', async () => {
+test('same-name Agents default to an existing configuration and preserve an explicit new draft', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
   const api = mockAgentsApi([
     { id: 'agent_savedfirst', name: 'Hello World Agent', system: 'First saved prompt.' },
@@ -174,11 +174,19 @@ test('same-name Agents require an explicit choice and display the selected saved
   ]);
   renderManagedAgentsPage('quickstart');
   await startAgentConfiguration();
+  expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toBe('First saved prompt.');
+  expect(codeBlockContaining('/v1/agents/agent_savedfirst').textContent).not.toContain('-X POST');
+  await selectManagedComboboxOption(document.body, 'Use existing', 'Create a new Agent');
   fireEvent.change(screen.getByLabelText('System prompt'), { target: { value: 'My draft prompt.' } });
   await selectManagedComboboxOption(document.body, 'Use existing', /agent_savedsecond/);
   expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toBe('Second saved prompt.');
   expect(codeBlockContaining('/v1/agents/agent_savedsecond').textContent).not.toContain('-X POST');
   await selectManagedComboboxOption(document.body, 'Use existing', 'Create a new Agent');
+  expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toBe('My draft prompt.');
+  cleanup();
+  renderManagedAgentsPage('quickstart');
+  expect(await screen.findByRole('button', { name: 'Create and continue' })).toBeTruthy();
+  await waitFor(() => expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').disabled).toBe(false));
   expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toBe('My draft prompt.');
   await selectManagedComboboxOption(document.body, 'Use existing', /agent_savedfirst/);
   fireEvent.click(screen.getByRole('button', { name: 'Use existing and continue' }));
@@ -238,7 +246,9 @@ test('a saved Agent that disappears returns to configuration without silently cr
 async function startAgentConfiguration() {
   fireEvent.click(await screen.findByRole('button', { name: 'Start configuring' }));
   await waitFor(() =>
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Create and continue' }).disabled).toBe(false),
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: /Create and continue|Use existing and continue/ }).disabled,
+    ).toBe(false),
   );
 }
 
@@ -777,4 +787,25 @@ test('a lost Session create response is recovered after refresh without creating
   expect(api.requests.filter((request) => request.method === 'POST' && request.url.includes('/events?'))).toHaveLength(
     0,
   );
+});
+
+test('API key links are available beside requests in steps two through four and open a new tab', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  mockAgentsApi([]);
+  renderManagedAgentsPage('quickstart');
+  await startAgentConfiguration();
+  const expectKeyLink = () => {
+    for (const link of screen.getAllByRole('link', { name: 'Go to API keys' })) {
+      expect(link.getAttribute('href')).toBe('/settings/workspaces/default/keys');
+      expect(link.getAttribute('target')).toBe('_blank');
+      expect(link.getAttribute('rel')).toContain('noopener');
+    }
+  };
+  expectKeyLink();
+  fireEvent.click(screen.getByRole('button', { name: 'Create and continue' }));
+  await screen.findByRole('heading', { name: 'Configure the runtime environment' });
+  expectKeyLink();
+  fireEvent.click(screen.getByRole('button', { name: 'Use existing and continue' }));
+  await screen.findByRole('heading', { name: 'Run your first conversation' });
+  expectKeyLink();
 });

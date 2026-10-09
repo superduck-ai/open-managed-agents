@@ -67,12 +67,20 @@ Cloud Session 的 archive 在同一个 Yourbatis 事务内归档 Session、终�
 归档保持 Session 历史、Transcript 和已持久化 Filestore 文件不变，不执行文件或对象清理。
 沙箱本地临时文件和未上传缓存不保留。
 
-archive 事务提交后，HTTP handler 立即按 Session 和租户范围查询待删除沙箱，投递去重的
-`sandbox_reclaim`。归档响应只等待数据库投递，不等待 Provider DELETE。投递失败不撤销归档，
-持久化清理意图由每分钟 River sweep 补投；提交后进程退出或请求取消同样由 sweep 恢复。
-它不受 `sandbox_lifecycle.enabled`、`dry_run` 或 idle 时间限制。archive 成功表示归档和清理意图
-已提交，不表示 Provider DELETE 已完成；后台删除失败保持 stopping 并由 River 重试，任务耗尽后
-下一次 sweep 再次投递。进程重启后同样从数据库恢复，不依赖请求内 goroutine。
+archive 事务提交后，HTTP handler 清理 Worker 消费资源，并按 Session 和租户范围查询待删除沙箱。
+每个服务实例最多启动 4 个即时删除 goroutine；名额使用非阻塞信号量获取，先取得名额再启动，
+不创建等待名额的 goroutine。每个任务有独立的 30 秒超时，不随归档请求结束而取消。
+任务在事务外执行 Provider DELETE，完成后将沙箱写为 stopped，并释放名额。
+归档接口不等待 Provider DELETE；成功响应表示归档和持久化清理意图已提交，不保证沙箱已删除。
+即时归档清理不受 `sandbox_lifecycle.enabled`、`dry_run` 或 idle 时间限制。
+
+名额已满时不启动即时任务，直接投递去重的 `sandbox_reclaim`。即时删除失败时保持 stopping，
+使用独立的 5 秒入队时限投递 River 重试，并记录结构化警告。删除超时不会取消重试入队。
+投递失败、即时任务超时或进程退出不撤销归档，
+每分钟 River sweep 仍从持久化清理意图补投。HTTP handler 对查询或投递失败记录错误，
+但归档仍返回成功。重复 archive 可以再次尝试尚未删除的目标，已完成目标不重复删除。
+并发归档与 River 重试可能同时删除同一固定 Provider ID；Provider DELETE 的幂等语义及 SDK
+对 404 的成功处理使两者收敛。后台删除失败由 River 重试，任务耗尽后下一次 sweep 再次投递。
 已停止的 Work 不阻碍发现待删除沙箱。完成后仅更新沙箱为 stopped，不调用消息恢复路径。
 
 候选及删除目标按 Work 关联沙箱，Code Session 作为可选的最新 Worker 记录读取。因此 Worker
@@ -89,21 +97,24 @@ sequenceDiagram
     participant Provider
     API->>DB: 事务归档、终止 Worker、停止 Work、标记沙箱 stopping
     DB-->>API: 提交成功
-    API->>River: 立即投递 sandbox_reclaim
-    API-->>API: 返回归档响应
-    opt 投递失败或提交后进程退出
-        River->>DB: 每分钟扫描待删除沙箱并补投
+    alt 即时删除名额可用
+        API->>Provider: goroutine DELETE 固定 Provider ID（30s 超时）
+    else 名额已满
+        API->>River: 投递 sandbox_reclaim
     end
-    River->>Provider: DELETE 固定 Provider ID
+    API-->>API: 返回归档成功响应，不等待删除
     alt 删除成功或 404
-        River->>DB: 沙箱 stopped，保留历史和文件
-    else 删除失败
-        River->>DB: 保持 stopping，后续重试
+        Provider-->>DB: 删除路径将沙箱写为 stopped
+    else 删除失败或进程退出
+        River->>DB: 从 stopping 意图恢复并补投
+        River->>Provider: 重试 DELETE
+        River->>DB: 删除成功后写入 stopped
     end
 ```
 
 升级前已经归档的 Session 不会自动补写 `session_archived`；再次调用 archive 可补记清理意图。
-单个 Thread 归档不触发整个 Session 的沙箱删除。
+单个 Thread 归档不触发整个 Session 的沙箱删除。Agent 归档也不等同于 Session 归档；
+只调用 Agent archive 的测试清理不会触发这条删除路径。
 
 ## 与现有消息流程衔接
 
@@ -186,6 +197,8 @@ SQL 和事务仍经现有 `database/sql` 包装层，监听复用同一个 pgxpo
 和关闭 idle 回收/dry-run 下归档沙箱的真实 River 调度。Provider DELETE 使用本地 HTTP fixture，
 不代表真实云端计费或资源释放验收。
 
-归档即时投递测试使用生产 HTTP handler 与真实 River，在删除周期 schedule 后归档并断言任务
-已持久化且重复归档只产生一个未完成任务。随后启动 Worker 验证 Provider DELETE 无需 sweep，
-Provider 响应阻塞时归档仍能返回。未配置投递 client 的失败路径验证归档及 pending 状态保留。
+归档即时删除测试使用生产 HTTP handler，阻塞 Provider 响应后确认归档仍返回成功；
+四个任务占满名额时，第五次归档不启动即时删除并保存 River 任务。
+解除阻塞后，即使原归档请求已经结束，即时删除仍将沙箱写为 stopped。
+失败路径验证归档成功、stopping 状态保留、重试任务持久化及再次归档通过 Provider 404 完成删除。
+并发测试强制即时删除与后台回收同时到达 Provider，以 204/404 返回检查双方收敛为 stopped。

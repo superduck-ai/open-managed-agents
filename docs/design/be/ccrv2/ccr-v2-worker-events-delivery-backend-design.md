@@ -244,35 +244,37 @@ consumer ACK floor。
 
 ### Session 永久结束与 consumer 自动回收
 
-Session 归档、删除或整体 `terminated` 的事务按 Session → Worker 的既有锁顺序完成状态转换，并终止租户范围内所有关联 Code Session（包括历史实例），清除 token/lease、推进 epoch，再通过同一个 Yourbatis SQL transaction executor 的 River 适配器持久化清理任务。入队失败则整个状态事务回滚。归档和整体终止保留公开历史；删除沿用软删除合同。Agent 归档不会触发此清理，也不会终止其已有 Session。
+Session 归档、删除或整体 `terminated` 的事务按 Session → Worker 的既有锁顺序完成状态转换，并终止租户范围内所有关联 Code Session（包括历史实例），清除 token/lease、推进 epoch。DB 仅返回关联 Code Session ID，不注入清理回调，也不创建 River 清理任务。归档和整体终止保留公开历史；删除沿用软删除合同。Agent 归档不会触发此清理，也不会终止其已有 Session。
 
-事件写入路径由状态应用返回“Session 本次进入 terminated”的结果，批次汇总该结果。整批事件及派生事件写完后，仅在批末状态仍为 terminated 时，事务编排显式终止关联 Worker 并入队清理，不重新扫描事件类型，也不在处理单个事件时提前推进 epoch。幂等重放和重复终态不再次触发清理；仅 Thread 终止不触发，除非派生出整个 Session 的终止转换。归档、删除与直接设置终止状态继续显式调用同一个 Worker 清理函数。
+事件写入路径由状态应用返回“Session 本次进入 terminated”的结果，批次汇总该结果。整批事件及派生事件写完后，仅在批末状态仍为 terminated 时，事务编排显式终止关联 Worker。事务失败返回空结果，不能向上层泄漏未提交的清理 ID。直接设置状态也返回已退休 ID，重复终态不再次推进 epoch。部署创建入口在同一事务内新建 Session，此时尚无关联 Worker，因此不执行 Worker 退休查询。幂等重放和重复终态不再次推进 epoch；仅 Thread 终止不触发，除非派生出整个 Session 的终止转换。
 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant API
+    participant Service
     participant PG
-    participant River
     participant NATS
-    Client->>API: archive / delete / terminate Session
-    API->>PG: 归档、终止关联 Code Session、推进 epoch、插入清理任务
-    PG-->>API: 同一事务提交
-    API-->>Client: 200
-    River->>NATS: 删除关联 task/reply consumer，purge 精确 subject
-    alt NATS 暂不可用
-        NATS-->>River: 错误
-        River->>PG: 保留任务并安排重试
-    else 成功或资源已不存在
-        River->>PG: 任务完成
+    Client->>Service: archive / delete / terminate Session
+    Service->>PG: 终止关联 Code Session、撤销凭证、推进 epoch
+    PG-->>Service: 提交并返回关联 Code Session ID
+    Service->>NATS: 删除 task/reply consumer，purge 精确 subject
+    alt 清理失败或超时
+        NATS-->>Service: 错误
+        Service->>Service: 记录告警
+        Note over NATS: consumer 由 InactiveThreshold 回收
     end
+    Service-->>Client: 状态变更成功
 ```
 
-事务返回后由 River 尽快执行，不把 NATS 清理放在 HTTP 请求内。任务保存稳定的租户、Session UUID 和关联 Code Session ID；排序后的参数对活跃任务去重，失败与进程重启沿用 River 的持久重试和 running job rescue。重试次数有限，耗尽后任务进入 discarded，本次没有增加自动对账扫描。已完成或已 discarded 的任务不阻止再次归档重新入队。清理重复执行安全，不依赖消息仍存在；不会 purge 共享 Stream 或其他 Session。
+上层在事务提交后直接调用 Code Session 服务清理 NATS，两路 consumer 和精确 subject 均由 `PurgeSession` 处理。整个 ID 列表共享独立的五秒超时，不继承请求取消。单个 ID 清理失败时记录告警并继续处理其他 ID；达到超时后停止。清理失败不会回滚已经提交的 Session 状态。重复归档可以再次尝试清理，清理不存在的 NATS 资源安全，不 purge 共享 Stream 或其他 Session。
 
-epoch 在永久结束事务内推进，已有 Worker SSE 会按既有一秒校验间隔退出，旧凭证无法重新订阅或注册。订阅创建后、发出 HTTP 200 前再次检查 epoch。每个关联 Session 的 Worker 订阅在开始创建时分配稳定的关闭 ID，结束时先停止读取，再检查父 Session；仅父 Session 已永久结束或查询失败时独立持久化补偿任务，正常断连与 replacement 不产生无效清理任务。订阅创建失败但已经留下 consumer 时也进入该补偿路径。任务通过组织、工作区和 Session UUID 查询包含软删除记录的永久结束状态，仅在归档、删除或整体终止时 purge；记录不存在不视为永久结束，普通 Worker replacement 不会删除新连接共用的 consumer。补偿任务独立于归档任务去重，覆盖旧请求在归档清理完成之后才创建 consumer 的窗口。无父 Session 的独立 Code Session 不入队。关闭补偿入队使用独立的五秒 context。进程在重建 consumer 后、持久化补偿前崩溃时，consumer 由 NATS inactivity 回收；该窗口中的残留消息仍依赖逻辑到期扫描，不承诺即时 purge。归档与旧消息处理并发仍受既有 epoch/Session 锁保护，不承诺跨系统瞬时原子删除。常规断连、idle/paused 与 Agent archive 不调用此清理；Redis ACK key 沿用 TTL，不即时删除。无 River 的进程内 HTTP removal 组装保留同步清理路径；生产 main 必须注入已配置的 SessionCleanup，包含事件历史写入和线程终止派生的整体终态。River kind/queue 保留 `session_archive_cleanup`，使已有持久任务可继续执行。
+该路径不持久化清理意图，也不承诺失败后或进程重启后的自动重试。原 `session_archive_cleanup` River worker、队列和 DB 回调已删除。若开发环境保留旧版本的清理任务，需要另行处理，这个版本不会执行这些任务。
 
-验收包含真实 PostgreSQL/River/NATS 的入队回滚、部分清理失败后 client 重启恢复、历史实例清理、重复归档、其他 subject 保留、已有 Worker stream 失效、延迟订阅重建后的补偿及普通 epoch replacement 保留 consumer；`chat reliability` 增加真实 Worker 完成后公开归档与两路 consumer 删除检查。
+epoch 在永久结束事务内推进，已有 Worker SSE 会按既有一秒校验间隔退出，旧凭证无法重新订阅或注册。订阅创建后、发出 HTTP 200 前再次检查 epoch。订阅结束时先停止读取，再用组织、工作区和 Session UUID 检查父 Session，包括软删除记录。仅确认父 Session 已归档、删除或整体终止时直接清理，检查与清理共享五秒超时。查询失败只告警，不清理可能仍活跃的 replacement；记录不存在也不视为永久结束。订阅创建失败但已经留下 consumer 时也执行此检查。无父 Session 的独立 Code Session 不执行此路径。
+
+旧请求可能在初次清理后重建 consumer，订阅关闭时的检查覆盖正常退出窗口。进程在重建后崩溃、查询失败或 purge 失败时，consumer 依赖 NATS `InactiveThreshold` 回收。此参数只回收 consumer，不能保证同步删除未 ACK 消息；默认 `StreamMaxAge=0` 下残留消息仍依赖既有逻辑到期扫描，不承诺五分钟内 purge。归档与旧消息处理并发仍受既有 epoch/Session 锁保护，不承诺跨系统瞬时原子删除。常规断连、idle/paused、Worker replacement 与 Agent archive 不触发永久结束清理；Redis ACK key 沿用 TTL。
+
+普通单测覆盖失败告警、继续处理、超时停止以及请求取消后仍尝试清理。真实 PostgreSQL/NATS 集成测试覆盖清理失败后状态保持提交、历史实例清理、重复归档、其他 subject 保留、已有 Worker stream 失效、延迟订阅重建后的清理及普通 replacement 保留 consumer；`chat reliability` 验证真实 Worker 完成后的公开归档与两路 consumer 删除。测试存在不代表已执行，需要按用户要求运行相关真实回归。
 
 旧 subject 中可能已有被任务阻塞的控制回应。仅增加新 consumer 不会自动移动这些存量消息。
 本次不提供存量迁移，也不自动恢复或删除旧对话，由用户另行处理。删除保留既有执行中禁止删除、尚未开始执行的已接收输入可取消的限制；本次不改变删除限制，也不包含停止按钮修复。

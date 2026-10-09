@@ -9,11 +9,15 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
+type SessionEventChanges struct {
+	Events                []SessionEvent
+	RetiredCodeSessionIDs []string
+}
+
 type SessionRemoval struct {
-	Session          Session
-	CodeSessionIDs   []string
-	CleanupScheduled bool
-	StatusEvents     []SessionEvent
+	Session        Session
+	CodeSessionIDs []string
+	StatusEvents   []SessionEvent
 }
 
 func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, workspaceUUID, sessionID string, archive bool) (SessionRemoval, error) {
@@ -45,10 +49,6 @@ func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, w
 	return removal, err
 }
 
-func (d *DB) ConfigureSessionCleanup(enqueue func(context.Context, *yourbatis.Tx, SessionRemoval) error) {
-	d.sessionCleanup = enqueue
-}
-
 func (d *DB) retireSessionWorkersTx(ctx context.Context, executor yourbatis.Executor, removal *SessionRemoval) error {
 	session := removal.Session
 	ids, err := NewCodeSessionMapper(executor).TerminateBySession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID)
@@ -56,13 +56,6 @@ func (d *DB) retireSessionWorkersTx(ctx context.Context, executor yourbatis.Exec
 		return err
 	}
 	removal.CodeSessionIDs = ids
-	if len(ids) == 0 || d.sessionCleanup == nil {
-		return nil
-	}
-	if err := d.sessionCleanup(ctx, executor.(*yourbatis.Tx), *removal); err != nil {
-		return err
-	}
-	removal.CleanupScheduled = true
 	return nil
 }
 

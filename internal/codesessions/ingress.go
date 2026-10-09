@@ -203,7 +203,7 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 			h.logger.ErrorContext(r.Context(), "mark code session worker stream disconnected", "code_session_id", codeSessionID, "error", err)
 		}
 	}
-	defer h.service.reclaimClosedSubscription(codeSession, uuid.NewV4().String())
+	defer h.service.reclaimClosedSubscription(codeSession)
 	subscription, err := h.service.workerEvents.Subscribe(r.Context(), codeSessionID)
 	if err != nil {
 		disconnect()

@@ -106,7 +106,6 @@ type ServerDeps struct {
 	TunnelBroker           *tunnelsapi.Broker
 	TunnelPresence         *tunnelsapi.ConnectorPresence
 	WorkerEventAcks        workerevents.AckStore
-	SessionCleanup         *sessionsapi.SessionCleanup
 }
 
 // NewServer 用显式依赖组装 HTTP API Server。
@@ -131,9 +130,6 @@ func NewServer(deps ServerDeps) *Server {
 		WithWorkerEventBroker(deps.WorkerEventBroker).
 		WithWorkerEventState(workerEventAcks, deps.ObjectStore).
 		WithSandboxTimeoutExtender(deps.SandboxTimeoutExtender, deps.Config.E2B.SandboxTimeout)
-	if deps.SessionCleanup != nil {
-		codeSessionService.WithClosedSubscriptionCleanup(deps.SessionCleanup.ReclaimClosedSubscription)
-	}
 	webhookLogger := componentLogger("webhooks")
 	webhookEnqueuer := webhooksapi.NewEnqueuer(deps.DB, deps.Config.Webhook, webhookLogger)
 	workbenchLogger := componentLogger("workbench")

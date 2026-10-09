@@ -53,23 +53,25 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 	if len(events) == 0 {
 		return nil
 	}
-	created, err := h.eventPayloads.AppendSessionEventsIfAbsent(ctx, session.WorkspaceUUID, session.ExternalID, events)
+	changes, err := h.eventPayloads.AppendSessionEventsIfAbsent(ctx, session.WorkspaceUUID, session.ExternalID, events)
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) && !hasModelRequest {
 			return nil
 		}
 		return err
 	}
-	h.publishSessionEvents(ctx, created)
-	h.enqueueWebhooksForSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, created)
+	h.codeSessions.PurgeWorkerEvents(ctx, changes.RetiredCodeSessionIDs)
+	h.publishSessionEvents(ctx, changes.Events)
+	h.enqueueWebhooksForSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, changes.Events)
 	return nil
 }
 
 func (h *Handler) appendAndBroadcastInternal(r *http.Request, sessionID string, events []db.SessionEvent) {
-	created, err := h.eventPayloads.AppendSessionEvents(r.Context(), workspaceUUIDFromRequest(r), sessionID, events, nil)
+	changes, err := h.eventPayloads.AppendSessionEvents(r.Context(), workspaceUUIDFromRequest(r), sessionID, events, nil)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "append internal session events", "session_id", sessionID, "error", err)
 		return
 	}
-	h.publishSessionEvents(r.Context(), created)
+	h.codeSessions.PurgeWorkerEvents(r.Context(), changes.RetiredCodeSessionIDs)
+	h.publishSessionEvents(r.Context(), changes.Events)
 }

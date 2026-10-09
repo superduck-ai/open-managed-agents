@@ -728,7 +728,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		ProcessedAt: now,
 		CreatedAt:   now,
 	}}, nil)
-	if err != nil || len(events) != 1 || events[0].ThreadUUID == nil || *events[0].ThreadUUID != thread.UUID {
+	if err != nil || len(events.Events) != 1 || events.Events[0].ThreadUUID == nil || *events.Events[0].ThreadUUID != thread.UUID {
 		t.Fatalf("append Session event with inferred typed thread UUID = (%+v, %v)", events, err)
 	}
 	listedEvents, _, err := app.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{

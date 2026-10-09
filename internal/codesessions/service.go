@@ -23,32 +23,51 @@ import (
 // Service 封装会被 sessions、environment runner 与 code-session HTTP handler 共同复用的业务能力。
 // 它不持有 HTTP 鉴权、代理连接或日志状态，因而可以安全地注入非 HTTP 调用方。
 type Service struct {
-	eventPayloads             *eventpayload.Store
-	db                        *db.DB
-	credentials               *SessionCredentials
-	logger                    *slog.Logger
-	sink                      PublicEventSink
-	sandboxTimeoutExtender    SandboxTimeoutExtender
-	sandboxTimeout            time.Duration
-	workerEvents              workerevents.Broker
-	workerEventAcks           workerevents.AckStore
-	workerEventObjects        storage.ObjectStore
-	closedSubscriptionCleanup func(context.Context, db.CodeSession, string) error
+	eventPayloads          *eventpayload.Store
+	db                     *db.DB
+	credentials            *SessionCredentials
+	logger                 *slog.Logger
+	sink                   PublicEventSink
+	sandboxTimeoutExtender SandboxTimeoutExtender
+	sandboxTimeout         time.Duration
+	workerEvents           workerevents.Broker
+	workerEventAcks        workerevents.AckStore
+	workerEventObjects     storage.ObjectStore
 }
 
-func (s *Service) WithClosedSubscriptionCleanup(cleanup func(context.Context, db.CodeSession, string) error) *Service {
-	s.closedSubscriptionCleanup = cleanup
-	return s
+func (s *Service) PurgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {
+	if s == nil || len(codeSessionIDs) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	s.purgeWorkerEvents(ctx, codeSessionIDs)
 }
 
-func (s *Service) reclaimClosedSubscription(codeSession db.CodeSession, subscriptionID string) {
-	if s.closedSubscriptionCleanup == nil {
+func (s *Service) purgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {
+	for _, codeSessionID := range codeSessionIDs {
+		if err := s.workerEvents.PurgeSession(ctx, codeSessionID); err != nil {
+			s.logger.WarnContext(ctx, "purge retired worker events", "code_session_id", codeSessionID, "error", err)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+	}
+}
+
+func (s *Service) reclaimClosedSubscription(codeSession db.CodeSession) {
+	if codeSession.SessionUUID == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := s.closedSubscriptionCleanup(ctx, codeSession, subscriptionID); err != nil {
-		s.logger.ErrorContext(ctx, "enqueue closed worker subscription cleanup", "code_session_id", codeSession.ExternalID, "error", err)
+	retired, err := s.db.IsSessionRetired(ctx, codeSession.OrganizationUUID, codeSession.WorkspaceUUID, codeSession.SessionUUID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "check closed worker session", "code_session_id", codeSession.ExternalID, "error", err)
+		return
+	}
+	if retired {
+		s.purgeWorkerEvents(ctx, []string{codeSession.ExternalID})
 	}
 }
 

@@ -307,8 +307,9 @@ func (d *DB) SetSessionOutcomeEvaluations(ctx context.Context, workspaceUUID str
 	return row.session(), mapNoRows(err)
 }
 
-func (d *DB) SetSessionStatus(ctx context.Context, workspaceUUID string, externalID, status string) error {
-	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+func (d *DB) SetSessionStatus(ctx context.Context, workspaceUUID string, externalID, status string) (SessionRemoval, error) {
+	var removal SessionRemoval
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		mapper := NewSessionMapper(executor)
 		session, err := lockSessionForEvents(ctx, mapper, workspaceUUID, externalID)
 		if err != nil {
@@ -317,11 +318,17 @@ func (d *DB) SetSessionStatus(ctx context.Context, workspaceUUID string, externa
 		if _, err := mapper.SetStatus(ctx, workspaceUUID, externalID, status); err != nil {
 			return err
 		}
-		if status == "terminated" {
-			return d.retireSessionWorkersTx(ctx, executor, &SessionRemoval{Session: session})
+		removal.Session = session
+		removal.Session.Status = status
+		if status == "terminated" && session.Status != "terminated" {
+			return d.retireSessionWorkersTx(ctx, executor, &removal)
 		}
 		return nil
 	})
+	if err != nil {
+		return SessionRemoval{}, err
+	}
+	return removal, nil
 }
 
 func (d *DB) SetSessionThreadStatus(ctx context.Context, workspaceUUID string, sessionExternalID, threadExternalID, status string) error {
@@ -611,8 +618,8 @@ func (d *DB) AppendSessionEvents(
 	sessionExternalID string,
 	events []SessionEvent,
 	outcomeEvaluations json.RawMessage,
-) ([]SessionEvent, error) {
-	var created []SessionEvent
+) (SessionEventChanges, error) {
+	var changes SessionEventChanges
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
 		session, txErr := lockSessionForEvents(ctx, sessionMapper, workspaceUUID, sessionExternalID)
@@ -626,11 +633,13 @@ func (d *DB) AppendSessionEvents(
 		if txErr != nil {
 			return txErr
 		}
-		created = result.Events
+		changes.Events = result.Events
 		if result.SessionTerminated {
-			if txErr := d.retireSessionWorkersTx(ctx, executor, &SessionRemoval{Session: session}); txErr != nil {
+			removal := SessionRemoval{Session: session}
+			if txErr := d.retireSessionWorkersTx(ctx, executor, &removal); txErr != nil {
 				return txErr
 			}
+			changes.RetiredCodeSessionIDs = removal.CodeSessionIDs
 		}
 		if len(outcomeEvaluations) == 0 {
 			return nil
@@ -638,11 +647,14 @@ func (d *DB) AppendSessionEvents(
 		_, txErr = sessionMapper.SetOutcomeEvaluations(ctx, session.WorkspaceUUID, session.ExternalID, agentJSONArg(outcomeEvaluations))
 		return mapNoRows(txErr)
 	})
-	return created, err
+	if err != nil {
+		return SessionEventChanges{}, err
+	}
+	return changes, nil
 }
 
-func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID string, sessionExternalID string, events []SessionEvent) ([]SessionEvent, error) {
-	var created []SessionEvent
+func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID string, sessionExternalID string, events []SessionEvent) (SessionEventChanges, error) {
+	var changes SessionEventChanges
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
 		session, txErr := lockSessionForEvents(ctx, sessionMapper, workspaceUUID, sessionExternalID)
@@ -656,13 +668,20 @@ func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID stri
 		if txErr != nil {
 			return txErr
 		}
-		created = result.Events
+		changes.Events = result.Events
 		if result.SessionTerminated {
-			return d.retireSessionWorkersTx(ctx, executor, &SessionRemoval{Session: session})
+			removal := SessionRemoval{Session: session}
+			if txErr := d.retireSessionWorkersTx(ctx, executor, &removal); txErr != nil {
+				return txErr
+			}
+			changes.RetiredCodeSessionIDs = removal.CodeSessionIDs
 		}
 		return nil
 	})
-	return created, err
+	if err != nil {
+		return SessionEventChanges{}, err
+	}
+	return changes, nil
 }
 
 func (d *DB) GetSessionEvent(ctx context.Context, workspaceUUID string, sessionExternalID string, eventExternalID string) (SessionEvent, error) {

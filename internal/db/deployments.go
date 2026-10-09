@@ -283,11 +283,6 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 			return err
 		}
 		events = result.Events
-		if result.SessionTerminated {
-			if err := d.retireSessionWorkersTx(ctx, executor, &SessionRemoval{Session: session}); err != nil {
-				return err
-			}
-		}
 
 		run := deploymentRunFromDeployment(input.Run, deployment)
 		run.SessionExternalID = &session.ExternalID
@@ -344,14 +339,9 @@ func (d *DB) ApplyScheduledOccurrenceTx(ctx context.Context, tx *yourbatis.Tx, i
 		if err != nil {
 			return err
 		}
-		result, err := insertSessionHistoryTx(ctx, tx, session, input.Events)
+		_, err = insertSessionHistoryTx(ctx, tx, session, input.Events)
 		if err != nil {
 			return err
-		}
-		if result.SessionTerminated {
-			if err := d.retireSessionWorkersTx(ctx, tx, &SessionRemoval{Session: session}); err != nil {
-				return err
-			}
 		}
 		run.SessionExternalID = &session.ExternalID
 		run.Error = nil

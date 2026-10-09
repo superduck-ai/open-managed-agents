@@ -44,9 +44,8 @@ var (
 )
 
 type DB struct {
-	pool           *pgxpool.Pool
-	mapperDB       *yourbatis.DB
-	sessionCleanup func(context.Context, *yourbatis.Tx, SessionRemoval) error
+	pool     *pgxpool.Pool
+	mapperDB *yourbatis.DB
 }
 
 type APIKey struct {

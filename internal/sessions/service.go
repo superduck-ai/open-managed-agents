@@ -370,14 +370,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *Handler) finishSessionRemoval(ctx context.Context, removal db.SessionRemoval) {
-	if !removal.CleanupScheduled && h.codeSessions != nil {
-		codeSessionIDs := removal.CodeSessionIDs
-		for _, codeSessionID := range codeSessionIDs {
-			if err := h.codeSessions.TerminateManagedAgentCodeSession(ctx, removal.Session, codeSessionID); err != nil {
-				h.logger.ErrorContext(ctx, "purge removed session worker events", "session_id", removal.Session.ExternalID, "code_session_id", codeSessionID, "error", err)
-			}
-		}
-	}
+	h.codeSessions.PurgeWorkerEvents(ctx, removal.CodeSessionIDs)
 	h.publishSessionEvents(ctx, removal.StatusEvents)
 	h.enqueueWebhooksForSessionEvents(ctx, removal.Session.WorkspaceUUID, removal.Session.ExternalID, removal.StatusEvents)
 }
@@ -539,13 +532,15 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if outcomesChanged {
 		outcomeEvaluations = normalizedSession.OutcomeEvaluations
 	}
-	created, err := h.eventPayloads.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
+	changes, err := h.eventPayloads.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			return invalidRequest(errors.New("archived sessions do not accept new events"))
 		}
 		return mapSessionLoadError(err, sessionID)
 	}
+	h.codeSessions.PurgeWorkerEvents(r.Context(), changes.RetiredCodeSessionIDs)
+	created := changes.Events
 	h.publishSessionEvents(r.Context(), created)
 	h.enqueueWebhooksForSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, created)
 	if h.codeSessions != nil {

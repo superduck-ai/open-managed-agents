@@ -51,6 +51,7 @@ export function useQuickstartWizard(
   const lock = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [unmatchedOperationID, setUnmatchedOperationID] = useState('');
   const [storageAvailable, setStorageAvailable] = useState(true);
   const mounted = useRef(true);
   useEffect(() => {
@@ -194,16 +195,18 @@ export function useQuickstartWizard(
   const recover = async () => {
     const pending = current.current.pending;
     if (!pending || !begin()) return;
+    setUnmatchedOperationID('');
     try {
       const loaded = await loadQuickstartResources(workspaceID);
       client.setQueryData(resourceKey, loaded);
       const results =
         pending.kind === 'session'
-          ? await findQuickstartSession(pending.id, workspaceID)
+          ? await findQuickstartSession(pending.id, workspaceID, current.current.agentID)
           : (pending.kind === 'agent' ? loaded.agents : loaded.environments).filter(
               (item) => item.metadata?.quickstart_operation_id === pending.id,
             );
       if (results.length !== 1) {
+        if (!results.length) setUnmatchedOperationID(pending.id);
         setError(results.length ? text.duplicate : text.notFound);
         return;
       }
@@ -222,6 +225,14 @@ export function useQuickstartWizard(
     } finally {
       end();
     }
+  };
+  const canAbandonPending = () =>
+    Boolean(current.current.pending && current.current.pending.id === unmatchedOperationID && !lock.current);
+  const abandonPending = () => {
+    if (!canAbandonPending()) return;
+    update((value) => ({ ...value, pending: null }));
+    setUnmatchedOperationID('');
+    setError(null);
   };
   const createSession = async () => {
     if (!agent || !environment || current.current.pending || !begin()) return null;
@@ -277,6 +288,8 @@ export function useQuickstartWizard(
     saveEnvironment,
     createSession,
     recover,
+    canAbandonPending: canAbandonPending(),
+    abandonPending,
     chooseScenario,
     editDraft,
   };

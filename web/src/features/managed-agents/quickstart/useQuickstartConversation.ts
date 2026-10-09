@@ -38,7 +38,6 @@ export function useQuickstartConversation(
     enabled: Boolean(sessionID),
     retry: false,
     staleTime: 1000,
-    refetchInterval: 2000,
   });
   const bindingValid = sessionMatchesQuickstart(session.data, binding);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -52,7 +51,9 @@ export function useQuickstartConversation(
   });
   const latestData = useRef(data);
   latestData.current = data;
-  const [message, setMessage] = useState(text.suggested);
+  const [message, setMessage] = useState(
+    () => (wizard.progress.sessionBinding === binding && wizard.progress.unconfirmedMessage) || text.suggested,
+  );
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sentVersion, setSentVersion] = useState(0);

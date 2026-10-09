@@ -72,6 +72,9 @@ const english = {
   unknown:
     'The request result is not confirmed. Check for its saved result before continuing; it will not be submitted again automatically.',
   recover: 'Check saved result',
+  abandon: 'I checked my resources; abandon this request',
+  abandonHint:
+    'The original request may still finish. Abandoning only clears its local recovery record; it does not cancel, delete, or retry the request.',
   notFound: 'No confirmed result was found yet. Retry checking, or inspect your resources before starting again.',
   duplicate: 'More than one saved result was found. Choose the intended resource in the console.',
   storage: 'This browser cannot save progress. Keep this page open until requests finish.',
@@ -163,6 +166,8 @@ const chinese: typeof english = {
   retry: '重试',
   unknown: '请求结果尚未确认。请先检查已保存结果；系统不会自动重复提交。',
   recover: '检查已保存结果',
+  abandon: '我已核对资源，放弃本次请求',
+  abandonHint: '原请求仍可能在服务端完成。放弃只清除本次恢复记录，不会取消请求、删除资源或自动重试。',
   notFound: '暂未找到已确认的结果。请再次检查，或先在控制台核对资源。',
   duplicate: '发现多个保存结果，请在控制台选择正确资源。',
   storage: '此浏览器无法保存进度。请保持页面打开，直到请求完成。',

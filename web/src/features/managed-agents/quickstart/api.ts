@@ -60,9 +60,9 @@ export function saveQuickstartSession(
   );
 }
 
-export async function findQuickstartSession(operationID: string, workspaceID: string) {
+export async function findQuickstartSession(operationID: string, workspaceID: string, agentID: string) {
   const sessions = await allPages<SessionApiResponse>(async (page) => {
-    const result = await listManagedEntities('sessions', workspaceID, page);
+    const result = await listManagedEntities('sessions', workspaceID, page, { agentId: agentID });
     return { ...result, data: result.data.filter((item): item is SessionApiResponse => item.type === 'session') };
   });
   return sessions.filter((session) => session.metadata?.quickstart_operation_id === operationID);

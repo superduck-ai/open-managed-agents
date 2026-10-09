@@ -159,7 +159,7 @@ export function ConsoleLayout() {
 export function ConsoleShell({ account, currentPath = '/', children, onLogout, onNavigate }: ConsoleShellProps) {
   const isWide = isWideConsolePath(currentPath);
   const isSessionWorkspace = isSessionDetailPath(currentPath);
-  const isQuickstart = /^\/workspaces\/[^/]+\/agent-quickstart\/?$/.test(currentPath);
+  const isQuickstart = /^(?:\/quickstart|\/workspaces\/[^/]+\/agent-quickstart)\/?$/.test(currentPath);
   const isSessionsRoute = isSessionsPath(currentPath);
   const { msg } = useI18n();
 

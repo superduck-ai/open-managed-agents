@@ -601,6 +601,7 @@ test('an unconfirmed send survives refresh and is never resent automatically', a
   await startAgentConfiguration();
   fireEvent.click(screen.getByRole('button', { name: 'Create and continue' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Use existing and continue' }));
+  fireEvent.change(screen.getByLabelText('Test message'), { target: { value: 'Original custom message' } });
   runtime.loseNextSend();
   fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
   expect(
@@ -617,6 +618,7 @@ test('an unconfirmed send survives refresh and is never resent automatically', a
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Send', exact: true }).disabled).toBe(false),
   );
   expect(runtime.sent).toHaveLength(1);
+  expect(screen.getByLabelText<HTMLTextAreaElement>('Test message').value).toBe('Original custom message');
 });
 
 test.each([
@@ -804,8 +806,10 @@ test('a lost Session create response is recovered after refresh without creating
   let saved: Record<string, unknown> | null = null;
   globalThis.fetch = (async (input, init) => {
     const url = String(input);
-    if (url.startsWith('/v1/sessions?') && (!init?.method || init.method === 'GET'))
+    if (url.startsWith('/v1/sessions?') && (!init?.method || init.method === 'GET')) {
+      expect(new URL(url, 'https://oma.duck.ai').searchParams.get('agent_id')).toBeTruthy();
       return jsonResponse({ data: saved ? [saved] : [], next_page: null });
+    }
     const response = await baseFetch(input, init);
     if (url.startsWith('/v1/sessions?') && init?.method === 'POST') {
       saved = await response.clone().json();
@@ -852,3 +856,76 @@ test('API key links are available beside requests in steps two through four and 
   await screen.findByRole('heading', { name: 'Run your first conversation' });
   expectKeyLink();
 });
+
+test('an unmatched create can only be abandoned after a successful empty recovery check', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = mockAgentsApi([]);
+  const baseFetch = globalThis.fetch;
+  let failCheck = false;
+  let createAttempts = 0;
+  globalThis.fetch = (async (input, init) => {
+    if (String(input).startsWith('/v1/agents?')) {
+      if (init?.method === 'POST') {
+        createAttempts++;
+        throw new TypeError('Request failed before saving');
+      }
+      if (failCheck) return jsonResponse({ error: { message: 'Lookup unavailable' } }, 500);
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  renderManagedAgentsPage('quickstart');
+  await startAgentConfiguration();
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Recoverable draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Create and continue' }));
+  await screen.findByRole('button', { name: 'Check saved result' });
+  expect(screen.queryByRole('button', { name: 'I checked my resources; abandon this request' })).toBeNull();
+  failCheck = true;
+  fireEvent.click(screen.getByRole('button', { name: 'Check saved result' }));
+  await screen.findByText('Lookup unavailable');
+  expect(screen.queryByRole('button', { name: 'I checked my resources; abandon this request' })).toBeNull();
+  failCheck = false;
+  fireEvent.click(screen.getByRole('button', { name: 'Check saved result' }));
+  const abandon = await screen.findByRole('button', { name: 'I checked my resources; abandon this request' });
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Create and continue' }).disabled).toBe(true);
+  expect(screen.getByText(/The original request may still finish/)).toBeTruthy();
+  fireEvent.click(abandon);
+  await waitFor(() =>
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Create and continue' }).disabled).toBe(false),
+  );
+  expect(screen.getByLabelText<HTMLInputElement>('Name').value).toBe('Recoverable draft');
+  expect(screen.queryByRole('button', { name: 'Check saved result' })).toBeNull();
+  expect(window.sessionStorage.length).toBe(0);
+  expect(createAttempts).toBe(1);
+  expect(api.requests.filter((request) => request.method === 'POST' || request.method === 'DELETE')).toHaveLength(0);
+});
+
+test('a completed Session has no recurring retrievals while visible or on an earlier step', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  mockAgentsApi([]);
+  const runtime = installSessionRuntime();
+  let retrievals = 0;
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => {
+    if (/\/v1\/sessions\/[^/]+\?/.test(String(input)) && (!init?.method || init.method === 'GET')) retrievals++;
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  renderManagedAgentsPage('quickstart');
+  await startAgentConfiguration();
+  fireEvent.click(screen.getByRole('button', { name: 'Create and continue' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Use existing and continue' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+  await waitFor(() => expect(runtime.sent).toHaveLength(1));
+  await act(async () => runtime.reply('Finished reply'));
+  await screen.findByText('First conversation completed');
+  const before = retrievals;
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 2100));
+  });
+  expect(retrievals).toBe(before);
+  fireEvent.click(screen.getByRole('button', { name: 'Back', exact: true }));
+  await screen.findByRole('heading', { name: 'Configure the runtime environment' });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 2100));
+  });
+  expect(retrievals).toBe(before);
+}, 8000);

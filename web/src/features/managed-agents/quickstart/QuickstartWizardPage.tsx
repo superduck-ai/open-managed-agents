@@ -88,6 +88,14 @@ export function QuickstartWizardPage({
             <Button disabled={wizard.busy} onClick={() => void wizard.recover()}>
               {text.recover}
             </Button>
+            {wizard.canAbandonPending && (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">{text.abandonHint}</p>
+                <Button variant="outline" onClick={wizard.abandonPending}>
+                  {text.abandon}
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -19,6 +19,38 @@ afterEach(() => {
   window.sessionStorage.clear();
 });
 
+test('refresh resets progress and the test conversation while keeping saved resources reusable', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = mockAgentsApi([]);
+  const runtime = installSessionRuntime();
+  renderManagedAgentsPage('quickstart');
+  await startAgentConfiguration();
+  fireEvent.click(screen.getByRole('button', { name: 'Create and continue' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Use existing and continue' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+  await waitFor(() => expect(runtime.sent).toHaveLength(1));
+  await act(async () => runtime.reply('Reply before refresh'));
+  expect(await screen.findByText('Reply before refresh')).toBeTruthy();
+  cleanup();
+  renderManagedAgentsPage('quickstart');
+  expect(await screen.findByRole('button', { name: 'Start configuring' })).toBeTruthy();
+  expect(screen.queryByText('Reply before refresh')).toBeNull();
+  await startAgentConfiguration();
+  fireEvent.click(screen.getByRole('button', { name: 'Use existing and continue' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Use existing and continue' }));
+  expect(await screen.findByRole('heading', { name: 'Run your first conversation' })).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'View session' })).toBeNull();
+  expect(screen.queryByText('Reply before refresh')).toBeNull();
+  expect(runtime.sent).toHaveLength(1);
+  expect(api.requests.filter((request) => request.method === 'DELETE')).toHaveLength(0);
+  expect(api.requests.filter((request) => request.method === 'POST' && request.url.includes('/agents?'))).toHaveLength(
+    1,
+  );
+  expect(
+    api.requests.filter((request) => request.method === 'POST' && request.url.includes('/sessions?')),
+  ).toHaveLength(1);
+});
+
 test('resource loading errors show the API message', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
   mockAgentsApi([]);
@@ -40,8 +72,9 @@ test('Session restoration errors show the API message and keep sending disabled'
   await startAgentConfiguration();
   fireEvent.click(screen.getByRole('button', { name: 'Create and continue' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Use existing and continue' }));
+  runtime.loseNextSend();
   fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
-  await waitFor(() => expect(runtime.sent).toHaveLength(1));
+  await screen.findByText('Sending was not confirmed. Refresh the conversation before explicitly sending again.');
   await act(async () => runtime.reply('A saved reply'));
   cleanup();
   const baseFetch = globalThis.fetch;
@@ -51,7 +84,7 @@ test('Session restoration errors show the API message and keep sending disabled'
     return baseFetch(input, init);
   }) as typeof fetch;
   renderManagedAgentsPage('quickstart');
-  expect((await screen.findByRole('alert')).textContent).toContain('Session unavailable');
+  expect(await screen.findByText('Session unavailable')).toBeTruthy();
   expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Send', exact: true }).disabled).toBe(true);
   expect(runtime.sent).toHaveLength(1);
 });
@@ -94,6 +127,9 @@ test('a lost Agent response is recovered by its operation ID without a second cr
   fireEvent.click(screen.getByRole('button', { name: 'Create and continue' }));
   expect(await screen.findByRole('button', { name: 'Check saved result' })).toBeTruthy();
   expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Create and continue' }).disabled).toBe(true);
+  cleanup();
+  renderManagedAgentsPage('quickstart');
+  expect(await screen.findByRole('button', { name: 'Check saved result' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Check saved result' }));
   expect(await screen.findByRole('heading', { name: 'Configure the runtime environment' })).toBeTruthy();
   expect(
@@ -185,10 +221,8 @@ test('same-name Agents default to an existing configuration and preserve an expl
   expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toBe('My draft prompt.');
   cleanup();
   renderManagedAgentsPage('quickstart');
-  expect(await screen.findByRole('button', { name: 'Create and continue' })).toBeTruthy();
-  await waitFor(() => expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').disabled).toBe(false));
-  expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toBe('My draft prompt.');
-  await selectManagedComboboxOption(document.body, 'Use existing', /agent_savedfirst/);
+  await startAgentConfiguration();
+  expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toBe('First saved prompt.');
   fireEvent.click(screen.getByRole('button', { name: 'Use existing and continue' }));
   expect(await screen.findByRole('heading', { name: 'Configure the runtime environment' })).toBeTruthy();
   expect(api.requests.filter((request) => request.method === 'POST')).toHaveLength(0);
@@ -207,7 +241,7 @@ test('an existing Agent with no system prompt can be reused at its saved version
   expect(api.requests.filter((request) => request.method === 'POST')).toHaveLength(0);
 });
 
-test('refreshing returns to saved resources and does not recreate the Agent', async () => {
+test('refreshing during environment configuration starts over without recreating the saved Agent', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
   const api = mockAgentsApi([]);
   renderManagedAgentsPage('quickstart');
@@ -216,14 +250,13 @@ test('refreshing returns to saved resources and does not recreate the Agent', as
   await screen.findByRole('heading', { name: 'Configure the runtime environment' });
   cleanup();
   renderManagedAgentsPage('quickstart');
-  await screen.findByRole('heading', { name: 'Configure the runtime environment' });
-  fireEvent.click(screen.getByRole('button', { name: 'Back', exact: true }));
+  await startAgentConfiguration();
   expect(await screen.findByRole('button', { name: 'Use existing and continue' })).toBeTruthy();
   expect(screen.getByLabelText<HTMLInputElement>('Name').value).toBe('Hello World Agent');
   expect(api.requests.filter((request) => request.method === 'POST')).toHaveLength(1);
 });
 
-test('a saved Agent that disappears returns to configuration without silently creating a replacement', async () => {
+test('refresh discards an obsolete Agent binding without silently creating a replacement', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
   const api = mockAgentsApi([]);
   renderManagedAgentsPage('quickstart');
@@ -238,8 +271,9 @@ test('a saved Agent that disappears returns to configuration without silently cr
     return baseFetch(input, init);
   }) as typeof fetch;
   renderManagedAgentsPage('quickstart');
+  await startAgentConfiguration();
   expect(await screen.findByRole('heading', { name: 'Configure Agent' })).toBeTruthy();
-  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect(screen.queryByRole('alert')).toBeNull();
   expect(api.requests.filter((request) => request.method === 'POST')).toHaveLength(1);
 });
 
@@ -403,6 +437,11 @@ test('selecting the same scenario or returning home keeps custom drafts and requ
   fireEvent.click(screen.getByRole('button', { name: 'Start configuring' }));
   expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toBe('Keep my draft.');
   expect(api.requests.filter((request) => request.method === 'POST')).toHaveLength(0);
+  cleanup();
+  renderManagedAgentsPage('quickstart');
+  expect((await screen.findByRole('radio', { name: /Hello World Agent/ })).getAttribute('aria-checked')).toBe('true');
+  await startAgentConfiguration();
+  expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).not.toBe('Keep my draft.');
 });
 
 test('API previews use the current origin, safely quote form content and offer manual copy on failure', async () => {
@@ -601,7 +640,7 @@ test.each([
     decision: 'Approve',
     accepted: { type: 'user.custom_tool_result', custom_tool_use_id: 'sevt_pending_tool', is_error: false },
   },
-])('pending tools keep sending locked across %j and refresh', async ({ toolType, decision, accepted }) => {
+])('tools wait for a new status (%j); refresh resets progress', async ({ toolType, decision, accepted }) => {
   resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
   mockAgentsApi([]);
   const runtime = installSessionRuntime();
@@ -617,7 +656,9 @@ test.each([
       name: 'Write',
       input: { file_path: '/tmp/quickstart.txt', content: 'test' },
     });
-    runtime.emit('session.status_idle', { stop_reason: { type: 'requires_action', event_ids: ['sevt_pending_tool'] } });
+    runtime.emit('session.status_idle', {
+      stop_reason: { type: 'requires_action', event_ids: ['sevt_pending_tool'] },
+    });
   });
   fireEvent.click(await screen.findByRole('button', { name: decision, exact: true }));
   await waitFor(() => expect(runtime.sent[1]).toMatchObject(accepted));
@@ -625,10 +666,7 @@ test.each([
   await act(async () => fireEvent.keyDown(screen.getByLabelText('Test message'), { key: 'Enter' }));
   expect(runtime.sent).toHaveLength(2);
   expect(screen.getByRole('button', { name: 'Stop', exact: true })).toBeTruthy();
-  cleanup();
-  renderManagedAgentsPage('quickstart');
-  expect(await screen.findByRole('button', { name: 'Stop', exact: true })).toBeTruthy();
-  fireEvent.change(screen.getByLabelText('Test message'), { target: { value: 'Still waiting after refresh' } });
+  fireEvent.change(screen.getByLabelText('Test message'), { target: { value: 'Still waiting for a new status' } });
   await act(async () => fireEvent.keyDown(screen.getByLabelText('Test message'), { key: 'Enter' }));
   expect(runtime.sent).toHaveLength(2);
   await act(async () => runtime.emit('session.status_running', {}));
@@ -639,9 +677,14 @@ test.each([
   await waitFor(() =>
     expect(runtime.sent[3]).toMatchObject({
       type: 'user.message',
-      content: [{ type: 'text', text: 'Still waiting after refresh' }],
+      content: [{ type: 'text', text: 'Still waiting for a new status' }],
     }),
   );
+  cleanup();
+  renderManagedAgentsPage('quickstart');
+  expect(await screen.findByRole('button', { name: 'Start configuring' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Stop', exact: true })).toBeNull();
+  expect(runtime.sent).toHaveLength(4);
 });
 
 test('Thinking followed by idle is not reported as a completed first reply', async () => {

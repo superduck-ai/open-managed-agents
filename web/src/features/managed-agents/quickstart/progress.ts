@@ -39,7 +39,14 @@ export function loadQuickstartProgress(key: string): QuickstartProgress | null {
     const saved = window.sessionStorage.getItem(key);
     if (!saved) return null;
     const result = progressSchema.safeParse(JSON.parse(saved));
-    return result.success && result.data.drafts[result.data.scenarioID] ? result.data : null;
+    if (
+      result.success &&
+      result.data.drafts[result.data.scenarioID] &&
+      (result.data.pending || result.data.unconfirmedMessage)
+    )
+      return result.data;
+    window.sessionStorage.removeItem(key);
+    return null;
   } catch {
     return null;
   }
@@ -47,7 +54,8 @@ export function loadQuickstartProgress(key: string): QuickstartProgress | null {
 
 export function storeQuickstartProgress(key: string, progress: QuickstartProgress) {
   try {
-    window.sessionStorage.setItem(key, JSON.stringify(progress));
+    if (progress.pending || progress.unconfirmedMessage) window.sessionStorage.setItem(key, JSON.stringify(progress));
+    else window.sessionStorage.removeItem(key);
     return true;
   } catch {
     return false;

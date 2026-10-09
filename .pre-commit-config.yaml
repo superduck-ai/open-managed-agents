@@ -7,7 +7,9 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^third_party/crush/internal/ui/.*\.golden$
       - id: end-of-file-fixer
+        exclude: ^third_party/crush/internal/ui/.*\.golden$
       - id: check-merge-conflict
       - id: check-yaml
       - id: check-json

@@ -104,8 +104,14 @@ e2b:
   template: managed-agent-sandbox
   request_timeout: 60s
   sandbox_timeout: 30s
+  local_port_lookup: false
+  local_service_host: ""
 
 environment_runner:
+  agent_mode: sandbox
+  sandbox_mcp_port: 8090
+  sandbox_mcp_path: /mcp
+  sandbox_mcp_command: ""
   enabled: true
   concurrency: 2
   package_provision_timeout: 2m

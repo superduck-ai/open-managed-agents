@@ -86,6 +86,7 @@ type Server struct {
 // ObjectStore 由应用启动层从共享 storage.Client 派生，绑定默认 bucket，供对象资源与 Filestore 共用。
 // Logger 是进程根 logger；nil 时统一回落到 slog.Default，生产组装应显式传入。
 type ServerDeps struct {
+	CodeSessionService     *codesessions.Service
 	Prebuilds              *environments.Prebuilds
 	SandboxLifecycle       *environments.SandboxLifecycle
 	Config                 config.Config
@@ -126,10 +127,13 @@ func NewServer(deps ServerDeps) *Server {
 	if workerEventAcks == nil {
 		workerEventAcks = workerevents.NewMemoryAcknowledgementStore()
 	}
-	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger).
-		WithWorkerEventBroker(deps.WorkerEventBroker).
-		WithWorkerEventState(workerEventAcks, deps.ObjectStore).
-		WithSandboxTimeoutExtender(deps.SandboxTimeoutExtender, deps.Config.E2B.SandboxTimeout)
+	codeSessionService := deps.CodeSessionService
+	if codeSessionService == nil {
+		codeSessionService = codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger).
+			WithWorkerEventBroker(deps.WorkerEventBroker).
+			WithWorkerEventState(workerEventAcks, deps.ObjectStore).
+			WithSandboxTimeoutExtender(deps.SandboxTimeoutExtender, deps.Config.E2B.SandboxTimeout)
+	}
 	webhookLogger := componentLogger("webhooks")
 	webhookEnqueuer := webhooksapi.NewEnqueuer(deps.DB, deps.Config.Webhook, webhookLogger)
 	workbenchLogger := componentLogger("workbench")

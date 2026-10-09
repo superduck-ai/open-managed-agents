@@ -28,6 +28,7 @@ type scenario struct {
 }
 
 var scenarios = map[string]scenario{
+	"chat.host":              {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatHostStart", Stages: []string{"host_public_started", "host_tool_denied", "host_tool_allowed", "host_history_continued", "host_sandbox_processes"}, Description: "公开 Session API 启动 Go Crush/Fantasy，真实沙箱 MCP、审批、流式事件和多轮历史"},
 	"deployment.lifecycle":   {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyDeploymentLifecycle", Stages: []string{"invalid_runs_leave_no_effects", "manual_run_effects_match", "durable_schedule_executed", "pause_archive_stop_schedule"}, Description: "Deployment 公开创建/运行、持久化调度执行、终态与 Session/Work/事件/挂载副作用一致"},
 	"deployment.retry":       {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyDeploymentRetry", Stages: []string{"failed_attempt_rolled_back", "automatic_retry_matches", "exhausted_job_has_no_effects", "reference_failure_paused"}, Description: "真实 River 自动退避重试、事务回滚、耗尽终态与依赖失败自动暂停"},
 	"deployment.idempotency": {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyDeploymentIdempotency", Stages: []string{"stale_jobs_have_no_effects", "duplicate_occurrence_single_effect", "distinct_occurrence_preserved"}, Description: "真实 River 并发重复投递、旧调度快照拒绝、同 occurrence 副作用唯一与不同 occurrence 保留"},
@@ -278,6 +279,8 @@ func saveReport(directory string, r report) error {
 		out.WriteString("Coverage: Memory/Filestore HTTP contracts with real PostgreSQL and MinIO; mounts additionally uses production Runner, local Docker sandbox and actual FUSE. Test-side faults and cleanup RunOnce do not certify cloud allocation, automatic background retry timing, process crash recovery, token renewal or concurrent editing throughput.\n\n")
 	} else if strings.HasPrefix(r.Scenario, "files.") {
 		out.WriteString("Coverage: real backend HTTP, PostgreSQL and MinIO. See scenario proof stages. generated runs a real Worker with FUSE and a scripted model; other Files scenarios use DB/storage fixtures where documented. recovery injects S3 errors through a local proxy and waits for the actual cleanup loop and backoff. Cloud S3 IAM and network infrastructure are not verified.\n\n")
+	} else if r.Scenario == "chat.host" {
+		out.WriteString("Coverage: public Agent/Session/input/confirmation/history/SSE HTTP, real PostgreSQL, Redis, JetStream and Core NATS. Production Runner and Crush/Fantasy host Service run in the Go test process with real HostWorker; a local Docker Provider runs actual FUSE mounts and qoder MCP. Only the upstream model is scripted. No Bun/Claude Agent process is started in the sandbox. Cloud E2B allocation, MCP bearer enforcement, production capacity and real-model quality are not verified.\n\n")
 	} else {
 		out.WriteString("Coverage: real backend, PostgreSQL, Redis, JetStream, Core NATS and Worker; scripted upstream model.\n")
 		if r.Scenario == "chat.public" || r.Scenario == "chat.upstream-errors" {

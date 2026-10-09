@@ -1,0 +1,26 @@
+name: Agent runtime
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  agent-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: ./scripts/generate-go.sh
+      - run: go test -race ./internal/agentruntime ./internal/codesessions ./internal/sessions ./internal/environments ./internal/config ./internal/runtime/e2bruntime -count=1
+      - run: go test -race ./runtime -count=1
+        working-directory: third_party/crush
+      - run: go test -race ./internal/agent -run 'TestPreparePrompt_|TestCreateUserMessage_|TestHasRepeatedToolCalls' -count=1
+        working-directory: third_party/crush

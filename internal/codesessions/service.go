@@ -511,6 +511,9 @@ func (s *Service) reconcileSubagentEvents(ctx context.Context, codeSessionID str
 }
 
 func (s *Service) publishSubagentInternalEvents(ctx context.Context, codeSession db.CodeSession) error {
+	if isHostCodeSession(codeSession) {
+		return nil
+	}
 	threadByAgent, err := s.subagentThreadMappings(ctx, codeSession)
 	if err != nil || len(threadByAgent) == 0 {
 		return err

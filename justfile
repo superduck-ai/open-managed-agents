@@ -61,6 +61,11 @@ lint: generate
 dead-code: generate
   ./scripts/go-dead-code.sh
 
+agent-runtime-test: generate
+  go test -race ./internal/agentruntime ./internal/codesessions ./internal/sessions ./internal/environments ./internal/config ./internal/runtime/e2bruntime -count=1
+  cd third_party/crush && go test -race ./runtime -count=1
+  cd third_party/crush && go test -race ./internal/agent -run 'TestPreparePrompt_|TestCreateUserMessage_|TestHasRepeatedToolCalls' -count=1
+
 duplicates:
   ./scripts/check-duplicates.sh
 

@@ -177,7 +177,7 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 | `BatchConfig`             | `batch`              | Message Batch 限制、worker、lease 和清理策略                                             |
 | `SandboxLifecycleConfig`  | `sandbox_lifecycle`  | 长期 idle 回收开关、dry-run 与超时，见 [沙箱生命周期](sandbox-lifecycle.md)              |
 | `E2BConfig`               | `e2b`                | E2B provider 连接、模板和超时                                                            |
-| `EnvironmentRunnerConfig` | `environment_runner` | Environment runner 并发及 Claude 运行命令                                                |
+| `EnvironmentRunnerConfig` | `environment_runner` | Environment runner 并发、Agent 运行位置与沙箱 MCP 入口，见 [双模式 Agent](dual-agent-runtime.md) |
 | `CodeSessionConfig`       | `code_session`       | Code session ingress、sandbox 回调 URL、JWT 和上游代理安全配置                           |
 | `ObservabilityConfig`     | `observability`      | Claude Code signal 策略、Backend 选择器、OpenObserve ingestion/query 连接与 OTLP ingress |
 | `WebhookConfig`           | `webhook`            | Webhook endpoint、签名、事件和投递 worker 策略                                           |
@@ -211,6 +211,8 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 
 ## 验收
 
+host 模式可通过 `environment_runner.sandbox_mcp_command` 使用已有 MCP 启动程序。空值使用 environment-manager；非空值只替换 host 启动命令，完整启动配置和凭证通过 stdin 交付。工作目录、端口和路径分别通过 `OMA_SANDBOX_WORK_DIR`、`OMA_SANDBOX_MCP_PORT`、`OMA_SANDBOX_MCP_PATH` 提供。详见 [双运行模式](dual-agent-runtime.md)。
+
 S3 兼容性测试是显式启用的真实服务测试，覆盖重复建桶、小对象、超过 16 MiB 的已知长度 multipart、未知长度 `io.Pipe` multipart、下载和删除。至少设置 endpoint；其余变量默认使用本地 MinIO 配置：
 
 ```bash
@@ -233,3 +235,7 @@ just dead-code
 just duplicates
 just complexity
 ```
+
+## 本地 E2B 服务端口
+
+`e2b.local_port_lookup` 默认关闭。开启时必须配置 HTTP(S) `api_url`，且地址不能含凭证、query 或 fragment。Provider 查询本地网关的沙箱端口映射，校验容器端口与发布端口。`local_service_host` 可覆盖公布的主机名，保留发布端口；它只允许在端口查询开启时使用，值为 IP 或主机名，不含协议或端口。云端 E2B 默认继续使用 SDK 的 `GetHost`。

@@ -185,7 +185,7 @@ func previewsFinishedBy(event sessionStreamEvent) []string {
 	switch event.EventType {
 	case "agent.message", "agent.thinking":
 		return []string{event.ExternalID}
-	case "span.model_request_end":
+	case "span.model_request_end", "system.message":
 		var end struct {
 			EventIDs []string `json:"event_ids"`
 		}

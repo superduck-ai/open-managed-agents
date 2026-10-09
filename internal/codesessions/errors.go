@@ -11,6 +11,13 @@ import (
 var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
 
 var (
+	ErrNotHostWorker         = errors.New("code session is not configured for host execution")
+	ErrHostInputExpired      = errors.New("host worker input has expired")
+	ErrHostHistoryInvalid    = errors.New("host worker history is invalid")
+	ErrHostPermissionInvalid = errors.New("host worker permission request is invalid")
+)
+
+var (
 	ErrMCPDeclarationInvalid          = errors.New("MCP server declarations must have unique canonical names and valid targets")
 	ErrMCPGatewayMissing              = errors.New("code_session.sandbox_api_base_url is required for managed-agent MCP tunnels")
 	ErrMCPRuntimeIdentityMissing      = errors.New("managed-agent MCP Tunnel runtime identity is incomplete")

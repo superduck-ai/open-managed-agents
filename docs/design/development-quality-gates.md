@@ -9,6 +9,8 @@
 - `.pre-commit-config.yaml` 固定通用 hook 版本，并排除由上游流程生成的 quickstart 请求文件。
 - 通用 hook 检查尾随空白、文件结尾、合并冲突标记、YAML/JSON 语法、私钥、大文件和混合换行符。
 - 暂存 Go 文件先由 `gofmt` 格式化，再对其所属 package 执行仓库 `.golangci.yml` 规则；独立的 `unused` 门禁随后分析全部 Go package 和测试，阻止不可达的包级声明进入提交。jscpd 再对 Go 和 TypeScript/TSX 生产代码执行独立的复制代码预算。
+- Go package 按最近的 `go.mod` 分组检查。Crush 独立源码模块使用随快照保留的上游 lint 配置；OMA 新增的 `third_party/crush/runtime` bridge 另执行根目录 `.golangci.yml`。根模块的死代码、复杂度与重复代码预算不变。
+- Crush TUI 的 `.golden` 文件按原始字节比较，尾随空白与结尾换行属于预期输出。因此仅这类快照不执行尾随空白和结尾修复；私钥、语法、换行类型与 1 MiB 大文件检查仍保留。源码和其他文件继续执行文件卫生检查。
 - 暂存前端代码、配置、样式和 Markdown 由 `web` 中固定版本的 Prettier 格式化，并遵循 `web/.prettierignore`。
 - 官方 `check-added-large-files` hook 使用 `--enforce-all`，因此新增和修改的文件都执行统一的 1 MiB 上限。由服务嵌入的 `internal/platformapi/directory_servers.json` 保存为紧凑 JSON，避免为生成数据引入长期阈值例外。
 - `just hooks-install` 为当前 Git clone 安装 hook，同一 clone 下的 worktree 共用该 hook。若机器尚未安装 `pre-commit`，`scripts/pre-commit.sh` 会通过 `uv` 安装固定版本 `4.6.0`；`just hooks-run` 可对全部跟踪文件复跑门禁。

@@ -29,6 +29,7 @@ Use this workflow when implementing or fixing Deployment/River, Memory/Filestore
 | Busy-input rejection and retry, ACK, Worker reconnection or replacement, history recovery | `chat.reliability` |
 | NATS fanout or delivery across backend instances | `chat.instances` |
 | Session creation, Runner, mounts or Worker startup | `chat.public` |
+| Host Crush/Fantasy startup, native Worker or sandbox MCP | `chat.host`; read [Host startup](features/host-start.md) |
 | Chat queries, scheduling, streaming latency or other performance-sensitive paths | `chat.performance` with a baseline comparison |
 | Upstream model authentication errors and failed-turn completion | `chat.upstream-errors`; read [Upstream errors](features/upstream-errors.md) |
 
@@ -139,7 +140,7 @@ go test ./cmd/verify-be -count=1
 
 These tests cover CLI parsing/help, image configuration precedence and verdict rejection of missing, skipped and incomplete Go tests. They also cover configuration isolation, dependency topology, cancellation, doctor probes and cleanup, diagnostic download bounds and comparable report metadata. Update the feature map and design document when contracts change.
 
-Scenario deadlines default to 3m for roundtrip/tools/instances, 5m for reliability/performance and 6m for public/generated. Files recovery/performance and cloud renewal default to 5m; other Files scenarios default to 3m. Override with `--timeout 8m`; this excludes environment build/startup. Go testing gets 30s cleanup grace and the outer command gets 2m compile/exit grace. Read `failure_kind` to distinguish scenario/outer timeouts, prerequisite blockers and incompatible baselines. A timeout alone is not a measured performance regression.
+Scenario deadlines default to 3m for roundtrip/tools/instances, 5m for reliability/performance and 6m for public/host/generated. Files recovery/performance and cloud renewal default to 5m; other Files scenarios default to 3m. Override with `--timeout 8m`; this excludes environment build/startup. Go testing gets 30s cleanup grace and the outer command gets 2m compile/exit grace. Read `failure_kind` to distinguish scenario/outer timeouts, prerequisite blockers and incompatible baselines. A timeout alone is not a measured performance regression.
 
 Memory deadlines default to 3m for portable scenarios and 8m for `mounts`.
 

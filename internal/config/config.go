@@ -120,6 +120,12 @@ func validate(cfg Config) error {
 	if err := validateGitSSHtoHTTPSHosts(cfg.EnvironmentRunner.GitSSHtoHTTPSHosts); err != nil {
 		return err
 	}
+	if err := validateAgentRuntimeConfig(cfg.EnvironmentRunner); err != nil {
+		return err
+	}
+	if err := validateLocalSandboxEndpointConfig(cfg.E2B); err != nil {
+		return err
+	}
 	return validateCodeSessionUpstreamProxyMITMConfig(cfg.CodeSession)
 }
 

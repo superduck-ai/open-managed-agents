@@ -119,6 +119,12 @@ func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID,
 }
 
 func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, result ModelRequestResult) error {
+	if isHostCodeSession(request.codeSession) {
+		result.Messages = nil
+		result.ToolUses = nil
+		result.ToolUseIDs = nil
+		result.EventIDs = nil
+	}
 	event := modelRequestEvent{ID: request.StartID + "_end", Type: "span.model_request_end", StartID: request.StartID,
 		CreatedAt: result.EndedAt, ProcessedAt: result.EndedAt, IsError: new(result.ErrorType != "" && result.ErrorType != "observation_limit"), Usage: &result.Usage, EventIDs: result.EventIDs, ToolUseIDs: result.ToolUseIDs, UpstreamRequestID: result.UpstreamRequestID}
 	if result.ErrorType != "" {

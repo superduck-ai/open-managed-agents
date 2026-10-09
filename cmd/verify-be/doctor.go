@@ -74,11 +74,16 @@ func doctor(ctx context.Context, root, worker, selected string) (doctorResult, e
 	if err != nil {
 		return result, err
 	}
-	if selected == "chat.public" || selected == "chat.upstream-errors" || selected == "files.generated" || selected == "memory.mounts" {
+	if selected == "chat.public" || selected == "chat.host" || selected == "chat.upstream-errors" || selected == "files.generated" || selected == "memory.mounts" {
 		if _, err := doctorProbe(ctx, root, result.Images["worker"], true); err != nil {
 			return result, fmt.Errorf("Docker sandbox requires usable FUSE, SYS_ADMIN and AppArmor configuration: %w", err)
 		}
 		result.PublicSandboxChecked = true
+	}
+	if selected == "chat.host" {
+		if _, err := capture(ctx, root, "docker", "run", "--rm", "--pull=never", "--entrypoint", "sh", result.Images["worker"], "-c", "test -x /usr/local/bin/mcp-server"); err != nil {
+			return result, errors.New("host scenario requires /usr/local/bin/mcp-server in the sandbox image")
+		}
 	}
 	return result, nil
 }

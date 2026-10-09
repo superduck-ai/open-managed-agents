@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,6 +30,7 @@ type chatDockerProvider struct {
 	created            atomic.Int32
 	failNext           atomic.Bool
 	failMemoryMarkdown atomic.Bool
+	mcpPort            int
 }
 
 func (p *chatDockerProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (e2bruntime.Resolution, error) {
@@ -43,8 +46,20 @@ func (p *chatDockerProvider) Create(ctx context.Context, _ db.Environment, _ *db
 		defer cancel()
 		_ = p.Kill(cleanupCtx, name)
 	})
-	err := exec.CommandContext(ctx, "docker", "run", "-d", "--rm", "--pull=never", "--name", name, "--label", "oma.verify-be.run="+os.Getenv("VERIFY_BE_RUN_ID"), "--cap-add", "SYS_ADMIN", "--device", "/dev/fuse", "--security-opt", "apparmor=unconfined", "--add-host", "host.docker.internal:host-gateway", "--entrypoint", "sleep", p.image, "infinity").Run()
+	args := []string{"run", "-d", "--rm", "--pull=never", "--name", name, "--label", "oma.verify-be.run=" + os.Getenv("VERIFY_BE_RUN_ID"), "--cap-add", "SYS_ADMIN", "--device", "/dev/fuse", "--security-opt", "apparmor=unconfined", "--add-host", "host.docker.internal:host-gateway"}
+	if p.mcpPort != 0 {
+		args = append(args, "-p", "127.0.0.1::"+strconv.Itoa(p.mcpPort))
+	}
+	err := exec.CommandContext(ctx, "docker", append(args, "--entrypoint", "sleep", p.image, "infinity")...).Run()
 	return e2bruntime.Sandbox{ID: name}, err
+}
+
+func (p *chatDockerProvider) ServiceEndpoint(ctx context.Context, id string, port int, path string) (string, error) {
+	output, err := exec.CommandContext(ctx, "docker", "port", id, strconv.Itoa(port)+"/tcp").Output()
+	if err != nil {
+		return "", err
+	}
+	return "http://" + strings.TrimSpace(string(output)) + path, nil
 }
 func (p *chatDockerProvider) Kill(ctx context.Context, id string) error {
 	return exec.CommandContext(ctx, "docker", "rm", "-f", id).Run()

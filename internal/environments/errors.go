@@ -56,6 +56,8 @@ func prebuildError(err error) error {
 }
 
 var (
+	errHostAgentUnavailable    = errors.New("host agent runtime is not configured")
+	errHostEndpointUnavailable = errors.New("sandbox provider cannot resolve MCP endpoints")
 	errGitResourcesRequireMITM = errors.New("git resources require code_session.upstream_proxy_mitm_enabled")
 	errMemorySnapshotInvalid   = errors.New("memory mount snapshot is invalid")
 )

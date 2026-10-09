@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -68,6 +69,7 @@ type RunnerDependencies struct {
 	Skills          RuntimeSkillResolver
 	FilestoreTokens FilestoreTokenIssuer
 	Logger          *slog.Logger
+	HostAgents      agentruntime.Starter
 }
 
 type Runner struct {
@@ -78,6 +80,7 @@ type Runner struct {
 	skills          RuntimeSkillResolver
 	filestoreTokens FilestoreTokenIssuer
 	logger          *slog.Logger
+	hostAgents      agentruntime.Starter
 }
 
 type managedAgentLaunchPreparation struct {
@@ -88,6 +91,7 @@ type managedAgentLaunchPreparation struct {
 	RecoveryCodeSessionID string
 	EnvPlaceholders       map[string]string
 	MemoryMounts          []memoryRuntimeMount
+	Mode                  agentruntime.Mode
 }
 
 type managedAgentRuntimeLaunch struct {
@@ -96,6 +100,8 @@ type managedAgentRuntimeLaunch struct {
 	SDKURLPath      string
 	Manager         environmentManagerCommand
 	Recovered       bool
+	Mode            agentruntime.Mode
+	HostInput       agentruntime.StartInput
 }
 
 const managedAgentRecoveryRetryDelay = 5 * time.Second
@@ -124,6 +130,7 @@ func NewRunner(deps RunnerDependencies) (*Runner, error) {
 		skills:          deps.Skills,
 		filestoreTokens: deps.FilestoreTokens,
 		logger:          logging.LoggerOrDefault(deps.Logger),
+		hostAgents:      deps.HostAgents,
 	}, nil
 }
 
@@ -337,30 +344,8 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 
 	// Cloud Session 还需创建 Code Session，并在 Sandbox 内启动 Environment Manager。
 	if preparation != nil {
-		launch, err := r.createManagedAgentRuntimeLaunch(ctx, env, *work, *preparation)
-		if err != nil {
-			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-			return true, fmt.Errorf("create managed-agent runtime launch: %w", err)
-		}
-		// rclone 和固定挂载已就绪；manager 随后通过 stdin 取得双凭证，
-		// 并在启动 Claude 前 register worker，建立首个 CCR lease。
-		if err := r.provider.StartBackgroundCommand(ctx, providerSandboxID, launch.Manager.ShellCommand, launch.Manager.Payload); err != nil {
-			publicError := r.logManagedAgentRuntimeStageFailure(
-				ctx,
-				"environment_manager_start",
-				errEnvironmentManagerStart,
-				err,
-			)
-			r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.Session, launch, publicError)
-			return true, publicError
-		}
-
-		// 只有 Manager 后台命令成功提交后才发布 runtime metadata，避免把启动失败的
-		// Code Session 暴露为可用。新建失败会终止 Code Session；恢复失败则保留其
-		// durable queue 并重新排队，只清理本次 replacement Sandbox。
-		if err := r.publishManagedAgentRuntime(ctx, preparation.Session, *work, launch); err != nil {
-			r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.Session, launch, err)
-			return true, fmt.Errorf("publish managed-agent runtime metadata: %w", err)
+		if err := r.startPreparedAgent(ctx, env, record, work, providerSandboxID, *preparation); err != nil {
+			return true, err
 		}
 	}
 
@@ -425,6 +410,9 @@ func (r *Runner) failManagedAgentRuntime(
 	launch managedAgentRuntimeLaunch,
 	cause error,
 ) {
+	if launch.Mode == agentruntime.Host && r.hostAgents != nil {
+		r.hostAgents.Stop(launch.CodeSessionID)
+	}
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if !launch.Recovered {
@@ -574,6 +562,10 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if err != nil {
 		return nil, err
 	}
+	mode, err := agentruntime.ResolveMode(session.AgentSnapshot, r.cfg.EnvironmentRunner.AgentMode)
+	if err != nil {
+		return nil, err
+	}
 	envPlaceholders, err := r.prepareEnvCredentialPlaceholders(ctx, session)
 	if err != nil {
 		return nil, err
@@ -587,8 +579,21 @@ func (r *Runner) prepareManagedAgentLaunch(
 	codeSession, err := r.db.GetActiveCodeSessionForEnvironmentWork(ctx, *work, session.UUID)
 	if err == nil {
 		recoveryCodeSessionID = codeSession.ExternalID
+		mode, err = agentruntime.PersistedMode(codeSession.Metadata)
+		if err != nil {
+			return nil, err
+		}
 	} else if !errors.Is(err, db.ErrNotFound) {
 		return nil, fmt.Errorf("load managed agent recovery Code Session: %w", err)
+	}
+	if mode == agentruntime.Host && r.hostAgents == nil {
+		return nil, errHostAgentUnavailable
+	}
+	sessionConfig, err = mergeManagedAgentMCPFields(sessionConfig, struct {
+		Mode agentruntime.Mode `json:"agent_runtime_mode"`
+	}{Mode: mode})
+	if err != nil {
+		return nil, err
 	}
 	return &managedAgentLaunchPreparation{
 		Session:               session,
@@ -598,6 +603,7 @@ func (r *Runner) prepareManagedAgentLaunch(
 		RecoveryCodeSessionID: recoveryCodeSessionID,
 		EnvPlaceholders:       envPlaceholders,
 		MemoryMounts:          runtimeResources.memoryMounts,
+		Mode:                  mode,
 	}, nil
 }
 
@@ -645,6 +651,9 @@ func (r *Runner) createManagedAgentRuntimeLaunch(
 	if err != nil {
 		return managedAgentRuntimeLaunch{}, err
 	}
+	if preparation.Mode == agentruntime.Host {
+		return r.createHostRuntimeLaunch(ctx, preparation, local)
+	}
 	runtimeSessionConfig, err := buildManagedAgentRuntimeMCPConfig(
 		preparation.SessionConfig,
 		local.CodeSessionID,
@@ -682,6 +691,7 @@ func (r *Runner) createManagedAgentRuntimeLaunch(
 		SDKURLPath:      local.SDKURLPath,
 		Manager:         buildEnvironmentManagerCommand(local.CodeSessionID, r.cfg, payload),
 		Recovered:       preparation.RecoveryCodeSessionID != "",
+		Mode:            agentruntime.Sandbox,
 	}, nil
 }
 
@@ -691,11 +701,16 @@ func (r *Runner) publishManagedAgentRuntime(
 	work db.EnvironmentWork,
 	launch managedAgentRuntimeLaunch,
 ) error {
+	runtimeName := "claude_code_local"
+	if launch.Mode == agentruntime.Host {
+		runtimeName = "crush_host"
+	}
 	metadataPatch, err := json.Marshal(map[string]any{
 		"claude_code_session_id":        launch.CodeSessionID,
 		"claude_code_public_session_id": launch.PublicSessionID,
 		"claude_code_sdk_url_path":      launch.SDKURLPath,
-		"runtime":                       "claude_code_local",
+		"runtime":                       runtimeName,
+		"agent_runtime_mode":            launch.Mode,
 	})
 	if err != nil {
 		return err

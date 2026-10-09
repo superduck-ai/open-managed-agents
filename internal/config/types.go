@@ -156,19 +156,25 @@ type BatchConfig struct {
 }
 
 type E2BConfig struct {
-	APIKey         string        `yaml:"api_key"`
-	AccessToken    string        `yaml:"access_token"`
-	Domain         string        `yaml:"domain"`
-	APIURL         string        `yaml:"api_url"`
-	SandboxURL     string        `yaml:"sandbox_url"`
-	Debug          bool          `yaml:"debug"`
-	Template       string        `yaml:"template"`
-	RequestTimeout time.Duration `yaml:"request_timeout"`
-	SandboxTimeout time.Duration `yaml:"sandbox_timeout"`
+	APIKey           string        `yaml:"api_key"`
+	AccessToken      string        `yaml:"access_token"`
+	Domain           string        `yaml:"domain"`
+	APIURL           string        `yaml:"api_url"`
+	SandboxURL       string        `yaml:"sandbox_url"`
+	Debug            bool          `yaml:"debug"`
+	Template         string        `yaml:"template"`
+	RequestTimeout   time.Duration `yaml:"request_timeout"`
+	SandboxTimeout   time.Duration `yaml:"sandbox_timeout"`
+	LocalPortLookup  bool          `yaml:"local_port_lookup"`
+	LocalServiceHost string        `yaml:"local_service_host"`
 }
 
 type EnvironmentRunnerConfig struct {
 	Enabled                 bool          `yaml:"enabled"`
+	AgentMode               string        `yaml:"agent_mode"`
+	SandboxMCPPort          int           `yaml:"sandbox_mcp_port"`
+	SandboxMCPPath          string        `yaml:"sandbox_mcp_path"`
+	SandboxMCPCommand       string        `yaml:"sandbox_mcp_command"`
 	Concurrency             int           `yaml:"concurrency"`
 	PackageProvisionTimeout time.Duration `yaml:"package_provision_timeout"`
 	ManagerPath             string        `yaml:"manager_path"`

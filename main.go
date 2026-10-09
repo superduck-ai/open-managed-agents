@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/riverqueue/river"
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/api"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
 	"github.com/superduck-ai/open-managed-agents/internal/cleanup"
@@ -162,13 +163,26 @@ func run(logger *slog.Logger) error {
 	// 过期策略只存在一份实现。
 	runnerCodeSessions := codesessions.NewServiceWithCredentials(database, codeSessionCredentials, environmentLogger).
 		WithWorkerEventBroker(workerEventBroker).
-		WithWorkerEventState(workerEventAcks, objectStore)
+		WithWorkerEventState(workerEventAcks, objectStore).
+		WithSandboxTimeoutExtender(sandboxProvider, cfg.E2B.SandboxTimeout)
 	codesessions.NewWorkerEventExpiryWorker(runnerCodeSessions, logger.With("component", "worker_event_expiry")).Start(ctx)
+	hostAgents, err := agentruntime.New(runnerCodeSessions, cfg.Server.Addr, logger.With("component", "host_agent"))
+	if err != nil {
+		return fmt.Errorf("create host agent runtime: %w", err)
+	}
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := hostAgents.Close(closeCtx); err != nil {
+			logger.Error("close host agent runtime", "error", err)
+		}
+	}()
 	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
 		DB:              database,
 		Provider:        sandboxProvider,
 		Config:          cfg,
 		CodeSessions:    runnerCodeSessions,
+		HostAgents:      hostAgents,
 		Skills:          skillsapi.NewRuntimeResolver(database),
 		FilestoreTokens: filestoreCredentials,
 		Logger:          environmentLogger,
@@ -176,8 +190,6 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create environment runner: %w", err)
 	}
-	stopRunner := environmentRunner.Start(ctx)
-	defer stopRunner()
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
 	workers := river.NewWorkers()
 	prebuilds := environments.NewPrebuilds(database, cfg, logger.With("component", "environment_prebuild"))
@@ -234,6 +246,7 @@ func run(logger *slog.Logger) error {
 			PlatformStore:          platformSessions,
 			PlatformAuth:           platformAuthProvider,
 			CodeSessionCredentials: codeSessionCredentials,
+			CodeSessionService:     runnerCodeSessions,
 			SandboxTimeoutExtender: sandboxProvider,
 			FilestoreCredentials:   filestoreCredentials,
 			FilestoreService:       filestoreService,
@@ -251,15 +264,17 @@ func run(logger *slog.Logger) error {
 		IdleTimeout:       2 * time.Minute,
 	}
 
-	return serveHTTP(ctx, server, logger)
+	return serveHTTP(ctx, server, environmentRunner, logger)
 }
 
-func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) error {
+func serveHTTP(ctx context.Context, server *http.Server, runner *environments.Runner, logger *slog.Logger) error {
 	listener, err := listeners.Open(server.Addr, os.Getenv("OMA_HTTP_LISTENER_FD"))
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
 	defer listener.Close()
+	stopRunner := runner.Start(ctx)
+	defer stopRunner()
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("claude api server listening", "addr", server.Addr)

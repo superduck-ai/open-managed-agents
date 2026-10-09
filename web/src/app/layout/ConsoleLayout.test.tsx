@@ -805,3 +805,21 @@ function WorkspaceHarness({
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }
+
+test.each([
+  '/quickstart',
+  '/quickstart/',
+  '/workspaces/default/agent-quickstart',
+  '/workspaces/default/agent-quickstart/',
+])('keeps quickstart content bounded at %s', (currentPath) => {
+  resetTestDom(`https://oma.duck.ai${currentPath}`);
+  renderWithWorkspaces(
+    <ConsoleShell currentPath={currentPath} account={testAccount()} onLogout={() => undefined}>
+      <div>Quickstart route content</div>
+    </ConsoleShell>,
+  );
+  const container = screen.getByText('Quickstart route content').parentElement;
+  expect(container?.classList.contains('flex-1')).toBe(true);
+  expect(container?.classList.contains('overflow-hidden')).toBe(true);
+  expect(container?.parentElement?.classList.contains('h-dvh')).toBe(true);
+});

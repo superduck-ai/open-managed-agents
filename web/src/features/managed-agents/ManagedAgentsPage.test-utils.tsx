@@ -343,7 +343,6 @@ export type MockAgentsApiOptions = {
   modelsErrorOnce?: boolean;
   modelsNotConfigured?: boolean;
   quickstartStream?: string | ((body: Record<string, unknown>) => string);
-  quickstartStreamErrorOnce?: boolean;
   agentUpdateErrorStatus?: number;
   agentsListErrorOnce?: boolean;
   agentsSearchErrorOnce?: boolean;
@@ -369,7 +368,6 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   let mcpTunnelsErrorsRemaining = options.mcpTunnelsErrorOnce ? 1 : 0;
   let mcpToolCatalogRefreshErrorsRemaining = options.mcpToolCatalogRefreshErrorOnce ? 1 : 0;
   let modelsErrorsRemaining = options.modelsErrorOnce ? 1 : 0;
-  let quickstartStreamErrorsRemaining = options.quickstartStreamErrorOnce ? 1 : 0;
   let mcpToolCatalogs = options.mcpToolCatalogs?.map((catalog) => ({ ...catalog }));
   const now = new Date().toISOString();
   const skillDetails = new Map((options.skills ?? []).map((skill) => [skill.id, skillResponse(skill)]));
@@ -714,6 +712,8 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
         type: 'session',
         updated_at: createdAt,
         vault_ids: [],
+        metadata: body?.metadata ?? {},
+        resources: body?.resources ?? [],
       };
       sessionEvents.set(created.id, []);
       return jsonResponse(created);
@@ -875,6 +875,11 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
         name,
         description: typeof body?.description === 'string' ? body.description : null,
         model: typeof body?.model === 'string' ? { id: body.model, speed: 'standard' } : { id: 'claude-sonnet-4-6' },
+        system: typeof body?.system === 'string' ? body.system : null,
+        metadata: body?.metadata as Record<string, unknown> | undefined,
+        tools: body?.tools as Array<Record<string, unknown>> | undefined,
+        mcp_servers: body?.mcp_servers as unknown[] | undefined,
+        skills: body?.skills as unknown[] | undefined,
       });
       agents = [created, ...agents];
       versionsById.set(created.id, [created]);
@@ -882,10 +887,6 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
     }
 
     if (url.match(/^\/api\/organizations\/[^/]+\/proxy\/v1\/messages$/) && method === 'POST') {
-      if (quickstartStreamErrorsRemaining > 0) {
-        quickstartStreamErrorsRemaining -= 1;
-        return jsonResponse({ error: { message: 'forced quickstart failure' } }, 500);
-      }
       const stream =
         typeof options.quickstartStream === 'function'
           ? options.quickstartStream(body ?? {})
@@ -2299,79 +2300,6 @@ export function quickstartToolStream(name: string, input: Record<string, unknown
     sseFrame('content_block_stop', { type: 'content_block_stop', index: 0 }),
     sseFrame('message_stop', { type: 'message_stop' }),
   ].join('');
-}
-
-export function quickstartTextAndToolStream(text: string, name: string, input: Record<string, unknown>) {
-  return [
-    sseFrame('message_start', { type: 'message_start', message: { id: 'msg_text_tool', type: 'message' } }),
-    sseFrame('content_block_start', {
-      type: 'content_block_start',
-      index: 0,
-      content_block: { type: 'text', text: '' },
-    }),
-    sseFrame('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }),
-    sseFrame('content_block_stop', { type: 'content_block_stop', index: 0 }),
-    sseFrame('content_block_start', {
-      type: 'content_block_start',
-      index: 1,
-      content_block: { type: 'tool_use', id: `toolu_${name}`, name, input: {} },
-    }),
-    sseFrame('content_block_delta', {
-      type: 'content_block_delta',
-      index: 1,
-      delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) },
-    }),
-    sseFrame('content_block_stop', { type: 'content_block_stop', index: 1 }),
-    sseFrame('message_stop', { type: 'message_stop' }),
-  ].join('');
-}
-
-export function quickstartTextServerToolAndToolStream(
-  text: string,
-  serverToolQuery: string,
-  name: string,
-  input: Record<string, unknown>,
-) {
-  const frames = [
-    sseFrame('message_start', { type: 'message_start', message: { id: 'msg_text_server_tool', type: 'message' } }),
-    sseFrame('content_block_start', {
-      type: 'content_block_start',
-      index: 0,
-      content_block: { type: 'text', text: '' },
-    }),
-    sseFrame('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }),
-    sseFrame('content_block_stop', { type: 'content_block_stop', index: 0 }),
-    sseFrame('content_block_start', {
-      type: 'content_block_start',
-      index: 1,
-      content_block: { type: 'server_tool_use', id: 'srvtoolu_web_search', name: 'web_search', input: {} },
-    }),
-    sseFrame('content_block_stop', { type: 'content_block_stop', index: 1 }),
-    sseFrame('content_block_start', {
-      type: 'content_block_start',
-      index: 2,
-      content_block: { type: 'tool_use', id: `toolu_${name}`, name, input: {} },
-    }),
-    sseFrame('content_block_delta', {
-      type: 'content_block_delta',
-      index: 2,
-      delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) },
-    }),
-    sseFrame('content_block_stop', { type: 'content_block_stop', index: 2 }),
-    sseFrame('message_stop', { type: 'message_stop' }),
-  ];
-  if (serverToolQuery) {
-    frames.splice(
-      5,
-      0,
-      sseFrame('content_block_delta', {
-        type: 'content_block_delta',
-        index: 1,
-        delta: { type: 'input_json_delta', partial_json: JSON.stringify({ query: serverToolQuery }) },
-      }),
-    );
-  }
-  return frames.join('');
 }
 
 export function sseFrame(event: string, data: Record<string, unknown>) {

@@ -1,3 +1,4 @@
+import { FollowSentSessionMessage } from './FollowSentSessionMessage';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
 import {
@@ -15,7 +16,6 @@ import {
   MessageScrollerContent,
   MessageScrollerProvider,
   MessageScrollerViewport,
-  useMessageScroller,
 } from '../../../shared/ui/message-scroller';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import {
@@ -893,18 +893,6 @@ function sessionConversationState(session: SessionApiResponse) {
     disabled: archived || status === 'deleted' || status === 'terminated',
     live: !archived && sessionStatusIsLive(status),
   };
-}
-
-function FollowSentSessionMessage({ version }: { version: number }) {
-  const { scrollToEnd } = useMessageScroller();
-  const previousVersion = useRef(version);
-  useLayoutEffect(() => {
-    if (version !== previousVersion.current) {
-      previousVersion.current = version;
-      scrollToEnd({ behavior: 'auto' });
-    }
-  }, [scrollToEnd, version]);
-  return null;
 }
 
 export function EventsTab({

@@ -161,6 +161,7 @@ type CodeSessionMapper interface {
 	UpdateWorkerToolMetadata(ctx context.Context, workspaceUUID, externalID string, metadata []byte, clearDetails bool) (int64, error)
 	ClearToolPermissionRequest(ctx context.Context, workspaceUUID, codeSessionExternalID, publicEventID string) error
 	LockLatestInputState(ctx context.Context, workspaceUUID, sessionUUID string) (codeSessionInputStateRow, bool, error)
+	TerminateBySession(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) ([]string, error)
 	ResetIdleSinceForSession(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string, newTurn bool) error
 	Insert(ctx context.Context, params createCodeSessionParams) (codeSessionRow, error)
 	FindCredentialByOAuthAccessTokenHash(ctx context.Context, tokenHash string) (codeSessionCredentialContextRow, error)

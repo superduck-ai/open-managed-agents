@@ -307,16 +307,28 @@ func (d *DB) SetSessionOutcomeEvaluations(ctx context.Context, workspaceUUID str
 	return row.session(), mapNoRows(err)
 }
 
-func (d *DB) SetSessionStatus(ctx context.Context, workspaceUUID string, externalID, status string) error {
-	mapper := NewSessionMapper(d.mapperDB)
-	rowsAffected, err := mapper.SetStatus(ctx, workspaceUUID, externalID, status)
+func (d *DB) SetSessionStatus(ctx context.Context, workspaceUUID string, externalID, status string) (SessionRemoval, error) {
+	var removal SessionRemoval
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewSessionMapper(executor)
+		session, err := lockSessionForEvents(ctx, mapper, workspaceUUID, externalID)
+		if err != nil {
+			return err
+		}
+		if _, err := mapper.SetStatus(ctx, workspaceUUID, externalID, status); err != nil {
+			return err
+		}
+		removal.Session = session
+		removal.Session.Status = status
+		if status == "terminated" && session.Status != "terminated" {
+			return d.retireSessionWorkersTx(ctx, executor, &removal)
+		}
+		return nil
+	})
 	if err != nil {
-		return err
+		return SessionRemoval{}, err
 	}
-	if rowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return removal, nil
 }
 
 func (d *DB) SetSessionThreadStatus(ctx context.Context, workspaceUUID string, sessionExternalID, threadExternalID, status string) error {
@@ -355,7 +367,10 @@ func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalI
 			return mapNoRows(err)
 		}
 		removal.Session = row.session()
-		return NewSandboxLifecycleMapper(executor).BeginArchiveStop(ctx, removal.Session.OrganizationUUID, workspaceUUID, removal.Session.UUID)
+		if err := NewSandboxLifecycleMapper(executor).BeginArchiveStop(ctx, removal.Session.OrganizationUUID, workspaceUUID, removal.Session.UUID); err != nil {
+			return err
+		}
+		return d.retireSessionWorkersTx(ctx, executor, &removal)
 	})
 	return removal, err
 }
@@ -391,8 +406,10 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 		if _, txErr = eventMapper.SoftDeleteBySession(ctx, workspaceUUID, externalID); txErr != nil {
 			return txErr
 		}
-		_, txErr = workMapper.StopForDeletedSession(ctx, workspaceUUID, session.EnvironmentExternalID, session.UUID)
-		return txErr
+		if _, txErr = workMapper.StopForDeletedSession(ctx, workspaceUUID, session.EnvironmentExternalID, session.UUID); txErr != nil {
+			return txErr
+		}
+		return d.retireSessionWorkersTx(ctx, executor, &removal)
 	})
 	return removal, err
 }
@@ -484,29 +501,18 @@ func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceUUID string, ses
 				return err
 			}
 			now := time.Now().UTC().Truncate(time.Microsecond)
-			removal.StatusEvents, err = insertSessionEventsTx(ctx, executor, session, []SessionEvent{{
+			result, err := insertSessionEventsTx(ctx, executor, session, []SessionEvent{{
 				UUID: uuid.NewV4().String(), ExternalID: eventID, EventType: "session.thread_status_terminated",
 				ThreadExternalID: &threadExternalID, StatusThreadID: threadExternalID, CreatedAt: now, ProcessedAt: now,
 			}})
 			if err != nil {
 				return err
 			}
-			for _, event := range removal.StatusEvents {
-				if event.EventType != "session.status_terminated" {
-					continue
-				}
-				codeSessions := NewCodeSessionMapper(executor)
-				worker, found, err := codeSessions.LockLatestInputState(ctx, workspaceUUID, session.UUID)
-				if err != nil {
+			removal.StatusEvents = result.Events
+			if result.SessionTerminated {
+				if err := d.retireSessionWorkersTx(ctx, executor, &removal); err != nil {
 					return err
 				}
-				if found {
-					if _, err := codeSessions.TerminateByExternalID(ctx, session.OrganizationUUID, workspaceUUID, worker.ExternalID); err != nil {
-						return err
-					}
-					removal.TerminatedCodeSession = worker.ExternalID
-				}
-				break
 			}
 		}
 		row, err = mapper.Archive(ctx, workspaceUUID, sessionExternalID, threadExternalID)
@@ -612,8 +618,8 @@ func (d *DB) AppendSessionEvents(
 	sessionExternalID string,
 	events []SessionEvent,
 	outcomeEvaluations json.RawMessage,
-) ([]SessionEvent, error) {
-	var created []SessionEvent
+) (SessionEventChanges, error) {
+	var changes SessionEventChanges
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
 		session, txErr := lockSessionForEvents(ctx, sessionMapper, workspaceUUID, sessionExternalID)
@@ -623,18 +629,32 @@ func (d *DB) AppendSessionEvents(
 		if session.ArchivedAt != nil {
 			return ErrInvalidState
 		}
-		created, txErr = insertSessionEventsTx(ctx, executor, session, events)
-		if txErr != nil || len(outcomeEvaluations) == 0 {
+		result, txErr := insertSessionEventsTx(ctx, executor, session, events)
+		if txErr != nil {
 			return txErr
+		}
+		changes.Events = result.Events
+		if result.SessionTerminated {
+			removal := SessionRemoval{Session: session}
+			if txErr := d.retireSessionWorkersTx(ctx, executor, &removal); txErr != nil {
+				return txErr
+			}
+			changes.RetiredCodeSessionIDs = removal.CodeSessionIDs
+		}
+		if len(outcomeEvaluations) == 0 {
+			return nil
 		}
 		_, txErr = sessionMapper.SetOutcomeEvaluations(ctx, session.WorkspaceUUID, session.ExternalID, agentJSONArg(outcomeEvaluations))
 		return mapNoRows(txErr)
 	})
-	return created, err
+	if err != nil {
+		return SessionEventChanges{}, err
+	}
+	return changes, nil
 }
 
-func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID string, sessionExternalID string, events []SessionEvent) ([]SessionEvent, error) {
-	var created []SessionEvent
+func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID string, sessionExternalID string, events []SessionEvent) (SessionEventChanges, error) {
+	var changes SessionEventChanges
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
 		session, txErr := lockSessionForEvents(ctx, sessionMapper, workspaceUUID, sessionExternalID)
@@ -644,10 +664,24 @@ func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID stri
 		if session.ArchivedAt != nil {
 			return ErrInvalidState
 		}
-		created, txErr = insertSessionHistoryTx(ctx, executor, session, events)
-		return txErr
+		result, txErr := insertSessionHistoryTx(ctx, executor, session, events)
+		if txErr != nil {
+			return txErr
+		}
+		changes.Events = result.Events
+		if result.SessionTerminated {
+			removal := SessionRemoval{Session: session}
+			if txErr := d.retireSessionWorkersTx(ctx, executor, &removal); txErr != nil {
+				return txErr
+			}
+			changes.RetiredCodeSessionIDs = removal.CodeSessionIDs
+		}
+		return nil
 	})
-	return created, err
+	if err != nil {
+		return SessionEventChanges{}, err
+	}
+	return changes, nil
 }
 
 func (d *DB) GetSessionEvent(ctx context.Context, workspaceUUID string, sessionExternalID string, eventExternalID string) (SessionEvent, error) {

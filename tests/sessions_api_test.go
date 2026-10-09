@@ -185,7 +185,7 @@ func TestSessionsAPI(t *testing.T) {
 		}
 		// Complete the accepted turn before testing idle-only resource mutations.
 		storedSession := mustSessionRecord(t, app, created.ID)
-		if err := app.db.SetSessionStatus(t.Context(), storedSession.WorkspaceUUID, created.ID, "idle"); err != nil {
+		if _, err := app.db.SetSessionStatus(t.Context(), storedSession.WorkspaceUUID, created.ID, "idle"); err != nil {
 			t.Fatal(err)
 		}
 		if err := app.db.SetSessionThreadStatus(t.Context(), storedSession.WorkspaceUUID, created.ID, thread.ID, "idle"); err != nil {
@@ -1425,7 +1425,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	if err := app.db.SetSessionThreadStatus(context.Background(), sessionRecord.WorkspaceUUID, session.ID, threads.Data[0].ID, "idle"); err != nil {
 		t.Fatalf("make primary thread projection stale: %v", err)
 	}
-	if err := app.db.SetSessionStatus(context.Background(), sessionRecord.WorkspaceUUID, session.ID, "idle"); err != nil {
+	if _, err := app.db.SetSessionStatus(context.Background(), sessionRecord.WorkspaceUUID, session.ID, "idle"); err != nil {
 		t.Fatalf("make session projection stale: %v", err)
 	}
 	retryService := newCodeSessionService(app, nil, nil)
@@ -3809,7 +3809,7 @@ func cleanupSession(t *testing.T, app *testApp, sessionID string) {
 	t.Helper()
 	// Tests that leave accepted work queued must end it before deleting it.
 	session := mustSessionRecord(t, app, sessionID)
-	if err := app.db.SetSessionStatus(context.Background(), session.WorkspaceUUID, sessionID, "terminated"); err != nil {
+	if _, err := app.db.SetSessionStatus(context.Background(), session.WorkspaceUUID, sessionID, "terminated"); err != nil {
 		t.Fatal(err)
 	}
 	deleteSession(t, app, sessionID)

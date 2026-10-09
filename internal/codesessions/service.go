@@ -35,6 +35,42 @@ type Service struct {
 	workerEventObjects     storage.ObjectStore
 }
 
+func (s *Service) PurgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {
+	if s == nil || len(codeSessionIDs) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	s.purgeWorkerEvents(ctx, codeSessionIDs)
+}
+
+func (s *Service) purgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {
+	for _, codeSessionID := range codeSessionIDs {
+		if err := s.workerEvents.PurgeSession(ctx, codeSessionID); err != nil {
+			s.logger.WarnContext(ctx, "purge retired worker events", "code_session_id", codeSessionID, "error", err)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+	}
+}
+
+func (s *Service) reclaimClosedSubscription(codeSession db.CodeSession) {
+	if codeSession.SessionUUID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	retired, err := s.db.IsSessionRetired(ctx, codeSession.OrganizationUUID, codeSession.WorkspaceUUID, codeSession.SessionUUID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "check closed worker session", "code_session_id", codeSession.ExternalID, "error", err)
+		return
+	}
+	if retired {
+		s.purgeWorkerEvents(ctx, []string{codeSession.ExternalID})
+	}
+}
+
 func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials, logger *slog.Logger) *Service {
 	// 显式注入避免 Service 在同一进程中各自生成临时 Ed25519 密钥。
 	if credentials == nil {

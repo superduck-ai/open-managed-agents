@@ -57,10 +57,10 @@ func TestEventPayloadIntegrationBoundaries(t *testing.T) {
 				publicPayload := sizedPublicPayload(size)
 				public := publicPayloadEvent("ev_"+id, publicPayload)
 				created, err := store.AppendSessionEvents(context.Background(), session.WorkspaceUUID, session.SessionExternalID, []db.SessionEvent{public}, nil)
-				if err != nil || len(created) != 1 {
-					t.Fatalf("public write: %d %v", len(created), err)
+				if err != nil || len(created.Events) != 1 {
+					t.Fatalf("public write: %d %v", len(created.Events), err)
 				}
-				assertRawJSONEqual(t, created[0].Payload, publicPayload)
+				assertRawJSONEqual(t, created.Events[0].Payload, publicPayload)
 				stored, err := app.db.GetSessionEvent(context.Background(), session.WorkspaceUUID, session.SessionExternalID, public.ExternalID)
 				if err != nil || (stored.PayloadBlobUUID != nil) != (size > 32768) {
 					t.Fatalf("public threshold: %+v %v", stored.PayloadBlobUUID, err)
@@ -133,8 +133,8 @@ func TestEventPayloadIntegrationBoundaries(t *testing.T) {
 	originalID := "ev_ascii-32769"
 	before := len(objects.objects)
 	retried, err := store.AppendSessionEventsIfAbsent(context.Background(), session.WorkspaceUUID, session.SessionExternalID, []db.SessionEvent{publicPayloadEvent(originalID, sizedPublicPayload(40000))})
-	if err != nil || len(retried) != 0 || len(objects.objects) != before {
-		t.Fatalf("public replay: %d %v", len(retried), err)
+	if err != nil || len(retried.Events) != 0 || len(objects.objects) != before {
+		t.Fatalf("public replay: %d %v", len(retried.Events), err)
 	}
 	persisted, err := store.GetSessionEvent(context.Background(), session.WorkspaceUUID, session.SessionExternalID, originalID)
 	if err != nil {
@@ -242,7 +242,7 @@ func TestEventPayloadIntegrationLimitsAndMissingStore(t *testing.T) {
 	} {
 		payload := sizedPublicPayload(tc.size)
 		created, err := tc.store.AppendSessionEvents(ctx, session.WorkspaceUUID, session.SessionExternalID, []db.SessionEvent{publicPayloadEvent(tc.id, payload)}, nil)
-		if err != nil || len(created) != 1 {
+		if err != nil || len(created.Events) != 1 {
 			t.Fatalf("accepted boundary %d: %v", tc.size, err)
 		}
 		restored, err := tc.store.GetSessionEvent(ctx, session.WorkspaceUUID, session.SessionExternalID, tc.id)

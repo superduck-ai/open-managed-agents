@@ -14,7 +14,7 @@ func defaultConfig() Config {
 			},
 		},
 		NATS: NATSConfig{
-			WorkerEventStream: WorkerEventStreamConfig{MaxBytes: 1 << 28, MaxMsgSize: 1 << 20, Replicas: 3},
+			WorkerEventStream: WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, MaxBytes: 1 << 28, MaxMsgSize: 1 << 20, Replicas: 3},
 			ConnectTimeout:    5 * time.Second,
 			DrainTimeout:      10 * time.Second,
 		},

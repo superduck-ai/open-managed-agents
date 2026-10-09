@@ -172,12 +172,15 @@
 
 ## 测试要求
 
-- 修改 Transcript 私有历史的归档、导出、还原、物理删除、pending 回收或对象完整性路径时，使用 [verify-be Skill](.agents/skills/verify-be/SKILL.md)，先运行 `just verify-be transcript doctor`，再运行五个 Transcript 场景。功能地图说明真实 PostgreSQL/MinIO、维护 CLI 与进程内服务调用的范围；这些场景不代表 River 定时调度、自动重试或生产性能验证。
-- 修改聊天会话的输入投递、Worker 协议、工具确认、模型代理、SSE、历史恢复、跨实例交付、Runner 启动或聊天性能路径时，主动使用项目的 [verify-be Skill](.agents/skills/verify-be/SKILL.md)，无需等待用户再次提醒。先读 Skill 的 Agent workflow 和相关功能地图，运行 `just verify-be chat doctor`，再按改动范围选择场景；场景选择和性能基线流程统一维护在 Skill 中。
-- 修改 Files 上传、元数据、下载、删除、租户隔离、对象存储或清理时，使用同一 [verify-be Skill](.agents/skills/verify-be/SKILL.md)，先运行 `just verify-be files doctor`，再按 Skill 运行九个本地功能场景及 Files 性能基线比较。`files generated` 需要真实 Worker 镜像与 FUSE，先运行 `just verify-be files doctor generated`；其他 Files 场景不要求 Worker。云端适配器验证使用显式私有配置，缺少配置必须报告 blocked，不能以本地模拟结果代替。
-- 修改 Memory store、Memory Filestore 读写、挂载权限、跨会话生命周期或对象清理时，使用同一 [verify-be Skill](.agents/skills/verify-be/SKILL.md)，先运行 `just verify-be memory doctor`，再运行 `integrity`、`isolation`、`cleanup`、`lifecycle`、`filestore`；真实挂载另运行 `just verify-be memory doctor mounts` 与 `just verify-be memory mounts`。前五个场景无需 Worker，`mounts` 需要真实 Worker 镜像与 FUSE。清理重试由测试显式驱动，不代表后台重试时序验收。
+- Agent 不得自动运行 `verify-be`。只有用户明确要求时才可执行，包括 doctor、test、功能场景和性能基线；修改代码、修复问题、提交或更新 PR 本身不构成运行授权。本节的静态检查和普通单测要求仍然适用。
+- 用户要求真实集成验证时，按改动影响选择最小场景集合。同一批改动完成后统一运行，不在每次中间编辑后重复执行；整域或全量回归及性能基线比较按用户指定范围执行。
+- 获得运行要求后，使用项目的 [verify-be Skill](.agents/skills/verify-be/SKILL.md)，阅读相关功能地图，并先运行对应 domain 的 doctor。不因 Skill 列出了全部场景而每次全量运行。未运行时说明未覆盖范围。
+- Transcript 的归档、导出、还原、物理删除、pending 回收和对象完整性按功能地图选择相关场景；五个场景用于完整 Transcript 验收。这些场景覆盖真实 PostgreSQL/MinIO、维护 CLI 与进程内服务调用，不代表 River 定时调度、自动重试或生产性能验证。
+- 聊天会话的输入投递、Worker 协议、工具确认、模型代理、SSE、历史恢复、跨实例交付和 Runner 启动按受影响行为选择场景；场景范围和性能基线流程维护在 Skill 中。
+- Files 的上传、元数据、下载、删除、租户隔离、对象存储和清理按功能地图选择相关场景；九个本地功能场景用于完整 Files 验收。`files generated` 需要真实 Worker 镜像与 FUSE，运行前使用 `just verify-be files doctor generated`；其他 Files 场景不要求 Worker。云端适配器验证使用显式私有配置，缺少配置必须报告 blocked，不能以本地模拟结果代替。
+- Memory store、Filestore 读写、挂载权限、跨会话生命周期和对象清理按功能地图选择相关场景；完整验收运行 `integrity`、`isolation`、`cleanup`、`lifecycle`、`filestore`。真实挂载另运行 `just verify-be memory doctor mounts` 与 `just verify-be memory mounts`；前五个场景无需 Worker。清理重试由测试显式驱动，不代表后台重试时序验收。
 - 聊天验证使用现有 Go CLI，不另写临时编排脚本或重新引入 Python。生成、构建和质量检查与验证串行执行，验证期间不修改源码。此验证不替代本节要求的静态检查和单测。
-- 交付时列出实际运行的场景、结果、`report.json` / `report.md` 路径和未覆盖范围；性能比较同时给出基准提交和报告。skip、缺少依赖、未完成、清理失败或不兼容基线均不能报告为通过，不得更新基线或放宽阈值掩盖退化。
+- 执行了 `verify-be` 时，交付列出实际运行的场景、结果、`report.json` / `report.md` 路径和未覆盖范围；性能比较同时给出基准提交和报告。skip、缺少依赖、未完成、清理失败或不兼容基线均不能报告为通过，不得更新基线或放宽阈值掩盖退化。
 
 - 测试组织顺序应先写失败场景，再写成功场景。
 - `*.gen.go` 不纳入版本控制；干净 checkout 在直接运行 Go 编译、测试或静态分析前先执行 `./scripts/generate-go.sh`（先清空 `internal/db/**/*.sqlmap.gen.go`，再 `go generate ./internal/db`，避免已删除 Mapper 的残留生成文件参与编译）。仓库标准 `just` 命令会自动完成生成。

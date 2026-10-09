@@ -246,6 +246,8 @@ consumer ACK floor。
 
 Session 归档、删除或整体 `terminated` 的事务按 Session → Worker 的既有锁顺序完成状态转换，并终止租户范围内所有关联 Code Session（包括历史实例），清除 token/lease、推进 epoch，再通过同一个 Yourbatis SQL transaction executor 的 River 适配器持久化清理任务。入队失败则整个状态事务回滚。归档和整体终止保留公开历史；删除沿用软删除合同。Agent 归档不会触发此清理，也不会终止其已有 Session。
 
+事件写入路径由状态应用返回“Session 本次进入 terminated”的结果，批次汇总该结果。整批事件及派生事件写完后，仅在批末状态仍为 terminated 时，事务编排显式终止关联 Worker 并入队清理，不重新扫描事件类型，也不在处理单个事件时提前推进 epoch。幂等重放和重复终态不再次触发清理；仅 Thread 终止不触发，除非派生出整个 Session 的终止转换。归档、删除与直接设置终止状态继续显式调用同一个 Worker 清理函数。
+
 ```mermaid
 sequenceDiagram
     participant Client

@@ -16,3 +16,5 @@ After interruption, the public client subscribes again before issuing the next t
 
 
 Consumer 生命周期另由 `tests/session_archive_cleanup_test.go` 的真实 PostgreSQL/River/NATS 测试覆盖归档、删除和整体终止、入队失败回滚、历史实例及晚订阅补偿。`internal/workerevents/consumer_lifecycle_test.go` 使用真实嵌入式 NATS，覆盖过期后未 ACK 消息重建、活跃 pull 与旧连接关闭。它使用缩短后的测试阈值，不认证生产五分钟回收时序。`chat reliability` 验证真实 Worker 重连与归档；不代表所有崩溃窗口中工具副作用恰好执行一次。
+
+`TestSessionTerminationWaitsForCompleteBatch` 验证两种事件写入路径在同批后续事件失败时不提前调用清理，状态、历史及 epoch 一起回滚。`TestSessionTerminationBatchAndReplay` 验证终态之后的同批文本仍保存，清理只执行一次，重放与重复终态不再次推进 epoch。`TestSessionTerminationBatchKeepsActiveWorkers` 验证同批后续状态恢复 running 时不回收活跃 Worker。

@@ -494,19 +494,17 @@ func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceUUID string, ses
 				return err
 			}
 			now := time.Now().UTC().Truncate(time.Microsecond)
-			removal.StatusEvents, err = insertSessionEventsTx(ctx, executor, session, []SessionEvent{{
+			result, err := insertSessionEventsTx(ctx, executor, session, []SessionEvent{{
 				UUID: uuid.NewV4().String(), ExternalID: eventID, EventType: "session.thread_status_terminated",
 				ThreadExternalID: &threadExternalID, StatusThreadID: threadExternalID, CreatedAt: now, ProcessedAt: now,
 			}})
 			if err != nil {
 				return err
 			}
-			for _, event := range removal.StatusEvents {
-				if event.EventType == "session.status_terminated" {
-					if err := d.retireSessionWorkersTx(ctx, executor, &removal); err != nil {
-						return err
-					}
-					break
+			removal.StatusEvents = result.Events
+			if result.SessionTerminated {
+				if err := d.retireSessionWorkersTx(ctx, executor, &removal); err != nil {
+					return err
 				}
 			}
 		}
@@ -624,9 +622,18 @@ func (d *DB) AppendSessionEvents(
 		if session.ArchivedAt != nil {
 			return ErrInvalidState
 		}
-		created, txErr = d.persistSessionEventsTx(ctx, executor, session, events)
-		if txErr != nil || len(outcomeEvaluations) == 0 {
+		result, txErr := insertSessionEventsTx(ctx, executor, session, events)
+		if txErr != nil {
 			return txErr
+		}
+		created = result.Events
+		if result.SessionTerminated {
+			if txErr := d.retireSessionWorkersTx(ctx, executor, &SessionRemoval{Session: session}); txErr != nil {
+				return txErr
+			}
+		}
+		if len(outcomeEvaluations) == 0 {
+			return nil
 		}
 		_, txErr = sessionMapper.SetOutcomeEvaluations(ctx, session.WorkspaceUUID, session.ExternalID, agentJSONArg(outcomeEvaluations))
 		return mapNoRows(txErr)
@@ -645,8 +652,15 @@ func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID stri
 		if session.ArchivedAt != nil {
 			return ErrInvalidState
 		}
-		created, txErr = d.persistSessionHistoryTx(ctx, executor, session, events)
-		return txErr
+		result, txErr := insertSessionHistoryTx(ctx, executor, session, events)
+		if txErr != nil {
+			return txErr
+		}
+		created = result.Events
+		if result.SessionTerminated {
+			return d.retireSessionWorkersTx(ctx, executor, &SessionRemoval{Session: session})
+		}
+		return nil
 	})
 	return created, err
 }

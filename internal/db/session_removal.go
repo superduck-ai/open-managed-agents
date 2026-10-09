@@ -38,9 +38,10 @@ func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, w
 		return SessionRemoval{}, err
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	removal.StatusEvents, err = insertSessionEventsTx(ctx, executor, session, []SessionEvent{{
+	result, err := insertSessionEventsTx(ctx, executor, session, []SessionEvent{{
 		UUID: uuid.NewV4().String(), ExternalID: eventID, EventType: "session.status_terminated", CreatedAt: now, ProcessedAt: now,
 	}})
+	removal.StatusEvents = result.Events
 	return removal, err
 }
 
@@ -63,31 +64,6 @@ func (d *DB) retireSessionWorkersTx(ctx context.Context, executor yourbatis.Exec
 	}
 	removal.CleanupScheduled = true
 	return nil
-}
-
-func (d *DB) retireSessionForEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) error {
-	for _, event := range events {
-		if event.EventType == "session.status_terminated" {
-			return d.retireSessionWorkersTx(ctx, executor, &SessionRemoval{Session: session})
-		}
-	}
-	return nil
-}
-
-func (d *DB) persistSessionEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) ([]SessionEvent, error) {
-	created, err := insertSessionEventsTx(ctx, executor, session, events)
-	if err != nil {
-		return nil, err
-	}
-	return created, d.retireSessionForEventsTx(ctx, executor, session, created)
-}
-
-func (d *DB) persistSessionHistoryTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) ([]SessionEvent, error) {
-	created, err := insertSessionHistoryTx(ctx, executor, session, events)
-	if err != nil {
-		return nil, err
-	}
-	return created, d.retireSessionForEventsTx(ctx, executor, session, created)
 }
 
 func (d *DB) IsSessionRetired(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) (bool, error) {

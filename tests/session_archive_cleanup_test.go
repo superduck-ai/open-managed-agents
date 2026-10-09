@@ -24,6 +24,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/sessions"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
+	"github.com/superduck-ai/yourbatis"
 )
 
 func TestSessionCleanupEnqueueFailureRollsBack(t *testing.T) {
@@ -455,6 +456,128 @@ func TestSessionRetirementEnqueueFailureRollsBack(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSessionTerminationWaitsForCompleteBatch(t *testing.T) {
+	for _, history := range []bool{false, true} {
+		t.Run(strconv.FormatBool(history), func(t *testing.T) {
+			f := newSessionCleanupFixture(t)
+			worker, epoch := newPayloadIntegrationSession(t, f.app)
+			var calls int
+			f.app.db.ConfigureSessionCleanup(func(context.Context, *yourbatis.Tx, db.SessionRemoval) error {
+				calls++
+				return nil
+			})
+			missingBlob := uuid.NewV4().String()
+			final := cleanupBatchFinalEvent(worker)
+			final.PayloadBlobUUID = &missingBlob
+			if _, err := appendCleanupEventBatch(t.Context(), f.app.db, worker, []db.SessionEvent{terminationEvent(worker), final}, history); err == nil {
+				t.Fatal("batch accepted a missing payload blob")
+			}
+			if calls != 0 {
+				t.Fatalf("cleanup started before the batch finished: %d calls", calls)
+			}
+			session, found, err := f.app.db.GetSession(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)
+			if err != nil || !found || session.Status != "idle" {
+				t.Fatalf("failed batch retained termination: %+v %v", session, err)
+			}
+			oldEpoch, err := strconv.ParseInt(epoch, 10, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.app.db.ValidateCodeSessionWorkerEpoch(t.Context(), worker.ExternalID, oldEpoch); err != nil {
+				t.Fatalf("failed batch revoked worker: %v", err)
+			}
+			if events := listSessionEvents(t, f.app, worker.SessionExternalID, "types[]=session.status_terminated", defaultTestKey); len(events.Data) != 0 {
+				t.Fatalf("failed batch persisted termination: %s", events.Data)
+			}
+		})
+	}
+}
+
+func TestSessionTerminationBatchAndReplay(t *testing.T) {
+	for _, history := range []bool{false, true} {
+		t.Run(strconv.FormatBool(history), func(t *testing.T) {
+			f := newSessionCleanupFixture(t)
+			worker, _ := newPayloadIntegrationSession(t, f.app)
+			var calls int
+			f.app.db.ConfigureSessionCleanup(func(context.Context, *yourbatis.Tx, db.SessionRemoval) error {
+				calls++
+				return nil
+			})
+			final := cleanupBatchFinalEvent(worker)
+			events := []db.SessionEvent{terminationEvent(worker), final}
+			created, err := appendCleanupEventBatch(t.Context(), f.app.db, worker, events, history)
+			if err != nil || !slices.ContainsFunc(created, func(event db.SessionEvent) bool { return event.ExternalID == final.ExternalID }) || calls != 1 {
+				t.Fatalf("batch incomplete or cleanup count wrong: %+v calls=%d error=%v", created, calls, err)
+			}
+			retired, found, err := f.app.db.GetCodeSession(t.Context(), worker.ExternalID)
+			if err != nil || !found || retired.Status != "terminated" || retired.CurrentWorkerEpoch <= worker.CurrentWorkerEpoch {
+				t.Fatalf("worker not retired: %+v %v", retired, err)
+			}
+			replayed, err := f.app.db.AppendSessionEventsIfAbsent(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID, events)
+			if err != nil || len(replayed) != 0 || calls != 1 {
+				t.Fatalf("replay repeated retirement: %+v calls=%d error=%v", replayed, calls, err)
+			}
+			duplicate := terminationEvent(worker)
+			duplicate.UUID = uuid.NewV4().String()
+			duplicate.ExternalID += "_duplicate"
+			if _, err := appendCleanupEventBatch(t.Context(), f.app.db, worker, []db.SessionEvent{duplicate}, history); err != nil || calls != 1 {
+				t.Fatalf("unchanged terminal status repeated cleanup: calls=%d error=%v", calls, err)
+			}
+			after, found, err := f.app.db.GetCodeSession(t.Context(), worker.ExternalID)
+			if err != nil || !found || after.CurrentWorkerEpoch != retired.CurrentWorkerEpoch {
+				t.Fatalf("replay advanced retired epoch: %+v %v", after, err)
+			}
+		})
+	}
+}
+
+func TestSessionTerminationBatchKeepsActiveWorkers(t *testing.T) {
+	for _, history := range []bool{false, true} {
+		t.Run(strconv.FormatBool(history), func(t *testing.T) {
+			f := newSessionCleanupFixture(t)
+			worker, epoch := newPayloadIntegrationSession(t, f.app)
+			var calls int
+			f.app.db.ConfigureSessionCleanup(func(context.Context, *yourbatis.Tx, db.SessionRemoval) error {
+				calls++
+				return nil
+			})
+			running := terminationEvent(worker)
+			running.UUID = uuid.NewV4().String()
+			running.ExternalID += "_running"
+			running.EventType = "session.status_running"
+			if _, err := appendCleanupEventBatch(t.Context(), f.app.db, worker, []db.SessionEvent{terminationEvent(worker), running}, history); err != nil || calls != 0 {
+				t.Fatalf("active session cleanup: calls=%d error=%v", calls, err)
+			}
+			session, found, err := f.app.db.GetSession(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)
+			if err != nil || !found || session.Status != "running" {
+				t.Fatalf("final batch status: %+v %v", session, err)
+			}
+			oldEpoch, err := strconv.ParseInt(epoch, 10, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.app.db.ValidateCodeSessionWorkerEpoch(t.Context(), worker.ExternalID, oldEpoch); err != nil {
+				t.Fatalf("active worker revoked: %v", err)
+			}
+		})
+	}
+}
+
+func cleanupBatchFinalEvent(worker db.CodeSession) db.SessionEvent {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	return db.SessionEvent{
+		UUID: uuid.NewV4().String(), ExternalID: "sevt_final_" + worker.ExternalID, EventType: "agent.message",
+		Payload: []byte(`{"content":[{"type":"text","text":"final"}]}`), CreatedAt: now, ProcessedAt: now,
+	}
+}
+
+func appendCleanupEventBatch(ctx context.Context, database *db.DB, worker db.CodeSession, events []db.SessionEvent, history bool) ([]db.SessionEvent, error) {
+	if history {
+		return database.AppendSessionEventsIfAbsent(ctx, worker.WorkspaceUUID, worker.SessionExternalID, events)
+	}
+	return database.AppendSessionEvents(ctx, worker.WorkspaceUUID, worker.SessionExternalID, events, nil)
 }
 
 func TestSessionRetirementReclaimsAllWorkers(t *testing.T) {

@@ -30,10 +30,12 @@ export function QuickstartStart({ wizard }: { wizard: QuickstartWizard }) {
   const { locale } = useI18n();
   const text = quickstartCopy(locale);
   return (
-    <div className="flex min-h-0 flex-1 flex-col pt-4">
+    <div className="flex min-h-0 flex-1 flex-col pt-(--quickstart-gap)">
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-        <div className="mb-6 space-y-3">
-          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{text.title}</h1>
+        <div className="mb-(--quickstart-gap) space-y-2">
+          <h1 className="text-[length:clamp(1.75rem,4dvh,2.25rem)] leading-tight font-semibold tracking-tight">
+            {text.title}
+          </h1>
           <p className="max-w-2xl text-muted-foreground">{text.subtitle}</p>
         </div>
         <RadioGroup
@@ -41,7 +43,7 @@ export function QuickstartStart({ wizard }: { wizard: QuickstartWizard }) {
           onValueChange={(value) => wizard.chooseScenario(value)}
           aria-label={text.scenarios}
           disabled={wizard.busy || Boolean(wizard.progress.pending)}
-          className="grid gap-3 sm:grid-cols-2"
+          className="grid gap-[clamp(0.5rem,1.5dvh,0.75rem)] sm:grid-cols-2"
         >
           {quickstartScenarios(locale).map((scenario) => {
             const Icon = scenarioIcons[scenario.id];
@@ -51,13 +53,13 @@ export function QuickstartStart({ wizard }: { wizard: QuickstartWizard }) {
               <FieldLabel
                 key={scenario.id}
                 htmlFor={`scenario-${scenario.id}`}
-                className={`flex w-full cursor-pointer flex-col items-stretch gap-3 rounded-xl border ${featured ? 'min-h-36 p-6 sm:col-span-2' : custom ? 'p-4 sm:col-span-2' : 'min-h-28 p-4'} ${wizard.progress.scenarioID === scenario.id ? 'border-foreground bg-accent/40' : 'border-border bg-card hover:bg-accent/20'}`}
+                className={`flex w-full cursor-pointer flex-col items-stretch gap-[clamp(0.375rem,1dvh,0.75rem)] rounded-xl border p-(--quickstart-padding) ${featured || custom ? 'sm:col-span-2' : ''} ${wizard.progress.scenarioID === scenario.id ? 'border-foreground bg-accent/40' : 'border-border bg-card hover:bg-accent/20'}`}
               >
                 <div className="flex items-center gap-3">
                   <span
                     className={
                       featured
-                        ? 'grid size-11 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground'
+                        ? 'grid size-[clamp(2.25rem,5dvh,2.75rem)] shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground'
                         : 'shrink-0'
                     }
                   >
@@ -68,7 +70,7 @@ export function QuickstartStart({ wizard }: { wizard: QuickstartWizard }) {
                       <span className="block text-xs font-medium text-muted-foreground">{text.firstStart}</span>
                     )}
                     <span
-                      className={`block font-semibold ${featured ? 'text-xl tracking-tight sm:text-2xl' : 'text-base'}`}
+                      className={`block font-semibold ${featured ? 'text-[length:clamp(1.125rem,2.8dvh,1.5rem)] tracking-tight' : 'text-base'}`}
                     >
                       {scenario.name}
                     </span>
@@ -121,7 +123,7 @@ export function QuickstartAgent({
     >
       <form
         id="quickstart-agent-form"
-        className="space-y-5"
+        className="space-y-(--quickstart-gap)"
         onSubmit={(event) => {
           event.preventDefault();
           if (valid && !disabled) void wizard.saveAgent();
@@ -211,7 +213,7 @@ export function QuickstartAgent({
             disabled={disabled || Boolean(agent)}
             rows={7}
             onChange={(event) => wizard.editDraft({ system: event.target.value })}
-            className="resize-y"
+            className="h-[clamp(6rem,18dvh,10rem)] resize-y"
           />
         </Field>
         {!valid && (
@@ -253,7 +255,7 @@ export function QuickstartEnvironment({ wizard, workspaceID }: { wizard: Quickst
     >
       <form
         id="quickstart-environment-form"
-        className="space-y-5"
+        className="space-y-(--quickstart-gap)"
         onSubmit={(event) => {
           event.preventDefault();
           if (valid && !disabled) void wizard.saveEnvironment();
@@ -265,7 +267,7 @@ export function QuickstartEnvironment({ wizard, workspaceID }: { wizard: Quickst
           value={progress.environmentID}
           disabled={disabled}
           onValueChange={(value) => wizard.update((current) => ({ ...current, environmentID: value }))}
-          className="max-h-80 max-w-[440px] overflow-y-auto p-1"
+          className="max-h-[clamp(10rem,40dvh,20rem)] max-w-[440px] overflow-y-auto p-1"
         >
           {wizard.activeEnvironments.map((item) => {
             const config = environmentFormValues(item);
@@ -273,7 +275,7 @@ export function QuickstartEnvironment({ wizard, workspaceID }: { wizard: Quickst
               <FieldLabel
                 key={item.id}
                 htmlFor={`environment-${item.id}`}
-                className={`flex min-h-[72px] w-full cursor-pointer items-center gap-3 rounded-lg border p-3 ${item.id === progress.environmentID ? 'border-foreground bg-accent/40' : 'border-border'}`}
+                className={`flex min-h-[clamp(3.5rem,9dvh,4.5rem)] w-full cursor-pointer items-center gap-3 rounded-lg border p-[clamp(0.5rem,1.5dvh,0.75rem)] ${item.id === progress.environmentID ? 'border-foreground bg-accent/40' : 'border-border'}`}
               >
                 <RadioGroupItem id={`environment-${item.id}`} value={item.id} />
                 <div className="min-w-0 flex-1">
@@ -292,7 +294,7 @@ export function QuickstartEnvironment({ wizard, workspaceID }: { wizard: Quickst
           })}
           <FieldLabel
             htmlFor="environment-new"
-            className={`flex min-h-[72px] w-full cursor-pointer items-center gap-3 rounded-lg border p-3 ${progress.environmentID === 'new' ? 'border-foreground bg-accent/40' : 'border-dashed border-border'}`}
+            className={`flex min-h-[clamp(3.5rem,9dvh,4.5rem)] w-full cursor-pointer items-center gap-3 rounded-lg border p-[clamp(0.5rem,1.5dvh,0.75rem)] ${progress.environmentID === 'new' ? 'border-foreground bg-accent/40' : 'border-dashed border-border'}`}
           >
             <RadioGroupItem id="environment-new" value="new" />
             <Plus className="size-4" />
@@ -350,17 +352,19 @@ function ConfigurationLayout({
   const { locale } = useI18n();
   const text = quickstartCopy(locale);
   return (
-    <div className="flex min-h-0 flex-1 flex-col pt-4">
-      <div className="mb-5 shrink-0 space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
+    <div className="flex min-h-0 flex-1 flex-col pt-(--quickstart-gap)">
+      <div className="mb-(--quickstart-gap) shrink-0 space-y-2">
+        <h1 className="text-[length:clamp(1.5rem,3.5dvh,1.875rem)] leading-tight font-semibold tracking-tight">
+          {title}
+        </h1>
         <p className="text-muted-foreground">{subtitle}</p>
       </div>
-      <div className="grid min-h-0 min-w-0 flex-1 auto-rows-max gap-6 overflow-y-auto min-[860px]:grid-cols-2 min-[860px]:grid-rows-[minmax(0,1fr)] min-[860px]:overflow-hidden">
+      <div className="grid min-h-0 min-w-0 flex-1 auto-rows-max gap-(--quickstart-gap) overflow-y-auto min-[860px]:grid-cols-2 min-[860px]:grid-rows-[minmax(0,1fr)] min-[860px]:overflow-hidden">
         <div className="min-h-0 min-w-0 max-w-xl pr-1 min-[860px]:overflow-y-auto">{children}</div>
         <aside className="min-h-0 min-w-0 border-t border-muted-foreground/30 pt-6 min-[860px]:overflow-y-auto min-[860px]:border-t-0 min-[860px]:border-l min-[860px]:pt-0 min-[860px]:pl-6">
-          <div className="rounded-xl bg-muted/50 p-4 sm:p-6">
+          <div className="rounded-xl bg-muted/50 p-(--quickstart-padding)">
             <QuickstartApiKey workspaceID={workspaceID} />
-            <div className="mt-5 border-t border-border pt-5">
+            <div className="mt-(--quickstart-gap) border-t border-border pt-(--quickstart-gap)">
               <h2 className="mb-3 text-sm font-medium">{text.api}</h2>
               <RequestPreview code={code} />
             </div>

@@ -190,7 +190,7 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
             isSessionWorkspace
               ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:py-6 [&>[data-testid=session-detail-page]]:!h-full [&>[data-testid=session-detail-page]]:!min-h-0 [&>[data-testid=session-detail-page]]:!overflow-hidden'
               : isQuickstart
-                ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-6 md:py-6 lg:px-8'
+                ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-[clamp(0.75rem,2dvh,1.5rem)] sm:px-6 lg:px-8'
                 : isWide
                   ? 'min-w-0 px-6 py-6 lg:px-8'
                   : 'mx-auto max-w-[928px] px-6 py-12 lg:px-0',

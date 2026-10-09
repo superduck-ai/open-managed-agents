@@ -28,12 +28,14 @@ export function QuickstartIntegration({
   const text = quickstartCopy(locale);
   const conversation = useQuickstartConversation(wizard, workspaceID, accountID, binding);
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col pt-4">
-      <div className="mb-5 shrink-0 space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{text.integrationTitle}</h1>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col pt-(--quickstart-gap)">
+      <div className="mb-(--quickstart-gap) shrink-0 space-y-2">
+        <h1 className="text-[length:clamp(1.5rem,3.5dvh,1.875rem)] leading-tight font-semibold tracking-tight">
+          {text.integrationTitle}
+        </h1>
         <p className="text-muted-foreground">{text.integrationSubtitle}</p>
       </div>
-      <div className="grid min-h-0 min-w-0 flex-1 auto-rows-max items-stretch gap-6 overflow-y-auto min-[860px]:grid-cols-2 min-[860px]:grid-rows-[minmax(0,1fr)] min-[860px]:overflow-hidden">
+      <div className="grid min-h-0 min-w-0 flex-1 auto-rows-max items-stretch gap-(--quickstart-gap) overflow-y-auto min-[860px]:grid-cols-2 min-[860px]:grid-rows-[minmax(0,1fr)] min-[860px]:overflow-hidden">
         <QuickstartApiCalls wizard={wizard} workspaceID={workspaceID} message={conversation.message} />
         <QuickstartChat conversation={conversation} wizard={wizard} workspaceID={workspaceID} />
       </div>
@@ -105,7 +107,7 @@ function QuickstartApiCalls({
     },
   ];
   return (
-    <aside className="min-h-0 min-w-0 space-y-5 rounded-xl bg-muted/50 p-4 min-[860px]:overflow-y-auto sm:p-6">
+    <aside className="min-h-0 min-w-0 space-y-(--quickstart-gap) rounded-xl bg-muted/50 p-(--quickstart-padding) min-[860px]:overflow-y-auto">
       <QuickstartApiKey workspaceID={workspaceID} />
       <Accordion defaultValue={['create']} aria-label={text.apiCalls} className="gap-3">
         {calls.map((call, index) => (

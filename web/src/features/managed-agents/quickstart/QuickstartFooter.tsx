@@ -8,8 +8,8 @@ export function QuickstartFooter({ wizard, children }: { wizard: QuickstartWizar
   const { locale } = useI18n();
   const text = quickstartCopy(locale);
   return (
-    <div className="mt-auto w-full shrink-0 bg-background pt-4">
-      <footer className="flex w-full flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+    <div className="mt-auto w-full shrink-0 bg-background pt-[clamp(0.5rem,1.5dvh,1rem)]">
+      <footer className="flex w-full flex-wrap items-center justify-between gap-3 border-t border-border pt-[clamp(0.5rem,1.5dvh,1rem)]">
         {wizard.progress.step === 0 ? (
           <p className="text-sm text-muted-foreground">{text.ready}</p>
         ) : (

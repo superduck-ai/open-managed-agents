@@ -216,11 +216,11 @@ export function sessionEventBadgeConfig(
   const label = sessionBadgeTypeLabel(type, msg);
   switch (family) {
     case 'user':
-      return { label, className: 'bg-session-speaker-user text-white' };
+      return { label, className: 'bg-session-speaker-user text-white dark:text-background' };
     case 'agent':
-      return { label, className: 'bg-session-speaker-agent text-white' };
+      return { label, className: 'bg-session-speaker-agent text-white dark:text-background' };
     case 'subagent':
-      return { label, className: 'bg-success text-white' };
+      return { label, className: 'bg-success text-white dark:text-background' };
     case 'tool':
       return { label, className: 'bg-accent text-muted-foreground' };
     case 'error':

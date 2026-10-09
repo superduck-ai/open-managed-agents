@@ -490,7 +490,7 @@ function CreateAgentDialogContent({
                   'px-3 text-[14px] font-semibold leading-5',
                   createDisabled
                     ? 'cursor-not-allowed bg-accent text-muted-foreground/70'
-                    : 'bg-foreground text-background hover:bg-muted',
+                    : 'bg-foreground text-background hover:bg-foreground/90',
                 )}
                 onClick={handleCreate}
               >

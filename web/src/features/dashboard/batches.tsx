@@ -14,6 +14,8 @@ import {
   dataTableHeaderRowClassName,
 } from '@/shared/ui/data-table-interactions';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
+import { consoleResourceListLimit } from '@/shared/console-list';
+import { resourceListPageCount } from '@/shared/ui/resource-list-pagination';
 import { useI18n } from '../../shared/i18n';
 import { ConsolePageFrame, CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from './frame';
 import {
@@ -159,6 +161,8 @@ export function BatchesPage() {
           error={batchesQuery.error}
           canPrevious={pageIndex > 0 && !batchesQuery.isFetching}
           canNext={Boolean(response?.has_more && lastId) && !batchesQuery.isFetching}
+          currentPage={pageIndex + 1}
+          totalPages={resourceListPageCount(response?.total_count, consoleResourceListLimit)}
           onRetry={() => void batchesQuery.refetch()}
           onPrevious={goPrevious}
           onNext={goNext}
@@ -192,6 +196,8 @@ function BatchesTable({
   error,
   canPrevious,
   canNext,
+  currentPage,
+  totalPages,
   onRetry,
   onPrevious,
   onNext,
@@ -205,6 +211,8 @@ function BatchesTable({
   error: unknown;
   canPrevious: boolean;
   canNext: boolean;
+  currentPage: number;
+  totalPages: number | null;
   onRetry: () => void;
   onPrevious: () => void;
   onNext: () => void;
@@ -306,11 +314,11 @@ function BatchesTable({
       </Table>
 
       <CursorPagination
-        previousLabel={msg('pagination.previousPage', 'Previous page')}
-        nextLabel={msg('pagination.nextPage', 'Next page')}
         updatingLabel={msg('common.updating', 'Updating...')}
         canPrevious={canPrevious}
         canNext={canNext}
+        currentPage={currentPage}
+        totalPages={totalPages}
         isUpdating={isFetching && !isLoading}
         onPrevious={onPrevious}
         onNext={onNext}

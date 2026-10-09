@@ -1640,16 +1640,14 @@ export function HeaderRow({
 
 export function MetaStrip({
   usage,
-  inferenceMs,
-  executionMs,
+  durationMs,
   lifecycle,
   isError,
   relativeTime,
   processedAtMs,
 }: {
   usage?: SessionEventUsage;
-  inferenceMs?: number;
-  executionMs?: number;
+  durationMs?: number;
   lifecycle?: ToolLifecycle;
   isError?: boolean;
   relativeTime: string;
@@ -1672,13 +1670,10 @@ export function MetaStrip({
     : 0;
   const outputTokens = usage?.output_tokens ?? 0;
   const hasUsage = Boolean(inputTokens || outputTokens);
-  const durationText = executionMs !== undefined ? formatSessionDuration(executionMs, formatters, msg) : null;
-  const durationTitle =
-    inferenceMs !== undefined
-      ? msg('managedAgents.sessions.trace.modelInferenceDuration', 'Model inference: {duration}', {
-          duration: formatSessionDuration(inferenceMs, formatters, msg),
-        })
-      : undefined;
+  const durationText = durationMs !== undefined ? formatSessionDuration(durationMs, formatters, msg) : null;
+  const durationTitle = durationText
+    ? `${msg('managedAgents.sessions.inspector.duration', 'Duration')}: ${durationText}`
+    : undefined;
   return (
     <div
       className="flex shrink-0 items-center gap-3 text-xs tabular-nums text-muted-foreground"

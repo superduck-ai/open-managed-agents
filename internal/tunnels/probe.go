@@ -15,10 +15,9 @@ import (
 )
 
 const (
-	maxTunnelProbePages       = 20
-	maxTunnelProbeTools       = 512
-	tunnelProbeTimeout        = 30 * time.Second
-	tunnelProbeCleanupTimeout = 5 * time.Second
+	maxTunnelProbePages = 20
+	maxTunnelProbeTools = 512
+	tunnelProbeTimeout  = 30 * time.Second
 )
 
 type TunnelProbeTool struct {
@@ -215,23 +214,21 @@ func (s *Service) executeProbeCommand(
 		headers.Set("Mcp-Session-Id", sessionID)
 	}
 	command := queuedCommand{
+		Scope:     payloadScope{OrganizationUUID: tunnel.OrganizationUUID, WorkspaceUUID: tunnel.WorkspaceUUID},
 		RequestID: requestID, CommandType: commandType, Channel: channel,
 		CreatedAt: time.Now().UTC(), Headers: headers, JSONRPC: body,
-		ExpiresAt: deadline, PayloadSize: int64(len(body)),
+		ExpiresAt: deadline,
 	}
-	waiter, err := s.broker.subscribeResponse(ctx, tunnel.UUID, requestID)
+	waiter, err := s.broker.subscribeResponse(ctx, requestID, deadline)
 	if err != nil {
 		return TunnelResponse{}, ingressQueueError(err)
 	}
 	defer waiter.Close()
-	if err := s.broker.Enqueue(ctx, tunnel.UUID, command); err != nil {
+	if err := s.broker.Enqueue(ctx, tunnel.UUID, tunnel.ExternalID, command); err != nil {
 		return TunnelResponse{}, ingressQueueError(err)
 	}
 	response, err := waiter.Wait(ctx, nil)
 	if err != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunnelProbeCleanupTimeout)
-		defer cancel()
-		_ = s.broker.Cancel(cleanupCtx, tunnel.UUID, requestID)
 		return TunnelResponse{}, ingressResponseError(err)
 	}
 	if response.ResponseCode < 200 || response.ResponseCode >= 300 {

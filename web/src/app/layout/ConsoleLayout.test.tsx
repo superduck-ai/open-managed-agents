@@ -18,9 +18,9 @@ afterEach(() => {
 
 describe('ConsoleShell', () => {
   test.each([
-    ['en', 'Billing'],
-    ['zh-CN', '计费'],
-  ] as const)('既有 Billing 角色在 %s 显示正确名称', (locale, label) => {
+    ['en', 'Billing', 'Default'],
+    ['zh-CN', '计费', '默认'],
+  ] as const)('既有 Billing 角色在 %s 显示正确名称', (locale, label, workspaceName) => {
     resetTestDom('https://oma.duck.ai/dashboard');
     renderWithWorkspaces(
       <ConsoleShell currentPath="/dashboard" account={testAccount('billing')} onLogout={() => undefined}>
@@ -28,8 +28,8 @@ describe('ConsoleShell', () => {
       </ConsoleShell>,
       { locale, effectiveRole: 'workspace_billing' },
     );
-    expect(screen.getByText(`${label} · Default`)).toBeTruthy();
-    expect(screen.queryByText('Member · Default')).toBeNull();
+    expect(screen.getByText(`${label} · ${workspaceName}`)).toBeTruthy();
+    expect(screen.queryByText(`Member · ${workspaceName}`)).toBeNull();
   });
 
   test.each(['/settings/workspaces/default/mcp-tunnels', '/settings/workspaces/default/mcp-tunnels/tunnel_test'])(
@@ -70,22 +70,42 @@ describe('ConsoleShell', () => {
     expect(screen.getByText('Build')).toBeTruthy();
     expect(screen.getByText('Managed Agents')).toBeTruthy();
     expect(screen.getByText('Analytics')).toBeTruthy();
-    expect(screen.getByText('Claude Code')).toBeTruthy();
+    expect(screen.queryByText('Claude Code')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Batches' })).toBeNull();
     expect(screen.getByText('Manage')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Managed Agents' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Analytics' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Manage' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Caching' })).toBeNull();
+    expect(screen.queryByRole('link', { name: /MCP tunnels/i })).toBeNull();
     expect(screen.getByRole('link', { name: 'Documentation' }).getAttribute('href')).toBe(
       'https://oma.mintlifysite.com/',
     );
     expect(screen.getByText('Deployments')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Files' }).getAttribute('href')).toBe('/workspaces/default/files');
-    expect(screen.getByRole('link', { name: 'Skills' }).getAttribute('href')).toBe('/workspaces/default/skills');
-    expect(screen.getByRole('link', { name: 'Batches' }).getAttribute('href')).toBe('/workspaces/default/batches');
-    expect(screen.getByRole('link', { name: 'Caching' }).getAttribute('href')).toBe('/usage/cache');
-    expect(screen.getByRole('link', { name: 'Rate limits' }).getAttribute('href')).toBe('/usage/limits');
+    expect(screen.queryByText('New')).toBeNull();
     expect(screen.getByRole('link', { name: 'Quickstart' }).getAttribute('href')).toBe(
       '/workspaces/default/agent-quickstart',
     );
     expect(screen.queryByRole('link', { name: /Playground/i })).toBeNull();
     expect(screen.queryByRole('link', { name: /Dreams/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Build' }));
+    expect(screen.getByRole('link', { name: 'Files' }).getAttribute('href')).toBe('/workspaces/default/files');
+    expect(screen.getByRole('link', { name: 'Skills' }).getAttribute('href')).toBe('/workspaces/default/skills');
+    expect(screen.getByRole('link', { name: 'MCP Servers' }).getAttribute('href')).toBe(
+      '/workspaces/default/mcp-servers',
+    );
+    expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Batches' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Analytics' }));
+    expect(screen.getByRole('link', { name: 'Caching' }).getAttribute('href')).toBe('/usage/cache');
+    expect(screen.getByRole('link', { name: 'Rate limits' }).getAttribute('href')).toBe('/usage/limits');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
     expect(screen.getByRole('link', { name: /MCP tunnels/i }).getAttribute('href')).toBe(
       '/settings/workspaces/default/mcp-tunnels',
     );
@@ -96,8 +116,80 @@ describe('ConsoleShell', () => {
       false,
     );
     expect(manage?.type === 'group' && manage.children.some((item) => item.href === '/mcp-tunnels')).toBe(true);
+    const build = consoleNavigation.find((item) => item.type === 'group' && item.label === 'Build');
+    const claudeCode = consoleNavigation.find((item) => item.type === 'group' && item.label === 'Claude Code');
+    expect(build?.type === 'group' && build.children.some((item) => item.href === '/workbench' && item.hidden)).toBe(
+      true,
+    );
+    expect(build?.type === 'group' && build.children.some((item) => item.href === '/batches' && item.hidden)).toBe(
+      true,
+    );
+    expect(claudeCode?.type === 'group' && claudeCode.hidden).toBe(true);
     expect(screen.queryByRole('link', { name: 'Tags' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Feedback' })).toBeNull();
+  });
+
+  test('does not expand Build for a sidebar-hidden workbench route', () => {
+    resetTestDom('https://oma.duck.ai/workbench');
+    renderWithWorkspaces(
+      <ConsoleShell currentPath="/workbench" account={testAccount()} onLogout={() => undefined}>
+        <div>Workbench content</div>
+      </ConsoleShell>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
+  });
+
+  test('expands the sidebar group that contains the current route', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/files');
+    renderWithWorkspaces(
+      <ConsoleShell currentPath="/workspaces/default/files" account={testAccount()} onLogout={() => undefined}>
+        <div>Files content</div>
+      </ConsoleShell>,
+    );
+
+    expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Batches' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Analytics' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('link', { name: 'Files' }).getAttribute('href')).toBe('/workspaces/default/files');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Build' }));
+
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
+  });
+
+  test('expands a collapsed group after navigation enters its route', () => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+
+    function FilesRouteHarness() {
+      const [currentPath, setCurrentPath] = useState('/dashboard');
+      return (
+        <>
+          <button type="button" onClick={() => setCurrentPath('/workspaces/default/files')}>
+            Open files
+          </button>
+          <ConsoleShell currentPath={currentPath} account={testAccount()} onLogout={() => undefined}>
+            <div>Route content</div>
+          </ConsoleShell>
+        </>
+      );
+    }
+
+    renderWithWorkspaces(<FilesRouteHarness />);
+
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open files' }));
+
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('link', { name: 'Files' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Batches' })).toBeNull();
   });
 
   test('hides LLM model configuration from non-administrators', () => {
@@ -131,6 +223,23 @@ describe('ConsoleShell', () => {
     expect(scrollArea?.classList.contains('scrollbar-none')).toBe(true);
   });
 
+  test('uses the wide build layout for MCP server routes', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/mcp-servers');
+    renderWithWorkspaces(
+      <ConsoleShell
+        currentPath="/workspaces/default/mcp-servers"
+        account={{ uuid: 'acct_test', email_address: 'test@example.com', display_name: 'test' }}
+        onLogout={() => undefined}
+      >
+        <div>MCP server content</div>
+      </ConsoleShell>,
+    );
+
+    const content = screen.getByText('MCP server content').parentElement;
+    expect(content?.className).toContain('lg:px-8');
+    expect(content?.className).not.toContain('max-w-[928px]');
+  });
+
   test('collapses and expands the desktop sidebar from the sidebar rail', () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     renderWithWorkspaces(
@@ -157,13 +266,14 @@ describe('ConsoleShell', () => {
     expect(sidebar?.getAttribute('data-state')).toBe('collapsed');
     expect(sidebar?.getAttribute('data-collapsible')).toBe('icon');
     expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Agents' })).toBeNull();
 
     fireEvent.click(sidebarRail);
 
     expect(sidebar?.getAttribute('data-state')).toBe('expanded');
     expect(sidebar?.getAttribute('data-collapsible')).toBe('');
-    expect(screen.getByRole('link', { name: 'Files' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Agents' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
   });
 
   test('preserves the desktop sidebar state when entering a session detail route', () => {
@@ -295,9 +405,9 @@ describe('ConsoleShell', () => {
       </ConsoleShell>,
     );
 
-    fireEvent.click(screen.getByRole('link', { name: 'Workbench' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }));
 
-    expect(navigate).toHaveBeenCalledWith('/workbench');
+    expect(navigate).toHaveBeenCalledWith('/dashboard');
   });
 
   test('uses workspace scoped client navigation for build links', () => {
@@ -315,6 +425,7 @@ describe('ConsoleShell', () => {
       </ConsoleShell>,
     );
 
+    fireEvent.click(screen.getByRole('button', { name: 'Build' }));
     fireEvent.click(screen.getByRole('link', { name: 'Files' }));
 
     expect(navigate).toHaveBeenCalledWith('/workspaces/default/files');
@@ -499,6 +610,30 @@ describe('ConsoleShell', () => {
     expect(screen.getByText('Member · foo')).toBeTruthy();
   });
 
+  test('shows the role for the active organization instead of the first membership', () => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+
+    renderWithWorkspaces(
+      <ConsoleShell
+        currentPath="/dashboard"
+        account={{
+          uuid: 'acct_test',
+          email_address: 'test@example.com',
+          display_name: 'test',
+          memberships: [
+            { role: 'user', organization: { uuid: 'org_other' } },
+            { role: 'developer', organization: { uuid: 'org_test' } },
+          ],
+        }}
+        onLogout={() => undefined}
+      >
+        <div>Dashboard content</div>
+      </ConsoleShell>,
+    );
+
+    expect(screen.getByText('Developer · Default')).toBeTruthy();
+  });
+
   test('uses client navigation when selecting a workspace on managed routes', async () => {
     resetTestDom('https://oma.duck.ai/agents');
     const navigate = mock(async () => undefined);
@@ -521,7 +656,7 @@ describe('ConsoleShell', () => {
     expect(getWorkspaceMenuButton(/foo/i)).toBeTruthy();
   });
 
-  test.each(['agents', 'sessions', 'environments', 'vaults', 'memory-stores', 'skills'])(
+  test.each(['agents', 'sessions', 'environments', 'vaults', 'memory-stores', 'skills', 'mcp-servers'])(
     '从 %s 详情切换工作区后导航到列表',
     async (section) => {
       const path = `/workspaces/default/${section}/old-resource`;
@@ -573,7 +708,7 @@ describe('ConsoleShell', () => {
       </ConsoleShell>,
       { canManageWorkspaces, locale: 'zh-CN' },
     );
-    fireEvent.click(getWorkspaceMenuButton(/Default/i));
+    fireEvent.click(getWorkspaceMenuButton('默认'));
     if (!canManageWorkspaces) {
       expect(screen.queryByRole('menuitem', { name: '管理工作区' })).toBeNull();
       expect(screen.queryByRole('menuitem', { name: /创建工作区/ })).toBeNull();
@@ -732,3 +867,21 @@ function WorkspaceHarness({
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }
+
+test.each([
+  '/quickstart',
+  '/quickstart/',
+  '/workspaces/default/agent-quickstart',
+  '/workspaces/default/agent-quickstart/',
+])('keeps quickstart content bounded at %s', (currentPath) => {
+  resetTestDom(`https://oma.duck.ai${currentPath}`);
+  renderWithWorkspaces(
+    <ConsoleShell currentPath={currentPath} account={testAccount()} onLogout={() => undefined}>
+      <div>Quickstart route content</div>
+    </ConsoleShell>,
+  );
+  const container = screen.getByText('Quickstart route content').parentElement;
+  expect(container?.classList.contains('flex-1')).toBe(true);
+  expect(container?.classList.contains('overflow-hidden')).toBe(true);
+  expect(container?.parentElement?.classList.contains('h-dvh')).toBe(true);
+});

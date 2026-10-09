@@ -24,6 +24,7 @@ nats:
 # non-empty email verification code. See docs/configuration-reference.yaml.
 
 tunnel:
+  max_body_bytes: 16777216
   # Change this to the externally reachable HTTPS origin in production.
   public_base_url: http://localhost:38080
 

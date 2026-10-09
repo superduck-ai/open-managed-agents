@@ -52,26 +52,34 @@ type packageProvisioningResult struct {
 	ExitCode     *int    `json:"exit_code"`
 }
 
-// buildPackageManifest 从已持久化的 Environment config 生成 provisioner manifest。
+// decodeEnvironmentPackages 从已持久化的 Environment config 提取并校验安装配置，供预构建和启动安装共用。
 // 存量 config 已经过 HTTP 边界规范化，因此这里直接解码成命名 schema；仍然重新
 // 校验一次，使被直接改写的数据库记录无法把非法 spec 送进 Sandbox。
-func buildPackageManifest(config json.RawMessage) ([]byte, bool, error) {
+func decodeEnvironmentPackages(config json.RawMessage) (*environmentPackages, error) {
 	var cloud cloudEnvironmentPackagesConfig
 	if err := json.Unmarshal(config, &cloud); err != nil {
-		return nil, false, fmt.Errorf("decode environment config: %w", err)
+		return nil, fmt.Errorf("decode environment config: %w", err)
 	}
 	if cloud.Type != "cloud" || cloud.Packages == nil {
-		return nil, false, nil
+		return nil, nil
 	}
 	packages := cloud.Packages
 	if err := packages.validate(); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if packages.empty() {
-		return nil, false, nil
+		return nil, nil
 	}
 	packages.normalized()
 	if err := packages.checkManifestSize(); err != nil {
+		return nil, err
+	}
+	return packages, nil
+}
+
+func buildPackageManifest(config json.RawMessage) ([]byte, bool, error) {
+	packages, err := decodeEnvironmentPackages(config)
+	if err != nil || packages == nil {
 		return nil, false, err
 	}
 	data, err := json.Marshal(packageManifest{Version: 1, Packages: *packages})

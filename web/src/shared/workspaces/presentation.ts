@@ -77,6 +77,7 @@ export function workspaceSwitchPath(currentPath: string, workspaceId: string) {
     'playground',
     'files',
     'skills',
+    'mcp-servers',
     'batches',
     'agents',
     'sessions',

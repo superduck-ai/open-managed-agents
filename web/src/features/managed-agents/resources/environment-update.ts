@@ -20,7 +20,7 @@ export function updateEnvironmentDetail(
   );
 }
 
-function environmentMetadataPatch(values: EnvironmentEditValues, initialValues: EnvironmentEditValues) {
+export function environmentMetadataPatch(values: EnvironmentEditValues, initialValues: EnvironmentEditValues) {
   const currentMetadata = environmentMetadataBody(values);
   const initialMetadata = environmentMetadataBody(initialValues);
   const metadata: Record<string, string | null> = {};

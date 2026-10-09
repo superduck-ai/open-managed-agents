@@ -23,7 +23,7 @@ type ConsoleScopeResolver func(http.ResponseWriter, *http.Request) (ConsoleScope
 
 type ConsoleHandler struct {
 	service      *Service
-	broker       *Broker
+	presence     *ConnectorPresence
 	logger       *slog.Logger
 	resolveScope ConsoleScopeResolver
 	router       chi.Router
@@ -37,12 +37,12 @@ type consoleTunnelResponse struct {
 
 type consoleEndpoint func(http.ResponseWriter, *http.Request) error
 
-func NewConsoleHandler(service *Service, broker *Broker, resolveScope ConsoleScopeResolver, logger *slog.Logger) *ConsoleHandler {
+func NewConsoleHandler(service *Service, presence *ConnectorPresence, resolveScope ConsoleScopeResolver, logger *slog.Logger) *ConsoleHandler {
 	if service == nil || resolveScope == nil {
 		panic("tunnels: console service and scope resolver are required")
 	}
 	handler := &ConsoleHandler{
-		service: service, broker: broker, resolveScope: resolveScope,
+		service: service, presence: presence, resolveScope: resolveScope,
 		logger: logging.LoggerOrDefault(logger),
 	}
 	router := chi.NewRouter()
@@ -223,19 +223,26 @@ func (h *ConsoleHandler) connectorSnapshots(r *http.Request, records []db.MCPTun
 	snapshots := make(map[string]ConnectorSnapshot, len(records))
 	ids := make([]string, 0, len(records))
 	for _, record := range records {
+		if record.ArchivedAt != nil {
+			snapshots[record.UUID] = disconnectedSnapshot()
+			continue
+		}
 		snapshots[record.UUID] = unknownSnapshot()
 		ids = append(ids, record.UUID)
 	}
-	if h.broker == nil || len(ids) == 0 {
+	if h.presence == nil || len(ids) == 0 {
 		return snapshots
 	}
-	resolved, err := h.broker.ConnectorSnapshots(r.Context(), ids)
+	resolved, err := h.presence.Snapshots(r.Context(), ids)
 	if err != nil {
 		h.logger.WarnContext(r.Context(), "read mcp tunnel connector status failed",
 			"request_id", httpapi.RequestID(r.Context()), "error", err)
 		return snapshots
 	}
-	return resolved
+	for id, snapshot := range resolved {
+		snapshots[id] = snapshot
+	}
+	return snapshots
 }
 
 func consoleResponseFromTunnel(r *http.Request, cfg config.TunnelConfig, record db.MCPTunnel, connection ConnectorSnapshot) consoleTunnelResponse {

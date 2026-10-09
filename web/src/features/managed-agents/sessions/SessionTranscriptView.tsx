@@ -8,6 +8,7 @@ import { InProgressChip, MetaStrip, SynchronizedShimmerText } from './sessionTim
 import {
   buildSessionTranscriptBlocks,
   filterSessionTranscriptBlocks,
+  sessionTranscriptEntryDurationMs,
   type SessionTranscriptBlock,
   type SessionTranscriptIteration,
 } from './sessionTranscriptModel';
@@ -84,12 +85,7 @@ export function SessionTranscriptView({
       {blocks.map((block, index) => {
         if (block.kind === 'user') {
           return (
-            <MessageScrollerItem
-              key={block.id}
-              messageId={block.id}
-              scrollAnchor
-              className={index === 0 ? 'mt-1.5' : 'mt-3'}
-            >
+            <MessageScrollerItem key={block.id} messageId={block.id} className={index === 0 ? 'mt-1.5' : 'mt-3'}>
               <Message align="end" data-transcript-block="user" className="items-start">
                 <MessageContent className="w-auto max-w-[92%] gap-0 sm:max-w-[80%]">
                   {renderEntry(block.entry, 'standalone')}
@@ -277,8 +273,7 @@ function TranscriptIteration({
           {meta ? (
             <MetaStrip
               usage={meta.usage}
-              inferenceMs={meta.inferenceMs}
-              executionMs={meta.executionMs}
+              durationMs={meta.durationMs}
               lifecycle={meta.lifecycle}
               isError={meta.isError}
               relativeTime={meta.relativeTime}
@@ -311,13 +306,11 @@ function sessionTranscriptIterationMetaEntry(iteration: SessionTranscriptIterati
     return null;
   }
   const usageEntry = entries.find((entry) => 'usage' in entry && entry.usage.input + entry.usage.output > 0);
-  const inferenceMs = Math.max(...entries.map((entry) => ('inferenceMs' in entry ? entry.inferenceMs : 0)));
-  const executionMs = Math.max(...entries.map((entry) => ('executionMs' in entry ? entry.executionMs : 0)));
+  const durations = entries.map(sessionTranscriptEntryDurationMs).filter((duration) => duration !== undefined);
   const lifecycleEntry = [...entries].reverse().find((entry) => 'lifecycle' in entry);
   return {
     usage: usageEntry && 'usage' in usageEntry ? usageEntry.usage : undefined,
-    inferenceMs,
-    executionMs,
+    durationMs: durations.length ? Math.max(...durations) : undefined,
     lifecycle: lifecycleEntry && 'lifecycle' in lifecycleEntry ? lifecycleEntry.lifecycle : undefined,
     isError: entries.some((entry) => entry.isError),
     relativeTime: latest.relativeTime,

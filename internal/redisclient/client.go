@@ -17,6 +17,8 @@ func Open(ctx context.Context, redisURL string) (*redis.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse redis.url: %w", err)
 	}
+	// Honor caller deadlines, including the bounded observational Tunnel reads/writes.
+	options.ContextTimeoutEnabled = true
 	client := redis.NewClient(options)
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()

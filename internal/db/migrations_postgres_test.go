@@ -21,7 +21,7 @@ const migrationBackfillFixtureSQL = `
 	values ('10000000-0000-0000-0000-000000000001', 'org_migration_184', 'migration 184');
 
 	insert into workspaces (uuid, external_id, organization_id, name)
-	select '20000000-0000-0000-0000-000000000001', 'workspace_migration_184', id, 'migration 184'
+	select '20000000-0000-0000-0000-000000000001', 'workspace_migration_184', id, 'default'
 	from organizations where external_id = 'org_migration_184';
 
 	insert into api_keys (uuid, external_id, workspace_id, key_hash)
@@ -212,40 +212,10 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 	if _, err := provider.UpTo(ctx, 34); err != nil {
 		t.Fatalf("create legacy Input projection: %v", err)
 	}
-	if _, err := standardDB.ExecContext(ctx, `
-		update session_resources
-		set organization_id = 0
-		where external_id = 'sesrsc_input_migration_184'
-	`); err != nil {
-		t.Fatalf("break Session Resource tenant reference: %v", err)
+	assertSessionResourceTenantMigration(t, ctx, standardDB, provider)
+	if _, err := provider.UpTo(ctx, 46); err != nil {
+		t.Fatalf("migrate fixture database to 46: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 42); err == nil {
-		t.Fatal("migration accepted an invalid Session Resource tenant chain")
-	}
-	if _, err := standardDB.ExecContext(ctx, `
-		update session_resources resource
-		set organization_id = session.organization_id
-		from sessions session
-		where session.id = resource.session_id
-			and resource.external_id = 'sesrsc_input_migration_184'
-	`); err != nil {
-		t.Fatalf("restore Session Resource tenant reference: %v", err)
-	}
-	if _, err := provider.UpTo(ctx, 42); err != nil {
-		t.Fatalf("migrate Session Resource tenant references to UUID: %v", err)
-	}
-
-	if _, err := provider.Down(ctx); err != nil {
-		t.Fatalf("回退租户 UUID 迁移: %v", err)
-	}
-	var restoredWorkspaceID, restoredSessionID int64
-	if err := standardDB.QueryRowContext(ctx, `select workspace_id, session_id from session_resources where external_id='sesrsc_input_migration_184'`).Scan(&restoredWorkspaceID, &restoredSessionID); err != nil {
-		t.Fatalf("回退后恢复 identity 引用: %v", err)
-	}
-	if _, err := provider.UpTo(ctx, 42); err != nil {
-		t.Fatal(err)
-	}
-
 	if _, err := standardDB.ExecContext(ctx, `
 		update filestore_entries
 		set managed_resource_uuid = '50000000-0000-0000-0000-000000000099'
@@ -253,8 +223,8 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break legacy Input reference: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 47); err == nil {
-		t.Fatal("migration accepted an unresolved legacy Input reference")
+	if _, err := provider.UpTo(ctx, 47); err == nil || !strings.Contains(err.Error(), "cannot unify Session namespace") {
+		t.Fatalf("unresolved legacy Input reference guard: %v", err)
 	}
 	var oldTableExists bool
 	if err := standardDB.QueryRowContext(ctx, `select to_regclass('filestore_entries') is not null`).Scan(&oldTableExists); err != nil {
@@ -281,8 +251,8 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break legacy Skill Version reference: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 48); err == nil {
-		t.Fatal("migration accepted an unresolved active Skill Version reference")
+	if _, err := provider.UpTo(ctx, 48); err == nil || !strings.Contains(err.Error(), "cannot snapshot Session skills") {
+		t.Fatalf("unresolved active Skill Version reference guard: %v", err)
 	}
 	var skillVersionUUID string
 	if err := standardDB.QueryRowContext(ctx, `
@@ -306,8 +276,57 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 		t.Fatalf("migrate fixture database to 48: %v", err)
 	}
 	assertUnifiedMigrationState(t, ctx, standardDB)
-
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("migrate fixture database to current schema: %v", err)
+	}
 	assertSessionResourceRuntimeWriteAfterUUIDMigration(t, ctx, standardDB)
+}
+
+func assertSessionResourceTenantMigration(t *testing.T, ctx context.Context, standardDB *sql.DB, provider *goose.Provider) {
+	t.Helper()
+	if _, err := provider.UpTo(ctx, 41); err != nil {
+		t.Fatalf("migrate fixture database to 41: %v", err)
+	}
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources
+		set organization_id = 0
+		where external_id = 'sesrsc_input_migration_184'
+	`); err != nil {
+		t.Fatalf("break Session Resource tenant reference: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 42); err == nil {
+		t.Fatal("migration accepted an invalid Session Resource tenant chain")
+	}
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources resource
+		set organization_id = session.organization_id
+		from sessions session
+		where session.id = resource.session_id
+			and resource.external_id = 'sesrsc_input_migration_184'
+	`); err != nil {
+		t.Fatalf("restore Session Resource tenant reference: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 42); err != nil {
+		t.Fatalf("migrate Session Resource tenant references to UUID: %v", err)
+	}
+
+	if _, err := provider.Down(ctx); err != nil {
+		t.Fatalf("roll back Session Resource tenant UUID migration: %v", err)
+	}
+	var restoredWorkspaceID, restoredSessionID int64
+	if err := standardDB.QueryRowContext(ctx, `
+		select workspace_id, session_id
+		from session_resources
+		where external_id = 'sesrsc_input_migration_184'
+	`).Scan(&restoredWorkspaceID, &restoredSessionID); err != nil {
+		t.Fatalf("load restored Session Resource internal IDs: %v", err)
+	}
+	if restoredWorkspaceID <= 0 || restoredSessionID <= 0 {
+		t.Fatalf("invalid restored internal IDs: %d, %d", restoredWorkspaceID, restoredSessionID)
+	}
+	if _, err := provider.UpTo(ctx, 42); err != nil {
+		t.Fatalf("reapply Session Resource tenant UUID migration: %v", err)
+	}
 }
 
 func TestEnvironmentWorkSessionUUIDMigration(t *testing.T) {
@@ -417,6 +436,68 @@ func TestEnvironmentWorkSessionUUIDMigration(t *testing.T) {
 			assertMigrationColumnExists(t, ctx, database, "environment_work", "session_uuid", false)
 		})
 	}
+}
+
+func TestSessionInputProcessedAtMigrationRepairsAppliedSchema(t *testing.T) {
+	databaseURL := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+	ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
+	if _, err := provider.UpTo(ctx, 65); err != nil {
+		t.Fatalf("migrate fixture database to 65: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `ALTER TABLE session_events ALTER COLUMN processed_at SET NOT NULL`); err != nil {
+		t.Fatalf("recreate applied-schema drift: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO goose_db_version (version_id, is_applied) VALUES (66, true)`); err != nil {
+		t.Fatalf("recreate migration history: %v", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("migrate drifted database: %v", err)
+	}
+	var nullable bool
+	if err := database.QueryRowContext(ctx, `SELECT NOT attnotnull FROM pg_attribute WHERE attrelid = 'session_events'::regclass AND attname = 'processed_at'`).Scan(&nullable); err != nil {
+		t.Fatalf("inspect processed_at: %v", err)
+	}
+	if nullable {
+		t.Fatal("session_events.processed_at still allows queued inputs")
+	}
+}
+
+func TestSessionInputProcessedAtMigrationRejectsUnprocessedInputs(t *testing.T) {
+	databaseURL := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+	ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
+	if _, err := provider.UpTo(ctx, 67); err != nil {
+		t.Fatalf("migrate fixture database to 67: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO session_events (uuid, external_id, organization_uuid, workspace_uuid, session_uuid, session_external_id, event_type, payload, processed_at, created_at)
+		VALUES
+		('60000000-0000-0000-0000-000000000001', 'sevt_queued', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', 'sesn_migration', 'user.message', '{}', NULL, NOW()),
+		('60000000-0000-0000-0000-000000000002', 'sevt_unprocessed_tool', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', 'sesn_migration', 'user.tool_result', '{}', NULL, NOW())
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 69); err == nil {
+		t.Fatal("migration discarded queued input")
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM session_events WHERE external_id = 'sevt_queued'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 69); err == nil {
+		t.Fatal("migration discarded unprocessed tool result")
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM session_events WHERE external_id = 'sevt_unprocessed_tool'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 69); err != nil {
+		t.Fatalf("migrate resolved input history: %v", err)
+	}
+	assertMigrationColumnNullable(t, ctx, database, "session_events", "processed_at", "NO")
 }
 
 func newIsolatedMigrationTestDatabase(
@@ -590,7 +671,8 @@ func assertSessionResourceRuntimeWriteAfterUUIDMigration(
 	}
 	createdAt := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
 	mapperDB := yourbatis.NewDB(database, yourbatis.DialectPostgres, yourbatis.WithDatabaseID("postgres"))
-	created, err := createSessionResource(ctx, mapperDB, SessionResource{
+	databaseAPI := &DB{mapperDB: mapperDB}
+	created, err := databaseAPI.CreateSessionResource(ctx, CreateSessionResourceInput{Resource: SessionResource{
 		UUID:              "50000000-0000-0000-0000-000000000099",
 		ExternalID:        "sesrsc_runtime_after_uuid_migration",
 		OrganizationUUID:  organizationUUID,
@@ -599,7 +681,7 @@ func assertSessionResourceRuntimeWriteAfterUUIDMigration(
 		ResourceType:      "github_repository",
 		Payload:           json.RawMessage(`{"repository":"example/repository"}`),
 		CreatedAt:         createdAt,
-	})
+	}})
 	if err != nil {
 		t.Fatalf("create Session Resource after UUID migration: %v", err)
 	}
@@ -727,9 +809,7 @@ func assertUnifiedMigrationState(t *testing.T, ctx context.Context, database *sq
 		from session_resources resource
 		join files file
 			on file.uuid = resource.file_uuid
-		join workspaces workspace
-			on workspace.uuid = file.workspace_uuid
-			and workspace.uuid = resource.workspace_uuid
+			and file.workspace_uuid = resource.workspace_uuid
 		where resource.path = '/skills/migration-skill'
 	`).Scan(
 		&skillResourceUUID,

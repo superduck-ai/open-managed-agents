@@ -1,28 +1,13 @@
 package tunnels
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"testing"
 )
-
-func TestShouldCancelTunnelRequestForCallerAndDeadlineTermination(t *testing.T) {
-	t.Parallel()
-	for _, err := range []error{context.Canceled, context.DeadlineExceeded, fmt.Errorf("wrapped: %w", context.DeadlineExceeded)} {
-		if !shouldCancelTunnelRequest(err) {
-			t.Fatalf("shouldCancelTunnelRequest(%v) = false, want true", err)
-		}
-	}
-	if shouldCancelTunnelRequest(errors.New("broker unavailable")) {
-		t.Fatal("shouldCancelTunnelRequest(broker unavailable) = true, want false")
-	}
-}
 
 func TestWriteSSEMessageCompactsMultilineJSON(t *testing.T) {
 	t.Parallel()

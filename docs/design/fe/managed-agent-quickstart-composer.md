@@ -2,24 +2,17 @@
 
 ## 范围
 
-本文定义 `/workspaces/{workspace_id}/agent-quickstart` 中首次描述输入框和后续回复输入框的键盘行为。两种输入框共享一致的发送语义，避免用户在 quickstart 的不同阶段切换操作习惯。
-
-问题集的显式确认、transcript 呈现和顶部进度条响应式规则见 [Managed Agent Quickstart 交互与响应式布局](./managed-agent-quickstart-interactions.md)。
+四步配置的前三步使用明确的表单与按钮，只有最后一步在线测试包含消息 composer。流程、资源恢复和对话布局见 [Quickstart 交互契约](./managed-agent-quickstart-interactions.md)。
 
 ## 交互契约
 
-| 操作 | 首次描述输入框 | 后续回复输入框 |
-| --- | --- | --- |
-| `Enter` | 发送当前内容 | 发送当前内容 |
-| `Shift+Enter` | 插入换行 | 插入换行 |
+| 操作                       | 在线测试                  |
+| -------------------------- | ------------------------- |
+| Enter                      | 发送当前内容              |
+| Shift+Enter                | 插入换行                  |
+| IME composition 或重复按键 | 不发送                    |
+| 点击发送                   | 与 Enter 使用同一提交路径 |
 
-补充约束：
+内容为空、请求进行中、Agent 运行、等待工具确认或结果未确认时不重复投递。连接未准备好时先等待 SSE 和历史同步，超时保留内容。成功接受消息后清空输入并恢复对话末尾跟随。
 
-- 输入为空或正在发送时不重复提交。
-- 按键处于 IME composition 状态时，`Enter` 只用于确认输入法文本，不发送消息。
-- 长按产生的 repeat 事件不得触发重复发送。
-- 点击发送按钮与按 `Enter` 使用同一提交路径。
-
-## 实现与验收
-
-首次描述和后续回复都通过 `PromptComposer` 的 `enter` 提交模式实现。回归测试必须分别覆盖 `Shift+Enter` 不提交和 `Enter` 只提交一次，并在修改交互后对真实浏览器键盘事件进行验证。
+回归测试通过页面检查 Shift+Enter 不提交、Enter 只提交一次、第二轮复用 Session 和未知发送不自动重试；浏览器验收补充真实键盘与消息内部滚动。

@@ -83,16 +83,6 @@ func nullableStringFromRaw(raw json.RawMessage, name string) (*string, error) {
 	return &value, nil
 }
 
-func copyOptionalPayloadString(payload map[string]any, raw json.RawMessage, name string) {
-	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
-		return
-	}
-	var value string
-	if json.Unmarshal(raw, &value) == nil {
-		payload[name] = value
-	}
-}
-
 func validateMetadataEntries(metadata map[string]string) error {
 	return httpapi.ValidateMetadataEntryLimit(metadata, 16, "metadata may contain at most 16 entries")
 }
@@ -204,15 +194,16 @@ func isToolResultOrConfirmationEvent(eventType string) bool {
 }
 
 func sessionEventPayloadForResponse(event db.SessionEvent, threadID string) json.RawMessage {
-	return eventPayloadForResponse(event.Payload, event.CreatedAt, event.ProcessedAt, threadID)
+	return eventPayloadForResponse(event.Payload, event.ProcessedAt, threadID)
 }
 
-func eventPayloadForResponse(payloadRaw json.RawMessage, createdAt, processedAt time.Time, threadID string) json.RawMessage {
+func eventPayloadForResponse(payloadRaw json.RawMessage, processedAt time.Time, threadID string) json.RawMessage {
 	var payload map[string]any
 	if err := json.Unmarshal(payloadRaw, &payload); err != nil {
 		return payloadRaw
 	}
-	changed := ensureSessionEventTimeField(payload, "created_at", createdAt)
+	_, changed := payload["created_at"]
+	delete(payload, "created_at")
 	changed = ensureSessionEventTimeField(payload, "processed_at", processedAt) || changed
 	if strings.TrimSpace(threadID) != "" && !hasSessionThreadOwnerField(payload) {
 		payload["session_thread_id"] = strings.TrimSpace(threadID)
@@ -246,14 +237,19 @@ func ensureSessionEventTimeField(payload map[string]any, field string, value tim
 			return false
 		}
 	}
-	payload[field] = httpapi.FormatTime(value)
+	payload[field] = formatEventTime(value)
 	return true
 }
 
-func parseOrder(r *http.Request) (string, error) {
+// Event times keep PostgreSQL's microsecond precision so live payloads match history.
+func eventTime(t time.Time) time.Time { return t.UTC().Truncate(time.Microsecond) }
+
+func formatEventTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
+
+func parseOrder(r *http.Request, defaultOrder string) (string, error) {
 	raw := strings.TrimSpace(r.URL.Query().Get("order"))
 	if raw == "" {
-		return "desc", nil
+		return defaultOrder, nil
 	}
 	if raw != "asc" && raw != "desc" {
 		return "", errors.New("order must be asc or desc")
@@ -317,8 +313,14 @@ func encodeSessionCursor(session db.Session) string {
 	return encodeCursor(session.CreatedAt, session.UUID)
 }
 
+// The server resolves the event's processing position from its ID.
+type eventCursor struct {
+	ExternalID string `json:"external_id"`
+}
+
 func encodeEventCursor(event db.SessionEvent) string {
-	return encodeCursor(event.CreatedAt, event.UUID)
+	data, _ := json.Marshal(eventCursor{event.ExternalID})
+	return base64.RawURLEncoding.EncodeToString(data)
 }
 
 func encodeThreadCursor(thread db.SessionThread) string {
@@ -339,11 +341,18 @@ func decodeSessionCursor(raw string) (*db.SessionPageCursor, error) {
 }
 
 func decodeEventCursor(raw string) (*db.SessionEventPageCursor, error) {
-	createdAt, resourceUUID, err := decodeCursor(raw)
-	if err != nil || createdAt == nil {
-		return nil, err
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
 	}
-	return &db.SessionEventPageCursor{CreatedAt: *createdAt, UUID: resourceUUID}, nil
+	data, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, errors.New("page cursor is invalid")
+	}
+	var payload eventCursor
+	if err := json.Unmarshal(data, &payload); err != nil || payload.ExternalID == "" {
+		return nil, errors.New("page cursor is invalid")
+	}
+	return &db.SessionEventPageCursor{ExternalID: payload.ExternalID}, nil
 }
 
 func decodeThreadCursor(raw string) (*db.SessionThreadPageCursor, error) {

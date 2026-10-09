@@ -42,6 +42,14 @@ func TestObjectCleanupJobMapperMethodsPropagateExecutionErrors(t *testing.T) {
 }
 
 func TestObjectCleanupJobMapperBuilderContracts(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement:         objectCleanupJobMapperFindObjectCleanupStateStatement,
+		bound:             buildObjectCleanupJobMapperFindObjectCleanupState(yourbatis.DialectPostgres, "workspace-test", "job-test"),
+		wantID:            "ObjectCleanupJobMapper.FindObjectCleanupState",
+		wantKind:          yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "externalID"},
+		wantSQLFragments:  []string{"SELECT status, attempts, run_after", "workspace_uuid = $1", "external_id = $2", "type = 'object_cleanup'"},
+	})
 	now := time.Date(2026, time.September, 7, 12, 0, 0, 0, time.UTC)
 	failureParams := objectCleanupJobFailureParams{JobUUID: "job-uuid", Status: "retry", RunAfter: now, Attempts: 2, Reason: "temporary"}
 	tests := []struct {

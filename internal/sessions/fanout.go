@@ -24,7 +24,6 @@ type sessionStreamEvent struct {
 	EventType         string          `json:"event_type"`
 	Payload           json.RawMessage `json:"payload"`
 	ProcessedAt       time.Time       `json:"processed_at,omitempty"`
-	CreatedAt         time.Time       `json:"created_at,omitempty"`
 }
 
 type codeSessionStreamFanout struct {
@@ -132,6 +131,5 @@ func sessionStreamEventFrom(event db.SessionEvent) sessionStreamEvent {
 		EventType:         event.EventType,
 		Payload:           event.Payload,
 		ProcessedAt:       event.ProcessedAt,
-		CreatedAt:         event.CreatedAt,
 	}
 }

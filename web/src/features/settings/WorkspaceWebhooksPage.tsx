@@ -46,6 +46,9 @@ import {
   DropdownMenuTrigger,
 } from '../../shared/ui/dropdown-menu';
 import { Badge } from '../../shared/ui/badge';
+import { ResourceListState } from '../../shared/ui/resource-list-state';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { Card, CardContent } from '../../shared/ui/card';
 import { Input } from '../../shared/ui/input';
 import { Label } from '../../shared/ui/label';
@@ -53,6 +56,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Textarea } from '../../shared/ui/textarea';
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '../../shared/ui/sheet';
 import { useI18n } from '../../shared/i18n';
+import type { MessageValues } from '../../shared/i18n/context';
 import { defaultWorkspace, type Workspace } from '../../shared/workspaces/api';
 import { useWorkspace } from '../../shared/workspaces/context';
 import { workspaceIdFromPath } from '../../shared/workspaces/presentation';
@@ -85,12 +89,16 @@ type SecretDisclosure = {
   source: 'created' | 'regenerated';
 };
 
+type Translate = (id: string, defaultMessage: string, values?: MessageValues) => string;
+
 type WebhookEvent = {
   type: string;
+  labelId: string;
   label: string;
 };
 
 type WebhookEventGroup = {
+  labelId: string;
   label: string;
   events: WebhookEvent[];
 };
@@ -102,41 +110,52 @@ type WebhookEventSummaryGroup = {
 
 const webhookEventGroups: WebhookEventGroup[] = [
   {
+    labelId: 'webhooks.group.sessionLifecycle',
     label: 'Session lifecycle',
     events: [
-      { label: 'Run started', type: 'session.status_run_started' },
-      { label: 'Rescheduled', type: 'session.status_rescheduled' },
-      { label: 'Idled', type: 'session.status_idled' },
-      { label: 'Terminated', type: 'session.status_terminated' },
+      { labelId: 'webhooks.event.runStarted', label: 'Run started', type: 'session.status_run_started' },
+      { labelId: 'webhooks.event.rescheduled', label: 'Rescheduled', type: 'session.status_rescheduled' },
+      { labelId: 'webhooks.event.idled', label: 'Idled', type: 'session.status_idled' },
+      { labelId: 'webhooks.event.terminated', label: 'Terminated', type: 'session.status_terminated' },
     ],
   },
   {
+    labelId: 'webhooks.group.threads',
     label: 'Threads',
     events: [
-      { label: 'Created', type: 'session.thread_created' },
-      { label: 'Idled', type: 'session.thread_idled' },
-      { label: 'Terminated', type: 'session.thread_terminated' },
+      { labelId: 'webhooks.event.created', label: 'Created', type: 'session.thread_created' },
+      { labelId: 'webhooks.event.idled', label: 'Idled', type: 'session.thread_idled' },
+      { labelId: 'webhooks.event.terminated', label: 'Terminated', type: 'session.thread_terminated' },
     ],
   },
   {
+    labelId: 'webhooks.group.outcomes',
     label: 'Outcomes',
-    events: [{ label: 'Evaluation ended', type: 'session.outcome_evaluation_ended' }],
+    events: [
+      {
+        labelId: 'webhooks.event.evaluationEnded',
+        label: 'Evaluation ended',
+        type: 'session.outcome_evaluation_ended',
+      },
+    ],
   },
   {
+    labelId: 'webhooks.group.vaultLifecycle',
     label: 'Vault lifecycle',
     events: [
-      { label: 'Created', type: 'vault.created' },
-      { label: 'Archived', type: 'vault.archived' },
-      { label: 'Deleted', type: 'vault.deleted' },
+      { labelId: 'webhooks.event.created', label: 'Created', type: 'vault.created' },
+      { labelId: 'webhooks.event.archived', label: 'Archived', type: 'vault.archived' },
+      { labelId: 'webhooks.event.deleted', label: 'Deleted', type: 'vault.deleted' },
     ],
   },
   {
+    labelId: 'webhooks.group.credentialLifecycle',
     label: 'Credential lifecycle',
     events: [
-      { label: 'Created', type: 'vault_credential.created' },
-      { label: 'Archived', type: 'vault_credential.archived' },
-      { label: 'Deleted', type: 'vault_credential.deleted' },
-      { label: 'Refresh failed', type: 'vault_credential.refresh_failed' },
+      { labelId: 'webhooks.event.created', label: 'Created', type: 'vault_credential.created' },
+      { labelId: 'webhooks.event.archived', label: 'Archived', type: 'vault_credential.archived' },
+      { labelId: 'webhooks.event.deleted', label: 'Deleted', type: 'vault_credential.deleted' },
+      { labelId: 'webhooks.event.refreshFailed', label: 'Refresh failed', type: 'vault_credential.refresh_failed' },
     ],
   },
 ];
@@ -146,16 +165,36 @@ const allWebhookEventTypes = webhookEventGroups.flatMap((group) => group.events.
 const webhookDetailEventGroups: WebhookEventGroup[] = [
   ...webhookEventGroups.slice(0, 3),
   {
+    labelId: 'webhooks.group.sessionRecord',
     label: 'Session record',
     events: [
-      { label: 'Updated', type: 'session.updated' },
-      { label: 'Deleted', type: 'session.deleted' },
-      { label: 'Updated', type: 'session.record_updated' },
-      { label: 'Deleted', type: 'session.record_deleted' },
+      { labelId: 'webhooks.event.updated', label: 'Updated', type: 'session.updated' },
+      { labelId: 'webhooks.event.deleted', label: 'Deleted', type: 'session.deleted' },
+      { labelId: 'webhooks.event.updated', label: 'Updated', type: 'session.record_updated' },
+      { labelId: 'webhooks.event.deleted', label: 'Deleted', type: 'session.record_deleted' },
     ],
   },
   ...webhookEventGroups.slice(3),
 ];
+
+function localizedWebhookEventGroups(groups: WebhookEventGroup[], msg: Translate) {
+  return groups.map((group) => ({
+    ...group,
+    label: msg(group.labelId, group.label),
+    events: group.events.map((event) => ({
+      ...event,
+      label: msg(event.labelId, event.label),
+    })),
+  }));
+}
+
+function webhookGroupCount(selected: number, total: number, msg: Translate) {
+  return msg('webhooks.group.count', '{selected} of {total}', { selected, total });
+}
+
+function webhookGroupEventsAria(group: string, msg: Translate) {
+  return msg('webhooks.group.eventsAria', '{group} events', { group });
+}
 
 const knownDetailEventTypes = new Set(
   webhookDetailEventGroups.flatMap((group) => group.events.map((event) => event.type)),
@@ -178,6 +217,7 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
     () => resolveWorkspace(routeWorkspaceId, workspaces, activeWorkspace),
     [activeWorkspace, routeWorkspaceId, workspaces],
   );
+  const workspaceName = localizedWorkspaceName(workspace.name, msg);
   const queryKey = useMemo(
     () => ['console', 'workspace-webhooks', orgUuid, workspace.id] as const,
     [orgUuid, workspace.id],
@@ -301,25 +341,22 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
   return (
     <section className="w-full max-w-none" data-testid="workspace-webhooks-page">
       <div className="min-w-0" data-testid="workspace-webhooks-list">
-        <div className="mb-7 flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
-              {msg('webhooks.title', 'Webhooks')}
-            </h1>
-            <p className="mt-2 max-w-[760px] text-sm leading-5 text-muted-foreground">
-              {msg(
-                'webhooks.description',
-                'Webhook endpoints receive event notifications when things happen in your workspace.',
-              )}
-            </p>
-          </div>
-          <Button type="button" size="lg" className="shrink-0" onClick={() => setCreateOpen(true)}>
-            <Plus className="size-4" aria-hidden />
-            {msg('webhooks.addEndpoint', 'Add webhook endpoint')}
-          </Button>
-        </div>
+        <ResourcePageHeader
+          contentGap="content"
+          title={msg('webhooks.title', 'Webhooks')}
+          description={msg(
+            'webhooks.description',
+            'Webhook endpoints receive event notifications when things happen in your workspace.',
+          )}
+          actions={
+            <Button type="button" size="lg" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" aria-hidden />
+              {msg('webhooks.createTitle', 'Create webhook endpoint')}
+            </Button>
+          }
+        />
 
-        <div className="border-t border-border">
+        <div className="overflow-x-auto">
           <Table className="min-w-[880px] table-fixed text-left">
             <colgroup>
               <col className="w-[18%]" />
@@ -348,7 +385,7 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
                 <WebhooksState text={msg('webhooks.loading', 'Loading webhooks...')} />
               ) : errorMessage ? (
                 <WebhooksState tone="error" text={errorMessage} />
-              ) : webhooks.length > 0 ? (
+              ) : (
                 webhooks.map((webhook) => (
                   <WebhookRow
                     key={webhook.id}
@@ -358,16 +395,22 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
                     onAction={(action) => setPendingAction({ action, webhook })}
                   />
                 ))
-              ) : (
-                <WebhooksState
-                  text={msg('webhooks.empty', 'No webhook endpoints have been created for {workspaceName}.', {
-                    workspaceName: workspace.name,
-                  })}
-                />
               )}
             </TableBody>
           </Table>
         </div>
+
+        {!webhooksQuery.isLoading && !errorMessage && webhooks.length === 0 ? (
+          <ResourceListState
+            icon={Webhook}
+            title={msg('webhooks.emptyTitle', 'No webhook endpoints yet')}
+            body={msg(
+              'webhooks.empty',
+              'Create a webhook endpoint for the {workspaceName} workspace to receive event notifications.',
+              { workspaceName },
+            )}
+          />
+        ) : null}
       </div>
 
       {selectedWebhook ? (
@@ -689,7 +732,7 @@ function WebhookEndpointDisplay({ url, copied, onCopy }: { url: string; copied: 
 
 function WebhookSubscribedEvents({ events }: { events: string[] }) {
   const { msg } = useI18n();
-  const groups = summarizeWebhookEvents(events);
+  const groups = summarizeWebhookEvents(events, msg);
 
   return (
     <section className="border-t border-border pt-8">
@@ -823,22 +866,22 @@ function WebhookDetailEditForm({
           {msg('webhooks.eventsToSubscribe', 'Events to subscribe')}
         </legend>
         <div className="space-y-3 border-t border-border pt-3">
-          {webhookEventGroups.map((group) => {
+          {localizedWebhookEventGroups(webhookEventGroups, msg).map((group) => {
             const selectedCount = group.events.filter((event) => selectedEvents.includes(event.type)).length;
             return (
-              <div key={group.label}>
+              <div key={group.labelId}>
                 <div className="flex min-h-7 items-center justify-between gap-3 text-sm">
                   <span className="flex min-w-0 items-center gap-2">
                     <GroupCheckbox
                       checked={selectedCount === group.events.length}
                       indeterminate={selectedCount > 0 && selectedCount < group.events.length}
-                      ariaLabel={`${group.label} events`}
+                      ariaLabel={webhookGroupEventsAria(group.label, msg)}
                       onChange={() => toggleGroup(group)}
                     />
                     <span className="truncate font-medium text-foreground">{group.label}</span>
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    {selectedCount} of {group.events.length}
+                    {webhookGroupCount(selectedCount, group.events.length, msg)}
                   </span>
                 </div>
                 <div className="ml-6 mt-1 space-y-1">
@@ -1007,7 +1050,9 @@ function CreateWebhookDialog({
         initialFocus={urlRef}
       >
         <DialogHeader className="px-4 py-4">
-          <DialogTitle>{msg('webhooks.createTitle', 'Create webhook endpoint')}</DialogTitle>
+          <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">
+            {msg('webhooks.createTitle', 'Create webhook endpoint')}
+          </DialogTitle>
         </DialogHeader>
         <form className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]" onSubmit={handleSubmit}>
           <div className="subtle-scrollbar-auto min-h-0 space-y-4 overflow-y-auto pl-4 pr-2 py-4">
@@ -1048,22 +1093,22 @@ function CreateWebhookDialog({
                 {msg('webhooks.eventsToSubscribe', 'Events to subscribe')}
               </legend>
               <div className="space-y-3 border-t border-border pt-3">
-                {webhookEventGroups.map((group) => {
+                {localizedWebhookEventGroups(webhookEventGroups, msg).map((group) => {
                   const selectedCount = group.events.filter((event) => selectedEvents.includes(event.type)).length;
                   return (
-                    <div key={group.label}>
+                    <div key={group.labelId}>
                       <div className="flex min-h-7 items-center justify-between gap-3 text-sm">
                         <span className="flex min-w-0 items-center gap-2">
                           <GroupCheckbox
                             checked={selectedCount === group.events.length}
                             indeterminate={selectedCount > 0 && selectedCount < group.events.length}
-                            ariaLabel={`${group.label} events`}
+                            ariaLabel={webhookGroupEventsAria(group.label, msg)}
                             onChange={() => toggleGroup(group)}
                           />
                           <span className="truncate font-medium text-foreground">{group.label}</span>
                         </span>
                         <span className="shrink-0 text-xs text-muted-foreground">
-                          {selectedCount} of {group.events.length}
+                          {webhookGroupCount(selectedCount, group.events.length, msg)}
                         </span>
                       </div>
                       <div className="ml-6 mt-1 space-y-1">
@@ -1090,9 +1135,12 @@ function CreateWebhookDialog({
           <div className="px-4">
             {error ? <InlineError>{error}</InlineError> : null}
             <DialogFooter className="py-4">
+              <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
+                {msg('common.cancel', 'Cancel')}
+              </Button>
               <Button type="submit" disabled={!canSubmit} size="lg" className="min-w-[82px]">
                 {isSubmitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-                {msg('common.create', 'Create')}
+                {msg('webhooks.createTitle', 'Create webhook endpoint')}
               </Button>
             </DialogFooter>
           </div>
@@ -1331,12 +1379,12 @@ function orderedEvents(events: Set<string>) {
   return [...orderedKnownEvents, ...extraEvents];
 }
 
-function summarizeWebhookEvents(events: string[]): WebhookEventSummaryGroup[] {
+function summarizeWebhookEvents(events: string[], msg: Translate): WebhookEventSummaryGroup[] {
   const selected = new Set(events);
   const consumed = new Set<string>();
   const groups: WebhookEventSummaryGroup[] = [];
 
-  webhookDetailEventGroups.forEach((group) => {
+  localizedWebhookEventGroups(webhookDetailEventGroups, msg).forEach((group) => {
     const labels: string[] = [];
     group.events.forEach((event) => {
       if (!selected.has(event.type)) {
@@ -1356,7 +1404,7 @@ function summarizeWebhookEvents(events: string[]): WebhookEventSummaryGroup[] {
     .filter((eventType) => !consumed.has(eventType) && !knownDetailEventTypes.has(eventType))
     .map(prettyWebhookEventType);
   if (unknownLabels.length > 0) {
-    groups.push({ label: 'Other', labels: unknownLabels });
+    groups.push({ label: msg('webhooks.group.other', 'Other'), labels: unknownLabels });
   }
 
   return groups;

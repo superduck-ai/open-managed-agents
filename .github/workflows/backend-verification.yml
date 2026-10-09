@@ -1,0 +1,265 @@
+name: Backend verification
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      verify_cloud:
+        description: Run cloud adapter checks using the protected verification-cloud environment
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-verification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-be:
+    name: Chat verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      OMA_WORKER_CONTROL_IMAGE: ${{ vars.OMA_WORKER_CONTROL_IMAGE || 'ghcr.io/superduck-ai/managed-agent-sandbox:latest' }}
+      BASE_REF: ${{ github.event.pull_request.base.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Prepare local images
+        run: |
+          for image in postgres:17 redis:8 nats:2.14.6-alpine pgsty/minio:latest "$OMA_WORKER_CONTROL_IMAGE"; do
+            docker pull "$image"
+          done
+          test -e /dev/fuse || sudo modprobe fuse
+      - name: Build verification CLI
+        run: |
+          mkdir -p tmp/bin
+          ./scripts/generate-go.sh
+          go build -o tmp/bin/verify-be ./cmd/verify-be
+      - name: Verify chat behavior and reliability
+        run: |
+          for scenario in roundtrip tools reliability instances public upstream-errors; do
+            tmp/bin/verify-be chat "$scenario"
+          done
+      - name: Verify Memory mounts and sandbox lifetime
+        run: |
+          tmp/bin/verify-be memory doctor mounts
+          tmp/bin/verify-be memory mounts
+      - name: Verify Worker generated Files
+        run: tmp/bin/verify-be files generated
+      - name: Measure base commit with current workload
+        run: |
+          tmp/bin/verify-be chat performance --backend-ref "$BASE_REF"
+          jq -s '[.[] | select(.scenario == "chat.performance" and .backend_commit == env.BASE_REF)] | if length == 1 then .[0] else error("expected one baseline") end' tmp/verify-be/*/report.json > tmp/chat-baseline.json
+      - name: Reject performance regression
+        run: tmp/bin/verify-be chat performance --baseline tmp/chat-baseline.json
+      - name: Upload verdicts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-verification-verdicts
+          path: |
+            tmp/verify-be/*/report.json
+            tmp/verify-be/*/report.md
+          retention-days: 14
+          if-no-files-found: warn
+
+  verify-files:
+    name: Files verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE_REF: ${{ github.event.pull_request.base.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Prepare common images
+        run: |
+          for image in postgres:17 redis:8 nats:2.14.6-alpine pgsty/minio:latest; do
+            docker pull "$image"
+          done
+      - name: Build verification CLI
+        run: |
+          mkdir -p tmp/bin
+          ./scripts/generate-go.sh
+          go build -o tmp/bin/verify-be ./cmd/verify-be
+      - name: Verify Files and object storage
+        run: |
+          tmp/bin/verify-be files doctor
+          for scenario in invalid isolation lifecycle storage attachments platform recovery exhaustion; do
+            tmp/bin/verify-be files "$scenario"
+          done
+      - name: Measure Files base commit
+        run: |
+          tmp/bin/verify-be files performance --backend-ref "$BASE_REF"
+          jq -s '[.[] | select(.scenario == "files.performance" and .backend_commit == env.BASE_REF)] | if length == 1 then .[0] else error("expected one Files baseline") end' tmp/verify-be/*/report.json > tmp/files-baseline.json
+      - name: Reject Files performance regression
+        run: tmp/bin/verify-be files performance --baseline tmp/files-baseline.json
+      - name: Upload Files verdicts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: files-verification-verdicts
+          path: |
+            tmp/verify-be/*/report.json
+            tmp/verify-be/*/report.md
+          retention-days: 14
+          if-no-files-found: warn
+
+  verify-transcript:
+    name: Transcript verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Prepare common images
+        run: |
+          for image in postgres:17 redis:8 nats:2.14.6-alpine pgsty/minio:latest; do
+            docker pull "$image"
+          done
+      - name: Build verification CLI
+        run: |
+          mkdir -p tmp/bin
+          ./scripts/generate-go.sh
+          go build -o tmp/bin/verify-be ./cmd/verify-be
+      - name: Verify Transcript archive and recovery
+        run: |
+          tmp/bin/verify-be transcript doctor
+          for scenario in integrity recovery concurrency boundary lifecycle; do
+            tmp/bin/verify-be transcript "$scenario"
+          done
+      - name: Upload Transcript verdicts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcript-verification-verdicts
+          path: |
+            tmp/verify-be/*/report.json
+            tmp/verify-be/*/report.md
+          retention-days: 14
+          if-no-files-found: warn
+
+  verify-memory:
+    name: Memory verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Prepare common images
+        run: |
+          for image in postgres:17 redis:8 nats:2.14.6-alpine pgsty/minio:latest; do
+            docker pull "$image"
+          done
+      - name: Build verification CLI
+        run: |
+          mkdir -p tmp/bin
+          ./scripts/generate-go.sh
+          go build -o tmp/bin/verify-be ./cmd/verify-be
+      - name: Verify Memory and Filestore
+        run: |
+          tmp/bin/verify-be memory doctor
+          for scenario in integrity isolation cleanup lifecycle filestore; do
+            tmp/bin/verify-be memory "$scenario"
+          done
+      - name: Upload Memory verdicts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-verification-verdicts
+          path: |
+            tmp/verify-be/*/report.json
+            tmp/verify-be/*/report.md
+          retention-days: 14
+          if-no-files-found: warn
+
+  verify-deployment:
+    name: Deployment verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Prepare common images
+        run: |
+          for image in postgres:17 redis:8 nats:2.14.6-alpine pgsty/minio:latest; do
+            docker pull "$image"
+          done
+      - name: Build verification CLI
+        run: |
+          mkdir -p tmp/bin
+          ./scripts/generate-go.sh
+          go build -o tmp/bin/verify-be ./cmd/verify-be
+      - name: Verify Deployment and River recovery
+        run: |
+          tmp/bin/verify-be deployment doctor
+          for scenario in lifecycle retry idempotency restart; do
+            tmp/bin/verify-be deployment "$scenario"
+          done
+      - name: Upload Deployment verdicts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-verification-verdicts
+          path: |
+            tmp/verify-be/*/report.json
+            tmp/verify-be/*/report.md
+          retention-days: 14
+          if-no-files-found: warn
+
+  verify-cloud:
+    name: Cloud adapter verification
+    if: github.event_name == 'workflow_dispatch' && inputs.verify_cloud
+    environment: verification-cloud
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify cloud storage and sandbox renewal
+        env:
+          CLOUD_VERIFY_CONFIG: ${{ secrets.VERIFY_BE_CLOUD_CONFIG_YAML }}
+        run: |
+          umask 077
+          export VERIFY_BE_CLOUD_CONFIG="$RUNNER_TEMP/verify-cloud.yaml"
+          trap 'rm -f "$VERIFY_BE_CLOUD_CONFIG"' EXIT
+          printf '%s' "$CLOUD_VERIFY_CONFIG" > "$VERIFY_BE_CLOUD_CONFIG"
+          unset CLOUD_VERIFY_CONFIG
+          .agents/skills/verify-be/scripts/verify-be files cloud-storage
+          tmp/bin/verify-be chat cloud-renewal
+      - name: Upload cloud verdicts and recovery IDs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-verification-verdicts
+          path: |
+            tmp/verify-be/*/report.json
+            tmp/verify-be/*/report.md
+            tmp/verify-be/*/cloud-resources.json
+          retention-days: 14
+          if-no-files-found: warn

@@ -20,18 +20,23 @@ import (
 const maxSessionBodySize = 4 << 20
 
 type Handler struct {
-	secretService *secrets.Service
-	eventPayloads *eventpayload.Store
-	cfg           config.Config
-	db            *db.DB
-	codeSessions  *codesessions.Service
-	webhooks      webhookEnqueuer
-	logger        *slog.Logger
-	errorAdapter  *httpapi.ErrorAdapter
-	router        chi.Router
-	streams       *streamHub
-	eventBus      sessionfanout.EventBus
-	previews      *workerPreviewConverter
+	secretService   *secrets.Service
+	eventPayloads   *eventpayload.Store
+	cfg             config.Config
+	db              *db.DB
+	codeSessions    *codesessions.Service
+	webhooks        webhookEnqueuer
+	sandboxReclaims sandboxReclaimer
+	logger          *slog.Logger
+	errorAdapter    *httpapi.ErrorAdapter
+	router          chi.Router
+	streams         *streamHub
+	eventBus        sessionfanout.EventBus
+	previews        *workerPreviewConverter
+}
+
+type sandboxReclaimer interface {
+	EnqueueArchivedSession(context.Context, db.Session) error
 }
 
 type webhookEnqueuer interface {
@@ -115,18 +120,4 @@ type sessionResourceRequest struct {
 
 type sessionResourceUpdateRequest struct {
 	AuthorizationToken json.RawMessage `json:"authorization_token"`
-}
-
-type resourceReferenceError struct {
-	ResourceType string
-	ResourceID   string
-	Err          error
-}
-
-func (e resourceReferenceError) Error() string {
-	return e.ResourceType + " reference failed: " + e.ResourceID
-}
-
-func (e resourceReferenceError) Unwrap() error {
-	return e.Err
 }

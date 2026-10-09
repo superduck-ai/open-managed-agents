@@ -61,22 +61,10 @@ func TestMessageBatchesAPI(t *testing.T) {
 		assertError(t, resp, http.StatusConflict, "invalid_request_error")
 	})
 
-	t.Run("failure official sdk fixture create bypasses real validation", func(t *testing.T) {
-		fixtureCfg := app.cfg
-		fixtureApp := newTestAppWithStore(t, &fixtureCfg, newFakeStore("fixture-bucket"))
-		defer fixtureApp.close()
-
+	t.Run("failure SDK batch cannot bypass stream validation", func(t *testing.T) {
 		body := `{"requests":[{"custom_id":"my-custom-id-1","params":{"model":"claude-opus-4-6","max_tokens":1024,"messages":[{"role":"user","content":"hi"}],"stream":true,"speed":"standard"}}]}`
-		resp := doBatchRequest(t, fixtureApp, http.MethodPost, "/v1/messages/batches", strings.NewReader(body), config.OfficialSDKResourceAPIKey, "application/json")
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("fixture create status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
-		}
-		var batch batchResponse
-		decodeJSON(t, resp.Body, &batch)
-		if batch.Type != "message_batch" || batch.ProcessingStatus != "in_progress" {
-			t.Fatalf("unexpected fixture batch: %+v", batch)
-		}
+		resp := doBatchRequest(t, app, http.MethodPost, "/v1/messages/batches", strings.NewReader(body), defaultTestKey, "application/json")
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 
 	t.Run("failure results upload closes producer pipe", func(t *testing.T) {

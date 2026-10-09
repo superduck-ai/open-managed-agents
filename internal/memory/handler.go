@@ -26,16 +26,14 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/memorypath"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/go-chi/chi/v5"
-	"golang.org/x/text/unicode/norm"
 )
 
 const (
-	maxMemoryBodySize     = 1 << 20
-	maxMemoryContentBytes = 102400
-	maxMemoryPathBytes    = 1024
+	maxMemoryBodySize = 1 << 20
 )
 
 type Handler struct {
@@ -402,7 +400,7 @@ func (h *Handler) deleteStore(w http.ResponseWriter, r *http.Request, storeID st
 		return
 	}
 	for _, ref := range refs {
-		h.deleteObjectOrEnqueue(r.Context(), ref)
+		h.deleteQueuedObject(r.Context(), ref)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": storeID, "type": "memory_store_deleted"})
 }
@@ -433,7 +431,7 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 		writeBadRequest(w, r, err)
 		return
 	}
-	if err := validateMemoryPath(path); err != nil {
+	if err := memorypath.Validate(path); err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
@@ -524,7 +522,7 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 		return
 	}
 	pathPrefix := strings.TrimSpace(r.URL.Query().Get("path_prefix"))
-	if err := validatePathPrefix(pathPrefix); err != nil {
+	if err := memorypath.ValidatePrefix(pathPrefix); err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
@@ -767,7 +765,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 			return
 		}
 		versionUUID := uuid.NewV4().String()
-		objectKey := memoryObjectKey(principal.WorkspaceUUID, store.UUID, record.UUID, versionUUID)
+		objectKey := db.MemoryContentObjectKey(principal.WorkspaceUUID, store.UUID, record.UUID, versionUUID)
 		contentBytes := []byte(targetContent)
 		contentSHA := sha256Hex(contentBytes)
 		if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(contentBytes), storage.UploadOptions{Size: int64(len(contentBytes)), ContentType: "text/plain; charset=utf-8"}); err != nil {
@@ -983,7 +981,7 @@ func (h *Handler) redactVersion(w http.ResponseWriter, r *http.Request, storeID,
 		return
 	}
 	if ref != nil {
-		h.deleteObjectOrEnqueue(r.Context(), *ref)
+		h.deleteQueuedObject(r.Context(), *ref)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromVersionRecord(record, nil))
 }
@@ -1028,7 +1026,7 @@ func (h *Handler) readObjectContent(ctx context.Context, key string, expectedSiz
 		return "", err
 	}
 	defer object.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(object.Body, maxMemoryContentBytes+1))
+	data, err := io.ReadAll(io.LimitReader(object.Body, db.MaxMemoryContentBytes+1))
 	if err != nil {
 		return "", err
 	}
@@ -1049,12 +1047,8 @@ func (h *Handler) newMemoryObjectIDs(workspaceUUID, storeUUID string) (memoryID,
 	}
 	memoryUUID = uuid.NewV4().String()
 	versionUUID = uuid.NewV4().String()
-	objectKey = memoryObjectKey(workspaceUUID, storeUUID, memoryUUID, versionUUID)
+	objectKey = db.MemoryContentObjectKey(workspaceUUID, storeUUID, memoryUUID, versionUUID)
 	return memoryID, versionID, memoryUUID, versionUUID, objectKey, nil
-}
-
-func memoryObjectKey(workspaceUUID, storeUUID, memoryUUID, versionUUID string) string {
-	return fmt.Sprintf("workspaces/%s/memory_stores/%s/memories/%s/versions/%s/content", workspaceUUID, storeUUID, memoryUUID, versionUUID)
 }
 
 func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context, ref db.ObjectRef) {
@@ -1067,11 +1061,17 @@ func (h *Handler) deleteObjectOrEnqueue(ctx context.Context, ref db.ObjectRef) {
 	if ref.Key == "" {
 		return
 	}
-	if err := h.store.Delete(ctx, ref.Key, storage.DeleteOptions{}); err != nil {
+	if err := h.store.Delete(ctx, ref.Key, storage.DeleteOptions{AllVersions: true}); err != nil {
 		h.logger.ErrorContext(ctx, "delete memory object", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", err)
 		if enqueueErr := h.db.EnqueueObjectCleanupResourceJob(ctx, ref.WorkspaceUUID, ref.Bucket, ref.Key, ref.ResourceType, ref.ResourceID); enqueueErr != nil {
 			h.logger.ErrorContext(ctx, "enqueue memory object cleanup", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", enqueueErr)
 		}
+	}
+}
+
+func (h *Handler) deleteQueuedObject(ctx context.Context, ref db.ObjectRef) {
+	if err := h.store.Delete(ctx, ref.Key, storage.DeleteOptions{AllVersions: true}); err != nil {
+		h.logger.WarnContext(ctx, "memory object cleanup deferred", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", err)
 	}
 }
 
@@ -1147,7 +1147,7 @@ func principalActor(principal auth.Principal) db.MemoryActor {
 		return db.MemoryActor{Type: "user_actor", UserID: principal.UserExternalID}
 	}
 	return db.MemoryActor{
-		Type:             "api_actor",
+		Type:             db.MemoryActorTypeAPI,
 		APIKeyUUID:       principal.APIKeyUUID,
 		APIKeyExternalID: principal.APIKeyExternalID,
 	}
@@ -1234,7 +1234,7 @@ func parseRequiredContent(raw json.RawMessage, name string) (string, error) {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return "", fmt.Errorf("%s must be a string", name)
 	}
-	if len([]byte(value)) > maxMemoryContentBytes {
+	if len([]byte(value)) > db.MaxMemoryContentBytes {
 		return "", fmt.Errorf("%s must be at most 102400 bytes", name)
 	}
 	return value, nil
@@ -1251,7 +1251,7 @@ func parseOptionalContent(raw json.RawMessage, name string) (string, bool, error
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return "", false, fmt.Errorf("%s must be a string", name)
 	}
-	if len([]byte(value)) > maxMemoryContentBytes {
+	if len([]byte(value)) > db.MaxMemoryContentBytes {
 		return "", false, fmt.Errorf("%s must be at most 102400 bytes", name)
 	}
 	return value, true, nil
@@ -1265,7 +1265,7 @@ func parseOptionalMemoryPath(raw json.RawMessage, name string) (string, bool, er
 	if err != nil {
 		return "", false, err
 	}
-	if err := validateMemoryPath(path); err != nil {
+	if err := memorypath.Validate(path); err != nil {
 		return "", false, err
 	}
 	return path, true, nil
@@ -1370,74 +1370,6 @@ func validateStoreName(value string) error {
 func validateDescription(value string) error {
 	if utf8.RuneCountInString(value) > 1024 {
 		return errors.New("description must be at most 1024 characters")
-	}
-	return nil
-}
-
-func validateMemoryPath(path string) error {
-	if path == "" || len([]byte(path)) > maxMemoryPathBytes {
-		return errors.New("path must be between 1 and 1024 bytes")
-	}
-	if !utf8.ValidString(path) {
-		return errors.New("path must be valid UTF-8")
-	}
-	if !strings.HasPrefix(path, "/") {
-		return errors.New("path must start with /")
-	}
-	if path == "/" {
-		return errors.New("path must contain at least one segment")
-	}
-	if strings.Contains(path, "//") || strings.HasSuffix(path, "/") {
-		return errors.New("path must not contain empty segments")
-	}
-	if !norm.NFC.IsNormalString(path) {
-		return errors.New("path must be NFC-normalized")
-	}
-	for _, r := range path {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-			return errors.New("path must not contain control or format characters")
-		}
-	}
-	for _, segment := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
-		if segment == "." || segment == ".." {
-			return errors.New("path must not contain . or .. segments")
-		}
-	}
-	return nil
-}
-
-func validatePathPrefix(pathPrefix string) error {
-	if pathPrefix == "" {
-		return nil
-	}
-	if len([]byte(pathPrefix)) > maxMemoryPathBytes {
-		return errors.New("path_prefix must be at most 1024 bytes")
-	}
-	if !utf8.ValidString(pathPrefix) {
-		return errors.New("path_prefix must be valid UTF-8")
-	}
-	if !strings.HasPrefix(pathPrefix, "/") {
-		return errors.New("path_prefix must start with /")
-	}
-	if !norm.NFC.IsNormalString(pathPrefix) {
-		return errors.New("path_prefix must be NFC-normalized")
-	}
-	if strings.Contains(pathPrefix, "//") {
-		return errors.New("path_prefix must not contain empty segments")
-	}
-	for _, r := range pathPrefix {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-			return errors.New("path_prefix must not contain control or format characters")
-		}
-	}
-	trimmed := strings.Trim(pathPrefix, "/")
-	if trimmed == "" {
-		return nil
-	}
-	for _, segment := range strings.Split(trimmed, "/") {
-		if segment == "." || segment == ".." {
-			return errors.New("path_prefix must not contain . or .. segments")
-		}
 	}
 	return nil
 }
@@ -1783,6 +1715,10 @@ func (h *Handler) writeMemoryMutationError(w http.ResponseWriter, r *http.Reques
 	}
 	if errors.Is(err, db.ErrInvalidState) {
 		writeBadRequest(w, r, errors.New("memory store must not be archived"))
+		return
+	}
+	if errors.Is(err, db.ErrLimitExceeded) {
+		writeMemorySpecificError(w, r, http.StatusBadRequest, "invalid_request_error", fmt.Sprintf("Memory store may contain at most %d memories", db.MaxMemoryItemsPerStore), nil)
 		return
 	}
 	if errors.Is(err, db.ErrNotFound) {

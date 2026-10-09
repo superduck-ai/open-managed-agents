@@ -67,6 +67,13 @@ export function codeForTemplate(template: AgentTemplate, format: CodeFormat, loc
 export function createAgentToolset() {
   return {
     type: 'agent_toolset_20260401',
+    configs: [
+      {
+        name: 'ask_user_question',
+        enabled: false,
+        permission_policy: { type: 'always_allow' as const },
+      },
+    ],
   };
 }
 
@@ -98,7 +105,7 @@ export const createDialogTemplateConfigs: Record<string, CreateAgentInput> = {
     system:
       "You are a general-purpose agent that can research, write code, run commands, and use connected tools to complete the user's task end to end.",
     mcp_servers: [],
-    tools: [{ type: 'agent_toolset_20260401' }],
+    tools: [createAgentToolset()],
     skills: [],
   },
   'deep-researcher': {

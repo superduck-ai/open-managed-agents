@@ -42,6 +42,7 @@
 `internal/api/server.go` 仍负责顶层 chi router、全局 middleware、鉴权入口选择和资源挂载：
 
 - `registerVersionedAPIRoutes` 统一挂载 `/v1`、`/v2`；`/v1` 通用资源只注册一次，并由凭据感知中间件选择 service API key 或 platform session 鉴权链。
+- `/v1/sessions` 及其子路由直接进入 Session 资源处理；`?beta=true` 可继续使用，但不是访问前提。API key 和平台会话仍经过上述鉴权链。
 - `/v1` platform privacy consent 路由从 `platformapi` 注册；code-session worker、ingress 与 upstream proxy 路由由 `codesessions.Handler` 注册，并在 handler 内执行专用鉴权。
 - `/v1/messages` 进入通用凭据感知中间件；code-session Messages token 只在 service auth 的这个 `POST` 路径被接受。
 - `registerPlatformConsoleRoutes` 将 `/api`、`/auth`、`/oauth`、`/web-api` 的平台 console 路由直接注册到根 chi router，不再通过成对的精确路径和 wildcard handler 转发到第二个 router。

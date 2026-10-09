@@ -61,7 +61,7 @@ Activation 是 Code Session 从 `initializing` 切到 `active` 的启动交接�
 
 如果只发布了部分消息、PubAck 丢失或 PostgreSQL 最终提交失败，Code Session 保持
 `initializing`。重试使用由 Code Session、initialize 标识或 `session_event` UUID 派生的稳定 message
-ID；JetStream 在 24 小时窗口内去重，窗口外可能再次投递，但 worker 仍应按稳定 `event_id` 幂等。
+ID；JetStream 在配置允许的窗口内去重，默认 24 小时，窗口外可能再次投递，但 worker 仍应按稳定 `event_id` 幂等。
 
 ## Stream、subject、consumer 与序号
 
@@ -96,7 +96,7 @@ processing（建议每 20–30 秒）。SSE 写失败时保留映射直到 TTL�
 
 原始 payload 实际字节数超过 32 KiB 时，payload 先上传到租户隔离的 S3 key。key 包含稳定 event ID 和随机 cleanup
 job ID，避免重试对象之间互相清理。JetStream 只保存 key、size、SHA-256 和 cleanup job ID，单条
-消息仍小于 1 MiB。PubAck 失败是模糊结果，因此不会立即删除对象；processed 后立即加速清理，最迟
+消息不能超过 `nats.worker_event_stream.max_msg_size`，默认 1 MiB。PubAck 失败是模糊结果，因此不会立即删除对象；processed 后立即加速清理，最迟
 在 30 天逻辑期限清理。
 
 发布前拒绝超过 16 MiB 的原始 payload，与 hydrate 读取上限保持一致。普通公开输入和 control

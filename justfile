@@ -10,6 +10,9 @@ help:
 generate:
   ./scripts/generate-go.sh
 
+test-generate-go:
+  ./scripts/tests/generate-go_test.sh
+
 # Create the gitignored Docker Compose runtime config without overwriting an existing secret-bearing file.
 init-compose-config:
   @compose_template="deploy/docker-compose/oma-server.yaml"; compose_local="deploy/docker-compose/oma-server.local.yaml"; \

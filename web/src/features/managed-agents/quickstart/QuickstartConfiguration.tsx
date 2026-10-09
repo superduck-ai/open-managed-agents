@@ -29,56 +29,58 @@ export function QuickstartStart({ wizard }: { wizard: QuickstartWizard }) {
   const { locale } = useI18n();
   const text = quickstartCopy(locale);
   return (
-    <div className="flex flex-1 flex-col py-8">
-      <div className="mb-6 space-y-3">
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{text.title}</h1>
-        <p className="max-w-2xl text-muted-foreground">{text.subtitle}</p>
-      </div>
-      <RadioGroup
-        value={wizard.progress.scenarioID}
-        onValueChange={(value) => wizard.chooseScenario(value)}
-        aria-label={text.scenarios}
-        disabled={wizard.busy || Boolean(wizard.progress.pending)}
-        className="grid gap-3 sm:grid-cols-2"
-      >
-        {quickstartScenarios(locale).map((scenario) => {
-          const Icon = scenarioIcons[scenario.id];
-          const featured = scenario.id === 'hello';
-          const custom = scenario.id === 'custom';
-          return (
-            <FieldLabel
-              key={scenario.id}
-              htmlFor={`scenario-${scenario.id}`}
-              className={`flex w-full cursor-pointer flex-col items-stretch gap-3 rounded-xl border ${featured ? 'min-h-36 p-6 sm:col-span-2' : custom ? 'p-4 sm:col-span-2' : 'min-h-28 p-4'} ${wizard.progress.scenarioID === scenario.id ? 'border-foreground bg-accent/40' : featured ? 'border-primary/40 bg-primary/5 hover:bg-primary/10' : 'border-border bg-card hover:bg-accent/20'}`}
-            >
-              <div className="flex items-center gap-3">
-                <span
-                  className={
-                    featured
-                      ? 'grid size-11 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground'
-                      : 'shrink-0'
-                  }
-                >
-                  <Icon className={featured ? 'size-6' : 'size-5'} />
-                </span>
-                <span className="min-w-0 flex-1 space-y-1">
-                  {featured && (
-                    <span className="block text-xs font-medium text-muted-foreground">{text.firstStart}</span>
-                  )}
+    <div className="flex min-h-0 flex-1 flex-col pt-4">
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="mb-6 space-y-3">
+          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{text.title}</h1>
+          <p className="max-w-2xl text-muted-foreground">{text.subtitle}</p>
+        </div>
+        <RadioGroup
+          value={wizard.progress.scenarioID}
+          onValueChange={(value) => wizard.chooseScenario(value)}
+          aria-label={text.scenarios}
+          disabled={wizard.busy || Boolean(wizard.progress.pending)}
+          className="grid gap-3 sm:grid-cols-2"
+        >
+          {quickstartScenarios(locale).map((scenario) => {
+            const Icon = scenarioIcons[scenario.id];
+            const featured = scenario.id === 'hello';
+            const custom = scenario.id === 'custom';
+            return (
+              <FieldLabel
+                key={scenario.id}
+                htmlFor={`scenario-${scenario.id}`}
+                className={`flex w-full cursor-pointer flex-col items-stretch gap-3 rounded-xl border ${featured ? 'min-h-36 p-6 sm:col-span-2' : custom ? 'p-4 sm:col-span-2' : 'min-h-28 p-4'} ${wizard.progress.scenarioID === scenario.id ? 'border-foreground bg-accent/40' : featured ? 'border-primary/40 bg-primary/5 hover:bg-primary/10' : 'border-border bg-card hover:bg-accent/20'}`}
+              >
+                <div className="flex items-center gap-3">
                   <span
-                    className={`block font-semibold ${featured ? 'text-xl tracking-tight sm:text-2xl' : 'text-base'}`}
+                    className={
+                      featured
+                        ? 'grid size-11 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground'
+                        : 'shrink-0'
+                    }
                   >
-                    {scenario.name}
+                    <Icon className={featured ? 'size-6' : 'size-5'} />
                   </span>
-                </span>
-                {featured && <Badge>{text.recommended}</Badge>}
-                <RadioGroupItem id={`scenario-${scenario.id}`} value={scenario.id} />
-              </div>
-              <p className="text-sm leading-relaxed font-normal text-muted-foreground">{scenario.summary}</p>
-            </FieldLabel>
-          );
-        })}
-      </RadioGroup>
+                  <span className="min-w-0 flex-1 space-y-1">
+                    {featured && (
+                      <span className="block text-xs font-medium text-muted-foreground">{text.firstStart}</span>
+                    )}
+                    <span
+                      className={`block font-semibold ${featured ? 'text-xl tracking-tight sm:text-2xl' : 'text-base'}`}
+                    >
+                      {scenario.name}
+                    </span>
+                  </span>
+                  {featured && <Badge>{text.recommended}</Badge>}
+                  <RadioGroupItem id={`scenario-${scenario.id}`} value={scenario.id} />
+                </div>
+                <p className="text-sm leading-relaxed font-normal text-muted-foreground">{scenario.summary}</p>
+              </FieldLabel>
+            );
+          })}
+        </RadioGroup>
+      </div>
       <QuickstartFooter wizard={wizard}>
         <Button disabled={wizard.busy || Boolean(wizard.progress.pending)} onClick={() => wizard.navigate(1)}>
           {text.start}
@@ -141,14 +143,29 @@ export function QuickstartAgent({
               onValueChange={(id) => wizard.update((value) => ({ ...value, agentID: id === 'new' ? '' : (id ?? '') }))}
               disabled={disabled}
             >
-              <SelectTrigger className="w-full" aria-label={text.reused}>
-                <SelectValue>{agent ? `${agent.name} · ${agent.id}` : text.newAgent}</SelectValue>
+              <SelectTrigger className="h-auto! min-h-10 w-full py-2.5" aria-label={text.reused}>
+                <SelectValue className="min-w-0">
+                  <span className="min-w-0 space-y-1">
+                    <span className="block truncate font-medium">{agent?.name ?? text.newAgent}</span>
+                    {agent && (
+                      <span className="block truncate font-mono text-xs text-muted-foreground">{agent.id}</span>
+                    )}
+                  </span>
+                </SelectValue>
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent alignItemWithTrigger={false} align="start" className="max-h-80 p-1.5">
                 {[{ id: 'new', name: text.newAgent }, ...candidates].map((item) => (
-                  <SelectItem key={item.id} value={item.id}>
-                    {item.name}
-                    {item.id !== 'new' && <span className="text-xs text-muted-foreground">{item.id}</span>}
+                  <SelectItem
+                    key={item.id}
+                    value={item.id}
+                    className={`py-3 pl-3 ${item.id === 'new' ? 'mb-1 border-b border-border' : ''}`}
+                  >
+                    <span className="min-w-0 flex-1 space-y-1 whitespace-normal">
+                      <span className="block break-words font-medium">{item.name}</span>
+                      {item.id !== 'new' && (
+                        <span className="block break-all font-mono text-xs text-muted-foreground">{item.id}</span>
+                      )}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -328,14 +345,14 @@ function ConfigurationLayout({
   const { locale } = useI18n();
   const text = quickstartCopy(locale);
   return (
-    <div className="flex flex-1 flex-col py-8">
-      <div className="mb-8 space-y-2">
+    <div className="flex min-h-0 flex-1 flex-col pt-4">
+      <div className="mb-5 shrink-0 space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
         <p className="text-muted-foreground">{subtitle}</p>
       </div>
-      <div className="grid min-w-0 gap-8 min-[860px]:grid-cols-2">
-        <div className="min-w-0 max-w-xl">{children}</div>
-        <aside className="min-w-0 border-t border-muted-foreground/30 pt-8 min-[860px]:border-t-0 min-[860px]:border-l min-[860px]:pt-0 min-[860px]:pl-8">
+      <div className="grid min-h-0 min-w-0 flex-1 auto-rows-max gap-6 overflow-y-auto min-[860px]:grid-cols-2 min-[860px]:grid-rows-[minmax(0,1fr)] min-[860px]:overflow-hidden">
+        <div className="min-h-0 min-w-0 max-w-xl pr-1 min-[860px]:overflow-y-auto">{children}</div>
+        <aside className="min-h-0 min-w-0 border-t border-muted-foreground/30 pt-6 min-[860px]:overflow-y-auto min-[860px]:border-t-0 min-[860px]:border-l min-[860px]:pt-0 min-[860px]:pl-6">
           <div className="rounded-xl bg-muted/50 p-4 sm:p-6">
             <h2 className="mb-3 text-sm font-medium">{text.api}</h2>
             <RequestPreview code={code} />

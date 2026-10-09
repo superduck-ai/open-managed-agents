@@ -1,6 +1,6 @@
 import { QuickstartChat } from './QuickstartChat';
 import { useState } from 'react';
-import { RotateCcw } from 'lucide-react';
+import { ArrowUpRight, KeyRound, RotateCcw } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { workspaceApiKeysPath } from '../../../shared/workspaces/presentation';
 import { Button, ButtonLink } from '../../../shared/ui/button';
@@ -28,12 +28,12 @@ export function QuickstartIntegration({
   const text = quickstartCopy(locale);
   const conversation = useQuickstartConversation(wizard, workspaceID, accountID, binding);
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col py-8">
-      <div className="mb-6 shrink-0 space-y-2">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col pt-4">
+      <div className="mb-5 shrink-0 space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{text.integrationTitle}</h1>
         <p className="text-muted-foreground">{text.integrationSubtitle}</p>
       </div>
-      <div className="grid min-h-0 min-w-0 items-stretch gap-6 min-[860px]:flex-1 min-[860px]:grid-cols-2 min-[860px]:grid-rows-[minmax(0,1fr)]">
+      <div className="grid min-h-0 min-w-0 flex-1 auto-rows-max items-stretch gap-6 overflow-y-auto min-[860px]:grid-cols-2 min-[860px]:grid-rows-[minmax(0,1fr)] min-[860px]:overflow-hidden">
         <QuickstartApiCalls wizard={wizard} workspaceID={workspaceID} message={conversation.message} />
         <QuickstartChat conversation={conversation} wizard={wizard} workspaceID={workspaceID} />
       </div>
@@ -111,19 +111,25 @@ function QuickstartApiCalls({
         <p className="text-sm leading-relaxed text-muted-foreground">{text.keyHint}</p>
         <ButtonLink
           href={workspaceApiKeysPath(workspaceID)}
-          variant="link"
-          className="h-auto px-0 text-sm whitespace-normal"
+          variant="outline"
+          className="h-auto min-h-9 bg-background py-2 text-sm whitespace-normal"
         >
+          <KeyRound />
           {text.keyLink}
+          <ArrowUpRight />
         </ButtonLink>
       </div>
-      <Accordion defaultValue={['create']} aria-label={text.apiCalls}>
+      <Accordion defaultValue={['create']} aria-label={text.apiCalls} className="gap-3">
         {calls.map((call, index) => (
-          <AccordionItem key={call.id} value={call.id}>
-            <AccordionTrigger>
+          <AccordionItem
+            key={call.id}
+            value={call.id}
+            className="rounded-lg border border-border bg-background last:border-b"
+          >
+            <AccordionTrigger className="px-4 hover:no-underline">
               {index + 1}. {call.title}
             </AccordionTrigger>
-            <AccordionContent className="space-y-3">
+            <AccordionContent className="space-y-3 border-t border-border px-4 pt-4">
               <p className="text-sm leading-relaxed text-muted-foreground">{call.hint}</p>
               {call.id !== 'create' && (
                 <Field>

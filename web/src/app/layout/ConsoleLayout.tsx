@@ -159,6 +159,7 @@ export function ConsoleLayout() {
 export function ConsoleShell({ account, currentPath = '/', children, onLogout, onNavigate }: ConsoleShellProps) {
   const isWide = isWideConsolePath(currentPath);
   const isSessionWorkspace = isSessionDetailPath(currentPath);
+  const isQuickstart = /^\/workspaces\/[^/]+\/agent-quickstart\/?$/.test(currentPath);
   const isSessionsRoute = isSessionsPath(currentPath);
   const { msg } = useI18n();
 
@@ -169,7 +170,11 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
         className={clsx(
           'text-foreground',
           isSessionsRoute && 'session-route-theme',
-          isSessionWorkspace ? 'h-svh min-h-0 overflow-hidden' : 'min-h-screen',
+          isSessionWorkspace
+            ? 'h-svh min-h-0 overflow-hidden'
+            : isQuickstart
+              ? 'h-dvh min-h-0 overflow-hidden'
+              : 'min-h-screen',
         )}
       >
         <ShellMobileBar
@@ -184,9 +189,11 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
           className={clsx(
             isSessionWorkspace
               ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:py-6 [&>[data-testid=session-detail-page]]:!h-full [&>[data-testid=session-detail-page]]:!min-h-0 [&>[data-testid=session-detail-page]]:!overflow-hidden'
-              : isWide
-                ? 'min-w-0 px-6 py-6 lg:px-8'
-                : 'mx-auto max-w-[928px] px-6 py-12 lg:px-0',
+              : isQuickstart
+                ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-6 md:py-6 lg:px-8'
+                : isWide
+                  ? 'min-w-0 px-6 py-6 lg:px-8'
+                  : 'mx-auto max-w-[928px] px-6 py-12 lg:px-0',
           )}
         >
           {children}

@@ -23,9 +23,7 @@ export function QuickstartWizardPage({
   const text = quickstartCopy(locale);
   const wizard = useQuickstartWizard(workspaceID, accountID, locale, models);
   return (
-    <section
-      className={`mx-auto flex w-full min-w-0 max-w-[1600px] flex-col py-6 md:min-h-[calc(100dvh-3rem)] ${wizard.progress.step === 3 ? 'min-[860px]:h-[calc(100dvh-3rem)] min-[860px]:min-h-[640px]' : ''}`}
-    >
+    <section className="mx-auto flex h-full min-h-0 w-full min-w-0 max-w-[1600px] flex-1 flex-col overflow-hidden">
       <nav aria-label={text.title} className="mx-auto w-full max-w-4xl shrink-0">
         <ol className="grid grid-cols-4">
           {text.steps.map((label, index) => (
@@ -63,34 +61,36 @@ export function QuickstartWizardPage({
           ))}
         </ol>
       </nav>
-      {wizard.resources.isPending && (
-        <p role="status" className="mt-6 text-sm text-muted-foreground">
-          {text.restore}
-        </p>
-      )}
-      {(wizard.error || wizard.resources.error) && (
-        <div className="mt-6 space-y-3">
-          <ManagedErrorAlert>{wizard.error ?? errorMessage(wizard.resources.error)}</ManagedErrorAlert>
-          {wizard.resources.isError && (
-            <Button variant="outline" onClick={() => void wizard.resources.refetch()}>
-              {text.retry}
+      <div className="max-h-24 shrink-0 overflow-y-auto">
+        {wizard.resources.isPending && (
+          <p role="status" className="mt-6 text-sm text-muted-foreground">
+            {text.restore}
+          </p>
+        )}
+        {(wizard.error || wizard.resources.error) && (
+          <div className="mt-6 space-y-3">
+            <ManagedErrorAlert>{wizard.error ?? errorMessage(wizard.resources.error)}</ManagedErrorAlert>
+            {wizard.resources.isError && (
+              <Button variant="outline" onClick={() => void wizard.resources.refetch()}>
+                {text.retry}
+              </Button>
+            )}
+          </div>
+        )}
+        {!wizard.storageAvailable && (
+          <p role="status" className="mt-4 text-sm text-muted-foreground">
+            {text.storage}
+          </p>
+        )}
+        {wizard.progress.pending && !wizard.busy && (
+          <div className="mt-6 space-y-3 rounded-lg border border-border p-4">
+            <p className="text-sm text-muted-foreground">{text.unknown}</p>
+            <Button disabled={wizard.busy} onClick={() => void wizard.recover()}>
+              {text.recover}
             </Button>
-          )}
-        </div>
-      )}
-      {!wizard.storageAvailable && (
-        <p role="status" className="mt-4 text-sm text-muted-foreground">
-          {text.storage}
-        </p>
-      )}
-      {wizard.progress.pending && !wizard.busy && (
-        <div className="mt-6 space-y-3 rounded-lg border border-border p-4">
-          <p className="text-sm text-muted-foreground">{text.unknown}</p>
-          <Button disabled={wizard.busy} onClick={() => void wizard.recover()}>
-            {text.recover}
-          </Button>
-        </div>
-      )}
+          </div>
+        )}
+      </div>
       {wizard.progress.step === 0 && <QuickstartStart wizard={wizard} />}
       {wizard.progress.step === 1 && <QuickstartAgent wizard={wizard} models={models} workspaceID={workspaceID} />}
       {wizard.progress.step === 2 && <QuickstartEnvironment wizard={wizard} workspaceID={workspaceID} />}

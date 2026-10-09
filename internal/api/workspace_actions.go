@@ -15,6 +15,9 @@ func platformActionAllowed(r *http.Request, access auth.WorkspaceAccess) bool {
 		return true
 	}
 	if strings.HasPrefix(path, "/v1/") {
+		if path == "/v1/files" && r.Method == http.MethodPost {
+			return access.Workbench()
+		}
 		if strings.HasPrefix(path, "/v1/sessions") || (strings.HasPrefix(path, "/v1/files/") && strings.HasSuffix(path, "/content")) {
 			return access.ViewTraces()
 		}

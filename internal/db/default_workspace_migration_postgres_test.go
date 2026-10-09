@@ -42,7 +42,7 @@ func TestDefaultWorkspaceMarkerMigration(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, migrationErr := provider.UpTo(ctx, 62)
+			_, migrationErr := provider.UpTo(ctx, 72)
 			if ambiguous {
 				if migrationErr == nil || !strings.Contains(migrationErr.Error(), "Cannot identify active default workspace") {
 					t.Fatalf("err = %v", migrationErr)

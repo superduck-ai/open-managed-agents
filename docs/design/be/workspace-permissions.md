@@ -12,6 +12,8 @@ Default 通过 `is_default` 和组织级唯一索引标记；用户按组织身�
 
 所有凭据均检查目标空间状态；Workspace Key 不依赖创建者的成员身份，不取得组织权限。用户越权或归档空间的新业务请求返回 403；授权管理范围内目标不存在返回 404；默认保护和非法角色操作返回 400。
 
+Workbench Prompt 路由按 URL 中的工作区及已存储 Prompt 的 `WorkspaceUUID` 重新授权，覆盖详情、修改、删除、Revision 和 KV 子路由；请求头选中的空间不能替代资源所属空间。创建入口沿用既有固定 Prompt ID 时，同时检查目标空间和已存储 Prompt 的空间。列表不返回其他空间的固定 Prompt。Workbench 附件上传 `POST /v1/files` 使用 Workbench 能力，其余 Files 操作保持原权限要求。
+
 ## Billing 既有行为边界
 
 对照 #346 与 main 的共同基线 `4e407449`：普通空间仍要求显式成员；没有成员时更新返回 404；更新 `workspace_billing` 写入成员记录，删除可撤销该显式关系。创建仍不接受 `workspace_billing`。本 PR 不引入 Billing 自动继承、提权幂等或恢复继承规则。
@@ -23,6 +25,8 @@ Default 通过 `is_default` 和组织级唯一索引标记；用户按组织身�
 - `TestWorkspaceAuthorizationInheritance`：Default、普通成员授权、成员管理、历史记录、批量查询与 Key 边界。
 - `TestWorkspaceMemberMutationObservesCommittedRevocation`：成员变更与组织撤权事务。
 - `TestWorkspaceMemoryReadsRejectOtherWorkspace`：真实 Memory 资源跨空间拒绝。
+- `TestWorkbenchPromptWorkspacePermissions`：真实 Prompt 资源跨空间、撤权与归档拒绝，授权成员正常读写。
+- `TestWorkbenchAttachmentPermissions`：User、Claude Code User 和 Developer 可上传附件，普通用户仍不能访问开发资源，未授权工作区拒绝上传。
 - `TestArchivedWorkspaceAdminRequests`：已归档空间的更新与成员读取均 403。
 - `TestWorkspaceScopeChecksAllRoles`：Developer 与既有 Billing 账号均不能越过跨组织、跨资源、归档和组织撤权边界。
 - `TestExistingBillingWorkspaceBehavior`：基线显式成员与功能行为；独立 Billing PR 以完整专项合同替换此兼容测试。
@@ -31,4 +35,4 @@ Default 通过 `is_default` 和组织级唯一索引标记；用户按组织身�
 
 ## 主分支迁移衔接
 
-主分支的 00060/00061 已用于 Tunnel 重建及事件 payload；本功能尚未合并的 Default 标记迁移顺延为 00062，SQL 内容保持不变。测试使用新建独立数据库验证 00061→00062，保留历史成员不变的断言。曾运行早期分支临时 00060 的开发库不能直接套用主分支同编号迁移；本轮不修改这些旧库，另建测试库。部署前必须核对 goose 历史，禁止仅改版本号或删除历史数据来跳过迁移。
+截至 2026-10-09，主分支已使用迁移编号至 00071，其中 00062 用于 Transcript 历史归档；本功能尚未合并的 Default 标记迁移顺延为 00072，SQL 内容保持不变。专项测试使用新建独立数据库验证 Default 标记及历史成员不变。曾运行早期分支临时 00060 或 Default 标记 00062 的开发库不能直接套用主分支同编号迁移；本轮不修改这些旧库，另建测试库。部署前必须核对 goose 历史，禁止仅改版本号或删除历史数据来跳过迁移。

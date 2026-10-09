@@ -30,8 +30,14 @@ export function quickstartConversationState(
   savedStatus: string,
   awaitingTool: boolean,
 ) {
-  const lastUserIndex = events.map(sessionEventType).lastIndexOf('user.message');
-  const latest = sessionStatusFromEvents(events);
+  const types = events.map(sessionEventType);
+  const lastUserIndex = types.lastIndexOf('user.message');
+  const lastInputIndex = Math.max(
+    lastUserIndex,
+    types.lastIndexOf('user.tool_confirmation'),
+    types.lastIndexOf('user.custom_tool_result'),
+  );
+  const latest = sessionStatusFromEvents(events.slice(lastInputIndex + 1));
   const terminated = ['terminated', 'deleted'].includes(savedStatus);
   const status = terminated ? savedStatus : (latest?.status ?? savedStatus);
   const reason = stopReasonSchema.safeParse(latest?.event.stop_reason);
@@ -47,7 +53,7 @@ export function quickstartConversationState(
       latest?.status === 'idle' &&
       !awaitingTool &&
       (!reason.success || reason.data.type === 'end_turn'),
-    running: status === 'running' || status === 'rescheduling' || (lastUserIndex >= 0 && !latest),
+    running: !terminated && (status === 'running' || status === 'rescheduling' || (lastInputIndex >= 0 && !latest)),
     failedTurn: reason.success && ['error', 'retries_exhausted'].includes(reason.data.type),
     stopped: terminated || (interrupted && status === 'idle'),
   };

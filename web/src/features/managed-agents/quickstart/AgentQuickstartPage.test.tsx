@@ -19,6 +19,43 @@ afterEach(() => {
   window.sessionStorage.clear();
 });
 
+test('resource loading errors show the API message', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  mockAgentsApi([]);
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => {
+    if (String(input).startsWith('/v1/agents?') && (!init?.method || init.method === 'GET'))
+      return jsonResponse({ error: { message: 'Resource unavailable' } }, 500);
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  renderManagedAgentsPage('quickstart');
+  expect((await screen.findByRole('alert')).textContent).toContain('Resource unavailable');
+});
+
+test('Session restoration errors show the API message and keep sending disabled', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  mockAgentsApi([]);
+  const runtime = installSessionRuntime();
+  renderManagedAgentsPage('quickstart');
+  await startAgentConfiguration();
+  fireEvent.click(screen.getByRole('button', { name: 'Create and continue' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Use existing and continue' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+  await waitFor(() => expect(runtime.sent).toHaveLength(1));
+  await act(async () => runtime.reply('A saved reply'));
+  cleanup();
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => {
+    if (/\/v1\/sessions\/[^/]+\?/.test(String(input)) && (!init?.method || init.method === 'GET'))
+      return jsonResponse({ error: { message: 'Session unavailable' } }, 500);
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  renderManagedAgentsPage('quickstart');
+  expect((await screen.findByRole('alert')).textContent).toContain('Session unavailable');
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Send', exact: true }).disabled).toBe(true);
+  expect(runtime.sent).toHaveLength(1);
+});
+
 test('a rejected Agent create keeps the draft and allows an explicit retry', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
   mockAgentsApi([]);
@@ -533,7 +570,28 @@ test('an unconfirmed send survives refresh and is never resent automatically', a
   expect(runtime.sent).toHaveLength(1);
 });
 
-test('pending tools use public confirmations and Stop sends a Session interrupt', async () => {
+test.each([
+  {
+    toolType: 'agent.tool_use',
+    decision: 'Deny',
+    accepted: { type: 'user.tool_confirmation', tool_use_id: 'sevt_pending_tool', result: 'deny' },
+  },
+  {
+    toolType: 'agent.tool_use',
+    decision: 'Approve',
+    accepted: { type: 'user.tool_confirmation', tool_use_id: 'sevt_pending_tool', result: 'allow' },
+  },
+  {
+    toolType: 'agent.custom_tool_use',
+    decision: 'Deny',
+    accepted: { type: 'user.custom_tool_result', custom_tool_use_id: 'sevt_pending_tool', is_error: true },
+  },
+  {
+    toolType: 'agent.custom_tool_use',
+    decision: 'Approve',
+    accepted: { type: 'user.custom_tool_result', custom_tool_use_id: 'sevt_pending_tool', is_error: false },
+  },
+])('pending tools keep sending locked across %j and refresh', async ({ toolType, decision, accepted }) => {
   resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
   mockAgentsApi([]);
   const runtime = installSessionRuntime();
@@ -544,24 +602,36 @@ test('pending tools use public confirmations and Stop sends a Session interrupt'
   fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
   await waitFor(() => expect(runtime.sent).toHaveLength(1));
   await act(async () => {
-    runtime.emit('agent.tool_use', {
+    runtime.emit(toolType, {
       id: 'sevt_pending_tool',
       name: 'Write',
       input: { file_path: '/tmp/quickstart.txt', content: 'test' },
     });
     runtime.emit('session.status_idle', { stop_reason: { type: 'requires_action', event_ids: ['sevt_pending_tool'] } });
   });
-  fireEvent.click(await screen.findByRole('button', { name: 'Approve', exact: true }));
-  await waitFor(() =>
-    expect(runtime.sent[1]).toMatchObject({
-      type: 'user.tool_confirmation',
-      tool_use_id: 'sevt_pending_tool',
-      result: 'allow',
-    }),
-  );
+  fireEvent.click(await screen.findByRole('button', { name: decision, exact: true }));
+  await waitFor(() => expect(runtime.sent[1]).toMatchObject(accepted));
+  fireEvent.change(screen.getByLabelText('Test message'), { target: { value: 'Wait for the resumed turn' } });
+  await act(async () => fireEvent.keyDown(screen.getByLabelText('Test message'), { key: 'Enter' }));
+  expect(runtime.sent).toHaveLength(2);
+  expect(screen.getByRole('button', { name: 'Stop', exact: true })).toBeTruthy();
+  cleanup();
+  renderManagedAgentsPage('quickstart');
+  expect(await screen.findByRole('button', { name: 'Stop', exact: true })).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Test message'), { target: { value: 'Still waiting after refresh' } });
+  await act(async () => fireEvent.keyDown(screen.getByLabelText('Test message'), { key: 'Enter' }));
+  expect(runtime.sent).toHaveLength(2);
   await act(async () => runtime.emit('session.status_running', {}));
   fireEvent.click(screen.getByRole('button', { name: 'Stop', exact: true }));
   await waitFor(() => expect(runtime.sent[2]).toMatchObject({ type: 'user.interrupt' }));
+  await act(async () => runtime.emit('session.status_idle', { stop_reason: { type: 'end_turn' } }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Send', exact: true }));
+  await waitFor(() =>
+    expect(runtime.sent[3]).toMatchObject({
+      type: 'user.message',
+      content: [{ type: 'text', text: 'Still waiting after refresh' }],
+    }),
+  );
 });
 
 test('Thinking followed by idle is not reported as a completed first reply', async () => {

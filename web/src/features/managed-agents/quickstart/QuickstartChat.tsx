@@ -11,6 +11,7 @@ import {
   MessageScrollerViewport,
 } from '../../../shared/ui/message-scroller';
 import { ManagedErrorAlert } from '../components/common';
+import { errorMessage } from '../utils';
 import { FollowSentSessionMessage } from '../sessions/FollowSentSessionMessage';
 import { SessionDetailDeltaFramesContext } from '../sessions/sessionDetailData';
 import { SessionTranscriptView } from '../sessions/SessionTranscriptView';
@@ -182,7 +183,7 @@ function QuickstartConversationAlerts({
     <>
       {(conversation.error || conversation.data.error || conversation.session.error) && (
         <ManagedErrorAlert>
-          {conversation.error ?? conversation.data.error ?? String(conversation.session.error)}
+          {conversation.error ?? conversation.data.error ?? errorMessage(conversation.session.error)}
         </ManagedErrorAlert>
       )}
       {conversation.failedTurn && (

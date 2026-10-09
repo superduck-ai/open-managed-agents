@@ -2,6 +2,7 @@ import { Check } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
 import { ManagedErrorAlert } from '../components/common';
+import { errorMessage } from '../utils';
 import type { AgentModelOption } from '../agents/create-dialog-model';
 import { quickstartCopy } from './copy';
 import { QuickstartStart, QuickstartAgent, QuickstartEnvironment } from './QuickstartConfiguration';
@@ -69,7 +70,7 @@ export function QuickstartWizardPage({
       )}
       {(wizard.error || wizard.resources.error) && (
         <div className="mt-6 space-y-3">
-          <ManagedErrorAlert>{wizard.error ?? String(wizard.resources.error)}</ManagedErrorAlert>
+          <ManagedErrorAlert>{wizard.error ?? errorMessage(wizard.resources.error)}</ManagedErrorAlert>
           {wizard.resources.isError && (
             <Button variant="outline" onClick={() => void wizard.resources.refetch()}>
               {text.retry}

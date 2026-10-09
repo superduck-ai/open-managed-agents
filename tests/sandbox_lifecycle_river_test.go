@@ -2,9 +2,12 @@ package tests
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"uuid"
@@ -152,102 +155,193 @@ func assertRiverListenerConnected(t *testing.T, app *testApp) {
 	}
 }
 
-func TestSessionArchiveImmediatelyDispatchesSandboxReclaim(t *testing.T) {
-	t.Run("enqueue failure preserves archive and pending deletion", func(t *testing.T) {
+func TestSessionArchiveImmediatelyReclaimsSandbox(t *testing.T) {
+	t.Run("delete failure preserves archive and queues retry", func(t *testing.T) {
 		f := newSandboxLifecycleFixture(t)
-		lifecycle := environments.NewSandboxLifecycle(f.app.db, nil, config.SandboxLifecycleConfig{}, nil)
-		serveArchiveWithLifecycle(t, f.app, lifecycle)
-		archiveSession(t, f.app, f.session.ExternalID)
-		if work, sandbox := f.state(t); work != "stopped" || sandbox != "stopping" {
-			t.Fatalf("enqueue failure lost durable intent: %s/%s", work, sandbox)
-		}
-	})
-	t.Run("dispatch without periodic sweep", func(t *testing.T) {
-		f := newSandboxLifecycleFixture(t)
-		ctx := context.Background()
-		calls := make(chan string, 10)
-		release := make(chan struct{}, 1)
-		defer close(release)
-		provider := newLifecycleProvider(t, func(w http.ResponseWriter, r *http.Request) {
-			select {
-			case calls <- strings.TrimPrefix(r.URL.Path, "/sandboxes/"):
-			case <-r.Context().Done():
+		var calls atomic.Int32
+		provider := newLifecycleProvider(t, func(w http.ResponseWriter, _ *http.Request) {
+			if calls.Add(1) == 1 {
+				w.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
+			w.WriteHeader(http.StatusNotFound)
+		})
+		lifecycle := environments.NewSandboxLifecycle(f.app.db, provider, config.SandboxLifecycleConfig{}, nil)
+		workers := river.NewWorkers()
+		lifecycle.Register(workers)
+		client, err := riverjobs.NewClient(f.app.db, nil, workers, map[string]river.QueueConfig{
+			environments.SandboxLifecycleQueue: {MaxWorkers: 1},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := lifecycle.Configure(context.Background(), client); err != nil {
+			t.Fatal(err)
+		}
+		serveArchiveWithLifecycle(t, f.app, lifecycle)
+		archiveSession(t, f.app, f.session.ExternalID)
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			var queued int
+			if err := f.app.pool.QueryRow(context.Background(), `SELECT count(*) FROM public.river_job WHERE kind = 'sandbox_reclaim' AND args->>'sandbox_uuid' = $1 AND state = 'available'`, f.target.SandboxUUID).Scan(&queued); err != nil {
+				t.Fatal(err)
+			}
+			if queued == 1 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("failed deletion did not queue retry")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if current := mustSessionRecord(t, f.app, f.session.ExternalID); current.ArchivedAt == nil {
+			t.Fatal("deletion failure reversed archive")
+		}
+		if work, sandbox := f.state(t); work != "stopped" || sandbox != "stopping" {
+			t.Fatalf("deletion failure lost durable intent: %s/%s", work, sandbox)
+		}
+		archiveSession(t, f.app, f.session.ExternalID)
+		waitForArchivedSandboxDeletion(t, f)
+	})
+	t.Run("bounded deletion continues after archive response", func(t *testing.T) {
+		f := newSandboxLifecycleFixture(t)
+		fixtures := []sandboxLifecycleFixture{f}
+		for range 4 {
+			fixtures = append(fixtures, newSandboxLifecycleFixtureWithApp(t, f.app))
+		}
+		calls := make(chan string, 10)
+		release := make(chan struct{}, 5)
+		defer close(release)
+		provider := newLifecycleProvider(t, func(w http.ResponseWriter, r *http.Request) {
+			calls <- strings.TrimPrefix(r.URL.Path, "/sandboxes/")
 			select {
 			case <-release:
 				w.WriteHeader(http.StatusNoContent)
 			case <-r.Context().Done():
 			}
 		})
-		lifecycle := environments.NewSandboxLifecycle(f.app.db, provider, config.SandboxLifecycleConfig{DryRun: true}, nil)
+		lifecycle := environments.NewSandboxLifecycle(f.app.db, provider, config.SandboxLifecycleConfig{DryRun: true, IdleTimeout: 24 * time.Hour}, nil)
 		workers := river.NewWorkers()
 		lifecycle.Register(workers)
 		client, err := riverjobs.NewClient(f.app.db, nil, workers, map[string]river.QueueConfig{
-			environments.SandboxLifecycleQueue: {MaxWorkers: 1, FetchPollInterval: time.Hour},
+			environments.SandboxLifecycleQueue: {MaxWorkers: 1},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := lifecycle.Configure(ctx, client); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := client.DurablePeriodicJobDelete(ctx, "sandbox_lifecycle_sweep"); err != nil {
+		if err := lifecycle.Configure(context.Background(), client); err != nil {
 			t.Fatal(err)
 		}
 		serveArchiveWithLifecycle(t, f.app, lifecycle)
-		archiveSession(t, f.app, f.session.ExternalID)
-		archiveSession(t, f.app, f.session.ExternalID)
+		for i, fixture := range fixtures {
+			archiveSession(t, f.app, fixture.session.ExternalID)
+			if i < 4 {
+				select {
+				case id := <-calls:
+					if id != fixture.target.ProviderSandboxID {
+						t.Fatalf("deleted wrong sandbox: %s", id)
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("archive did not start deletion")
+				}
+			}
+		}
 		var queued int
-		if err := f.app.pool.QueryRow(ctx, `SELECT count(*) FROM public.river_job WHERE kind = 'sandbox_reclaim' AND args->>'sandbox_uuid' = $1 AND state = 'available'`, f.target.SandboxUUID).Scan(&queued); err != nil || queued != 1 {
-			t.Fatalf("archive should durably enqueue one reclaim: queued=%d err=%v", queued, err)
+		if err := f.app.pool.QueryRow(context.Background(), `SELECT count(*) FROM public.river_job WHERE kind = 'sandbox_reclaim' AND args->>'sandbox_uuid' = $1 AND state = 'available'`, fixtures[4].target.SandboxUUID).Scan(&queued); err != nil || queued != 1 {
+			t.Fatalf("capacity fallback: queued=%d err=%v", queued, err)
 		}
-		runCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		if err := client.Start(runCtx); err != nil {
-			t.Fatal(err)
+		if len(calls) != 0 {
+			t.Fatal("deletion exceeded four concurrent tasks")
 		}
-		defer func() {
-			cancel()
-			stopCtx, stopCancel := context.WithTimeout(ctx, 5*time.Second)
-			defer stopCancel()
-			if err := client.Stop(stopCtx); err != nil {
-				t.Error(err)
-			}
-		}()
-		select {
-		case id := <-calls:
-			if id != f.target.ProviderSandboxID {
-				t.Fatalf("deleted wrong sandbox: %s", id)
-			}
-		case <-time.After(10 * time.Second):
-			logSandboxLifecycleState(t, f)
-			t.Fatal("archive did not dispatch sandbox deletion without a sweep")
+		for range 4 {
+			release <- struct{}{}
 		}
-		archiveSession(t, f.app, f.session.ExternalID)
-		if work, sandbox := f.state(t); work != "stopped" || sandbox != "stopping" {
-			t.Fatalf("archive did not return while provider deletion was pending: %s/%s", work, sandbox)
+		for _, fixture := range fixtures[:4] {
+			waitForArchivedSandboxDeletion(t, fixture)
 		}
 		release <- struct{}{}
-		deadline := time.NewTimer(10 * time.Second)
-		defer deadline.Stop()
-		ticker := time.NewTicker(25 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			if _, sandbox := f.state(t); sandbox == "stopped" {
-				break
-			}
-			select {
-			case <-ticker.C:
-			case <-deadline.C:
-				t.Fatal("immediately dispatched deletion did not complete")
-			}
+		if err := lifecycle.Reclaim(context.Background(), fixtures[4].target); err != nil {
+			t.Fatal(err)
 		}
-		archiveSession(t, f.app, f.session.ExternalID)
-		if len(calls) != 0 {
-			t.Fatal("repeated archive duplicated provider deletion")
+		waitForArchivedSandboxDeletion(t, fixtures[4])
+	})
+}
+
+func waitForArchivedSandboxDeletion(t *testing.T, f sandboxLifecycleFixture) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, sandbox := f.state(t); sandbox == "stopped" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("archived sandbox deletion did not complete")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestSessionArchiveConcurrentSandboxReclamation(t *testing.T) {
+	f := newSandboxLifecycleFixture(t)
+	archiveSession(t, f.app, f.session.ExternalID)
+	var calls atomic.Int32
+	bothDeleting := make(chan struct{})
+	provider := newLifecycleProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		if call == 2 {
+			close(bothDeleting)
+		}
+		select {
+		case <-bothDeleting:
+		case <-r.Context().Done():
+			return
+		}
+		if call == 1 {
+			w.WriteHeader(http.StatusNoContent)
+		} else {
+			w.WriteHeader(http.StatusNotFound)
 		}
 	})
+	completed := make(chan struct{}, 2)
+	logger := slog.New(archiveCompletionHandler{
+		Handler: slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}), completed: completed,
+	})
+	lifecycle := environments.NewSandboxLifecycle(f.app.db, provider, config.SandboxLifecycleConfig{}, logger)
+	results := make(chan error, 2)
+	go func() { results <- lifecycle.EnqueueArchivedSession(context.Background(), f.session) }()
+	go func() { results <- lifecycle.Reclaim(context.Background(), f.target) }()
+	for range 2 {
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("concurrent deletion did not converge")
+		}
+	}
+	for range 2 {
+		select {
+		case <-completed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("concurrent reclamation did not finish database writes")
+		}
+	}
+	if _, sandbox := f.state(t); sandbox != "stopped" {
+		t.Fatalf("concurrent deletion state = %s", sandbox)
+	}
+}
+
+type archiveCompletionHandler struct {
+	slog.Handler
+	completed chan struct{}
+}
+
+func (h archiveCompletionHandler) Handle(_ context.Context, record slog.Record) error {
+	if record.Message == "sandbox reclaimed" || record.Message == "sandbox reclamation completion skipped" {
+		h.completed <- struct{}{}
+	}
+	return nil
 }
 
 func serveArchiveWithLifecycle(t *testing.T, app *testApp, lifecycle *environments.SandboxLifecycle) {

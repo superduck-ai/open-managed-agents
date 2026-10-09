@@ -323,14 +323,14 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
 	}
-	if h.sandboxReclaims != nil {
-		if err := h.sandboxReclaims.EnqueueArchivedSession(r.Context(), removal.Session); err != nil {
-			h.logger.ErrorContext(r.Context(), "enqueue archived session sandbox reclamation", "session_id", sessionID, "error", err)
-		}
-	}
 	h.finishSessionRemoval(r.Context(), removal)
 	archived := removal.Session
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.archived", archived.ExternalID, nil)
+	if h.sandboxReclaims != nil {
+		if err := h.sandboxReclaims.EnqueueArchivedSession(r.Context(), archived); err != nil {
+			h.logger.ErrorContext(r.Context(), "schedule archived session sandbox reclamation", "session_id", sessionID, "error", err)
+		}
+	}
 	response, err := h.responseFromSession(r, archived)
 	if err != nil {
 		return internalError("Could not archive session", fmt.Errorf("load archived session %q response: %w", sessionID, err))

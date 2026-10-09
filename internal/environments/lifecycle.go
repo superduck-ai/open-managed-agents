@@ -17,23 +17,27 @@ import (
 )
 
 const (
-	SandboxLifecycleQueue = "sandbox_lifecycle"
-	lifecycleBatchSize    = 100
-	sandboxSweepID        = "sandbox_lifecycle_sweep"
-	sandboxSweepCron      = "* * * * *"
-	sandboxSweepTimezone  = "UTC"
+	SandboxLifecycleQueue     = "sandbox_lifecycle"
+	lifecycleBatchSize        = 100
+	sandboxSweepID            = "sandbox_lifecycle_sweep"
+	sandboxSweepCron          = "* * * * *"
+	sandboxSweepTimezone      = "UTC"
+	archiveReclaimConcurrency = 4
+	archiveReclaimTimeout     = 30 * time.Second
+	archiveRetryTimeout       = 5 * time.Second
 )
 
 type SandboxLifecycle struct {
-	database *db.DB
-	provider *e2bruntime.E2BProvider
-	cfg      config.SandboxLifecycleConfig
-	logger   *slog.Logger
-	client   *river.Client[*sql.Tx]
+	database        *db.DB
+	provider        *e2bruntime.E2BProvider
+	cfg             config.SandboxLifecycleConfig
+	logger          *slog.Logger
+	client          *river.Client[*sql.Tx]
+	archiveReclaims chan struct{}
 }
 
 func NewSandboxLifecycle(database *db.DB, provider *e2bruntime.E2BProvider, cfg config.SandboxLifecycleConfig, logger *slog.Logger) *SandboxLifecycle {
-	return &SandboxLifecycle{database: database, provider: provider, cfg: cfg, logger: logging.LoggerOrDefault(logger)}
+	return &SandboxLifecycle{database: database, provider: provider, cfg: cfg, logger: logging.LoggerOrDefault(logger), archiveReclaims: make(chan struct{}, archiveReclaimConcurrency)}
 }
 
 type sandboxSweepArgs struct{}
@@ -74,19 +78,42 @@ func (l *SandboxLifecycle) Configure(ctx context.Context, client *river.Client[*
 }
 
 func (l *SandboxLifecycle) EnqueueArchivedSession(ctx context.Context, session db.Session) error {
-	if l.client == nil {
-		return errors.New("sandbox lifecycle River client is not configured")
-	}
 	targets, err := l.database.ListArchivedSessionSandboxes(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID)
 	if err != nil {
 		return err
 	}
+	var failures []error
 	for _, target := range targets {
-		if err := enqueueSandboxReclaim(ctx, l.client, target); err != nil {
-			return err
+		select {
+		case l.archiveReclaims <- struct{}{}:
+			go l.reclaimArchivedSandbox(context.WithoutCancel(ctx), target)
+		default:
+			if err := l.enqueueArchiveRetry(ctx, target); err != nil {
+				failures = append(failures, err)
+			}
 		}
 	}
-	return nil
+	return errors.Join(failures...)
+}
+
+func (l *SandboxLifecycle) reclaimArchivedSandbox(parent context.Context, target db.SandboxReclaimTarget) {
+	defer func() { <-l.archiveReclaims }()
+	ctx, cancel := context.WithTimeout(parent, archiveReclaimTimeout)
+	defer cancel()
+	if err := l.Reclaim(ctx, target); err != nil {
+		retryCtx, retryCancel := context.WithTimeout(parent, archiveRetryTimeout)
+		defer retryCancel()
+		failure := errors.Join(err, l.enqueueArchiveRetry(retryCtx, target))
+		l.logger.WarnContext(retryCtx, "archived sandbox reclamation deferred", "sandbox_id", target.SandboxUUID,
+			"organization_id", target.OrganizationUUID, "workspace_id", target.WorkspaceUUID, "error", failure)
+	}
+}
+
+func (l *SandboxLifecycle) enqueueArchiveRetry(ctx context.Context, target db.SandboxReclaimTarget) error {
+	if l.client == nil {
+		return errors.New("sandbox lifecycle River client is not configured")
+	}
+	return enqueueSandboxReclaim(ctx, l.client, target)
 }
 
 func enqueueSandboxReclaim(ctx context.Context, client *river.Client[*sql.Tx], target db.SandboxReclaimTarget) error {

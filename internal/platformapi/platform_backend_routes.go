@@ -198,6 +198,9 @@ func handleGetPlatformOrganization(store OrganizationStore) http.HandlerFunc {
 func handleUpdatePlatformOrganization(store OrganizationStore) http.HandlerFunc {
 	organizationStore, _ := store.(platformOrganizationUpdater)
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireOrganizationAdministrator(w, r) {
+			return
+		}
 		orgUUID, ok := visibleOrgUUID(w, r)
 		if !ok {
 			return

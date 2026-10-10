@@ -87,7 +87,7 @@ func TestAdminWorkspaceMapperInsert(t *testing.T) {
 func TestAdminWorkspaceMapperFindByIdentifier(t *testing.T) {
 	organizationUUID := "11111111-1111-4111-8111-111111111111"
 	workspaceUUID := "22222222-2222-4222-8222-222222222222"
-	wantValues := []any{organizationUUID, "wrkspc_mapper", workspaceUUID}
+	wantValues := []any{organizationUUID, "wrkspc_mapper", "wrkspc_mapper", workspaceUUID}
 
 	t.Run("not found", func(t *testing.T) {
 		executor := newMapperTestExecutor(t, mapperTestResponse{columns: adminWorkspaceMapperTestColumns()})
@@ -107,7 +107,7 @@ func TestAdminWorkspaceMapperFindByIdentifier(t *testing.T) {
 			yourbatis.StatementSelect,
 			wantValues,
 			"organization_uuid = $1",
-			"external_id = $2 OR uuid = $3",
+			"external_id = $3 OR uuid = $4",
 		)
 	})
 
@@ -131,11 +131,11 @@ func TestAdminWorkspaceMapperFindByIdentifier(t *testing.T) {
 			executor,
 			"AdminWorkspaceMapper.FindByIdentifier",
 			yourbatis.StatementSelect,
-			[]any{organizationUUID, "wrkspc_mapper"},
+			[]any{organizationUUID, "wrkspc_mapper", "wrkspc_mapper"},
 			"organization_uuid = $1",
-			"external_id = $2",
+			"external_id = $3",
 		)
-		if strings.Contains(executor.bound.SQL, "uuid = $3") {
+		if strings.Contains(executor.bound.SQL, "uuid = $4") {
 			t.Fatalf("FindByIdentifier() SQL unexpectedly contains UUID filter: %s", executor.bound.SQL)
 		}
 	})
@@ -270,6 +270,7 @@ func adminWorkspaceMapperTestColumns() []string {
 		"external_id",
 		"organization_uuid",
 		"name",
+		"is_default",
 		"created_at",
 		"updated_at",
 		"archived_at",
@@ -287,6 +288,7 @@ func adminWorkspaceMapperTestRow(externalID string, createdAt time.Time) []drive
 		externalID,
 		"11111111-1111-4111-8111-111111111111",
 		"Mapper workspace",
+		false,
 		createdAt,
 		createdAt,
 		nil,

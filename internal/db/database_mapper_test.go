@@ -39,20 +39,6 @@ func TestDatabaseSeedMapperBuilders(t *testing.T) {
 			wantSQLFragments:  []string{"INSERT INTO users", "ON CONFLICT (external_id)"},
 		},
 		{
-			statement: adminWorkspaceMemberMapperSeedDefaultStatement,
-			bound: buildAdminWorkspaceMemberMapperSeedDefault(yourbatis.DialectPostgres, seedAdminWorkspaceMemberParams{
-				ExternalID: "wmem_default", OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID,
-				WorkspaceExternalID: "workspace_default", UserUUID: userUUID, UserExternalID: "user_default",
-			}),
-			wantID:   "AdminWorkspaceMemberMapper.SeedDefault",
-			wantKind: yourbatis.StatementInsert,
-			wantArgumentNames: []string{
-				"params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
-				"params.WorkspaceExternalID", "params.UserUUID", "params.UserExternalID",
-			},
-			wantSQLFragments: []string{"INSERT INTO workspace_members", "ON CONFLICT (external_id)"},
-		},
-		{
 			statement: adminAPIKeyMapperSeedDefaultStatement,
 			bound: buildAdminAPIKeyMapperSeedDefault(yourbatis.DialectPostgres, seedAdminAPIKeyParams{
 				ExternalID: "api_key_default", WorkspaceUUID: workspaceUUID, KeyHash: "hash",

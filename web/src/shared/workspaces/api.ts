@@ -1,6 +1,10 @@
 import { consoleApi } from '../api/client';
 
 export type Workspace = {
+  is_default?: boolean;
+  effective_role?: string;
+  role_source?: string;
+  external_id?: string;
   id: string;
   type: 'workspace';
   name: string;
@@ -50,6 +54,7 @@ export type UpdateWorkspaceApiKeyStatusInput = {
 
 export const defaultWorkspace: Workspace = {
   id: 'default',
+  is_default: true,
   type: 'workspace',
   name: 'Default',
   display_color: '#9B87F5',

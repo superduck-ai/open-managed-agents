@@ -377,12 +377,12 @@ describe('Dashboard i18n', () => {
     expect(screen.getByRole('link', { name: 'View logs' }).getAttribute('href')).toBe('/logs');
     expect(screen.getByRole('link', { name: 'Manage' }).getAttribute('href')).toBe('/members');
     expect(screen.getByRole('switch', { name: 'Admin multi-factor authentication' })).toBeTruthy();
-    expect(screen.getByText('Current default: Required for admins and billing members')).toBeTruthy();
+    expect(screen.getByText('Current default: Required for admins')).toBeTruthy();
     expect(screen.getByText('Current default: Every 24 hours')).toBeTruthy();
     expect(screen.getByText('Current default: Admins only')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('switch', { name: 'Admin multi-factor authentication' }));
-    expect(screen.getByText('Current default: Optional for admins and billing members')).toBeTruthy();
+    expect(screen.getByText('Current default: Optional for admins')).toBeTruthy();
 
     const configureButtons = () => screen.getAllByRole('button', { name: 'Configure' });
 
@@ -408,11 +408,11 @@ describe('Dashboard i18n', () => {
 
     fireEvent.click(configureButtons()[1]);
     fireEvent.click(screen.getByRole('combobox', { name: 'Visibility' }));
-    selectOption('Admins and billing');
+    selectOption('All members');
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('Current default: Admins and billing')).toBeTruthy();
+    expect(screen.getByText('Current default: All members')).toBeTruthy();
   });
 
   test('uses shared shadcn card chrome for dashboard home and Claude Code usage', () => {

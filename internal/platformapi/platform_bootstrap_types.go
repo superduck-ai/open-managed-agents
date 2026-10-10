@@ -1,6 +1,7 @@
 package platformapi
 
 type Account struct {
+	Permissions               []string       `json:"permissions"`
 	TaggedID                  string         `json:"tagged_id"`
 	UUID                      string         `json:"uuid"`
 	EmailAddress              string         `json:"email_address"`

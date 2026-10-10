@@ -246,12 +246,6 @@ func (d *DB) GetMemoryStoresByExternalIDs(ctx context.Context, workspaceUUID str
 	return memoryStoresFromMapperRows(rows), nil
 }
 
-func (d *DB) GetMemoryStoreByExternalID(ctx context.Context, organizationUUID, externalID string) (MemoryStore, error) {
-	mapper := NewMemoryStoreMapper(d.mapperDB)
-	row, err := mapper.FindByOrganizationAndExternalID(ctx, organizationUUID, externalID)
-	return memoryStoreFromMapperRow(row, err)
-}
-
 func (d *DB) UpdateMemoryStore(ctx context.Context, workspaceUUID, externalID string, next MemoryStore) (MemoryStore, error) {
 	var updated MemoryStore
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {

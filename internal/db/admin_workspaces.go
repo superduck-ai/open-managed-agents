@@ -7,6 +7,7 @@ import (
 )
 
 type AdminWorkspace struct {
+	IsDefault        bool            `db:"is_default"`
 	UUID             string          `db:"uuid"`
 	ExternalID       string          `db:"external_id"`
 	OrganizationUUID string          `db:"organization_uuid"`

@@ -1,3 +1,4 @@
+import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
 import {
   ArrowLeft,
   BookOpen,
@@ -136,6 +137,7 @@ export function ConsoleLayout() {
   const { account, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const { activeWorkspaceId } = useWorkspace();
 
   const handleNavigate = useCallback(
     async (href: string) => {
@@ -151,7 +153,7 @@ export function ConsoleLayout() {
 
   return (
     <ConsoleShell account={account} currentPath={location.pathname} onLogout={handleLogout} onNavigate={handleNavigate}>
-      <Outlet />
+      <Outlet key={workspaceIdFromPath(location.pathname) || activeWorkspaceId} />
     </ConsoleShell>
   );
 }
@@ -491,13 +493,21 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
   const [createOpen, setCreateOpen] = useState(false);
   const { isMobile, state } = useSidebar();
   const collapsed = state === 'collapsed';
-  const { workspaces, activeWorkspace, activeWorkspaceId, selectWorkspace, isLoading, createWorkspace } =
-    useWorkspace();
+  const {
+    canManageWorkspaces,
+    workspaces,
+    activeWorkspace,
+    activeWorkspaceId,
+    selectWorkspace,
+    isLoading,
+    createWorkspace,
+  } = useWorkspace();
 
-  const handleSelect = (workspace: Workspace) => {
-    selectWorkspace(workspace.id);
+  const handleSelect = async (workspace: Workspace) => {
     setOpen(false);
-    void navigateToMatchingWorkspacePath(currentPath, workspace.id, onNavigate);
+    if (workspace.id === activeWorkspaceId) return;
+    await navigateToMatchingWorkspacePath(currentPath, workspace.id, onNavigate);
+    selectWorkspace(workspace.id);
   };
 
   const handleCreate = async (name: string, displayColor: string) => {
@@ -567,22 +577,37 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
               </div>
             </DropdownMenuGroup>
 
-            <DropdownMenuSeparator />
-
-            <DropdownMenuItem
-              className="gap-2 p-2"
-              onClick={() => {
-                setOpen(false);
-                setCreateOpen(true);
-              }}
-            >
-              <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background">
-                <Plus className="size-4" aria-hidden />
-              </span>
-              <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
-                {msg('workspace.create.title', 'Create workspace')}
-              </span>
-            </DropdownMenuItem>
+            {canManageWorkspaces ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="gap-2 p-2"
+                  onClick={() => {
+                    setOpen(false);
+                    setCreateOpen(true);
+                  }}
+                >
+                  <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background">
+                    <Plus className="size-4" aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
+                    {msg('workspace.create.title', 'Create workspace')}
+                  </span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="gap-2 p-2"
+                  render={<ShellLink href="/settings/workspaces" onNavigate={onNavigate} />}
+                  onClick={() => setOpen(false)}
+                >
+                  <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background">
+                    <Settings className="size-4" aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
+                    {msg('workspace.manage.title', 'Manage workspaces')}
+                  </span>
+                </DropdownMenuItem>
+              </>
+            ) : null}
 
             {isLoading ? (
               <div className="px-3 pt-2 text-xs text-muted-foreground">
@@ -717,6 +742,7 @@ export function AccountMenu({
   const [loggingOut, setLoggingOut] = useState(false);
   const identity = getIdentity(account);
   const { activeWorkspace, orgUuid } = useWorkspace();
+  const organizationRole = membershipRoleForOrganization(account?.memberships, orgUuid);
   const { locale, setLocale, supportedLocales: locales } = useLocale();
   const { msg } = useI18n();
 
@@ -767,7 +793,11 @@ export function AccountMenu({
                   <span className="block truncate text-sm font-medium text-sidebar-foreground">{identity.name}</span>
                   <span className="block truncate text-xs text-sidebar-foreground/70">
                     {msg('account.subtitle', '{role} · {workspaceName}', {
-                      role: accountRoleLabel(membershipRoleForOrganization(account?.memberships, orgUuid), msg),
+                      role: activeWorkspace.effective_role
+                        ? accountRoleLabel(activeWorkspace.effective_role, msg)
+                        : organizationRole
+                          ? accountRoleLabel(organizationRole, msg)
+                          : msg('account.role.unknown', 'Member'),
                       workspaceName: localizedWorkspaceName(activeWorkspace.name, msg),
                     })}
                   </span>
@@ -922,6 +952,9 @@ function openSidebarGroups(current: Record<string, boolean>, labels: string[]) {
 }
 
 function navigationHref(href: string, workspaceId: string) {
+  if (href === '/cost' || href === '/logs') {
+    return workspaceSwitchPath(href, workspaceId);
+  }
   if (href === '/api-keys') {
     return workspaceApiKeysPath(workspaceId);
   }
@@ -946,43 +979,7 @@ function navigationHref(href: string, workspaceId: string) {
 }
 
 async function navigateToMatchingWorkspacePath(currentPath: string, workspaceId: string, onNavigate?: NavigateHandler) {
-  const encodedWorkspaceId = encodeURIComponent(workspaceId || 'default');
-  let nextPath: string | undefined;
-
-  if (currentPath === '/api-keys') {
-    nextPath = workspaceApiKeysPath(workspaceId);
-  } else if (currentPath === '/webhooks') {
-    nextPath = workspaceWebhooksPath(workspaceId);
-  } else if (/^\/settings\/workspaces\/[^/]+\/mcp-tunnels(?:\/[^/]+)?\/?$/.test(currentPath)) {
-    nextPath = workspaceMcpTunnelsPath(workspaceId);
-  } else {
-    for (const [href, buildPath] of Object.entries(workspaceBuildPathByHref)) {
-      if (currentPath === href) {
-        nextPath = `/workspaces/${encodedWorkspaceId}/${buildPath}`;
-        break;
-      }
-    }
-
-    for (const [href, managedPath] of Object.entries(managedAgentPathByHref)) {
-      if (!nextPath && currentPath === href) {
-        nextPath = `/workspaces/${encodedWorkspaceId}/${managedPath}`;
-        break;
-      }
-    }
-  }
-
-  nextPath ??= currentPath
-    .replace(/^\/settings\/workspaces\/[^/]+\/keys/, workspaceApiKeysPath(workspaceId))
-    .replace(/^\/settings\/workspaces\/[^/]+\/webhooks/, workspaceWebhooksPath(workspaceId))
-    .replace(/^\/settings\/workspaces\/[^/]+\/mcp-tunnels(?:\/[^/]+)?/, workspaceMcpTunnelsPath(workspaceId))
-    .replace(
-      /^\/workspaces\/[^/]+\/(llm-models|playground|files|skills|mcp-servers|batches)/,
-      `/workspaces/${encodedWorkspaceId}/$1`,
-    )
-    .replace(
-      /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|observability|deployments|environments|vaults|memory-stores|dreams)/,
-      `/workspaces/${encodedWorkspaceId}/$1`,
-    );
+  const nextPath = workspaceSwitchPath(currentPath, workspaceId);
 
   if (nextPath === currentPath) {
     return;
@@ -1051,7 +1048,7 @@ function isActivePath(currentPath: string, href: string) {
 
 function isWideConsolePath(currentPath: string) {
   return (
-    currentPath === '/api-keys' ||
+    ['/api-keys', '/members', '/settings/members'].includes(currentPath) ||
     /^\/settings\/workspaces\/[^/]+\/keys/.test(currentPath) ||
     currentPath === '/webhooks' ||
     /^\/settings\/workspaces\/[^/]+\/webhooks/.test(currentPath) ||

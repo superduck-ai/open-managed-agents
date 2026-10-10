@@ -57,7 +57,7 @@ func TestTunnelConsoleWorkspaceAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = app.db.CreateAdminWorkspaceMember(t.Context(), db.AdminWorkspaceMember{ExternalID: "wmem_tunnel_review", OrganizationUUID: org, WorkspaceUUID: workspace.UUID, WorkspaceExternalID: workspace.ExternalID, UserUUID: session.UserUUID, UserExternalID: session.UserExternalID, WorkspaceRole: "workspace_developer", CreatedAt: time.Now().UTC()}); err != nil {
+	if _, err = app.db.CreateAdminWorkspaceMember(t.Context(), db.AdminWorkspaceMember{ExternalID: "wmem_tunnel_review", OrganizationUUID: org, WorkspaceUUID: workspace.UUID, WorkspaceExternalID: workspace.ExternalID, UserUUID: session.UserUUID, UserExternalID: session.UserExternalID, WorkspaceRole: "workspace_user", CreatedAt: time.Now().UTC()}); err != nil {
 		t.Fatal(err)
 	}
 	response := app.platformRequestWithHeaders(t, "GET", path, nil, cookies, nil)

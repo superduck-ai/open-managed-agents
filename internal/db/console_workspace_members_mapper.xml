@@ -21,5 +21,6 @@
         WHERE wm.organization_uuid = #{params.OrgUUID}
         AND wm.user_uuid = u.uuid
         AND wm.deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM workspaces w WHERE w.uuid = wm.workspace_uuid AND NOT w.is_default)
     </update>
 </mapper>

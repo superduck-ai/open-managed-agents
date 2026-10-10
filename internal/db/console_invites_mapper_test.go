@@ -83,7 +83,7 @@ func TestConsoleInviteMapperInsert(t *testing.T) {
 		ExternalID:       "invite_mapper",
 		OrganizationUUID: "11111111-1111-4111-8111-111111111111",
 		Email:            "invitee@example.com",
-		Role:             "developer",
+		Role:             "user",
 		InvitedAt:        invitedAt,
 		ExpiresAt:        invitedAt.Add(21 * 24 * time.Hour),
 	}
@@ -221,7 +221,7 @@ func consoleInviteMapperTestRow(externalID, status string, invitedAt time.Time) 
 	return []driver.Value{
 		externalID,
 		"invitee@example.com",
-		"developer",
+		"user",
 		status,
 		invitedAt,
 		invitedAt.Add(21 * 24 * time.Hour),

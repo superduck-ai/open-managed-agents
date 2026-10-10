@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -145,4 +146,19 @@ func consoleWorkspaceAPIKeyTestRequest(workspaceReference string) *http.Request 
 	contextWithRoute := context.WithValue(request.Context(), chi.RouteCtxKey, routeContext)
 	contextWithPrincipal := auth.WithPrincipal(contextWithRoute, auth.Principal{OrganizationUUID: orgUUID})
 	return request.WithContext(contextWithPrincipal)
+}
+
+func (s *consoleAPIKeyScopeStore) GetAdminUser(_ context.Context, orgUUID, userID string) (db.AdminUser, error) {
+	return db.AdminUser{UUID: "00000000-0000-4000-8000-000000000003", ExternalID: userID, OrganizationUUID: orgUUID, Role: "admin"}, nil
+}
+func (s *consoleAPIKeyScopeStore) GetAdminWorkspace(_ context.Context, orgUUID, workspaceID string) (db.AdminWorkspace, error) {
+	for _, workspace := range s.workspaces {
+		if workspace.UUID == workspaceID || workspace.ExternalID == workspaceID {
+			return db.AdminWorkspace{UUID: workspace.UUID, ExternalID: workspace.ExternalID, OrganizationUUID: orgUUID, IsDefault: workspace.IsDefault}, nil
+		}
+	}
+	return db.AdminWorkspace{}, db.ErrNotFound
+}
+func (s *consoleAPIKeyScopeStore) GetAdminWorkspaceMember(context.Context, string, string, string) (db.AdminWorkspaceMember, error) {
+	return db.AdminWorkspaceMember{}, db.ErrNotFound
 }

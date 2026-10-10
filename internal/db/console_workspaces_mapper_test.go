@@ -9,7 +9,7 @@ import (
 
 func TestConsoleWorkspaceMapperBuilders(t *testing.T) {
 	orgUUID := "11111111-1111-4111-8111-111111111111"
-	params := upsertConsoleWorkspaceParams{
+	params := insertConsoleWorkspaceParams{
 		UUID:          "22222222-2222-4222-8222-222222222222",
 		ExternalID:    "workspace_external",
 		OrgUUID:       orgUUID,
@@ -19,12 +19,12 @@ func TestConsoleWorkspaceMapperBuilders(t *testing.T) {
 	}
 
 	assertMapperBuilderContract(t, mapperBuilderContract{
-		statement:         consoleWorkspaceMapperUpsertStatement,
-		bound:             buildConsoleWorkspaceMapperUpsert(yourbatis.DialectPostgres, params),
-		wantID:            "ConsoleWorkspaceMapper.Upsert",
+		statement:         consoleWorkspaceMapperInsertStatement,
+		bound:             buildConsoleWorkspaceMapperInsert(yourbatis.DialectPostgres, params),
+		wantID:            "ConsoleWorkspaceMapper.Insert",
 		wantKind:          yourbatis.StatementInsert,
 		wantArgumentNames: []string{"params.OrgUUID", "params.UUID", "params.ExternalID", "params.Name", "params.ExternalID", "params.DisplayColor", "params.DataResidency"},
-		wantSQLFragments:  []string{"WITH org AS", "INSERT INTO workspaces", "CAST($7 AS jsonb)", "ON CONFLICT", "RETURNING"},
+		wantSQLFragments:  []string{"WITH org AS", "INSERT INTO workspaces", "CAST($7 AS jsonb)", "RETURNING"},
 	})
 
 	t.Run("active only", func(t *testing.T) {

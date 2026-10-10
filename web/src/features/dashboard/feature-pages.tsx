@@ -242,8 +242,8 @@ export function ClaudeCodeSettingsPage() {
       label: msg('claudeCode.settings.workspacePermissions.optionSeatHolders', 'Members with a Claude Code seat'),
     },
     {
-      value: 'developers-and-admins',
-      label: msg('claudeCode.settings.workspacePermissions.optionDevelopers', 'Developers and admins'),
+      value: 'all-members',
+      label: msg('claudeCode.settings.workspacePermissions.optionAllMembers', 'All members'),
     },
     {
       value: 'disabled',

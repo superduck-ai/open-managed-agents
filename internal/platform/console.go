@@ -19,6 +19,9 @@ type AdminRequest struct {
 }
 
 type ConsoleWorkspace struct {
+	IsDefault             bool
+	EffectiveRole         string
+	RoleSource            string
 	UUID                  string
 	ExternalID            string
 	OrgUUID               string

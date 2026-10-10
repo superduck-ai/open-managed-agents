@@ -15,7 +15,7 @@ import {
 import { Field, FieldDescription, FieldLabel } from '../../shared/ui/field';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
 
-type BillingAudience = 'billing-members' | 'admins-and-billing' | 'all-members';
+type BillingAudience = 'admins' | 'all-members';
 type BillingCadence = 'weekly' | 'monthly' | 'quarterly';
 
 export function BillingSettingsPage() {
@@ -23,14 +23,7 @@ export function BillingSettingsPage() {
   const audienceOptions = useMemo(
     () =>
       [
-        {
-          value: 'billing-members',
-          label: msg('billing.option.billingMembers', 'Billing members only'),
-        },
-        {
-          value: 'admins-and-billing',
-          label: msg('billing.option.adminsAndBilling', 'Admins and billing members'),
-        },
+        { value: 'admins', label: msg('billing.option.admins', 'Admins only') },
         {
           value: 'all-members',
           label: msg('billing.option.allMembers', 'All members'),
@@ -48,10 +41,10 @@ export function BillingSettingsPage() {
     [msg],
   );
 
-  const [invoiceAudience, setInvoiceAudience] = useState<BillingAudience>('admins-and-billing');
+  const [invoiceAudience, setInvoiceAudience] = useState<BillingAudience>('admins');
   const [invoiceAudienceDraft, setInvoiceAudienceDraft] = useState<BillingAudience>(invoiceAudience);
   const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false);
-  const [costVisibility, setCostVisibility] = useState<BillingAudience>('billing-members');
+  const [costVisibility, setCostVisibility] = useState<BillingAudience>('admins');
   const [costVisibilityDraft, setCostVisibilityDraft] = useState<BillingAudience>(costVisibility);
   const [costVisibilityDialogOpen, setCostVisibilityDialogOpen] = useState(false);
   const [statementCadence, setStatementCadence] = useState<BillingCadence>('monthly');

@@ -64,6 +64,7 @@ func newWorkbenchHandler(store OrganizationStore, secretService *secrets.Service
 }
 
 func (h *workbenchHandler) registerRoutes(r chi.Router) {
+	r = r.With(h.authorizeWorkspace)
 	r.Get("/models", h.handleWorkbenchModels)
 	r.Get("/rate_limits_v2", h.handleWorkbenchRateLimitsV2)
 	r.Get("/workspaces/{workspaceId}/rate_limits", h.handleWorkbenchWorkspaceRateLimits)

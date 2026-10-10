@@ -5,12 +5,6 @@
         FROM users u
         WHERE LOWER(u.email) = LOWER(#{email})
         AND u.deleted_at IS NULL
-        AND EXISTS (
-            SELECT 1 FROM workspace_members wm
-            WHERE wm.organization_uuid = u.organization_uuid
-            AND wm.user_uuid = u.uuid
-            AND wm.deleted_at IS NULL
-        )
         ORDER BY u.added_at ASC, u.uuid ASC
         LIMIT 1
     </select>
@@ -36,7 +30,7 @@
         FROM users u
         JOIN LATERAL (
             SELECT uuid, external_id FROM workspaces
-            WHERE organization_uuid = u.organization_uuid AND archived_at IS NULL
+            WHERE organization_uuid = u.organization_uuid AND archived_at IS NULL AND is_default
             ORDER BY CASE WHEN external_id = 'workspace_default' THEN 0 ELSE 1 END,
                 created_at ASC, uuid ASC
             LIMIT 1

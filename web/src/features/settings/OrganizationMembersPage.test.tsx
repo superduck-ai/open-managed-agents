@@ -257,7 +257,7 @@ function mockMembersApi(options: { failMembersOnce?: boolean; failInvitesOnce?: 
       id: 'invite_pending',
       type: 'invite',
       email: 'pending@example.com',
-      role: 'billing',
+      role: 'user',
       status: 'pending',
       invited_at: '2026-06-24T00:00:00Z',
       expires_at: '2026-07-15T00:00:00Z',

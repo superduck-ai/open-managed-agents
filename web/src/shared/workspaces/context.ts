@@ -3,6 +3,7 @@ import type { AuthAccount } from '../auth/api';
 import { defaultWorkspace, type CreateWorkspaceInput, type Workspace } from './api';
 
 export type WorkspaceContextValue = {
+  canManageWorkspaces?: boolean;
   orgUuid?: string;
   workspaces: Workspace[];
   activeWorkspace: Workspace;

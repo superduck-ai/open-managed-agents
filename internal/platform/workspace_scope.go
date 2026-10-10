@@ -2,7 +2,6 @@ package platform
 
 import (
 	"strings"
-	"time"
 )
 
 const DefaultWorkspaceDisplayID = "default"
@@ -32,52 +31,12 @@ func ResolveWorkspaceScope(reference string, workspaces []ConsoleWorkspace) (Wor
 }
 
 func resolveDefaultWorkspaceScope(workspaces []ConsoleWorkspace) (WorkspaceScope, error) {
-	var selected *ConsoleWorkspace
-	for index := range workspaces {
-		candidate := &workspaces[index]
-		if candidate.ArchivedAt != nil || strings.TrimSpace(candidate.UUID) == "" {
-			continue
-		}
-		if selected == nil || defaultWorkspaceLess(*candidate, *selected) {
-			selected = candidate
+	for _, workspace := range workspaces {
+		if workspace.IsDefault && workspace.ArchivedAt == nil {
+			return workspaceScope(workspace, DefaultWorkspaceDisplayID), nil
 		}
 	}
-	if selected == nil {
-		return WorkspaceScope{}, ErrNotFound
-	}
-	return workspaceScope(*selected, DefaultWorkspaceDisplayID), nil
-}
-
-func defaultWorkspaceLess(left ConsoleWorkspace, right ConsoleWorkspace) bool {
-	leftRank := defaultWorkspaceRank(left)
-	rightRank := defaultWorkspaceRank(right)
-	if leftRank != rightRank {
-		return leftRank < rightRank
-	}
-	if !left.CreatedAt.Equal(right.CreatedAt) {
-		return workspaceCreatedBefore(left.CreatedAt, right.CreatedAt)
-	}
-	return strings.TrimSpace(left.UUID) < strings.TrimSpace(right.UUID)
-}
-
-func defaultWorkspaceRank(workspace ConsoleWorkspace) int {
-	if strings.TrimSpace(workspace.ExternalID) == "workspace_default" {
-		return 0
-	}
-	if strings.EqualFold(strings.TrimSpace(workspace.Name), DefaultWorkspaceDisplayID) {
-		return 1
-	}
-	return 2
-}
-
-func workspaceCreatedBefore(left time.Time, right time.Time) bool {
-	if left.IsZero() {
-		return !right.IsZero()
-	}
-	if right.IsZero() {
-		return false
-	}
-	return left.Before(right)
+	return WorkspaceScope{}, ErrNotFound
 }
 
 func workspaceScope(workspace ConsoleWorkspace, displayID string) WorkspaceScope {

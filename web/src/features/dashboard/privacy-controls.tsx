@@ -11,7 +11,7 @@ import { useI18n } from '../../shared/i18n';
 import { ConsolePageFrame, SettingRow } from './frame';
 
 type RetentionWindow = '30-days' | '90-days' | '1-year' | 'indefinite';
-type ExportAccess = 'admins' | 'billing-and-admins' | 'disabled';
+type ExportAccess = 'admins' | 'disabled';
 
 export function PrivacyControlsPage() {
   const { msg } = useI18n();
@@ -39,10 +39,6 @@ export function PrivacyControlsPage() {
     () =>
       [
         { value: 'admins', label: msg('privacyControls.exports.optionAdmins', 'Admins only') },
-        {
-          value: 'billing-and-admins',
-          label: msg('privacyControls.exports.optionBilling', 'Billing and admins'),
-        },
         { value: 'disabled', label: msg('privacyControls.exports.optionDisabled', 'Disabled') },
       ] satisfies Array<{ value: ExportAccess; label: string }>,
     [msg],

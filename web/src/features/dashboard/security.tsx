@@ -12,7 +12,7 @@ import { useI18n } from '../../shared/i18n';
 import { ConsolePageFrame, SecondaryAction, SettingRow } from './frame';
 
 type ReauthenticationWindow = '12-hours' | '24-hours' | '7-days';
-type SecurityActivityVisibility = 'admins' | 'admins-and-billing' | 'all-members';
+type SecurityActivityVisibility = 'admins' | 'all-members';
 
 export function SecurityPage() {
   const { msg } = useI18n();
@@ -39,10 +39,6 @@ export function SecurityPage() {
     () =>
       [
         { value: 'admins', label: msg('security.visibility.optionAdmins', 'Admins only') },
-        {
-          value: 'admins-and-billing',
-          label: msg('security.visibility.optionBilling', 'Admins and billing'),
-        },
         { value: 'all-members', label: msg('security.visibility.optionAllMembers', 'All members') },
       ] satisfies Array<{ value: SecurityActivityVisibility; label: string }>,
     [msg],
@@ -95,7 +91,7 @@ export function SecurityPage() {
             title={
               <SecuritySettingTitle
                 title={msg('security.mfa.title', 'Admin multi-factor authentication')}
-                tooltip={msg('security.mfa.tooltip', 'Applies the next time an admin or billing member signs in.')}
+                tooltip={msg('security.mfa.tooltip', 'Applies the next time an admin signs in.')}
               />
             }
             body={msg(
@@ -104,8 +100,8 @@ export function SecurityPage() {
             )}
             detail={
               adminMfaRequired
-                ? msg('security.mfa.enabledDetail', 'Current default: Required for admins and billing members')
-                : msg('security.mfa.disabledDetail', 'Current default: Optional for admins and billing members')
+                ? msg('security.mfa.enabledDetail', 'Current default: Required for admins')
+                : msg('security.mfa.disabledDetail', 'Current default: Optional for admins')
             }
             action={
               <Switch

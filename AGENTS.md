@@ -38,6 +38,10 @@
 - 不要通过 `nolint`、ESLint disable 注释、忽略新增生产文件或提高复杂度阈值来绕过失败。确需调整预算时，必须同时说明无法拆分的边界原因，并更新 `docs/design/development-complexity-guardrails.md`。
 - pre-commit 和 `.github/workflows/complexity.yml` 都调用仓库固定的复杂度配置；本地验收入口为 `just complexity`。
 
+## 代码注释
+
+- 禁止代码注释。
+
 ## 命名规范
 
 - Go package 名使用简短的小写单词；导出类型、函数和方法使用 PascalCase，未导出标识符使用 mixedCaps。缩写保持 Go 惯例并在同一标识符中一致，例如 `API`、`HTTP`、`ID`、`URL`、`UUID`；接收器名应简短且在同一类型的方法中一致。
@@ -168,8 +172,18 @@
 
 ## 测试要求
 
+- Agent 不得自动运行 `verify-be`。只有用户明确要求时才可执行，包括 doctor、test、功能场景和性能基线；修改代码、修复问题、提交或更新 PR 本身不构成运行授权。本节的静态检查和普通单测要求仍然适用。
+- 用户要求真实集成验证时，按改动影响选择最小场景集合。同一批改动完成后统一运行，不在每次中间编辑后重复执行；整域或全量回归及性能基线比较按用户指定范围执行。
+- 获得运行要求后，使用项目的 [verify-be Skill](.agents/skills/verify-be/SKILL.md)，阅读相关功能地图，并先运行对应 domain 的 doctor。不因 Skill 列出了全部场景而每次全量运行。未运行时说明未覆盖范围。
+- Transcript 的归档、导出、还原、物理删除、pending 回收和对象完整性按功能地图选择相关场景；五个场景用于完整 Transcript 验收。这些场景覆盖真实 PostgreSQL/MinIO、维护 CLI 与进程内服务调用，不代表 River 定时调度、自动重试或生产性能验证。
+- 聊天会话的输入投递、Worker 协议、工具确认、模型代理、SSE、历史恢复、跨实例交付和 Runner 启动按受影响行为选择场景；场景范围和性能基线流程维护在 Skill 中。
+- Files 的上传、元数据、下载、删除、租户隔离、对象存储和清理按功能地图选择相关场景；九个本地功能场景用于完整 Files 验收。`files generated` 需要真实 Worker 镜像与 FUSE，运行前使用 `just verify-be files doctor generated`；其他 Files 场景不要求 Worker。云端适配器验证使用显式私有配置，缺少配置必须报告 blocked，不能以本地模拟结果代替。
+- Memory store、Filestore 读写、挂载权限、跨会话生命周期和对象清理按功能地图选择相关场景；完整验收运行 `integrity`、`isolation`、`cleanup`、`lifecycle`、`filestore`。真实挂载另运行 `just verify-be memory doctor mounts` 与 `just verify-be memory mounts`；前五个场景无需 Worker。清理重试由测试显式驱动，不代表后台重试时序验收。
+- 聊天验证使用现有 Go CLI，不另写临时编排脚本或重新引入 Python。生成、构建和质量检查与验证串行执行，验证期间不修改源码。此验证不替代本节要求的静态检查和单测。
+- 执行了 `verify-be` 时，交付列出实际运行的场景、结果、`report.json` / `report.md` 路径和未覆盖范围；性能比较同时给出基准提交和报告。skip、缺少依赖、未完成、清理失败或不兼容基线均不能报告为通过，不得更新基线或放宽阈值掩盖退化。
+
 - 测试组织顺序应先写失败场景，再写成功场景。
-- `*.gen.go` 不纳入版本控制；干净 checkout 在直接运行 Go 编译、测试或静态分析前先执行 `./scripts/generate-go.sh`（先清空 `internal/db/**/*.sqlmap.gen.go`，再 `go generate ./internal/db`，避免已删除 Mapper 的残留生成文件参与编译）。仓库标准 `just` 命令会自动完成生成。
+- `*.gen.go` 不纳入版本控制；干净 checkout 在直接运行 Go 编译、测试或静态分析前先执行 `./scripts/generate-go.sh`（先清空 `internal/db/**/*.sqlmap.gen.go`，再 `go generate ./internal/db`，避免已删除 Mapper 的残留生成文件参与编译）。测试、静态检查、CI 和 Docker 构建继续使用无参数的全量生成入口。`just server`、`just restart-server` 和直接调用重启脚本使用 `./scripts/generate-go.sh --cached`；只有输入与生成产物的路径和内容摘要均一致时才跳过生成。缓存位于当前 worktree 的 `tmp/go-generation/`，两个模式共用文件锁；生成失败或中断后不得保留有效缓存。生成检查在停止旧服务前执行。
 - 修改 `web/` 下的文件后，运行 `just web-format-check`，确保 Prettier 格式门禁通过。
 - 修改 Go 代码后，运行 `just lint`；该命令使用仓库根目录的 `.golangci.yml` 执行与 CI 相同的静态分析和格式检查。
 - 修改 schema 或 handler 后，运行 `just test`（等价于先生成 Go 源码，再运行 `go test ./... -count=1`）。

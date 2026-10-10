@@ -45,7 +45,6 @@ function AuthenticatedInvitationsPage() {
   const returnTo = invitationReturnTo(returnToFromSearch(location.searchStr));
   const onResolved = useCallback(
     async (action: 'accept' | 'decline' | null, remaining: number) => {
-      // 接受只增加成员身份；返回首页时保留原组织和工作区。
       if (action === 'accept' || remaining === 0) await navigate({ href: '/', replace: true });
     },
     [navigate],

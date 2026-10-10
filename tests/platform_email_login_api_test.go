@@ -272,7 +272,7 @@ func TestPlatformWorkspaceHeaderScopesV1Resources(t *testing.T) {
 		WorkspaceExternalID: customWorkspace.ExternalID,
 		UserUUID:            platformSession.UserUUID,
 		UserExternalID:      platformSession.UserExternalID,
-		WorkspaceRole:       "workspace_developer",
+		WorkspaceRole:       "workspace_user",
 		CreatedAt:           time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("create custom workspace membership: %v", err)

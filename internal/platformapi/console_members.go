@@ -58,7 +58,7 @@ func formatConsoleMember(user OrgUser) map[string]any {
 		"type":     "user",
 		"email":    user.Email,
 		"name":     consoleMemberName(user),
-		"role":     consoleMemberRole(user.Role),
+		"role":     user.Role,
 		"added_at": isoTime(user.AddedAt),
 	}
 }
@@ -68,17 +68,6 @@ func consoleMemberName(user OrgUser) string {
 		return *user.FullName
 	}
 	return user.Email
-}
-
-func consoleMemberRole(role string) string {
-	switch strings.TrimSpace(strings.ToLower(role)) {
-	case "admin", "owner", "primary_owner", "membership_admin":
-		return "admin"
-	case "developer", "billing", "claude_code_user":
-		return strings.TrimSpace(strings.ToLower(role))
-	default:
-		return "user"
-	}
 }
 
 func handleUpdateConsoleMember(store OrganizationStore) http.HandlerFunc {
@@ -148,14 +137,11 @@ func handleDeleteConsoleMember(store OrganizationStore) http.HandlerFunc {
 }
 
 func normalizeConsoleMemberRole(role string) string {
-	switch strings.TrimSpace(strings.ToLower(role)) {
-	case "user", "developer", "billing", "admin", "claude_code_user":
-		return strings.TrimSpace(strings.ToLower(role))
-	case "member":
-		return "user"
-	default:
-		return ""
+	role = strings.TrimSpace(strings.ToLower(role))
+	if role == "user" || role == "admin" {
+		return role
 	}
+	return ""
 }
 
 func taggedUserID(userUUID string) string {

@@ -11,7 +11,6 @@ import {
   type DisplayEventType,
   type I18nMsg,
   type IdleGapEntry,
-  type QueuedBoundaryEntry,
   type QuickstartSessionEvent,
   type SessionApiResponse,
   type SessionDetailLane,
@@ -24,7 +23,13 @@ import {
   type SessionTimelineLane,
   type ToolCallEntry,
 } from '../types';
-import { compactEntityId, numericValueFromKeys, sessionListCost, toRecord } from '../utils';
+import {
+  compactEntityId,
+  numericValueFromKeys,
+  optionalNumericValueFromKeys,
+  sessionListCost,
+  toRecord,
+} from '../utils';
 import { Bot, Clock3, Cloud, LockKeyhole, ReceiptText, Timer } from 'lucide-react';
 import { SESSION_ARCHIVED_LANES_STORAGE_KEY, SESSION_MAIN_LANE_ID } from './sessionTimeline';
 import {
@@ -185,9 +190,6 @@ export function buildSessionTimeline(
 }
 
 export function sessionTimelineItemFromEntry(entry: SessionEventListEntry): SessionTimelineItem | null {
-  if (entry.kind === 'queued_boundary') {
-    return null;
-  }
   if (entry.kind === 'idle_gap') {
     return {
       id: entry.id,
@@ -201,9 +203,6 @@ export function sessionTimelineItemFromEntry(entry: SessionEventListEntry): Sess
     };
   }
   if (!Number.isFinite(entry.processedAtMs)) {
-    return null;
-  }
-  if (entry.kind === 'message' && entry.displayEvent.isQueued) {
     return null;
   }
   if (entry.kind === 'passthrough' && entry.displayEvent.isStreaming) {
@@ -324,7 +323,7 @@ export function buildSessionTimelineVisibleIds(
 
 export function sessionDetailEventCopyPayload(entries: SessionEventListEntry[]) {
   const selectableEntries = entries.filter(
-    (entry): entry is Exclude<SessionEventListEntry, IdleGapEntry | QueuedBoundaryEntry> => 'traceEntry' in entry,
+    (entry): entry is Exclude<SessionEventListEntry, IdleGapEntry> => 'traceEntry' in entry,
   );
   return selectableEntries
     .map((entry) => {
@@ -605,7 +604,7 @@ export function sessionStatusFromEventType(type: string) {
 }
 
 export function sessionEventUpdateTimestamp(event: QuickstartSessionEvent, fallback: string) {
-  return sessionNullableProcessedAt(event) ?? (typeof event.created_at === 'string' ? event.created_at : fallback);
+  return sessionNullableProcessedAt(event) ?? fallback;
 }
 
 export function sessionShouldStreamEvents(session: Pick<SessionApiResponse, 'archived_at' | 'status'> | null) {
@@ -791,13 +790,14 @@ export function aggregateSessionModelUsage(value: unknown) {
 }
 
 export function sessionEventDurationMs(event: QuickstartSessionEvent) {
-  return numericValueFromKeys(event, [
+  const durationMs = optionalNumericValueFromKeys(event, [
     'duration_ms',
     'elapsed_ms',
     'latency_ms',
     'run_time_ms',
     'processing_duration_ms',
   ]);
+  return durationMs !== undefined && durationMs >= 0 ? durationMs : undefined;
 }
 
 export function formatCompactTokenCount(value: number, formatters: ReturnType<typeof useFormatters>) {

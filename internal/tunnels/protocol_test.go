@@ -18,15 +18,15 @@ func TestServerInfoRejectsUnsupportedSchema(t *testing.T) {
 	}
 }
 
-func TestServerInfoAcceptsIndependentVersionTwoCapabilities(t *testing.T) {
+func TestServerInfoUsesOnlyChannelNames(t *testing.T) {
 	channels, err := ParseMCPServerInfo(`{"version":2,"channels":[{"name":"main"},{"name":"stdio","proc_affinity":true},{"name":"stateless","stateless":true},{"name":"harpoon","stateless":true,"proc_affinity":true}]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(channels) != 4 || channels[0].Stateless || !channels[1].ProcessAffinity || channels[1].Stateless || !channels[2].Stateless || channels[2].ProcessAffinity || !channels[3].Stateless || !channels[3].ProcessAffinity {
+	if len(channels) != 4 || channels[3].Name != "harpoon" {
 		t.Fatalf("capabilities = %+v", channels)
 	}
-	if legacy, err := ParseMCPServerInfo(`{"version":1,"channels":[{"name":"main","proc_affinity":true}]}`); err != nil || len(legacy) != 1 || !legacy[0].ProcessAffinity {
+	if legacy, err := ParseMCPServerInfo(`{"version":1,"channels":[{"name":"main","proc_affinity":true}]}`); err != nil || len(legacy) != 1 || legacy[0].Name != "main" {
 		t.Fatalf("v1 = %+v, %v", legacy, err)
 	}
 }

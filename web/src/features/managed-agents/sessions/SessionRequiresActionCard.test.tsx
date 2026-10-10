@@ -42,7 +42,6 @@ describe('SessionRequiresActionCard', () => {
       label: 'Bash',
       content: 'npm test',
       event: { id: 'evt_bash_123', type: 'agent.tool_use', name: 'Bash', input: { command: 'npm test' } },
-      isQueued: false,
       isStreaming: false,
       isError: false,
       createdAtMs: Date.now(),

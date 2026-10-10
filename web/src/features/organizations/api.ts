@@ -8,10 +8,7 @@ export function invitationReturnTo(value?: string) {
 
 const organizationRoleLabels: Record<string, string> = {
   admin: '管理员',
-  developer: '开发者',
-  billing: '财务',
   user: '用户',
-  claude_code_user: 'Claude Code 用户',
 };
 
 export function organizationRoleLabel(role?: string) {

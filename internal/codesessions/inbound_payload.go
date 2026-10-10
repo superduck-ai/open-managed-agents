@@ -61,20 +61,10 @@ func (s *Service) prepareInboundEvent(
 		expiresAt,
 	)
 	cleanupJobID := ""
-	// Count the actual payload bytes; still validate the final transport envelope.
 	if workerevents.ExceedsLargePayload(len(metadata.Payload)) {
 		cleanupJobID, err = s.offloadInboundPayload(ctx, codeSession, source, eventID, expiresAt, &envelope)
 		if err != nil {
 			return preparedInboundEvent{}, err
-		}
-		encoded, err := json.Marshal(envelope)
-		if err != nil {
-			s.triggerPayloadCleanupNow(ctx, cleanupJobID)
-			return preparedInboundEvent{}, err
-		}
-		if len(encoded) > workerevents.MaxMessageBytes {
-			s.triggerPayloadCleanupNow(ctx, cleanupJobID)
-			return preparedInboundEvent{}, fmt.Errorf("worker event envelope exceeds %d bytes", workerevents.MaxMessageBytes)
 		}
 	}
 	return preparedInboundEvent{messageID: eventID, envelope: envelope, cleanupJobID: cleanupJobID}, nil

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-//go:generate go tool sqlmapgen -dir $PWD -mapper InvitationMapper -sql ./invitation.xml -out ./invitation.sqlmap.gen.go -dialect postgres
+//go:generate go tool sqlmapgen -dir $PWD -mapper InvitationMapper -sql ./invitation_mapper.xml -out ./invitation_mapper.sqlmap.gen.go -dialect postgres
 
 type invitationRow struct {
 	ID               string    `db:"id"`

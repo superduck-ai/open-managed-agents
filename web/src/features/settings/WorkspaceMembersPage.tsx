@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Info, UsersRound } from 'lucide-react';
 import { consoleApi } from '../../shared/api/client';
+import { accountRoleLabel } from '../../shared/permissions/roles';
 import { useI18n } from '../../shared/i18n';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { ButtonLink } from '../../shared/ui/button';
@@ -61,7 +62,7 @@ export function WorkspaceMembersPage() {
       ) : (
         <DataTable
           columns={[msg('members.userId', 'User ID'), msg('members.role', 'Role')]}
-          rows={(members.data ?? []).map((member) => [member.user_id, member.workspace_role])}
+          rows={(members.data ?? []).map((member) => [member.user_id, accountRoleLabel(member.workspace_role, msg)])}
         />
       )}
     </ConsolePageFrame>

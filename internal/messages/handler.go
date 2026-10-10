@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
@@ -50,10 +51,11 @@ var responseHeadersToRemove = map[string]struct{}{
 
 // Handler 校验顶层 model 后按原样转发请求体。
 type Handler struct {
-	database *db.DB
-	secrets  *secrets.Service
-	client   *http.Client
-	logger   *slog.Logger
+	codeSessions *codesessions.Service
+	database     *db.DB
+	secrets      *secrets.Service
+	client       *http.Client
+	logger       *slog.Logger
 }
 
 // flushingResponseWriter 在每次复制一块响应后主动 flush，避免 SSE 被 net/http 缓冲。
@@ -63,9 +65,9 @@ type flushingResponseWriter struct {
 }
 
 // NewHandler 创建复用连接池的 Messages 代理 handler。
-func NewHandler(database *db.DB, secretService *secrets.Service, logger *slog.Logger) *Handler {
+func NewHandler(database *db.DB, secretService *secrets.Service, codeSessionService *codesessions.Service, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	return &Handler{database: database, secrets: secretService, client: llmproviders.NewHTTPClient(0), logger: logger}
+	return &Handler{codeSessions: codeSessionService, database: database, secrets: secretService, client: llmproviders.NewHTTPClient(0), logger: logger}
 }
 
 // Create 处理 canonical POST /v1/messages，并以有界内存完成请求校验和响应流式转发。
@@ -120,16 +122,13 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	// 先清除客户端鉴权和租户 header，再注入只存在于 OMA 服务端的真实上游 key。
 	upstreamRequest.Header = sanitizedRequestHeaders(r.Header)
 	llmproviders.ApplyAPIKey(upstreamRequest.Header, upstream.APIKey)
-	upstreamResponse, err := h.client.Do(upstreamRequest)
+	request, err := h.beginModelRequest(r, principal, modelID)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "proxy messages upstream request", "error", err)
+		h.logger.ErrorContext(r.Context(), "start model request", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return
 	}
-	defer upstreamResponse.Body.Close()
-	if err := writeProxyResponse(w, upstreamResponse); err != nil && r.Context().Err() == nil {
-		h.logger.ErrorContext(r.Context(), "stream Messages upstream response", "error", err)
-	}
+	h.proxyModelRequest(w, r, upstreamRequest, request)
 }
 
 func (h *Handler) writeProviderError(w http.ResponseWriter, r *http.Request, err error) {

@@ -14,7 +14,7 @@ const invitation = {
   id: 'invite',
   organization_uuid: 'new-org',
   organization_name: '受邀组织',
-  role: 'developer',
+  role: 'user',
   invited_at: '2026-01-01',
   expires_at: '2027-01-01',
 };
@@ -116,7 +116,7 @@ test('组织菜单显示当前 membership 的中文角色，邀请卡片也显�
   mount();
   expect(await screen.findByRole('menuitemradio', { name: '当前组织 管理员' })).toBeTruthy();
   fireEvent.click(await screen.findByRole('menuitem', { name: '组织邀请 (1)' }));
-  expect(await screen.findByText(/开发者 · 有效期至/)).toBeTruthy();
+  expect(await screen.findByText(/用户 · 有效期至/)).toBeTruthy();
 });
 
 test.each([

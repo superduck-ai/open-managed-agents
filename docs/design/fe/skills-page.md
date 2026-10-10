@@ -106,8 +106,8 @@ Builtin skill 和 builtin version 不显示删除入口；后端仍会强制返�
 SuperDuck 手动验收覆盖：
 
 - Skills list：列、source badge、pagination、builtin/custom actions 差异。
-- Create empty state：dropzone、8MB 文案、disabled Continue。
-- Create file state：archive summary、check icon、remove upload、enabled Continue。
+- Create empty state：dropzone、8MB 文案、disabled Create skill。
+- Create file state：archive summary、check icon、remove upload、enabled Create skill。
 - Create duplicate custom title：发送 `POST /v1/skills?beta=true` 后展示后端冲突错误，不发送 versions endpoint。
 - Drawer：query param、description、versions、close。
 - Agent detail：`skills` 空态显示 `No skills configured.`；非空态展示紧凑 skills 列表，默认只包含可读名称、原始 `skill_id` 和版本信息；跟随鼠标的 hover 浮窗展示 source、created / updated 时间和 metadata 状态。

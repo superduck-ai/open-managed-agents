@@ -1,7 +1,6 @@
 package skills
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -18,7 +17,6 @@ import (
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -38,7 +36,6 @@ const (
 )
 
 type Handler struct {
-	cfg          config.Config
 	db           *db.DB
 	logger       *slog.Logger
 	store        storage.ObjectStore
@@ -77,10 +74,9 @@ type pageCursor struct {
 	Offset int `json:"offset"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, logger *slog.Logger) *Handler {
+func NewHandler(database *db.DB, store storage.ObjectStore, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
 	h := &Handler{
-		cfg:          cfg,
 		db:           database,
 		logger:       logger,
 		store:        store,
@@ -126,10 +122,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 
 	pkg, err := readSkillPackage(w, r, MaxSkillPackageBytes)
 	if err != nil {
-		if h.isOfficialSDKFixturePrincipal(principal) {
-			httpapi.WriteJSON(w, http.StatusOK, h.fixtureSkillResponse(h.cfg.SDKFixtures.SkillID, firstNonEmpty(r.FormValue("display_title"), "display_title")))
-			return nil
-		}
 		return mapSkillPackageError(err)
 	}
 
@@ -330,10 +322,6 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, skillID strin
 	}
 	record, err := h.db.GetSkill(r.Context(), principal.WorkspaceUUID, skillID)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureSkill(principal, skillID) {
-			httpapi.WriteJSON(w, http.StatusOK, h.fixtureSkillResponse(skillID, "display_title"))
-			return nil
-		}
 		if errors.Is(err, db.ErrNotFound) {
 			return skillNotFound(skillID, err)
 		}
@@ -363,10 +351,6 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, skillID string)
 
 	_, _, err := h.db.SoftDeleteSkill(r.Context(), principal.WorkspaceUUID, skillID)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureSkill(principal, skillID) {
-			httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": skillID, "type": "skill_deleted"})
-			return nil
-		}
 		if errors.Is(err, db.ErrNotFound) {
 			return skillNotFound(skillID, err)
 		}
@@ -393,19 +377,11 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 
 	pkg, err := readSkillPackage(w, r, MaxSkillPackageBytes)
 	if err != nil {
-		if h.isOfficialSDKFixtureSkill(principal, skillID) {
-			httpapi.WriteJSON(w, http.StatusOK, h.fixtureVersionResponse(skillID, h.cfg.SDKFixtures.SkillVersion))
-			return nil
-		}
 		return mapSkillPackageError(err)
 	}
 
 	skill, err := h.db.GetSkill(r.Context(), principal.WorkspaceUUID, skillID)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureSkill(principal, skillID) {
-			httpapi.WriteJSON(w, http.StatusOK, h.fixtureVersionResponse(skillID, h.cfg.SDKFixtures.SkillVersion))
-			return nil
-		}
 		if errors.Is(err, db.ErrNotFound) {
 			return skillNotFound(skillID, err)
 		}
@@ -489,14 +465,6 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID s
 		})
 		return nil
 	}
-	if h.isOfficialSDKFixtureSkill(principal, skillID) {
-		httpapi.WriteJSON(w, http.StatusOK, pageResponse[skillVersionResponse]{
-			Data:     []skillVersionResponse{h.fixtureVersionResponse(skillID, h.cfg.SDKFixtures.SkillVersion)},
-			HasMore:  false,
-			NextPage: nil,
-		})
-		return nil
-	}
 
 	limit, err := parseLimitParam(r, defaultSkillVersionsLimit, maxSkillVersionsLimit)
 	if err != nil {
@@ -550,10 +518,6 @@ func (h *Handler) retrieveVersion(w http.ResponseWriter, r *http.Request, skillI
 		httpapi.WriteJSON(w, http.StatusOK, responseFromBuiltinVersion(record))
 		return nil
 	}
-	if h.isOfficialSDKFixtureVersion(principal, skillID, version) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureVersionResponse(skillID, version))
-		return nil
-	}
 
 	resolved, err := h.resolveVersion(r.Context(), principal.WorkspaceUUID, skillID, version)
 	if err != nil {
@@ -583,10 +547,6 @@ func (h *Handler) deleteVersion(w http.ResponseWriter, r *http.Request, skillID,
 		return internalError("Could not delete skill version", fmt.Errorf("retrieve built-in skill %q before version delete: %w", skillID, err))
 	} else if ok {
 		return readOnlyBuiltinError()
-	}
-	if h.isOfficialSDKFixtureVersion(principal, skillID, version) {
-		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": version, "type": "skill_version_deleted"})
-		return nil
 	}
 
 	resolved, err := h.resolveVersion(r.Context(), principal.WorkspaceUUID, skillID, version)
@@ -624,10 +584,6 @@ func (h *Handler) downloadVersion(w http.ResponseWriter, r *http.Request, skillI
 			return
 		}
 		h.downloadBuiltinSkill(w, r, record)
-		return
-	}
-	if h.isOfficialSDKFixtureVersion(principal, skillID, version) {
-		h.downloadFixtureSkill(w, r)
 		return
 	}
 
@@ -700,15 +656,6 @@ func (h *Handler) downloadBuiltinSkill(w http.ResponseWriter, r *http.Request, v
 	if copied != version.SizeBytes {
 		h.logger.WarnContext(r.Context(), "stream builtin skill size mismatch", "skill_id", version.SkillExternalID, "version", version.Version, "key", version.S3Key, "bytes_copied", copied, "expected_size", version.SizeBytes)
 	}
-}
-
-func (h *Handler) downloadFixtureSkill(w http.ResponseWriter, _ *http.Request) {
-	data := fixtureArchive()
-	w.Header().Set("Content-Type", skillArchiveContentType)
-	w.Header().Set("Content-Disposition", `attachment; filename="fixture-skill.skill"`)
-	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
 }
 
 func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context, workspaceUUID string, bucket, key, externalID string) {
@@ -804,43 +751,6 @@ func responsesFromBuiltinSkillVersions(versions []db.BuiltinSkillVersion) []skil
 	return out
 }
 
-func (h *Handler) fixtureSkillResponse(skillID, displayTitle string) skillResponse {
-	now := time.Unix(0, 0).UTC()
-	return skillResponse{
-		ID:            skillID,
-		CreatedAt:     formatTime(now),
-		DisplayTitle:  firstNonEmpty(displayTitle, "display_title"),
-		LatestVersion: h.cfg.SDKFixtures.SkillVersion,
-		Source:        "custom",
-		Type:          "skill",
-		UpdatedAt:     formatTime(now),
-	}
-}
-
-func (h *Handler) fixtureVersionResponse(skillID, version string) skillVersionResponse {
-	return skillVersionResponse{
-		ID:          "skillver_fixture",
-		CreatedAt:   formatTime(time.Unix(0, 0).UTC()),
-		Description: "description",
-		Directory:   "fixture-skill",
-		Name:        "fixture-skill",
-		SkillID:     skillID,
-		Type:        "skill_version",
-		Version:     version,
-	}
-}
-
-func fixtureArchive() []byte {
-	var buf bytes.Buffer
-	writer := zip.NewWriter(&buf)
-	entry, err := writer.Create("fixture-skill/SKILL.md")
-	if err == nil {
-		_, _ = entry.Write([]byte("---\nname: fixture-skill\ndescription: description\n---\n\n# fixture-skill\n"))
-	}
-	_ = writer.Close()
-	return buf.Bytes()
-}
-
 func parseLimitParam(r *http.Request, defaultLimit, maxLimit int) (int, error) {
 	raw := strings.TrimSpace(r.URL.Query().Get("limit"))
 	if raw == "" {
@@ -894,18 +804,6 @@ func hasSkillsBeta(r *http.Request) bool {
 		}
 	}
 	return false
-}
-
-func (h *Handler) isOfficialSDKFixturePrincipal(principal auth.Principal) bool {
-	return principal.CredentialType == "api_key" && principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID
-}
-
-func (h *Handler) isOfficialSDKFixtureSkill(principal auth.Principal, skillID string) bool {
-	return h.isOfficialSDKFixturePrincipal(principal) && skillID == h.cfg.SDKFixtures.SkillID
-}
-
-func (h *Handler) isOfficialSDKFixtureVersion(principal auth.Principal, skillID, version string) bool {
-	return h.isOfficialSDKFixtureSkill(principal, skillID) && (version == h.cfg.SDKFixtures.SkillVersion || version == "latest")
 }
 
 func formatTime(t time.Time) string {

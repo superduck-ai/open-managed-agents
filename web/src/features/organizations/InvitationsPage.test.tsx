@@ -24,7 +24,7 @@ const invitation = {
   id: 'invite-first',
   organization_uuid: 'new-org',
   organization_name: '受邀组织',
-  role: 'developer',
+  role: 'user',
   invited_at: '2026-09-01',
   expires_at: '2027-01-01',
 };

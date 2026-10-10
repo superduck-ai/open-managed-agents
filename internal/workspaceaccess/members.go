@@ -62,7 +62,7 @@ func validateMemberChange(orgRole, role, operation string) error {
 	if _, err := Effective(orgRole, true, ""); err != nil {
 		return err
 	}
-	if operation != "delete" && !Assignable(role) && !(operation == "update" && role == "workspace_billing") {
+	if operation != "delete" && !Assignable(role) {
 		return ErrInvalidRole
 	}
 	return nil

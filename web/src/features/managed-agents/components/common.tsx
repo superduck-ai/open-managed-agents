@@ -32,7 +32,7 @@ import clsx from 'clsx';
 import { AlertCircle, Archive, ArrowUpRight, Bot, Plus, Search, Trash2, TriangleAlert, X } from 'lucide-react';
 import { type FormEvent, type ReactNode, useId, useState } from 'react';
 import { compactAgentId } from '../agents/AgentsResourcePage';
-import { entityKindLabel, resourceEmptyAction, resourceEmptyBody, resourceEmptyTitle } from '../labels';
+import { entityKindLabel, resourceEmptyBody, resourceEmptyTitle } from '../labels';
 import { entityDisplayName } from '../resources/ManagedResources';
 import {
   type AgentApiResponse,
@@ -264,7 +264,7 @@ export function DeploymentFieldHeader({
   const { msg } = useI18n();
 
   return (
-    <div className="mb-2 flex items-center justify-between gap-4">
+    <div className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
       <Label htmlFor={id} className="text-sm font-medium leading-5 text-foreground">
         {label}{' '}
         {optional ? (
@@ -279,7 +279,7 @@ export function DeploymentFieldHeader({
           target="_blank"
           rel="noreferrer"
           aria-label={msg('managedAgents.common.opensInNewTab', '{label} (opens in new tab)', { label: manageLabel })}
-          className="inline-flex items-center gap-0.5 text-xs leading-4 text-[#6da7ec] underline-offset-2 hover:underline"
+          className="inline-flex items-center gap-0.5 text-xs leading-4 text-primary underline-offset-2 hover:underline"
         >
           {manageLabel}
           <ArrowUpRight className="size-3" aria-hidden />
@@ -302,7 +302,7 @@ export function DeploymentTextField({
   autoFocus?: boolean;
   onChange: (value: string) => void;
 }) {
-  const id = `deployment-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `deployment-field-${useId()}`;
   return (
     <div>
       <DeploymentFieldHeader id={id} label={label} />
@@ -311,7 +311,7 @@ export function DeploymentTextField({
         value={value}
         placeholder={placeholder}
         autoFocus={autoFocus}
-        className="h-8 border-white/10 bg-transparent px-3 text-sm text-foreground ring-1 ring-white/10 placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
+        className="h-9 bg-background"
         onChange={(event) => onChange(event.target.value)}
       />
     </div>
@@ -331,7 +331,7 @@ export function DeploymentTextArea({
   helpText?: string;
   onChange: (value: string) => void;
 }) {
-  const id = `deployment-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `deployment-field-${useId()}`;
   return (
     <div>
       <DeploymentFieldHeader id={id} label={label} />
@@ -340,7 +340,7 @@ export function DeploymentTextArea({
         value={value}
         rows={2}
         placeholder={placeholder}
-        className="min-h-14 resize-none border-white/10 bg-white/10 px-3 py-2 text-sm leading-5 text-foreground ring-1 ring-white/10 placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
+        className="min-h-20 resize-y bg-background"
         onChange={(event) => onChange(event.target.value)}
       />
       {helpText ? <p className="mt-1.5 text-xs leading-4 text-muted-foreground">{helpText}</p> : null}
@@ -367,7 +367,7 @@ export function DeploymentSelectField({
   manageLabel?: string;
   onChange: (value: string) => void;
 }) {
-  const id = `deployment-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `deployment-select-${useId()}`;
   const selected = options.find((option) => option.id === value);
   const items = [
     { value: '', label: placeholder },
@@ -391,18 +391,17 @@ export function DeploymentSelectField({
           }
         }}
       >
-        <SelectTrigger
-          id={id}
-          className="h-8 w-full border-0 bg-white/10 px-3 text-sm ring-1 ring-white/10 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
-        >
+        <SelectTrigger id={id} className="h-9 w-full min-w-0 bg-background">
           <SelectValue className={value ? 'text-foreground' : 'text-muted-foreground'}>
             {selected?.label ?? placeholder}
           </SelectValue>
         </SelectTrigger>
         <SelectContent alignItemWithTrigger={false}>
-          <SelectItem value="" label={placeholder}>
-            {placeholder}
-          </SelectItem>
+          {placeholder ? (
+            <SelectItem value="" label={placeholder}>
+              {placeholder}
+            </SelectItem>
+          ) : null}
           {options.map((option) => (
             <SelectItem key={option.id} value={option.id} label={option.label}>
               {option.label}
@@ -441,7 +440,7 @@ export function ManagedAddSelectField({
   onChange: (value: string[]) => void;
 }) {
   const { msg } = useI18n();
-  const id = `managed-add-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `managed-add-select-${useId()}`;
   const availableOptions = options.filter((option) => !selectedIds.includes(option.id));
   const selectedOptions = options.filter((option) => selectedIds.includes(option.id));
   const triggerPlaceholder = availableOptions.length
@@ -476,7 +475,7 @@ export function ManagedAddSelectField({
           id={id}
           className={
             deploymentTone
-              ? 'h-8 w-full border-0 bg-white/10 pl-3 pr-2 text-sm text-muted-foreground ring-1 ring-white/10 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:text-muted-foreground'
+              ? 'h-9 w-full min-w-0 bg-background text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:text-muted-foreground'
               : 'managed-resource-field mt-0 h-10 w-full border-border bg-secondary px-3 text-sm text-muted-foreground focus-visible:border-ring focus-visible:ring-0 disabled:cursor-not-allowed'
           }
         >
@@ -833,17 +832,14 @@ export function AgentsListState({
 export function AgentsEmptyState({
   trueEmpty,
   truncated,
-  trueEmptyActionLabel,
-  onCreate,
   onReset,
 }: {
   trueEmpty: boolean;
   truncated?: boolean;
-  trueEmptyActionLabel: string;
-  onCreate: () => void;
   onReset: () => void;
 }) {
   const { msg } = useI18n();
+  const filtered = !trueEmpty;
   return (
     <AgentsListState
       icon={trueEmpty ? Bot : Search}
@@ -862,37 +858,20 @@ export function AgentsEmptyState({
             ? msg('managedAgents.agents.emptyBody', 'Create an agent to start building managed workflows.')
             : msg('managedAgents.agents.noFilteredResultsBody', 'Try a different search or reset the filters.')
       }
-      actionLabel={
-        truncated
-          ? undefined
-          : trueEmpty
-            ? trueEmptyActionLabel
-            : msg('managedAgents.filters.resetFilters', 'Reset filters')
-      }
-      onAction={truncated ? undefined : trueEmpty ? onCreate : onReset}
+      actionLabel={filtered && !truncated ? msg('managedAgents.filters.resetFilters', 'Reset filters') : undefined}
+      onAction={filtered && !truncated ? onReset : undefined}
     />
   );
 }
 
 export function EmptyState({ config }: { config: ResourceConfig }) {
   const { msg } = useI18n();
-  const Icon = config.emptyIcon;
-  const title = resourceEmptyTitle(config, msg);
-  const body = resourceEmptyBody(config, msg);
-  const action = resourceEmptyAction(config, msg);
   return (
-    <div className="grid min-h-[320px] place-items-center text-center">
-      <div>
-        <Icon className="mx-auto mb-4 size-14 stroke-[1.2] text-foreground" aria-hidden />
-        <div className="text-sm font-medium text-foreground">{title}</div>
-        {body ? <p className="mt-3 text-sm text-muted-foreground">{body}</p> : null}
-        {action ? (
-          <Button type="button" variant="outline" className="mt-4">
-            {action}
-          </Button>
-        ) : null}
-      </div>
-    </div>
+    <ResourceListState
+      icon={config.emptyIcon}
+      title={resourceEmptyTitle(config, msg)}
+      body={resourceEmptyBody(config, msg) ?? ''}
+    />
   );
 }
 

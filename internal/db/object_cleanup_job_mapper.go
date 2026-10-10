@@ -8,12 +8,19 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper ObjectCleanupJobMapper -sql ./object_cleanup_job_mapper.xml -out ./object_cleanup_job_mapper.sqlmap.gen.go -dialect postgres
 
 type ObjectCleanupJobMapper interface {
+	FindObjectCleanupState(ctx context.Context, workspaceUUID, externalID string) (objectCleanupStateRow, bool, error)
 	EnqueueObjectCleanupJob(ctx context.Context, workspaceUUID string, payload []byte) error
 	EnqueueScheduledObjectCleanupJob(ctx context.Context, params scheduledObjectCleanupJobParams) error
 	ExpediteObjectCleanupJob(ctx context.Context, externalID string) (int64, error)
 	LeaseObjectCleanupJobs(ctx context.Context, workerID string, limit int) ([]objectCleanupJobRow, error)
 	CompleteObjectCleanupJob(ctx context.Context, jobUUID string) error
 	FailObjectCleanupJob(ctx context.Context, params objectCleanupJobFailureParams) error
+}
+
+type objectCleanupStateRow struct {
+	Status   string    `db:"status"`
+	Attempts int       `db:"attempts"`
+	RunAfter time.Time `db:"run_after"`
 }
 
 type objectCleanupJobFailureParams struct {

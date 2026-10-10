@@ -44,7 +44,6 @@ func (d *DB) ListInvitations(ctx context.Context, email string) ([]Invitation, e
 	return result, nil
 }
 
-// RespondToInvitation 在同一事务中锁定邀请、复用或创建组织成员并转换状态。
 func (d *DB) RespondToInvitation(ctx context.Context, id, email string, accept bool) (Invitation, error) {
 	var result Invitation
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
@@ -98,7 +97,6 @@ func ensureInvitationMember(ctx context.Context, mapper InvitationMapper, row in
 	if err != nil || found {
 		return member, err
 	}
-	// 已接受邀请不得重建被移除的组织成员。
 	if row.Status == "accepted" {
 		return invitationMemberRow{}, ErrInvitationConflict
 	}
@@ -109,7 +107,6 @@ func ensureInvitationMember(ctx context.Context, mapper InvitationMapper, row in
 	if _, err = mapper.InsertMember(ctx, invitationMemberParams{ID: id, OrganizationUUID: row.OrganizationUUID, Email: row.Email, Role: row.Role}); err != nil {
 		return invitationMemberRow{}, err
 	}
-	// 不同邀请可并发命中同一邮箱；独立 SELECT 读取唯一索引冲突后已提交的成员。
 	member, found, err = mapper.FindActiveMember(ctx, row.OrganizationUUID, row.Email)
 	if err != nil {
 		return invitationMemberRow{}, err

@@ -10,14 +10,9 @@ var (
 	errInvalidEmail = errors.New("invalid email")
 )
 
-func validateOrganizationRole(role string, allowAdmin bool) error {
-	switch role {
-	case "user", "developer", "billing", "claude_code_user":
+func validateOrganizationRole(role string) error {
+	if role == "user" || role == "admin" {
 		return nil
-	case "admin":
-		if allowAdmin {
-			return nil
-		}
 	}
 	return errors.New("invalid organization role")
 }

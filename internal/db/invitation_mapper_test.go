@@ -51,11 +51,11 @@ func TestInvitationMapperBindings(t *testing.T) {
 	})
 	t.Run("成员插入冲突", func(t *testing.T) {
 		executor := newMapperTestExecutor(t, mapperTestResponse{})
-		count, err := NewInvitationMapper(executor).InsertMember(t.Context(), invitationMemberParams{ID: "user_test", OrganizationUUID: org, Email: email, Role: "developer"})
+		count, err := NewInvitationMapper(executor).InsertMember(t.Context(), invitationMemberParams{ID: "user_test", OrganizationUUID: org, Email: email, Role: "user"})
 		if err != nil || count != 0 {
 			t.Fatalf("count=%d err=%v", count, err)
 		}
-		assertMapperTestExecution(t, executor, "InvitationMapper.InsertMember", yourbatis.StatementInsert, []any{"user_test", org, email, "developer"}, "ON CONFLICT (organization_uuid, lower(email)) WHERE deleted_at IS NULL DO NOTHING")
+		assertMapperTestExecution(t, executor, "InvitationMapper.InsertMember", yourbatis.StatementInsert, []any{"user_test", org, email, "user"}, "ON CONFLICT (organization_uuid, lower(email)) WHERE deleted_at IS NULL DO NOTHING")
 	})
 	t.Run("状态转换绑定", func(t *testing.T) {
 		executor := newMapperTestExecutor(t, mapperTestResponse{})

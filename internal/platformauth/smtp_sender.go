@@ -35,7 +35,6 @@ func newSMTPSender(cfg config.EmailSMTPConfig) *smtpSender {
 	}
 }
 
-// NewMailSender 复用登录邮件的 TLS、认证及超时策略。
 func NewMailSender(cfg config.EmailSMTPConfig) interface {
 	SendMessage(context.Context, string, []byte) error
 } {

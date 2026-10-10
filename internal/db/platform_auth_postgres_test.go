@@ -15,7 +15,7 @@ func TestPlatformLoginIdentityPostgres(t *testing.T) {
 		t.Skip("需要隔离 PostgreSQL 测试地址")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
-	if _, err := provider.UpTo(ctx, 62); err != nil {
+	if _, err := provider.UpTo(ctx, 75); err != nil {
 		t.Fatal(err)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}

@@ -1,6 +1,7 @@
 package liveworker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -64,7 +65,7 @@ func TestRealWorkerControlDelivery(t *testing.T) {
 			if !scenario.reconnect {
 				release()
 			}
-			model := realWorkerModelFixture(t, &calls, &queuedCall, scenario.textOnly, resume)
+			model := realWorkerModelFixture(t, &calls, &queuedCall, scenario.textOnly, resume, `/tmp/oma-control-e2e.txt`)
 			worker := startRealControlWorker(t, f, model)
 			waitRealWorker(t, "initialize ACK", func() bool {
 				consumer, err := e.stream.Consumer(t.Context(), "oma_worker_"+f.code.ExternalID)
@@ -80,7 +81,14 @@ func TestRealWorkerControlDelivery(t *testing.T) {
 			var queuedSequence uint64
 			if scenario.policy == "always_ask" {
 				toolID := waitRealWorkerPermission(t, f)
-				sendRealWorkerInput(t, f, "Reply queued done after the previous task.")
+				const queuedText = "Reply queued done after the previous task."
+				e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{
+					"events": []any{map[string]any{"type": "user.message", "content": []any{map[string]string{"type": "text", "text": queuedText}}}},
+				}, http.StatusConflict)
+				if info := f.consumer(t); info.NumPending != 0 || info.NumAckPending != 1 {
+					t.Fatal("rejected public input changed the Worker task lane")
+				}
+				f.queue(t, payloadFor(uuid.NewString(), queuedText))
 				waitRealWorker(t, "blocked task lane", func() bool {
 					info := f.consumer(t)
 					return info.NumAckPending == 1 && info.NumPending == 1
@@ -99,8 +107,6 @@ func TestRealWorkerControlDelivery(t *testing.T) {
 					})
 				}
 				if scenario.control == "interrupt" {
-					// Public user.interrupt conversion is a separate bugfix; this tests
-					// delivery of the canonical Worker protocol message.
 					queueRealWorkerControl(t, f, map[string]any{"type": "control_request", "request_id": "interrupt_probe", "request": map[string]string{"subtype": "interrupt"}})
 				} else {
 					e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{
@@ -212,21 +218,97 @@ func realWorkerReplyConsumer(t *testing.T, f *liveSession) *jetstream.ConsumerIn
 
 func waitRealWorker(t *testing.T, label string, ready func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(chatTimeout(t, 30*time.Second))
+	if testDeadline, ok := t.Deadline(); ok && testDeadline.Before(deadline) {
+		deadline = testDeadline.Add(-5 * time.Second)
+	}
 	for time.Now().Before(deadline) {
 		if ready() {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for %s", label)
+	t.Fatalf("BE_TIMEOUT waiting for %s", label)
 }
 
 type realControlWorker struct {
-	container   string
-	mu          sync.Mutex
-	connections int
-	disconnect  context.CancelFunc
+	container        string
+	loseProcessedACK atomic.Bool
+	recordDeliveries atomic.Bool
+	deliveries       map[string]int
+	mu               sync.Mutex
+	connections      int
+	disconnect       context.CancelFunc
+}
+
+type workerStreamObserver struct {
+	io.ReadCloser
+	reader io.Reader
+}
+
+func (s *workerStreamObserver) Read(data []byte) (int, error) {
+	return s.reader.Read(data)
+}
+
+type workerEventTap struct {
+	worker  *realControlWorker
+	pending []byte
+}
+
+func (tap *workerEventTap) Write(data []byte) (int, error) {
+	if !tap.worker.recordDeliveries.Load() {
+		return len(data), nil
+	}
+	tap.pending = append(tap.pending, data...)
+	for {
+		end := bytes.Index(tap.pending, []byte("\n\n"))
+		if end < 0 {
+			if len(tap.pending) > 1<<20 {
+				tap.pending = nil
+			}
+			return len(data), nil
+		}
+		for _, line := range bytes.Split(tap.pending[:end], []byte("\n")) {
+			if !bytes.HasPrefix(line, []byte("data: ")) {
+				continue
+			}
+			var event struct {
+				ID   string `json:"event_id"`
+				Type string `json:"event_type"`
+			}
+			if err := json.Unmarshal(bytes.TrimPrefix(line, []byte("data: ")), &event); err != nil {
+				continue
+			}
+			if event.ID != "" && (event.Type == "user" || event.Type == "user.message") {
+				tap.worker.mu.Lock()
+				tap.worker.deliveries[event.ID]++
+				tap.worker.mu.Unlock()
+			}
+		}
+		tap.pending = tap.pending[end+2:]
+	}
+}
+
+func (w *realControlWorker) retainedInput(t *testing.T) string {
+	t.Helper()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.deliveries) != 1 {
+		t.Fatalf("expected one observed input, got %d", len(w.deliveries))
+	}
+	for id, count := range w.deliveries {
+		if count != 1 {
+			t.Fatalf("input was already redelivered before consumer deletion: %d", count)
+		}
+		return id
+	}
+	return ""
+}
+
+func (w *realControlWorker) deliveredAgain(id string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.deliveries[id] >= 2
 }
 
 func (w *realControlWorker) reconnect(t *testing.T) {
@@ -247,11 +329,19 @@ func (w *realControlWorker) reconnect(t *testing.T) {
 
 func startRealControlWorker(t *testing.T, f *liveSession, modelURL string) *realControlWorker {
 	t.Helper()
+	ingressToken, modelToken := f.token, f.modelToken
 	name := "oma-control-e2e-" + f.code.ExternalID
-	worker := &realControlWorker{container: name}
+	worker := &realControlWorker{container: name, deliveries: make(map[string]int)}
 	target, err := url.Parse(f.env.url)
 	requireOK(t, err)
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ModifyResponse = func(response *http.Response) error {
+		if response.StatusCode == http.StatusOK && strings.HasSuffix(response.Request.URL.Path, "/worker/events/stream") {
+			body := response.Body
+			response.Body = &workerStreamObserver{ReadCloser: body, reader: io.TeeReader(body, &workerEventTap{worker: worker})}
+		}
+		return nil
+	}
 	proxyURL := serveRealWorkerFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/worker/events/stream") {
 			ctx, cancel := context.WithCancel(r.Context())
@@ -262,8 +352,37 @@ func startRealControlWorker(t *testing.T, f *liveSession, modelURL string) *real
 			worker.mu.Unlock()
 			r = r.WithContext(ctx)
 		}
+		if worker.loseProcessedACK.Load() && strings.HasSuffix(r.URL.Path, "/worker/events/delivery") {
+			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+			_ = r.Body.Close()
+			if err != nil {
+				http.Error(w, "read delivery fault request", http.StatusBadRequest)
+				return
+			}
+			var payload struct {
+				Updates []struct {
+					Status string `json:"status"`
+				} `json:"updates"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil {
+				http.Error(w, "decode delivery fault request", http.StatusBadRequest)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			for _, update := range payload.Updates {
+				if update.Status == "processed" {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "applied": len(payload.Updates), "ignored": 0})
+					return
+				}
+			}
+		}
 		proxy.ServeHTTP(w, r)
 	}))
+	modelKey := "isolated-fake-model-key"
+	if modelURL == "" {
+		modelURL, modelKey = proxyURL, f.modelToken
+	}
 	log, err := os.Create(filepath.Join(t.TempDir(), "worker.log"))
 	requireOK(t, err)
 	t.Cleanup(func() { _ = log.Close() })
@@ -272,9 +391,13 @@ func startRealControlWorker(t *testing.T, f *liveSession, modelURL string) *real
 		image = "ghcr.io/superduck-ai/managed-agent-sandbox:latest"
 	}
 	args := []string{"run", "--rm", "--pull=never", "--name", name, "--entrypoint", "/opt/claude-code/bin/claude"}
+	if runID := os.Getenv("VERIFY_BE_RUN_ID"); runID != "" {
+		args = append(args, "--label", "oma.verify-be.run="+runID)
+	}
+	args = append(args, "--add-host", "host.docker.internal:host-gateway")
 	for key, value := range map[string]string{
-		"ANTHROPIC_BASE_URL": modelURL, "ANTHROPIC_API_KEY": "isolated-fake-model-key",
-		"CLAUDE_CODE_SESSION_ACCESS_TOKEN": f.token, "CLAUDE_CODE_WORKER_EPOCH": "1",
+		"ANTHROPIC_BASE_URL": modelURL, "ANTHROPIC_API_KEY": modelKey,
+		"CLAUDE_CODE_SESSION_ACCESS_TOKEN": f.token, "CLAUDE_CODE_WORKER_EPOCH": fmt.Sprint(f.code.CurrentWorkerEpoch),
 		"CLAUDE_CODE_USE_CCR_V2": "1", "CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2": "1",
 		"CLAUDE_CODE_REMOTE": "true", "CLAUDE_CODE_REMOTE_SESSION_ID": f.code.ExternalID,
 		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
@@ -301,13 +424,13 @@ func startRealControlWorker(t *testing.T, f *liveSession, modelURL string) *real
 			data, _ := os.ReadFile(log.Name())
 			// Diagnostic output is from this test's fake model. Never print the
 			// short-lived ingress token even if a CLI diagnostic includes it.
-			t.Log(strings.ReplaceAll(string(data[max(0, len(data)-6000):]), f.token, "[redacted]"))
+			t.Log(strings.NewReplacer(ingressToken, "[redacted]", modelToken, "[redacted]").Replace(string(data[max(0, len(data)-6000):])))
 		}
 	})
 	return worker
 }
 
-func realWorkerModelFixture(t *testing.T, calls, queuedCall *atomic.Int32, textOnly bool, resume <-chan struct{}) string {
+func realWorkerModelFixture(t *testing.T, calls, queuedCall *atomic.Int32, textOnly bool, resume <-chan struct{}, toolPath string) string {
 	t.Helper()
 	return serveRealWorkerFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
@@ -341,7 +464,8 @@ func realWorkerModelFixture(t *testing.T, calls, queuedCall *atomic.Int32, textO
 		if call == 1 && !textOnly {
 			reason = "tool_use"
 			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "tool_use", "id": "toolu_control_e2e", "name": "Write", "input": map[string]any{}}})
-			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": `{"file_path":"/tmp/oma-control-e2e.txt","content":"verified control delivery"}`}})
+			input, _ := json.Marshal(map[string]string{"file_path": toolPath, "content": "verified control delivery"})
+			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(input)}})
 		} else {
 			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "text", "text": ""}})
 			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "text_delta", "text": "done"}})

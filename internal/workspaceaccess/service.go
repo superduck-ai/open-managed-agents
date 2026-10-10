@@ -49,7 +49,7 @@ func (s *Service) Resolve(ctx context.Context, organizationUUID, userID, workspa
 
 // Effective 只读取组织角色和普通空间显式角色；默认空间忽略所有历史成员记录。
 func Effective(organizationRole string, isDefault bool, explicitRole string) (auth.WorkspaceAccess, error) {
-	inherited := map[string]string{"admin": "workspace_admin", "billing": "workspace_billing", "developer": "workspace_developer", "claude_code_user": "workspace_user", "user": "workspace_user"}
+	inherited := map[string]string{"admin": "workspace_admin", "user": "workspace_user"}
 	role, known := inherited[organizationRole]
 	if !known {
 		return auth.WorkspaceAccess{}, ErrDenied
@@ -58,7 +58,7 @@ func Effective(organizationRole string, isDefault bool, explicitRole string) (au
 	if isDefault || organizationRole == "admin" {
 		return access, nil
 	}
-	if !Assignable(explicitRole) && explicitRole != "workspace_billing" {
+	if !Assignable(explicitRole) {
 		return auth.WorkspaceAccess{}, ErrDenied
 	}
 	access.Role = explicitRole
@@ -67,12 +67,7 @@ func Effective(organizationRole string, isDefault bool, explicitRole string) (au
 }
 
 func Assignable(role string) bool {
-	switch role {
-	case "workspace_admin", "workspace_developer", "workspace_restricted_developer", "workspace_user":
-		return true
-	default:
-		return false
-	}
+	return role == "workspace_admin" || role == "workspace_user"
 }
 
 func accessError(err error) error {

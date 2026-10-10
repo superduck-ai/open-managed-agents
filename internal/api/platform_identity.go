@@ -11,7 +11,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 )
 
-// loadPlatformSession 只验证登录身份，不要求原组织或工作区仍可访问。
 func (s *Server) loadPlatformSession(r *http.Request) (platformsession.Session, *httpapi.Error) {
 	sessionKey := auth.ExtractPlatformSessionKey(r)
 	if sessionKey == "" {

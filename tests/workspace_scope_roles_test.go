@@ -8,7 +8,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-// 既有计费账号也必须经过共用的组织、资源归属、归档与撤权检查。
 func TestWorkspaceScopeChecksAllRoles(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("workspace-scope-roles"))
 	defer app.close()
@@ -17,9 +16,9 @@ func TestWorkspaceScopeChecksAllRoles(t *testing.T) {
 	suffix := uniqueAdminSuffix()
 	_, foreignWorkspace := seedWorkspaceKey(t, app.pool, "外部组织-"+suffix, "wrkspc_foreign_"+suffix, "key_foreign_"+suffix, "sk-foreign-"+suffix)
 	store := createMemoryStore(t, app, "默认空间资源")
-	for _, role := range []string{"developer", "billing"} {
+	for _, role := range []string{"workspace_user", "workspace_admin"} {
 		t.Run(role, func(t *testing.T) {
-			userID := seedAdminUser(t, app.pool, role+suffix+"@example.local", role)
+			userID := seedAdminUser(t, app.pool, role+suffix+"@example.local", "user")
 			user, err := app.db.GetAdminUser(ctx, refs.OrganizationUUID, userID)
 			if err != nil {
 				t.Fatal(err)
@@ -32,7 +31,7 @@ func TestWorkspaceScopeChecksAllRoles(t *testing.T) {
 			if _, err := app.db.CreateAdminWorkspaceMember(ctx, db.AdminWorkspaceMember{
 				ExternalID: "wmem_" + role + suffix, OrganizationUUID: refs.OrganizationUUID, WorkspaceUUID: workspace.UUID,
 				WorkspaceExternalID: workspace.ExternalID, UserUUID: user.UUID, UserExternalID: userID,
-				WorkspaceRole: "workspace_admin", CreatedAt: time.Now().UTC(),
+				WorkspaceRole: role, CreatedAt: time.Now().UTC(),
 			}); err != nil {
 				t.Fatal(err)
 			}

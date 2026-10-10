@@ -57,7 +57,22 @@ type listCodeSessionInternalEventsParams struct {
 	Limit                 int
 }
 
+type transcriptScopeRow struct {
+	OrganizationUUID      string `db:"organization_uuid"`
+	WorkspaceUUID         string `db:"workspace_uuid"`
+	CodeSessionUUID       string `db:"code_session_uuid"`
+	CodeSessionExternalID string `db:"code_session_external_id"`
+}
+
 type CodeSessionInternalEventMapper interface {
+	RestoreArchived(ctx context.Context, event CodeSessionInternalEvent) (int64, error)
+	ListDeletionCandidates(ctx context.Context, afterUUID string, cutoff time.Time, limit int) ([]transcriptScopeRow, error)
+	HasUnprotectedDeleted(ctx context.Context, scope TranscriptScope, cutoff time.Time) (bool, error)
+	ListArchiveCandidates(ctx context.Context, query TranscriptArchiveQuery) ([]transcriptScopeRow, error)
+	ListArchivable(ctx context.Context, query TranscriptArchiveQuery) ([]codeSessionInternalEventRow, error)
+	ReadArchiveRange(ctx context.Context, query TranscriptArchiveQuery) ([]codeSessionInternalEventRow, error)
+	SoftDeleteArchived(ctx context.Context, batch TranscriptDeleteBatch) (int64, error)
+	HardDeleteArchived(ctx context.Context, batch TranscriptDeleteBatch) (int64, error)
 	ExistsByIdempotencyKey(ctx context.Context, workspaceUUID, idempotencyKey string) (bool, error)
 	Insert(ctx context.Context, params codeSessionInternalEventInsertParams) (codeSessionInternalEventRow, error)
 	ListPage(ctx context.Context, params listCodeSessionInternalEventsParams) ([]codeSessionInternalEventRow, error)

@@ -264,10 +264,10 @@ func TestAdminAPI(t *testing.T) {
 		assertError(t, resp, http.StatusNotFound, "not_found_error")
 	})
 
-	t.Run("failure invite cannot grant admin", func(t *testing.T) {
+	t.Run("failure invite rejects removed role", func(t *testing.T) {
 		resp := adminDo(t, app, http.MethodPost, "/v1/organizations/invites", map[string]any{
 			"email": "admin-invite-" + suffix + "@example.com",
-			"role":  "admin",
+			"role":  "developer",
 		}, defaultTestKey, "")
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
@@ -333,7 +333,7 @@ func TestAdminAPI(t *testing.T) {
 
 	t.Run("success invites paginate and soft delete", func(t *testing.T) {
 		first := createAdminInvite(t, app, "one-"+suffix+"@example.com", "user")
-		second := createAdminInvite(t, app, "two-"+suffix+"@example.com", "developer")
+		second := createAdminInvite(t, app, "two-"+suffix+"@example.com", "admin")
 		forceInviteTimes(t, app.pool, first.ID, second.ID)
 
 		var page adminCursorPage
@@ -356,14 +356,18 @@ func TestAdminAPI(t *testing.T) {
 	})
 
 	t.Run("success users and workspace members", func(t *testing.T) {
-		userID := seedAdminUser(t, app.pool, "member-"+suffix+"@example.com", "developer")
+		userID := seedAdminUser(t, app.pool, "member-"+suffix+"@example.com", "user")
 
-		resp := adminDo(t, app, http.MethodPost, "/v1/organizations/users/"+userID, map[string]any{"role": "admin"}, defaultTestKey, "")
+		resp := adminDo(t, app, http.MethodPost, "/v1/organizations/users/"+userID, map[string]any{"role": "developer"}, defaultTestKey, "")
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 
 		var user adminObject
-		adminDecodeOK(t, adminDo(t, app, http.MethodPost, "/v1/organizations/users/"+userID, map[string]any{"role": "claude_code_user"}, defaultTestKey, ""), &user)
-		if user.Role != "claude_code_user" {
+		adminDecodeOK(t, adminDo(t, app, http.MethodPost, "/v1/organizations/users/"+userID, map[string]any{"role": "admin"}, defaultTestKey, ""), &user)
+		if user.Role != "admin" {
+			t.Fatalf("promoted role = %s", user.Role)
+		}
+		adminDecodeOK(t, adminDo(t, app, http.MethodPost, "/v1/organizations/users/"+userID, map[string]any{"role": "user"}, defaultTestKey, ""), &user)
+		if user.Role != "user" {
 			t.Fatalf("updated user role = %s", user.Role)
 		}
 
@@ -377,9 +381,9 @@ func TestAdminAPI(t *testing.T) {
 		var member adminObject
 		adminDecodeOK(t, adminDo(t, app, http.MethodPost, "/v1/organizations/workspaces/"+workspace.ID+"/members", map[string]any{
 			"user_id":        userID,
-			"workspace_role": "workspace_developer",
+			"workspace_role": "workspace_user",
 		}, defaultTestKey, ""), &member)
-		if member.UserID != userID || member.WorkspaceID == nil || *member.WorkspaceID != workspace.ID || member.WorkspaceRole != "workspace_developer" {
+		if member.UserID != userID || member.WorkspaceID == nil || *member.WorkspaceID != workspace.ID || member.WorkspaceRole != "workspace_user" {
 			t.Fatalf("workspace member = %+v", member)
 		}
 
@@ -487,7 +491,7 @@ func TestAdminAPI(t *testing.T) {
 	})
 
 	t.Run("success api key before cursor returns nearest previous page", func(t *testing.T) {
-		creatorID := seedAdminUser(t, app.pool, "before-key-creator-"+suffix+"@example.com", "developer")
+		creatorID := seedAdminUser(t, app.pool, "before-key-creator-"+suffix+"@example.com", "user")
 		oldestID, _ := seedAdminAPIKey(t, app.pool, "before-oldest-"+suffix, "sk-ant-admin-before-oldest-"+suffix)
 		olderMiddleID, _ := seedAdminAPIKey(t, app.pool, "before-older-middle-"+suffix, "sk-ant-admin-before-older-middle-"+suffix)
 		newerMiddleID, _ := seedAdminAPIKey(t, app.pool, "before-newer-middle-"+suffix, "sk-ant-admin-before-newer-middle-"+suffix)

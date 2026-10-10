@@ -21,11 +21,11 @@ init-compose-config:
     fi
 
 # Restart backend in foreground. server.addr comes from config/config.yaml; PORT selects the listener to stop.
-server: generate
+server:
   PORT="${PORT:-38080}" ./scripts/restart-server.sh
 
 # Restart backend in foreground. server.addr comes from config/config.yaml; PORT selects the listener to stop.
-restart-server: generate
+restart-server:
   PORT="${PORT:-38080}" ./scripts/restart-server.sh
 
 # Restart frontend Vite dev server in foreground. Override with: PORT=4173 API_PORT=18080 just web
@@ -42,6 +42,13 @@ restart-web:
 
 test: generate
   go test ./... -count=1
+
+verify-be *args:
+  ./.agents/skills/verify-be/scripts/verify-be {{args}}
+
+# Real E2B Memory Store lifetime. Skips without e2b.api_key. Uses config/config.yaml when present.
+test-e2e-memory-sandbox: generate
+  if [[ -z "${CONFIG_FILE:-}" && -f config/config.yaml ]]; then export CONFIG_FILE="$PWD/config/config.yaml"; fi; go test ./tests -tags e2e -count=1 -timeout 25m -run 'TestMemorySandbox'
 
 # Regenerate DB mappers with the version pinned by go.mod's tool directive.
 generate-yourbatis-mappers:

@@ -27,10 +27,6 @@ func queueCodeSessionEventsError(cause error) error {
 	return internalError("Could not queue events for the code session worker", cause)
 }
 
-func sessionsBetaRequired() error {
-	return apperr.New(apperr.InvalidArgument, "Sessions API requires beta=true", nil)
-}
-
 func sessionRouteNotFound() error {
 	return apperr.New(apperr.NotFound, "Not found", nil)
 }
@@ -82,10 +78,10 @@ func mapResourceBuildError(err error) error {
 	if !errors.As(err, &refErr) {
 		return invalidRequest(err)
 	}
-	if refErr.ResourceType == "memory_store" && errors.Is(refErr.Err, db.ErrNotFound) {
+	if refErr.ResourceType == sessionresource.MemoryStoreType && errors.Is(refErr.Err, db.ErrNotFound) {
 		return memoryStoreNotFound(refErr.ResourceID, err)
 	}
-	if refErr.ResourceType == "memory_store" && errors.Is(refErr.Err, db.ErrInvalidState) {
+	if refErr.ResourceType == sessionresource.MemoryStoreType && errors.Is(refErr.Err, db.ErrInvalidState) {
 		return apperr.New(apperr.InvalidArgument, "memory store must not be archived", err)
 	}
 	return internalError(
@@ -103,6 +99,9 @@ func mapSessionLoadError(err error, sessionID string) error {
 	}
 	if errors.Is(err, db.ErrInvalidState) {
 		return apperr.New(apperr.InvalidArgument, "session state does not allow this operation", err)
+	}
+	if errors.Is(err, db.ErrSessionInputConflict) {
+		return apperr.New(apperr.Conflict, "Session cannot accept this input now", err)
 	}
 	return internalError("Session operation failed", fmt.Errorf("session %q operation: %w", sessionID, err))
 }
@@ -122,12 +121,23 @@ func mapFileResourcePersistenceError(err error) (error, bool) {
 	if errors.Is(err, db.ErrFilestorePathExists) {
 		return apperr.New(apperr.Conflict, "File resource mount_path conflicts with the session filesystem", err), true
 	}
+	var memoryLimitErr *db.SessionMemoryStoreLimitError
+	if errors.As(err, &memoryLimitErr) {
+		return invalidRequest(memoryLimitErr), true
+	}
+	var memoryDuplicateErr *db.SessionMemoryStoreDuplicateError
+	if errors.As(err, &memoryDuplicateErr) {
+		return invalidRequest(memoryDuplicateErr), true
+	}
 	return nil, false
 }
 
 func mapThreadLoadError(err error, threadID string) error {
 	if errors.Is(err, db.ErrNotFound) {
 		return threadNotFound(threadID, err)
+	}
+	if errors.Is(err, db.ErrInvalidState) {
+		return invalidRequest(errors.New("thread must be idle or terminated to archive"))
 	}
 	return internalError("Thread operation failed", fmt.Errorf("thread %q operation: %w", threadID, err))
 }
@@ -146,3 +156,5 @@ func streamingUnsupported() error {
 func gitTokenUpdateRequiredError() error {
 	return invalidRequest(errors.New("authorization_token must be provided when updating a Git resource"))
 }
+
+type resourceReferenceError = sessionresource.ReferenceError

@@ -127,11 +127,11 @@ func TestWorkspaceAuthorizationInheritance(t *testing.T) {
 		}
 	})
 
-	t.Run("用户接口不能使用历史默认授权创建资源", func(t *testing.T) {
+	t.Run("默认用户可访问开发资源但不能管理组织", func(t *testing.T) {
 		cookies := workspaceUserCookies(t, app, refs.OrganizationUUID, userID)
-		response := app.platformRequest(t, http.MethodGet, "/v1/files?beta=true", nil, cookies)
+		response := app.platformRequestWithHeaders(t, http.MethodGet, "/v1/files?beta=true", nil, cookies, map[string]string{"anthropic-beta": "files-api-2025-04-14"})
 		defer response.Body.Close()
-		if response.StatusCode != http.StatusForbidden {
+		if response.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d", response.StatusCode)
 		}
 	})

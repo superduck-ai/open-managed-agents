@@ -27,6 +27,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -222,6 +223,17 @@ func (h *Handler) streamPlatformFileVariant(w http.ResponseWriter, r *http.Reque
 		}
 		h.logger.ErrorContext(r.Context(), "get platform file metadata", "variant", variant, "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve file"))
+		return
+	}
+	_, access, err := workspaceaccess.New(h.db).Resolve(r.Context(), principal.OrganizationUUID, principal.UserExternalID, record.WorkspaceUUID)
+	if err == nil && !access.UseResources() {
+		err = workspaceaccess.ErrDenied
+	}
+	if err != nil {
+		if !errors.Is(err, workspaceaccess.ErrDenied) {
+			h.logger.ErrorContext(r.Context(), "authorize platform file workspace", "variant", variant, "workspace_id", record.WorkspaceUUID, "error", err)
+		}
+		httpapi.WriteError(w, r, platformFileWorkspaceError(err))
 		return
 	}
 	objectKey := record.S3Key

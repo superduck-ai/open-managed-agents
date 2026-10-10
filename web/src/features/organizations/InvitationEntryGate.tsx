@@ -6,7 +6,6 @@ import { returnToFromSearch } from '../../shared/auth/redirects';
 import { Button } from '../../shared/ui/button';
 import { invitationReturnTo, listInvitations } from './api';
 
-// 每次打开应用、每个登录身份只做一次前置检查，避免打断正在进行的业务操作。
 export function InvitationEntryGate() {
   const { status, account } = useAuth();
   if (status !== 'authenticated' || !account) return <Outlet />;

@@ -169,7 +169,6 @@ async function requestJson<T>(path: string, options: RequestInit): Promise<T> {
   const scoped = Boolean(context.organizationUuid || context.workspaceId);
   const scopeSignal = scopeController.signal;
   const readOnly = !options.method || ['GET', 'HEAD'].includes(options.method.toUpperCase());
-  // 写请求一旦发送就让服务端完成；只隔离返回值，不因切换取消或重发写操作。
   const signal =
     scoped && readOnly ? AbortSignal.any([scopeSignal, ...(options.signal ? [options.signal] : [])]) : options.signal;
   const response = await fetch(path, { ...options, signal });

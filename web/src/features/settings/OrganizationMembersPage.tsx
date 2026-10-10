@@ -1,7 +1,7 @@
 import { createColumnHelper, flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, MoreVertical, Plus, Send, Trash2 } from 'lucide-react';
-import { useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { AlertCircle, MoreVertical, Plus, Send, Trash2, Users } from 'lucide-react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,8 +15,10 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '../../shared/ui/alert';
 import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
-import { Card, CardContent, CardHeader } from '../../shared/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
+import { ResourceListState } from '../../shared/ui/resource-list-state';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import { useI18n } from '../../shared/i18n';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,11 +32,16 @@ import { Textarea } from '../../shared/ui/textarea';
 import { Skeleton } from '../../shared/ui/skeleton';
 import { toast } from '../../shared/ui/sonner';
 import { useAuth } from '../../shared/auth/context';
-import { useI18n } from '../../shared/i18n';
 import { notifyInvitationDelivery } from './invitationDelivery';
 import { canManageMembers } from '../../shared/permissions/members';
-import { roleOptions, type PlatformRole } from '../../shared/permissions/roles';
+import {
+  platformRoleDescription,
+  platformRoleLabel,
+  roleOptions,
+  type PlatformRole,
+} from '../../shared/permissions/roles';
 import { useWorkspace } from '../../shared/workspaces/context';
+import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import {
   createOrganizationInvite,
   deleteOrganizationInvite,
@@ -47,25 +54,14 @@ import {
 } from './membersApi';
 
 type OrganizationMemberRow = OrganizationMember | OrganizationInvite;
-type SelectOption<T extends string> = {
-  value: T;
-  label: string;
-  description?: ReactNode;
-  disabled?: boolean;
-};
 type InviteValidationError = { type: 'invalid-email'; emails: string[] } | { type: 'too-many' };
 
 const memberColumnHelper = createColumnHelper<OrganizationMemberRow>();
-const roleSelectOptions = roleOptions.map<SelectOption<PlatformRole>>((role) => ({
-  value: role.value,
-  label: role.label,
-  description: role.description,
-}));
 
 export function OrganizationMembersPage() {
   const { msg } = useI18n();
   const { account, csrfToken } = useAuth();
-  const { orgUuid } = useWorkspace();
+  const { orgUuid, activeWorkspace } = useWorkspace();
   const queryClient = useQueryClient();
   const bootstrapOrganization = account?.memberships?.find((membership) => membership.organization?.uuid)?.organization;
   const activeOrgUuid = orgUuid ?? bootstrapOrganization?.uuid;
@@ -134,7 +130,7 @@ export function OrganizationMembersPage() {
       );
       setInviteToRevoke(null);
       setInviteActionError(null);
-      toast.success('Invitation revoked.');
+      toast.success(msg('members.revoked', 'Invitation revoked.'));
     },
     onError: (error) => {
       setInviteActionError(errorMessage(error));
@@ -160,14 +156,14 @@ export function OrganizationMembersPage() {
     () => [
       memberColumnHelper.display({
         id: 'name',
-        header: 'Name',
+        header: msg('common.name', 'Name'),
         cell: ({ row }) => {
           if (isInviteRow(row.original)) {
             return (
               <div className="flex min-w-0 items-center gap-2">
                 <span className="text-muted-foreground">–</span>
                 <Badge variant="secondary" className="rounded-md px-1.5">
-                  Pending
+                  {msg('members.pending', 'Pending')}
                 </Badge>
               </div>
             );
@@ -184,15 +180,19 @@ export function OrganizationMembersPage() {
       }),
       memberColumnHelper.display({
         id: 'email',
-        header: 'Email',
+        header: msg('members.email', 'Email'),
         cell: ({ row }) => <span className="truncate text-muted-foreground">{row.original.email}</span>,
       }),
       memberColumnHelper.display({
         id: 'role',
-        header: 'Role',
+        header: msg('members.role', 'Role'),
         cell: ({ row }) => {
           if (isInviteRow(row.original)) {
-            return <span className="text-foreground">{roleLabel(normalizePlatformRole(row.original.role))}</span>;
+            return (
+              <span className="text-foreground">
+                {platformRoleLabel(normalizePlatformRole(row.original.role), msg)}
+              </span>
+            );
           }
 
           const member = row.original;
@@ -200,12 +200,12 @@ export function OrganizationMembersPage() {
           const isSelf = isCurrentAccountMember(account, member);
 
           if (!canManage || isSelf) {
-            return <span className="text-foreground">{roleLabel(role)}</span>;
+            return <span className="text-foreground">{platformRoleLabel(role, msg)}</span>;
           }
 
           return (
             <RoleSelect
-              ariaLabel={`Role for ${displayMemberName(member)}`}
+              ariaLabel={msg('members.role.for', 'Role for {name}', { name: displayMemberName(member) })}
               value={role}
               disabled={pendingRoleMemberId === member.id || updateRoleMutation.isPending}
               className="min-w-[144px]"
@@ -241,7 +241,7 @@ export function OrganizationMembersPage() {
           ),
       }),
     ],
-    [account, canManage, deleteInviteMutation, pendingRoleMemberId, resendInviteMutation, updateRoleMutation],
+    [account, canManage, deleteInviteMutation, msg, pendingRoleMemberId, resendInviteMutation, updateRoleMutation],
   );
 
   // TanStack Table returns callback-heavy instance methods; this table instance stays local to the page.
@@ -254,47 +254,47 @@ export function OrganizationMembersPage() {
 
   if (!activeOrgUuid) {
     return (
-      <section className="mx-auto w-full max-w-[1180px]">
-        <Card>
-          <CardHeader>
-            <h1 className="text-xl font-semibold tracking-normal text-foreground">Members</h1>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">No organization is available for this session.</p>
-          </CardContent>
-        </Card>
+      <section>
+        <ResourcePageHeader contentGap="content" title={msg('members.title', 'Members')} />
+        <p className="text-[15px] leading-5 text-muted-foreground">
+          {msg('members.noOrganization', 'No organization is available for this session.')}
+        </p>
       </section>
     );
   }
 
   return (
-    <section className="mx-auto w-full max-w-[1180px]" data-testid="organization-members-page">
-      <div className="mb-6 flex min-h-9 items-center justify-between gap-4">
-        <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold tracking-normal text-foreground">
-          <span>Members</span>
+    <section data-testid="organization-members-page">
+      <ResourcePageHeader
+        contentGap="content"
+        title={msg('members.title', 'Members')}
+        description={memberAccessDescription(bootstrapOrganization, activeWorkspace.name, msg)}
+        titleAdornment={
           <Badge variant="secondary" className="min-w-5 rounded-full px-1.5">
             {titleCount}
           </Badge>
-        </h1>
-        {canManage ? (
-          <Button
-            size="lg"
-            onClick={() => {
-              setInviteActionError(null);
-              setInviteOpen(true);
-            }}
-          >
-            <Plus className="size-4" aria-hidden />
-            Invite
-          </Button>
-        ) : null}
-      </div>
+        }
+        actions={
+          canManage ? (
+            <Button
+              size="lg"
+              onClick={() => {
+                setInviteActionError(null);
+                setInviteOpen(true);
+              }}
+            >
+              <Plus className="size-4" aria-hidden />
+              {msg('members.invite', 'Invite')}
+            </Button>
+          ) : null
+        }
+      />
 
       {updateRoleMutation.isError ? <InlineNotice>{errorMessage(updateRoleMutation.error)}</InlineNotice> : null}
       {inviteActionError ? <InlineNotice>{inviteActionError}</InlineNotice> : null}
 
-      <div className="overflow-hidden border-y border-border">
-        <Table className="table-fixed text-left" aria-label="Members">
+      <div className="overflow-x-auto">
+        <Table className="table-fixed text-left" aria-label={msg('members.tableAria', 'Members')}>
           <TableHeader className="text-muted-foreground">
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id} className="border-border hover:bg-transparent">
@@ -313,21 +313,14 @@ export function OrganizationMembersPage() {
                 <TableCell colSpan={4} className="px-3 py-10">
                   <Alert variant="destructive" className="mx-auto max-w-xl">
                     <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                    <AlertTitle>Members could not be loaded.</AlertTitle>
+                    <AlertTitle>{msg('members.loadError', 'Members could not be loaded.')}</AlertTitle>
                     <AlertDescription>
-                      <p>Try again.</p>
+                      <p>{msg('members.tryAgainBody', 'Try again.')}</p>
                       <Button type="button" variant="outline" size="sm" className="mt-3" onClick={handleRetry}>
-                        Try again
+                        {msg('members.tryAgain', 'Try again')}
                       </Button>
                     </AlertDescription>
                   </Alert>
-                </TableCell>
-              </TableRow>
-            ) : null}
-            {!isInitialLoading && !hasTableError && table.getRowModel().rows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="px-3 py-10 text-center text-sm text-muted-foreground">
-                  No members found.
                 </TableCell>
               </TableRow>
             ) : null}
@@ -345,6 +338,14 @@ export function OrganizationMembersPage() {
           </TableBody>
         </Table>
       </div>
+
+      {!isInitialLoading && !hasTableError && table.getRowModel().rows.length === 0 ? (
+        <ResourceListState
+          icon={Users}
+          title={msg('members.emptyTitle', 'No members yet')}
+          body={msg('members.emptyBody', 'Invite people to join this organization.')}
+        />
+      ) : null}
 
       <InviteMembersDialog
         open={inviteOpen}
@@ -390,6 +391,7 @@ function InviteMembersDialog({
   onOpenChange: (open: boolean) => void;
   onInvited: (createdInvites: OrganizationInvite[]) => void;
 }) {
+  const { msg } = useI18n();
   const [emailsValue, setEmailsValue] = useState('');
   const [role, setRole] = useState<PlatformRole>('user');
   const [submitValidationError, setSubmitValidationError] = useState<InviteValidationError | null>(null);
@@ -450,12 +452,14 @@ function InviteMembersDialog({
         initialFocus={textareaRef}
       >
         <DialogHeader>
-          <DialogTitle>Invite members</DialogTitle>
+          <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">
+            {msg('members.invite', 'Invite')}
+          </DialogTitle>
         </DialogHeader>
         <form className="space-y-5" onSubmit={handleSubmit}>
           <div>
             <Label htmlFor="invite-emails" className="mb-2">
-              Email addresses
+              {msg('members.emails', 'Email addresses')}
             </Label>
             <Textarea
               ref={textareaRef}
@@ -472,14 +476,14 @@ function InviteMembersDialog({
               aria-describedby="invite-emails-help"
             />
             <p id="invite-emails-help" className="mt-2 text-xs leading-5 text-muted-foreground">
-              Separate addresses with commas, spaces, or new lines. Up to 50 at once.
+              {msg('members.emails.help', 'Separate addresses with commas, spaces, or new lines. Up to 50 at once.')}
             </p>
           </div>
 
           <div>
-            <Label className="mb-2">Role</Label>
+            <Label className="mb-2">{msg('members.role', 'Role')}</Label>
             <RoleSelect
-              ariaLabel="Role"
+              ariaLabel={msg('members.role', 'Role')}
               value={role}
               disabled={inviteMutation.isPending}
               className="w-full"
@@ -494,11 +498,19 @@ function InviteMembersDialog({
           {submitValidationError ? <InviteValidationNotice error={submitValidationError} /> : null}
           {inviteMutation.isError ? <InlineNotice>{errorMessage(inviteMutation.error)}</InlineNotice> : null}
 
-          <div className="flex justify-end">
-            <Button type="submit" size="lg" disabled={!canSubmit}>
-              {inviteMutation.isPending ? 'Inviting...' : 'Invite'}
+          <DialogFooter className="sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => closeDialog(false)}
+              disabled={inviteMutation.isPending}
+            >
+              {msg('common.cancel', 'Cancel')}
             </Button>
-          </div>
+            <Button type="submit" size="lg" disabled={!canSubmit}>
+              {inviteMutation.isPending ? msg('members.inviting', 'Inviting...') : msg('members.invite', 'Invite')}
+            </Button>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
@@ -520,10 +532,16 @@ function RoleSelect({
   contentClassName?: string;
   onChange: (value: PlatformRole) => void;
 }) {
+  const { msg } = useI18n();
+  const options = roleOptions.map((role) => ({
+    value: role.value,
+    label: platformRoleLabel(role.value, msg),
+    description: platformRoleDescription(role.value, msg),
+  }));
   return (
     <Select<PlatformRole>
       value={value}
-      items={roleSelectOptions.map((option) => ({ value: option.value, label: option.label }))}
+      items={options.map((option) => ({ value: option.value, label: option.label }))}
       disabled={disabled}
       onValueChange={(nextValue) => {
         if (nextValue !== null) {
@@ -535,8 +553,8 @@ function RoleSelect({
         <SelectValue />
       </SelectTrigger>
       <SelectContent alignItemWithTrigger={false} className={contentClassName}>
-        {roleSelectOptions.map((option) => (
-          <SelectItem key={option.value} value={option.value} label={option.label} disabled={option.disabled}>
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value} label={option.label}>
             <span className="block">
               <span className="block leading-5">{option.label}</span>
               {option.description ? (
@@ -551,10 +569,15 @@ function RoleSelect({
 }
 
 function MembersSkeletonRows() {
+  const { msg } = useI18n();
   return (
     <>
       {[0, 1, 2].map((index) => (
-        <TableRow key={index} className="border-border last:border-b-0" aria-label="Loading member">
+        <TableRow
+          key={index}
+          className="border-border last:border-b-0"
+          aria-label={msg('members.loadingRow', 'Loading member')}
+        >
           <TableCell className="px-3 py-3">
             <Skeleton className="h-5 w-44" />
           </TableCell>
@@ -582,23 +605,31 @@ function InviteActionsMenu({
   onResend: (invite: OrganizationInvite) => void;
   onRevoke: (invite: OrganizationInvite) => void;
 }) {
+  const { msg } = useI18n();
   return (
     <div className="flex justify-end">
       <DropdownMenu>
         <DropdownMenuTrigger
           disabled={disabled}
-          render={<Button variant="ghost" size="icon" className="text-muted-foreground" aria-label="More actions" />}
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground"
+              aria-label={msg('managedAgents.common.moreActions', 'More actions')}
+            />
+          }
         >
           <MoreVertical className="size-4" aria-hidden />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-44">
           <DropdownMenuItem onClick={() => onResend(invite)}>
             <Send className="size-4" aria-hidden />
-            <span>Resend invite</span>
+            <span>{msg('members.resend', 'Resend invite')}</span>
           </DropdownMenuItem>
           <DropdownMenuItem variant="destructive" onClick={() => onRevoke(invite)}>
             <Trash2 className="size-4" aria-hidden />
-            <span>Revoke invitation</span>
+            <span>{msg('members.revokeInvitation', 'Revoke invitation')}</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -617,6 +648,7 @@ function InviteRevokeDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const { msg } = useI18n();
   if (!invite) {
     return null;
   }
@@ -632,17 +664,19 @@ function InviteRevokeDialog({
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Revoke invitation?</AlertDialogTitle>
+          <AlertDialogTitle>{msg('members.revokeTitle', 'Revoke invitation?')}</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to revoke the invitation for {invite.email}?
+            {msg('members.revokeBody', 'Are you sure you want to revoke the invitation for {email}?', {
+              email: invite.email,
+            })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isSubmitting} onClick={onCancel}>
-            Cancel
+            {msg('common.cancel', 'Cancel')}
           </AlertDialogCancel>
           <AlertDialogAction variant="destructive" disabled={isSubmitting} onClick={onConfirm}>
-            {isSubmitting ? 'Revoking...' : 'Revoke'}
+            {isSubmitting ? msg('members.revoking', 'Revoking...') : msg('members.revoke', 'Revoke')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -651,11 +685,12 @@ function InviteRevokeDialog({
 }
 
 function InviteValidationNotice({ error }: { error: InviteValidationError }) {
+  const { msg } = useI18n();
   if (error.type === 'too-many') {
     return (
       <Alert variant="destructive">
         <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-        <AlertDescription>Invite up to 50 email addresses at once.</AlertDescription>
+        <AlertDescription>{msg('members.tooMany', 'Invite up to 50 email addresses at once.')}</AlertDescription>
       </Alert>
     );
   }
@@ -663,12 +698,16 @@ function InviteValidationNotice({ error }: { error: InviteValidationError }) {
   return (
     <Alert variant="destructive">
       <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-      <AlertTitle>{error.emails.length === 1 ? 'Invalid email address:' : 'Invalid email addresses:'}</AlertTitle>
+      <AlertTitle>
+        {error.emails.length === 1
+          ? msg('members.invalidEmail', 'Invalid email address:')
+          : msg('members.invalidEmails', 'Invalid email addresses:')}
+      </AlertTitle>
       <AlertDescription>
         {error.emails.map((email) => (
           <p key={email}>{email}</p>
         ))}
-        <p>Please remove or fix before sending invitations.</p>
+        <p>{msg('members.fixEmails', 'Please remove or fix before sending invitations.')}</p>
       </AlertDescription>
     </Alert>
   );
@@ -696,6 +735,17 @@ function isInviteRow(row: OrganizationMemberRow): row is OrganizationInvite {
   return row.type === 'invite';
 }
 
+function memberAccessDescription(
+  organization: { name?: string } | undefined,
+  workspaceName: string,
+  msg: ReturnType<typeof useI18n>['msg'],
+) {
+  const organizationName = organization?.name || localizedWorkspaceName(workspaceName, msg);
+  return msg('members.description', 'People who can access the {organizationName} organization.', {
+    organizationName,
+  });
+}
+
 function headerClassName(columnId: string) {
   switch (columnId) {
     case 'name':
@@ -719,10 +769,6 @@ function cellClassName(columnId: string) {
     default:
       return 'px-3 py-2.5';
   }
-}
-
-function roleLabel(role: PlatformRole) {
-  return roleOptions.find((option) => option.value === role)?.label ?? titleizeRole(role);
 }
 
 function normalizePlatformRole(role: unknown): PlatformRole {
@@ -766,14 +812,6 @@ function initials(value: string) {
     return parts[0].slice(0, 2);
   }
   return `${parts[0][0]}${parts[1][0]}`;
-}
-
-function titleizeRole(role: string) {
-  return role
-    .split('_')
-    .filter(Boolean)
-    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
-    .join(' ');
 }
 
 function errorMessage(error: unknown) {

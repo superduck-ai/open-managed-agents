@@ -69,7 +69,7 @@ test('普通空间按真实 ID 请求全部分页，不请求组织成员', asyn
         data: [
           {
             user_id: next ? 'user_admin' : 'user_billing',
-            workspace_role: next ? 'workspace_admin' : 'workspace_billing',
+            workspace_role: next ? 'workspace_admin' : 'workspace_user',
           },
         ],
         has_more: next,

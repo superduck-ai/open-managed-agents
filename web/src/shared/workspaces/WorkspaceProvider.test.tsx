@@ -29,11 +29,11 @@ const account: AuthAccount = {
   memberships: [
     { organization: { uuid: 'a' }, role: 'admin', user_id: 'self-a' },
     { organization: { uuid: 'b' }, role: 'user', user_id: 'self-b' },
-    { organization: { uuid: 'c' }, role: 'billing', user_id: 'self-c' },
+    { organization: { uuid: 'c' }, role: 'user', user_id: 'self-c' },
   ],
 };
 const workspaces = (org: string) => [
-  { id: `ws-${org}`, name: org, type: 'workspace', is_default: true, effective_role: 'workspace_developer' },
+  { id: `ws-${org}`, name: org, type: 'workspace', is_default: true, effective_role: 'workspace_user' },
 ];
 
 afterEach(() => {
@@ -349,7 +349,7 @@ for (const fail of [true, false]) {
           ? new Response('{}', { status: 500 })
           : Response.json([
               ...workspaces('a'),
-              { id: 'ws-saved', name: 'Saved', type: 'workspace', effective_role: 'workspace_developer' },
+              { id: 'ws-saved', name: 'Saved', type: 'workspace', effective_role: 'workspace_user' },
             ]),
       );
     });

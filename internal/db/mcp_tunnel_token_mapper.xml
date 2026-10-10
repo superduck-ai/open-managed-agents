@@ -40,9 +40,7 @@
 
     <select id="FindByHashAndTunnelExternalID" resultType="mcpTunnelTokenContextRow">
         SELECT
-            tv.uuid, tv.external_id, tv.tunnel_uuid, tv.version, tv.token_hash,
-            tv.ciphertext, tv.nonce, tv.wrapped_dek, tv.format_version,
-            tv.key_provider, tv.key_version, tv.created_at, tv.retired_at, tv.archived_at,
+            tv.tunnel_uuid, tv.retired_at, tv.archived_at,
             t.external_id AS tunnel_external_id,
             t.organization_uuid,
             t.workspace_uuid,

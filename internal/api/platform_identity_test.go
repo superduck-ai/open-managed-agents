@@ -50,7 +50,6 @@ func TestPlatformIdentityMiddleware(t *testing.T) {
 				req.AddCookie(&http.Cookie{Name: "sessionKey", Value: tc.cookie})
 			}
 			req.Header.Set("X-CSRF-Token", tc.csrf)
-			// 错误的旧上下文不能阻断邀请入口，也不能改变已验证邮箱。
 			req.Header.Set("X-Organization-UUID", "removed-organization")
 			req.Header.Set("X-Workspace-ID", "archived-workspace")
 			response := httptest.NewRecorder()

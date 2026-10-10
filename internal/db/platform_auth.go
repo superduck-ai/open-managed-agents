@@ -180,7 +180,6 @@ func (r platformSessionIdentityRow) session() platformsession.Session {
 	}
 }
 
-// EnrichPlatformSession 从可信会话的原始组织及用户标识补齐身份，历史软删记录不代表成员权限。
 func (d *DB) EnrichPlatformSession(ctx context.Context, session platformsession.Session) (platformsession.Session, error) {
 	if d == nil || d.mapperDB == nil || session.OrganizationUUID == "" {
 		return platformsession.Session{}, ErrNotFound
@@ -206,7 +205,6 @@ func (d *DB) EnrichPlatformSession(ctx context.Context, session platformsession.
 	return session, nil
 }
 
-// GetActivePlatformUserByEmail 仅按服务端已验证邮箱读取目标组织的有效成员。
 func (d *DB) GetActivePlatformUserByEmail(ctx context.Context, organizationUUID, email string) (AdminUser, error) {
 	if d == nil || d.mapperDB == nil || organizationUUID == "" || email == "" {
 		return AdminUser{}, ErrNotFound

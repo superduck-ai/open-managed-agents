@@ -1,4 +1,3 @@
-// Package invitations 提供以服务端已验证邮箱为身份边界的邀请资源。
 package invitations
 
 import (
@@ -28,7 +27,6 @@ func NewHandler(store Store, verifiedEmail func(*http.Request) (string, bool), l
 	return &Handler{store: store, verifiedEmail: verifiedEmail, errors: httpapi.NewErrorAdapter(logger)}
 }
 
-// RegisterRoutes 注册相对资源路由；调用方负责登录身份与写请求 CSRF 校验。
 func (h *Handler) RegisterRoutes(router chi.Router) {
 	router.Use(middleware.SetHeader("Cache-Control", "no-store"))
 	router.Get("/", h.errors.Wrap(h.list))

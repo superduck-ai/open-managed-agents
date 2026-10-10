@@ -98,7 +98,7 @@ func TestFilestoreRoutingUsesResourceBoundary(t *testing.T) {
 func TestFilestoreProtocolOperationsAreRegistered(t *testing.T) {
 	t.Parallel()
 
-	handler := filestore.NewHandler(config.Config{}, filestore.NewService(config.Config{}, nil, nil), nil)
+	handler := filestore.NewHandler(config.Config{}, filestore.NewService(config.Config{}, nil, nil, nil), nil)
 	for _, requestPath := range filestoreAuthPaths {
 		requestPath := requestPath
 		t.Run(strings.TrimPrefix(requestPath, "/v1/filestore/fs/"), func(t *testing.T) {
@@ -625,7 +625,7 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, *pgxpool.Pool, confi
 	}
 	if _, err := pool.Exec(context.Background(), `
 		insert into users (uuid, external_id, organization_uuid, email, name, role)
-		values ($1, $2, $3, $4, $5, 'developer')
+		values ($1, $2, $3, $4, $5, 'user')
 	`, accountUUID, accountExternalID, organizationUUID, accountExternalID+"@example.com", "Filestore auth account"); err != nil {
 		t.Fatalf("insert filestore auth account: %v", err)
 	}

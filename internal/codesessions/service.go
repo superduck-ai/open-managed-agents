@@ -35,6 +35,42 @@ type Service struct {
 	workerEventObjects     storage.ObjectStore
 }
 
+func (s *Service) PurgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {
+	if s == nil || len(codeSessionIDs) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	s.purgeWorkerEvents(ctx, codeSessionIDs)
+}
+
+func (s *Service) purgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {
+	for _, codeSessionID := range codeSessionIDs {
+		if err := s.workerEvents.PurgeSession(ctx, codeSessionID); err != nil {
+			s.logger.WarnContext(ctx, "purge retired worker events", "code_session_id", codeSessionID, "error", err)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+	}
+}
+
+func (s *Service) reclaimClosedSubscription(codeSession db.CodeSession) {
+	if codeSession.SessionUUID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	retired, err := s.db.IsSessionRetired(ctx, codeSession.OrganizationUUID, codeSession.WorkspaceUUID, codeSession.SessionUUID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "check closed worker session", "code_session_id", codeSession.ExternalID, "error", err)
+		return
+	}
+	if retired {
+		s.purgeWorkerEvents(ctx, []string{codeSession.ExternalID})
+	}
+}
+
 func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials, logger *slog.Logger) *Service {
 	// 显式注入避免 Service 在同一进程中各自生成临时 Ed25519 密钥。
 	if credentials == nil {
@@ -115,7 +151,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 			queued = true
 			continue
 		}
-		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event.Payload, event.UUID, event.ProcessedAt)
+		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event)
 		if err != nil {
 			return fmt.Errorf("convert public session event %s: %w", event.ExternalID, err)
 		}
@@ -198,7 +234,7 @@ func (s *Service) QueueRawPublicSessionEvents(ctx context.Context, codeSession d
 		}
 		batch.events = append(batch.events, prepared)
 	}
-	return s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, func(db.CodeSession) error {
+	return s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, "", func(db.CodeSession) error {
 		return batch.publish(ctx)
 	})
 }
@@ -280,6 +316,12 @@ type preparedPublicAction struct {
 	payloads []json.RawMessage
 }
 
+type preparedFailedResultAction struct {
+	preparedPublicAction
+	threadID string
+	at       time.Time
+}
+
 func (preparedNoopAction) implPreparedWorkerOutputEvent()      {}
 func (preparedKeepAliveAction) implPreparedWorkerOutputEvent() {}
 func (preparedStreamAction) implPreparedWorkerOutputEvent()    {}
@@ -340,6 +382,17 @@ func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now
 	if !ok {
 		return preparedNoopAction{}, nil
 	}
+	if meta.EventType == "result" && (meta.EventSubtype == "" || meta.EventSubtype == "error_during_execution") {
+		var schema workerOutputCommonPayload
+		if err := json.Unmarshal(payload, &schema); err != nil {
+			return nil, err
+		}
+		return preparedFailedResultAction{
+			preparedPublicAction: preparedPublicAction{payloads: publicPayloads},
+			threadID:             schema.SessionThreadID,
+			at:                   firstWorkerPayloadTime(schema, now),
+		}, nil
+	}
 	return preparedPublicAction{payloads: publicPayloads}, nil
 }
 
@@ -380,6 +433,12 @@ func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessi
 		return nil
 	case preparedControlAction:
 		return s.handleToolPermissionRequest(ctx, codeSessionID, workerEpoch, &prepared.request, prepared.metadata)
+	case preparedFailedResultAction:
+		interrupted, err := s.workerResultWasInterrupted(ctx, codeSessionID, prepared)
+		if err != nil || interrupted {
+			return err
+		}
+		return s.publishWorkerPublicPayloads(ctx, codeSessionID, prepared.payloads)
 	case preparedPublicAction:
 		return s.publishWorkerPublicPayloads(ctx, codeSessionID, prepared.payloads)
 	default:
@@ -537,35 +596,6 @@ func (s *Service) PublishSubagentInternalEvents(ctx context.Context, codeSession
 		return nil
 	}
 	return s.publishSubagentInternalEvents(ctx, codeSession)
-}
-
-func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.CodeSession) (map[string]string, error) {
-	events, _, err := s.eventPayloads.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
-		WorkspaceUUID:     codeSession.WorkspaceUUID,
-		SessionExternalID: codeSession.SessionExternalID,
-		PrimaryOnly:       true,
-		Limit:             500,
-		Order:             "asc",
-		Types:             []string{"session.thread_created"},
-	})
-	if err != nil {
-		return nil, err
-	}
-	threadByAgent := make(map[string]string)
-	for _, event := range events {
-		object := rawObject(event.Payload)
-		threadID := strings.TrimSpace(stringField(object, "session_thread_id"))
-		if threadID == "" {
-			continue
-		}
-		for _, key := range []string{"task_id", "agent_id", "agentId"} {
-			agentID := strings.TrimSpace(stringField(object, key))
-			if agentID != "" {
-				threadByAgent[agentID] = threadID
-			}
-		}
-	}
-	return threadByAgent, nil
 }
 
 func isPublicWorkerOutputEvent(eventType string) bool {

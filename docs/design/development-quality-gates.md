@@ -15,7 +15,11 @@
 
 ## 配置与执行
 
-- yourbatis 根据 `internal/db/*.xml` 生成的 `*.sqlmap.gen.go` 不提交；`scripts/generate-go.sh` 是统一生成入口。该脚本会先删除 `internal/db` 下已有的 `*.sqlmap.gen.go`，再执行 `go generate ./internal/db`，避免已删除 Mapper 留下的 ignored 生成文件继续参与编译。Go lint、死代码、复杂度、测试、开发启动和 Docker 构建在类型检查或编译前调用该入口，避免本地残留的 ignored 文件掩盖干净 checkout 中的缺失生成代码。
+- yourbatis 根据 `internal/db/*.xml` 生成的 `*.sqlmap.gen.go` 不提交；`scripts/generate-go.sh` 是统一生成入口。无参数调用会先删除 `internal/db` 下已有的 `*.sqlmap.gen.go`，再执行 `go generate ./internal/db`，避免已删除 Mapper 留下的 ignored 生成文件继续参与编译。Go lint、死代码、复杂度、测试、CI 和 Docker 构建继续使用该全量入口。
+- 开发重启使用 `scripts/generate-go.sh --cached`，由重启脚本调用一次；`just server` 和 `just restart-server` 不再另设生成前置步骤。检查通过后才停止旧服务，因此生成失败时旧服务继续运行。其他 Go 业务代码的编译仍由 `go run .` 完成。
+- `cmd/generate-go` 只依赖 Go 标准库。缓存输入包含 DB 包非测试、非 Mapper 生成的 Go 源码和 XML、DB 与生成器的本地传递依赖源码、模块文件、workspace 配置、生成入口源码及稳定的 Go 构建环境。通过 `go list -deps -e -json` 发现依赖；无法解析时全量生成且不保存缓存。摘要包含路径和内容，能识别新增、删除和保留原修改时间的修改。
+- 缓存同时保存 `internal/db` 下全部 `*.sqlmap.gen.go` 的路径与内容摘要。产物缺失、修改或出现多余文件时缓存失效，先清空全部旧产物再全量生成。缓存保存在当前 worktree 的 ignored 路径 `tmp/go-generation/cache.json`，不跨 worktree 共享。成功的全量生成也可以建立缓存。
+- 两种模式均通过操作系统文件锁串行执行；生成子进程继承锁，即使父进程被强制终止，也不会在旧生成进程退出前允许另一个任务生成。进程退出后锁自动释放。开始重建前删除旧缓存；仅生成成功且前后输入摘要一致时原子保存新缓存。收到中断或终止信号时停止生成子进程组。生成失败、中断、依赖解析失败或生成期间输入变化都不会留下有效缓存。使用 `GOFLAGS` 指定 `-overlay` 或 `-modfile` 时保守地禁用缓存，继续全量生成。
 - `.golangci.yml` 是常规 Go lint 规则来源；复杂度和死代码等需要不同扫描范围的专项门禁使用独立的固定配置。
 - `just lint` 在本地对所有 Go package（包括测试）运行相同配置。
 - `.golangci-dead-code.yml` 单独启用 golangci-lint 的 `unused` 分析器并覆盖测试代码；`just dead-code` 通过 `scripts/go-dead-code.sh` 枚举当前 Go module 的仓库 package，避免本地前端依赖中的第三方 Go 示例污染结果。
@@ -29,6 +33,8 @@
 规则变更应先在本地通过 `just lint`、`just dead-code` 和 `just duplicates`，再提交配置与必要的代码修复；不要通过全局排除、提高重复率预算、`nolint`、伪造引用或跳过标记隐藏既有问题。
 
 ## 验收
+
+生成缓存的验收使用 `go test ./cmd/generate-go -count=1`，覆盖失败、中断、并发、输入和产物变化、删除 Mapper、强制重建、无关代码修改及重启脚本。两个 Just 入口另用 `just --dry-run server` 和 `just --dry-run restart-server` 确认只调用一次重启脚本；Go 单测不依赖 Just。DB 实际生成后执行 `go test ./internal/db -count=1`，确认生成代码可编译且 Mapper 测试通过。
 
 ```bash
 just hooks-install

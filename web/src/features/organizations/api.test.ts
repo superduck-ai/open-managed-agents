@@ -7,13 +7,7 @@ test('网络及未知状态使用可重试文案，未知冲突不会误报已�
   expect(invitationErrorMessage({ status: 409, message: 'other conflict' })).toBe('此邀请状态已变更，请刷新后重试。');
 });
 
-test('组织五种角色均提供中文名称', () => {
-  expect(['admin', 'developer', 'billing', 'user', 'claude_code_user'].map(organizationRoleLabel)).toEqual([
-    '管理员',
-    '开发者',
-    '财务',
-    '用户',
-    'Claude Code 用户',
-  ]);
+test('组织只有用户和管理员角色', () => {
+  expect(['admin', 'user'].map(organizationRoleLabel)).toEqual(['管理员', '用户']);
   expect(organizationRoleLabel()).toBe('成员');
 });

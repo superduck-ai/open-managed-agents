@@ -23,7 +23,6 @@ type mailStore interface {
 	GetAdminUser(context.Context, string, string) (db.AdminUser, error)
 }
 
-// Mailer 在邀请落库后同步提交邮件，不改变邀请状态或成员资格。
 type Mailer struct {
 	db         mailStore
 	logger     *slog.Logger
@@ -42,7 +41,6 @@ func NewMailer(cfg config.AuthConfig, database mailStore, logger *slog.Logger) *
 	return m
 }
 
-// Notify 的 sent 仅表示 SMTP 接受，不承诺收件箱投递。失败可通过重发恢复。
 func (m *Mailer) Notify(ctx context.Context, principal auth.Principal, recipient string, expiresAt time.Time) string {
 	if m == nil || m.sender == nil {
 		return "not_configured"
@@ -64,7 +62,6 @@ func (m *Mailer) Notify(ctx context.Context, principal auth.Principal, recipient
 		err = m.sender.SendMessage(ctx, recipient, message)
 	}
 	if err != nil {
-		// SMTP 错误可能包含收件人地址，不将原始错误或邮件内容写入日志。
 		m.logger.WarnContext(ctx, "invitation email submission failed", "organization_uuid", principal.OrganizationUUID)
 		return "failed"
 	}

@@ -113,8 +113,6 @@ debug/归一化模式的转换规则：
 
 跳过以下 entry：
 
-- `queued_boundary`
-- queued message
 - streaming passthrough
 - 无 id 或非法时间的原始 event
 

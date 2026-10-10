@@ -6,7 +6,7 @@ const account: AuthAccount = {
   uuid: 'acct_test',
   email_address: 'test@example.com',
   memberships: [
-    { role: 'developer', organization: { uuid: 'org_developer' } },
+    { role: 'user', organization: { uuid: 'org_developer' } },
     { role: 'ADMIN', organization: { uuid: 'org_admin' } },
   ],
 };

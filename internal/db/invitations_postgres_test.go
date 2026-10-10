@@ -16,7 +16,7 @@ func TestInvitationsPostgres(t *testing.T) {
 		t.Skip("需要隔离 PostgreSQL 测试地址")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
-	if _, err := provider.UpTo(ctx, 61); err != nil {
+	if _, err := provider.UpTo(ctx, 74); err != nil {
 		t.Fatal(err)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
@@ -54,7 +54,7 @@ func TestInvitationsPostgres(t *testing.T) {
 		}
 	})
 	t.Run("接受后移除不能重建", func(t *testing.T) {
-		seed("invite_removed", "removed@example.com", "pending", "developer", future)
+		seed("invite_removed", "removed@example.com", "pending", "user", future)
 		if _, err := store.RespondToInvitation(ctx, "invite_removed", "removed@example.com", true); err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +67,7 @@ func TestInvitationsPostgres(t *testing.T) {
 		}
 	})
 	t.Run("成员插入失败回滚邀请", func(t *testing.T) {
-		seed("invite_rollback", "rollback@example.com", "pending", "developer", future)
+		seed("invite_rollback", "rollback@example.com", "pending", "user", future)
 		execMapperFixtureSQL(t, ctx, store.mapperDB, `ALTER TABLE users ADD CONSTRAINT invitation_test_reject CHECK (email != 'rollback@example.com')`)
 		if _, err := store.RespondToInvitation(ctx, "invite_rollback", "rollback@example.com", true); err == nil {
 			t.Fatal("应拒绝插入")
@@ -111,7 +111,7 @@ func TestInvitationsPostgres(t *testing.T) {
 	t.Run("不同邀请并发接受同组织邮箱", func(t *testing.T) {
 		ids := []string{"invite_concurrent_a", "invite_concurrent_b"}
 		for _, id := range ids {
-			seed(id, "concurrent@example.com", "pending", "developer", future)
+			seed(id, "concurrent@example.com", "pending", "user", future)
 		}
 		start := make(chan struct{})
 		results := make(chan Invitation, 12)

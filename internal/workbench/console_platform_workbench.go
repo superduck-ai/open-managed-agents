@@ -70,7 +70,7 @@ func (h *workbenchHandler) handleListWorkbenchPrompts(w http.ResponseWriter, r *
 	if workbenchWritePersistenceError(w, err) {
 		return
 	}
-	if !deleted {
+	if !deleted && h.promptInCurrentWorkspace(r, workbenchDefaultPromptID) {
 		prompts = append(prompts, h.promptSummary(r, workbenchDefaultPromptID, "default", ""))
 		seen[workbenchDefaultPromptID] = true
 	}
@@ -109,7 +109,7 @@ func (h *workbenchHandler) handleListWorkbenchWorkspacePrompts(w http.ResponseWr
 	if workbenchWritePersistenceError(w, err) {
 		return
 	}
-	if !deleted {
+	if !deleted && h.promptInCurrentWorkspace(r, workbenchDefaultPromptID) {
 		prompt := h.promptSummary(r, workbenchDefaultPromptID, workspaceID, "")
 		if promptWorkspaceID, _ := prompt["workspace_id"].(string); strings.TrimSpace(promptWorkspaceID) == workspaceID {
 			prompts = append(prompts, prompt)

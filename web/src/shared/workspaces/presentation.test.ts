@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { workspaceSwitchPath } from './presentation';
 
-test.each(['agents', 'sessions', 'deployments', 'environments', 'vaults', 'memory-stores', 'skills'])(
+test.each(['agents', 'sessions', 'deployments', 'environments', 'vaults', 'memory-stores', 'skills', 'mcp-servers'])(
   '切换 %s 详情时不保留旧资源与筛选条件',
   (section) => {
     expect(workspaceSwitchPath(`/workspaces/default/${section}/old-resource/details?agent=old#tab`, 'other')).toBe(
@@ -10,7 +10,7 @@ test.each(['agents', 'sessions', 'deployments', 'environments', 'vaults', 'memor
   },
 );
 
-test.each(['files', 'batches', 'llm-models', 'playground', 'observability', 'dreams', 'cost', 'logs'])(
+test.each(['files', 'batches', 'llm-models', 'playground', 'observability', 'dreams', 'cost', 'logs', 'mcp-servers'])(
   '切换 %s 列表进入目标工作区',
   (section) => {
     expect(workspaceSwitchPath(`/workspaces/default/${section}`, 'other')).toBe(`/workspaces/other/${section}`);

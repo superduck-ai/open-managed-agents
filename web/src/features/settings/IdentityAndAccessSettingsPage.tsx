@@ -1,6 +1,7 @@
 import { Info, ShieldCheck } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useI18n } from '../../shared/i18n';
+import { platformRoleLabel, roleOptions, type PlatformRole } from '../../shared/permissions/roles';
 import { Alert, AlertDescription, AlertTitle } from '../../shared/ui/alert';
 import { Button, ButtonLink } from '../../shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '../../shared/ui/card';
@@ -20,7 +21,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../
 import { SettingRow } from '../dashboard/frame';
 
 type SignInMode = 'email-link' | 'sso-and-email' | 'sso-only';
-type DefaultInviteRole = 'member' | 'billing' | 'admin';
 
 export function IdentityAndAccessSettingsPage() {
   const { msg } = useI18n();
@@ -43,21 +43,7 @@ export function IdentityAndAccessSettingsPage() {
     [msg],
   );
   const inviteRoleOptions = useMemo(
-    () =>
-      [
-        {
-          value: 'member',
-          label: msg('identityAccess.roles.optionMember', 'Member'),
-        },
-        {
-          value: 'billing',
-          label: msg('identityAccess.roles.optionBilling', 'Billing'),
-        },
-        {
-          value: 'admin',
-          label: msg('identityAccess.roles.optionAdmin', 'Admin'),
-        },
-      ] satisfies Array<{ value: DefaultInviteRole; label: string }>,
+    () => roleOptions.map((role) => ({ value: role.value, label: platformRoleLabel(role.value, msg) })),
     [msg],
   );
 
@@ -69,8 +55,8 @@ export function IdentityAndAccessSettingsPage() {
   const [verifiedDomainDialogOpen, setVerifiedDomainDialogOpen] = useState(false);
   const [verifiedDomainsRequired, setVerifiedDomainsRequired] = useState(true);
   const [jitProvisioningEnabled, setJitProvisioningEnabled] = useState(true);
-  const [defaultInviteRole, setDefaultInviteRole] = useState<DefaultInviteRole>('member');
-  const [defaultInviteRoleDraft, setDefaultInviteRoleDraft] = useState<DefaultInviteRole>(defaultInviteRole);
+  const [defaultInviteRole, setDefaultInviteRole] = useState<PlatformRole>('user');
+  const [defaultInviteRoleDraft, setDefaultInviteRoleDraft] = useState<PlatformRole>(defaultInviteRole);
   const [defaultInviteRoleDialogOpen, setDefaultInviteRoleDialogOpen] = useState(false);
 
   const signInModeLabel = signInModeOptions.find((option) => option.value === signInMode)?.label ?? signInMode;
@@ -403,7 +389,7 @@ export function IdentityAndAccessSettingsPage() {
               <FieldLabel htmlFor="identity-access-default-role">
                 {msg('identityAccess.roles.dialogLabel', 'Default role')}
               </FieldLabel>
-              <Select<DefaultInviteRole>
+              <Select<PlatformRole>
                 value={defaultInviteRoleDraft}
                 items={inviteRoleOptions}
                 onValueChange={(nextValue) => {
@@ -430,7 +416,7 @@ export function IdentityAndAccessSettingsPage() {
               <FieldDescription>
                 {msg(
                   'identityAccess.roles.dialogHelp',
-                  'Use Member by default unless invitations should immediately land with billing or admin-level access.',
+                  'Use User by default; grant Admin only when organization management is required.',
                 )}
               </FieldDescription>
             </Field>

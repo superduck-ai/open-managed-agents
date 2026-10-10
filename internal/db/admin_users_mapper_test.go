@@ -43,14 +43,14 @@ func TestAdminUserMapperFindByExternalID(t *testing.T) {
 		addedAt := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 		executor := newMapperTestExecutor(t, mapperTestResponse{
 			columns: adminUserMapperTestColumns(),
-			rows:    [][]driver.Value{adminUserMapperTestRow("user_mapper", "developer", addedAt)},
+			rows:    [][]driver.Value{adminUserMapperTestRow("user_mapper", "user", addedAt)},
 		})
 		user, err := NewAdminUserMapper(executor).FindByExternalID(
 			context.Background(),
 			organizationUUID,
 			"user_mapper",
 		)
-		if err != nil || user.ExternalID != "user_mapper" || user.Role != "developer" {
+		if err != nil || user.ExternalID != "user_mapper" || user.Role != "user" {
 			t.Fatalf("FindByExternalID() = (%+v, %v)", user, err)
 		}
 		assertMapperTestExecution(
@@ -145,7 +145,7 @@ func TestAdminUserMapperListPage(t *testing.T) {
 			columns: adminUserMapperTestColumns(),
 			rows: [][]driver.Value{
 				adminUserMapperTestRow("user_newer", "admin", addedAt),
-				adminUserMapperTestRow("user_older", "developer", addedAt.Add(-time.Minute)),
+				adminUserMapperTestRow("user_older", "user", addedAt.Add(-time.Minute)),
 			},
 		})
 		users, err := NewAdminUserMapper(executor).ListPage(
@@ -304,7 +304,7 @@ func TestAdminUserMapperSoftDeleteByExternalID(t *testing.T) {
 		addedAt := time.Date(2026, time.August, 5, 6, 7, 8, 0, time.UTC)
 		executor := newMapperTestExecutor(t, mapperTestResponse{
 			columns: adminUserMapperTestColumns(),
-			rows:    [][]driver.Value{adminUserMapperTestRow("user_mapper", "developer", addedAt)},
+			rows:    [][]driver.Value{adminUserMapperTestRow("user_mapper", "user", addedAt)},
 		})
 		user, err := NewAdminUserMapper(executor).SoftDeleteByExternalID(
 			context.Background(),

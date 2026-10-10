@@ -54,7 +54,6 @@ export function InvitationList({
     try {
       const result = await respondToInvitation(invitation.id, action);
       setCompletedAction(action);
-      // 先隔离在途旧列表，防止其在写请求完成后重新填入已处理邀请。
       await queryClient.cancelQueries({ queryKey, exact: true });
       queryClient.setQueryData<{ data: Invitation[] }>(queryKey, (current) => ({
         data: current?.data.filter((item) => item.id !== result.id) ?? [],

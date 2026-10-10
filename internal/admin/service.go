@@ -48,7 +48,7 @@ func (s *Service) CreateInvite(ctx context.Context, principal auth.Principal, re
 	if err != nil {
 		return inviteResponse{}, invalidRequest(err.Error())
 	}
-	if err := validateOrganizationRole(req.Role, false); err != nil {
+	if err := validateOrganizationRole(req.Role); err != nil {
 		return inviteResponse{}, invalidRequest(err.Error())
 	}
 	externalID, err := ids.New("invite_")
@@ -141,7 +141,7 @@ func (s *Service) ListUsers(ctx context.Context, principal auth.Principal, email
 }
 
 func (s *Service) UpdateUser(ctx context.Context, principal auth.Principal, userID string, req updateUserRequest) (userResponse, error) {
-	if err := validateOrganizationRole(req.Role, false); err != nil {
+	if err := validateOrganizationRole(req.Role); err != nil {
 		return userResponse{}, invalidRequest(err.Error())
 	}
 	user, err := s.db.UpdateAdminUserRole(ctx, principal.OrganizationUUID, userID, req.Role)

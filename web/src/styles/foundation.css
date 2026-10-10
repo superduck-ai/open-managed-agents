@@ -50,6 +50,7 @@
   --color-session-border: var(--session-border);
   --color-session-hover: var(--session-hover);
   --color-session-selected: var(--session-selected);
+  --color-success: var(--success);
 
   --color-scrim: var(--scrim);
 

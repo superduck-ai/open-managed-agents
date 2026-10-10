@@ -45,7 +45,6 @@ type joiningFixture struct {
 
 func newJoiningFixture(t *testing.T) joiningFixture {
 	t.Helper()
-	// 与其他 HTTP 集成测试共用测试配置；运行时必须指向隔离数据库。
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +62,6 @@ func newJoiningFixture(t *testing.T) joiningFixture {
 
 func joiningLogin(t *testing.T, app *testApp, email string) []*http.Cookie {
 	t.Helper()
-	// 不调用 platformLoginCookies：它会预先把邮箱写成 seed 组织成员。
 	response := app.platformRequest(t, http.MethodPost, "/api/auth/verify_magic_link", strings.NewReader(`{"credentials":{"method":"code","code":"123456","email_address":`+quoteJSON(email)+`}}`), nil)
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
@@ -107,7 +105,7 @@ func (f joiningFixture) loadBootstrap(t *testing.T, headers map[string]string) j
 
 func (f joiningFixture) invite(t *testing.T, email, status string, expires time.Time) db.AdminInvite {
 	t.Helper()
-	invite, err := f.app.db.CreateAdminInvite(t.Context(), db.AdminInvite{ExternalID: "invite_joining_" + uuid.NewV4().String(), OrganizationUUID: f.organization, Email: email, Role: "developer", Status: status, InvitedAt: expires.Add(-21 * 24 * time.Hour), ExpiresAt: expires})
+	invite, err := f.app.db.CreateAdminInvite(t.Context(), db.AdminInvite{ExternalID: "invite_joining_" + uuid.NewV4().String(), OrganizationUUID: f.organization, Email: email, Role: "user", Status: status, InvitedAt: expires.Add(-21 * 24 * time.Hour), ExpiresAt: expires})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +205,7 @@ func TestOrganizationJoiningLifecycle(t *testing.T) {
 		t.Fatalf("首次登录消费了邀请或泄漏其他邮箱：%+v", pending)
 	}
 	row := pending.Data[0]
-	if row.ID != invite.ExternalID || row.OrganizationUUID != f.organization || row.OrganizationName == "" || row.Role != "developer" || row.InvitedAt.IsZero() || !row.ExpiresAt.After(row.InvitedAt) {
+	if row.ID != invite.ExternalID || row.OrganizationUUID != f.organization || row.OrganizationName == "" || row.Role != "user" || row.InvitedAt.IsZero() || !row.ExpiresAt.After(row.InvitedAt) {
 		t.Fatalf("邀请列表合同错误：%+v", row)
 	}
 	f.assertNoImplicitAccess(t)
@@ -219,7 +217,7 @@ func TestOrganizationJoiningLifecycle(t *testing.T) {
 		t.Fatalf("接受邀请改变账号身份或默认组织：%+v", joined)
 	}
 	member := joiningMember(t, joined, f.organization)
-	if member.UserUUID == f.bootstrap.Account.UUID || member.UserID == "" || member.Role != "developer" {
+	if member.UserUUID == f.bootstrap.Account.UUID || member.UserID == "" || member.Role != "user" {
 		t.Fatalf("缺少独立的组织成员身份：%+v", member)
 	}
 	f.assertNoImplicitAccess(t)
@@ -302,7 +300,6 @@ func (f joiningFixture) assertNoImplicitAccess(t *testing.T) {
 func (f joiningFixture) implicitAccessCounts(t *testing.T) map[string]int {
 	t.Helper()
 	counts := make(map[string]int)
-	// 仅检查当前测试创建的目标组织；API key 的组织归属通过工作区确定。
 	for table, query := range map[string]string{
 		"workspace_members": "SELECT count(*) FROM workspace_members WHERE organization_uuid=$1",
 		"api_keys":          "SELECT count(*) FROM api_keys k JOIN workspaces w ON w.uuid=k.workspace_uuid WHERE w.organization_uuid=$1",

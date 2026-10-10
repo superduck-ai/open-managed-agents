@@ -4,15 +4,11 @@
 
 本功能依赖 #339 / PR #346 的通用组织与工作区权限规则、真实 Default 工作区标记和按请求计算的用户 Principal。发布前必须先包含该前置实现；邀请接受不补建 Default 成员关系，不创建 API key，不把加入组织等同于获得普通工作区权限。具体规则见 [通用工作区权限](be/workspace-permissions.md)。
 
-2026-09-17 跟进拆分：#347 与 Billing 专项 #354 均基于 #346，不互相包含。当前基线为 #346 的 `5ce6e11`；Billing 普通空间仍需显式成员，功能权限保持 #346 基线，组织切换后的前端权限映射与后端 `WorkspaceAccess.Permissions` 一致，包含 Workbench 与既有资源能力，但不能因此获得组织/成员管理权限。缺少有效工作区角色时仍返回空权限。
+当前基线为 main 的 `e63151a3`（#346 已 squash 合并）。组织角色仅为 `user` / `admin`，工作区角色仅为 `workspace_user` / `workspace_admin`；旧 Billing、Developer 与 Claude Code 角色由 main 的 00073 迁移归并。本功能不恢复旧角色或 #354 的 Billing 专项逻辑。组织切换后的 `scopePermissions` 与后端 `WorkspaceAccess.Permissions` 保持一致：两种有效工作区角色都能使用资源；只有组织管理员管理组织与组织成员，工作区管理员仅管理当前工作区成员。缺少有效工作区角色时返回空权限。
 
-#354 的自动继承、提权恢复、资源功能限制及空态不在本 PR 中。后续集成 #354 时，必须同步本 PR 的 `scopePermissions`：移除组织 Billing 的基线开发权限例外，按有效工作区角色投影，并保持 Workbench 可用；补充跨组织切换与提权/恢复联动测试，不能只合并后端专项后保留旧前端投影。
+变基兼容修正：main 已占用迁移至 73（包含 Default 工作区与两角色迁移），本 PR 尚未合并的 declined/注册来源迁移顺延为 00074/00075，SQL 内容不变，不改写基线迁移或任何现存数据库的 goose 记录。此前运行旧 PR 编号的测试库不能直接升级；可丢弃的隔离库应重建，需保留数据的部署必须另行核对迁移记录和 schema 后制定升级方案，禁止直接覆盖版本号。邀请、Console 和 bootstrap 统一复用基线 `auth.PlatformCSRFToken` / `ValidatePlatformCSRFToken`；旧前端应刷新 bootstrap 获取新令牌，旧算法令牌被拒绝，登录会话不因此清除。
 
-同日为满足原生 Stack 的层间历史要求，#347 变基到 #346 的 `bb9a0d6`，替代上述同步基线；保留先前合并提交中的权限映射和回归测试。最新基线也加入了 bootstrap CSRF 字段，集成时只保留一个 `CSRFToken`，继续使用本功能的 `csrf_token` 响应语义。#350、#354 未随本次操作变基，组合验收仍需单独完成。
-
-变基兼容修正：新基线已占用迁移 61/62，本 PR 尚未合并的 declined/注册来源迁移顺延为 00063/00064，SQL 内容不变，不改写基线迁移或任何现存数据库的 goose 记录。此前运行旧 PR 编号的测试库不能直接升级；可丢弃的隔离库应重建，需保留数据的部署必须另行核对迁移记录和 schema 后制定升级方案，禁止直接覆盖版本号。邀请、Console 和 bootstrap 统一复用基线 `auth.PlatformCSRFToken` / `ValidatePlatformCSRFToken`；旧前端应刷新 bootstrap 获取新令牌，旧算法令牌被拒绝，登录会话不因此清除。
-
-既有 Anthropic `/v1/*` 资源合同和显式 API key 的身份语义保持不变。组织邀请操作新增在 `/api/invitations`，使用用户 cookie 会话。邀请只授予组织角色；developer 在 Default 投影为 workspace_developer，普通工作区仍需要显式授权。
+既有 Anthropic `/v1/*` 资源合同和显式 API key 的身份语义保持不变。组织邀请操作新增在 `/api/invitations`，使用用户 cookie 会话。邀请只授予组织角色；组织用户在 Default 投影为 workspace_user，组织管理员投影为 workspace_admin，普通用户访问普通工作区仍需要显式授权；组织管理员继承管理本组织未归档工作区。
 
 ## 首次登录与账号身份
 
@@ -184,7 +180,7 @@ CONFIG_FILE=/path/to/isolated-test-config.yaml go test ./tests -run '^TestOrgani
 
 2026-09-09 PR 审查修正：切换结果、邀请页失败保留与 403 单一恢复状态的前端定向测试共 37 项通过，生产构建通过；使用 `/tmp/oma338-review-config.yaml` 和新建隔离 PostgreSQL 实例执行三个 `TestOrganizationJoining*` 全部通过，确认无需原临时文件名。Go lint、死代码、重复代码、复杂度、前端格式和大文件检查通过。全量 Bun 测试仍在 ConsoleShell 套件退出 133，不计为全量验收通过。
 
-正式改动保存在 `codex/338-organization-joining`，基于 #339 的 `ad9b3e4`；原工作区未提交 Demo 不属于正式交付，也未被回退。数据库新增 00061（declined）与 00062（注册来源标记）迁移，历史已应用迁移未修改。
+正式改动保存在 `codex/338-organization-joining`，整合 main 的 `e63151a3`（#346 已 squash 合并）；原工作区未提交 Demo 不属于正式交付，也未被回退。数据库新增 00074（declined）与 00075（注册来源标记）迁移，历史已应用迁移未修改。
 
 - 真实 PostgreSQL：邀请失败、事务回滚、重复处理、同邮箱并发接受、接受/拒绝竞态、移除后禁止重放、首次登录不接受邀请和多组织身份测试通过。HTTP 集成覆盖七类资源的创建与租户隔离；使用 fake object store，不调用真实模型。
 - 前端定向回归：76 项通过、0 失败，覆盖邀请交互、登录重复导航修复、组织选择、请求隔离、权限投影等。生产 build、格式、命名、复杂度和重复代码门禁通过。

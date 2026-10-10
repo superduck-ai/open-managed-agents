@@ -129,4 +129,107 @@
         ORDER BY e.sequence_num ASC
         LIMIT #{params.Limit}
     </select>
+
+ <sql id="archiveTerminalEligible">
+ EXISTS (SELECT 1 FROM sessions s WHERE s.uuid = cs.session_uuid
+ AND s.organization_uuid = cs.organization_uuid AND s.workspace_uuid = cs.workspace_uuid
+ AND (s.archived_at &lt; #{query.Cutoff} OR s.deleted_at &lt; #{query.Cutoff})
+ AND NOT EXISTS (SELECT 1 FROM code_sessions active WHERE active.session_uuid = s.uuid
+ AND active.organization_uuid = s.organization_uuid AND active.workspace_uuid = s.workspace_uuid
+ AND (active.worker_lease_expires_at &gt;= now() OR active.worker_status &lt;&gt; 'idle')))
+ </sql>
+ <sql id="archiveBoundaryEligible">
+ e.created_at &lt; #{query.Cutoff} AND EXISTS (SELECT 1 FROM code_session_internal_events boundary
+ WHERE boundary.organization_uuid = e.organization_uuid AND boundary.workspace_uuid = e.workspace_uuid
+ AND boundary.code_session_uuid = e.code_session_uuid AND boundary.agent_id IS NOT DISTINCT FROM e.agent_id
+ AND boundary.deleted_at IS NULL AND boundary.is_compaction AND boundary.sequence_num &gt; e.sequence_num)
+ </sql>
+ <sql id="unregisteredArchiveEvent">
+ e.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM transcript_archives a
+ WHERE a.organization_uuid = e.organization_uuid AND a.workspace_uuid = e.workspace_uuid
+ AND a.code_session_uuid = e.code_session_uuid AND a.state &lt;&gt; 'deleting'
+ AND e.sequence_num BETWEEN a.from_sequence_num AND a.to_sequence_num)
+ </sql>
+ <select id="ListArchiveCandidates" resultType="transcriptScopeRow">
+ SELECT cs.organization_uuid, cs.workspace_uuid, cs.uuid AS code_session_uuid, cs.external_id AS code_session_external_id
+ FROM code_sessions cs WHERE true
+ <if test="query.AfterUUID != ''">AND cs.uuid &gt; #{query.AfterUUID}</if>
+ <if test="query.Terminal">AND <include refid="archiveTerminalEligible"/></if>
+ AND (EXISTS (SELECT 1 FROM code_session_internal_events e
+ WHERE e.organization_uuid = cs.organization_uuid AND e.workspace_uuid = cs.workspace_uuid AND e.code_session_uuid = cs.uuid
+ AND <include refid="unregisteredArchiveEvent"/>
+ <if test="!query.Terminal">AND <include refid="archiveBoundaryEligible"/></if>)
+ OR EXISTS (SELECT 1 FROM transcript_archives a WHERE a.organization_uuid = cs.organization_uuid
+ AND a.workspace_uuid = cs.workspace_uuid AND a.code_session_uuid = cs.uuid AND a.state &lt;&gt; 'deleting'))
+ ORDER BY cs.uuid LIMIT #{query.Limit}
+ </select>
+ <select id="ListArchivable" resultType="codeSessionInternalEventRow">
+ SELECT <include refid="aliasedEventColumns"/> FROM code_session_internal_events e
+ JOIN code_sessions cs ON cs.uuid = e.code_session_uuid AND cs.organization_uuid = e.organization_uuid AND cs.workspace_uuid = e.workspace_uuid
+ WHERE e.organization_uuid = #{query.Scope.OrganizationUUID} AND e.workspace_uuid = #{query.Scope.WorkspaceUUID}
+ AND e.code_session_uuid = #{query.Scope.CodeSessionUUID} AND e.sequence_num &gt; #{query.AfterSequence}
+ AND <include refid="unregisteredArchiveEvent"/>
+ <choose><when test="query.Terminal">AND <include refid="archiveTerminalEligible"/></when>
+ <otherwise>AND <include refid="archiveBoundaryEligible"/></otherwise></choose>
+ ORDER BY e.sequence_num LIMIT #{query.Limit}
+ </select>
+ <select id="ReadArchiveRange" resultType="codeSessionInternalEventRow">
+ SELECT <include refid="eventColumns"/> FROM code_session_internal_events
+ WHERE organization_uuid = #{query.Scope.OrganizationUUID} AND workspace_uuid = #{query.Scope.WorkspaceUUID}
+ AND code_session_uuid = #{query.Scope.CodeSessionUUID} AND sequence_num &gt; #{query.AfterSequence} AND sequence_num &lt;= #{query.ToSequence}
+ ORDER BY sequence_num LIMIT #{query.Limit}
+ </select>
+ <sql id="archiveBatchScope">
+ organization_uuid = #{batch.Scope.OrganizationUUID} AND workspace_uuid = #{batch.Scope.WorkspaceUUID}
+ AND code_session_uuid = #{batch.Scope.CodeSessionUUID}
+ AND sequence_num IN <foreach collection="batch.Sequences" item="sequence" open="(" separator="," close=")">#{sequence}</foreach>
+ </sql>
+ <update id="SoftDeleteArchived" result="rows">
+ UPDATE code_session_internal_events SET deleted_at = now()
+ WHERE <include refid="archiveBatchScope"/> AND deleted_at IS NULL
+ AND EXISTS (SELECT 1 FROM code_session_internal_events e
+ JOIN code_sessions cs ON cs.uuid = e.code_session_uuid AND cs.organization_uuid = e.organization_uuid AND cs.workspace_uuid = e.workspace_uuid
+ WHERE e.uuid = code_session_internal_events.uuid
+ <choose><when test="batch.Eligibility.Terminal">AND EXISTS (SELECT 1 FROM sessions s
+ WHERE s.uuid = cs.session_uuid AND s.organization_uuid = cs.organization_uuid AND s.workspace_uuid = cs.workspace_uuid
+ AND (s.archived_at &lt; #{batch.Eligibility.Cutoff} OR s.deleted_at &lt; #{batch.Eligibility.Cutoff})
+ AND NOT EXISTS (SELECT 1 FROM code_sessions active WHERE active.session_uuid = s.uuid
+ AND active.organization_uuid = s.organization_uuid AND active.workspace_uuid = s.workspace_uuid
+ AND (active.worker_lease_expires_at &gt;= now() OR active.worker_status &lt;&gt; 'idle')))</when>
+ <otherwise>AND e.created_at &lt; #{batch.Eligibility.Cutoff} AND EXISTS (SELECT 1 FROM code_session_internal_events boundary
+ WHERE boundary.organization_uuid = e.organization_uuid AND boundary.workspace_uuid = e.workspace_uuid
+ AND boundary.code_session_uuid = e.code_session_uuid AND boundary.agent_id IS NOT DISTINCT FROM e.agent_id
+ AND boundary.deleted_at IS NULL AND boundary.is_compaction AND boundary.sequence_num &gt; e.sequence_num)</otherwise></choose>)
+ </update>
+ <delete id="HardDeleteArchived" result="rows">
+ DELETE FROM code_session_internal_events WHERE <include refid="archiveBatchScope"/>
+ AND deleted_at &lt; #{batch.Cutoff}
+ </delete>
+
+ <select id="ListDeletionCandidates" resultType="transcriptScopeRow">
+ SELECT DISTINCT organization_uuid, workspace_uuid, code_session_uuid, code_session_external_id
+ FROM code_session_internal_events WHERE deleted_at &lt; #{cutoff}
+ <if test="afterUUID != ''">AND code_session_uuid &gt; #{afterUUID}</if>
+ ORDER BY code_session_uuid LIMIT #{limit}
+ </select>
+ <select id="HasUnprotectedDeleted" result="scalar">
+ SELECT EXISTS (SELECT 1 FROM code_session_internal_events e
+ WHERE e.organization_uuid = #{scope.OrganizationUUID} AND e.workspace_uuid = #{scope.WorkspaceUUID}
+ AND e.code_session_uuid = #{scope.CodeSessionUUID} AND e.deleted_at &lt; #{cutoff}
+ AND NOT EXISTS (SELECT 1 FROM transcript_archives a WHERE a.organization_uuid = e.organization_uuid
+ AND a.workspace_uuid = e.workspace_uuid AND a.code_session_uuid = e.code_session_uuid
+ AND a.state = 'attached' AND e.sequence_num BETWEEN a.from_sequence_num AND a.to_sequence_num))
+ </select>
+ <insert id="RestoreArchived" result="rows">
+ INSERT INTO code_session_internal_events (uuid, external_id, organization_uuid, workspace_uuid, code_session_uuid, code_session_external_id,
+ sequence_num, event_type, payload_uuid, agent_id, is_compaction, payload, payload_blob_uuid, payload_hash, idempotency_key, event_metadata, created_at, updated_at)
+ VALUES (#{event.UUID}, #{event.ExternalID}, #{event.OrganizationUUID}, #{event.WorkspaceUUID}, #{event.CodeSessionUUID}, #{event.CodeSessionExternalID},
+ #{event.SequenceNum}, #{event.EventType}, #{event.PayloadUUID}, #{event.AgentID}, #{event.IsCompaction}, CAST(#{event.Payload,sensitive=true} AS jsonb),
+ #{event.PayloadBlobUUID}, #{event.PayloadHash,sensitive=true}, #{event.IdempotencyKey}, CAST(#{event.EventMetadata,sensitive=true} AS jsonb), #{event.CreatedAt}, #{event.UpdatedAt})
+ ON CONFLICT (uuid) DO UPDATE SET payload = excluded.payload, payload_blob_uuid = excluded.payload_blob_uuid, deleted_at = NULL
+ WHERE code_session_internal_events.organization_uuid = excluded.organization_uuid AND code_session_internal_events.workspace_uuid = excluded.workspace_uuid
+ AND code_session_internal_events.code_session_uuid = excluded.code_session_uuid AND code_session_internal_events.sequence_num = excluded.sequence_num
+ AND code_session_internal_events.deleted_at IS NOT NULL
+ </insert>
+
 </mapper>

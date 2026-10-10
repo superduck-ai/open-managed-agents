@@ -21,11 +21,11 @@ init-compose-config:
     fi
 
 # Restart backend in foreground. server.addr comes from config/config.yaml; PORT selects the listener to stop.
-server: generate
+server:
   PORT="${PORT:-38080}" ./scripts/restart-server.sh
 
 # Restart backend in foreground. server.addr comes from config/config.yaml; PORT selects the listener to stop.
-restart-server: generate
+restart-server:
   PORT="${PORT:-38080}" ./scripts/restart-server.sh
 
 # Restart frontend Vite dev server in foreground. Override with: PORT=4173 API_PORT=18080 just web

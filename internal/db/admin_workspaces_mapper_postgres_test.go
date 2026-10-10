@@ -235,7 +235,7 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 				WorkspaceExternalID: "wrkspc_mapper_a",
 				UserUUID:            userUUID.String(),
 				UserExternalID:      "user_mapper_" + letter,
-				WorkspaceRole:       "workspace_developer",
+				WorkspaceRole:       "workspace_user",
 				CreatedAt:           baseTime.Add(time.Duration(index) * time.Minute),
 			})
 			if createErr != nil || created.UserUUID != userUUID.String() {

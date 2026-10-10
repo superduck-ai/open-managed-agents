@@ -94,7 +94,7 @@ func TestAdminInviteMapperPostgreSQL(t *testing.T) {
 				ExternalID:       externalID,
 				OrganizationUUID: organizationUUID,
 				Email:            externalID + "@example.com",
-				Role:             "developer",
+				Role:             "user",
 				Status:           "pending",
 				InvitedAt:        invitedAt,
 				ExpiresAt:        invitedAt.Add(21 * 24 * time.Hour),

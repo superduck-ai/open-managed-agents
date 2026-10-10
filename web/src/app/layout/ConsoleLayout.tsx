@@ -794,7 +794,7 @@ export function AccountMenu({
                   <span className="block truncate text-xs text-sidebar-foreground/70">
                     {msg('account.subtitle', '{role} · {workspaceName}', {
                       role: activeWorkspace.effective_role
-                        ? msg(`account.role.${activeWorkspace.effective_role}`, 'Member')
+                        ? accountRoleLabel(activeWorkspace.effective_role, msg)
                         : organizationRole
                           ? accountRoleLabel(organizationRole, msg)
                           : msg('account.role.unknown', 'Member'),

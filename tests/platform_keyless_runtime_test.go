@@ -240,7 +240,7 @@ func TestPlatformKeylessResourceCreators(t *testing.T) {
 		if _, err := f.app.db.CreateAdminWorkspaceMember(context.Background(), db.AdminWorkspaceMember{
 			ExternalID: "wmem_keyless_" + uuid.NewV4().String(), OrganizationUUID: f.workspace.OrganizationUUID,
 			WorkspaceUUID: f.workspace.UUID, WorkspaceExternalID: f.workspace.ExternalID,
-			UserUUID: otherLogin.UserUUID, UserExternalID: otherLogin.UserExternalID, WorkspaceRole: "workspace_developer", CreatedAt: time.Now().UTC(),
+			UserUUID: otherLogin.UserUUID, UserExternalID: otherLogin.UserExternalID, WorkspaceRole: "workspace_user", CreatedAt: time.Now().UTC(),
 		}); err != nil {
 			t.Fatal(err)
 		}

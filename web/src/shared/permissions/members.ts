@@ -5,8 +5,6 @@ type AccountWithPermissions = AuthAccount & {
   account_permissions?: Array<string | { permission?: string; name?: string }>;
 };
 
-const memberManagementRoles = new Set(['admin', 'owner', 'primary_owner', 'membership_admin']);
-
 export function canManageMembers(account: AuthAccount | null | undefined) {
   if (!account) {
     return false;
@@ -14,11 +12,11 @@ export function canManageMembers(account: AuthAccount | null | undefined) {
 
   const permissions = permissionNames(account as AccountWithPermissions);
   if (account.permissions) return permissions.has('members:manage');
-  if (permissions.has('members:manage') || permissions.has('membership_admins:manage')) {
+  if (permissions.has('members:manage')) {
     return true;
   }
 
-  return account.memberships?.some((membership) => memberManagementRoles.has(normalizeRole(membership.role))) ?? false;
+  return account.memberships?.some((membership) => membership.role === 'admin') ?? false;
 }
 
 function permissionNames(account: AccountWithPermissions) {
@@ -39,8 +37,4 @@ function permissionNames(account: AccountWithPermissions) {
     }
   }
   return names;
-}
-
-function normalizeRole(role: string | undefined) {
-  return (role ?? '').trim().toLowerCase();
 }

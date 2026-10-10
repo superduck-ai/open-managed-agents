@@ -18,15 +18,15 @@ afterEach(() => {
 
 describe('ConsoleShell', () => {
   test.each([
-    ['en', 'Billing', 'Default'],
-    ['zh-CN', '计费', '默认'],
-  ] as const)('既有 Billing 角色在 %s 显示正确名称', (locale, label, workspaceName) => {
+    ['en', 'User', 'Default'],
+    ['zh-CN', '用户', '默认'],
+  ] as const)('用户角色在 %s 显示正确名称', (locale, label, workspaceName) => {
     resetTestDom('https://oma.duck.ai/dashboard');
     renderWithWorkspaces(
-      <ConsoleShell currentPath="/dashboard" account={testAccount('billing')} onLogout={() => undefined}>
+      <ConsoleShell currentPath="/dashboard" account={testAccount('user')} onLogout={() => undefined}>
         <div>Dashboard content</div>
       </ConsoleShell>,
-      { locale, effectiveRole: 'workspace_billing' },
+      { locale, effectiveRole: 'workspace_user' },
     );
     expect(screen.getByText(`${label} · ${workspaceName}`)).toBeTruthy();
     expect(screen.queryByText(`Member · ${workspaceName}`)).toBeNull();
@@ -195,7 +195,7 @@ describe('ConsoleShell', () => {
   test('hides LLM model configuration from non-administrators', () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     renderWithWorkspaces(
-      <ConsoleShell currentPath="/dashboard" account={testAccount('developer')} onLogout={() => undefined}>
+      <ConsoleShell currentPath="/dashboard" account={testAccount('user')} onLogout={() => undefined}>
         <div>Dashboard content</div>
       </ConsoleShell>,
     );
@@ -622,7 +622,7 @@ describe('ConsoleShell', () => {
           display_name: 'test',
           memberships: [
             { role: 'user', organization: { uuid: 'org_other' } },
-            { role: 'developer', organization: { uuid: 'org_test' } },
+            { role: 'admin', organization: { uuid: 'org_test' } },
           ],
         }}
         onLogout={() => undefined}
@@ -631,7 +631,7 @@ describe('ConsoleShell', () => {
       </ConsoleShell>,
     );
 
-    expect(screen.getByText('Developer · Default')).toBeTruthy();
+    expect(screen.getByText('Admin · Default')).toBeTruthy();
   });
 
   test('uses client navigation when selecting a workspace on managed routes', async () => {

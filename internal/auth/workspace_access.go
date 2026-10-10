@@ -10,20 +10,12 @@ type WorkspaceAccess struct {
 func (a WorkspaceAccess) ManageOrganization() bool { return a.OrganizationRole == "admin" }
 func (a WorkspaceAccess) ManageMembers() bool      { return a.Role == "workspace_admin" }
 
-// Billing 沿用权限统一前的资源访问能力；调用前仍必须通过组织、工作区和有效成员校验。
-func (a WorkspaceAccess) Develop() bool {
-	return a.OrganizationRole == "billing" || a.Role == "workspace_admin" || a.Role == "workspace_developer" || a.Role == "workspace_restricted_developer"
-}
-func (a WorkspaceAccess) ViewTraces() bool {
-	return a.OrganizationRole == "billing" || a.Role == "workspace_admin" || a.Role == "workspace_developer"
-}
-func (a WorkspaceAccess) Workbench() bool { return a.Role != "" }
-func (a WorkspaceAccess) Billing() bool {
-	return a.OrganizationRole == "admin" || a.OrganizationRole == "billing"
+func (a WorkspaceAccess) UseResources() bool {
+	return a.Role == "workspace_user" || a.Role == "workspace_admin"
 }
 
 func (a WorkspaceAccess) Permissions() []string {
-	if a.Role == "" {
+	if !a.UseResources() {
 		return []string{}
 	}
 	permissions := []string{"workspaces:view"}
@@ -33,13 +25,8 @@ func (a WorkspaceAccess) Permissions() []string {
 	if a.ManageMembers() {
 		permissions = append(permissions, "workspace:members:manage")
 	}
-	if a.Develop() {
-		permissions = append(permissions, "api:view", "api:manage", "workspace:api:resource_manage")
-	}
-	if a.Workbench() {
-		permissions = append(permissions, "workbench:view")
-	}
-	if a.Billing() {
+	permissions = append(permissions, "api:view", "api:manage", "workspace:api:resource_manage", "workbench:view")
+	if a.ManageOrganization() {
 		permissions = append(permissions, "billing:view", "billing:manage", "cost:view", "usage:view", "invoices:view")
 	}
 	return permissions

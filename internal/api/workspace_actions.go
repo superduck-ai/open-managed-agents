@@ -15,41 +15,35 @@ func platformActionAllowed(r *http.Request, access auth.WorkspaceAccess) bool {
 		return true
 	}
 	if strings.HasPrefix(path, "/v1/") {
-		if path == "/v1/files" && r.Method == http.MethodPost {
-			return access.Workbench()
-		}
-		if strings.HasPrefix(path, "/v1/sessions") || (strings.HasPrefix(path, "/v1/files/") && strings.HasSuffix(path, "/content")) {
-			return access.ViewTraces()
-		}
-		return access.Develop()
+		return access.UseResources()
 	}
 	if strings.Contains(path, "/api_keys") || strings.Contains(path, "/api_key_count") {
 		if strings.Contains(path, "/workspaces/") {
 			// 工作区 Key 接口由资源层针对路径中的目标空间检查权限。
 			return true
 		}
-		return access.Develop()
+		return access.UseResources()
 	}
 	if strings.Contains(path, "/members") || strings.Contains(path, "/invites") || strings.Contains(path, "/invitations") {
 		return access.ManageOrganization()
 	}
 	if strings.Contains(path, "/billing") || strings.Contains(path, "/cost_report") {
-		return access.Billing()
+		return access.ManageOrganization()
 	}
 	if r.Method == http.MethodPost && strings.HasSuffix(path, "/workspaces") {
 		return access.ManageOrganization()
 	}
 	if strings.Contains(path, "/workbench") {
-		return access.Workbench()
+		return access.UseResources()
 	}
 	if strings.HasPrefix(path, "/web-api/sessions/") {
-		return access.ViewTraces()
+		return access.UseResources()
 	}
 	if strings.Contains(path, "/proxy/") || strings.Contains(path, "/mcp/") || strings.HasSuffix(path, "/upload_b64") {
-		return access.Develop()
+		return access.UseResources()
 	}
 	if strings.Contains(path, "/files/") || strings.Contains(path, "/observability/") {
-		return access.ViewTraces()
+		return access.UseResources()
 	}
 	return true
 }

@@ -10,20 +10,19 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 )
 
-// 对照 #346 的共同基线：普通空间需显式成员，更新计费角色写入记录，不恢复继承。
-func TestExistingBillingWorkspaceBehavior(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("billing-baseline"))
+func TestWorkspaceMemberRoleChanges(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("role-changes"))
 	defer app.close()
 	ctx := t.Context()
 	refs := getAdminDefaultIDs(t, app.pool)
-	app.seedPlatformSession(t, "billing-baseline-admin")
-	session, err := app.sessions.Get(ctx, "billing-baseline-admin")
+	app.seedPlatformSession(t, "role-changes-admin")
+	session, err := app.sessions.Get(ctx, "role-changes-admin")
 	if err != nil {
 		t.Fatal(err)
 	}
 	principal := session.Principal()
-	userID := seedAdminUser(t, app.pool, "billing-baseline-"+uniqueAdminSuffix()+"@example.local", "billing")
-	workspace := createAdminWorkspace(t, app, "计费基线-"+uniqueAdminSuffix(), nil, nil)
+	userID := seedAdminUser(t, app.pool, "role-changes-"+uniqueAdminSuffix()+"@example.local", "user")
+	workspace := createAdminWorkspace(t, app, "角色变更-"+uniqueAdminSuffix(), nil, nil)
 	cookies := workspaceUserCookies(t, app, refs.OrganizationUUID, userID)
 	resolver := workspaceaccess.New(app.db)
 	if _, _, err := resolver.Resolve(ctx, refs.OrganizationUUID, userID, workspace.ID); !errors.Is(err, workspaceaccess.ErrDenied) {
@@ -35,7 +34,7 @@ func TestExistingBillingWorkspaceBehavior(t *testing.T) {
 	if _, err := workspaceaccess.ChangeMember(ctx, app.db, principal, workspace.ID, userID, "workspace_user", "create"); err != nil {
 		t.Fatal(err)
 	}
-	for _, role := range []string{"workspace_user", "workspace_billing"} {
+	for _, role := range []string{"workspace_user", "workspace_admin"} {
 		if _, err := workspaceaccess.ChangeMember(ctx, app.db, principal, workspace.ID, userID, role, "update"); err != nil {
 			t.Fatal(err)
 		}

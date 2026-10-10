@@ -15,8 +15,11 @@ func TestEffective(t *testing.T) {
 		{name: "普通成员未加入", orgRole: "user"},
 		{name: "默认忽略历史管理员", orgRole: "user", explicitRole: "workspace_admin", isDefault: true, wantRole: "workspace_user", wantSource: "organization"},
 		{name: "默认忽略历史降权", orgRole: "admin", explicitRole: "workspace_user", isDefault: true, wantRole: "workspace_admin", wantSource: "organization"},
-		{name: "默认开发者无记录", orgRole: "developer", isDefault: true, wantRole: "workspace_developer", wantSource: "organization"},
-		{name: "默认代码用户", orgRole: "claude_code_user", isDefault: true, wantRole: "workspace_user", wantSource: "organization"},
+		{name: "旧开发者角色拒绝", orgRole: "developer", isDefault: true},
+		{name: "旧代码用户角色拒绝", orgRole: "claude_code_user", isDefault: true},
+		{name: "旧计费角色拒绝", orgRole: "billing", isDefault: true},
+		{name: "旧工作区角色拒绝", orgRole: "user", explicitRole: "workspace_developer"},
+		{name: "普通空间用户", orgRole: "user", explicitRole: "workspace_user", wantRole: "workspace_user", wantSource: "membership"},
 		{name: "组织管理员继承", orgRole: "admin", wantRole: "workspace_admin", wantSource: "organization"},
 		{name: "降级保留显式授权", orgRole: "user", explicitRole: "workspace_admin", wantRole: "workspace_admin", wantSource: "membership"},
 	}

@@ -25,7 +25,7 @@ func TestWorkspaceAccessMapperBindings(t *testing.T) {
 	t.Run("成员投影绑定和扫描", func(t *testing.T) {
 		executor := newMapperTestExecutor(t, mapperTestResponse{
 			columns: []string{"user_uuid", "user_external_id", "organization_role", "explicit_role"},
-			rows:    [][]driver.Value{{"aa000000-0000-4000-8000-000000000003", "user_member", "billing", "workspace_admin"}},
+			rows:    [][]driver.Value{{"aa000000-0000-4000-8000-000000000003", "user_member", "user", "workspace_admin"}},
 		})
 		facts, err := NewWorkspaceAccessMapper(executor).ListMemberFacts(context.Background(), org, workspace)
 		if err != nil || len(facts) != 1 || facts[0].ExplicitRole != "workspace_admin" {

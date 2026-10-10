@@ -31,7 +31,7 @@ describe('Billing settings page', () => {
     press(screen.getByRole('button', { name: 'Cancel' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('Current default: Admins and billing members')).toBeTruthy();
+    expect(screen.getByText('Current default: Admins only')).toBeTruthy();
 
     press(configureButtons()[1]);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Configure cost visibility' })).toBeTruthy());

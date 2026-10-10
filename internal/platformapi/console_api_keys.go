@@ -387,7 +387,7 @@ func consoleWorkspaceScopeFromRequest(
 			return WorkspaceScope{}, false
 		}
 		_, access, accessErr := workspaceaccess.New(accessStore).Resolve(r.Context(), orgUUID, principal.UserExternalID, scope.UUID)
-		if accessErr == nil && access.Develop() {
+		if accessErr == nil && access.UseResources() {
 			return scope, true
 		}
 		workspaceAccessDenied(w)

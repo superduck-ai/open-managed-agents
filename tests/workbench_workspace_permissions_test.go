@@ -18,38 +18,35 @@ func TestWorkbenchAttachmentPermissions(t *testing.T) {
 	t.Cleanup(app.close)
 	refs := getAdminDefaultIDs(t, app.pool)
 	forbiddenWorkspace := createAdminWorkspace(t, app, "upload-private-"+uniqueAdminSuffix(), nil, nil)
-	for _, role := range []string{"user", "claude_code_user", "developer"} {
-		t.Run(role, func(t *testing.T) {
-			userID := seedAdminUser(t, app.pool, role+uniqueAdminSuffix()+"@example.local", role)
-			cookies := workspaceUserCookies(t, app, refs.OrganizationUUID, userID)
-			list := app.platformRequest(t, http.MethodGet, "/api/organizations/"+refs.OrganizationUUID+"/workbench/prompts", nil, cookies)
-			list.Body.Close()
-			if list.StatusCode != http.StatusOK {
-				t.Fatalf("Workbench list = %d", list.StatusCode)
-			}
-			body, contentType := multipartBody(t, "attachment.txt", "text/plain", []byte("Workbench attachment"), false)
-			response := app.platformRequestWithHeaders(t, http.MethodPost, "/v1/files?beta=true", body, cookies, map[string]string{"Content-Type": contentType, "anthropic-beta": "files-api-2025-04-14"})
-			defer response.Body.Close()
-			if response.StatusCode != http.StatusOK {
-				t.Errorf("Workbench attachment = %d, want 200: %s", response.StatusCode, readAll(t, response.Body))
-			}
-			body, contentType = multipartBody(t, "attachment.txt", "text/plain", []byte("Workbench attachment"), false)
-			denied := app.platformRequestWithHeaders(t, http.MethodPost, "/v1/files?beta=true", body, cookies, map[string]string{"Content-Type": contentType, "X-Workspace-ID": forbiddenWorkspace.ID})
+	t.Run("user", func(t *testing.T) {
+		role := "user"
+		userID := seedAdminUser(t, app.pool, role+uniqueAdminSuffix()+"@example.local", role)
+		cookies := workspaceUserCookies(t, app, refs.OrganizationUUID, userID)
+		list := app.platformRequest(t, http.MethodGet, "/api/organizations/"+refs.OrganizationUUID+"/workbench/prompts", nil, cookies)
+		list.Body.Close()
+		if list.StatusCode != http.StatusOK {
+			t.Fatalf("Workbench list = %d", list.StatusCode)
+		}
+		body, contentType := multipartBody(t, "attachment.txt", "text/plain", []byte("Workbench attachment"), false)
+		response := app.platformRequestWithHeaders(t, http.MethodPost, "/v1/files?beta=true", body, cookies, map[string]string{"Content-Type": contentType, "anthropic-beta": "files-api-2025-04-14"})
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Errorf("Workbench attachment = %d, want 200: %s", response.StatusCode, readAll(t, response.Body))
+		}
+		body, contentType = multipartBody(t, "attachment.txt", "text/plain", []byte("Workbench attachment"), false)
+		denied := app.platformRequestWithHeaders(t, http.MethodPost, "/v1/files?beta=true", body, cookies, map[string]string{"Content-Type": contentType, "X-Workspace-ID": forbiddenWorkspace.ID})
+		denied.Body.Close()
+		if denied.StatusCode != http.StatusForbidden {
+			t.Fatalf("nonmember attachment = %d", denied.StatusCode)
+		}
+		for _, path := range []string{"/v1/files?beta=true", "/v1/agents?beta=true"} {
+			denied := app.platformRequestWithHeaders(t, http.MethodGet, path, nil, cookies, map[string]string{"anthropic-beta": "managed-agents-2026-04-01,files-api-2025-04-14"})
 			denied.Body.Close()
-			if denied.StatusCode != http.StatusForbidden {
-				t.Fatalf("nonmember attachment = %d", denied.StatusCode)
+			if denied.StatusCode != http.StatusOK {
+				t.Fatalf("development resource %s = %d", path, denied.StatusCode)
 			}
-			if role != "developer" {
-				for _, path := range []string{"/v1/files?beta=true", "/v1/agents?beta=true"} {
-					denied := app.platformRequest(t, http.MethodGet, path, nil, cookies)
-					denied.Body.Close()
-					if denied.StatusCode != http.StatusForbidden {
-						t.Fatalf("development resource %s = %d", path, denied.StatusCode)
-					}
-				}
-			}
-		})
-	}
+		}
+	})
 }
 
 func TestWorkbenchPromptWorkspacePermissions(t *testing.T) {

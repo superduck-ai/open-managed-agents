@@ -625,7 +625,7 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, *pgxpool.Pool, confi
 	}
 	if _, err := pool.Exec(context.Background(), `
 		insert into users (uuid, external_id, organization_uuid, email, name, role)
-		values ($1, $2, $3, $4, $5, 'developer')
+		values ($1, $2, $3, $4, $5, 'user')
 	`, accountUUID, accountExternalID, organizationUUID, accountExternalID+"@example.com", "Filestore auth account"); err != nil {
 		t.Fatalf("insert filestore auth account: %v", err)
 	}

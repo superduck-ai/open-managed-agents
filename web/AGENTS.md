@@ -95,13 +95,10 @@
 
 使用以下角色标签和值：
 
-| 标签        | 值                 | 说明                                           |
-| ----------- | ------------------ | ---------------------------------------------- |
-| User        | `user`             | Use Workbench                                  |
-| Claude Code | `claude_code_user` | Use Workbench and Claude Code                  |
-| Developer   | `developer`        | Use Workbench, Claude Code and manage API keys |
-| Billing     | `billing`          | Use Workbench and manage billing details       |
-| Admin       | `admin`            | Do all of the above, plus manage users         |
+| 标签  | 值      | 说明                                           |
+| ----- | ------- | ---------------------------------------------- |
+| User  | `user`  | 使用工作台、开发资源和工作区 API Key           |
+| Admin | `admin` | 管理成员；组织管理员额外管理组织、工作区和账单 |
 
 - 前端中的权限检查只用于 UX。
 - 后端 RBAC 才是权威来源。
@@ -165,13 +162,7 @@
 
 ## Members
 
-- Members 页面必须使用上面列出的五个角色值来实现角色下拉框。
-- 角色展示文案必须与现有产品预期一致：
-  - User: Use Workbench
-  - Claude Code: Use Workbench and Claude Code
-  - Developer: Use Workbench, Claude Code and manage API keys
-  - Billing: Use Workbench and manage billing details
-  - Admin: Do all of the above, plus manage users
+- Members 页面只提供用户和管理员两个角色选项。
 - 只有拥有 `members:manage` 的用户才能看到角色变更控件。
 - 在 UI 中避免明显的自我锁死，但也要依赖后端进行强制校验。
 

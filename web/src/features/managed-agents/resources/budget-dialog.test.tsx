@@ -20,7 +20,7 @@ afterEach(() => {
 
 for (const mode of ['create', 'unbudgeted', 'budgeted'] as const) {
   test(`会话预算字段遵守创建和编辑限制：${mode}`, async () => {
-    resetTestDom();
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     mockManagedResourceApi();
     const entity: SessionApiResponse | undefined =
       mode === 'create'
@@ -29,6 +29,10 @@ for (const mode of ['create', 'unbudgeted', 'budgeted'] as const) {
             id: 'sesn_budget',
             type: 'session',
             status: 'idle',
+            archived_at: null,
+            created_at: '2026-10-10T00:00:00Z',
+            updated_at: '2026-10-10T00:00:00Z',
+            resources: [],
             agent: { type: 'agent', id: 'agent_budget' },
             environment_id: 'env_budget',
             budget: mode === 'budgeted' ? budgetWireBody(100) : null,

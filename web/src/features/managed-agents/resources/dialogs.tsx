@@ -1,3 +1,4 @@
+import { budgetErrorMessage } from './budget-errors';
 import { useI18n } from '../../../shared/i18n';
 import { useAuth } from '../../../shared/auth/context';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
@@ -861,7 +862,9 @@ function GenericManagedEntityDialog({
               />
             </div>
 
-            {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
+            {submitError ? (
+              <p className="mt-4 text-sm text-destructive">{budgetErrorMessage(submitError, msg)}</p>
+            ) : null}
 
             <DeploymentDialogActions
               editing={Boolean(entity)}
@@ -973,7 +976,7 @@ function GenericManagedEntityDialog({
             ) : null}
           </div>
 
-          {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
+          {submitError ? <p className="mt-4 text-sm text-destructive">{budgetErrorMessage(submitError, msg)}</p> : null}
 
           <ManagedEntityDialogActions
             section={section}

@@ -1,3 +1,5 @@
+import { budgetErrorMessage } from '../resources/budget-errors';
+import { useSessionBudgetSync } from './useSessionBudgetSync';
 import { FollowSentSessionMessage } from './FollowSentSessionMessage';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
@@ -33,7 +35,7 @@ import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
 import { ResourceNotFound, useResourceMissingCopy } from '../components/resource-not-found';
 import { ConfirmEntityDialog, ManagedErrorAlert, ManagedWarningAlert } from '../components/common';
 import { resourceTitle } from '../labels';
-import { budgetWireBody, parseBudgetUsdInput, sessionBudgetState, type SessionBudgetState } from '../resources/budget';
+import { budgetWireBody, parseBudgetUsdInput, type SessionBudgetState } from '../resources/budget';
 import { SessionBudgetBanner } from './SessionBudgetBanner';
 import {
   type EventsTabProps,
@@ -159,8 +161,8 @@ async function applyBudgetChange(
 
 function budgetToastMessage(cents: number | null, msg: (key: string, fallback: string) => string): string {
   return cents === null
-    ? msg('managedAgents.budget.removedToast', 'Budget removed — session resumed')
-    : msg('managedAgents.budget.updatedToast', 'Budget updated — session resumed');
+    ? msg('managedAgents.budget.removedToast', 'Budget removed — you can continue messaging')
+    : msg('managedAgents.budget.updatedToast', 'Budget updated — you can continue messaging');
 }
 
 function SessionBudgetBannerSection({
@@ -378,7 +380,6 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     return () => window.clearInterval(interval);
   }, [session?.archived_at, session?.id, session?.status]);
 
-  const budget = useMemo(() => (session ? sessionBudgetState(session) : null), [session]);
   const laneState = useMemo(
     () => buildSessionDetailLaneState(threads, msg, showArchivedLanes),
     [msg, showArchivedLanes, threads],
@@ -395,6 +396,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     refreshKey: refreshKey + eventRefreshKey,
   });
   const events = eventData.events;
+  const { budget, budgetReached } = useSessionBudgetSync(session, events, activeWorkspaceId, mutationError, setSession);
   const eventsLoading = eventData.loading || eventData.childLoading;
   const eventError = eventData.error;
 
@@ -808,7 +810,10 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
           </div>
         </header>
 
-        <SessionDetailAlerts mutationError={mutationError} warningError={warningError} />
+        <SessionDetailAlerts
+          mutationError={budgetErrorMessage(mutationError, msg, budgetReached)}
+          warningError={warningError}
+        />
         <SessionBudgetBannerSection
           budget={budget}
           archived={archived}
@@ -826,7 +831,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                 <SessionMessageComposer
                   acceptingMessages={conversationState.acceptingMessages}
                   awaitingAction={Boolean(activeAwaitingToolCall)}
-                  disabled={conversationState.disabled}
+                  disabled={conversationState.disabled || budgetReached}
                   live={conversationState.live}
                   onError={setMutationError}
                   onEventsChanged={() => setEventRefreshKey((value) => value + 1)}

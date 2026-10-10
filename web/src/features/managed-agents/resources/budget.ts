@@ -102,3 +102,7 @@ export function entityBudgetDisplay(entity: DeploymentApiResponse | SessionApiRe
   const cents = entityBudgetCents(entity);
   return cents === null ? '—' : formatUsdCents(cents);
 }
+
+export function isBudgetReachedError(message: string | null): boolean {
+  return Boolean(message?.startsWith('session budget reached:'));
+}

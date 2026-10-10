@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { useI18n } from '../../../shared/i18n';
+import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
 import {
   Dialog,
@@ -12,7 +12,7 @@ import {
 import { Input } from '../../../shared/ui/input';
 import { Label } from '../../../shared/ui/label';
 import { ManagedWarningAlert } from '../components/common';
-import { formatUsdCents, parseBudgetUsdInput, type SessionBudgetState } from '../resources/budget';
+import { parseBudgetUsdInput, type SessionBudgetState } from '../resources/budget';
 
 export function SessionBudgetBanner({
   state,
@@ -24,6 +24,7 @@ export function SessionBudgetBanner({
   onChangeBudget: (usd: string | null) => Promise<void>;
 }) {
   const { msg } = useI18n();
+  const formatters = useFormatters();
   const [editOpen, setEditOpen] = useState(false);
   const [editValue, setEditValue] = useState('');
   const editParsed = parseBudgetUsdInput(editValue);
@@ -46,10 +47,12 @@ export function SessionBudgetBanner({
             <span>
               {msg(
                 'managedAgents.budget.reached',
-                'Budget reached: {{spent}} of {{budget}} spent. Only settlement events are accepted; change or remove the budget to resume.',
-              )
-                .replace('{{spent}}', formatUsdCents(state.spentCents))
-                .replace('{{budget}}', formatUsdCents(state.budgetCents))}
+                'Budget reached: {spent} spent of {budget}. Change or remove the budget to continue messaging.',
+                {
+                  spent: formatters.currency(state.spentCents / 100),
+                  budget: formatters.currency(state.budgetCents / 100),
+                },
+              )}
             </span>
             <span className="flex items-center gap-2">
               <Button
@@ -80,9 +83,10 @@ export function SessionBudgetBanner({
         </ManagedWarningAlert>
       ) : (
         <p className="mx-4 mb-2 text-xs text-muted-foreground @min-[640px]:mx-6 @min-[1024px]:mx-8">
-          {msg('managedAgents.budget.summary', 'Budget {{budget}} · spent {{spent}}')
-            .replace('{{budget}}', formatUsdCents(state.budgetCents))
-            .replace('{{spent}}', formatUsdCents(state.spentCents))}
+          {msg('managedAgents.budget.summary', 'Budget {budget} · spent {spent}', {
+            budget: formatters.currency(state.budgetCents / 100),
+            spent: formatters.currency(state.spentCents / 100),
+          })}
         </p>
       )}
       <Dialog open={editOpen} onOpenChange={(open) => !open && setEditOpen(false)}>
@@ -93,7 +97,7 @@ export function SessionBudgetBanner({
               <DialogDescription>
                 {msg(
                   'managedAgents.budget.changeHelp',
-                  'Set a new USD cap. Saving re-arms enforcement and resumes the session.',
+                  'Set a USD limit greater than the amount already spent to continue messaging.',
                 )}
               </DialogDescription>
             </DialogHeader>

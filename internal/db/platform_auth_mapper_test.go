@@ -44,6 +44,8 @@ func TestPlatformAuthMapperBuilders(t *testing.T) {
 		},
 		wantSQLFragments: []string{
 			"u.organization_uuid = $1", "u.external_id = $2", "OR u.uuid = $3",
+			"LOWER(registration.email) = LOWER(u.email)", "registration.registration_identity",
+			"ORDER BY registration.added_at ASC, registration.uuid ASC", "), u.organization_uuid) AS home_organization_uuid",
 		},
 	})
 	assertMapperBuilderContract(t, mapperBuilderContract{

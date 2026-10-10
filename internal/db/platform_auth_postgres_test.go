@@ -75,10 +75,33 @@ func TestPlatformLoginIdentityPostgres(t *testing.T) {
 			t.Fatalf("稳定账号: %+v, %v", userRecord, err)
 		}
 	})
-	t.Run("旧身份仅回退到登录来源组织", func(t *testing.T) {
+	t.Run("受邀组织旧会话优先使用注册来源且不改变当前身份", func(t *testing.T) {
 		session, err := store.EnrichPlatformSession(ctx, platformsession.Session{OrganizationUUID: other, UserUUID: member})
-		if err != nil || session.HomeOrganizationUUID != other {
+		if err != nil || session.HomeOrganizationUUID != home || session.OrganizationUUID != other || session.UserUUID != member {
 			t.Fatalf("旧身份来源: %+v, %v", session, err)
+		}
+	})
+	t.Run("新会话保留受邀身份并使用注册来源", func(t *testing.T) {
+		created, err := store.ResolvePlatformSessionIdentity(ctx, platformsession.CreateInput{
+			SessionKey: "trusted-member-key", UserUUID: member, OrgUUID: other,
+		})
+		if err != nil || created.HomeOrganizationUUID != home || created.OrganizationUUID != other || created.UserUUID != member {
+			t.Fatalf("受邀新会话: %+v, %v", created, err)
+		}
+	})
+	t.Run("已有Home保持不变", func(t *testing.T) {
+		session, err := store.EnrichPlatformSession(ctx, platformsession.Session{
+			OrganizationUUID: other, UserUUID: member, HomeOrganizationUUID: other,
+		})
+		if err != nil || session.HomeOrganizationUUID != other {
+			t.Fatalf("已记录来源: %+v, %v", session, err)
+		}
+	})
+	t.Run("无注册标记的历史身份保留来源组织", func(t *testing.T) {
+		execMapperFixtureSQL(t, ctx, store.mapperDB, `UPDATE users SET registration_identity = false WHERE uuid = $1`, original)
+		session, err := store.EnrichPlatformSession(ctx, platformsession.Session{OrganizationUUID: other, UserUUID: member})
+		if err != nil || session.HomeOrganizationUUID != other || session.UserUUID != member {
+			t.Fatalf("历史来源回退: %+v, %v", session, err)
 		}
 	})
 }

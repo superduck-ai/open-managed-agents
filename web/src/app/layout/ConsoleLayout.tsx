@@ -521,7 +521,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
 
   const handleCreate = async (name: string, displayColor: string) => {
     const created = await createWorkspace(buildCreateWorkspaceInput(name, displayColor));
-    await navigateToMatchingWorkspacePath(currentPath, created.id, onNavigate);
+    if (!organizations) await navigateToMatchingWorkspacePath(currentPath, created.id, onNavigate);
   };
 
   return (
@@ -594,7 +594,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                   className="gap-2 p-2"
                   onClick={() => {
                     setOpen(false);
-                    setCreateOpen(true);
+                    confirmation.request(() => setCreateOpen(true));
                   }}
                 >
                   <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background">

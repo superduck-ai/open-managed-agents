@@ -26,7 +26,13 @@
         SELECT u.organization_uuid AS organization_uuid,
             COALESCE(CAST(w.uuid AS text), '') AS workspace_uuid, COALESCE(w.external_id, '') AS workspace_external_id,
             u.uuid AS user_uuid, u.external_id AS user_external_id,
-            LOWER(u.email) AS verified_email, u.organization_uuid AS home_organization_uuid
+            LOWER(u.email) AS verified_email,
+            COALESCE((
+                SELECT registration.organization_uuid FROM users registration
+                WHERE LOWER(registration.email) = LOWER(u.email) AND registration.registration_identity
+                ORDER BY registration.added_at ASC, registration.uuid ASC
+                LIMIT 1
+            ), u.organization_uuid) AS home_organization_uuid
         FROM users u
         LEFT JOIN LATERAL (
             SELECT uuid, external_id FROM workspaces

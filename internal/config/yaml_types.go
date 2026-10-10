@@ -54,6 +54,7 @@ type yamlConfig struct {
 	Webhook              yamlWebhookConfig         `yaml:"webhook"`
 	Vault                VaultConfig               `yaml:"vault"`
 	Bootstrap            yamlBootstrapConfig       `yaml:"bootstrap"`
+	Billing              BillingConfig             `yaml:"billing"`
 }
 
 type yamlDatabaseConfig struct {
@@ -172,6 +173,7 @@ func (input yamlConfig) resolve() Config {
 			UpstreamProxyCAKeyFile:             input.CodeSession.UpstreamProxyCAKeyFile,
 			UpstreamProxyDisableSSRFProtection: input.CodeSession.UpstreamProxyDisableSSRFProtection,
 		},
+		Billing:       input.Billing,
 		Observability: input.Observability,
 		Webhook: WebhookConfig{
 			EndpointURL:   input.Webhook.EndpointURL,

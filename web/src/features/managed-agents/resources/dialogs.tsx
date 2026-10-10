@@ -1,3 +1,4 @@
+import { budgetErrorMessage } from './budget-errors';
 import { useI18n } from '../../../shared/i18n';
 import { useAuth } from '../../../shared/auth/context';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
@@ -52,6 +53,8 @@ import {
 } from './model';
 import { CredentialMcpServerField } from './credential-mcp-server-field';
 import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActions } from './dialog-components';
+import { BudgetField } from './budget-field';
+import { entityBudgetUsdInput } from './budget';
 import { DeploymentFormFields } from './deployment-form-fields';
 import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
 import { EnvironmentEntityDialog } from './environment-dialog';
@@ -860,7 +863,9 @@ function GenericManagedEntityDialog({
               />
             </div>
 
-            {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
+            {submitError ? (
+              <p className="mt-4 text-sm text-destructive">{budgetErrorMessage(submitError, msg)}</p>
+            ) : null}
 
             <DeploymentDialogActions
               editing={Boolean(entity)}
@@ -946,12 +951,20 @@ function GenericManagedEntityDialog({
                   onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
                 />
                 {section === 'sessions' ? (
-                  <ManagedResourceFields
-                    values={values}
-                    onChange={setValues}
-                    workspaceId={workspaceId}
-                    memoryStores={memoryStores}
-                  />
+                  <>
+                    <ManagedResourceFields
+                      values={values}
+                      onChange={setValues}
+                      workspaceId={workspaceId}
+                      memoryStores={memoryStores}
+                    />
+                    {!entity || entityBudgetUsdInput(entity) ? (
+                      <BudgetField
+                        values={values}
+                        onChange={(patch) => setValues((current) => ({ ...current, ...patch }))}
+                      />
+                    ) : null}
+                  </>
                 ) : null}
               </>
             ) : null}
@@ -966,7 +979,7 @@ function GenericManagedEntityDialog({
             ) : null}
           </div>
 
-          {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
+          {submitError ? <p className="mt-4 text-sm text-destructive">{budgetErrorMessage(submitError, msg)}</p> : null}
 
           <ManagedEntityDialogActions
             section={section}

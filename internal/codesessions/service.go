@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
@@ -33,6 +34,7 @@ type Service struct {
 	workerEvents           workerevents.Broker
 	workerEventAcks        workerevents.AckStore
 	workerEventObjects     storage.ObjectStore
+	billing                *billing.Calculator
 }
 
 func (s *Service) PurgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {
@@ -114,6 +116,24 @@ func (s *Service) WithSandboxTimeoutExtender(extender SandboxTimeoutExtender, ti
 	s.sandboxTimeoutExtender = extender
 	s.sandboxTimeout = timeout
 	return s
+}
+
+// WithBilling wires the model list-price calculator used to write the
+// billing payload on synthesized span.model_request_end events.
+func (s *Service) WithBilling(calculator *billing.Calculator) *Service {
+	if s == nil {
+		return s
+	}
+	s.billing = calculator
+	return s
+}
+
+// Billing exposes the model list-price calculator for budget validation.
+func (s *Service) Billing() *billing.Calculator {
+	if s == nil {
+		return nil
+	}
+	return s.billing
 }
 
 func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Session, events []db.SessionEvent) error {

@@ -2391,5 +2391,22 @@
   "managedAgents.agentPicker.search": "按名称或 Agent ID 搜索…",
   "managedAgents.agentPicker.empty": "没有找到 Agent。",
   "managedAgents.agentPicker.failed": "无法加载 Agent。",
-  "managedAgents.agentPicker.more": "加载更多"
+  "managedAgents.agentPicker.more": "加载更多",
+  "managedAgents.budget.title": "预算",
+  "managedAgents.budget.placeholder": "例如 25",
+  "managedAgents.budget.invalid": "请输入大于 0 的美元金额，例如 25 或 12.50。",
+  "managedAgents.budget.help": "每个会话的美元预算上限。费用达到上限后，会话将暂停。",
+  "managedAgents.budget.reached": "已达到预算上限：已使用 {spent}，预算为 {budget}。请调整或移除预算后继续发送消息。",
+  "managedAgents.budget.summary": "预算 {budget} · 已使用 {spent}",
+  "managedAgents.budget.change": "调整预算",
+  "managedAgents.budget.remove": "移除预算",
+  "managedAgents.budget.changeTitle": "调整预算",
+  "managedAgents.budget.changeHelp": "请设置高于已使用金额的美元预算上限，以继续发送消息。",
+  "managedAgents.budget.updatedToast": "预算已更新，可以继续发送消息",
+  "managedAgents.budget.removedToast": "预算已移除，可以继续发送消息",
+  "managedAgents.budget.rejected": "会话已达到预算上限，请调整或移除预算后继续。",
+  "managedAgents.budget.unpriced": "设置预算前，请先为以下模型配置价格：{models}",
+  "managedAgents.budget.aboveSpent": "新预算必须高于已使用的金额。",
+  "managedAgents.budget.createOnly": "预算只能在创建会话时设置，移除后无法重新添加。",
+  "managedAgents.budget.noBudget": "此会话没有可移除的预算。"
 }

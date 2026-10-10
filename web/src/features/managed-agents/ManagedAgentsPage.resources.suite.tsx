@@ -19,6 +19,8 @@ import {
   waitFor,
   within,
 } from './ManagedAgentsPage.test-utils';
+import { managedEntityListLimit } from './api';
+import { SessionNestedPanel } from './resources/detail';
 import { objectRecord } from './utils';
 
 function requestUrl(input: RequestInfo | URL) {
@@ -29,7 +31,33 @@ function requestMethod(input: RequestInfo | URL, init?: RequestInit) {
   return init?.method ?? (input instanceof Request ? input.method : 'GET');
 }
 
+function appendRowPastPage<T>(rows: T[], create: (index: number, hidden: boolean) => T) {
+  const hiddenIndex = managedEntityListLimit - rows.length;
+  for (let index = 0; index <= hiddenIndex; index += 1) {
+    rows.push(create(index, index === hiddenIndex));
+  }
+}
+
+async function confirmFirstRowAction(menuName: string, confirmName: string) {
+  fireEvent.click(screen.getAllByRole('button', { name: 'More actions' })[0]);
+  fireEvent.click(screen.getByRole('menuitem', { name: menuName }));
+  const dialog = await screen.findByRole('alertdialog');
+  fireEvent.click(within(dialog).getByRole('button', { name: confirmName }));
+}
+
 export function registerManagedAgentsResourceTests() {
+  test('shows session event processing time without a created_at field', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<SessionNestedPanel session={api.resources.sessions[0]} workspaceId="default" refreshKey={0} />);
+
+    const eventType = await screen.findByText('session.status_running');
+    const row = eventType.closest('tr');
+    expect(row).not.toBeNull();
+    expect(within(row!).getAllByRole('cell')[1].textContent).not.toBe('—');
+    expect(screen.getByRole('columnheader', { name: 'Time' })).toBeTruthy();
+  });
+
   test('renders managed resource rows from the real v1 resource endpoints', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();
@@ -1078,9 +1106,12 @@ export function registerManagedAgentsResourceTests() {
     mockManagedResourceApi();
     renderManagedAgentsPage('sessions');
 
-    const missingAlert = await screen.findByRole('alert');
-    expect(missingAlert.dataset.slot).toBe('alert');
-    expect(missingAlert.textContent).toContain('not found');
+    expect(await screen.findByRole('heading', { name: 'Session not found' })).toBeTruthy();
+    expect(screen.getByText(/Session sesn_missing123456 was not found/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Back to sessions' }).getAttribute('href')).toBe(
+      '/workspaces/default/sessions',
+    );
+    expect(screen.queryByRole('alert')).toBeNull();
 
     cleanup();
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
@@ -1652,6 +1683,14 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
     await waitFor(() =>
+      expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBe(
+        true,
+      ),
+    );
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url.includes('/threads/sthr_reporter123456/stream?'))).toBe(true),
+    );
+    await waitFor(() =>
       expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events?'))).toBe(true),
     );
     await waitFor(() =>
@@ -1661,12 +1700,45 @@ export function registerManagedAgentsResourceTests() {
         ),
       ).toBe(true),
     );
-    await waitFor(() =>
-      expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBe(
-        true,
-      ),
+    const urls = api.requests.map((request) => request.url);
+    expect(urls.findIndex((url) => url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBeLessThan(
+      urls.findIndex((url) => url.startsWith('/v1/sessions/sesn_one123456/events?')),
     );
-    expect(api.requests.some((request) => request.url.includes('/threads/sthr_reporter123456/stream?'))).toBe(false);
+    expect(urls.findIndex((url) => url.includes('/threads/sthr_reporter123456/stream?'))).toBeLessThan(
+      urls.findIndex((url) => url.includes('/threads/sthr_reporter123456/events?')),
+    );
+  });
+
+  test('Refresh rescans events while a live session stream stays open', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].status = 'running';
+    const fetchResource = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input).includes('/stream?')) {
+        return new Response(
+          new ReadableStream({
+            start(stream) {
+              init?.signal?.addEventListener('abort', () => stream.close(), { once: true });
+            },
+          }),
+          { headers: { 'Content-Type': 'text/event-stream' } },
+        );
+      }
+      return fetchResource(input, init);
+    });
+
+    renderManagedAgentsPage('sessions');
+    await screen.findByTestId('session-detail-page');
+    const eventRequests = () =>
+      api.requests.filter((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events?')).length;
+    await waitFor(() => expect(eventRequests()).toBeGreaterThan(0));
+    const beforeRefresh = eventRequests();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Refresh' }));
+
+    await waitFor(() => expect(eventRequests()).toBeGreaterThan(beforeRefresh));
   });
 
   test('keeps the primary session stream open when running metadata has completed history', async () => {
@@ -2221,6 +2293,56 @@ export function registerManagedAgentsResourceTests() {
     ).toBeGreaterThan(1);
   });
 
+  test('stays on the session list when creating a session fails', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    const baseFetch = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input) === '/v1/sessions?beta=true' && requestMethod(input, init) === 'POST') {
+        return new Response(JSON.stringify({ error: { message: 'session create failed' } }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch;
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
+
+    expect(await within(dialog).findByText('session create failed')).toBeTruthy();
+    expect(window.location.pathname).toBe('/workspaces/default/sessions');
+    expect(screen.getByRole('dialog', { name: 'Create session' })).toBeTruthy();
+    expect(screen.getByRole('heading', { hidden: true, name: 'Sessions' })).toBeTruthy();
+  });
+
+  test('opens the created session detail after the list create succeeds', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeTruthy();
+    expect(screen.getByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Opened session' } });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
+
+    await waitFor(() => expect(window.location.pathname).toBe('/workspaces/default/sessions/sesn_created123456'));
+    expect(screen.queryByRole('dialog', { name: 'Create session' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Sessions' })).toBeNull();
+    expect(await screen.findByRole('heading', { name: 'Opened session' })).toBeTruthy();
+  });
+
   test('creates a session with selected agent and environment references', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();
@@ -2737,7 +2859,8 @@ export function registerManagedAgentsResourceTests() {
     expect(
       api.requests.some(
         (request) =>
-          request.url === '/v1/deployments?beta=true&limit=5&include_archived=true' && request.method === 'GET',
+          request.url === `/v1/deployments?beta=true&limit=${managedEntityListLimit}&include_archived=true` &&
+          request.method === 'GET',
       ),
     ).toBe(true);
 
@@ -2981,6 +3104,136 @@ export function registerManagedAgentsResourceTests() {
       ).toBe(true),
     );
     await waitFor(() => expect(screen.queryByText('Memory one')).toBeNull());
+  });
+
+  test('shows the next session after deleting one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.sessions, (index, hidden) => ({
+      ...api.resources.sessions[0],
+      id: `sesn_extra_${index}`,
+      title: hidden ? 'Session overflow' : `Session extra ${index}`,
+      status: 'idle',
+    }));
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    expect(screen.queryByText('Session overflow')).toBeNull();
+    await confirmFirstRowAction('Delete session', 'Delete');
+
+    expect(await screen.findByText('Session overflow')).toBeTruthy();
+    expect(screen.queryByText('Session one')).toBeNull();
+  });
+
+  test('returns to the previous session page after deleting the last row on the last page', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.sessions, (index, hidden) => ({
+      ...api.resources.sessions[0],
+      id: `sesn_extra_${index}`,
+      title: hidden ? 'Session overflow' : `Session extra ${index}`,
+      status: 'idle',
+    }));
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByText('Session overflow')).toBeTruthy();
+    await confirmFirstRowAction('Delete session', 'Delete');
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    expect(screen.queryByText('Session overflow')).toBeNull();
+  });
+
+  test('keeps a successful session delete when the refill request fails', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    api.resources.failSessionList = true;
+    await confirmFirstRowAction('Delete session', 'Delete');
+
+    expect(await screen.findByText('Session deleted')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('Session one')).toBeNull());
+    expect(screen.getByRole('alert').textContent).toContain('list failed');
+  });
+
+  test('shows the next deployment after archiving one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/deployments');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.deployments, (index, hidden) => ({
+      ...api.resources.deployments[0],
+      id: `dep_extra_${index}`,
+      name: hidden ? 'Deployment overflow' : `Deployment extra ${index}`,
+      status: 'active',
+    }));
+    render(<ManagedAgentsPage section="deployments" />);
+
+    expect(await screen.findByText('Deployment one')).toBeTruthy();
+    expect(screen.queryByText('Deployment overflow')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Status All' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Active' }));
+    expect(await screen.findByText('Deployment one')).toBeTruthy();
+    expect(screen.queryByText('Deployment overflow')).toBeNull();
+    await confirmFirstRowAction('Archive deployment', 'Archive');
+
+    expect(await screen.findByText('Deployment overflow')).toBeTruthy();
+    expect(screen.queryByText('Deployment one')).toBeNull();
+  });
+
+  test('shows the next environment after deleting one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/environments');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.environments, (index, hidden) => ({
+      ...api.resources.environments[0],
+      id: `env_extra_${index}`,
+      name: hidden ? 'Environment overflow' : `Environment extra ${index}`,
+    }));
+    render(<ManagedAgentsPage section="environments" />);
+
+    expect(await screen.findByText('Environment one')).toBeTruthy();
+    expect(screen.queryByText('Environment overflow')).toBeNull();
+    await confirmFirstRowAction('Delete environment', 'Delete');
+
+    expect(await screen.findByText('Environment overflow')).toBeTruthy();
+    expect(screen.queryByText('Environment one')).toBeNull();
+  });
+
+  test('shows the next vault after deleting one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/vaults');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.vaults, (index, hidden) => ({
+      ...api.resources.vaults[0],
+      id: `vlt_extra_${index}`,
+      display_name: hidden ? 'Vault overflow' : `Vault extra ${index}`,
+    }));
+    render(<ManagedAgentsPage section="credential-vaults" />);
+
+    expect(await screen.findByText('Vault one')).toBeTruthy();
+    expect(screen.queryByText('Vault overflow')).toBeNull();
+    await confirmFirstRowAction('Delete vault', 'Delete');
+
+    expect(await screen.findByText('Vault overflow')).toBeTruthy();
+    expect(screen.queryByText('Vault one')).toBeNull();
+  });
+
+  test('shows the next memory store after deleting one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/memory-stores');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.memoryStores, (index, hidden) => ({
+      ...api.resources.memoryStores[0],
+      id: `memstore_extra_${index}`,
+      name: hidden ? 'Memory overflow' : `Memory extra ${index}`,
+    }));
+    render(<ManagedAgentsPage section="memory-stores" />);
+
+    expect(await screen.findByText('Memory one')).toBeTruthy();
+    expect(screen.queryByText('Memory overflow')).toBeNull();
+    await confirmFirstRowAction('Delete memory store', 'Delete');
+
+    expect(await screen.findByText('Memory overflow')).toBeTruthy();
+    expect(screen.queryByText('Memory one')).toBeNull();
   });
 
   test('uses the shared delete confirmation dialog on environment detail pages', async () => {
@@ -3315,7 +3568,7 @@ export function registerManagedAgentsResourceTests() {
     const discardDialog = await screen.findByRole('alertdialog', { name: '放弃未保存的更改？' });
     fireEvent.click(within(discardDialog).getByRole('button', { name: '继续编辑' }));
 
-    const form = within(dialog).getByRole('button', { name: '创建' }).closest('form') as HTMLFormElement;
+    const form = within(dialog).getByRole('button', { name: '创建环境' }).closest('form') as HTMLFormElement;
     fireEvent.submit(form);
     fireEvent.submit(form);
     await waitFor(() =>

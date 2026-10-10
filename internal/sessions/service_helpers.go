@@ -152,7 +152,7 @@ func (h *Handler) resourceFromRequest(
 	if err != nil {
 		return normalizedSessionResource{}, err
 	}
-	payload := map[string]any{"id": resourceID, "type": resourceType}
+	var payload any
 	var secret json.RawMessage
 	var normalizedFileSpec *sessionresource.FileSpec
 	var gitSpec *sessionresource.GitRepositorySpec
@@ -195,11 +195,12 @@ func (h *Handler) resourceFromRequest(
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		payload["url"] = spec.URL
-		payload["mount_path"] = spec.MountPath
+		fields := map[string]any{"id": resourceID, "type": resourceType, "url": spec.URL}
+		fields["mount_path"] = spec.MountPath
 		if spec.Checkout != nil {
-			payload["checkout"] = spec.Checkout
+			fields["checkout"] = spec.Checkout
 		}
+		payload = fields
 		gitSpec = &spec
 	case sessionresource.MemoryStoreType:
 		fields, err := h.memoryStorePayload(r.Context(), session, body, attachSet, resourceID)
@@ -237,6 +238,7 @@ func normalizeInputEvent(
 	raw json.RawMessage,
 	now time.Time,
 ) (db.SessionEvent, json.RawMessage, bool, error) {
+	now = eventTime(now)
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return db.SessionEvent{}, nil, false, errors.New("event must be an object")
@@ -253,8 +255,8 @@ func normalizeInputEvent(
 		return db.SessionEvent{}, nil, false, err
 	}
 	payload["id"] = eventID
-	payload["processed_at"] = now.Format(time.RFC3339)
-	payload["created_at"] = httpapi.FormatTime(now)
+	payload["processed_at"] = formatEventTime(now)
+	delete(payload, "created_at")
 	var threadExternalID *string
 	if value, ok := payload["session_thread_id"].(string); ok && strings.TrimSpace(value) != "" {
 		value = strings.TrimSpace(value)
@@ -414,11 +416,51 @@ func validateContentBlocks(payload map[string]any, field string, required bool) 
 		if !ok {
 			return fmt.Errorf("%s items must be objects", field)
 		}
-		if requiredStringValue(block, "type") == "" {
-			return fmt.Errorf("%s item type is required", field)
+		switch block["type"] {
+		case "text":
+			text, ok := block["text"].(string)
+			if !ok || text == "" {
+				return fmt.Errorf("%s text must be non-empty", field)
+			}
+		case "image", "document":
+			if err := validateContentSource(block); err != nil {
+				return fmt.Errorf("%s %w", field, err)
+			}
+		case "search_result":
+			if required {
+				return fmt.Errorf("%s item type is not accepted", field)
+			}
+		default:
+			return fmt.Errorf("%s item type is not accepted", field)
 		}
 	}
 	return nil
+}
+
+func validateContentSource(block map[string]any) error {
+	source, ok := block["source"].(map[string]any)
+	if !ok {
+		return errors.New("source is required")
+	}
+	switch source["type"] {
+	case "base64":
+		if requiredStringValue(source, "data") != "" && requiredStringValue(source, "media_type") != "" {
+			return nil
+		}
+	case "url":
+		if requiredStringValue(source, "url") != "" {
+			return nil
+		}
+	case "file":
+		if requiredStringValue(source, "file_id") != "" {
+			return nil
+		}
+	case "text":
+		if block["type"] == "document" && requiredStringValue(source, "data") != "" && source["media_type"] == "text/plain" {
+			return nil
+		}
+	}
+	return errors.New("source is invalid")
 }
 
 func requiredStringValue(payload map[string]any, field string) string {

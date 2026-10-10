@@ -1,6 +1,7 @@
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
 import { Bubble, BubbleContent } from '../../../shared/ui/bubble';
 import { MessageHeader } from '../../../shared/ui/message';
 import {
@@ -8,7 +9,6 @@ import {
   type DisplayEventEntry,
   type I18nMsg,
   type IdleGapEntry,
-  type QueuedBoundaryEntry,
   type QuickstartSessionEvent,
   type SessionEventListEntry,
   type ToolBatchEntry,
@@ -17,10 +17,11 @@ import {
 } from '../types';
 import { compactEntityId, numericValueFromKeys, toRecord } from '../utils';
 import clsx from 'clsx';
-import { ArrowLeft, ArrowRight, Ban, Check, CircleX, Clock3, Loader2, Wrench } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Ban, Check, ChevronRight, CircleX, Clock3, Loader2, Timer, Wrench } from 'lucide-react';
 import { type MouseEvent as ReactMouseEvent, type ReactNode, useContext } from 'react';
 import { SessionDetailDeltaFramesContext } from './sessionDetailData';
 import { formatSessionDuration } from './sessionDetailModel';
+import { sessionTranscriptEntryDurationMs } from './sessionTranscriptModel';
 import { HeaderRow, InProgressChip, MetaStrip, OutcomeStatusChip, SynchronizedShimmerText } from './sessionTimeline';
 import {
   sessionEventFamily,
@@ -79,27 +80,6 @@ export function IdleGapRow({ entry }: { entry: IdleGapEntry }) {
   );
 }
 
-export function QueuedBoundaryRow({ entry }: { entry: QueuedBoundaryEntry }) {
-  const { msg } = useI18n();
-  const label = msg(
-    'managedAgents.sessions.trace.queuedMessages',
-    '{count, plural, one {# queued message} other {# queued messages}}',
-    { count: entry.count },
-  );
-  return (
-    <div
-      role="separator"
-      aria-label={label}
-      data-entry-kind="queued_boundary"
-      className="relative my-2 flex h-6 items-center gap-3 text-xs text-muted-foreground"
-    >
-      <span className="h-px flex-1 bg-border/30" aria-hidden />
-      <span>{label}</span>
-      <span className="h-px flex-1 bg-border/30" aria-hidden />
-    </div>
-  );
-}
-
 export function DisplayEventRow({
   entry,
   selected,
@@ -123,7 +103,7 @@ export function DisplayEventRow({
     return <TranscriptThinkingRow entry={entry} selected={selected} onSelect={onSelect} presentation={presentation} />;
   }
   const title = sessionDisplayEventInlinePreview(entry, msg);
-  const textInProgress = Boolean(entry.inProgress || entry.displayEvent.isQueued || entry.displayEvent.isStreaming);
+  const textInProgress = Boolean(entry.inProgress || entry.displayEvent.isStreaming);
   const showGenerating = Boolean(entry.inProgress || entry.displayEvent.isStreaming);
   return (
     <div
@@ -148,7 +128,7 @@ export function DisplayEventRow({
         ) : null}
         <MetaStrip
           usage={entry.kind === 'passthrough' || entry.kind === 'message' ? entry.usage : undefined}
-          inferenceMs={entry.kind === 'passthrough' || entry.kind === 'message' ? entry.inferenceMs : undefined}
+          durationMs={sessionTranscriptEntryDurationMs(entry)}
           isError={entry.displayEvent.isError && entry.displayEvent.type !== 'error'}
           relativeTime={entry.relativeTime}
           processedAtMs={entry.processedAtMs}
@@ -170,7 +150,7 @@ function TranscriptMessageRow({
   presentation: 'standalone' | 'iteration';
 }) {
   const { msg } = useI18n();
-  const inProgress = Boolean(entry.inProgress || entry.displayEvent.isQueued || entry.displayEvent.isStreaming);
+  const inProgress = Boolean(entry.inProgress || entry.displayEvent.isStreaming);
   const content = entry.displayEvent.content || sessionDisplayEventInlinePreview(entry, msg);
   const speaker = entry.displayEvent.type === 'agent' ? 'agent' : 'user';
   const handleClick = (event: ReactMouseEvent<HTMLElement>) => {
@@ -192,6 +172,7 @@ function TranscriptMessageRow({
           speaker={speaker}
           processedAtMs={entry.processedAtMs}
           relativeTime={entry.relativeTime}
+          durationMs={speaker === 'agent' ? sessionTranscriptEntryDurationMs(entry) : undefined}
           selected={selected}
           onSelect={onSelect}
         />
@@ -272,6 +253,7 @@ export function TranscriptSpeakerHeader({
   speaker,
   processedAtMs,
   relativeTime,
+  durationMs,
   selected,
   onSelect,
 }: {
@@ -279,6 +261,7 @@ export function TranscriptSpeakerHeader({
   speaker: 'agent' | 'user';
   processedAtMs: number;
   relativeTime: string;
+  durationMs?: number;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -306,6 +289,12 @@ export function TranscriptSpeakerHeader({
         <span className="truncate">{label}</span>
       </Button>
       <time className="shrink-0 font-mono text-[11px] font-normal text-muted-foreground">{time}</time>
+      {durationMs !== undefined ? (
+        <span className="ml-auto inline-flex items-center gap-1 font-mono">
+          <Timer className="size-3.5" aria-hidden />
+          {formatSessionDuration(durationMs, formatters, msg)}
+        </span>
+      ) : null}
     </MessageHeader>
   );
 }
@@ -330,8 +319,8 @@ function TranscriptThinkingRow({
 }) {
   const { msg } = useI18n();
   const inProgress = Boolean(entry.inProgress || entry.displayEvent.isStreaming);
-  const durationSeconds =
-    entry.bracketStartMs === undefined ? undefined : (entry.processedAtMs - entry.bracketStartMs) / 1000;
+  const durationMs = sessionTranscriptEntryDurationMs(entry);
+  const durationSeconds = durationMs === undefined ? undefined : durationMs / 1000;
   const duration =
     durationSeconds !== undefined && Number.isFinite(durationSeconds) && durationSeconds >= 0
       ? `${durationSeconds.toFixed(durationSeconds < 10 ? 1 : 0)}s`
@@ -348,27 +337,34 @@ function TranscriptThinkingRow({
       className={clsx('w-full max-w-full', presentation === 'standalone' && 'my-1')}
     >
       <BubbleContent className="!w-full !max-w-full !overflow-visible !rounded-md !px-0 !py-0">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          data-event-id={entry.traceEntry.id}
-          data-entry-kind={entry.kind}
-          data-display-kind={entry.traceEntry.displayKind}
-          data-transcript-thinking-row
-          aria-pressed={selected}
-          className={clsx(
-            'h-auto min-h-6 w-full justify-start rounded-md border-transparent px-1.5 py-0.5 text-left text-sm leading-5 font-normal italic text-muted-foreground transition-colors hover:bg-session-hover hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/30',
-            selected && 'bg-session-selected text-foreground',
-          )}
-          onClick={onSelect}
-        >
-          {inProgress ? (
-            <SynchronizedShimmerText className="min-w-0 flex-1 truncate">{label}</SynchronizedShimmerText>
-          ) : (
-            <span className="min-w-0 flex-1 truncate">{label}</span>
-          )}
-        </Button>
+        <Collapsible key={inProgress ? 'streaming' : 'complete'} defaultOpen={inProgress}>
+          <CollapsibleTrigger
+            type="button"
+            data-event-id={entry.traceEntry.id}
+            data-entry-kind={entry.kind}
+            data-display-kind={entry.traceEntry.displayKind}
+            data-transcript-thinking-row
+            aria-pressed={selected}
+            className={clsx(
+              'group flex items-center gap-1 h-auto min-h-6 w-full justify-start rounded-md border-transparent px-1.5 py-0.5 text-left text-sm leading-5 font-normal italic text-muted-foreground transition-colors hover:bg-session-hover hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/30',
+              selected && 'bg-session-selected text-foreground',
+            )}
+            onClick={onSelect}
+          >
+            <ChevronRight aria-hidden className="size-3 shrink-0 transition-transform group-aria-expanded:rotate-90" />
+            {inProgress ? (
+              <SynchronizedShimmerText className="min-w-0 flex-1 truncate">{label}</SynchronizedShimmerText>
+            ) : (
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+            )}
+          </CollapsibleTrigger>
+          <CollapsibleContent
+            className="px-1.5 py-1 text-sm text-muted-foreground [&_*]:!text-muted-foreground"
+            data-transcript-thinking-content
+          >
+            <LiveRowPreview displayEvent={entry.displayEvent} msg={msg} compact={false} />
+          </CollapsibleContent>
+        </Collapsible>
       </BubbleContent>
     </Bubble>
   );
@@ -387,7 +383,8 @@ export function ToolCallRow({
 }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
-  const duration = formatSessionDuration(entry.executionMs, formatters, msg);
+  const duration =
+    entry.executionMs === undefined ? undefined : formatSessionDuration(entry.executionMs, formatters, msg);
   return (
     <div
       data-event-id={entry.traceEntry.id}
@@ -452,7 +449,7 @@ function CompactToolRowContent({
 }: {
   name: string;
   preview: string;
-  duration: string;
+  duration?: string;
   lifecycle: ToolLifecycle;
 }) {
   return (
@@ -562,7 +559,7 @@ export function OutcomeRow({
         )}
         <MetaStrip
           usage={entry.usage}
-          executionMs={entry.durationMs}
+          durationMs={entry.durationMs}
           isError={entry.isError}
           relativeTime={entry.relativeTime}
           processedAtMs={entry.processedAtMs}
@@ -814,8 +811,6 @@ export function TranscriptRow({
   switch (entry.kind) {
     case 'idle_gap':
       return <IdleGapRow entry={entry} />;
-    case 'queued_boundary':
-      return <QueuedBoundaryRow entry={entry} />;
     case 'outcome':
       return <OutcomeRow entry={entry} selected={selected} onSelect={onSelect} />;
     case 'tool_call':
@@ -934,7 +929,7 @@ export function LiveRowPreview({
   const family = sessionEventFamily(liveEvent);
   const label = sessionEventLabel(liveEvent, family, msg);
   const value = sessionEventIsThinking(liveEvent)
-    ? sessionThinkingText(liveEvent)
+    ? sessionThinkingText(liveEvent) || displayEvent.content
     : sessionEventTranscriptText(liveEvent) ||
       sessionEventStructuredContentText(liveEvent) ||
       sessionToolResultText(liveEvent) ||
@@ -942,7 +937,7 @@ export function LiveRowPreview({
       displayEvent.content ||
       displayEvent.label ||
       label;
-  return <>{compact ? sessionInlineRowPreview(value) : value}</>;
+  return <>{compact ? sessionInlineRowPreview(value) : <TranscriptContent value={value} />}</>;
 }
 
 export function sessionDisplayEventInlinePreview(entry: DisplayEventEntry, msg: I18nMsg) {

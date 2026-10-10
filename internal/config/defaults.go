@@ -6,9 +6,17 @@ const DefaultE2BTemplate = "managed-agent-sandbox"
 
 func defaultConfig() Config {
 	cfg := Config{
+		EnvironmentPrebuilds: EnvironmentPrebuildConfig{
+			Timeout: time.Hour,
+			Template: TemplateBuildConfig{
+				DiskSize: "20G",
+				Network:  TemplateNetworkConfig{AllowInternet: true, InjectEgressCA: true},
+			},
+		},
 		NATS: NATSConfig{
-			ConnectTimeout: 5 * time.Second,
-			DrainTimeout:   10 * time.Second,
+			WorkerEventStream: WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, MaxBytes: 1 << 28, MaxMsgSize: 1 << 20, Replicas: 3},
+			ConnectTimeout:    5 * time.Second,
+			DrainTimeout:      10 * time.Second,
 		},
 		Storage: StorageConfig{
 			MaxFileBytes:        500 * 1024 * 1024,
@@ -23,10 +31,8 @@ func defaultConfig() Config {
 			RequestTimeout:      2 * time.Minute,
 			PresenceTTL:         60 * time.Second,
 			TombstoneTTL:        5 * time.Minute,
-			MaxPendingRequests:  256,
-			MaxStoredRequests:   4096,
-			MaxPendingBytes:     32 * 1024 * 1024,
-			MaxBodyBytes:        1024 * 1024,
+			CommandStream:       TunnelCommandStreamConfig{MaxBytes: 513 << 20, MaxMsgs: -1},
+			MaxBodyBytes:        16 * 1024 * 1024,
 			MaxHeaderBytes:      32 * 1024,
 			MaxHeaderValueBytes: 8 * 1024,
 		},
@@ -53,7 +59,6 @@ func defaultConfig() Config {
 			Concurrency:             2,
 			PackageProvisionTimeout: 2 * time.Minute,
 			ManagerPath:             "/usr/local/bin/environment-manager",
-			ClaudeAgentVersion:      "2.1.251",
 			ClaudePath:              "/opt/claude-code/bin/claude",
 		},
 		Observability: ObservabilityConfig{
@@ -85,24 +90,6 @@ func defaultConfig() Config {
 			UserExternalID:      "user_default",
 			APIKeyExternalID:    "api_key_default",
 		},
-		SDKFixtures: SDKFixtureConfig{
-			FileID:            "file_id",
-			BatchID:           "message_batch_id",
-			AgentID:           "agent_011CZkYpogX7uDKUyvBTophP",
-			ReferenceAgentID:  "agent_011CZkYqphY8vELVzwCUpqiQ",
-			EnvironmentID:     "env_011CZkZ9X2dpNyB7HsEFoRfW",
-			WorkID:            "work_id",
-			SessionID:         "sesn_011CZkZAtmR3yMPDzynEDxu7",
-			SessionResourceID: "sesrsc_011CZkZBJq5dWxk9fVLNcPht",
-			SessionThreadID:   "sthr_011CZkZVWa6oIjw0rgXZpnBt",
-			SessionEventID:    "sevt_011CZkZbF9oBV2h6c7qWZfnE",
-			SkillID:           "skill_id",
-			SkillVersion:      "version",
-			DeploymentID:      "deployment_id",
-			DeploymentRunID:   "deployment_run_id",
-			APIKey:            OfficialSDKResourceAPIKey,
-			APIKeyExternalID:  "api_key_official_sdk_resource_tests",
-		},
 	}
 	setDefaultSeedAPIKeys(&cfg)
 	return cfg
@@ -115,7 +102,6 @@ func defaultDatabaseAutoMigrate(appEnv string) bool {
 func setDefaultSeedAPIKeys(cfg *Config) {
 	cfg.Bootstrap.SeedAPIKeys = []SeedAPIKey{
 		{ExternalID: cfg.Bootstrap.APIKeyExternalID, Key: DefaultAPIKey},
-		{ExternalID: cfg.SDKFixtures.APIKeyExternalID, Key: cfg.SDKFixtures.APIKey},
 	}
 }
 

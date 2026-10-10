@@ -203,6 +203,7 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 			h.logger.ErrorContext(r.Context(), "mark code session worker stream disconnected", "code_session_id", codeSessionID, "error", err)
 		}
 	}
+	defer h.service.reclaimClosedSubscription(codeSession)
 	subscription, err := h.service.workerEvents.Subscribe(r.Context(), codeSessionID)
 	if err != nil {
 		disconnect()
@@ -215,6 +216,10 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 			h.logger.WarnContext(r.Context(), "close code session worker event subscription", "code_session_id", codeSessionID, "error", err)
 		}
 	}()
+	if err := h.db.ValidateCodeSessionWorkerEpoch(r.Context(), codeSessionID, epoch); err != nil {
+		h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not connect code session worker stream")
+		return
+	}
 	header := w.Header()
 	header.Set("Content-Type", "text/event-stream")
 	header.Set("Cache-Control", "no-cache")
@@ -312,7 +317,14 @@ func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer
 			if envelope.PayloadRef != nil {
 				cleanupJobID = envelope.PayloadRef.CleanupJobID
 			}
-			if err := h.service.workerEventAcks.Put(ctx, codeSession.ExternalID, epoch, eventID, workerevents.AckRef{AckSubject: delivery.AckSubject, CleanupJobID: cleanupJobID}); err != nil {
+			var publicEvent struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(envelope.Payload, &publicEvent); err != nil {
+				h.logger.ErrorContext(ctx, "decode code session worker event ID", "code_session_id", codeSession.ExternalID, "event_id", eventID, "error", err)
+				return
+			}
+			if err := h.service.workerEventAcks.Put(ctx, codeSession.ExternalID, epoch, eventID, workerevents.AckRef{AckSubject: delivery.AckSubject, CleanupJobID: cleanupJobID, PublicEventID: publicEvent.ID}); err != nil {
 				h.logger.WarnContext(ctx, "store code session worker event ACK", "code_session_id", codeSession.ExternalID, "event_id", eventID, "error", err)
 				return
 			}

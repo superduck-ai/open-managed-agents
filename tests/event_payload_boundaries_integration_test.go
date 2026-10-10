@@ -19,7 +19,7 @@ import (
 )
 
 func publicPayloadEvent(id, payload string) db.SessionEvent {
-	return db.SessionEvent{UUID: uuid.NewV4().String(), ExternalID: id, EventType: "user.message", Payload: json.RawMessage(payload), CreatedAt: time.Now().UTC(), ProcessedAt: time.Now().UTC()}
+	return db.SessionEvent{UUID: uuid.NewV4().String(), ExternalID: id, EventType: "agent.message", Payload: json.RawMessage(payload), CreatedAt: time.Now().UTC(), ProcessedAt: time.Now().UTC()}
 }
 
 func TestEventPayloadIntegrationBoundaries(t *testing.T) {
@@ -57,10 +57,10 @@ func TestEventPayloadIntegrationBoundaries(t *testing.T) {
 				publicPayload := sizedPublicPayload(size)
 				public := publicPayloadEvent("ev_"+id, publicPayload)
 				created, err := store.AppendSessionEvents(context.Background(), session.WorkspaceUUID, session.SessionExternalID, []db.SessionEvent{public}, nil)
-				if err != nil || len(created) != 1 {
-					t.Fatalf("public write: %d %v", len(created), err)
+				if err != nil || len(created.Events) != 1 {
+					t.Fatalf("public write: %d %v", len(created.Events), err)
 				}
-				assertRawJSONEqual(t, created[0].Payload, publicPayload)
+				assertRawJSONEqual(t, created.Events[0].Payload, publicPayload)
 				stored, err := app.db.GetSessionEvent(context.Background(), session.WorkspaceUUID, session.SessionExternalID, public.ExternalID)
 				if err != nil || (stored.PayloadBlobUUID != nil) != (size > 32768) {
 					t.Fatalf("public threshold: %+v %v", stored.PayloadBlobUUID, err)
@@ -105,12 +105,12 @@ func TestEventPayloadIntegrationBoundaries(t *testing.T) {
 		assertRawJSONEqual(t, event.Payload, expectedPrivate[i])
 	}
 	// Service pagination must hydrate a page containing both inline and S3 records.
-	pageEvents, more, err := store.ListSessionEventsPage(context.Background(), db.ListSessionEventsPageParams{WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.SessionExternalID, Limit: 3, Order: "asc", Types: []string{"user.message"}})
+	pageEvents, more, err := store.ListSessionEventsPage(context.Background(), db.ListSessionEventsPageParams{WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.SessionExternalID, Limit: 3, Order: "asc", Types: []string{"agent.message"}})
 	if err != nil || len(pageEvents) != 3 || !more {
 		t.Fatalf("pagination: %d %t %v", len(pageEvents), more, err)
 	}
 	last := pageEvents[len(pageEvents)-1]
-	next, more, err := store.ListSessionEventsPage(context.Background(), db.ListSessionEventsPageParams{WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.SessionExternalID, Limit: 3, Order: "asc", Types: []string{"user.message"}, Cursor: &db.SessionEventPageCursor{CreatedAt: last.CreatedAt, UUID: last.UUID}})
+	next, more, err := store.ListSessionEventsPage(context.Background(), db.ListSessionEventsPageParams{WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.SessionExternalID, Limit: 3, Order: "asc", Types: []string{"agent.message"}, Cursor: &db.SessionEventPageCursor{ExternalID: last.ExternalID}})
 	if err != nil || len(next) != 3 || more {
 		t.Fatalf("next page: %d %t %v", len(next), more, err)
 	}
@@ -133,8 +133,8 @@ func TestEventPayloadIntegrationBoundaries(t *testing.T) {
 	originalID := "ev_ascii-32769"
 	before := len(objects.objects)
 	retried, err := store.AppendSessionEventsIfAbsent(context.Background(), session.WorkspaceUUID, session.SessionExternalID, []db.SessionEvent{publicPayloadEvent(originalID, sizedPublicPayload(40000))})
-	if err != nil || len(retried) != 0 || len(objects.objects) != before {
-		t.Fatalf("public replay: %d %v", len(retried), err)
+	if err != nil || len(retried.Events) != 0 || len(objects.objects) != before {
+		t.Fatalf("public replay: %d %v", len(retried.Events), err)
 	}
 	persisted, err := store.GetSessionEvent(context.Background(), session.WorkspaceUUID, session.SessionExternalID, originalID)
 	if err != nil {
@@ -209,7 +209,7 @@ func TestEventPayloadIntegrationConcurrentReplay(t *testing.T) {
 }
 
 func sizedPublicPayload(size int) string {
-	prefix := `{"type":"user.message","content":[{"type":"text","text":"`
+	prefix := `{"type":"agent.message","content":[{"type":"text","text":"`
 	suffix := `"}]}`
 	return prefix + strings.Repeat("x", size-len(prefix)-len(suffix)) + suffix
 }
@@ -242,7 +242,7 @@ func TestEventPayloadIntegrationLimitsAndMissingStore(t *testing.T) {
 	} {
 		payload := sizedPublicPayload(tc.size)
 		created, err := tc.store.AppendSessionEvents(ctx, session.WorkspaceUUID, session.SessionExternalID, []db.SessionEvent{publicPayloadEvent(tc.id, payload)}, nil)
-		if err != nil || len(created) != 1 {
+		if err != nil || len(created.Events) != 1 {
 			t.Fatalf("accepted boundary %d: %v", tc.size, err)
 		}
 		restored, err := tc.store.GetSessionEvent(ctx, session.WorkspaceUUID, session.SessionExternalID, tc.id)

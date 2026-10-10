@@ -14,6 +14,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
@@ -24,22 +25,17 @@ const (
 	subjectPrefix = "oma.worker.inbound.v2."
 	// streamSubject 使用 > 通配符，让共享 Stream 收集所有会话的入站事件。
 	streamSubject = subjectPrefix + ">"
-	// MaxMessageBytes 是编码后单条 envelope 的大小上限：1 MiB。
-	MaxMessageBytes = 1 << 20
 	// LargePayloadThreshold counts actual payload bytes, excluding envelope overhead.
 	LargePayloadThreshold = storage.EventPayloadThreshold
 	// MaxOffloadedPayloadBytes 是允许外置到对象存储的单个 payload 大小上限。
 	// payload 不只来自 ingress 请求体（activation 历史来自 session_events），
 	// 因此该契约属于 worker event 传输层，而不是 HTTP body 限制。
 	MaxOffloadedPayloadBytes = 16 << 20
-	// LogicalRetention 是入站事件的逻辑有效期：30 天，通过 expires_at 和应用过期清理执行，
-	// 不使用 JetStream MaxAge 自动删除未处理消息。
-	LogicalRetention = 30 * 24 * time.Hour
+	LogicalRetention         = 30 * 24 * time.Hour
 	// AcknowledgementStoreTTL 是事件到 ACK subject 临时映射的有效期：20 分钟。
 	// received/processing 回执会续期；映射过期后依靠消息重投重建，不代表消息已完成。
 	AcknowledgementStoreTTL = 20 * time.Minute
-	// duplicateWindow 是消息 ID 去重窗口，JetStream Duplicates 与内存实现保持一致。
-	duplicateWindow = 24 * time.Hour
+	duplicateWindow         = 24 * time.Hour
 )
 
 type PayloadReference struct {
@@ -129,11 +125,16 @@ func Subject(codeSessionID string) (string, error) {
 func consumerName(codeSessionID string) string { return "oma_worker_" + codeSessionID }
 
 type JetStreamBroker struct {
-	connection *nats.Conn
-	js         jetstream.JetStream
+	consumerInactiveThreshold time.Duration
+	maxMessageBytes           int32
+	connection                *nats.Conn
+	js                        jetstream.JetStream
 }
 
-func NewJetStream(ctx context.Context, connection *nats.Conn) (*JetStreamBroker, error) {
+func NewJetStream(ctx context.Context, connection *nats.Conn, cfg config.WorkerEventStreamConfig) (*JetStreamBroker, error) {
+	if cfg.ConsumerInactiveThreshold <= 0 {
+		return nil, errors.New("worker event consumer inactive threshold must be positive")
+	}
 	if connection == nil || !connection.IsConnected() {
 		return nil, nats.ErrDisconnected
 	}
@@ -141,22 +142,26 @@ func NewJetStream(ctx context.Context, connection *nats.Conn) (*JetStreamBroker,
 	if err != nil {
 		return nil, fmt.Errorf("create worker event JetStream client: %w", err)
 	}
+	duplicates := duplicateWindow
+	if cfg.MaxAge > 0 {
+		duplicates = min(duplicates, cfg.MaxAge)
+	}
 	_, err = js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:       StreamName,
 		Subjects:   []string{streamSubject},
 		Retention:  jetstream.WorkQueuePolicy,
 		Discard:    jetstream.DiscardNew,
-		MaxAge:     0,
-		MaxBytes:   10 << 30,
-		MaxMsgSize: MaxMessageBytes,
+		MaxAge:     cfg.MaxAge,
+		MaxBytes:   cfg.MaxBytes,
+		MaxMsgSize: cfg.MaxMsgSize,
 		Storage:    jetstream.FileStorage,
-		Replicas:   3,
-		Duplicates: duplicateWindow,
+		Replicas:   cfg.Replicas,
+		Duplicates: duplicates,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ensure worker event stream: %w", err)
 	}
-	return &JetStreamBroker{connection: connection, js: js}, nil
+	return &JetStreamBroker{connection: connection, js: js, maxMessageBytes: cfg.MaxMsgSize, consumerInactiveThreshold: cfg.ConsumerInactiveThreshold}, nil
 }
 
 func (b *JetStreamBroker) Publish(ctx context.Context, messageID string, envelope EnvelopeV1) error {
@@ -168,8 +173,8 @@ func (b *JetStreamBroker) Publish(ctx context.Context, messageID string, envelop
 	if err != nil {
 		return fmt.Errorf("marshal worker event envelope: %w", err)
 	}
-	if len(body) > MaxMessageBytes {
-		return fmt.Errorf("worker event envelope is %d bytes, limit is %d", len(body), MaxMessageBytes)
+	if int64(len(body)) > int64(b.maxMessageBytes) {
+		return fmt.Errorf("worker event envelope is %d bytes, limit is %d", len(body), b.maxMessageBytes)
 	}
 	message := nats.NewMsg(subjectName)
 	message.Data = body
@@ -210,15 +215,16 @@ func (b *JetStreamBroker) laneConsumer(ctx context.Context, codeSessionID string
 	}
 	name := lane.consumerName(codeSessionID)
 	consumer, err := b.js.CreateOrUpdateConsumer(ctx, StreamName, jetstream.ConsumerConfig{
-		Name:            name,
-		Durable:         name,
-		DeliverPolicy:   jetstream.DeliverAllPolicy,
-		AckPolicy:       jetstream.AckExplicitPolicy,
-		FilterSubject:   filter,
-		MaxDeliver:      -1,
-		BackOff:         []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute},
-		MaxAckPending:   1,
-		MaxRequestBatch: 1,
+		Name:              name,
+		Durable:           name,
+		DeliverPolicy:     jetstream.DeliverAllPolicy,
+		AckPolicy:         jetstream.AckExplicitPolicy,
+		FilterSubject:     filter,
+		MaxDeliver:        -1,
+		BackOff:           []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute},
+		MaxAckPending:     1,
+		MaxRequestBatch:   1,
+		InactiveThreshold: b.consumerInactiveThreshold,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ensure worker event consumer: %w", err)
@@ -312,6 +318,9 @@ func (b *JetStreamBroker) PurgeSession(ctx context.Context, codeSessionID string
 		return err
 	}
 	stream, err := b.js.Stream(ctx, StreamName)
+	if errors.Is(err, jetstream.ErrStreamNotFound) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}

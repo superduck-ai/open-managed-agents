@@ -118,6 +118,26 @@ func TestSessionResourceMapperBuilderContracts(t *testing.T) {
 			},
 		},
 		{
+			name: "list memory mounts by filesystem",
+			contract: mapperBuilderContract{
+				statement: sessionResourceMapperListMemoryMountsByFilesystemStatement,
+				bound: buildSessionResourceMapperListMemoryMountsByFilesystem(
+					yourbatis.DialectPostgres,
+					"workspace-uuid",
+					"filesystem-uuid",
+				),
+				wantID:            "SessionResourceMapper.ListMemoryMountsByFilesystem",
+				wantKind:          yourbatis.StatementSelect,
+				wantArgumentNames: []string{"workspaceUUID", "filesystemUUID"},
+				wantSQLFragments: []string{
+					"resource.payload->>'memory_store_id'",
+					"resource.resource_type = 'memory_store'",
+					"LEFT JOIN memory_stores store",
+					"filesystem.uuid = $2",
+				},
+			},
+		},
+		{
 			name: "find resource by external id",
 			contract: mapperBuilderContract{
 				statement: sessionResourceMapperFindByExternalIDStatement,
@@ -474,6 +494,10 @@ func TestSessionResourceMapperPropagatesExecutionErrors(t *testing.T) {
 		}}},
 		{name: "insert skill resource", contract: mapperExecutionErrorContract{statementID: "SessionResourceMapper.InsertSkillArchiveResource", kind: yourbatis.StatementInsert, call: func(executor yourbatis.Executor) error {
 			return NewSessionResourceMapper(executor).InsertSkillArchiveResource(ctx, skillInsertParams)
+		}}},
+		{name: "list memory mounts", contract: mapperExecutionErrorContract{statementID: "SessionResourceMapper.ListMemoryMountsByFilesystem", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
+			_, err := NewSessionResourceMapper(executor).ListMemoryMountsByFilesystem(ctx, "workspace", "filesystem")
+			return err
 		}}},
 	}
 

@@ -107,6 +107,8 @@ sequenceDiagram
 
 组织级最多保留 1,000 个未归档且 schedule 非空的 Deployment。创建以及从无 schedule 更新为有 schedule 时进行 best-effort 计数检查；并发请求可能短暂越过限制，不额外引入 organization 锁或配额计数器。
 
+Deployment/River 的可重复验收入口为 `just verify-be deployment doctor`，随后执行 `lifecycle`、`retry`、`idempotency`、`restart`。它们通过真实 PostgreSQL/River 的异步执行验证 API Run、事务副作用、自动退避、耗尽终态、依赖失败暂停、重复 occurrence 与旧调度拒绝；重启场景在业务提交前后 SIGKILL 独立 River 进程，再等待真实 rescuer 恢复。重启测试显式缩短 timeout/rescue 至 10s/15s，不等待生产默认一小时，也不把 Session 后续模型执行算作 Deployment Run 的终态。完整场景和边界见 [Deployment 功能地图](../../../.agents/skills/verify-be/features/deployment.md)。
+
 主要参考资料：
 
 - <https://platform.claude.com/docs/en/api/beta/deployments>

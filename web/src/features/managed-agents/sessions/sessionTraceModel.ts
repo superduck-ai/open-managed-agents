@@ -10,7 +10,6 @@ import {
   type ModelBracketTargetEntry,
   type ModelRequestBracket,
   type ModelRequestBracketMeta,
-  type QueuedBoundaryEntry,
   type QuickstartSessionEvent,
   type SessionEventListEntry,
   type SessionEventUsage,
@@ -24,7 +23,7 @@ import {
   type ToolCallEntry,
   type ToolLifecycle,
 } from '../types';
-import { compactEntityId, numericValueFromKeys, objectRecord, stringValueFromKeys, toRecord } from '../utils';
+import { compactEntityId, optionalNumericValueFromKeys, objectRecord, stringValueFromKeys, toRecord } from '../utils';
 import {
   addSessionEventUsage,
   emptySessionEventUsage,
@@ -41,9 +40,9 @@ export function sessionCanonicalDisplayEvent(event: QuickstartSessionEvent): Qui
   }
   const payload = sessionSerializedCanonicalPayload(event);
   if (!payload) return event;
+  delete payload.created_at;
   return {
     ...payload,
-    created_at: payload.created_at ?? event.created_at,
     processed_at: payload.processed_at ?? event.processed_at,
     session_id: payload.session_id ?? event.session_id,
     session_thread_id: payload.session_thread_id ?? event.session_thread_id,
@@ -336,7 +335,6 @@ export function buildSessionEventEntries(
 
   const entries: SessionEventListEntry[] = [];
   let lastIdleAt = 0;
-  let queuedBoundaryInserted = false;
   const rawEvents = events.map(sessionCanonicalDisplayEvent);
   const rawEventKeys = new Set(rawEvents.map(sessionEventKey));
   const traceEntriesByRawKey = new Map<string, SessionTraceEntry[]>();
@@ -347,19 +345,12 @@ export function buildSessionEventEntries(
     traceEntriesByRawKey.set(rawKey, list);
   });
 
-  rawEvents.forEach((event, eventIndex) => {
+  rawEvents.forEach((event) => {
     const type = sessionEventType(event);
     if (type === 'session.status_idle' && !sessionIsResultEvent(event)) {
       lastIdleAt = sessionEventTimestamp(event);
       return;
     }
-    const isQueuedUserMessage = sessionEventIsQueuedUserMessage(event);
-    if (!queuedBoundaryInserted && isQueuedUserMessage) {
-      queuedBoundaryInserted = true;
-      const queuedCount = rawEvents.slice(eventIndex).filter(sessionEventIsQueuedUserMessage).length;
-      entries.push(queuedBoundaryEntry(queuedCount, sessionEventTimestamp(event) || traceStartMs, traceStartMs, msg));
-    }
-
     const rawKey = sessionEventKey(event);
     const matchingTraceEntries = traceEntriesByRawKey.get(rawKey) ?? [];
     matchingTraceEntries.forEach((traceEntry) => {
@@ -529,7 +520,6 @@ function sessionEventEndsTranscriptTurn(event: QuickstartSessionEvent) {
   const type = sessionEventType(event);
   return (
     sessionEventFamily(event) === 'user' ||
-    sessionEventIsQueuedUserMessage(event) ||
     sessionStatusFromEventType(type) !== null ||
     sessionEventFamily(event) === 'outcome'
   );
@@ -640,7 +630,6 @@ export function h(
     label: traceEntry?.label ?? sessionEventLabel(canonicalEvent, family, msg),
     content: displayText,
     event: canonicalEvent,
-    isQueued: sessionEventIsQueuedUserMessage(canonicalEvent),
     isStreaming:
       canonicalEvent.is_streaming === true ||
       canonicalEvent.streaming === true ||
@@ -746,7 +735,7 @@ export function displayEntryFromTraceEntry(
     ...baseEventEntry(traceEntry, kind, traceStartMs, msg),
     kind,
     usage: extractSessionEventUsage(event),
-    inferenceMs: sessionEventInferenceMs(event),
+    inferenceMs: sessionEventInferenceMs(event) ?? 0,
     executionMs: durationMs,
     inProgress: sessionDisplayEntryInProgress(event, kind),
     outcomeStatus,
@@ -772,12 +761,26 @@ export function toolCallEntryFromTraceEntry(
     resultEvent,
     confirmationEvent,
     usage: extractSessionEventUsage(event),
-    inferenceMs: sessionEventInferenceMs(event),
-    executionMs: sessionEventDurationMs(resultEvent ?? event) || sessionEventDurationMs(event),
+    inferenceMs: sessionEventInferenceMs(event) ?? 0,
+    executionMs: sessionToolExecutionMs(event, resultEvent, confirmationEvent),
     lifecycle: sessionToolLifecycle(event, resultEvent, confirmationEvent),
     bracketId: sessionEventBracketId(event),
     isError: traceEntry.isError || sessionToolResultIsError(resultEvent),
   };
+}
+
+function sessionToolExecutionMs(
+  event: QuickstartSessionEvent,
+  resultEvent?: QuickstartSessionEvent,
+  confirmationEvent?: QuickstartSessionEvent,
+) {
+  const reportedMs = (resultEvent ? sessionEventDurationMs(resultEvent) : undefined) ?? sessionEventDurationMs(event);
+  if (reportedMs !== undefined) return reportedMs;
+  if (!resultEvent || sessionToolLifecycle(event, resultEvent, confirmationEvent) === 'denied') return undefined;
+  const startEvent = confirmationEvent ?? event;
+  const startMs = sessionEventProcessedTimestamp(startEvent);
+  const endMs = sessionEventProcessedTimestamp(resultEvent);
+  return startMs && endMs >= startMs ? endMs - startMs : undefined;
 }
 
 export function baseEventEntry(
@@ -839,29 +842,8 @@ export function idleGapEntry(idleAtMs: number, nextAtMs: number, traceStartMs: n
     durationMs,
     createdAtMs: idleAtMs,
     processedAtMs: nextAtMs,
-    relativeTime: sessionEventElapsedTime({ created_at: new Date(idleAtMs).toISOString() }, traceStartMs),
+    relativeTime: sessionEventElapsedTime({ processed_at: new Date(idleAtMs).toISOString() }, traceStartMs),
     searchText: `idle gap ${durationMs}`,
-    isError: false,
-  };
-}
-
-export function queuedBoundaryEntry(
-  count: number,
-  createdAtMs: number,
-  traceStartMs: number,
-  msg?: I18nMsg,
-): QueuedBoundaryEntry {
-  const text = msg
-    ? msg('managedAgents.sessions.trace.queuedMessages', '{count} queued messages', { count })
-    : `${count} queued messages`;
-  return {
-    id: `queued-boundary-${createdAtMs}-${count}`,
-    kind: 'queued_boundary',
-    count,
-    createdAtMs,
-    processedAtMs: createdAtMs,
-    relativeTime: sessionEventElapsedTime({ created_at: new Date(createdAtMs).toISOString() }, traceStartMs),
-    searchText: text.toLowerCase(),
     isError: false,
   };
 }
@@ -924,7 +906,8 @@ export function toolBatchEntry(calls: ToolCallEntry[]): ToolBatchEntry {
     (total, call) => addSessionEventUsage(total, call.usage),
     emptySessionEventUsage(),
   );
-  const executionMs = calls.reduce((max, call) => Math.max(max, call.executionMs), 0);
+  const durations = calls.flatMap((call) => (call.executionMs === undefined ? [] : [call.executionMs]));
+  const executionMs = durations.length ? Math.max(...durations) : undefined;
   const inferenceMs = calls.reduce((total, call) => total + call.inferenceMs, 0);
   const toolCounts = [
     ...calls.reduce((counts, call) => {
@@ -966,7 +949,7 @@ export function sessionEventProcessedTimestamp(event: QuickstartSessionEvent) {
 }
 
 export function sessionEventInferenceMs(event: QuickstartSessionEvent) {
-  return numericValueFromKeys(event, ['inference_ms', 'model_duration_ms', 'model_request_duration_ms']);
+  return optionalNumericValueFromKeys(event, ['inference_ms', 'model_duration_ms', 'model_request_duration_ms']);
 }
 
 export function sessionToolLifecycle(
@@ -1153,13 +1136,6 @@ export function sessionEventBracketId(event: QuickstartSessionEvent) {
   return bracketId ? bracketId.trim() : '';
 }
 
-export function sessionEventIsQueuedUserMessage(event: QuickstartSessionEvent) {
-  if (sessionEventType(event) !== 'user.message') {
-    return false;
-  }
-  return event.is_queued === true || event.queued === true || toRecord(event.metadata)?.queued === true;
-}
-
 export function sessionContentBlockEntries(
   event: QuickstartSessionEvent,
   index: number,
@@ -1213,7 +1189,7 @@ export function sessionContentBlockEntries(
         session_id: event.session_id,
         session_thread_id: event.session_thread_id,
         thread_id: event.thread_id,
-        created_at: event.created_at,
+        processed_at: event.processed_at,
         name: typeof record.name === 'string' ? record.name : 'tool_use',
         input: record.input ?? {},
         parent_event_id: sessionEventKey(event),
@@ -1244,7 +1220,7 @@ export function sessionContentBlockEntries(
         session_id: event.session_id,
         session_thread_id: event.session_thread_id,
         thread_id: event.thread_id,
-        created_at: event.created_at,
+        processed_at: event.processed_at,
         tool_use_id: record.tool_use_id,
         content: record.content,
         is_error: record.is_error,
@@ -1264,7 +1240,7 @@ export function sessionContentBlockEntries(
       const resultEvent: QuickstartSessionEvent = {
         id: `${toolUseId}-thread-result`,
         type: 'agent.thread_message_received',
-        created_at: event.created_at,
+        processed_at: event.processed_at,
         tool_use_id: toolUseId,
         from_session_thread_id: threadHint.id,
         from_agent_name: threadHint.name,
@@ -2474,6 +2450,9 @@ export function sessionEventCanonicalKey(event: QuickstartSessionEvent) {
 }
 
 export function sessionEventsShouldCoalesce(left: QuickstartSessionEvent, right: QuickstartSessionEvent) {
+  if (typeof left.id === 'string' && left.id && typeof right.id === 'string' && right.id && left.id !== right.id) {
+    return false;
+  }
   return !sessionEventTimestamp(left) || !sessionEventTimestamp(right);
 }
 
@@ -2506,7 +2485,7 @@ export function sessionEventType(event: QuickstartSessionEvent) {
 }
 
 export function sessionEventTimestamp(event: QuickstartSessionEvent) {
-  return sessionTimestampMs(event.created_at);
+  return sessionTimestampMs(event.processed_at);
 }
 
 export function sessionTimestampMs(value: unknown) {

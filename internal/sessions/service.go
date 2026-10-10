@@ -31,10 +31,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	if h.isOfficialSDKFixturePrincipal(principal) && h.createUsesOfficialFixtures(body) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureSession(time.Now().UTC(), false))
-		return nil
-	}
 
 	agent, snapshot, err := h.resolveAgent(r, principal, body.Agent)
 	if err != nil {
@@ -188,7 +184,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	order, err := parseOrder(r)
+	order, err := parseOrder(r, "desc")
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -258,10 +254,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
-	if h.isOfficialSDKFixtureSession(r, sessionID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureSession(time.Now().UTC(), false))
-		return nil
-	}
+
 	session, err := h.authorizeSession(r, sessionID, sessionAccessRead)
 	if err != nil {
 		return err
@@ -280,10 +273,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	sessionID := chi.URLParam(r, "session_id")
-	if h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.SDKFixtures.SessionID {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureSession(time.Now().UTC(), false))
-		return nil
-	}
+
 	current, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
@@ -333,14 +323,19 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 			return invalidRequest(fmt.Errorf("budget requires models with a list price; no list price configured for: %s", strings.Join(unpriced, ", ")))
 		}
 	}
-	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next)
-	if err != nil {
-		return mapSessionLoadError(err, sessionID)
-	}
-	event, err := h.sessionUpdatedEvent(updated)
-	if err == nil {
-		h.appendAndBroadcastInternal(r, updated.ExternalID, []db.SessionEvent{event})
+	updated := current
+	if len(changedSessionFields(current, next)) > 0 {
+		next.UpdatedAt = time.Now().UTC()
+		updated, err = h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next)
+		if err != nil {
+			return mapSessionLoadError(err, sessionID)
+		}
+		if fields := changedSessionFields(current, updated); len(fields) > 0 {
+			event, err := h.sessionUpdatedEvent(updated, fields)
+			if err == nil {
+				h.appendAndBroadcastInternal(r, updated.ExternalID, []db.SessionEvent{event})
+			}
+		}
 	}
 	response, err := h.responseFromSession(r, updated, true)
 	if err != nil {
@@ -407,25 +402,18 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	sessionID := chi.URLParam(r, "session_id")
-	if h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.SDKFixtures.SessionID {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureSession(time.Now().UTC(), true))
-		return nil
-	}
-	current, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	removal, err := h.db.ArchiveSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
 	}
-	if !found {
-		return mapSessionLoadError(db.ErrNotFound, sessionID)
-	}
-	if current.Status == "running" || current.Status == "rescheduling" {
-		return invalidRequest(errors.New("running sessions cannot be archived"))
-	}
-	archived, err := h.db.ArchiveSession(r.Context(), principal.WorkspaceUUID, sessionID)
-	if err != nil {
-		return mapSessionLoadError(err, sessionID)
-	}
+	h.finishSessionRemoval(r.Context(), removal)
+	archived := removal.Session
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.archived", archived.ExternalID, nil)
+	if h.sandboxReclaims != nil {
+		if err := h.sandboxReclaims.EnqueueArchivedSession(r.Context(), archived); err != nil {
+			h.logger.ErrorContext(r.Context(), "schedule archived session sandbox reclamation", "session_id", sessionID, "error", err)
+		}
+	}
 	response, err := h.responseFromSession(r, archived, true)
 	if err != nil {
 		return internalError("Could not archive session", fmt.Errorf("load archived session %q response: %w", sessionID, err))
@@ -440,36 +428,34 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	sessionID := chi.URLParam(r, "session_id")
-	if h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.SDKFixtures.SessionID {
-		httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: sessionID, Type: "session_deleted"})
-		return nil
-	}
-	current, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	primary, found, err := h.db.GetPrimarySessionThread(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
 	}
 	if !found {
 		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
-	if current.Status == "running" || current.Status == "rescheduling" {
-		return invalidRequest(errors.New("running sessions cannot be deleted"))
-	}
-	deletedEvent, err := h.simpleSessionEvent("session.deleted", sessionID, nil)
-	if err == nil {
-		if current.ArchivedAt == nil {
-			h.appendAndBroadcastInternal(r, sessionID, []db.SessionEvent{deletedEvent})
-		} else {
-			deletedEvent.SessionExternalID = sessionID
-			h.publishSessionEvents(r.Context(), []db.SessionEvent{deletedEvent})
-		}
-	}
-	deleted, err := h.db.DeleteSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	removal, err := h.db.DeleteSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
+	}
+	h.finishSessionRemoval(r.Context(), removal)
+	deleted := removal.Session
+	deletedEvent, err := h.simpleSessionEvent("session.deleted", sessionID, &primary.ExternalID)
+	if err == nil {
+		deletedEvent.WorkspaceUUID = deleted.WorkspaceUUID
+		deletedEvent.SessionExternalID = sessionID
+		h.publishSessionEvents(r.Context(), []db.SessionEvent{deletedEvent})
 	}
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.deleted", deleted.ExternalID, nil)
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: sessionID, Type: "session_deleted"})
 	return nil
+}
+
+func (h *Handler) finishSessionRemoval(ctx context.Context, removal db.SessionRemoval) {
+	h.codeSessions.PurgeWorkerEvents(ctx, removal.CodeSessionIDs)
+	h.publishSessionEvents(ctx, removal.StatusEvents)
+	h.enqueueWebhooksForSessionEvents(ctx, removal.Session.WorkspaceUUID, removal.Session.ExternalID, removal.StatusEvents)
 }
 
 func (h *Handler) listEventsRoute(w http.ResponseWriter, r *http.Request) error {
@@ -518,10 +504,6 @@ func (h *Handler) backfillSubagentThreadEventsIfEmpty(ctx context.Context, sessi
 }
 
 func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, threadID string) error {
-	if h.isOfficialSDKFixtureSession(r, sessionID) {
-		httpapi.WriteJSON(w, http.StatusOK, pageResponse[json.RawMessage]{Data: []json.RawMessage{}})
-		return nil
-	}
 	if _, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead); err != nil {
 		return err
 	}
@@ -533,7 +515,7 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	if err != nil {
 		return invalidRequest(err)
 	}
-	order, err := parseOrder(r)
+	order, err := parseOrder(r, "asc")
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -567,6 +549,9 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 		CreatedAtLT:       createdAtLT,
 		CreatedAtLTE:      createdAtLTE,
 	})
+	if errors.Is(err, db.ErrInvalidCursor) {
+		return invalidRequest(err)
+	}
 	if err != nil {
 		return internalError("Could not list events", fmt.Errorf("list session %q events: %w", sessionID, err))
 	}
@@ -606,19 +591,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if err := json.Unmarshal(body.Events, &inputs); err != nil || len(inputs) == 0 {
 		return invalidRequest(errors.New("events must be a non-empty array"))
 	}
-	if h.isOfficialSDKFixtureSession(r, sessionID) {
-		now := time.Now().UTC()
-		data := make([]json.RawMessage, 0, len(inputs))
-		for _, raw := range inputs {
-			payload, err := normalizeFixtureEvent(raw, now)
-			if err != nil {
-				return invalidRequest(err)
-			}
-			data = append(data, payload)
-		}
-		httpapi.WriteJSON(w, http.StatusOK, sendEventsResponse{Data: data})
-		return nil
-	}
+
 	session, err := h.authorizeSession(r, sessionID, sessionAccessEventsSend)
 	if err != nil {
 		return err
@@ -652,14 +625,17 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if outcomesChanged {
 		outcomeEvaluations = normalizedSession.OutcomeEvaluations
 	}
-	created, err := h.eventPayloads.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
+	changes, err := h.eventPayloads.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			return invalidRequest(errors.New("archived sessions do not accept new events"))
 		}
 		return mapSessionLoadError(err, sessionID)
 	}
+	h.codeSessions.PurgeWorkerEvents(r.Context(), changes.RetiredCodeSessionIDs)
+	created := changes.Events
 	h.publishSessionEvents(r.Context(), created)
+	h.enqueueWebhooksForSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, created)
 	if h.codeSessions != nil {
 		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created); err != nil {
 			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)
@@ -677,7 +653,9 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	}
 	data := make([]json.RawMessage, 0, len(created))
 	for _, event := range created {
-		data = append(data, sessionEventPayload(event))
+		if allowedPublicEventType(event.EventType) {
+			data = append(data, sessionEventPayload(event))
+		}
 	}
 	httpapi.WriteJSON(w, http.StatusOK, sendEventsResponse{Data: data})
 	return nil
@@ -685,10 +663,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 
 func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
-	if h.isOfficialSDKFixtureSession(r, sessionID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureResource(time.Now().UTC()))
-		return nil
-	}
+
 	session, err := h.authorizeSession(r, sessionID, sessionAccessManageResources)
 	if err != nil {
 		return err
@@ -729,10 +704,7 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error
 
 func (h *Handler) listResourcesRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
-	if h.isOfficialSDKFixtureSession(r, sessionID) {
-		httpapi.WriteJSON(w, http.StatusOK, pageResponse[json.RawMessage]{Data: []json.RawMessage{h.fixtureResource(time.Now().UTC())}})
-		return nil
-	}
+
 	session, err := h.authorizeSession(r, sessionID, sessionAccessRead)
 	if err != nil {
 		return err
@@ -753,10 +725,7 @@ func (h *Handler) retrieveResourceRoute(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return err
 	}
-	if h.isFixtureResource(r, sessionID, resourceID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureResource(time.Now().UTC()))
-		return nil
-	}
+
 	resource, err := h.db.GetSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID)
 	if err != nil {
 		return mapResourceLoadError(err, resourceID)
@@ -772,10 +741,7 @@ func (h *Handler) updateResourceRoute(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return err
 	}
-	if h.isFixtureResource(r, sessionID, resourceID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureResource(time.Now().UTC()))
-		return nil
-	}
+
 	current, err := h.db.GetSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID)
 	if err != nil {
 		return mapResourceLoadError(err, resourceID)
@@ -817,10 +783,7 @@ func (h *Handler) deleteResourceRoute(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return err
 	}
-	if h.isFixtureResource(r, sessionID, resourceID) {
-		httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: resourceID, Type: "session_resource_deleted"})
-		return nil
-	}
+
 	resource, err := h.db.GetSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID)
 	if err != nil {
 		return mapResourceLoadError(err, resourceID)
@@ -840,10 +803,7 @@ func (h *Handler) deleteResourceRoute(w http.ResponseWriter, r *http.Request) er
 
 func (h *Handler) listThreadsRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
-	if h.isOfficialSDKFixtureSession(r, sessionID) {
-		httpapi.WriteJSON(w, http.StatusOK, pageResponse[threadResponse]{Data: []threadResponse{h.fixtureThread(time.Now().UTC(), false)}})
-		return nil
-	}
+
 	session, err := h.authorizeSession(r, sessionID, sessionAccessRead)
 	if err != nil {
 		return err
@@ -892,10 +852,7 @@ func (h *Handler) retrieveThreadRoute(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return err
 	}
-	if h.isFixtureThread(r, sessionID, threadID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureThread(time.Now().UTC(), false))
-		return nil
-	}
+
 	thread, err := h.db.GetSessionThread(r.Context(), session.WorkspaceUUID, session.ExternalID, threadID)
 	if err != nil {
 		return mapThreadLoadError(err, threadID)
@@ -911,10 +868,7 @@ func (h *Handler) archiveThreadRoute(w http.ResponseWriter, r *http.Request) err
 	}
 	sessionID := chi.URLParam(r, "session_id")
 	threadID := chi.URLParam(r, "thread_id")
-	if h.isFixtureThread(r, sessionID, threadID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureThread(time.Now().UTC(), true))
-		return nil
-	}
+
 	session, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
@@ -922,11 +876,11 @@ func (h *Handler) archiveThreadRoute(w http.ResponseWriter, r *http.Request) err
 	if !found {
 		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
-	thread, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceUUID, session.ExternalID, threadID)
+	thread, removal, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceUUID, session.ExternalID, threadID)
 	if err != nil {
 		return mapThreadLoadError(err, threadID)
 	}
-	h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_terminated", session.ExternalID, &thread.ExternalID)
+	h.finishSessionRemoval(r.Context(), removal)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromThread(thread))
 	return nil
 }

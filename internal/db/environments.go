@@ -24,6 +24,7 @@ type Environment struct {
 	Scope               *string
 	Provider            string
 	ResolvedTemplate    string
+	BuildJobID          *int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	ArchivedAt          *time.Time
@@ -40,6 +41,8 @@ type ListEnvironmentsPageParams struct {
 	Limit           int
 	Cursor          *EnvironmentPageCursor
 	IncludeArchived bool
+	ArchivedOnly    bool
+	Search          string
 }
 
 type EnvironmentKey struct {
@@ -138,21 +141,6 @@ func (d *DB) CreateEnvironment(ctx context.Context, env Environment) (Environmen
 func (d *DB) GetEnvironment(ctx context.Context, workspaceUUID string, externalID string) (Environment, error) {
 	mapper := NewEnvironmentMapper(d.mapperDB)
 	row, err := mapper.FindByExternalID(ctx, workspaceUUID, externalID)
-	if err != nil {
-		return Environment{}, mapNoRows(err)
-	}
-	return row.environment(), nil
-}
-
-func (d *DB) UpdateEnvironment(ctx context.Context, workspaceUUID string, externalID string, next Environment) (Environment, error) {
-	params := environmentWriteParamsFrom(next)
-	params.WorkspaceUUID = workspaceUUID
-	params.ExternalID = externalID
-	mapper := NewEnvironmentMapper(d.mapperDB)
-	row, err := mapper.UpdateByExternalID(ctx, params)
-	if isUniqueViolation(err) {
-		return Environment{}, ErrDuplicate
-	}
 	if err != nil {
 		return Environment{}, mapNoRows(err)
 	}
@@ -475,10 +463,15 @@ func (d *DB) CreateEnvironmentSandbox(ctx context.Context, sandbox EnvironmentSa
 }
 
 func (d *DB) UpdateEnvironmentSandboxState(ctx context.Context, workspaceUUID string, externalID, state string, providerSandboxID *string, lastError *string, stoppedAt *time.Time) error {
-	mapper := NewEnvironmentSandboxMapper(d.mapperDB)
-	return mapper.UpdateState(ctx, environmentSandboxStateParams{
-		WorkspaceUUID: workspaceUUID, ExternalID: externalID, State: state,
-		ProviderSandboxID: providerSandboxID, LastError: lastError, StoppedAt: stoppedAt,
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewEnvironmentSandboxMapper(executor)
+		if _, _, err := mapper.LockOwnerSession(ctx, workspaceUUID, externalID); err != nil {
+			return err
+		}
+		return mapper.UpdateState(ctx, environmentSandboxStateParams{
+			WorkspaceUUID: workspaceUUID, ExternalID: externalID, State: state,
+			ProviderSandboxID: providerSandboxID, LastError: lastError, StoppedAt: stoppedAt,
+		})
 	})
 }
 
@@ -570,7 +563,7 @@ func environmentWriteParamsFrom(env Environment) environmentWriteParams {
 		WorkspaceUUID: env.WorkspaceUUID, CreatedByAPIKeyUUID: nullableString(env.CreatedByAPIKeyUUID),
 		Name: env.Name, Description: env.Description,
 		Config: agentJSONArg(env.Config), Metadata: agentJSONArg(env.Metadata),
-		Scope: env.Scope, Provider: env.Provider, ResolvedTemplate: env.ResolvedTemplate,
+		BuildJobID: env.BuildJobID, Scope: env.Scope, Provider: env.Provider, ResolvedTemplate: env.ResolvedTemplate,
 		CreatedAt: env.CreatedAt, UpdatedAt: env.UpdatedAt,
 	}
 }
@@ -579,6 +572,7 @@ func environmentPageParams(params ListEnvironmentsPageParams) environmentPageMap
 	return environmentPageMapperParams{
 		WorkspaceUUID: params.WorkspaceUUID, FetchLimit: params.Limit + 1,
 		Cursor: params.Cursor, IncludeArchived: params.IncludeArchived,
+		ArchivedOnly: params.ArchivedOnly, Search: params.Search,
 	}
 }
 
@@ -632,7 +626,7 @@ func (r environmentMapperRow) environment() Environment {
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		Name: r.Name, Description: r.Description, Config: bytes.Clone(r.Config), Metadata: bytes.Clone(r.Metadata),
-		Scope: r.Scope, Provider: r.Provider, ResolvedTemplate: r.ResolvedTemplate,
+		BuildJobID: r.BuildJobID, Scope: r.Scope, Provider: r.Provider, ResolvedTemplate: r.ResolvedTemplate,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
 }

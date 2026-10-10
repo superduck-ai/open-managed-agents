@@ -15,15 +15,14 @@ import {
 import { Label } from '../../../shared/ui/label';
 import { ChevronDown } from 'lucide-react';
 import { type FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { compactAgentId } from '../agents/AgentsResourcePage';
+import { AgentSelectField } from '../agents/AgentSelectField';
 import { loadMcpDirectoryServers } from '../agents/tools/api';
 import { type McpDirectoryServer } from '../agents/tools/model';
-import { listAgents, listManagedEntities, listMemoryStoreOptions, startMCPVaultAuth } from '../api';
+import { listManagedEntities, listMemoryStoreOptions, startMCPVaultAuth } from '../api';
 import { LockedAgentReferenceField, ManagedSelectField, ManagedTextArea, ManagedTextField } from '../components/common';
 import { entityDialogSubtitle } from '../labels';
 import {
   type AgentApiResponse,
-  type AgentPageResponse,
   type CredentialFormValues,
   type EntityOption,
   type EnvironmentApiResponse,
@@ -46,6 +45,7 @@ import {
   credentialFormValues,
   credentialDisplayName,
   initialFormValues,
+  isPlatformMemoryMarkdownPath,
   parseCredentialAuthType,
   patchCredentialFormValues,
   vaultOAuthErrorMessage,
@@ -624,7 +624,7 @@ export function MemoryDialog({
   }));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const canSubmit = values.path.trim() && values.content.length > 0;
+  const canSubmit = values.path.trim() && values.content.length > 0 && !isPlatformMemoryMarkdownPath(values.path);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSubmit) {
@@ -664,6 +664,14 @@ export function MemoryDialog({
               onChange={(path) => setValues((current) => ({ ...current, path }))}
               autoFocus
             />
+            {isPlatformMemoryMarkdownPath(values.path) ? (
+              <p className="text-sm text-destructive" role="alert">
+                {msg(
+                  'managedAgents.memoryStores.memoryDialog.platformMemoryMd',
+                  'Platform MEMORY.md is created in the sandbox and cannot be added to a store.',
+                )}
+              </p>
+            ) : null}
             <ManagedTextArea
               label={msg('managedAgents.memoryStores.memoryDialog.content', 'Content')}
               value={values.content}
@@ -732,7 +740,6 @@ function GenericManagedEntityDialog({
     [entity, lockedAgent, section],
   );
   const [values, setValues] = useState<ManagedEntityFormValues>(initialValues);
-  const [agents, setAgents] = useState<EntityOption[]>([]);
   const [environments, setEnvironments] = useState<EntityOption[]>([]);
   const [vaults, setVaults] = useState<EntityOption[]>([]);
   const [memoryStores, setMemoryStores] = useState<EntityOption[]>([]);
@@ -756,8 +763,7 @@ function GenericManagedEntityDialog({
 
       setLoadingOptions(true);
       try {
-        const [agentPage, environmentPage, vaultPage, memoryStorePage] = await Promise.all([
-          lockedAgent ? Promise.resolve({ data: [], next_page: null } as AgentPageResponse) : listAgents(workspaceId),
+        const [environmentPage, vaultPage, memoryStorePage] = await Promise.all([
           listManagedEntities('environments', workspaceId),
           listManagedEntities('credential-vaults', workspaceId),
           listMemoryStoreOptions(workspaceId),
@@ -765,19 +771,6 @@ function GenericManagedEntityDialog({
         if (!active) {
           return;
         }
-        const agentOptions = lockedAgent
-          ? [
-              {
-                id: lockedAgent.id,
-                label: lockedAgent.name || lockedAgent.id,
-                secondary: `v${lockedAgent.version} · ${compactAgentId(lockedAgent.id)}`,
-              },
-            ]
-          : (agentPage.data ?? []).map((agent) => ({
-              id: agent.id,
-              label: agent.name || agent.id,
-              secondary: compactAgentId(agent.id),
-            }));
         const environmentOptions = (environmentPage.data as EnvironmentApiResponse[]).map((environment) => ({
           id: environment.id,
           label: environment.name || environment.id,
@@ -794,13 +787,12 @@ function GenericManagedEntityDialog({
           label: memoryStore.name || memoryStore.id,
           secondary: memoryStore.id,
         }));
-        setAgents(agentOptions);
         setEnvironments(environmentOptions);
         setVaults(vaultOptions);
         setMemoryStores(memoryStoreOptions);
         setValues((current) => ({
           ...current,
-          agentId: lockedAgent?.id || current.agentId || (section === 'sessions' ? agentOptions[0]?.id || '' : ''),
+          agentId: lockedAgent?.id || current.agentId,
           environmentId: current.environmentId || (section === 'sessions' ? environmentOptions[0]?.id || '' : ''),
         }));
         setLoadingOptions(false);
@@ -860,7 +852,6 @@ function GenericManagedEntityDialog({
                 values={values}
                 lockedAgent={lockedAgent}
                 workspaceId={workspaceId}
-                agents={agents}
                 environments={environments}
                 vaults={vaults}
                 memoryStores={memoryStores}
@@ -872,7 +863,12 @@ function GenericManagedEntityDialog({
 
             {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
 
-            <DeploymentDialogActions editing={Boolean(entity)} submitting={submitting} canSubmit={canSubmit} />
+            <DeploymentDialogActions
+              editing={Boolean(entity)}
+              submitting={submitting}
+              canSubmit={canSubmit}
+              onCancel={onClose}
+            />
           </form>
         </DialogContent>
       </Dialog>
@@ -920,15 +916,10 @@ function GenericManagedEntityDialog({
                 {lockedAgent ? (
                   <LockedAgentReferenceField agent={lockedAgent} variant="managed" />
                 ) : (
-                  <ManagedSelectField
-                    label={msg('managedAgents.common.agent', 'Agent')}
+                  <AgentSelectField
+                    workspaceId={workspaceId}
                     value={values.agentId}
-                    placeholder={
-                      loadingOptions
-                        ? msg('managedAgents.agents.loading', 'Loading agents...')
-                        : msg('managedAgents.deployments.selectAgent', 'Select an agent')
-                    }
-                    options={agents}
+                    defaultFirst
                     onChange={(agentId) => setValues((current) => ({ ...current, agentId }))}
                   />
                 )}
@@ -976,7 +967,7 @@ function GenericManagedEntityDialog({
               <p className="text-sm leading-5 text-muted-foreground">
                 {msg(
                   'managedAgents.credentialVaults.createHint',
-                  'Continue after creating the vault to add credentials for tools and MCP servers.',
+                  'After you create the vault, add credentials for tools and MCP servers.',
                 )}
               </p>
             ) : null}

@@ -35,7 +35,7 @@ func TestSandboxLifecycleMapperDeletionTargetsImmutableTenantSandbox(t *testing.
 		bound:     buildSandboxLifecycleMapperFinishStop(yourbatis.DialectPostgres, scope),
 		wantID:    "SandboxLifecycleMapper.FinishStop", wantKind: yourbatis.StatementUpdate,
 		wantArgumentNames: []string{"scope.OrganizationUUID", "scope.WorkspaceUUID", "scope.SandboxUUID"},
-		wantSQLFragments:  []string{"organization_uuid = $1", "workspace_uuid = $2", "uuid = $3", "state = 'stopping'", "stop_reason = 'idle_timeout'"},
+		wantSQLFragments:  []string{"organization_uuid = $1", "workspace_uuid = $2", "uuid = $3", "state = 'stopping'", "stop_reason IN ('idle_timeout', 'session_archived')"},
 	})
 }
 
@@ -72,9 +72,41 @@ func TestSandboxReclamationRecoveryWithoutProviderIDOnlyTargetsReclaimed(t *test
 func TestCodeSessionMapperPublicInputResetsIdleClockWithinTenant(t *testing.T) {
 	assertMapperBuilderContract(t, mapperBuilderContract{
 		statement: codeSessionMapperResetIdleSinceForSessionStatement,
-		bound:     buildCodeSessionMapperResetIdleSinceForSession(yourbatis.DialectPostgres, "org", "workspace", "session"),
+		bound:     buildCodeSessionMapperResetIdleSinceForSession(yourbatis.DialectPostgres, "org", "workspace", "session", true),
 		wantID:    "CodeSessionMapper.ResetIdleSinceForSession", wantKind: yourbatis.StatementUpdate,
+		wantArgumentNames: []string{"newTurn", "organizationUUID", "workspaceUUID", "sessionUUID"},
+		wantSQLFragments:  []string{"idle_since = NULL", "worker_turn_started = worker_turn_started AND NOT $1", "organization_uuid = $2", "workspace_uuid = $3", "session_uuid = $4", "status = 'active'"},
+	})
+}
+
+func TestSandboxLifecycleMapperArchiveStopBindsTenantAndSession(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sandboxLifecycleMapperBeginArchiveStopStatement,
+		bound:     buildSandboxLifecycleMapperBeginArchiveStop(yourbatis.DialectPostgres, "org", "workspace", "session"),
+		wantID:    "SandboxLifecycleMapper.BeginArchiveStop", wantKind: yourbatis.StatementUpdate,
+		wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "sessionUUID", "organizationUUID", "workspaceUUID"},
+		wantSQLFragments: []string{"work.organization_uuid = $1", "work.workspace_uuid = $2", "work.session_uuid = $3",
+			"s.archived_at IS NOT NULL", "env.config->>'type' = 'cloud'", "state = 'stopped'", "stop_reason = 'session_archived'",
+			"provider_sandbox_id IS NOT NULL", "state <> 'stopped'"},
+	})
+}
+
+func TestEnvironmentSandboxMapperLocksOwnerBeforeStateUpdates(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: environmentSandboxMapperLockOwnerSessionStatement,
+		bound:     buildEnvironmentSandboxMapperLockOwnerSession(yourbatis.DialectPostgres, "workspace", "sandbox"),
+		wantID:    "EnvironmentSandboxMapper.LockOwnerSession", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "sandboxExternalID"},
+		wantSQLFragments:  []string{"sandbox.workspace_uuid = $1", "sandbox.external_id = $2", "FOR UPDATE OF s"},
+	})
+}
+
+func TestSandboxLifecycleMapperArchivedSessionCandidatesAreScoped(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sandboxLifecycleMapperListArchivedForSessionStatement,
+		bound:     buildSandboxLifecycleMapperListArchivedForSession(yourbatis.DialectPostgres, "org", "workspace", "session"),
+		wantID:    "SandboxLifecycleMapper.ListArchivedForSession", wantKind: yourbatis.StatementSelect,
 		wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "sessionUUID"},
-		wantSQLFragments:  []string{"idle_since = NULL", "organization_uuid = $1", "workspace_uuid = $2", "session_uuid = $3", "status = 'active'"},
+		wantSQLFragments:  []string{"work.organization_uuid = $1", "work.workspace_uuid = $2", "work.session_uuid = $3", "s.archived_at IS NOT NULL", "sandbox.state = 'stopping'", "sandbox.stop_reason = 'session_archived'", "ORDER BY sandbox.uuid"},
 	})
 }

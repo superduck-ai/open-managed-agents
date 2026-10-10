@@ -62,6 +62,7 @@ type environmentSandboxRecoveryParams struct {
 
 type EnvironmentSandboxMapper interface {
 	Insert(ctx context.Context, params environmentSandboxWriteParams) (environmentSandboxMapperRow, error)
+	LockOwnerSession(ctx context.Context, workspaceUUID, sandboxExternalID string) (string, bool, error)
 	UpdateState(ctx context.Context, params environmentSandboxStateParams) error
 	FindActiveForWork(ctx context.Context, workspaceUUID, environmentExternalID, workExternalID string) (environmentSandboxMapperRow, error)
 	FindActiveByCodeSessionExternalIDAndWorkerStatuses(ctx context.Context, codeSessionExternalID string, workerStatuses []string) (environmentSandboxMapperRow, error)

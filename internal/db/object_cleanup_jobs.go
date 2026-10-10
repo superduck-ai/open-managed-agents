@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/superduck-ai/yourbatis"
 )
 
 type ObjectCleanupJob struct {
@@ -18,16 +20,37 @@ type ObjectCleanupJob struct {
 	Attempts       int
 }
 
+type ObjectCleanupState struct {
+	Status   string
+	Attempts int
+	RunAfter time.Time
+}
+
+func (d *DB) GetObjectCleanupState(ctx context.Context, workspaceUUID, externalID string) (ObjectCleanupState, error) {
+	row, found, err := NewObjectCleanupJobMapper(d.mapperDB).FindObjectCleanupState(ctx, workspaceUUID, externalID)
+	if err != nil {
+		return ObjectCleanupState{}, err
+	}
+	if !found {
+		return ObjectCleanupState{}, ErrNotFound
+	}
+	return ObjectCleanupState{Status: row.Status, Attempts: row.Attempts, RunAfter: row.RunAfter}, nil
+}
+
 func (d *DB) EnqueueObjectCleanupJob(ctx context.Context, workspaceUUID string, bucket, key, fileExternalID string) error {
 	return d.EnqueueObjectCleanupResourceJob(ctx, workspaceUUID, bucket, key, "file", fileExternalID)
 }
 
 func (d *DB) EnqueueObjectCleanupResourceJob(ctx context.Context, workspaceUUID string, bucket, key, resourceType, resourceID string) error {
-	payload, err := objectCleanupJobPayload(bucket, key, resourceType, resourceID)
+	return enqueueObjectCleanupRef(ctx, d.mapperDB, ObjectRef{WorkspaceUUID: workspaceUUID, Bucket: bucket, Key: key, ResourceType: resourceType, ResourceID: resourceID})
+}
+
+func enqueueObjectCleanupRef(ctx context.Context, executor yourbatis.Executor, ref ObjectRef) error {
+	payload, err := objectCleanupJobPayload(ref.Bucket, ref.Key, ref.ResourceType, ref.ResourceID)
 	if err != nil {
 		return fmt.Errorf("encode object cleanup job payload: %w", err)
 	}
-	return NewObjectCleanupJobMapper(d.mapperDB).EnqueueObjectCleanupJob(ctx, workspaceUUID, payload)
+	return NewObjectCleanupJobMapper(executor).EnqueueObjectCleanupJob(ctx, ref.WorkspaceUUID, payload)
 }
 
 func (d *DB) EnqueueScheduledObjectCleanupResourceJob(

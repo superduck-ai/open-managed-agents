@@ -577,7 +577,7 @@ func testMemoryStoreResourceInput(t *testing.T, session db.Session, storeID, res
 		"atomic",
 		"",
 		slug,
-	).PayloadFields(resourceID))
+	).Payload(resourceID))
 	if err != nil {
 		t.Fatalf("marshal memory store payload: %v", err)
 	}

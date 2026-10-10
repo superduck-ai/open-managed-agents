@@ -141,6 +141,8 @@ type sessionPageMapperParams struct {
 
 // SessionMapper contains queries whose primary table is sessions.
 type SessionMapper interface {
+	IsRetired(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) (bool, error)
+	AddUsage(ctx context.Context, workspaceUUID, sessionUUID, threadUUID string, usage SessionUsageIncrement) (sessionRow, error)
 	Insert(ctx context.Context, params sessionWriteParams) (sessionRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, bool, error)
 	FindByUUID(ctx context.Context, workspaceUUID, sessionUUID string) (sessionRow, bool, error)

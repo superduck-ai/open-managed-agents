@@ -728,19 +728,16 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		ProcessedAt: now,
 		CreatedAt:   now,
 	}}, nil)
-	if err != nil || len(events) != 1 || events[0].ThreadUUID == nil || *events[0].ThreadUUID != thread.UUID {
+	if err != nil || len(events.Events) != 1 || events.Events[0].ThreadUUID == nil || *events.Events[0].ThreadUUID != thread.UUID {
 		t.Fatalf("append Session event with inferred typed thread UUID = (%+v, %v)", events, err)
 	}
 	listedEvents, _, err := app.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
 		WorkspaceUUID:     ids.WorkspaceUUID,
 		SessionExternalID: session.ExternalID,
 		Limit:             10,
-		Cursor: &db.SessionEventPageCursor{
-			CreatedAt: now.Add(-time.Second),
-			UUID:      uuid.NewV4().String(),
-		},
+		Cursor:            &db.SessionEventPageCursor{ExternalID: eventExternalID},
 	})
-	if err != nil || len(listedEvents) != 1 || listedEvents[0].UUID != events[0].UUID {
+	if err != nil || len(listedEvents) != 0 {
 		t.Fatalf("list Session events with typed UUID cursor = (%+v, %v)", listedEvents, err)
 	}
 

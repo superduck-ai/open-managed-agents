@@ -1,3 +1,4 @@
+import { AgentSelectField } from '../agents/AgentSelectField';
 import { type ReactNode } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { FieldGroup } from '../../../shared/ui/field';
@@ -37,7 +38,6 @@ export function DeploymentFormFields({
   values,
   lockedAgent,
   workspaceId,
-  agents,
   environments,
   vaults,
   memoryStores,
@@ -48,7 +48,6 @@ export function DeploymentFormFields({
   values: ManagedEntityFormValues;
   lockedAgent?: AgentApiResponse;
   workspaceId: string;
-  agents: EntityOption[];
   environments: EntityOption[];
   vaults: EntityOption[];
   memoryStores: EntityOption[];
@@ -76,17 +75,10 @@ export function DeploymentFormFields({
         {lockedAgent ? (
           <LockedAgentReferenceField agent={lockedAgent} variant="deployment" />
         ) : (
-          <DeploymentSelectField
-            label={msg('managedAgents.common.agent', 'Agent')}
+          <AgentSelectField
+            workspaceId={workspaceId}
             value={values.agentId}
-            placeholder={
-              loadingOptions
-                ? msg('managedAgents.agents.loading', 'Loading agents...')
-                : msg('managedAgents.deployments.selectAgent', 'Select an agent')
-            }
-            options={agents}
-            manageHref={`/workspaces/${workspaceId}/agents`}
-            manageLabel={msg('managedAgents.agents.manage', 'Manage agents')}
+            manage
             onChange={(agentId) => onChange({ agentId })}
           />
         )}

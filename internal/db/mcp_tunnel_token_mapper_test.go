@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,7 +38,7 @@ func TestMCPTunnelTokenMapperOptionalRows(t *testing.T) {
 			name: "FindByHashAndTunnelExternalID",
 			call: func(mapper MCPTunnelTokenMapper) (string, bool, error) {
 				row, found, err := mapper.FindByHashAndTunnelExternalID(t.Context(), []byte("hash"), "tunnel-external")
-				return row.UUID, found, err
+				return row.TunnelUUID, found, err
 			},
 			values: []any{[]byte("hash"), "tunnel-external"}, clauses: []string{"JOIN mcp_tunnels", "tv.token_hash = $1", "t.external_id = $2"},
 		},
@@ -46,11 +47,16 @@ func TestMCPTunnelTokenMapperOptionalRows(t *testing.T) {
 			columns := []string{"uuid", "external_id", "tunnel_uuid", "version", "token_hash", "ciphertext", "nonce", "wrapped_dek", "format_version", "key_provider", "key_version", "created_at", "retired_at", "archived_at"}
 			row := []driver.Value{"token-uuid", "token-external", "tunnel-uuid", int64(1), []byte("hash"), nil, nil, nil, nil, nil, nil, time.Now().UTC(), nil, nil}
 			if query.name == "FindByHashAndTunnelExternalID" {
-				columns = append(columns, "tunnel_external_id", "organization_uuid", "workspace_uuid", "tunnel_archived_at")
-				row = append(row, "tunnel-external", "organization", "workspace", nil)
+				columns = []string{"tunnel_uuid", "retired_at", "archived_at", "tunnel_external_id", "organization_uuid", "workspace_uuid", "tunnel_archived_at"}
+				row = []driver.Value{"token-uuid", nil, nil, "tunnel-external", "organization", "workspace", nil}
 			}
 			badRow := append([]driver.Value(nil), row...)
-			badRow[3] = "invalid-version"
+			if query.name == "FindByHashAndTunnelExternalID" {
+				badRow[1] = "invalid-timestamp"
+			} else {
+				badRow[3] = "invalid-version"
+			}
+
 			queryErr := errors.New("database unavailable")
 			for _, test := range []struct {
 				name     string
@@ -76,6 +82,18 @@ func TestMCPTunnelTokenMapperOptionalRows(t *testing.T) {
 						t.Fatalf("unexpected token UUID: %q", id)
 					}
 					assertMapperTestExecution(t, executor, "MCPTunnelTokenMapper."+query.name, yourbatis.StatementSelect, query.values, query.clauses...)
+					if query.name == "FindByHashAndTunnelExternalID" {
+						projection, _, _ := strings.Cut(executor.bound.SQL, "FROM")
+						for _, column := range []string{"ciphertext", "nonce", "wrapped_dek", "token_hash", "tv.version", "key_provider"} {
+							if strings.Contains(projection, column) {
+								t.Fatalf("credential query projects secret/version column %s", column)
+							}
+						}
+						if !executor.bound.Args[0].Sensitive {
+							t.Fatal("credential hash binding is not marked sensitive")
+						}
+					}
+
 				})
 			}
 		})

@@ -176,7 +176,8 @@ func (h *Handler) enforceBudgetAfterEvents(ctx context.Context, session db.Sessi
 		h.logger.ErrorContext(ctx, "append budget reached events", "session_id", session.ExternalID, "error", err)
 		return
 	}
-	h.publishSessionEvents(ctx, created)
+	h.codeSessions.PurgeWorkerEvents(ctx, created.RetiredCodeSessionIDs)
+	h.publishSessionEvents(ctx, created.Events)
 }
 
 // sessionUsageEvent builds the session.usage snapshot event.

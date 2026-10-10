@@ -39,7 +39,7 @@ func TestManagedAgentWorkDirIgnoresNonRepositoryResources(t *testing.T) {
 		},
 		{
 			ResourceType: "memory_store",
-			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/workspace/memory"}`),
+			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/mnt/memory/test","access":"read_write"}`),
 		},
 		{
 			ResourceType: "future_resource",
@@ -65,7 +65,7 @@ func TestManagedAgentWorkDirUsesRepositoryRegardlessOfResourceOrder(t *testing.T
 	memoryStore := db.SessionResource{
 		UUID:         "00000000-0000-0000-0000-000000000003",
 		ResourceType: "memory_store",
-		Payload:      json.RawMessage(`{"type":"memory_store","mount_path":"/workspace/memory"}`),
+		Payload:      json.RawMessage(`{"type":"memory_store","mount_path":"/mnt/memory/test","access":"read_write"}`),
 	}
 	for name, resources := range map[string][]db.SessionResource{
 		"repository first": {repository, file, memoryStore},
@@ -124,7 +124,7 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 		},
 		{
 			ResourceType: "memory_store",
-			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/workspace/memory","runtime_extension":{"enabled":true}}`),
+			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/mnt/memory/test","access":"read_write","runtime_extension":{"enabled":true}}`),
 		},
 	}
 
@@ -133,14 +133,6 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 			"type":       "git_repository",
 			"git_info":   map[string]any{"type": "git", "repo": "group/subgroup/widgets.git", "url": "https://git.internal:443/group/subgroup/widgets.git", "ref": "refs/heads/main"},
 			"mount_path": "/workspace/widgets",
-		},
-		map[string]any{
-			"type":            "memory_store",
-			"memory_store_id": "mem_test",
-			"mount_path":      "/workspace/memory",
-			"runtime_extension": map[string]any{
-				"enabled": true,
-			},
 		},
 	}
 	sources := managedAgentRuntimeSourceValues(
@@ -217,7 +209,6 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		},
 		EnvironmentRunner: config.EnvironmentRunnerConfig{
 			ManagerPath:        "/opt/env manager/bin/environment-manager",
-			ClaudeAgentVersion: "2.1.251",
 			ClaudePath:         "/opt/claude path/bin/claude",
 			GitSSHtoHTTPSHosts: []string{"gitlab.xxxx.cn"},
 		},
@@ -247,6 +238,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		startupEnv["CLAUDE_CODE_USE_CCR_V2"] != "1" ||
 		startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" ||
 		startupEnv["CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES"] != "true" ||
+		startupEnv["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"] != "1" ||
 		startupEnv["CCR_UPSTREAM_PROXY_ENABLED"] != "1" {
 		t.Fatalf("unexpected startup environment variables: %#v", startupEnv)
 	}
@@ -335,7 +327,6 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		"export GIT_EDITOR=true",
 		"export GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt",
 		"export GIT_TERMINAL_PROMPT=0",
-		"Claude binary version mismatch: expected 2.1.251",
 		"> '/tmp/claude-code-sessions/cse_session_with_'\"'\"'quote'\"'\"'_and_slash/environment-manager.log' 2>&1",
 	} {
 		if !strings.Contains(allCommands, want) {
@@ -448,6 +439,7 @@ func TestBuildEnvironmentManagerPayloadPrefersUserTelemetryConfig(t *testing.T) 
 	}
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"CLAUDE_CODE_ENABLE_TELEMETRY":"",
+		"CLAUDE_CODE_DISABLE_TERMINAL_TITLE":"0",
 		"OTEL_METRICS_EXPORTER":"console",
 		"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com",
 		"OTEL_EXPORTER_OTLP_METRICS_HEADERS":"Authorization=Bearer stale",
@@ -469,6 +461,9 @@ func TestBuildEnvironmentManagerPayloadPrefersUserTelemetryConfig(t *testing.T) 
 	}
 	if got := startupEnv["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]; got != "" {
 		t.Fatalf("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = %#v, want empty so Claude can export OTEL", got)
+	}
+	if got := startupEnv["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"]; got != "1" {
+		t.Fatalf("CLAUDE_CODE_DISABLE_TERMINAL_TITLE = %#v, want 1", got)
 	}
 	// 用户可以保留采集偏好；连接 OMA 的 signal-specific endpoint/header
 	// 由平台覆盖，使不会动态配置 OTLP 的旧版 environment-manager 也能工作。

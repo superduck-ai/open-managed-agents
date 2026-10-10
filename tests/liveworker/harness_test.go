@@ -84,10 +84,14 @@ func newLiveEnv(t *testing.T) *liveEnv {
 	requireOK(t, err)
 	info, err := e.stream.Info(ctx)
 	requireOK(t, err)
-	if info.Config.Retention != jetstream.WorkQueuePolicy || info.Config.Replicas != 3 || info.Config.MaxAge != 0 || info.Config.Storage != jetstream.FileStorage || info.Config.MaxBytes != 10<<30 || info.Config.MaxMsgSize != 1<<20 || info.Config.Discard != jetstream.DiscardNew || info.Config.Duplicates != 24*time.Hour {
+	duplicates := 24 * time.Hour
+	if cfg.NATS.WorkerEventStream.MaxAge > 0 {
+		duplicates = min(duplicates, cfg.NATS.WorkerEventStream.MaxAge)
+	}
+	if info.Config.Retention != jetstream.WorkQueuePolicy || info.Config.Replicas != cfg.NATS.WorkerEventStream.Replicas || info.Config.MaxAge != cfg.NATS.WorkerEventStream.MaxAge || info.Config.Storage != jetstream.FileStorage || info.Config.MaxBytes != cfg.NATS.WorkerEventStream.MaxBytes || info.Config.MaxMsgSize != cfg.NATS.WorkerEventStream.MaxMsgSize || info.Config.Discard != jetstream.DiscardNew || info.Config.Duplicates != duplicates {
 		t.Fatal("live stream does not match required configuration; refusing to change it")
 	}
-	e.broker, err = workerevents.NewJetStream(ctx, connection)
+	e.broker, err = workerevents.NewJetStream(ctx, connection, cfg.NATS.WorkerEventStream)
 	requireOK(t, err)
 	redisOptions, err := redis.ParseURL(cfg.Redis.URL)
 	requireOK(t, err)
@@ -160,10 +164,11 @@ func (e *liveEnv) requestContext(ctx context.Context, t *testing.T, method, path
 }
 
 type liveSession struct {
-	env     *liveEnv
-	session db.Session
-	code    db.CodeSession
-	token   string
+	env        *liveEnv
+	session    db.Session
+	code       db.CodeSession
+	token      string
+	modelToken string
 }
 
 func (e *liveEnv) newSession(t *testing.T) *liveSession {
@@ -199,9 +204,10 @@ func (e *liveEnv) newSessionWithSnapshot(t *testing.T, snapshot json.RawMessage)
 			t.Errorf("delete test session: %v", err)
 		}
 	})
-	code, err := e.database.CreateCodeSession(ctx, db.CreateCodeSessionInput{ExternalID: "cse_" + strings.ReplaceAll(uuid.NewString(), "-", ""), OrganizationUUID: org, WorkspaceUUID: workspace, SessionUUID: session.UUID, SessionExternalID: sessionID, EnvironmentUUID: e.environment.UUID, EnvironmentExternalID: e.environment.ExternalID, Status: "initializing", Model: agentConfig.Model.ID, PermissionMode: "default", Metadata: json.RawMessage(`{"config":{}}`), OAuthAccessTokenHash: auth.HashAPIKey(uuid.NewString()), InitialWorkerEpoch: 1, CreatedAt: now})
+	modelToken := uuid.NewString()
+	code, err := e.database.CreateCodeSession(ctx, db.CreateCodeSessionInput{ExternalID: "cse_" + strings.ReplaceAll(uuid.NewString(), "-", ""), OrganizationUUID: org, WorkspaceUUID: workspace, SessionUUID: session.UUID, SessionExternalID: sessionID, EnvironmentUUID: e.environment.UUID, EnvironmentExternalID: e.environment.ExternalID, Status: "initializing", Model: agentConfig.Model.ID, PermissionMode: "default", Metadata: json.RawMessage(`{"config":{}}`), OAuthAccessTokenHash: auth.HashAPIKey(modelToken), InitialWorkerEpoch: 1, CreatedAt: now})
 	requireOK(t, err)
-	f := &liveSession{env: e, session: session, code: code}
+	f := &liveSession{env: e, session: session, code: code, modelToken: modelToken}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -348,7 +354,9 @@ func (f *liveSession) queue(t *testing.T, payload json.RawMessage) workerevents.
 	requireOK(t, err)
 	message, err := f.env.stream.GetLastMsgForSubject(t.Context(), subject)
 	requireOK(t, err)
-	if len(message.Data) > workerevents.MaxMessageBytes {
+	info, err := f.env.stream.Info(t.Context())
+	requireOK(t, err)
+	if int64(len(message.Data)) > int64(info.Config.MaxMsgSize) {
 		t.Fatal("stored envelope exceeds limit")
 	}
 	var envelope workerevents.EnvelopeV1

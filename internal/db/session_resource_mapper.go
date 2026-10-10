@@ -11,6 +11,7 @@ type SessionResourceMapper interface {
 	Insert(ctx context.Context, params sessionResourceWriteParams) (sessionResourceRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, resourceExternalID string) (sessionResourceRow, error)
 	List(ctx context.Context, workspaceUUID, sessionExternalID string, maxOutputResources int) ([]sessionResourceRow, error)
+	ListMemoryMountsByFilesystem(ctx context.Context, workspaceUUID, filesystemUUID string) ([]sessionMemoryMountRow, error)
 	Update(ctx context.Context, params sessionResourceUpdateParams) (sessionResourceRow, error)
 	SoftDeleteBySession(ctx context.Context, workspaceUUID, sessionExternalID string) (int64, error)
 	CountSessionFileResources(ctx context.Context, workspaceUUID, sessionExternalID, resourceType string) (int, error)
@@ -52,6 +53,16 @@ type sessionResourceRow struct {
 	CreatedAt         time.Time  `db:"created_at"`
 	UpdatedAt         time.Time  `db:"updated_at"`
 	DeletedAt         *time.Time `db:"deleted_at"`
+}
+
+type sessionMemoryMountRow struct {
+	SessionExternalID     string     `db:"session_external_id"`
+	MemoryStoreExternalID string     `db:"memory_store_external_id"`
+	Access                string     `db:"access"`
+	MountPath             string     `db:"mount_path"`
+	MemoryStoreUUID       *string    `db:"memory_store_uuid"`
+	ArchivedAt            *time.Time `db:"archived_at"`
+	DeletedAt             *time.Time `db:"deleted_at"`
 }
 
 type sessionResourceWriteParams struct {

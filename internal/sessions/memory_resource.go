@@ -13,50 +13,19 @@ func (h *Handler) memoryStorePayload(
 	body *sessionResourceRequest,
 	attachSet *sessionresource.MemoryAttachSet,
 	resourceID string,
-) (map[string]any, error) {
-	if err := sessionresource.RejectClientMemoryIdentityFields(body.MountPath, body.Name, body.Description); err != nil {
-		return nil, err
-	}
-	memoryStoreID, err := parseRequiredRawString(body.MemoryStoreID, "memory_store_id")
+) (sessionresource.MemorySnapshotPayload, error) {
+	spec, store, err := sessionresource.ResolveMemoryAttach(ctx, h.db, session.WorkspaceUUID, sessionresource.MemoryAttachRequest{
+		MemoryStoreID: body.MemoryStoreID, Access: body.Access, Instructions: body.Instructions,
+		MountPath: body.MountPath, Name: body.Name, Description: body.Description,
+	})
 	if err != nil {
-		return nil, err
+		return sessionresource.MemorySnapshotPayload{}, err
 	}
-	store, err := h.db.GetMemoryStore(ctx, session.WorkspaceUUID, memoryStoreID)
+	snapshot, err := spec.Snapshot(store, attachSet)
 	if err != nil {
-		return nil, resourceReferenceError{
-			ResourceType: sessionresource.MemoryStoreType,
-			ResourceID:   memoryStoreID,
-			Err:          err,
-		}
+		return sessionresource.MemorySnapshotPayload{}, err
 	}
-	if store.ArchivedAt != nil {
-		return nil, resourceReferenceError{
-			ResourceType: sessionresource.MemoryStoreType,
-			ResourceID:   memoryStoreID,
-			Err:          db.ErrInvalidState,
-		}
-	}
-	access, err := sessionresource.ParseMemoryAccess(body.Access)
-	if err != nil {
-		return nil, err
-	}
-	instructions, err := sessionresource.ParseMemoryInstructions(body.Instructions)
-	if err != nil {
-		return nil, err
-	}
-	slug, err := attachSet.Add(memoryStoreID, store.Name, store.ExternalID)
-	if err != nil {
-		return nil, err
-	}
-	snapshot := sessionresource.SnapshotMemoryStore(
-		memoryStoreID,
-		access,
-		instructions,
-		store.Name,
-		store.Description,
-		slug,
-	)
-	return snapshot.PayloadFields(resourceID), nil
+	return snapshot.Payload(resourceID), nil
 }
 
 func observeSessionMemoryResources(resources []db.SessionResource) *sessionresource.MemoryAttachSet {

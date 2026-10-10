@@ -75,7 +75,7 @@ func TestSessionEventsFanoutUsesMinimalSSEContract(t *testing.T) {
 	}
 	wantFields := map[string]struct{}{
 		"external_id": {}, "workspace_uuid": {}, "session_id": {}, "thread_id": {},
-		"event_type": {}, "payload": {}, "processed_at": {}, "created_at": {},
+		"event_type": {}, "payload": {}, "processed_at": {},
 	}
 	if len(rawPayload.Events[0]) != len(wantFields) {
 		t.Fatalf("fanout fields = %v, want exactly %v", rawPayload.Events[0], wantFields)
@@ -97,8 +97,8 @@ func TestSessionEventsFanoutUsesMinimalSSEContract(t *testing.T) {
 	if event.ThreadExternalID == nil || *event.ThreadExternalID != threadID || event.EventType != "agent.message" {
 		t.Fatalf("fanout event delivery fields = %+v", event)
 	}
-	if !event.CreatedAt.Equal(createdAt) || !event.ProcessedAt.Equal(processedAt) {
-		t.Fatalf("fanout event times = created:%v processed:%v", event.CreatedAt, event.ProcessedAt)
+	if !event.ProcessedAt.Equal(processedAt) {
+		t.Fatalf("fanout event processing time = %v, want %v", event.ProcessedAt, processedAt)
 	}
 }
 

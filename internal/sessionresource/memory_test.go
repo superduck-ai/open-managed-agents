@@ -214,7 +214,14 @@ func TestMemorySnapshotPayloadFields(t *testing.T) {
 		Description:   "personal taste",
 		MountPath:     MemoryMountPath("product-docs-draft"),
 	}
-	fields := snapshot.PayloadFields("sesrsc_one")
+	raw, err := json.Marshal(snapshot.Payload("sesrsc_one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
 	if fields["type"] != MemoryStoreType ||
 		fields["memory_store_id"] != "memstore_one" ||
 		fields["access"] != "read_write" ||

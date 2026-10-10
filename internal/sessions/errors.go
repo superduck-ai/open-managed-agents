@@ -27,10 +27,6 @@ func queueCodeSessionEventsError(cause error) error {
 	return internalError("Could not queue events for the code session worker", cause)
 }
 
-func sessionsBetaRequired() error {
-	return apperr.New(apperr.InvalidArgument, "Sessions API requires beta=true", nil)
-}
-
 func sessionRouteNotFound() error {
 	return apperr.New(apperr.NotFound, "Not found", nil)
 }
@@ -104,6 +100,9 @@ func mapSessionLoadError(err error, sessionID string) error {
 	if errors.Is(err, db.ErrInvalidState) {
 		return apperr.New(apperr.InvalidArgument, "session state does not allow this operation", err)
 	}
+	if errors.Is(err, db.ErrSessionInputConflict) {
+		return apperr.New(apperr.Conflict, "Session cannot accept this input now", err)
+	}
 	return internalError("Session operation failed", fmt.Errorf("session %q operation: %w", sessionID, err))
 }
 
@@ -137,6 +136,9 @@ func mapThreadLoadError(err error, threadID string) error {
 	if errors.Is(err, db.ErrNotFound) {
 		return threadNotFound(threadID, err)
 	}
+	if errors.Is(err, db.ErrInvalidState) {
+		return invalidRequest(errors.New("thread must be idle or terminated to archive"))
+	}
 	return internalError("Thread operation failed", fmt.Errorf("thread %q operation: %w", threadID, err))
 }
 
@@ -154,3 +156,5 @@ func streamingUnsupported() error {
 func gitTokenUpdateRequiredError() error {
 	return invalidRequest(errors.New("authorization_token must be provided when updating a Git resource"))
 }
+
+type resourceReferenceError = sessionresource.ReferenceError

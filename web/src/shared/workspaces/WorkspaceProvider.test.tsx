@@ -72,14 +72,17 @@ function mount({
   initialWorkspaceId,
   dirty = false,
   initialAccount = account,
+  preferredOrg,
 }: {
   refresh?: AuthContextValue['refresh'];
   navigate?: (workspaceId: string) => Promise<void>;
   initialWorkspaceId?: string;
   dirty?: boolean;
   initialAccount?: AuthAccount;
+  preferredOrg?: string;
 } = {}) {
   resetTestDom('https://oma.duck.ai/workspaces/ws-a/agents/agent-detail');
+  if (preferredOrg) window.sessionStorage.setItem('oma.organization.account', preferredOrg);
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const auth: AuthContextValue = {
     account: initialAccount,
@@ -102,6 +105,119 @@ function mount({
 
 function mockWorkspaces() {
   globalThis.fetch = mock(async (input) => Response.json(workspaces(String(input).split('/').at(-2)!))) as typeof fetch;
+}
+
+for (const target of ['organization', 'workspace']) {
+  test(`${target}导航失败保留原请求作用域与偏好`, async () => {
+    globalThis.fetch = mock(async (input) => {
+      const org = String(input).split('/').at(-2)!;
+      return Response.json([...workspaces(org), { ...workspaces(org)[0], id: 'ws-next', is_default: false }]);
+    }) as typeof fetch;
+    let rejectNavigation!: (error: Error) => void;
+    mount({
+      navigate: () =>
+        new Promise<void>((_, reject) => {
+          rejectNavigation = reject;
+        }),
+    });
+    await waitFor(() => expect(screen.getByTestId('state').textContent).toBe('ready'));
+    const previousContext = getConsoleRequestContext();
+    let pending: Promise<boolean> | undefined;
+    await act(async () => {
+      if (target === 'organization') pending = organizations.switchOrganization('b');
+      else fireEvent.click(screen.getByRole('button', { name: '切换工作区' }));
+    });
+    await waitFor(() => expect(rejectNavigation).toBeDefined());
+    const navigatingContext = getConsoleRequestContext();
+    await act(async () => {
+      rejectNavigation(new Error('navigation failed'));
+      if (pending) expect(await pending).toBe(false);
+    });
+    expect(screen.getByTestId('state').textContent).toBe('error');
+    expect(screen.getByTestId('scope').textContent).toBe('a:ws-a:self-a');
+    expect(getConsoleRequestContext()).toEqual(previousContext);
+    expect(navigatingContext).toEqual(previousContext);
+    expect(window.sessionStorage.getItem('oma.organization.account')).toBe('a');
+    expect(window.localStorage.getItem('oma.workspace.account.a')).toBe('ws-a');
+    expect(window.localStorage.getItem('oma.workspace.account.b')).toBeNull();
+  });
+}
+
+for (const newNavigationFinished of [false, true]) {
+  test(`旧工作区导航错误不覆盖${newNavigationFinished ? '已完成' : '进行中'}的新组织切换`, async () => {
+    globalThis.fetch = mock(async (input) => {
+      const org = String(input).split('/').at(-2)!;
+      return Response.json([...workspaces(org), { ...workspaces(org)[0], id: 'ws-next', is_default: false }]);
+    }) as typeof fetch;
+    let rejectOld!: (error: Error) => void;
+    let finishNew!: () => void;
+    mount({
+      navigate: (id) =>
+        new Promise<void>((resolve, reject) => {
+          if (id === 'ws-next') rejectOld = reject;
+          else finishNew = resolve;
+        }),
+    });
+    await waitFor(() => expect(screen.getByTestId('state').textContent).toBe('ready'));
+    fireEvent.click(screen.getByRole('button', { name: '切换工作区' }));
+    await waitFor(() => expect(rejectOld).toBeDefined());
+    let pending!: Promise<boolean>;
+    await act(async () => {
+      pending = organizations.switchOrganization('b');
+    });
+    await waitFor(() => expect(finishNew).toBeDefined());
+    if (newNavigationFinished)
+      await act(async () => {
+        finishNew();
+        expect(await pending).toBe(true);
+      });
+    await act(async () => {
+      rejectOld(new Error('old navigation failed'));
+    });
+    const stateAfterOldFailure = screen.getByTestId('state').textContent;
+    if (!newNavigationFinished)
+      await act(async () => {
+        finishNew();
+        expect(await pending).toBe(true);
+      });
+    expect(screen.getByTestId('scope').textContent).toBe('b:ws-b:self-b');
+    expect(getConsoleRequestContext().organizationUuid).toBe('b');
+    expect(getConsoleRequestContext().workspaceId).toBe('ws-b');
+    expect(screen.getByTestId('state').textContent).toBe('ready');
+    expect(stateAfterOldFailure).toBe(newNavigationFinished ? 'ready' : 'loading');
+  });
+}
+
+for (const preferredOrg of ['a', 'b']) {
+  test(`初始化修正${preferredOrg === 'b' ? '失效组织' : '失效工作区'}的详情深链`, async () => {
+    mockWorkspaces();
+    const initialAccount = {
+      ...account,
+      memberships: account.memberships?.filter((item) => item.organization?.uuid !== 'b'),
+    };
+    const path = '/workspaces/ws-b/agents/agent-detail';
+    const root = createRootRoute();
+    const route = createRoute({ getParentRoute: () => root, path: '/workspaces/$workspaceId/agents/{-$agentId}' });
+    const router = createRouter({
+      routeTree: root.addChildren([route]),
+      history: createMemoryHistory({ initialEntries: [path] }),
+    });
+    await router.load();
+    const navigate = mock(async (id: string) => {
+      await router.navigate({
+        href: workspaceSwitchPath(router.state.location.pathname, id),
+        replace: true,
+        ignoreBlocker: true,
+      });
+    });
+    mount({ initialAccount, initialWorkspaceId: 'ws-b', preferredOrg, navigate });
+    await waitFor(() => expect(screen.getByTestId('state').textContent).toBe('ready'));
+    expect(screen.getByTestId('scope').textContent).toBe('a:ws-a:self-a');
+    expect(getConsoleRequestContext().organizationUuid).toBe('a');
+    expect(getConsoleRequestContext().workspaceId).toBe('ws-a');
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(router.state.location.pathname).toBe('/workspaces/ws-a/agents');
+  });
 }
 
 test('保留前置分支的 Default 展示名但不改写真实工作区标识', async () => {

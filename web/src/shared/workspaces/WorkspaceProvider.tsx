@@ -47,14 +47,14 @@ export function WorkspaceProvider({
       await queryClient.cancelQueries({ predicate: isBusinessQuery });
       if (ticket !== generation.current) return false;
       queryClient.removeQueries({ predicate: isBusinessQuery });
+      if (navigate && next.activeWorkspaceId) await navigateScope?.(next.activeWorkspaceId);
+      if (ticket !== generation.current) return false;
       const { account, csrfToken } = authRef.current;
       setConsoleRequestContext({
         organizationUuid: next.orgUuid,
         workspaceId: next.activeWorkspaceId || undefined,
         csrfToken,
       });
-      if (navigate && next.activeWorkspaceId) await navigateScope?.(next.activeWorkspaceId);
-      if (ticket !== generation.current) return false;
       if (account && next.orgUuid) savePreference(account.uuid, next.orgUuid, next.activeWorkspaceId);
       scopeRef.current = next;
       setScope(next);
@@ -88,7 +88,12 @@ export function WorkspaceProvider({
         const workspaces = await listConsoleWorkspaces(orgUuid);
         const preferred = !navigate && initialWorkspaceId ? initialWorkspaceId : readPreference(account.uuid, orgUuid);
         const selected = chooseWorkspace(workspaces, preferred);
-        return await installScope({ orgUuid, workspaces, activeWorkspaceId: selected?.id ?? '' }, ticket, navigate);
+        const shouldNavigate = navigate || Boolean(initialWorkspaceId && selected?.id !== initialWorkspaceId);
+        return await installScope(
+          { orgUuid, workspaces, activeWorkspaceId: selected?.id ?? '' },
+          ticket,
+          shouldNavigate,
+        );
       } catch (cause) {
         if (ticket !== generation.current) return false;
         recovery.current = 'failed';
@@ -179,6 +184,7 @@ export function WorkspaceProvider({
       setSwitching(true);
       setError(null);
       void installScope({ ...current, activeWorkspaceId: workspaceId }, ticket).catch((cause) => {
+        if (ticket !== generation.current) return;
         setError(cause);
         setSwitching(false);
       });

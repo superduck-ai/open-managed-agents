@@ -6,6 +6,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
@@ -63,5 +64,25 @@ func TestMapMemoryAttachError(t *testing.T) {
 				t.Fatalf("error = (%v, %q), want (%v, %q)", appErr.Kind, appErr.PublicMessage, apperr.InvalidArgument, test.message)
 			}
 		})
+	}
+}
+
+func TestSessionAgentErrorPreservesWorkspaceModelConfigStatus(t *testing.T) {
+	mapped := sessionAgentError(workspaceModelConfigError(llmproviders.ErrNotConfigured))
+	appErr, ok := errors.AsType[*apperr.Error](mapped)
+	if !ok {
+		t.Fatalf("error type = %T, want *apperr.Error", mapped)
+	}
+	if appErr.Kind != apperr.Unavailable {
+		t.Fatalf("kind = %v, want %v", appErr.Kind, apperr.Unavailable)
+	}
+
+	invalid := sessionAgentError(errors.New("agent not found"))
+	appErr, ok = errors.AsType[*apperr.Error](invalid)
+	if !ok {
+		t.Fatalf("error type = %T, want *apperr.Error", invalid)
+	}
+	if appErr.Kind != apperr.InvalidArgument || appErr.PublicMessage != "agent not found" {
+		t.Fatalf("error = (%v, %q)", appErr.Kind, appErr.PublicMessage)
 	}
 }

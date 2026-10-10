@@ -254,7 +254,7 @@ func TestPlatformWorkspaceHeaderScopesV1Resources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load platform session: %v", err)
 	}
-	if _, err := app.db.UpdateAdminUserRole(context.Background(), orgCookie.Value, platformSession.UserExternalID, "user"); err != nil {
+	if _, err := app.db.UpdateAdminUserRole(context.Background(), orgCookie.Value, platformSession.UserExternalID, "developer"); err != nil {
 		t.Fatalf("set platform user role: %v", err)
 	}
 	deniedResp := app.platformRequestWithHeaders(t, http.MethodGet, "/v1/agents?beta=true&limit=1", nil, cookies, map[string]string{

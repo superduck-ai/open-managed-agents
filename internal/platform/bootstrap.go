@@ -26,8 +26,10 @@ type OrganizationRecord struct {
 
 type UserOrganizationRecord struct {
 	OrganizationRecord
-	Role    string
-	AddedAt time.Time
+	UserUUID       string
+	UserExternalID string
+	Role           string
+	AddedAt        time.Time
 }
 
 type OrganizationUpdatePatch struct {

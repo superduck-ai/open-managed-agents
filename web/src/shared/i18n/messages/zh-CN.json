@@ -1,4 +1,6 @@
 {
+  "invitations.delivery.unconfirmed": "邀请已保存，但 {count} 封邮件未确认发送。请检查邮件配置后重发邀请。",
+  "invitations.delivery.sent": "邀请邮件已提交发送，请提醒收件人检查邮箱。",
   "account.apiPlan": "API 方案",
   "account.logout": "退出登录",
   "account.loggingOut": "正在退出...",
@@ -2250,6 +2252,9 @@
   "common.copyFailed": "复制失败",
   "apiKeys.costTooltip": "记录到用量后，才会显示 API 密钥的费用归因。",
   "apiKeys.workspaceTooltip": "此密钥的范围限定为所选工作区。",
+  "members.accessDeniedTitle": "无权限访问",
+  "members.accessDeniedDescription": "只有组织管理员可以查看和管理组织成员。请联系组织管理员。",
+  "members.workspaceAccessDeniedDescription": "只有工作区管理员或组织管理员可以查看和管理工作区成员。请联系管理员。",
   "members.description": "可以访问{organizationName}组织的人员。",
   "members.emails": "邮箱地址",
   "members.emails.help": "用逗号、空格或换行分隔地址，一次最多 50 个。",

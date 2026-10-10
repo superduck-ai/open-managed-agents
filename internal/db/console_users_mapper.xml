@@ -86,8 +86,7 @@
             true AS age_is_verified,
             u.added_at AS created_at
         FROM users u
-        WHERE u.deleted_at IS NULL
-        AND (
+        WHERE (
             u.external_id = #{userExternalID}
             OR 'user_' || LEFT(REPLACE(CAST(u.uuid AS text), '-', ''), 24) = #{userExternalID}
             <if test="userUUID != ''">
@@ -100,6 +99,8 @@
 
     <select id="ListBootstrapOrganizations" resultType="consoleOrganizationRow">
         SELECT
+            u.uuid AS user_uuid,
+            u.external_id AS user_external_id,
             o.uuid,
             o.name,
             CAST(NULL AS text) AS domain,
@@ -125,5 +126,17 @@
         </if>
             u.added_at ASC,
             u.uuid ASC
+    </select>
+
+    <select id="ListBootstrapOrganizationsByEmail" resultType="consoleOrganizationRow">
+        SELECT u.uuid AS user_uuid, u.external_id AS user_external_id,
+            o.uuid, o.name, CAST(NULL AS text) AS domain,
+            CAST(NULL AS uuid) AS parent_organization_uuid,
+            COALESCE(o.settings, CAST('{}' AS jsonb)) AS settings,
+            o.created_at, o.updated_at, u.role, u.added_at
+        FROM users u
+        JOIN organizations o ON o.uuid = u.organization_uuid
+        WHERE LOWER(u.email) = LOWER(#{email}) AND u.deleted_at IS NULL
+        ORDER BY u.added_at ASC, u.uuid ASC
     </select>
 </mapper>

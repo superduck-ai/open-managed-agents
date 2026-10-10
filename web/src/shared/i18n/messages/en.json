@@ -1,4 +1,6 @@
 {
+  "invitations.delivery.unconfirmed": "Invitations saved, but delivery of {count, plural, one {# email} other {# emails}} is unconfirmed. Check your email configuration and resend.",
+  "invitations.delivery.sent": "Invitation emails submitted for sending. Remind recipients to check their inbox.",
   "account.apiPlan": "API plan",
   "account.logout": "Log out",
   "account.loggingOut": "Logging out...",
@@ -2250,6 +2252,9 @@
   "common.copyFailed": "Copy failed",
   "apiKeys.costTooltip": "API key cost attribution appears after usage is recorded.",
   "apiKeys.workspaceTooltip": "This key will be scoped to the selected workspace.",
+  "members.accessDeniedTitle": "Access denied",
+  "members.accessDeniedDescription": "Only organization administrators can view and manage organization members. Contact your organization administrator.",
+  "members.workspaceAccessDeniedDescription": "Only workspace or organization administrators can view and manage workspace members. Contact your administrator.",
   "members.description": "People who can access the {organizationName} organization.",
   "members.emails": "Email addresses",
   "members.emails.help": "Separate addresses with commas, spaces, or new lines. Up to 50 at once.",

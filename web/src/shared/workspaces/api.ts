@@ -67,7 +67,11 @@ export const defaultWorkspace: Workspace = {
 };
 
 export function listConsoleWorkspaces(orgUuid: string) {
-  return consoleApi<Workspace[]>(`/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces`);
+  return consoleApi<Workspace[]>(`/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces`, {
+    context: { organizationUuid: orgUuid },
+  }).then((workspaces) =>
+    workspaces.map((workspace) => (workspace.is_default ? { ...workspace, name: defaultWorkspace.name } : workspace)),
+  );
 }
 
 export function createConsoleWorkspace(orgUuid: string, input: CreateWorkspaceInput) {

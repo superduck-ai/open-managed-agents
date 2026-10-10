@@ -35,7 +35,17 @@ func newSMTPSender(cfg config.EmailSMTPConfig) *smtpSender {
 	}
 }
 
+func NewMailSender(cfg config.EmailSMTPConfig) interface {
+	SendMessage(context.Context, string, []byte) error
+} {
+	return newSMTPSender(cfg)
+}
+
 func (s *smtpSender) SendLoginCode(ctx context.Context, recipient, code string) error {
+	return s.SendMessage(ctx, recipient, s.message(recipient, code))
+}
+
+func (s *smtpSender) SendMessage(ctx context.Context, recipient string, message []byte) error {
 	to, err := mail.ParseAddress(recipient)
 	if err != nil || to.Address != recipient {
 		return errors.New("invalid SMTP recipient")
@@ -84,7 +94,7 @@ func (s *smtpSender) SendLoginCode(ctx context.Context, recipient, code string) 
 	if err != nil {
 		return fmt.Errorf("open SMTP message: %w", err)
 	}
-	if _, err := writer.Write(s.message(to.String(), code)); err != nil {
+	if _, err := writer.Write(message); err != nil {
 		_ = writer.Close()
 		return fmt.Errorf("write SMTP message: %w", err)
 	}

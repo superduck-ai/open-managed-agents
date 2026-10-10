@@ -6,6 +6,15 @@ import { I18nProvider, useI18n } from '../shared/i18n';
 import { ThemeProvider } from '../shared/theme/ThemeProvider';
 import { Toaster } from '../shared/ui/sonner';
 import { WorkspaceProvider } from '../shared/workspaces/WorkspaceProvider';
+import { workspaceIdFromPath, workspaceSwitchPath } from '../shared/workspaces/presentation';
+
+const initialWorkspaceId = workspaceIdFromPath(window.location.pathname);
+
+async function navigateScope(workspaceId: string) {
+  const href = workspaceSwitchPath(router.state.location.pathname, workspaceId);
+  if (href === router.state.location.pathname) return;
+  await router.navigate({ href, replace: true, ignoreBlocker: true });
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,7 +33,7 @@ export function App() {
         <AppToaster />
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
-            <WorkspaceProvider>
+            <WorkspaceProvider navigateScope={navigateScope} initialWorkspaceId={initialWorkspaceId}>
               <RouterProvider router={router} />
             </WorkspaceProvider>
           </AuthProvider>

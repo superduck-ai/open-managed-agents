@@ -62,8 +62,9 @@ func TestConsoleOrganizationMapperExecution(t *testing.T) {
 	createdAt := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 	updatedAt := createdAt.Add(time.Minute)
 	executor := newMapperTestExecutor(t, mapperTestResponse{
-		columns: []string{"uuid", "name", "domain", "parent_organization_uuid", "settings", "created_at", "updated_at", "role", "added_at"},
+		columns: []string{"user_uuid", "user_external_id", "uuid", "name", "domain", "parent_organization_uuid", "settings", "created_at", "updated_at", "role", "added_at"},
 		rows: [][]driver.Value{{
+			"", "",
 			"11111111-1111-4111-8111-111111111111",
 			"Console Organization",
 			nil,

@@ -23,6 +23,8 @@ Default 通过 `is_default` 和组织级唯一索引标记；用户按组织身�
 
 Workbench Prompt 路由按 URL 中的工作区及已存储 Prompt 的 `WorkspaceUUID` 重新授权，覆盖详情、修改、删除、Revision 和 KV 子路由；请求头选中的空间不能替代资源所属空间。创建入口沿用固定 Prompt ID 时，同时检查目标空间和已存储 Prompt 的空间。列表不返回其他空间的固定 Prompt。
 
+Files 平台预览和缩略图在读取原始或派生对象前，按文件实际 `WorkspaceUUID` 检查最新用户权限。选择 Default 不能绕过目标空间的成员关系、撤权或归档检查；合法成员和组织管理员仍可读取有权访问的文件。权限拒绝返回 403，不返回文件内容或成功缓存头；授权查询失败返回 500。
+
 ## 历史角色归并
 
 迁移 `00073_simplify_roles.sql` 在一个事务内归并用户、邀请和工作区成员角色，并收紧三张表的 CHECK 约束。旧组织 `developer`、`claude_code_user`、`billing` 全部变为 `user`；旧工作区开发者、受限开发者和账单角色全部变为 `workspace_user`；管理员保持原值。包含已删除记录与被忽略的 Default 历史成员，身份、资源关联、时间戳和删除状态保持原样。
@@ -36,6 +38,7 @@ Workbench Prompt 路由按 URL 中的工作区及已存储 Prompt 的 `Workspace
 - `TestWorkspaceAuthorizationInheritance`：Default、普通成员授权、成员管理、历史记录、批量查询与 Key 边界。
 - `TestWorkspaceMemberMutationObservesCommittedRevocation`：成员变更与组织撤权事务。
 - `TestWorkspaceMemoryReadsRejectOtherWorkspace`：真实资源跨空间拒绝。
+- `TestFilesPlatform`：通过 Default 请求私有文件，未加入、用户及工作区管理员撤权、目标空间归档均拒绝；合法两种空间角色、组织管理员和 Default 继承访问正常，预览/缩略图内容与清理保持正确。
 - `TestWorkbenchPromptWorkspacePermissions`：Prompt 资源跨空间、撤权与归档拒绝，授权成员正常读写。
 - `TestWorkbenchAttachmentPermissions`：用户可上传附件和访问开发资源，未授权工作区拒绝上传。
 - `TestArchivedWorkspaceAdminRequests`：已归档空间的更新与成员读取均 403。

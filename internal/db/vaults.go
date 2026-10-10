@@ -243,6 +243,17 @@ func (d *DB) UpdateVaultCredential(ctx context.Context, workspaceUUID, vaultExte
 	return VaultCredential{}, ErrNotFound
 }
 
+// ClearVaultCredentialSecret invalidates only the envelope used for an exchange.
+// A concurrent rename is retained; a newly authorized envelope is never cleared.
+// Zero matched rows is an idempotent success (already cleared or replaced).
+func (d *DB) ClearVaultCredentialSecret(ctx context.Context, expected VaultCredential) error {
+	if err := requireCompleteSecretEnvelope(expected.SecretEnvelope); err != nil {
+		return err
+	}
+	return NewVaultCredentialMapper(d.mapperDB).ClearSecretIfMatches(ctx,
+		vaultCredentialUpdateParams(expected.WorkspaceUUID, expected.VaultExternalID, expected.ExternalID, expected))
+}
+
 func (d *DB) ArchiveVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (VaultCredential, error) {
 	mapper := NewVaultCredentialMapper(d.mapperDB)
 	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, vaultExternalID, credentialExternalID)

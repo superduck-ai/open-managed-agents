@@ -78,6 +78,14 @@ const (
 	legacyTableExistsQuery = `select to_regclass($1) is not null`
 )
 
+func OpenExisting(ctx context.Context, cfg config.Config, logger *slog.Logger) (*DB, error) {
+	pool, err := openPool(ctx, cfg.Database.URL)
+	if err != nil {
+		return nil, err
+	}
+	return newDB(pool, logger), nil
+}
+
 func Open(ctx context.Context, cfg config.Config, logger *slog.Logger) (*DB, error) {
 	pool, err := openPool(ctx, cfg.Database.URL)
 	if err == nil {

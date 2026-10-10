@@ -409,6 +409,10 @@ func TestRefreshMCPOAuthCredentialPersistsExchangeAfterRenameCASConflict(t *test
 	if saved == nil || saved.DisplayName != "renamed" {
 		t.Fatalf("saved display_name = %+v, want renamed", saved)
 	}
+	_, persistedSecret, err := injector.openMCPOAuthMaterial(t.Context(), *saved)
+	if err != nil || persistedSecret.AccessToken != "fresh-access" {
+		t.Fatalf("CAS retry did not persist usable exchanged token: %v", err)
+	}
 	if saved.SecretVersion != renamed.SecretVersion {
 		t.Fatalf("persisted SecretVersion = %d, want %d", saved.SecretVersion, renamed.SecretVersion)
 	}

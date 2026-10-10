@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
+	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -126,9 +128,9 @@ func sessionBudgetAmount(session db.Session) (int64, bool) {
 // reaches its cap, marks the cap reached and emits the CMA budget_reached
 // event sequence: session.usage immediately followed by session.status_idle
 // with stop_reason budget_reached.
-func (h *Handler) enforceBudgetAfterEvents(ctx context.Context, session db.Session, events []db.SessionEvent) {
+func (h *Handler) enforceBudgetAfterEvents(ctx context.Context, session db.Session, events []db.SessionEvent) error {
 	if h == nil || len(events) == 0 {
-		return
+		return nil
 	}
 	interesting := false
 	for _, event := range events {
@@ -138,46 +140,36 @@ func (h *Handler) enforceBudgetAfterEvents(ctx context.Context, session db.Sessi
 		}
 	}
 	if !interesting {
-		return
+		return nil
 	}
 	totals, err := h.db.SumSessionUsageTotals(ctx, session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
-		h.logger.ErrorContext(ctx, "sum session usage", "session_id", session.ExternalID, "error", err)
-		return
+		return fmt.Errorf("sum session usage: %w", err)
 	}
 	usage := sessionUsageJSON(totals, session.Budget)
 	if err := h.db.SetSessionUsage(ctx, session.WorkspaceUUID, session.ExternalID, usage); err != nil {
-		h.logger.ErrorContext(ctx, "set session usage", "session_id", session.ExternalID, "error", err)
+		return fmt.Errorf("set session usage: %w", err)
 	}
 	budgetAmount, budgeted := sessionBudgetAmount(session)
 	if !budgeted || session.BudgetReachedAt != nil {
-		return
+		return nil
 	}
 	if billing.TotalListCostCents(totals.ListCostCents, totals.WebSearchRequests, totals.ActiveSeconds) < budgetAmount {
-		return
+		return nil
 	}
 	now := time.Now().UTC()
-	reached, err := h.db.MarkSessionBudgetReached(ctx, session.WorkspaceUUID, session.ExternalID, now)
-	if err != nil {
-		h.logger.ErrorContext(ctx, "mark session budget reached", "session_id", session.ExternalID, "error", err)
-		return
-	}
-	if !reached {
-		return
-	}
-	// Distinct timestamps guarantee usage sorts strictly before the idle event;
-	// same-timestamp ordering is not guaranteed (uuid tie-break).
 	usageAt := now
 	idleAt := now.Add(time.Microsecond)
 	usageEvent := h.sessionUsageEvent(session, usage, usageAt)
 	idleEvent := h.budgetReachedIdleEvent(session, idleAt)
-	created, err := h.eventPayloads.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, []db.SessionEvent{usageEvent, idleEvent}, nil)
+	created, err := h.eventPayloads.AppendSessionBudgetReachedEvents(ctx, session.WorkspaceUUID, session.ExternalID, []db.SessionEvent{usageEvent, idleEvent}, db.SessionBudgetTransition{Budget: session.Budget, ReachedAt: now})
 	if err != nil {
-		h.logger.ErrorContext(ctx, "append budget reached events", "session_id", session.ExternalID, "error", err)
-		return
+		return fmt.Errorf("append budget reached events: %w", err)
 	}
 	h.codeSessions.PurgeWorkerEvents(ctx, created.RetiredCodeSessionIDs)
 	h.publishSessionEvents(ctx, created.Events)
+	h.enqueueWebhooksForSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, created.Events)
+	return nil
 }
 
 // sessionUsageEvent builds the session.usage snapshot event.
@@ -187,7 +179,7 @@ func (h *Handler) sessionUsageEvent(session db.Session, usage json.RawMessage, n
 		"id":           eventID,
 		"type":         "session.usage",
 		"usage":        json.RawMessage(usage),
-		"budget":       budgetJSONOrNull(session.Budget),
+		"budget":       jsonx.Default(session.Budget, "null"),
 		"created_at":   httpapi.FormatTime(now),
 		"processed_at": now.Format(time.RFC3339),
 	})
@@ -234,11 +226,4 @@ func (h *Handler) budgetReachedIdleEvent(session db.Session, now time.Time) db.S
 		ProcessedAt:       now,
 		CreatedAt:         now,
 	}
-}
-
-func budgetJSONOrNull(budget json.RawMessage) json.RawMessage {
-	if len(budget) == 0 {
-		return json.RawMessage("null")
-	}
-	return budget
 }

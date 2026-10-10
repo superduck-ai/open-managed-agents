@@ -54,6 +54,7 @@ import {
 import { CredentialMcpServerField } from './credential-mcp-server-field';
 import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActions } from './dialog-components';
 import { BudgetField } from './budget-field';
+import { entityBudgetUsdInput } from './budget';
 import { DeploymentFormFields } from './deployment-form-fields';
 import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
 import { EnvironmentEntityDialog } from './environment-dialog';
@@ -957,10 +958,12 @@ function GenericManagedEntityDialog({
                       workspaceId={workspaceId}
                       memoryStores={memoryStores}
                     />
-                    <BudgetField
-                      values={values}
-                      onChange={(patch) => setValues((current) => ({ ...current, ...patch }))}
-                    />
+                    {!entity || entityBudgetUsdInput(entity) ? (
+                      <BudgetField
+                        values={values}
+                        onChange={(patch) => setValues((current) => ({ ...current, ...patch }))}
+                      />
+                    ) : null}
                   </>
                 ) : null}
               </>

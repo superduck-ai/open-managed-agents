@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -304,11 +305,6 @@ func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID
 func (d *DB) SetSessionUsage(ctx context.Context, workspaceUUID, externalID string, usage json.RawMessage) error {
 	_, err := NewSessionMapper(d.mapperDB).SetUsage(ctx, workspaceUUID, externalID, agentJSONArg(usage))
 	return err
-}
-
-func (d *DB) MarkSessionBudgetReached(ctx context.Context, workspaceUUID, externalID string, reachedAt time.Time) (bool, error) {
-	updated, err := NewSessionMapper(d.mapperDB).SetBudgetReached(ctx, workspaceUUID, externalID, reachedAt)
-	return updated > 0, err
 }
 
 func (d *DB) PatchSessionMetadata(ctx context.Context, workspaceUUID string, externalID string, patch json.RawMessage) (Session, error) {
@@ -635,6 +631,19 @@ func (d *DB) AppendSessionEvents(
 	events []SessionEvent,
 	outcomeEvaluations json.RawMessage,
 ) (SessionEventChanges, error) {
+	return d.appendSessionEvents(ctx, workspaceUUID, sessionExternalID, events, outcomeEvaluations, nil)
+}
+
+type SessionBudgetTransition struct {
+	Budget    json.RawMessage
+	ReachedAt time.Time
+}
+
+func (d *DB) AppendSessionBudgetReachedEvents(ctx context.Context, workspaceUUID, sessionID string, events []SessionEvent, transition SessionBudgetTransition) (SessionEventChanges, error) {
+	return d.appendSessionEvents(ctx, workspaceUUID, sessionID, events, nil, &transition)
+}
+
+func (d *DB) appendSessionEvents(ctx context.Context, workspaceUUID, sessionExternalID string, events []SessionEvent, outcomeEvaluations json.RawMessage, transition *SessionBudgetTransition) (SessionEventChanges, error) {
 	var changes SessionEventChanges
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
@@ -644,6 +653,14 @@ func (d *DB) AppendSessionEvents(
 		}
 		if session.ArchivedAt != nil {
 			return ErrInvalidState
+		}
+		if transition != nil {
+			if len(session.Budget) == 0 || session.BudgetReachedAt != nil || !bytes.Equal(session.Budget, transition.Budget) {
+				return nil
+			}
+			if _, txErr := sessionMapper.SetBudgetReached(ctx, workspaceUUID, sessionExternalID, transition.ReachedAt); txErr != nil {
+				return txErr
+			}
 		}
 		result, txErr := insertSessionEventsTx(ctx, executor, session, events)
 		if txErr != nil {

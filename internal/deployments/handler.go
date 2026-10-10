@@ -1187,7 +1187,7 @@ func responseFromDeployment(deployment db.Deployment, now time.Time) (deployment
 		ID:            deployment.ExternalID,
 		Agent:         agentReference(deployment.AgentExternalID, deployment.AgentVersion),
 		ArchivedAt:    httpapi.OptionalTime(deployment.ArchivedAt),
-		Budget:        deploymentBudgetResponse(deployment.Budget),
+		Budget:        jsonx.Default(deployment.Budget, "null"),
 		CreatedAt:     httpapi.FormatTime(deployment.CreatedAt),
 		Description:   description,
 		EnvironmentID: deployment.EnvironmentExternalID,
@@ -1706,11 +1706,4 @@ func (h *Handler) deploymentBudgetPatch(current, raw, snapshot json.RawMessage) 
 		return nil, fmt.Errorf("budget requires models with a list price; no list price configured for: %s", strings.Join(unpriced, ", "))
 	}
 	return budget, nil
-}
-
-func deploymentBudgetResponse(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 {
-		return json.RawMessage("null")
-	}
-	return raw
 }

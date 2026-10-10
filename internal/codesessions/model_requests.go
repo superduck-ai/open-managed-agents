@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 )
@@ -25,11 +26,17 @@ type ModelRequest struct {
 
 // ModelRequestUsage is cumulative within one provider response, never a turn total.
 type ModelRequestUsage struct {
-	CacheCreation            *ModelRequestCacheUsage `json:"cache_creation,omitzero"`
-	InputTokens              *int64                  `json:"input_tokens,omitzero"`
-	OutputTokens             *int64                  `json:"output_tokens,omitzero"`
-	CacheCreationInputTokens *int64                  `json:"cache_creation_input_tokens,omitzero"`
-	CacheReadInputTokens     *int64                  `json:"cache_read_input_tokens,omitzero"`
+	ServerToolUse            *ModelRequestServerToolUsage `json:"server_tool_use,omitzero"`
+	CacheCreation            *ModelRequestCacheUsage      `json:"cache_creation,omitzero"`
+	InputTokens              *int64                       `json:"input_tokens,omitzero"`
+	OutputTokens             *int64                       `json:"output_tokens,omitzero"`
+	CacheCreationInputTokens *int64                       `json:"cache_creation_input_tokens,omitzero"`
+	CacheReadInputTokens     *int64                       `json:"cache_read_input_tokens,omitzero"`
+}
+
+type ModelRequestServerToolUsage struct {
+	WebSearchRequests *int64 `json:"web_search_requests,omitzero"`
+	WebFetchRequests  *int64 `json:"web_fetch_requests,omitzero"`
 }
 
 type ModelRequestCacheUsage struct {
@@ -253,13 +260,13 @@ func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.Cod
 }
 
 func (s *Service) modelRequestBilling(model string, usage ModelRequestUsage) map[string]string {
-	counters := map[string]any{}
-	for key, value := range map[string]*int64{
-		"input_tokens": usage.InputTokens, "output_tokens": usage.OutputTokens,
-		"cache_read_input_tokens": usage.CacheReadInputTokens, "cache_creation_input_tokens": usage.CacheCreationInputTokens,
+	counters := billing.TokenUsage{}
+	for _, field := range []struct{ target, value *int64 }{
+		{&counters.InputTokens, usage.InputTokens}, {&counters.OutputTokens, usage.OutputTokens},
+		{&counters.CacheReadInputTokens, usage.CacheReadInputTokens}, {&counters.CacheCreationInputTokens, usage.CacheCreationInputTokens},
 	} {
-		if value != nil {
-			counters[key] = float64(*value)
+		if field.value != nil {
+			*field.target = *field.value
 		}
 	}
 	cents, priced := s.billing.ModelRequestCents(model, counters)

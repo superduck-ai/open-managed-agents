@@ -12,6 +12,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -498,15 +499,17 @@ func (h *Handler) responseFromSession(r *http.Request, session db.Session, refre
 	}
 	usage := httpapi.RawOr(session.Usage, `{}`)
 	if refreshUsage {
-		if totals, err := h.db.SumSessionUsageTotals(r.Context(), session.WorkspaceUUID, session.ExternalID); err == nil {
-			usage = sessionUsageJSON(totals, session.Budget)
+		totals, err := h.db.SumSessionUsageTotals(r.Context(), session.WorkspaceUUID, session.ExternalID)
+		if err != nil {
+			return sessionResponse{}, fmt.Errorf("sum session usage: %w", err)
 		}
+		usage = sessionUsageJSON(totals, session.Budget)
 	}
 	return sessionResponse{
 		ID:                 session.ExternalID,
 		Agent:              httpapi.RawOr(session.AgentSnapshot, `{}`),
 		ArchivedAt:         httpapi.OptionalTime(session.ArchivedAt),
-		Budget:             budgetJSONOrNull(session.Budget),
+		Budget:             jsonx.Default(session.Budget, "null"),
 		CreatedAt:          httpapi.FormatTime(session.CreatedAt),
 		DeploymentID:       session.DeploymentID,
 		EnvironmentID:      session.EnvironmentExternalID,

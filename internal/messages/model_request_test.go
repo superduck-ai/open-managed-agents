@@ -214,3 +214,26 @@ func TestResponseObservationLimitsThinkingContent(t *testing.T) {
 		t.Fatalf("thinking observation exceeded bound: error=%q bytes=%d", observation.result.ErrorType, observation.blocks[0].thinkingBuffer.Len())
 	}
 }
+
+func TestResponseObservationPreservesServerToolUsage(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		body := `{"id":"msg_search","type":"message","usage":{"server_tool_use":{"web_search_requests":2,"web_fetch_requests":1}},"content":[{"type":"text","text":"结果"}]}`
+		if streaming {
+			body = "data: {\"type\":\"message_start\",\"message\":" + body + "}\n\n" +
+				`data: {"type":"message_delta","usage":{"output_tokens":3,"server_tool_use":{"web_search_requests":4}}}` + "\n\n" +
+				`data: {"type":"message_delta","usage":{"output_tokens":5}}` + "\n\n" +
+				`data: {"type":"message_stop"}` + "\n\n"
+		}
+		observation := &responseObservation{streaming: streaming, request: &codesessions.ModelRequest{CodeSessionID: "cse_search"}}
+		_, _ = observation.Write([]byte(body))
+		observation.finish()
+		want := int64(2)
+		if streaming {
+			want = 4
+		}
+		usage := observation.result.Usage.ServerToolUse
+		if observation.result.ErrorType != "" || usage == nil || usage.WebSearchRequests == nil || *usage.WebSearchRequests != want || usage.WebFetchRequests == nil || *usage.WebFetchRequests != 1 {
+			t.Fatalf("搜索用量丢失或累计值错误：%+v，streaming=%v", observation.result, streaming)
+		}
+	}
+}

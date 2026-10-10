@@ -116,42 +116,30 @@ func TestCalculatorModelRequestCents(t *testing.T) {
 	}
 
 	// 1M input + 1M output tokens: 3.0 + 15.0 = 18.00 USD = 1800 cents.
-	snake := map[string]any{"input_tokens": 1_000_000.0, "output_tokens": 1_000_000.0}
-	if cents, ok := calculator.ModelRequestCents("claude-sonnet-4-5-20250929", snake); !ok || cents != 1800 {
+	usage := TokenUsage{InputTokens: 1_000_000, OutputTokens: 1_000_000}
+	if cents, ok := calculator.ModelRequestCents("claude-sonnet-4-5-20250929", usage); !ok || cents != 1800 {
 		t.Fatalf("ModelRequestCents(snake) = (%d, %v), want (1800, true)", cents, ok)
 	}
 
 	// Anthropic usage reports non-cache input separately: input_tokens excludes
 	// cache reads/writes, so each counter is billed at its own rate.
-	withCache := map[string]any{
-		"input_tokens":                1_000_000.0,
-		"output_tokens":               1_000_000.0,
-		"cache_read_input_tokens":     500_000.0,
-		"cache_creation_input_tokens": 500_000.0,
+	withCache := TokenUsage{
+		InputTokens:              1_000_000.0,
+		OutputTokens:             1_000_000.0,
+		CacheReadInputTokens:     500_000.0,
+		CacheCreationInputTokens: 500_000.0,
 	}
 	// input 3.00 + output 15.00 + cache read 0.15 + cache write 1.875 = 20.025
-	// USD → 2002 cents after float64 rounding.
-	if cents, ok := calculator.ModelRequestCents("claude-sonnet-4-5-20250929", withCache); !ok || cents != 2002 {
-		t.Fatalf("ModelRequestCents(cache) = (%d, %v), want (2002, true)", cents, ok)
+
+	if cents, ok := calculator.ModelRequestCents("claude-sonnet-4-5-20250929", withCache); !ok || cents != 2003 {
+		t.Fatalf("ModelRequestCents(cache) = (%d, %v), want (2003, true)", cents, ok)
 	}
 
-	// camelCase keys from Claude Code modelUsage payloads.
-	camel := map[string]any{"inputTokens": 1_000_000.0, "outputTokens": 1_000_000.0}
-	if cents, ok := calculator.ModelRequestCents("claude-sonnet-4-5-20250929", camel); !ok || cents != 1800 {
-		t.Fatalf("ModelRequestCents(camel) = (%d, %v), want (1800, true)", cents, ok)
-	}
-
-	// Per-model map shape: {model: {counters}}.
-	perModel := map[string]any{"claude-sonnet-4-5-20250929": map[string]any{"input_tokens": 1_000_000.0, "output_tokens": 1_000_000.0}}
-	if cents, ok := calculator.ModelRequestCents("claude-sonnet-4-5-20250929", perModel); !ok || cents != 1800 {
-		t.Fatalf("ModelRequestCents(per-model) = (%d, %v), want (1800, true)", cents, ok)
-	}
-
-	if _, ok := calculator.ModelRequestCents("unlisted-model", snake); ok {
+	if _, ok := calculator.ModelRequestCents("unlisted-model", usage); ok {
 		t.Fatal("ModelRequestCents(unpriced) ok = true, want false")
 	}
 	var nilCalculator *Calculator
-	if _, ok := nilCalculator.ModelRequestCents("claude-sonnet-4-5-20250929", snake); ok {
+	if _, ok := nilCalculator.ModelRequestCents("claude-sonnet-4-5-20250929", usage); ok {
 		t.Fatal("nil calculator ok = true, want false")
 	}
 }
@@ -171,5 +159,44 @@ func TestTotalListCostCents(t *testing.T) {
 	want := int64(1800 + 5*WebSearchCentsPerRequest + 4)
 	if got != want {
 		t.Fatalf("TotalListCostCents = %d, want %d", got, want)
+	}
+}
+
+func TestModelRequestCentsDecimalRounding(t *testing.T) {
+	calculator := NewCalculator(map[string]ModelPrice{"priced": {InputPerMTok: 1}})
+	for _, test := range []struct {
+		tokens int64
+		want   int64
+	}{
+		{4999, 0}, {5000, 1}, {5001, 1}, {20024999, 2002}, {20025000, 2003}, {20025001, 2003},
+	} {
+		got, ok := calculator.ModelRequestCents("priced", TokenUsage{InputTokens: test.tokens})
+		if !ok || got != test.want {
+			t.Fatalf("tokens=%v：got=%d，want=%d", test.tokens, got, test.want)
+		}
+	}
+}
+
+func TestSnapshotModelPricing(t *testing.T) {
+	c := NewCalculator(map[string]ModelPrice{"priced": {InputPerMTok: 1}})
+	for _, test := range []struct {
+		raw  string
+		want string
+	}{
+		{`{"model":{"id":"unpriced"}}`, "unpriced"},
+		{`{"model":"unpriced"}`, "unpriced"},
+		{`{"model":{"id":"priced"},"metadata":{"model":"invoice-v2"},"tools":[{"model":"tool-data"}]}`, ""},
+		{`{"model":"priced"}`, ""},
+	} {
+		got := c.UnpricedSnapshotModels(json.RawMessage(test.raw))
+		if test.want == "" {
+			if len(got) != 0 {
+				t.Fatalf("错误识别模型：%v", got)
+			}
+			continue
+		}
+		if len(got) != 1 || got[0] != test.want {
+			t.Fatalf("未定价模型：%v，预期 %s", got, test.want)
+		}
 	}
 }

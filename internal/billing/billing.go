@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -153,11 +154,14 @@ func (c *Calculator) UnpricedModels(models []string) []string {
 	return missing
 }
 
-// ModelRequestCents prices one model request from its usage counters. Token
-// usage may use either camelCase (Claude Code modelUsage) or snake_case keys.
-// The result is rounded to the nearest cent. ok is false when the model has no
-// list price.
-func (c *Calculator) ModelRequestCents(model string, usage any) (cents int64, ok bool) {
+type TokenUsage struct {
+	InputTokens              int64
+	OutputTokens             int64
+	CacheReadInputTokens     int64
+	CacheCreationInputTokens int64
+}
+
+func (c *Calculator) ModelRequestCents(model string, usage TokenUsage) (cents int64, ok bool) {
 	if c == nil {
 		return 0, false
 	}
@@ -165,58 +169,31 @@ func (c *Calculator) ModelRequestCents(model string, usage any) (cents int64, ok
 	if !priced {
 		return 0, false
 	}
-	counters := usageCounters(usage)
-	// Anthropic usage reports non-cache input separately: input_tokens excludes
-	// cache_read_input_tokens and cache_creation_input_tokens, so all three are
-	// billed at their own rates without subtraction.
-	input := counters["inputTokens"] + counters["input_tokens"]
-	output := counters["outputTokens"] + counters["output_tokens"]
-	cacheRead := counters["cacheReadInputTokens"] + counters["cache_read_input_tokens"]
-	cacheWrite := counters["cacheCreationInputTokens"] + counters["cache_creation_input_tokens"]
-	dollars := (input*price.InputPerMTok +
-		output*price.OutputPerMTok +
-		cacheRead*price.CacheReadPerMTok +
-		cacheWrite*price.CacheWritePerMTok) / TokensPerMillion
-	return int64(math.Round(dollars * 100)), true
-}
-
-// usageCounters flattens token counters from the shapes seen in worker result
-// payloads: either a per-model map {model: {counters}} or a flat counter map.
-func usageCounters(usage any) map[string]float64 {
-	counters := map[string]float64{}
-	add := func(object map[string]any) {
-		for key, value := range object {
-			number, ok := value.(float64)
-			if !ok {
-				continue
-			}
-			counters[key] = number
+	total := new(big.Rat)
+	for _, term := range []struct {
+		tokens int64
+		price  float64
+	}{
+		{usage.InputTokens, price.InputPerMTok}, {usage.OutputTokens, price.OutputPerMTok},
+		{usage.CacheReadInputTokens, price.CacheReadPerMTok}, {usage.CacheCreationInputTokens, price.CacheWritePerMTok},
+	} {
+		tokens := new(big.Rat).SetInt64(term.tokens)
+		rate, rateOK := new(big.Rat).SetString(strconv.FormatFloat(term.price, 'f', -1, 64))
+		if !rateOK {
+			return 0, false
 		}
+		total.Add(total, tokens.Mul(tokens, rate))
 	}
-	switch typed := usage.(type) {
-	case map[string]any:
-		if perModel, hasModelEntry := firstObjectEntry(typed); hasModelEntry {
-			add(perModel)
-			return counters
-		}
-		add(typed)
-	case []any:
-		for _, item := range typed {
-			if object, ok := item.(map[string]any); ok {
-				add(object)
-			}
-		}
+	total.Quo(total, big.NewRat(TokensPerMillion, 100))
+	if total.Sign() < 0 {
+		return 0, false
 	}
-	return counters
-}
-
-func firstObjectEntry(object map[string]any) (map[string]any, bool) {
-	for _, value := range object {
-		if nested, ok := value.(map[string]any); ok {
-			return nested, true
-		}
+	total.Add(total, big.NewRat(1, 2))
+	rounded := new(big.Int).Quo(total.Num(), total.Denom())
+	if !rounded.IsInt64() {
+		return 0, false
 	}
-	return nil, false
+	return rounded.Int64(), true
 }
 
 // MeteringCents converts web-search request counts and active seconds into
@@ -232,47 +209,27 @@ func TotalListCostCents(modelCents, webSearchRequests int64, activeSeconds float
 	return modelCents + MeteringCents(webSearchRequests, activeSeconds)
 }
 
-// UnpricedSnapshotModels walks an agent snapshot and returns the sorted subset
-// of model names referenced by "model" fields that have no list price. Used
-// for create/update-time checks so a budget cannot be attached to workloads
-// that would silently accrue no cost.
 func (c *Calculator) UnpricedSnapshotModels(snapshot json.RawMessage) []string {
-	if len(snapshot) == 0 || c == nil {
+	var agent struct {
+		Model json.RawMessage `json:"model"`
+	}
+	if len(snapshot) == 0 || c == nil || json.Unmarshal(snapshot, &agent) != nil {
 		return nil
 	}
-	var tree any
-	if err := json.Unmarshal(snapshot, &tree); err != nil {
-		return nil
-	}
-	seen := map[string]bool{}
-	collectSnapshotModels(tree, seen)
-	if len(seen) == 0 {
-		return nil
-	}
-	models := make([]string, 0, len(seen))
-	for model := range seen {
-		models = append(models, model)
-	}
-	sort.Strings(models)
-	return c.UnpricedModels(models)
-}
-
-func collectSnapshotModels(node any, seen map[string]bool) {
-	switch typed := node.(type) {
-	case map[string]any:
-		for key, value := range typed {
-			if key == "model" {
-				if text, ok := value.(string); ok && text != "" {
-					seen[text] = true
-				}
-			}
-			collectSnapshotModels(value, seen)
+	var modelID string
+	if json.Unmarshal(agent.Model, &modelID) != nil {
+		var model struct {
+			ID string `json:"id"`
 		}
-	case []any:
-		for _, item := range typed {
-			collectSnapshotModels(item, seen)
+		if json.Unmarshal(agent.Model, &model) != nil {
+			return nil
 		}
+		modelID = model.ID
 	}
+	if modelID == "" {
+		return nil
+	}
+	return c.UnpricedModels([]string{modelID})
 }
 
 func normalizeModelName(model string) string {

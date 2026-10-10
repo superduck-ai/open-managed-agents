@@ -1,6 +1,6 @@
 import { afterEach, expect, mock, test } from 'bun:test';
 import { resetTestDom } from '../../../test/setup';
-import type { ReactNode } from 'react';
+import { Profiler, type ReactNode } from 'react';
 import type { EnvironmentApiResponse } from '../types';
 const { act, render, fireEvent, screen, cleanup, waitFor } = await import('@testing-library/react');
 const { RouterContextProvider, createRootRoute, createRouter, createBrowserHistory } =
@@ -161,9 +161,17 @@ test('archived detail explains its read-only state', async () => {
 
 test('search and status filters reset pagination and request only matching pages', async () => {
   const requests: URL[] = [];
+  let commits = 0;
+  let resolveFilter!: () => void;
   globalThis.fetch = mock(async (input: RequestInfo | URL) => {
     const url = new URL(String(input), 'https://oma.duck.ai');
     requests.push(url);
+    // Exercise the pending state after switching filters, not only immediate responses.
+    if (url.searchParams.get('status') === 'all') {
+      await new Promise<void>((resolve) => {
+        resolveFilter = resolve;
+      });
+    }
     const page = url.searchParams.get('page');
     return Response.json({
       data: [{ ...entity, name: page || url.searchParams.get('search') || url.searchParams.get('status') || 'all' }],
@@ -171,14 +179,25 @@ test('search and status filters reset pagination and request only matching pages
     });
   }) as typeof fetch;
   mount(
-    <EnvironmentList
-      workspaceId="default"
-      listHref="/workspaces/default/environments"
-      onPreview={() => {}}
-      onAction={() => {}}
-    />,
+    <Profiler
+      id="environment-list"
+      onRender={() => {
+        // Fail a render loop before it can hang the test runner.
+        if (++commits > 100) throw new Error('Environment list render loop');
+      }}
+    >
+      <EnvironmentList
+        workspaceId="default"
+        listHref="/workspaces/default/environments"
+        onPreview={() => {}}
+        onAction={() => {}}
+      />
+    </Profiler>,
   );
-  await screen.findByRole('link', { name: 'all', exact: true });
+  await screen.findByRole('link', { name: 'active', exact: true });
+  expect(screen.getByRole('button', { name: /Status Active/ })).toBeTruthy();
+  expect(requests[0].searchParams.get('status')).toBe('active');
+  expect(requests[0].searchParams.get('include_archived')).toBe('false');
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
   await screen.findByRole('link', { name: 'c1' });
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
@@ -189,19 +208,23 @@ test('search and status filters reset pagination and request only matching pages
   expect(requests.at(-1)?.searchParams.get('page')).toBeNull();
   expect(requests.filter((url) => url.searchParams.get('search') === 'Needle')).toHaveLength(1);
   fireEvent.change(search, { target: { value: '' } });
-  await screen.findByRole('link', { name: 'all', exact: true });
+  await screen.findByRole('link', { name: 'active', exact: true });
   expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
   await screen.findByRole('link', { name: 'c1' });
+  fireEvent.click(screen.getByRole('button', { name: /Status Active/ }));
+  fireEvent.click(await screen.findByRole('menuitemradio', { name: 'All', exact: true }));
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await act(async () => resolveFilter());
+  await screen.findByRole('link', { name: 'all', exact: true });
+  expect(requests.at(-1)?.searchParams.get('page')).toBeNull();
+  expect(requests.at(-1)?.searchParams.get('include_archived')).toBe('true');
+  expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: /Status All/ }));
   fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Active', exact: true }));
   await screen.findByRole('link', { name: 'active', exact: true });
-  expect(requests.at(-1)?.searchParams.get('page')).toBeNull();
-  expect(requests.at(-1)?.searchParams.get('include_archived')).toBe('false');
-  expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.click(screen.getByRole('button', { name: /Status Active/ }));
-  fireEvent.click(await screen.findByRole('menuitemradio', { name: 'All', exact: true }));
-  await screen.findByRole('link', { name: 'all', exact: true });
   expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
 });
 

@@ -1,12 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
 import { Info, UsersRound } from 'lucide-react';
-import { consoleApi } from '../../shared/api/client';
+import { consoleApi, type ApiError } from '../../shared/api/client';
+import { useAuth } from '../../shared/auth/context';
+import { canManageWorkspaceMembers } from '../../shared/permissions/members';
 import { accountRoleLabel } from '../../shared/permissions/roles';
 import { useI18n } from '../../shared/i18n';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { ButtonLink } from '../../shared/ui/button';
 import { useWorkspace } from '../../shared/workspaces/context';
 import { ConsolePageFrame, DataTable } from '../dashboard/frame';
+import { MembersAccessDenied } from './MembersAccessDenied';
 
 type WorkspaceMember = { user_id: string; workspace_role: string };
 type MemberPage = { data: WorkspaceMember[]; has_more: boolean; last_id: string };
@@ -29,13 +32,15 @@ async function listMembers(workspaceId: string) {
 
 export function WorkspaceMembersPage() {
   const { msg } = useI18n();
+  const { account } = useAuth();
   const { activeWorkspace, orgUuid, isLoading } = useWorkspace();
   const isDefault = activeWorkspace.is_default === true;
   const workspaceId = activeWorkspace.external_id || activeWorkspace.id;
+  const canManage = canManageWorkspaceMembers(account);
   const members = useQuery({
     queryKey: ['workspace-members', orgUuid, workspaceId],
     queryFn: () => listMembers(workspaceId),
-    enabled: !isLoading && Boolean(workspaceId) && !isDefault,
+    enabled: !isLoading && Boolean(workspaceId) && !isDefault && canManage,
     retry: false,
   });
 
@@ -53,11 +58,20 @@ export function WorkspaceMembersPage() {
             </ButtonLink>
           </AlertDescription>
         </Alert>
+      ) : isLoading ? (
+        <p>{msg('common.loading', 'Loading...')}</p>
+      ) : !canManage || (members.error as ApiError | null)?.status === 403 ? (
+        <MembersAccessDenied
+          description={msg(
+            'members.workspaceAccessDeniedDescription',
+            'Only workspace or organization administrators can view and manage workspace members. Contact your administrator.',
+          )}
+        />
       ) : members.error ? (
         <Alert variant="destructive">
           <AlertDescription>{members.error.message}</AlertDescription>
         </Alert>
-      ) : isLoading || members.isPending ? (
+      ) : members.isPending ? (
         <p>{msg('common.loading', 'Loading...')}</p>
       ) : (
         <DataTable

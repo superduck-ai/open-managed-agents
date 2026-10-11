@@ -24,21 +24,6 @@ import {
   type WorkspaceMemberRole,
 } from './workspace-members/api';
 
-function resolveOrganizationName(
-  account:
-    | {
-        memberships?: Array<{ organization?: { uuid?: string; name?: string } }>;
-      }
-    | null
-    | undefined,
-  orgUuid: string | null | undefined,
-): string {
-  return (
-    account?.memberships?.find((membership) => membership.organization?.uuid === orgUuid)?.organization?.name ??
-    'this organization'
-  );
-}
-
 export function WorkspaceMembersPage() {
   const { msg } = useI18n();
   const { account } = useAuth();
@@ -83,7 +68,7 @@ function WorkspaceMembersAccessDenied() {
 
 function WorkspaceMembersAdminPage() {
   const { msg } = useI18n();
-  const { account, csrfToken } = useAuth();
+  const { csrfToken } = useAuth();
   const queryClient = useQueryClient();
   const { activeWorkspace, orgUuid, isLoading } = useWorkspace();
   const workspaceId = activeWorkspace.external_id || activeWorkspace.id;
@@ -92,7 +77,6 @@ function WorkspaceMembersAdminPage() {
   const [sort, setSort] = useState<MemberSort>({ field: 'name', descending: false });
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<WorkspaceMember | null>(null);
-  const organizationName = resolveOrganizationName(account, orgUuid);
 
   const directoryKey = ['console', 'workspace-members', orgUuid, workspaceId] as const;
   const directory = useQuery({
@@ -192,10 +176,14 @@ function WorkspaceMembersAdminPage() {
             mutation.mutate({ operation: 'delete', userId: removing.user_id, role: removing.workspace_role });
         }}
       >
-        {msg('members.removeDialogBody', 'Are you sure you want to remove {email} from {organization}?', {
-          email: removing?.email ?? '',
-          organization: organizationName,
-        })}
+        {msg(
+          'members.removeWorkspaceDialogBody',
+          'Are you sure you want to remove {email} from workspace {workspace}?',
+          {
+            email: removing?.email ?? '',
+            workspace: activeWorkspace.name,
+          },
+        )}
       </MemberRemovalDialog>
     </ConsolePageFrame>
   );

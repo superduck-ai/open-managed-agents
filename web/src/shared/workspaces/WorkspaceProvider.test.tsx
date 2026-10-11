@@ -4,7 +4,7 @@ import { resetTestDom } from '../../test/setup';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthContext, useAuth, type AuthContextValue } from '../auth/context';
 import { useOrganizations, type OrganizationContextValue } from '../organizations/context';
-import { useWorkspace } from './context';
+import { useWorkspace, type WorkspaceContextValue } from './context';
 import { WorkspaceProvider } from './WorkspaceProvider';
 import { getConsoleRequestContext, reportApiAuthFailure, setConsoleRequestContext } from '../api/client';
 import type { AuthAccount } from '../auth/api';
@@ -22,6 +22,7 @@ import { workspaceSwitchPath } from './presentation';
 const { act, cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
 const originalFetch = globalThis.fetch;
 let organizations: OrganizationContextValue;
+let workspaceContext: WorkspaceContextValue;
 const account: AuthAccount = {
   uuid: 'account',
   email_address: 'a@example.com',
@@ -47,6 +48,7 @@ afterEach(() => {
 function Probe({ dirty = false }: { dirty?: boolean }) {
   organizations = useOrganizations()!;
   const workspace = useWorkspace();
+  workspaceContext = workspace;
   const auth = useAuth();
   useScopeUnsavedChanges(dirty);
   const confirmation = useScopeConfirmation();
@@ -494,6 +496,39 @@ test('显式空权限不回退管理员身份，缺失字段才兼容角色', ()
   expect(canManageMembers({ ...account, permissions: ['workspaces:view'] })).toBe(false);
   expect(canManageMembers({ ...account, permissions: ['members:manage'] })).toBe(true);
   expect(canManageMembers(account)).toBe(true);
+});
+
+test('创建工作区从服务端列表安装有效权限，归档当前空间后回退默认空间', async () => {
+  let created = false;
+  let archived = false;
+  globalThis.fetch = mock(async (_input, init) => {
+    if (init?.method === 'POST') {
+      created = true;
+      return Response.json({ id: 'ws-created', type: 'workspace', name: 'Created' });
+    }
+    return Response.json([
+      { ...workspaces('a')[0], effective_role: 'workspace_admin' },
+      ...(created && !archived
+        ? [{ id: 'ws-created', type: 'workspace', name: 'Created', effective_role: 'workspace_admin' }]
+        : []),
+    ]);
+  }) as typeof fetch;
+  mount();
+  await waitFor(() => expect(workspaceContext.canManageWorkspaces).toBe(true));
+  await act(async () => {
+    await workspaceContext.createWorkspace({
+      name: 'Created',
+      display_color: '#9B87F5',
+      data_residency: { workspace_geo: 'us' },
+    });
+  });
+  expect(workspaceContext.activeWorkspaceId).toBe('ws-created');
+  expect(workspaceContext.canManageWorkspaces).toBe(true);
+  archived = true;
+  await act(async () => workspaceContext.refreshWorkspaces());
+  expect(workspaceContext.activeWorkspaceId).toBe('ws-a');
+  expect(getConsoleRequestContext().workspaceId).toBe('ws-a');
+  expect(workspaceContext.canManageWorkspaces).toBe(true);
 });
 
 for (const fail of [true, false]) {

@@ -2432,6 +2432,7 @@
   "members.cancel": "取消",
   "members.removeDialogTitle": "移除成员？",
   "members.removeDialogBody": "确定要将 {email} 从 {organization} 移除吗？",
+  "members.removeWorkspaceDialogBody": "确定要将 {email} 从工作区 {workspace} 移除吗？",
   "members.addDialog.description": "选择当前组织中的成员并分配工作区角色。",
   "members.addDialog.searchOrganizationMembers": "搜索组织成员",
   "members.addDialog.organizationMember": "组织成员",

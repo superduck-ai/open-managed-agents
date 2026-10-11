@@ -2432,6 +2432,7 @@
   "members.cancel": "Cancel",
   "members.removeDialogTitle": "Remove member?",
   "members.removeDialogBody": "Are you sure you want to remove {email} from {organization}?",
+  "members.removeWorkspaceDialogBody": "Are you sure you want to remove {email} from workspace {workspace}?",
   "members.addDialog.description": "Select an active organization member and assign a workspace role.",
   "members.addDialog.searchOrganizationMembers": "Search organization members",
   "members.addDialog.organizationMember": "Organization member",

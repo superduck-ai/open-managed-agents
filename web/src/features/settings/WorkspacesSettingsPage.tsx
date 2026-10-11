@@ -1,11 +1,12 @@
 import { AlertCircle, Box, Info, KeyRound, MoreVertical, Plus, Search, Settings, Trash2, Webhook } from 'lucide-react';
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useI18n } from '../../shared/i18n';
 import { useFormatters } from '../../shared/i18n/formatters';
 import { CreateWorkspaceDialog } from '../../shared/workspaces/CreateWorkspaceDialog';
 import { ArchiveWorkspaceDialog } from '../../shared/workspaces/ArchiveWorkspaceDialog';
 import { EditWorkspaceDialog } from '../../shared/workspaces/EditWorkspaceDialog';
-import { archiveConsoleWorkspace, updateConsoleWorkspace } from '../../shared/workspaces/api';
+import { archiveConsoleWorkspace, listConsoleWorkspaces, updateConsoleWorkspace } from '../../shared/workspaces/api';
 import {
   buildCreateWorkspaceInput,
   workspaceApiKeysPath,
@@ -46,14 +47,22 @@ export function WorkspacesSettingsPage() {
     workspaces,
     activeWorkspaceId,
     createWorkspace,
-    error,
-    isLoading,
+    error: workspaceError,
+    isLoading: workspaceLoading,
     refreshWorkspaces,
   } = useWorkspace();
   const [createOpen, setCreateOpen] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'active' | 'archived'>('active');
+  const archivedQuery = useQuery({
+    queryKey: ['console', 'archived-workspaces', orgUuid],
+    queryFn: () => listConsoleWorkspaces(orgUuid ?? '', true),
+    enabled: Boolean(orgUuid) && !workspaceLoading && statusFilter === 'archived',
+    retry: false,
+  });
+  const error = workspaceError ?? (statusFilter === 'archived' ? archivedQuery.error : null);
+  const isLoading = workspaceLoading || (statusFilter === 'archived' && archivedQuery.isLoading);
   const [editingWorkspace, setEditingWorkspace] = useState<Workspace | null>(null);
   const [archivingWorkspace, setArchivingWorkspace] = useState<Workspace | null>(null);
   const [archivePending, setArchivePending] = useState(false);
@@ -87,6 +96,7 @@ export function WorkspacesSettingsPage() {
       await archiveConsoleWorkspace(orgUuid, archivingWorkspace.id);
       setArchivingWorkspace(null);
       await refreshWorkspaces();
+      await archivedQuery.refetch();
       toast.success(msg('workspace.archive.success', 'Workspace archived.'));
     } catch (archiveError) {
       setArchiveError(
@@ -106,13 +116,18 @@ export function WorkspacesSettingsPage() {
     setRetrying(true);
     try {
       await refreshWorkspaces();
+      if (statusFilter === 'archived') await archivedQuery.refetch();
     } finally {
       setRetrying(false);
     }
   };
 
   const keyword = search.trim().toLowerCase();
-  const visibleWorkspaces = filterWorkspaces(workspaces, keyword, statusFilter);
+  const visibleWorkspaces = filterWorkspaces(
+    statusFilter === 'archived' ? (archivedQuery.data ?? []) : workspaces,
+    keyword,
+    statusFilter,
+  );
 
   return (
     <TooltipProvider>
@@ -357,7 +372,7 @@ export function WorkspacesSettingsPage() {
                                 <MoreVertical className="size-4" aria-hidden />
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="w-48">
-                                {canManageWorkspaces && !workspace.is_default ? (
+                                {canManageWorkspaces && !workspace.is_default && !workspace.archived_at ? (
                                   <DropdownMenuItem onClick={() => setEditingWorkspace(workspace)}>
                                     <Settings className="size-4" aria-hidden />
                                     <span>{msg('settings.workspaces.editDetails', 'Edit details')}</span>
@@ -375,7 +390,7 @@ export function WorkspacesSettingsPage() {
                                   <Webhook className="size-4" aria-hidden />
                                   <span>{msg('nav.webhooks', 'Webhooks')}</span>
                                 </DropdownMenuItem>
-                                {canManageWorkspaces && !workspace.is_default ? (
+                                {canManageWorkspaces && !workspace.is_default && !workspace.archived_at ? (
                                   <DropdownMenuItem
                                     variant="destructive"
                                     onClick={() => setArchivingWorkspace(workspace)}

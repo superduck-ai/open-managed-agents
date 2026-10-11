@@ -93,7 +93,7 @@ func TestReadinessReportsMissingDependencies(t *testing.T) {
 	}
 }
 
-func TestMCPServerRoutesRequireCSRF(t *testing.T) {
+func TestConsoleRoutesRequireCSRF(t *testing.T) {
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -148,6 +148,14 @@ func TestMCPServerRoutesRequireCSRF(t *testing.T) {
 		{http.MethodPost, path},
 		{http.MethodPost, path + "/mcp_missing"},
 		{http.MethodDelete, path + "/mcp_missing"},
+		{http.MethodPost, "/api/console/organizations/" + organizationUUID + "/members/user_missing"},
+		{http.MethodDelete, "/api/console/organizations/" + organizationUUID + "/members/user_missing"},
+		{http.MethodPost, "/api/console/organizations/" + organizationUUID + "/workspaces/default/members"},
+		{http.MethodPost, "/api/console/organizations/" + organizationUUID + "/workspaces/default/members/user_missing"},
+		{http.MethodDelete, "/api/console/organizations/" + organizationUUID + "/workspaces/default/members/user_missing"},
+		{http.MethodPost, "/api/console/organizations/" + organizationUUID + "/workspaces"},
+		{http.MethodPatch, "/api/console/organizations/" + organizationUUID + "/workspaces/default"},
+		{http.MethodPost, "/api/console/organizations/" + organizationUUID + "/workspaces/default/archive"},
 	} {
 		for _, token := range []string{"", "invalid", auth.PlatformCSRFToken("another-session")} {
 			t.Run(route.method+route.path+"/"+token, func(t *testing.T) {

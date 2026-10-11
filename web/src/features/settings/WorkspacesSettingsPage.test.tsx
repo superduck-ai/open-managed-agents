@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { SettingsShell } from '../../app/layout/ConsoleLayout';
 import { I18nProvider } from '../../shared/i18n';
@@ -10,9 +11,11 @@ import { filterWorkspaces, WorkspacesSettingsPage } from './WorkspacesSettingsPa
 
 const testingLibrary = await import('@testing-library/react');
 const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
+const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   cleanup();
+  globalThis.fetch = originalFetch;
 });
 
 describe('Workspaces settings page', () => {
@@ -99,13 +102,17 @@ describe('Workspaces settings page', () => {
       api_keys_count: 0,
       archived_at: '2026-01-01T00:00:00Z',
     };
+    const fetchMock = mock(async (_input: string | URL | Request) =>
+      Response.json([defaultWorkspace, fooWorkspace, archivedWorkspace]),
+    );
+    globalThis.fetch = fetchMock as typeof fetch;
 
     renderWorkspacesSettings({
       withSettingsShell: false,
       workspaceValue: {
         orgUuid: 'org_test',
         canManageWorkspaces: true,
-        workspaces: [defaultWorkspace, fooWorkspace, archivedWorkspace],
+        workspaces: [defaultWorkspace, fooWorkspace],
         activeWorkspace: fooWorkspace,
         activeWorkspaceId: fooWorkspace.id,
         isLoading: false,
@@ -125,6 +132,15 @@ describe('Workspaces settings page', () => {
     expect(within(table).queryByText('Default')).toBeNull();
 
     fireEvent.change(searchBox, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status' }));
+    const archivedOption = await screen.findByRole('option', { name: 'Archived' });
+    fireEvent.pointerDown(archivedOption);
+    fireEvent.mouseDown(archivedOption);
+    fireEvent.pointerUp(archivedOption);
+    fireEvent.mouseUp(archivedOption);
+    fireEvent.click(archivedOption);
+    expect(await screen.findByText('legacy')).toBeTruthy();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('include_archived=true');
     expect(
       filterWorkspaces([defaultWorkspace, fooWorkspace, archivedWorkspace], '', 'active').map(
         (workspace) => workspace.name,
@@ -212,5 +228,10 @@ function renderWorkspacesSettings({
 }
 
 function SettingsHarness({ children, workspaceValue }: { children: ReactNode; workspaceValue: WorkspaceContextValue }) {
-  return <WorkspaceContext.Provider value={workspaceValue}>{children}</WorkspaceContext.Provider>;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return (
+    <QueryClientProvider client={client}>
+      <WorkspaceContext.Provider value={workspaceValue}>{children}</WorkspaceContext.Provider>
+    </QueryClientProvider>
+  );
 }

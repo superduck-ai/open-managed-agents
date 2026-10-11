@@ -69,10 +69,13 @@ export const defaultWorkspace: Workspace = {
   },
 };
 
-export function listConsoleWorkspaces(orgUuid: string) {
-  return consoleApi<Workspace[]>(`/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces`, {
-    context: { organizationUuid: orgUuid },
-  }).then((workspaces) =>
+export function listConsoleWorkspaces(orgUuid: string, includeArchived = false) {
+  return consoleApi<Workspace[]>(
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces${includeArchived ? '?include_archived=true' : ''}`,
+    {
+      context: { organizationUuid: orgUuid },
+    },
+  ).then((workspaces) =>
     workspaces.map((workspace) => (workspace.is_default ? { ...workspace, name: defaultWorkspace.name } : workspace)),
   );
 }

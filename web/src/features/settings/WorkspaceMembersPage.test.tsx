@@ -242,3 +242,13 @@ test('无可添加组织成员时禁用提交', async () => {
   await screen.findByText('No eligible organization members found.');
   expect((screen.getAllByRole('button', { name: 'Add to Workspace' }).at(-1) as HTMLButtonElement).disabled).toBe(true);
 });
+
+test('移除确认明确显示目标工作区名称', async () => {
+  globalThis.fetch = mock(async () => Response.json(directoryResponse())) as typeof fetch;
+  renderMembers({ ...defaultWorkspace, id: 'wrkspc_other', name: 'Project Alpha', is_default: false });
+  fireEvent.click(await screen.findByRole('button', { name: 'More actions for Member' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove member' }));
+  expect(
+    await screen.findByText('Are you sure you want to remove member@example.com from workspace Project Alpha?'),
+  ).toBeTruthy();
+});

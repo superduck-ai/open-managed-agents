@@ -5,9 +5,12 @@ export type Workspace = {
   effective_role?: string;
   role_source?: string;
   external_id?: string;
+  archived_at?: string | null;
   id: string;
   type: 'workspace';
   name: string;
+  created_at?: string;
+  api_keys_count?: number;
   display_color?: string;
   color?: string;
   data_residency?: {
@@ -79,6 +82,24 @@ export function createConsoleWorkspace(orgUuid: string, input: CreateWorkspaceIn
     method: 'POST',
     body: JSON.stringify(input),
   });
+}
+
+export async function updateConsoleWorkspace(
+  orgUuid: string,
+  workspaceId: string,
+  input: { name: string; display_color: string },
+) {
+  return consoleApi<Workspace>(
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}`,
+    { method: 'PATCH', body: JSON.stringify(input) },
+  );
+}
+
+export async function archiveConsoleWorkspace(orgUuid: string, workspaceId: string) {
+  return consoleApi<Workspace>(
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/archive`,
+    { method: 'POST' },
+  );
 }
 
 export function listWorkspaceApiKeys(orgUuid: string, workspaceId: string) {

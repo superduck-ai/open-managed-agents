@@ -57,4 +57,27 @@
         </if>
         ORDER BY name ASC, uuid ASC
     </select>
+
+    <update id="UpdateByIdentifier" result="returning" resultType="consoleWorkspaceRow">
+        UPDATE workspaces
+        SET name = #{params.Name},
+            display_color = #{params.DisplayColor},
+            updated_at = NOW()
+        WHERE organization_uuid = #{params.OrgUUID}
+        AND external_id = #{params.ExternalID}
+        AND NOT is_default
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="ArchiveByIdentifier" result="returning" resultType="consoleWorkspaceRow">
+        UPDATE workspaces
+        SET archived_at = COALESCE(archived_at, NOW()),
+            updated_at = NOW()
+        WHERE organization_uuid = #{orgUUID}
+        AND external_id = #{externalID}
+        AND NOT is_default
+        RETURNING
+        <include refid="columns"/>
+    </update>
 </mapper>

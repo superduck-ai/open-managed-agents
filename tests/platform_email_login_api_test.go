@@ -254,7 +254,13 @@ func TestPlatformWorkspaceHeaderScopesV1Resources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load platform session: %v", err)
 	}
-	if _, err := app.db.UpdateAdminUserRole(context.Background(), orgCookie.Value, platformSession.UserExternalID, "developer"); err != nil {
+	if _, err := app.pool.Exec(t.Context(), `
+		insert into users (external_id, organization_uuid, email, name, role)
+		values ($1, $2, $3, 'Scope administrator', 'admin')
+	`, "user_scope_admin_"+suffix, orgCookie.Value, "workspace-scope-admin-"+suffix+"@example.com"); err != nil {
+		t.Fatalf("retain organization administrator: %v", err)
+	}
+	if _, err := app.db.UpdateAdminUserRole(t.Context(), orgCookie.Value, platformSession.UserExternalID, "user"); err != nil {
 		t.Fatalf("set platform user role: %v", err)
 	}
 	deniedResp := app.platformRequestWithHeaders(t, http.MethodGet, "/v1/agents?beta=true&limit=1", nil, cookies, map[string]string{

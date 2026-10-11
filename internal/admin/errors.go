@@ -22,6 +22,9 @@ func (e *serviceError) Error() string {
 }
 
 func mapAdminDBError(err error, missingMessage string) error {
+	if errors.Is(err, db.ErrLastOrganizationAdmin) {
+		return conflict(err.Error())
+	}
 	if errors.Is(err, workspaceaccess.ErrDenied) {
 		return &serviceError{status: http.StatusForbidden, typ: "permission_error", message: "Action not allowed"}
 	}

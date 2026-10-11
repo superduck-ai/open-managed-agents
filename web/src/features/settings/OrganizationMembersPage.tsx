@@ -43,6 +43,8 @@ import {
   type PlatformRole,
 } from '../../shared/permissions/roles';
 import { useWorkspace } from '../../shared/workspaces/context';
+import { MemberDirectoryFilters } from './MemberDirectoryFilters';
+import { OrganizationMemberRemoval } from './OrganizationMemberRemoval';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import {
   createOrganizationInvite,
@@ -78,11 +80,11 @@ export function OrganizationMembersPage() {
     );
   }
 
-  if (!canManageMembers(account)) {
+  if (!canManageMembers(account, activeOrgUuid)) {
     return <OrganizationMembersAccessDenied />;
   }
 
-  return <OrganizationMembersAdminPage activeOrgUuid={activeOrgUuid} />;
+  return <OrganizationMembersAdminPage key={activeOrgUuid} activeOrgUuid={activeOrgUuid} />;
 }
 
 function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string }) {
@@ -91,6 +93,11 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
   const { activeWorkspace } = useWorkspace();
   const queryClient = useQueryClient();
   const bootstrapOrganization = account?.memberships?.find((membership) => membership.organization?.uuid)?.organization;
+  const activeOrganization =
+    account?.memberships?.find((membership) => membership.organization?.uuid === activeOrgUuid)?.organization ??
+    bootstrapOrganization;
+  const [memberSearch, setMemberSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteActionError, setInviteActionError] = useState<string | null>(null);
   const [inviteToRevoke, setInviteToRevoke] = useState<OrganizationInvite | null>(null);
@@ -165,6 +172,19 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
   const tableRows = useMemo<OrganizationMemberRow[]>(
     () => [...(invitesQuery.data ?? []), ...(membersQuery.data ?? [])],
     [invitesQuery.data, membersQuery.data],
+  );
+  const filteredRows = useMemo(
+    () =>
+      tableRows.filter((row) => {
+        if (roleFilter !== 'all' && normalizePlatformRole(row.role) !== roleFilter) return false;
+        const keyword = memberSearch.trim().toLowerCase();
+        return (
+          !keyword ||
+          (!isInviteRow(row) && row.name?.toLowerCase().includes(keyword)) ||
+          row.email.toLowerCase().includes(keyword)
+        );
+      }),
+    [tableRows, roleFilter, memberSearch],
   );
   const isInitialLoading =
     (membersQuery.isLoading && !membersQuery.data) || (invitesQuery.isLoading && !invitesQuery.data);
@@ -259,18 +279,36 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
                 setInviteToRevoke(invite);
               }}
             />
-          ) : (
+          ) : isCurrentAccountMember(account, row.original) ? (
             <span aria-hidden className="block h-8 w-8" />
+          ) : (
+            <OrganizationMemberRemoval
+              orgUuid={activeOrgUuid}
+              organizationName={activeOrganization?.name ?? msg('members.fallbackOrgName', 'this organization')}
+              member={row.original}
+              csrfToken={csrfToken}
+              disabled={updateRoleMutation.isPending}
+            />
           ),
       }),
     ],
-    [account, deleteInviteMutation, msg, pendingRoleMemberId, resendInviteMutation, updateRoleMutation],
+    [
+      account,
+      activeOrgUuid,
+      activeOrganization,
+      csrfToken,
+      deleteInviteMutation,
+      msg,
+      pendingRoleMemberId,
+      resendInviteMutation,
+      updateRoleMutation,
+    ],
   );
 
   // TanStack Table returns callback-heavy instance methods; this table instance stays local to the page.
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
-    data: tableRows,
+    data: filteredRows,
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
@@ -284,7 +322,7 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
       <ResourcePageHeader
         contentGap="content"
         title={msg('members.title', 'Members')}
-        description={memberAccessDescription(bootstrapOrganization, activeWorkspace.name, msg)}
+        description={memberAccessDescription(activeOrganization, activeWorkspace.name, msg)}
         titleAdornment={
           !hasTableError ? (
             <Badge variant="secondary" className="min-w-5 rounded-full px-1.5">
@@ -304,6 +342,15 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
             {msg('members.invite', 'Invite')}
           </Button>
         }
+      />
+
+      <MemberDirectoryFilters
+        search={memberSearch}
+        onSearch={setMemberSearch}
+        role={roleFilter}
+        onRole={setRoleFilter}
+        roles={roleOptions.map((role) => ({ value: role.value, label: platformRoleLabel(role.value, msg) }))}
+        roleLabelPrefix="members.role"
       />
 
       {updateRoleMutation.isError ? <InlineNotice>{errorMessage(updateRoleMutation.error)}</InlineNotice> : null}

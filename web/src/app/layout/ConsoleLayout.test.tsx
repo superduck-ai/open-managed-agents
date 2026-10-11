@@ -66,18 +66,20 @@ describe('ConsoleShell', () => {
     expect(screen.getByRole('link', { name: 'LLM models' }).getAttribute('href')).toBe(
       '/workspaces/default/llm-models',
     );
-    expect(screen.getByText('API keys')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'API keys' }).getAttribute('href')).toBe(
+      '/settings/workspaces/default/keys',
+    );
     expect(screen.getByText('Build')).toBeTruthy();
     expect(screen.getByText('Managed Agents')).toBeTruthy();
     expect(screen.getByText('Analytics')).toBeTruthy();
     expect(screen.queryByText('Claude Code')).toBeNull();
     expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Batches' })).toBeNull();
-    expect(screen.getByText('Manage')).toBeTruthy();
+    expect(screen.getByText('Workspace settings')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Managed Agents' }).getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('false');
     expect(screen.getByRole('button', { name: 'Analytics' }).getAttribute('aria-expanded')).toBe('false');
-    expect(screen.getByRole('button', { name: 'Manage' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Workspace settings' }).getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Caching' })).toBeNull();
     expect(screen.queryByRole('link', { name: /MCP tunnels/i })).toBeNull();
@@ -105,13 +107,20 @@ describe('ConsoleShell', () => {
     expect(screen.getByRole('link', { name: 'Caching' }).getAttribute('href')).toBe('/usage/cache');
     expect(screen.getByRole('link', { name: 'Rate limits' }).getAttribute('href')).toBe('/usage/limits');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace settings' }));
     expect(screen.getByRole('link', { name: /MCP tunnels/i }).getAttribute('href')).toBe(
       '/settings/workspaces/default/mcp-tunnels',
     );
+    expect(screen.getAllByRole('link', { name: 'API keys' }).map((link) => link.getAttribute('href'))).toEqual([
+      '/settings/workspaces/default/keys',
+      '/settings/workspaces/default/keys',
+    ]);
+    for (const name of ['Limits', 'Service accounts', 'Privacy controls', 'Security']) {
+      expect(screen.queryByRole('link', { name })).toBeNull();
+    }
     expect(screen.getByText('Preview')).toBeTruthy();
     const managedAgents = consoleNavigation.find((item) => item.type === 'group' && item.label === 'Managed Agents');
-    const manage = consoleNavigation.find((item) => item.type === 'group' && item.label === 'Manage');
+    const manage = consoleNavigation.find((item) => item.type === 'group' && item.label === 'Workspace settings');
     expect(managedAgents?.type === 'group' && managedAgents.children.some((item) => item.href === '/mcp-tunnels')).toBe(
       false,
     );
@@ -451,6 +460,8 @@ describe('ConsoleShell', () => {
     expect(menu.closest('[data-sidebar-state]')).toBeNull();
     expect(screen.queryByRole('menuitemradio', { name: /Default API plan/i })).toBeNull();
     expect(screen.getByRole('menuitem', { name: 'Organization settings' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Profile' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Appearance' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'Language' })).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: 'Feedback' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Get help' })).toBeNull();
@@ -523,6 +534,10 @@ describe('ConsoleShell', () => {
     expect(document.documentElement.lang).toBe('zh-CN');
     expect(screen.getByText('仪表盘')).toBeTruthy();
     expect(screen.getByText('API 密钥')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '工作区设置' }));
+    expect(screen.getAllByRole('link', { name: 'API 密钥' })[1].getAttribute('href')).toBe(
+      '/settings/workspaces/default/keys',
+    );
     expect(screen.getByText('构建')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: /test/i }));

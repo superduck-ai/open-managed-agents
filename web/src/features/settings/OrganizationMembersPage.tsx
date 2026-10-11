@@ -186,10 +186,8 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
       }),
     [tableRows, roleFilter, memberSearch],
   );
-  const isInitialLoading =
-    (membersQuery.isLoading && !membersQuery.data) || (invitesQuery.isLoading && !invitesQuery.data);
+  const isInitialLoading = membersQuery.isPending || invitesQuery.isPending;
   const hasTableError = membersQuery.isError || invitesQuery.isError;
-  const titleCount = isInitialLoading ? 0 : tableRows.length;
   const handleRetry = () => {
     membersQuery.refetch();
     invitesQuery.refetch();
@@ -324,9 +322,9 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
         title={msg('members.title', 'Members')}
         description={memberAccessDescription(activeOrganization, activeWorkspace.name, msg)}
         titleAdornment={
-          !hasTableError ? (
+          !isInitialLoading && !hasTableError ? (
             <Badge variant="secondary" className="min-w-5 rounded-full px-1.5">
-              {titleCount}
+              {tableRows.length}
             </Badge>
           ) : null
         }

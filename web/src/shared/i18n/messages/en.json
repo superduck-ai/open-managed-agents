@@ -2412,6 +2412,7 @@
   "workspace.archive.error": "Failed to archive workspace.",
   "workspace.archive.success": "Workspace archived.",
   "workspace.archive.title": "Archive {name}",
+  "workspace.edit.title": "Edit workspace",
   "workspace.update.error": "Failed to update workspace.",
   "workspace.update.success": "Workspace updated.",
   "members.workspaceNotice": "Organization admins inherit the workspace admin role. Other organization members must be added to this workspace.",

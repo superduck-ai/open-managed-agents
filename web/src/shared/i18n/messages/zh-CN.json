@@ -2412,6 +2412,7 @@
   "workspace.archive.error": "归档工作区失败。",
   "workspace.archive.success": "工作区已归档。",
   "workspace.archive.title": "归档 {name}",
+  "workspace.edit.title": "编辑工作区",
   "workspace.update.error": "更新工作区失败。",
   "workspace.update.success": "工作区已更新。",
   "members.workspaceNotice": "组织管理员继承工作区管理员角色。其他组织成员需要显式添加到此工作区。",

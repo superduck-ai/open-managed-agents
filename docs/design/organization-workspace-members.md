@@ -30,7 +30,7 @@ sequenceDiagram
 
 `/api/console/organizations/{organizationUuid}` 路由组统一执行会话 CSRF 校验。POST、PATCH、DELETE 等变更请求必须携带当前会话的 `X-CSRF-Token`；缺失、无效或其他会话的 token 返回 403，GET、HEAD、OPTIONS 不要求 token。成员授权与事务内角色复查仍独立执行。
 
-全局会话中间件不对工作区成员路由要求组织管理权限；目录和候选接口在资源层解析 URL 中的目标工作区并校验成员管理权限，写入接口在事务内复查目标工作区的成员管理权限。组织普通成员获授 Workspace Admin 后可以管理该空间成员，但不能管理组织或未授权的其他空间，且不能依赖会话当前工作区的角色替代目标空间校验。
+全局会话中间件不对工作区成员路由要求组织管理权限；目录、候选和写入接口在资源层解析 URL 中的目标工作区并校验成员管理权限，写入接口在查询目标组织成员前完成该校验，并在事务内再次复查权限。无成员管理权限时，无论目标成员是否存在，写入统一返回 403 `workspace_access_denied`，不泄露组织成员身份。组织普通成员获授 Workspace Admin 后可以管理该空间成员，但不能管理组织或未授权的其他空间，且不能依赖会话当前工作区的角色替代目标空间校验。
 
 路径前缀为 `/api/console/organizations/{organizationUuid}/workspaces/{workspaceId}`。
 
@@ -65,7 +65,7 @@ sequenceDiagram
 - 组织角色授权、跨组织拒绝、最后管理员删除/降级、并发管理员变更、级联移除和重复移除由独立 PostgreSQL 事务测试覆盖（`TestOrganizationMemberChangesPostgreSQL`）。
 - Console 组织管理员中间件与错误合同由 `internal/platformapi/console_member_authorization_test.go` 覆盖。
 - 组织移除取消、CSRF、后端 409 保持弹窗由 `OrganizationMemberRemoval.test.tsx` 覆盖；工作区只读、Default 提示、继承角色、搜索和空候选状态由工作区成员页测试覆盖。
-- `TestConsoleMembersAPI` 覆盖组织成员列表、改角色、移除；工作区成员 Console 合同由`TestConsoleWorkspaceMemberTargetAuthorization` 的真实 HTTP/PostgreSQL 测试覆盖，包含跨空间拒绝和管理员降级后目录、候选与写入拒绝。
+- `TestConsoleMembersAPI` 覆盖组织成员列表、改角色、移除；工作区成员 Console 合同由`TestConsoleWorkspaceMemberTargetAuthorization` 的真实 HTTP/PostgreSQL 测试覆盖，包含跨空间拒绝和管理员降级后目录、候选与写入拒绝，以及新增、改角色、移除对存在和不存在的成员均返回相同 403 错误。
 - 历史全量测试结果及截图按对应提交保留在 PR 验收评论；本轮同步后的验证结果单独记录，不沿用历史结果声明当前提交全绿。
 - 本阶段不处理长连接撤权、运行中任务迁移或凭据归属模型变更。
 

@@ -151,8 +151,12 @@ func applyConsoleWorkspaceMemberChange(w http.ResponseWriter, r *http.Request, s
 		return
 	}
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	workspace, _, ok := resolveConsoleWorkspace(w, r, memberStore, orgUUID, principal.UserExternalID, chi.URLParam(r, "workspaceId"))
+	workspace, access, ok := resolveConsoleWorkspace(w, r, memberStore, orgUUID, principal.UserExternalID, chi.URLParam(r, "workspaceId"))
 	if !ok {
+		return
+	}
+	if !access.ManageMembers() {
+		writeConsoleWorkspaceMemberError(w, workspaceaccess.ErrDenied)
 		return
 	}
 	target, err := memberStore.FindOrgMemberByReference(r.Context(), orgUUID, userID)

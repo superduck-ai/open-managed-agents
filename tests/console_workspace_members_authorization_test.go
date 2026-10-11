@@ -116,13 +116,39 @@ func TestConsoleWorkspaceMemberTargetAuthorization(t *testing.T) {
 	for _, tc := range []struct{ method, suffix, body string }{
 		{http.MethodGet, "/members", ""},
 		{http.MethodGet, "/member-candidates", ""},
-		{http.MethodPost, "/members", `{"user_id":"` + target + `","workspace_role":"workspace_user"}`},
 	} {
 		response := app.platformRequest(t, tc.method, path+tc.suffix, strings.NewReader(tc.body), cookies)
 		body := readAll(t, response.Body)
 		response.Body.Close()
 		if response.StatusCode != http.StatusForbidden {
 			t.Fatalf("降级后仍可管理成员: %d %s", response.StatusCode, body)
+		}
+	}
+	for _, member := range []struct{ name, reference string }{
+		{"existing external ID", target},
+		{"existing Console ID", consoleTaggedUserID(targetUser.UUID)},
+		{"existing UUID", targetUser.UUID},
+		{"missing member", "user_000000000000000000000000"},
+	} {
+		for _, operation := range []struct{ name, method, suffix, body string }{
+			{"create", http.MethodPost, "/members", `{"user_id":"` + member.reference + `","workspace_role":"workspace_user"}`},
+			{"update", http.MethodPost, "/members/" + member.reference, `{"workspace_role":"workspace_admin"}`},
+			{"delete", http.MethodDelete, "/members/" + member.reference, ""},
+		} {
+			t.Run(member.name+"/"+operation.name, func(t *testing.T) {
+				response := app.platformRequest(t, operation.method, path+operation.suffix, strings.NewReader(operation.body), cookies)
+				defer response.Body.Close()
+				var result struct {
+					Error   string `json:"error"`
+					Message string `json:"message"`
+				}
+				if err := json.UnmarshalRead(response.Body, &result); err != nil {
+					t.Fatal(err)
+				}
+				if response.StatusCode != http.StatusForbidden || result.Error != "workspace_access_denied" || result.Message != "You do not have permission to manage this workspace." {
+					t.Fatalf("普通成员写入响应泄露目标状态: status=%d result=%+v", response.StatusCode, result)
+				}
+			})
 		}
 	}
 }

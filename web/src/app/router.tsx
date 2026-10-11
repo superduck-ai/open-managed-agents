@@ -1,4 +1,4 @@
-import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
+import { createRootRoute, createRoute, createRouter, Navigate } from '@tanstack/react-router';
 import { InvitationEntryGate } from '../features/organizations/InvitationEntryGate';
 import { InvitationsPage } from '../features/organizations/InvitationsPage';
 import { invitationReturnTo } from '../features/organizations/api';
@@ -489,6 +489,12 @@ const settingsOrganizationRoute = createRoute({
   component: OrganizationSettingsPage,
 });
 
+const settingsBillingRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: 'settings/billing',
+  component: () => <Navigate to="/billing" replace />,
+});
+
 const settingsLimitsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: 'settings/limits',
@@ -590,6 +596,7 @@ const routeTree = rootRoute.addChildren([
       settingsWorkspaceWebhooksRoute,
     ]),
     settingsOrganizationRoute,
+    settingsBillingRoute,
     settingsLimitsRoute,
     settingsMembersRoute,
     settingsServiceAccountsRoute,

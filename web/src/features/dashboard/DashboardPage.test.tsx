@@ -143,29 +143,13 @@ describe('Dashboard i18n', () => {
     expect(await screen.findByText('Default 工作区还没有创建批处理。')).toBeTruthy();
   });
 
-  test('renders Claude Code and manage sections in Chinese', () => {
+  test('preserves Claude Code usage in Chinese', () => {
     resetTestDom('https://oma.duck.ai/claude-code/usage');
-    const claudeCode = renderDashboardPage(<DashboardPage section="claude-code-usage" />, undefined, 'zh-CN');
+    renderDashboardPage(<DashboardPage section="claude-code-usage" />, undefined, 'zh-CN');
 
     expect(screen.getByRole('heading', { name: 'Claude Code 用量' })).toBeTruthy();
     expect(screen.getByText('席位')).toBeTruthy();
     expect(screen.getByText('暂无 Claude Code 用量')).toBeTruthy();
-
-    claudeCode.unmount();
-    resetTestDom('https://oma.duck.ai/settings/service-accounts');
-    const serviceAccounts = renderDashboardPage(<DashboardPage section="service-accounts" />, undefined, 'zh-CN');
-
-    expect(screen.getByRole('heading', { name: '服务账号' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '创建服务账号' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: '还没有服务账号' })).toBeTruthy();
-
-    serviceAccounts.unmount();
-    resetTestDom('https://oma.duck.ai/security');
-    renderDashboardPage(<DashboardPage section="security" />, undefined, 'zh-CN');
-
-    expect(screen.getByRole('heading', { name: '安全' })).toBeTruthy();
-    expect(screen.getByRole('switch', { name: '管理员多因素认证' })).toBeTruthy();
-    expect(screen.queryByText('暂无安全警报')).toBeNull();
   });
 
   test('uses standard Claude Code settings actions', async () => {
@@ -192,57 +176,16 @@ describe('Dashboard i18n', () => {
     expect(screen.getByText('Current default: Disabled by default')).toBeTruthy();
   });
 
-  test('uses standard rate limit notice actions', () => {
-    resetTestDom('https://oma.duck.ai/limits');
-
-    renderDashboardPage(<DashboardPage section="limits" />);
-
-    expect(screen.getByRole('heading', { name: 'Rate limits' })).toBeTruthy();
-    const monitorUsage = screen.getByRole('link', { name: 'Monitor rate limit usage' });
-    expect(monitorUsage.getAttribute('href')).toBe('/usage/limits');
-    expect(monitorUsage.dataset.slot).toBe('button');
-    const contactSales = screen.getByRole('link', { name: 'Contact sales' });
-    expect(contactSales.getAttribute('href')).toBe('https://www.anthropic.com/contact-sales');
-    expect(contactSales.getAttribute('target')).toBe('_blank');
-    expect(contactSales.getAttribute('rel')).toBe('noreferrer');
-    expect(contactSales.dataset.slot).toBe('button');
-  });
-
-  test('uses shared button links on security actions', () => {
-    resetTestDom('https://oma.duck.ai/security');
-
-    renderDashboardPage(<DashboardPage section="security" />);
-
-    const viewLogs = screen.getByRole('link', { name: 'View logs' });
-    expect(viewLogs.getAttribute('href')).toBe('/logs');
-    expect(viewLogs.dataset.slot).toBe('button');
-    const manageMembers = screen.getByRole('link', { name: 'Manage' });
-    expect(manageMembers.getAttribute('href')).toBe('/members');
-    expect(manageMembers.dataset.slot).toBe('button');
-  });
-
-  test('uses the shared organization members surface on the manage members route', async () => {
+  test('directs default workspace member management to organization settings', async () => {
     resetTestDom('https://oma.duck.ai/members');
     const api = mockOrganizationMembersApi();
-
-    renderDashboardPage(
-      <DashboardPage section="members" />,
-      undefined,
-      'en',
-      makeAuthContextValue({
-        memberships: [{ role: 'admin' }],
-      }),
-    );
-
+    renderDashboardPage(<DashboardPage section="members" />);
     expect(await screen.findByRole('heading', { name: 'Members' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Invite' })).toBeTruthy();
-    expect(screen.queryByRole('link', { name: 'Invite' })).toBeNull();
-    expect(await screen.findByText('pending@example.com')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'More actions' })).toBeTruthy();
-    expect(screen.getByText('pending@example.com')).toBeTruthy();
-    expect(screen.getByText('admin@example.local')).toBeTruthy();
-    expect(api.requests).toContain('/api/console/organizations/org_test_uuid/members');
-    expect(api.requests).toContain('/api/console/organizations/org_test_uuid/invites?status=pending');
+    expect(screen.getByRole('link', { name: 'Go to organization settings' }).getAttribute('href')).toBe(
+      '/settings/members',
+    );
+    expect(screen.queryByRole('button', { name: 'Invite' })).toBeNull();
+    expect(api.requests).toEqual([]);
   });
 
   test('uses the shared workspace webhooks surface on the manage webhooks route', async () => {
@@ -266,153 +209,6 @@ describe('Dashboard i18n', () => {
     expect(api.requests[0]?.url).toBe('/v1/webhooks?beta=true');
     expect(api.requests[0]?.headers.get('anthropic-beta')).toBe('webhooks-2026-03-01');
     expect(api.requests[0]?.headers.get('x-workspace-id')).toBe(defaultWorkspace.id);
-  });
-
-  test('uses standard service account dialog, tabs, and menu actions', async () => {
-    resetTestDom('https://oma.duck.ai/service-accounts');
-
-    renderDashboardPage(<DashboardPage section="service-accounts" />);
-
-    expect(screen.getByRole('heading', { name: 'Service accounts' })).toBeTruthy();
-    expect(screen.getByRole('tablist')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Create service account' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'No service accounts yet' })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Create service account' }));
-
-    expect(screen.getByRole('dialog')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'CI deploy bot' } });
-    fireEvent.change(screen.getByLabelText('Description'), {
-      target: { value: 'Publishes production builds' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    const serviceAccountsTable = screen.getByRole('table', { name: 'Service accounts' });
-    expect(serviceAccountsTable).toBeTruthy();
-    expect(serviceAccountsTable.closest('[data-slot="card"]')).toBeNull();
-    expect(screen.getByText('CI deploy bot')).toBeTruthy();
-    expect(screen.getByText('svcacc_local_0001')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive' }));
-
-    const archiveDialog = screen.getByRole('alertdialog');
-    fireEvent.click(within(archiveDialog).getByRole('button', { name: 'Archive' }));
-
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-    expect(screen.getByRole('heading', { name: 'No service accounts yet' })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Archived' }));
-    expect(screen.getByText('CI deploy bot')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-
-    const deleteDialog = screen.getByRole('alertdialog');
-    fireEvent.click(within(deleteDialog).getByRole('button', { name: 'Delete' }));
-
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-    expect(screen.getByRole('heading', { name: 'No archived service accounts' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Show active service accounts' })).toBeTruthy();
-  });
-
-  test('uses standard privacy controls switches, tooltips, and configure dialogs', async () => {
-    resetTestDom('https://oma.duck.ai/privacy-controls');
-
-    renderDashboardPage(<DashboardPage section="privacy-controls" />);
-
-    expect(screen.getByRole('heading', { name: 'Privacy controls' })).toBeTruthy();
-    expect(screen.getByRole('switch', { name: 'Training data' })).toBeTruthy();
-    expect(screen.getByRole('switch', { name: 'Sensitive metadata redaction' })).toBeTruthy();
-    expect(screen.getByText('Current default: Excluded from training')).toBeTruthy();
-    expect(screen.getByText('Current default: Admins only')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('switch', { name: 'Training data' }));
-    expect(screen.getByText('Current default: Eligible for training')).toBeTruthy();
-
-    expect(
-      screen.getByRole('button', {
-        name: 'Applies to new prompts, attachments, and outputs created after this default changes.',
-      }),
-    ).toBeTruthy();
-
-    const configureButtons = () => screen.getAllByRole('button', { name: 'Configure' });
-
-    fireEvent.click(configureButtons()[0]);
-
-    expect(screen.getByRole('dialog')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Configure activity retention' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('combobox', { name: 'Retention window' }));
-    selectOption('1 year');
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('Current default: 1 year')).toBeTruthy();
-
-    fireEvent.click(configureButtons()[1]);
-    expect(screen.getByRole('heading', { name: 'Configure export access' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('combobox', { name: 'Export access' }));
-    selectOption('Disabled');
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('Current default: Admins only')).toBeTruthy();
-
-    fireEvent.click(configureButtons()[1]);
-    fireEvent.click(screen.getByRole('combobox', { name: 'Export access' }));
-    selectOption('Disabled');
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('Current default: Disabled')).toBeTruthy();
-  });
-
-  test('uses standard security controls switches, links, and configure dialogs', async () => {
-    resetTestDom('https://oma.duck.ai/security');
-
-    renderDashboardPage(<DashboardPage section="security" />);
-
-    expect(screen.getByRole('heading', { name: 'Security' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'View logs' }).getAttribute('href')).toBe('/logs');
-    expect(screen.getByRole('link', { name: 'Manage' }).getAttribute('href')).toBe('/members');
-    expect(screen.getByRole('switch', { name: 'Admin multi-factor authentication' })).toBeTruthy();
-    expect(screen.getByText('Current default: Required for admins')).toBeTruthy();
-    expect(screen.getByText('Current default: Every 24 hours')).toBeTruthy();
-    expect(screen.getByText('Current default: Admins only')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('switch', { name: 'Admin multi-factor authentication' }));
-    expect(screen.getByText('Current default: Optional for admins')).toBeTruthy();
-
-    const configureButtons = () => screen.getAllByRole('button', { name: 'Configure' });
-
-    fireEvent.click(configureButtons()[0]);
-
-    expect(screen.getByRole('dialog')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Configure session reauthentication' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('combobox', { name: 'Reauthentication window' }));
-    selectOption('Every 7 days');
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('Current default: Every 7 days')).toBeTruthy();
-
-    fireEvent.click(configureButtons()[1]);
-    expect(screen.getByRole('heading', { name: 'Configure security activity visibility' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('combobox', { name: 'Visibility' }));
-    selectOption('All members');
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('Current default: Admins only')).toBeTruthy();
-
-    fireEvent.click(configureButtons()[1]);
-    fireEvent.click(screen.getByRole('combobox', { name: 'Visibility' }));
-    selectOption('All members');
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('Current default: All members')).toBeTruthy();
   });
 
   test('uses shared shadcn card chrome for dashboard home and Claude Code usage', () => {
@@ -440,6 +236,16 @@ describe('Dashboard i18n', () => {
     expect(emptyState?.className.includes('surface-card')).toBe(false);
     expect(emptyState?.className.includes('border-dashed')).toBe(true);
   });
+  test.each(['limits', 'service-accounts', 'privacy-controls', 'security'])(
+    'retired workspace setting %s cannot expose simulated actions',
+    (section) => {
+      resetTestDom(`https://oma.duck.ai/${section}`);
+      renderDashboardPage(<DashboardPage section={section} />);
+      expect(screen.getByText('This page has been retired')).toBeTruthy();
+      expect(screen.getByRole('link', { name: 'Back to app' }).getAttribute('href')).toBe('/dashboard');
+      expect(screen.queryByRole('button')).toBeNull();
+    },
+  );
 });
 
 describe('Files page', () => {

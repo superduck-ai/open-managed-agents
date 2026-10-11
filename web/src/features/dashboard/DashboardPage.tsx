@@ -6,16 +6,13 @@ import {
   ClaudeCodeSettingsPage,
   ClaudeCodeUsagePage,
   ConsoleFeaturePage,
-  LimitsPage,
   PlaygroundPage,
   WorkbenchPage,
 } from './feature-pages';
 import { FilesPage } from './files';
 import { DashboardHome } from './home';
+import { RetiredConsolePage } from './RetiredConsolePage';
 import { currentSkillId } from './model';
-import { PrivacyControlsPage } from './privacy-controls';
-import { SecurityPage } from './security';
-import { ServiceAccountsPage } from './service-accounts';
 import { CreateSkillPage, SkillDetailPage, SkillsPage } from './skills';
 
 type DashboardPageProps = {
@@ -23,11 +20,8 @@ type DashboardPageProps = {
 };
 
 export { BatchesPage } from './batches';
-export { ConsolePlaceholderPage, LimitsPage, MembersPage } from './feature-pages';
+export { ConsolePlaceholderPage, MembersPage } from './feature-pages';
 export { FilesPage } from './files';
-export { PrivacyControlsPage } from './privacy-controls';
-export { SecurityPage } from './security';
-export { ServiceAccountsPage } from './service-accounts';
 export { CreateSkillPage, SkillDetailPage, SkillsPage } from './skills';
 
 export function DashboardPage({ section = 'dashboard' }: DashboardPageProps) {
@@ -52,16 +46,13 @@ export function DashboardPage({ section = 'dashboard' }: DashboardPageProps) {
       return <SkillDetailPage skillId={currentSkillId()} />;
     case 'batches':
       return <BatchesPage />;
-    case 'limits':
-      return <LimitsPage />;
     case 'members':
       return <WorkspaceMembersPage />;
+    case 'limits':
     case 'service-accounts':
-      return <ServiceAccountsPage />;
     case 'privacy-controls':
-      return <PrivacyControlsPage />;
     case 'security':
-      return <SecurityPage />;
+      return <RetiredConsolePage />;
     case 'webhooks':
       return <WorkspaceWebhooksContent />;
     case 'claude-code-usage':

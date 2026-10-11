@@ -10,18 +10,14 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
-  Gauge,
   Globe2,
-  KeyRound,
   ListTree,
-  LockKeyhole,
   LogOut,
   Palette,
   Plus,
   Settings,
-  Shield,
   UsersRound,
-  WalletCards,
+  UserRound,
 } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import {
@@ -89,7 +85,12 @@ import {
 import { useI18n, useLocale } from '../../shared/i18n';
 import { accountRoleLabel, membershipRoleForOrganization } from '../../shared/permissions/roles';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
-import { settingsNavigation, visibleConsoleNavigation, type NavLinkItem } from './navigation';
+import {
+  personalSettingsNavigation,
+  settingsNavigation,
+  visibleConsoleNavigation,
+  type NavLinkItem,
+} from './navigation';
 
 type ConsoleShellProps = {
   account?: AuthAccount | null;
@@ -218,16 +219,21 @@ export function SettingsShell({
   onNavigate,
 }: SettingsShellProps) {
   const { msg } = useI18n();
+  const personal = isPersonalSettingsPath(currentPath);
 
   return (
     <SidebarProvider defaultOpen>
       <SettingsSidebar account={account} currentPath={currentPath} onLogout={onLogout} onNavigate={onNavigate} />
       <SidebarInset className="min-h-screen text-foreground">
         <ShellMobileBar
-          title={msg('account.organizationSettings', 'Organization settings')}
+          title={
+            personal
+              ? msg('account.personalSettings', 'Personal settings')
+              : msg('account.organizationSettings', 'Organization settings')
+          }
           toggleLabel={msg('common.expand', 'Expand')}
           activeToggleLabel={msg('common.collapse', 'Collapse')}
-          href="/settings/organization"
+          href={personal ? '/settings/profile' : '/settings/organization'}
           onNavigate={onNavigate}
         />
         <div className="px-6 py-6 lg:px-8">{children}</div>
@@ -378,6 +384,8 @@ function SettingsSidebar({
   const { msg } = useI18n();
   const { state } = useSidebar();
   const collapsed = state === 'collapsed';
+  const personal = isPersonalSettingsPath(currentPath);
+  const navigation = personal ? personalSettingsNavigation : settingsNavigation;
 
   return (
     <AppSidebar
@@ -407,12 +415,14 @@ function SettingsSidebar({
         <SidebarGroup className="mt-2 p-0">
           <SidebarGroupLabel className="gap-2 px-2 text-sidebar-foreground">
             <Settings className="size-4" aria-hidden />
-            {msg('account.organizationSettings', 'Organization settings')}
+            {personal
+              ? msg('account.personalSettings', 'Personal settings')
+              : msg('account.organizationSettings', 'Organization settings')}
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <nav aria-label={msg('nav.settingsNavigation', 'Settings navigation')}>
               <SidebarMenu>
-                {settingsNavigation.map((item) => (
+                {navigation.map((item) => (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton
                       render={<ShellLink href={item.href} onNavigate={onNavigate} />}
@@ -701,7 +711,14 @@ function SidebarFooter({
   );
 }
 
+function isPersonalSettingsPath(path: string) {
+  return path === '/settings/profile' || path === '/settings/appearance';
+}
+
 function SettingsNavigationIcon({ href }: { href: string }) {
+  if (href === '/settings/profile') {
+    return <UserRound className="size-4" aria-hidden />;
+  }
   if (href === '/settings/appearance') {
     return <Palette className="size-4" aria-hidden />;
   }
@@ -713,25 +730,6 @@ function SettingsNavigationIcon({ href }: { href: string }) {
   }
   if (href === '/settings/workspaces') {
     return <Box className="size-4" aria-hidden />;
-  }
-  if (href === '/settings/billing') {
-    return <WalletCards className="size-4" aria-hidden />;
-  }
-  if (href === '/settings/limits') {
-    return <Gauge className="size-4" aria-hidden />;
-  }
-  if (href === '/settings/api-keys' || href === '/settings/admin-keys') {
-    return <KeyRound className="size-4" aria-hidden />;
-  }
-  if (href === '/settings/service-accounts') {
-    return <LockKeyhole className="size-4" aria-hidden />;
-  }
-  if (
-    href === '/settings/workload-identity' ||
-    href === '/settings/privacy-controls' ||
-    href === '/settings/identity-and-access'
-  ) {
-    return <Shield className="size-4" aria-hidden />;
   }
   return <Settings className="size-4" aria-hidden />;
 }
@@ -840,6 +838,17 @@ export function AccountMenu({
                 {msg('account.organizationSettings', 'Organization settings')}
               </span>
             </DropdownMenuItem>
+
+            {personalSettingsNavigation.map((item) => (
+              <DropdownMenuItem
+                key={item.href}
+                className="h-8 gap-3 px-3"
+                onClick={() => void handleMenuNavigation(item.href)}
+              >
+                <SettingsNavigationIcon href={item.href} />
+                <span className="min-w-0 flex-1 truncate">{msg(item.labelId, item.label)}</span>
+              </DropdownMenuItem>
+            ))}
 
             <DropdownMenuSub>
               <DropdownMenuSubTrigger openOnHover className="h-8 gap-3 px-3">

@@ -1,5 +1,5 @@
 import '../../test/setup';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { useMemo, type ReactNode } from 'react';
 import { SettingsShell } from '../../app/layout/ConsoleLayout';
@@ -12,16 +12,107 @@ import { OrganizationMembersPage } from './OrganizationMembersPage';
 import type { OrganizationInvite, OrganizationMember } from './membersApi';
 
 const testingLibrary = await import('@testing-library/react');
-const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
+const { act, cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
 
 const originalFetch = globalThis.fetch;
+const originalOnline = onlineManager.isOnline();
+const queryClients: QueryClient[] = [];
 
 afterEach(() => {
   cleanup();
+  queryClients.splice(0).forEach((client) => client.clear());
+  onlineManager.setOnline(originalOnline);
   globalThis.fetch = originalFetch;
 });
 
 describe('Organization members settings', () => {
+  for (const cachedResource of [null, 'members', 'invites'] as const) {
+    test(`does not show an empty directory while offline with ${cachedResource ?? 'no'} cached data and resumes online`, async () => {
+      resetTestDom('https://oma.duck.ai/settings/members');
+      const api = mockMembersApi();
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+      if (cachedResource) {
+        const queryKey =
+          cachedResource === 'members'
+            ? ['console', 'organization-members', 'org_test']
+            : ['console', 'organization-invites', 'org_test', 'pending'];
+        queryClient.setQueryData(queryKey, []);
+      }
+      onlineManager.setOnline(false);
+
+      const { container } = render(
+        <OrganizationMembersHarness queryClient={queryClient}>
+          <OrganizationMembersPage />
+        </OrganizationMembersHarness>,
+      );
+
+      const pendingKey =
+        cachedResource === 'members'
+          ? ['console', 'organization-invites', 'org_test', 'pending']
+          : ['console', 'organization-members', 'org_test'];
+      expect(queryClient.getQueryState(pendingKey)).toMatchObject({ status: 'pending', fetchStatus: 'paused' });
+      expect(api.memberListRequests).toBe(0);
+      expect(api.inviteListRequests).toBe(0);
+      expect(screen.queryByText('No members yet') === null).toBe(true);
+      expect(screen.queryByText('0', { exact: true }) === null).toBe(true);
+      expect(container.querySelector('[data-slot="skeleton"]') !== null).toBe(true);
+
+      await act(async () => onlineManager.setOnline(true));
+
+      const expectedCount = cachedResource === 'members' ? '1' : cachedResource === 'invites' ? '2' : '3';
+      expect(await screen.findByText(expectedCount, { exact: true })).toBeTruthy();
+      expect(screen.getByText(cachedResource === 'members' ? 'pending@example.com' : 'Ada Lovelace')).toBeTruthy();
+      expect(screen.queryByText('No members yet')).toBeNull();
+      expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+    });
+  }
+
+  test('shows zero and an empty directory only after both requests succeed with empty lists', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    globalThis.fetch = (async () => jsonResponse([])) as typeof fetch;
+
+    const { container } = render(
+      <OrganizationMembersHarness>
+        <OrganizationMembersPage />
+      </OrganizationMembersHarness>,
+    );
+
+    expect(screen.queryByText('0', { exact: true }) === null).toBe(true);
+    expect(container.querySelector('[data-slot="skeleton"]') !== null).toBe(true);
+    expect(await screen.findByText('No members yet')).toBeTruthy();
+    expect(screen.getByText('0', { exact: true })).toBeTruthy();
+    expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+  });
+
+  test('keeps the complete cached directory visible when a remount pauses its refresh offline', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    const api = mockMembersApi();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const mount = () =>
+      render(
+        <OrganizationMembersHarness queryClient={queryClient}>
+          <OrganizationMembersPage />
+        </OrganizationMembersHarness>,
+      );
+    const view = mount();
+    expect(await screen.findByText('3', { exact: true })).toBeTruthy();
+    view.unmount();
+    onlineManager.setOnline(false);
+
+    const { container } = mount();
+
+    expect(queryClient.getQueryState(['console', 'organization-members', 'org_test'])).toMatchObject({
+      status: 'success',
+      fetchStatus: 'paused',
+    });
+    expect(screen.getByText('Ada Lovelace')).toBeTruthy();
+    expect(screen.getByText('pending@example.com')).toBeTruthy();
+    expect(screen.getByText('3', { exact: true })).toBeTruthy();
+    expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+    expect(api.memberListRequests).toBe(1);
+    expect(api.inviteListRequests).toBe(1);
+  });
+
   test('shows permission guidance without requesting members for an invited user', async () => {
     resetTestDom('https://oma.duck.ai/settings/members');
     const api = mockMembersApi();
@@ -276,12 +367,18 @@ function OrganizationMembersHarness({
   children,
   organizationName = 'default',
   permissions = ['members:view', 'members:manage'],
+  queryClient: suppliedQueryClient,
 }: {
   children: ReactNode;
   organizationName?: string;
   permissions?: string[];
+  queryClient?: QueryClient;
 }) {
-  const queryClient = useMemo(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }), []);
+  const queryClient = useMemo(() => {
+    const client = suppliedQueryClient ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClients.push(client);
+    return client;
+  }, [suppliedQueryClient]);
   const authValue = useMemo<AuthContextValue>(
     () => ({
       account: {

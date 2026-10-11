@@ -2486,5 +2486,9 @@
   "members.addDialog.title": "添加成员到 {workspaceName}",
   "members.addDialog.member": "成员",
   "members.addDialog.role": "角色",
-  "members.addDialog.select": "选择"
+  "members.addDialog.select": "选择",
+  "nav.workspaceSettings": "工作区设置",
+  "account.personalSettings": "个人设置",
+  "console.retired.title": "此页面已下线",
+  "console.retired.description": "此功能页面已移除，请使用控制台中现有的功能继续操作。"
 }

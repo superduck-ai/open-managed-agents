@@ -2486,5 +2486,9 @@
   "members.addDialog.title": "Add member to {workspaceName}",
   "members.addDialog.member": "Member",
   "members.addDialog.role": "Role",
-  "members.addDialog.select": "Select"
+  "members.addDialog.select": "Select",
+  "nav.workspaceSettings": "Workspace settings",
+  "account.personalSettings": "Personal settings",
+  "console.retired.title": "This page has been retired",
+  "console.retired.description": "This page is no longer available. Use the available console features to continue."
 }

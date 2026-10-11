@@ -5,6 +5,7 @@ import { invitationReturnTo } from '../features/organizations/api';
 import { ConsoleLayout } from './layout/ConsoleLayout';
 import { ProtectedConsoleLayout } from './layout/ProtectedConsoleLayout';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
+import { WorkspaceSettingsRedirect } from '../features/settings/WorkspaceSettingsRedirect';
 import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../features/analytics/AnalyticsPages';
 import { LoginPage } from '../features/auth/LoginPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
@@ -449,7 +450,7 @@ const securityRoute = createRoute({
 const webhooksRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'webhooks',
-  component: () => <DashboardPage section="webhooks" />,
+  component: () => <WorkspaceSettingsRedirect resource="webhooks" />,
 });
 
 const settingsWorkspaceMcpTunnelsRoute = createRoute({
@@ -491,7 +492,7 @@ const settingsOrganizationRoute = createRoute({
 const settingsLimitsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: 'settings/limits',
-  component: () => <OrganizationSettingsPage section="limits" />,
+  component: () => <OrganizationSettingsPage section="retired" />,
 });
 
 const settingsMembersRoute = createRoute({
@@ -503,7 +504,7 @@ const settingsMembersRoute = createRoute({
 const settingsServiceAccountsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: 'settings/service-accounts',
-  component: () => <OrganizationSettingsPage section="service-accounts" />,
+  component: () => <OrganizationSettingsPage section="retired" />,
 });
 
 const settingsFallbackRoute = createRoute({

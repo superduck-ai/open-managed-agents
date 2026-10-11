@@ -34,7 +34,7 @@ environment_packages:
 
 示例 IP 必须替换成服务的实际地址范围。registry 仅允许 HTTPS 443，不能包含凭据、query、fragment、空白、控制字符或变量插值。scope 与 endpoint hostname 在启动时校验；endpoint 必须为精确域名或 IP，并同时配置 443 端口及规范化的私网 CIDR。CIDR 只能落在 RFC1918、IPv6 ULA 或 `100.64.0.0/10` 内，不能通过配置放行 loopback、link-local、metadata 或任意公网范围。
 
-预构建把 npm 源作为独立 argv 插入 `--` 之前，不产生永久 `.npmrc` 或 `ENV`。启动安装保留 v1 manifest，通过临时 npm userconfig 传递相同的源；复制已有 userconfig 保留认证配置，结束后删除临时文件，保留 Manager 的 stdin、stdout 和退出码。部署源不包含认证信息；预构建认证仍由流水线私密配置提供，启动安装认证由镜像或原 userconfig 提供。源配置及私网例外计入预构建服务商配置标识，避免排队任务在修改后静默使用不同设置；已完成模板仍按既有合同复用。
+预构建把 npm 源作为独立 argv 插入 `--` 之前，不产生永久 `.npmrc` 或 `ENV`。启动安装保留 v1 manifest，通过临时 npm userconfig 传递相同的源；复制已有 userconfig 保留认证配置，结束后删除临时文件，保留 Manager 的 stdin、stdout 和退出码。原配置依次读取非空的 `NPM_CONFIG_USERCONFIG`、`npm_config_userconfig`，仅在 `HOME` 非空时回退到 `$HOME/.npmrc`；均未指定时直接使用临时配置继续安装。部署源不包含认证信息；预构建认证仍由流水线私密配置提供，启动安装认证由镜像或原 userconfig 提供。源配置及私网例外计入预构建服务商配置标识，避免排队任务在修改后静默使用不同设置；已完成模板仍按既有合同复用。
 
 Environment 的 `allow_package_managers: true` 将管理员配置的 npm registry hosts 纳入 Sandbox 与 OMA CONNECT 的允许列表；关闭时仍需显式 `allowed_hosts`。私网例外不会替代 Environment 域名授权。OMA CONNECT 完成授权后，对每个解析结果检查精确 host、port、CIDR，然后只拨号已校验的 IP。MCP proxy 与其他使用 `PublicAddress` 的服务不继承此例外。
 

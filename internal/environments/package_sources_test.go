@@ -64,6 +64,61 @@ func TestRegistryProvisioningPreservesInputOutputAndCleansConfiguration(t *testi
 	}
 }
 
+func TestRegistryProvisioningHandlesMissingHome(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		home          string
+		userConfigKey string
+	}{
+		{name: "HOME unset"},
+		{name: "HOME empty", home: "empty"},
+		{name: "uppercase userconfig without HOME", userConfigKey: "NPM_CONFIG_USERCONFIG"},
+		{name: "lowercase userconfig without HOME", userConfigKey: "npm_config_userconfig"},
+		{name: "HOME userconfig", home: "directory"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			manager := filepath.Join(dir, "manager")
+			pathRecord := filepath.Join(dir, "temporary-path")
+			original := filepath.Join(dir, ".npmrc")
+			originalText := "//registry.example.com/:_authToken=fixture-token\n"
+			if err := os.WriteFile(original, []byte(originalText), 0600); err != nil {
+				t.Fatal(err)
+			}
+			script := "#!/bin/sh\nset -eu\ncat \"$NPM_CONFIG_USERCONFIG\"\nprintf '%s' \"$NPM_CONFIG_USERCONFIG\" > " + shellQuote(pathRecord) + "\n"
+			if err := os.WriteFile(manager, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			cfg := config.Config{EnvironmentRunner: config.EnvironmentRunnerConfig{ManagerPath: manager}, EnvironmentPackages: config.EnvironmentPackageConfig{NPM: config.NPMRegistryConfig{ScopedRegistries: map[string]string{"@cvte": "https://registry.example.com/"}}}}
+			command := exec.Command("sh", "-c", buildPackageProvisionCommand(cfg))
+			for _, entry := range os.Environ() {
+				key, _, _ := strings.Cut(entry, "=")
+				if key != "HOME" && key != "NPM_CONFIG_USERCONFIG" && key != "npm_config_userconfig" {
+					command.Env = append(command.Env, entry)
+				}
+			}
+			want := "\n@cvte:registry=\"https://registry.example.com/\"\n"
+			if test.home == "empty" {
+				command.Env = append(command.Env, "HOME=")
+			} else if test.home == "directory" {
+				command.Env = append(command.Env, "HOME="+dir)
+				want = originalText + want
+			}
+			if test.userConfigKey != "" {
+				command.Env = append(command.Env, test.userConfigKey+"="+original)
+				want = originalText + want
+			}
+			output, err := command.CombinedOutput()
+			if err != nil || string(output) != want {
+				t.Fatalf("provisioning output = %q, error = %v, want %q", output, err, want)
+			}
+			if _, err := os.Stat(string(readPackageSourceFile(t, pathRecord))); !os.IsNotExist(err) {
+				t.Fatalf("temporary configuration survived installation: %v", err)
+			}
+		})
+	}
+}
+
 func readPackageSourceFile(t *testing.T, name string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(name)

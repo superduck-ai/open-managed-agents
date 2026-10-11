@@ -45,7 +45,7 @@ func buildPackageProvisionCommand(cfg config.Config) string {
 		`trap 'exit 129' HUP`,
 		`trap 'exit 130' INT`,
 		`trap 'exit 143' TERM`,
-		`original_config="${NPM_CONFIG_USERCONFIG:-${npm_config_userconfig:-$HOME/.npmrc}}"`,
+		`original_config="${NPM_CONFIG_USERCONFIG:-${npm_config_userconfig:-${HOME:+$HOME/.npmrc}}}"`,
 		`if [ -f "$original_config" ]; then cat "$original_config" > "$npm_config_path"; fi`,
 		`printf '\n' >> "$npm_config_path"`,
 		"printf '%s' " + shellQuote(encoded) + ` | base64 -d >> "$npm_config_path"`,

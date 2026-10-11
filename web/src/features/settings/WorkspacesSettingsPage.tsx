@@ -393,7 +393,10 @@ export function WorkspacesSettingsPage() {
                                 {canManageWorkspaces && !workspace.is_default && !workspace.archived_at ? (
                                   <DropdownMenuItem
                                     variant="destructive"
-                                    onClick={() => setArchivingWorkspace(workspace)}
+                                    onClick={() => {
+                                      setArchiveError('');
+                                      setArchivingWorkspace(workspace);
+                                    }}
                                   >
                                     <Trash2 className="size-4" aria-hidden />
                                     <span>{msg('settings.workspaces.archiveWorkspace', 'Archive workspace')}</span>
@@ -430,7 +433,10 @@ export function WorkspacesSettingsPage() {
           workspaceName={archivingWorkspace?.name ?? ''}
           pending={archivePending}
           error={archiveError}
-          onClose={() => setArchivingWorkspace(null)}
+          onClose={() => {
+            setArchiveError('');
+            setArchivingWorkspace(null);
+          }}
           onConfirm={() => void handleArchive()}
         />
       </section>

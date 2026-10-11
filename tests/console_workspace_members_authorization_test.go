@@ -1,12 +1,67 @@
 package tests
 
 import (
+	"encoding/json/v2"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 )
+
+func TestConsoleDefaultWorkspaceMemberPermissions(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("console-default-workspace-members"))
+	defer app.close()
+	refs := getAdminDefaultIDs(t, app.pool)
+	actor := seedAdminUser(t, app.pool, "default-manager-"+uniqueAdminSuffix()+"@example.local", "admin")
+	target := seedAdminUser(t, app.pool, "default-target-"+uniqueAdminSuffix()+"@example.local", "user")
+	cookies := workspaceUserCookies(t, app, refs.OrganizationUUID, actor)
+	path := "/api/console/organizations/" + refs.OrganizationUUID + "/workspaces/workspace_default"
+	t.Run("directory is read only", func(t *testing.T) {
+		response := app.platformRequest(t, http.MethodGet, path+"/members", nil, cookies)
+		defer response.Body.Close()
+		var directory struct {
+			IsDefault        bool `json:"is_default"`
+			CanManageMembers bool `json:"can_manage_members"`
+			Members          []struct {
+				CanEdit   bool `json:"can_edit"`
+				CanRemove bool `json:"can_remove"`
+			} `json:"members"`
+		}
+		if err := json.UnmarshalRead(response.Body, &directory); err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusOK || !directory.IsDefault || directory.CanManageMembers || len(directory.Members) < 2 {
+			t.Fatalf("unexpected Default directory: status=%d directory=%+v", response.StatusCode, directory)
+		}
+		for _, member := range directory.Members {
+			if member.CanEdit || member.CanRemove {
+				t.Fatalf("Default member is editable: %+v", member)
+			}
+		}
+	})
+	for _, tc := range []struct{ method, suffix, body string }{
+		{http.MethodGet, "/member-candidates", ""},
+		{http.MethodPost, "/members", `{"user_id":"` + target + `","workspace_role":"workspace_user"}`},
+		{http.MethodPost, "/members/" + target, `{"workspace_role":"workspace_admin"}`},
+		{http.MethodDelete, "/members/" + target, ""},
+	} {
+		t.Run(tc.method+tc.suffix, func(t *testing.T) {
+			response := app.platformRequest(t, tc.method, path+tc.suffix, strings.NewReader(tc.body), cookies)
+			defer response.Body.Close()
+			var result struct {
+				Error string `json:"error"`
+			}
+			body := readAll(t, response.Body)
+			if err := json.Unmarshal(body, &result); err != nil {
+				t.Fatalf("decode Default error: %v: %s", err, body)
+			}
+			if response.StatusCode != http.StatusConflict || result.Error != "default_workspace_protected" {
+				t.Fatalf("Default operation accepted: status=%d body=%s", response.StatusCode, body)
+			}
+		})
+	}
+}
 
 func TestConsoleWorkspaceMemberTargetAuthorization(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("console-workspace-members"))

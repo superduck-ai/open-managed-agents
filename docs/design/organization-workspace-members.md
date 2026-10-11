@@ -44,6 +44,8 @@ sequenceDiagram
 
 每个成员返回身份、姓名、邮箱、组织角色、有效工作区角色、角色来源及 `can_edit`、`can_remove`。界面消费服务端权限，不自行复制继承算法。目录与候选查询复用 `ListWorkspaceMemberFacts`；添加、改角色和移除统一走 `workspaceaccess.ChangeMember`（组织成员行锁 → 工作区锁 → 操作者授权 → Default 保护 → 显式角色规则）。组织 Admin 的继承访问不可编辑或移除；User 显式成员可编辑和移除；候选列表排除 Admin 与已有显式成员。添加与更新仅提供 Workspace User、Workspace Admin。
 
+组织 Admin 查询 Default 成员目录时，`can_manage_members` 和所有成员的 `can_edit`、`can_remove` 均为 false。Default 的候选查询与成员写操作统一返回 409 `default_workspace_protected`，成员管理应转到组织设置。
+
 ## 组织成员 Console 合同
 
 组织成员写路径（改角色、移除）挂 `requireConsoleOrganizationAdmin` 中间件，任何登录成员包括其他组织管理员都不可操作。DB 层 `withOrganizationMemberChange` 在组织行锁事务内校验操作者最新角色与最后管理员计数；Admin API 的 `UpdateAdminUserRole`/`DeleteAdminUser` 与 Console 共用同一保护。移除最后管理员返回 409 `last_organization_admin`，重复移除返回 404，非管理员返回 403。
@@ -53,6 +55,8 @@ sequenceDiagram
 组织成员页提供计数、权限说明、搜索、角色筛选、行内角色选择和更多操作菜单；普通工作区成员页额外支持姓名/邮箱/角色排序。无权限时保留 main 的明确权限提示，不请求成员目录；服务器返回 403 或当前权限撤销时隐藏缓存目录。组织右上入口为 Invite，工作区为 Add to Workspace。移除使用确认弹窗，提交期间禁用操作，后端失败保留弹窗和原因。切换组织或工作区后重置弹窗状态。
 
 工作区成员移除确认显示当前工作区名称，明确只移除该空间的显式成员关系。工作区设置的归档筛选单独请求 `include_archived=true`，导航选择器仍只使用活动工作区；归档记录不提供编辑或再次归档入口。
+
+归档弹窗打开和关闭时清空上次操作错误；失败后重新打开同一工作区或其他工作区时，不显示先前的错误。
 
 已观察 `platform.claude.com` 组织成员和普通工作区成员页的布局、权限说明与操作入口。真实 CMA 的移除操作未执行；添加弹窗因无可添加成员未能观察。本地验收需要逐项对照布局、筛选、表格、角色变更、添加和移除流程，不能将页面观察视为写操作验收。
 

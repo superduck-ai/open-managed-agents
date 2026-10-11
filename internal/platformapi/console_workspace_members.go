@@ -53,17 +53,18 @@ func handleListConsoleWorkspaceMembers(store OrganizationStore) http.HandlerFunc
 			return
 		}
 		members := make([]map[string]any, 0, len(facts))
+		canManage := access.ManageMembers() && !workspace.IsDefault
 		for _, fact := range facts {
 			memberAccess, accessErr := workspaceaccess.Effective(fact.OrganizationRole, workspace.IsDefault, fact.ExplicitRole)
 			if accessErr != nil {
 				continue
 			}
-			members = append(members, formatConsoleWorkspaceMember(fact, memberAccess, access.ManageMembers()))
+			members = append(members, formatConsoleWorkspaceMember(fact, memberAccess, canManage))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"workspace_id":       workspace.ExternalID,
 			"is_default":         workspace.IsDefault,
-			"can_manage_members": access.ManageMembers(),
+			"can_manage_members": canManage,
 			"members":            members,
 		})
 	}
@@ -86,6 +87,10 @@ func handleListConsoleWorkspaceMemberCandidates(store OrganizationStore) http.Ha
 		}
 		if !access.ManageMembers() {
 			writeConsoleWorkspaceMemberError(w, workspaceaccess.ErrDenied)
+			return
+		}
+		if workspace.IsDefault {
+			writeConsoleWorkspaceMemberError(w, workspaceaccess.ErrDefaultProtected)
 			return
 		}
 		facts, err := memberStore.ListWorkspaceMemberFacts(r.Context(), orgUUID, workspace.UUID)

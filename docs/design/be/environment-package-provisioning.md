@@ -16,6 +16,43 @@ Package 安装发生在 rclone 和 Environment Manager 启动之前。安装失�
 
 Sandbox 镜像或自定义 E2B template 必须提供 `/usr/local/bin/environment-manager`，并实现 `provision-packages` v1 合同。持久化清理协调以及事务化 Session event 交接不在本功能范围内。
 
+## 部署配置的软件源与内网例外
+
+`config.yaml` 的 `environment_packages` 由部署管理员管理，不属于 Environment API 的可写字段。省略时继续使用镜像/软件包管理器已有的源，且 OMA CONNECT 代理仍拒绝私网地址。当前自定义源支持 npm 默认 registry 与 scoped registries；包列表仍只接收包 spec，不能提交 registry 参数或任意命令。
+
+```yaml
+environment_packages:
+  npm:
+    scoped_registries:
+      "@cvte": "https://artifactory.gz.cvte.cn/artifactory/api/npm/npm-local/"
+  network:
+    private_endpoints:
+      - host: artifactory.gz.cvte.cn
+        port: 443
+        allowed_cidrs: ["10.20.30.40/32"]
+```
+
+示例 IP 必须替换成服务的实际地址范围。registry 仅允许 HTTPS 443，不能包含凭据、query、fragment、空白、控制字符或变量插值。scope 与 endpoint hostname 在启动时校验；endpoint 必须为精确域名或 IP，并同时配置 443 端口及规范化的私网 CIDR。CIDR 只能落在 RFC1918、IPv6 ULA 或 `100.64.0.0/10` 内，不能通过配置放行 loopback、link-local、metadata 或任意公网范围。
+
+预构建把 npm 源作为独立 argv 插入 `--` 之前，不产生永久 `.npmrc` 或 `ENV`。启动安装保留 v1 manifest，通过临时 npm userconfig 传递相同的源；复制已有 userconfig 保留认证配置，结束后删除临时文件，保留 Manager 的 stdin、stdout 和退出码。部署源不包含认证信息；预构建认证仍由流水线私密配置提供，启动安装认证由镜像或原 userconfig 提供。源配置及私网例外计入预构建服务商配置标识，避免排队任务在修改后静默使用不同设置；已完成模板仍按既有合同复用。
+
+Environment 的 `allow_package_managers: true` 将管理员配置的 npm registry hosts 纳入 Sandbox 与 OMA CONNECT 的允许列表；关闭时仍需显式 `allowed_hosts`。私网例外不会替代 Environment 域名授权。OMA CONNECT 完成授权后，对每个解析结果检查精确 host、port、CIDR，然后只拨号已校验的 IP。MCP proxy 与其他使用 `PublicAddress` 的服务不继承此例外。
+
+```mermaid
+flowchart TD
+    Config["管理员 config.yaml"] --> Install["预构建 argv / 启动安装临时 npmrc"]
+    Config --> Catalog["自定义 npm registry hosts"]
+    Catalog --> Environment["Environment 域名授权"]
+    Environment --> DNS["一次 DNS 解析"]
+    DNS --> Address{"公网地址或指定 host + 443 + CIDR"}
+    Address -->|允许| Dial["连接已校验 IP，保留 TLS 验证"]
+    Address -->|拒绝| Forbidden["403"]
+```
+
+YAML 不能创建公司内网路由、DNS 或 VPN。预构建发生在 Aliyun Flow，流水线构建节点需要独立配置网络访问；`environment_prebuilds.template.network` 影响模板创建，不能配置 Flow 构建容器。启动安装发生在 Sandbox relay 启动之前，也依赖 Sandbox 提供方的网络与 DNS；OMA CONNECT 例外不替代提供方的网络限制。只允许构建期访问内网时，应在构建节点配置访问并使用已完成模板，运行 Environment 保持有限网络且关闭内网域名授权。
+
+该配置不承诺软件源之外的私有包管理器支持，也不会自动放行 tarball、重定向或依赖引用的其他域名。确有额外目标时，需分别配置 Environment 授权和对应的私网例外。配置变更需重启服务；已运行的 Sandbox 网络列表需重新创建后更新。
+
 ## 软件包预构建
 
 `Prebuild` 为单个环境提前安装软件包并生成可启动模板。开启 `environment_prebuilds` 后，创建环境或修改未归档环境的软件包会在保存环境的同一事务内插入 River 任务；每个环境独立构建。执行链路为 Aliyun Flow 构建镜像 → CubeSandbox 制作模板 → 绑定环境的 `resolved_template`。

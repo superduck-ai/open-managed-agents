@@ -215,6 +215,19 @@ sandbox_lifecycle:
   dry_run: true
   idle_timeout: 24h
 
+environment_packages:
+  npm:
+    registry: ""
+    scoped_registries: {}
+    # Example: {"@cvte": "https://artifactory.gz.cvte.cn/artifactory/api/npm/npm-local/"}
+  network:
+    # Omit or set [] to retain default private-address rejection. The entry
+    # below illustrates the schema; replace the host and IP before deployment.
+    private_endpoints:
+      - host: registry.example.internal
+        port: 443
+        allowed_cidrs: ["10.20.30.40/32"]
+
 # Copy this section into the active OMA configuration. Disabled by default.
 # Template creation uses the existing e2b.api_url and e2b.api_key.
 # Registry push credentials stay in the image pipeline's private variables.

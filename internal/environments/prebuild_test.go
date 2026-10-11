@@ -153,7 +153,7 @@ func TestPrebuildProviderConfiguration(t *testing.T) {
 
 func TestPrebuildRecipePreservesLiteralSpecs(t *testing.T) {
 	p := &environmentPackages{APT: []string{"vim=1.2", "$(touch /tmp/injected)\nCOPY secret /"}, Cargo: []string{"ripgrep"}, Gem: []string{"rake"}, Go: []string{"a@v1", "b@v2"}, NPM: []string{"$(touch /tmp/injected)\nCOPY secret /"}, PIP: []string{"demo >= 1"}}
-	file := packageDockerfile("registry/base@sha256:pinned", p)
+	file := packageDockerfile("registry/base@sha256:pinned", p, nil)
 	var actual [][]string
 	for _, line := range strings.Split(file, "\n") {
 		if strings.HasPrefix(line, "RUN ") {

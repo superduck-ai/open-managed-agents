@@ -46,6 +46,17 @@ e2b:
   api_key: ""
   api_url: ""
 
+# Optional deployment-owned npm sources; private access stays disabled when omitted.
+# environment_packages:
+#   npm:
+#     scoped_registries:
+#       "@cvte": "https://artifactory.gz.cvte.cn/artifactory/api/npm/npm-local/"
+#   network:
+#     private_endpoints:
+#       - host: artifactory.gz.cvte.cn
+#         port: 443
+#         allowed_cidrs: ["10.20.30.40/32"]
+
 # Optional: extra hosts for SSH→HTTPS rewrite in environment-manager
 # (github.com is always built-in). See docs/configuration-reference.yaml.
 # environment_runner:

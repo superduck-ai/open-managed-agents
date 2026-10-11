@@ -2,6 +2,7 @@ package environments
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,7 +26,36 @@ const (
 // 在启动前全部失败。固定 flag 不含任何用户数据，spec 只经由 stdin 传入。
 func buildPackageProvisionCommand(cfg config.Config) string {
 	managerPath := firstNonEmpty(strings.TrimSpace(cfg.EnvironmentRunner.ManagerPath), defaultEnvironmentManagerPath)
-	return shellQuote(managerPath) + " " + packageProvisionArgs
+	command := shellQuote(managerPath) + " " + packageProvisionArgs
+	options := cfg.EnvironmentPackages.NPM.Options()
+	if len(options) == 0 {
+		return command
+	}
+	var npmConfig strings.Builder
+	for _, option := range options {
+		key, registry, _ := strings.Cut(strings.TrimPrefix(option, "--"), "=")
+		npmConfig.WriteString(key + "=" + strconv.Quote(registry))
+		npmConfig.WriteByte('\n')
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(npmConfig.String()))
+	script := strings.Join([]string{
+		"set -eu",
+		"npm_config_path=$(mktemp)",
+		`trap 'rm -f "$npm_config_path"' EXIT`,
+		`trap 'exit 129' HUP`,
+		`trap 'exit 130' INT`,
+		`trap 'exit 143' TERM`,
+		`original_config="${NPM_CONFIG_USERCONFIG:-${npm_config_userconfig:-$HOME/.npmrc}}"`,
+		`if [ -f "$original_config" ]; then cat "$original_config" > "$npm_config_path"; fi`,
+		`printf '\n' >> "$npm_config_path"`,
+		"printf '%s' " + shellQuote(encoded) + ` | base64 -d >> "$npm_config_path"`,
+		`export NPM_CONFIG_USERCONFIG="$npm_config_path" npm_config_userconfig="$npm_config_path"`,
+		command,
+	}, "\n")
+	if cfg.EnvironmentPackages.NPM.Registry != "" {
+		script = "export NPM_CONFIG_REGISTRY=" + shellQuote(cfg.EnvironmentPackages.NPM.Registry) + " npm_config_registry=" + shellQuote(cfg.EnvironmentPackages.NPM.Registry) + "\n" + script
+	}
+	return "sh -c " + shellQuote(script)
 }
 
 type packageManifest struct {

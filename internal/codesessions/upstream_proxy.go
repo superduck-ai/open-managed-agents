@@ -120,6 +120,7 @@ func (h *Handler) serveUpstreamProxyTunnel(connection *websocket.Conn, identity 
 		connection.Request().Context(),
 		connectRequest.Target,
 		h.cfg.CodeSession.UpstreamProxyDisableSSRFProtection,
+		h.cfg.EnvironmentPackages.Network.PrivateEndpoints...,
 	)
 	if err != nil {
 		status := http.StatusBadGateway
@@ -210,13 +211,21 @@ func upstreamProxyCredentialsMatch(request upstreamProxyConnectRequest, expected
 		subtle.ConstantTimeCompare([]byte(request.Token), []byte(expectedToken)) == 1
 }
 
-func resolveUpstreamProxyTarget(ctx context.Context, target string, disableSSRFProtection bool) (string, error) {
+func resolveUpstreamProxyTarget(ctx context.Context, target string, disableSSRFProtection bool, endpoints ...networkpolicy.PrivateEndpoint) (string, error) {
 	// 即使临时关闭 SSRF 地址过滤，也继续限制为 443：当前协议只支持 HTTPS CONNECT，
 	// 不能把该开关扩展成任意端口的通用 TCP 转发器。
-	return resolveProxyTarget(ctx, target, disableSSRFProtection, true)
+	policy, err := networkpolicy.NewPrivateNetworkPolicy(endpoints)
+	if err != nil {
+		return "", &upstreamProxyTargetError{status: http.StatusForbidden, cause: err}
+	}
+	return resolveProxyTargetWithPolicy(ctx, target, disableSSRFProtection, true, policy, net.DefaultResolver.LookupIPAddr)
 }
 
 func resolveProxyTarget(ctx context.Context, target string, disableSSRFProtection bool, httpsOnly bool) (string, error) {
+	return resolveProxyTargetWithPolicy(ctx, target, disableSSRFProtection, httpsOnly, networkpolicy.PrivateNetworkPolicy{}, net.DefaultResolver.LookupIPAddr)
+}
+
+func resolveProxyTargetWithPolicy(ctx context.Context, target string, disableSSRFProtection bool, httpsOnly bool, policy networkpolicy.PrivateNetworkPolicy, lookup func(context.Context, string) ([]net.IPAddr, error)) (string, error) {
 	host, port, err := net.SplitHostPort(target)
 	if err != nil || strings.TrimSpace(host) == "" {
 		return "", &upstreamProxyTargetError{status: http.StatusBadRequest, cause: errors.New("invalid CONNECT target")}
@@ -226,20 +235,20 @@ func resolveProxyTarget(ctx context.Context, target string, disableSSRFProtectio
 	}
 	// IP 字面量无需 DNS；默认必须是公网地址，临时开关开启时才原样放行。
 	if parsed, parseErr := netip.ParseAddr(host); parseErr == nil {
-		if !disableSSRFProtection && !networkpolicy.PublicAddress(parsed) {
+		if !disableSSRFProtection && !networkpolicy.PublicAddress(parsed) && !policy.Allows(host, port, parsed) {
 			return "", &upstreamProxyTargetError{status: http.StatusForbidden, cause: errors.New("target address is not public")}
 		}
 		return net.JoinHostPort(parsed.Unmap().String(), port), nil
 	}
 	// 域名使用服务端系统 resolver。Clash/TUN 的 fake-IP DNS 可能返回 198.18/15，
 	// 因此本地排障模式允许选择这样的首个有效地址；默认模式仍逐个寻找安全公网地址。
-	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	addresses, err := lookup(ctx, host)
 	if err != nil {
 		return "", &upstreamProxyTargetError{status: http.StatusBadGateway, cause: err}
 	}
 	for _, address := range addresses {
 		parsed, ok := netip.AddrFromSlice(address.IP)
-		if ok && (disableSSRFProtection || networkpolicy.PublicAddress(parsed)) {
+		if ok && (disableSSRFProtection || networkpolicy.PublicAddress(parsed) || policy.Allows(host, port, parsed)) {
 			return net.JoinHostPort(parsed.Unmap().String(), port), nil
 		}
 	}

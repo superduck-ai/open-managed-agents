@@ -1,4 +1,7 @@
 import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
+import { OrganizationMenu } from '../../features/organizations/OrganizationMenu';
+import { useScopeConfirmation } from '../../features/organizations/useScopeConfirmation';
+import { useOrganizations } from '../../shared/organizations/context';
 import {
   ArrowLeft,
   BookOpen,
@@ -488,6 +491,8 @@ function ShellSidebarHeader({ currentPath, onNavigate }: { currentPath: string; 
 }
 
 function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; onNavigate?: NavigateHandler }) {
+  const confirmation = useScopeConfirmation();
+  const organizations = useOrganizations();
   const { msg } = useI18n();
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -506,17 +511,22 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
   const handleSelect = async (workspace: Workspace) => {
     setOpen(false);
     if (workspace.id === activeWorkspaceId) return;
+    if (organizations) {
+      confirmation.request(() => selectWorkspace(workspace.id));
+      return;
+    }
     await navigateToMatchingWorkspacePath(currentPath, workspace.id, onNavigate);
     selectWorkspace(workspace.id);
   };
 
   const handleCreate = async (name: string, displayColor: string) => {
     const created = await createWorkspace(buildCreateWorkspaceInput(name, displayColor));
-    await navigateToMatchingWorkspacePath(currentPath, created.id, onNavigate);
+    if (!organizations) await navigateToMatchingWorkspacePath(currentPath, created.id, onNavigate);
   };
 
   return (
     <SidebarMenu>
+      {confirmation.dialog}
       <SidebarMenuItem>
         <DropdownMenu open={open} onOpenChange={setOpen}>
           <DropdownMenuTrigger
@@ -584,7 +594,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                   className="gap-2 p-2"
                   onClick={() => {
                     setOpen(false);
-                    setCreateOpen(true);
+                    confirmation.request(() => setCreateOpen(true));
                   }}
                 >
                   <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background">
@@ -817,21 +827,7 @@ export function AccountMenu({
               <DropdownMenuLabel className="truncate px-3 py-2 text-xs">{identity.email}</DropdownMenuLabel>
             </DropdownMenuGroup>
 
-            <DropdownMenuRadioGroup value={activeWorkspace.id}>
-              <DropdownMenuRadioItem
-                value={activeWorkspace.id}
-                closeOnClick={false}
-                className="h-12 items-start gap-3 px-3 py-2.5 text-foreground"
-              >
-                <Building2 className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">
-                    {localizedWorkspaceName(activeWorkspace.name, msg)}
-                  </span>
-                  <span className="block text-xs text-muted-foreground">{msg('account.apiPlan', 'API plan')}</span>
-                </span>
-              </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
+            <OrganizationMenu />
 
             <DropdownMenuSeparator />
 

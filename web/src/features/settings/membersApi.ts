@@ -11,6 +11,7 @@ export type OrganizationMember = {
 };
 
 export type OrganizationInvite = {
+  email_delivery?: 'sent' | 'failed' | 'not_configured';
   id: string;
   type?: 'invite';
   email: string;

@@ -170,10 +170,45 @@ func platformAuthWorkspaceInsertParams(input PlatformAuthWorkspaceInput) insertP
 
 func (r platformSessionIdentityRow) session() platformsession.Session {
 	return platformsession.Session{
-		OrganizationUUID:    r.OrganizationUUID,
-		WorkspaceUUID:       r.WorkspaceUUID,
-		WorkspaceExternalID: r.WorkspaceExternalID,
-		UserUUID:            r.UserUUID,
-		UserExternalID:      r.UserExternalID,
+		VerifiedEmail:        r.VerifiedEmail,
+		HomeOrganizationUUID: r.HomeOrganizationUUID,
+		OrganizationUUID:     r.OrganizationUUID,
+		WorkspaceUUID:        r.WorkspaceUUID,
+		WorkspaceExternalID:  r.WorkspaceExternalID,
+		UserUUID:             r.UserUUID,
+		UserExternalID:       r.UserExternalID,
 	}
+}
+
+func (d *DB) EnrichPlatformSession(ctx context.Context, session platformsession.Session) (platformsession.Session, error) {
+	if d == nil || d.mapperDB == nil || session.OrganizationUUID == "" {
+		return platformsession.Session{}, ErrNotFound
+	}
+	userID := session.UserUUID
+	if userID == "" {
+		userID = session.UserExternalID
+	}
+	if userID == "" {
+		return platformsession.Session{}, ErrNotFound
+	}
+	row, err := NewPlatformAuthUserMapper(d.mapperDB).ResolveSessionIdentity(ctx, session.OrganizationUUID, userID,
+		optionalVaultString(tryParseDBUUIDIdentifierString(userID)))
+	if err != nil {
+		return platformsession.Session{}, mapNoRows(err)
+	}
+	session.UserUUID = row.UserUUID
+	session.UserExternalID = row.UserExternalID
+	session.VerifiedEmail = row.VerifiedEmail
+	if session.HomeOrganizationUUID == "" {
+		session.HomeOrganizationUUID = row.HomeOrganizationUUID
+	}
+	return session, nil
+}
+
+func (d *DB) GetActivePlatformUserByEmail(ctx context.Context, organizationUUID, email string) (AdminUser, error) {
+	if d == nil || d.mapperDB == nil || organizationUUID == "" || email == "" {
+		return AdminUser{}, ErrNotFound
+	}
+	user, err := NewPlatformAuthUserMapper(d.mapperDB).FindActiveByEmail(ctx, organizationUUID, email)
+	return user, mapNoRows(err)
 }

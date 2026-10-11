@@ -5,6 +5,10 @@ type AccountWithPermissions = AuthAccount & {
   account_permissions?: Array<string | { permission?: string; name?: string }>;
 };
 
+export function canManageWorkspaceMembers(account: AuthAccount | null | undefined) {
+  return account?.permissions?.includes('workspace:members:manage') ?? false;
+}
+
 export function canManageMembers(account: AuthAccount | null | undefined) {
   if (!account) {
     return false;

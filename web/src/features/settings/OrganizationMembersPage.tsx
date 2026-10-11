@@ -18,6 +18,7 @@ import { Button } from '../../shared/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
 import { ResourceListState } from '../../shared/ui/resource-list-state';
 import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import type { ApiError } from '../../shared/api/client';
 import { useI18n } from '../../shared/i18n';
 import {
   DropdownMenu,
@@ -32,6 +33,8 @@ import { Textarea } from '../../shared/ui/textarea';
 import { Skeleton } from '../../shared/ui/skeleton';
 import { toast } from '../../shared/ui/sonner';
 import { useAuth } from '../../shared/auth/context';
+import { notifyInvitationDelivery } from './invitationDelivery';
+import { MembersAccessDenied } from './MembersAccessDenied';
 import { canManageMembers } from '../../shared/permissions/members';
 import {
   platformRoleDescription,
@@ -59,12 +62,35 @@ const memberColumnHelper = createColumnHelper<OrganizationMemberRow>();
 
 export function OrganizationMembersPage() {
   const { msg } = useI18n();
-  const { account, csrfToken } = useAuth();
-  const { orgUuid, activeWorkspace } = useWorkspace();
-  const queryClient = useQueryClient();
+  const { account } = useAuth();
+  const { orgUuid } = useWorkspace();
   const bootstrapOrganization = account?.memberships?.find((membership) => membership.organization?.uuid)?.organization;
   const activeOrgUuid = orgUuid ?? bootstrapOrganization?.uuid;
-  const canManage = canManageMembers(account);
+
+  if (!activeOrgUuid) {
+    return (
+      <section>
+        <ResourcePageHeader contentGap="content" title={msg('members.title', 'Members')} />
+        <p className="text-[15px] leading-5 text-muted-foreground">
+          {msg('members.noOrganization', 'No organization is available for this session.')}
+        </p>
+      </section>
+    );
+  }
+
+  if (!canManageMembers(account)) {
+    return <OrganizationMembersAccessDenied />;
+  }
+
+  return <OrganizationMembersAdminPage activeOrgUuid={activeOrgUuid} />;
+}
+
+function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string }) {
+  const { msg } = useI18n();
+  const { account, csrfToken } = useAuth();
+  const { activeWorkspace } = useWorkspace();
+  const queryClient = useQueryClient();
+  const bootstrapOrganization = account?.memberships?.find((membership) => membership.organization?.uuid)?.organization;
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteActionError, setInviteActionError] = useState<string | null>(null);
   const [inviteToRevoke, setInviteToRevoke] = useState<OrganizationInvite | null>(null);
@@ -82,7 +108,7 @@ export function OrganizationMembersPage() {
   const invitesQuery = useQuery({
     queryKey: invitesQueryKey,
     queryFn: () => listOrganizationInvites(activeOrgUuid ?? '', 'pending'),
-    enabled: Boolean(activeOrgUuid) && canManage,
+    enabled: Boolean(activeOrgUuid),
     retry: false,
   });
 
@@ -113,7 +139,7 @@ export function OrganizationMembersPage() {
           current?.map((invite) => (invite.id === updatedInvite.id ? updatedInvite : invite)) ?? [updatedInvite],
       );
       setInviteActionError(null);
-      toast.success(msg('members.reminderSent', 'Invite reminder sent.'));
+      notifyInvitationDelivery([updatedInvite], msg);
     },
     onError: (error) => {
       setInviteActionError(errorMessage(error));
@@ -137,18 +163,16 @@ export function OrganizationMembersPage() {
   });
 
   const tableRows = useMemo<OrganizationMemberRow[]>(
-    () => [...(canManage ? (invitesQuery.data ?? []) : []), ...(membersQuery.data ?? [])],
-    [canManage, invitesQuery.data, membersQuery.data],
+    () => [...(invitesQuery.data ?? []), ...(membersQuery.data ?? [])],
+    [invitesQuery.data, membersQuery.data],
   );
   const isInitialLoading =
-    (membersQuery.isLoading && !membersQuery.data) || (canManage && invitesQuery.isLoading && !invitesQuery.data);
-  const hasTableError = membersQuery.isError || (canManage && invitesQuery.isError);
+    (membersQuery.isLoading && !membersQuery.data) || (invitesQuery.isLoading && !invitesQuery.data);
+  const hasTableError = membersQuery.isError || invitesQuery.isError;
   const titleCount = isInitialLoading ? 0 : tableRows.length;
   const handleRetry = () => {
     membersQuery.refetch();
-    if (canManage) {
-      invitesQuery.refetch();
-    }
+    invitesQuery.refetch();
   };
 
   const columns = useMemo(
@@ -198,7 +222,7 @@ export function OrganizationMembersPage() {
           const role = normalizePlatformRole(member.role);
           const isSelf = isCurrentAccountMember(account, member);
 
-          if (!canManage || isSelf) {
+          if (isSelf) {
             return <span className="text-foreground">{platformRoleLabel(role, msg)}</span>;
           }
 
@@ -240,7 +264,7 @@ export function OrganizationMembersPage() {
           ),
       }),
     ],
-    [account, canManage, deleteInviteMutation, msg, pendingRoleMemberId, resendInviteMutation, updateRoleMutation],
+    [account, deleteInviteMutation, msg, pendingRoleMemberId, resendInviteMutation, updateRoleMutation],
   );
 
   // TanStack Table returns callback-heavy instance methods; this table instance stays local to the page.
@@ -251,15 +275,8 @@ export function OrganizationMembersPage() {
     getCoreRowModel: getCoreRowModel(),
   });
 
-  if (!activeOrgUuid) {
-    return (
-      <section>
-        <ResourcePageHeader contentGap="content" title={msg('members.title', 'Members')} />
-        <p className="text-[15px] leading-5 text-muted-foreground">
-          {msg('members.noOrganization', 'No organization is available for this session.')}
-        </p>
-      </section>
-    );
+  if ([membersQuery.error, invitesQuery.error].some(isPermissionDenied)) {
+    return <OrganizationMembersAccessDenied />;
   }
 
   return (
@@ -269,23 +286,23 @@ export function OrganizationMembersPage() {
         title={msg('members.title', 'Members')}
         description={memberAccessDescription(bootstrapOrganization, activeWorkspace.name, msg)}
         titleAdornment={
-          <Badge variant="secondary" className="min-w-5 rounded-full px-1.5">
-            {titleCount}
-          </Badge>
+          !hasTableError ? (
+            <Badge variant="secondary" className="min-w-5 rounded-full px-1.5">
+              {titleCount}
+            </Badge>
+          ) : null
         }
         actions={
-          canManage ? (
-            <Button
-              size="lg"
-              onClick={() => {
-                setInviteActionError(null);
-                setInviteOpen(true);
-              }}
-            >
-              <Plus className="size-4" aria-hidden />
-              {msg('members.invite', 'Invite')}
-            </Button>
-          ) : null
+          <Button
+            size="lg"
+            onClick={() => {
+              setInviteActionError(null);
+              setInviteOpen(true);
+            }}
+          >
+            <Plus className="size-4" aria-hidden />
+            {msg('members.invite', 'Invite')}
+          </Button>
         }
       />
 
@@ -356,11 +373,7 @@ export function OrganizationMembersPage() {
             ...createdInvites,
             ...(current ?? []),
           ]);
-          toast.success(
-            createdInvites.length === 1
-              ? msg('members.inviteSent', 'Invite sent.')
-              : msg('members.invitesSent', '{count} invites sent.', { count: createdInvites.length }),
-          );
+          notifyInvitationDelivery(createdInvites, msg);
         }}
       />
       <InviteRevokeDialog
@@ -379,6 +392,26 @@ export function OrganizationMembersPage() {
       />
     </section>
   );
+}
+
+function OrganizationMembersAccessDenied() {
+  const { msg } = useI18n();
+
+  return (
+    <section data-testid="organization-members-page">
+      <ResourcePageHeader contentGap="content" title={msg('members.title', 'Members')} />
+      <MembersAccessDenied
+        description={msg(
+          'members.accessDeniedDescription',
+          'Only organization administrators can view and manage organization members. Contact your organization administrator.',
+        )}
+      />
+    </section>
+  );
+}
+
+function isPermissionDenied(error: unknown) {
+  return Boolean(error && typeof error === 'object' && (error as Partial<ApiError>).status === 403);
 }
 
 function InviteMembersDialog({
@@ -788,6 +821,7 @@ function isCurrentAccountMember(account: ReturnType<typeof useAuth>['account'], 
     return false;
   }
   return (
+    account.memberships?.some((membership) => member.id === membership.user_id || member.id === membership.user_uuid) ||
     member.id === account.uuid ||
     member.id === account.tagged_id ||
     (member.email !== '' && member.email.toLowerCase() === account.email_address.toLowerCase())

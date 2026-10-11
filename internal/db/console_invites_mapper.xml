@@ -18,6 +18,7 @@
             <choose>
                 <when test="status == ''">
                     AND deleted_at IS NULL
+                    AND status &lt;&gt; 'declined'
                 </when>
                 <when test="status == 'pending'">
                     AND deleted_at IS NULL
@@ -33,7 +34,7 @@
                     AND status = 'accepted'
                 </when>
                 <when test="status == 'deleted'">
-                    AND (status = 'deleted' OR deleted_at IS NOT NULL)
+                    AND (status = 'deleted' OR deleted_at IS NOT NULL OR status = 'declined')
                 </when>
                 <otherwise>
                     AND FALSE
@@ -74,6 +75,7 @@
         WHERE organization_uuid = #{params.OrganizationUUID}
         AND external_id = #{params.ExternalID}
         AND deleted_at IS NULL
+        AND status IN ('pending', 'expired')
         RETURNING
         <include refid="consoleInviteColumns"/>
     </update>
@@ -84,6 +86,7 @@
             deleted_at = COALESCE(deleted_at, NOW())
         WHERE organization_uuid = #{organizationUUID}
         AND external_id = #{externalID}
+        AND status IN ('pending', 'expired', 'deleted')
         RETURNING
         <include refid="consoleInviteColumns"/>
     </update>

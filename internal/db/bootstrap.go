@@ -173,10 +173,31 @@ func (row consoleOrganizationRow) userOrganizationRecord() (platform.UserOrganiz
 		return platform.UserOrganizationRecord{}, err
 	}
 	return platform.UserOrganizationRecord{
+		UserUUID:           row.UserUUID,
+		UserExternalID:     row.UserExternalID,
 		OrganizationRecord: *organization,
 		Role:               row.Role,
 		AddedAt:            row.AddedAt,
 	}, nil
+}
+
+func (d *DB) ListBootstrapOrganizationsByEmail(ctx context.Context, email string) ([]platform.UserOrganizationRecord, error) {
+	out := []platform.UserOrganizationRecord{}
+	if d == nil || d.mapperDB == nil || email == "" {
+		return out, nil
+	}
+	rows, err := NewConsoleUserMapper(d.mapperDB).ListBootstrapOrganizationsByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		org, mapErr := row.userOrganizationRecord()
+		if mapErr != nil {
+			return nil, mapErr
+		}
+		out = append(out, org)
+	}
+	return out, nil
 }
 
 func decodeOrganizationSettings(raw []byte) (map[string]any, error) {

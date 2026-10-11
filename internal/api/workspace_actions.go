@@ -25,6 +25,9 @@ func platformActionAllowed(r *http.Request, access auth.WorkspaceAccess) bool {
 		return access.UseResources()
 	}
 	if strings.Contains(path, "/members") || strings.Contains(path, "/invites") || strings.Contains(path, "/invitations") {
+		if strings.Contains(path, "/workspaces/") && strings.Contains(path, "/members") {
+			return true
+		}
 		return access.ManageOrganization()
 	}
 	if strings.Contains(path, "/billing") || strings.Contains(path, "/cost_report") {

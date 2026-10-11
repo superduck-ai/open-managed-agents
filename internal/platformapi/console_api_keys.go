@@ -27,6 +27,18 @@ type consoleWorkspaceLister interface {
 	ListConsoleWorkspaces(ctx context.Context, orgUUID string, includeArchived bool) ([]ConsoleWorkspace, error)
 }
 
+type consoleWorkspaceUpdater interface {
+	UpdateConsoleWorkspace(ctx context.Context, orgUUID, workspaceID, name, displayColor string) (ConsoleWorkspace, error)
+}
+
+type consoleWorkspaceArchiver interface {
+	ArchiveConsoleWorkspace(ctx context.Context, orgUUID, workspaceID string) (ConsoleWorkspace, error)
+}
+
+type consoleAPIKeyOrganizationCounter interface {
+	CountConsoleAPIKeysByOrganization(ctx context.Context, orgUUID string) (map[string]int, error)
+}
+
 type consoleWorkspaceCreator interface {
 	CreateConsoleWorkspace(ctx context.Context, input CreateConsoleWorkspaceInput) (ConsoleWorkspace, error)
 }
@@ -54,6 +66,8 @@ func RegisterConsoleOrganizationAPIKeyRoutes(r chi.Router, store OrganizationSto
 func registerConsoleOrganizationAPIKeyRoutes(r chi.Router, store OrganizationStore) {
 	r.Get("/api_keys", handleListConsoleAPIKeys(store))
 	r.Post("/workspaces", handleCreateConsoleWorkspace(store))
+	r.Patch("/workspaces/{workspaceId}", handleUpdateConsoleWorkspace(store))
+	r.Post("/workspaces/{workspaceId}/archive", handleArchiveConsoleWorkspace(store))
 	r.Get("/workspaces/{workspaceId}/api_keys", handleListConsoleWorkspaceAPIKeys(store))
 	r.Post("/workspaces/{workspaceId}/api_keys", handleCreateConsoleWorkspaceAPIKey(store))
 	r.Post("/workspaces/{workspaceId}/api_keys/{apiKeyId}", handleUpdateConsoleWorkspaceAPIKey(store))
@@ -63,6 +77,7 @@ func registerConsoleOrganizationAPIKeyRoutes(r chi.Router, store OrganizationSto
 
 func handleListConsoleWorkspaces(store OrganizationStore) http.HandlerFunc {
 	workspaceLister, _ := store.(consoleWorkspaceLister)
+	apiKeyCounter, _ := store.(consoleAPIKeyOrganizationCounter)
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgUUID, ok := visibleOrgUUID(w, r)
 		if !ok {
@@ -84,9 +99,19 @@ func handleListConsoleWorkspaces(store OrganizationStore) http.HandlerFunc {
 			internalError(w, "failed to resolve workspace access")
 			return
 		}
+		apiKeyCounts := map[string]int{}
+		if apiKeyCounter != nil {
+			apiKeyCounts, err = apiKeyCounter.CountConsoleAPIKeysByOrganization(r.Context(), orgUUID)
+			if err != nil {
+				internalError(w, "failed to count workspace api keys")
+				return
+			}
+		}
 		out := make([]map[string]any, 0, len(workspaces))
 		for _, workspace := range workspaces {
-			out = append(out, formatConsoleWorkspace(workspace))
+			entry := formatConsoleWorkspace(workspace)
+			entry["api_keys_count"] = apiKeyCounts[workspace.UUID]
+			out = append(out, entry)
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
@@ -140,6 +165,92 @@ func handleCreateConsoleWorkspace(store OrganizationStore) http.HandlerFunc {
 		}
 		if err != nil {
 			internalError(w, "failed to create workspace")
+			return
+		}
+		writeJSON(w, http.StatusOK, formatConsoleWorkspace(workspace))
+	}
+}
+
+type updateConsoleWorkspaceRequest struct {
+	Name         string `json:"name"`
+	DisplayColor string `json:"display_color"`
+	Color        string `json:"color"`
+}
+
+func handleUpdateConsoleWorkspace(store OrganizationStore) http.HandlerFunc {
+	workspaceUpdater, _ := store.(consoleWorkspaceUpdater)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireOrganizationAdministrator(w, r) {
+			return
+		}
+		orgUUID, ok := visibleOrgUUID(w, r)
+		if !ok {
+			return
+		}
+		if workspaceUpdater == nil {
+			internalError(w, "failed to update workspace")
+			return
+		}
+		body, err := readRequiredJSON[updateConsoleWorkspaceRequest](r, false)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "workspace name is required"})
+			return
+		}
+		name := strings.TrimSpace(body.Name)
+		if name == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "workspace name is required"})
+			return
+		}
+		if strings.EqualFold(name, "default") {
+			defaultWorkspaceNameReserved(w)
+			return
+		}
+		displayColor := strings.TrimSpace(body.DisplayColor)
+		if displayColor == "" {
+			displayColor = strings.TrimSpace(body.Color)
+		}
+		workspace, err := workspaceUpdater.UpdateConsoleWorkspace(
+			r.Context(), orgUUID, chi.URLParam(r, "workspaceId"), name, displayColor,
+		)
+		if errors.Is(err, db.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "workspace_not_found"})
+			return
+		}
+		if errors.Is(err, db.ErrDuplicate) {
+			workspaceAlreadyExists(w)
+			return
+		}
+		if err != nil {
+			internalError(w, "failed to update workspace")
+			return
+		}
+		writeJSON(w, http.StatusOK, formatConsoleWorkspace(workspace))
+	}
+}
+
+func handleArchiveConsoleWorkspace(store OrganizationStore) http.HandlerFunc {
+	workspaceArchiver, _ := store.(consoleWorkspaceArchiver)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireOrganizationAdministrator(w, r) {
+			return
+		}
+		orgUUID, ok := visibleOrgUUID(w, r)
+		if !ok {
+			return
+		}
+		if workspaceArchiver == nil {
+			internalError(w, "failed to archive workspace")
+			return
+		}
+		workspace, err := workspaceArchiver.ArchiveConsoleWorkspace(
+			r.Context(), orgUUID, chi.URLParam(r, "workspaceId"),
+		)
+		if errors.Is(err, db.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "workspace_not_found"})
+			return
+		}
+		if err != nil {
+			internalError(w, "failed to archive workspace")
 			return
 		}
 		writeJSON(w, http.StatusOK, formatConsoleWorkspace(workspace))

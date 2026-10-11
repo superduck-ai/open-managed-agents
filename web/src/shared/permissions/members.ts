@@ -9,7 +9,7 @@ export function canManageWorkspaceMembers(account: AuthAccount | null | undefine
   return account?.permissions?.includes('workspace:members:manage') ?? false;
 }
 
-export function canManageMembers(account: AuthAccount | null | undefined) {
+export function canManageMembers(account: AuthAccount | null | undefined, orgUuid?: string) {
   if (!account) {
     return false;
   }
@@ -20,7 +20,9 @@ export function canManageMembers(account: AuthAccount | null | undefined) {
     return true;
   }
 
-  return account.memberships?.some((membership) => membership.role === 'admin') ?? false;
+  const memberships =
+    account.memberships?.filter((membership) => !orgUuid || membership.organization?.uuid === orgUuid) ?? [];
+  return memberships.some((membership) => membership.role === 'admin');
 }
 
 function permissionNames(account: AccountWithPermissions) {

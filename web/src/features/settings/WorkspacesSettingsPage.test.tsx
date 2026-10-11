@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { SettingsShell } from '../../app/layout/ConsoleLayout';
 import { I18nProvider } from '../../shared/i18n';
@@ -6,23 +7,27 @@ import { defaultWorkspace, type CreateWorkspaceInput, type Workspace } from '../
 import { buildCreateWorkspaceInput } from '../../shared/workspaces/presentation';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
 import { resetTestDom } from '../../test/setup';
-import { WorkspacesSettingsPage } from './WorkspacesSettingsPage';
+import { filterWorkspaces, WorkspacesSettingsPage } from './WorkspacesSettingsPage';
 
 const testingLibrary = await import('@testing-library/react');
 const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
+const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   cleanup();
+  globalThis.fetch = originalFetch;
 });
 
 describe('Workspaces settings page', () => {
-  test('renders the settings-shell workspace table with current badge and action links', () => {
+  test('renders the settings-shell workspace table with current badge and action links', async () => {
     resetTestDom('https://oma.duck.ai/settings/workspaces');
 
     const fooWorkspace: Workspace = {
       id: 'wrkspc_foo',
       type: 'workspace',
       name: 'foo',
+      created_at: '2026-02-03T07:12:00Z',
+      api_keys_count: 2,
       display_color: '#8CCDB5',
       color: '#8CCDB5',
       data_residency: {
@@ -46,23 +51,112 @@ describe('Workspaces settings page', () => {
       },
     });
 
-    expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Workspaces 2' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Create workspace' })).toBeTruthy();
     const table = screen.getByRole('table', { name: 'Workspaces' });
     expect(within(table).getByRole('columnheader', { name: 'Workspace' })).toBeTruthy();
-    expect(within(table).getByRole('columnheader', { name: 'Residency' })).toBeTruthy();
+    expect(within(table).getByRole('columnheader', { name: 'ID' })).toBeTruthy();
+    expect(within(table).getByRole('columnheader', { name: 'Created' })).toBeTruthy();
+    expect(within(table).getByRole('columnheader', { name: 'API keys' })).toBeTruthy();
+    expect(within(table).queryByRole('columnheader', { name: 'Residency' })).toBeNull();
     expect(within(table).getByText('Default')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /collaborative spaces/i })).toBeTruthy();
+    expect(
+      within(table).getByRole('button', { name: 'The default workspace is not editable and cannot be removed' }),
+    ).toBeTruthy();
+    const overviewTrigger = screen.getByRole('button', { name: /collaborative spaces/i });
+    expect(overviewTrigger.closest('[data-slot="tooltip-trigger"]')).toBeTruthy();
+    expect(
+      within(table)
+        .getByRole('button', { name: 'The default workspace is not editable and cannot be removed' })
+        .closest('[data-slot="tooltip-trigger"]'),
+    ).toBeTruthy();
     expect(within(table).getByText('foo')).toBeTruthy();
     expect(within(table).getByText('Current')).toBeTruthy();
-    const apiKeyLinks = within(table).getAllByRole('link', { name: 'API keys' });
-    const webhookLinks = within(table).getAllByRole('link', { name: 'Webhooks' });
-    expect(apiKeyLinks[0].getAttribute('href')).toBe('/settings/workspaces/default/keys');
-    expect(apiKeyLinks[1].getAttribute('href')).toBe('/settings/workspaces/wrkspc_foo/keys');
-    expect(webhookLinks[0].getAttribute('href')).toBe('/settings/workspaces/default/webhooks');
-    expect(webhookLinks[1].getAttribute('href')).toBe('/settings/workspaces/wrkspc_foo/webhooks');
-    expect(apiKeyLinks[0].getAttribute('data-slot')).toBe('button');
-    expect(webhookLinks[0].getAttribute('data-slot')).toBe('button');
+    expect(within(table).getByText('wrkspc_foo')).toBeTruthy();
+    expect(within(table).getAllByText(/2026/).length).toBeGreaterThan(0);
+    expect(within(table).getByText('2')).toBeTruthy();
+    const actionButtons = within(table).getAllByRole('button', { name: 'Workspace actions' });
+    expect(actionButtons.length).toBe(2);
+    expect(actionButtons[1].getAttribute('aria-haspopup')).toBe('menu');
+    fireEvent.click(actionButtons[1]);
+    expect(await screen.findByRole('menuitem', { name: 'Webhooks' })).toBeTruthy();
     expect(container.querySelector('.surface-card')).toBeNull();
+  });
+
+  test('filters workspaces by search keyword and archived status', async () => {
+    resetTestDom('https://oma.duck.ai/settings/workspaces');
+
+    const fooWorkspace: Workspace = {
+      id: 'wrkspc_foo',
+      type: 'workspace',
+      name: 'foo',
+      created_at: '2026-02-03T07:12:00Z',
+      api_keys_count: 2,
+    };
+    const archivedWorkspace: Workspace = {
+      id: 'wrkspc_archived',
+      type: 'workspace',
+      name: 'legacy',
+      created_at: '2025-06-01T00:00:00Z',
+      api_keys_count: 0,
+      archived_at: '2026-01-01T00:00:00Z',
+    };
+    const fetchMock = mock(async (_input: string | URL | Request) =>
+      Response.json([defaultWorkspace, fooWorkspace, archivedWorkspace]),
+    );
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    renderWorkspacesSettings({
+      withSettingsShell: false,
+      workspaceValue: {
+        orgUuid: 'org_test',
+        canManageWorkspaces: true,
+        workspaces: [defaultWorkspace, fooWorkspace],
+        activeWorkspace: fooWorkspace,
+        activeWorkspaceId: fooWorkspace.id,
+        isLoading: false,
+        error: null,
+        selectWorkspace: () => undefined,
+        createWorkspace: async () => fooWorkspace,
+        refreshWorkspaces: async () => undefined,
+      },
+    });
+
+    const table = screen.getByRole('table', { name: 'Workspaces' });
+    expect(within(table).queryByText('legacy')).toBeNull();
+
+    const searchBox = screen.getByRole('searchbox', { name: 'Search workspaces' });
+    fireEvent.change(searchBox, { target: { value: 'foo' } });
+    expect(within(table).getByText('foo')).toBeTruthy();
+    expect(within(table).queryByText('Default')).toBeNull();
+
+    fireEvent.change(searchBox, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status' }));
+    const archivedOption = await screen.findByRole('option', { name: 'Archived' });
+    fireEvent.pointerDown(archivedOption);
+    fireEvent.mouseDown(archivedOption);
+    fireEvent.pointerUp(archivedOption);
+    fireEvent.mouseUp(archivedOption);
+    fireEvent.click(archivedOption);
+    expect(await screen.findByText('legacy')).toBeTruthy();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('include_archived=true');
+    expect(
+      filterWorkspaces([defaultWorkspace, fooWorkspace, archivedWorkspace], '', 'active').map(
+        (workspace) => workspace.name,
+      ),
+    ).toEqual(['Default', 'foo']);
+    expect(
+      filterWorkspaces([defaultWorkspace, fooWorkspace, archivedWorkspace], '', 'archived').map(
+        (workspace) => workspace.name,
+      ),
+    ).toEqual(['legacy']);
+    expect(
+      filterWorkspaces([defaultWorkspace, fooWorkspace, archivedWorkspace], 'wrkspc_archived', 'archived').map(
+        (workspace) => workspace.name,
+      ),
+    ).toEqual(['legacy']);
+    expect(filterWorkspaces([defaultWorkspace, fooWorkspace, archivedWorkspace], 'no-hit', 'active')).toEqual([]);
   });
 
   test('builds the shared workspace create payload with name, color, and US residency', () => {
@@ -134,5 +228,10 @@ function renderWorkspacesSettings({
 }
 
 function SettingsHarness({ children, workspaceValue }: { children: ReactNode; workspaceValue: WorkspaceContextValue }) {
-  return <WorkspaceContext.Provider value={workspaceValue}>{children}</WorkspaceContext.Provider>;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return (
+    <QueryClientProvider client={client}>
+      <WorkspaceContext.Provider value={workspaceValue}>{children}</WorkspaceContext.Provider>
+    </QueryClientProvider>
+  );
 }

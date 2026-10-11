@@ -320,16 +320,18 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterOrganizationOAuthEnvironmentRoutes(r)
 		})
 		r.Route("/api/console/organizations/{orgUuid}", func(r chi.Router) {
+			r.Use(platformCSRFMiddleware)
 			platformapi.RegisterConsoleOrganizationWorkspaceRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationAdminRequestRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationAPIKeyRoutes(r, s.db)
 			platformapi.RegisterConsoleLLMProviderRoutes(r, s.db, s.vaultSecrets)
 			platformapi.RegisterConsoleOrganizationMemberRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db, invitations.NewMailer(s.cfg.Auth, s.db, s.logger.With("component", "invitation_mail")))
+			platformapi.RegisterConsoleWorkspaceMemberRoutes(r, s.db)
 			mcpCatalogHandler.RegisterRoutes(r)
-			mcpServerHandler.RegisterRoutes(r.With(platformCSRFMiddleware))
+			mcpServerHandler.RegisterRoutes(r)
 			if s.consoleTunnels != nil {
-				r.With(platformCSRFMiddleware).Mount("/workspaces/{workspaceId}/mcp_tunnels", s.consoleTunnels)
+				r.Mount("/workspaces/{workspaceId}/mcp_tunnels", s.consoleTunnels)
 			}
 		})
 		r.Route("/api/{orgUuid}", func(r chi.Router) {

@@ -197,8 +197,9 @@ export function WorkspaceProvider({
       const current = scopeRef.current;
       if (!current.orgUuid) throw new Error('No organization is available for workspace creation.');
       const created = await createConsoleWorkspace(current.orgUuid, input);
+      const workspaces = await listConsoleWorkspaces(current.orgUuid);
       if (current !== scopeRef.current) throw new DOMException('Scope changed', 'AbortError');
-      const next = { ...current, workspaces: [...current.workspaces, created], activeWorkspaceId: created.id };
+      const next = { ...current, workspaces, activeWorkspaceId: chooseWorkspace(workspaces, created.id)?.id ?? '' };
       setSwitching(true);
       await installScope(next, ++generation.current);
       return created;
@@ -211,8 +212,13 @@ export function WorkspaceProvider({
     if (!current.orgUuid) return;
     const workspaces = await listConsoleWorkspaces(current.orgUuid);
     if (current !== scopeRef.current) return;
-    setScope({ ...current, workspaces });
-  }, []);
+    const activeWorkspaceId = chooseWorkspace(workspaces, current.activeWorkspaceId)?.id ?? '';
+    await installScope(
+      { ...current, workspaces, activeWorkspaceId },
+      ++generation.current,
+      activeWorkspaceId !== current.activeWorkspaceId,
+    );
+  }, [installScope]);
   const activeWorkspace = scope.workspaces.find((workspace) => workspace.id === scope.activeWorkspaceId) ?? {
     id: '',
     type: 'workspace' as const,
@@ -238,7 +244,7 @@ export function WorkspaceProvider({
           value={{
             ...scope,
             activeWorkspace,
-            canManageWorkspaces: canManageMembers(account),
+            canManageWorkspaces: canManageMembers(account, scope.orgUuid),
             isLoading: switching,
             error,
             selectWorkspace,

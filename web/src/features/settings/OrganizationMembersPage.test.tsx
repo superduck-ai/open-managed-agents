@@ -1,3 +1,4 @@
+import '../../test/setup';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { useMemo, type ReactNode } from 'react';
@@ -129,7 +130,34 @@ describe('Organization members settings', () => {
     expect(within(table).getByText('Ada Lovelace')).toBeTruthy();
     expect(within(table).getByText('ada@example.com')).toBeTruthy();
     expect(screen.queryByRole('combobox', { name: 'Role for Current User' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'More actions for Current User' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'More actions for Ada Lovelace' })).toBeTruthy();
     expect(screen.getByRole('combobox', { name: 'Role for Ada Lovelace' })).toBeTruthy();
+  });
+
+  test('filters the member directory by search keyword', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    mockMembersApi();
+
+    render(
+      <OrganizationMembersHarness>
+        <OrganizationMembersPage />
+      </OrganizationMembersHarness>,
+    );
+
+    expect(await screen.findByText('Ada Lovelace')).toBeTruthy();
+    expect(screen.getByText('3')).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Role' })).toBeTruthy();
+
+    const table = screen.getByRole('table', { name: 'Members' });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search members' }), { target: { value: 'Ada' } });
+    expect(within(table).getByText('Ada Lovelace')).toBeTruthy();
+    expect(within(table).queryByText('Current User')).toBeNull();
+    expect(within(table).queryByText('pending@example.com')).toBeNull();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search members' }), { target: { value: '' } });
+    expect(within(table).getByText('Current User')).toBeTruthy();
+    expect(within(table).getByText('pending@example.com')).toBeTruthy();
   });
 
   test('retries both members and pending invites after a shared table load failure', async () => {

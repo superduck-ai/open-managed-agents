@@ -23,16 +23,21 @@ Use this workflow when implementing or fixing Deployment/River, Memory/Filestore
 | --- | --- |
 | Deployment Run creation, scheduled Worker, River state/retry, occurrence idempotency or restart recovery | All four `deployment` scenarios below |
 | Memory/Filestore mounts, mutation, token scope, cross-session lifetime or cleanup | All six `memory` scenarios below; run `memory doctor mounts` for FUSE preflight |
+| Brain Memory catalog discovery, permission or sandbox MCP reads | `chat.brain-memory`; read [Memory](features/memory.md) |
 | Transcript archive/export/restore/delete, compaction boundary, pending cleanup or object integrity | All five `transcript` scenarios below |
 | Files API, file metadata, workspace authorization, storage or cleanup | `files.lifecycle`, `files.isolation`, `files.invalid`, `files.storage`, `files.attachments`, `files.platform`, `files.recovery`, `files.exhaustion`, `files.generated`, `files.performance` |
 | Tool permissions or confirmation | `chat.tools` |
 | Busy-input rejection and retry, ACK, Worker reconnection or replacement, history recovery | `chat.reliability` |
 | NATS fanout or delivery across backend instances | `chat.instances` |
 | Session creation, Runner, mounts or Worker startup | `chat.public` |
+| Bound Skill discovery, permission, body/reference loading or readonly mounts | `chat.skills-loading`; read [Skill loading](features/skills-loading.md) |
 | Chat queries, scheduling, streaming latency or other performance-sensitive paths | `chat.performance` with a baseline comparison |
 | Upstream model authentication errors and failed-turn completion | `chat.upstream-errors`; read [Upstream errors](features/upstream-errors.md) |
 
 Use the existing Go CLI for orchestration and verdicts. Repository lint and unit-test requirements still apply. When changing a scenario or its contract, update its feature map and the corresponding design documentation.
+
+Rust Brain 的沙箱外循环或多节点归属变化，还须阅读 [Brain 覆盖](features/brain.md)，先运行 `chat doctor brain`，再运行 `chat brain`。设置 `OMA_BRAIN_BINARY` 指向已构建的真实 Rust 可执行文件；其他 chat 回归仍按上表选择。
+Brain 系统提示词或 Skill 目录/读取变化，还须运行 `chat doctor brain-skills` 和 `chat brain-skills`，检查无沙箱目录传递、真实 MCP 加载、只读挂载与版本固定。
 
 ## Launch
 
@@ -60,6 +65,8 @@ Prerequisites: macOS or Linux, repository Go toolchain, Bash, git, tar, Docker E
 Worker image selection follows this order: `--worker-image IMAGE`, `OMA_WORKER_CONTROL_IMAGE`, the root `.verify-be.local.json` file's `worker_image` field, then `ghcr.io/superduck-ai/managed-agent-sandbox:latest`. The local settings file is Git-ignored: keep private registry addresses there, out of source and documentation. Once configured locally, no export is needed. Help does not display resolved local values; reports record image IDs. The CLI generates Go sources, builds the actual backend, starts it on `127.0.0.1:18080`, and waits for `/readyz`. It uses a unique Compose project with disposable PostgreSQL, Redis, three NATS nodes and MinIO. It never reads `config/config.yaml` and never kills the listener of an occupied port. Dependency ports are allocated by Docker.
 
 ## Doctor
+
+Scenario subprocesses and the full Go suite discard inherited model-provider credentials, endpoints, profiles, custom headers and model settings. The filtered families are documented in [Backend verification](../../../docs/design/be/backend-verification.md). Infrastructure environment variables remain available. Local scripted-model scenarios require no external `ANTHROPIC_API_KEY`.
 
 `doctor` / `chat doctor [SCENARIO]` / `files doctor [SCENARIO]` / `transcript doctor [SCENARIO]` / `memory doctor [SCENARIO]` checks tools, Docker daemon, image IDs, port 18080 and at least 1 GiB of free Docker volume space. It creates and removes a short-lived probe container and anonymous volume. `chat doctor public`, `chat doctor upstream-errors`, `files doctor generated` and `memory doctor mounts` also open the daemon-side FUSE device and verifies mount permissions with the Worker image; macOS alone is not a blocker. Every run performs its own scenario-specific preflight. It does not claim the application works. Scenario execution performs dependency health checks and, when starting a standalone backend, readiness checks before testing. Do not point this runner at an existing API or database. Leave the checkout unchanged while a run is active; source changes invalidate the result.
 
@@ -139,7 +146,7 @@ go test ./cmd/verify-be -count=1
 
 These tests cover CLI parsing/help, image configuration precedence and verdict rejection of missing, skipped and incomplete Go tests. They also cover configuration isolation, dependency topology, cancellation, doctor probes and cleanup, diagnostic download bounds and comparable report metadata. Update the feature map and design document when contracts change.
 
-Scenario deadlines default to 3m for roundtrip/tools/instances, 5m for reliability/performance and 6m for public/generated. Files recovery/performance and cloud renewal default to 5m; other Files scenarios default to 3m. Override with `--timeout 8m`; this excludes environment build/startup. Go testing gets 30s cleanup grace and the outer command gets 2m compile/exit grace. Read `failure_kind` to distinguish scenario/outer timeouts, prerequisite blockers and incompatible baselines. A timeout alone is not a measured performance regression.
+Scenario deadlines default to 3m for roundtrip/tools/instances, 5m for reliability/performance and 6m for public/generated/skills-loading. Files recovery/performance and cloud renewal default to 5m; other Files scenarios default to 3m. Override with `--timeout 8m`; this excludes environment build/startup. Go testing gets 30s cleanup grace and the outer command gets 2m compile/exit grace. Read `failure_kind` to distinguish scenario/outer timeouts, prerequisite blockers and incompatible baselines. A timeout alone is not a measured performance regression.
 
 Memory deadlines default to 3m for portable scenarios and 8m for `mounts`.
 

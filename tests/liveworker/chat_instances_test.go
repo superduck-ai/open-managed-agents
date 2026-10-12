@@ -78,7 +78,7 @@ func TestChatInstances(t *testing.T) {
 	e := newLiveEnv(t)
 	previewSeen := make(chan struct{}, 4)
 	var calls atomic.Int32
-	model := chatModelFixture(t, previewSeen, &calls)
+	model := chatModelFixture(t, previewSeen, &calls, false)
 	configureChatModel(t, e, model.URL)
 	f := e.newSessionWithSnapshot(t, json.RawMessage(`{"model":{"id":"claude-sonnet-4-6"}}`))
 	remoteEnv := *e

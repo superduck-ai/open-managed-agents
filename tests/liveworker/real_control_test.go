@@ -216,9 +216,13 @@ func realWorkerReplyConsumer(t *testing.T, f *liveSession) *jetstream.ConsumerIn
 	return info
 }
 
-func waitRealWorker(t *testing.T, label string, ready func() bool) {
+func waitRealWorker(t *testing.T, label string, ready func() bool, timeouts ...time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(chatTimeout(t, 30*time.Second))
+	timeout := 30 * time.Second
+	if len(timeouts) > 0 {
+		timeout = timeouts[0]
+	}
+	deadline := time.Now().Add(chatTimeout(t, timeout))
 	if testDeadline, ok := t.Deadline(); ok && testDeadline.Before(deadline) {
 		deadline = testDeadline.Add(-5 * time.Second)
 	}

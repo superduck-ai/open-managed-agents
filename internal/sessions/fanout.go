@@ -41,6 +41,9 @@ func (h *Handler) publishSessionEvents(ctx context.Context, events []db.SessionE
 	payloads := make(map[string]*sessionEventsFanout)
 	sessionIDs := make([]string, 0, 1)
 	for _, event := range events {
+		if event.EventType == "user.message" && event.ProcessedAt.IsZero() {
+			continue
+		}
 		payload, exists := payloads[event.SessionExternalID]
 		if !exists {
 			payload = &sessionEventsFanout{}
@@ -97,7 +100,11 @@ func (h *Handler) receiveFanout(ctx context.Context, _ string, envelope sessionf
 			h.logger.WarnContext(ctx, "discard code session stream fanout", "error", err)
 			return
 		}
-		if event, emit := h.previews.convert(payload); emit {
+		event, emit := nativeStreamPreview(payload)
+		if !emit {
+			event, emit = h.previews.convert(payload)
+		}
+		if emit {
 			h.streams.broadcastEvent(event)
 		}
 	}

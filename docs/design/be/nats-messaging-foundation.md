@@ -61,8 +61,8 @@ worker 强制执行。容量满时新 Publish 被拒绝并返回调用方；没�
 每个 Code Session 使用任务 subject `oma.worker.inbound.v2.<code-session-id>` 和回应 subject
 `oma.worker.inbound.v2.<code-session-id>.reply`，各创建一个稳定 durable pull consumer。精确 filter
 互不重叠，满足 `WorkQueuePolicy` 限制。两路均配置为 `DeliverAll`、`AckExplicit`、
-`MaxAckPending=1`、无限 `MaxDeliver`，退避 1 分钟、5 分钟、15 分钟，之后保持 15 分钟。
-各路内部串行；控制回应可以越过未完成任务及排队输入，解除循环等待。分类及顺序约束见
+无限 `MaxDeliver`，退避 1 分钟、5 分钟、15 分钟，之后保持 15 分钟。
+两路均使用服务端默认 `MaxAckPending`，当前 NATS 2.14.6 为 1000；每次按序拉取一条，执行端负责输入顺序和幂等。控制回应可以越过未完成任务及排队输入，解除循环等待。分类及顺序约束见
 [Worker 入站投递设计](ccrv2/ccr-v2-worker-events-delivery-backend-design.md#stream-与顺序)。
 
 SSE 断开不删除 consumer。worker 上报 `received` 或 `processing` 时发送 InProgress；只有

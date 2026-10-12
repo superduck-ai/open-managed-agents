@@ -240,7 +240,7 @@ func TestEnvironmentWorkMapperBuilderContracts(t *testing.T) {
 			bound:     buildEnvironmentWorkMapperClaimNext(yourbatis.DialectPostgres, &workerID, now),
 			wantID:    "EnvironmentWorkMapper.ClaimNext", wantKind: yourbatis.StatementSelect,
 			wantArgumentNames: []string{"workerID", "claimExpiresAt"},
-			wantSQLFragments:  []string{"WITH changed AS", "FOR UPDATE SKIP LOCKED", "RETURNING", "JOIN sessions session"},
+			wantSQLFragments:  []string{"WITH changed AS", "FOR UPDATE SKIP LOCKED", "RETURNING", "JOIN sessions session", "worker_transport", "cs.worker_lease_expires_at < NOW()", "s.status = 'running'"},
 		}},
 		{"lock", mapperBuilderContract{
 			statement: environmentWorkMapperLockByExternalIDStatement,

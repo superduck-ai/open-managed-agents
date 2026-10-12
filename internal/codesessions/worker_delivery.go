@@ -2,9 +2,12 @@ package codesessions
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
 const workerDeliveryTimeout = 5 * time.Second
@@ -28,14 +31,40 @@ func (s *Service) applyWorkerDeliveryUpdates(
 	ackCtx, cancel := context.WithTimeout(ctx, workerDeliveryTimeout)
 	defer cancel()
 	result := workerDeliveryResult{}
-	cleanupJobIDs := make([]string, 0)
-	// 锁一直持有到 JetStream 确认完成；限定整个批次的等待时间，避免 Redis/NATS
-	// 不响应时无限阻塞 register、凭证轮换或 sandbox recovery。
+	var references map[string]workerevents.AckRef
+	var cleanupJobIDs []string
+	needsProcessing := false
+	apply := func() (bool, error) {
+		var err error
+		result, cleanupJobIDs, err = s.applyLockedWorkerDeliveryUpdates(ackCtx, codeSessionID, epoch, updates, references)
+		return result.Applied > 0, err
+	}
 	err := s.db.WithLockedCodeSessionWorkerEpoch(ackCtx, codeSessionID, epoch, func() (bool, error) {
-		var applyErr error
-		result, cleanupJobIDs, applyErr = s.applyLockedWorkerDeliveryUpdates(ackCtx, codeSessionID, epoch, updates)
-		return result.Applied > 0, applyErr
+		eventIDs := make([]string, len(updates))
+		for i, update := range updates {
+			eventIDs[i] = update.EventID
+		}
+		var err error
+		references, err = s.workerEventAcks.GetMany(ackCtx, codeSessionID, epoch, eventIDs)
+		if err != nil {
+			return false, err
+		}
+		for _, update := range updates {
+			if references[update.EventID].PublicEventID != "" && (update.Status == "processing" || update.Status == "processed") {
+				needsProcessing = true
+			}
+		}
+		if needsProcessing {
+			return false, nil
+		}
+		return apply()
 	})
+	if err == nil && needsProcessing {
+		err = s.publishProcessingInputs(ackCtx, codeSessionID, epoch, updates, references)
+		if err == nil {
+			err = s.db.WithLockedCodeSessionWorkerEpoch(ackCtx, codeSessionID, epoch, apply)
+		}
+	}
 	cancel()
 	// 对象清理会访问 jobs 表，必须在释放 Code Session 事务后执行，避免回调
 	// 另取 DB 连接。即使后续 update 失败，已 DoubleAck 的对象仍可以清理。
@@ -50,18 +79,10 @@ func (s *Service) applyLockedWorkerDeliveryUpdates(
 	codeSessionID string,
 	epoch int64,
 	updates []workerDeliveryUpdate,
+	references map[string]workerevents.AckRef,
 ) (workerDeliveryResult, []string, error) {
 	result := workerDeliveryResult{}
 	cleanupJobIDs := make([]string, 0)
-	// 整批映射先一次取回，避免在行锁内逐 event 串行访问 ACK store。
-	eventIDs := make([]string, len(updates))
-	for index, update := range updates {
-		eventIDs[index] = update.EventID
-	}
-	references, err := s.workerEventAcks.GetMany(ctx, codeSessionID, epoch, eventIDs)
-	if err != nil {
-		return result, cleanupJobIDs, err
-	}
 	for _, update := range updates {
 		reference, found := references[update.EventID]
 		if !found {
@@ -92,4 +113,53 @@ func (s *Service) applyLockedWorkerDeliveryUpdates(
 		result.Applied++
 	}
 	return result, cleanupJobIDs, nil
+}
+
+func (s *Service) publishProcessingInputs(ctx context.Context, codeSessionID string, epoch int64, updates []workerDeliveryUpdate, references map[string]workerevents.AckRef) error {
+	if err := s.db.ValidateCodeSessionWorkerEpoch(ctx, codeSessionID, epoch); err != nil {
+		return err
+	}
+	var eventIDs []string
+	for _, update := range updates {
+		if update.Status == "processing" || update.Status == "processed" {
+			eventIDs = append(eventIDs, update.EventID)
+		}
+	}
+	if len(eventIDs) == 0 {
+		return nil
+	}
+	record, found, err := s.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return db.ErrNotFound
+	}
+	payloads := make([]json.RawMessage, 0, len(eventIDs))
+	for _, id := range eventIDs {
+		reference := references[id]
+		if reference.PublicEventID == "" {
+			continue
+		}
+		event, err := s.db.GetSessionEvent(ctx, record.WorkspaceUUID, record.SessionExternalID, reference.PublicEventID)
+		if errors.Is(err, db.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if event.EventType != "user.message" || !event.ProcessedAt.IsZero() {
+			continue
+		}
+		raw, err := json.Marshal(struct {
+			ID          string    `json:"id"`
+			Type        string    `json:"type"`
+			ProcessedAt time.Time `json:"processed_at"`
+		}{reference.PublicEventID, "user.message", time.Now().UTC()})
+		if err != nil {
+			return err
+		}
+		payloads = append(payloads, raw)
+	}
+	return s.publishPublicPayloads(ctx, codeSessionID, payloads)
 }

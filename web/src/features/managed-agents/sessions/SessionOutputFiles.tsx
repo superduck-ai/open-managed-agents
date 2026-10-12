@@ -1,6 +1,7 @@
 import { Download, FileText, LoaderCircle } from 'lucide-react';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
+import { Card } from '../../../shared/ui/card';
 import { MessageScrollerItem } from '../../../shared/ui/message-scroller';
 import type { FileMetadataApiResponse, SessionApiResponse } from '../types';
 import { errorMessage } from '../utils';
@@ -28,17 +29,18 @@ function SessionOutputFilesContent({ session, workspaceId, refreshKey }: Session
   if (!files.length && !error) return null;
   return (
     <MessageScrollerItem messageId={`session-output-files-${session.id}`} className="mt-5">
-      <section
-        className="@container"
+      <Card
+        role="region"
+        className="@container gap-0 rounded-2xl bg-muted/60 p-3 ring-border/60 sm:p-4"
         data-testid="session-output-files"
         aria-label={msg('managedAgents.sessions.outputs.title', 'Output files')}
       >
         {files.length ? (
           <>
-            <h3 className="text-sm font-medium text-muted-foreground">
+            <h3 className="text-sm font-medium text-foreground/80">
               {msg('managedAgents.sessions.outputs.title', 'Output files')}
             </h3>
-            <div className="mt-2 grid grid-cols-1 gap-2 @min-[480px]:grid-cols-2">
+            <div className="mt-3 grid grid-cols-1 gap-2 @min-[480px]:grid-cols-2">
               {files.map((file) => (
                 <SessionOutputFileCard key={file.id} file={file} workspaceId={workspaceId} />
               ))}
@@ -54,7 +56,7 @@ function SessionOutputFilesContent({ session, workspaceId, refreshKey }: Session
             </Button>
           </div>
         ) : null}
-      </section>
+      </Card>
     </MessageScrollerItem>
   );
 }
@@ -72,7 +74,7 @@ function SessionOutputFileCard({ file, workspaceId }: { file: FileMetadataApiRes
       aria-busy={downloading}
       aria-label={msg('files.downloadAria', 'Download {filename}', { filename: file.filename })}
       title={file.filename}
-      className="h-auto min-w-0 justify-start gap-3 rounded-xl border-0 bg-muted/55 px-3 py-2.5 text-left font-normal hover:bg-muted/80 dark:hover:bg-muted"
+      className="h-auto min-w-0 justify-start gap-3 rounded-xl border-0 bg-background/85 px-3 py-2.5 text-left font-normal hover:bg-background dark:hover:bg-background"
       onClick={() => void download(file)}
     >
       <FileText className="size-5 shrink-0 text-muted-foreground" aria-hidden />

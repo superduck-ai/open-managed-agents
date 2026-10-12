@@ -369,6 +369,9 @@ func packageDockerfile(base string, packages *environmentPackages, sources confi
 	}
 	batch(cargoCommand, packages.Cargo)
 	gemCommand := []string{"gem", "install"}
+	if len(sources.Gem.Sources) > 0 {
+		gemCommand = append(gemCommand, "--clear-sources")
+	}
 	for _, source := range sources.Gem.Sources {
 		gemCommand = append(gemCommand, "--source", source)
 	}

@@ -42,13 +42,15 @@ environment_packages:
 
 所有 URL 仅允许 HTTPS 443，禁止 userinfo、query、fragment、`$`、反斜杠、空白与控制字符，包括路径中的编码形式。npm scope、Cargo registry 名与 hostname 在启动时校验。未知字段或未实现的管理器（包括 `apt`）使启动失败；APT 软件包列表仍可用，但动态 APT 源由基础镜像或预构建节点管理。原 `environment_packages.network.private_endpoints` 已移除，旧配置会明确报错，不提供 CIDR 配置项。
 
+Go `proxy` 只接受单个 URL，拒绝未编码的 `,`、`|` 代理列表分隔符，不支持 `direct`、`off` 或额外源回退；URL 路径中的 `%2C`、`%7C` 保持原样。
+
 | 管理器 | 预构建 | 启动安装 |
 | --- | --- | --- |
 | npm | `npm install --global [--registry=...] [--@scope:registry=...] -- pkgs`，独立 argv | 复制原 userconfig，追加声明的源；仅配置默认 registry 时设置 `NPM_CONFIG_REGISTRY` |
 | pip | `env PIP_INDEX_URL=... pip install pkgs` | 安装进程的 `PIP_INDEX_URL`，保留原 pip.conf 与认证 |
 | go | `env GOPROXY=... go install spec` | 安装进程的 `GOPROXY`；不改变 `GOSUMDB` |
 | cargo | 临时 TOML，通过 `cargo --config file install pkgs` 叠加命名 registry 条目 | 临时 Cargo 包装命令传入相同 `--config`；保留 `CARGO_HOME`、原配置与 credentials |
-| gem | `gem install --source URL ... pkgs`，独立 argv | `GEMRC` 追加临时 sources 配置，原生合并并保留原 .gemrc 与认证 |
+| gem | 声明 sources 时使用 `gem install --clear-sources --source URL ... pkgs`，独立 argv | `GEMRC` 追加临时 sources 配置，替换源列表并保留原 .gemrc 的其他配置与认证 |
 
 Cargo 不改变镜像的 `registry.default`，不自动查找私有源或回退。部署希望从命名私有源安装时，需在镜像原配置中选定该默认 registry；这里只补充该名称的 index URL。Cargo 原配置由其原生 `--config` 合并机制保留，包括同名 registry 的其他字段与认证。
 

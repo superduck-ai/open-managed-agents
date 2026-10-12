@@ -2,8 +2,38 @@ package config
 
 import (
 	"reflect"
+	"strconv"
 	"testing"
 )
+
+func TestDeploymentGoProxyRejectsFallbackLists(t *testing.T) {
+	prepareLoadTest(t)
+	for _, proxy := range []string{
+		"https://packages.example.internal/proxy/,https://other.example.internal/",
+		"https://packages.example.internal/proxy/|http://other.example.internal:80/",
+		"https://packages.example.internal/proxy/|https://user:secret@other.example.internal:8443/",
+		"https://packages.example.internal/proxy/,direct",
+		"https://packages.example.internal/proxy/|off",
+	} {
+		t.Run(proxy, func(t *testing.T) {
+			if _, err := loadConfigTestYAML(t, "environment_packages:\n  go: {proxy: "+strconv.Quote(proxy)+"}\n"); err == nil {
+				t.Fatal("accepted Go proxy fallback list")
+			}
+		})
+	}
+}
+
+func TestDeploymentGoProxyPreservesEncodedPathSeparators(t *testing.T) {
+	prepareLoadTest(t)
+	proxy := "https://packages.example.internal/proxy%2Csegment%7Cname/"
+	cfg, err := loadConfigTestYAML(t, "environment_packages:\n  go: {proxy: "+strconv.Quote(proxy)+"}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EnvironmentPackages.Go.Proxy != proxy || !reflect.DeepEqual(cfg.EnvironmentPackages.RegistryHosts(), []string{"packages.example.internal"}) {
+		t.Fatal("encoded URL path changed proxy or registry hosts")
+	}
+}
 
 func TestDeploymentPackageSourcesRejectInvalidManagersAndURLs(t *testing.T) {
 	prepareLoadTest(t)

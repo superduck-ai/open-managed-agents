@@ -156,7 +156,7 @@ func TestDeploymentSourcesPrebuildRecipe(t *testing.T) {
 		}
 	}
 	want := [][]string{
-		{"gem", "install", "--source", sources.Gem.Sources[0], "--source", sources.Gem.Sources[1], "gem-name"},
+		{"gem", "install", "--clear-sources", "--source", sources.Gem.Sources[0], "--source", sources.Gem.Sources[1], "gem-name"},
 		{"env", "GOPROXY=" + sources.Go.Proxy, "go", "install", packages.Go[0]},
 		{"npm", "install", "--global", "--@example:registry=" + sources.NPM.ScopedRegistries["@example"], "--", packages.NPM[0]},
 		{"env", "PIP_INDEX_URL=" + sources.PIP.IndexURL, "pip", "install", packages.PIP[0]},
@@ -170,6 +170,39 @@ func TestDeploymentSourcesPrebuildRecipe(t *testing.T) {
 	}
 	if strings.Contains(file, "\nENV ") || strings.Contains(file, "npmrc") {
 		t.Fatal("prebuild persisted npm configuration or source environment")
+	}
+}
+
+func TestDeploymentGemPrebuildUsesDeclaredSources(t *testing.T) {
+	if _, err := exec.LookPath("ruby"); err != nil {
+		t.Skip("native RubyGems source verification requires Ruby")
+	}
+	for _, sources := range []config.EnvironmentPackageConfig{{}, {Gem: deploymentSourceFixture().Gem}} {
+		file := packageDockerfile("registry.example.internal/base:stable", &environmentPackages{Gem: []string{"gem-name"}}, sources)
+		_, encoded, ok := strings.Cut(file, "\nRUN ")
+		if !ok {
+			t.Fatal("missing gem installation command")
+		}
+		var command []string
+		if err := json.Unmarshal([]byte(encoded), &command); err != nil {
+			t.Fatal(err)
+		}
+		args := []string{"-W0", "-rrubygems/commands/install_command", "-rjson", "-e", `Gem.sources = ["https://image.example.internal/gems/"]; Gem::Commands::InstallCommand.new.handle_options(ARGV); print JSON.generate(Gem.sources.to_a)`, "--"}
+		output, err := exec.CommandContext(t.Context(), "ruby", append(args, command[2:]...)...).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var actual []string
+		if err := json.Unmarshal(output, &actual); err != nil {
+			t.Fatal(err)
+		}
+		want := sources.Gem.Sources
+		if len(want) == 0 {
+			want = []string{"https://image.example.internal/gems/"}
+		}
+		if !reflect.DeepEqual(actual, want) {
+			t.Fatalf("native RubyGems sources = %v, want %v", actual, want)
+		}
 	}
 }
 

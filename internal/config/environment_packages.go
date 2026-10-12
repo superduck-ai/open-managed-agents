@@ -46,6 +46,9 @@ var npmScopePattern = regexp.MustCompile(`^@[a-z0-9][a-z0-9._-]*$`)
 var cargoRegistryPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 func validateEnvironmentPackageConfig(packages EnvironmentPackageConfig) error {
+	if strings.ContainsAny(packages.Go.Proxy, ",|") {
+		return errors.New("environment_packages.go.proxy must be a single HTTPS URL without proxy list separators")
+	}
 	for scope := range packages.NPM.ScopedRegistries {
 		if !npmScopePattern.MatchString(scope) {
 			return errors.New("environment_packages.npm.scoped_registries keys must be npm scopes such as @example")

@@ -60,7 +60,7 @@ func Resolve(ctx context.Context, database *db.DB, agent db.Agent) (json.RawMess
 			if err != nil {
 				return nil, fmt.Errorf("resolve subagent %s@%d: %w", ref.ID, ref.Version, err)
 			}
-			if len(child.Multiagent) > 0 && string(child.Multiagent) != "null" {
+			if ref.ID != agent.ExternalID && len(child.Multiagent) > 0 && string(child.Multiagent) != "null" {
 				return nil, fmt.Errorf("subagent %s must not configure multiagent", ref.ID)
 			}
 		}

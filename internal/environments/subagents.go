@@ -1,6 +1,7 @@
 package environments
 
 import (
+	"cmp"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"fmt"
@@ -21,6 +22,7 @@ type subagentLaunchSnapshot struct {
 	Skills []struct {
 		Type    string `json:"type"`
 		SkillID string `json:"skill_id"`
+		Version string `json:"version"`
 	} `json:"skills"`
 }
 
@@ -60,7 +62,8 @@ func buildManagedAgentSubagents(source json.RawMessage, identity codesessions.MC
 			definition.Description = snapshot.Name
 		}
 		for _, skill := range snapshot.Skills {
-			directory := input.SkillDirectories[skill.Type+":"+skill.SkillID]
+			version := cmp.Or(strings.TrimSpace(skill.Version), "latest")
+			directory := input.SkillDirectories[skill.Type+":"+skill.SkillID+":"+version]
 			if directory == "" {
 				return nil, fmt.Errorf("subagent skill directory missing: %s", skill.SkillID)
 			}

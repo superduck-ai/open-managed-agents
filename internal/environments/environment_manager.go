@@ -77,7 +77,9 @@ func managedAgentSessionConfig(
 		body["multiagent"] = mcpSource.Multiagent
 		directories := make(map[string]string, len(runtimeSkills))
 		for _, skill := range runtimeSkills {
-			directories[skill.Source+":"+skill.SkillID] = skill.Directory
+			prefix := skill.Source + ":" + skill.SkillID + ":"
+			directories[prefix+skill.Version] = skill.Directory
+			directories[prefix+skill.RequestedVersion] = skill.Directory
 		}
 		body["skill_directories"] = directories
 	}

@@ -53,7 +53,7 @@ func (r *RuntimeResolver) ResolveAgentSnapshot(ctx context.Context, workspaceUUI
 
 	resolved := make([]RuntimeSkill, 0, len(refs))
 	seenRefs := map[string]struct{}{}
-	seenResolved := map[string]struct{}{}
+	seenResolved := map[string]int{}
 	dirs := map[string]string{}
 	for _, ref := range refs {
 		ref.Type = strings.TrimSpace(ref.Type)
@@ -70,7 +70,10 @@ func (r *RuntimeResolver) ResolveAgentSnapshot(ctx context.Context, workspaceUUI
 			return nil, err
 		}
 		resolvedKey := skill.Source + "\x00" + skill.SkillID + "\x00" + skill.Version
-		if _, ok := seenResolved[resolvedKey]; ok {
+		if index, ok := seenResolved[resolvedKey]; ok {
+			if ref.Version == "latest" {
+				resolved[index].RequestedVersion = "latest"
+			}
 			continue
 		}
 		dirKey := strings.TrimSpace(skill.Directory)
@@ -78,7 +81,7 @@ func (r *RuntimeResolver) ResolveAgentSnapshot(ctx context.Context, workspaceUUI
 			return nil, fmt.Errorf("skill install directory %q is used by multiple skills", dirKey)
 		}
 		dirs[dirKey] = resolvedKey
-		seenResolved[resolvedKey] = struct{}{}
+		seenResolved[resolvedKey] = len(resolved)
 		resolved = append(resolved, skill)
 	}
 	return resolved, nil

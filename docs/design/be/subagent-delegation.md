@@ -21,7 +21,7 @@ The saved roster always includes the resolved numeric `version`. Later child upd
 
 Agent creation/update resolves each roster entry to an Agent ID and exact version in the same workspace. Session creation expands those references into full child snapshots, including model, system, skills, tools and MCP servers. Deployment creation uses the same resolver, so scheduled Sessions receive the same frozen configuration. Updating a referenced Agent after the parent is saved does not change the pinned version in a new Session. Existing Sessions retain their snapshots.
 
-Referenced children must have no multiagent configuration; nested delegation definitions are rejected during snapshot resolution. Existing coordinator self entries use the parent configuration with its multiagent field removed. This implements the predefined-child runtime behavior described by [Claude Managed Agents](https://platform.claude.com/docs/zh-CN/managed-agents/multiagent-orchestration#delegate-to-subagents). OMA continues using its coordinator schema; workflows, advisors and the newer `multiagent_20261001` API schema are outside this change.
+Referenced children must have no multiagent configuration; nested delegation definitions are rejected during snapshot resolution. Existing coordinator self entries are recognized by their parent Agent ID and use the referenced version with its multiagent field removed. A name/system update that leaves the roster unchanged preserves historical self versions, without treating self as a nested child or repinning it to the current parent version. This implements the predefined-child runtime behavior described by [Claude Managed Agents](https://platform.claude.com/docs/zh-CN/managed-agents/multiagent-orchestration#delegate-to-subagents). OMA continues using its coordinator schema; workflows, advisors and the newer `multiagent_20261001` API schema are outside this change.
 
 ## Startup and continuation
 
@@ -43,6 +43,8 @@ sequenceDiagram
 ```
 
 `--agents` is a Claude Code startup parameter accepting JSON definitions. Registration makes the configured children available; the actual child runs when the parent delegates. Startup definitions include the child's prompt, model, skill directory names and inline `mcpServers`. Skills use the existing resolver/mount path with deduplication and directory conflict checks.
+
+Skill directory lookup includes source, Skill ID and version. Actual-version and requested-version keys point to the same resolved directory; deduplication retains a requested `latest` alias when it shares an actual version with an explicit reference. Different skill versions in distinct directories therefore remain independent of resolver traversal order.
 
 The runtime uses four identities:
 

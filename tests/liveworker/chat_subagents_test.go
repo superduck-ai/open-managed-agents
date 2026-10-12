@@ -3,6 +3,7 @@ package liveworker
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
 const childSystem = "OMA_SUBAGENT_REVIEWER_V1"
@@ -30,9 +32,22 @@ func TestChatSubagents(t *testing.T) {
 	isolatedChat(t)
 	started := time.Now()
 	e := newLiveEnv(t)
+	verifyUpdatedSelfReference(t, e)
 	var mcpCalls atomic.Int32
 	mcpURL := subagentMCPFixture(t, &mcpCalls)
 	skillID, skillVersion := uploadSubagentSkill(t, e)
+	for _, versions := range [][2]string{{skillVersion, "latest"}, {"latest", skillVersion}} {
+		snapshot, err := jsonv2.Marshal(map[string]any{"skills": []map[string]string{
+			{"type": "custom", "skill_id": skillID, "version": versions[0]},
+			{"type": "custom", "skill_id": skillID, "version": versions[1]},
+		}})
+		requireOK(t, err)
+		resolved, err := skillsapi.NewRuntimeResolver(e.database).ResolveAgentSnapshot(t.Context(), e.key.WorkspaceUUID.String(), snapshot)
+		requireOK(t, err)
+		if len(resolved) != 1 || resolved[0].Version != skillVersion || resolved[0].RequestedVersion != "latest" {
+			t.Fatalf("explicit/latest aliases lost during deduplication: %+v", resolved)
+		}
+	}
 	var child struct {
 		ID string `json:"id"`
 	}
@@ -188,6 +203,71 @@ func TestChatSubagents(t *testing.T) {
 	chatProof(t, started, "child_thread_resumed")
 }
 
+func verifyUpdatedSelfReference(t *testing.T, e *liveEnv) {
+	t.Helper()
+	var parent struct {
+		ID string `json:"id"`
+	}
+	requireOK(t, jsonv2.Unmarshal(e.request(t, "POST", "/v1/agents", e.apiKey, map[string]any{
+		"name": "self-v1", "system": "self-v1", "model": "claude-sonnet-4-6",
+		"multiagent": map[string]any{"type": "coordinator", "agents": []map[string]string{{"type": "self"}}},
+	}, 200), &parent))
+	t.Cleanup(func() {
+		e.requestContext(context.Background(), t, "POST", "/v1/agents/"+parent.ID+"/archive", e.apiKey, nil, 200)
+	})
+	e.request(t, "POST", "/v1/agents/"+parent.ID, e.apiKey, map[string]any{"version": 1, "name": "self-v2", "system": "self-v2"}, 200)
+	var nested struct {
+		ID string `json:"id"`
+	}
+	requireOK(t, jsonv2.Unmarshal(e.request(t, "POST", "/v1/agents", e.apiKey, map[string]any{
+		"name": "nested-self-review", "model": "claude-sonnet-4-6", "multiagent": map[string]any{"type": "coordinator", "agents": []map[string]any{{"type": "agent", "id": parent.ID, "version": 1}}},
+	}, 200), &nested))
+	t.Cleanup(func() {
+		e.requestContext(context.Background(), t, "POST", "/v1/agents/"+nested.ID+"/archive", e.apiKey, nil, 200)
+	})
+	for _, kind := range []string{"sessions", "deployments"} {
+		body := map[string]any{"agent": nested.ID, "environment_id": e.environment.ExternalID}
+		if kind == "deployments" {
+			body["name"] = "self-review"
+			body["initial_events"] = []map[string]any{{"type": "user.message", "content": []map[string]string{{"type": "text", "text": "self review"}}}}
+		}
+		e.request(t, "POST", "/v1/"+kind, e.apiKey, body, 400)
+		body["agent"] = parent.ID
+		var resource struct {
+			ID    string `json:"id"`
+			Agent struct {
+				Version    int `json:"version"`
+				Multiagent struct {
+					Agents []struct {
+						ID         string          `json:"id"`
+						Version    int             `json:"version"`
+						System     string          `json:"system"`
+						Multiagent json.RawMessage `json:"multiagent"`
+					} `json:"agents"`
+				} `json:"multiagent"`
+			} `json:"agent"`
+		}
+		requireOK(t, jsonv2.Unmarshal(e.request(t, "POST", "/v1/"+kind, e.apiKey, body, 200), &resource))
+		cleanup := sync.OnceFunc(func() {
+			e.requestContext(context.Background(), t, "POST", "/v1/"+kind+"/"+resource.ID+"/archive", e.apiKey, nil, 200)
+			if kind == "sessions" {
+				e.requestContext(context.Background(), t, "DELETE", "/v1/sessions/"+resource.ID, e.apiKey, nil, 200)
+			}
+		})
+		t.Cleanup(cleanup)
+		if kind == "deployments" {
+			stored, err := e.database.GetDeployment(t.Context(), e.key.WorkspaceUUID.String(), resource.ID)
+			requireOK(t, err)
+			requireOK(t, jsonv2.Unmarshal(stored.AgentSnapshot, &resource.Agent))
+		}
+		children := resource.Agent.Multiagent.Agents
+		if resource.Agent.Version != 2 || len(children) != 1 || children[0].ID != parent.ID || children[0].Version != 1 || children[0].System != "self-v1" || string(children[0].Multiagent) != "null" {
+			t.Fatalf("%s did not preserve historical self configuration: %+v", kind, resource.Agent)
+		}
+		cleanup()
+	}
+}
+
 func configureSubagentReferences(t *testing.T, e *liveEnv, childID string) {
 	t.Helper()
 	latest := map[string]any{"type": "coordinator", "agents": []map[string]any{{"type": "agent", "id": childID}}}
@@ -197,7 +277,7 @@ func configureSubagentReferences(t *testing.T, e *liveEnv, childID string) {
 		{"type": "agent", "id": childID, "version": 0},
 		{"type": "agent", "id": childID, "version": 999},
 	} {
-		e.request(t, "POST", "/v1/agents", e.apiKey, map[string]any{"model": "claude-sonnet-4-6", "multiagent": map[string]any{"type": "coordinator", "agents": []map[string]any{ref}}}, 400)
+		e.request(t, "POST", "/v1/agents", e.apiKey, map[string]any{"name": "invalid-reference", "model": "claude-sonnet-4-6", "multiagent": map[string]any{"type": "coordinator", "agents": []map[string]any{ref}}}, 400)
 	}
 	latestID := requireSubagentReference(t, e.request(t, "POST", "/v1/agents", e.apiKey, map[string]any{"name": "reference-latest", "model": "claude-sonnet-4-6", "multiagent": latest}, 200), childID, 1)
 	t.Cleanup(func() {

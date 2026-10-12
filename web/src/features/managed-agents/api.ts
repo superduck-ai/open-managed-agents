@@ -764,7 +764,10 @@ export function sessionThreadIsArchived(thread: SessionThreadApiResponse) {
 
 export function sessionThreadListSignature(threads: SessionThreadApiResponse[]) {
   return threads
-    .map((thread) => `${thread.id}:${thread.type}:${thread.archived_at ?? ''}:${thread.parent_thread_id ?? ''}`)
+    .map(
+      (thread) =>
+        `${thread.id}:${thread.type}:${thread.archived_at ?? ''}:${thread.parent_thread_id ?? ''}:${thread.updated_at ?? ''}`,
+    )
     .join('|');
 }
 

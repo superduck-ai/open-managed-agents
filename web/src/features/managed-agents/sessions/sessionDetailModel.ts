@@ -153,7 +153,7 @@ export function buildSessionDetailLaneState(
       return;
     }
     laneIdByThreadId.set(thread.id, thread.id);
-    lanes.push({ id: thread.id, label: name, group, archived: sessionThreadIsArchived(thread) });
+    lanes.push({ id: thread.id, agent: thread.agent, label: name, group, archived: sessionThreadIsArchived(thread) });
   });
 
   return {

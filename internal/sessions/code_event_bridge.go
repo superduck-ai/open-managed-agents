@@ -3,6 +3,7 @@ package sessions
 import (
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"net/http"
 	"time"
@@ -25,11 +26,21 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 	var streamEvents []db.SessionEvent
 	var events []db.SessionEvent
 	var hasModelRequest bool
+	var hasSubagentLifecycle bool
 	now := time.Now().UTC()
 	for _, raw := range payloads {
 		eventType := rawSessionEventType(raw)
 		isModelRequest := eventType == "span.model_request_start" || eventType == "span.model_request_end"
 		hasModelRequest = hasModelRequest || isModelRequest
+		if eventType == "session.thread_created" || eventType == "agent.tool_use" {
+			var tool struct {
+				Name string `json:"name"`
+			}
+			if err := jsonv2.Unmarshal(raw, &tool); err != nil {
+				return err
+			}
+			hasSubagentLifecycle = hasSubagentLifecycle || eventType == "session.thread_created" || tool.Name == "task"
+		}
 		if maevents.IsStreamDelta(eventType) {
 			event, err := h.streamDeltaEventFromCodeSessionPayload(ctx, session, codeSession.ExternalID, raw, now)
 			if err != nil {
@@ -61,6 +72,11 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 		return err
 	}
 	h.codeSessions.PurgeWorkerEvents(ctx, changes.RetiredCodeSessionIDs)
+	if hasSubagentLifecycle {
+		if err := h.codeSessions.ReconcileSubagentSnapshots(ctx, codeSession); err != nil {
+			return err
+		}
+	}
 	h.publishSessionEvents(ctx, changes.Events)
 	h.enqueueWebhooksForSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, changes.Events)
 	return nil

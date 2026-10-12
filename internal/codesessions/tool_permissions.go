@@ -111,7 +111,10 @@ func (s *Service) resolveToolPermission(ctx context.Context, codeSessionID strin
 		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), db.ErrNotFound
 	}
 	if threadID != "" {
-		thread, err := s.db.GetSessionThread(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, threadID)
+		thread, err := s.subagentThread(ctx, codeSession, threadID)
+		if errors.Is(err, db.ErrInvalidState) {
+			return resolvedToolPermissionDeny, parseClaudeToolIdentity(claudeToolName), nil
+		}
 		if err != nil {
 			return resolvedToolPermissionDeny, parseClaudeToolIdentity(claudeToolName), err
 		}

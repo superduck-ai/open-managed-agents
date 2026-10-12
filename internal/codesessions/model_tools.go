@@ -12,7 +12,7 @@ func (s *Service) modelToolUsePayloads(ctx context.Context, request *ModelReques
 	if len(tools) == 0 {
 		return nil, nil
 	}
-	thread, err := s.db.GetSessionThread(ctx, request.codeSession.WorkspaceUUID, request.codeSession.SessionExternalID, request.ThreadID)
+	thread, err := s.subagentThread(ctx, request.codeSession, request.ThreadID)
 	if err != nil {
 		return nil, err
 	}

@@ -11,10 +11,94 @@ import (
 )
 
 type subagentLifecycle struct {
-	Type      string `json:"type"`
-	TaskID    string `json:"task_id"`
-	ToolUseID string `json:"tool_use_id"`
-	ThreadID  string `json:"session_thread_id"`
+	Type       string `json:"type"`
+	TaskID     string `json:"task_id"`
+	ToolUseID  string `json:"tool_use_id"`
+	ThreadID   string `json:"session_thread_id"`
+	AgentID    string `json:"agent_id"`
+	AgentIDAlt string `json:"agentId"`
+}
+
+func (s *Service) ReconcileSubagentSnapshots(ctx context.Context, codeSession db.CodeSession) error {
+	lifecycles, err := s.subagentLifecycles(ctx, codeSession)
+	if err != nil {
+		return err
+	}
+	for _, lifecycle := range lifecycles {
+		if lifecycle.ThreadID == "" || lifecycle.ToolUseID == "" {
+			continue
+		}
+		thread, err := s.db.GetSessionThread(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, lifecycle.ThreadID)
+		if err != nil {
+			return err
+		}
+		var identity struct {
+			ID string `json:"id"`
+		}
+		if err := jsonv2.Unmarshal(thread.AgentSnapshot, &identity); err != nil {
+			return err
+		}
+		if identity.ID != "" {
+			continue
+		}
+		snapshot, err := s.subagentSnapshotForTool(ctx, codeSession, lifecycle.ToolUseID)
+		if err != nil {
+			return err
+		}
+		if len(snapshot) == 0 {
+			continue
+		}
+		if err := s.db.FillSessionThreadAgentSnapshot(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, lifecycle.ThreadID, snapshot); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) subagentThread(ctx context.Context, codeSession db.CodeSession, threadID string) (db.SessionThread, error) {
+	thread, err := s.db.GetSessionThread(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, threadID)
+	if err != nil || thread.ParentThreadUUID == nil {
+		return thread, err
+	}
+	var identity struct {
+		ID string `json:"id"`
+	}
+	if err := jsonv2.Unmarshal(thread.AgentSnapshot, &identity); err != nil {
+		return thread, err
+	}
+	if identity.ID != "" {
+		return thread, nil
+	}
+	session, found, err := s.db.GetSession(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
+	if err != nil {
+		return thread, err
+	}
+	if !found {
+		return thread, db.ErrNotFound
+	}
+	var parent struct {
+		Multiagent *struct{} `json:"multiagent"`
+	}
+	if err := jsonv2.Unmarshal(session.AgentSnapshot, &parent); err != nil {
+		return thread, err
+	}
+	if parent.Multiagent == nil {
+		return thread, nil
+	}
+	if err := s.ReconcileSubagentSnapshots(ctx, codeSession); err != nil {
+		return thread, err
+	}
+	thread, err = s.db.GetSessionThread(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, threadID)
+	if err != nil {
+		return thread, err
+	}
+	if err := jsonv2.Unmarshal(thread.AgentSnapshot, &identity); err != nil {
+		return thread, err
+	}
+	if identity.ID == "" {
+		return thread, db.ErrInvalidState
+	}
+	return thread, nil
 }
 
 func (s *Service) enrichSubagentLifecycle(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) ([]json.RawMessage, error) {

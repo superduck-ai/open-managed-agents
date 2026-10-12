@@ -1681,8 +1681,8 @@ function InspectorThreadsPanel({
     </ScrollArea>
   );
   if (!selected) return threadList;
-  const selectedAgent = selected.isMain ? agent : null;
-  const selectedAgentId = selected.isMain ? agentId : '';
+  const selectedAgent = selected.isMain ? agent : (selected.agent ?? null);
+  const selectedAgentId = selected.isMain ? agentId : (selectedAgent?.id ?? '');
   return (
     <InspectorListDetailSplit
       id="threads"
@@ -1705,7 +1705,9 @@ function InspectorThreadsPanel({
                         <InspectorEntityLink href={agentDetailHref(workspaceId, selectedAgentId)}>
                           {selectedAgent?.name || selectedAgentId}
                         </InspectorEntityLink>
-                        {selectedAgent ? <span className="text-muted-foreground">v{selectedAgent.version}</span> : null}
+                        {selectedAgent?.version ? (
+                          <span className="text-muted-foreground">v{selectedAgent.version}</span>
+                        ) : null}
                       </span>
                     ) : (
                       '—'

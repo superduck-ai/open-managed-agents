@@ -198,7 +198,11 @@ func (s *Service) modelRequestThread(ctx context.Context, codeSession db.CodeSes
 			return "", err
 		}
 		if threadID := mappings[agentID]; threadID != "" {
-			return threadID, nil
+			if _, err := s.subagentThread(ctx, codeSession, threadID); err == nil {
+				return threadID, nil
+			} else if !errors.Is(err, db.ErrInvalidState) {
+				return "", err
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -211,36 +215,42 @@ func (s *Service) modelRequestThread(ctx context.Context, codeSession db.CodeSes
 // The task registry is already persisted as thread_created events. Page it rather
 // than maintaining a second registry or assuming at most 500 tasks per session.
 func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.CodeSession) (map[string]string, error) {
+	lifecycles, err := s.subagentLifecycles(ctx, codeSession)
+	if err != nil {
+		return nil, err
+	}
+	mappings := make(map[string]string)
+	for _, task := range lifecycles {
+		if task.ThreadID == "" {
+			continue
+		}
+		for _, id := range []string{task.TaskID, task.AgentID, task.AgentIDAlt, task.ToolUseID} {
+			if id != "" {
+				mappings[id] = task.ThreadID
+			}
+		}
+	}
+	return mappings, nil
+}
+
+func (s *Service) subagentLifecycles(ctx context.Context, codeSession db.CodeSession) ([]subagentLifecycle, error) {
 	params := db.ListSessionEventsPageParams{WorkspaceUUID: codeSession.WorkspaceUUID, SessionExternalID: codeSession.SessionExternalID,
 		PrimaryOnly: true, Limit: 500, Order: "asc", Types: []string{"session.thread_created"}}
-	mappings := make(map[string]string)
+	var lifecycles []subagentLifecycle
 	for {
 		events, more, err := s.eventPayloads.ListSessionEventsPage(ctx, params)
 		if err != nil {
 			return nil, err
 		}
 		for _, event := range events {
-			var task struct {
-				ThreadID   string `json:"session_thread_id"`
-				TaskID     string `json:"task_id"`
-				ToolUseID  string `json:"tool_use_id"`
-				AgentID    string `json:"agent_id"`
-				AgentIDAlt string `json:"agentId"`
-			}
-			if err := json.Unmarshal(event.Payload, &task); err != nil {
+			var task subagentLifecycle
+			if err := jsonv2.Unmarshal(event.Payload, &task); err != nil {
 				return nil, fmt.Errorf("decode thread mapping: %w", err)
 			}
-			if task.ThreadID == "" {
-				continue
-			}
-			for _, id := range []string{task.TaskID, task.AgentID, task.AgentIDAlt, task.ToolUseID} {
-				if id != "" {
-					mappings[id] = task.ThreadID
-				}
-			}
+			lifecycles = append(lifecycles, task)
 		}
 		if !more {
-			return mappings, nil
+			return lifecycles, nil
 		}
 		if len(events) == 0 {
 			return nil, errors.New("empty thread mapping page")

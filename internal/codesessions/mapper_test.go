@@ -2,6 +2,7 @@ package codesessions
 
 import (
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"strings"
 	"testing"
@@ -666,5 +667,29 @@ func TestInternalSubagentToolResultUsesPublicToolResultContract(t *testing.T) {
 	objects := decodePublicPayloads(t, payloads)
 	if len(objects) != 1 || objects[0]["type"] != "agent.tool_result" || objects[0]["tool_use_id"] != toolUsePublicEventID("cse_test", "tool_child") || objects[0]["is_error"] != true {
 		t.Fatalf("child result violates public tool contract: %#v", objects)
+	}
+}
+
+func TestInternalSubagentAssistantPreservesModelRequestCorrelation(t *testing.T) {
+	for _, field := range []string{"requestId", "request_id"} {
+		t.Run(field, func(t *testing.T) {
+			raw := mustRawJSON(t, map[string]any{
+				"type": "assistant", "uuid": "transcript-uuid", field: "sevt_request",
+				"message": map[string]any{"id": "transcript-message", "content": []map[string]string{{"type": "text", "text": "child reply"}}},
+			})
+			payloads, err := publicPayloadsFromInternalSubagentEvent("cse_test", db.CodeSessionInternalEvent{Payload: raw}, "sthr_child")
+			if err != nil || len(payloads) != 1 {
+				t.Fatalf("mapped payloads = %s, error = %v", payloads, err)
+			}
+			var mapped struct {
+				RequestID string `json:"model_request_start_id"`
+			}
+			if err := jsonv2.Unmarshal(payloads[0], &mapped); err != nil {
+				t.Fatal(err)
+			}
+			if mapped.RequestID != "sevt_request" {
+				t.Fatalf("request identity = %q, want sevt_request", mapped.RequestID)
+			}
+		})
 	}
 }

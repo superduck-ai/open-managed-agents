@@ -57,6 +57,10 @@ The runtime uses four identities:
 
 The existing persisted `session.thread_created` events provide runtime/task/tool-to-thread mappings. The initiating public Agent tool event selects the frozen child snapshot. Later lifecycle events reuse the mapping so a new task can continue an existing execution thread. This adds no scheduler, process per child, registry table or migration.
 
+Lifecycle events and the initiating tool event may arrive in either order. After either is persisted, the service reconciles missing thread snapshots through the existing tool-to-thread mapping. The conditional write only fills child snapshots without an Agent ID, preserving already pinned configurations. Child model dispatch waits for both its thread mapping and configuration within the existing ten-second dispatch deadline. Tool authorization denies a configured child whose snapshot is not ready, instead of using the empty-toolset default.
+
+Internal transcripts may carry `requestId` while live Worker output carries `request_id`. The input DTO normalizes both to `model_request_start_id`, so the existing transactional cross-source echo deduplication handles a proxy reply and its transcript copy even when their message IDs differ. Independent model requests and unique transcript content remain separate.
+
 This is lazy execution of predefined children within a Session. Editing the parent's roster during an active Session does not hot-reload that Session; a new Session uses the newly pinned roster.
 
 ## Tools, MCP and shared environment
@@ -76,8 +80,12 @@ Parent and children share the sandbox filesystem, mounted skill files and Sessio
 
 Internal child tool results are mapped to the public `agent.tool_result` contract. A resumed child keeps its thread ID and previous context. This change adds no new public route or frontend flow.
 
+The frontend thread inspector displays the selected child's Agent ID, name, version and model from that thread's snapshot. It does not replace historical child configuration with the parent or the catalog's current Agent version; incomplete snapshots remain unknown.
+
 ## Acceptance
 
 The [Subagent verification scenario](../../../.agents/skills/verify-be/features/subagents.md) exercises both object-reference forms through public Agent creation/update, rejected references, version retention after child upgrades, repinning when resending a roster and preservation when updating other parent fields. The child reaches V3 while the actual Worker must dispatch explicitly pinned V1. The scenario also covers the child's model/system/skill, tool rejection and approval with filesystem checks, remote MCP execution, thread listing/history/SSE and same-thread continuation. The upstream model is scripted, so this verifies protocol behavior rather than autonomous model decisions. Handler tests additionally cover child Tunnel selection, rejection of unknown configuration IDs and OAuth scope preservation.
 
-Child Worker-restart recovery, directed interruption, concurrent executions of one configuration, real Tunnel service execution, cloud allocation and browser presentation remain unverified by this scenario.
+The scenario also forces lifecycle-before-tool delivery for two child instances, verifies pending-configuration denial and repaired ask/deny policies, and tests proxy/transcript delivery in both orders with changed message IDs. Two real background instances of the same V1 configuration overlap, request independent Write confirmations and leave no files after rejection. First-turn, follow-up and new-Session histories must contain one copy of each child reply.
+
+Child Worker-restart recovery, directed interruption, real Tunnel service execution, cloud allocation and browser presentation remain outside this backend scenario. Frontend component regression separately verifies snapshot display.

@@ -10,6 +10,10 @@ Child Write permission is `ask` while the parent's default is `allow`. Reject th
 
 Required stages are `configured_child_dispatched`, `child_skill_preloaded`, `child_stream_received`, `child_tool_policy_verified`, `child_mcp_executed`, `child_thread_history_verified` and `child_thread_resumed`. A missing stage, skipped test, source mutation or incomplete cleanup fails the scenario.
 
-This covers a single configured child and same-Worker continuation. It does not verify concurrent instances of one configuration, directed interruption, Worker restart recovery, real model reasoning, cloud allocation, UI rendering or filesystem/skill isolation. Child Tunnel gateway selection and OAuth scope preservation have handler tests; this scenario's actual Worker uses a remote HTTP MCP fixture.
+The protocol regression creates two child lifecycles before their initiating tool events, checks that unresolved Write requests are denied, then delivers the tools in reverse order and verifies complete V1 snapshots with independent ask/deny policies. Conditional repair must not overwrite an existing pin. Proxy replies and camel-case `requestId` transcript echoes arrive in both orders with different message IDs; two independent requests containing identical text must retain exactly two replies.
+
+A new public Session starts two real background instances of the same configured V1 child. Both model requests must overlap and both thread snapshots must be complete before execution proceeds. Each child requests its own Write confirmation; denying both must leave both files absent. First-turn, follow-up and parallel child histories must have no duplicate replies.
+
+This covers configured children, concurrent instances of one configuration and same-Worker continuation. It does not verify directed interruption, Worker restart recovery, real model reasoning, cloud allocation, UI rendering or filesystem/skill isolation. Child Tunnel gateway selection and OAuth scope preservation have handler tests; this scenario's actual Worker uses a remote HTTP MCP fixture.
 
 See [the delegation design](../../../../docs/design/be/subagent-delegation.md) for configuration, identities and permission boundaries.

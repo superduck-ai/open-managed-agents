@@ -32,6 +32,8 @@ func TestChatSubagents(t *testing.T) {
 	isolatedChat(t)
 	started := time.Now()
 	e := newLiveEnv(t)
+	verifySubagentLifecycleOrdering(t, e)
+	chatProof(t, started, "snapshot_and_echo_order_verified")
 	verifyUpdatedSelfReference(t, e)
 	var mcpCalls atomic.Int32
 	mcpURL := subagentMCPFixture(t, &mcpCalls)
@@ -186,6 +188,7 @@ func TestChatSubagents(t *testing.T) {
 	if toolResults < 3 {
 		t.Fatalf("child tool results=%d, want denied Write, approved Write and MCP", toolResults)
 	}
+	assertSubagentSingleReply(t, e, f, childThread, childAnswer)
 	if calls.Load() < 6 {
 		t.Fatalf("model calls=%d, want at least parent, four child calls, parent", calls.Load())
 	}
@@ -201,6 +204,26 @@ func TestChatSubagents(t *testing.T) {
 		t.Fatalf("follow-up created %d threads, want two", len(threads.Data))
 	}
 	chatProof(t, started, "child_thread_resumed")
+	assertSubagentSingleReply(t, e, f, childThread, childResumedAnswer)
+	verifyParallelConfiguredSubagents(t, e, child.ID, provider)
+	chatProof(t, started, "parallel_instances_verified")
+}
+
+func assertSubagentSingleReply(t *testing.T, e *liveEnv, f *liveSession, threadID, text string) {
+	t.Helper()
+	var history struct {
+		Data []chatEvent `json:"data"`
+	}
+	requireOK(t, jsonv2.Unmarshal(e.request(t, "GET", "/v1/sessions/"+f.session.ExternalID+"/threads/"+threadID+"/events?types[]=agent.message", e.apiKey, nil, 200), &history))
+	count := 0
+	for _, event := range history.Data {
+		if len(event.Content) == 1 && event.Content[0].Text == text {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("child reply count=%d, want one", count)
+	}
 }
 
 func verifyUpdatedSelfReference(t *testing.T, e *liveEnv) {

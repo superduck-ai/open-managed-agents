@@ -547,3 +547,23 @@ function session(): SessionApiResponse {
     updated_at: '2026-08-27T07:25:22.000Z',
   };
 }
+
+test('child thread details show the pinned snapshot even when current Agent data differs', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
+  renderInspector({
+    activeTab: 'threads',
+    activeLane: 'child',
+    lanes: [
+      { id: 'main', label: 'Main', isMain: true },
+      {
+        id: 'child',
+        label: 'Reviewer thread',
+        agent: { id: 'agent_child', name: 'Pinned reviewer', version: 1, model: { id: 'deepseek-flash' } },
+      },
+    ],
+  });
+  await act(async () => Promise.resolve());
+  expect(screen.getByRole('link', { name: 'Pinned reviewer' }).getAttribute('href')).toContain('agent_child');
+  expect(screen.getByText('v1')).toBeTruthy();
+  expect(screen.getByText('deepseek-flash')).toBeTruthy();
+});

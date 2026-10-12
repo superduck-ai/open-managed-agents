@@ -232,7 +232,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
             : currentSession,
         );
       }
-      if (type === 'session.thread_created') {
+      if (type === 'session.thread_created' || type === 'session.status_idle') {
         refreshSessionThreads();
       }
     },

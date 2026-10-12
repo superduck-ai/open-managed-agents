@@ -157,7 +157,7 @@ func run(logger *slog.Logger) error {
 		logger.With("component", "batches"),
 	).Start(ctx)
 	environmentLogger := logger.With("component", "environment_runner")
-	sandboxProvider := e2bruntime.NewProvider(cfg.E2B)
+	sandboxProvider := e2bruntime.NewProvider(cfg.E2B, cfg.EnvironmentPackages.RegistryHosts()...)
 	// runner 与 worker-event 过期处置共享同一个 code-session Service，
 	// 过期策略只存在一份实现。
 	runnerCodeSessions := codesessions.NewServiceWithCredentials(database, codeSessionCredentials, environmentLogger).

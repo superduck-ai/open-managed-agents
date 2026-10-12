@@ -47,7 +47,7 @@ func (h *Handler) loadUpstreamProxyPolicyContext(ctx context.Context, identity u
 	if err != nil {
 		return upstreamProxyPolicyContext{}, err
 	}
-	policy, err := networkpolicy.ParsePolicy(record.EnvironmentConfig, record.AgentSnapshot)
+	policy, err := networkpolicy.ParsePolicy(record.EnvironmentConfig, record.AgentSnapshot, h.cfg.EnvironmentPackages.RegistryHosts()...)
 	if err != nil {
 		return upstreamProxyPolicyContext{}, err
 	}

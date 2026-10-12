@@ -10,6 +10,7 @@ const (
 )
 
 type Config struct {
+	EnvironmentPackages  EnvironmentPackageConfig  `yaml:"environment_packages"`
 	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
 	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
 	Env                  string                    `yaml:"env"`

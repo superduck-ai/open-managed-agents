@@ -76,6 +76,9 @@ func validate(cfg Config) error {
 	if err := validateEnvironmentPrebuildConfig(cfg.EnvironmentPrebuilds, cfg.E2B); err != nil {
 		return err
 	}
+	if err := validateEnvironmentPackageConfig(cfg.EnvironmentPackages); err != nil {
+		return err
+	}
 	if strings.TrimSpace(cfg.Storage.Type) == "" {
 		return errors.New("storage.type is required")
 	}

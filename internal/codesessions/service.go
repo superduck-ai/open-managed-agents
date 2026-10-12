@@ -533,6 +533,10 @@ func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID strin
 	if s.sink == nil {
 		return nil
 	}
+	payloads, err = s.enrichSubagentLifecycle(ctx, codeSession, payloads)
+	if err != nil {
+		return err
+	}
 	return s.sink.PublishCodeSessionEvents(ctx, codeSession, payloads)
 }
 

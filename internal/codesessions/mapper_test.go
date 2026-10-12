@@ -657,3 +657,14 @@ func TestCompactionPreservesThreadWithoutDiagnostics(t *testing.T) {
 		t.Fatalf("diagnostic fields leaked: %+v", candidates[0].payload)
 	}
 }
+
+func TestInternalSubagentToolResultUsesPublicToolResultContract(t *testing.T) {
+	payloads, err := publicPayloadsFromInternalSubagentEvent("cse_test", db.CodeSessionInternalEvent{Payload: json.RawMessage(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool_child","is_error":true,"content":"denied"}]}}`)}, "sthr_child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects := decodePublicPayloads(t, payloads)
+	if len(objects) != 1 || objects[0]["type"] != "agent.tool_result" || objects[0]["tool_use_id"] != toolUsePublicEventID("cse_test", "tool_child") || objects[0]["is_error"] != true {
+		t.Fatalf("child result violates public tool contract: %#v", objects)
+	}
+}

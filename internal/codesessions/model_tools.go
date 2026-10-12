@@ -12,16 +12,13 @@ func (s *Service) modelToolUsePayloads(ctx context.Context, request *ModelReques
 	if len(tools) == 0 {
 		return nil, nil
 	}
-	session, found, err := s.db.GetSession(ctx, request.codeSession.WorkspaceUUID, request.codeSession.SessionExternalID)
+	thread, err := s.db.GetSessionThread(ctx, request.codeSession.WorkspaceUUID, request.codeSession.SessionExternalID, request.ThreadID)
 	if err != nil {
 		return nil, err
 	}
-	if !found {
-		return nil, db.ErrNotFound
-	}
 	var payloads []json.RawMessage
 	for _, tool := range tools {
-		permission, identity := resolveToolPermissionFromAgentSnapshot(session.AgentSnapshot, tool.Name)
+		permission, identity := resolveToolPermissionFromAgentSnapshot(thread.AgentSnapshot, tool.Name)
 		if tool.InputRejected {
 			eventType, _ := toolPermissionPublicIdentity(tool.Name, identity)
 			if identity.Kind != "agent_toolset" || eventType != "agent.tool_use" {

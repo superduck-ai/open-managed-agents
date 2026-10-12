@@ -59,6 +59,7 @@ var scenarios = map[string]scenario{
 	"chat.performance": {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatPerformance", Stages: []string{"fixed_load_completed", "performance_history_verified"}, Description: "固定串行负载，测量接收、首片段、最终回复及空闲延迟，并可比较基线"},
 	"chat.instances":   {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatInstances", Stages: []string{"cross_instance_preview_final", "cross_instance_history"}, Description: "两个真实后端实例间的流式广播、最终回复及历史一致性"},
 	"chat.public":      {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatPublicStart", Stages: []string{"public_runner_error_recovered", "public_session_started", "public_runner_roundtrip", "public_runner_multiple_work"}, Description: "公开创建会话，后台 Runner 连续领取工作，经本地 Docker 沙箱完成聊天"},
+	"chat.subagents":   {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatSubagents", Stages: []string{"configured_child_dispatched", "child_skill_preloaded", "child_stream_received", "child_tool_policy_verified", "child_mcp_executed", "child_thread_history_verified", "child_thread_resumed"}, Description: "公开配置子 Agent、真实 Runner 委派、固定版本、独立线程列表/SSE/历史"},
 	"chat.reliability": {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatReliability", Stages: []string{"busy_input_rejected", "worker_consumers_recreated", "worker_stream_reconnected", "midstream_history_recovered", "public_stream_reconnected", "public_history_reconciled", "busy_input_retried", "worker_restarted", "archive_consumers_reclaimed"}, Description: "忙时拒绝与重试、Worker 重连与重启、公开 SSE 重订阅和历史对账、Session 归档回收 consumer"},
 	"chat.roundtrip":   {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatRoundtrip", Stages: []string{"sse_connected", "input_submitted", "preview_and_final_match", "history_recovered", "idle_and_drained"}, Description: "消息发送、中文流式预览、最终回复、历史恢复和队列清空"},
 	"chat.tools":       {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatTools", Stages: []string{"malformed_tool_rejected", "tool_denied", "tool_allowed"}, Description: "拒绝非法参数工具，核对 SSE/历史关联，再通过 Go SDK 拒绝/允许 Write 并核对副作用和队列清空"},
@@ -280,7 +281,7 @@ func saveReport(directory string, r report) error {
 		out.WriteString("Coverage: real backend HTTP, PostgreSQL and MinIO. See scenario proof stages. generated runs a real Worker with FUSE and a scripted model; other Files scenarios use DB/storage fixtures where documented. recovery injects S3 errors through a local proxy and waits for the actual cleanup loop and backoff. Cloud S3 IAM and network infrastructure are not verified.\n\n")
 	} else {
 		out.WriteString("Coverage: real backend, PostgreSQL, Redis, JetStream, Core NATS and Worker; scripted upstream model.\n")
-		if r.Scenario == "chat.public" || r.Scenario == "chat.upstream-errors" {
+		if r.Scenario == "chat.public" || r.Scenario == "chat.subagents" || r.Scenario == "chat.upstream-errors" {
 			out.WriteString("Sandbox allocation uses a local Docker Provider; real Runner, filesystem mounts and environment-manager execute unchanged. A local E2B control API checks container ownership and handles connect/timeout/deletion. Cloud TTL renewal and provider API/network policies are not verified.\n\n")
 		} else {
 			out.WriteString("Session activation is prepared by the fixture. Public Runner provisioning is verified separately by chat.public.\n\n")

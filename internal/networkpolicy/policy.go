@@ -54,11 +54,11 @@ func ParsePolicy(configRaw, agentSnapshotRaw []byte) (Policy, error) {
 	}
 	var mcpHosts []string
 	if config.AllowMCPServers {
-		targets, err := parseMCPServerTargets(agentSnapshotRaw)
+		hosts, err := MCPAllowedHosts(agentSnapshotRaw)
 		if err != nil {
 			return Policy{}, err
 		}
-		mcpHosts = targets.hosts
+		mcpHosts = hosts
 	}
 	return compilePolicy(config, mcpHosts), nil
 }

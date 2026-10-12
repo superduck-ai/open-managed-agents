@@ -46,10 +46,13 @@ func managedAgentMCPConfigFields(document any, args map[string]json.RawMessage) 
 // buildManagedAgentRuntimeMCPConfig constructs the client document only after
 // the current Code Session identity is available. Source declarations stay intact.
 func buildManagedAgentRuntimeMCPConfig(sessionConfig json.RawMessage, codeSessionID, sessionIngressToken string, cfg config.Config) (json.RawMessage, error) {
-	document, err := codesessions.BuildMCPRuntimeConfig(sessionConfig, codesessions.MCPRuntimeIdentity{
-		CodeSessionID: codeSessionID, SessionIngressToken: sessionIngressToken,
-		APIBaseURL: codeSessionSandboxAPIBaseURL(cfg),
-	}, cfg.Tunnel)
+	identity := codesessions.MCPRuntimeIdentity{CodeSessionID: codeSessionID, SessionIngressToken: sessionIngressToken, APIBaseURL: codeSessionSandboxAPIBaseURL(cfg)}
+	var err error
+	sessionConfig, err = buildManagedAgentSubagents(sessionConfig, identity, cfg.Tunnel)
+	if err != nil {
+		return nil, err
+	}
+	document, err := codesessions.BuildMCPRuntimeConfig(sessionConfig, identity, cfg.Tunnel)
 	if err != nil {
 		return nil, err
 	}

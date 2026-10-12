@@ -570,7 +570,7 @@ func (r *Runner) prepareManagedAgentLaunch(
 			}
 		}
 	}
-	sessionConfig, err := managedAgentSessionConfig(session, runtimeResources)
+	sessionConfig, err := managedAgentSessionConfig(session, runtimeResources, runtimeSkills)
 	if err != nil {
 		return nil, err
 	}

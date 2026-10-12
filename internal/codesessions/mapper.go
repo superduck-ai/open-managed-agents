@@ -226,7 +226,7 @@ func publicPayloadCandidatesFromInternalSubagentEvent(codeSessionID string, raw 
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return nil, fmt.Errorf("%w: invalid user payload: %w", ErrProtocol, err)
 		}
-		return internalSubagentUserPayloadCandidates(object, payload), nil
+		return internalSubagentUserPayloadCandidates(codeSessionID, object, payload), nil
 	default:
 		return nil, nil
 	}
@@ -513,7 +513,10 @@ func userPublicPayloadCandidates(codeSessionID string, object map[string]any, sc
 	return candidates
 }
 
-func internalSubagentUserPayloadCandidates(object map[string]any, schema workerUserOutputPayload) []publicPayloadCandidate {
+func internalSubagentUserPayloadCandidates(codeSessionID string, object map[string]any, schema workerUserOutputPayload) []publicPayloadCandidate {
+	if results := userPublicPayloadCandidates(codeSessionID, object, schema); len(results) > 0 {
+		return results
+	}
 	content := publicContentBlocks(workerOutputContent(schema.Content, schema.Message.Content))
 	if content == nil {
 		return nil

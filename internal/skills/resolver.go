@@ -94,11 +94,28 @@ func runtimeSkillRefs(snapshot json.RawMessage) ([]runtimeSkillRef, error) {
 	}
 	raw, ok := object["skills"]
 	if !ok || len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
-		return nil, nil
+		raw = json.RawMessage(`[]`)
 	}
 	var refs []runtimeSkillRef
 	if err := json.Unmarshal(raw, &refs); err != nil {
 		return nil, fmt.Errorf("decode agent skills: %w", err)
+	}
+	var roster struct {
+		Multiagent *struct {
+			Agents []json.RawMessage `json:"agents"`
+		} `json:"multiagent"`
+	}
+	if err := json.Unmarshal(snapshot, &roster); err != nil {
+		return nil, err
+	}
+	if roster.Multiagent != nil {
+		for _, child := range roster.Multiagent.Agents {
+			childRefs, err := runtimeSkillRefs(child)
+			if err != nil {
+				return nil, err
+			}
+			refs = append(refs, childRefs...)
+		}
 	}
 	for i, ref := range refs {
 		if strings.TrimSpace(ref.Type) != "anthropic" && strings.TrimSpace(ref.Type) != "custom" {

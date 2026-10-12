@@ -9,6 +9,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
 const (
@@ -42,11 +43,13 @@ These rules describe the current sandbox environment and do not replace your ass
 func managedAgentSessionConfig(
 	session db.Session,
 	runtimeResources managedAgentRuntimeResources,
+	runtimeSkills []skillsapi.RuntimeSkill,
 ) (json.RawMessage, error) {
 	agentSnapshot := rawJSONObject(session.AgentSnapshot)
 	var mcpSource struct {
 		MCPServers json.RawMessage `json:"mcp_servers"`
 		Tools      json.RawMessage `json:"tools"`
+		Multiagent json.RawMessage `json:"multiagent"`
 	}
 	if len(session.AgentSnapshot) > 0 {
 		if err := json.Unmarshal(session.AgentSnapshot, &mcpSource); err != nil {
@@ -69,6 +72,14 @@ func managedAgentSessionConfig(
 	}
 	if len(tools) > 0 {
 		body["tools"] = tools
+	}
+	if len(mcpSource.Multiagent) > 0 && string(mcpSource.Multiagent) != "null" {
+		body["multiagent"] = mcpSource.Multiagent
+		directories := make(map[string]string, len(runtimeSkills))
+		for _, skill := range runtimeSkills {
+			directories[skill.Source+":"+skill.SkillID] = skill.Directory
+		}
+		body["skill_directories"] = directories
 	}
 	if len(session.VaultIDs) > 0 {
 		body["vault_ids"] = session.VaultIDs

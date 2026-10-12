@@ -66,7 +66,7 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 	if agent.ArchivedAt != nil {
 		return db.Agent{}, nil, errors.New("agent must not be archived")
 	}
-	snapshot, err := agentsnapshot.FromAgent(agent)
+	snapshot, err := agentsnapshot.Resolve(r.Context(), h.db, agent)
 	if err != nil {
 		return db.Agent{}, nil, err
 	}

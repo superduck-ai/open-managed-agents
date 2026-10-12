@@ -54,7 +54,25 @@ func MCPAllowedHosts(agentSnapshot json.RawMessage) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return targets.hosts, nil
+	var root struct {
+		Multiagent *struct {
+			Agents []json.RawMessage `json:"agents"`
+		} `json:"multiagent"`
+	}
+	if err := json.Unmarshal(agentSnapshot, &root); err != nil {
+		return nil, err
+	}
+	hosts := targets.hosts
+	if root.Multiagent != nil {
+		for _, child := range root.Multiagent.Agents {
+			childTargets, err := parseMCPServerTargets(child)
+			if err != nil {
+				return nil, err
+			}
+			hosts = append(hosts, childTargets.hosts...)
+		}
+	}
+	return collections.UniqueTrimmedStrings(hosts), nil
 }
 
 func parseMCPServerTargets(agentSnapshot json.RawMessage) (mcpServerTargets, error) {

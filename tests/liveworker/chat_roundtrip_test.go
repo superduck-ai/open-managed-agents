@@ -117,9 +117,17 @@ func configureChatModel(t *testing.T, e *liveEnv, modelURL string) {
 }
 
 func connectChatStream(t *testing.T, ctx context.Context, f *liveSession) (<-chan chatEvent, func()) {
+	return connectChatThreadStream(t, ctx, f, "")
+}
+
+func connectChatThreadStream(t *testing.T, ctx context.Context, f *liveSession, threadID string) (<-chan chatEvent, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(ctx)
-	req, err := http.NewRequestWithContext(ctx, "GET", f.env.url+"/v1/sessions/"+f.session.ExternalID+"/events/stream?beta=true&event_deltas[]=agent.message", nil)
+	path := f.env.url + "/v1/sessions/" + f.session.ExternalID + "/events/stream?beta=true&event_deltas[]=agent.message"
+	if threadID != "" {
+		path = f.env.url + "/v1/sessions/" + f.session.ExternalID + "/threads/" + threadID + "/stream?beta=true&event_deltas[]=agent.message"
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", path, nil)
 	requireOK(t, err)
 	req.Header.Set("Authorization", "Bearer "+f.env.apiKey)
 	response, err := http.DefaultClient.Do(req)

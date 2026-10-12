@@ -43,10 +43,26 @@ func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID
 		return nil
 	}
 	toolName := firstNonEmpty(payload.Request.ToolName, payload.ToolName)
-	permission, identity, err := s.resolveToolPermission(ctx, codeSessionID, toolName)
+	threadID := workerOutputSessionThreadID(payload)
+	if payload.Request.AgentID != "" {
+		codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return db.ErrNotFound
+		}
+		threadID, err = s.modelRequestThread(ctx, codeSession, payload.Request.AgentID)
+		if err != nil {
+			s.logger.ErrorContext(ctx, "resolve subagent permission thread", "code_session_id", codeSessionID, "error", err)
+			return s.respondToToolPermissionRequest(ctx, codeSessionID, workerEpoch, toolPermissionRequestFromWorkerEvent(payload, meta), resolvedToolPermissionDeny, "unknown-subagent", "Subagent thread could not be resolved.", "", "")
+		}
+		payload.Request.SessionThreadID = threadID
+	}
+	permission, identity, err := s.resolveToolPermission(ctx, codeSessionID, toolName, threadID)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "resolve tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "error", err)
-		return nil
+		return s.respondToToolPermissionRequest(ctx, codeSessionID, workerEpoch, toolPermissionRequestFromWorkerEvent(payload, meta), resolvedToolPermissionDeny, "invalid-thread", "Tool permission could not be resolved.", "", "")
 	}
 	s.logger.InfoContext(ctx, "resolved tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "tool_kind", identity.Kind, "server_name", identity.ServerName, "normalized_tool_name", identity.ToolName, "permission", permission)
 	request, payloads, err := toolPermissionPublicPayloads(codeSessionID, payload, meta, identity, permission)
@@ -86,13 +102,21 @@ func toolPermissionRequestFromWorkerEvent(payload *workerControlRequestPayload, 
 	}
 }
 
-func (s *Service) resolveToolPermission(ctx context.Context, codeSessionID string, claudeToolName string) (resolvedToolPermission, toolIdentity, error) {
+func (s *Service) resolveToolPermission(ctx context.Context, codeSessionID string, claudeToolName string, threadID string) (resolvedToolPermission, toolIdentity, error) {
 	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
 	if err != nil {
 		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), err
 	}
 	if !found {
 		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), db.ErrNotFound
+	}
+	if threadID != "" {
+		thread, err := s.db.GetSessionThread(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, threadID)
+		if err != nil {
+			return resolvedToolPermissionDeny, parseClaudeToolIdentity(claudeToolName), err
+		}
+		permission, identity := resolveToolPermissionFromAgentSnapshot(thread.AgentSnapshot, claudeToolName)
+		return permission, identity, nil
 	}
 	session, found, err := s.db.GetSession(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
 	if err != nil {

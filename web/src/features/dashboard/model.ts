@@ -1,8 +1,9 @@
 import type { ComponentType } from 'react';
 import { useLocation } from '@tanstack/react-router';
 import { copyText } from '@/shared/lib/clipboard';
+import { downloadApiFile } from '../../shared/api/file-download';
 import { anthropicBetaApi } from '../../shared/api/anthropic';
-import { filesRequestHeaders, messageBatchesRequestHeaders, skillsRequestHeaders } from '../../shared/api/client';
+import { messageBatchesRequestHeaders, skillsRequestHeaders } from '../../shared/api/client';
 import { consoleResourceListLimit } from '../../shared/console-list';
 import type { useI18n } from '../../shared/i18n';
 import { useWorkspace } from '../../shared/workspaces/context';
@@ -407,23 +408,8 @@ export function errorMessage(error: unknown) {
 
 export { copyText };
 
-export async function downloadFile(file: ConsoleFile, workspaceId: string) {
-  const response = await fetch(`/v1/files/${encodeURIComponent(file.id)}/content?beta=true`, {
-    headers: filesRequestHeaders(workspaceRequestHeaders(workspaceId)),
-    credentials: 'include',
-  });
-  if (!response.ok) {
-    throw new Error('File could not be downloaded.');
-  }
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = file.filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
+export function downloadFile(file: ConsoleFile, workspaceId: string) {
+  return downloadApiFile(file, workspaceId);
 }
 
 export async function downloadMessageBatchResults(batch: ConsoleMessageBatch, workspaceId: string) {

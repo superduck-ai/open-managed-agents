@@ -1,3 +1,4 @@
+import { useQueries } from '@tanstack/react-query';
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { cn } from '../../../shared/lib/utils';
@@ -38,7 +39,9 @@ import { Separator } from '../../../shared/ui/separator';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tooltip';
-import { Ban, CheckCircle2, ChevronDown, CircleHelp, Database, File, Plus, Search, X } from 'lucide-react';
+import { toast } from '../../../shared/ui/sonner';
+import { downloadApiFile } from '../../../shared/api/file-download';
+import { Ban, CheckCircle2, ChevronDown, CircleHelp, Database, Download, File, Plus, Search, X } from 'lucide-react';
 import { retrieveAgent, retrieveFileMetadata, retrieveManagedEntity } from '../api';
 import {
   type AgentApiResponse,
@@ -96,6 +99,47 @@ import { SessionTraceObservability } from '../../observability/traces/SessionTra
 
 const SESSION_INSPECTOR_DETAIL_DEFAULT_HEIGHT = 360;
 const SESSION_INSPECTOR_DETAIL_MIN_HEIGHT = 120;
+
+type InspectorFileMetadata = { name: string; size: number; downloadable?: boolean };
+
+function SessionResourceDownload({
+  file,
+  fileId,
+  workspaceId,
+}: {
+  file?: InspectorFileMetadata;
+  fileId?: string;
+  workspaceId: string;
+}) {
+  const { msg } = useI18n();
+  const [downloading, setDownloading] = useState(false);
+  const busyRef = useRef(false);
+  const download = async () => {
+    if (!file?.downloadable || !fileId || busyRef.current) return;
+    busyRef.current = true;
+    setDownloading(true);
+    try {
+      await downloadApiFile({ id: fileId, filename: file.name }, workspaceId);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      busyRef.current = false;
+      setDownloading(false);
+    }
+  };
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      aria-label={msg('files.downloadAria', 'Download {filename}', { filename: file?.name ?? fileId ?? 'file' })}
+      disabled={!file?.downloadable || downloading}
+      onClick={() => void download()}
+    >
+      <Download className="size-3.5" aria-hidden />
+    </Button>
+  );
+}
 
 export function SessionInspector({
   activeTab,
@@ -1445,7 +1489,7 @@ function InspectorResourcesPanel({
   session,
   workspaceId,
 }: {
-  filenamesByFileId: Record<string, { name: string; size: number }>;
+  filenamesByFileId: Record<string, InspectorFileMetadata>;
   onAddFileResource: (resource: SessionFileResourceFormValue) => Promise<void>;
   session: SessionApiResponse;
   workspaceId: string;
@@ -1517,6 +1561,7 @@ function InspectorResourcesPanel({
             <TableHead className="h-6 w-24 px-1.5 text-right">
               {msg('managedAgents.sessions.inspector.size', 'Size')}
             </TableHead>
+            <TableHead className="h-6 w-8 px-1.5" aria-label={msg('common.actions', 'Actions')} />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -1546,6 +1591,7 @@ function InspectorResourcesPanel({
                     <TableCell className="h-auto min-w-0 truncate px-1.5 py-1.5 text-right font-mono text-muted-foreground">
                       —
                     </TableCell>
+                    <TableCell />
                   </TableRow>
                 );
               }
@@ -1561,6 +1607,9 @@ function InspectorResourcesPanel({
                   </TableCell>
                   <TableCell className="h-8 min-w-0 truncate px-1.5 py-0 text-right font-mono text-muted-foreground">
                     {file ? formatters.bytes(file.size) : '—'}
+                  </TableCell>
+                  <TableCell className="h-8 px-1.5 py-0 text-right">
+                    <SessionResourceDownload file={file} fileId={resource.file_id} workspaceId={workspaceId} />
                   </TableCell>
                 </TableRow>
               );
@@ -1934,30 +1983,24 @@ function useSessionInspectorEntities(session: SessionApiResponse, workspaceId: s
 }
 
 function useSessionInspectorFileMetadata(session: SessionApiResponse, workspaceId: string) {
-  const [files, setFiles] = useState<Record<string, { name: string; size: number }>>({});
-  const fileIds = useMemo(
-    () => [...new Set(session.resources.map((resource) => resource.file_id).filter(Boolean))] as string[],
-    [session.resources],
-  );
-  useEffect(() => {
-    let active = true;
-    void Promise.allSettled(fileIds.map((id) => retrieveFileMetadata(id, workspaceId))).then((results) => {
-      if (!active) return;
-      setFiles(
-        Object.fromEntries(
-          results.flatMap((result) =>
-            result.status === 'fulfilled'
-              ? [[result.value.id, { name: result.value.filename, size: result.value.size_bytes }] as const]
-              : [],
-          ),
-        ),
-      );
-    });
-    return () => {
-      active = false;
-    };
-  }, [fileIds, workspaceId]);
-  return files;
+  const resources = [
+    ...new Map(
+      session.resources.filter((resource) => resource.file_id).map((resource) => [resource.file_id!, resource]),
+    ).values(),
+  ];
+  const queries = useQueries({
+    queries: resources.map((resource) => ({
+      queryKey: ['files', workspaceId, 'metadata', resource.file_id, resource.updated_at ?? ''],
+      queryFn: () => retrieveFileMetadata(resource.file_id!, workspaceId),
+      staleTime: 15000,
+      retry: false,
+    })),
+  });
+  return Object.fromEntries(
+    queries.flatMap(({ data }) =>
+      data ? [[data.id, { name: data.filename, size: data.size_bytes, downloadable: data.downloadable }]] : [],
+    ),
+  ) as Record<string, InspectorFileMetadata>;
 }
 
 function inspectorTabLabel(tab: SessionInspectorTab, msg: ReturnType<typeof useI18n>['msg']) {

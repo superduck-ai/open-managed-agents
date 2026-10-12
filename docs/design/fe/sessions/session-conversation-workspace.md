@@ -76,16 +76,17 @@ Events、Tools、Threads 共用 list 最小 `120px`、detail 默认 `360px` 的�
 | 转录与 Events | Session/Thread events + SSE                         | 保留现有缓存、补帧、lane 和实时状态机                                                               |
 | Session       | Session retrieve + Agent/Environment/Vault retrieve | 只读取关联实体名称和固定版本信息                                                                    |
 | Tools         | 原始事件 + Agent retrieve                           | 聚合配置工具、权限、调用、失败和耗时                                                                |
-| Resources     | Session retrieve + File metadata                    | 挂载关系来自 Session；File 名称/大小按 `file_id` 获取；Memory Store 用快照 `name`/`memory_store_id` |
+| Resources     | Session retrieve + File metadata                    | 挂载关系来自 Session；File 名称/大小/下载权限按 `file_id` 获取；Memory Store 用快照 `name`/`memory_store_id` |
 | Threads       | Session threads + thread events + Agent retrieve    | 聚合线程状态、模型用量和 context 阶梯点                                                             |
 
-进入 Resources 页签时重新请求 Session retrieve，以获取后端最新挂载关系；再次点击已激活的 Resources 页签也会刷新。打开 File 表单时按需读取 Files list，提交后调用 Session resources add，并再次刷新 Session。Memory Store 资源直接使用 Session 快照里的 `name` 和 `memory_store_id`，不额外请求 Memory Store retrieve。
+进入 Resources 页签时重新请求 Session retrieve，以获取后端最新挂载关系；再次点击已激活的 Resources 页签也会刷新。资源缓存按 workspace/session 隔离，切换作用域后旧响应不得更新新页面。运行中的会话每 3 秒刷新资源，Resources 可见的非运行会话每 10 秒刷新，后台页签暂停轮询；恢复可见时由 TanStack Query 刷新。状态切换（含运行结束）和工具结果事件立即触发刷新。文件元数据按 workspace/file ID/资源更新时间缓存，各文件独立更新，避免一个慢请求阻塞整个列表。打开 File 表单时按需读取 Files list，提交后调用 Session resources add，并再次刷新 Session。Memory Store 资源直接使用 Session 快照里的 `name` 和 `memory_store_id`，不额外请求 Memory Store retrieve。资源表格下载按钮以 Files metadata 的 `downloadable` 为准：未加载或不可下载时禁用。生成的输出文件通过 SDK 的 Files download（`GET /v1/files/{file_id}/content?beta=true`）下载，并保留文件名、workspace/org 范围和 cookie 鉴权；失败展示错误，不生成空文件。Files 页面复用相同下载 helper。
 
 ## 对话与审批行为
 
 - `Enter` 发送，`Shift+Enter` 换行；输入法合成中和键盘长按不得触发发送。
-- Composer 使用 shadcn InputGroup 和语义化 form：空状态高 `56px`、圆角 `22px`、单行起步并按内容增长至 `160px`；Send 是 submit，Stop 是普通 button。
-- 空消息、发送中、已归档、已终止或已删除的 Session 不能发送；只有 idle 或初始 queued Session 可提交新消息。运行期间保留输入框草稿，但 Send 和 Enter 不发请求；草稿只在当前页面内存中，刷新后丢失。本次不增加客户端待发队列或自动重发。
+- Composer 使用 shadcn InputGroup 和语义化 form：空状态高 `56px`、圆角 `22px`、单行起步并按内容增长至 `160px`；Send 是 submit，Stop 是普通 button。输入框使用柔和的语义底色区分区域，移除常驻描边和聚焦投影，仅在聚焦时显示低对比度的 `1px` 焦点环。附件标签使用无描边的浅底色和 `8px` 圆角，文件图标与移除按钮弱化为次级文字色；浅色、深色和窄屏保持同样的轻量层级。
+- 通过附件按钮选择多个本地文件，可移除待发送附件，也允许仅附件发送。发送时依次上传到 Files API，再调用 Session resources add 挂载到 `/attachments/{随机 ID}/{文件名}`；每个文件路径独立，同名文件不会相互覆盖。消息文本附带 `/mnt/session/uploads/attachments/{随机 ID}/{文件名}`，让 Agent 通过工具读取文件，不改变 `user.message` 文本事件合同。挂载成功后刷新资源及 Files 选择缓存。上传、挂载或发送失败时保留文本与附件；重试复用已成功上传的 file ID 和已完成的挂载，避免重复操作。切换 workspace/session 后清空当前输入状态。
+- 无文本且无附件、发送中、已归档、已终止或已删除的 Session 不能发送；只有 idle 或初始 queued Session 可提交新消息。运行期间保留输入框草稿，但 Send 和 Enter 不发请求；草稿只在当前页面内存中，刷新后丢失。本次不增加客户端待发队列或自动重发。
 - running、queued 或 rescheduled Session 显示停止按钮，并通过既有 `user.interrupt` 合同停止。
 - 最新 `session.status_idle.stop_reason` 为 `requires_action` 时，在转录与输入框之间展示 Action Card。普通工具审批发送 `user.tool_confirmation`，AskUserQuestion 答案发送 `user.custom_tool_result`；等待期间禁用普通消息输入框。
 - 用户离开列表底部后停止自动跟随并显示“回到最新事件”；位于底部时继续跟随流式正文增长。发送新消息成功后重新跟随底部，即使随后重连补入更早的历史事件，也应保持最新回复可见；主动上滚阅读历史时不强制拉回底部。
@@ -97,3 +98,22 @@ Events、Tools、Threads 共用 list 最小 `120px`、detail 默认 `360px` 的�
 - 复用现有 Session resources add 挂载文件；不新增后端 API，也不开放关联实体编辑。
 - 不伪造 Thread cost、等待时长或后端未返回的统计数据。
 - 不展示 credential secret，也不恢复旧版关联实体完整配置卡片。
+
+## 附件与资源验收
+
+- `SessionMessageComposer.test.tsx` 覆盖上传/挂载/发送失败后的恢复、多附件、同名文件隔离、仅附件发送、移除附件和重复提交保护。
+- `useSessionResourceRefresh.test.tsx` 覆盖运行期发现输出文件、idle 时立即刷新、刷新失败保留旧列表、重试和 workspace 切换的旧响应隔离。
+- `SessionInspector.test.tsx` 覆盖慢元数据请求不会阻塞其他文件的下载入口，以及上传文件不可下载。
+- `file-download.test.ts` 覆盖 Files beta、workspace/org、cookie、文件名和鉴权失败处理；浏览器验收检查文件选择、资源刷新和实际下载事件。
+
+## 文件工作流截图
+
+以下截图来自完整 Session 路由的 Playwright 验证，API 使用模拟数据；不代表真实后端或 Worker 集成验收。
+
+| 状态 | 截图 |
+| --- | --- |
+| 选择两个同名附件 | [桌面浅色](screenshots/session-file-workflow/attachments-ready.png) |
+| 输出资源与下载入口 | [桌面浅色](screenshots/session-file-workflow/resources-output.png) |
+| 轻量输入框与附件标签 | [浅色](screenshots/session-file-workflow/composer-light.png) / [深色](screenshots/session-file-workflow/composer-dark.png) |
+
+模拟浏览器流程覆盖上传失败后保留草稿、重试、两个同名文件独立挂载、资源自动刷新、输出文件下载及 390px 窄屏无横向溢出；下载文件名与内容逐字节校验通过。

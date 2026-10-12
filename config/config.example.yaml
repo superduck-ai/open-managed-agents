@@ -46,16 +46,8 @@ e2b:
   api_key: ""
   api_url: ""
 
-# Optional deployment-owned npm sources; private access stays disabled when omitted.
-# environment_packages:
-#   npm:
-#     scoped_registries:
-#       "@example": "https://registry.example.internal/npm/"
-#   network:
-#     private_endpoints:
-#       - host: registry.example.internal
-#         port: 443
-#         allowed_cidrs: ["10.20.30.40/32"]
+# Optional deployment package sources: see docs/configuration-reference.yaml.
+# Omit environment_packages to retain image sources and deny private CONNECT targets.
 
 # Optional: extra hosts for SSH→HTTPS rewrite in environment-manager
 # (github.com is always built-in). See docs/configuration-reference.yaml.

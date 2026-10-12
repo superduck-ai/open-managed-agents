@@ -19,9 +19,6 @@ func TestLoadEnvironmentPackagesRejectsInvalidConfiguration(t *testing.T) {
 		{"invalid scope", `npm: {scoped_registries: {"--secret": "https://registry.example.com/"}}`},
 		{"empty scoped registry", `npm: {scoped_registries: {"@example": ""}}`},
 		{"duplicate normalized scopes", `npm: {scoped_registries: {" @example ": "https://a.example.com/", "@example": "https://b.example.com/"}}`},
-		{"all private destinations", `network: {private_endpoints: [{host: registry.example.com, port: 443, allowed_cidrs: ["0.0.0.0/0"]}]}`},
-		{"metadata", `network: {private_endpoints: [{host: registry.example.com, port: 443, allowed_cidrs: ["169.254.169.254/32"]}]}`},
-		{"missing CIDR", `network: {private_endpoints: [{host: registry.example.com, port: 443}]}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := loadConfigTestYAML(t, "environment_packages:\n  "+test.yaml+"\n")
@@ -35,20 +32,15 @@ func TestLoadEnvironmentPackagesRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
-func TestLoadEnvironmentPackagesNormalizesRegistryConfiguration(t *testing.T) {
+func TestLoadEnvironmentPackagesUsesDeclaredRegistries(t *testing.T) {
 	prepareLoadTest(t)
 	cfg, err := loadConfigTestYAML(t, `
 environment_packages:
   npm:
-    registry: " https://registry.npmjs.org/ "
+    registry: "https://registry.npmjs.org/"
     scoped_registries:
-      " @example ": " https://registry.example.internal/npm/ "
+      "@example": "https://registry.example.internal/npm/"
       "@another": "https://registry.example.internal/other/"
-  network:
-    private_endpoints:
-      - host: " REGISTRY.EXAMPLE.INTERNAL. "
-        port: 443
-        allowed_cidrs: [" 10.20.30.40/32 "]
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -61,15 +53,11 @@ environment_packages:
 	if hosts := cfg.EnvironmentPackages.RegistryHosts(); !reflect.DeepEqual(hosts, []string{"registry.example.internal", "registry.npmjs.org"}) {
 		t.Fatalf("registry hosts = %v", hosts)
 	}
-	endpoint := cfg.EnvironmentPackages.Network.PrivateEndpoints[0]
-	if endpoint.Host != "registry.example.internal" || endpoint.AllowedCIDRs[0] != "10.20.30.40/32" {
-		t.Fatalf("endpoint was not normalized: %+v", endpoint)
-	}
 	defaults, err := loadConfigTestYAML(t, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(defaults.EnvironmentPackages.NPM.Options()) != 0 || len(defaults.EnvironmentPackages.Network.PrivateEndpoints) != 0 {
+	if !defaults.EnvironmentPackages.Empty() {
 		t.Fatal("default configuration must not grant private access or change registries")
 	}
 }

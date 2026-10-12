@@ -18,40 +18,58 @@ Sandbox 镜像或自定义 E2B template 必须提供 `/usr/local/bin/environment
 
 ## 部署配置的软件源与内网例外
 
-`config.yaml` 的 `environment_packages` 由部署管理员管理，不属于 Environment API 的可写字段。省略时继续使用镜像/软件包管理器已有的源，且 OMA CONNECT 代理仍拒绝私网地址。当前自定义源支持 npm 默认 registry 与 scoped registries；包列表仍只接收包 spec，不能提交 registry 参数或任意命令。
+`config.yaml` 的 `environment_packages` 由部署管理员管理，不属于 Environment API 的可写字段。增量覆盖 npm、pip、go、cargo、gem 声明过的源；未声明的管理器与字段继续使用镜像已有配置。空配置不改变安装行为，也不产生 CONNECT 私网例外。Environment API 的包列表只接收 package spec，拒绝 registry 字段、未知管理器和命令行选项。
 
 ```yaml
 environment_packages:
   npm:
+    # 可选，省略时保留镜像的默认 registry。
+    # registry: "https://packages.example.internal/npm/"
     scoped_registries:
-      "@example": "https://registry.example.internal/npm/"
-  network:
-    private_endpoints:
-      - host: registry.example.internal
-        port: 443
-        allowed_cidrs: ["10.20.30.40/32"]
+      "@example": "https://packages.example.internal/npm-private/"
+      "@acme": "https://packages.example.internal/npm-acme/"
+  pip:
+    index_url: "https://packages.example.internal/pypi/simple/"
+  go:
+    proxy: "https://packages.example.internal/goproxy/"
+  cargo:
+    registries:
+      example: "https://packages.example.internal/cargo/index/"
+  gem:
+    sources:
+      - "https://packages.example.internal/rubygems/"
 ```
 
-示例 IP 必须替换成服务的实际地址范围。registry 仅允许 HTTPS 443，不能包含凭据、query、fragment、空白、控制字符或变量插值。scope 与 endpoint hostname 在启动时校验；endpoint 必须为精确域名或 IP，并同时配置 443 端口及规范化的私网 CIDR。CIDR 只能落在 RFC1918、IPv6 ULA 或 `100.64.0.0/10` 内，不能通过配置放行 loopback、link-local、metadata 或任意公网范围。
+所有 URL 仅允许 HTTPS 443，禁止 userinfo、query、fragment、`$`、反斜杠、空白与控制字符，包括路径中的编码形式。npm scope、Cargo registry 名与 hostname 在启动时校验。未知字段或未实现的管理器（包括 `apt`）使启动失败；APT 软件包列表仍可用，但动态 APT 源由基础镜像或预构建节点管理。原 `environment_packages.network.private_endpoints` 已移除，旧配置会明确报错，不提供 CIDR 配置项。
 
-预构建把 npm 源作为独立 argv 插入 `--` 之前，不产生永久 `.npmrc` 或 `ENV`。启动安装保留 v1 manifest，通过临时 npm userconfig 传递相同的源；复制已有 userconfig 保留认证配置，结束后删除临时文件，保留 Manager 的 stdin、stdout 和退出码。原配置依次读取非空的 `NPM_CONFIG_USERCONFIG`、`npm_config_userconfig`，仅在 `HOME` 非空时回退到 `$HOME/.npmrc`；均未指定时直接使用临时配置继续安装。部署源不包含认证信息；预构建认证仍由流水线私密配置提供，启动安装认证由镜像或原 userconfig 提供。源配置及私网例外计入预构建服务商配置标识，避免排队任务在修改后静默使用不同设置；已完成模板仍按既有合同复用。
+| 管理器 | 预构建 | 启动安装 |
+| --- | --- | --- |
+| npm | `npm install --global [--registry=...] [--@scope:registry=...] -- pkgs`，独立 argv | 复制原 userconfig，追加声明的源；仅配置默认 registry 时设置 `NPM_CONFIG_REGISTRY` |
+| pip | `env PIP_INDEX_URL=... pip install pkgs` | 安装进程的 `PIP_INDEX_URL`，保留原 pip.conf 与认证 |
+| go | `env GOPROXY=... go install spec` | 安装进程的 `GOPROXY`；不改变 `GOSUMDB` |
+| cargo | 临时 TOML，通过 `cargo --config file install pkgs` 叠加命名 registry 条目 | 临时 Cargo 包装命令传入相同 `--config`；保留 `CARGO_HOME`、原配置与 credentials |
+| gem | `gem install --source URL ... pkgs`，独立 argv | `GEMRC` 追加临时 sources 配置，原生合并并保留原 .gemrc 与认证 |
 
-Environment 的 `allow_package_managers: true` 将管理员配置的 npm registry hosts 纳入 Sandbox 与 OMA CONNECT 的允许列表；关闭时仍需显式 `allowed_hosts`。私网例外不会替代 Environment 域名授权。OMA CONNECT 完成授权后，对每个解析结果检查精确 host、port、CIDR，然后只拨号已校验的 IP。MCP proxy 与其他使用 `PublicAddress` 的服务不继承此例外。
+Cargo 不改变镜像的 `registry.default`，不自动查找私有源或回退。部署希望从命名私有源安装时，需在镜像原配置中选定该默认 registry；这里只补充该名称的 index URL。Cargo 原配置由其原生 `--config` 合并机制保留，包括同名 registry 的其他字段与认证。
+
+临时目录由 `mktemp -d` 创建，npmrc、Cargo TOML、Cargo 包装命令与 gemrc 在同一安装进程中使用，通过 EXIT 和信号 trap 清理；成功、失败与信号退出均保留 Manager 的 stdin、stdout、stderr 和退出码合同。原 npm 配置依次读取非空的 `NPM_CONFIG_USERCONFIG`、`npm_config_userconfig`，仅在 `HOME` 非空时回退到 `$HOME/.npmrc`；均未指定时直接使用临时配置。预构建的 ENV 仅作用于对应 RUN 进程，不写 Dockerfile ENV，不留下永久配置文件或包装命令。部署 YAML 不包含认证；认证由镜像原配置或流水线私密配置提供。整份 `environment_packages` 计入预构建 provider key，源变更会改变标识；已完成模板仍按既有合同复用。
+
+所有管理器的 URL 抽取并规范化 host，经 `RegistryHosts()` 去重后，在 Environment 的 `allow_package_managers: true` 下纳入 Sandbox AllowOut 与 CONNECT host 策略；关闭时仍需显式 `allowed_hosts`。完成 Environment 授权后，只有配置过的精确 host、443 端口、RFC1918 / ULA / CGNAT 地址可获得自动私网例外。loopback、link-local、metadata 地址仍拒绝，包括 CGNAT 与 ULA 内的已知 metadata 地址。DNS 只解析一次，随后拨号已校验 IP。MCP proxy 与其他使用 `PublicAddress` 的服务不继承此例外。
 
 ```mermaid
 flowchart TD
-    Config["管理员 config.yaml"] --> Install["预构建 argv / 启动安装临时 npmrc"]
-    Config --> Catalog["自定义 npm registry hosts"]
+    Config["管理员 config.yaml"] --> Install["预构建 argv / ENV / 临时配置"]
+    Config --> Catalog["五种管理器的 RegistryHosts"]
     Catalog --> Environment["Environment 域名授权"]
     Environment --> DNS["一次 DNS 解析"]
-    DNS --> Address{"公网地址或指定 host + 443 + CIDR"}
+    DNS --> Address{"公网地址或配置 host + 443 + 合规私网 IP"}
     Address -->|允许| Dial["连接已校验 IP，保留 TLS 验证"]
     Address -->|拒绝| Forbidden["403"]
 ```
 
 YAML 不能创建私有网络路由、DNS 或 VPN。预构建发生在 Aliyun Flow，流水线构建节点需要独立配置网络访问；`environment_prebuilds.template.network` 影响模板创建，不能配置 Flow 构建容器。启动安装发生在 Sandbox relay 启动之前，也依赖 Sandbox 提供方的网络与 DNS；OMA CONNECT 例外不替代提供方的网络限制。只允许构建期访问内网时，应在构建节点配置访问并使用已完成模板，运行 Environment 保持有限网络且关闭内网域名授权。
 
-该配置不承诺软件源之外的私有包管理器支持，也不会自动放行 tarball、重定向或依赖引用的其他域名。确有额外目标时，需分别配置 Environment 授权和对应的私网例外。配置变更需重启服务；已运行的 Sandbox 网络列表需重新创建后更新。
+该配置不会自动放行 tarball、重定向或依赖引用的其他域名。公开额外目标需配置 Environment `allowed_hosts`；私网目标还必须作为软件源 URL host 出现在源配置中。配置变更需重启服务；已运行的 Sandbox 网络列表需重新创建后更新。
 
 ## 软件包预构建
 

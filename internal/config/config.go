@@ -37,9 +37,6 @@ func Load() (Config, error) {
 	cfg.E2B.Template = strings.TrimSpace(cfg.E2B.Template)
 
 	normalizeEnvironmentPrebuildConfig(&cfg.EnvironmentPrebuilds)
-	if err := normalizeEnvironmentPackageConfig(&cfg.EnvironmentPackages); err != nil {
-		return Config{}, err
-	}
 
 	if err := resolveConfigPaths(&cfg, configFileDirectory(configPath)); err != nil {
 		return Config{}, err

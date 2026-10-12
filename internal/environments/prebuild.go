@@ -180,7 +180,7 @@ func (svc *Prebuilds) enqueue(ctx context.Context, tx *yourbatis.Tx, env *db.Env
 		WorkspaceUUID:   env.WorkspaceUUID,
 		EnvironmentUUID: env.UUID,
 		ProviderKey:     svc.providerKey,
-		Dockerfile:      packageDockerfile(svc.cfg.Image.BaseImage, packages, svc.packages.NPM.Options()),
+		Dockerfile:      packageDockerfile(svc.cfg.Image.BaseImage, packages, svc.packages),
 	}
 	result, err := svc.client.InsertTx(ctx, tx.SQLTx(), args, nil)
 	if err != nil {
@@ -347,9 +347,7 @@ func (svc *Prebuilds) readLogs(ctx context.Context, task prebuildTask, stage, cu
 	return svc.templates.ReadLogs(ctx, task.output.TemplateJobRef, cursor)
 }
 
-// Keep argv and ordering aligned with environment-manager provision-packages v1.
-// Exec-form RUN preserves specs literally and exposes package manager output to CI.
-func packageDockerfile(base string, packages *environmentPackages, npmOptions []string) string {
+func packageDockerfile(base string, packages *environmentPackages, sources config.EnvironmentPackageConfig) string {
 	var output strings.Builder
 	fmt.Fprintf(&output, "FROM --platform=linux/amd64 %s\nUSER root\nWORKDIR /home/user\n", base)
 	run := func(command []string) {
@@ -363,17 +361,32 @@ func packageDockerfile(base string, packages *environmentPackages, npmOptions []
 			run(append(prefix, specs...))
 		}
 	}
-	// Cache APT's index and installation together; pass specs as literal arguments.
 	batch([]string{"sh", "-c", `apt-get update && exec apt-get install -y -- "$@"`, "apt-get"}, packages.APT)
-	batch([]string{"cargo", "install"}, packages.Cargo)
-	batch([]string{"gem", "install"}, packages.Gem)
-	for _, spec := range packages.Go {
-		run([]string{"go", "install", spec})
+	cargoCommand := []string{"cargo", "install"}
+	if len(sources.Cargo.Registries) > 0 {
+		prelude := packageSourcePrelude(config.EnvironmentPackageConfig{Cargo: sources.Cargo})
+		cargoCommand = append([]string{"sh", "-c", prelude + `"$@"`, "cargo-install"}, cargoCommand...)
 	}
-	npmCommand := append([]string{"npm", "install", "--global"}, npmOptions...)
+	batch(cargoCommand, packages.Cargo)
+	gemCommand := []string{"gem", "install"}
+	for _, source := range sources.Gem.Sources {
+		gemCommand = append(gemCommand, "--source", source)
+	}
+	batch(gemCommand, packages.Gem)
+	for _, spec := range packages.Go {
+		run(packageInstallEnvironment("GOPROXY", sources.Go.Proxy, []string{"go", "install", spec}))
+	}
+	npmCommand := append([]string{"npm", "install", "--global"}, sources.NPM.Options()...)
 	batch(append(npmCommand, "--"), packages.NPM)
-	batch([]string{"pip", "install"}, packages.PIP)
+	batch(packageInstallEnvironment("PIP_INDEX_URL", sources.PIP.IndexURL, []string{"pip", "install"}), packages.PIP)
 	return output.String()
+}
+
+func packageInstallEnvironment(key, value string, command []string) []string {
+	if value == "" {
+		return command
+	}
+	return append([]string{"env", key + "=" + value}, command...)
 }
 
 // Decoding normalizes absent/empty packages; installation order remains significant.
@@ -393,7 +406,7 @@ func samePackages(previous, next *environmentPackages) bool {
 func prebuildProviderKey(cfg config.Config) string {
 	settings := cfg.EnvironmentPrebuilds
 	var packageSources *config.EnvironmentPackageConfig
-	if len(cfg.EnvironmentPackages.NPM.Options()) > 0 || len(cfg.EnvironmentPackages.Network.PrivateEndpoints) > 0 {
+	if !cfg.EnvironmentPackages.Empty() {
 		packageSources = &cfg.EnvironmentPackages
 	}
 	// Credentials may rotate; endpoints and pipeline identities may not silently move jobs.

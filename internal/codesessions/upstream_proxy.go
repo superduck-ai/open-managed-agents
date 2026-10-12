@@ -120,7 +120,7 @@ func (h *Handler) serveUpstreamProxyTunnel(connection *websocket.Conn, identity 
 		connection.Request().Context(),
 		connectRequest.Target,
 		h.cfg.CodeSession.UpstreamProxyDisableSSRFProtection,
-		h.cfg.EnvironmentPackages.Network.PrivateEndpoints...,
+		h.cfg.EnvironmentPackages.RegistryHosts()...,
 	)
 	if err != nil {
 		status := http.StatusBadGateway
@@ -211,10 +211,10 @@ func upstreamProxyCredentialsMatch(request upstreamProxyConnectRequest, expected
 		subtle.ConstantTimeCompare([]byte(request.Token), []byte(expectedToken)) == 1
 }
 
-func resolveUpstreamProxyTarget(ctx context.Context, target string, disableSSRFProtection bool, endpoints ...networkpolicy.PrivateEndpoint) (string, error) {
+func resolveUpstreamProxyTarget(ctx context.Context, target string, disableSSRFProtection bool, registryHosts ...string) (string, error) {
 	// 即使临时关闭 SSRF 地址过滤，也继续限制为 443：当前协议只支持 HTTPS CONNECT，
 	// 不能把该开关扩展成任意端口的通用 TCP 转发器。
-	policy, err := networkpolicy.NewPrivateNetworkPolicy(endpoints)
+	policy, err := networkpolicy.NewPrivateNetworkPolicy(registryHosts)
 	if err != nil {
 		return "", &upstreamProxyTargetError{status: http.StatusForbidden, cause: err}
 	}

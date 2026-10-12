@@ -10,7 +10,14 @@ import (
 )
 
 func TestCustomRegistrySandboxNetworkingRequiresPackageManagerPermission(t *testing.T) {
-	provider := NewProvider(config.E2BConfig{}, "registry.example.com")
+	sources := config.EnvironmentPackageConfig{
+		NPM:   config.NPMRegistryConfig{ScopedRegistries: map[string]string{"@example": "https://npm.example.internal/"}},
+		PIP:   config.PIPRegistryConfig{IndexURL: "https://pip.example.internal/simple/"},
+		Go:    config.GoRegistryConfig{Proxy: "https://go.example.internal/"},
+		Cargo: config.CargoRegistryConfig{Registries: map[string]string{"example": "https://cargo.example.internal/index/"}},
+		Gem:   config.GemRegistryConfig{Sources: []string{"https://gem.example.internal/"}},
+	}
+	provider := NewProvider(config.E2BConfig{}, sources.RegistryHosts()...)
 	for _, test := range []struct {
 		raw   string
 		allow bool
@@ -26,8 +33,10 @@ func TestCustomRegistrySandboxNetworkingRequiresPackageManagerPermission(t *test
 		if !ok {
 			t.Fatalf("unexpected network selector: %T", resolved.Network.AllowOut)
 		}
-		if got := slices.Contains(hosts, "registry.example.com"); got != test.allow {
-			t.Fatalf("registry allowed = %v, want %v", got, test.allow)
+		for _, host := range sources.RegistryHosts() {
+			if got := slices.Contains(hosts, host); got != test.allow {
+				t.Fatalf("%s registry allowed = %v, want %v", host, got, test.allow)
+			}
 		}
 	}
 }

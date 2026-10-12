@@ -220,13 +220,18 @@ environment_packages:
     registry: ""
     scoped_registries: {}
     # Example: {"@example": "https://registry.example.internal/npm/"}
-  network:
-    # Omit or set [] to retain default private-address rejection. The entry
-    # below illustrates the schema; replace the host and IP before deployment.
-    private_endpoints:
-      - host: registry.example.internal
-        port: 443
-        allowed_cidrs: ["10.20.30.40/32"]
+  pip:
+    index_url: ""
+    # Example: "https://packages.example.internal/pypi/simple/"
+  go:
+    proxy: ""
+    # Example: "https://packages.example.internal/goproxy/"
+  cargo:
+    registries: {}
+    # Example: {example: "https://packages.example.internal/cargo/index/"}
+  gem:
+    sources: []
+    # Example: ["https://packages.example.internal/rubygems/"]
 
 # Copy this section into the active OMA configuration. Disabled by default.
 # Template creation uses the existing e2b.api_url and e2b.api_key.

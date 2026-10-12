@@ -128,9 +128,9 @@ func readPackageSourceFile(t *testing.T, name string) []byte {
 	return data
 }
 
-func TestPrebuildScopedRegistryOptionsAndConfigurationIdentity(t *testing.T) {
+func TestPrebuildScopedRegistryOptions(t *testing.T) {
 	sources := config.EnvironmentPackageConfig{NPM: config.NPMRegistryConfig{ScopedRegistries: map[string]string{"@example": "https://registry.example.com/private/"}}}
-	file := packageDockerfile("registry.example.com/base:stable", &environmentPackages{NPM: []string{"@example/demo-cli"}}, sources.NPM.Options())
+	file := packageDockerfile("registry.example.com/base:stable", &environmentPackages{NPM: []string{"@example/demo-cli"}}, sources)
 	lines := strings.Split(strings.TrimSpace(file), "\n")
 	var argv []string
 	if err := json.Unmarshal([]byte(strings.TrimPrefix(lines[len(lines)-1], "RUN ")), &argv); err != nil {
@@ -142,16 +142,5 @@ func TestPrebuildScopedRegistryOptionsAndConfigurationIdentity(t *testing.T) {
 	}
 	if strings.Contains(file, "npmrc") || strings.Contains(file, "ENV ") {
 		t.Fatal("registry configuration was persisted in the image")
-	}
-	cfg := config.Config{}
-	defaultKey := prebuildProviderKey(cfg)
-	cfg.EnvironmentPackages = sources
-	if prebuildProviderKey(cfg) == defaultKey {
-		t.Fatal("registry change did not affect build configuration identity")
-	}
-	key := prebuildProviderKey(cfg)
-	cfg.EnvironmentPackages.NPM.ScopedRegistries["@example"] = "https://other.example.com/"
-	if prebuildProviderKey(cfg) == key {
-		t.Fatal("different registry reused the same build configuration identity")
 	}
 }

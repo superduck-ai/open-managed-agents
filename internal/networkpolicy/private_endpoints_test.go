@@ -5,36 +5,16 @@ import (
 	"testing"
 )
 
-func TestPrivateNetworkPolicyRejectsInvalidGrants(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		endpoint PrivateEndpoint
-	}{
-		{"wildcard", PrivateEndpoint{Host: "*.example.com", Port: 443, AllowedCIDRs: []string{"10.0.0.0/8"}}},
-		{"missing port", PrivateEndpoint{Host: "registry.example.com", AllowedCIDRs: []string{"10.0.0.0/8"}}},
-		{"non HTTPS port", PrivateEndpoint{Host: "registry.example.com", Port: 80, AllowedCIDRs: []string{"10.0.0.0/8"}}},
-		{"empty prefixes", PrivateEndpoint{Host: "registry.example.com", Port: 443}},
-		{"all addresses", PrivateEndpoint{Host: "registry.example.com", Port: 443, AllowedCIDRs: []string{"0.0.0.0/0"}}},
-		{"loopback", PrivateEndpoint{Host: "registry.example.com", Port: 443, AllowedCIDRs: []string{"127.0.0.0/8"}}},
-		{"metadata", PrivateEndpoint{Host: "registry.example.com", Port: 443, AllowedCIDRs: []string{"169.254.169.254/32"}}},
-		{"public address", PrivateEndpoint{Host: "registry.example.com", Port: 443, AllowedCIDRs: []string{"1.1.1.1/32"}}},
-		{"unmasked prefix", PrivateEndpoint{Host: "registry.example.com", Port: 443, AllowedCIDRs: []string{"10.0.0.1/24"}}},
-		{"mapped prefix", PrivateEndpoint{Host: "registry.example.com", Port: 443, AllowedCIDRs: []string{"::ffff:10.0.0.0/104"}}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := NewPrivateNetworkPolicy([]PrivateEndpoint{test.endpoint}); err == nil {
-				t.Fatal("invalid grant was accepted")
-			}
-		})
-	}
-	endpoint := PrivateEndpoint{Host: "registry.example.com", Port: 443, AllowedCIDRs: []string{"10.0.0.0/8"}}
-	if _, err := NewPrivateNetworkPolicy([]PrivateEndpoint{endpoint, endpoint}); err == nil {
-		t.Fatal("duplicate endpoints were accepted")
+func TestPrivateNetworkPolicyRejectsInvalidHosts(t *testing.T) {
+	for _, host := range []string{"*.example.com", "", "host/path"} {
+		if _, err := NewPrivateNetworkPolicy([]string{host}); err == nil {
+			t.Fatalf("accepted invalid registry host %q", host)
+		}
 	}
 }
 
 func TestPrivateNetworkPolicyMatchesHostPortAndAddress(t *testing.T) {
-	policy, err := NewPrivateNetworkPolicy([]PrivateEndpoint{{Host: "registry.example.com", Port: 443, AllowedCIDRs: []string{"10.20.30.40/32", "fd12::/64"}}})
+	policy, err := NewPrivateNetworkPolicy([]string{"registry.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,10 +24,19 @@ func TestPrivateNetworkPolicyMatchesHostPortAndAddress(t *testing.T) {
 	}{
 		{"other.example.com", "443", "10.20.30.40", false},
 		{"registry.example.com", "80", "10.20.30.40", false},
-		{"registry.example.com", "443", "10.20.30.41", false},
+		{"registry.example.com", "443", "10.20.30.41", true},
 		{"registry.example.com", "443", "127.0.0.1", false},
 		{"registry.example.com", "443", "169.254.169.254", false},
 		{"registry.example.com", "443", "1.1.1.1", false},
+		{"registry.example.com", "443", "100.100.100.200", false},
+		{"registry.example.com", "443", "fd00:ec2::254", false},
+		{"registry.example.com", "443", "fd20:ce::254", false},
+		{"registry.example.com", "443", "fe80::1", false},
+		{"registry.example.com", "443", "::1", false},
+		{"registry.example.com", "443", "198.18.0.1", false},
+		{"registry.example.com", "443", "172.16.4.5", true},
+		{"registry.example.com", "443", "192.168.1.1", true},
+		{"registry.example.com", "443", "100.64.0.1", true},
 		{"registry.example.com", "443", "10.20.30.40", true},
 		{"REGISTRY.EXAMPLE.COM.", "443", "::ffff:10.20.30.40", true},
 		{"registry.example.com", "443", "fd12::1", true},

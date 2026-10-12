@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
 	"slices"
@@ -13,8 +14,11 @@ import (
 )
 
 type EnvironmentPackageConfig struct {
-	NPM     NPMRegistryConfig    `yaml:"npm" json:"npm"`
-	Network PackageNetworkConfig `yaml:"network" json:"network"`
+	NPM   NPMRegistryConfig   `yaml:"npm" json:"npm"`
+	PIP   PIPRegistryConfig   `yaml:"pip" json:"pip"`
+	Go    GoRegistryConfig    `yaml:"go" json:"go"`
+	Cargo CargoRegistryConfig `yaml:"cargo" json:"cargo"`
+	Gem   GemRegistryConfig   `yaml:"gem" json:"gem"`
 }
 
 type NPMRegistryConfig struct {
@@ -22,64 +26,53 @@ type NPMRegistryConfig struct {
 	ScopedRegistries map[string]string `yaml:"scoped_registries" json:"scoped_registries,omitempty"`
 }
 
-type PackageNetworkConfig struct {
-	PrivateEndpoints []networkpolicy.PrivateEndpoint `yaml:"private_endpoints" json:"private_endpoints,omitempty"`
+type PIPRegistryConfig struct {
+	IndexURL string `yaml:"index_url" json:"index_url,omitempty"`
+}
+
+type GoRegistryConfig struct {
+	Proxy string `yaml:"proxy" json:"proxy,omitempty"`
+}
+
+type CargoRegistryConfig struct {
+	Registries map[string]string `yaml:"registries" json:"registries,omitempty"`
+}
+
+type GemRegistryConfig struct {
+	Sources []string `yaml:"sources" json:"sources,omitempty"`
 }
 
 var npmScopePattern = regexp.MustCompile(`^@[a-z0-9][a-z0-9._-]*$`)
-
-func normalizeEnvironmentPackageConfig(packages *EnvironmentPackageConfig) error {
-	packages.NPM.Registry = strings.TrimSpace(packages.NPM.Registry)
-	registries := make(map[string]string, len(packages.NPM.ScopedRegistries))
-	for scope, registry := range packages.NPM.ScopedRegistries {
-		key := strings.TrimSpace(scope)
-		if _, exists := registries[key]; exists {
-			return errors.New("environment_packages.npm.scoped_registries contains duplicate scopes")
-		}
-		registries[key] = strings.TrimSpace(registry)
-	}
-	packages.NPM.ScopedRegistries = registries
-	for i := range packages.Network.PrivateEndpoints {
-		endpoint := &packages.Network.PrivateEndpoints[i]
-		host, err := networkpolicy.NormalizeHost(endpoint.Host)
-		if err != nil {
-			return errors.New("environment_packages.network.private_endpoints requires exact valid hosts")
-		}
-		endpoint.Host = host
-		for j := range endpoint.AllowedCIDRs {
-			endpoint.AllowedCIDRs[j] = strings.TrimSpace(endpoint.AllowedCIDRs[j])
-		}
-	}
-	return nil
-}
+var cargoRegistryPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 func validateEnvironmentPackageConfig(packages EnvironmentPackageConfig) error {
-	if packages.NPM.Registry != "" {
-		if err := validateNPMRegistry(packages.NPM.Registry); err != nil {
-			return fmt.Errorf("environment_packages.npm.registry: %w", err)
-		}
-	}
-	for scope, registry := range packages.NPM.ScopedRegistries {
+	for scope := range packages.NPM.ScopedRegistries {
 		if !npmScopePattern.MatchString(scope) {
 			return errors.New("environment_packages.npm.scoped_registries keys must be npm scopes such as @example")
 		}
-		if err := validateNPMRegistry(registry); err != nil {
-			return fmt.Errorf("environment_packages.npm.scoped_registries: %w", err)
+	}
+	for name := range packages.Cargo.Registries {
+		if !cargoRegistryPattern.MatchString(name) {
+			return errors.New("environment_packages.cargo.registries keys must start with a lowercase letter and contain only lowercase letters, digits, hyphens or underscores")
 		}
 	}
-	if _, err := networkpolicy.NewPrivateNetworkPolicy(packages.Network.PrivateEndpoints); err != nil {
-		return fmt.Errorf("environment_packages.network.private_endpoints: %w", err)
+	for _, registry := range packages.registryURLs() {
+		if err := validatePackageRegistry(registry); err != nil {
+			return fmt.Errorf("environment_packages: %w", err)
+		}
 	}
 	return nil
 }
 
-func validateNPMRegistry(registry string) error {
+func validatePackageRegistry(registry string) error {
 	u, err := url.Parse(registry)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" || (u.Port() != "" && u.Port() != "443") {
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(registry, "#") || u.Opaque != "" || strings.HasSuffix(u.Host, ":") || (u.Port() != "" && u.Port() != "443") {
 		return errors.New("must be an HTTPS registry on port 443 without credentials, query or fragment")
 	}
-	if strings.ContainsAny(registry, "$\\") || strings.ContainsFunc(registry, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
-		return errors.New("registry must not contain whitespace, control characters or variable interpolation")
+	for _, value := range []string{registry, u.Path} {
+		if strings.ContainsAny(value, "$\\") || strings.ContainsFunc(value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+			return errors.New("registry must not contain whitespace, control characters or variable interpolation")
+		}
 	}
 	if _, err := networkpolicy.NormalizeHost(u.Hostname()); err != nil {
 		return errors.New("registry must have a valid host")
@@ -87,17 +80,28 @@ func validateNPMRegistry(registry string) error {
 	return nil
 }
 
+func (c EnvironmentPackageConfig) registryURLs() []string {
+	var registries []string
+	for _, registry := range []string{c.NPM.Registry, c.PIP.IndexURL, c.Go.Proxy} {
+		if registry != "" {
+			registries = append(registries, registry)
+		}
+	}
+	registries = slices.AppendSeq(registries, maps.Values(c.NPM.ScopedRegistries))
+	registries = slices.AppendSeq(registries, maps.Values(c.Cargo.Registries))
+	return append(registries, c.Gem.Sources...)
+}
+
+func (c EnvironmentPackageConfig) Empty() bool {
+	return len(c.registryURLs()) == 0
+}
+
 func (c NPMRegistryConfig) Options() []string {
 	var options []string
 	if c.Registry != "" {
 		options = append(options, "--registry="+c.Registry)
 	}
-	scopes := make([]string, 0, len(c.ScopedRegistries))
-	for scope := range c.ScopedRegistries {
-		scopes = append(scopes, scope)
-	}
-	slices.Sort(scopes)
-	for _, scope := range scopes {
+	for _, scope := range slices.Sorted(maps.Keys(c.ScopedRegistries)) {
 		options = append(options, "--"+scope+":registry="+c.ScopedRegistries[scope])
 	}
 	return options
@@ -105,8 +109,7 @@ func (c NPMRegistryConfig) Options() []string {
 
 func (c EnvironmentPackageConfig) RegistryHosts() []string {
 	var hosts []string
-	for _, option := range c.NPM.Options() {
-		_, registry, _ := strings.Cut(option, "=")
+	for _, registry := range c.registryURLs() {
 		u, err := url.Parse(registry)
 		if err != nil {
 			continue

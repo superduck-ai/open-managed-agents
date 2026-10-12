@@ -50,10 +50,10 @@ e2b:
 # environment_packages:
 #   npm:
 #     scoped_registries:
-#       "@cvte": "https://artifactory.gz.cvte.cn/artifactory/api/npm/npm-local/"
+#       "@example": "https://registry.example.internal/npm/"
 #   network:
 #     private_endpoints:
-#       - host: artifactory.gz.cvte.cn
+#       - host: registry.example.internal
 #         port: 443
 #         allowed_cidrs: ["10.20.30.40/32"]
 

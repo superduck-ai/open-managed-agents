@@ -17,8 +17,8 @@ func TestLoadEnvironmentPackagesRejectsInvalidConfiguration(t *testing.T) {
 		{"interpolation", `npm: {registry: "https://registry.example.com/${SECRET}"}`},
 		{"newline", `npm: {registry: "https://registry.example.com/\nregistry=secret"}`},
 		{"invalid scope", `npm: {scoped_registries: {"--secret": "https://registry.example.com/"}}`},
-		{"empty scoped registry", `npm: {scoped_registries: {"@cvte": ""}}`},
-		{"duplicate normalized scopes", `npm: {scoped_registries: {" @cvte ": "https://a.example.com/", "@cvte": "https://b.example.com/"}}`},
+		{"empty scoped registry", `npm: {scoped_registries: {"@example": ""}}`},
+		{"duplicate normalized scopes", `npm: {scoped_registries: {" @example ": "https://a.example.com/", "@example": "https://b.example.com/"}}`},
 		{"all private destinations", `network: {private_endpoints: [{host: registry.example.com, port: 443, allowed_cidrs: ["0.0.0.0/0"]}]}`},
 		{"metadata", `network: {private_endpoints: [{host: registry.example.com, port: 443, allowed_cidrs: ["169.254.169.254/32"]}]}`},
 		{"missing CIDR", `network: {private_endpoints: [{host: registry.example.com, port: 443}]}`},
@@ -42,11 +42,11 @@ environment_packages:
   npm:
     registry: " https://registry.npmjs.org/ "
     scoped_registries:
-      " @cvte ": " https://artifactory.gz.cvte.cn/artifactory/api/npm/npm-local/ "
-      "@another": "https://artifactory.gz.cvte.cn/other/"
+      " @example ": " https://registry.example.internal/npm/ "
+      "@another": "https://registry.example.internal/other/"
   network:
     private_endpoints:
-      - host: " ARTIFACTORY.GZ.CVTE.CN. "
+      - host: " REGISTRY.EXAMPLE.INTERNAL. "
         port: 443
         allowed_cidrs: [" 10.20.30.40/32 "]
 `)
@@ -54,15 +54,15 @@ environment_packages:
 		t.Fatal(err)
 	}
 	options := cfg.EnvironmentPackages.NPM.Options()
-	want := []string{"--registry=https://registry.npmjs.org/", "--@another:registry=https://artifactory.gz.cvte.cn/other/", "--@cvte:registry=https://artifactory.gz.cvte.cn/artifactory/api/npm/npm-local/"}
+	want := []string{"--registry=https://registry.npmjs.org/", "--@another:registry=https://registry.example.internal/other/", "--@example:registry=https://registry.example.internal/npm/"}
 	if !reflect.DeepEqual(options, want) {
 		t.Fatalf("npm options = %v, want %v", options, want)
 	}
-	if hosts := cfg.EnvironmentPackages.RegistryHosts(); !reflect.DeepEqual(hosts, []string{"artifactory.gz.cvte.cn", "registry.npmjs.org"}) {
+	if hosts := cfg.EnvironmentPackages.RegistryHosts(); !reflect.DeepEqual(hosts, []string{"registry.example.internal", "registry.npmjs.org"}) {
 		t.Fatalf("registry hosts = %v", hosts)
 	}
 	endpoint := cfg.EnvironmentPackages.Network.PrivateEndpoints[0]
-	if endpoint.Host != "artifactory.gz.cvte.cn" || endpoint.AllowedCIDRs[0] != "10.20.30.40/32" {
+	if endpoint.Host != "registry.example.internal" || endpoint.AllowedCIDRs[0] != "10.20.30.40/32" {
 		t.Fatalf("endpoint was not normalized: %+v", endpoint)
 	}
 	defaults, err := loadConfigTestYAML(t, "")

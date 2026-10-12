@@ -61,7 +61,7 @@ func validateEnvironmentPackageConfig(packages EnvironmentPackageConfig) error {
 	}
 	for scope, registry := range packages.NPM.ScopedRegistries {
 		if !npmScopePattern.MatchString(scope) {
-			return errors.New("environment_packages.npm.scoped_registries keys must be npm scopes such as @cvte")
+			return errors.New("environment_packages.npm.scoped_registries keys must be npm scopes such as @example")
 		}
 		if err := validateNPMRegistry(registry); err != nil {
 			return fmt.Errorf("environment_packages.npm.scoped_registries: %w", err)

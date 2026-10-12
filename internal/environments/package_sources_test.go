@@ -32,8 +32,8 @@ func TestRegistryProvisioningPreservesInputOutputAndCleansConfiguration(t *testi
 			if err := os.WriteFile(manager, []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
-			cfg := config.Config{EnvironmentRunner: config.EnvironmentRunnerConfig{ManagerPath: manager}, EnvironmentPackages: config.EnvironmentPackageConfig{NPM: config.NPMRegistryConfig{Registry: "https://registry.npmjs.org/", ScopedRegistries: map[string]string{"@cvte": "https://registry.example.com/private;segment/"}}}}
-			manifest := []byte(`{"version":1,"packages":{"npm":["@cvte/friday-cli"]}}`)
+			cfg := config.Config{EnvironmentRunner: config.EnvironmentRunnerConfig{ManagerPath: manager}, EnvironmentPackages: config.EnvironmentPackageConfig{NPM: config.NPMRegistryConfig{Registry: "https://registry.npmjs.org/", ScopedRegistries: map[string]string{"@example": "https://registry.example.com/private;segment/"}}}}
+			manifest := []byte(`{"version":1,"packages":{"npm":["@example/demo-cli"]}}`)
 			command := exec.Command("sh", "-c", buildPackageProvisionCommand(cfg))
 			command.Env = append(os.Environ(), "NPM_CONFIG_USERCONFIG="+original, "NPM_CONFIG_REGISTRY=https://previous.example.com/")
 			command.Stdin = bytes.NewReader(manifest)
@@ -48,7 +48,7 @@ func TestRegistryProvisioningPreservesInputOutputAndCleansConfiguration(t *testi
 				t.Fatalf("wrapper changed stdin: %s", input)
 			}
 			contents := string(readPackageSourceFile(t, configPath))
-			if contents != originalText+"\nregistry=\"https://registry.npmjs.org/\"\n@cvte:registry=\"https://registry.example.com/private;segment/\"\n" {
+			if contents != originalText+"\nregistry=\"https://registry.npmjs.org/\"\n@example:registry=\"https://registry.example.com/private;segment/\"\n" {
 				t.Fatalf("npm config did not retain authentication and append registry: %s", contents)
 			}
 			if string(readPackageSourceFile(t, original)) != originalText {
@@ -89,7 +89,7 @@ func TestRegistryProvisioningHandlesMissingHome(t *testing.T) {
 			if err := os.WriteFile(manager, []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
-			cfg := config.Config{EnvironmentRunner: config.EnvironmentRunnerConfig{ManagerPath: manager}, EnvironmentPackages: config.EnvironmentPackageConfig{NPM: config.NPMRegistryConfig{ScopedRegistries: map[string]string{"@cvte": "https://registry.example.com/"}}}}
+			cfg := config.Config{EnvironmentRunner: config.EnvironmentRunnerConfig{ManagerPath: manager}, EnvironmentPackages: config.EnvironmentPackageConfig{NPM: config.NPMRegistryConfig{ScopedRegistries: map[string]string{"@example": "https://registry.example.com/"}}}}
 			command := exec.Command("sh", "-c", buildPackageProvisionCommand(cfg))
 			for _, entry := range os.Environ() {
 				key, _, _ := strings.Cut(entry, "=")
@@ -97,7 +97,7 @@ func TestRegistryProvisioningHandlesMissingHome(t *testing.T) {
 					command.Env = append(command.Env, entry)
 				}
 			}
-			want := "\n@cvte:registry=\"https://registry.example.com/\"\n"
+			want := "\n@example:registry=\"https://registry.example.com/\"\n"
 			if test.home == "empty" {
 				command.Env = append(command.Env, "HOME=")
 			} else if test.home == "directory" {
@@ -129,14 +129,14 @@ func readPackageSourceFile(t *testing.T, name string) []byte {
 }
 
 func TestPrebuildScopedRegistryOptionsAndConfigurationIdentity(t *testing.T) {
-	sources := config.EnvironmentPackageConfig{NPM: config.NPMRegistryConfig{ScopedRegistries: map[string]string{"@cvte": "https://registry.example.com/private/"}}}
-	file := packageDockerfile("registry.example.com/base:stable", &environmentPackages{NPM: []string{"@cvte/friday-cli"}}, sources.NPM.Options())
+	sources := config.EnvironmentPackageConfig{NPM: config.NPMRegistryConfig{ScopedRegistries: map[string]string{"@example": "https://registry.example.com/private/"}}}
+	file := packageDockerfile("registry.example.com/base:stable", &environmentPackages{NPM: []string{"@example/demo-cli"}}, sources.NPM.Options())
 	lines := strings.Split(strings.TrimSpace(file), "\n")
 	var argv []string
 	if err := json.Unmarshal([]byte(strings.TrimPrefix(lines[len(lines)-1], "RUN ")), &argv); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"npm", "install", "--global", "--@cvte:registry=https://registry.example.com/private/", "--", "@cvte/friday-cli"}
+	want := []string{"npm", "install", "--global", "--@example:registry=https://registry.example.com/private/", "--", "@example/demo-cli"}
 	if !reflect.DeepEqual(argv, want) {
 		t.Fatalf("install command = %v, want %v", argv, want)
 	}
@@ -150,7 +150,7 @@ func TestPrebuildScopedRegistryOptionsAndConfigurationIdentity(t *testing.T) {
 		t.Fatal("registry change did not affect build configuration identity")
 	}
 	key := prebuildProviderKey(cfg)
-	cfg.EnvironmentPackages.NPM.ScopedRegistries["@cvte"] = "https://other.example.com/"
+	cfg.EnvironmentPackages.NPM.ScopedRegistries["@example"] = "https://other.example.com/"
 	if prebuildProviderKey(cfg) == key {
 		t.Fatal("different registry reused the same build configuration identity")
 	}

@@ -219,7 +219,7 @@ environment_packages:
   npm:
     registry: ""
     scoped_registries: {}
-    # Example: {"@cvte": "https://artifactory.gz.cvte.cn/artifactory/api/npm/npm-local/"}
+    # Example: {"@example": "https://registry.example.internal/npm/"}
   network:
     # Omit or set [] to retain default private-address rejection. The entry
     # below illustrates the schema; replace the host and IP before deployment.

@@ -24,10 +24,10 @@ Sandbox 镜像或自定义 E2B template 必须提供 `/usr/local/bin/environment
 environment_packages:
   npm:
     scoped_registries:
-      "@cvte": "https://artifactory.gz.cvte.cn/artifactory/api/npm/npm-local/"
+      "@example": "https://registry.example.internal/npm/"
   network:
     private_endpoints:
-      - host: artifactory.gz.cvte.cn
+      - host: registry.example.internal
         port: 443
         allowed_cidrs: ["10.20.30.40/32"]
 ```
@@ -49,7 +49,7 @@ flowchart TD
     Address -->|拒绝| Forbidden["403"]
 ```
 
-YAML 不能创建公司内网路由、DNS 或 VPN。预构建发生在 Aliyun Flow，流水线构建节点需要独立配置网络访问；`environment_prebuilds.template.network` 影响模板创建，不能配置 Flow 构建容器。启动安装发生在 Sandbox relay 启动之前，也依赖 Sandbox 提供方的网络与 DNS；OMA CONNECT 例外不替代提供方的网络限制。只允许构建期访问内网时，应在构建节点配置访问并使用已完成模板，运行 Environment 保持有限网络且关闭内网域名授权。
+YAML 不能创建私有网络路由、DNS 或 VPN。预构建发生在 Aliyun Flow，流水线构建节点需要独立配置网络访问；`environment_prebuilds.template.network` 影响模板创建，不能配置 Flow 构建容器。启动安装发生在 Sandbox relay 启动之前，也依赖 Sandbox 提供方的网络与 DNS；OMA CONNECT 例外不替代提供方的网络限制。只允许构建期访问内网时，应在构建节点配置访问并使用已完成模板，运行 Environment 保持有限网络且关闭内网域名授权。
 
 该配置不承诺软件源之外的私有包管理器支持，也不会自动放行 tarball、重定向或依赖引用的其他域名。确有额外目标时，需分别配置 Environment 授权和对应的私网例外。配置变更需重启服务；已运行的 Sandbox 网络列表需重新创建后更新。
 
@@ -129,7 +129,10 @@ API 沿用 `/v1/environments` 的鉴权和 `beta=true` 要求，返回 `build` �
 ```bash
 go test ./internal/config ./internal/environments ./internal/db -run 'Test(BuildHTTP|LoadEnvironmentPrebuild|Prebuild|EnvironmentMapper|BuildPackage|NormalizePackages|ValidatePackage|ProvisionPackages)' -count=1
 go test ./internal/runtime/e2bruntime -count=1
+go test ./internal/environments -run TestRegistryProvisioningInstallsFromLocalRegistry -count=1 -v
 ```
+
+示例统一使用 `@example/demo-cli` 和占位 registry。真实 npm 安装测试在进程内启动 HTTPS registry，通过只允许测试域名的本地 CONNECT 代理下载自生成软件包，保留 TLS 校验并检查原 userconfig 的认证配置。它覆盖未配置源时的 404、默认 registry 与 scoped registry 的成功安装，不访问外部 registry、私有 DNS 或部署网络。未安装 `npm` 或 `node` 时，该项测试显式跳过；其余配置与协议单测不需要这些工具。
 
 CubeSandbox HTTP 测试验证模板请求与状态映射，`BuildHTTP` 测试验证服务商状态码被区分为明确拒绝或结果不可知。真实部署还需验证镜像推送、拉取、模板转换及 Session 回连；镜像与模板构建本身无需 Sandbox 回连 OMA，启动 Session 后的注册、心跳、消息与模型代理需要此连通性。
 

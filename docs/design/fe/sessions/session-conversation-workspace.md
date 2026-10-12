@@ -79,6 +79,24 @@ Events、Tools、Threads 共用 list 最小 `120px`、detail 默认 `360px` 的�
 | Resources     | Session retrieve + File metadata                    | 挂载关系来自 Session；File 名称/大小/下载权限按 `file_id` 获取；Memory Store 用快照 `name`/`memory_store_id` |
 | Threads       | Session threads + thread events + Agent retrieve    | 聚合线程状态、模型用量和 context 阶梯点                                                             |
 
+主会话的转录末尾显示「输出文件」卡片，文件名、类型和大小来自 Files API；整个卡片可点击下载，显示下载状态，并通过共享下载 hook 处理错误。卡片位于消息滚动容器内，位于输入框上方；关闭 Inspector 后仍可见，窄屏自动变为单列。没有可下载输出时不渲染空占位。输出属于整个 Session，子线程和消息搜索视图不展示该汇总，避免把 Session 文件误认为某个子线程的产物或搜索命中。
+
+输出列表直接调用 `GET /v1/files?scope_id={session_id}&beta=true`，读取完整分页并只显示 `downloadable=true` 的文件；按 file ID 去重。Session `resources[]` 的输出摘要存在数量上限，因此卡片不依赖资源摘要是否包含某个输出文件。Files 列表和文件元数据缓存按 workspace/session 或 workspace/file ID/资源版本隔离；作用域切换取消旧请求，列表结果也会填充 Inspector 使用的元数据缓存。分页游标缺失或重复会终止读取并展示可重试错误。
+
+运行中每 3 秒刷新输出列表，状态改变（含 idle）、工具结果、资源变更和手动刷新时及时同步；后台页签暂停轮询。列表刷新失败时保留已加载的卡片，展示错误与重试入口；下载失败提示错误并恢复下载动作。
+
+```mermaid
+flowchart LR
+  Events[Session 状态 / 工具结果] --> Refresh[刷新资源与输出列表]
+  Refresh --> Files[Files API: scope_id = sessionId]
+  Files --> Cache[作用域查询缓存]
+  Cache --> Chat[主会话末尾文件卡片]
+  Cache --> Metadata[Inspector 文件元数据缓存]
+  Chat --> Download[共享文件下载 hook]
+  Sidebar[Inspector 下载按钮] --> Download
+  Download --> Content[Files SDK: file content]
+```
+
 进入 Resources 页签时重新请求 Session retrieve，以获取后端最新挂载关系；再次点击已激活的 Resources 页签也会刷新。资源缓存按 workspace/session 隔离，切换作用域后旧响应不得更新新页面。运行中的会话每 3 秒刷新资源，Resources 可见的非运行会话每 10 秒刷新，后台页签暂停轮询；恢复可见时由 TanStack Query 刷新。状态切换（含运行结束）和工具结果事件立即触发刷新。文件元数据按 workspace/file ID/资源更新时间缓存，各文件独立更新，避免一个慢请求阻塞整个列表。打开 File 表单时按需读取 Files list，提交后调用 Session resources add，并再次刷新 Session。Memory Store 资源直接使用 Session 快照里的 `name` 和 `memory_store_id`，不额外请求 Memory Store retrieve。资源表格下载按钮以 Files metadata 的 `downloadable` 为准：未加载或不可下载时禁用。生成的输出文件通过 SDK 的 Files download（`GET /v1/files/{file_id}/content?beta=true`）下载，并保留文件名、workspace/org 范围和 cookie 鉴权；失败展示错误，不生成空文件。Files 页面复用相同下载 helper。
 
 ## 对话与审批行为
@@ -114,6 +132,17 @@ Events、Tools、Threads 共用 list 最小 `120px`、detail 默认 `360px` 的�
 | --- | --- |
 | 选择两个同名附件 | [桌面浅色](screenshots/session-file-workflow/attachments-ready.png) |
 | 输出资源与下载入口 | [桌面浅色](screenshots/session-file-workflow/resources-output.png) |
+| 聊天末尾输出文件（关闭 Inspector） | [浅色](screenshots/session-file-workflow/chat-outputs-light.png) / [深色](screenshots/session-file-workflow/chat-outputs-dark.png) |
+| 聊天输出文件窄屏单列 | [390px 深色](screenshots/session-file-workflow/chat-outputs-mobile-dark.png) |
 | 轻量输入框与附件标签 | [浅色](screenshots/session-file-workflow/composer-light.png) / [深色](screenshots/session-file-workflow/composer-dark.png) |
 
 模拟浏览器流程覆盖上传失败后保留草稿、重试、两个同名文件独立挂载、资源自动刷新、输出文件下载及 390px 窄屏无横向溢出；下载文件名与内容逐字节校验通过。
+
+## Claude HAR 参考与聊天输出验收
+
+用户提供的 `platform.claude.com.har` 中，`0hb36q-3rvz8d.js` 与 `1vfc34t0k8rxd.js` 包含 `useListSessionFiles`、`sessionFilesQueryKey` 和 `useDownloadFileForWorkspace`：通过 `scope_id` 查询文件、按组织/工作区/会话缓存、传入 abort signal，并使用 Files SDK 下载 Blob、保留文件名和延后回收对象 URL。本实现参考这些数据流与交互行为，使用项目自身的 shadcn 组件和语义令牌。HAR 未包含完整的聊天末尾文件卡片组件，不能据此声称与 Claude 的该组件逐像素一致；HAR、原始 JS 和请求凭据不纳入仓库。
+
+- `api.test.ts` 覆盖带 session scope 的全分页请求、beta/workspace/cookie/abort signal，以及循环游标终止。
+- `SessionOutputFiles.test.tsx` 覆盖上传文件排除、输出 ID 去重、无输出占位、错误重试与旧卡片保留、作用域切换取消、运行期与 idle 刷新、下载失败恢复及重复点击保护。
+- `SessionDetailPage.scroll.test.tsx` 覆盖卡片位于聊天末尾、关闭 Inspector 后可下载，以及搜索/子线程作用域切换。
+- 对 React Query 轮询与组件验证，先通过 `bun test --preload ./src/test/setup.ts ...` 初始化 DOM，避免 Query Core 在其他纯工具测试先加载时被缓存为 server mode。

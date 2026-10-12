@@ -107,6 +107,8 @@ import {
   writeSessionInspectorUrlState,
 } from './sessionInspectorModel';
 import { SessionMessageComposer } from './SessionMessageComposer';
+import { SessionOutputFiles } from './SessionOutputFiles';
+import { sessionFilesQueryKey } from './sessionFiles';
 import { useSessionResourceRefresh } from './useSessionResourceRefresh';
 import { SessionRequiresActionCard } from './SessionRequiresActionCard';
 import { SessionTranscriptView } from './SessionTranscriptView';
@@ -234,9 +236,13 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       if (type === 'session.thread_created') {
         refreshSessionThreads();
       }
-      if (sessionIsToolResultEvent(event)) void refreshSessionResources();
+      if (sessionIsToolResultEvent(event)) {
+        void refreshSessionResources();
+        if (activeSessionId)
+          void queryClient.invalidateQueries({ queryKey: sessionFilesQueryKey(activeWorkspaceId, activeSessionId) });
+      }
     },
-    [activeSessionId, refreshSessionResources, refreshSessionThreads],
+    [activeSessionId, activeWorkspaceId, queryClient, refreshSessionResources, refreshSessionThreads],
   );
 
   useEffect(() => {
@@ -776,6 +782,15 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                   workspaceId={activeWorkspaceId}
                 />
               }
+              outputFiles={
+                <SessionOutputFiles
+                  session={session}
+                  workspaceId={activeWorkspaceId}
+                  refreshKey={refreshKey}
+                  mainLane={activeLane === SESSION_MAIN_LANE_ID}
+                  filtered={hasFilter}
+                />
+              }
               entries={entries}
               events={events}
               filteredEntries={filteredEntries}
@@ -912,6 +927,7 @@ export function EventsTab({
   lanes,
   openModelRequest,
   pendingAction,
+  outputFiles,
   onClearFilters,
   onCopyAll,
   onCloseInspector,
@@ -1118,6 +1134,7 @@ export function EventsTab({
                           onClear={hasFilter ? onClearFilters : undefined}
                         />
                       )}
+                      {outputFiles}
                     </MessageScrollerContent>
                   </MessageScrollerViewport>
                   <MessageScrollerButton

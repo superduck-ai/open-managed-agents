@@ -19,6 +19,7 @@ export function useSessionResourceRefresh(
     queryFn: () => retrieveSessionDetailSession(sessionId!, workspaceId),
     enabled: Boolean(sessionId),
     refetchInterval: running ? 3000 : resourcesVisible ? 10000 : false,
+    refetchOnWindowFocus: true,
     retry: false,
   });
   useEffect(() => {

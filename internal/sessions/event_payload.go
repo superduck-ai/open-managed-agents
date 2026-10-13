@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -96,6 +97,61 @@ func rawOrDefault(raw json.RawMessage, fallback string) json.RawMessage {
 
 func sessionEventPayload(event db.SessionEvent) json.RawMessage {
 	return sessionEventPayloadForResponse(event, "")
+}
+
+type sessionToolProjectionIdentity struct {
+	PrimaryEventID      string `json:"primary_event_id"`
+	EvaluatedPermission string `json:"evaluated_permission"`
+}
+
+func (h *Handler) linkLegacyToolEvents(ctx context.Context, workspaceUUID, sessionID, threadID string, records []db.SessionEvent) error {
+	if threadID == "" {
+		return nil
+	}
+	var codeSessionID string
+	for i := range records {
+		record := &records[i]
+		if record.ThreadExternalID == nil || *record.ThreadExternalID != threadID || !maevents.IsCrossPostedBlockingEvent(record.EventType) {
+			continue
+		}
+		var identity sessionToolProjectionIdentity
+		if err := jsonv2.Unmarshal(record.Payload, &identity); err != nil {
+			return err
+		}
+		if identity.PrimaryEventID != "" {
+			continue
+		}
+		if record.EventType != "agent.custom_tool_use" && identity.EvaluatedPermission != "ask" {
+			continue
+		}
+		if codeSessionID == "" {
+			code, err := h.db.GetCodeSessionBySessionExternalID(ctx, workspaceUUID, sessionID)
+			if errors.Is(err, db.ErrNotFound) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			codeSessionID = code.ExternalID
+		}
+		var payload map[string]json.RawMessage
+		if err := jsonv2.Unmarshal(record.Payload, &payload); err != nil {
+			return err
+		}
+		if payload == nil {
+			continue
+		}
+		primaryID, err := jsonv2.Marshal(derivedSessionEventID(codeSessionID, record.ExternalID, record.EventType, "primary"))
+		if err != nil {
+			return err
+		}
+		payload["primary_event_id"] = primaryID
+		record.Payload, err = jsonv2.Marshal(payload)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (h *Handler) primaryOrphanToolUseIDsWithChildCopies(ctx context.Context, sessionID, threadID string, records []db.SessionEvent) (map[string]struct{}, error) {

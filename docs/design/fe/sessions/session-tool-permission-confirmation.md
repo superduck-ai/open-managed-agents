@@ -86,6 +86,10 @@ result 事件中的 `is_error=true` 表示执行失败。下载、流式复制�
 
 ## 3. 归一化模型
 
+同一阻塞工具调用的 primary 镜像和子线程原始事件保留各自公开 `id`，分别通过 `original_event_id` 和 `primary_event_id` 声明关联。事件合并层先建立这两套 ID 到原始调用的映射，再统一用于 tool row 去重、confirmation/result 关联和 `stop_reason.event_ids` 匹配。两份事件同时存在时选择原始事件；仅收到镜像时仍可审批。历史子线程读取会补齐缺失关联，不改写存储历史。独立调用即使线程、路径、输入或时间相同，也保持独立。
+
+待处理集合分别读取 Session 和各线程的最新状态，包括 `session.thread_status_idle`。父线程继续运行不会清掉子线程审批；确认和结果按统一调用身份清除对应待处理项。
+
 Transcript 不直接逐条渲染原始事件。构建 session trace 时，应先扫描事件流并建立两张索引：
 
 ```ts

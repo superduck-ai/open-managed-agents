@@ -900,11 +900,11 @@ export function findActiveAwaitingToolCall(
   }
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
-    if (entry.kind === 'tool_call' && requiresActionEventIDs.has(sessionToolCallPublicID(entry))) {
+    if (entry.kind === 'tool_call' && requiresActionEventIDs.has(sessionToolCallIdentity(entry))) {
       return entry;
     }
     if (entry.kind === 'tool_batch') {
-      const call = entry.calls.find((item) => requiresActionEventIDs.has(sessionToolCallPublicID(item)));
+      const call = entry.calls.find((item) => requiresActionEventIDs.has(sessionToolCallIdentity(item)));
       if (call) {
         return call;
       }
@@ -913,7 +913,8 @@ export function findActiveAwaitingToolCall(
   return null;
 }
 
-function sessionToolCallPublicID(toolCall: ToolCallEntry) {
+function sessionToolCallIdentity(toolCall: ToolCallEntry) {
+  if (typeof toolCall.event.toolCallId === 'string') return toolCall.event.toolCallId;
   return typeof toolCall.event.id === 'string' && toolCall.event.id.trim()
     ? toolCall.event.id.trim()
     : toolCall.rawEventId;

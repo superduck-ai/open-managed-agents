@@ -128,7 +128,10 @@ export function buildSessionTraceEntries(
       return [];
     }
     let enrichedEvent = sessionEventWithThreadHint(event, threadHints.byThreadId);
-    if (requiresActionEventIDs.has(sessionEventKey(enrichedEvent))) {
+    if (
+      requiresActionEventIDs.has(sessionEventKey(enrichedEvent)) ||
+      requiresActionEventIDs.has(sessionToolUseId(enrichedEvent))
+    ) {
       enrichedEvent = { ...enrichedEvent, requires_action: true };
     }
     if (view === 'transcript' && !sessionEventAppearsInTranscript(event, options)) {
@@ -235,8 +238,9 @@ function sessionRequiresActionEventIDs(event: QuickstartSessionEvent) {
   if (normalizedStringValue(stopReason?.type) !== 'requires_action' || !Array.isArray(stopReason?.event_ids)) {
     return new Set<string>();
   }
+  const eventIds = Array.isArray(event.pendingToolCallIds) ? event.pendingToolCallIds : stopReason.event_ids;
   return new Set(
-    stopReason.event_ids
+    eventIds
       .filter((eventID): eventID is string => typeof eventID === 'string' && Boolean(eventID.trim()))
       .map((eventID) => eventID.trim()),
   );
@@ -1711,7 +1715,7 @@ export function sessionRawToolResult(event: QuickstartSessionEvent) {
 }
 
 export function sessionToolUseId(event: QuickstartSessionEvent) {
-  const id = stringValueFromKeys(event, ['tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id', 'id']);
+  const id = stringValueFromKeys(event, ['toolCallId', 'tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id', 'id']);
   if (id) {
     return id;
   }
@@ -1720,11 +1724,11 @@ export function sessionToolUseId(event: QuickstartSessionEvent) {
 }
 
 export function sessionToolConfirmationToolUseId(event: QuickstartSessionEvent) {
-  return stringValueFromKeys(event, ['tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id']);
+  return stringValueFromKeys(event, ['toolCallId', 'tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id']);
 }
 
 export function sessionToolResultToolUseId(event: QuickstartSessionEvent) {
-  const direct = stringValueFromKeys(event, ['tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id']);
+  const direct = stringValueFromKeys(event, ['toolCallId', 'tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id']);
   if (direct) {
     return direct;
   }

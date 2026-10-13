@@ -19,6 +19,8 @@ import (
 const chatAnswer = "你好，聊天验证完成。"
 
 type chatEvent struct {
+	PrimaryEventID      string          `json:"primary_event_id"`
+	OriginalEventID     string          `json:"original_event_id"`
 	ID                  string          `json:"id"`
 	Type                string          `json:"type"`
 	ThreadID            string          `json:"session_thread_id"`

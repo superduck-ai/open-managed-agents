@@ -1381,9 +1381,19 @@ export function mergeSessionEventsById(events: QuickstartSessionEvent[]) {
 }
 
 export function coalesceSessionCrossPostedToolEvents(events: QuickstartSessionEvent[]) {
+  const aliases = new Map<string, string>();
+  events.forEach((event) => {
+    if (!sessionCrossPostedToolEventKey(event)) return;
+    const id = sessionEventStringField(event, 'id');
+    const originalId = sessionEventStringField(event, 'original_event_id');
+    const primaryId = sessionEventStringField(event, 'primary_event_id');
+    if (originalId) aliases.set(id, originalId);
+    if (primaryId && !originalId) aliases.set(primaryId, id);
+  });
   const output: QuickstartSessionEvent[] = [];
   const indexByKey = new Map<string, number>();
-  events.forEach((event) => {
+  events.forEach((rawEvent) => {
+    const event = sessionEventWithToolIdentity(rawEvent, aliases);
     const canonicalKey = sessionCrossPostedToolEventKey(event);
     if (!canonicalKey) {
       output.push(event);
@@ -1393,9 +1403,26 @@ export function coalesceSessionCrossPostedToolEvents(events: QuickstartSessionEv
     if (existingIndex === undefined) {
       indexByKey.set(canonicalKey, output.length);
       output.push(event);
+    } else if (aliases.size && sessionEventStringField(event, 'id') === sessionEventToolUseId(event)) {
+      output[existingIndex] = event;
     }
   });
   return output;
+}
+
+function sessionEventWithToolIdentity(event: QuickstartSessionEvent, aliases: Map<string, string>) {
+  if (!aliases.size) return event;
+  const toolId = sessionEventToolUseId(event);
+  const toolCallId = aliases.get(toolId);
+  const stopReason = toRecord(event.stop_reason);
+  const eventIds = Array.isArray(stopReason?.event_ids) ? stopReason.event_ids : undefined;
+  return {
+    ...event,
+    ...(toolCallId ? { toolCallId } : {}),
+    ...(eventIds
+      ? { pendingToolCallIds: eventIds.map((id) => (typeof id === 'string' ? (aliases.get(id) ?? id) : id)) }
+      : {}),
+  };
 }
 
 export function sessionCrossPostedToolEventKey(event: QuickstartSessionEvent) {
@@ -1417,6 +1444,7 @@ export function sessionEventOwnerThreadId(event: QuickstartSessionEvent) {
 
 export function sessionEventToolUseId(event: QuickstartSessionEvent) {
   return (
+    sessionEventStringField(event, 'toolCallId') ||
     sessionEventStringField(event, 'tool_use_id') ||
     sessionEventStringField(event, 'mcp_tool_use_id') ||
     sessionEventStringField(event, 'custom_tool_use_id') ||

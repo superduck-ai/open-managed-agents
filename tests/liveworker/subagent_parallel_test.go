@@ -86,6 +86,9 @@ func verifyParallelConfiguredSubagents(t *testing.T, e *liveEnv, childID string,
 			if len(history.Data) != 1 || history.Data[0].ID == event.ID {
 				t.Fatalf("child history did not expose an independent tool ID: %+v", history.Data)
 			}
+			if history.Data[0].PrimaryEventID != event.ID || event.OriginalEventID != history.Data[0].ID {
+				t.Fatal("public tool copies did not expose the same call identity")
+			}
 			confirmationID := history.Data[0].ID
 			if len(confirmed) == 1 {
 				confirmationID = event.ID
@@ -121,6 +124,7 @@ func verifyParallelConfiguredSubagents(t *testing.T, e *liveEnv, childID string,
 	if result.ExitCode != 0 {
 		t.Fatal("denied parallel Write produced a file")
 	}
+	e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/archive", e.apiKey, nil, 200)
 }
 
 func parallelSubagentModelFixture(t *testing.T, childID string, ready chan<- struct{}, release <-chan struct{}) *httptest.Server {

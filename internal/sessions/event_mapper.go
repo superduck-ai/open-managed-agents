@@ -340,6 +340,8 @@ func (h *Handler) dualSessionEventCopySpecs(codeSessionID, eventType, eventID st
 	primaryPayload := copySessionEventPayload(payload)
 	primaryPayload["session_thread_id"] = threadID
 	primaryEventID := derivedSessionEventID(codeSessionID, eventID, eventType, "primary")
+	threadPayload["primary_event_id"] = primaryEventID
+	primaryPayload["original_event_id"] = eventID
 	return []sessionEventCopySpec{
 		newSessionEventCopySpec(eventID, threadPayload, &threadID, false),
 		newSessionEventCopySpec(primaryEventID, primaryPayload, nil, true),

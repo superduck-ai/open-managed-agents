@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
@@ -219,6 +220,7 @@ func TestChatSubagents(t *testing.T) {
 	}
 	chatProof(t, started, "child_thread_resumed")
 	assertSubagentSingleReply(t, e, f, childThread, childResumedAnswer)
+	e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/archive", e.apiKey, nil, 200)
 	verifyParallelConfiguredSubagents(t, e, child.ID, provider)
 	chatProof(t, started, "parallel_instances_verified")
 }
@@ -375,6 +377,11 @@ func waitSubagentIdle(t *testing.T, f *liveSession) {
 		code, found, err := f.env.database.GetCodeSession(t.Context(), f.code.ExternalID)
 		requireOK(t, err)
 		if !found || code.WorkerStatus == "running" || code.WorkerStatus == "requires_action" {
+			return false
+		}
+		pending, err := maevents.PendingToolEventIDs(code.WorkerExternalMetadata, "", "")
+		requireOK(t, err)
+		if len(pending) != 0 {
 			return false
 		}
 		var session struct {

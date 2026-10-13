@@ -14,6 +14,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
+
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 func verifySubagentLifecycleOrdering(t *testing.T, e *liveEnv) {
@@ -125,6 +128,7 @@ func verifySubagentLifecycleOrdering(t *testing.T, e *liveEnv) {
 			t.Fatal("invalid confirmation was persisted")
 		}
 		requireOK(t, e.database.FillSessionThreadAgentSnapshot(t.Context(), f.code.WorkspaceUUID, f.session.ExternalID, thread.ID, json.RawMessage(`{"id":"wrong","version":2}`)))
+		verifyLegacyToolProjection(t, e, f, thread.ID)
 	}
 	load()
 	for _, thread := range threads.Data {
@@ -133,6 +137,39 @@ func verifySubagentLifecycleOrdering(t *testing.T, e *liveEnv) {
 		}
 	}
 	verifySubagentTranscriptDedup(t, f)
+}
+
+func verifyLegacyToolProjection(t *testing.T, e *liveEnv, f *liveSession, threadID string) {
+	t.Helper()
+	originalID := "sevt_legacy_" + threadID
+	payload := map[string]any{"id": originalID, "type": "agent.tool_use", "name": "write", "evaluated_permission": "ask", "input": map[string]string{"file_path": "/tmp/legacy"}}
+	appendEvent := func(id string, owner *string, object map[string]any) {
+		t.Helper()
+		raw, err := jsonv2.Marshal(object)
+		requireOK(t, err)
+		now := time.Now().UTC()
+		_, err = e.database.AppendSessionEvents(t.Context(), f.session.WorkspaceUUID, f.session.ExternalID, []db.SessionEvent{{UUID: uuid.NewV4().String(), ExternalID: id, EventType: "agent.tool_use", ThreadExternalID: owner, Payload: raw, CreatedAt: now, ProcessedAt: now}}, nil)
+		requireOK(t, err)
+	}
+	appendEvent(originalID, &threadID, payload)
+	var childHistory struct {
+		Data []chatEvent `json:"data"`
+	}
+	requireOK(t, jsonv2.Unmarshal(e.request(t, "GET", "/v1/sessions/"+f.session.ExternalID+"/threads/"+threadID+"/events?types[]=agent.tool_use", e.apiKey, nil, 200), &childHistory))
+	legacy := childHistory.Data[len(childHistory.Data)-1]
+	if legacy.ID != originalID || legacy.PrimaryEventID == "" || legacy.PrimaryEventID == originalID {
+		t.Fatalf("legacy history lost its identity: %+v", legacy)
+	}
+	payload["id"] = legacy.PrimaryEventID
+	payload["session_thread_id"] = threadID
+	appendEvent(legacy.PrimaryEventID, nil, payload)
+	var rootHistory struct {
+		Data []chatEvent `json:"data"`
+	}
+	requireOK(t, jsonv2.Unmarshal(e.request(t, "GET", "/v1/sessions/"+f.session.ExternalID+"/events?types[]=agent.tool_use", e.apiKey, nil, 200), &rootHistory))
+	if rootHistory.Data[len(rootHistory.Data)-1].ID != legacy.PrimaryEventID {
+		t.Fatal("legacy history did not retain the original public mirror ID")
+	}
 }
 
 func verifySubagentTranscriptDedup(t *testing.T, f *liveSession) {

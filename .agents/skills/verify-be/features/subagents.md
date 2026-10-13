@@ -16,6 +16,8 @@ A new public Session starts two real background instances of the same configured
 
 Approval regression first submits an unknown tool ID and a child-history ID addressed to the primary thread. Both must return 409 without persisting a confirmation. The real child Write deny/allow sequence uses tool IDs read from child history. Parallel rejection uses a child-history ID for one child and a primary mirror ID for the other; both children must resume and neither may write its file.
 
+Tool projection regression checks reciprocal `primary_event_id` and `original_event_id` through public history and SSE. A seeded legacy child event must receive its deterministic primary ID on history reads while both public IDs remain unchanged. Completed Sessions are archived before the fixture stops their sandboxes, and cleanup must complete successfully.
+
 This covers configured children, concurrent instances of one configuration and same-Worker continuation. It does not verify directed interruption, Worker restart recovery, real model reasoning, cloud allocation, UI rendering or filesystem/skill isolation. Child Tunnel gateway selection and OAuth scope preservation have handler tests; this scenario's actual Worker uses a remote HTTP MCP fixture.
 
 See [the delegation design](../../../../docs/design/be/subagent-delegation.md) for configuration, identities and permission boundaries.

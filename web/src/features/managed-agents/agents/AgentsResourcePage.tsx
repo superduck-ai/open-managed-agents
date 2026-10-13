@@ -1,16 +1,6 @@
 import { type ApiError } from '../../../shared/api/client';
-import { useFormatters, useI18n } from '../../../shared/i18n';
+import { useI18n } from '../../../shared/i18n';
 import { cn } from '../../../shared/lib/utils';
-import { Button } from '../../../shared/ui/button';
-import {
-  CopyIdCell,
-  DataTableCell,
-  DataTableResourceLink,
-  DataTableRow,
-  dataTableClassName,
-  dataTableHeaderCellClassName,
-  dataTableHeaderRowClassName,
-} from '../../../shared/ui/data-table-interactions';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
 import {
@@ -18,9 +8,8 @@ import {
   resourceListPageCount,
   resourceListTotalCount,
 } from '../../../shared/ui/resource-list-pagination';
-import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { useWorkspace } from '../../../shared/workspaces/context';
-import { Plus, Search, TriangleAlert } from 'lucide-react';
+import { Search, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { consoleResourceListLimit } from '../../../shared/console-list';
 import {
@@ -35,7 +24,6 @@ import {
 import {
   AgentsEmptyState,
   AgentsListState,
-  AgentStatusBadge,
   ConfirmAgentsArchiveDialog,
   CreateResourceDialog,
   EmptyState,
@@ -63,18 +51,12 @@ import {
   type PageCursor,
   type ResourceConfig,
 } from '../types';
-import { agentDetailHref, errorMessage, handleInternalLinkClick } from '../utils';
+import { errorMessage } from '../utils';
 import { CreateAgentDialog } from './create-dialog';
-import { AgentRowActions } from './AgentRowActions';
+import { AgentListTable } from './AgentListTable';
+import { AgentListHeader } from './AgentListHeader';
 import { AgentListOverlays } from './AgentListOverlays';
-import {
-  agentMatchesClientFilters,
-  agentModelName,
-  compactAgentId,
-  emptyAgents,
-  relativeTime,
-  rowFromAgent,
-} from './model';
+import { agentMatchesClientFilters, emptyAgents, rowFromAgent } from './model';
 
 export { AgentDetailPage } from './detail';
 export {
@@ -118,7 +100,6 @@ export function AgentsResourcePage({
   routeWorkspaceId?: string;
 }) {
   const { msg } = useI18n();
-  const formatters = useFormatters();
   const { activeWorkspaceId, orgUuid } = useWorkspace();
   const workspaceId = routeWorkspaceId || activeWorkspaceId;
   const [quickViewAgentId, setQuickViewAgentId] = useState<string | null>(null);
@@ -602,21 +583,18 @@ export function AgentsResourcePage({
   };
 
   return (
-    <section className="min-h-[calc(100vh-48px)] text-foreground">
-      <ResourcePageHeader
+    <section
+      className={cn('min-h-[calc(100vh-48px)] text-foreground', isAgentsPage && 'mx-auto w-full max-w-[1280px]')}
+    >
+      <AgentListHeader
         title={title}
         description={description}
-        actions={
-          createLabel ? (
-            <Button type="button" size="lg" onClick={() => setDialogOpen(true)}>
-              <Plus className="size-4" aria-hidden />
-              {createLabel}
-            </Button>
-          ) : null
-        }
+        createLabel={createLabel}
+        compact={isAgentsPage}
+        onCreate={() => setDialogOpen(true)}
       />
 
-      <div className="mb-7 flex flex-wrap items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2 [&_button]:text-[13px] [&_input]:text-[13px]">
         <ResourceSearchField
           id={`${config.section}-search`}
           value={search}
@@ -672,97 +650,16 @@ export function AgentsResourcePage({
             onAction={retryAgentsLoad}
           />
         ) : isAgentsPage ? (
-          <Table className={cn(dataTableClassName, 'min-w-[1150px]')}>
-            <TableHeader>
-              <TableRow className={dataTableHeaderRowClassName}>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[185px]')}>
-                  {managedColumnLabel('ID', msg)}
-                </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[200px]')}>
-                  {managedColumnLabel('Name', msg)}
-                </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[210px]')}>
-                  {managedColumnLabel('Model', msg)}
-                </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[120px]')}>
-                  {managedColumnLabel('Status', msg)}
-                </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[150px]')}>
-                  {managedColumnLabel('Created', msg)}
-                </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[150px]')}>
-                  {managedColumnLabel('Last updated', msg)}
-                </TableHead>
-                <TableHead
-                  className={cn(dataTableHeaderCellClassName, 'w-[136px] px-2')}
-                  aria-label={managedColumnLabel('Actions', msg)}
-                />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {remoteAgents === null ? (
-                <TableRow className="border-0 hover:bg-transparent">
-                  <TableCell colSpan={7} className="h-[280px] text-center text-sm text-muted-foreground">
-                    {msg('managedAgents.agents.loading', 'Loading agents...')}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                displayedAgents.map((agent) => {
-                  const archiving = archivingIds.has(agent.id);
-                  const detailHref = agentDetailHref(workspaceId, agent.id);
-                  return (
-                    <DataTableRow key={agent.id} selected={quickViewAgentId === agent.id}>
-                      <DataTableCell edge="start">
-                        <CopyIdCell
-                          value={agent.id}
-                          ariaLabel={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: agent.id })}
-                          className="gap-1.5"
-                        >
-                          <DataTableResourceLink
-                            href={detailHref}
-                            className="truncate font-mono text-[13px] text-foreground"
-                            onClick={(event) => handleInternalLinkClick(event, detailHref)}
-                          >
-                            {compactAgentId(agent.id)}
-                          </DataTableResourceLink>
-                        </CopyIdCell>
-                      </DataTableCell>
-                      <DataTableCell className="truncate text-foreground">
-                        <DataTableResourceLink
-                          href={detailHref}
-                          className="text-foreground"
-                          onClick={(event) => handleInternalLinkClick(event, detailHref)}
-                        >
-                          {agent.name || msg('managedAgents.agents.untitled', 'Untitled agent')}
-                        </DataTableResourceLink>
-                      </DataTableCell>
-                      <DataTableCell className="truncate font-mono text-[13px] text-muted-foreground">
-                        {agentModelName(agent.model)}
-                      </DataTableCell>
-                      <DataTableCell className="truncate">
-                        <AgentStatusBadge archived={Boolean(agent.archived_at)} />
-                      </DataTableCell>
-                      <DataTableCell className="truncate text-muted-foreground">
-                        {relativeTime(agent.created_at, formatters.relativeTime)}
-                      </DataTableCell>
-                      <DataTableCell className="truncate text-muted-foreground">
-                        {relativeTime(agent.updated_at, formatters.relativeTime)}
-                      </DataTableCell>
-                      <DataTableCell edge="end" className="px-2">
-                        <AgentRowActions
-                          agent={agent}
-                          archiving={archiving}
-                          onQuickView={() => setQuickViewAgentId(agent.id)}
-                          onStartSession={() => setSessionAgent(agent)}
-                          onArchive={() => requestArchiveAgents([agent.id])}
-                        />
-                      </DataTableCell>
-                    </DataTableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
+          <AgentListTable
+            agents={displayedAgents}
+            loading={remoteAgents === null}
+            workspaceId={workspaceId}
+            archivingIds={archivingIds}
+            quickViewAgentId={quickViewAgentId}
+            onQuickView={setQuickViewAgentId}
+            onStartSession={setSessionAgent}
+            onArchive={requestArchiveAgents}
+          />
         ) : (
           <Table className="table-fixed border-collapse text-left">
             <TableHeader>
@@ -810,6 +707,7 @@ export function AgentsResourcePage({
       </div>
 
       <ResourceListPagination
+        compact={isAgentsPage}
         {...agentListPager(
           agentLoadMode,
           agentPageHistory.length,

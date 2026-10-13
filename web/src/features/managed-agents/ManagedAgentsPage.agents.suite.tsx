@@ -2625,7 +2625,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(api.requests.some((request) => request.url.includes('created_at%5Bgte%5D='))).toBe(true);
   }, 10_000);
 
-  test('does not render selection controls or a batch archive bar', async () => {
+  test('renders agent selection controls and shows batch archive only after selecting', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
     mockAgentsApi([
       { id: 'agent_one123456', name: 'First agent' },
@@ -2635,8 +2635,11 @@ export function registerManagedAgentsAgentsTests() {
     render(<ManagedAgentsPage section="agents" />);
 
     expect(await screen.findByText('First agent')).toBeTruthy();
-    expect(screen.queryByRole('checkbox', { name: 'Select all agents' })).toBeNull();
+    expect(screen.getByRole('checkbox', { name: 'Select all agents' })).toBeTruthy();
     expect(screen.queryByText('3 selected')).toBeNull();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all agents' }));
+    await waitFor(() => expect(screen.getByText('3 selected')).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Archive selected' })).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'More actions' }).length).toBe(3);
   });
 

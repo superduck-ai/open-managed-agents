@@ -31,6 +31,7 @@ export function AgentRowActions({
         type="button"
         variant="ghost"
         size="xs"
+        className="transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/agent-row:opacity-100 [@media(hover:hover)]:group-focus-within/agent-row:opacity-100"
         onClick={onQuickView}
         aria-label={msg('managedAgents.agents.quickViewAgent', 'Quick view {name}', { name: agent.name || agent.id })}
       >

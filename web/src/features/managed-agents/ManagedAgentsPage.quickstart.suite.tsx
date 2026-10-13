@@ -80,9 +80,9 @@ export function registerManagedAgentsQuickstartTests() {
     const api = mockAgentsApi([]);
     renderManagedAgentsPage('agents', 'zh-CN');
 
-    expect(screen.getByRole('heading', { name: 'Agents' })).toBeTruthy();
-    expect(screen.getByText('创建并管理自主 Agent。')).toBeTruthy();
-    expect(screen.getByRole('button', { name: '创建 Agent' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '智能体' })).toBeTruthy();
+    expect(screen.getByText('创建和管理自主智能体。')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '创建智能体' })).toBeTruthy();
     expect(screen.getByPlaceholderText('按名称或精确 ID 搜索')).toBeTruthy();
     expect(screen.getByRole('button', { name: /创建时间\s+全部时间/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /状态\s+活跃/ })).toBeTruthy();
@@ -91,8 +91,9 @@ export function registerManagedAgentsQuickstartTests() {
 
     expect(screen.getByRole('menuitemradio', { name: '活跃' })).toBeTruthy();
     expect(screen.getByRole('menuitemradio', { name: '全部' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /状态\s+活跃/, hidden: true }));
     expect(await screen.findByText('暂无 Agent')).toBeTruthy();
-    expect(screen.getByRole('button', { name: '开始使用 Agents' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '创建智能体' })).toBeTruthy();
     expect(api.requests[0]?.headers['x-workspace-id']).toBe('default');
   });
 
@@ -103,9 +104,9 @@ export function registerManagedAgentsQuickstartTests() {
 
     await waitFor(() => expect(document.documentElement.lang).toBe('zh-CN'));
 
-    fireEvent.click(screen.getByRole('button', { name: '创建 Agent' }));
+    fireEvent.click(screen.getByRole('button', { name: '创建智能体' }));
 
-    const dialog = screen.getByRole('dialog', { name: '创建 Agent' });
+    const dialog = screen.getByRole('dialog', { name: '创建智能体' });
     fireEvent.click(within(dialog).getByRole('tab', { name: '模板' }));
     fireEvent.click(within(dialog).getByRole('button', { name: /深度调研助手/i }));
 

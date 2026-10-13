@@ -2483,5 +2483,11 @@
   "managedAgents.agents.nextAgent": "Next agent",
   "managedAgents.agents.kindTitle": "Agent",
   "managedAgents.agents.openAgent": "Open",
-  "managedAgents.agents.noDescription": "No description provided."
+  "managedAgents.agents.noDescription": "No description provided.",
+  "managedAgents.agents.selectedCount": "{count} selected",
+  "managedAgents.agents.archiveSelected": "Archive selected",
+  "managedAgents.sessions.setupDescription": "Set up an instance of your agent in its environment.",
+  "managedAgents.sessions.runNamePlaceholder": "Name this run",
+  "managedAgents.credentialVaults.addVault": "Add vault",
+  "managedAgents.credentialVaults.removeVault": "Remove {name}"
 }

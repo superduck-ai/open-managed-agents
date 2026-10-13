@@ -529,8 +529,8 @@
   "managedAgents.agents.createDialog.toolsDescription": "此 Agent 可调用的所有能力：内置工具、MCP 服务器和已有自定义工具。",
   "managedAgents.agents.createDialog.tunnelNotReady": "隧道当前未连接",
   "managedAgents.agents.createDialog.tunnelNotReadyDescription": "可以先保存此配置；tunnel-client 连接并发布该通道后即可调用。",
-  "managedAgents.agents.createLabel": "创建 Agent",
-  "managedAgents.agents.description": "创建并管理自主 Agent。",
+  "managedAgents.agents.createLabel": "创建智能体",
+  "managedAgents.agents.description": "创建和管理自主智能体。",
   "managedAgents.agents.detail.alwaysAllow": "始终允许",
   "managedAgents.agents.detail.alwaysAsk": "始终询问",
   "managedAgents.agents.detail.alwaysDeny": "始终拒绝",
@@ -2483,5 +2483,11 @@
   "managedAgents.agents.nextAgent": "下一个智能体",
   "managedAgents.agents.kindTitle": "智能体",
   "managedAgents.agents.openAgent": "打开",
-  "managedAgents.agents.noDescription": "暂无描述。"
+  "managedAgents.agents.noDescription": "暂无描述。",
+  "managedAgents.agents.selectedCount": "已选择 {count} 项",
+  "managedAgents.agents.archiveSelected": "归档所选智能体",
+  "managedAgents.sessions.setupDescription": "在其环境中设置您的智能体实例。",
+  "managedAgents.sessions.runNamePlaceholder": "为此次运行命名",
+  "managedAgents.credentialVaults.addVault": "添加密钥库",
+  "managedAgents.credentialVaults.removeVault": "移除 {name}"
 }

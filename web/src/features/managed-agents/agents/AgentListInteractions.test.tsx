@@ -91,6 +91,9 @@ test('starting a conversation from quick view creates for that agent and opens t
   const panel = screen.getByRole('dialog', { name: 'Agent' });
   fireEvent.click(await within(panel).findByRole('button', { name: 'Start conversation' }));
   const dialog = screen.getByRole('dialog', { name: 'Create session' });
+  expect(within(dialog).queryByRole('combobox', { name: 'Agent' })).toBeNull();
+  expect(within(dialog).queryByRole('button', { name: 'Cancel' })).toBeNull();
+  expect(within(dialog).getByRole('combobox', { name: 'Credential vaults' }).textContent).toContain('Add vault');
   fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: '  Extraction run  ' } });
   const submit = within(dialog).getByRole('button', { name: 'Create session' });
   await waitFor(() => expect(submit.hasAttribute('disabled')).toBe(false));
@@ -102,6 +105,54 @@ test('starting a conversation from quick view creates for that agent and opens t
   expect(request?.body?.agent).toEqual({ type: 'agent', id: serverAgent.id });
   expect(request?.body?.title).toBe('Extraction run');
   expect(request?.body?.environment_id).toBe('env_option123456');
+});
+
+test('batch archive waits for confirmation and only archives selected agents', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+  const api = mockAgentsApi([
+    serverAgent,
+    { ...serverAgent, id: 'agent_second123456', name: 'Second agent' },
+    { ...serverAgent, id: 'agent_third123456', name: 'Third agent' },
+  ]);
+  render(<ManagedAgentsPage section="agents" />);
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Select Server agent' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Second agent' }));
+  await screen.findByText('2 selected');
+  expect(screen.getByRole('checkbox', { name: 'Select all agents' }).getAttribute('aria-checked')).toBe('mixed');
+  fireEvent.click(screen.getByRole('button', { name: 'Archive selected' }));
+  expect(screen.getByRole('alertdialog')).toBeTruthy();
+  expect(api.requests.some((request) => request.url.includes('/archive?'))).toBe(false);
+  fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: 'Archive selected' }));
+  fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Archive' }));
+  await waitFor(() => expect(screen.queryByRole('link', { name: 'Server agent' })).toBeNull());
+  expect(screen.getByRole('link', { name: 'Third agent' })).toBeTruthy();
+  const archivedIds = api.requests.filter((request) => request.url.includes('/archive?')).map((request) => request.url);
+  expect(archivedIds).toEqual([
+    '/v1/agents/agent_server123456/archive?beta=true',
+    '/v1/agents/agent_second123456/archive?beta=true',
+  ]);
+});
+
+test('searching a new set of agents clears the previous selection', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+  const api = mockAgentsApi([serverAgent, { ...serverAgent, id: 'agent_second123456', name: 'Second agent' }]);
+  render(<ManagedAgentsPage section="agents" />);
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Select Server agent' }));
+  await screen.findByText('1 selected');
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Second' } });
+  await waitFor(
+    () => expect(api.requests.some((request) => request.url === '/v1/agents:search?beta=true')).toBe(true),
+    { timeout: 2000 },
+  );
+  await waitFor(() => expect(Boolean(screen.queryByRole('link', { name: 'Server agent' }))).toBe(false));
+  expect(screen.queryByText('1 selected')).toBeNull();
+  expect(screen.getByRole('checkbox', { name: 'Select Second agent' }).getAttribute('aria-checked')).toBe('false');
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
+  const restoredCheckbox = await screen.findByRole('checkbox', { name: 'Select Server agent' });
+  expect(restoredCheckbox.getAttribute('aria-checked')).toBe('false');
+  expect(screen.queryByText('1 selected')).toBeNull();
 });
 
 test('archived agents can be previewed but cannot start a conversation', async () => {

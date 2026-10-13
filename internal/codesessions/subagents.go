@@ -178,5 +178,5 @@ func (s *Service) subagentSnapshotForTool(ctx context.Context, codeSession db.Co
 	if root.Multiagent == nil {
 		return nil, nil
 	}
-	return agentsnapshot.ForSubagent(session.AgentSnapshot, tool.Input.SubagentType)
+	return agentsnapshot.ForSubagentType(session.AgentSnapshot, tool.Input.SubagentType)
 }

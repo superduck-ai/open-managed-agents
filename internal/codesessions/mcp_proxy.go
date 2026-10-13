@@ -53,6 +53,7 @@ func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 		organizationUUID:      claims.OrganizationUUID,
 		workspaceUUID:         claims.WorkspaceUUID,
 		configAgentID:         strings.TrimSpace(r.URL.Query().Get("config_agent_id")),
+		configAgentName:       strings.TrimSpace(r.URL.Query().Get("config_agent_name")),
 	}
 	if !h.authorizeMCPProxyTarget(r.Context(), identity, target, rawTarget) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "MCP upstream is not allowed"))
@@ -81,6 +82,7 @@ func (h *Handler) handleNamedMCPProxy(w http.ResponseWriter, r *http.Request) {
 		organizationUUID:      claims.OrganizationUUID,
 		workspaceUUID:         claims.WorkspaceUUID,
 		configAgentID:         strings.TrimSpace(r.URL.Query().Get("config_agent_id")),
+		configAgentName:       strings.TrimSpace(r.URL.Query().Get("config_agent_name")),
 	}
 	policyContext, err := h.loadMCPPolicyContext(r.Context(), identity)
 	if err != nil {
@@ -123,6 +125,7 @@ func (h *Handler) HandleMCPProtectedResource(w http.ResponseWriter, r *http.Requ
 		organizationUUID:      claims.OrganizationUUID,
 		workspaceUUID:         claims.WorkspaceUUID,
 		configAgentID:         strings.TrimSpace(r.URL.Query().Get("config_agent_id")),
+		configAgentName:       strings.TrimSpace(r.URL.Query().Get("config_agent_name")),
 	}
 	policyContext, err := h.loadMCPPolicyContext(r.Context(), identity)
 	if err != nil {
@@ -266,6 +269,9 @@ func runtimeMCPMetadataURL(r *http.Request, codeSessionID, serverName string) st
 }
 
 func runtimeMCPAgentScope(r *http.Request) string {
+	if name := strings.TrimSpace(r.URL.Query().Get("config_agent_name")); name != "" {
+		return "?config_agent_name=" + url.QueryEscape(name)
+	}
 	if agentID := strings.TrimSpace(r.URL.Query().Get("config_agent_id")); agentID != "" {
 		return "?config_agent_id=" + url.QueryEscape(agentID)
 	}

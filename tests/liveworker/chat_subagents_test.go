@@ -52,7 +52,8 @@ func TestChatSubagents(t *testing.T) {
 		}
 	}
 	var child struct {
-		ID string `json:"id"`
+		ID   string `json:"id"`
+		Name string `json:"name"`
 	}
 	requireOK(t, jsonv2.Unmarshal(e.request(t, "POST", "/v1/agents", e.apiKey, map[string]any{
 		"name": "configured-reviewer", "description": "Review delegated work", "system": childSystem,
@@ -74,7 +75,7 @@ func TestChatSubagents(t *testing.T) {
 	release := sync.OnceFunc(func() { close(childRelease) })
 	defer release()
 	var calls atomic.Int32
-	model := subagentModelFixture(t, child.ID, childReady, childRelease, &calls)
+	model := subagentModelFixture(t, child.ID, child.Name, childReady, childRelease, &calls)
 	configureChatModel(t, e, model.URL)
 	provider, stopRunner := startPublicRunner(t, e)
 	defer stopRunner()
@@ -221,7 +222,7 @@ func TestChatSubagents(t *testing.T) {
 	chatProof(t, started, "child_thread_resumed")
 	assertSubagentSingleReply(t, e, f, childThread, childResumedAnswer)
 	e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/archive", e.apiKey, nil, 200)
-	verifyParallelConfiguredSubagents(t, e, child.ID, provider)
+	verifyParallelConfiguredSubagents(t, e, child.ID, child.Name, provider)
 	chatProof(t, started, "parallel_instances_verified")
 }
 
@@ -483,7 +484,7 @@ func waitSubagentText(t *testing.T, ctx context.Context, events <-chan chatEvent
 	}
 }
 
-func subagentModelFixture(t *testing.T, childID string, ready chan<- []byte, release <-chan struct{}, calls *atomic.Int32) *httptest.Server {
+func subagentModelFixture(t *testing.T, childID, childName string, ready chan<- []byte, release <-chan struct{}, calls *atomic.Int32) *httptest.Server {
 	t.Helper()
 	var childCalls atomic.Int32
 	runtimeID := regexp.MustCompile(`agentId: ([a-zA-Z0-9_-]+)`)
@@ -551,9 +552,12 @@ func subagentModelFixture(t *testing.T, childID string, ready chan<- []byte, rel
 			input, _ := jsonv2.Marshal(map[string]string{"to": string(matches[1]), "message": childFollowup, "summary": "Resume configured child"})
 			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]string{"type": "input_json_delta", "partial_json": string(input)}})
 		} else if call == 1 {
+			if !strings.Contains(string(body), childName) || strings.Contains(string(body), childID) {
+				t.Error("parent model must receive child name without OMA Agent ID")
+			}
 			reason = "tool_use"
 			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "tool_use", "id": "toolu_configured_child", "name": "Agent", "input": map[string]any{}}})
-			input, _ := jsonv2.Marshal(map[string]any{"description": "Review configured child", "prompt": "Reply with the child verification text", "subagent_type": childID})
+			input, _ := jsonv2.Marshal(map[string]any{"description": "Review configured child", "prompt": "Reply with the child verification text", "subagent_type": childName})
 			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(input)}})
 		} else {
 			text := chatAnswer

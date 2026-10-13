@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
@@ -48,8 +49,12 @@ func buildManagedAgentSubagents(source json.RawMessage, identity codesessions.MC
 	if input.Multiagent == nil {
 		return source, nil
 	}
+	names, err := agentsnapshot.SubagentNames(input.Multiagent.Agents)
+	if err != nil {
+		return nil, err
+	}
 	agents := make(map[string]claudeAgentDefinition, len(input.Multiagent.Agents))
-	for _, raw := range input.Multiagent.Agents {
+	for i, raw := range input.Multiagent.Agents {
 		var snapshot subagentLaunchSnapshot
 		if err := jsonv2.Unmarshal(raw, &snapshot); err != nil {
 			return nil, err
@@ -59,7 +64,7 @@ func buildManagedAgentSubagents(source json.RawMessage, identity codesessions.MC
 		}
 		definition := claudeAgentDefinition{Description: snapshot.Description, Prompt: snapshot.System + "\n\n" + managedAgentEnvironmentPrompt, Model: snapshot.Model.ID}
 		if definition.Description == "" {
-			definition.Description = snapshot.Name
+			definition.Description = cmp.Or(snapshot.Name, names[i])
 		} else if snapshot.Name != "" {
 			definition.Description = snapshot.Name + ": " + definition.Description
 		}
@@ -72,7 +77,7 @@ func buildManagedAgentSubagents(source json.RawMessage, identity codesessions.MC
 			definition.Skills = append(definition.Skills, directory)
 		}
 		childIdentity := identity
-		childIdentity.ConfigAgentID = snapshot.ID
+		childIdentity.ConfigAgentName = names[i]
 		document, err := codesessions.BuildMCPRuntimeConfig(raw, childIdentity, cfg)
 		if err != nil {
 			return nil, err
@@ -88,7 +93,7 @@ func buildManagedAgentSubagents(source json.RawMessage, identity codesessions.MC
 				definition.MCPServers = append(definition.MCPServers, map[string]json.RawMessage{strings.ReplaceAll(name, ".", "_"): server})
 			}
 		}
-		agents[snapshot.ID] = definition
+		agents[names[i]] = definition
 	}
 	encoded, err := jsonv2.Marshal(agents)
 	if err != nil {

@@ -21,7 +21,7 @@ import (
 
 func verifySubagentLifecycleOrdering(t *testing.T, e *liveEnv) {
 	t.Helper()
-	f := e.newSessionWithSnapshot(t, json.RawMessage(`{"model":{"id":"claude-opus-4-6"},"multiagent":{"type":"coordinator","agents":[{"id":"agent_ordering","version":1,"model":{"id":"claude-sonnet-4-6"},"tools":[{"type":"agent_toolset_20260401","default_config":{"permission_policy":{"type":"always_ask"}},"configs":[{"name":"write","enabled":false}]}]}]}}`))
+	f := e.newSessionWithSnapshot(t, json.RawMessage(`{"model":{"id":"claude-opus-4-6"},"multiagent":{"type":"coordinator","agents":[{"id":"agent_ordering","name":"ordering-reviewer","version":1,"model":{"id":"claude-sonnet-4-6"},"tools":[{"type":"agent_toolset_20260401","default_config":{"permission_policy":{"type":"always_ask"}},"configs":[{"name":"write","enabled":false}]}]}]}}`))
 	post := func(payloads ...any) {
 		t.Helper()
 		events := make([]map[string]any, len(payloads))
@@ -88,7 +88,7 @@ func verifySubagentLifecycleOrdering(t *testing.T, e *liveEnv) {
 	}
 	for _, task := range []string{"b", "a"} {
 		post(map[string]any{"type": "control_request", "uuid": "tool-" + task, "request_id": "tool-" + task,
-			"request": map[string]any{"subtype": "can_use_tool", "tool_name": "Agent", "tool_use_id": "agent-" + task, "input": map[string]string{"subagent_type": "agent_ordering"}}})
+			"request": map[string]any{"subtype": "can_use_tool", "tool_name": "Agent", "tool_use_id": "agent-" + task, "input": map[string]string{"subagent_type": "ordering-reviewer"}}})
 	}
 	load()
 	for _, thread := range threads.Data {

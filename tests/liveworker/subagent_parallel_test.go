@@ -16,13 +16,13 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 )
 
-func verifyParallelConfiguredSubagents(t *testing.T, e *liveEnv, childID string, provider *chatDockerProvider) {
+func verifyParallelConfiguredSubagents(t *testing.T, e *liveEnv, childID, childName string, provider *chatDockerProvider) {
 	t.Helper()
 	ready := make(chan struct{}, 2)
 	release := make(chan struct{})
 	finish := sync.OnceFunc(func() { close(release) })
 	defer finish()
-	model := parallelSubagentModelFixture(t, childID, ready, release)
+	model := parallelSubagentModelFixture(t, childID, childName, ready, release)
 	configureChatModel(t, e, model.URL)
 	f := createPublicChat(t, e)
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
@@ -127,7 +127,7 @@ func verifyParallelConfiguredSubagents(t *testing.T, e *liveEnv, childID string,
 	e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/archive", e.apiKey, nil, 200)
 }
 
-func parallelSubagentModelFixture(t *testing.T, childID string, ready chan<- struct{}, release <-chan struct{}) *httptest.Server {
+func parallelSubagentModelFixture(t *testing.T, childID, childName string, ready chan<- struct{}, release <-chan struct{}) *httptest.Server {
 	t.Helper()
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -180,9 +180,12 @@ func parallelSubagentModelFixture(t *testing.T, childID string, ready chan<- str
 		reason := "end_turn"
 		switch {
 		case call == 1:
+			if !strings.Contains(string(body), childName) || strings.Contains(string(body), childID) {
+				t.Error("parent model must receive child name without OMA Agent ID")
+			}
 			reason = "tool_use"
 			for index, name := range []string{"A", "B"} {
-				tool(index, "toolu_parallel_"+name, "Agent", map[string]any{"description": "Parallel reviewer " + name, "prompt": "PARALLEL_" + name, "subagent_type": childID, "run_in_background": true})
+				tool(index, "toolu_parallel_"+name, "Agent", map[string]any{"description": "Parallel reviewer " + name, "prompt": "PARALLEL_" + name, "subagent_type": childName, "run_in_background": true})
 			}
 		case firstChild:
 			reason = "tool_use"

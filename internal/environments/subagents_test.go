@@ -9,6 +9,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/skills"
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -34,9 +35,13 @@ func TestManagedAgentSubagentsPreservesNameAndDescription(t *testing.T) {
 			if err := jsonv2.Unmarshal([]byte(encoded), &definitions); err != nil {
 				t.Fatal(err)
 			}
-			definition, found := definitions["agent_child"]
-			if !found || len(definitions) != 1 || definition.Description != test.want {
-				t.Fatalf("registered by ID=%t, count=%d, description=%q, want %q", found, len(definitions), definition.Description, test.want)
+			name := test.name
+			if name == "" {
+				name = "subagent"
+			}
+			definition, found := definitions[name]
+			if !found || len(definitions) != 1 || definition.Description != test.want || strings.Contains(encoded, "agent_child") {
+				t.Fatalf("registered by name=%t, count=%d, description=%q, want %q", found, len(definitions), definition.Description, test.want)
 			}
 		})
 	}
@@ -58,14 +63,14 @@ func TestManagedAgentSubagentsUsesChildMCPGateway(t *testing.T) {
 	if err := jsonv2.Unmarshal([]byte(encoded), &definitions); err != nil {
 		t.Fatal(err)
 	}
-	if err := jsonv2.Unmarshal(mcpConfigField(t, definitions["agent_child"].MCPServers[0]["local"], "url"), &address); err != nil {
+	if err := jsonv2.Unmarshal(mcpConfigField(t, definitions["child"].MCPServers[0]["local"], "url"), &address); err != nil {
 		t.Fatal(err)
 	}
 	target, err := url.Parse(address)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target.Query().Get("config_agent_id") != "agent_child" {
+	if target.Query().Get("config_agent_name") != "child" || strings.Contains(encoded, "agent_child") {
 		t.Fatalf("child Tunnel uses parent MCP scope: %s", address)
 	}
 }
@@ -74,7 +79,7 @@ func TestManagedAgentSubagentSkillsPreserveVersions(t *testing.T) {
 	for _, source := range []string{"custom", "anthropic"} {
 		for _, reverse := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/reverse=%t", source, reverse), func(t *testing.T) {
-				snapshot := json.RawMessage(fmt.Sprintf(`{"multiagent":{"agents":[{"id":"agent_a","model":{"id":"model"},"skills":[{"type":%q,"skill_id":"review","version":"1"}]},{"id":"agent_b","model":{"id":"model"},"skills":[{"type":%q,"skill_id":"review","version":"2"}]},{"id":"agent_c","model":{"id":"model"},"skills":[{"type":%q,"skill_id":"review"}]}]}}`, source, source, source))
+				snapshot := json.RawMessage(fmt.Sprintf(`{"multiagent":{"agents":[{"id":"agent_a","name":"review-a","model":{"id":"model"},"skills":[{"type":%q,"skill_id":"review","version":"1"}]},{"id":"agent_b","name":"review-b","model":{"id":"model"},"skills":[{"type":%q,"skill_id":"review","version":"2"}]},{"id":"agent_c","name":"review-c","model":{"id":"model"},"skills":[{"type":%q,"skill_id":"review"}]}]}}`, source, source, source))
 				resolved := []skills.RuntimeSkill{
 					{Source: source, SkillID: "review", Version: "1", RequestedVersion: "1", Directory: "review-v1"},
 					{Source: source, SkillID: "review", Version: "2", RequestedVersion: "latest", Directory: "review-v2"},
@@ -98,9 +103,9 @@ func TestManagedAgentSubagentSkillsPreserveVersions(t *testing.T) {
 				if err := jsonv2.Unmarshal([]byte(encoded), &definitions); err != nil {
 					t.Fatal(err)
 				}
-				for id, directory := range map[string]string{"agent_a": "review-v1", "agent_b": "review-v2", "agent_c": "review-v2"} {
-					if !slices.Equal(definitions[id].Skills, []string{directory}) {
-						t.Errorf("%s skills=%v, want [%s]", id, definitions[id].Skills, directory)
+				for name, directory := range map[string]string{"review-a": "review-v1", "review-b": "review-v2", "review-c": "review-v2"} {
+					if !slices.Equal(definitions[name].Skills, []string{directory}) {
+						t.Errorf("%s skills=%v, want [%s]", name, definitions[name].Skills, directory)
 					}
 				}
 			})

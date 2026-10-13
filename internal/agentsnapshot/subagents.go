@@ -1,10 +1,12 @@
 package agentsnapshot
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"fmt"
+	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -14,7 +16,7 @@ type rosterReference struct {
 	Version int    `json:"version"`
 }
 
-func ForSubagent(snapshot json.RawMessage, agentID string) (json.RawMessage, error) {
+func subagentSnapshots(snapshot json.RawMessage) ([]json.RawMessage, error) {
 	var root struct {
 		Multiagent *struct {
 			Agents []json.RawMessage `json:"agents"`
@@ -23,15 +25,69 @@ func ForSubagent(snapshot json.RawMessage, agentID string) (json.RawMessage, err
 	if err := jsonv2.Unmarshal(snapshot, &root); err != nil {
 		return nil, err
 	}
-	if root.Multiagent != nil {
-		for _, child := range root.Multiagent.Agents {
-			var identity rosterReference
-			if err := jsonv2.Unmarshal(child, &identity); err != nil {
-				return nil, err
-			}
-			if identity.ID == agentID {
-				return child, nil
-			}
+	if root.Multiagent == nil {
+		return nil, nil
+	}
+	return root.Multiagent.Agents, nil
+}
+
+func SubagentNames(children []json.RawMessage) ([]string, error) {
+	names := make([]string, len(children))
+	used := map[string]bool{"Explore": true, "Plan": true, "general-purpose": true, "claude": true, "statusline-setup": true, "claude-code-guide": true, "fork": true}
+	for i, raw := range children {
+		var identity struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		if err := jsonv2.Unmarshal(raw, &identity); err != nil {
+			return nil, err
+		}
+		used[identity.ID] = true
+		names[i] = cmp.Or(identity.Name, "subagent")
+		if strings.HasPrefix(names[i], "-") {
+			names[i] = "subagent" + names[i]
+		}
+	}
+	for i, base := range names {
+		name := base
+		for suffix := 2; used[name]; suffix++ {
+			name = fmt.Sprintf("%s-%d", base, suffix)
+		}
+		used[name] = true
+		names[i] = name
+	}
+	return names, nil
+}
+
+func ForSubagentType(snapshot json.RawMessage, agentType string) (json.RawMessage, error) {
+	children, err := subagentSnapshots(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	names, err := SubagentNames(children)
+	if err != nil {
+		return nil, err
+	}
+	for i, name := range names {
+		if name == agentType {
+			return children[i], nil
+		}
+	}
+	return ForSubagent(snapshot, agentType)
+}
+
+func ForSubagent(snapshot json.RawMessage, agentID string) (json.RawMessage, error) {
+	children, err := subagentSnapshots(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	for _, child := range children {
+		var identity rosterReference
+		if err := jsonv2.Unmarshal(child, &identity); err != nil {
+			return nil, err
+		}
+		if identity.ID == agentID {
+			return child, nil
 		}
 	}
 	return nil, fmt.Errorf("configured subagent not found: %s", agentID)

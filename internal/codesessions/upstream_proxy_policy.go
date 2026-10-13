@@ -30,6 +30,7 @@ type mcpProxyPolicyContext struct {
 // Code Session 策略查询的可信租户作用域；不接受 relay 在 CONNECT 中提交作用域。
 type upstreamProxyIdentity struct {
 	configAgentID         string
+	configAgentName       string
 	codeSessionExternalID string
 	organizationUUID      string
 	workspaceUUID         string
@@ -76,7 +77,12 @@ func (h *Handler) loadMCPProxyPolicyContext(ctx context.Context, identity upstre
 		return mcpProxyPolicyContext{}, err
 	}
 	snapshot := record.AgentSnapshot
-	if identity.configAgentID != "" {
+	if identity.configAgentName != "" {
+		snapshot, err = agentsnapshot.ForSubagentType(snapshot, identity.configAgentName)
+		if err != nil {
+			return mcpProxyPolicyContext{}, err
+		}
+	} else if identity.configAgentID != "" {
 		snapshot, err = agentsnapshot.ForSubagent(snapshot, identity.configAgentID)
 		if err != nil {
 			return mcpProxyPolicyContext{}, err

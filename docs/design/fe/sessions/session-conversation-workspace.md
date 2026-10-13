@@ -124,20 +124,7 @@ flowchart LR
 - `useSessionResourceRefresh.test.tsx` 覆盖运行期发现输出文件、idle 时立即刷新、刷新失败保留旧列表、重试和 workspace 切换的旧响应隔离。
 - `SessionInspector.test.tsx` 覆盖慢元数据请求不会阻塞其他文件的下载入口，以及上传文件不可下载。
 - `file-download.test.ts` 覆盖 Files beta、workspace/org、cookie、文件名和鉴权失败处理；浏览器验收检查文件选择、资源刷新和实际下载事件。
-
-## 文件工作流截图
-
-以下截图来自完整 Session 路由的 Playwright 验证，API 使用模拟数据；不代表真实后端或 Worker 集成验收。
-
-| 状态 | 截图 |
-| --- | --- |
-| 选择两个同名附件 | [桌面浅色](screenshots/session-file-workflow/attachments-ready.png) |
-| 输出资源与下载入口 | [桌面浅色](screenshots/session-file-workflow/resources-output.png) |
-| 聊天末尾输出文件（关闭 Inspector） | [浅色](screenshots/session-file-workflow/chat-outputs-light.png) / [深色](screenshots/session-file-workflow/chat-outputs-dark.png) |
-| 聊天输出文件窄屏单列 | [390px 深色](screenshots/session-file-workflow/chat-outputs-mobile-dark.png) |
-| 轻量输入框与附件标签 | [浅色](screenshots/session-file-workflow/composer-light.png) / [深色](screenshots/session-file-workflow/composer-dark.png) |
-
-模拟浏览器流程覆盖上传失败后保留草稿、重试、两个同名文件独立挂载、资源自动刷新、输出文件下载及 390px 窄屏无横向溢出；下载文件名与内容逐字节校验通过。
+- 模拟浏览器流程覆盖上传失败后保留草稿、重试、两个同名文件独立挂载、资源自动刷新、输出文件下载及 390px 窄屏无横向溢出；下载文件名与内容逐字节校验通过。
 
 ## Claude HAR 参考与聊天输出验收
 

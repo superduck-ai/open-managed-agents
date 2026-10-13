@@ -84,6 +84,7 @@ func (s *Service) resolveSubagentThread(ctx context.Context, codeSession db.Code
 		return thread, err
 	}
 	if parent.Multiagent == nil {
+		thread.AgentSnapshot = session.AgentSnapshot
 		return thread, nil
 	}
 	if err := s.ReconcileSubagentSnapshots(ctx, codeSession); err != nil {

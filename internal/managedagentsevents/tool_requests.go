@@ -19,6 +19,32 @@ type toolPermissionRequestMetadata struct {
 // PendingToolEventIDs is shared by locked input acceptance and public status.
 // An empty threadID selects all threads; requests without a thread belong to primary.
 func PendingToolEventIDs(raw []byte, primaryID, threadID string) ([]string, error) {
+	requests, err := pendingToolRequests(raw, primaryID, threadID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(requests))
+	for _, request := range requests {
+		ids = append(ids, request.PublicEventID)
+	}
+	slices.Sort(ids)
+	return slices.Compact(ids), nil
+}
+
+func ResolvePendingToolEventID(raw []byte, codeSessionID, primaryID, threadID, eventID string) (string, error) {
+	requests, err := pendingToolRequests(raw, primaryID, threadID)
+	if err != nil {
+		return "", err
+	}
+	for _, request := range requests {
+		if request.PublicEventID == eventID || ToolUseEventID(codeSessionID, request.ToolUseID) == eventID {
+			return request.PublicEventID, nil
+		}
+	}
+	return "", nil
+}
+
+func pendingToolRequests(raw []byte, primaryID, threadID string) ([]toolPermissionRequestMetadata, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -26,7 +52,7 @@ func PendingToolEventIDs(raw []byte, primaryID, threadID string) ([]string, erro
 	if err := jsonv2.Unmarshal(raw, &metadata); err != nil {
 		return nil, err
 	}
-	ids := make([]string, 0)
+	requests := make([]toolPermissionRequestMetadata, 0)
 	for key, value := range metadata {
 		suffix, prefixed := strings.CutPrefix(key, ToolPermissionRequestMetadataKey+":")
 		if key != ToolPermissionRequestMetadataKey && (!prefixed || suffix == "") {
@@ -49,11 +75,10 @@ func PendingToolEventIDs(raw []byte, primaryID, threadID string) ([]string, erro
 			request.SessionThreadID = primaryID
 		}
 		if threadID == "" || request.SessionThreadID == threadID {
-			ids = append(ids, request.PublicEventID)
+			requests = append(requests, request)
 		}
 	}
-	slices.Sort(ids)
-	return slices.Compact(ids), nil
+	return requests, nil
 }
 
 func ClearPendingToolRequests(raw []byte, primaryID, threadID string) ([]byte, error) {

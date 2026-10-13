@@ -106,6 +106,24 @@ func verifySubagentLifecycleOrdering(t *testing.T, e *liveEnv) {
 		if len(history.Data) != 3 || history.Data[1].EvaluatedPermission != "deny" || history.Data[2].EvaluatedPermission != "ask" {
 			t.Fatalf("repaired child lost deny/ask policy: %+v", history.Data)
 		}
+		for _, confirmation := range []map[string]string{
+			{"type": "user.tool_confirmation", "tool_use_id": "sevt_unknown", "result": "deny", "session_thread_id": thread.ID},
+			{"type": "user.tool_confirmation", "tool_use_id": history.Data[2].ID, "result": "deny"},
+		} {
+			e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{"events": []map[string]string{confirmation}}, 409)
+		}
+		for _, other := range threads.Data {
+			if other.ParentID != nil && other.ID != thread.ID {
+				e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{"events": []map[string]string{{"type": "user.tool_confirmation", "tool_use_id": history.Data[2].ID, "result": "deny", "session_thread_id": other.ID}}}, 409)
+			}
+		}
+		var confirmations struct {
+			Data []chatEvent `json:"data"`
+		}
+		requireOK(t, jsonv2.Unmarshal(e.request(t, "GET", "/v1/sessions/"+f.session.ExternalID+"/events?types[]=user.tool_confirmation", e.apiKey, nil, 200), &confirmations))
+		if len(confirmations.Data) != 0 {
+			t.Fatal("invalid confirmation was persisted")
+		}
 		requireOK(t, e.database.FillSessionThreadAgentSnapshot(t.Context(), f.code.WorkspaceUUID, f.session.ExternalID, thread.ID, json.RawMessage(`{"id":"wrong","version":2}`)))
 	}
 	load()

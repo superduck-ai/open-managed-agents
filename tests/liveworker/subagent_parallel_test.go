@@ -79,7 +79,18 @@ func verifyParallelConfiguredSubagents(t *testing.T, e *liveEnv, childID string,
 			if !children[event.ThreadID] || event.EvaluatedPermission != "ask" || confirmed[event.ThreadID] {
 				t.Fatalf("parallel child policy mismatch: %+v", event)
 			}
-			e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{"events": []map[string]string{{"type": "user.tool_confirmation", "tool_use_id": event.ID, "result": "deny", "session_thread_id": event.ThreadID}}}, 200)
+			var history struct {
+				Data []chatEvent `json:"data"`
+			}
+			requireOK(t, jsonv2.Unmarshal(e.request(t, "GET", "/v1/sessions/"+f.session.ExternalID+"/threads/"+event.ThreadID+"/events?types[]=agent.tool_use", e.apiKey, nil, 200), &history))
+			if len(history.Data) != 1 || history.Data[0].ID == event.ID {
+				t.Fatalf("child history did not expose an independent tool ID: %+v", history.Data)
+			}
+			confirmationID := history.Data[0].ID
+			if len(confirmed) == 1 {
+				confirmationID = event.ID
+			}
+			e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{"events": []map[string]string{{"type": "user.tool_confirmation", "tool_use_id": confirmationID, "result": "deny", "session_thread_id": event.ThreadID}}}, 200)
 			confirmed[event.ThreadID] = true
 		case <-ctx.Done():
 			t.Fatal("parallel child permissions were not independently requested")

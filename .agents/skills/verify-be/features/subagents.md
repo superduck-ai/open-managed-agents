@@ -14,6 +14,8 @@ The protocol regression creates two child lifecycles before their initiating too
 
 A new public Session starts two real background instances of the same configured V1 child. Both model requests must overlap and both thread snapshots must be complete before execution proceeds. Each child requests its own Write confirmation; denying both must leave both files absent. First-turn, follow-up and parallel child histories must have no duplicate replies.
 
+Approval regression first submits an unknown tool ID and a child-history ID addressed to the primary thread. Both must return 409 without persisting a confirmation. The real child Write deny/allow sequence uses tool IDs read from child history. Parallel rejection uses a child-history ID for one child and a primary mirror ID for the other; both children must resume and neither may write its file.
+
 This covers configured children, concurrent instances of one configuration and same-Worker continuation. It does not verify directed interruption, Worker restart recovery, real model reasoning, cloud allocation, UI rendering or filesystem/skill isolation. Child Tunnel gateway selection and OAuth scope preservation have handler tests; this scenario's actual Worker uses a remote HTTP MCP fixture.
 
 See [the delegation design](../../../../docs/design/be/subagent-delegation.md) for configuration, identities and permission boundaries.

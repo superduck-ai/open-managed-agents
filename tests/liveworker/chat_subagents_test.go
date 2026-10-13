@@ -139,7 +139,21 @@ func TestChatSubagents(t *testing.T) {
 		if result.ExitCode != 0 {
 			t.Fatal("child tool executed before approval")
 		}
-		e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{"events": []any{map[string]string{"type": "user.tool_confirmation", "tool_use_id": tool.ID, "result": decision, "session_thread_id": childThread}}}, 200)
+		var history struct {
+			Data []chatEvent `json:"data"`
+		}
+		requireOK(t, jsonv2.Unmarshal(e.request(t, "GET", "/v1/sessions/"+f.session.ExternalID+"/threads/"+childThread+"/events?types[]=agent.tool_use", e.apiKey, nil, 200), &history))
+		confirmationID := ""
+		for _, event := range history.Data {
+			if event.Name == "write" {
+				confirmationID = event.ID
+			}
+		}
+		if confirmationID == "" || confirmationID == tool.ID {
+			t.Fatal("child Write history did not expose its own tool event ID")
+		}
+		e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{"events": []any{map[string]string{"type": "user.tool_confirmation", "tool_use_id": confirmationID, "result": decision, "session_thread_id": childThread}}}, 200)
+		e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{"events": []any{map[string]string{"type": "user.tool_confirmation", "tool_use_id": confirmationID, "result": decision, "session_thread_id": childThread}}}, 409)
 	}
 	childFinal := waitSubagentText(t, ctx, childEvents, childAnswer)
 	if childFinal.ThreadID != childThread {
@@ -357,6 +371,18 @@ func waitSubagentIdle(t *testing.T, f *liveSession) {
 			if thread.Status != "idle" {
 				return false
 			}
+		}
+		code, found, err := f.env.database.GetCodeSession(t.Context(), f.code.ExternalID)
+		requireOK(t, err)
+		if !found || code.WorkerStatus == "running" || code.WorkerStatus == "requires_action" {
+			return false
+		}
+		var session struct {
+			Status string `json:"status"`
+		}
+		requireOK(t, jsonv2.Unmarshal(f.env.request(t, "GET", "/v1/sessions/"+f.session.ExternalID, f.env.apiKey, nil, 200), &session))
+		if session.Status != "idle" {
+			return false
 		}
 		queue := f.consumer(t)
 		return queue.NumPending == 0 && queue.NumAckPending == 0

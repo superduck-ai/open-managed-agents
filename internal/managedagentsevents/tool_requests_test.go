@@ -23,6 +23,30 @@ func TestClearPendingToolRequestsRejectsMalformedMetadata(t *testing.T) {
 	}
 }
 
+func TestResolvePendingToolEventID(t *testing.T) {
+	const childEventID = "sevt_e6def445dfa02dbc80525f1e5d2f5b6d"
+	const request = `{"public_event_id":"mirror","request_id":"request","provider_tool_use_id":"provider-child","session_thread_id":"child"}`
+	for _, test := range []struct {
+		name, metadata, threadID, eventID, want string
+	}{
+		{"unknown ID", `{"managed_agent_tool_permission_request:mirror":` + request + `}`, "child", "unknown", ""},
+		{"wrong thread", `{"managed_agent_tool_permission_request:mirror":` + request + `}`, "other", childEventID, ""},
+		{"implicit primary", `{"managed_agent_tool_permission_request:mirror":` + request + `}`, "primary", childEventID, ""},
+		{"completed legacy request", `{"managed_agent_tool_permission_request":` + request + `,"managed_agent_tool_permission_request:mirror":null}`, "child", childEventID, ""},
+		{"wrong metadata key", `{"managed_agent_tool_permission_request:wrong":` + request + `}`, "child", childEventID, ""},
+		{"mirror", `{"managed_agent_tool_permission_request:mirror":` + request + `}`, "child", "mirror", "mirror"},
+		{"child history", `{"managed_agent_tool_permission_request:mirror":` + request + `}`, "child", childEventID, "mirror"},
+		{"legacy child history", `{"managed_agent_tool_permission_request":` + request + `}`, "child", childEventID, "mirror"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := ResolvePendingToolEventID([]byte(test.metadata), "cse_test", "primary", test.threadID, test.eventID)
+			if err != nil || got != test.want {
+				t.Fatalf("resolved event ID=%q want=%q error=%v", got, test.want, err)
+			}
+		})
+	}
+}
+
 func TestClearPendingToolRequestsPreservesOtherThreads(t *testing.T) {
 	raw := []byte(`{"task_summary":"keep","managed_agent_tool_permission_request":{"public_event_id":"main","request_id":"r1","provider_tool_use_id":"t1"},"managed_agent_tool_permission_request:main":{"public_event_id":"main","request_id":"r1","provider_tool_use_id":"t1"},"managed_agent_tool_permission_request:child":{"public_event_id":"child","request_id":"r2","provider_tool_use_id":"t2","session_thread_id":"child-thread"}}`)
 	cleared, err := ClearPendingToolRequests(raw, "primary", "primary")

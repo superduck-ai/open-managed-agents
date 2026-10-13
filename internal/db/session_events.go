@@ -182,15 +182,18 @@ func validateSessionInputBatch(primary SessionThread, worker codeSessionInputSta
 				return "", ErrSessionInputConflict
 			}
 		case "user.tool_confirmation", "user.custom_tool_result":
+			if event.ToolUseID == nil {
+				return "", ErrSessionInputConflict
+			}
 			threadID := primary.ExternalID
 			if event.ThreadExternalID != nil {
 				threadID = *event.ThreadExternalID
 			}
-			threadPending, err := maevents.PendingToolEventIDs(worker.WorkerExternalMetadata, primary.ExternalID, threadID)
+			resolvedEventID, err := maevents.ResolvePendingToolEventID(worker.WorkerExternalMetadata, worker.ExternalID, primary.ExternalID, threadID, *event.ToolUseID)
 			if err != nil {
 				return "", err
 			}
-			if len(threadPending) == 0 && worker.WorkerStatus != "requires_action" {
+			if resolvedEventID == "" {
 				return "", ErrSessionInputConflict
 			}
 		case "user.tool_result":

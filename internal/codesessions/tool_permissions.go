@@ -369,10 +369,10 @@ func (s *Service) queueControlResponseForToolConfirmation(ctx context.Context, c
 	if toolUseID == "" {
 		return false, nil
 	}
-	request, err := toolPermissionRequestFromMetadata(codeSession.WorkerExternalMetadata, toolUseID)
+	request, err := toolPermissionRequestFromMetadata(codeSession.WorkerExternalMetadata, codeSession.ExternalID, toolUseID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			return false, nil
+			return false, db.ErrSessionInputConflict
 		}
 		return false, err
 	}
@@ -425,15 +425,19 @@ func (s *Service) persistToolPermissionRequest(ctx context.Context, codeSessionI
 	return err
 }
 
-func toolPermissionRequestFromMetadata(raw json.RawMessage, publicEventID string) (toolPermissionRequest, error) {
-	if len(raw) == 0 {
+func toolPermissionRequestFromMetadata(raw json.RawMessage, codeSessionID, publicEventID string) (toolPermissionRequest, error) {
+	resolvedID, err := maevents.ResolvePendingToolEventID(raw, codeSessionID, "", "", publicEventID)
+	if err != nil {
+		return toolPermissionRequest{}, err
+	}
+	if resolvedID == "" {
 		return toolPermissionRequest{}, db.ErrNotFound
 	}
 	var metadata map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &metadata); err != nil {
 		return toolPermissionRequest{}, err
 	}
-	requestRaw := metadata[toolPermissionRequestMetadataKey(publicEventID)]
+	requestRaw := metadata[toolPermissionRequestMetadataKey(resolvedID)]
 	if len(requestRaw) == 0 {
 		requestRaw = metadata[legacyToolPermissionRequestMetadataKey]
 	}
@@ -444,7 +448,7 @@ func toolPermissionRequestFromMetadata(raw json.RawMessage, publicEventID string
 	if err := json.Unmarshal(requestRaw, &request); err != nil {
 		return toolPermissionRequest{}, err
 	}
-	if request.PublicEventID != publicEventID || request.RequestID == "" || request.ToolUseID == "" {
+	if request.PublicEventID != resolvedID || request.RequestID == "" || request.ToolUseID == "" {
 		return toolPermissionRequest{}, db.ErrNotFound
 	}
 	return request, nil
@@ -465,9 +469,9 @@ func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, c
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return false, err
 	}
-	request, err := toolPermissionRequestFromMetadata(codeSession.WorkerExternalMetadata, payload.CustomToolUseID)
+	request, err := toolPermissionRequestFromMetadata(codeSession.WorkerExternalMetadata, codeSession.ExternalID, payload.CustomToolUseID)
 	if errors.Is(err, db.ErrNotFound) {
-		return false, nil
+		return false, db.ErrSessionInputConflict
 	}
 	if err != nil {
 		return false, err
@@ -601,7 +605,7 @@ func controlResponseUUID(codeSessionID, requestID string) string {
 // toolUsePublicEventID translates the private provider tool id into the stable
 // public event id used by confirmations and tool results.
 func toolUsePublicEventID(codeSessionID string, toolUseID string) string {
-	return stablePublicEventID(codeSessionID, "tool_use\x00"+toolUseID)
+	return maevents.ToolUseEventID(codeSessionID, toolUseID)
 }
 
 func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRequestPayload, meta EventMetadata, identity toolIdentity, permission resolvedToolPermission) (toolPermissionRequest, []json.RawMessage, error) {

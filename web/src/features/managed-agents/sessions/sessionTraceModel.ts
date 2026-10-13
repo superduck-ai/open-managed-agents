@@ -209,38 +209,37 @@ function sessionIdleResultDuplicatesAgentMessage(events: QuickstartSessionEvent[
 }
 
 export function latestRequiresActionEventIDs(events: QuickstartSessionEvent[]) {
-  let latestStatusIndex = -1;
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    if (sessionStatusFromEventType(sessionEventType(events[index]))) {
-      latestStatusIndex = index;
-      break;
+  const pendingByScope = new Map<string, Set<string>>();
+  events.forEach((event) => {
+    const type = sessionEventType(event);
+    const threadStatus = type.startsWith('session.thread_status_');
+    const status = sessionStatusFromEventType(type.replace('session.thread_status_', 'session.status_'));
+    if (status) {
+      if (!threadStatus && (status === 'terminated' || status === 'deleted')) pendingByScope.clear();
+      const scope = threadStatus ? normalizedStringValue(event.session_thread_id) : '';
+      pendingByScope.set(scope, status === 'idle' ? sessionRequiresActionEventIDs(event) : new Set());
     }
-  }
-  const latestStatus = events[latestStatusIndex];
-  if (!latestStatus || sessionEventType(latestStatus) !== 'session.status_idle') {
-    return new Set<string>();
-  }
-  const stopReason = toRecord(latestStatus.stop_reason);
-  if (normalizedStringValue(stopReason?.type) !== 'requires_action' || !Array.isArray(stopReason?.event_ids)) {
-    return new Set<string>();
-  }
-  const eventIDs = new Set(
-    stopReason.event_ids
-      .filter((eventID): eventID is string => typeof eventID === 'string' && Boolean(eventID.trim()))
-      .map((eventID) => eventID.trim()),
-  );
-  events.slice(latestStatusIndex + 1).forEach((event) => {
     const handledEventID =
-      sessionEventType(event) === 'user.tool_confirmation'
+      type === 'user.tool_confirmation'
         ? sessionToolConfirmationToolUseId(event)
         : sessionIsToolResultEvent(event)
           ? sessionToolResultToolUseId(event)
           : '';
-    if (handledEventID) {
-      eventIDs.delete(handledEventID);
-    }
+    if (handledEventID) pendingByScope.forEach((eventIDs) => eventIDs.delete(handledEventID));
   });
-  return eventIDs;
+  return new Set([...pendingByScope.values()].flatMap((eventIDs) => [...eventIDs]));
+}
+
+function sessionRequiresActionEventIDs(event: QuickstartSessionEvent) {
+  const stopReason = toRecord(event.stop_reason);
+  if (normalizedStringValue(stopReason?.type) !== 'requires_action' || !Array.isArray(stopReason?.event_ids)) {
+    return new Set<string>();
+  }
+  return new Set(
+    stopReason.event_ids
+      .filter((eventID): eventID is string => typeof eventID === 'string' && Boolean(eventID.trim()))
+      .map((eventID) => eventID.trim()),
+  );
 }
 
 function addSessionToolCompanionEvent(

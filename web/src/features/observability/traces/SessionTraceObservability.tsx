@@ -115,6 +115,7 @@ export function SessionTraceObservability({ sessionId, compact = false }: { sess
             </ObservabilityToolbar>
             <TraceListView
               orgUuid={orgUuid}
+              compact={compact}
               filters={filters}
               variables={variables}
               queries={[]}

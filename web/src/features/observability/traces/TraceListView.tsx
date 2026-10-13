@@ -50,6 +50,7 @@ export function TraceListView({
   filters,
   variables,
   queries,
+  compact = false,
   showTrends = true,
   showAgentColumn = false,
   showSessionColumn = true,
@@ -63,6 +64,7 @@ export function TraceListView({
   filters: ObservabilityFilters;
   variables: PanelQueryVariables;
   queries: ObservabilityQuery[];
+  compact?: boolean;
   showTrends?: boolean;
   showAgentColumn?: boolean;
   showSessionColumn?: boolean;
@@ -153,6 +155,7 @@ export function TraceListView({
           foundLabel={foundLabel}
           offset={offset}
           hasMore={hasMore}
+          compact={compact}
           showAgentColumn={showAgentColumn}
           showSessionColumn={showSessionColumn}
           agentNames={agentNames}
@@ -214,6 +217,7 @@ function TraceListResults({
   foundLabel,
   offset,
   hasMore,
+  compact,
   showAgentColumn,
   showSessionColumn,
   agentNames,
@@ -225,6 +229,7 @@ function TraceListResults({
   foundLabel: string;
   offset: number;
   hasMore: boolean;
+  compact: boolean;
   showAgentColumn: boolean;
   showSessionColumn: boolean;
   agentNames: Map<string, string>;
@@ -260,10 +265,16 @@ function TraceListResults({
         <p className="text-sm text-foreground">{pending ? '' : foundLabel}</p>
         <TraceListPagination offset={offset} hasMore={hasMore} onOffset={onOffset} />
       </div>
-      <Table className="w-full table-fixed text-left text-xs" aria-label={msg('observability.tab.traces', 'Traces')}>
-        <TableHeader className="bg-muted/50">
+      <Table
+        className="w-full table-fixed text-left text-xs"
+        style={{ minWidth: `${(compact ? 40 : 51) + (showAgentColumn ? 7 : 0) + (showSessionColumn ? 8 : 0)}rem` }}
+        aria-label={msg('observability.tab.traces', 'Traces')}
+      >
+        <TableHeader className={compact ? undefined : 'bg-muted/50'}>
           <TableRow className="hover:bg-transparent">
-            <TableHead className="h-8 w-36">{msg('observability.column.trace_id', 'Trace')}</TableHead>
+            <TableHead className={compact ? 'h-8 w-24' : 'h-8 w-36'}>
+              {msg('observability.column.trace_id', 'Trace')}
+            </TableHead>
             {showAgentColumn ? (
               <TableHead className="h-8 w-28">{msg('observability.column.agent', 'Agent')}</TableHead>
             ) : null}
@@ -272,16 +283,18 @@ function TraceListResults({
             ) : null}
             <TableHead className="h-8">{msg('observability.column.input', 'Input')}</TableHead>
             <TableHead className="h-8">{msg('observability.column.output', 'Output')}</TableHead>
-            <TableHead className="h-8 w-44 whitespace-nowrap">
+            <TableHead className="h-8 w-44">
               <span className="inline-flex items-center gap-1">
                 {msg('observability.column.start_time', 'Started')}
                 <ArrowDown className="size-3 text-muted-foreground" aria-hidden />
               </span>
             </TableHead>
-            <TableHead className="h-8 w-20 whitespace-nowrap">
+            <TableHead className={compact ? 'h-8 w-16' : 'h-8 w-20'}>
               {msg('observability.column.duration', 'Duration')}
             </TableHead>
-            <TableHead className="h-8 w-20 whitespace-nowrap">{msg('observability.column.tokens', 'Tokens')}</TableHead>
+            <TableHead className={compact ? 'h-8 w-16' : 'h-8 w-20'}>
+              {msg('observability.column.tokens', 'Tokens')}
+            </TableHead>
             <TableHead className="h-8 w-20 whitespace-nowrap">{msg('observability.column.status', 'Status')}</TableHead>
           </TableRow>
         </TableHeader>
@@ -337,7 +350,9 @@ function TraceListRow({
       }}
     >
       <TableCell className="max-w-36">
-        <span className="block truncate font-mono text-[11px] text-primary">{item.trace_id}</span>
+        <span className="block truncate font-mono text-[11px] text-primary" title={item.trace_id}>
+          {item.trace_id}
+        </span>
       </TableCell>
       {showAgentColumn ? (
         <TableCell className="max-w-28">
@@ -352,7 +367,13 @@ function TraceListRow({
       <TracePreviewTableCell value={item.input} />
       <TracePreviewTableCell value={item.output} />
       <TableCell>
-        <span className="block truncate font-mono text-[11px] tabular-nums">{timestamp}</span>
+        <time
+          dateTime={item.start_time}
+          title={timestamp}
+          className="block truncate font-mono text-[11px] tabular-nums"
+        >
+          {timestamp}
+        </time>
       </TableCell>
       <TableCell>
         <span className="block truncate tabular-nums">{duration}</span>

@@ -32,12 +32,13 @@ export function EnvironmentList({
 }) {
   const { msg } = useI18n();
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('all');
+  const [status, setStatus] = useState('active');
   const [filterOpen, setFilterOpen] = useState(false);
   const [pages, setPages] = useState<PageCursor[]>([null]);
   const [selection, setSelection] = useState<Record<string, boolean>>({});
   const query = useEnvironments(workspaceId, pages.at(-1) ?? null, search.trim(), status);
-  const entities = query.data?.data ?? [];
+  // Keep pending/error data stable so table pagination resets cannot trigger a render loop.
+  const entities = useMemo(() => query.data?.data ?? [], [query.data?.data]);
   const columns = useMemo<ColumnDef<EnvironmentApiResponse>[]>(() => [{ accessorKey: 'id' }], []);
   const table = useReactTable({
     data: entities,

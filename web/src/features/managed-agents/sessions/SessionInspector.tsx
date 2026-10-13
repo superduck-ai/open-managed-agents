@@ -297,7 +297,7 @@ export function SessionInspector({
           />
         </TabsContent>
         <TabsContent value="traces" className="mt-0 min-h-0 min-w-0 overflow-hidden">
-          <ScrollArea>
+          <ScrollArea className="[&_[data-slot=scroll-area-content]]:!min-w-0">
             <SessionTraceObservability sessionId={session.id} compact />
           </ScrollArea>
         </TabsContent>

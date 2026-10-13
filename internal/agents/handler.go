@@ -713,12 +713,10 @@ func (h *Handler) normalizeConfiguredModel(
 	if err != nil {
 		return agentconfig.Model{}, configuredModelError(err)
 	}
-	for _, modelID := range modelIDs {
-		if modelID == model.ID {
-			return model, nil
-		}
+	if err := agentconfig.CheckModelAllowed(model.ID, modelIDs); err != nil {
+		return agentconfig.Model{}, err
 	}
-	return agentconfig.Model{}, fmt.Errorf("model %q is not configured for this workspace", model.ID)
+	return model, nil
 }
 
 func validateMetadata(metadata map[string]string) error {

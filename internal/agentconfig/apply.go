@@ -70,14 +70,15 @@ func ParseSessionAgent(raw json.RawMessage) (SessionAgent, error) {
 		MCPServers: object.MCPServers,
 		Skills:     object.Skills,
 	}
+	disallowed := hasRaw(object.Name) || hasRaw(object.Description) || hasRaw(object.Metadata) || hasRaw(object.Multiagent)
 	switch object.Type {
 	case "", TypeAgent:
-		if hasRaw(object.Name) || hasRaw(object.Description) || hasRaw(object.Metadata) || hasRaw(object.Multiagent) || !overrides.empty() {
+		if disallowed || !overrides.empty() {
 			return SessionAgent{}, errors.New("agent override fields require type agent_with_overrides")
 		}
 		return sessionAgentFromID(object.ID, derefVersion(object.Version), false, Overrides{})
 	case TypeAgentWithOverrides:
-		if hasRaw(object.Name) || hasRaw(object.Description) || hasRaw(object.Metadata) || hasRaw(object.Multiagent) {
+		if disallowed {
 			return SessionAgent{}, errors.New("agent_with_overrides cannot set name, description, metadata, or multiagent")
 		}
 		return sessionAgentFromID(object.ID, derefVersion(object.Version), true, overrides)
@@ -87,13 +88,7 @@ func ParseSessionAgent(raw json.RawMessage) (SessionAgent, error) {
 }
 
 func FromAgent(agent db.Agent) Config {
-	return Config{
-		Model:      cloneRaw(agent.Model),
-		System:     cloneString(agent.System),
-		Tools:      cloneRaw(agent.Tools),
-		MCPServers: cloneRaw(agent.MCPServers),
-		Skills:     cloneRaw(agent.Skills),
-	}
+	return clonedConfig(agent.Model, agent.System, agent.Tools, agent.MCPServers, agent.Skills)
 }
 
 func WriteAgent(agent db.Agent, cfg Config) db.Agent {
@@ -106,13 +101,7 @@ func WriteAgent(agent db.Agent, cfg Config) db.Agent {
 }
 
 func Apply(base Config, overrides Overrides, allowedModelIDs []string) (Config, error) {
-	next := Config{
-		Model:      cloneRaw(base.Model),
-		System:     cloneString(base.System),
-		Tools:      cloneRaw(base.Tools),
-		MCPServers: cloneRaw(base.MCPServers),
-		Skills:     cloneRaw(base.Skills),
-	}
+	next := clonedConfig(base.Model, base.System, base.Tools, base.MCPServers, base.Skills)
 	if err := applyModel(&next, overrides.Model, allowedModelIDs); err != nil {
 		return Config{}, err
 	}
@@ -170,9 +159,6 @@ func applyModel(next *Config, raw json.RawMessage, allowedModelIDs []string) err
 	if !hasRaw(raw) {
 		return nil
 	}
-	if jsonx.IsNull(raw) {
-		return errors.New("model cannot be null")
-	}
 	model, err := NormalizeModel(raw)
 	if err != nil {
 		return err
@@ -205,36 +191,17 @@ func applySystem(next *Config, raw json.RawMessage) error {
 }
 
 func applyLists(next *Config, overrides Overrides) error {
-	mcpServers := cloneRaw(next.MCPServers)
-	if hasRaw(overrides.MCPServers) {
-		normalized, err := NormalizeMCPServers(overrides.MCPServers)
-		if err != nil {
-			return err
-		}
-		mcpServers = normalized
+	mcpServers, err := applyOptionalList(next.MCPServers, overrides.MCPServers, NormalizeMCPServers)
+	if err != nil {
+		return err
 	}
-	skills := cloneRaw(next.Skills)
-	if hasRaw(overrides.Skills) {
-		normalized, err := NormalizeSkills(overrides.Skills)
-		if err != nil {
-			return err
-		}
-		skills = normalized
+	skills, err := applyOptionalList(next.Skills, overrides.Skills, NormalizeSkills)
+	if err != nil {
+		return err
 	}
-	tools := cloneRaw(next.Tools)
-	switch {
-	case hasRaw(overrides.Tools):
-		normalized, err := NormalizeTools(overrides.Tools, mcpServers)
-		if err != nil {
-			return err
-		}
-		tools = normalized
-	case hasRaw(overrides.MCPServers):
-		normalized, err := NormalizeTools(jsonx.Default(tools, `[]`), mcpServers)
-		if err != nil {
-			return err
-		}
-		tools = normalized
+	tools, err := toolsForOverrides(next.Tools, overrides, mcpServers)
+	if err != nil {
+		return err
 	}
 	if overrides.replacesToolsOrSkills() && listHasEntries(skills) && !readToolEnabled(tools) {
 		return errors.New("skills require the read tool")
@@ -245,16 +212,48 @@ func applyLists(next *Config, overrides Overrides) error {
 	return nil
 }
 
-func ensureModelAllowed(modelID string, allowedModelIDs []string) error {
-	if allowedModelIDs == nil {
-		return nil
-	}
+func CheckModelAllowed(modelID string, allowedModelIDs []string) error {
 	for _, allowed := range allowedModelIDs {
 		if allowed == modelID {
 			return nil
 		}
 	}
 	return fmt.Errorf("model %q is not configured for this workspace", modelID)
+}
+
+func ensureModelAllowed(modelID string, allowedModelIDs []string) error {
+	if allowedModelIDs == nil {
+		return nil
+	}
+	return CheckModelAllowed(modelID, allowedModelIDs)
+}
+
+func clonedConfig(model json.RawMessage, system *string, tools, mcpServers, skills json.RawMessage) Config {
+	return Config{
+		Model:      cloneRaw(model),
+		System:     cloneString(system),
+		Tools:      cloneRaw(tools),
+		MCPServers: cloneRaw(mcpServers),
+		Skills:     cloneRaw(skills),
+	}
+}
+
+func applyOptionalList(current, override json.RawMessage, normalize func(json.RawMessage) (json.RawMessage, error)) (json.RawMessage, error) {
+	if !hasRaw(override) {
+		return cloneRaw(current), nil
+	}
+	return normalize(override)
+}
+
+func toolsForOverrides(current json.RawMessage, overrides Overrides, mcpServers json.RawMessage) (json.RawMessage, error) {
+	switch {
+	case hasRaw(overrides.Tools):
+		return NormalizeTools(overrides.Tools, mcpServers)
+	case hasRaw(overrides.MCPServers):
+		return NormalizeTools(jsonx.Default(current, `[]`), mcpServers)
+	default:
+		return cloneRaw(current), nil
+	}
 }
 
 func sessionAgentFromID(agentID string, version int, withOverrides bool, overrides Overrides) (SessionAgent, error) {
@@ -393,13 +392,7 @@ func configFromSnapshot(snapshot json.RawMessage) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	return Config{
-		Model:      cloneRaw(object.Model),
-		System:     system,
-		Tools:      cloneRaw(object.Tools),
-		MCPServers: cloneRaw(object.MCPServers),
-		Skills:     cloneRaw(object.Skills),
-	}, nil
+	return clonedConfig(object.Model, system, object.Tools, object.MCPServers, object.Skills), nil
 }
 
 func systemFromRaw(raw json.RawMessage) (*string, error) {

@@ -12,15 +12,10 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/superduck-ai/open-managed-agents/internal/agentconfig"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
-
-func patchSessionAgent(current json.RawMessage, raw json.RawMessage) (json.RawMessage, error) {
-	return agentconfig.PatchSessionSnapshot(current, raw)
-}
 
 func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {

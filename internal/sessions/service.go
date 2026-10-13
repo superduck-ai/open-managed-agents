@@ -10,6 +10,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentconfig"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -286,7 +287,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	if len(body.Agent) > 0 {
-		next.AgentSnapshot, err = patchSessionAgent(next.AgentSnapshot, body.Agent)
+		next.AgentSnapshot, err = agentconfig.PatchSessionSnapshot(next.AgentSnapshot, body.Agent)
 		if err != nil {
 			return invalidRequest(err)
 		}

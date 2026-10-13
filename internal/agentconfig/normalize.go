@@ -14,6 +14,12 @@ import (
 var (
 	customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 	mcpNamePattern        = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	agentToolNames        = map[string]struct{}{
+		"task": {}, "ask_user_question": {}, "bash": {}, "cron_create": {}, "cron_delete": {}, "cron_list": {},
+		"edit": {}, "enter_plan_mode": {}, "enter_worktree": {}, "exit_plan_mode": {}, "exit_worktree": {},
+		"glob": {}, "grep": {}, "notebook_edit": {}, "read": {}, "schedule_wakeup": {}, "skill": {},
+		"task_output": {}, "task_stop": {}, "todo_write": {}, "web_fetch": {}, "write": {},
+	}
 )
 
 type modelInput struct {
@@ -82,11 +88,8 @@ func NormalizeMCPServers(raw json.RawMessage) (json.RawMessage, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(name) > 255 {
-			return nil, errors.New("mcp_servers.name must be at most 255 characters")
-		}
-		if !mcpNamePattern.MatchString(name) || strings.Contains(name, "__") {
-			return nil, errors.New("mcp_servers.name must match ^[A-Za-z0-9_.-]+$ and not contain consecutive underscores")
+		if err := validateMCPServerName(name); err != nil {
+			return nil, err
 		}
 		if _, ok := seen[name]; ok {
 			return nil, errors.New("mcp_servers.name must be unique")
@@ -190,8 +193,8 @@ func NormalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMe
 			if name == "" {
 				return nil, errors.New("mcp_toolset.mcp_server_name is required")
 			}
-			if len(name) > 255 || !mcpNamePattern.MatchString(name) || strings.Contains(name, "__") {
-				return nil, errors.New("mcp_toolset.mcp_server_name must match ^[A-Za-z0-9_.-]+$ and not contain consecutive underscores")
+			if err := validateMCPToolsetName(name); err != nil {
+				return nil, err
 			}
 			if _, ok := serverNames[name]; !ok {
 				return nil, errors.New("mcp_toolset.mcp_server_name must reference an MCP server")
@@ -244,31 +247,59 @@ func validMCPServerURL(value string) bool {
 }
 
 func normalizeAgentToolConfigs(value any, defaultPolicy string, defaultEnabled bool) ([]map[string]any, error) {
-	var configs []map[string]any
-	if value != nil {
-		raw, err := json.Marshal(value)
-		if err != nil {
-			return nil, errors.New("tools.configs must be an array")
+	normalized, err := normalizeToolConfigList(value, defaultPolicy, defaultEnabled, func(name string) error {
+		if _, ok := agentToolNames[name]; !ok {
+			return errors.New("agent tool config name is invalid")
 		}
-		if err := json.Unmarshal(raw, &configs); err != nil {
-			return nil, errors.New("tools.configs must be an array")
-		}
+		return nil
+	}, "agent tool config names must be unique")
+	if err != nil {
+		return nil, err
 	}
-	allowed := map[string]struct{}{
-		"task": {}, "ask_user_question": {}, "bash": {}, "cron_create": {}, "cron_delete": {}, "cron_list": {},
-		"edit": {}, "enter_plan_mode": {}, "enter_worktree": {}, "exit_plan_mode": {}, "exit_worktree": {},
-		"glob": {}, "grep": {}, "notebook_edit": {}, "read": {}, "schedule_wakeup": {}, "skill": {},
-		"task_output": {}, "task_stop": {}, "todo_write": {}, "web_fetch": {}, "write": {},
+	if toolConfigNamed(normalized, "ask_user_question") {
+		return normalized, nil
+	}
+	return append(normalized, map[string]any{
+		"enabled":           false,
+		"name":              "ask_user_question",
+		"permission_policy": map[string]string{"type": "always_allow"},
+	}), nil
+}
+
+func configEnabled(defaultConfig map[string]any) bool {
+	enabled, ok := defaultConfig["enabled"].(bool)
+	return !ok || enabled
+}
+
+func normalizeMCPToolConfigs(value any, defaultPolicy string) ([]map[string]any, error) {
+	return normalizeToolConfigList(value, defaultPolicy, true, func(name string) error {
+		if !mcpNamePattern.MatchString(name) || len(name) > 128 {
+			return errors.New("mcp tool config name must match ^[A-Za-z0-9_.-]{1,128}$")
+		}
+		return nil
+	}, "mcp tool config names must be unique")
+}
+
+func normalizeToolConfigList(
+	value any,
+	defaultPolicy string,
+	defaultEnabled bool,
+	validateName func(string) error,
+	duplicateError string,
+) ([]map[string]any, error) {
+	configs, err := decodeToolConfigs(value)
+	if err != nil {
+		return nil, err
 	}
 	normalized := make([]map[string]any, 0, len(configs))
 	seen := map[string]struct{}{}
 	for _, config := range configs {
 		name, _ := config["name"].(string)
-		if _, ok := allowed[name]; !ok {
-			return nil, errors.New("agent tool config name is invalid")
+		if err := validateName(name); err != nil {
+			return nil, err
 		}
 		if _, exists := seen[name]; exists {
-			return nil, errors.New("agent tool config names must be unique")
+			return nil, errors.New(duplicateError)
 		}
 		seen[name] = struct{}{}
 		enabled, err := boolWithDefault(config["enabled"], defaultEnabled, "tools.configs.enabled")
@@ -281,22 +312,10 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string, defaultEnabled b
 		}
 		normalized = append(normalized, map[string]any{"enabled": enabled, "name": name, "permission_policy": policy})
 	}
-	if _, configured := seen["ask_user_question"]; !configured {
-		normalized = append(normalized, map[string]any{
-			"enabled":           false,
-			"name":              "ask_user_question",
-			"permission_policy": map[string]string{"type": "always_allow"},
-		})
-	}
 	return normalized, nil
 }
 
-func configEnabled(defaultConfig map[string]any) bool {
-	enabled, ok := defaultConfig["enabled"].(bool)
-	return !ok || enabled
-}
-
-func normalizeMCPToolConfigs(value any, defaultPolicy string) ([]map[string]any, error) {
+func decodeToolConfigs(value any) ([]map[string]any, error) {
 	if value == nil {
 		return []map[string]any{}, nil
 	}
@@ -308,28 +327,37 @@ func normalizeMCPToolConfigs(value any, defaultPolicy string) ([]map[string]any,
 	if err := json.Unmarshal(raw, &configs); err != nil {
 		return nil, errors.New("tools.configs must be an array")
 	}
-	normalized := make([]map[string]any, 0, len(configs))
-	seen := map[string]struct{}{}
+	return configs, nil
+}
+
+func toolConfigNamed(configs []map[string]any, name string) bool {
 	for _, config := range configs {
-		name, _ := config["name"].(string)
-		if !mcpNamePattern.MatchString(name) || len(name) > 128 {
-			return nil, errors.New("mcp tool config name must match ^[A-Za-z0-9_.-]{1,128}$")
+		if config["name"] == name {
+			return true
 		}
-		if _, exists := seen[name]; exists {
-			return nil, errors.New("mcp tool config names must be unique")
-		}
-		seen[name] = struct{}{}
-		enabled, err := boolWithDefault(config["enabled"], true, "tools.configs.enabled")
-		if err != nil {
-			return nil, err
-		}
-		policy, err := normalizePermissionPolicy(config["permission_policy"], defaultPolicy)
-		if err != nil {
-			return nil, err
-		}
-		normalized = append(normalized, map[string]any{"enabled": enabled, "name": name, "permission_policy": policy})
 	}
-	return normalized, nil
+	return false
+}
+
+func validateMCPServerName(name string) error {
+	if len(name) > 255 {
+		return errors.New("mcp_servers.name must be at most 255 characters")
+	}
+	if !validMCPName(name) {
+		return errors.New("mcp_servers.name must match ^[A-Za-z0-9_.-]+$ and not contain consecutive underscores")
+	}
+	return nil
+}
+
+func validateMCPToolsetName(name string) error {
+	if len(name) > 255 || !validMCPName(name) {
+		return errors.New("mcp_toolset.mcp_server_name must match ^[A-Za-z0-9_.-]+$ and not contain consecutive underscores")
+	}
+	return nil
+}
+
+func validMCPName(name string) bool {
+	return mcpNamePattern.MatchString(name) && !strings.Contains(name, "__")
 }
 
 func normalizeDefaultConfig(value any, defaultPolicy string) (map[string]any, error) {
@@ -368,13 +396,10 @@ func normalizePermissionPolicy(value any, defaultPolicy string) (map[string]stri
 
 func permissionPolicyType(config map[string]any, fallback string) string {
 	policy, _ := config["permission_policy"].(map[string]string)
-	if policy == nil {
-		return fallback
+	if policyType := policy["type"]; policyType != "" {
+		return policyType
 	}
-	if policy["type"] == "" {
-		return fallback
-	}
-	return policy["type"]
+	return fallback
 }
 
 func normalizeCustomTool(tool map[string]any) (map[string]any, error) {

@@ -877,13 +877,22 @@ function GenericManagedEntityDialog({
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        className="flex max-h-[min(760px,calc(100dvh-2rem))] flex-col sm:max-w-[560px]"
+        className={`flex max-h-[min(760px,calc(100dvh-2rem))] flex-col ${section === 'sessions' ? 'sm:max-w-[640px]' : 'sm:max-w-[560px]'}`}
         showCloseButton={false}
       >
         <form className="relative flex min-h-0 flex-col" onSubmit={handleSubmit}>
           <ManagedDialogCloseControl />
 
           <ManagedDialogHeader title={title} subtitle={dialogSubtitleText} />
+
+          {section === 'sessions' && !entity ? (
+            <p className="mt-3 text-sm text-muted-foreground">
+              {msg(
+                'managedAgents.sessions.createConversationHint',
+                'Choose an agent and environment. After creating the session, you can send your first message in the conversation.',
+              )}
+            </p>
+          ) : null}
 
           <div className="subtle-scrollbar mt-5 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             <ManagedTextField
@@ -912,27 +921,29 @@ function GenericManagedEntityDialog({
 
             {needsReferences ? (
               <>
-                {lockedAgent ? (
-                  <LockedAgentReferenceField agent={lockedAgent} variant="managed" />
-                ) : (
-                  <AgentSelectField
-                    workspaceId={workspaceId}
-                    value={values.agentId}
-                    defaultFirst
-                    onChange={(agentId) => setValues((current) => ({ ...current, agentId }))}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {lockedAgent ? (
+                    <LockedAgentReferenceField agent={lockedAgent} variant="managed" />
+                  ) : (
+                    <AgentSelectField
+                      workspaceId={workspaceId}
+                      value={values.agentId}
+                      defaultFirst
+                      onChange={(agentId) => setValues((current) => ({ ...current, agentId }))}
+                    />
+                  )}
+                  <ManagedSelectField
+                    label={msg('managedAgents.environments.kindTitle', 'Environment')}
+                    value={values.environmentId}
+                    placeholder={
+                      loadingOptions
+                        ? msg('managedAgents.environments.loading', 'Loading environments...')
+                        : msg('managedAgents.quickstart.selectEnvironment', 'Select an environment')
+                    }
+                    options={environments}
+                    onChange={(environmentId) => setValues((current) => ({ ...current, environmentId }))}
                   />
-                )}
-                <ManagedSelectField
-                  label={msg('managedAgents.environments.kindTitle', 'Environment')}
-                  value={values.environmentId}
-                  placeholder={
-                    loadingOptions
-                      ? msg('managedAgents.environments.loading', 'Loading environments...')
-                      : msg('managedAgents.quickstart.selectEnvironment', 'Select an environment')
-                  }
-                  options={environments}
-                  onChange={(environmentId) => setValues((current) => ({ ...current, environmentId }))}
-                />
+                </div>
                 <ManagedVaultSelectField
                   label={msg('managedAgents.credentialVaults.title', 'Credential vaults')}
                   optional

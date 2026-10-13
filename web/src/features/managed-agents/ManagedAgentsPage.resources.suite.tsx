@@ -2322,6 +2322,26 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.getByRole('heading', { hidden: true, name: 'Sessions' })).toBeTruthy();
   });
 
+  test('previews a session in a sheet and opens its conversation without changing the list on preview', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+    await screen.findByRole('heading', { name: 'Sessions' });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Quick view' })[0]);
+    const preview = await screen.findByRole('dialog', { name: 'Session one' });
+    expect(window.location.pathname).toBe('/workspaces/default/sessions');
+    await within(preview).findByText('Recent activity (up to 20 events)');
+    expect(within(preview).getByRole('button', { name: `Copy ${api.resources.sessions[0].id}` }).textContent).toContain(
+      api.resources.sessions[0].id,
+    );
+    fireEvent.click(within(preview).getByRole('button', { name: 'Open conversation' }));
+    await waitFor(() =>
+      expect(window.location.pathname).toBe(`/workspaces/default/sessions/${api.resources.sessions[0].id}`),
+    );
+    expect(new URLSearchParams(window.location.search).get('interactive')).toBe('true');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   test('opens the created session detail after the list create succeeds', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     mockManagedResourceApi();
@@ -2338,6 +2358,7 @@ export function registerManagedAgentsResourceTests() {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
 
     await waitFor(() => expect(window.location.pathname).toBe('/workspaces/default/sessions/sesn_created123456'));
+    expect(new URLSearchParams(window.location.search).get('interactive')).toBe('true');
     expect(screen.queryByRole('dialog', { name: 'Create session' })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Sessions' })).toBeNull();
     expect(await screen.findByRole('heading', { name: 'Opened session' })).toBeTruthy();

@@ -95,6 +95,7 @@ export function SessionMessageComposer({
           <InputGroupTextarea
             value={draft}
             rows={1}
+            autoFocus={new URLSearchParams(window.location.search).get('interactive') === 'true'}
             aria-label={msg('managedAgents.sessions.detail.messageLabel', 'Message')}
             placeholder={
               disabled

@@ -6,7 +6,17 @@ Session 详情页同时承担继续对话和检查运行上下文两个职责。
 
 本页面不再使用旧版 `Events / Resources / Agent / Environment / Credentials` 页面级页签。主界面固定由左侧会话转录和右侧 Session Inspector 组成，用户无需离开对话即可查看上下文。
 
-Sessions 列表点击「创建会话」并提交成功后，直接进入刚创建的 Session 详情。地址与点击该行名称相同：`/workspaces/{workspaceId}/sessions/{sessionId}`。创建失败时留在列表和对话框里显示错误；编辑已有 Session 仍停在列表。这次只改变创建成功后的导航，不改变列表分页或侧边栏折叠。
+Sessions 列表点击「创建会话」并提交成功后，直接进入刚创建的 Session 详情：`/workspaces/{workspaceId}/sessions/{sessionId}?interactive=true`，聚焦消息输入框。创建弹窗使用 shadcn Dialog，桌面将 Agent 和 Environment 并列，窄屏堆叠；Title、Vault 和 Resources 合同不变。创建失败时留在列表和对话框里显示错误；编辑已有 Session 仍停在列表。不改变列表分页或侧边栏折叠。
+
+## 创建、快速查看与标识符
+
+- 2026-10-13 提供的 `session.har` 中，`2nzfpvkf-rq47.js` 的 `ClippedId` 使用 CSS 裁剪，`CopyableId` 的点击和键盘处理始终向剪贴板传入原始 ID，并通过 Tooltip 与勾选反馈复制结果。`4264g0ol0a34b.js` 使用 `RowEndQuickview` / `SessionSlideOverContent` 展示侧边预览；新建成功后导航到带 `interactive=true` 的 Session 页面。HAR 仅用于核对这些交互，不提交原文件或其中的请求、凭据和账户数据。
+- OMA 使用 shadcn Button + Tooltip 实现 `ResourceIdButton`。面包屑、无标题 Session 的标题、摘要中的 Agent/Environment/Vault 和 Inspector 的 Session ID 都可直接复制完整原始值。文本以 CSS 裁剪而非把字符串改成含省略号的 ID；Inspector 和快速查看标题支持完整 ID 换行。点击或 Enter/空格复制，Tooltip 显示完整值，成功后显示勾选与 toast；失败不显示成功状态，传统剪贴板降级路径始终清理临时元素。
+- 列表行尾提供可见的「快速查看」按钮，菜单也提供「快速查看」和「进入对话」。预览使用 shadcn Sheet，读取当前 Workspace 下的 Session 元数据和最新 20 条事件，按后端返回顺序反向展示为正序，不导航、不重置列表筛选、选择或分页。提供加载、错误、空活动与刷新状态；关闭时中止事件请求并忽略迟到结果。切换 Workspace 时关闭预览，禁止将旧预览带入新作用域。
+- 预览中可复制完整 ID、打开关联 Agent/Environment/Deployment，或进入完整对话。预览只展示近期活动，不在 Sheet 中发送消息或建立 SSE；完整历史、流式转录与审批仍由 Session Viewer 承担。已归档、terminated 或 deleted Session 的按钮使用「查看会话」。
+- 可接收消息的空会话显示 shadcn Empty「开始对话」状态，「输入消息」聚焦该 Viewer 的 Composer。归档或终止会话保留只读空状态；发送、停止与工具审批的 API 合同不变。
+
+验收覆盖完整 ID DOM/复制与失败反馈、列表预览不导航、创建后进入交互页面，以及 Chromium 中的键盘复制、Escape 关闭与焦点恢复、明暗主题和 390px 窄屏布局。浏览器界面检查使用隔离的 API fixtures，不代表真实沙箱或模型调用的端到端验收。
 
 ## 页面结构
 

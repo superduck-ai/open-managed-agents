@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useFormatters, useI18n } from '../../../shared/i18n';
+import { ResourceIdButton } from '../components/ResourceIdButton';
 import { cn } from '../../../shared/lib/utils';
 import { Badge } from '../../../shared/ui/badge';
 import { Button, buttonVariants } from '../../../shared/ui/button';
@@ -347,7 +348,7 @@ function SessionOverviewPanel({
     ? session.vault_ids.filter((value): value is string => typeof value === 'string' && value.length > 0)
     : [];
   const rows: Array<[string, React.ReactNode]> = [
-    [msg('common.id', 'ID'), <span className="font-mono">{compactEntityId(session.id)}</span>],
+    [msg('common.id', 'ID'), <ResourceIdButton value={session.id} wrap />],
     [msg('common.status', 'Status'), <SessionStateBadge key="status" status={session.status} />],
     [msg('common.created', 'Created'), formatInspectorDate(session.created_at, formatters)],
     [msg('managedAgents.common.updatedAt', 'Updated'), formatInspectorDate(session.updated_at, formatters)],

@@ -26,7 +26,7 @@ import {
 } from '../../../shared/ui/resource-list-pagination';
 import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { useWorkspace } from '../../../shared/workspaces/context';
-import { Archive, Copy, Pencil, Play, Plus, X } from 'lucide-react';
+import { Archive, Copy, Eye, MessageSquare, Pencil, Play, Plus, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { agentDetailStatusValues } from '../agents/model';
 import {
@@ -76,6 +76,7 @@ import {
   navigateToInternalHref,
 } from '../utils';
 import { DeploymentEmptyState } from './deployment-list';
+import { SessionQuickView } from '../sessions/SessionQuickView';
 import { ManagedEntityDialog } from './dialogs';
 import { useManagedEntityCells } from './environment-list';
 import { managedEntityErrorMessage } from './environment-model';
@@ -161,6 +162,9 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
   const { msg } = useI18n();
   const { activeWorkspaceId } = useWorkspace();
   const [search, setSearch] = useState('');
+  const [previewSession, setPreviewSession] = useState<{ workspaceId: string; session: SessionApiResponse } | null>(
+    null,
+  );
   const [entities, setEntities] = useState<ManagedEntityApiResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -362,6 +366,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
 
   useEffect(() => {
     setCreatedFilter('all_time');
+    setPreviewSession(null);
     setDeploymentAgentOptions([]);
     setDeploymentAgentFilter('');
     setDeploymentStatusFilter('all');
@@ -736,7 +741,9 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       return false;
     }
     if (config.section === 'sessions') {
-      navigateToInternalHref(managedEntityDetailHref(activeWorkspaceId, config.section, created.id));
+      navigateToInternalHref(
+        `${managedEntityDetailHref(activeWorkspaceId, config.section, created.id)}?interactive=true`,
+      );
       return true;
     }
     return false;
@@ -888,7 +895,10 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
                 </TableHead>
               ))}
               <TableHead
-                className={cn(dataTableHeaderCellClassName, 'w-[48px] px-2')}
+                className={cn(
+                  dataTableHeaderCellClassName,
+                  config.section === 'sessions' ? 'w-[88px] px-2' : 'w-[48px] px-2',
+                )}
                 aria-label={managedColumnLabel('Actions', msg)}
               />
             </TableRow>
@@ -920,6 +930,12 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
                   onRunDeployment={() => void handleDeploymentAction('run', entity)}
                   onPauseDeployment={() => void handleDeploymentAction('pause', entity)}
                   onUnpauseDeployment={() => void handleDeploymentAction('unpause', entity)}
+                  onQuickView={
+                    config.section === 'sessions'
+                      ? () =>
+                          setPreviewSession({ workspaceId: activeWorkspaceId, session: entity as SessionApiResponse })
+                      : undefined
+                  }
                 />
               ))
             )}
@@ -945,6 +961,15 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         onPrevious={goToPreviousEntityPage}
         onNext={goToNextEntityPage}
       />
+
+      {previewSession?.workspaceId === activeWorkspaceId ? (
+        <SessionQuickView
+          key={`${activeWorkspaceId}:${previewSession.session.id}`}
+          session={previewSession.session}
+          workspaceId={activeWorkspaceId}
+          onClose={() => setPreviewSession(null)}
+        />
+      ) : null}
 
       {dialogState ? (
         <ManagedEntityDialog
@@ -999,6 +1024,7 @@ export function ManagedEntityRow({
   onRunDeployment,
   onPauseDeployment,
   onUnpauseDeployment,
+  onQuickView,
 }: {
   config: ResourceConfig & { section: ManagedEntitySection };
   entity: ManagedEntityApiResponse;
@@ -1013,6 +1039,7 @@ export function ManagedEntityRow({
   onRunDeployment: () => void;
   onPauseDeployment: () => void;
   onUnpauseDeployment: () => void;
+  onQuickView?: () => void;
 }) {
   const { msg } = useI18n();
   const cells = useManagedEntityCells(config.section, entity);
@@ -1029,7 +1056,8 @@ export function ManagedEntityRow({
           column === 'ID' ? (
             <CopyIdCell
               value={entity.id}
-              displayValue={compactEntityId(entity.id)}
+              displayValue={config.section === 'sessions' ? entity.id : compactEntityId(entity.id)}
+              alwaysVisible={config.section === 'sessions'}
               ariaLabel={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: entity.id })}
             />
           ) : column === 'Name' ? (
@@ -1063,6 +1091,17 @@ export function ManagedEntityRow({
       })}
       <DataTableCell edge="end" className="px-2">
         <div className="flex justify-end">
+          {onQuickView ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={msg('managedAgents.sessions.quickView', 'Quick view')}
+              onClick={onQuickView}
+            >
+              <Eye className="size-4" aria-hidden />
+            </Button>
+          ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -1074,6 +1113,20 @@ export function ManagedEntityRow({
               }
             />
             <DropdownMenuContent align="end" className="w-[188px]">
+              {config.section === 'sessions' ? (
+                <>
+                  <DropdownMenuItem onClick={onQuickView}>
+                    <Eye className="size-4" aria-hidden />
+                    {msg('managedAgents.sessions.quickView', 'Quick view')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigateToInternalHref(`${detailHref}?interactive=true`)}>
+                    <MessageSquare className="size-4" aria-hidden />
+                    {archived || (entity as SessionApiResponse).status === 'terminated'
+                      ? msg('managedAgents.sessions.viewSession', 'View session')
+                      : msg('managedAgents.sessions.openConversation', 'Open conversation')}
+                  </DropdownMenuItem>
+                </>
+              ) : null}
               <DropdownMenuItem onClick={onCopy}>
                 <Copy className="size-4" aria-hidden />
                 {msg('common.copyId', 'Copy ID')}

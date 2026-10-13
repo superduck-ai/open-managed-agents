@@ -60,6 +60,8 @@ func buildManagedAgentSubagents(source json.RawMessage, identity codesessions.MC
 		definition := claudeAgentDefinition{Description: snapshot.Description, Prompt: snapshot.System + "\n\n" + managedAgentEnvironmentPrompt, Model: snapshot.Model.ID}
 		if definition.Description == "" {
 			definition.Description = snapshot.Name
+		} else if snapshot.Name != "" {
+			definition.Description = snapshot.Name + ": " + definition.Description
 		}
 		for _, skill := range snapshot.Skills {
 			version := cmp.Or(strings.TrimSpace(skill.Version), "latest")

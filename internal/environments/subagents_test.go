@@ -12,6 +12,36 @@ import (
 	"testing"
 )
 
+func TestManagedAgentSubagentsPreservesNameAndDescription(t *testing.T) {
+	for _, test := range []struct {
+		name, description, want string
+	}{
+		{name: "计算Agent", description: "内置核心工具集的空白起点。", want: "计算Agent: 内置核心工具集的空白起点。"},
+		{name: "计算Agent", want: "计算Agent"},
+		{description: "Calculate results", want: "Calculate results"},
+	} {
+		t.Run(test.want, func(t *testing.T) {
+			source := json.RawMessage(fmt.Sprintf(`{"multiagent":{"agents":[{"id":"agent_child","name":%q,"description":%q,"model":{"id":"child-model"}}]}}`, test.name, test.description))
+			raw, err := buildManagedAgentSubagents(source, codesessions.MCPRuntimeIdentity{}, mcpConfigTestRuntimeConfig().Tunnel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var encoded string
+			if err := jsonv2.Unmarshal(mcpConfigField(t, raw, "claude_code_args", "agents"), &encoded); err != nil {
+				t.Fatal(err)
+			}
+			var definitions map[string]claudeAgentDefinition
+			if err := jsonv2.Unmarshal([]byte(encoded), &definitions); err != nil {
+				t.Fatal(err)
+			}
+			definition, found := definitions["agent_child"]
+			if !found || len(definitions) != 1 || definition.Description != test.want {
+				t.Fatalf("registered by ID=%t, count=%d, description=%q, want %q", found, len(definitions), definition.Description, test.want)
+			}
+		})
+	}
+}
+
 func TestManagedAgentSubagentsUsesChildMCPGateway(t *testing.T) {
 	source := json.RawMessage(`{"multiagent":{"agents":[{"id":"agent_child","name":"child","model":{"id":"child-model"},"mcp_servers":[{"name":"local","type":"url","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"}]}]}}`)
 	cfg := mcpConfigTestRuntimeConfig()

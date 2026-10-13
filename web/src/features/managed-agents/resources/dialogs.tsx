@@ -18,21 +18,18 @@ import { type FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } 
 import { AgentSelectField } from '../agents/AgentSelectField';
 import { loadMcpDirectoryServers } from '../agents/tools/api';
 import { type McpDirectoryServer } from '../agents/tools/model';
-import { listManagedEntities, listMemoryStoreOptions, startMCPVaultAuth } from '../api';
+import { startMCPVaultAuth } from '../api';
 import { LockedAgentReferenceField, ManagedSelectField, ManagedTextArea, ManagedTextField } from '../components/common';
 import { entityDialogSubtitle } from '../labels';
 import {
   type AgentApiResponse,
   type CredentialFormValues,
   type EntityOption,
-  type EnvironmentApiResponse,
   type ManagedEntityApiResponse,
   type ManagedEntityFormValues,
   type ManagedEntitySection,
   type MemoryApiResponse,
   type MemoryFormValues,
-  type MemoryStoreApiResponse,
-  type VaultApiResponse,
   type VaultCredentialApiResponse,
 } from '../types';
 import { errorMessage } from '../utils';
@@ -56,6 +53,8 @@ import { DeploymentFormFields } from './deployment-form-fields';
 import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
 import { EnvironmentEntityDialog } from './environment-dialog';
 import { ManagedVaultSelectField } from './vault-select-field';
+import { useManagedReferenceOptions } from './useManagedReferenceOptions';
+import { SessionCreateDialog } from '../sessions/SessionCreateDialog';
 
 type VaultOAuthCompleteMessage = {
   type: 'vault_oauth_complete';
@@ -708,6 +707,7 @@ type ManagedEntityDialogProps = {
 };
 
 export function ManagedEntityDialog(props: ManagedEntityDialogProps) {
+  if (props.section === 'sessions' && !props.entity) return <SessionCreateDialog key={props.workspaceId} {...props} />;
   if (props.section === 'environments') {
     return (
       <EnvironmentEntityDialog
@@ -739,78 +739,30 @@ function GenericManagedEntityDialog({
     [entity, lockedAgent, section],
   );
   const [values, setValues] = useState<ManagedEntityFormValues>(initialValues);
-  const [environments, setEnvironments] = useState<EntityOption[]>([]);
-  const [vaults, setVaults] = useState<EntityOption[]>([]);
-  const [memoryStores, setMemoryStores] = useState<EntityOption[]>([]);
   const [vaultAcknowledged, setVaultAcknowledged] = useState(false);
-  const [loadingOptions, setLoadingOptions] = useState(section === 'sessions' || section === 'deployments');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const needsReferences = section === 'sessions' || section === 'deployments';
+  const {
+    environments,
+    vaults,
+    memoryStores,
+    loading: loadingOptions,
+    error: referenceError,
+  } = useManagedReferenceOptions(workspaceId, needsReferences);
   useEffect(() => {
-    if (!needsReferences) {
-      return;
-    }
-    let active = true;
-
-    void (async () => {
-      await Promise.resolve();
-      if (!active) {
-        return;
-      }
-
-      setLoadingOptions(true);
-      try {
-        const [environmentPage, vaultPage, memoryStorePage] = await Promise.all([
-          listManagedEntities('environments', workspaceId),
-          listManagedEntities('credential-vaults', workspaceId),
-          listMemoryStoreOptions(workspaceId),
-        ]);
-        if (!active) {
-          return;
-        }
-        const environmentOptions = (environmentPage.data as EnvironmentApiResponse[]).map((environment) => ({
-          id: environment.id,
-          label: environment.name || environment.id,
-          secondary: environment.id,
-        }));
-        const vaultRecords = (vaultPage.data as VaultApiResponse[]) ?? [];
-        const vaultOptions = vaultRecords.map((vault) => ({
-          id: vault.id,
-          label: vault.display_name || vault.id,
-          createdAt: vault.created_at,
-        }));
-        const memoryStoreOptions = (memoryStorePage.data as MemoryStoreApiResponse[]).map((memoryStore) => ({
-          id: memoryStore.id,
-          label: memoryStore.name || memoryStore.id,
-          secondary: memoryStore.id,
-        }));
-        setEnvironments(environmentOptions);
-        setVaults(vaultOptions);
-        setMemoryStores(memoryStoreOptions);
-        setValues((current) => ({
-          ...current,
-          agentId: lockedAgent?.id || current.agentId,
-          environmentId: current.environmentId || (section === 'sessions' ? environmentOptions[0]?.id || '' : ''),
-        }));
-        setLoadingOptions(false);
-      } catch (error) {
-        if (active) {
-          setSubmitError(errorMessage(error));
-          setLoadingOptions(false);
-        }
-      }
-    })();
-
-    return () => {
-      active = false;
-    };
-  }, [lockedAgent, needsReferences, section, workspaceId]);
+    if (!needsReferences || loadingOptions || referenceError) return;
+    setValues((current) => ({
+      ...current,
+      agentId: lockedAgent?.id || current.agentId,
+      environmentId: current.environmentId || (section === 'sessions' ? environments[0]?.id || '' : ''),
+    }));
+  }, [environments, loadingOptions, lockedAgent, needsReferences, referenceError, section]);
 
   const canSubmit = managedEntityDialogCanSubmit(section, values, {
     submitting,
-    loadingOptions,
+    loadingOptions: loadingOptions || Boolean(referenceError),
     needsReferences,
     editing: Boolean(entity),
     vaultAcknowledged,
@@ -860,7 +812,9 @@ function GenericManagedEntityDialog({
               />
             </div>
 
-            {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
+            {submitError || referenceError ? (
+              <p className="mt-4 text-sm text-destructive">{submitError || referenceError}</p>
+            ) : null}
 
             <DeploymentDialogActions
               editing={Boolean(entity)}
@@ -884,15 +838,6 @@ function GenericManagedEntityDialog({
           <ManagedDialogCloseControl />
 
           <ManagedDialogHeader title={title} subtitle={dialogSubtitleText} />
-
-          {section === 'sessions' && !entity ? (
-            <p className="mt-3 text-sm text-muted-foreground">
-              {msg(
-                'managedAgents.sessions.createConversationHint',
-                'Choose an agent and environment. After creating the session, you can send your first message in the conversation.',
-              )}
-            </p>
-          ) : null}
 
           <div className="subtle-scrollbar mt-5 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             <ManagedTextField
@@ -977,7 +922,9 @@ function GenericManagedEntityDialog({
             ) : null}
           </div>
 
-          {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
+          {submitError || referenceError ? (
+            <p className="mt-4 text-sm text-destructive">{submitError || referenceError}</p>
+          ) : null}
 
           <ManagedEntityDialogActions
             section={section}

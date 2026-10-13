@@ -22,6 +22,7 @@ import {
 import { managedEntityListLimit } from './api';
 import { SessionNestedPanel } from './resources/detail';
 import { objectRecord } from './utils';
+import { SessionCreateDialog } from './sessions/SessionCreateDialog';
 
 function requestUrl(input: RequestInfo | URL) {
   return typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -2322,11 +2323,79 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.getByRole('heading', { hidden: true, name: 'Sessions' })).toBeTruthy();
   });
 
+  test('finds an exact session ID outside the current page and previews a row without navigating', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.sessions, (index, hidden) => ({
+      ...api.resources.sessions[0],
+      id: `sesn_page${index}`,
+      title: hidden ? 'Session beyond first page' : `Session page ${index}`,
+    }));
+    const remote = api.resources.sessions.at(-1)!;
+    render(<ManagedAgentsPage section="sessions" />);
+    await screen.findByText('Session one');
+    const headers = screen.getAllByRole('columnheader').map((header) => header.textContent);
+    expect(headers.slice(0, 7)).toEqual(['ID', 'Name', 'Status', 'Agent', 'Cost', 'Tokens in / out', 'Created']);
+    expect(screen.queryByText(remote.title)).toBeNull();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: remote.id } });
+    await screen.findByText(remote.title);
+    expect(api.requests.some((request) => request.url.startsWith(`/v1/sessions/${remote.id}?`))).toBe(true);
+    const row = screen.getByText(remote.title).closest('tr')!;
+    fireEvent.click(within(row).getByRole('cell', { name: 'Running' }));
+    expect(await screen.findByRole('dialog', { name: remote.title })).toBeTruthy();
+    expect(window.location.pathname).toBe('/workspaces/default/sessions');
+  });
+
+  test('resets the session list filters from an empty search result', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+    await screen.findByText('Session one');
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'no matching title' } });
+    expect(screen.getByText('No matching sessions')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }));
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe('');
+  });
+
+  test('keeps session creation open and submits only once while the request is pending', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    let resolveSubmit: () => void = () => {};
+    const pending = new Promise<void>((resolve) => {
+      resolveSubmit = resolve;
+    });
+    const onSubmit = mock(async () => pending);
+    const onClose = mock(() => {});
+    render(<SessionCreateDialog title="Create session" workspaceId="default" onSubmit={onSubmit} onClose={onClose} />);
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    await waitFor(() =>
+      expect((within(dialog).getByRole('button', { name: 'Create session' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
+    expect(within(dialog).getByLabelText(/Title/).getAttribute('maxlength')).toBe('500');
+    expect(
+      within(dialog)
+        .getByRole('link', { name: /Manage environments/ })
+        .getAttribute('target'),
+    ).toBe('_blank');
+    const form = within(dialog).getByTestId('session-create-form');
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect((within(dialog).getByRole('button', { name: 'Close' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(onClose).not.toHaveBeenCalled();
+    resolveSubmit();
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Create session' })).toBeTruthy());
+  });
+
   test('previews a session in a sheet and opens its conversation without changing the list on preview', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();
     render(<ManagedAgentsPage section="sessions" />);
-    await screen.findByRole('heading', { name: 'Sessions' });
+    await screen.findByText('Session one');
     fireEvent.click(screen.getAllByRole('button', { name: 'Quick view' })[0]);
     const preview = await screen.findByRole('dialog', { name: 'Session one' });
     expect(window.location.pathname).toBe('/workspaces/default/sessions');
@@ -2348,7 +2417,7 @@ export function registerManagedAgentsResourceTests() {
     render(<ManagedAgentsPage section="sessions" />);
 
     expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeTruthy();
-    expect(screen.getByText('Session one')).toBeTruthy();
+    expect(await screen.findByText('Session one')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
     const dialog = screen.getByRole('dialog', { name: 'Create session' });
     fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Opened session' } });

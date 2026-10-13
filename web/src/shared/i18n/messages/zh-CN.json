@@ -1,4 +1,8 @@
 {
+  "managedAgents.sessions.outputs.title": "输出文件",
+  "managedAgents.sessions.outputs.loadError": "输出文件暂时无法刷新。",
+  "managedAgents.sessions.detail.attachFiles": "添加附件",
+  "managedAgents.sessions.detail.removeAttachment": "移除 {filename}",
   "invitations.delivery.unconfirmed": "邀请已保存，但 {count} 封邮件未确认发送。请检查邮件配置后重发邀请。",
   "invitations.delivery.sent": "邀请邮件已提交发送，请提醒收件人检查邮箱。",
   "account.apiPlan": "API 方案",

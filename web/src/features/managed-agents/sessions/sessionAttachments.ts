@@ -13,9 +13,24 @@ export type SessionAttachment = {
 
 export function createSessionAttachment(file: File): SessionAttachment {
   const id = crypto.randomUUID();
-  const sanitized = file.name.replace(/[\\/]/g, '_').trim();
+  return { id, file, mountPath: sessionAttachmentMountPath(id, file) };
+}
+
+function sessionAttachmentFilename(name: string) {
+  const sanitized = name.replace(/[\\/<>:"|?*\p{Cc}]/gu, '_').trim();
   const filename = sanitized === '.' || sanitized === '..' ? 'file' : sanitized;
-  return { id, file, mountPath: `attachments/${id}/${filename || 'file'}` };
+  return filename || 'file';
+}
+
+function sessionAttachmentMountPath(id: string, file: File) {
+  return `attachments/${id}/${sessionAttachmentFilename(file.name)}`;
+}
+
+async function sessionAttachmentUploadFile(file: File) {
+  const filename = sessionAttachmentFilename(file.name);
+  return filename === file.name
+    ? file
+    : new File([await file.arrayBuffer()], filename, { type: file.type, lastModified: file.lastModified });
 }
 
 export async function prepareSessionAttachments(
@@ -26,8 +41,12 @@ export async function prepareSessionAttachments(
 ) {
   const paths: string[] = [];
   for (const attachment of attachments) {
-    attachment.metadata ??= await anthropicBetaApi.files.upload<FileMetadataApiResponse>(attachment.file, workspaceId);
+    attachment.metadata ??= await anthropicBetaApi.files.upload<FileMetadataApiResponse>(
+      await sessionAttachmentUploadFile(attachment.file),
+      workspaceId,
+    );
     if (!attachment.mounted) {
+      attachment.mountPath = sessionAttachmentMountPath(attachment.id, attachment.file);
       await addSessionFileResource(
         sessionId,
         { fileId: attachment.metadata.id, mountPath: attachment.mountPath },

@@ -1008,6 +1008,8 @@ describe('managed agents API', () => {
       expect(url.searchParams.get('beta')).toBe('true');
       expect(new Headers(init?.headers).get('x-workspace-id')).toBe('workspace_123');
       expect(new Headers(init?.headers).get('anthropic-beta')).toContain('files-api-2025-04-14');
+      expect(new Headers(init?.headers).get('anthropic-beta')).toContain('managed-agents-2026-04-01');
+      expect(url.searchParams.has('betas')).toBe(false);
       expect(init?.credentials).toBe('include');
       expect(init?.signal).toBeDefined();
     }

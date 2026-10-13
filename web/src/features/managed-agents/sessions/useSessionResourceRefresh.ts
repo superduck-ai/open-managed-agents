@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { replaceEqualDeep, useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { retrieveSessionDetailSession } from '../api';
@@ -17,14 +17,20 @@ export function useSessionResourceRefresh(
   const { data, error, refetch } = useQuery({
     queryKey: ['session-resources', workspaceId, sessionId],
     queryFn: () => retrieveSessionDetailSession(sessionId!, workspaceId),
+    select: (response) => response.resources,
     enabled: Boolean(sessionId),
     refetchInterval: running ? 3000 : resourcesVisible ? 10000 : false,
     refetchOnWindowFocus: true,
     retry: false,
   });
   useEffect(() => {
-    if (data) setSession((current) => (current?.id === data.id ? { ...current, resources: data.resources } : current));
-  }, [data, setSession, workspaceId]);
+    if (data)
+      setSession((current) => {
+        if (!current || current.id !== sessionId) return current;
+        const resources = replaceEqualDeep(current.resources, data);
+        return resources === current.resources ? current : { ...current, resources };
+      });
+  }, [data, sessionId, setSession, workspaceId]);
   useEffect(() => {
     if (sessionId) void refetch();
   }, [refetch, resourcesVisible, session?.status, sessionId]);

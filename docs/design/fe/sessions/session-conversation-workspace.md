@@ -81,7 +81,7 @@ Events、Tools、Threads 共用 list 最小 `120px`、detail 默认 `360px` 的�
 
 主会话的转录末尾显示「输出文件」卡片，文件名、类型和大小来自 Files API；整个卡片可点击下载，显示下载状态，并通过共享下载 hook 处理错误。输出区使用圆角容器、柔和底色、淡色轮廓和内边距与消息正文区分，内部下载卡片使用背景色形成层次，适配明暗主题。卡片位于消息滚动容器内，位于输入框上方；关闭 Inspector 后仍可见，窄屏自动变为单列。没有可下载输出时不渲染空占位。输出属于整个 Session，子线程和消息搜索视图不展示该汇总，避免把 Session 文件误认为某个子线程的产物或搜索命中。
 
-输出列表直接调用 `GET /v1/files?scope_id={session_id}&beta=true`，读取完整分页并只显示 `downloadable=true` 的文件；按 file ID 去重。Session `resources[]` 的输出摘要存在数量上限，因此卡片不依赖资源摘要是否包含某个输出文件。Files 列表和文件元数据缓存按 workspace/session 或 workspace/file ID/资源版本隔离；作用域切换取消旧请求，列表结果也会填充 Inspector 使用的元数据缓存。分页游标缺失或重复会终止读取并展示可重试错误。
+输出列表直接调用 `GET /v1/files?scope_id={session_id}&beta=true`，同时携带 Files 与 `managed-agents-2026-04-01` beta 请求头，读取完整分页并只显示 `downloadable=true` 的文件；按 file ID 去重。Session `resources[]` 的输出摘要存在数量上限，因此卡片不依赖资源摘要是否包含某个输出文件。Files 列表和文件元数据缓存按 workspace/session 或 workspace/file ID/资源版本隔离；作用域切换取消旧请求，列表结果也会填充 Inspector 使用的元数据缓存。分页游标缺失或重复会终止读取并展示可重试错误。
 
 运行中每 3 秒刷新输出列表，状态改变（含 idle）、工具结果、资源变更和手动刷新时及时同步；后台页签暂停轮询。列表刷新失败时保留已加载的卡片，展示错误与重试入口；下载失败提示错误并恢复下载动作。
 
@@ -97,13 +97,13 @@ flowchart LR
   Download --> Content[Files SDK: file content]
 ```
 
-进入 Resources 页签时重新请求 Session retrieve，以获取后端最新挂载关系；再次点击已激活的 Resources 页签也会刷新。资源缓存按 workspace/session 隔离，切换作用域后旧响应不得更新新页面。运行中的会话每 3 秒刷新资源，Resources 可见的非运行会话每 10 秒刷新，后台页签暂停轮询；恢复可见时由 TanStack Query 刷新。状态切换（含运行结束）和工具结果事件立即触发刷新。文件元数据按 workspace/file ID/资源更新时间缓存，各文件独立更新，避免一个慢请求阻塞整个列表。打开 File 表单时按需读取 Files list，提交后调用 Session resources add，并再次刷新 Session。Memory Store 资源直接使用 Session 快照里的 `name` 和 `memory_store_id`，不额外请求 Memory Store retrieve。资源表格下载按钮以 Files metadata 的 `downloadable` 为准：未加载或不可下载时禁用。生成的输出文件通过 SDK 的 Files download（`GET /v1/files/{file_id}/content?beta=true`）下载，并保留文件名、workspace/org 范围和 cookie 鉴权；失败展示错误，不生成空文件。Files 页面复用相同下载 helper。
+进入 Resources 页签时重新请求 Session retrieve，以获取后端最新挂载关系；再次点击已激活的 Resources 页签也会刷新。资源缓存按 workspace/session 隔离，切换作用域后旧响应不得更新新页面。运行中的会话每 3 秒刷新资源，Resources 可见的非运行会话每 10 秒刷新，后台页签暂停轮询；恢复可见时由 TanStack Query 刷新。状态切换（含运行结束）和工具结果事件立即触发刷新。资源查询只订阅 `resources[]`，资源深度相等时保留当前 Session 对象；`usage`、`updated_at` 等非资源字段变化不会通过资源轮询更新 Session 状态。文件元数据按 workspace/file ID/资源更新时间缓存，各文件独立更新，避免一个慢请求阻塞整个列表。打开 File 表单时按需读取 Files list，提交后调用 Session resources add，并再次刷新 Session。Memory Store 资源直接使用 Session 快照里的 `name` 和 `memory_store_id`，不额外请求 Memory Store retrieve。资源表格下载按钮以 Files metadata 的 `downloadable` 为准：未加载或不可下载时禁用。生成的输出文件通过 SDK 的 Files download（`GET /v1/files/{file_id}/content?beta=true`）下载，并保留文件名、workspace/org 范围和 cookie 鉴权；失败展示错误，不生成空文件。Files 页面复用相同下载 helper。
 
 ## 对话与审批行为
 
 - `Enter` 发送，`Shift+Enter` 换行；输入法合成中和键盘长按不得触发发送。
 - Composer 使用 shadcn InputGroup 和语义化 form：空状态高 `56px`、圆角 `22px`、单行起步并按内容增长至 `160px`；Send 是 submit，Stop 是普通 button。输入框使用柔和的语义底色区分区域，移除常驻描边和聚焦投影，仅在聚焦时显示低对比度的 `1px` 焦点环。附件标签使用无描边的浅底色和 `8px` 圆角，文件图标与移除按钮弱化为次级文字色；浅色、深色和窄屏保持同样的轻量层级。
-- 通过附件按钮选择多个本地文件，可移除待发送附件，也允许仅附件发送。发送时依次上传到 Files API，再调用 Session resources add 挂载到 `/attachments/{随机 ID}/{文件名}`；每个文件路径独立，同名文件不会相互覆盖。消息文本附带 `/mnt/session/uploads/attachments/{随机 ID}/{文件名}`，让 Agent 通过工具读取文件，不改变 `user.message` 文本事件合同。挂载成功后刷新资源及 Files 选择缓存。上传、挂载或发送失败时保留文本与附件；重试复用已成功上传的 file ID 和已完成的挂载，避免重复操作。切换 workspace/session 后清空当前输入状态。
+- 通过附件按钮选择多个本地文件，可移除待发送附件，也允许仅附件发送。发送时依次上传到 Files API，再调用 Session resources add 挂载到 `/attachments/{随机 ID}/{文件名}`；每个文件路径独立，同名文件不会相互覆盖。上传名与挂载名统一替换控制字符（Unicode Cc）、路径分隔符和上传接口禁止的文件名字符，空名及点路径使用 `file`；保留原始附件标签、文件内容、类型和修改时间。未挂载附件重试时重新计算合法挂载路径，也可修复已有上传 metadata 的非法路径，继续复用 file ID。消息文本附带 `/mnt/session/uploads/attachments/{随机 ID}/{文件名}`，让 Agent 通过工具读取文件，不改变 `user.message` 文本事件合同。挂载成功后刷新资源及 Files 选择缓存。上传、挂载或发送失败时保留文本与附件；重试复用已成功上传的 file ID 和已完成的挂载，避免重复操作。切换 workspace/session 后清空当前输入状态。
 - 无文本且无附件、发送中、已归档、已终止或已删除的 Session 不能发送；只有 idle 或初始 queued Session 可提交新消息。运行期间保留输入框草稿，但 Send 和 Enter 不发请求；草稿只在当前页面内存中，刷新后丢失。本次不增加客户端待发队列或自动重发。
 - running、queued 或 rescheduled Session 显示停止按钮，并通过既有 `user.interrupt` 合同停止。
 - 最新 `session.status_idle.stop_reason` 为 `requires_action` 时，在转录与输入框之间展示 Action Card。普通工具审批发送 `user.tool_confirmation`，AskUserQuestion 答案发送 `user.custom_tool_result`；等待期间禁用普通消息输入框。
@@ -120,6 +120,7 @@ flowchart LR
 ## 附件与资源验收
 
 - `SessionMessageComposer.test.tsx` 覆盖上传/挂载/发送失败后的恢复、多附件、同名文件隔离、仅附件发送、移除附件和重复提交保护。
+- `sessionAttachments.test.ts` 覆盖 C0/C1/DEL 控制字符、空名与点路径、上传名和挂载名一致、原始附件与内容保留，以及已有上传 metadata 的非法挂载路径恢复；资源刷新测试验证非资源字段变化保留 Session 对象、资源内容变化仍能同步。
 - `useSessionResourceRefresh.test.tsx` 覆盖运行期发现输出文件、idle 时立即刷新、刷新失败保留旧列表、重试和 workspace 切换的旧响应隔离。
 - `SessionInspector.test.tsx` 覆盖慢元数据请求不会阻塞其他文件的下载入口，以及上传文件不可下载。
 - `file-download.test.ts` 覆盖 Files beta、workspace/org、cookie、文件名和鉴权失败处理；浏览器验收检查文件选择、资源刷新和实际下载事件。

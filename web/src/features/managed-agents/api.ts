@@ -605,7 +605,7 @@ export function listSessionFileOptions(workspaceId: string) {
 }
 
 export function listSessionFiles(sessionId: string, workspaceId: string, signal?: AbortSignal) {
-  return listFileMetadataPages(workspaceId, { scope_id: sessionId }, signal);
+  return listFileMetadataPages(workspaceId, { scope_id: sessionId, betas: ['managed-agents-2026-04-01'] }, signal);
 }
 
 async function listFileMetadataPages(

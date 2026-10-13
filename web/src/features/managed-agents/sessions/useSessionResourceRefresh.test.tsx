@@ -84,3 +84,32 @@ test('discovers generated files while running and refreshes immediately when the
   hook.rerender({ session: makeSession('sesn_refresh', 'idle'), workspaceId: 'workspace_first' });
   await waitFor(() => expect(hook.latest()?.resources[0]?.file_id).toBe('file_final'));
 });
+
+test('preserves Session identity when only non-resource response fields change', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  const initial = makeSession();
+  initial.resources = [{ id: 'resource_existing', type: 'file', file_id: 'file_existing', metadata: { version: 1 } }];
+  let response = initial;
+  const fetchMock = mock(async () => Response.json(response));
+  globalThis.fetch = fetchMock as typeof fetch;
+  const hook = renderRefresh(initial);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  await act(async () => {
+    await hook.result.current.refresh();
+  });
+  expect(hook.latest()).toBe(initial);
+  response = { ...initial, updated_at: 'changed', usage: { input_tokens: 42 }, status: 'idle' };
+  await act(async () => {
+    await hook.result.current.refresh();
+  });
+  expect(hook.latest()).toBe(initial);
+  expect(hook.latest()?.resources).toBe(initial.resources);
+  response = { ...response, resources: [{ ...initial.resources[0], metadata: { version: 2 } }] };
+  await act(async () => {
+    await hook.result.current.refresh();
+  });
+  await waitFor(() => expect(hook.latest()?.resources[0].metadata).toEqual({ version: 2 }));
+  expect(hook.latest()).not.toBe(initial);
+  expect(hook.latest()?.status).toBe('running');
+  expect(hook.latest()?.updated_at).toBe(initial.updated_at);
+});

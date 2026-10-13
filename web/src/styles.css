@@ -2,3 +2,4 @@
 @import './styles/foundation.css';
 @import './styles/workbench.css';
 @import './styles/utilities.css';
+@import './styles/managed-agents/session-create-dialog.css';

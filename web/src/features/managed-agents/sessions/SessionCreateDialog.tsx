@@ -83,7 +83,7 @@ export function SessionCreateDialog({
     <Dialog open onOpenChange={(open) => !open && close()}>
       <DialogContent
         showCloseButton={false}
-        className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 p-0 sm:max-w-[640px]"
+        className="session-create-dialog flex max-h-[calc(100dvh-2rem)] flex-col gap-0 p-0 sm:max-w-[640px]"
       >
         <form onSubmit={submit} className="flex min-h-0 flex-col" data-testid="session-create-form">
           <DialogHeader className="relative px-6 pb-5 pt-6 sm:px-8 sm:pt-7">
@@ -95,7 +95,7 @@ export function SessionCreateDialog({
               type="button"
               variant="ghost"
               size="icon-sm"
-              className="absolute right-4 top-5"
+              className="absolute right-5 top-5 text-muted-foreground hover:text-foreground sm:right-6 sm:top-6"
               aria-label={msg('common.close', 'Close')}
               disabled={submitting}
               onClick={close}
@@ -103,7 +103,7 @@ export function SessionCreateDialog({
               <X aria-hidden />
             </Button>
           </DialogHeader>
-          <div className="subtle-scrollbar min-h-0 flex-1 space-y-5 overflow-y-auto px-6 pb-6 sm:px-8">
+          <div className="subtle-scrollbar min-h-0 flex-1 space-y-5 overflow-y-auto px-6 pb-5 sm:px-8">
             <div className="space-y-2">
               <Label htmlFor="session-create-title">
                 {msg('managedAgents.sessions.fieldTitle', 'Title')}{' '}
@@ -192,7 +192,7 @@ export function SessionCreateDialog({
               </Alert>
             ) : null}
           </div>
-          <DialogFooter className="border-t px-6 py-4 sm:px-8">
+          <DialogFooter className="px-6 pb-6 pt-1 sm:px-8 sm:pb-7">
             <Button type="button" variant="outline" onClick={close} disabled={submitting}>
               {msg('common.cancel', 'Cancel')}
             </Button>

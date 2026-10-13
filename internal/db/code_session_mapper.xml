@@ -445,6 +445,20 @@
           AND deleted_at IS NULL
     </update>
 
+    <update id="TerminateBySession" result="returning" resultType="string">
+        UPDATE code_sessions
+        SET status = 'terminated',
+            oauth_access_token_hash = NULL,
+            current_worker_epoch = current_worker_epoch + 1,
+            worker_lease_expires_at = NULL,
+            connection_status = 'disconnected',
+            updated_at = NOW()
+        WHERE organization_uuid = #{organizationUUID}
+          AND workspace_uuid = #{workspaceUUID}
+          AND session_uuid = #{sessionUUID}
+        RETURNING external_id
+    </update>
+
     <update id="TerminateByExternalID" result="rows">
         UPDATE code_sessions
         SET status = 'terminated',

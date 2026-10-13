@@ -10,18 +10,29 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
+type sessionEventBatchResult struct {
+	Events            []SessionEvent
+	SessionTerminated bool
+}
+
+type sessionEventWriteResult struct {
+	Event             SessionEvent
+	Inserted          bool
+	SessionTerminated bool
+}
+
 // The caller holds the Session lock. Lock the Worker second, decide acceptance,
 // then persist each action's events and state in their public order.
-func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) ([]SessionEvent, error) {
+func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) (sessionEventBatchResult, error) {
 	primary, worker, err := lockSessionEventStateTx(ctx, executor, session)
 	if err != nil {
-		return nil, err
+		return sessionEventBatchResult{}, err
 	}
 	acceptedID, err := validateSessionInputBatch(primary, worker, events)
 	if err != nil {
-		return nil, err
+		return sessionEventBatchResult{}, err
 	}
-	created := make([]SessionEvent, 0, len(events)+2)
+	result := sessionEventBatchResult{Events: make([]SessionEvent, 0, len(events)+2)}
 	for _, event := range events {
 		var batch []SessionEvent
 		if event.ExternalID == acceptedID {
@@ -35,36 +46,38 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 			batch, err = sessionEventBatchTx(ctx, executor, session, primary, worker, event)
 		}
 		if err != nil {
-			return nil, err
+			return sessionEventBatchResult{}, err
 		}
 		for _, next := range batch {
-			stored, inserted, err := insertSessionEventTx(ctx, executor, &session, primary, next)
+			write, err := insertSessionEventTx(ctx, executor, &session, primary, next)
 			if err != nil {
-				return nil, err
+				return sessionEventBatchResult{}, err
 			}
-			if inserted {
-				created = append(created, stored)
+			if write.Inserted {
+				result.Events = append(result.Events, write.Event)
+				result.SessionTerminated = result.SessionTerminated || write.SessionTerminated
 				trackPrimaryThreadStatus(&primary, next)
 			}
 		}
 	}
-	if slices.ContainsFunc(created, func(event SessionEvent) bool { return maevents.IsPublicWorkerInputEvent(event.EventType) }) {
-		newTurn := slices.ContainsFunc(created, func(event SessionEvent) bool { return event.ExternalID == acceptedID })
+	if slices.ContainsFunc(result.Events, func(event SessionEvent) bool { return maevents.IsPublicWorkerInputEvent(event.EventType) }) {
+		newTurn := slices.ContainsFunc(result.Events, func(event SessionEvent) bool { return event.ExternalID == acceptedID })
 		if err := NewCodeSessionMapper(executor).ResetIdleSinceForSession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID, newTurn); err != nil {
-			return nil, err
+			return sessionEventBatchResult{}, err
 		}
 	}
-	return created, nil
+	result.SessionTerminated = result.SessionTerminated && session.Status == "terminated"
+	return result, nil
 }
 
 // History includes events seeded with a new Session and idempotent Worker reports.
 // Neither admits a new client turn.
-func insertSessionHistoryTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) ([]SessionEvent, error) {
+func insertSessionHistoryTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) (sessionEventBatchResult, error) {
 	primary, worker, err := lockSessionEventStateTx(ctx, executor, session)
 	if err != nil {
-		return nil, err
+		return sessionEventBatchResult{}, err
 	}
-	created := make([]SessionEvent, 0, len(events)+2)
+	result := sessionEventBatchResult{Events: make([]SessionEvent, 0, len(events)+2)}
 	// The Session lock makes proxy finals and Worker echoes compare against one
 	// committed source at a time, even when they arrive on different API instances.
 	echoKeys := make(map[string]map[string]int)
@@ -76,7 +89,7 @@ func insertSessionHistoryTx(ctx context.Context, executor yourbatis.Executor, se
 		}
 		if (event.EventType == "agent.message" || event.EventType == "agent.thinking") && len(event.Payload) > 0 {
 			if err := jsonv2.Unmarshal(event.Payload, &echo); err != nil {
-				return nil, err
+				return sessionEventBatchResult{}, err
 			}
 		}
 		if echo.RequestID != "" && echo.Source != "" && echo.Key != "" {
@@ -89,7 +102,7 @@ func insertSessionHistoryTx(ctx context.Context, executor yourbatis.Executor, se
 			if !ok {
 				stored, err := NewSessionEventMapper(executor).FindAssistantEchoKeys(ctx, session.WorkspaceUUID, session.ExternalID, echo.RequestID, opposite)
 				if err != nil {
-					return nil, err
+					return sessionEventBatchResult{}, err
 				}
 				keys = make(map[string]int, len(stored))
 				for _, key := range stored {
@@ -107,29 +120,31 @@ func insertSessionHistoryTx(ctx context.Context, executor yourbatis.Executor, se
 			continue
 		}
 		if !errors.Is(mapNoRows(err), ErrNotFound) {
-			return nil, err
+			return sessionEventBatchResult{}, err
 		}
 		batch, err := sessionEventBatchTx(ctx, executor, session, primary, worker, event)
 		if err != nil {
-			return nil, err
+			return sessionEventBatchResult{}, err
 		}
 		for _, next := range batch {
-			stored, inserted, err := insertSessionEventIfAbsentTx(ctx, executor, &session, primary, next)
+			write, err := insertSessionEventIfAbsentTx(ctx, executor, &session, primary, next)
 			if err != nil {
-				return nil, err
+				return sessionEventBatchResult{}, err
 			}
-			if inserted {
-				created = append(created, stored)
+			if write.Inserted {
+				result.Events = append(result.Events, write.Event)
+				result.SessionTerminated = result.SessionTerminated || write.SessionTerminated
 				trackPrimaryThreadStatus(&primary, next)
 			}
 		}
 	}
-	if slices.ContainsFunc(created, func(event SessionEvent) bool { return maevents.IsPublicWorkerInputEvent(event.EventType) }) {
+	if slices.ContainsFunc(result.Events, func(event SessionEvent) bool { return maevents.IsPublicWorkerInputEvent(event.EventType) }) {
 		if err := NewCodeSessionMapper(executor).ResetIdleSinceForSession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID, false); err != nil {
-			return nil, err
+			return sessionEventBatchResult{}, err
 		}
 	}
-	return created, nil
+	result.SessionTerminated = result.SessionTerminated && session.Status == "terminated"
+	return result, nil
 }
 
 func lockSessionEventStateTx(ctx context.Context, executor yourbatis.Executor, session Session) (SessionThread, codeSessionInputStateRow, error) {
@@ -190,34 +205,36 @@ func validateSessionInputBatch(primary SessionThread, worker codeSessionInputSta
 	return acceptedID, nil
 }
 
-func insertSessionEventTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent) (SessionEvent, bool, error) {
+func insertSessionEventTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent) (sessionEventWriteResult, error) {
 	event, write, err := prepareSessionEventTx(ctx, executor, session, primary, event)
 	if err != nil || !write {
-		return SessionEvent{}, false, err
+		return sessionEventWriteResult{}, err
 	}
 	row, err := NewSessionEventMapper(executor).Insert(ctx, sessionEventWriteParameters(event))
 	if err != nil {
-		return SessionEvent{}, false, err
+		return sessionEventWriteResult{}, err
 	}
-	if err := applySessionEventWriteTx(ctx, executor, session, primary, event); err != nil {
-		return SessionEvent{}, false, err
+	terminated, err := applySessionEventWriteTx(ctx, executor, session, primary, event)
+	if err != nil {
+		return sessionEventWriteResult{}, err
 	}
-	return row.event(), true, nil
+	return sessionEventWriteResult{Event: row.event(), Inserted: true, SessionTerminated: terminated}, nil
 }
 
-func insertSessionEventIfAbsentTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent) (SessionEvent, bool, error) {
+func insertSessionEventIfAbsentTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent) (sessionEventWriteResult, error) {
 	event, write, err := prepareSessionEventTx(ctx, executor, session, primary, event)
 	if err != nil || !write {
-		return SessionEvent{}, false, err
+		return sessionEventWriteResult{}, err
 	}
 	row, inserted, err := NewSessionEventMapper(executor).InsertIfAbsent(ctx, sessionEventWriteParameters(event))
 	if err != nil || !inserted {
-		return SessionEvent{}, false, err
+		return sessionEventWriteResult{}, err
 	}
-	if err := applySessionEventWriteTx(ctx, executor, session, primary, event); err != nil {
-		return SessionEvent{}, false, err
+	terminated, err := applySessionEventWriteTx(ctx, executor, session, primary, event)
+	if err != nil {
+		return sessionEventWriteResult{}, err
 	}
-	return row.event(), true, nil
+	return sessionEventWriteResult{Event: row.event(), Inserted: true, SessionTerminated: terminated}, nil
 }
 
 func prepareSessionEventTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent) (SessionEvent, bool, error) {
@@ -243,12 +260,9 @@ func prepareSessionEventTx(ctx context.Context, executor yourbatis.Executor, ses
 	return event, true, nil
 }
 
-func applySessionEventWriteTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent) error {
+func applySessionEventWriteTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent) (bool, error) {
 	if err := attachEventPayloadBlob(ctx, executor, session.WorkspaceUUID, event.PayloadBlobUUID); err != nil {
-		return err
+		return false, err
 	}
-	if err := applySessionEventState(ctx, executor, session, primary.ExternalID, event); err != nil {
-		return err
-	}
-	return nil
+	return applySessionEventState(ctx, executor, session, primary.ExternalID, event)
 }

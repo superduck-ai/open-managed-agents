@@ -42,6 +42,10 @@ func TestNormalizePackages(t *testing.T) {
 		{"blank", json.RawMessage(`{"type":"packages","apt":["  "]}`), "entries must be non-empty strings"},
 		{"manager option", json.RawMessage(`{"type":"packages","pip":["--token=secret-value"]}`), invalidPackageOptionMessage},
 		{"credential URL", json.RawMessage(`{"type":"packages","pip":["git+https://user:secret-token@example.test/private.git"]}`), "must not contain URL credentials"},
+		{"registry field", json.RawMessage(`{"type":"packages","registry":"https://example.internal/"}`), "must be an object or null"},
+		{"unknown manager", json.RawMessage(`{"type":"packages","yarn":["demo"]}`), "must be an object or null"},
+		{"npm registry option", json.RawMessage(`{"type":"packages","npm":["--registry=https://example.internal/"]}`), invalidPackageOptionMessage},
+		{"cargo registry option", json.RawMessage(`{"type":"packages","cargo":["--registry=example"]}`), invalidPackageOptionMessage},
 	}
 	for _, test := range invalid {
 		t.Run(test.name, func(t *testing.T) {
@@ -89,6 +93,13 @@ func TestBuildPackageManifest(t *testing.T) {
 		manifest, provision, err := buildPackageManifest(json.RawMessage(`{"type":"cloud","packages":{"type":"packages","pip":["-x=secret-value"]}}`))
 		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), invalidPackageOptionMessage) || strings.Contains(err.Error(), "secret-value") {
 			t.Fatalf("buildPackageManifest() = (%s, %t, %v)", manifest, provision, err)
+		}
+	})
+
+	t.Run("stored registry field", func(t *testing.T) {
+		_, _, err := buildPackageManifest(json.RawMessage(`{"type":"cloud","packages":{"type":"packages","pip":["numpy"],"index_url":"https://example.internal/"}}`))
+		if err == nil {
+			t.Fatal("stored API registry configuration was accepted")
 		}
 	})
 

@@ -1,0 +1,5 @@
+.quickstart-wizard {
+  --quickstart-gap: clamp(0.75rem, calc(4dvh - 1rem), 1.25rem);
+  --quickstart-padding: clamp(0.75rem, calc(5dvh - 1.5rem), 1.5rem);
+  --quickstart-step-size: clamp(1.75rem, 4dvh, 2rem);
+}

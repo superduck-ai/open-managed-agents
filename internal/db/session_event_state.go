@@ -350,12 +350,12 @@ func shouldWriteSessionStatus(ctx context.Context, executor yourbatis.Executor, 
 }
 
 // applySessionEventState runs only for newly inserted facts under the session lock.
-func applySessionEventState(ctx context.Context, executor yourbatis.Executor, session *Session, primaryID string, event SessionEvent) error {
+func applySessionEventState(ctx context.Context, executor yourbatis.Executor, session *Session, primaryID string, event SessionEvent) (bool, error) {
 	mapper := NewSessionMapper(executor)
 	if event.UsageIncrement != nil {
 		row, err := mapper.AddUsage(ctx, session.WorkspaceUUID, session.UUID, *event.ThreadUUID, *event.UsageIncrement)
 		if err != nil {
-			return err
+			return false, err
 		}
 		session.Usage = row.Usage
 	}
@@ -365,13 +365,15 @@ func applySessionEventState(ctx context.Context, executor yourbatis.Executor, se
 			threadID = primaryID
 		}
 		_, err := NewSessionThreadMapper(executor).SetStatus(ctx, session.WorkspaceUUID, session.ExternalID, threadID, status)
-		return err
+		return false, err
 	}
 	if status, ok := maevents.SessionStatus(event.EventType); ok {
 		if _, err := mapper.SetStatus(ctx, session.WorkspaceUUID, session.ExternalID, status); err != nil {
-			return err
+			return false, err
 		}
+		terminated := session.Status != "terminated" && status == "terminated"
 		session.Status = status
+		return terminated, nil
 	}
-	return nil
+	return false, nil
 }

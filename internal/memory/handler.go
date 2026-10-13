@@ -295,23 +295,12 @@ func (h *Handler) retrieveStoreRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) retrieveStore(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+	record, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromStore(record))
-}
-
-func (h *Handler) memoryStoreForRead(ctx context.Context, principal auth.Principal, storeID string) (db.MemoryStore, error) {
-	record, err := h.db.GetMemoryStore(ctx, principal.WorkspaceUUID, storeID)
-	if err == nil {
-		return record, nil
-	}
-	if !errors.Is(err, db.ErrNotFound) || principal.CredentialType != auth.CredentialTypePlatformSession {
-		return db.MemoryStore{}, err
-	}
-	return h.db.GetMemoryStoreByExternalID(ctx, principal.OrganizationUUID, storeID)
 }
 
 func (h *Handler) updateStoreRoute(w http.ResponseWriter, r *http.Request) {
@@ -553,7 +542,7 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 			writeBadRequest(w, r, errors.New("order_by must be path when depth is set"))
 			return
 		}
-		store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+		store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 		if err != nil {
 			h.writeStoreLoadError(w, r, err, storeID)
 			return
@@ -566,7 +555,7 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 		writeBadRequest(w, r, err)
 		return
 	}
-	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -670,7 +659,7 @@ func (h *Handler) retrieveMemory(w http.ResponseWriter, r *http.Request, storeID
 		writeBadRequest(w, r, err)
 		return
 	}
-	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -913,7 +902,7 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, storeID s
 		writeBadRequest(w, r, errors.New("operation must be created, modified, or deleted"))
 		return
 	}
-	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -963,7 +952,7 @@ func (h *Handler) retrieveVersion(w http.ResponseWriter, r *http.Request, storeI
 		writeBadRequest(w, r, err)
 		return
 	}
-	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return

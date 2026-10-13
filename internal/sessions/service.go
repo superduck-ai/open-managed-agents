@@ -327,6 +327,11 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 	if changed && len(removal.StatusEvents) == 0 {
 		h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_terminated", archived.ExternalID, nil, *archived.ArchivedAt)
 	}
+	if h.sandboxReclaims != nil {
+		if err := h.sandboxReclaims.EnqueueArchivedSession(r.Context(), archived); err != nil {
+			h.logger.ErrorContext(r.Context(), "schedule archived session sandbox reclamation", "session_id", sessionID, "error", err)
+		}
+	}
 	response, err := h.responseFromSession(r, archived)
 	if err != nil {
 		return internalError("Could not archive session", fmt.Errorf("load archived session %q response: %w", sessionID, err))
@@ -367,11 +372,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *Handler) finishSessionRemoval(ctx context.Context, removal db.SessionRemoval) {
-	if removal.TerminatedCodeSession != "" && h.codeSessions != nil {
-		if err := h.codeSessions.TerminateManagedAgentCodeSession(ctx, removal.Session, removal.TerminatedCodeSession); err != nil {
-			h.logger.ErrorContext(ctx, "purge removed session worker events", "session_id", removal.Session.ExternalID, "code_session_id", removal.TerminatedCodeSession, "error", err)
-		}
-	}
+	h.codeSessions.PurgeWorkerEvents(ctx, removal.CodeSessionIDs)
 	h.publishSessionEvents(ctx, removal.StatusEvents)
 	h.enqueueWebhooksForSessionEvents(ctx, removal.Session.WorkspaceUUID, removal.Session.ExternalID, removal.StatusEvents)
 }
@@ -533,13 +534,15 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if outcomesChanged {
 		outcomeEvaluations = normalizedSession.OutcomeEvaluations
 	}
-	created, err := h.eventPayloads.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
+	changes, err := h.eventPayloads.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			return invalidRequest(errors.New("archived sessions do not accept new events"))
 		}
 		return mapSessionLoadError(err, sessionID)
 	}
+	h.codeSessions.PurgeWorkerEvents(r.Context(), changes.RetiredCodeSessionIDs)
+	created := changes.Events
 	h.publishSessionEvents(r.Context(), created)
 	h.enqueueWebhooksForSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, created)
 	if h.codeSessions != nil {

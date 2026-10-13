@@ -1,4 +1,4 @@
-import { Activity, Code2, Gauge, KeyRound, LifeBuoy, MessageSquare, Plus, Tags, TerminalSquare } from 'lucide-react';
+import { Activity, Code2, KeyRound, MessageSquare, Plus, Tags, TerminalSquare } from 'lucide-react';
 import { useState } from 'react';
 import { placeholderIcons } from '../../app/layout/navigation';
 import { useAuth } from '../../shared/auth/context';
@@ -24,10 +24,8 @@ import {
   DataTable,
   EmptyState,
   MetricTile,
-  NoticeCard,
   PanelCard,
   PrimaryAction,
-  SecondaryAction,
   SettingRow,
 } from './frame';
 import { formatRole, titleize, type IconComponent } from './model';
@@ -137,57 +135,6 @@ export function PlaygroundPage() {
   );
 }
 
-export function LimitsPage() {
-  const { msg } = useI18n();
-
-  return (
-    <ConsolePageFrame
-      title={msg('limits.title', 'Rate limits')}
-      icon={Gauge}
-      description={msg(
-        'limits.description',
-        'Limits help us mitigate against misuse and manage API capacity. Rate limits restrict API usage frequency over a certain period of time.',
-      )}
-      eyebrow={msg('limits.customPlan', 'Custom Plan')}
-      actions={
-        <SecondaryAction
-          href="/usage/limits"
-          icon={Gauge}
-          label={msg('limits.monitorUsage', 'Monitor rate limit usage')}
-        />
-      }
-    >
-      <NoticeCard
-        icon={LifeBuoy}
-        title={msg(
-          'limits.notice.title',
-          'Contact the Anthropic accounts team to learn more about custom rate limits.',
-        )}
-        action={
-          <ButtonLink
-            href="https://www.anthropic.com/contact-sales"
-            target="_blank"
-            rel="noreferrer"
-            variant="outline"
-            size="lg"
-          >
-            {msg('limits.notice.action', 'Contact sales')}
-          </ButtonLink>
-        }
-      />
-      <DataTable
-        columns={[
-          msg('analytics.table.model', 'Model'),
-          msg('analytics.rateLimits.requestsPerMinute', 'Requests per Minute'),
-          msg('analytics.rateLimits.inputTokensPerMinute', 'Input Tokens per Minute'),
-          msg('analytics.rateLimits.outputTokensPerMinute', 'Output Tokens per Minute'),
-        ]}
-        rows={limitRows}
-      />
-    </ConsolePageFrame>
-  );
-}
-
 export function MembersPage() {
   const { msg } = useI18n();
   const { account } = useAuth();
@@ -242,8 +189,8 @@ export function ClaudeCodeSettingsPage() {
       label: msg('claudeCode.settings.workspacePermissions.optionSeatHolders', 'Members with a Claude Code seat'),
     },
     {
-      value: 'developers-and-admins',
-      label: msg('claudeCode.settings.workspacePermissions.optionDevelopers', 'Developers and admins'),
+      value: 'all-members',
+      label: msg('claudeCode.settings.workspacePermissions.optionAllMembers', 'All members'),
     },
     {
       value: 'disabled',
@@ -377,13 +324,6 @@ export function ConsoleFeaturePage({ section }: { section: string }) {
     </ConsolePageFrame>
   );
 }
-
-const limitRows = [
-  ['Claude Fable 5', '5', '10K excluding cache reads', '4K'],
-  ['Claude Opus 4.8', '5', '10K excluding cache reads', '4K'],
-  ['Claude Sonnet 4.6', '50', '40K excluding cache reads', '16K'],
-  ['Claude Haiku 4.5', '50', '50K excluding cache reads', '20K'],
-];
 
 const featurePageConfig: Record<
   string,

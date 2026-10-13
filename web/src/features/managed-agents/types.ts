@@ -36,8 +36,6 @@ export type AgentTemplate = {
 
 export type CodeFormat = 'YAML' | 'JSON';
 
-export type IntegrationSnippetLanguage = 'cli' | 'python' | 'typescript' | 'curl';
-
 export type AgentPanelTab = 'config' | 'preview';
 
 export type AgentApiResponse = {
@@ -166,6 +164,7 @@ export type AgentSearchResponse = AgentPageResponse & {
 };
 
 export type SessionApiResponse = {
+  metadata?: Record<string, string>;
   id: string;
   agent: unknown;
   archived_at: string | null;
@@ -495,7 +494,7 @@ export type ToolCallEntry = BaseSessionEventEntry & {
   confirmationEvent?: QuickstartSessionEvent;
   usage: SessionEventUsage;
   inferenceMs: number;
-  executionMs: number;
+  executionMs?: number;
   lifecycle: ToolLifecycle;
   bracketId: string;
   bracketStartMs?: number;
@@ -507,7 +506,7 @@ export type ToolBatchEntry = Omit<BaseSessionEventEntry, 'kind'> & {
   toolCounts: Array<{ name: string; count: number }>;
   usage: SessionEventUsage;
   inferenceMs: number;
-  executionMs: number;
+  executionMs?: number;
   lifecycle: ToolLifecycle;
   bracketStartMs?: number;
 };
@@ -516,7 +515,7 @@ export type DisplayEventEntry = BaseSessionEventEntry & {
   kind: 'message' | 'status' | 'passthrough' | 'outcome' | 'debug';
   usage: SessionEventUsage;
   inferenceMs: number;
-  executionMs: number;
+  executionMs?: number;
   inProgress?: boolean;
   outcomeStatus?: string;
   outcomeIteration?: number;
@@ -631,66 +630,6 @@ export type CreateAgentInput = {
 };
 
 export type AgentEditConfig = z.infer<typeof agentEditConfigSchema>;
-
-export type QuickstartToolStatus = 'running' | 'awaiting_user' | 'completed' | 'failed';
-
-export type QuickstartToolCall = {
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-  status: QuickstartToolStatus;
-  result?: string;
-  error?: string;
-};
-
-export type QuickstartChatItem =
-  | {
-      id: string;
-      type: 'message';
-      role: 'user' | 'assistant';
-      content: string;
-    }
-  | {
-      id: string;
-      type: 'create_agent_result';
-      agentConfig: CreateAgentInput;
-    }
-  | {
-      id: string;
-      type: 'status';
-      content: string;
-      tone?: 'muted' | 'success' | 'error';
-    }
-  | {
-      id: string;
-      type: 'tool';
-      call: QuickstartToolCall;
-    };
-
-export type QuickstartToolExecutionResult = {
-  content: string;
-  isError?: boolean;
-};
-
-export type QuickstartEnvironmentConfig = {
-  type?: string;
-  networking?: Record<string, unknown>;
-  [key: string]: unknown;
-};
-
-export type QuickstartCreateEnvironmentInput = {
-  reuse_environment_id?: string;
-  name?: string;
-  description?: string;
-  config?: QuickstartEnvironmentConfig;
-};
-
-export type QuickstartDeploymentInput = {
-  name?: string;
-  cron_expression?: string;
-  timezone?: string;
-  initial_message?: string;
-};
 
 export type CredentialTokenEndpointAuthType = 'none' | 'client_secret_post' | 'client_secret_basic';
 

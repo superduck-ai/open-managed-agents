@@ -32,6 +32,7 @@ nats:
     max_age: 24h
     replicas: 3 # Set 1 for a single-node JetStream deployment.
   worker_event_stream:
+    consumer_inactive_threshold: 5m
     max_bytes: 268435456
     max_age: 0s
     replicas: 3
@@ -40,6 +41,8 @@ nats:
 # Optional. Omit the entire auth.smtp block to accept any non-empty verification
 # code without sending email. Configure every SMTP field together for real email.
 auth:
+  # 邀请邮件按钮使用的控制台 HTTPS origin；未配置时只创建站内邀请。
+  console_url: ""
   smtp:
     # Required host:port. Surrounding whitespace is removed during loading.
     addr: smtp.example.com:587
@@ -220,6 +223,24 @@ sandbox_lifecycle:
   enabled: true
   dry_run: true
   idle_timeout: 24h
+
+environment_packages:
+  npm:
+    registry: ""
+    scoped_registries: {}
+    # Example: {"@example": "https://registry.example.internal/npm/"}
+  pip:
+    index_url: ""
+    # Example: "https://packages.example.internal/pypi/simple/"
+  go:
+    proxy: ""
+    # Example: "https://packages.example.internal/goproxy/"
+  cargo:
+    registries: {}
+    # Example: {example: "https://packages.example.internal/cargo/index/"}
+  gem:
+    sources: []
+    # Example: ["https://packages.example.internal/rubygems/"]
 
 # Copy this section into the active OMA configuration. Disabled by default.
 # Template creation uses the existing e2b.api_url and e2b.api_key.

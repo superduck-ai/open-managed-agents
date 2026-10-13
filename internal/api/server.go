@@ -22,8 +22,10 @@ import (
 	filestoreapi "github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/invitations"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
+	"github.com/superduck-ai/open-managed-agents/internal/mcpservers"
 	memoryapi "github.com/superduck-ai/open-managed-agents/internal/memory"
 	messagesapi "github.com/superduck-ai/open-managed-agents/internal/messages"
 	modelsapi "github.com/superduck-ai/open-managed-agents/internal/models"
@@ -43,12 +45,14 @@ import (
 	webhooksapi "github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	workbenchapi "github.com/superduck-ai/open-managed-agents/internal/workbench"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
+	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
 )
 
 type Server struct {
+	workspaceAccess      *workspaceaccess.Service
 	cfg                  config.Config
 	db                   *db.DB
 	logger               *slog.Logger
@@ -86,6 +90,7 @@ type Server struct {
 // Logger 是进程根 logger；nil 时统一回落到 slog.Default，生产组装应显式传入。
 type ServerDeps struct {
 	Prebuilds              *environments.Prebuilds
+	SandboxLifecycle       *environments.SandboxLifecycle
 	Config                 config.Config
 	DB                     *db.DB
 	Deployments            *deploymentsapi.Store
@@ -133,6 +138,7 @@ func NewServer(deps ServerDeps) *Server {
 	webhookEnqueuer := deps.WebhookEnqueuer
 	workbenchLogger := componentLogger("workbench")
 	mcpCatalogHandler := mcpcatalogs.NewHandler(deps.DB, componentLogger("mcp_catalogs"))
+	mcpServerHandler := mcpservers.NewHandler(deps.DB, componentLogger("mcp_servers"))
 	filestoreService := deps.FilestoreService
 	if filestoreService == nil {
 		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.DB, deps.ObjectStore)
@@ -147,6 +153,7 @@ func NewServer(deps ServerDeps) *Server {
 		oauthRefreshLease = lease
 	}
 	s := &Server{
+		workspaceAccess:      workspaceaccess.New(deps.DB),
 		cfg:                  deps.Config,
 		db:                   deps.DB,
 		logger:               componentLogger("api"),
@@ -172,6 +179,9 @@ func NewServer(deps ServerDeps) *Server {
 		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 		tunnelBroker:         deps.TunnelBroker,
 	}
+	if deps.SandboxLifecycle != nil {
+		s.sessions.WithSandboxReclaimer(deps.SandboxLifecycle)
+	}
 	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
@@ -190,7 +200,7 @@ func NewServer(deps ServerDeps) *Server {
 	}
 	router.Get("/.well-known/oauth-protected-resource/v2/ccr-sessions/{code_session_id}/mcp/*", s.codeSessions.HandleMCPProtectedResource)
 	s.registerVersionedAPIRoutes(router)
-	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler)
+	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler, mcpServerHandler)
 	s.router = router
 	return s
 }
@@ -267,7 +277,18 @@ func filestoreNotFound(w http.ResponseWriter, _ *http.Request) {
 	filestoreapi.WriteProtocolError(w, http.StatusNotFound, "not_found", "Not found")
 }
 
-func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogger *slog.Logger, mcpCatalogHandler *mcpcatalogs.Handler) {
+func (s *Server) registerPlatformConsoleRoutes(
+	router chi.Router,
+	workbenchLogger *slog.Logger,
+	mcpCatalogHandler *mcpcatalogs.Handler,
+	mcpServerHandler *mcpservers.Handler,
+) {
+	router.Group(func(r chi.Router) {
+		r.Use(s.platformIdentityMiddleware)
+		r.Route("/api/invitations", func(r chi.Router) {
+			invitations.NewHandler(s.db, verifiedInvitationEmail, s.logger.With("component", "invitations")).RegisterRoutes(r)
+		})
+	})
 	router.Group(func(r chi.Router) {
 		r.Use(s.optionalPlatformAuthMiddleware)
 		platformapi.RegisterDirectoryRoutes(r)
@@ -300,15 +321,18 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogge
 			platformapi.RegisterOrganizationOAuthEnvironmentRoutes(r)
 		})
 		r.Route("/api/console/organizations/{orgUuid}", func(r chi.Router) {
+			r.Use(platformCSRFMiddleware)
 			platformapi.RegisterConsoleOrganizationWorkspaceRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationAdminRequestRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationAPIKeyRoutes(r, s.db)
 			platformapi.RegisterConsoleLLMProviderRoutes(r, s.db, s.vaultSecrets)
 			platformapi.RegisterConsoleOrganizationMemberRoutes(r, s.db)
-			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db)
+			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db, invitations.NewMailer(s.cfg.Auth, s.db, s.logger.With("component", "invitation_mail")))
+			platformapi.RegisterConsoleWorkspaceMemberRoutes(r, s.db)
 			mcpCatalogHandler.RegisterRoutes(r)
+			mcpServerHandler.RegisterRoutes(r)
 			if s.consoleTunnels != nil {
-				r.With(platformCSRFMiddleware).Mount("/workspaces/{workspaceId}/mcp_tunnels", s.consoleTunnels)
+				r.Mount("/workspaces/{workspaceId}/mcp_tunnels", s.consoleTunnels)
 			}
 		})
 		r.Route("/api/{orgUuid}", func(r chi.Router) {
@@ -424,6 +448,10 @@ func (s *Server) platformAuthMiddleware(next http.Handler) http.Handler {
 			httpapi.WriteError(w, r, err)
 			return
 		}
+		if !platformActionAllowed(r, principal.WorkspaceAccess) {
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Action not allowed"))
+			return
+		}
 		ctx := auth.WithPrincipal(r.Context(), principal)
 		if orgAlias := s.platformMirrorOrganizationAlias(r, principal); orgAlias != "" {
 			ctx = auth.WithPlatformMirrorOrganizationAlias(ctx, orgAlias)
@@ -438,9 +466,11 @@ func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler 
 			next.ServeHTTP(w, r)
 			return
 		}
-		principal, err := s.authenticatePlatformSession(r)
+		session, err := s.loadPlatformSession(r)
 		if err != nil {
-			clearPlatformSessionCookies(w)
+			if err.Status == http.StatusUnauthorized {
+				clearPlatformSessionCookies(w)
+			}
 			if err.Status >= http.StatusInternalServerError {
 				httpapi.WriteError(w, r, err)
 				return
@@ -448,7 +478,11 @@ func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler 
 			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
+		ctx := platformsession.WithSession(r.Context(), session)
+		if principal, scopeErr := s.resolvePlatformSessionPrincipal(r, session); scopeErr == nil {
+			ctx = auth.WithPrincipal(ctx, principal)
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -456,7 +490,7 @@ func (s *Server) authenticated(next http.Handler, authenticate func(*http.Reques
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, err := authenticate(r)
 		if err != nil {
-			if auth.ExtractPlatformSessionKey(r) != "" {
+			if err.Status == http.StatusUnauthorized && auth.ExtractPlatformSessionKey(r) != "" {
 				clearPlatformSessionCookies(w)
 			}
 			httpapi.WriteError(w, r, err)
@@ -479,45 +513,11 @@ func clearPlatformSessionCookies(w http.ResponseWriter) {
 }
 
 func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *httpapi.Error) {
-	sessionKey := auth.ExtractPlatformSessionKey(r)
-	if sessionKey == "" {
-		return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing sessionKey cookie")
-	}
-	session, err := s.platformStore.Get(r.Context(), sessionKey)
+	session, err := s.loadPlatformSession(r)
 	if err != nil {
-		if errors.Is(err, platformsession.ErrNotFound) {
-			return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session")
-		}
-		s.logger.ErrorContext(r.Context(), "authenticate platform session", "error", err)
-		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
+		return auth.Principal{}, err
 	}
-	if session.UserUUID == "" || session.WorkspaceUUID == "" {
-		refreshed, refreshErr := s.db.ResolvePlatformSessionIdentity(r.Context(), platformsession.CreateInput{
-			SessionKey: sessionKey,
-			UserUUID:   session.UserExternalID,
-			OrgUUID:    session.OrganizationUUID,
-			ExpiresAt:  session.ExpiresAt,
-		})
-		if refreshErr != nil {
-			if errors.Is(refreshErr, db.ErrNotFound) || errors.Is(refreshErr, platform.ErrNotFound) {
-				return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session")
-			}
-			s.logger.ErrorContext(r.Context(), "refresh platform session UUID references", "error", refreshErr)
-			return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-		}
-		refreshed.ExternalID = session.ExternalID
-		if saveErr := s.platformStore.Save(r.Context(), sessionKey, refreshed); saveErr != nil {
-			s.logger.ErrorContext(r.Context(), "save refreshed platform session UUID references", "error", saveErr)
-			return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-		}
-		session = refreshed
-	}
-	principal := session.Principal()
-	principal, orgErr := s.applyPlatformOrganizationOverride(r, principal)
-	if orgErr != nil {
-		return auth.Principal{}, orgErr
-	}
-	return s.resolvePlatformWorkspaceScope(r, principal)
+	return s.resolvePlatformSessionPrincipal(r, session)
 }
 
 func (s *Server) resolvePlatformWorkspaceScope(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {
@@ -525,72 +525,20 @@ func (s *Server) resolvePlatformWorkspaceScope(r *http.Request, principal auth.P
 }
 
 func (s *Server) resolvePlatformWorkspace(r *http.Request, principal auth.Principal, workspaceID string) (auth.Principal, *httpapi.Error) {
-	if workspaceID == "" || workspaceID == "default" {
-		workspaceID = principal.WorkspaceExternalID
+	if workspaceID == "" {
+		workspaceID = "default"
 	}
-	workspace, err := s.db.GetAdminWorkspace(r.Context(), principal.OrganizationUUID, workspaceID)
+	workspace, access, err := s.workspaceAccess.Resolve(r.Context(), principal.OrganizationUUID, principal.UserExternalID, workspaceID)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not found")
+		if errors.Is(err, workspaceaccess.ErrDenied) {
+			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not allowed")
 		}
-		s.logger.ErrorContext(r.Context(), "load requested platform workspace", "error", err)
+		s.logger.ErrorContext(r.Context(), "resolve workspace access", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-	}
-	if workspace.ArchivedAt != nil {
-		return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace is archived")
-	}
-	if accessErr := s.authorizePlatformWorkspaceAccess(r, principal, workspace); accessErr != nil {
-		return auth.Principal{}, accessErr
 	}
 	principal.WorkspaceUUID = workspace.UUID
 	principal.WorkspaceExternalID = workspace.ExternalID
-	return principal, nil
-}
-
-func (s *Server) authorizePlatformWorkspaceAccess(r *http.Request, principal auth.Principal, workspace db.AdminWorkspace) *httpapi.Error {
-	user, err := s.db.GetAdminUser(r.Context(), principal.OrganizationUUID, principal.UserExternalID)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not allowed")
-		}
-		s.logger.ErrorContext(r.Context(), "load platform user workspace access", "error", err)
-		return httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-	}
-	if strings.EqualFold(user.Role, "admin") {
-		return nil
-	}
-	if _, err := s.db.GetAdminWorkspaceMember(
-		r.Context(),
-		principal.OrganizationUUID,
-		workspace.ExternalID,
-		principal.UserExternalID,
-	); err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not allowed")
-		}
-		s.logger.ErrorContext(r.Context(), "load platform workspace membership", "error", err)
-		return httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-	}
-	return nil
-}
-
-func (s *Server) applyPlatformOrganizationOverride(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {
-	orgID := platformOrganizationOverrideID(r)
-	if orgID == "" || orgID == principal.OrganizationUUID {
-		return principal, nil
-	}
-	org, err := s.db.GetPlatformOrganization(r.Context(), orgID)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) || errors.Is(err, platform.ErrNotFound) {
-			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Organization not found")
-		}
-		s.logger.ErrorContext(r.Context(), "load platform organization override", "error", err)
-		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-	}
-	if org.UUID != principal.OrganizationUUID {
-		return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Organization not allowed")
-	}
-	principal.OrganizationUUID = org.UUID
+	principal.WorkspaceAccess = access
 	return principal, nil
 }
 

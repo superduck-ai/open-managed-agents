@@ -7,7 +7,14 @@ import {
   MessageScrollerViewport,
 } from '../../../shared/ui/message-scroller';
 import { resetTestDom } from '../../../test/setup';
-import { type DisplayEventEntry, type IdleGapEntry, type SessionEventUsage, type ToolCallEntry } from '../types';
+import {
+  type DisplayEventEntry,
+  type IdleGapEntry,
+  type SessionEventListEntry,
+  type SessionEventUsage,
+  type ToolCallEntry,
+} from '../types';
+import { buildSessionEventEntries } from './sessionTraceModel';
 import { SessionDetailDeltaFramesContext } from './sessionDetailData';
 import { SessionTranscriptView } from './SessionTranscriptView';
 import { type ReactNode } from 'react';
@@ -26,6 +33,258 @@ const EMPTY_USAGE: SessionEventUsage = {
 afterEach(() => cleanup());
 
 describe('SessionTranscriptView', () => {
+  test.each([0, 40])('prefers reported thinking and model durations %s over bracket timing', (durationMs) => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const entries = buildSessionEventEntries(
+      [
+        { id: 'request', type: 'span.model_request_start', processed_at: '2026-10-01T05:26:53.000Z' },
+        {
+          id: 'thinking',
+          type: 'agent.thinking',
+          processed_at: '2026-10-01T05:26:54.000Z',
+          model_request_start_id: 'request',
+          duration_ms: durationMs,
+          content: [{ type: 'thinking', thinking: 'Checking.' }],
+        },
+        {
+          id: 'answer',
+          type: 'agent.message',
+          processed_at: '2026-10-01T05:26:55.000Z',
+          model_request_start_id: 'request',
+          inference_ms: durationMs,
+          duration_ms: 300,
+          content: [{ type: 'text', text: 'Done.' }],
+        },
+        {
+          id: 'request-end',
+          type: 'span.model_request_end',
+          processed_at: '2026-10-01T05:26:55.000Z',
+          model_request_start_id: 'request',
+        },
+      ],
+      'transcript',
+    );
+
+    const { container } = render(transcriptTree(entries));
+
+    expect(container.querySelector('[data-transcript-thinking-row]')?.textContent).toContain('Thought for 0.0s');
+    expect(
+      container.querySelector('[data-transcript-iteration] [data-testid="session-meta-strip"]')?.textContent,
+    ).toContain(`${durationMs}ms`);
+    expect(screen.queryByText('2.0s')).toBeNull();
+  });
+
+  test.each(['inference_ms', 'model_duration_ms', 'model_request_duration_ms', 'duration_ms'])(
+    'shows explicitly reported zero model duration from %s without a bracket',
+    (key) => {
+      resetTestDom('https://oma.duck.ai/sessions/test');
+      const entries = buildSessionEventEntries(
+        [
+          {
+            id: 'answer',
+            type: 'agent.message',
+            processed_at: '2026-10-01T05:26:55.000Z',
+            content: [{ type: 'text', text: 'Done.' }],
+            [key]: 0,
+          },
+        ],
+        'transcript',
+      );
+
+      render(transcriptTree(entries));
+
+      expect(screen.getByText('0ms')).toBeTruthy();
+    },
+  );
+
+  test('uses a reported agent duration while its model request is still open', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const entries = buildSessionEventEntries(
+      [
+        { id: 'request', type: 'span.model_request_start', processed_at: '2026-10-01T05:26:53.000Z' },
+        {
+          id: 'answer',
+          type: 'agent.message',
+          processed_at: '2026-10-01T05:26:54.000Z',
+          model_request_start_id: 'request',
+          duration_ms: 40,
+          content: [{ type: 'text', text: 'Done.' }],
+        },
+      ],
+      'transcript',
+    );
+
+    const { container } = render(transcriptTree(entries));
+
+    expect(
+      container.querySelector('[data-transcript-iteration] [data-testid="session-meta-strip"]')?.textContent,
+    ).toContain('40ms');
+  });
+
+  test('uses tool call and result timestamps when execution duration was not reported', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const entries = buildSessionEventEntries(
+      [
+        { id: 'request', type: 'span.model_request_start', processed_at: '2026-10-01T05:26:51.000Z' },
+        { id: 'write', type: 'agent.tool_use', processed_at: '2026-10-01T05:26:52.000Z', name: 'Write', input: {} },
+        {
+          id: 'request-end',
+          type: 'span.model_request_end',
+          processed_at: '2026-10-01T05:26:52.000Z',
+          model_request_start_id: 'request',
+        },
+        {
+          id: 'written',
+          type: 'agent.tool_result',
+          processed_at: '2026-10-01T05:26:52.750Z',
+          tool_use_id: 'write',
+          content: 'Done',
+        },
+      ],
+      'transcript',
+    );
+
+    const { container } = render(transcriptTree(entries));
+
+    expect(container.querySelector('[data-transcript-tool-row]')?.textContent).toContain('750ms');
+    expect(
+      container
+        .querySelector('[data-transcript-tool-row]')
+        ?.closest('[data-transcript-iteration]')
+        ?.querySelector('[data-testid="session-meta-strip"]')?.textContent,
+    ).toContain('750ms');
+    expect(screen.queryByText('0ms')).toBeNull();
+  });
+
+  test('shows thinking and model request durations from persisted events without reported execution timing', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const entries = buildSessionEventEntries(
+      [
+        { id: 'request', type: 'span.model_request_start', processed_at: '2026-10-01T05:26:53.237442Z' },
+        {
+          id: 'thinking',
+          type: 'agent.thinking',
+          processed_at: '2026-10-01T05:26:54.118Z',
+          model_request_start_id: 'request',
+          content: [{ type: 'thinking', thinking: 'File written.' }],
+        },
+        {
+          id: 'answer',
+          type: 'agent.message',
+          processed_at: '2026-10-01T05:26:54.898337Z',
+          model_request_start_id: 'request',
+          content: [{ type: 'text', text: 'Done.' }],
+        },
+        {
+          id: 'request-end',
+          type: 'span.model_request_end',
+          processed_at: '2026-10-01T05:26:54.898337Z',
+          model_request_start_id: 'request',
+        },
+      ],
+      'transcript',
+    );
+
+    const { container } = render(transcriptTree(entries));
+
+    expect(screen.getByText('Thought for 0.9s')).toBeTruthy();
+    const thinkingPanel = container.querySelector('[data-thinking-only]');
+    expect(thinkingPanel?.querySelector('[data-testid="session-meta-strip"]')?.textContent).toContain('881ms');
+    expect(screen.getByText('1.7s')).toBeTruthy();
+    expect(screen.queryByText('0ms')).toBeNull();
+  });
+
+  test('hides unknown durations on thinking, messages, and tools', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const entries = buildSessionEventEntries(
+      [
+        {
+          id: 'thinking',
+          type: 'agent.thinking',
+          processed_at: '2026-10-01T05:26:54.118Z',
+          content: [{ type: 'thinking', thinking: 'Checking.' }],
+        },
+        {
+          id: 'answer',
+          type: 'agent.message',
+          processed_at: '2026-10-01T05:26:54.898337Z',
+          bracket_id: 'answer',
+          content: [{ type: 'text', text: 'Done.' }],
+        },
+        { id: 'write', type: 'agent.tool_use', bracket_id: 'write', name: 'Write', input: {} },
+        { id: 'written', type: 'agent.tool_result', tool_use_id: 'write', content: 'Done' },
+      ],
+      'transcript',
+    );
+
+    const { container } = render(transcriptTree(entries));
+
+    expect(screen.getByText('Thought')).toBeTruthy();
+    expect(container.querySelector('[data-transcript-tool-row]')?.textContent).toContain('Completed');
+    expect(screen.queryByText('0ms')).toBeNull();
+    expect(container.querySelectorAll('[data-testid="session-meta-strip"]')).toHaveLength(3);
+  });
+
+  test.each([
+    [-1, 300, '300ms'],
+    [-1, -2, '750ms'],
+    [undefined, undefined, '750ms'],
+    [0, 300, '0ms'],
+    [40, 300, '40ms'],
+  ])('uses valid result duration %s then call duration %s before timestamps', (reportedMs, callMs, expected) => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const entries = buildSessionEventEntries(
+      [
+        {
+          id: 'write',
+          type: 'agent.tool_use',
+          processed_at: '2026-10-01T05:26:50.000Z',
+          bracket_id: 'write',
+          name: 'Write',
+          input: {},
+          permission_behavior: 'ask',
+          duration_ms: callMs,
+        },
+        {
+          id: 'approved',
+          type: 'user.tool_confirmation',
+          processed_at: '2026-10-01T05:26:52.000Z',
+          tool_use_id: 'write',
+          decision: 'allow',
+        },
+        {
+          id: 'written',
+          type: 'agent.tool_result',
+          processed_at: '2026-10-01T05:26:52.750Z',
+          tool_use_id: 'write',
+          content: 'Done',
+          duration_ms: reportedMs,
+        },
+      ],
+      'transcript',
+    );
+
+    const { container } = render(transcriptTree(entries));
+
+    expect(container.querySelector('[data-transcript-tool-row]')?.textContent).toContain(expected);
+  });
+
+  test('hides invalid tool durations when timestamps are unavailable', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const entries = buildSessionEventEntries(
+      [
+        { id: 'write', type: 'agent.tool_use', name: 'Write', input: {}, duration_ms: -2 },
+        { id: 'written', type: 'agent.tool_result', tool_use_id: 'write', content: 'Done', duration_ms: -1 },
+      ],
+      'transcript',
+    );
+
+    const { container } = render(transcriptTree(entries));
+
+    expect(container.querySelector('[data-transcript-tool-row]')?.textContent).toContain('Completed');
+    expect(screen.queryByText('0ms')).toBeNull();
+  });
+
   test('renders Markdown as an agent message grows and after the stream ends', () => {
     resetTestDom('https://oma.duck.ai/sessions/test');
     const answer = displayEntry('live-answer', 'agent', 'A **stale reply**', 'bracket-live');
@@ -335,10 +594,7 @@ function renderTranscript(
   return render(transcriptTree(entries, onSelectEntry));
 }
 
-function transcriptTree(
-  entries: Array<DisplayEventEntry | ToolCallEntry>,
-  onSelectEntry: (id: string | null) => void = () => {},
-) {
+function transcriptTree(entries: SessionEventListEntry[], onSelectEntry: (id: string | null) => void = () => {}) {
   return transcriptScrollerTree(
     <SessionTranscriptView
       entries={entries}
@@ -422,7 +678,6 @@ function displayEntry(
     isError: false,
     usage: EMPTY_USAGE,
     inferenceMs: 100,
-    executionMs: 0,
     bracketId,
     bracketStartMs: thinkingDurationMs === undefined ? undefined : processedAtMs - thinkingDurationMs,
   };

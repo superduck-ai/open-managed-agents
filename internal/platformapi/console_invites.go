@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/invitations"
+
 	"github.com/go-chi/chi/v5"
 )
 
@@ -23,14 +26,14 @@ type createConsoleInviteRequest struct {
 	Role  string `json:"role"`
 }
 
-func RegisterConsoleOrganizationInviteRoutes(r chi.Router, store OrganizationStore) {
-	registerConsoleOrganizationInviteRoutes(r, store)
+func RegisterConsoleOrganizationInviteRoutes(r chi.Router, store OrganizationStore, mailer *invitations.Mailer) {
+	registerConsoleOrganizationInviteRoutes(r, store, mailer)
 }
 
-func registerConsoleOrganizationInviteRoutes(r chi.Router, store OrganizationStore) {
+func registerConsoleOrganizationInviteRoutes(r chi.Router, store OrganizationStore, mailer *invitations.Mailer) {
 	r.Get("/invites", handleListConsoleInvites(store))
-	r.Post("/invites", handleCreateConsoleInvite(store))
-	r.Put("/invites/{inviteId}", handleResendConsoleInvite(store))
+	r.Post("/invites", handleCreateConsoleInvite(store, mailer))
+	r.Put("/invites/{inviteId}", handleResendConsoleInvite(store, mailer))
 	r.Delete("/invites/{inviteId}", handleDeleteConsoleInvite(store))
 }
 
@@ -63,7 +66,7 @@ func handleListConsoleInvites(store OrganizationStore) http.HandlerFunc {
 	}
 }
 
-func handleCreateConsoleInvite(store OrganizationStore) http.HandlerFunc {
+func handleCreateConsoleInvite(store OrganizationStore, mailer *invitations.Mailer) http.HandlerFunc {
 	inviteStore, _ := store.(consoleInviteStore)
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgUUID, ok := visibleOrgUUID(w, r)
@@ -105,11 +108,11 @@ func handleCreateConsoleInvite(store OrganizationStore) http.HandlerFunc {
 			internalError(w, "failed to create invite")
 			return
 		}
-		writeJSON(w, http.StatusOK, formatConsoleInvite(invite))
+		writeDeliveredInvite(w, r, invite, mailer)
 	}
 }
 
-func handleResendConsoleInvite(store OrganizationStore) http.HandlerFunc {
+func handleResendConsoleInvite(store OrganizationStore, mailer *invitations.Mailer) http.HandlerFunc {
 	inviteStore, _ := store.(consoleInviteStore)
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgUUID, ok := visibleOrgUUID(w, r)
@@ -134,8 +137,15 @@ func handleResendConsoleInvite(store OrganizationStore) http.HandlerFunc {
 			internalError(w, "failed to resend invite")
 			return
 		}
-		writeJSON(w, http.StatusOK, formatConsoleInvite(invite))
+		writeDeliveredInvite(w, r, invite, mailer)
 	}
+}
+
+func writeDeliveredInvite(w http.ResponseWriter, r *http.Request, invite ConsoleInvite, mailer *invitations.Mailer) {
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	response := formatConsoleInvite(invite)
+	response["email_delivery"] = mailer.Notify(r.Context(), principal, invite.Email, invite.ExpiresAt)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func handleDeleteConsoleInvite(store OrganizationStore) http.HandlerFunc {
@@ -187,6 +197,9 @@ func formatDeletedConsoleInvite(inviteID string) map[string]any {
 }
 
 func effectiveConsoleInviteStatus(invite ConsoleInvite) string {
+	if invite.Status == "declined" {
+		return "deleted"
+	}
 	status := strings.TrimSpace(strings.ToLower(invite.Status))
 	if status == "" {
 		status = "pending"

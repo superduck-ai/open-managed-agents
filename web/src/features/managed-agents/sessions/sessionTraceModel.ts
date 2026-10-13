@@ -23,7 +23,7 @@ import {
   type ToolCallEntry,
   type ToolLifecycle,
 } from '../types';
-import { compactEntityId, numericValueFromKeys, objectRecord, stringValueFromKeys, toRecord } from '../utils';
+import { compactEntityId, optionalNumericValueFromKeys, objectRecord, stringValueFromKeys, toRecord } from '../utils';
 import {
   addSessionEventUsage,
   emptySessionEventUsage,
@@ -735,7 +735,7 @@ export function displayEntryFromTraceEntry(
     ...baseEventEntry(traceEntry, kind, traceStartMs, msg),
     kind,
     usage: extractSessionEventUsage(event),
-    inferenceMs: sessionEventInferenceMs(event),
+    inferenceMs: sessionEventInferenceMs(event) ?? 0,
     executionMs: durationMs,
     inProgress: sessionDisplayEntryInProgress(event, kind),
     outcomeStatus,
@@ -761,12 +761,26 @@ export function toolCallEntryFromTraceEntry(
     resultEvent,
     confirmationEvent,
     usage: extractSessionEventUsage(event),
-    inferenceMs: sessionEventInferenceMs(event),
-    executionMs: sessionEventDurationMs(resultEvent ?? event) || sessionEventDurationMs(event),
+    inferenceMs: sessionEventInferenceMs(event) ?? 0,
+    executionMs: sessionToolExecutionMs(event, resultEvent, confirmationEvent),
     lifecycle: sessionToolLifecycle(event, resultEvent, confirmationEvent),
     bracketId: sessionEventBracketId(event),
     isError: traceEntry.isError || sessionToolResultIsError(resultEvent),
   };
+}
+
+function sessionToolExecutionMs(
+  event: QuickstartSessionEvent,
+  resultEvent?: QuickstartSessionEvent,
+  confirmationEvent?: QuickstartSessionEvent,
+) {
+  const reportedMs = (resultEvent ? sessionEventDurationMs(resultEvent) : undefined) ?? sessionEventDurationMs(event);
+  if (reportedMs !== undefined) return reportedMs;
+  if (!resultEvent || sessionToolLifecycle(event, resultEvent, confirmationEvent) === 'denied') return undefined;
+  const startEvent = confirmationEvent ?? event;
+  const startMs = sessionEventProcessedTimestamp(startEvent);
+  const endMs = sessionEventProcessedTimestamp(resultEvent);
+  return startMs && endMs >= startMs ? endMs - startMs : undefined;
 }
 
 export function baseEventEntry(
@@ -892,7 +906,8 @@ export function toolBatchEntry(calls: ToolCallEntry[]): ToolBatchEntry {
     (total, call) => addSessionEventUsage(total, call.usage),
     emptySessionEventUsage(),
   );
-  const executionMs = calls.reduce((max, call) => Math.max(max, call.executionMs), 0);
+  const durations = calls.flatMap((call) => (call.executionMs === undefined ? [] : [call.executionMs]));
+  const executionMs = durations.length ? Math.max(...durations) : undefined;
   const inferenceMs = calls.reduce((total, call) => total + call.inferenceMs, 0);
   const toolCounts = [
     ...calls.reduce((counts, call) => {
@@ -934,7 +949,7 @@ export function sessionEventProcessedTimestamp(event: QuickstartSessionEvent) {
 }
 
 export function sessionEventInferenceMs(event: QuickstartSessionEvent) {
-  return numericValueFromKeys(event, ['inference_ms', 'model_duration_ms', 'model_request_duration_ms']);
+  return optionalNumericValueFromKeys(event, ['inference_ms', 'model_duration_ms', 'model_request_duration_ms']);
 }
 
 export function sessionToolLifecycle(

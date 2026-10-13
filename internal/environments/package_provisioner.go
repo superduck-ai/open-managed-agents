@@ -25,7 +25,12 @@ const (
 // 在启动前全部失败。固定 flag 不含任何用户数据，spec 只经由 stdin 传入。
 func buildPackageProvisionCommand(cfg config.Config) string {
 	managerPath := firstNonEmpty(strings.TrimSpace(cfg.EnvironmentRunner.ManagerPath), defaultEnvironmentManagerPath)
-	return shellQuote(managerPath) + " " + packageProvisionArgs
+	command := shellQuote(managerPath) + " " + packageProvisionArgs
+	prelude := packageSourcePrelude(cfg.EnvironmentPackages)
+	if prelude == "" {
+		return command
+	}
+	return "sh -c " + shellQuote(prelude+command)
 }
 
 type packageManifest struct {

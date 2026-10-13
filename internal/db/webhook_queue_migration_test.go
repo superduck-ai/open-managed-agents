@@ -12,7 +12,7 @@ func TestWebhookQueueRetirementMigration(t *testing.T) {
 		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, source)
-	if _, err := provider.UpTo(ctx, 69); err != nil {
+	if _, err := provider.UpTo(ctx, 75); err != nil {
 		t.Fatal(err)
 	}
 	_, err := database.ExecContext(ctx, `INSERT INTO jobs(external_id,workspace_uuid,type,status,attempts,payload,locked_by,locked_until)
@@ -21,7 +21,7 @@ func TestWebhookQueueRetirementMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 70); err != nil {
+	if _, err := provider.UpTo(ctx, 76); err != nil {
 		t.Fatal(err)
 	}
 	assertWebhookFailureWindowColumn(t, database, true)

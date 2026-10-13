@@ -9,16 +9,17 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
-// SessionRemoval reports accepted work cancelled by archive or delete. The
-// caller purges the worker queue and publishes StatusEvents after commit.
-type SessionRemoval struct {
-	Session               Session
-	TerminatedCodeSession string
-	StatusEvents          []SessionEvent
+type SessionEventChanges struct {
+	Events                []SessionEvent
+	RetiredCodeSessionIDs []string
 }
 
-// Removal may cancel accepted work that the worker has not started. Serialize
-// with input acceptance and worker reports using the same Session → Worker locks.
+type SessionRemoval struct {
+	Session        Session
+	CodeSessionIDs []string
+	StatusEvents   []SessionEvent
+}
+
 func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, workspaceUUID, sessionID string, archive bool) (SessionRemoval, error) {
 	session, err := lockSessionForEvents(ctx, NewSessionMapper(executor), workspaceUUID, sessionID)
 	if err != nil {
@@ -33,22 +34,31 @@ func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, w
 		return SessionRemoval{}, err
 	}
 	var removal SessionRemoval
-	if found {
-		if session.Status != "idle" && worker.Status != "terminated" && worker.WorkerTurnStarted {
-			return SessionRemoval{}, ErrInvalidState
-		}
-		if _, err := codeSessions.TerminateByExternalID(ctx, session.OrganizationUUID, workspaceUUID, worker.ExternalID); err != nil {
-			return SessionRemoval{}, err
-		}
-		removal.TerminatedCodeSession = worker.ExternalID
+	if found && session.Status != "idle" && worker.Status != "terminated" && worker.WorkerTurnStarted {
+		return SessionRemoval{}, ErrInvalidState
 	}
 	eventID, err := ids.New("sevt_")
 	if err != nil {
 		return SessionRemoval{}, err
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	removal.StatusEvents, err = insertSessionEventsTx(ctx, executor, session, []SessionEvent{{
+	result, err := insertSessionEventsTx(ctx, executor, session, []SessionEvent{{
 		UUID: uuid.NewV4().String(), ExternalID: eventID, EventType: "session.status_terminated", CreatedAt: now, ProcessedAt: now,
 	}})
+	removal.StatusEvents = result.Events
 	return removal, err
+}
+
+func (d *DB) retireSessionWorkersTx(ctx context.Context, executor yourbatis.Executor, removal *SessionRemoval) error {
+	session := removal.Session
+	ids, err := NewCodeSessionMapper(executor).TerminateBySession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID)
+	if err != nil {
+		return err
+	}
+	removal.CodeSessionIDs = ids
+	return nil
+}
+
+func (d *DB) IsSessionRetired(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) (bool, error) {
+	return NewSessionMapper(d.mapperDB).IsRetired(ctx, organizationUUID, workspaceUUID, sessionUUID)
 }

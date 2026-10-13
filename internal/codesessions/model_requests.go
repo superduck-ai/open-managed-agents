@@ -48,9 +48,10 @@ type ModelRequestResult struct {
 }
 
 type ModelRequestToolUse struct {
-	ID    string
-	Name  string
-	Input json.RawMessage
+	ID            string
+	Name          string
+	Input         json.RawMessage
+	InputRejected bool
 }
 
 // ModelRequestMessage is a completed public message observed at the proxy.
@@ -124,12 +125,14 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 		event.Error = &modelRequestError{Type: result.ErrorType}
 	}
 	payloads := make([]json.RawMessage, 0, len(result.Messages)+1)
-	if result.ErrorType == "" {
-		tools, err := s.modelToolUsePayloads(ctx, request, result.ToolUses, result.EndedAt)
+	if toolUses := modelRequestPublicTools(result); len(toolUses) > 0 {
+		tools, err := s.modelToolUsePayloads(ctx, request, toolUses, result.EndedAt)
 		if err != nil {
 			return err
 		}
 		payloads = append(payloads, tools...)
+	}
+	if result.ErrorType == "" {
 		for _, message := range result.Messages {
 			payload, err := jsonv2.Marshal(struct {
 				ModelRequestMessage
@@ -144,6 +147,22 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 		}
 	}
 	return s.publishModelRequestEvent(ctx, request, event, payloads)
+}
+
+func modelRequestPublicTools(result ModelRequestResult) []ModelRequestToolUse {
+	if result.ErrorType == "" {
+		return result.ToolUses
+	}
+	if result.ErrorType != "invalid_response" {
+		return nil
+	}
+	var rejected []ModelRequestToolUse
+	for _, tool := range result.ToolUses {
+		if tool.InputRejected {
+			rejected = append(rejected, tool)
+		}
+	}
+	return rejected
 }
 
 func (s *Service) publishModelRequestEvent(ctx context.Context, request *ModelRequest, event modelRequestEvent, preceding []json.RawMessage) error {

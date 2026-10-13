@@ -27,6 +27,7 @@ const PrebuildQueue = "environment_prebuild"
 type Prebuilds struct {
 	db          *db.DB
 	cfg         config.EnvironmentPrebuildConfig
+	packages    config.EnvironmentPackageConfig
 	providerKey string
 	logger      *slog.Logger
 	images      imageBuilder
@@ -36,7 +37,7 @@ type Prebuilds struct {
 
 func NewPrebuilds(database *db.DB, cfg config.Config, logger *slog.Logger) *Prebuilds {
 	settings := cfg.EnvironmentPrebuilds
-	return &Prebuilds{db: database, cfg: settings, providerKey: prebuildProviderKey(cfg),
+	return &Prebuilds{db: database, cfg: settings, packages: cfg.EnvironmentPackages, providerKey: prebuildProviderKey(cfg),
 		logger:    logging.LoggerOrDefault(logger),
 		images:    &aliyunFlowImageBuilder{http: newBuildHTTP("x-yunxiao-token", settings.Image.Flow.Token), pipelineURL: settings.Image.Flow.PipelineURL},
 		templates: &cubeSandboxTemplateBuilder{http: newBuildHTTP("Authorization", "Bearer "+cfg.E2B.APIKey), apiURL: strings.TrimRight(cfg.E2B.APIURL, "/"), cfg: settings.Template}}
@@ -179,7 +180,7 @@ func (svc *Prebuilds) enqueue(ctx context.Context, tx *yourbatis.Tx, env *db.Env
 		WorkspaceUUID:   env.WorkspaceUUID,
 		EnvironmentUUID: env.UUID,
 		ProviderKey:     svc.providerKey,
-		Dockerfile:      packageDockerfile(svc.cfg.Image.BaseImage, packages),
+		Dockerfile:      packageDockerfile(svc.cfg.Image.BaseImage, packages, svc.packages),
 	}
 	result, err := svc.client.InsertTx(ctx, tx.SQLTx(), args, nil)
 	if err != nil {
@@ -346,9 +347,7 @@ func (svc *Prebuilds) readLogs(ctx context.Context, task prebuildTask, stage, cu
 	return svc.templates.ReadLogs(ctx, task.output.TemplateJobRef, cursor)
 }
 
-// Keep argv and ordering aligned with environment-manager provision-packages v1.
-// Exec-form RUN preserves specs literally and exposes package manager output to CI.
-func packageDockerfile(base string, packages *environmentPackages) string {
+func packageDockerfile(base string, packages *environmentPackages, sources config.EnvironmentPackageConfig) string {
 	var output strings.Builder
 	fmt.Fprintf(&output, "FROM --platform=linux/amd64 %s\nUSER root\nWORKDIR /home/user\n", base)
 	run := func(command []string) {
@@ -362,16 +361,35 @@ func packageDockerfile(base string, packages *environmentPackages) string {
 			run(append(prefix, specs...))
 		}
 	}
-	// Cache APT's index and installation together; pass specs as literal arguments.
 	batch([]string{"sh", "-c", `apt-get update && exec apt-get install -y -- "$@"`, "apt-get"}, packages.APT)
-	batch([]string{"cargo", "install"}, packages.Cargo)
-	batch([]string{"gem", "install"}, packages.Gem)
-	for _, spec := range packages.Go {
-		run([]string{"go", "install", spec})
+	cargoCommand := []string{"cargo", "install"}
+	if len(sources.Cargo.Registries) > 0 {
+		prelude := packageSourcePrelude(config.EnvironmentPackageConfig{Cargo: sources.Cargo})
+		cargoCommand = append([]string{"sh", "-c", prelude + `"$@"`, "cargo-install"}, cargoCommand...)
 	}
-	batch([]string{"npm", "install", "--global", "--"}, packages.NPM)
-	batch([]string{"pip", "install"}, packages.PIP)
+	batch(cargoCommand, packages.Cargo)
+	gemCommand := []string{"gem", "install"}
+	if len(sources.Gem.Sources) > 0 {
+		gemCommand = append(gemCommand, "--clear-sources")
+	}
+	for _, source := range sources.Gem.Sources {
+		gemCommand = append(gemCommand, "--source", source)
+	}
+	batch(gemCommand, packages.Gem)
+	for _, spec := range packages.Go {
+		run(packageInstallEnvironment("GOPROXY", sources.Go.Proxy, []string{"go", "install", spec}))
+	}
+	npmCommand := append([]string{"npm", "install", "--global"}, sources.NPM.Options()...)
+	batch(append(npmCommand, "--"), packages.NPM)
+	batch(packageInstallEnvironment("PIP_INDEX_URL", sources.PIP.IndexURL, []string{"pip", "install"}), packages.PIP)
 	return output.String()
+}
+
+func packageInstallEnvironment(key, value string, command []string) []string {
+	if value == "" {
+		return command
+	}
+	return append([]string{"env", key + "=" + value}, command...)
 }
 
 // Decoding normalizes absent/empty packages; installation order remains significant.
@@ -390,20 +408,25 @@ func samePackages(previous, next *environmentPackages) bool {
 
 func prebuildProviderKey(cfg config.Config) string {
 	settings := cfg.EnvironmentPrebuilds
+	var packageSources *config.EnvironmentPackageConfig
+	if !cfg.EnvironmentPackages.Empty() {
+		packageSources = &cfg.EnvironmentPackages
+	}
 	// Credentials may rotate; endpoints and pipeline identities may not silently move jobs.
 	// omitempty keeps absent and empty network lists equivalent, as in provider requests.
 	data, _ := json.Marshal(struct {
-		PipelineURL        string   `json:"pipeline_url"`
-		Repository         string   `json:"repository"`
-		APIURL             string   `json:"api_url"`
-		DiskSize           string   `json:"disk_size"`
-		CPU                uint32   `json:"cpu"`
-		Memory             uint32   `json:"memory"`
-		DNSServers         []string `json:"dns_servers,omitempty"`
-		AllowOutboundCIDRs []string `json:"allow_outbound_cidrs,omitempty"`
-		DenyOutboundCIDRs  []string `json:"deny_outbound_cidrs,omitempty"`
-		AllowInternet      bool     `json:"allow_internet"`
-		InjectEgressCA     bool     `json:"inject_egress_ca"`
+		PipelineURL        string                           `json:"pipeline_url"`
+		Repository         string                           `json:"repository"`
+		APIURL             string                           `json:"api_url"`
+		DiskSize           string                           `json:"disk_size"`
+		CPU                uint32                           `json:"cpu"`
+		Memory             uint32                           `json:"memory"`
+		DNSServers         []string                         `json:"dns_servers,omitempty"`
+		AllowOutboundCIDRs []string                         `json:"allow_outbound_cidrs,omitempty"`
+		DenyOutboundCIDRs  []string                         `json:"deny_outbound_cidrs,omitempty"`
+		AllowInternet      bool                             `json:"allow_internet"`
+		InjectEgressCA     bool                             `json:"inject_egress_ca"`
+		PackageSources     *config.EnvironmentPackageConfig `json:"package_sources,omitempty"`
 	}{
 		PipelineURL: settings.Image.Flow.PipelineURL, Repository: settings.Image.Repository(),
 		APIURL:   cfg.E2B.APIURL,
@@ -411,6 +434,7 @@ func prebuildProviderKey(cfg config.Config) string {
 		DNSServers: settings.Template.Network.DNSServers, AllowOutboundCIDRs: settings.Template.Network.AllowOutboundCIDRs,
 		DenyOutboundCIDRs: settings.Template.Network.DenyOutboundCIDRs,
 		AllowInternet:     settings.Template.Network.AllowInternet, InjectEgressCA: settings.Template.Network.InjectEgressCA,
+		PackageSources: packageSources,
 	})
 
 	sum := sha256.Sum256(data)

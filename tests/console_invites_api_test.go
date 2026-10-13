@@ -6,10 +6,17 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
 func TestConsoleInvitesAPI(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("console-invites-bucket"))
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Auth = config.AuthConfig{}
+	app := newTestAppWithStore(t, &cfg, newFakeStore("console-invites-bucket"))
 	defer app.close()
 	cookies := app.platformLoginCookies(t, "console-invites@example.com")
 
@@ -25,7 +32,7 @@ func TestConsoleInvitesAPI(t *testing.T) {
 	path := "/api/console/organizations/" + orgUUID + "/invites"
 
 	t.Run("failure rejects invalid create payload", func(t *testing.T) {
-		resp := app.platformRequest(t, http.MethodPost, path, strings.NewReader(`{"email":"not-an-email","role":"billing"}`), cookies)
+		resp := app.platformRequest(t, http.MethodPost, path, strings.NewReader(`{"email":"not-an-email","role":"user"}`), cookies)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Fatalf("invalid email status = %d, want 400: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -68,14 +75,14 @@ func TestConsoleInvitesAPI(t *testing.T) {
 		}
 		officialOrgPath := "/api/console/organizations/7294b4e5-c50b-48d9-bef8-c7a19423262c/invites"
 		email := "mirrored-org-" + uniqueAdminSuffix() + "@example.com"
-		resp := app.platformRequest(t, http.MethodPost, officialOrgPath, strings.NewReader(`{"email":"`+email+`","role":"billing"}`), aliasCookies)
+		resp := app.platformRequest(t, http.MethodPost, officialOrgPath, strings.NewReader(`{"email":"`+email+`","role":"user"}`), aliasCookies)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("mirrored official org create status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
 		var created map[string]any
 		decodeJSON(t, resp.Body, &created)
-		if created["email"] != email || created["role"] != "billing" || created["status"] != "pending" {
+		if created["email"] != email || created["role"] != "user" || created["status"] != "pending" {
 			t.Fatalf("mirrored official org invite = %#v", created)
 		}
 		createdID, _ := created["id"].(string)
@@ -86,6 +93,9 @@ func TestConsoleInvitesAPI(t *testing.T) {
 		}
 		var resent map[string]any
 		decodeJSON(t, resendResp.Body, &resent)
+		if resent["email_delivery"] != "not_configured" {
+			t.Fatalf("重发不得将更新时间误报为邮件发送成功：%v", resent["email_delivery"])
+		}
 		if resent["id"] != createdID || resent["email"] != email || resent["status"] != "pending" {
 			t.Fatalf("mirrored official org resent invite = %#v", resent)
 		}
@@ -109,23 +119,26 @@ func TestConsoleInvitesAPI(t *testing.T) {
 			insert into organization_invites (
 				external_id, organization_uuid, email, role, status, invited_at, expires_at
 			)
-			values ($1, $2, $3, 'developer', 'pending', now() - interval '24 hours', now() - interval '1 hour')
+			values ($1, $2, $3, 'user', 'pending', now() - interval '24 hours', now() - interval '1 hour')
 		`, expiredID, orgUUID, "expired-"+suffix+"@example.com"); err != nil {
 			t.Fatalf("seed expired invite: %v", err)
 		}
 
-		createResp := app.platformRequest(t, http.MethodPost, path, strings.NewReader(`{"email":" Mixed+Case@Example.com ","role":"billing"}`), cookies)
+		createResp := app.platformRequest(t, http.MethodPost, path, strings.NewReader(`{"email":" Mixed+Case@Example.com ","role":"user"}`), cookies)
 		defer createResp.Body.Close()
 		if createResp.StatusCode != http.StatusOK {
 			t.Fatalf("create status = %d, want 200: %s", createResp.StatusCode, readAll(t, createResp.Body))
 		}
 		var created map[string]any
 		decodeJSON(t, createResp.Body, &created)
+		if created["email_delivery"] != "not_configured" {
+			t.Fatalf("未配置邮件服务时不得声称已发送：%v", created["email_delivery"])
+		}
 		createdID, _ := created["id"].(string)
 		if !strings.HasPrefix(createdID, "invite_") ||
 			created["type"] != "invite" ||
 			created["email"] != "mixed+case@example.com" ||
-			created["role"] != "billing" ||
+			created["role"] != "user" ||
 			created["status"] != "pending" {
 			t.Fatalf("created invite mismatch: %#v", created)
 		}
@@ -165,7 +178,7 @@ func TestConsoleInvitesAPI(t *testing.T) {
 		if resent["id"] != createdID ||
 			resent["type"] != "invite" ||
 			resent["email"] != "mixed+case@example.com" ||
-			resent["role"] != "billing" ||
+			resent["role"] != "user" ||
 			resent["status"] != "pending" {
 			t.Fatalf("resent invite mismatch: %#v", resent)
 		}

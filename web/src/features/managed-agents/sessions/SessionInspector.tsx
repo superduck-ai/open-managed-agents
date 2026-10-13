@@ -1395,7 +1395,7 @@ function InspectorToolDetail({
                       {call.lifecycle.replace('_', ' ')}
                     </TableCell>
                     <TableCell className="h-6 truncate px-1.5 py-0 text-right font-mono tabular-nums">
-                      {call.executionMs ? formatSessionDuration(call.executionMs, formatters, msg) : '—'}
+                      {call.executionMs !== undefined ? formatSessionDuration(call.executionMs, formatters, msg) : '—'}
                     </TableCell>
                     {showWaited ? (
                       <TableCell className="h-6 truncate px-1.5 py-0 text-right font-mono tabular-nums">

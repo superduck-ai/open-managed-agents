@@ -32,33 +32,3 @@ export function parseQuestionInput(input: Record<string, unknown>): QuickstartQu
     })
     .filter((question): question is QuickstartQuestion => Boolean(question));
 }
-
-export function parseSubmittedQuestionAnswers(result?: string) {
-  if (!result) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(result);
-    const answers = toRecord(parsed)?.answers;
-    if (!Array.isArray(answers)) {
-      return [];
-    }
-    return answers
-      .map((item) => {
-        const answer = toRecord(item);
-        if (!answer) {
-          return null;
-        }
-        const labels = Array.isArray(answer.answers)
-          ? answer.answers.filter((label): label is string => typeof label === 'string' && Boolean(label.trim()))
-          : [];
-        return {
-          question: typeof answer.question === 'string' ? answer.question : '',
-          answers: labels,
-        };
-      })
-      .filter((answer): answer is { question: string; answers: string[] } => Boolean(answer));
-  } catch {
-    return [];
-  }
-}

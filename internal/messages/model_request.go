@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
@@ -319,20 +320,7 @@ func (o *responseObservation) addMessage(index int, block responseContentBlock) 
 	message := codesessions.ModelRequestMessage{Type: "agent.message"}
 	switch block.Type {
 	case "tool_use":
-		input := block.Input
-		if block.inputBuffer.Len() > 0 {
-			input = jsonv1.RawMessage(block.inputBuffer.String())
-		}
-		if block.ID == "" || block.Name == "" || !jsonv1.Valid(input) {
-			o.malformed = true
-			return
-		}
-		var fields map[string]jsonv1.RawMessage
-		if err := jsonv1.Unmarshal(input, &fields); err != nil || fields == nil {
-			o.malformed = true
-			return
-		}
-		o.result.ToolUses = append(o.result.ToolUses, codesessions.ModelRequestToolUse{ID: block.ID, Name: block.Name, Input: input})
+		o.addToolUse(block)
 		return
 	case "thinking":
 		message.Type = "agent.thinking"
@@ -348,6 +336,36 @@ func (o *responseObservation) addMessage(index int, block responseContentBlock) 
 	}
 	message.ID = maevents.StableAssistantEventID(o.request.CodeSessionID, o.messageID, index, message.Type)
 	o.result.Messages = append(o.result.Messages, message)
+}
+
+type unparsedToolInput struct {
+	Raw    string `json:"raw"`
+	Length int    `json:"len"`
+}
+
+func (o *responseObservation) addToolUse(block responseContentBlock) {
+	if block.ID == "" || block.Name == "" {
+		o.malformed = true
+		return
+	}
+	input := block.Input
+	if block.inputBuffer.Len() > 0 {
+		input = jsonv1.RawMessage(block.inputBuffer.String())
+	}
+	var fields map[string]jsonv1.RawMessage
+	rejected := jsonv1.Unmarshal(input, &fields) != nil || fields == nil
+	if rejected {
+		o.malformed = true
+		raw := string(input)
+		length := 0
+		for _, character := range raw {
+			length += utf16.RuneLen(character)
+		}
+		input, _ = jsonv1.Marshal(struct {
+			Value unparsedToolInput `json:"__unparsedToolInput"`
+		}{Value: unparsedToolInput{Raw: raw, Length: length}})
+	}
+	o.result.ToolUses = append(o.result.ToolUses, codesessions.ModelRequestToolUse{ID: block.ID, Name: block.Name, Input: input, InputRejected: rejected})
 }
 
 func mergeRequestUsage(target *codesessions.ModelRequestUsage, delta codesessions.ModelRequestUsage) {

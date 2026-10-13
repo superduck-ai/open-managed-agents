@@ -1,3 +1,7 @@
+import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
+import { OrganizationMenu } from '../../features/organizations/OrganizationMenu';
+import { useScopeConfirmation } from '../../features/organizations/useScopeConfirmation';
+import { useOrganizations } from '../../shared/organizations/context';
 import {
   ArrowLeft,
   BookOpen,
@@ -6,18 +10,14 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
-  Gauge,
   Globe2,
-  KeyRound,
   ListTree,
-  LockKeyhole,
   LogOut,
   Palette,
   Plus,
   Settings,
-  Shield,
   UsersRound,
-  WalletCards,
+  UserRound,
 } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import {
@@ -85,7 +85,12 @@ import {
 import { useI18n, useLocale } from '../../shared/i18n';
 import { accountRoleLabel, membershipRoleForOrganization } from '../../shared/permissions/roles';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
-import { settingsNavigation, visibleConsoleNavigation, type NavLinkItem } from './navigation';
+import {
+  personalSettingsNavigation,
+  settingsNavigation,
+  visibleConsoleNavigation,
+  type NavLinkItem,
+} from './navigation';
 
 type ConsoleShellProps = {
   account?: AuthAccount | null;
@@ -136,6 +141,7 @@ export function ConsoleLayout() {
   const { account, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const { activeWorkspaceId } = useWorkspace();
 
   const handleNavigate = useCallback(
     async (href: string) => {
@@ -151,7 +157,7 @@ export function ConsoleLayout() {
 
   return (
     <ConsoleShell account={account} currentPath={location.pathname} onLogout={handleLogout} onNavigate={handleNavigate}>
-      <Outlet />
+      <Outlet key={workspaceIdFromPath(location.pathname) || activeWorkspaceId} />
     </ConsoleShell>
   );
 }
@@ -159,6 +165,7 @@ export function ConsoleLayout() {
 export function ConsoleShell({ account, currentPath = '/', children, onLogout, onNavigate }: ConsoleShellProps) {
   const isWide = isWideConsolePath(currentPath);
   const isSessionWorkspace = isSessionDetailPath(currentPath);
+  const isQuickstart = /^(?:\/quickstart|\/workspaces\/[^/]+\/agent-quickstart)\/?$/.test(currentPath);
   const isSessionsRoute = isSessionsPath(currentPath);
   const { msg } = useI18n();
 
@@ -169,7 +176,11 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
         className={clsx(
           'text-foreground',
           isSessionsRoute && 'session-route-theme',
-          isSessionWorkspace ? 'h-svh min-h-0 overflow-hidden' : 'min-h-screen',
+          isSessionWorkspace
+            ? 'h-svh min-h-0 overflow-hidden'
+            : isQuickstart
+              ? 'h-dvh min-h-0 overflow-hidden'
+              : 'min-h-screen',
         )}
       >
         <ShellMobileBar
@@ -184,9 +195,11 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
           className={clsx(
             isSessionWorkspace
               ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:py-6 [&>[data-testid=session-detail-page]]:!h-full [&>[data-testid=session-detail-page]]:!min-h-0 [&>[data-testid=session-detail-page]]:!overflow-hidden'
-              : isWide
-                ? 'min-w-0 px-6 py-6 lg:px-8'
-                : 'mx-auto max-w-[928px] px-6 py-12 lg:px-0',
+              : isQuickstart
+                ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-[clamp(0.75rem,2dvh,1.5rem)] sm:px-6 lg:px-8'
+                : isWide
+                  ? 'min-w-0 px-6 py-6 lg:px-8'
+                  : 'mx-auto max-w-[928px] px-6 py-12 lg:px-0',
           )}
         >
           {children}
@@ -206,16 +219,21 @@ export function SettingsShell({
   onNavigate,
 }: SettingsShellProps) {
   const { msg } = useI18n();
+  const personal = isPersonalSettingsPath(currentPath);
 
   return (
     <SidebarProvider defaultOpen>
       <SettingsSidebar account={account} currentPath={currentPath} onLogout={onLogout} onNavigate={onNavigate} />
       <SidebarInset className="min-h-screen text-foreground">
         <ShellMobileBar
-          title={msg('account.organizationSettings', 'Organization settings')}
+          title={
+            personal
+              ? msg('account.personalSettings', 'Personal settings')
+              : msg('account.organizationSettings', 'Organization settings')
+          }
           toggleLabel={msg('common.expand', 'Expand')}
           activeToggleLabel={msg('common.collapse', 'Collapse')}
-          href="/settings/organization"
+          href={personal ? '/settings/profile' : '/settings/organization'}
           onNavigate={onNavigate}
         />
         <div className="px-6 py-6 lg:px-8">{children}</div>
@@ -366,6 +384,8 @@ function SettingsSidebar({
   const { msg } = useI18n();
   const { state } = useSidebar();
   const collapsed = state === 'collapsed';
+  const personal = isPersonalSettingsPath(currentPath);
+  const navigation = personal ? personalSettingsNavigation : settingsNavigation;
 
   return (
     <AppSidebar
@@ -395,12 +415,14 @@ function SettingsSidebar({
         <SidebarGroup className="mt-2 p-0">
           <SidebarGroupLabel className="gap-2 px-2 text-sidebar-foreground">
             <Settings className="size-4" aria-hidden />
-            {msg('account.organizationSettings', 'Organization settings')}
+            {personal
+              ? msg('account.personalSettings', 'Personal settings')
+              : msg('account.organizationSettings', 'Organization settings')}
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <nav aria-label={msg('nav.settingsNavigation', 'Settings navigation')}>
               <SidebarMenu>
-                {settingsNavigation.map((item) => (
+                {navigation.map((item) => (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton
                       render={<ShellLink href={item.href} onNavigate={onNavigate} />}
@@ -479,27 +501,42 @@ function ShellSidebarHeader({ currentPath, onNavigate }: { currentPath: string; 
 }
 
 function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; onNavigate?: NavigateHandler }) {
+  const confirmation = useScopeConfirmation();
+  const organizations = useOrganizations();
   const { msg } = useI18n();
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const { isMobile, state } = useSidebar();
   const collapsed = state === 'collapsed';
-  const { workspaces, activeWorkspace, activeWorkspaceId, selectWorkspace, isLoading, createWorkspace } =
-    useWorkspace();
+  const {
+    canManageWorkspaces,
+    workspaces,
+    activeWorkspace,
+    activeWorkspaceId,
+    selectWorkspace,
+    isLoading,
+    createWorkspace,
+  } = useWorkspace();
 
-  const handleSelect = (workspace: Workspace) => {
-    selectWorkspace(workspace.id);
+  const handleSelect = async (workspace: Workspace) => {
     setOpen(false);
-    void navigateToMatchingWorkspacePath(currentPath, workspace.id, onNavigate);
+    if (workspace.id === activeWorkspaceId) return;
+    if (organizations) {
+      confirmation.request(() => selectWorkspace(workspace.id));
+      return;
+    }
+    await navigateToMatchingWorkspacePath(currentPath, workspace.id, onNavigate);
+    selectWorkspace(workspace.id);
   };
 
   const handleCreate = async (name: string, displayColor: string) => {
     const created = await createWorkspace(buildCreateWorkspaceInput(name, displayColor));
-    await navigateToMatchingWorkspacePath(currentPath, created.id, onNavigate);
+    if (!organizations) await navigateToMatchingWorkspacePath(currentPath, created.id, onNavigate);
   };
 
   return (
     <SidebarMenu>
+      {confirmation.dialog}
       <SidebarMenuItem>
         <DropdownMenu open={open} onOpenChange={setOpen}>
           <DropdownMenuTrigger
@@ -560,22 +597,37 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
               </div>
             </DropdownMenuGroup>
 
-            <DropdownMenuSeparator />
-
-            <DropdownMenuItem
-              className="gap-2 p-2"
-              onClick={() => {
-                setOpen(false);
-                setCreateOpen(true);
-              }}
-            >
-              <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background">
-                <Plus className="size-4" aria-hidden />
-              </span>
-              <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
-                {msg('workspace.create.title', 'Create workspace')}
-              </span>
-            </DropdownMenuItem>
+            {canManageWorkspaces ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="gap-2 p-2"
+                  onClick={() => {
+                    setOpen(false);
+                    confirmation.request(() => setCreateOpen(true));
+                  }}
+                >
+                  <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background">
+                    <Plus className="size-4" aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
+                    {msg('workspace.create.title', 'Create workspace')}
+                  </span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="gap-2 p-2"
+                  render={<ShellLink href="/settings/workspaces" onNavigate={onNavigate} />}
+                  onClick={() => setOpen(false)}
+                >
+                  <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background">
+                    <Settings className="size-4" aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
+                    {msg('workspace.manage.title', 'Manage workspaces')}
+                  </span>
+                </DropdownMenuItem>
+              </>
+            ) : null}
 
             {isLoading ? (
               <div className="px-3 pt-2 text-xs text-muted-foreground">
@@ -659,7 +711,14 @@ function SidebarFooter({
   );
 }
 
+function isPersonalSettingsPath(path: string) {
+  return path === '/settings/profile' || path === '/settings/appearance';
+}
+
 function SettingsNavigationIcon({ href }: { href: string }) {
+  if (href === '/settings/profile') {
+    return <UserRound className="size-4" aria-hidden />;
+  }
   if (href === '/settings/appearance') {
     return <Palette className="size-4" aria-hidden />;
   }
@@ -671,25 +730,6 @@ function SettingsNavigationIcon({ href }: { href: string }) {
   }
   if (href === '/settings/workspaces') {
     return <Box className="size-4" aria-hidden />;
-  }
-  if (href === '/settings/billing') {
-    return <WalletCards className="size-4" aria-hidden />;
-  }
-  if (href === '/settings/limits') {
-    return <Gauge className="size-4" aria-hidden />;
-  }
-  if (href === '/settings/api-keys' || href === '/settings/admin-keys') {
-    return <KeyRound className="size-4" aria-hidden />;
-  }
-  if (href === '/settings/service-accounts') {
-    return <LockKeyhole className="size-4" aria-hidden />;
-  }
-  if (
-    href === '/settings/workload-identity' ||
-    href === '/settings/privacy-controls' ||
-    href === '/settings/identity-and-access'
-  ) {
-    return <Shield className="size-4" aria-hidden />;
   }
   return <Settings className="size-4" aria-hidden />;
 }
@@ -710,6 +750,7 @@ export function AccountMenu({
   const [loggingOut, setLoggingOut] = useState(false);
   const identity = getIdentity(account);
   const { activeWorkspace, orgUuid } = useWorkspace();
+  const organizationRole = membershipRoleForOrganization(account?.memberships, orgUuid);
   const { locale, setLocale, supportedLocales: locales } = useLocale();
   const { msg } = useI18n();
 
@@ -760,7 +801,11 @@ export function AccountMenu({
                   <span className="block truncate text-sm font-medium text-sidebar-foreground">{identity.name}</span>
                   <span className="block truncate text-xs text-sidebar-foreground/70">
                     {msg('account.subtitle', '{role} · {workspaceName}', {
-                      role: accountRoleLabel(membershipRoleForOrganization(account?.memberships, orgUuid), msg),
+                      role: activeWorkspace.effective_role
+                        ? accountRoleLabel(activeWorkspace.effective_role, msg)
+                        : organizationRole
+                          ? accountRoleLabel(organizationRole, msg)
+                          : msg('account.role.unknown', 'Member'),
                       workspaceName: localizedWorkspaceName(activeWorkspace.name, msg),
                     })}
                   </span>
@@ -780,21 +825,7 @@ export function AccountMenu({
               <DropdownMenuLabel className="truncate px-3 py-2 text-xs">{identity.email}</DropdownMenuLabel>
             </DropdownMenuGroup>
 
-            <DropdownMenuRadioGroup value={activeWorkspace.id}>
-              <DropdownMenuRadioItem
-                value={activeWorkspace.id}
-                closeOnClick={false}
-                className="h-12 items-start gap-3 px-3 py-2.5 text-foreground"
-              >
-                <Building2 className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">
-                    {localizedWorkspaceName(activeWorkspace.name, msg)}
-                  </span>
-                  <span className="block text-xs text-muted-foreground">{msg('account.apiPlan', 'API plan')}</span>
-                </span>
-              </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
+            <OrganizationMenu />
 
             <DropdownMenuSeparator />
 
@@ -807,6 +838,17 @@ export function AccountMenu({
                 {msg('account.organizationSettings', 'Organization settings')}
               </span>
             </DropdownMenuItem>
+
+            {personalSettingsNavigation.map((item) => (
+              <DropdownMenuItem
+                key={item.href}
+                className="h-8 gap-3 px-3"
+                onClick={() => void handleMenuNavigation(item.href)}
+              >
+                <SettingsNavigationIcon href={item.href} />
+                <span className="min-w-0 flex-1 truncate">{msg(item.labelId, item.label)}</span>
+              </DropdownMenuItem>
+            ))}
 
             <DropdownMenuSub>
               <DropdownMenuSubTrigger openOnHover className="h-8 gap-3 px-3">
@@ -880,6 +922,7 @@ const workspaceBuildPathByHref: Record<string, string> = {
   '/playground': 'playground',
   '/files': 'files',
   '/skills': 'skills',
+  '/mcp-servers': 'mcp-servers',
   '/batches': 'batches',
 };
 
@@ -914,6 +957,9 @@ function openSidebarGroups(current: Record<string, boolean>, labels: string[]) {
 }
 
 function navigationHref(href: string, workspaceId: string) {
+  if (href === '/cost' || href === '/logs') {
+    return workspaceSwitchPath(href, workspaceId);
+  }
   if (href === '/api-keys') {
     return workspaceApiKeysPath(workspaceId);
   }
@@ -938,43 +984,7 @@ function navigationHref(href: string, workspaceId: string) {
 }
 
 async function navigateToMatchingWorkspacePath(currentPath: string, workspaceId: string, onNavigate?: NavigateHandler) {
-  const encodedWorkspaceId = encodeURIComponent(workspaceId || 'default');
-  let nextPath: string | undefined;
-
-  if (currentPath === '/api-keys') {
-    nextPath = workspaceApiKeysPath(workspaceId);
-  } else if (currentPath === '/webhooks') {
-    nextPath = workspaceWebhooksPath(workspaceId);
-  } else if (/^\/settings\/workspaces\/[^/]+\/mcp-tunnels(?:\/[^/]+)?\/?$/.test(currentPath)) {
-    nextPath = workspaceMcpTunnelsPath(workspaceId);
-  } else {
-    for (const [href, buildPath] of Object.entries(workspaceBuildPathByHref)) {
-      if (currentPath === href) {
-        nextPath = `/workspaces/${encodedWorkspaceId}/${buildPath}`;
-        break;
-      }
-    }
-
-    for (const [href, managedPath] of Object.entries(managedAgentPathByHref)) {
-      if (!nextPath && currentPath === href) {
-        nextPath = `/workspaces/${encodedWorkspaceId}/${managedPath}`;
-        break;
-      }
-    }
-  }
-
-  nextPath ??= currentPath
-    .replace(/^\/settings\/workspaces\/[^/]+\/keys/, workspaceApiKeysPath(workspaceId))
-    .replace(/^\/settings\/workspaces\/[^/]+\/webhooks/, workspaceWebhooksPath(workspaceId))
-    .replace(/^\/settings\/workspaces\/[^/]+\/mcp-tunnels(?:\/[^/]+)?/, workspaceMcpTunnelsPath(workspaceId))
-    .replace(
-      /^\/workspaces\/[^/]+\/(llm-models|playground|files|skills|batches)/,
-      `/workspaces/${encodedWorkspaceId}/$1`,
-    )
-    .replace(
-      /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|observability|deployments|environments|vaults|memory-stores|dreams)/,
-      `/workspaces/${encodedWorkspaceId}/$1`,
-    );
+  const nextPath = workspaceSwitchPath(currentPath, workspaceId);
 
   if (nextPath === currentPath) {
     return;
@@ -1043,7 +1053,7 @@ function isActivePath(currentPath: string, href: string) {
 
 function isWideConsolePath(currentPath: string) {
   return (
-    currentPath === '/api-keys' ||
+    ['/api-keys', '/members', '/settings/members'].includes(currentPath) ||
     /^\/settings\/workspaces\/[^/]+\/keys/.test(currentPath) ||
     currentPath === '/webhooks' ||
     /^\/settings\/workspaces\/[^/]+\/webhooks/.test(currentPath) ||
@@ -1064,9 +1074,11 @@ function isSessionsPath(currentPath: string) {
 
 function isBuildPath(currentPath: string) {
   return (
-    ['/workbench', '/llm-models', '/playground', '/files', '/skills', '/batches'].includes(currentPath) ||
+    ['/workbench', '/llm-models', '/playground', '/files', '/skills', '/mcp-servers', '/batches'].includes(
+      currentPath,
+    ) ||
     currentPath.startsWith('/workbench/') ||
-    /^\/workspaces\/[^/]+\/(?:llm-models|playground|files|skills|batches)(\/|$)/.test(currentPath)
+    /^\/workspaces\/[^/]+\/(?:llm-models|playground|files|skills|mcp-servers|batches)(\/|$)/.test(currentPath)
   );
 }
 

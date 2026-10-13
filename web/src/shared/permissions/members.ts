@@ -5,19 +5,24 @@ type AccountWithPermissions = AuthAccount & {
   account_permissions?: Array<string | { permission?: string; name?: string }>;
 };
 
-const memberManagementRoles = new Set(['admin', 'owner', 'primary_owner', 'membership_admin']);
+export function canManageWorkspaceMembers(account: AuthAccount | null | undefined) {
+  return account?.permissions?.includes('workspace:members:manage') ?? false;
+}
 
-export function canManageMembers(account: AuthAccount | null | undefined) {
+export function canManageMembers(account: AuthAccount | null | undefined, orgUuid?: string) {
   if (!account) {
     return false;
   }
 
   const permissions = permissionNames(account as AccountWithPermissions);
-  if (permissions.has('members:manage') || permissions.has('membership_admins:manage')) {
+  if (account.permissions) return permissions.has('members:manage');
+  if (permissions.has('members:manage')) {
     return true;
   }
 
-  return account.memberships?.some((membership) => memberManagementRoles.has(normalizeRole(membership.role))) ?? false;
+  const memberships =
+    account.memberships?.filter((membership) => !orgUuid || membership.organization?.uuid === orgUuid) ?? [];
+  return memberships.some((membership) => membership.role === 'admin');
 }
 
 function permissionNames(account: AccountWithPermissions) {
@@ -38,8 +43,4 @@ function permissionNames(account: AccountWithPermissions) {
     }
   }
   return names;
-}
-
-function normalizeRole(role: string | undefined) {
-  return (role ?? '').trim().toLowerCase();
 }

@@ -38,16 +38,6 @@ type PlatformAuthWorkspaceInput struct {
 
 type PlatformAuthWorkspaceRef struct{ UUID string }
 
-type PlatformAuthWorkspaceMemberInput struct {
-	ExternalID          string
-	OrganizationUUID    string
-	WorkspaceUUID       string
-	WorkspaceExternalID string
-	UserUUID            string
-	UserExternalID      string
-	WorkspaceRole       string
-}
-
 type PlatformAuthAPIKeyInput struct {
 	ExternalID        string
 	WorkspaceUUID     string
@@ -66,7 +56,6 @@ type PlatformAuthTxStore interface {
 	InsertOrganization(ctx context.Context, input PlatformAuthOrganizationInput) (PlatformAuthOrganizationRef, error)
 	InsertUser(ctx context.Context, input PlatformAuthUserInput) (PlatformAuthUserRef, error)
 	InsertWorkspace(ctx context.Context, input PlatformAuthWorkspaceInput) (PlatformAuthWorkspaceRef, error)
-	InsertWorkspaceMember(ctx context.Context, input PlatformAuthWorkspaceMemberInput) error
 	InsertAPIKey(ctx context.Context, input PlatformAuthAPIKeyInput) error
 }
 
@@ -126,23 +115,6 @@ func (tx PlatformAuthTx) InsertWorkspace(ctx context.Context, input PlatformAuth
 	return PlatformAuthWorkspaceRef{UUID: uuid}, err
 }
 
-func (tx PlatformAuthTx) InsertWorkspaceMember(ctx context.Context, input PlatformAuthWorkspaceMemberInput) error {
-	role := strings.TrimSpace(input.WorkspaceRole)
-	if role == "" {
-		role = "workspace_admin"
-	}
-	mapper := NewPlatformAuthWorkspaceMemberMapper(tx.executor)
-	return mapper.Insert(ctx, insertPlatformAuthWorkspaceMemberParams{
-		ExternalID:          input.ExternalID,
-		OrganizationUUID:    input.OrganizationUUID,
-		WorkspaceUUID:       input.WorkspaceUUID,
-		WorkspaceExternalID: input.WorkspaceExternalID,
-		UserUUID:            input.UserUUID,
-		UserExternalID:      input.UserExternalID,
-		WorkspaceRole:       role,
-	})
-}
-
 func (tx PlatformAuthTx) InsertAPIKey(ctx context.Context, input PlatformAuthAPIKeyInput) error {
 	status := strings.TrimSpace(input.Status)
 	if status == "" {
@@ -198,10 +170,45 @@ func platformAuthWorkspaceInsertParams(input PlatformAuthWorkspaceInput) insertP
 
 func (r platformSessionIdentityRow) session() platformsession.Session {
 	return platformsession.Session{
-		OrganizationUUID:    r.OrganizationUUID,
-		WorkspaceUUID:       r.WorkspaceUUID,
-		WorkspaceExternalID: r.WorkspaceExternalID,
-		UserUUID:            r.UserUUID,
-		UserExternalID:      r.UserExternalID,
+		VerifiedEmail:        r.VerifiedEmail,
+		HomeOrganizationUUID: r.HomeOrganizationUUID,
+		OrganizationUUID:     r.OrganizationUUID,
+		WorkspaceUUID:        r.WorkspaceUUID,
+		WorkspaceExternalID:  r.WorkspaceExternalID,
+		UserUUID:             r.UserUUID,
+		UserExternalID:       r.UserExternalID,
 	}
+}
+
+func (d *DB) EnrichPlatformSession(ctx context.Context, session platformsession.Session) (platformsession.Session, error) {
+	if d == nil || d.mapperDB == nil || session.OrganizationUUID == "" {
+		return platformsession.Session{}, ErrNotFound
+	}
+	userID := session.UserUUID
+	if userID == "" {
+		userID = session.UserExternalID
+	}
+	if userID == "" {
+		return platformsession.Session{}, ErrNotFound
+	}
+	row, err := NewPlatformAuthUserMapper(d.mapperDB).ResolveSessionIdentity(ctx, session.OrganizationUUID, userID,
+		optionalVaultString(tryParseDBUUIDIdentifierString(userID)))
+	if err != nil {
+		return platformsession.Session{}, mapNoRows(err)
+	}
+	session.UserUUID = row.UserUUID
+	session.UserExternalID = row.UserExternalID
+	session.VerifiedEmail = row.VerifiedEmail
+	if session.HomeOrganizationUUID == "" {
+		session.HomeOrganizationUUID = row.HomeOrganizationUUID
+	}
+	return session, nil
+}
+
+func (d *DB) GetActivePlatformUserByEmail(ctx context.Context, organizationUUID, email string) (AdminUser, error) {
+	if d == nil || d.mapperDB == nil || organizationUUID == "" || email == "" {
+		return AdminUser{}, ErrNotFound
+	}
+	user, err := NewPlatformAuthUserMapper(d.mapperDB).FindActiveByEmail(ctx, organizationUUID, email)
+	return user, mapNoRows(err)
 }

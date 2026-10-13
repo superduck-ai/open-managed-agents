@@ -10,6 +10,7 @@ const (
 )
 
 type Config struct {
+	EnvironmentPackages  EnvironmentPackageConfig  `yaml:"environment_packages"`
 	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
 	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
 	Env                  string                    `yaml:"env"`
@@ -86,10 +87,11 @@ type RedisConfig struct {
 }
 
 type WorkerEventStreamConfig struct {
-	MaxBytes   int64         `yaml:"max_bytes"`
-	MaxAge     time.Duration `yaml:"max_age"`
-	Replicas   int           `yaml:"replicas"`
-	MaxMsgSize int32         `yaml:"max_msg_size"`
+	ConsumerInactiveThreshold time.Duration `yaml:"consumer_inactive_threshold"`
+	MaxBytes                  int64         `yaml:"max_bytes"`
+	MaxAge                    time.Duration `yaml:"max_age"`
+	Replicas                  int           `yaml:"replicas"`
+	MaxMsgSize                int32         `yaml:"max_msg_size"`
 }
 
 type WebhookStreamConfig struct {
@@ -107,7 +109,8 @@ type NATSConfig struct {
 }
 
 type AuthConfig struct {
-	SMTP EmailSMTPConfig `yaml:"smtp"`
+	SMTP       EmailSMTPConfig `yaml:"smtp"`
+	ConsoleURL string          `yaml:"console_url"`
 }
 
 type EmailSMTPConfig struct {

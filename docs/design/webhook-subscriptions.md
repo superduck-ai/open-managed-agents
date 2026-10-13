@@ -48,15 +48,23 @@ flowchart TD
 
 ### 升级与可靠性边界
 
-停止所有旧生产者与 Worker → 执行 migration `00070_webhook_failure_window.sql` → 启动新版。该迁移同时增加 nullable failure_started_at，并仅将旧 webhook_delivery 的 pending/retry/running 标记 failed，释放锁、注明队列停用；保留 payload 中原 event、attempts、订阅统计和其他 jobs，不迁移消息、不删除历史。Down 不复活。不得混跑；回退旧版不转移 JetStream 消息，也不恢复旧任务。
+停止所有旧生产者与 Worker → 执行 migration `00076_webhook_failure_window.sql` → 启动新版。该迁移同时增加 nullable failure_started_at，并仅将旧 webhook_delivery 的 pending/retry/running 标记 failed，释放锁、注明队列停用；保留 payload 中原 event、attempts、订阅统计和其他 jobs，不迁移消息、不删除历史。Down 不复活。不得混跑；回退旧版不转移 JetStream 消息，也不恢复旧任务。
 
-本分支尚未发布，按本轮确认将原 71 收尾 SQL 合并进 70。新安装/从 upstream 升级按合并版 70 一次执行。已执行旧版 70 的开发库不会自动重跑：应停止服务、备份并核实字段和版本，仅补执行收尾 SQL，保留原失败窗口及版本 70；不要 Down/Up 清空已有失败窗口。曾手动执行 71 的开发库需另行核对迁移历史，不能直接启动或删除业务数据。
+本分支尚未发布，早期已将原 71 收尾 SQL 合并进 Webhook 70；2026-10-13 同步 upstream 后，该合并版迁移顺延为 76。新安装/从 upstream 升级先应用 upstream 70–75，再执行 Webhook 76。已执行旧版 Webhook 70 或曾手动执行 71 的开发库必须单独协调迁移历史，见下节；不要 Down/Up 清空已有失败窗口，也不能直接启动或删除业务数据。
 
 更早版本的全局配置 endpoint_url/signing_key/event_types 仍需删除，严格配置拒绝空值。数据库订阅及其密钥保持有效。副本/容量/有效期是 OMA 选择，所有实例需一致配置，变更消费策略先停机。Claude 未公开内部队列实现；我们保留有限重试、薄 payload、签名、重复与无序语义，但不保证零遗漏、精确 HTTP 次数或统计与确认原子一致。发布超时/满队列、进程中断、过期或消费耗尽可能丢失通知，重要状态由资源 API 校准。
 
 ### 验收路径
 
 现有资源操作/失败/重复/级联测试改为读取真实 JetStream 消息，投递测试仍经本地 HTTP 接收器及官方 Go SDK 验签。新增队列容量、单条限制、重启、短 TTL、消费耗尽、统计失败不重发成功 HTTP、默认及自定义处理位置自动补充、panic 恢复与重投、取消、部分启动失败、会话恢复、NATS 重启及旧 jobs 精确迁移测试。验证记录见 [JetStream 迁移验证记录](webhook-jetstream-verification.md)，不能沿用历史门禁结论。人工顺序：创建订阅 → 资源操作 → 正常签名 → 普通失败重试 → 永久拒绝 → 重新启用确认旧消息不恢复 → 停启 Worker 验证积压和过期。
+
+## upstream 合并与迁移编号（2026-10-13）
+
+upstream 新增 MCP Server、默认工作区、角色及邀请相关迁移，占用 70–75。本分支未合入 upstream 的 Webhook 迁移从 70 顺延为 `00076_webhook_failure_window.sql`，SQL 内容不变，保留 upstream 各迁移原编号。新数据库与正常 upstream 数据库按版本顺序应用；迁移测试分别验证升级到 75 前置状态及 76 的失败窗口和旧队列收尾效果。
+
+曾应用旧 Webhook 70 的开发库不能把该 goose 记录视为 upstream MCP 70 已执行，也不能直接重跑 76 而重复添加 `failure_started_at`。启动前需要停止服务、备份并核对真实 schema 和 goose 历史，保留既有失败窗口和通知终态，单独协调对应版本并补齐 upstream 70–75。本次仅修正仓库迁移编号，不自动修改开发数据库；历史章节中的 70/71 保留当时事实，不代表当前升级入口。
+
+Session 归档继续通过同一 Yourbatis 事务保存终止事件、首次归档标记、cloud sandbox 回收状态及 Worker 退役。任一步失败整体回滚，不发布 Webhook；提交成功后只发送规范 `session.status_terminated`，不恢复旧 `session.archived`。重复归档不刷新 Session 时间戳或新增通知，但仍执行 upstream 的沙箱/Worker 清理，并在请求层允许重新预约异步回收。合并同时保留 Webhook Stream 默认配置与 upstream Worker Event Consumer 的 5 分钟闲置回收阈值，两者职责独立。
 
 ## 创建对话框渲染稳定性（2026-09-29）
 

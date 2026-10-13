@@ -28,6 +28,7 @@ tunnel:
 # Optional SMTP email verification. When omitted, any non-empty verification
 # code is accepted. Configure all three fields together for real email delivery.
 # auth:
+#   console_url: https://oma.example.com
 #   smtp:
 #     addr: smtp.example.com:587
 #     username: sender@example.com
@@ -46,6 +47,9 @@ storage:
 e2b:
   api_key: ""
   api_url: ""
+
+# Optional deployment package sources: see docs/configuration-reference.yaml.
+# Omit environment_packages to retain image sources and deny private CONNECT targets.
 
 # Optional: extra hosts for SSH→HTTPS rewrite in environment-manager
 # (github.com is always built-in). See docs/configuration-reference.yaml.

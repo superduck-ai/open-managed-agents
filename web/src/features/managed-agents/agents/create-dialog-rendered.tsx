@@ -3,6 +3,7 @@ import { Check, ChevronDown, ExternalLink, X } from 'lucide-react';
 import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AuthContext } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
+import { listWorkspaceMCPServers } from '../../../shared/api/workspaceMCPServers';
 import { cn } from '../../../shared/lib/utils';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
@@ -72,6 +73,12 @@ export function AgentConfigRenderedEditor({
     queryFn: loadMcpDirectoryServers,
     retry: false,
   });
+  const workspaceServersQuery = useQuery({
+    queryKey: ['workspace-mcp-servers', orgUuid ?? '', workspaceId, 'agent-picker'],
+    queryFn: () => listAllWorkspaceMCPServers(orgUuid ?? '', workspaceId),
+    enabled: Boolean(orgUuid && workspaceId),
+    retry: false,
+  });
   const tunnelsQuery = useQuery({
     queryKey: ['console-mcp-tunnels', orgUuid, workspaceId, false],
     queryFn: () => listMcpTunnels(orgUuid ?? '', workspaceId, false),
@@ -80,15 +87,17 @@ export function AgentConfigRenderedEditor({
   });
   const refetchAgents = agentsQuery.refetch;
   const refetchSkills = skillsQuery.refetch;
+  const refetchWorkspaceServers = workspaceServersQuery.refetch;
 
   useEffect(() => {
     const refresh = () => {
       void refetchAgents();
       void refetchSkills();
+      void refetchWorkspaceServers();
     };
     window.addEventListener('focus', refresh);
     return () => window.removeEventListener('focus', refresh);
-  }, [refetchAgents, refetchSkills]);
+  }, [refetchAgents, refetchSkills, refetchWorkspaceServers]);
 
   const selectedSubagents = selectedSubagentReferences(draft);
   const selectedSubagentIds = selectedSubagents
@@ -300,6 +309,11 @@ export function AgentConfigRenderedEditor({
           directoryServers={mcpServers}
           directoryLoading={mcpSourcesLoading}
           directoryError={mcpSourcesUnavailable}
+          workspaceServers={workspaceServersQuery.data?.data ?? []}
+          workspaceServersLoading={workspaceServersQuery.isLoading}
+          workspaceServersError={workspaceServersQuery.isError}
+          onRetryWorkspaceServers={() => void workspaceServersQuery.refetch()}
+          onCreateWorkspaceServer={() => openInNewTab(mcpServerCreateHref(workspaceId))}
           onRetryDirectory={() => {
             void directoryQuery.refetch();
             void tunnelsQuery.refetch();
@@ -452,6 +466,29 @@ function agentCreateHref(workspaceId: string) {
 
 function skillCreateHref(workspaceId: string) {
   return `/workspaces/${encodeURIComponent(workspaceId || 'default')}/skills/new`;
+}
+
+function mcpServerCreateHref(workspaceId: string) {
+  return `/workspaces/${encodeURIComponent(workspaceId || 'default')}/mcp-servers/new`;
+}
+
+async function listAllWorkspaceMCPServers(orgUuid: string, workspaceId: string) {
+  const data = [];
+  let page: string | undefined;
+  const seenPages = new Set<string>();
+  while (true) {
+    const response = await listWorkspaceMCPServers(orgUuid, workspaceId, { page });
+    data.push(...response.data);
+    const nextPage = response.next_page || undefined;
+    if (!nextPage) {
+      return { data, next_page: null };
+    }
+    if (seenPages.has(nextPage)) {
+      throw new Error('MCP Servers pagination returned a repeated cursor.');
+    }
+    seenPages.add(nextPage);
+    page = nextPage;
+  }
 }
 
 function openInNewTab(path: string) {

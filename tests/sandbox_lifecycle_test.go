@@ -37,7 +37,7 @@ func newSandboxLifecycleFixtureWithApp(t *testing.T, app *testApp) sandboxLifecy
 	t.Helper()
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"lifecycle-agent"}`)
 	t.Cleanup(func() { cleanupAgentRows(t, app.pool, agent.ID) })
-	env := createEnvironment(t, app, `{"name":"lifecycle-environment"}`)
+	env := createEnvironment(t, app, `{"name":`+quoteJSON("lifecycle-environment-"+uuid.NewV4().String())+`}`)
 	t.Cleanup(func() { cleanupEnvironmentRows(t, app.pool, env.ID) })
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	t.Cleanup(func() { cleanupSession(t, app, session.ID) })

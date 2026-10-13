@@ -1,3 +1,5 @@
+import { getConsoleRequestContext, getScopeSignal, reportApiAuthFailure } from './client';
+
 export type ServerSentEvent<TData = Record<string, unknown>> = {
   event?: string;
   data: TData;
@@ -21,6 +23,9 @@ export async function postJsonSseStream<TData = Record<string, unknown>>({
   errorFromResponse?: (response: Response) => Promise<Error>;
 }) {
   const requestHeaders = new Headers(headers);
+  const context = getConsoleRequestContext();
+  const scopeSignal = getScopeSignal();
+  signal = AbortSignal.any([scopeSignal, ...(signal ? [signal] : [])]);
   requestHeaders.set('Accept', 'text/event-stream');
   if (!requestHeaders.has('Content-Type')) {
     requestHeaders.set('Content-Type', 'application/json');
@@ -35,6 +40,8 @@ export async function postJsonSseStream<TData = Record<string, unknown>>({
   });
 
   if (!response.ok) {
+    signal.throwIfAborted();
+    reportApiAuthFailure(response.status, context);
     throw errorFromResponse ? await errorFromResponse(response) : await streamError(response);
   }
   if (!response.body) {
@@ -46,6 +53,7 @@ export async function postJsonSseStream<TData = Record<string, unknown>>({
   let buffer = '';
   for (;;) {
     const { value, done } = await reader.read();
+    signal.throwIfAborted();
     if (done) {
       break;
     }

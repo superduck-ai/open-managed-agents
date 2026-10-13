@@ -21,7 +21,7 @@ const migrationBackfillFixtureSQL = `
 	values ('10000000-0000-0000-0000-000000000001', 'org_migration_184', 'migration 184');
 
 	insert into workspaces (uuid, external_id, organization_id, name)
-	select '20000000-0000-0000-0000-000000000001', 'workspace_migration_184', id, 'migration 184'
+	select '20000000-0000-0000-0000-000000000001', 'workspace_migration_184', id, 'default'
 	from organizations where external_id = 'org_migration_184';
 
 	insert into api_keys (uuid, external_id, workspace_id, key_hash)

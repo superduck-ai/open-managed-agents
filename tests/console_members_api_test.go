@@ -60,14 +60,14 @@ func TestConsoleMembersAPI(t *testing.T) {
 	})
 
 	t.Run("success update and delete member", func(t *testing.T) {
-		updateResp := app.doPlatformConsole(t, http.MethodPost, path+"/"+memberID, []byte(`{"role":"developer"}`), cookies)
+		updateResp := app.doPlatformConsole(t, http.MethodPost, path+"/"+memberID, []byte(`{"role":"user"}`), cookies)
 		defer updateResp.Body.Close()
 		if updateResp.StatusCode != http.StatusOK {
 			t.Fatalf("update status = %d, want 200: %s", updateResp.StatusCode, readAll(t, updateResp.Body))
 		}
 		var updated map[string]any
 		decodeJSON(t, updateResp.Body, &updated)
-		if updated["id"] != memberID || updated["role"] != "developer" {
+		if updated["id"] != memberID || updated["role"] != "user" {
 			t.Fatalf("updated member mismatch: %#v", updated)
 		}
 

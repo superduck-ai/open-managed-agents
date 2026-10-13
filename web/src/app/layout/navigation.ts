@@ -77,7 +77,7 @@ export const consoleNavigation: NavItem[] = [
       { href: '/workbench', label: 'Workbench', labelId: 'nav.workbench', hidden: true },
       { href: '/files', label: 'Files', labelId: 'nav.files' },
       { href: '/skills', label: 'Skills', labelId: 'nav.skills' },
-      // Temporarily hidden from the sidebar; this entry stays so the route can be restored.
+      { href: '/mcp-servers', label: 'MCP Servers', labelId: 'nav.mcpServers' },
       { href: '/batches', label: 'Batches', labelId: 'nav.batches', hidden: true },
     ],
   },
@@ -124,15 +124,12 @@ export const consoleNavigation: NavItem[] = [
   },
   {
     type: 'group',
-    label: 'Manage',
-    labelId: 'nav.manage',
+    label: 'Workspace settings',
+    labelId: 'nav.workspaceSettings',
     icon: Settings,
     children: [
-      { href: '/limits', label: 'Limits', labelId: 'nav.limits' },
       { href: '/members', label: 'Members', labelId: 'nav.members' },
-      { href: '/service-accounts', label: 'Service accounts', labelId: 'nav.serviceAccounts' },
-      { href: '/privacy-controls', label: 'Privacy controls', labelId: 'nav.privacyControls' },
-      { href: '/security', label: 'Security', labelId: 'nav.security' },
+      { href: '/api-keys', label: 'API keys', labelId: 'nav.apiKeys' },
       { href: '/webhooks', label: 'Webhooks', labelId: 'nav.webhooks' },
       {
         href: '/mcp-tunnels',
@@ -158,19 +155,14 @@ export function visibleConsoleNavigation(items: readonly NavItem[] = consoleNavi
 }
 
 export const settingsNavigation = [
-  { href: '/settings/profile', label: 'Profile', labelId: 'nav.profile' },
-  { href: '/settings/appearance', label: 'Appearance', labelId: 'nav.appearance' },
   { href: '/settings/organization', label: 'Organization', labelId: 'nav.organization' },
   { href: '/settings/members', label: 'Members', labelId: 'nav.members' },
   { href: '/settings/workspaces', label: 'Workspaces', labelId: 'nav.workspaces' },
-  { href: '/settings/billing', label: 'Billing', labelId: 'nav.billing' },
-  { href: '/settings/limits', label: 'Limits', labelId: 'nav.limits' },
-  { href: '/settings/api-keys', label: 'API keys', labelId: 'nav.apiKeys' },
-  { href: '/settings/admin-keys', label: 'Admin keys', labelId: 'nav.adminKeys' },
-  { href: '/settings/service-accounts', label: 'Service accounts', labelId: 'nav.serviceAccounts' },
-  { href: '/settings/workload-identity', label: 'Workload identity', labelId: 'nav.workloadIdentity' },
-  { href: '/settings/privacy-controls', label: 'Privacy controls', labelId: 'nav.privacyControls' },
-  { href: '/settings/identity-and-access', label: 'Identity and access', labelId: 'nav.identityAndAccess' },
+] as const;
+
+export const personalSettingsNavigation = [
+  { href: '/settings/profile', label: 'Profile', labelId: 'nav.profile' },
+  { href: '/settings/appearance', label: 'Appearance', labelId: 'nav.appearance' },
 ] as const;
 
 export const placeholderIcons = {
@@ -180,6 +172,7 @@ export const placeholderIcons = {
   '/playground': Braces,
   '/files': FileText,
   '/skills': ToggleLeft,
+  '/mcp-servers': Plug,
   '/batches': Receipt,
   '/quickstart': Bot,
   '/agents': Bot,

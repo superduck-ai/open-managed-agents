@@ -216,11 +216,11 @@ export function sessionEventBadgeConfig(
   const label = sessionBadgeTypeLabel(type, msg);
   switch (family) {
     case 'user':
-      return { label, className: 'bg-session-speaker-user text-white' };
+      return { label, className: 'bg-session-speaker-user text-white dark:text-background' };
     case 'agent':
-      return { label, className: 'bg-session-speaker-agent text-white' };
+      return { label, className: 'bg-session-speaker-agent text-white dark:text-background' };
     case 'subagent':
-      return { label, className: 'bg-success text-white' };
+      return { label, className: 'bg-success text-white dark:text-background' };
     case 'tool':
       return { label, className: 'bg-accent text-muted-foreground' };
     case 'error':
@@ -837,7 +837,7 @@ export function CallSection({
         <SectionHeader title={title} />
         <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
           <ApprovalChip lifecycle={lifecycle} />
-          {executionMs ? (
+          {executionMs !== undefined ? (
             <span className="inline-flex items-center gap-1 font-mono">
               <Timer className="size-3.5" aria-hidden />
               {formatSessionDuration(executionMs, formatters, msg)}

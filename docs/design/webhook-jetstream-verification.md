@@ -1,5 +1,15 @@
 # Webhook JetStream 验证记录
 
+## upstream 合并验收与收尾（2026-10-13）
+
+合并提交 `8a3da721` 将 upstream/main `471c8179` 合入本分支，并已推送至 origin。Webhook 迁移顺延为 `00076_webhook_failure_window.sql`，SQL 内容与此前 Webhook 70 一致；upstream 70–75 保持原编号。升级合同和旧开发库协调要求见 [订阅设计](webhook-subscriptions.md#upstream-合并与迁移编号2026-10-13)。以下结果取代历史阶段作为此次合并的验收依据，不改写下文当时的测试事实。
+
+- 最终 `just test` 使用本轮独立配置及 PostgreSQL、MinIO、Redis、NATS 执行。Webhook、Session、Deployment、迁移及 `tests` 包通过；全量仍未通过，仅 `TestVerifiedEmailWithPendingInviteCreatesHomePostgres` 报 `last organization administrator`。原样导出的 upstream `471c8179` 在同一专用 PostgreSQL 数据库的另一独立测试 schema 中复现同一失败，未修改登录模块或跳过失败。日志位于 `/private/tmp/oma-webhook-sync-20261013-sz6jb44p/go-test-recheck.log` 和同目录 `upstream-auth.log`。
+- Webhook 页面定向测试 28/28、291 次断言通过；前端格式、命名和生产构建通过。源码生成、lint、dead-code、duplicates、complexity、large-files、全仓 hooks 及正常提交 hook 通过。证据为同目录的 `webhook-page-test.log`、`quality-checks.tsv`、各项检查日志和 `hooks-run.log`。本次收尾没有重复执行已通过的功能测试，也没有另行运行 verify-be。
+- GitHub 上 `8a3da721` 的九个项目 CI workflow 成功；Cloud adapter verification 跳过，不能作为云端适配器通过证据。Pullfrog 自动 review 因 DeepSeek 返回 `Insufficient Balance` 失败，未完成 review，不属于代码检查通过；[失败运行](https://github.com/superduck-ai/open-managed-agents/actions/runs/38391184768) 的日志保存在同目录 `pullfrog-failure.log`。
+- Review 复核 Session 归档的 Yourbatis 事务、沙箱清理失败回滚、重复归档时间戳及通知抑制、终止事件与通知的单次映射、Worker 清理和迁移编号，未发现需新增修复的逻辑问题。
+- 本轮专用 Compose 项目 `oma-webhook-sync-sz6jb44p` 的四个测试容器、两个匿名测试数据卷及网络已清理，并核对无残留；本轮日志保留。未操作开发数据库、开发桶或用户已有容器。人工 Console 验收、生产故障演练和长期容量验证仍未覆盖。
+
 ## 并发配置与消息回调 panic 隔离（2026-09-30）
 
 在当前未提交的 Consume 实现上补充 `webhook.concurrency`，默认 10，显式零和负数启动校验失败。每实例按该值建立会话，专用 Transport 的总空闲、单 Host 空闲和连接上限同步变化；修改配置需重启实例，不改变共享 Consumer 的限制。

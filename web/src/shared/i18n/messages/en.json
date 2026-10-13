@@ -2489,5 +2489,8 @@
   "managedAgents.sessions.setupDescription": "Set up an instance of your agent in its environment.",
   "managedAgents.sessions.runNamePlaceholder": "Name this run",
   "managedAgents.credentialVaults.addVault": "Add vault",
-  "managedAgents.credentialVaults.removeVault": "Remove {name}"
+  "managedAgents.credentialVaults.removeVault": "Remove {name}",
+  "managedAgents.agents.newAgent": "New agent",
+  "managedAgents.agents.createDialog.configuredTools": "{count} toolsets",
+  "managedAgents.agents.createDialog.describeLabel": "Describe your agent"
 }

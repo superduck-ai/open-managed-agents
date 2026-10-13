@@ -106,7 +106,7 @@ export function registerManagedAgentsQuickstartTests() {
 
     fireEvent.click(screen.getByRole('button', { name: '创建智能体' }));
 
-    const dialog = screen.getByRole('dialog', { name: '创建智能体' });
+    const dialog = screen.getByRole('main', { name: '创建智能体' });
     fireEvent.click(within(dialog).getByRole('tab', { name: '模板' }));
     fireEvent.click(within(dialog).getByRole('button', { name: /深度调研助手/i }));
 

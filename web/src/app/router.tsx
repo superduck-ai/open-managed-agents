@@ -411,6 +411,12 @@ const agentsRoute = createRoute({
   component: () => <ManagedAgentsPage section="agents" />,
 });
 
+const agentCreateRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'agents/new',
+  component: () => <ManagedAgentsPage section="agents" />,
+});
+
 const agentDetailRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'agents/$agentId',
@@ -420,6 +426,12 @@ const agentDetailRoute = createRoute({
 const workspaceAgentsRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/agents',
+  component: () => <ManagedAgentsPage section="agents" />,
+});
+
+const workspaceAgentCreateRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/agents/new',
   component: () => <ManagedAgentsPage section="agents" />,
 });
 
@@ -549,8 +561,10 @@ const routeTree = rootRoute.addChildren([
       quickstartRoute,
       workspaceAgentQuickstartRoute,
       agentsRoute,
+      agentCreateRoute,
       agentDetailRoute,
       workspaceAgentsRoute,
+      workspaceAgentCreateRoute,
       workspaceAgentDetailRoute,
       sessionsRoute,
       workspaceSessionsRoute,

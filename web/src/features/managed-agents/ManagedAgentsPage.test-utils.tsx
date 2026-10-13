@@ -202,6 +202,18 @@ export async function selectManagedComboboxOption(
   fireEvent.click(option);
 }
 
+export function expandAgentCreateSections(container: HTMLElement) {
+  for (const button of within(container).queryAllByRole('button')) {
+    if (
+      button.dataset.slot === 'collapsible-trigger' &&
+      /^(Tools|Skills|Multiagent|工具|技能|多智能体)/.test(button.textContent ?? '') &&
+      button.getAttribute('aria-expanded') === 'false'
+    ) {
+      fireEvent.click(button);
+    }
+  }
+}
+
 export type CodeMirrorTestElement = HTMLElement & {
   __agentConfigCodeMirrorView?: EditorView;
 };

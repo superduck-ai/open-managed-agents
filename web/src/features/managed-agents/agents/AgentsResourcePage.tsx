@@ -51,8 +51,9 @@ import {
   type PageCursor,
   type ResourceConfig,
 } from '../types';
-import { errorMessage } from '../utils';
-import { CreateAgentDialog } from './create-dialog';
+import { errorMessage, navigateToInternalHref } from '../utils';
+import { AgentCreatePage } from './AgentCreatePage';
+import { agentCreateHref } from './creation-route';
 import { AgentListTable } from './AgentListTable';
 import { AgentListHeader } from './AgentListHeader';
 import { AgentListOverlays } from './AgentListOverlays';
@@ -109,7 +110,7 @@ export function AgentsResourcePage({
   const [createdFilter, setCreatedFilter] = useState<AgentCreatedFilter>(defaultAgentFilters.created);
   const [statusFilter, setStatusFilter] = useState<AgentStatusFilter>(defaultAgentFilters.status);
   const [openFilterMenu, setOpenFilterMenu] = useState<AgentFilterMenu | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(
+  const [createOpen, setCreateOpen] = useState(
     () =>
       config.section === 'agents' &&
       typeof window !== 'undefined' &&
@@ -236,7 +237,7 @@ export function AgentsResourcePage({
   }, [workspaceId]);
 
   useEffect(() => {
-    if (!dialogOpen || typeof window === 'undefined') {
+    if (!createOpen || typeof window === 'undefined') {
       return;
     }
     const url = new URL(window.location.href);
@@ -245,7 +246,7 @@ export function AgentsResourcePage({
     }
     url.searchParams.delete('create_agent');
     window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
-  }, [dialogOpen]);
+  }, [createOpen]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(search), 300);
@@ -582,6 +583,12 @@ export function AgentsResourcePage({
     setConfirmArchiveAgentIds(null);
   };
 
+  if (isAgentsPage && createOpen) {
+    return (
+      <AgentCreatePage workspaceId={workspaceId} onCreate={handleCreateAgent} onClose={() => setCreateOpen(false)} />
+    );
+  }
+
   return (
     <section
       className={cn('min-h-[calc(100vh-48px)] text-foreground', isAgentsPage && 'mx-auto w-full max-w-[1280px]')}
@@ -591,7 +598,10 @@ export function AgentsResourcePage({
         description={description}
         createLabel={createLabel}
         compact={isAgentsPage}
-        onCreate={() => setDialogOpen(true)}
+        onCreate={() => {
+          setCreateOpen(true);
+          if (isAgentsPage) navigateToInternalHref(agentCreateHref(workspaceId));
+        }}
       />
 
       <div className="mb-3 flex flex-wrap items-center gap-2 [&_button]:text-[13px] [&_input]:text-[13px]">
@@ -721,16 +731,8 @@ export function AgentsResourcePage({
         onNext={goToNextAgentsPage}
       />
 
-      {dialogOpen && createLabel ? (
-        config.section === 'agents' ? (
-          <CreateAgentDialog
-            workspaceId={workspaceId}
-            onClose={() => setDialogOpen(false)}
-            onCreate={handleCreateAgent}
-          />
-        ) : (
-          <CreateResourceDialog title={createLabel} onClose={() => setDialogOpen(false)} />
-        )
+      {createOpen && createLabel ? (
+        <CreateResourceDialog title={createLabel} onClose={() => setCreateOpen(false)} />
       ) : null}
 
       {isAgentsPage ? (

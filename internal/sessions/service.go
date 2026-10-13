@@ -10,6 +10,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentconfig"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -33,7 +34,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 
 	agent, snapshot, err := h.resolveAgent(r, principal, body.Agent)
 	if err != nil {
-		return invalidRequest(err)
+		return sessionAgentError(err)
 	}
 	environmentID, err := parseRequiredRawString(body.EnvironmentID, "environment_id")
 	if err != nil {
@@ -286,7 +287,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	if len(body.Agent) > 0 {
-		next.AgentSnapshot, err = patchSessionAgent(next.AgentSnapshot, body.Agent)
+		next.AgentSnapshot, err = agentconfig.PatchSessionSnapshot(next.AgentSnapshot, body.Agent)
 		if err != nil {
 			return invalidRequest(err)
 		}
@@ -740,7 +741,7 @@ func (h *Handler) listThreadsRoute(w http.ResponseWriter, r *http.Request) error
 	}
 	data := make([]threadResponse, 0, len(records))
 	for _, thread := range records {
-		data = append(data, responseFromThread(thread))
+		data = append(data, responseFromThread(thread, session.AgentSnapshot))
 	}
 	var nextPage *string
 	if hasMore && len(records) > 0 {
@@ -763,7 +764,7 @@ func (h *Handler) retrieveThreadRoute(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return mapThreadLoadError(err, threadID)
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromThread(thread))
+	httpapi.WriteJSON(w, http.StatusOK, responseFromThread(thread, session.AgentSnapshot))
 	return nil
 }
 
@@ -787,6 +788,6 @@ func (h *Handler) archiveThreadRoute(w http.ResponseWriter, r *http.Request) err
 		return mapThreadLoadError(err, threadID)
 	}
 	h.finishSessionRemoval(r.Context(), removal)
-	httpapi.WriteJSON(w, http.StatusOK, responseFromThread(thread))
+	httpapi.WriteJSON(w, http.StatusOK, responseFromThread(thread, session.AgentSnapshot))
 	return nil
 }

@@ -17,40 +17,6 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
-func patchSessionAgent(current json.RawMessage, raw json.RawMessage) (json.RawMessage, error) {
-	var snapshot map[string]any
-	if err := json.Unmarshal(current, &snapshot); err != nil || snapshot == nil {
-		return nil, errors.New("stored session agent is invalid")
-	}
-	var patch map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &patch); err != nil {
-		return nil, errors.New("agent must be an object")
-	}
-	if rawServers, ok := patch["mcp_servers"]; ok {
-		if httpapi.IsJSONNull(rawServers) {
-			snapshot["mcp_servers"] = []any{}
-		} else {
-			var servers any
-			if err := json.Unmarshal(rawServers, &servers); err != nil {
-				return nil, errors.New("agent.mcp_servers must be an array")
-			}
-			snapshot["mcp_servers"] = servers
-		}
-	}
-	if rawTools, ok := patch["tools"]; ok {
-		if httpapi.IsJSONNull(rawTools) {
-			snapshot["tools"] = []any{}
-		} else {
-			var tools any
-			if err := json.Unmarshal(rawTools, &tools); err != nil {
-				return nil, errors.New("agent.tools must be an array")
-			}
-			snapshot["tools"] = tools
-		}
-	}
-	return httpapi.MarshalRaw(snapshot)
-}
-
 func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return "", fmt.Errorf("%s is required", name)

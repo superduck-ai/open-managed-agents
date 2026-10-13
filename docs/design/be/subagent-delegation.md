@@ -1,101 +1,231 @@
-# Subagent delegation
+# 子智能体委派设计
 
-OMA supports a parent Agent delegating to a configured child Agent inside the same Session. Each child execution has an independent public Session Thread. Thread listing, history and SSE reuse the existing Session APIs. Claude Code 2.1.251 is the validated runtime baseline.
+OMA 支持父智能体在同一会话中委派任务。
+子智能体按需启动，并在独立线程中执行任务。
+控制台通过现有接口读取线程列表、历史事件和事件流。
+本次验证使用 Claude Code 2.1.251。
 
-## Configuration and snapshot
+## 术语
 
-The public Agent API retains the existing configuration:
+| 术语       | 含义                                                |
+| ---------- | --------------------------------------------------- |
+| 智能体     | Agent 配置，包含模型、提示词、技能、工具和 MCP 服务 |
+| 会话       | Session，一次独立的执行上下文                       |
+| 线程       | Session Thread，保存一次执行实例的历史事件          |
+| 工作进程   | Worker，在沙箱内运行 Claude Code                    |
+| 后台执行器 | Runner，负责领取工作并启动沙箱                      |
+| 配置快照   | 会话保存的完整配置，包含已固定的子智能体版本        |
+| 原始事件   | 归属于子线程的工具事件                              |
+| 镜像事件   | 主线程中用于提示客户端处理的工具事件副本            |
+
+## 配置与版本固定
+
+公开接口沿用 `multiagent.type = coordinator`：
 
 ```json
-{"multiagent":{"type":"coordinator","agents":[{"type":"agent","id":"agent_child"}]}}
+{
+  "multiagent": {
+    "type": "coordinator",
+    "agents": [{ "type": "agent", "id": "agent_child" }]
+  }
+}
 ```
 
-The two supported object references are:
+支持两种智能体引用：
 
-| Reference | Version selection |
-| --- | --- |
-| `{"type":"agent","id":"agent_child"}` | Pin the child's latest version when creating the parent or updating it with this roster |
-| `{"type":"agent","id":"agent_child","version":1}` | Pin exactly child version 1, even when newer versions exist |
+| 引用                                              | 固定规则                                             |
+| ------------------------------------------------- | ---------------------------------------------------- |
+| `{"type":"agent","id":"agent_child"}`             | 创建父智能体或更新名单时，固定子智能体当时的最新版本 |
+| `{"type":"agent","id":"agent_child","version":1}` | 固定子智能体的第 1 版                                |
 
-The saved roster always includes the resolved numeric `version`. Later child updates leave that reference unchanged. Sending an unversioned roster again selects the latest version at that update; updating other parent fields without sending `multiagent` retains the existing pins. Unknown Agent IDs, nonexistent versions and versions below 1 are rejected.
+保存后的每条引用都包含数字版本。
+子智能体升级后，已保存的引用保持原版本。
+再次发送不含版本的名单时，系统重新选择最新版本。
+仅修改父智能体名称或提示词时，系统保留原名单和原版本。
 
-Agent creation/update resolves each roster entry to an Agent ID and exact version in the same workspace. Session creation expands those references into full child snapshots, including model, system, skills, tools and MCP servers. Deployment creation uses the same resolver, so scheduled Sessions receive the same frozen configuration. Updating a referenced Agent after the parent is saved does not change the pinned version in a new Session. Existing Sessions retain their snapshots.
+系统拒绝以下引用：
 
-Referenced children must have no multiagent configuration; nested delegation definitions are rejected during snapshot resolution. Existing coordinator self entries are recognized by their parent Agent ID and use the referenced version with its multiagent field removed. A name/system update that leaves the roster unchanged preserves historical self versions, without treating self as a nested child or repinning it to the current parent version. This implements the predefined-child runtime behavior described by [Claude Managed Agents](https://platform.claude.com/docs/zh-CN/managed-agents/multiagent-orchestration#delegate-to-subagents). OMA continues using its coordinator schema; workflows, advisors and the newer `multiagent_20261001` API schema are outside this change.
+- 智能体 ID 不存在。
+- 智能体版本不存在。
+- 版本小于 1。
 
-## Startup and continuation
+系统只解析同一工作区内的智能体。
+创建会话时，系统将引用展开为完整配置快照。
+创建部署时，系统使用同一个解析器。
+部署创建的会话继续使用该部署保存的快照。
+
+其他子智能体不得配置嵌套委派。
+`self` 引用按父智能体 ID 识别。
+父智能体升级到 V2 后，仍可引用自身 V1。
+系统按引用版本读取配置，并移除子快照中的 `multiagent`。
+系统不会将历史 `self` 自动升级到父智能体的当前版本。
+
+本实现沿用现有协调器配置。
+工作流、顾问智能体和 `multiagent_20261001` 配置不在本次范围内。
+官方委派语义见 [Claude 子智能体文档](https://platform.claude.com/docs/zh-CN/managed-agents/multiagent-orchestration#delegate-to-subagents)。
+
+## 启动与续聊
 
 ```mermaid
 sequenceDiagram
-    participant API as Session API
-    participant Runner
-    participant Worker as Claude Code
-    participant Events as Existing event store
-    API->>API: Expand pinned child snapshots
-    Runner->>Runner: Resolve root and child skills
-    Runner->>Worker: Register definitions through --agents
-    Worker->>Worker: Parent calls Agent with child config ID
-    Worker->>Events: Child lifecycle and runtime identity
-    Events->>Events: Create thread with frozen child snapshot
-    Worker->>Events: Child messages, tools and results
-    Worker->>Worker: Parent SendMessage to runtime Agent ID
-    Worker->>Events: Continue the same child thread
+    participant API as 会话接口
+    participant Runner as 后台执行器
+    participant Worker as 工作进程
+    participant Events as 事件存储
+    API->>API: 展开固定版本的子配置
+    Runner->>Runner: 解析父子技能
+    Runner->>Worker: 通过 --agents 注册子配置
+    Worker->>Worker: 父智能体调用 Agent 委派任务
+    Worker->>Events: 写入生命周期事件和实例标识
+    Events->>Events: 创建线程并保存配置快照
+    Worker->>Events: 写入子线程消息和工具结果
+    Worker->>Worker: 通过 SendMessage 继续原实例
+    Worker->>Events: 继续写入原线程
 ```
 
-`--agents` is a Claude Code startup parameter accepting JSON definitions. Registration makes the configured children available; the actual child runs when the parent delegates. Startup definitions include the child's prompt, model, skill directory names and inline `mcpServers`. Skills use the existing resolver/mount path with deduplication and directory conflict checks.
+`--agents` 是 Claude Code 的启动参数。
+该参数接收 JSON 格式的智能体定义。
+注册配置后，父智能体才能选择对应子智能体。
+实际执行从父智能体委派任务时开始。
 
-Skill directory lookup includes source, Skill ID and version. Actual-version and requested-version keys point to the same resolved directory; deduplication retains a requested `latest` alias when it shares an actual version with an explicit reference. Different skill versions in distinct directories therefore remain independent of resolver traversal order.
+子配置包含自己的提示词、模型、技能目录和 `mcpServers`。
+技能继续使用现有解析器和挂载路径。
+系统按实际技能版本去重，并检查目录冲突。
 
-The runtime uses four identities:
+技能目录索引包含来源、技能 ID 和版本。
+请求版本与实际版本可以指向同一目录。
+若 `latest` 与显式版本指向同一技能版本，系统保留 `latest` 查找标识。
+同一技能的不同版本可以使用不同目录。
 
-| Identity | Meaning |
-| --- | --- |
-| Agent ID + version | Pinned configuration, used as native `subagent_type` |
-| Runtime Agent ID | Claude execution instance, used by native `SendMessage` |
-| Session Thread ID | Public persisted history and event routing |
-| Task ID / Tool Use ID | Individual delegation/turn/call |
+执行过程使用四类身份：
 
-The existing persisted `session.thread_created` events provide runtime/task/tool-to-thread mappings. The initiating public Agent tool event selects the frozen child snapshot. Later lifecycle events reuse the mapping so a new task can continue an existing execution thread. This adds no scheduler, process per child, registry table or migration.
+| 身份                  | 用途                                           |
+| --------------------- | ---------------------------------------------- |
+| 智能体 ID 和版本      | 标识固定配置。原生 `subagent_type` 使用配置 ID |
+| 运行实例 ID           | 标识一次执行实例。原生 `SendMessage` 使用该 ID |
+| 会话线程 ID           | 标识公开历史和事件路由                         |
+| 任务 ID 或工具调用 ID | 标识一次委派或调用                             |
 
-Lifecycle events and the initiating tool event may arrive in either order. After either is persisted, the service reconciles missing thread snapshots through the existing tool-to-thread mapping. The conditional write only fills child snapshots without an Agent ID, preserving already pinned configurations. Child model dispatch waits for both its thread mapping and configuration within the existing ten-second dispatch deadline. Tool authorization denies a configured child whose snapshot is not ready, instead of using the empty-toolset default.
+系统从已有 `session.thread_created` 事件读取身份映射。
+发起委派的 `Agent` 工具事件确定子配置。
+后续生命周期事件复用原线程映射。
+续聊继续使用原实例和原线程。
 
-Internal transcripts may carry `requestId` while live Worker output carries `request_id`. The input DTO normalizes both to `model_request_start_id`, so the existing transactional cross-source echo deduplication handles a proxy reply and its transcript copy even when their message IDs differ. Independent model requests and unique transcript content remain separate.
+本实现复用现有事件存储。
+系统不新增调度器、子进程注册表、数据库表或迁移。
 
-This is lazy execution of predefined children within a Session. Editing the parent's roster during an active Session does not hot-reload that Session; a new Session uses the newly pinned roster.
+## 事件乱序与快照补齐
 
-## Tools, MCP and shared environment
+生命周期事件和发起工具事件可能按不同顺序到达。
+任一事件保存后，系统检查缺失的子线程快照。
+条件更新只填补缺少智能体 ID 的子快照。
+该更新保留已经固定的配置。
 
-Child tool events and Worker permission requests resolve the actual thread and evaluate its Agent snapshot. Child `ask` requires public confirmation even if the parent allows the same tool. An unknown runtime/thread identity receives a deny response rather than inheriting the parent policy. Confirmations preserve `session_thread_id`.
+子模型请求等待线程映射和配置就绪。
+等待使用现有 10 秒期限。
+配置未就绪时，工具授权返回拒绝结果。
+系统不会使用空配置中的默认允许策略。
 
-Blocking child tools have a child-history event ID and a separate primary-stream mirror ID. Both IDs resolve to the same pending Worker permission request, including requests persisted before this fix. Input acceptance checks the submitted ID and thread against pending metadata while holding the existing Session/Worker locks. Unknown IDs, another thread's IDs and completed requests return an input conflict before the confirmation is persisted. A missing request during Worker delivery returns an error instead of forwarding the confirmation as ordinary input.
+内部回复记录使用 `requestId`。
+实时工作进程事件使用 `request_id`。
+系统将两者统一为 `model_request_start_id`。
+现有事务去重逻辑据此关联模型代理回复与内部回复副本。
+独立模型请求和不同回复内容仍分别保存。
 
-Public tool projections retain both event IDs and expose their relation: the primary copy has `original_event_id`, and the child copy has `primary_event_id`. Child history reads enrich older blocking tool events that lack this field through the Session's existing Worker identity and deterministic mirror-ID mapping, without rewriting stored history. Already annotated events require no additional lookup. This belongs to Session projection and rendering, not Agent configuration or local Worker execution.
+编辑父智能体名单不会更新已有会话。
+新会话使用重新固定的名单。
 
-The frontend maps both public IDs to the original call before coalescing tool rows and linking confirmations, results and pending status references. It prefers the original event when both copies are loaded; a primary-only copy remains actionable until child history arrives. Event IDs and submitted confirmation IDs remain public IDs. Distinct calls with the same thread, file, input or timestamp remain distinct; missing identity information is not inferred from content.
+## 工具审批与调用身份
 
-The frontend tracks pending approvals for the Session and each child thread independently. A running parent does not clear a child's `session.thread_status_idle` with `requires_action`; a confirmation, tool result or subsequent status clears the corresponding pending action. The existing approval card submits the selected public tool event ID and its child thread ID.
+子工具按实际线程的配置快照判断权限。
+父智能体允许某工具，不会使子智能体自动获得相同权限。
+子配置中的 `ask` 必须等待客户端确认。
+未知实例或未知线程收到拒绝结果。
 
-Inline child MCP configuration reuses the existing runtime config builder. Child Tunnel gateway URLs carry `config_agent_id` after normal Session-ingress authentication; the gateway selects only a referenced frozen child from that authenticated Session. Unknown selectors fail closed. Resource and OAuth discovery URLs retain the selector. Shared sandbox networking includes all configured MCP hosts, while each MCP gateway policy uses the selected Agent's exact URLs.
+阻塞工具有原始事件 ID 和主线程镜像 ID。
+两套 ID 指向同一个待处理请求。
+后端在现有会话锁和工作进程锁内检查 ID 与线程。
+未知 ID、其他线程的 ID 和已处理的请求返回输入冲突。
+校验失败时，后端不保存确认事件。
 
-Parent and children share the sandbox filesystem, mounted skill files and Session credentials. Skill preload and tool policy selection do not establish filesystem or skill-access isolation. The MCP configuration selector is a scope selector within the authenticated Session, not a separate child credential.
+公开事件保留原 ID，并声明两份事件的关联：
 
-## Public observation
+- 镜像事件的 `original_event_id` 指向原始事件。
+- 原始事件的 `primary_event_id` 指向镜像事件。
 
-- `GET /v1/sessions/{session_id}/threads` lists the parent and instantiated children with their Agent snapshots.
-- `GET /v1/sessions/{session_id}/threads/{thread_id}/events` reads persisted thread history.
-- `GET /v1/sessions/{session_id}/threads/{thread_id}/stream` streams that thread's events.
-- `POST /v1/sessions/{session_id}/events` accepts tool confirmations carrying the child `session_thread_id`.
+读取旧历史时，后端使用会话现有工作进程身份推导镜像 ID。
+后端只补齐缺失的关联字段，不改写已存储的历史。
+缺少工作进程身份时，后端保留原响应。
 
-Internal child tool results are mapped to the public `agent.tool_result` contract. A resumed child keeps its thread ID and previous context. This change adds no new public route or frontend flow.
+前端先统一调用身份，再执行去重和结果关联。
+同一身份用于工具记录、审批确认、工具结果和待处理状态。
+两份事件都已加载时，前端选择原始事件。
+仅加载镜像事件时，前端仍提供审批入口。
+审批提交继续使用选中事件的公开 ID 和子线程 ID。
 
-The frontend thread inspector displays the selected child's Agent ID, name, version and model from that thread's snapshot. It does not replace historical child configuration with the parent or the catalog's current Agent version; incomplete snapshots remain unknown.
+不同调用即使线程、路径、输入或时间相同，也分别显示。
+前端不根据相似内容推测调用身份。
+该修复属于共享会话层，不修改智能体配置或工作进程执行方式。
 
-## Acceptance
+前端分别跟踪会话和各子线程的待处理审批。
+父线程继续运行时，子线程审批入口仍然可用。
+确认、结果或后续线程状态清除对应待处理项。
 
-The [Subagent verification scenario](../../../.agents/skills/verify-be/features/subagents.md) exercises both object-reference forms through public Agent creation/update, rejected references, version retention after child upgrades, repinning when resending a roster and preservation when updating other parent fields. The child reaches V3 while the actual Worker must dispatch explicitly pinned V1. The scenario also covers the child's model/system/skill, tool rejection and approval with filesystem checks, remote MCP execution, thread listing/history/SSE and same-thread continuation. The upstream model is scripted, so this verifies protocol behavior rather than autonomous model decisions. Handler tests additionally cover child Tunnel selection, rejection of unknown configuration IDs and OAuth scope preservation.
+## MCP 与共享环境
 
-The scenario also forces lifecycle-before-tool delivery for two child instances, verifies pending-configuration denial and repaired ask/deny policies, and tests proxy/transcript delivery in both orders with changed message IDs. Two real background instances of the same V1 configuration overlap, request independent Write confirmations and leave no files after rejection. First-turn, follow-up and new-Session histories must contain one copy of each child reply.
+子智能体复用现有 MCP 配置构造器。
+子隧道网关地址携带 `config_agent_id`。
+网关先验证会话入口凭据，再选择会话已引用的子快照。
+未知配置 ID 无法访问上游服务。
+资源发现与 OAuth 元数据地址保留该配置 ID。
 
-Approval regression rejects unknown IDs and child approvals addressed to the primary thread without persisting them. Real child Write rejection and approval use IDs read from child history. Parallel children exercise one child-history ID and one primary mirror ID, proving both resume the correct Worker request. Frontend component tests require approval buttons while the parent runs and retain another child's approval after one thread resumes.
+沙箱网络名单包含父子配置中的 MCP 主机。
+每个网关请求仍按选中的配置检查具体 URL。
 
-Child Worker-restart recovery, directed interruption, real Tunnel service execution, cloud allocation and browser presentation remain outside this backend scenario. Frontend component regression separately verifies snapshot display.
+父子智能体共享沙箱文件系统、技能文件和会话凭据。
+技能预加载不提供文件系统隔离。
+MCP 配置选择参数不构成独立的子智能体凭据。
+
+## 公开接口与展示
+
+| 接口                                                       | 用途                         |
+| ---------------------------------------------------------- | ---------------------------- |
+| `GET /v1/sessions/{session_id}/threads`                    | 读取线程列表和配置快照       |
+| `GET /v1/sessions/{session_id}/threads/{thread_id}/events` | 读取线程历史                 |
+| `GET /v1/sessions/{session_id}/threads/{thread_id}/stream` | 订阅线程事件流               |
+| `POST /v1/sessions/{session_id}/events`                    | 提交携带子线程 ID 的工具确认 |
+
+内部工具结果转换为公开 `agent.tool_result` 事件。
+线程详情从该线程快照读取智能体名称、ID、版本和模型。
+缺失配置显示为未知。
+控制台不会用父配置或当前目录版本替代历史子配置。
+
+## 验收范围
+
+[子智能体验证场景](../../../.agents/skills/verify-be/features/subagents.md)覆盖以下行为：
+
+- 两种引用形式、非法引用拒绝、版本保留和重发名单。
+- 历史 `self` 配置，以及会话和部署的快照一致性。
+- 子模型、提示词、技能、MCP 和工具权限。
+- 线程列表、历史、事件流和原线程续聊。
+- 生命周期乱序、配置补齐和既有快照保留。
+- 同配置的两个后台实例并行执行。
+- 回复去重、两套审批 ID 和旧历史关联补齐。
+
+真实工作进程使用脚本提供的上游模型响应。
+该测试验证协议行为，不验证模型自主推理质量。
+隧道配置选择和 OAuth 参数保留有处理器测试。
+完整隧道服务、云端分配、定向中断和子线程重启恢复仍未验收。
+浏览器展示由独立组件回放检查。
+该回放不等于原控制台的完整端到端验收。
+
+## 中文写作约定
+
+本文采用 ASD-STE100 的可迁移写作原则。
+每句话表达一个主要意思。
+操作步骤使用主动语态。
+同一对象使用同一术语。
+代码标识、命令、URL 和产品名称保留原文。
+
+ASD-STE100 是受控英语规范，本文不声明通过其英语词汇合规检查。
+参考 [ASD 官方说明](https://www.asd-ste100.org/STE_faq.html)。

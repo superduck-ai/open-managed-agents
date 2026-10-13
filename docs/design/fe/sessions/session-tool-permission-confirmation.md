@@ -1,193 +1,178 @@
-# Session Tool 权限确认与审批交互设计指南
+# 会话工具审批与状态展示
 
+## 配置与调用状态
 
----
+工具权限与工具调用状态是两类信息。
+智能体的 `tools` 配置决定自动执行、每次询问或拒绝执行。
+历史事件决定本次调用的等待、执行、完成、失败或拒绝状态。
+配置规则见[权限策略](../../be/permission-policies.md)。
 
-## 1. 背景
+控制台从会话及各线程的最新状态读取待处理项。
+`stop_reason.type=requires_action` 时，`event_ids` 指定需要用户处理的调用。
+普通工具使用允许和拒绝按钮。
+`AskUserQuestion` 使用问卷。
+分别提交 `user.tool_confirmation` 和 `user.custom_tool_result`。
+页面布局边界见[会话时间线设计](session-detail-lane-timeline-design.md)。
 
-权限策略有两层含义：
+## 线程与事件归属
 
-- **配置层**：Agent 的 `tools` 配置决定预构建 agent toolset 与 MCP toolset 是自动执行还是等待确认。详见 [权限策略](../permission-policies.md)。
-- **回放与交互层**：Session Detail 页面读取已经写入事件流的 tool use、tool confirmation 和 tool result，还原本次工具调用处于等待、运行、完成、失败或拒绝状态；最新 `session.status_idle.stop_reason` 为 `requires_action` 时，控制台按其中的 `event_ids` 提供普通工具 Allow/Deny 或 AskUserQuestion 问卷交互，分别发送 `user.tool_confirmation` 与 `user.custom_tool_result`。
+| 接口                                                           | 历史范围                               |
+| -------------------------------------------------------------- | -------------------------------------- |
+| `/v1/sessions/{session_id}/events`                             | 主线程视图及需要客户端处理的子线程镜像 |
+| `/v1/sessions/{session_id}/threads/{session_thread_id}/events` | 对应子线程的历史                       |
 
-后端事件输出必须先遵守 Anthropic multi-agent 线程契约，再由前端做归一化回放与交互：
+普通子工具及结果归属于子线程。
+需要审批或自定义结果时，后端可将子调用复制到主线程。
+镜像必须携带 `session_thread_id`，表示来源子线程。
+该字段不改变镜像事件的主线程归属。
+子接口已通过 URL 指定线程，原始载荷可以省略重复线程字段。
+响应补齐字段只方便读取，不改变存储归属。
 
-- `/v1/sessions/{session_id}/events` 是 primary thread 的浓缩视图，不应返回普通子线程的完整工具调用历史。
-- `/v1/sessions/{session_id}/threads/{session_thread_id}/events` 是子线程明细视图，子线程自身的 tool use/result 应在这里返回。
-- 子线程 tool use 只有在需要客户端动作时才允许 cross-post 到 primary，例如 `always_ask` 权限确认或 custom tool result；primary copy 必须携带 `session_thread_id`，用于标识来源子线程并路由后续确认/结果。
-- 子线程自己的 thread events 可以不重复携带 `session_thread_id`，因为 URL 已经定位到 thread；若返回时补齐该字段，也只能作为响应层便利字段，不能改变事件归属。
+后端过滤主线程中无来源标识的孤立子事件副本。
+同一规则适用于调用、确认和结果。
+这类归属错误由接口和测试处理，前端不根据相似内容隐藏事件。
 
-参考来源：
+## 工具调用契约
 
-- [../permission-policies.md](../permission-policies.md)：公开 API 契约、默认策略、确认事件发送流程。
-- [session-detail-lane-timeline-design.md](session-detail-lane-timeline-design.md)：session detail minimap 与 transcript 的现有设计边界。
+| 事件类型                | 关键字段                                      | 用途           |
+| ----------------------- | --------------------------------------------- | -------------- |
+| `agent.tool_use`        | `id`、`name`、`input`、`evaluated_permission` | 内置工具调用   |
+| `agent.mcp_tool_use`    | `id`、`name`、`input`、`evaluated_permission` | MCP 工具调用   |
+| `agent.custom_tool_use` | `id`、`name`、`input`                         | 自定义工具调用 |
 
----
+`evaluated_permission` 表示后端对本次调用的评估。
+前端按下表归一化：
 
-## 2. 事件契约
+| 原始值                                 | 内部值  | 含义     |
+| -------------------------------------- | ------- | -------- |
+| `ask`、`always_ask`、`requires_action` | `ask`   | 等待确认 |
+| `allow`、`always_allow`                | `allow` | 可以执行 |
+| `deny`、`denied`                       | `deny`  | 拒绝执行 |
 
-### 2.1 Tool use
+自定义工具不使用普通工具的权限策略，但复用调用展示。
 
-| 事件类型 | 关键字段 | 说明 |
-|---|---|---|
-| `agent.tool_use` | `id`, `name`, `input`, `evaluated_permission` | 预构建 agent toolset 调用。 |
-| `agent.mcp_tool_use` | `id`, `name`, `input`, `evaluated_permission` | MCP toolset 调用。 |
-| `agent.custom_tool_use` | `id`, `name`, `input` | 自定义工具调用，权限策略不适用，但 UI 可复用 tool call 展示路径。 |
+## 确认与结果契约
 
-`evaluated_permission` 是服务端对本次 tool use 的策略评估结果。前端展示层归一化为：
-
-| 原始值 | 归一化值 | 含义 |
-|---|---|---|
-| `ask`, `always_ask`, `requires_action` | `ask` | 需要确认后才能执行。 |
-| `allow`, `always_allow` | `allow` | 自动放行，工具可直接运行。 |
-| `deny`, `denied` | `deny` | 策略直接拒绝，工具不会运行。 |
-
-多线程补充：
-
-- coordinator/primary 自己的 tool use 不需要 `session_thread_id`。
-- 子线程自身的 tool use 在 thread endpoint 中以该 thread 作为 owner，不要求 payload 内重复 `session_thread_id`。
-- 子线程 tool use 若被 cross-post 到 primary，必须带 `session_thread_id`，且该字段只表示“来源子线程”，不是 primary 事件的 owner。
-- 没有 `session_thread_id` 的子线程 tool use 不应出现在 primary；若历史数据或异常 payload 已经这样返回，应由后端响应过滤和 API 测试兜住，不在前端隐藏/去重。
-- 同一规则也适用于按 `tool_use_id` 关联的 `tool_result` 与 `user.tool_confirmation`：如果 primary 中出现无 `session_thread_id` 的 result/confirmation，但同一 `tool_use_id` 已在子线程 owner copy 中存在，则 primary 响应必须过滤该 orphan projection。
-
-### 2.2 Tool confirmation
-
-`user.tool_confirmation` 表示某个阻塞 tool use 已被确认：
+普通工具确认使用以下事件：
 
 ```ts
 interface UserToolConfirmationEvent {
-  type: 'user.tool_confirmation'
-  tool_use_id: string
-  result: 'allow' | 'deny'
-  deny_message?: string | null
+  type: "user.tool_confirmation";
+  tool_use_id: string;
+  result: "allow" | "deny";
+  deny_message?: string | null;
+  session_thread_id?: string;
 }
 ```
 
-`tool_use_id` 必须回指对应 tool use 事件的 `id`。`result="allow"` 表示可以继续执行；`result="deny"` 表示拒绝执行，`deny_message` 可用于说明原因。
+`tool_use_id` 必须是对应工具事件的公开 ID。
+`result=allow` 表示允许执行，`result=deny` 表示拒绝执行。
+`deny_message` 如存在，必须是字符串或 `null`。
+子工具确认必须携带对应子线程的 `session_thread_id`。
+原始 ID 和镜像 ID 都必须关联同一个待处理请求。
 
-当确认的是 cross-post 到 primary 的子线程 tool use 时，调用方可以把 tool use 事件上的 `session_thread_id` 原样带回 `user.tool_confirmation.session_thread_id`。即使只传 `tool_use_id`，服务端也应能根据阻塞事件路由到正确线程；但响应 payload 仍应保留 `session_thread_id`，避免 UI 和 SDK 客户端丢失来源信息。
+未知 ID、错误线程或已处理请求返回输入冲突。
+失败确认不得保存为成功事件。
 
-### 2.3 Tool result
+| 结果事件                  | 关联字段             |
+| ------------------------- | -------------------- |
+| `user.tool_result`        | `tool_use_id`        |
+| `agent.tool_result`       | `tool_use_id`        |
+| `agent.mcp_tool_result`   | `mcp_tool_use_id`    |
+| `user.custom_tool_result` | `custom_tool_use_id` |
 
-Tool result 事件通过 tool use id 关联到 tool use：
+`is_error=true` 表示执行失败。
+原始载荷保留下载、流式复制和外部错误等详细信息。
+回复记录视图使用状态和可读摘要。
+结果与确认遵循对应调用的线程归属。
 
-| 事件类型 | 关联字段 | 说明 |
-|---|---|---|
-| `user.tool_result` | `tool_use_id` | 调用方返回的 tool result。 |
-| `agent.tool_result` | `tool_use_id` | agent toolset result。 |
-| `agent.mcp_tool_result` | `mcp_tool_use_id` | MCP toolset result。 |
-| `user.custom_tool_result` | `custom_tool_use_id` | 自定义工具 result。 |
+## 统一调用身份
 
-result 事件中的 `is_error=true` 表示执行失败。下载、流式复制、外部工具错误等细节仍保留在原始 payload 中，Transcript 只消费成功/失败语义和可读摘要。
+主线程镜像和子原始事件保留各自公开 `id`。
+镜像通过 `original_event_id` 指向原始事件。
+原始事件通过 `primary_event_id` 指向镜像。
 
-多线程 result 归属遵循对应 tool use：普通子线程 result 应只出现在 thread endpoint；需要 cross-post 的 result/confirmation 必须携带 `session_thread_id`。历史上 Claude Code 可能把子线程 MCP result 作为无归属 `agent.tool_result` 写到 primary，后端响应层应根据 `tool_use_id` 与子线程 tool use owner copy 去除该 projection，避免 Orchestrator 回放出子线程工具。
+事件合并层先建立两套 ID 到原始调用的映射。
+内部 `toolCallId` 用于工具记录去重，以及确认和结果关联。
+内部 `pendingToolCallIds` 用于待处理状态匹配。
+两份事件都已加载时，选择原始事件。
+只加载镜像时，仍提供审批入口。
+提交确认继续使用选中事件的公开 ID。
 
----
+旧子历史读取补齐可推导的关联，不改写存储历史。
+独立调用即使线程、文件、输入和时间相同，也保持独立。
 
-## 3. 归一化模型
+前端分别读取会话与各子线程的最新状态。
+子状态包括 `session.thread_status_idle`。
+父线程运行时，子线程待审批项仍保留。
+对应确认、结果或后续线程状态清除待处理项。
+会话终止或删除时，清除全部待处理项。
 
-同一阻塞工具调用的 primary 镜像和子线程原始事件保留各自公开 `id`，分别通过 `original_event_id` 和 `primary_event_id` 声明关联。事件合并层先建立这两套 ID 到原始调用的映射，再统一用于 tool row 去重、confirmation/result 关联和 `stop_reason.event_ids` 匹配。两份事件同时存在时选择原始事件；仅收到镜像时仍可审批。历史子线程读取会补齐缺失关联，不改写存储历史。独立调用即使线程、路径、输入或时间相同，也保持独立。
+## 归一化展示
 
-待处理集合分别读取 Session 和各线程的最新状态，包括 `session.thread_status_idle`。父线程继续运行不会清掉子线程审批；确认和结果按统一调用身份清除对应待处理项。
-
-Transcript 不直接逐条渲染原始事件。构建 session trace 时，应先扫描事件流并建立两张索引：
+生成回复记录前，先扫描完整事件流。
+建立结果索引和确认索引：
 
 ```ts
-const toolResultsByUseId = new Map<string, SessionEvent>()
-const toolConfirmationsByUseId = new Map<string, UserToolConfirmationEvent>()
-
-for (const event of events) {
-  if (isToolResultEvent(event)) {
-    const id = toolResultUseId(event)
-    if (id) toolResultsByUseId.set(id, event)
-  }
-
-  if (event.type === 'user.tool_confirmation') {
-    toolConfirmationsByUseId.set(event.tool_use_id, event)
-  }
-}
+const toolResultsByUseId = new Map<string, SessionEvent>();
+const toolConfirmationsByUseId = new Map<string, UserToolConfirmationEvent>();
 ```
 
-之后遍历事件生成显示 entry：
-
-- `tool_use` 事件生成 `tool_call` entry。
-- 对应 result 通过 `toolResultsByUseId.get(toolUse.id)` 挂到 `tool_call.resultEvent`。
-- 对应 confirmation 通过 `toolConfirmationsByUseId.get(toolUse.id)` 挂到 `tool_call.confirmationEvent`。
-- Transcript 模式跳过独立的 `tool_result` 与 `user.tool_confirmation` 行。
-- Debug 模式仍显示所有原始事件，方便排查事件流和关联错误。
-
-建议内部结构：
+索引键使用统一调用身份。
+工具记录通过 `resultEvent` 和 `confirmationEvent` 保存关联事件。
+回复记录视图不单独显示已经关联的确认和结果行。
+调试视图保留原始事件及无法关联的孤立事件。
+孤立事件不改变其他调用的状态。
 
 ```ts
 type ToolLifecycle =
-  | 'awaiting_approval'
-  | 'running'
-  | 'failed'
-  | 'denied'
-  | 'completed'
+  "awaiting_approval" | "running" | "failed" | "denied" | "completed";
 
 interface ToolCallEntry {
-  kind: 'tool_call'
-  name: string
-  input: unknown
-  resultEvent?: SessionEvent
-  confirmationEvent?: UserToolConfirmationEvent
-  lifecycle: ToolLifecycle
-  bracketId?: string
+  kind: "tool_call";
+  name: string;
+  input: unknown;
+  resultEvent?: SessionEvent;
+  confirmationEvent?: UserToolConfirmationEvent;
+  lifecycle: ToolLifecycle;
+  bracketId?: string;
 }
 ```
 
----
+## 调用状态
 
-## 4. Lifecycle 状态机
+按以下优先级计算状态：
 
-对每个 `tool_call`，按以下顺序计算 lifecycle：
+1. 策略或用户拒绝时，状态为 `denied`。
+2. 已有结果时，根据 `is_error` 选择 `failed` 或 `completed`。
+3. 需要确认且没有确认时，状态为 `awaiting_approval`。
+4. 其他情况为 `running`。
 
-```ts
-function toolLifecycle(toolUse, resultEvent, confirmationEvent): ToolLifecycle {
-  const permission = normalizedPermission(toolUse.evaluated_permission)
-  const confirmationResult = confirmationEvent?.result
-  const resultIsError = resultEvent?.is_error === true
+| 条件                           | 状态                | 中文含义 |
+| ------------------------------ | ------------------- | -------- |
+| `ask`，尚无确认                | `awaiting_approval` | 等待批准 |
+| 自动允许，或已允许但尚无结果   | `running`           | 执行中   |
+| 结果的 `is_error=true`         | `failed`            | 执行失败 |
+| 策略拒绝或确认的 `result=deny` | `denied`            | 已拒绝   |
+| 已有结果且没有错误             | `completed`         | 已完成   |
 
-  if (permission === 'deny' || confirmationResult === 'deny') return 'denied'
-  if (resultEvent) return resultIsError ? 'failed' : 'completed'
-  if (permission === 'ask' && !confirmationEvent) return 'awaiting_approval'
-  return 'running'
-}
-```
+缺失权限字段时，按已有允许策略兼容。
+若事件明确包含 `requires_action=true`，则按待处理调用展示。
+历史状态用于回放，不能单独决定是否显示当前操作卡。
+当前操作卡还必须匹配最新待处理集合。
+确认和结果到达后，立即从该集合移除对应调用。
 
-状态语义：
+## 工具批次
 
-| lifecycle | 触发条件 | 展示含义 |
-|---|---|---|
-| `awaiting_approval` | `evaluated_permission=ask` 且无 confirmation | 工具尚未执行，等待外部确认。 |
-| `running` | 自动允许，或 ask 后已有 allow confirmation，但尚无 result | 工具已可运行，正在等待结果。 |
-| `failed` | 有 result 且 `is_error=true` | 工具执行失败。 |
-| `denied` | 策略拒绝，或 confirmation `result=deny` | 工具不会执行。 |
-| `completed` | 有 result 且非 error | 工具执行完成。 |
+同一模型请求中连续的调用可合并为 `tool_batch`。
+批次只改变展示，每个调用仍保留自己的事件关联。
 
-注意：
-
-- `denied` 的优先级最高，因为策略拒绝或用户拒绝都意味着工具不会继续运行。
-- `ask + allow confirmation + no result` 必须是 `running`，不是 `awaiting_approval`。
-- `ask + no confirmation + no result` 才是 `awaiting_approval`。
-- 缺少 `evaluated_permission` 时按 `allow` 兼容处理，除非事件显式带有 `requires_action=true`。
-- lifecycle 用于回放；当前可操作卡片必须额外由最新 `session.status_idle.stop_reason.event_ids` 决定，并扣除该 status 之后已经出现 confirmation/result 的 ID，避免新 status 到达前重复提交；不能让历史 ask tool 长期阻塞 composer。
-
----
-
-## 5. Tool batch 聚合
-
-同一 model request bracket 下连续的多个 `tool_call` 可聚合为 `tool_batch`。batch 只影响展示，不改变每个 tool call 的原始事件关联。
-
-聚合规则：
-
-- `toolCounts` 按工具名统计，例如 `Read x2, Glob`。
+- `toolCounts` 按工具名称统计。
 - `executionMs` 取子调用最大值。
-- `isError` 任一子调用为 error 即为 true。
-- `lifecycle` 取最需要关注的子调用状态。
+- `isError` 在任一子调用失败时为 `true`。
+- 批次状态取最需要处理的子调用状态。
 
-lifecycle 严重性排序：
+状态优先级为等待批准、执行中、失败、拒绝、完成：
 
 ```ts
 const lifecyclePriority = {
@@ -196,135 +181,79 @@ const lifecyclePriority = {
   failed: 2,
   denied: 3,
   completed: 4,
-}
+};
 ```
 
-batch lifecycle 使用数字最小的状态。这样只要 batch 内仍有工具等待确认，整行就显示 `awaiting approval`，避免被已完成工具掩盖。
+只要批次仍有待审批调用，整行就显示等待批准。
 
----
+## 页面交互
 
-## 6. UI 行为
+工具行显示工具名称、输入摘要和状态。
+执行中显示加载图标。
+等待批准和拒绝状态显示对应标签。
+错误结果显示错误标记。
+其他信息包括令牌用量、耗时和相对时间。
+工具批次使用相同信息栏。
 
-### 6.1 Transcript 行
+详情面板显示状态、输入 JSON、结果 JSON 和确认 JSON。
+没有结果时，显示无结果提示。
+拒绝确认还显示 `deny_message`。
+调试视图允许查看原始确认、结果及孤立事件。
 
-`tool_call` 行展示：
+右侧操作卡提供允许、拒绝或问卷交互。
+等待处理时，左侧普通消息输入框保持可见并禁用。
+历史调用已完成后，不再显示操作卡。
+父线程运行不应隐藏子线程审批入口。
 
-- 左侧 compact `Tool` badge。
-- 主文本为工具名，后接输入摘要。
-- 行尾 meta strip 依次展示：
-  - `running` spinner，仅当 lifecycle 为 `running`。
-  - approval chip，仅当 lifecycle 为 `awaiting_approval` 或 `denied`。
-  - error badge，仅当 result error 或 entry error。
-  - token usage。
-  - execution/model duration。
-  - relative timestamp。
+工具配置表显示配置权限，不从历史确认反推配置。
+主线程按会话固定的智能体 ID 和版本读取配置。
+子线程详情显示该线程自己的配置快照。
+内置与 MCP 工具复用智能体详情页的权限规则。
+规则包括首个配置优先、`default_config`、`enabled=false` 和已有默认权限。
 
-Approval chip 规则：
+历史权限、确认和结果只表示本次调用。
+配置暂时不可读或自定义工具无配置权限时，才使用已观察结果作为兼容信息。
+配置为每次询问的工具，在历史调用完成后仍显示每次询问。
 
-| lifecycle | 展示 |
-|---|---|
-| `awaiting_approval` | accent chip，文案 `awaiting approval` / `等待批准`。 |
-| `denied` | warning chip，带 prohibit/ban 图标，文案 `denied` / `已拒绝`。 |
-| 其他 | 不渲染 approval chip。 |
+## 问卷提交
 
-`tool_batch` 行使用同一套 meta strip，并以 batch lifecycle 决定 chip。
+`AskUserQuestion` 发布为 `agent.custom_tool_use`。
+控制台提交 `user.custom_tool_result`。
 
-### 6.2 详情面板
+1. 使用待处理集合所引用的公开 `custom_tool_use_id`。
+2. 子线程请求携带对应 `session_thread_id`。
+3. 接受答案时，设置 `is_error=false`。
+4. 将答案对象 JSON 放入单个文本内容块。
+5. 使用完整 `question` 文本作为答案键。
 
-选中 `tool_call` 时，详情面板展示：
+拒绝时，设置 `is_error=true`，无需 `content`。
+后端从私有映射读取原始输入，并设置 Claude Code 的 `updatedInput.answers`。
+公开 `user.tool_confirmation` 不增加 `updated_input` 或 `answers` 字段。
 
-- lifecycle badge。
-- Tool use input JSON。
-- Tool result JSON；若没有 result，显示 `No result`。
-- 如果存在 confirmation：
-  - `result=allow` 显示确认结果。
-  - `result=deny` 显示确认结果和 `deny_message`。
+## 实现与验收
 
-选中 Debug 中的 `user.tool_confirmation` 原始事件时，详情面板可直接显示原始 JSON。Transcript 不需要单独渲染该行。
+实现位于 `sessionTraceModel.ts`、`sessionTraceRows.tsx`、`SessionRequiresActionCard.tsx`、`SessionDetailPage.tsx` 和 `SessionTracePanel.tsx`。
+新增事件形态时，扩展现有归一化和关联函数。
+用户拒绝必须读取确认结果，不能只读取初始权限。
 
-### 6.3 Debug 模式
+| 场景                   | 期望结果                                     |
+| ---------------------- | -------------------------------------------- |
+| 普通工具等待确认       | 显示等待批准及允许、拒绝按钮，普通输入框禁用 |
+| 用户允许               | 发送允许确认，工具转为执行中                 |
+| 用户拒绝               | 发送拒绝确认，工具显示已拒绝及原因           |
+| 问卷提交               | 按完整问题文本关联答案，发送自定义结果       |
+| 策略拒绝               | 无用户确认也显示已拒绝                       |
+| 结果失败               | 显示失败状态及错误标记                       |
+| 结果成功               | 显示已完成，不显示审批标签                   |
+| 批次中一项等待         | 整批显示等待批准                             |
+| 父线程运行             | 子线程仍提供审批入口                         |
+| 并行子线程             | 处理一个线程不清除另一个线程的待处理项       |
+| 原始与镜像调用同时加载 | 只显示一条工具记录，确认与结果正确关联       |
+| 独立调用内容相同       | 分别显示，不按内容合并                       |
+| 刷新历史               | 已完成调用不再出现重复执行中记录             |
+| 调试视图               | 保留原始确认、结果和孤立事件                 |
 
-Debug 模式是事件审计视图，必须保留：
-
-- 原始 `user.tool_confirmation` 事件。
-- 原始 tool result 事件。
-- 无法关联到 tool use 的孤立 confirmation/result。
-
-孤立事件不应影响任何 `tool_call` lifecycle，但需要在 Debug 中可见，方便定位后端或导入数据问题。
-
-### 6.4 Inspector Tools 权限列
-
-Inspector 的 Tools 表格展示配置层权限，而不是根据历史调用是否出现 confirmation 反推策略：
-
-- 按 `session.agent.id` 和 `session.agent.version` 获取该 Session 固定引用的 Agent 版本；
-- 内置 toolset 与 MCP toolset 复用 Agent 详情页的权限计算，包括逐工具 first-wins、`default_config`、`enabled=false`、内置默认 `always_allow` 和 MCP 默认 `always_ask`；
-- 历史事件的 `evaluated_permission`、confirmation 和 result 只负责本次调用的 lifecycle、审批与执行结果，不得覆盖 Agent 配置列；
-- Agent 版本暂时不可读取，或 custom tool 等没有配置层权限语义时，才兼容使用已观察调用的权限结果，避免伪造一个不存在的 Agent 配置。
-
-因此，Agent 配置为 `always_ask` 时，即使历史工具调用已经获准并完成，Tools 表格仍显示 `Always ask` / `始终询问`；调用行本身继续按事件展示 completed、denied 或 awaiting approval。
-
----
-
-## 7. 后端与事件发送边界
-
-后端继续按 session events 契约接受合法 client input events。
-
-普通 `agent.tool_use` / `agent.mcp_tool_use` 使用 `user.tool_confirmation`：
-
-- `tool_use_id` 必填且非空（必须是公开 `agent.tool_use` / `agent.mcp_tool_use` 的 `id`，例如 `sevt_...`）。
-- `result` 必须是 `allow` 或 `deny`。
-- `deny_message` 如存在，必须是 string 或 null。
-- `session_thread_id`：若所确认的阻塞 tool use 来源于子线程 cross-post，则原样带回 `session_thread_id`。
-
-`AskUserQuestion` 作为 `agent.custom_tool_use` 发布，使用 `user.custom_tool_result`：
-
-- `custom_tool_use_id` 必须是最新 `stop_reason.event_ids` 引用的公开 custom tool event id。
-- 接受答案时 `is_error=false`，`content` 中单个 text block 保存以完整 `question` 文本为 key 的答案对象 JSON。
-- 拒绝时 `is_error=true`，无需 `content`。
-- 后端从私有映射恢复原始 input，将答案写入 Claude Code `updatedInput.answers`；不扩展公开 `user.tool_confirmation` 的 `updated_input` 或 `answers` 字段。
-
-控制台 Session Detail 详情页只在最新 `session.status_idle.stop_reason.type=requires_action` 时，按 `event_ids` 找到对应 tool call，并在右侧详情区域优先展示可滚动的 Action Card；等待处理期间保留并禁用左侧消息输入框，避免用户将回复误发为普通 `user.message`。
-
----
-
-## 8. 本仓库实现状态
-
-当前前端实现位于 `sessionTraceModel.ts`、`sessionTraceRows.tsx`、`SessionRequiresActionCard.tsx`、`SessionDetailPage.tsx` 与 `SessionTracePanel.tsx`：
-
-- `buildSessionTraceEntries` 在生成 Transcript 前预扫描完整事件流，建立 `toolResultsByUseId` 与 `toolConfirmationsByUseId`。
-- Transcript 中 `user.tool_confirmation` 与 tool result 不独立成行，而是挂到对应 `tool_call.confirmationEvent` / `tool_call.resultEvent`。
-- Debug 模式仍显示原始 `user.tool_confirmation` 与 tool result，便于审计孤立事件或关联错误。
-- `sessionToolLifecycle` 支持字符串与对象形态的 `evaluated_permission` / `permission`，并按 `deny > result > ask-without-confirmation > running` 的顺序派生 lifecycle。
-- `ask + allow confirmation + no result` 显示为 `running`；`ask + deny confirmation` 或策略 `deny` 显示为 `denied`；`ask + no confirmation` 显示为 `awaiting_approval`。
-- tool 详情面板展示 confirmation JSON；拒绝事件会显示 `deny_message`。
-- 在页面检测到待确认工具时，右侧详情区域呈现 `SessionRequiresActionCard` 并提供 Allow/Deny 或问卷交互，左侧普通输入框保持可见但禁用。
-- 页面待处理集合来自最新 `session.status_idle.stop_reason.event_ids`，历史 lifecycle 不会继续显示操作卡。
-- 普通工具提交 `user.tool_confirmation`；`agent.custom_tool_use`（包括 `AskUserQuestion`）提交 `user.custom_tool_result`。
-
-相关测试在 `web/src/features/managed-agents/ManagedAgentsPage.test.tsx` 及 `SessionRequiresActionCard.test.tsx` 中覆盖。
-
-## 9. 验收场景
-
-| 场景 | 输入事件 | 期望展示 |
-|---|---|---|
-| 等待确认 | `tool_use(evaluated_permission=ask)`，无 confirmation/result | Transcript tool row 显示 `awaiting approval`，右侧详情区域出现操作卡片，左侧输入框保持可见但禁用。 |
-| 允许执行 | 点击 Allow 按钮 | 发送 `result=allow` 的 confirmation，tool row 转为 running spinner。 |
-| 拒绝执行 | 点击 Deny 按钮 | 发送 `result=deny` 的 confirmation，tool row 显示 `denied`。 |
-| 问卷交互 | `AskUserQuestion` custom tool 被最新 `event_ids` 引用 | 渲染问卷选项与输入框，确认后以 `question` 文本为 key 发送 `user.custom_tool_result`。 |
-| 用户拒绝 | `ask` + `user.tool_confirmation(result=deny, deny_message=...)` | tool row 显示 `denied`，详情可看到拒绝原因。 |
-| 策略拒绝 | `tool_use(evaluated_permission=deny)` | 即使没有 confirmation，也显示 `denied`。 |
-| 执行失败 | 有 result 且 `is_error=true` | tool row 显示 error badge，lifecycle 为 `failed`。 |
-| 执行完成 | 有 result 且非 error | tool row 无 approval chip，lifecycle 为 `completed`。 |
-| batch 等待 | 同一 bracket 多个 tool call，其中一个 awaiting | batch row 显示 `awaiting approval`。 |
-| Transcript 过滤 | confirmation/result 原始事件存在 | Transcript 不出现独立 confirmation/result 行。 |
-| Debug 审计 | confirmation/result 原始事件存在 | Debug 可看到原始事件 JSON。 |
-
----
-
-## 10. 实现注意
-
-- 当前本仓库前端已把 `user.tool_confirmation` 纳入按 `tool_use_id` 关联的归一化模型；新增 permission 事件形态时应优先扩展现有 helper，而不是在行渲染处单独判断。
-- 不要只从 `tool_use.evaluated_permission` 推断最终状态；用户拒绝必须来自 confirmation。
-- 不要把 `user.tool_confirmation` 当普通 `user` 行渲染到 Transcript，否则会破坏官方两层模型。
-- AskUserQuestion 的答案 key 必须是完整问题文本 `question`，不能是短标题 `header`。
-- 自定义工具不受 permission policy 控制，但 custom tool use/result 仍应能在统一 tool 展示框架中回放。
+组件测试覆盖操作卡和权限展示。
+`sessionApproval.test.tsx` 覆盖子线程与并行审批状态。
+`sessionToolIdentity.test.ts` 覆盖两套 ID、结果关联及独立调用。
+真实工作进程验证见[子智能体验证说明](../../../../.agents/skills/verify-be/features/subagents.md)。

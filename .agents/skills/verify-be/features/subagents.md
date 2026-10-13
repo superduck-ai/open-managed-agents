@@ -1,23 +1,112 @@
-# Subagent delegation
+# 子智能体委派验证
 
-Run `just verify-be chat doctor subagents`, then `just verify-be chat subagents`. The scenario uses public Agent, Skill, Session and event APIs, the real Runner, Docker/FUSE and Claude Code 2.1.251. The upstream model is scripted. Pair it with `chat roundtrip`, `chat tools` and `chat public` when changing the delegation runtime.
+## 运行步骤
 
-Public Agent requests first reject an unknown child ID, version 0 and a nonexistent version. Create a parent with an unversioned object reference and check that it saves child V1. Upgrade the child to V2; the saved reference must remain V1. Resend the unversioned roster to select V2. Create/update another parent with an explicit V1 reference while V2 exists. After the child reaches V3, both parents must retain their pins; updating only the unversioned parent's name must also retain V2. The final execution parent explicitly pins V1, and its new Session must expand V1. The Worker must delegate to that configured child using its own model, system prompt and uploaded skill content. Thread listing must identify the pinned child. The child thread stream and history must contain the same final event ID.
+1. 运行 `just verify-be chat doctor subagents`。
+2. 运行 `just verify-be chat subagents`。
+3. 读取最终报告，确认所有必需阶段完成。
+4. 确认没有跳过项，且清理成功。
 
-Before execution, create a self coordinator and update its name/system without resending the roster. Public Session and Deployment creation must retain self V1 inside parent V2, with the child's multiagent field removed. Both endpoints must still reject a different nested coordinator. Resolve explicit/latest aliases of the uploaded skill in both orders and require one actual version with its latest alias retained. Unit tests separately verify version-specific launch directories for custom/builtin skills in both traversal orders.
+修改委派运行逻辑时，还要运行 `chat roundtrip`、`chat tools` 和 `chat public`。
+场景使用公开智能体、技能、会话和事件接口。
+执行使用真实后台执行器、Docker、FUSE 和 Claude Code 2.1.251。
+上游模型响应由脚本提供。
 
-Child Write permission is `ask` while the parent's default is `allow`. Reject the first Write and approve the second; the file must remain absent until approval and contain the expected bytes afterward. A child-only HTTP MCP server must receive exactly one tool invocation. A later parent turn uses the returned runtime Agent ID with native `SendMessage`; the child model request must retain the previous answer and the public thread ID must stay unchanged.
+## 引用与版本
 
-Required stages are `configured_child_dispatched`, `child_skill_preloaded`, `child_stream_received`, `child_tool_policy_verified`, `child_mcp_executed`, `child_thread_history_verified` and `child_thread_resumed`. A missing stage, skipped test, source mutation or incomplete cleanup fails the scenario.
+先检查非法引用。
+未知 ID、版本 0 和不存在的版本必须返回拒绝结果。
 
-The protocol regression creates two child lifecycles before their initiating tool events, checks that unresolved Write requests are denied, then delivers the tools in reverse order and verifies complete V1 snapshots with independent ask/deny policies. Conditional repair must not overwrite an existing pin. Proxy replies and camel-case `requestId` transcript echoes arrive in both orders with different message IDs; two independent requests containing identical text must retain exactly two replies.
+按以下顺序检查版本固定：
 
-A new public Session starts two real background instances of the same configured V1 child. Both model requests must overlap and both thread snapshots must be complete before execution proceeds. Each child requests its own Write confirmation; denying both must leave both files absent. First-turn, follow-up and parallel child histories must have no duplicate replies.
+1. 创建不含版本的父引用，确认它保存子 V1。
+2. 将子智能体升级到 V2，确认原引用仍为 V1。
+3. 重发不含版本的名单，确认该引用改为 V2。
+4. 显式创建和更新 V1 引用，确认系统仍保存 V1。
+5. 将子智能体升级到 V3，确认两种父引用仍保留原版本。
+6. 仅更新父名称，确认已固定的 V2 保持不变。
+7. 用显式 V1 配置创建会话，确认工作进程执行 V1。
 
-Approval regression first submits an unknown tool ID and a child-history ID addressed to the primary thread. Both must return 409 without persisting a confirmation. The real child Write deny/allow sequence uses tool IDs read from child history. Parallel rejection uses a child-history ID for one child and a primary mirror ID for the other; both children must resume and neither may write its file.
+子请求必须使用该版本的模型、提示词和上传技能。
+线程列表必须返回子智能体 ID 和版本。
+子线程事件流与历史必须包含相同的最终回复 ID。
 
-Tool projection regression checks reciprocal `primary_event_id` and `original_event_id` through public history and SSE. A seeded legacy child event must receive its deterministic primary ID on history reads while both public IDs remain unchanged. Completed Sessions are archived before the fixture stops their sandboxes, and cleanup must complete successfully.
+## 历史自身引用与技能目录
 
-This covers configured children, concurrent instances of one configuration and same-Worker continuation. It does not verify directed interruption, Worker restart recovery, real model reasoning, cloud allocation, UI rendering or filesystem/skill isolation. Child Tunnel gateway selection and OAuth scope preservation have handler tests; this scenario's actual Worker uses a remote HTTP MCP fixture.
+创建带 `self` 的协调器。
+只更新名称和提示词，不重发名单。
+父 V2 创建的会话和部署必须保留 `self@V1`。
+子快照中的 `multiagent` 必须移除。
+其他嵌套协调器仍必须被拒绝。
 
-See [the delegation design](../../../../docs/design/be/subagent-delegation.md) for configuration, identities and permission boundaries.
+按两种顺序解析显式技能版本与 `latest`。
+去重后必须保留一个实际版本及其 `latest` 查找标识。
+单测另行检查内置技能和自定义技能的不同版本目录。
+
+## 工具、MCP 与续聊
+
+父工具默认允许执行。
+子 `Write` 配置为 `ask`。
+
+先拒绝第一次写入，再允许第二次写入。
+确认前文件必须不存在。
+允许后文件必须包含预期字节。
+子专用 HTTP MCP 服务必须收到一次调用。
+
+后续父回合通过原生 `SendMessage` 使用返回的运行实例 ID。
+子模型请求必须保留上一条回复。
+公开线程 ID 必须保持不变。
+
+## 乱序与并行
+
+先创建两个子线程，再反向提交发起委派的工具事件。
+配置未就绪时，写入请求必须被拒绝。
+配置就绪后，两条线程必须得到完整 V1 快照和各自的权限。
+条件补齐不得覆盖已有版本。
+
+按两种顺序提交模型代理回复和内部回复副本。
+副本使用不同消息 ID，并携带 `requestId`。
+同一次请求只保存一份回复。
+两个独立请求即使内容相同，也必须保存两份回复。
+
+新会话同时启动两个同配置的后台实例。
+两个模型请求必须重叠。
+释放执行前，两条线程的快照必须完整。
+分别拒绝两个写入请求后，两个文件都必须不存在。
+首轮、续聊和并行线程历史均不得出现重复回复。
+
+## 审批与事件关联
+
+未知工具 ID、错误线程 ID 和子事件 ID 指向主线程的请求必须返回 409。
+失败请求不得保存确认事件。
+真实写入的拒绝与允许使用子历史中的事件 ID。
+并行验证分别使用原始 ID 和镜像 ID。
+两种 ID 都必须恢复正确的工作进程请求。
+
+公开历史与 SSE 必须返回互相对应的 `primary_event_id` 和 `original_event_id`。
+旧子事件读取时必须补齐可推导的主线程镜像 ID。
+两套公开 ID 必须保持不变。
+已完成会话先归档，再停止测试沙箱。
+最终清理必须成功。
+
+## 必需阶段与验证边界
+
+必需阶段如下：
+
+- `configured_child_dispatched`
+- `child_skill_preloaded`
+- `child_stream_received`
+- `child_tool_policy_verified`
+- `child_mcp_executed`
+- `child_thread_history_verified`
+- `child_thread_resumed`
+
+缺少阶段、跳过测试、源码变化或清理失败时，场景不能报告通过。
+
+该场景验证固定配置、并行实例和同一工作进程内的续聊。
+定向中断、子线程重启恢复、云端分配和真实模型推理仍未验证。
+浏览器展示、文件系统隔离和技能隔离不属于该后端场景。
+隧道选择及 OAuth 参数保留由处理器测试覆盖。
+真实工作进程在本场景中使用 HTTP MCP 测试服务。
+
+配置、身份与权限边界见[子智能体委派设计](../../../../docs/design/be/subagent-delegation.md)。

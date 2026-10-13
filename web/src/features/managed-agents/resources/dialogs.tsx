@@ -877,7 +877,7 @@ function GenericManagedEntityDialog({
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        className="flex max-h-[min(760px,calc(100dvh-2rem))] flex-col sm:max-w-[560px]"
+        className={`flex flex-col ${section === 'sessions' ? 'max-h-[calc(100dvh-2rem)] p-5 sm:max-w-[720px] sm:p-6' : 'max-h-[min(760px,calc(100dvh-2rem))] sm:max-w-[560px]'}`}
         showCloseButton={false}
       >
         <form className="relative flex min-h-0 flex-col" onSubmit={handleSubmit}>
@@ -924,6 +924,12 @@ function GenericManagedEntityDialog({
                 )}
                 <ManagedSelectField
                   label={msg('managedAgents.environments.kindTitle', 'Environment')}
+                  manageHref={
+                    section === 'sessions' ? `/workspaces/${encodeURIComponent(workspaceId)}/environments` : undefined
+                  }
+                  manageLabel={
+                    section === 'sessions' ? msg('managedAgents.environments.manage', 'Manage environments') : undefined
+                  }
                   value={values.environmentId}
                   placeholder={
                     loadingOptions
@@ -966,7 +972,11 @@ function GenericManagedEntityDialog({
             ) : null}
           </div>
 
-          {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
+          {submitError ? (
+            <p role="alert" className="mt-4 text-sm text-destructive">
+              {submitError}
+            </p>
+          ) : null}
 
           <ManagedEntityDialogActions
             section={section}

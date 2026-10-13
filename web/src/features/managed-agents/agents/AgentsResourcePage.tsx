@@ -7,17 +7,10 @@ import {
   DataTableCell,
   DataTableResourceLink,
   DataTableRow,
-  MoreActionsButton,
   dataTableClassName,
   dataTableHeaderCellClassName,
   dataTableHeaderRowClassName,
 } from '../../../shared/ui/data-table-interactions';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '../../../shared/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
 import {
@@ -27,7 +20,7 @@ import {
 } from '../../../shared/ui/resource-list-pagination';
 import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { useWorkspace } from '../../../shared/workspaces/context';
-import { Archive, Plus, Search, TriangleAlert } from 'lucide-react';
+import { Plus, Search, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { consoleResourceListLimit } from '../../../shared/console-list';
 import {
@@ -72,6 +65,8 @@ import {
 } from '../types';
 import { agentDetailHref, errorMessage, handleInternalLinkClick } from '../utils';
 import { CreateAgentDialog } from './create-dialog';
+import { AgentRowActions } from './AgentRowActions';
+import { AgentListOverlays } from './AgentListOverlays';
 import {
   agentMatchesClientFilters,
   agentModelName,
@@ -124,8 +119,10 @@ export function AgentsResourcePage({
 }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
-  const { activeWorkspaceId } = useWorkspace();
+  const { activeWorkspaceId, orgUuid } = useWorkspace();
   const workspaceId = routeWorkspaceId || activeWorkspaceId;
+  const [quickViewAgentId, setQuickViewAgentId] = useState<string | null>(null);
+  const [sessionAgent, setSessionAgent] = useState<AgentApiResponse | null>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [createdFilter, setCreatedFilter] = useState<AgentCreatedFilter>(defaultAgentFilters.created);
@@ -251,6 +248,8 @@ export function AgentsResourcePage({
     setRemoteAgentsState({ workspaceId, requestKey: '', mode: 'list', data: null, truncated: false });
     setOpenFilterMenu(null);
     setConfirmArchiveAgentIds(null);
+    setQuickViewAgentId(null);
+    setSessionAgent(null);
     setArchiveError(null);
     setArchivingIds(new Set());
   }, [workspaceId]);
@@ -602,31 +601,6 @@ export function AgentsResourcePage({
     setConfirmArchiveAgentIds(null);
   };
 
-  const renderAgentActionMenu = (agent: AgentApiResponse, archiving: boolean) => (
-    <div className="flex justify-end">
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <MoreActionsButton
-              label={msg('managedAgents.common.moreActions', 'More actions')}
-              disabled={archiving}
-              className="disabled:cursor-wait"
-            />
-          }
-        />
-        <DropdownMenuContent align="end" className="w-[164px]">
-          <DropdownMenuItem
-            disabled={archiving || Boolean(agent.archived_at)}
-            onClick={() => requestArchiveAgents([agent.id])}
-          >
-            <Archive className="size-4" aria-hidden />
-            {msg('managedAgents.agents.archiveAgent', 'Archive agent')}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
-  );
-
   return (
     <section className="min-h-[calc(100vh-48px)] text-foreground">
       <ResourcePageHeader
@@ -698,7 +672,7 @@ export function AgentsResourcePage({
             onAction={retryAgentsLoad}
           />
         ) : isAgentsPage ? (
-          <Table className={cn(dataTableClassName, 'min-w-[1063px]')}>
+          <Table className={cn(dataTableClassName, 'min-w-[1150px]')}>
             <TableHeader>
               <TableRow className={dataTableHeaderRowClassName}>
                 <TableHead className={cn(dataTableHeaderCellClassName, 'w-[185px]')}>
@@ -720,7 +694,7 @@ export function AgentsResourcePage({
                   {managedColumnLabel('Last updated', msg)}
                 </TableHead>
                 <TableHead
-                  className={cn(dataTableHeaderCellClassName, 'w-[48px] px-2')}
+                  className={cn(dataTableHeaderCellClassName, 'w-[136px] px-2')}
                   aria-label={managedColumnLabel('Actions', msg)}
                 />
               </TableRow>
@@ -737,7 +711,7 @@ export function AgentsResourcePage({
                   const archiving = archivingIds.has(agent.id);
                   const detailHref = agentDetailHref(workspaceId, agent.id);
                   return (
-                    <DataTableRow key={agent.id}>
+                    <DataTableRow key={agent.id} selected={quickViewAgentId === agent.id}>
                       <DataTableCell edge="start">
                         <CopyIdCell
                           value={agent.id}
@@ -775,7 +749,13 @@ export function AgentsResourcePage({
                         {relativeTime(agent.updated_at, formatters.relativeTime)}
                       </DataTableCell>
                       <DataTableCell edge="end" className="px-2">
-                        {renderAgentActionMenu(agent, archiving)}
+                        <AgentRowActions
+                          agent={agent}
+                          archiving={archiving}
+                          onQuickView={() => setQuickViewAgentId(agent.id)}
+                          onStartSession={() => setSessionAgent(agent)}
+                          onArchive={() => requestArchiveAgents([agent.id])}
+                        />
                       </DataTableCell>
                     </DataTableRow>
                   );
@@ -853,6 +833,19 @@ export function AgentsResourcePage({
         ) : (
           <CreateResourceDialog title={createLabel} onClose={() => setDialogOpen(false)} />
         )
+      ) : null}
+
+      {isAgentsPage ? (
+        <AgentListOverlays
+          key={workspaceId}
+          workspaceId={workspaceId}
+          orgUuid={orgUuid}
+          agents={displayedAgents}
+          quickViewAgentId={quickViewAgentId}
+          sessionAgent={sessionAgent}
+          onSelect={setQuickViewAgentId}
+          onStartSession={setSessionAgent}
+        />
       ) : null}
 
       {isAgentsPage && confirmArchiveAgentIds?.length ? (

@@ -2475,5 +2475,13 @@
   "nav.workspaceSettings": "工作区设置",
   "account.personalSettings": "个人设置",
   "console.retired.title": "此页面已下线",
-  "console.retired.description": "此功能页面已移除，请使用控制台中现有的功能继续操作。"
+  "console.retired.description": "此功能页面已移除，请使用控制台中现有的功能继续操作。",
+  "managedAgents.agents.quickView": "快速查看",
+  "managedAgents.agents.quickViewAgent": "快速查看 {name}",
+  "managedAgents.agents.startConversation": "开始对话",
+  "managedAgents.agents.previousAgent": "上一个智能体",
+  "managedAgents.agents.nextAgent": "下一个智能体",
+  "managedAgents.agents.kindTitle": "智能体",
+  "managedAgents.agents.openAgent": "打开",
+  "managedAgents.agents.noDescription": "暂无描述。"
 }

@@ -88,28 +88,23 @@ func (r *RuntimeResolver) ResolveAgentSnapshot(ctx context.Context, workspaceUUI
 }
 
 func runtimeSkillRefs(snapshot json.RawMessage) ([]runtimeSkillRef, error) {
-	object := map[string]json.RawMessage{}
 	if len(snapshot) == 0 || strings.TrimSpace(string(snapshot)) == "null" {
 		return nil, nil
 	}
-	if err := json.Unmarshal(snapshot, &object); err != nil {
-		return nil, fmt.Errorf("decode agent snapshot: %w", err)
-	}
-	raw, ok := object["skills"]
-	if !ok || len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
-		raw = json.RawMessage(`[]`)
-	}
-	var refs []runtimeSkillRef
-	if err := json.Unmarshal(raw, &refs); err != nil {
-		return nil, fmt.Errorf("decode agent skills: %w", err)
-	}
 	var roster struct {
+		Skills     json.RawMessage `json:"skills"`
 		Multiagent *struct {
 			Agents []json.RawMessage `json:"agents"`
 		} `json:"multiagent"`
 	}
 	if err := json.Unmarshal(snapshot, &roster); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode agent snapshot: %w", err)
+	}
+	var refs []runtimeSkillRef
+	if len(roster.Skills) > 0 {
+		if err := json.Unmarshal(roster.Skills, &refs); err != nil {
+			return nil, fmt.Errorf("decode agent skills: %w", err)
+		}
 	}
 	if roster.Multiagent != nil {
 		for _, child := range roster.Multiagent.Agents {

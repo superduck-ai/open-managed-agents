@@ -8,6 +8,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 type subagentLifecycle struct {
@@ -20,7 +21,7 @@ type subagentLifecycle struct {
 }
 
 func (s *Service) ReconcileSubagentSnapshots(ctx context.Context, codeSession db.CodeSession) error {
-	lifecycles, err := s.subagentLifecycles(ctx, codeSession)
+	lifecycles, err := s.listSubagentThreadCreatedEvents(ctx, codeSession)
 	if err != nil {
 		return err
 	}
@@ -55,7 +56,7 @@ func (s *Service) ReconcileSubagentSnapshots(ctx context.Context, codeSession db
 	return nil
 }
 
-func (s *Service) subagentThread(ctx context.Context, codeSession db.CodeSession, threadID string) (db.SessionThread, error) {
+func (s *Service) resolveSubagentThread(ctx context.Context, codeSession db.CodeSession, threadID string) (db.SessionThread, error) {
 	thread, err := s.db.GetSessionThread(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, threadID)
 	if err != nil || thread.ParentThreadUUID == nil {
 		return thread, err
@@ -142,7 +143,7 @@ func (s *Service) subagentSnapshotForTool(ctx context.Context, codeSession db.Co
 	if toolUseID == "" {
 		return nil, nil
 	}
-	event, err := s.eventPayloads.GetSessionEvent(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, toolUsePublicEventID(codeSession.ExternalID, toolUseID))
+	event, err := s.eventPayloads.GetSessionEvent(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, maevents.ToolUseEventID(codeSession.ExternalID, toolUseID))
 	if errors.Is(err, db.ErrNotFound) {
 		return nil, nil
 	}

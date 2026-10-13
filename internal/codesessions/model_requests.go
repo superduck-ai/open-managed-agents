@@ -198,7 +198,7 @@ func (s *Service) modelRequestThread(ctx context.Context, codeSession db.CodeSes
 			return "", err
 		}
 		if threadID := mappings[agentID]; threadID != "" {
-			if _, err := s.subagentThread(ctx, codeSession, threadID); err == nil {
+			if _, err := s.resolveSubagentThread(ctx, codeSession, threadID); err == nil {
 				return threadID, nil
 			} else if !errors.Is(err, db.ErrInvalidState) {
 				return "", err
@@ -215,7 +215,7 @@ func (s *Service) modelRequestThread(ctx context.Context, codeSession db.CodeSes
 // The task registry is already persisted as thread_created events. Page it rather
 // than maintaining a second registry or assuming at most 500 tasks per session.
 func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.CodeSession) (map[string]string, error) {
-	lifecycles, err := s.subagentLifecycles(ctx, codeSession)
+	lifecycles, err := s.listSubagentThreadCreatedEvents(ctx, codeSession)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +233,7 @@ func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.Cod
 	return mappings, nil
 }
 
-func (s *Service) subagentLifecycles(ctx context.Context, codeSession db.CodeSession) ([]subagentLifecycle, error) {
+func (s *Service) listSubagentThreadCreatedEvents(ctx context.Context, codeSession db.CodeSession) ([]subagentLifecycle, error) {
 	params := db.ListSessionEventsPageParams{WorkspaceUUID: codeSession.WorkspaceUUID, SessionExternalID: codeSession.SessionExternalID,
 		PrimaryOnly: true, Limit: 500, Order: "asc", Types: []string{"session.thread_created"}}
 	var lifecycles []subagentLifecycle

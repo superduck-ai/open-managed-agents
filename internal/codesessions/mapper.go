@@ -489,7 +489,7 @@ func userPublicPayloadCandidates(codeSessionID string, object map[string]any, sc
 		if providerToolUseID == "" {
 			continue
 		}
-		toolUseID := toolUsePublicEventID(codeSessionID, providerToolUseID)
+		toolUseID := maevents.ToolUseEventID(codeSessionID, providerToolUseID)
 		eventType := "agent.tool_result"
 		if claudeToolResultIsAgentThreadMessage(block) {
 			eventType = "agent.thread_message_received"

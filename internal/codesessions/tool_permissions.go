@@ -111,7 +111,7 @@ func (s *Service) resolveToolPermission(ctx context.Context, codeSessionID strin
 		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), db.ErrNotFound
 	}
 	if threadID != "" {
-		thread, err := s.subagentThread(ctx, codeSession, threadID)
+		thread, err := s.resolveSubagentThread(ctx, codeSession, threadID)
 		if errors.Is(err, db.ErrInvalidState) {
 			return resolvedToolPermissionDeny, parseClaudeToolIdentity(claudeToolName), nil
 		}
@@ -602,12 +602,6 @@ func controlResponseUUID(codeSessionID, requestID string) string {
 	return result.String()
 }
 
-// toolUsePublicEventID translates the private provider tool id into the stable
-// public event id used by confirmations and tool results.
-func toolUsePublicEventID(codeSessionID string, toolUseID string) string {
-	return maevents.ToolUseEventID(codeSessionID, toolUseID)
-}
-
 func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRequestPayload, meta EventMetadata, identity toolIdentity, permission resolvedToolPermission) (toolPermissionRequest, []json.RawMessage, error) {
 	request := toolPermissionRequestFromWorkerEvent(payload, meta)
 	if request.ToolName == "" || request.ToolUseID == "" || request.RequestID == "" {
@@ -640,7 +634,7 @@ func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRe
 
 func toolCallPublicPayload(codeSessionID string, request toolPermissionRequest, identity toolIdentity, permission resolvedToolPermission, at time.Time) (toolPermissionRequest, json.RawMessage, error) {
 	eventType, publicName := toolPermissionPublicIdentity(request.ToolName, identity)
-	toolEventID := toolUsePublicEventID(codeSessionID, request.ToolUseID)
+	toolEventID := maevents.ToolUseEventID(codeSessionID, request.ToolUseID)
 	request.PublicEventID = toolEventID
 	request.EventType = eventType
 	if request.SessionThreadID != "" {

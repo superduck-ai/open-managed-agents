@@ -376,7 +376,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeUserToolResults(t *testing.T) {
 	if len(toolObjects) != 1 {
 		t.Fatalf("plain tool_result payload count = %d, want 1: %#v", len(toolObjects), toolObjects)
 	}
-	if toolObjects[0]["type"] != "agent.tool_result" || toolObjects[0]["tool_use_id"] != toolUsePublicEventID("csev_test", "tool_bash") {
+	if toolObjects[0]["type"] != "agent.tool_result" || toolObjects[0]["tool_use_id"] != maevents.ToolUseEventID("csev_test", "tool_bash") {
 		t.Fatalf("plain tool_result mapped payload = %#v", toolObjects[0])
 	}
 	if _, ok := toolObjects[0]["raw_tool_result"]; ok {
@@ -665,7 +665,7 @@ func TestInternalSubagentToolResultUsesPublicToolResultContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	objects := decodePublicPayloads(t, payloads)
-	if len(objects) != 1 || objects[0]["type"] != "agent.tool_result" || objects[0]["tool_use_id"] != toolUsePublicEventID("cse_test", "tool_child") || objects[0]["is_error"] != true {
+	if len(objects) != 1 || objects[0]["type"] != "agent.tool_result" || objects[0]["tool_use_id"] != maevents.ToolUseEventID("cse_test", "tool_child") || objects[0]["is_error"] != true {
 		t.Fatalf("child result violates public tool contract: %#v", objects)
 	}
 }

@@ -158,6 +158,7 @@ export const settingsNavigation = [
   { href: '/settings/organization', label: 'Organization', labelId: 'nav.organization' },
   { href: '/settings/members', label: 'Members', labelId: 'nav.members' },
   { href: '/settings/workspaces', label: 'Workspaces', labelId: 'nav.workspaces' },
+  { href: '/settings/cost', label: 'Cost', labelId: 'nav.cost' },
 ] as const;
 
 export const personalSettingsNavigation = [

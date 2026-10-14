@@ -548,14 +548,14 @@ func TestAdminAPI(t *testing.T) {
 		}
 
 		var messages adminReportPage
-		adminDecodeOK(t, adminDo(t, app, http.MethodGet, "/v1/organizations/usage_report/messages?starting_at=2026-01-01T00:00:00Z&bucket_width=1d", nil, defaultTestKey, ""), &messages)
-		if len(messages.Data) != 0 || messages.HasMore || messages.NextPage != nil {
-			t.Fatalf("messages report = %+v, want empty report", messages)
+		adminDecodeOK(t, adminDo(t, app, http.MethodGet, "/v1/organizations/usage_report/messages?starting_at=2026-01-01T00:00:00Z&ending_at=2026-01-03T00:00:00Z&bucket_width=1d", nil, defaultTestKey, ""), &messages)
+		if len(messages.Data) != 2 || messages.HasMore || messages.NextPage != nil {
+			t.Fatalf("messages report = %+v, want two empty buckets", messages)
 		}
 
 		var cost adminReportPage
-		adminDecodeOK(t, adminDo(t, app, http.MethodGet, "/v1/organizations/cost_report?starting_at=2026-01-01T00:00:00Z&bucket_width=1d", nil, defaultTestKey, ""), &cost)
-		if len(cost.Data) != 0 || cost.HasMore {
+		adminDecodeOK(t, adminDo(t, app, http.MethodGet, "/v1/organizations/cost_report?starting_at=2026-01-01T00:00:00Z&ending_at=2026-01-03T00:00:00Z&bucket_width=1d", nil, defaultTestKey, ""), &cost)
+		if len(cost.Data) != 2 || cost.HasMore {
 			t.Fatalf("cost report = %+v, want empty report", cost)
 		}
 	})

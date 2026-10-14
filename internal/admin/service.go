@@ -526,11 +526,8 @@ func (s *Service) ListRateLimits(model, groupType string, workspace bool) (token
 	return tokenPageResponse[rateLimitResponse]{Data: []rateLimitResponse{}, NextPage: nil}, nil
 }
 
-func (s *Service) MessagesUsageReport(query reportQuery) (reportResponse, error) {
-	if err := validateMessagesReportQuery(query); err != nil {
-		return reportResponse{}, invalidRequest(err.Error())
-	}
-	return emptyReport(), nil
+func (s *Service) MessagesUsageReport(ctx context.Context, principal auth.Principal, query reportQuery) (reportResponse, error) {
+	return s.messagesUsageReport(ctx, principal, query)
 }
 
 func (s *Service) ClaudeCodeUsageReport(query reportQuery) (reportResponse, error) {
@@ -540,11 +537,8 @@ func (s *Service) ClaudeCodeUsageReport(query reportQuery) (reportResponse, erro
 	return emptyReport(), nil
 }
 
-func (s *Service) CostReport(query reportQuery) (reportResponse, error) {
-	if err := validateCostReportQuery(query); err != nil {
-		return reportResponse{}, invalidRequest(err.Error())
-	}
-	return emptyReport(), nil
+func (s *Service) CostReport(ctx context.Context, principal auth.Principal, query reportQuery) (reportResponse, error) {
+	return s.costReport(ctx, principal, query)
 }
 
 func inviteFromRecord(record db.AdminInvite) inviteResponse {

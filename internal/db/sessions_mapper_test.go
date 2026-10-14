@@ -295,6 +295,15 @@ func TestSessionRunningIntervalSQL(t *testing.T) {
 		},
 		wantSQLFragments: []string{"event_type = 'session.usage'", "active_milliseconds", "DISTINCT ON (baseline.session_uuid)"},
 	})
+	adminUsage := buildSessionEventMapperListAdminUsagePoints(yourbatis.DialectPostgres, adminUsageQuery{OrganizationUUID: "org"})
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperListAdminUsagePointsStatement, bound: adminUsage,
+		wantID: "SessionEventMapper.ListAdminUsagePoints", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{
+			"params.OrganizationUUID", "params.EndingBefore", "params.StartingAt", "params.OrganizationUUID", "params.StartingAt",
+		},
+		wantSQLFragments: []string{"input_tokens", "runtime_cost_usd", "event_type = 'session.usage'"},
+	})
 }
 
 func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {

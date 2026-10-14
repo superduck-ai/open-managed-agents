@@ -1202,6 +1202,7 @@
   "nav.claudeCode": "Claude Code",
   "nav.consoleNavigation": "控制台导航",
   "nav.cost": "成本",
+  "analytics.cost.accessDenied": "只有组织管理员可以查看所有工作区的成本。",
   "nav.credentialVaults": "凭据保险库",
   "nav.dashboard": "仪表盘",
   "nav.deployments": "部署",

@@ -1202,6 +1202,7 @@
   "nav.claudeCode": "Claude Code",
   "nav.consoleNavigation": "Console navigation",
   "nav.cost": "Cost",
+  "analytics.cost.accessDenied": "Only organization administrators can view cost across workspaces.",
   "nav.credentialVaults": "Credential vaults",
   "nav.dashboard": "Dashboard",
   "nav.deployments": "Deployments",

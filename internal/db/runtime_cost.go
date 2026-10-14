@@ -324,6 +324,10 @@ func addRuntimeCostUSD(usage json.RawMessage, addedMillis int64, usdPerHour *big
 	return json.Marshal(payload)
 }
 
+func FormatDecimalAmount(value *big.Rat) string {
+	return formatUSD(value)
+}
+
 func formatUSD(cost *big.Rat) string {
 	if cost == nil || cost.Sign() <= 0 {
 		return "0.00"

@@ -49,6 +49,27 @@ type runtimeUsageQuery struct {
 	EndingBefore        time.Time
 }
 
+type adminUsageQuery struct {
+	OrganizationUUID string
+	StartingAt       time.Time
+	EndingBefore     time.Time
+}
+
+type adminUsagePointRow struct {
+	SessionUUID         string    `db:"session_uuid"`
+	ProcessedAt         time.Time `db:"processed_at"`
+	EventID             int64     `db:"id"`
+	WorkspaceExternalID string    `db:"workspace_external_id"`
+	Model               string    `db:"model"`
+	InputTokens         string    `db:"input_tokens"`
+	OutputTokens        string    `db:"output_tokens"`
+	CacheReadTokens     string    `db:"cache_read_input_tokens"`
+	Cache5mTokens       string    `db:"cache_5m_input_tokens"`
+	Cache1hTokens       string    `db:"cache_1h_input_tokens"`
+	ActiveMilliseconds  string    `db:"active_milliseconds"`
+	RuntimeCostUSD      string    `db:"runtime_cost_usd"`
+}
+
 type runtimeUsagePointRow struct {
 	SessionUUID         string    `db:"session_uuid"`
 	WorkspaceUUID       string    `db:"workspace_uuid"`
@@ -98,4 +119,5 @@ type SessionEventMapper interface {
 		sessionUUID string,
 	) ([]sessionEventRow, error)
 	ListRuntimeUsagePoints(ctx context.Context, params runtimeUsageQuery) ([]runtimeUsagePointRow, error)
+	ListAdminUsagePoints(ctx context.Context, params adminUsageQuery) ([]adminUsagePointRow, error)
 }

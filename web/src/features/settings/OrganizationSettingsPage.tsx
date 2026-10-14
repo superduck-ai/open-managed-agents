@@ -3,8 +3,6 @@ import { useLocation, useNavigate } from '@tanstack/react-router';
 import { Copy, Save, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react';
 import { SettingsShell } from '../../app/layout/ConsoleLayout';
-import { LimitsPage, ServiceAccountsPage } from '../dashboard/DashboardPage';
-import { PrivacyControlsPage } from '../dashboard/privacy-controls';
 import { useAuth } from '../../shared/auth/context';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Button } from '../../shared/ui/button';
@@ -29,19 +27,16 @@ import {
   type UpdateOrganizationProfileInput,
 } from '../../shared/organization/api';
 import { useWorkspace } from '../../shared/workspaces/context';
-import { BillingSettingsPage } from './BillingSettingsPage';
-import { AdminKeysSettingsPage } from './AdminKeysSettingsPage';
-import { IdentityAndAccessSettingsPage } from './IdentityAndAccessSettingsPage';
-import { WorkloadIdentitySettingsPage } from './WorkloadIdentitySettingsPage';
 import {
   AppearanceSettingsPage,
   ProfileSettingsPage,
-  SettingsApiKeysPage,
   settingsSectionFromPath,
   type SettingsPageSection,
 } from './feature-pages';
 import { OrganizationMembersPage } from './OrganizationMembersPage';
 import { WorkspacesSettingsPage } from './WorkspacesSettingsPage';
+import { RetiredConsolePage } from '../dashboard/RetiredConsolePage';
+import { WorkspaceSettingsRedirect } from './WorkspaceSettingsRedirect';
 
 type FormState = {
   name: string;
@@ -63,28 +58,15 @@ const emptyForm: FormState = {
   postalCode: '',
 };
 
-type OrganizationSettingsSection = Extract<
-  SettingsPageSection,
-  | 'organization'
-  | 'limits'
-  | 'members'
-  | 'workspaces'
-  | 'service-accounts'
-  | 'profile'
-  | 'appearance'
-  | 'billing'
-  | 'api-keys'
-  | 'admin-keys'
-  | 'workload-identity'
-  | 'privacy-controls'
-  | 'identity-and-access'
->;
-
-export function OrganizationSettingsPage({ section = 'organization' }: { section?: OrganizationSettingsSection }) {
+export function OrganizationSettingsPage({ section = 'organization' }: { section?: SettingsPageSection }) {
   const { account, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const resolvedSection = section === 'organization' ? settingsSectionFromPath(location.pathname) : section;
+
+  if (resolvedSection === 'api-keys') {
+    return <WorkspaceSettingsRedirect resource="keys" />;
+  }
 
   const handleNavigate = async (href: string) => {
     await navigate({ href });
@@ -107,14 +89,7 @@ export function OrganizationSettingsPage({ section = 'organization' }: { section
       {resolvedSection === 'organization' ? <OrganizationSettingsContent /> : null}
       {resolvedSection === 'members' ? <OrganizationMembersPage /> : null}
       {resolvedSection === 'workspaces' ? <WorkspacesSettingsPage /> : null}
-      {resolvedSection === 'billing' ? <BillingSettingsPage /> : null}
-      {resolvedSection === 'limits' ? <LimitsPage /> : null}
-      {resolvedSection === 'api-keys' ? <SettingsApiKeysPage /> : null}
-      {resolvedSection === 'admin-keys' ? <AdminKeysSettingsPage /> : null}
-      {resolvedSection === 'service-accounts' ? <ServiceAccountsPage /> : null}
-      {resolvedSection === 'workload-identity' ? <WorkloadIdentitySettingsPage /> : null}
-      {resolvedSection === 'privacy-controls' ? <PrivacyControlsPage /> : null}
-      {resolvedSection === 'identity-and-access' ? <IdentityAndAccessSettingsPage /> : null}
+      {resolvedSection === 'retired' ? <RetiredConsolePage organizationSettings /> : null}
     </SettingsShell>
   );
 }

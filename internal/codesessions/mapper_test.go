@@ -3,6 +3,7 @@ package codesessions
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,24 @@ func TestPublicPayloadsFromWorkerEventRejectsTypeSpecificSchemaMismatch(t *testi
 	}, json.RawMessage(`{"type":"result","uuid":"result-uuid","duration_ms":"invalid"}`))
 	if !errors.Is(err, ErrProtocol) {
 		t.Fatalf("publicPayloadsFromWorkerEvent() error = %v, want ErrProtocol", err)
+	}
+}
+
+func TestPublicPayloadsFromWorkerAssistantErrorIsDiagnostic(t *testing.T) {
+	for _, errorType := range []string{"unknown", "authentication_failed", "rate_limit"} {
+		t.Run(errorType, func(t *testing.T) {
+			raw := mustRawJSON(t, map[string]any{
+				"type": "assistant", "uuid": "assistant-error", "error": errorType,
+				"message": map[string]any{"content": []map[string]string{{"type": "text", "text": "API Error: private upstream details"}}},
+			})
+			payloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{EventType: "assistant", CreatedAt: time.Now().UTC()}, raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ok || len(payloads) != 0 {
+				t.Fatalf("assistant error became public content: %s", payloads)
+			}
+		})
 	}
 }
 
@@ -149,7 +168,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 			"id":   "msg_assistant_blocks",
 			"role": "assistant",
 			"content": []any{
-				map[string]any{"type": "thinking", "thinking": "plan"},
+				map[string]any{"type": "thinking", "thinking": "plan", "signature": "signature-secret"},
 				map[string]any{"type": "text", "text": "starting"},
 				map[string]any{
 					"type":  "tool_use",
@@ -169,6 +188,12 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 	objects := decodePublicPayloads(t, payloads)
 	if got, want := len(objects), 2; got != want {
 		t.Fatalf("payload count = %d, want %d: %#v", got, want, objects)
+	}
+	if blocks, ok := objects[0]["content"].([]any); !ok || len(blocks) != 1 || blocks[0].(map[string]any)["thinking"] != "plan" {
+		t.Fatalf("thinking content missing: %#v", objects[0])
+	}
+	if strings.Contains(string(payloads[0]), "signature-secret") {
+		t.Fatal("thinking payload exposed signature")
 	}
 	wantTypes := []string{"agent.thinking", "agent.message"}
 	for index, wantType := range wantTypes {
@@ -383,12 +408,19 @@ func TestPublicWorkerDiagnosticsDoNotBecomeMessages(t *testing.T) {
 
 	}
 	payloads, ok, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: "result"}, json.RawMessage(`{"type":"result","is_error":true,"subtype":"error_max_turns","result":"private credentials","errors":["private credentials"]}`))
-	if err != nil || !ok || len(payloads) != 1 {
+	if err != nil || !ok || len(payloads) != 2 {
 		t.Fatalf("error event: %s %v", payloads, err)
 	}
 	object := decodePublicPayloads(t, payloads)[0]
 	if object["type"] != "session.error" || object["result"] != nil || object["errors"] != nil {
 		t.Fatalf("unsafe error: %s", payloads)
+	}
+	idle := decodePublicPayloads(t, payloads)[1]
+	if idle["type"] != "session.status_idle" || idle["stop_reason"].(map[string]any)["type"] != "retries_exhausted" {
+		t.Fatalf("failed turn idle = %#v", idle)
+	}
+	if idle["id"] == object["id"] {
+		t.Fatal("error and idle share an event ID")
 	}
 	errorPayload := object["error"].(map[string]any)
 	if errorPayload["message"] != "Agent reached the maximum number of turns." {

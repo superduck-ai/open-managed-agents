@@ -65,7 +65,7 @@ handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发
 - 删除调用方的 `Authorization`、`X-Api-Key`、`Cookie`、组织/workspace 内部 header 和 hop-by-hop header；
 - 解密该模型所属 Provider 的 Key，同时注入为上游 `X-Api-Key` 和 `Authorization: Bearer`；
 - 将请求发往 `{provider.base_url}/v1/messages`；
-- 透传上游状态码、响应 body、SSE 数据和限流等响应 header；
+- 透传上游状态码、响应 body、SSE 数据和限流等响应 header；Code Session 上游 401 按下述失败语义转换；
 - SSE 响应逐块 flush，并关闭代理缓冲；
 - 请求 body 上限为 32 MiB。
 
@@ -95,6 +95,7 @@ environment-manager 在启动 Claude Code 前调用 `/worker/register`，建立�
 code-session 请求来自受信任的沙箱调用方。公共 Messages 入口完整扫描有界请求体的顶层对象，只读取唯一的 `model` 以选择 Provider；其余字段仍由上游按 Anthropic Messages 合同校验。本服务负责入口鉴权、请求大小限制、header 清洗、Provider 解析和响应流式代理。
 
 Claude Code 所需的 `ANTHROPIC_MODEL` 等变量名保留，但值为 Agent 保存的真实模型 ID；Provider Key 不进入 sandbox。
+Runner 在 Worker 启动环境中固定设置 `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`。在支持的 Claude Code 2.1.251 中，这会跳过 Agent SDK/headless 模式的后台标题生成请求，避免其 JSON 响应被 Messages 代理记录为公开 `agent.message`；显式创建或更新 Session 的 `title` API 不受影响。该变量独立于 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`，因此启用 OTLP 时仍生效。
 
 Agent PATCH 只有在请求显式携带 `model` 时才校验新模型；只修改名称、描述等字段时原样保留旧模型，即使管理员已经从 Provider 删除了该模型。这样旧 Agent 仍可通过后续 PATCH 切换到有效模型；实际运行仍按当前 Provider 配置失败关闭。
 
@@ -143,7 +144,8 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 - 上游地址或网络不可用：`502 api_error`；
 - 请求超过 32 MiB：`413 request_too_large`；
 - token 无效、session 终止、worker lease 过期或用在其他资源：`401 authentication_error`；
-- 上游返回的非 2xx 状态和 body：原样透传。
+- Code Session 已通过本地鉴权，但上游拒绝 Provider 凭据：将上游 `401` 转为 `403 permission_error`，消息为 `Messages upstream rejected its configured credentials`，并设置 `X-Should-Retry: false`。不转发上游 body、`WWW-Authenticate` 或 `Retry-After`，避免 Claude Code 将 Provider 凭据错误当成自身 OAuth token 失效并进入凭据恢复等待。模型请求 span 仍记录 `http_error` 和上游 request ID；失败结果与 idle 仍由真实 Worker 协议推进；
+- 普通 API key、平台 cookie 调用的上游非 2xx，以及 Code Session 的其他上游非 2xx 状态和 body：原样透传。
 
 所有本地生成的错误继续通过 `internal/httpapi.WriteError` 返回 Anthropic 兼容结构。
 
@@ -158,6 +160,9 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 
 - `tests/messages_api_test.go`：缺少 Provider、未配置模型、跨资源使用、未 register、lease 过期、public session 终止、长时间运行、普通 API key、平台 cookie、header 清洗与响应 header 透传；
 - `internal/messages/handler_test.go`：有界缓冲后保留原始请求体，并拒绝重复顶层 `model`；
+- `tests/messages_upstream_auth_test.go`：三种上游 401 body 的 Worker 错误转换、不可重试 header、模型 span，以及普通 API key 调用的原始响应；
+- `tests/liveworker/chat_upstream_errors_test.go`：公开 Runner 通过 environment-manager 的真实 OAuth FD 启动 Worker，两种持续上游 401 在 90 秒内产生 `session.error`、以 `retries_exhausted` 自然 idle 并清空队列，不生成助手回复；
+- `tests/session_worker_error_status_test.go`：失败结果不提前结束 Session、API 错误消息不公开、失败 idle 原因和重复报告幂等，以及下一轮成功恢复 `end_turn`；
 - `tests/llm_providers_api_test.go`：workspace Provider CRUD、空模型转换、Key 加密、模型发现、冲突与解析；
 - `tests/models_api_test.go`：`GET /v1/models` 返回已配置的真实模型 ID，并区分空 Provider 列表与空模型列表；
 - `tests/platform_proxy_directory_api_test.go`：管理后台原有独立路径的 JSON 与 SSE 转发；

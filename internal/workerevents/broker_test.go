@@ -16,7 +16,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-var testStreamConfig = config.WorkerEventStreamConfig{MaxBytes: 1 << 28, MaxMsgSize: 1 << 20, Replicas: 3}
+var testStreamConfig = config.WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, MaxBytes: 1 << 28, MaxMsgSize: 1 << 20, Replicas: 3}
 
 func TestJetStreamBrokerRejectsInsufficientReplicas(t *testing.T) {
 	srv := runNATSServer(t, server.Options{Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir()})
@@ -30,7 +30,7 @@ func TestJetStreamBrokerAppliesConfiguredLimits(t *testing.T) {
 	srv := runNATSServer(t, server.Options{Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir()})
 	connection := connectNATS(t, srv.ClientURL())
 	for _, capacity := range []int64{2 << 20, 4 << 20} {
-		broker, err := NewJetStream(t.Context(), connection, config.WorkerEventStreamConfig{MaxBytes: capacity, MaxMsgSize: 1024, MaxAge: time.Hour, Replicas: 1})
+		broker, err := NewJetStream(t.Context(), connection, config.WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, MaxBytes: capacity, MaxMsgSize: 1024, MaxAge: time.Hour, Replicas: 1})
 		if err != nil {
 			t.Fatal(err)
 		}

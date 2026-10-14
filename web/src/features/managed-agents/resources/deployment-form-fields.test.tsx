@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, expect, test } from 'bun:test';
 import { resetTestDom } from '../../../test/setup';
 import { I18nProvider } from '../../../shared/i18n';
@@ -10,19 +11,20 @@ test('localizes configuration and scheduling and gives Chinese labels unique con
   resetTestDom('https://oma.duck.ai/workspaces/default/deployments');
   const values = { ...initialFormValues('deployments'), triggerType: 'schedule' as const, timezone: 'Asia/Shanghai' };
   render(
-    <I18nProvider initialLocale="zh-CN">
-      <DeploymentFormFields
-        values={values}
-        workspaceId="default"
-        agents={[]}
-        environments={[]}
-        vaults={[]}
-        memoryStores={[]}
-        loadingOptions={false}
-        editing={false}
-        onChange={() => {}}
-      />
-    </I18nProvider>,
+    <QueryClientProvider client={new QueryClient()}>
+      <I18nProvider initialLocale="zh-CN">
+        <DeploymentFormFields
+          values={values}
+          workspaceId="default"
+          environments={[]}
+          vaults={[]}
+          memoryStores={[]}
+          loadingOptions={false}
+          editing={false}
+          onChange={() => {}}
+        />
+      </I18nProvider>
+    </QueryClientProvider>,
   );
   expect(screen.getByRole('heading', { name: '配置' })).toBeTruthy();
   expect(screen.getByRole('combobox', { name: '频率' }).textContent).toContain('工作日');

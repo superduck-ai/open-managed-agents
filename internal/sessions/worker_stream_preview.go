@@ -90,9 +90,16 @@ type workerStreamContentBlock struct {
 	Type string `json:"type"`
 }
 
+type previewDeltaContent struct {
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	Thinking string `json:"thinking,omitempty"`
+}
+
 type workerStreamDelta struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type     string `json:"type"`
+	Text     string `json:"text"`
+	Thinking string `json:"thinking"`
 }
 
 func newWorkerPreviewConverter() *workerPreviewConverter {
@@ -145,7 +152,7 @@ func (event workerStreamEvent) affectsPreview() bool {
 	case workerStreamEventTypeContentBlockStart:
 		return event.Index != nil && publicPreviewEventType(event.ContentBlock.Type) != ""
 	case workerStreamEventTypeContentBlockDelta:
-		return event.Index != nil && event.Delta.Type == workerStreamDeltaText && event.Delta.Text != ""
+		return event.Index != nil && ((event.Delta.Type == workerStreamDeltaText && event.Delta.Text != "") || (event.Delta.Type == "thinking_delta" && event.Delta.Thinking != ""))
 	case workerStreamEventTypeContentBlockStop:
 		return event.Index != nil
 	case workerStreamEventTypeMessageStop:
@@ -247,13 +254,17 @@ func (c *workerPreviewConverter) appendPreviewBlockDelta(batch codeSessionStream
 	}
 	index := *payload.Event.Index
 	block, found := state.blocks[index]
-	if !found || block.eventType != "agent.message" {
+	if !found || (block.eventType == "agent.message" && payload.Event.Delta.Type != workerStreamDeltaText) || (block.eventType == "agent.thinking" && payload.Event.Delta.Type != "thinking_delta") {
 		return sessionStreamEvent{}, false
 	}
 	block.updatedAt = now
 	state.blocks[index] = block
 	state.updatedAt = now
-	payloadJSON := eventDeltaPayload(block.eventID, payload.Event.Delta.Text)
+	content := previewDeltaContent{Type: "text", Text: payload.Event.Delta.Text}
+	if block.eventType == "agent.thinking" {
+		content = previewDeltaContent{Type: "thinking", Thinking: payload.Event.Delta.Thinking}
+	}
+	payloadJSON := eventDeltaPayload(block.eventID, content)
 	return previewSessionEvent(batch, payload, now, block.eventID, previewEventDelta, payloadJSON), true
 }
 
@@ -317,17 +328,14 @@ func eventStartPayload(block previewBlock) json.RawMessage {
 	return payload
 }
 
-func eventDeltaPayload(eventID, text string) json.RawMessage {
+func eventDeltaPayload(eventID string, content previewDeltaContent) json.RawMessage {
 	payload, _ := json.Marshal(map[string]any{
 		"type":     "event_delta",
 		"event_id": eventID,
 		"delta": map[string]any{
-			"type":  "content_delta",
-			"index": 0,
-			"content": map[string]string{
-				"type": "text",
-				"text": text,
-			},
+			"type":    "content_delta",
+			"index":   0,
+			"content": content,
 		},
 	})
 	return payload

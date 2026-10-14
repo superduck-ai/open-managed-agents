@@ -5,6 +5,7 @@
         external_id,
         organization_uuid,
         name,
+        is_default,
         created_at,
         updated_at,
         archived_at,
@@ -51,7 +52,7 @@
         FROM workspaces
         WHERE organization_uuid = #{organizationUUID}
         AND (
-            external_id = #{externalID}
+            (#{externalID} = 'default' AND is_default) OR external_id = #{externalID}
             <if test="workspaceUUID != ''">
                 OR uuid = #{workspaceUUID}
             </if>
@@ -62,7 +63,7 @@
         SELECT created_at, uuid
         FROM workspaces
         WHERE organization_uuid = #{organizationUUID}
-        AND external_id = #{externalID}
+        AND external_id = #{externalID} AND NOT is_default
     </select>
 
     <select id="ListPage" resultType="AdminWorkspace">
@@ -71,6 +72,7 @@
         FROM workspaces
         <where>
             organization_uuid = #{organizationUUID}
+            AND NOT is_default
             <if test="!includeArchived">
                 AND archived_at IS NULL
             </if>
@@ -120,11 +122,12 @@
     </select>
 
     <insert id="SeedDefault" result="returning" resultType="string">
-        INSERT INTO workspaces (external_id, organization_uuid, name)
-        VALUES (#{externalID}, #{organizationUUID}, #{name})
+        INSERT INTO workspaces (external_id, organization_uuid, name, is_default)
+        VALUES (#{externalID}, #{organizationUUID}, #{name}, TRUE)
         ON CONFLICT (external_id) DO UPDATE SET
             organization_uuid = excluded.organization_uuid,
-            name = excluded.name
+            name = excluded.name,
+            is_default = TRUE
         RETURNING uuid
     </insert>
 </mapper>

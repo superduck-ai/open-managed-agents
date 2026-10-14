@@ -3,6 +3,7 @@ package tunnels
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,7 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/superduck-ai/open-managed-agents/internal/cleanup"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -46,8 +47,6 @@ type largeToolInput struct {
 	Text string `json:"text"`
 }
 
-// This uses an isolated, explicitly configured database and versioned S3 bucket.
-// Connector token lookup remains the existing fixture; cleanup uses real PostgreSQL.
 func TestTunnelPayloadRealStorageAndClient(t *testing.T) {
 	url, endpoint, binary := os.Getenv("TEST_TUNNEL_PAYLOAD_DATABASE_URL"), os.Getenv("TEST_TUNNEL_PAYLOAD_S3_ENDPOINT"), os.Getenv("TEST_TUNNEL_CLIENT_BINARY")
 	if url == "" || endpoint == "" || binary == "" {
@@ -62,7 +61,15 @@ func TestTunnelPayloadRealStorageAndClient(t *testing.T) {
 	if err := database.Migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.StorageConfig{Type: config.StorageTypeS3, S3: config.S3Config{Endpoint: endpoint, Bucket: "tunnel-payload-test", Region: "us-east-1", AccessKeyID: "payload-test", SecretAccessKey: "payload-test-secret", ForcePathStyle: true}}
+	appConfig, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := appConfig.Storage
+	cfg.Type = config.StorageTypeS3
+	cfg.S3.Endpoint = endpoint
+	cfg.S3.Bucket = "tunnel-payload-" + uuid.NewString()
+	cfg.S3.ForcePathStyle = true
 	client, err := storage.New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -71,12 +78,23 @@ func TestTunnelPayloadRealStorageAndClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s3Client := s3.NewFromConfig(aws.Config{Region: cfg.S3.Region, Credentials: credentials.NewStaticCredentialsProvider(cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey, "")}, func(o *s3.Options) { o.BaseEndpoint = aws.String(endpoint); o.UsePathStyle = true })
 	if err := objects.Ensure(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	s3Client := s3.NewFromConfig(aws.Config{Region: cfg.S3.Region, Credentials: credentials.NewStaticCredentialsProvider(cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey, "")}, func(o *s3.Options) { o.BaseEndpoint = aws.String(endpoint); o.UsePathStyle = true })
-	if _, err := s3Client.PutBucketVersioning(t.Context(), &s3.PutBucketVersioningInput{Bucket: aws.String(cfg.S3.Bucket), VersioningConfiguration: &types.VersioningConfiguration{Status: types.BucketVersioningStatusEnabled}}); err != nil {
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := s3Client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(cfg.S3.Bucket)}); err != nil {
+			t.Error(err)
+		}
+	})
+	versioning, err := s3Client.GetBucketVersioning(t.Context(), &s3.GetBucketVersioningInput{Bucket: aws.String(cfg.S3.Bucket)})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if versioning.Status != "" {
+		t.Fatal("Tunnel payload verification requires an unversioned bucket")
 	}
 	jobs := &trackedPayloadCleanup{database: database}
 	store := NewPayloadStore(database, objects)
@@ -96,13 +114,14 @@ func TestTunnelPayloadRealStorageAndClient(t *testing.T) {
 			}
 		}
 		for _, key := range jobs.keys {
-			versions, err := s3Client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{Bucket: aws.String(cfg.S3.Bucket), Prefix: aws.String(key)})
-			if err != nil {
+			object, err := objects.Open(ctx, key, nil)
+			if err == nil {
+				if closeErr := object.Body.Close(); closeErr != nil {
+					t.Error(closeErr)
+				}
+				t.Error("cleanup retained readable object")
+			} else if !errors.Is(err, storage.ErrNotFound) {
 				t.Error(err)
-				continue
-			}
-			if len(versions.Versions) != 0 || len(versions.DeleteMarkers) != 0 {
-				t.Error("cleanup retained object versions")
 			}
 		}
 	})
@@ -116,7 +135,6 @@ func TestTunnelPayloadRealStorageAndClient(t *testing.T) {
 	if len(jobs.ids) < 5 {
 		t.Fatalf("expected request/response/notification offloads, got %d", len(jobs.ids))
 	}
-	// Prove scheduled jobs cannot be leased before their deadlines.
 	pending, err := database.LeaseObjectCleanupJobs(t.Context(), "premature-cleanup", 100)
 	if err != nil || len(pending) != 0 {
 		t.Fatalf("cleanup ran early: %d, %v", len(pending), err)
@@ -181,7 +199,6 @@ func runLargeOfficialClient(t *testing.T, binary string, store *PayloadStore, st
 			t.Fatal("notification lost")
 		}
 	}
-	// HTTP boundary rejects >16 MiB without enqueueing or uploading.
 	oversized, _ := json.Marshal(largeToolInput{Text: strings.Repeat("x", 16<<20)})
 	response, err := http.Post(endpoint, "application/json", strings.NewReader(string(oversized)))
 	if err != nil {

@@ -1,0 +1,19 @@
+# Upstream failures and backoff interruption
+
+Run `just verify-be chat upstream-errors` with an installed real Worker image.
+
+`tests/liveworker/chat_upstream_errors_test.go` exercises a standard Anthropic authentication error and a generic JSON invalid-key error. Both upstream fixtures always return HTTP 401. Each case creates a Session and submits its message through the public API. The actual Runner starts a real Worker through environment-manager, including OAuth and WebSocket FD credentials. The production model proxy translates the upstream 401 to a non-retryable 403 for this authenticated Worker. The 90-second observation budget starts at message submission and includes startup.
+
+Run `just verify-be chat doctor upstream-errors` first. This scenario needs FUSE, SYS_ADMIN and the Worker image, just like `chat.public`. Sandbox allocation uses a local Docker Provider. A local E2B control API checks the run-scoped container name and ownership label, accepts positive connect/timeout requests, and removes owned containers on deletion. Docker containers have no cloud TTL; this fixture does not verify real E2B renewal or cloud lifecycle behavior.
+
+Passing requires at least one upstream request, matching completed model request spans, a durable `session.error` with exhausted retry status, Session `idle` with `retries_exhausted`, no `agent.message`, and a drained input queue. Synthetic Worker API error messages remain private diagnostics. The number of upstream attempts is observed rather than fixed, since retry behavior belongs to the installed Worker. The 90-second window is this scenario's acceptance budget, not a claim about a permanent hang or a documented Worker retry deadline.
+
+The evidence directory contains `upstream-401-observations.json`, plus the usual `report.json`, `report.md`, and `tests.jsonl`. Each case records `naturally_completed` and `before_interrupt`, including request counts, model span counts, error event IDs, Worker/Session status, and queue state. If the Session remains running, the test sends public `user.interrupt`, waits up to 15 seconds for idle, and records `post_interrupt_observations` separately. Successful interruption cannot turn a failed natural completion into a pass. Missing requests, missing errors, unfinished spans, or cleanup failure also fail the test.
+
+This verifies the configured local Worker image with scripted upstream errors. It does not establish real provider credential validity, browser error rendering, or behavior of other Worker versions.
+
+The scenario also runs `backoff_500_interrupt`. A scripted upstream returns six or more quick HTTP 500/api_error responses. Once all observed model spans have ended while the Session is still running, the test sends public `user.interrupt` during the retry wait. SSE is connected before the message. Passing requires same-ID idle/end_turn in SSE and history, no session.error, no additional requests before the next user message, and a drained input queue. The fixture then returns successful text for the next message; the same Session must finish normally. `upstream-backoff-observations.json` records the pre/post-interrupt state. The required proof stage is `backoff_500_interrupted_and_recovered`.
+
+Six attempts select a retry wait long enough to submit the interrupt; they are not a production retry limit. This test does not verify natural exhaustion of persistent HTTP 500 or a 90-second retry SLA.
+
+The isolated sandbox API uses a format-valid dummy E2B key with loopback API and sandbox URLs. Production SDK connect/timeout calls must reach this owned-resource fixture when subsequent public inputs renew the sandbox; key-format rejection is a verification failure, not an interruption verdict. `TestLocalSandboxConfigSupportsProviderRenewal` exercises that configuration through the production provider.

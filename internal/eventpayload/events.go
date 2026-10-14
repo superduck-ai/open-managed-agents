@@ -155,42 +155,43 @@ func (s *Store) GetSessionEvent(ctx context.Context, workspaceUUID, sessionID, e
 	return s.RestorePublic(ctx, event)
 }
 
-func (s *Store) AppendSessionEvents(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, outcomes json.RawMessage) ([]db.SessionEvent, error) {
+func (s *Store) AppendSessionEvents(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, outcomes json.RawMessage) (db.SessionEventChanges, error) {
 	return s.appendPublic(ctx, workspaceUUID, sessionID, events, outcomes, false)
 }
 
-func (s *Store) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent) ([]db.SessionEvent, error) {
+func (s *Store) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent) (db.SessionEventChanges, error) {
 	return s.appendPublic(ctx, workspaceUUID, sessionID, events, nil, true)
 }
 
-func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, outcomes json.RawMessage, ifAbsent bool) ([]db.SessionEvent, error) {
+func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, outcomes json.RawMessage, ifAbsent bool) (db.SessionEventChanges, error) {
 	session, found, err := s.database.GetSession(ctx, workspaceUUID, sessionID)
 	if err != nil {
-		return nil, err
+		return db.SessionEventChanges{}, err
 	}
 	if !found {
-		return nil, db.ErrNotFound
+		return db.SessionEventChanges{}, db.ErrNotFound
 	}
 	if ifAbsent {
 		events, err = s.skipPersistedLargeEvents(ctx, workspaceUUID, sessionID, events)
 		if err != nil {
-			return nil, err
+			return db.SessionEventChanges{}, err
 		}
 	}
 	prepared, err := s.PreparePublic(ctx, session.OrganizationUUID, workspaceUUID, events)
 	if err != nil {
-		return nil, err
+		return db.SessionEventChanges{}, err
 	}
-	var created []db.SessionEvent
+	var changes db.SessionEventChanges
 	if ifAbsent {
-		created, err = s.database.AppendSessionEventsIfAbsent(ctx, workspaceUUID, sessionID, prepared)
+		changes, err = s.database.AppendSessionEventsIfAbsent(ctx, workspaceUUID, sessionID, prepared)
 	} else {
-		created, err = s.database.AppendSessionEvents(ctx, workspaceUUID, sessionID, prepared, outcomes)
+		changes, err = s.database.AppendSessionEvents(ctx, workspaceUUID, sessionID, prepared, outcomes)
 	}
 	if err != nil {
-		return nil, err
+		return db.SessionEventChanges{}, err
 	}
-	return RestoreCreatedPublic(created, events), nil
+	changes.Events = RestoreCreatedPublic(changes.Events, events)
+	return changes, nil
 }
 
 // Avoid uploading already persisted events during worker replay. The insert still

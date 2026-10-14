@@ -98,7 +98,7 @@ func TestRebuildMCPTunnelsMigration(t *testing.T) {
 	assertTableRowCount(t, ctx, database, "mcp_tunnels", 0)
 	assertTableRowCount(t, ctx, database, "mcp_tunnel_certificates", 0)
 
-	if _, err := provider.Up(ctx); err != nil {
+	if _, err := provider.UpTo(ctx, 60); err != nil {
 		t.Fatalf("reapply MCP Tunnel migration 60: %v", err)
 	}
 	assertTunnelMigration60State(t, ctx, database)

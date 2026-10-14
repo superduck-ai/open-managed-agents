@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/nats-io/nats.go/jetstream"
 	"image"
 	"image/color"
 	"image/png"
@@ -41,6 +42,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 
 	"github.com/jackc/pgx/v5"
@@ -52,6 +54,8 @@ const defaultTestKey = config.DefaultAPIKey
 const onePixelGIFBase64 = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
 
 type testApp struct {
+	webhookQueue         *webhooks.Queue
+	webhookStream        jetstream.Stream
 	cfg                  config.Config
 	db                   *db.DB
 	deployments          *deploymentsapi.Store
@@ -1182,7 +1186,9 @@ func newTestAppWithSecrets(t *testing.T, override *config.Config, store storage.
 		}
 		vaultSecrets = secrets.NewService(vaultSecretsProvider)
 	}
-	deploymentStore := deploymentsapi.NewStore(database).WithEventPayloadStorage(store)
+	webhookQueue, webhookStream := newWebhookTestQueue(t, cfg.Webhook)
+	webhookEnqueuer := webhooks.NewEnqueuer(database, webhookQueue, logger)
+	deploymentStore := deploymentsapi.NewStore(database, logger).WithEventPayloadStorage(store).WithWebhooks(webhookEnqueuer)
 	workers := river.NewWorkers()
 	deploymentsapi.RegisterWorkers(workers, deploymentStore)
 	deploymentJobs, err := riverjobs.NewClient(database, logger, workers, map[string]river.QueueConfig{
@@ -1200,6 +1206,7 @@ func newTestAppWithSecrets(t *testing.T, override *config.Config, store storage.
 		Config:                 cfg,
 		DB:                     database,
 		Deployments:            deploymentStore,
+		WebhookEnqueuer:        webhookEnqueuer,
 		ObjectStore:            store,
 		Logger:                 logger,
 		PlatformStore:          platformSessions,
@@ -1211,6 +1218,7 @@ func newTestAppWithSecrets(t *testing.T, override *config.Config, store storage.
 		VaultSecrets:           vaultSecrets,
 	}))
 	app := &testApp{
+		webhookQueue: webhookQueue, webhookStream: webhookStream,
 		cfg:                  cfg,
 		db:                   database,
 		deployments:          deploymentStore,

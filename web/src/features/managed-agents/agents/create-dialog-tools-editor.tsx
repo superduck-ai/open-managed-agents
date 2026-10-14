@@ -53,7 +53,7 @@ import {
   updateCustomTool,
   updateMcpServer,
 } from './create-dialog-model';
-import { CreateDialogMcpPicker } from './create-dialog-mcp-picker';
+import { CreateDialogMcpPicker, type CreateDialogMcpPickerProps } from './create-dialog-mcp-picker';
 import {
   BUILT_IN_AGENT_TOOLSETS,
   builtInAgentToolDescription,
@@ -85,21 +85,20 @@ export function CreateDialogToolsEditor({
   directoryServers,
   directoryLoading,
   directoryError,
+  workspaceServers,
+  workspaceServersLoading,
+  workspaceServersError,
   onRetryDirectory,
+  onRetryWorkspaceServers,
+  onCreateWorkspaceServer,
   onProbeTunnel,
   onPendingTunnelChange,
   selectionResetKey = 0,
   onChange,
-}: {
-  draft: CreateAgentInput;
-  directoryServers: McpDirectoryServer[];
-  directoryLoading: boolean;
-  directoryError: boolean;
-  onRetryDirectory: () => void;
+}: Omit<CreateDialogMcpPickerProps, 'onSelectTunnel'> & {
   onProbeTunnel: (tunnelId: string, channel: string) => Promise<Array<{ name: string; description?: string }>>;
   onPendingTunnelChange?: (pending: boolean) => void;
   selectionResetKey?: number;
-  onChange: (next: CreateAgentInput) => void;
 }) {
   const { msg } = useI18n();
   const [pendingTunnel, setPendingTunnel] = useState<PendingTunnelSelection | null>(null);
@@ -175,7 +174,12 @@ export function CreateDialogToolsEditor({
           directoryServers={directoryServers}
           directoryLoading={directoryLoading}
           directoryError={directoryError}
+          workspaceServers={workspaceServers}
+          workspaceServersLoading={workspaceServersLoading}
+          workspaceServersError={workspaceServersError}
           onRetryDirectory={onRetryDirectory}
+          onRetryWorkspaceServers={onRetryWorkspaceServers}
+          onCreateWorkspaceServer={onCreateWorkspaceServer}
           onSelectTunnel={selectTunnel}
           onChange={onChange}
         />

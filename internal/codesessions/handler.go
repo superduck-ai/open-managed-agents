@@ -13,6 +13,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
+	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
 
 // Handler 是 code-session 的 HTTP transport 边界。
@@ -99,12 +100,12 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 // rewriting (placeholder substitution + Git Smart HTTP Authorization) on MITM
 // via MITMEgress.Prepare. Platform OAuth client secrets are re-resolved from
 // cfg at refresh time.
-func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaults.OAuthRefreshLease) *Handler {
+func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaults.OAuthRefreshLease, webhookEnqueuer *webhooks.Enqueuer) *Handler {
 	if h == nil || h.db == nil || secretSvc == nil {
 		return h
 	}
 	injector := vaults.NewInjector(h.db, secretSvc, h.logger).
-		WithPlatformOAuthClients(h.cfg.Vault.PlatformOAuthClients)
+		WithPlatformOAuthClients(h.cfg.Vault.PlatformOAuthClients).WithWebhooks(webhookEnqueuer)
 	if refreshLease != nil {
 		injector = injector.WithRefreshLease(refreshLease)
 	}

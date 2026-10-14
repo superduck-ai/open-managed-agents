@@ -135,7 +135,7 @@ func TestPollCancellationAndConnectionLossAreBounded(t *testing.T) {
 	cancel()
 	select {
 	case err := <-done:
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, nats.ErrDisconnected) {
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, nats.ErrDisconnected) && !errors.Is(err, nats.ErrConnectionClosed) {
 			t.Fatalf("cancellation = %v", err)
 		}
 	case <-time.After(2 * time.Second):

@@ -19,11 +19,17 @@ import (
 const chatAnswer = "你好，聊天验证完成。"
 
 type chatEvent struct {
-	ID        string  `json:"id"`
-	Type      string  `json:"type"`
-	ThreadID  string  `json:"session_thread_id"`
-	Processed *string `json:"processed_at"`
-	Content   []struct {
+	ID                  string          `json:"id"`
+	Type                string          `json:"type"`
+	ThreadID            string          `json:"session_thread_id"`
+	Processed           *string         `json:"processed_at"`
+	Name                string          `json:"name"`
+	Input               json.RawMessage `json:"input"`
+	ToolUseID           string          `json:"tool_use_id"`
+	IsError             bool            `json:"is_error"`
+	EvaluatedPermission string          `json:"evaluated_permission"`
+	Evaluation          json.RawMessage `json:"evaluation"`
+	Content             []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
@@ -31,7 +37,15 @@ type chatEvent struct {
 		ID string `json:"id"`
 	} `json:"event"`
 	EventID string `json:"event_id"`
-	Delta   struct {
+	Error   struct {
+		RetryStatus struct {
+			Type string `json:"type"`
+		} `json:"retry_status"`
+	} `json:"error"`
+	StopReason struct {
+		Type string `json:"type"`
+	} `json:"stop_reason"`
+	Delta struct {
 		Content struct {
 			Text string `json:"text"`
 		} `json:"content"`

@@ -1,48 +1,21 @@
-import { Info, UserRound } from 'lucide-react';
+import { UserRound } from 'lucide-react';
 import { useMemo } from 'react';
-import { settingsNavigation } from '../../app/layout/navigation';
 import { formatRole } from '../dashboard/model';
-import { WorkspaceApiKeysContent } from './WorkspaceApiKeysPage';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n, useLocale, localeLabels, type Locale } from '../../shared/i18n';
 import { themeModes, useTheme, type ThemeMode } from '../../shared/theme/context';
-import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Badge } from '../../shared/ui/badge';
 import { Card, CardContent, CardHeader } from '../../shared/ui/card';
 import { Field, FieldDescription, FieldLabel } from '../../shared/ui/field';
 import { Input } from '../../shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
 
-export const settingsSections = [
-  'profile',
-  'appearance',
-  'organization',
-  'members',
-  'workspaces',
-  'billing',
-  'limits',
-  'api-keys',
-  'admin-keys',
-  'service-accounts',
-  'workload-identity',
-  'privacy-controls',
-  'identity-and-access',
-] as const;
-
-export type SettingsPageSection = (typeof settingsSections)[number];
-
-const settingsSectionSet = new Set<SettingsPageSection>(settingsSections);
-
-const settingsLabelsBySection = new Map(
-  settingsNavigation.map((item) => [pathSectionFromHref(item.href), item] as const),
-);
-
-type PlaceholderSection = Extract<SettingsPageSection, 'identity-and-access'>;
+export const settingsSections = ['profile', 'appearance', 'organization', 'members', 'workspaces', 'api-keys'] as const;
+export type SettingsPageSection = (typeof settingsSections)[number] | 'retired';
 
 export function settingsSectionFromPath(pathname: string): SettingsPageSection {
-  const match = pathname.match(/^\/settings\/([^/]+)/);
-  const section = match ? decodeURIComponent(match[1]) : 'organization';
-  return isSettingsPageSection(section) ? section : 'organization';
+  const section = pathname.match(/^\/settings\/([^/]+)/)?.[1] ?? 'organization';
+  return settingsSections.find((candidate) => candidate === section) ?? 'retired';
 }
 
 export function ProfileSettingsPage() {
@@ -189,46 +162,6 @@ export function AppearanceSettingsPage() {
   );
 }
 
-export function SettingsApiKeysPage() {
-  return <WorkspaceApiKeysContent />;
-}
-
-export function SettingsPlaceholderPage({ section }: { section: PlaceholderSection }) {
-  const { msg } = useI18n();
-  const navigationItem = settingsLabelsBySection.get(section);
-  const title = navigationItem ? msg(navigationItem.labelId, navigationItem.label) : section;
-
-  return (
-    <section className="mx-auto w-full max-w-[1100px]" data-testid={`settings-${section}-page`}>
-      <Card>
-        <CardHeader className="space-y-1">
-          <h1 className="text-xl font-semibold tracking-normal text-foreground">{title}</h1>
-          <p className="text-sm text-muted-foreground">
-            {msg(
-              'settings.placeholder.description',
-              'This setting is available from the organization settings sidebar, but its configuration flow is not wired yet.',
-            )}
-          </p>
-        </CardHeader>
-        <CardContent>
-          <Alert>
-            <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
-            <AlertDescription>
-              {msg(
-                'settings.placeholder.body',
-                '{title} does not have an interactive surface in Open Managed Agents yet.',
-                {
-                  title,
-                },
-              )}
-            </AlertDescription>
-          </Alert>
-        </CardContent>
-      </Card>
-    </section>
-  );
-}
-
 function ReadonlyField({ label, value }: { label: string; value: string }) {
   return (
     <Field className="gap-2">
@@ -242,11 +175,3 @@ const settingsLocaleOptions = [
   { value: 'en', label: 'English' },
   { value: 'zh-CN', label: '简体中文' },
 ] satisfies Array<{ value: Locale; label: string }>;
-
-function pathSectionFromHref(href: string) {
-  return href.replace(/^\/settings\//, '') as SettingsPageSection;
-}
-
-function isSettingsPageSection(section: string): section is SettingsPageSection {
-  return settingsSectionSet.has(section as SettingsPageSection);
-}

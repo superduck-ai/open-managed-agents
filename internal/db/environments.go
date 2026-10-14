@@ -147,13 +147,14 @@ func (d *DB) GetEnvironment(ctx context.Context, workspaceUUID string, externalI
 	return row.environment(), nil
 }
 
-func (d *DB) ArchiveEnvironment(ctx context.Context, workspaceUUID string, externalID string) (Environment, error) {
+func (d *DB) ArchiveEnvironment(ctx context.Context, workspaceUUID string, externalID string) (Environment, bool, error) {
 	mapper := NewEnvironmentMapper(d.mapperDB)
 	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, externalID)
-	if err != nil {
-		return Environment{}, mapNoRows(err)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return row.environment(), err == nil, err
 	}
-	return row.environment(), nil
+	current, loadErr := d.GetEnvironment(ctx, workspaceUUID, externalID)
+	return current, false, loadErr
 }
 
 func (d *DB) DeleteEnvironment(ctx context.Context, workspaceUUID string, externalID string) error {
@@ -463,10 +464,15 @@ func (d *DB) CreateEnvironmentSandbox(ctx context.Context, sandbox EnvironmentSa
 }
 
 func (d *DB) UpdateEnvironmentSandboxState(ctx context.Context, workspaceUUID string, externalID, state string, providerSandboxID *string, lastError *string, stoppedAt *time.Time) error {
-	mapper := NewEnvironmentSandboxMapper(d.mapperDB)
-	return mapper.UpdateState(ctx, environmentSandboxStateParams{
-		WorkspaceUUID: workspaceUUID, ExternalID: externalID, State: state,
-		ProviderSandboxID: providerSandboxID, LastError: lastError, StoppedAt: stoppedAt,
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewEnvironmentSandboxMapper(executor)
+		if _, _, err := mapper.LockOwnerSession(ctx, workspaceUUID, externalID); err != nil {
+			return err
+		}
+		return mapper.UpdateState(ctx, environmentSandboxStateParams{
+			WorkspaceUUID: workspaceUUID, ExternalID: externalID, State: state,
+			ProviderSandboxID: providerSandboxID, LastError: lastError, StoppedAt: stoppedAt,
+		})
 	})
 }
 

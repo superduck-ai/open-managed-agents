@@ -1,3 +1,4 @@
+import { useScopeUnsavedChanges } from '../../shared/organizations/unsaved';
 import {
   AlertCircle,
   Braces,
@@ -268,6 +269,13 @@ export function WorkbenchPage() {
   const canRunWithVariables = canRun && !hasMissingVariableValues;
   const currentDraftKey = prompt ? workbenchDraftAutosaveKey(prompt.id, draft) : null;
   const hasUnsavedChanges = Boolean(prompt && latestRevisionDraftKeyRef.current !== currentDraftKey);
+  useScopeUnsavedChanges(hasUnsavedChanges, isGeneratingPrompt, isRunning);
+  useEffect(
+    () => () => {
+      runControllerRef.current?.abort();
+    },
+    [],
+  );
   const canRunAllEvaluations =
     Boolean(orgUuid) && hasPromptText && evaluateRows.length > 0 && !isLoading && !hasUnsavedChanges;
   const canAddPrefillResponse =

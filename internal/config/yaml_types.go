@@ -35,6 +35,7 @@ func (o optional[T]) valueOr(fallback T) T {
 }
 
 type yamlConfig struct {
+	EnvironmentPackages  EnvironmentPackageConfig  `yaml:"environment_packages"`
 	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
 	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
 	Env                  string                    `yaml:"env"`
@@ -100,6 +101,7 @@ type yamlDatabaseConfig struct {
 }
 
 type yamlNATSConfig struct {
+	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
 	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
 	URL               string                  `yaml:"url"`
 	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
@@ -115,13 +117,12 @@ type yamlCodeSessionConfig struct {
 }
 
 type yamlWebhookConfig struct {
-	EndpointURL   string         `yaml:"endpoint_url"`
-	SigningKey    string         `yaml:"signing_key"`
-	EventTypes    []string       `yaml:"event_types"`
-	WorkerEnabled optional[bool] `yaml:"worker_enabled"`
-	Timeout       time.Duration  `yaml:"timeout"`
-	MaxAttempts   int            `yaml:"max_attempts"`
-	AllowInsecure bool           `yaml:"allow_insecure"`
+	Concurrency         int            `yaml:"concurrency"`
+	WorkerEnabled       optional[bool] `yaml:"worker_enabled"`
+	Timeout             time.Duration  `yaml:"timeout"`
+	FailureDisableAfter time.Duration  `yaml:"failure_disable_after"`
+	MaxAttempts         int            `yaml:"max_attempts"`
+	AllowInsecure       bool           `yaml:"allow_insecure"`
 }
 
 type yamlBootstrapConfig struct {
@@ -142,6 +143,7 @@ func newYAMLConfig() yamlConfig {
 		Redis:    defaults.Redis,
 		NATS: yamlNATSConfig{
 			WorkerEventStream: defaults.NATS.WorkerEventStream,
+			WebhookStream:     defaults.NATS.WebhookStream,
 			URL:               defaults.NATS.URL,
 			ConnectTimeout:    defaults.NATS.ConnectTimeout,
 			DrainTimeout:      defaults.NATS.DrainTimeout,
@@ -152,6 +154,7 @@ func newYAMLConfig() yamlConfig {
 		Batch:                defaults.Batch,
 		E2B:                  defaults.E2B,
 		EnvironmentPrebuilds: defaults.EnvironmentPrebuilds,
+		EnvironmentPackages:  defaults.EnvironmentPackages,
 		TranscriptArchive:    defaults.TranscriptArchive,
 		SandboxLifecycle:     defaults.SandboxLifecycle,
 		EnvironmentRunner:    defaults.EnvironmentRunner,
@@ -164,12 +167,11 @@ func newYAMLConfig() yamlConfig {
 		},
 		Observability: defaults.Observability,
 		Webhook: yamlWebhookConfig{
-			EndpointURL:   defaults.Webhook.EndpointURL,
-			SigningKey:    defaults.Webhook.SigningKey,
-			EventTypes:    defaults.Webhook.EventTypes,
-			Timeout:       defaults.Webhook.Timeout,
-			MaxAttempts:   defaults.Webhook.MaxAttempts,
-			AllowInsecure: defaults.Webhook.AllowInsecure,
+			Concurrency:         defaults.Webhook.Concurrency,
+			Timeout:             defaults.Webhook.Timeout,
+			MaxAttempts:         defaults.Webhook.MaxAttempts,
+			FailureDisableAfter: defaults.Webhook.FailureDisableAfter,
+			AllowInsecure:       defaults.Webhook.AllowInsecure,
 		},
 		Vault: defaults.Vault,
 		Bootstrap: yamlBootstrapConfig{
@@ -190,6 +192,7 @@ func (input yamlConfig) resolve() Config {
 		Redis:    input.Redis,
 		NATS: NATSConfig{
 			WorkerEventStream: input.NATS.WorkerEventStream,
+			WebhookStream:     input.NATS.WebhookStream,
 			URL:               input.NATS.URL,
 			ConnectTimeout:    input.NATS.ConnectTimeout,
 			DrainTimeout:      input.NATS.DrainTimeout,
@@ -200,6 +203,7 @@ func (input yamlConfig) resolve() Config {
 		Batch:                input.Batch,
 		E2B:                  input.E2B,
 		EnvironmentPrebuilds: input.EnvironmentPrebuilds,
+		EnvironmentPackages:  input.EnvironmentPackages,
 		TranscriptArchive:    input.TranscriptArchive,
 		SandboxLifecycle:     input.SandboxLifecycle,
 		EnvironmentRunner:    input.EnvironmentRunner,
@@ -212,12 +216,11 @@ func (input yamlConfig) resolve() Config {
 		},
 		Observability: input.Observability,
 		Webhook: WebhookConfig{
-			EndpointURL:   input.Webhook.EndpointURL,
-			SigningKey:    input.Webhook.SigningKey,
-			EventTypes:    input.Webhook.EventTypes,
-			Timeout:       input.Webhook.Timeout,
-			MaxAttempts:   input.Webhook.MaxAttempts,
-			AllowInsecure: input.Webhook.AllowInsecure,
+			Concurrency:         input.Webhook.Concurrency,
+			Timeout:             input.Webhook.Timeout,
+			MaxAttempts:         input.Webhook.MaxAttempts,
+			FailureDisableAfter: input.Webhook.FailureDisableAfter,
+			AllowInsecure:       input.Webhook.AllowInsecure,
 		},
 		Vault: input.Vault,
 		Bootstrap: BootstrapConfig{
@@ -229,7 +232,7 @@ func (input yamlConfig) resolve() Config {
 		},
 	}
 	cfg.Database.AutoMigrate = input.Database.AutoMigrate.valueOr(defaultDatabaseAutoMigrate(cfg.Env))
-	cfg.Webhook.WorkerEnabled = input.Webhook.WorkerEnabled.valueOr(cfg.Webhook.EndpointURL != "" && cfg.Webhook.SigningKey != "")
+	cfg.Webhook.WorkerEnabled = input.Webhook.WorkerEnabled.valueOr(true)
 	if input.Bootstrap.SeedAPIKeys.set {
 		cfg.Bootstrap.SeedAPIKeys = input.Bootstrap.SeedAPIKeys.value
 	} else {

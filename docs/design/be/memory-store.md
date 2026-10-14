@@ -344,3 +344,13 @@ Agent 可以改运行中的 `MEMORY.md`。下一 Session 按快照重建，不�
 文件树约束回归：`tests/memory_path_tree_test.go` 使用真实 PostgreSQL 覆盖两个入口的父子冲突、失败不改版本、目录仍可列举、路径段边界、已删除路径复用及并发创建父子路径时仅一个请求成功。
 
 合并 attach 合同后，`internal/deployments/memory_store_batch_test.go` 继续验证批量加载一次及按资源顺序返回错误；slug 转写测试覆盖中文、重音字符及下划线。
+
+### 9.1 可重复的后端验证
+
+使用 [verify-be Memory 功能地图](../../../.agents/skills/verify-be/features/memory.md)。`memory doctor` 后运行 `integrity`、`isolation`、`cleanup`、`lifecycle`、`filestore`，验证生产 HTTP handler、真实 PostgreSQL 与 MinIO；它们不启动 Worker。`memory doctor mounts` 与 `memory mounts` 使用真实 Runner、Docker provider 和 FUSE，通过公开 Session API attach store，直接在挂载目录读写，销毁沙箱后用新 Session 验证 store 保留、根文件消失及 `MEMORY.md` 重建。不使用模型生成来替代文件系统断言。
+
+删除 store、redact 历史 version 和失败写入的补偿删除必须删除对象 key 的所有 S3 版本及 delete marker。Memory 的 object key 每个 version 唯一，不共享正文 key。store 删除和 version redact 在修改元数据的同一个 Yourbatis 事务中登记 `memory_version` 对象清理任务，任务持久化失败时整个变更回滚，源记录与对象仍可读。事务提交后尝试同步删除；失败由已持久化任务重试，成功后后台任务的重复删除也保持幂等。后台 Worker 按全版本删除完成该任务。Filestore 相同正文 flush 上传出的冗余对象和 metadata 写入失败对象使用同一补偿策略。若删除与任务持久化都失败，该次写入返回失败，不可报告成功。
+
+`memory cleanup` 在真实非版本化 MinIO 上检查同步删除、删除失败后的持久化重试、相同正文和 metadata 拒绝后的补偿，并通过实际读取确认所有待删除的 Memory 对象返回 NotFound。测试只读检查桶从未开启版本控制；Memory 业务历史版本使用独立对象 key，不依赖 MinIO 版本控制。清理由测试显式 `RunOnce` 驱动，重试等待时间也由测试推进；不宣称覆盖自动后台时序、进程崩溃恢复或云端 IAM。
+
+`memory cleanup` 还用 schema 内的 trigger 拒绝任务写入，验证 store 删除和 version redact 返回失败、清理任务及元数据均回滚，恢复任务持久化后可以重试。此保护覆盖元数据变更提交后的进程退出；正文 upload 到 metadata 提交前的崩溃窗口仍未覆盖。

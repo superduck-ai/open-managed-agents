@@ -60,15 +60,38 @@
         <include refid="columns"/>
     </insert>
 
+    <select id="LockOwnerSession" result="optional" resultType="string">
+        SELECT s.uuid
+        FROM sessions s JOIN environment_work work ON work.session_uuid = s.uuid
+            AND work.organization_uuid = s.organization_uuid AND work.workspace_uuid = s.workspace_uuid
+        JOIN environment_sandboxes sandbox ON sandbox.work_uuid = work.uuid
+            AND sandbox.organization_uuid = work.organization_uuid AND sandbox.workspace_uuid = work.workspace_uuid
+        WHERE sandbox.workspace_uuid = #{workspaceUUID} AND sandbox.external_id = #{sandboxExternalID}
+        FOR UPDATE OF s
+    </select>
+
     <update id="UpdateState" result="exec">
-        UPDATE environment_sandboxes
-        SET state = #{params.State},
-            provider_sandbox_id = COALESCE(#{params.ProviderSandboxID}, provider_sandbox_id),
+        WITH target AS (
+            SELECT sandbox.uuid,
+                COALESCE(s.archived_at IS NOT NULL AND env.config-&gt;&gt;'type' = 'cloud', false) AS archived
+            FROM environment_sandboxes sandbox
+            LEFT JOIN environment_work work ON work.uuid = sandbox.work_uuid
+                AND work.organization_uuid = sandbox.organization_uuid AND work.workspace_uuid = sandbox.workspace_uuid
+            LEFT JOIN sessions s ON s.uuid = work.session_uuid
+                AND s.organization_uuid = work.organization_uuid AND s.workspace_uuid = work.workspace_uuid
+            LEFT JOIN environments env ON env.uuid = s.environment_uuid
+                AND env.organization_uuid = s.organization_uuid AND env.workspace_uuid = s.workspace_uuid
+            WHERE sandbox.workspace_uuid = #{params.WorkspaceUUID} AND sandbox.external_id = #{params.ExternalID}
+        )
+        UPDATE environment_sandboxes sandbox
+        SET state = CASE WHEN target.archived OR sandbox.stop_reason = 'session_archived' THEN 'stopping' ELSE #{params.State} END,
+            stop_reason = CASE WHEN target.archived OR sandbox.stop_reason = 'session_archived' THEN 'session_archived' ELSE sandbox.stop_reason END,
+            provider_sandbox_id = COALESCE(#{params.ProviderSandboxID}, sandbox.provider_sandbox_id),
             last_error = #{params.LastError,sensitive=true},
-            stopped_at = COALESCE(#{params.StoppedAt}, stopped_at),
+            stopped_at = CASE WHEN target.archived OR sandbox.stop_reason = 'session_archived' THEN sandbox.stopped_at ELSE COALESCE(#{params.StoppedAt}, sandbox.stopped_at) END,
             updated_at = NOW()
-        WHERE workspace_uuid = #{params.WorkspaceUUID}
-        AND external_id = #{params.ExternalID}
+        FROM target WHERE sandbox.uuid = target.uuid
+            AND (sandbox.state &lt;&gt; 'stopped' OR sandbox.stop_reason IS DISTINCT FROM 'session_archived')
     </update>
 
     <select id="FindActiveForWork" resultType="environmentSandboxMapperRow">

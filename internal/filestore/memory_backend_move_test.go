@@ -114,3 +114,7 @@ func (s *recordingMemoryStore) DeleteMemory(_ context.Context, input db.DeleteMe
 	}
 	return db.ErrNotFound
 }
+
+func (s *recordingMemoryStore) EnqueueObjectCleanupResourceJob(context.Context, string, string, string, string, string) error {
+	panic("unexpected EnqueueObjectCleanupResourceJob")
+}

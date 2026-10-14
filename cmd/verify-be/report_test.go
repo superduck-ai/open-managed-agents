@@ -94,3 +94,29 @@ func TestEvaluatePackageAndTimeout(t *testing.T) {
 		}
 	}
 }
+
+func TestEvaluateSubtestEvidence(t *testing.T) {
+	selected := scenarios["memory.cleanup"]
+	for _, tc := range []struct {
+		name        string
+		proofTest   string
+		childAction string
+		want        string
+	}{
+		{"sibling prefix", selected.Test + "Other/child", "pass", "fail"},
+		{"child skipped", selected.Test + "/child", "skip", "fail"},
+		{"child failed", selected.Test + "/child", "fail", "fail"},
+		{"selected descendant", selected.Test + "/child/grandchild", "pass", "pass"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evidence := selected
+			evidence.Test = tc.proofTest
+			events := []testEvent{{Test: selected.Test, Action: "pass"}, {Test: tc.proofTest, Action: tc.childAction}, {Action: "pass"}}
+			output := testOutput(t, evidence, events, true)
+			result, err := evaluate(strings.NewReader(output), 0, selected)
+			if err != nil || result.Status != tc.want {
+				t.Fatalf("subtest verdict=%+v err=%v", result, err)
+			}
+		})
+	}
+}

@@ -23,10 +23,11 @@ import (
 )
 
 type chatDockerProvider struct {
-	name, image string
-	t           *testing.T
-	created     atomic.Int32
-	failNext    atomic.Bool
+	name, image        string
+	t                  *testing.T
+	created            atomic.Int32
+	failNext           atomic.Bool
+	failMemoryMarkdown atomic.Bool
 }
 
 func (p *chatDockerProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (e2bruntime.Resolution, error) {
@@ -49,6 +50,9 @@ func (p *chatDockerProvider) Kill(ctx context.Context, id string) error {
 	return exec.CommandContext(ctx, "docker", "rm", "-f", id).Run()
 }
 func (p *chatDockerProvider) WriteFile(ctx context.Context, id, path string, data []byte) error {
+	if path == "/mnt/memory/MEMORY.md" && p.failMemoryMarkdown.Swap(false) {
+		return errors.New("injected memory mount setup failure")
+	}
 	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", id, "sh", "-c", `mkdir -p "$(dirname "$1")" && cat > "$1"`, "sh", path)
 	cmd.Stdin = bytes.NewReader(data)
 	return cmd.Run()
@@ -123,12 +127,15 @@ func createPublicChat(t *testing.T, e *liveEnv) *liveSession {
 	var session struct {
 		ID string `json:"id"`
 	}
-	requireOK(t, json.Unmarshal(e.request(t, "POST", "/v1/sessions", e.apiKey, map[string]string{"agent": e.agent.ExternalID, "environment_id": e.environment.ExternalID, "title": "Public startup verification"}, 200), &session))
+	requireOK(t, json.Unmarshal(e.request(t, "POST", "/v1/sessions", e.apiKey, map[string]string{"agent": e.agent.ExternalID, "environment_id": e.environment.ExternalID}, 200), &session))
 	t.Cleanup(func() {
 		e.requestContext(context.Background(), t, "DELETE", "/v1/sessions/"+session.ID, e.apiKey, nil, 200)
 	})
 	record, _, err := e.database.GetSession(t.Context(), e.key.WorkspaceUUID.String(), session.ID)
 	requireOK(t, err)
+	if record.Title != nil {
+		t.Fatalf("new session title = %q, want nil", *record.Title)
+	}
 	return &liveSession{env: e, session: record}
 }
 

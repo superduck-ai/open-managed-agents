@@ -5,6 +5,7 @@
         external_id,
         organization_uuid AS org_uuid,
         name,
+        is_default,
         display_color AS display_color,
         display_color AS color,
         data_residency,
@@ -15,7 +16,7 @@
         updated_at
     </sql>
 
-    <insert id="Upsert" result="returning" resultType="consoleWorkspaceRow">
+    <insert id="Insert" result="returning" resultType="consoleWorkspaceRow">
         WITH org AS (
             SELECT uuid
             FROM organizations
@@ -42,11 +43,6 @@
             CAST(#{params.DataResidency} AS jsonb),
             CAST('{}' AS jsonb)
         FROM org
-        ON CONFLICT (organization_uuid, name) DO UPDATE SET
-            display_color = excluded.display_color,
-            data_residency = excluded.data_residency,
-            archived_at = NULL,
-            updated_at = NOW()
         RETURNING
         <include refid="columns"/>
     </insert>
@@ -61,4 +57,27 @@
         </if>
         ORDER BY name ASC, uuid ASC
     </select>
+
+    <update id="UpdateByIdentifier" result="returning" resultType="consoleWorkspaceRow">
+        UPDATE workspaces
+        SET name = #{params.Name},
+            display_color = #{params.DisplayColor},
+            updated_at = NOW()
+        WHERE organization_uuid = #{params.OrgUUID}
+        AND external_id = #{params.ExternalID}
+        AND NOT is_default
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="ArchiveByIdentifier" result="returning" resultType="consoleWorkspaceRow">
+        UPDATE workspaces
+        SET archived_at = COALESCE(archived_at, NOW()),
+            updated_at = NOW()
+        WHERE organization_uuid = #{orgUUID}
+        AND external_id = #{externalID}
+        AND NOT is_default
+        RETURNING
+        <include refid="columns"/>
+    </update>
 </mapper>

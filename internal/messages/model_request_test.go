@@ -1,6 +1,8 @@
 package messages
 
 import (
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -69,6 +71,66 @@ func TestResponseObservationNonStreaming(t *testing.T) {
 	}
 }
 
+func TestResponseObservationInvalidToolInput(t *testing.T) {
+	observation := &responseObservation{request: &codesessions.ModelRequest{CodeSessionID: "cse_test"}}
+	_, _ = observation.Write([]byte(`{"id":"msg_tool","type":"message","content":[{"type":"tool_use","id":"toolu_test","name":"Bash","input":null}]}`))
+	observation.finish()
+	if observation.result.ErrorType != "invalid_response" || len(observation.result.ToolUses) != 1 || !observation.result.ToolUses[0].InputRejected {
+		t.Fatalf("invalid tool input result = %+v", observation.result)
+	}
+}
+
+func TestResponseObservationRejectedToolInputPreservesRaw(t *testing.T) {
+	for _, test := range []struct {
+		raw    string
+		length int
+	}{
+		{raw: "{\"x\":\x01}", length: 7},
+		{raw: "{\"command\":", length: 11},
+		{raw: "null", length: 4},
+		{raw: "[]", length: 2},
+		{raw: `"text"`, length: 6},
+		{raw: "{\"x\":\"中😀\",\"y\":\x01}", length: 17},
+	} {
+		raw := test.raw
+		t.Run(fmt.Sprintf("raw=%q", raw), func(t *testing.T) {
+			partial, err := json.Marshal(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_rejected\"}}\n\n" +
+				"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_rejected\",\"name\":\"Bash\",\"input\":{}}}\n\n" +
+				fmt.Sprintf("data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":%s}}\n\n", partial) +
+				"data: {\"type\":\"message_stop\"}\n\n"
+			observation := &responseObservation{streaming: true, request: &codesessions.ModelRequest{CodeSessionID: "cse_test"}}
+			recorder := httptest.NewRecorder()
+			observation.onComplete = func() {
+				observation.finish()
+				if strings.Contains(recorder.Body.String(), "message_stop") {
+					t.Error("rejected call observed after forwarding message_stop")
+				}
+			}
+			response := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(io.TeeReader(strings.NewReader(body), observation))}
+			if err := writeProxyResponse(recorder, response); err != nil {
+				t.Fatal(err)
+			}
+			if recorder.Body.String() != body || observation.result.ErrorType != "invalid_response" || len(observation.result.ToolUses) != 1 {
+				t.Fatalf("rejected response changed or call missing: %+v", observation.result)
+			}
+			tool := observation.result.ToolUses[0]
+			var input struct {
+				Value unparsedToolInput `json:"__unparsedToolInput"`
+			}
+			if err := json.Unmarshal(tool.Input, &input); err != nil {
+				t.Fatal(err)
+			}
+			if !tool.InputRejected || tool.ID != "toolu_rejected" || tool.Name != "Bash" || input.Value.Raw != raw || input.Value.Length != test.length {
+				t.Fatalf("rejected input changed: %+v", tool)
+			}
+		})
+	}
+}
+
 func TestResponseObservationRetainsUsageWhenClientWriteFails(t *testing.T) {
 	observation := &responseObservation{request: &codesessions.ModelRequest{CodeSessionID: "cse_test"}}
 	body := `{"id":"msg_json","type":"message","usage":{"input_tokens":2,"output_tokens":3},"content":[{"type":"text","text":"answer"}]}`
@@ -111,5 +173,44 @@ func TestMergeRequestUsagePreservesMissingAndExplicitZero(t *testing.T) {
 	})
 	if *usage.InputTokens != 0 || *usage.OutputTokens != 0 || *usage.CacheCreationInputTokens != 0 || *usage.CacheReadInputTokens != 0 {
 		t.Fatal("explicit zero did not overwrite prior usage")
+	}
+}
+
+func TestResponseObservationPreservesThinking(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(fmt.Sprint(streaming), func(t *testing.T) {
+			body := `{"id":"msg_thinking","type":"message","content":[{"type":"thinking","thinking":"公开思考正文","signature":"secret"},{"type":"redacted_thinking","data":"encrypted"}]}`
+			if streaming {
+				body = "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_thinking\"}}\n\n" +
+					"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"公开\"}}\n\n" +
+					"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"思考正文\"}}\n\n" +
+					"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"secret\"}}\n\n" +
+					"data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"redacted_thinking\",\"data\":\"encrypted\"}}\n\n" +
+					"data: {\"type\":\"message_stop\"}\n\n"
+			}
+			observation := &responseObservation{streaming: streaming, request: &codesessions.ModelRequest{CodeSessionID: "cse_test"}}
+			for _, b := range []byte(body) {
+				_, _ = observation.Write([]byte{b})
+			}
+			observation.finish()
+			messages := observation.result.Messages
+			if observation.result.ErrorType != "" || len(messages) != 2 || len(messages[0].Content) != 1 || messages[0].Content[0].Thinking == nil || *messages[0].Content[0].Thinking != "公开思考正文" || len(messages[1].Content) != 0 {
+				t.Fatalf("thinking result = %+v", observation.result)
+			}
+		})
+	}
+}
+
+func TestResponseObservationLimitsThinkingContent(t *testing.T) {
+	observation := &responseObservation{streaming: true, request: &codesessions.ModelRequest{CodeSessionID: "cse_test"}}
+	observation.observeFrame([]byte(`{"type":"message_start","message":{"id":"msg_limit"}}`))
+	observation.observeFrame([]byte(`{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}`))
+	delta := responseStreamEvent{Index: 0, Delta: responseContentBlock{Type: "thinking_delta", Thinking: strings.Repeat("a", 1024*1024)}}
+	for range 5 {
+		observation.observeContentDelta(delta)
+	}
+	observation.finish()
+	if observation.result.ErrorType != "observation_limit" || !observation.malformed || observation.blocks[0].thinkingBuffer.Len() != 4*1024*1024 {
+		t.Fatalf("thinking observation exceeded bound: error=%q bytes=%d", observation.result.ErrorType, observation.blocks[0].thinkingBuffer.Len())
 	}
 }

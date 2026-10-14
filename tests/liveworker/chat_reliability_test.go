@@ -3,6 +3,7 @@ package liveworker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 )
 
@@ -204,6 +206,16 @@ func TestChatReliability(t *testing.T) {
 	events, closeStream := connectChatStream(t, ctx, f)
 	defer closeStream()
 	worker := startRealControlWorker(t, f, "")
+	waitRealWorker(t, "initial Worker queue drained", func() bool {
+		consumer, err := e.stream.Consumer(ctx, "oma_worker_"+f.code.ExternalID)
+		if err != nil {
+			return false
+		}
+		info, err := consumer.Info(ctx)
+		return err == nil && info.NumWaiting > 0 && info.NumPending == 0 && info.NumAckPending == 0
+	})
+	worker.recordDeliveries.Store(true)
+	worker.loseProcessedACK.Store(true)
 	first := submitChat(t, f, "第一条，请回复。")
 	firstPreview := nextChatEvent(t, ctx, events, "event_delta")
 	secondText := "第二条，等待第一条完成。"
@@ -227,7 +239,36 @@ func TestChatReliability(t *testing.T) {
 	if rejection.Error.Type != "conflict_error" || inputs != 1 || calls.Load() != 1 {
 		t.Fatal("busy input rejection changed history or started another model request")
 	}
+	retainedInput := worker.retainedInput(t)
+	before := f.consumer(t)
+	if before.NumAckPending != 1 {
+		t.Fatal("fault did not retain the running input for redelivery")
+	}
+	for _, name := range []string{"oma_worker_" + f.code.ExternalID, "oma_worker_" + f.code.ExternalID + "_reply"} {
+		requireOK(t, e.stream.DeleteConsumer(ctx, name))
+	}
+	waitRealWorker(t, "Worker rebuilt deleted consumers", func() bool {
+		consumer, err := e.stream.Consumer(ctx, "oma_worker_"+f.code.ExternalID)
+		if err != nil {
+			return false
+		}
+		info, err := consumer.Info(ctx)
+		if err != nil || !info.Created.After(before.Created) || info.NumWaiting == 0 {
+			return false
+		}
+		reply, err := e.stream.Consumer(ctx, "oma_worker_"+f.code.ExternalID+"_reply")
+		if err != nil {
+			return false
+		}
+		replyInfo, err := reply.Info(ctx)
+		return err == nil && replyInfo.NumWaiting > 0
+	})
+	waitRealWorker(t, "same retained input delivered from recreated consumer", func() bool {
+		return worker.deliveredAgain(retainedInput)
+	})
+	chatProof(t, started, "worker_consumers_recreated")
 	worker.reconnect(t)
+	worker.loseProcessedACK.Store(false)
 	if calls.Load() != 1 {
 		t.Fatal("reconnect duplicated the running model request")
 	}
@@ -294,6 +335,19 @@ func TestChatReliability(t *testing.T) {
 		t.Fatalf("model calls=%d want 3", calls.Load())
 	}
 	chatProof(t, started, "worker_restarted")
+	e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/archive", e.apiKey, nil, 200)
+	waitRealWorker(t, "archive reclaimed both consumers", func() bool {
+		for _, name := range []string{"oma_worker_" + f.code.ExternalID, "oma_worker_" + f.code.ExternalID + "_reply"} {
+			_, err := e.stream.Consumer(t.Context(), name)
+			if !errors.Is(err, jetstream.ErrConsumerNotFound) {
+				return false
+			}
+		}
+		return true
+	})
+	e.request(t, "POST", f.path("/worker/register"), f.token, map[string]string{"session_id": f.code.ExternalID}, 401)
+	assertChatTurns(t, f, []string{first, second, third})
+	chatProof(t, started, "archive_consumers_reclaimed")
 }
 
 func chatTimeout(t *testing.T, fallback time.Duration) time.Duration {

@@ -37,11 +37,12 @@ const (
 )
 
 type Handler struct {
-	cfg    config.Config
-	db     *db.DB
-	logger *slog.Logger
-	store  storage.ObjectStore
-	router chi.Router
+	webhooks webhookEnqueuer
+	cfg      config.Config
+	db       *db.DB
+	logger   *slog.Logger
+	store    storage.ObjectStore
+	router   chi.Router
 }
 
 type storePageResponse struct {
@@ -232,6 +233,7 @@ func (h *Handler) createStore(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, "Could not create memory store")
 		return
 	}
+	h.enqueueWebhook(r.Context(), principal, "memory_store.created", created.ExternalID, created.CreatedAt)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromStore(created))
 }
 
@@ -293,23 +295,12 @@ func (h *Handler) retrieveStoreRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) retrieveStore(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+	record, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromStore(record))
-}
-
-func (h *Handler) memoryStoreForRead(ctx context.Context, principal auth.Principal, storeID string) (db.MemoryStore, error) {
-	record, err := h.db.GetMemoryStore(ctx, principal.WorkspaceUUID, storeID)
-	if err == nil {
-		return record, nil
-	}
-	if !errors.Is(err, db.ErrNotFound) || principal.CredentialType != auth.CredentialTypePlatformSession {
-		return db.MemoryStore{}, err
-	}
-	return h.db.GetMemoryStoreByExternalID(ctx, principal.OrganizationUUID, storeID)
 }
 
 func (h *Handler) updateStoreRoute(w http.ResponseWriter, r *http.Request) {
@@ -391,10 +382,13 @@ func (h *Handler) archiveStoreRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) archiveStore(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, err := h.db.ArchiveMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
+	record, changed, err := h.db.ArchiveMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
+	}
+	if changed {
+		h.enqueueWebhook(r.Context(), principal, "memory_store.archived", record.ExternalID, *record.ArchivedAt)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromStore(record))
 }
@@ -410,8 +404,9 @@ func (h *Handler) deleteStore(w http.ResponseWriter, r *http.Request, storeID st
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
+	h.enqueueWebhook(r.Context(), principal, "memory_store.deleted", storeID, time.Now().UTC())
 	for _, ref := range refs {
-		h.deleteObjectOrEnqueue(r.Context(), ref)
+		h.deleteQueuedObject(r.Context(), ref)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": storeID, "type": "memory_store_deleted"})
 }
@@ -547,7 +542,7 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 			writeBadRequest(w, r, errors.New("order_by must be path when depth is set"))
 			return
 		}
-		store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+		store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 		if err != nil {
 			h.writeStoreLoadError(w, r, err, storeID)
 			return
@@ -560,7 +555,7 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 		writeBadRequest(w, r, err)
 		return
 	}
-	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -664,7 +659,7 @@ func (h *Handler) retrieveMemory(w http.ResponseWriter, r *http.Request, storeID
 		writeBadRequest(w, r, err)
 		return
 	}
-	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -907,7 +902,7 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, storeID s
 		writeBadRequest(w, r, errors.New("operation must be created, modified, or deleted"))
 		return
 	}
-	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -957,7 +952,7 @@ func (h *Handler) retrieveVersion(w http.ResponseWriter, r *http.Request, storeI
 		writeBadRequest(w, r, err)
 		return
 	}
-	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -992,7 +987,7 @@ func (h *Handler) redactVersion(w http.ResponseWriter, r *http.Request, storeID,
 		return
 	}
 	if ref != nil {
-		h.deleteObjectOrEnqueue(r.Context(), *ref)
+		h.deleteQueuedObject(r.Context(), *ref)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromVersionRecord(record, nil))
 }
@@ -1072,11 +1067,17 @@ func (h *Handler) deleteObjectOrEnqueue(ctx context.Context, ref db.ObjectRef) {
 	if ref.Key == "" {
 		return
 	}
-	if err := h.store.Delete(ctx, ref.Key, storage.DeleteOptions{}); err != nil {
+	if err := h.store.Delete(ctx, ref.Key, storage.DeleteOptions{AllVersions: true}); err != nil {
 		h.logger.ErrorContext(ctx, "delete memory object", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", err)
 		if enqueueErr := h.db.EnqueueObjectCleanupResourceJob(ctx, ref.WorkspaceUUID, ref.Bucket, ref.Key, ref.ResourceType, ref.ResourceID); enqueueErr != nil {
 			h.logger.ErrorContext(ctx, "enqueue memory object cleanup", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", enqueueErr)
 		}
+	}
+}
+
+func (h *Handler) deleteQueuedObject(ctx context.Context, ref db.ObjectRef) {
+	if err := h.store.Delete(ctx, ref.Key, storage.DeleteOptions{AllVersions: true}); err != nil {
+		h.logger.WarnContext(ctx, "memory object cleanup deferred", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", err)
 	}
 }
 

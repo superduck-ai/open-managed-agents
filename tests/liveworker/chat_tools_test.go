@@ -44,6 +44,13 @@ func TestChatTools(t *testing.T) {
 	started := time.Now()
 	e := newLiveEnv(t)
 	client := chatSDK(e)
+	if t.Run("malformed", func(t *testing.T) {
+		for _, policy := range []string{"always_ask", "always_allow"} {
+			t.Run(policy, func(t *testing.T) { verifyMalformedTool(t, e, &client, policy) })
+		}
+	}) {
+		t.Logf("BE_PROOF {\"stage\":\"malformed_tool_rejected\",\"elapsed_ms\":%d}", time.Since(started).Milliseconds())
+	}
 	for _, decision := range []anthropic.BetaManagedAgentsUserToolConfirmationEventParamsResult{"deny", "allow"} {
 		if t.Run(string(decision), func(t *testing.T) { verifySDKToolDecision(t, e, &client, decision) }) {
 			stage := "tool_denied"

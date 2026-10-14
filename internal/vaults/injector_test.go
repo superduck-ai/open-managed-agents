@@ -531,3 +531,7 @@ func TestSnapshotRequestBodyBuffersSmallBody(t *testing.T) {
 		t.Fatalf("restored body %q", reread)
 	}
 }
+
+func (f *fakeCredentialStore) GetWorkspaceIdentifiers(context.Context, string) (db.WorkspaceIdentifiers, error) {
+	return db.WorkspaceIdentifiers{OrganizationUUID: "org-test", WorkspaceExternalID: "workspace-test"}, nil
+}

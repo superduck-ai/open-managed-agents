@@ -1,29 +1,38 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="SandboxLifecycleMapper">
     <sql id="targetColumns">
-        cs.organization_uuid, cs.workspace_uuid, cs.session_external_id,
-        cs.external_id AS code_session_external_id, cs.uuid AS code_session_uuid,
+        work.organization_uuid, work.workspace_uuid, s.external_id AS session_external_id,
+        COALESCE(cs.external_id, '') AS code_session_external_id,
+        COALESCE(CAST(cs.uuid AS text), '') AS code_session_uuid,
         sandbox.uuid AS sandbox_uuid,
         sandbox.provider_sandbox_id, sandbox.state, sandbox.stop_reason
     </sql>
     <sql id="targetTables">
-        FROM code_sessions cs
-        JOIN environment_work work ON work.organization_uuid = cs.organization_uuid
-            AND work.workspace_uuid = cs.workspace_uuid AND work.environment_uuid = cs.environment_uuid
-            AND work.session_uuid = cs.session_uuid
+        FROM environment_work work
+        JOIN sessions s ON s.uuid = work.session_uuid
+            AND s.organization_uuid = work.organization_uuid AND s.workspace_uuid = work.workspace_uuid
         JOIN environment_sandboxes sandbox ON sandbox.organization_uuid = work.organization_uuid
             AND sandbox.workspace_uuid = work.workspace_uuid AND sandbox.environment_uuid = work.environment_uuid
             AND sandbox.work_uuid = work.uuid
+        LEFT JOIN LATERAL (
+            SELECT code.uuid, code.external_id, code.status, code.deleted_at,
+                code.worker_status, code.idle_since
+            FROM code_sessions code
+            WHERE code.organization_uuid = work.organization_uuid
+                AND code.workspace_uuid = work.workspace_uuid AND code.environment_uuid = work.environment_uuid
+                AND code.session_uuid = work.session_uuid
+            ORDER BY code.created_at DESC, code.uuid DESC LIMIT 1
+        ) cs ON true
     </sql>
     <sql id="scope">
-        cs.organization_uuid = #{scope.OrganizationUUID} AND cs.workspace_uuid = #{scope.WorkspaceUUID}
+        work.organization_uuid = #{scope.OrganizationUUID} AND work.workspace_uuid = #{scope.WorkspaceUUID}
         AND sandbox.uuid = #{scope.SandboxUUID} AND sandbox.provider_sandbox_id IS NOT NULL
     </sql>
     <select id="ListCandidates" resultType="sandboxLifecycleRow">
         SELECT <include refid="targetColumns"/> <include refid="targetTables"/>
         WHERE sandbox.provider_sandbox_id IS NOT NULL
         <if test="after != ''">AND sandbox.uuid &gt; #{after}</if>
-        AND ((sandbox.state = 'stopping' AND sandbox.stop_reason = 'idle_timeout')
+        AND ((sandbox.state = 'stopping' AND sandbox.stop_reason IN ('idle_timeout', 'session_archived'))
         <if test="reclaim">
             OR (sandbox.state = 'running'
                 AND cs.status = 'active' AND cs.deleted_at IS NULL
@@ -31,6 +40,14 @@
                 AND work.state = 'active' AND work.deleted_at IS NULL)
         </if>)
         ORDER BY sandbox.uuid LIMIT #{limit}
+    </select>
+    <select id="ListArchivedForSession" resultType="sandboxLifecycleRow">
+        SELECT <include refid="targetColumns"/> <include refid="targetTables"/>
+        WHERE work.organization_uuid = #{organizationUUID} AND work.workspace_uuid = #{workspaceUUID}
+            AND work.session_uuid = #{sessionUUID} AND s.archived_at IS NOT NULL
+            AND sandbox.provider_sandbox_id IS NOT NULL
+            AND sandbox.state = 'stopping' AND sandbox.stop_reason = 'session_archived'
+        ORDER BY sandbox.uuid
     </select>
     <select id="FindTarget" result="optional" resultType="sandboxLifecycleRow">
         SELECT <include refid="targetColumns"/> <include refid="targetTables"/>
@@ -69,6 +86,26 @@
     <update id="FinishStop" result="rows">
         UPDATE environment_sandboxes SET state = 'stopped', stopped_at = COALESCE(stopped_at, NOW()), updated_at = NOW()
         WHERE organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID}
-            AND uuid = #{scope.SandboxUUID} AND state = 'stopping' AND stop_reason = 'idle_timeout'
+            AND uuid = #{scope.SandboxUUID} AND state = 'stopping' AND stop_reason IN ('idle_timeout', 'session_archived')
+    </update>
+    <update id="BeginArchiveStop" result="exec">
+        WITH stopping_work AS (
+            UPDATE environment_work work
+            SET state = 'stopped', stop_requested_at = COALESCE(work.stop_requested_at, NOW()),
+                stopped_at = COALESCE(work.stopped_at, NOW()), updated_at = NOW()
+            FROM sessions s JOIN environments env ON env.uuid = s.environment_uuid
+                AND env.organization_uuid = s.organization_uuid AND env.workspace_uuid = s.workspace_uuid
+            WHERE work.organization_uuid = #{organizationUUID} AND work.workspace_uuid = #{workspaceUUID}
+                AND work.session_uuid = #{sessionUUID}
+                AND s.uuid = work.session_uuid AND s.organization_uuid = work.organization_uuid
+                AND s.workspace_uuid = work.workspace_uuid AND s.archived_at IS NOT NULL
+                AND env.config-&gt;&gt;'type' = 'cloud'
+            RETURNING work.uuid
+        )
+        UPDATE environment_sandboxes
+        SET state = 'stopping', stop_reason = 'session_archived', updated_at = NOW()
+        WHERE organization_uuid = #{organizationUUID} AND workspace_uuid = #{workspaceUUID}
+            AND work_uuid IN (SELECT uuid FROM stopping_work)
+            AND provider_sandbox_id IS NOT NULL AND state &lt;&gt; 'stopped'
     </update>
 </mapper>

@@ -23,7 +23,13 @@ import {
   type SessionTimelineLane,
   type ToolCallEntry,
 } from '../types';
-import { compactEntityId, numericValueFromKeys, sessionListCost, toRecord } from '../utils';
+import {
+  compactEntityId,
+  numericValueFromKeys,
+  optionalNumericValueFromKeys,
+  sessionListCost,
+  toRecord,
+} from '../utils';
 import { Bot, Clock3, Cloud, LockKeyhole, ReceiptText, Timer } from 'lucide-react';
 import { SESSION_ARCHIVED_LANES_STORAGE_KEY, SESSION_MAIN_LANE_ID } from './sessionTimeline';
 import {
@@ -40,18 +46,19 @@ export function buildSessionDetailSummary(
   msg: I18nMsg,
   nowMs = Date.now(),
 ) {
-  const title = session.title || compactEntityId(session.id);
+  const title = session.title || session.id;
   const statusLabel = localizedEntityStatusLabel('sessions', session, msg);
   const chips: SessionDetailSummaryChip[] = [];
   const agentLabel = sessionAgentDisplayName(session.agent) || entityAgentId(session);
   if (agentLabel) {
-    chips.push({ key: 'agent', icon: Bot, value: agentLabel });
+    chips.push({ key: 'agent', icon: Bot, value: agentLabel, copyValue: entityAgentId(session) || undefined });
   }
   if (session.environment_id) {
     const value = compactEntityId(session.environment_id);
     chips.push({
       key: 'environment',
       icon: Cloud,
+      copyValue: session.environment_id,
       tooltip: value === session.environment_id ? undefined : session.environment_id,
       value,
     });
@@ -61,6 +68,7 @@ export function buildSessionDetailSummary(
     chips.push({
       key: 'vaults',
       icon: LockKeyhole,
+      copyValue: vaults.join(', '),
       tooltip: vaults.length === 1 && compactEntityId(vaults[0]) === vaults[0] ? undefined : vaults.join(', '),
       value:
         vaults.length === 1
@@ -784,13 +792,14 @@ export function aggregateSessionModelUsage(value: unknown) {
 }
 
 export function sessionEventDurationMs(event: QuickstartSessionEvent) {
-  return numericValueFromKeys(event, [
+  const durationMs = optionalNumericValueFromKeys(event, [
     'duration_ms',
     'elapsed_ms',
     'latency_ms',
     'run_time_ms',
     'processing_duration_ms',
   ]);
+  return durationMs !== undefined && durationMs >= 0 ? durationMs : undefined;
 }
 
 export function formatCompactTokenCount(value: number, formatters: ReturnType<typeof useFormatters>) {

@@ -411,7 +411,7 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 
 	})
 	t.Run("archived session rejects lifecycle persistence", func(t *testing.T) {
-		if err := app.db.SetSessionStatus(t.Context(), codeSession.WorkspaceUUID, codeSession.SessionExternalID, "idle"); err != nil {
+		if _, err := app.db.SetSessionStatus(t.Context(), codeSession.WorkspaceUUID, codeSession.SessionExternalID, "idle"); err != nil {
 			t.Fatal(err)
 		}
 		archiveSession(t, app, codeSession.SessionExternalID)

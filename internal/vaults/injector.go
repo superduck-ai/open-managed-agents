@@ -27,6 +27,7 @@ const oauthRefreshTimeout = 15 * time.Second
 // deterministic credentials without a live database.
 type credentialStore interface {
 	ClearVaultCredentialSecret(ctx context.Context, expected db.VaultCredential) error
+	GetWorkspaceIdentifiers(context.Context, string) (db.WorkspaceIdentifiers, error)
 	UpdateVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string, next db.VaultCredential) (db.VaultCredential, error)
 	GetVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (db.VaultCredential, error)
 	GetCodeSessionVaultIDs(ctx context.Context, codeSessionExternalID, organizationUUID, workspaceUUID string) ([]string, error)
@@ -36,6 +37,7 @@ type credentialStore interface {
 // Injector loads session vault credentials per request and rewrites MCP
 // Authorization for injectable targets. Plaintext tokens are never cached.
 type Injector struct {
+	webhooks             webhookEnqueuer
 	store                credentialStore
 	secretSvc            *secrets.Service
 	logger               *slog.Logger
@@ -56,6 +58,12 @@ func NewInjector(database *db.DB, secretSvc *secrets.Service, logger *slog.Logge
 		logger:       logging.LoggerOrDefault(logger),
 		refreshLease: newMemoryOAuthRefreshLease(),
 	}
+}
+
+// WithWebhooks supplies the existing resource event enqueuer for permanent refresh failures.
+func (i *Injector) WithWebhooks(enqueuer webhookEnqueuer) *Injector {
+	i.webhooks = enqueuer
+	return i
 }
 
 // WithRefreshLease replaces the in-process lease used by tests with a

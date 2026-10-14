@@ -10,6 +10,7 @@ const (
 )
 
 type Config struct {
+	EnvironmentPackages  EnvironmentPackageConfig  `yaml:"environment_packages"`
 	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
 	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
 	Env                  string                    `yaml:"env"`
@@ -114,13 +115,21 @@ type RedisConfig struct {
 }
 
 type WorkerEventStreamConfig struct {
-	MaxBytes   int64         `yaml:"max_bytes"`
-	MaxAge     time.Duration `yaml:"max_age"`
-	Replicas   int           `yaml:"replicas"`
-	MaxMsgSize int32         `yaml:"max_msg_size"`
+	ConsumerInactiveThreshold time.Duration `yaml:"consumer_inactive_threshold"`
+	MaxBytes                  int64         `yaml:"max_bytes"`
+	MaxAge                    time.Duration `yaml:"max_age"`
+	Replicas                  int           `yaml:"replicas"`
+	MaxMsgSize                int32         `yaml:"max_msg_size"`
+}
+
+type WebhookStreamConfig struct {
+	MaxBytes int64         `yaml:"max_bytes"`
+	MaxAge   time.Duration `yaml:"max_age"`
+	Replicas int           `yaml:"replicas"`
 }
 
 type NATSConfig struct {
+	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
 	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
 	URL               string                  `yaml:"url"`
 	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
@@ -128,7 +137,8 @@ type NATSConfig struct {
 }
 
 type AuthConfig struct {
-	SMTP EmailSMTPConfig `yaml:"smtp"`
+	SMTP       EmailSMTPConfig `yaml:"smtp"`
+	ConsoleURL string          `yaml:"console_url"`
 }
 
 type EmailSMTPConfig struct {
@@ -258,13 +268,12 @@ type ObservabilityOTLPConfig struct {
 }
 
 type WebhookConfig struct {
-	EndpointURL   string        `yaml:"endpoint_url"`
-	SigningKey    string        `yaml:"signing_key"`
-	EventTypes    []string      `yaml:"event_types"`
-	WorkerEnabled bool          `yaml:"worker_enabled"`
-	Timeout       time.Duration `yaml:"timeout"`
-	MaxAttempts   int           `yaml:"max_attempts"`
-	AllowInsecure bool          `yaml:"allow_insecure"`
+	Concurrency         int           `yaml:"concurrency"`
+	WorkerEnabled       bool          `yaml:"worker_enabled"`
+	Timeout             time.Duration `yaml:"timeout"`
+	FailureDisableAfter time.Duration `yaml:"failure_disable_after"`
+	MaxAttempts         int           `yaml:"max_attempts"`
+	AllowInsecure       bool          `yaml:"allow_insecure"`
 }
 
 type BootstrapConfig struct {

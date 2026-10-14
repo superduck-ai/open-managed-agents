@@ -153,6 +153,14 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 				"provider_sandbox_id = $6", "work.state = 'active'",
 			},
 		}},
+		{"clear worker tool metadata", mapperBuilderContract{
+			statement: codeSessionMapperUpdateWorkerToolMetadataStatement,
+			bound:     buildCodeSessionMapperUpdateWorkerToolMetadata(yourbatis.DialectPostgres, "workspace-uuid", "codeses_test", []byte(`{"task_summary":"keep"}`), true),
+			wantID:    "CodeSessionMapper.UpdateWorkerToolMetadata", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames:          []string{"metadata", "clearDetails", "workspaceUUID", "externalID"},
+			wantSensitiveArgumentNames: []string{"metadata"},
+			wantSQLFragments:           []string{"UPDATE code_sessions", "CAST($1 AS jsonb)", "CASE WHEN $2 THEN NULL", "workspace_uuid = $3", "external_id = $4", "deleted_at IS NULL"},
+		}},
 		{"update worker state", mapperBuilderContract{
 			statement: codeSessionMapperUpdateWorkerStateStatement,
 			bound: buildCodeSessionMapperUpdateWorkerState(yourbatis.DialectPostgres, updateCodeSessionWorkerStateParams{

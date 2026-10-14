@@ -26,7 +26,13 @@ nats:
   url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
   connect_timeout: 5s
   drain_timeout: 10s
+  # Dedicated webhook queue; independent from the endpoint failure window.
+  webhook_stream:
+    max_bytes: 268435456
+    max_age: 24h
+    replicas: 3 # Set 1 for a single-node JetStream deployment.
   worker_event_stream:
+    consumer_inactive_threshold: 5m
     max_bytes: 268435456
     max_age: 0s
     replicas: 3
@@ -35,6 +41,8 @@ nats:
 # Optional. Omit the entire auth.smtp block to accept any non-empty verification
 # code without sending email. Configure every SMTP field together for real email.
 auth:
+  # 邀请邮件按钮使用的控制台 HTTPS origin；未配置时只创建站内邀请。
+  console_url: ""
   smtp:
     # Required host:port. Surrounding whitespace is removed during loading.
     addr: smtp.example.com:587
@@ -157,14 +165,16 @@ observability:
       timeout: 15s
 
 webhook:
-  endpoint_url: ""
-  signing_key: ""
-  event_types:
-    - session.created
-  # Derived default: true only when endpoint_url and signing_key are both set.
-  worker_enabled: false
+  concurrency: 10
+  # Delivery uses workspace subscriptions only. Set false to pause this instance.
+  worker_enabled: true
   timeout: 10s
-  max_attempts: 10
+  # JetStream consumption opportunities, including the first; not guaranteed HTTP sends.
+  max_attempts: 3
+  # Positive duration; checked on failures, reset by a successful delivery or explicit enable.
+  failure_disable_after: 24h
+  # Webhooks connect directly; HTTP_PROXY/HTTPS_PROXY are not used.
+  # Verify direct egress before upgrading a proxy-dependent deployment.
   allow_insecure: false
 
 vault:
@@ -253,6 +263,24 @@ sandbox_lifecycle:
   enabled: true
   dry_run: true
   idle_timeout: 24h
+
+environment_packages:
+  npm:
+    registry: ""
+    scoped_registries: {}
+    # Example: {"@example": "https://registry.example.internal/npm/"}
+  pip:
+    index_url: ""
+    # Example: "https://packages.example.internal/pypi/simple/"
+  go:
+    proxy: ""
+    # Example: "https://packages.example.internal/goproxy/"
+  cargo:
+    registries: {}
+    # Example: {example: "https://packages.example.internal/cargo/index/"}
+  gem:
+    sources: []
+    # Example: ["https://packages.example.internal/rubygems/"]
 
 # Copy this section into the active OMA configuration. Disabled by default.
 # Template creation uses the existing e2b.api_url and e2b.api_key.

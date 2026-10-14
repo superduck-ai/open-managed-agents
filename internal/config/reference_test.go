@@ -63,6 +63,13 @@ func TestConfigurationReferenceCoversConfigYAMLContract(t *testing.T) {
 	}
 }
 
+func TestConfigurationReferenceHasNoPackageSources(t *testing.T) {
+	cfg := loadValidatedConfigTestFile(t, repositoryFilePath(t, "docs", "configuration-reference.yaml"))
+	if !cfg.EnvironmentPackages.Empty() {
+		t.Fatal("configuration reference must not configure package sources")
+	}
+}
+
 func TestYAMLInputCoversRuntimeConfigContract(t *testing.T) {
 	runtimePaths := make(map[string]struct{})
 	collectConfigTypePaths(reflect.TypeFor[Config](), "", runtimePaths)

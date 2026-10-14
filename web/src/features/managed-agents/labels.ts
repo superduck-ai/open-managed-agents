@@ -1,4 +1,3 @@
-import { type QuickstartStepName } from './quickstart/steps';
 import {
   type AgentCreatedFilter,
   type AgentStatusFilter,
@@ -46,19 +45,6 @@ export function templateSearchText(template: AgentTemplate, msg: I18nMsg) {
     templateBody(template, msg),
     ...(template.tags?.map((tag) => tag.label) ?? []),
   ].join(' ');
-}
-
-export function quickstartStepLabel(step: QuickstartStepName, msg: I18nMsg) {
-  switch (step) {
-    case 'Create agent':
-      return msg('managedAgents.quickstart.steps.createAgent', step);
-    case 'Configure environment':
-      return msg('managedAgents.quickstart.steps.configureEnvironment', step);
-    case 'Start session':
-      return msg('managedAgents.quickstart.steps.startSession', step);
-    case 'Integrate':
-      return msg('managedAgents.quickstart.steps.integrate', step);
-  }
 }
 
 export function resourceTitle(config: ResourceConfig, msg: I18nMsg) {

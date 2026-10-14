@@ -3,6 +3,7 @@ import { Check, ChevronDown, ExternalLink, X } from 'lucide-react';
 import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AuthContext } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
+import { listWorkspaceMCPServers } from '../../../shared/api/workspaceMCPServers';
 import { cn } from '../../../shared/lib/utils';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
@@ -31,6 +32,8 @@ import {
 } from './create-dialog-model';
 import { CreateDialogPicker } from './create-dialog-picker';
 import { CreateDialogToolsEditor } from './create-dialog-tools-editor';
+import { CreatePageSection } from './create-page-section';
+import { agentCreateHref } from './creation-route';
 
 export function AgentConfigRenderedEditor({
   orgUuid,
@@ -39,6 +42,7 @@ export function AgentConfigRenderedEditor({
   modelOptions,
   onPendingTunnelChange,
   tunnelSelectionResetKey,
+  compact,
   onChange,
 }: {
   orgUuid?: string;
@@ -47,9 +51,11 @@ export function AgentConfigRenderedEditor({
   modelOptions: AgentModelOption[];
   onPendingTunnelChange?: (pending: boolean) => void;
   tunnelSelectionResetKey?: number;
+  compact?: boolean;
   onChange: (next: CreateAgentInput) => void;
 }) {
   const { msg } = useI18n();
+  const presentation = renderedEditorPresentation(compact === true);
   const csrfToken = useContext(AuthContext)?.csrfToken;
   const [agentSearch, setAgentSearch] = useState('');
   const [debouncedAgentSearch, setDebouncedAgentSearch] = useState('');
@@ -72,6 +78,12 @@ export function AgentConfigRenderedEditor({
     queryFn: loadMcpDirectoryServers,
     retry: false,
   });
+  const workspaceServersQuery = useQuery({
+    queryKey: ['workspace-mcp-servers', orgUuid ?? '', workspaceId, 'agent-picker'],
+    queryFn: () => listAllWorkspaceMCPServers(orgUuid ?? '', workspaceId),
+    enabled: Boolean(orgUuid && workspaceId),
+    retry: false,
+  });
   const tunnelsQuery = useQuery({
     queryKey: ['console-mcp-tunnels', orgUuid, workspaceId, false],
     queryFn: () => listMcpTunnels(orgUuid ?? '', workspaceId, false),
@@ -80,15 +92,17 @@ export function AgentConfigRenderedEditor({
   });
   const refetchAgents = agentsQuery.refetch;
   const refetchSkills = skillsQuery.refetch;
+  const refetchWorkspaceServers = workspaceServersQuery.refetch;
 
   useEffect(() => {
     const refresh = () => {
       void refetchAgents();
       void refetchSkills();
+      void refetchWorkspaceServers();
     };
     window.addEventListener('focus', refresh);
     return () => window.removeEventListener('focus', refresh);
-  }, [refetchAgents, refetchSkills]);
+  }, [refetchAgents, refetchSkills, refetchWorkspaceServers]);
 
   const selectedSubagents = selectedSubagentReferences(draft);
   const selectedSubagentIds = selectedSubagents
@@ -134,15 +148,16 @@ export function AgentConfigRenderedEditor({
     mcpServers.length === 0 && !mcpSourcesLoading && (directoryQuery.isError || tunnelsQuery.isError);
 
   return (
-    <div className="space-y-0">
+    <div className={presentation.container}>
       <CreateDialogSection
+        compact={compact}
         title={msg('managedAgents.agents.createDialog.general', 'General')}
         description={msg(
           'managedAgents.agents.createDialog.generalDescription',
           "What this agent is and how it's prompted.",
         )}
       >
-        <div className="space-y-4">
+        <div className={cn('space-y-4', presentation.generalFields)}>
           <label className="grid gap-2 text-sm font-medium">
             <span>{msg('managedAgents.common.name', 'Name')}</span>
             <Input
@@ -155,6 +170,7 @@ export function AgentConfigRenderedEditor({
           <label className="grid gap-2 text-sm font-medium">
             <span>{msg('managedAgents.common.model', 'Model')}</span>
             <ModelPicker
+              compact={compact === true}
               options={modelOptions}
               value={typeof draft.model === 'string' ? draft.model : draft.model.id}
               onChange={(id) => onChange({ ...draft, model: updateDraftModelID(draft.model, id) })}
@@ -163,7 +179,7 @@ export function AgentConfigRenderedEditor({
           <label className="grid gap-2 text-sm font-medium">
             <span>{msg('managedAgents.agents.createDialog.optionalDescription', 'Description (optional)')}</span>
             <Textarea
-              className="min-h-20 resize-y"
+              className={presentation.description}
               value={draft.description ?? ''}
               onChange={(event) => onChange({ ...draft, description: event.target.value || null })}
             />
@@ -171,7 +187,7 @@ export function AgentConfigRenderedEditor({
           <label className="grid gap-2 text-sm font-medium">
             <span>{msg('managedAgents.agents.createDialog.optionalSystemPrompt', 'System prompt (optional)')}</span>
             <Textarea
-              className="min-h-28 resize-y"
+              className={presentation.system}
               value={draft.system ?? ''}
               onChange={(event) => onChange({ ...draft, system: event.target.value || null })}
             />
@@ -179,8 +195,12 @@ export function AgentConfigRenderedEditor({
         </div>
       </CreateDialogSection>
 
-      <Separator />
+      <Separator className={presentation.separator} />
       <CreateDialogSection
+        compact={compact}
+        collapsible={compact}
+        className={presentation.multiagentOrder}
+        summary={selectedConfigurationSummary(selectedSubagents.length, msg)}
         title={msg('managedAgents.agents.createDialog.multiagent', 'Multiagent')}
         description={msg(
           'managedAgents.agents.createDialog.multiagentDescription',
@@ -242,8 +262,12 @@ export function AgentConfigRenderedEditor({
         />
       </CreateDialogSection>
 
-      <Separator />
+      <Separator className={presentation.separator} />
       <CreateDialogSection
+        compact={compact}
+        collapsible={compact}
+        className={presentation.skillsOrder}
+        summary={selectedConfigurationSummary(selectedSkills.length, msg)}
         title={msg('managedAgents.agents.createDialog.skills', 'Skills')}
         description={msg(
           'managedAgents.agents.createDialog.skillsDescription',
@@ -286,8 +310,12 @@ export function AgentConfigRenderedEditor({
         />
       </CreateDialogSection>
 
-      <Separator />
+      <Separator className={presentation.separator} />
       <CreateDialogSection
+        compact={compact}
+        collapsible={compact}
+        className={presentation.toolsOrder}
+        summary={toolConfigurationSummary(draft, msg)}
         title={msg('managedAgents.agents.createDialog.tools', 'Tools')}
         description={msg(
           'managedAgents.agents.createDialog.toolsDescription',
@@ -300,6 +328,11 @@ export function AgentConfigRenderedEditor({
           directoryServers={mcpServers}
           directoryLoading={mcpSourcesLoading}
           directoryError={mcpSourcesUnavailable}
+          workspaceServers={workspaceServersQuery.data?.data ?? []}
+          workspaceServersLoading={workspaceServersQuery.isLoading}
+          workspaceServersError={workspaceServersQuery.isError}
+          onRetryWorkspaceServers={() => void workspaceServersQuery.refetch()}
+          onCreateWorkspaceServer={() => openInNewTab(mcpServerCreateHref(workspaceId))}
           onRetryDirectory={() => {
             void directoryQuery.refetch();
             void tunnelsQuery.refetch();
@@ -321,18 +354,46 @@ function CreateDialogSection({
   title,
   description,
   learnMore,
+  compact = false,
+  collapsible = false,
+  summary,
+  className,
   children,
 }: {
   title: string;
   description: string;
   learnMore?: string;
+  compact?: boolean;
+  collapsible?: boolean;
+  summary?: ReactNode;
+  className?: string;
   children: ReactNode;
 }) {
   const { msg } = useI18n();
+  if (collapsible)
+    return (
+      <CreatePageSection
+        title={title}
+        description={description}
+        learnMore={learnMore}
+        summary={summary}
+        className={className}
+      >
+        {children}
+      </CreatePageSection>
+    );
   return (
-    <section className="grid gap-5 py-8 md:grid-cols-[220px_minmax(0,1fr)] md:gap-6">
+    <section
+      className={cn(
+        'grid gap-5 md:gap-6',
+        compact
+          ? 'border-b border-border py-4 md:grid-cols-[244px_minmax(0,1fr)]'
+          : 'py-8 md:grid-cols-[220px_minmax(0,1fr)]',
+        className,
+      )}
+    >
       <div>
-        <h3 className="text-base font-semibold">{title}</h3>
+        <h3 className={compact ? 'text-sm font-medium' : 'text-base font-semibold'}>{title}</h3>
         <p className="mt-2 max-w-64 text-sm leading-6 text-muted-foreground">{description}</p>
         {learnMore ? (
           <a
@@ -354,9 +415,11 @@ function CreateDialogSection({
 function ModelPicker({
   options,
   value,
+  compact,
   onChange,
 }: {
   options: AgentModelOption[];
+  compact: boolean;
   value: string;
   onChange: (id: string) => void;
 }) {
@@ -377,7 +440,10 @@ function ModelPicker({
             role="combobox"
             aria-label={msg('managedAgents.common.model', 'Model')}
             aria-expanded={open}
-            className="h-10 w-full justify-between font-mono font-normal"
+            className={cn(
+              'w-full justify-between font-normal',
+              compact ? 'h-9 max-w-[344px] bg-secondary font-sans' : 'h-10 font-mono',
+            )}
           />
         }
       >
@@ -446,14 +512,69 @@ function SelectedPills({
   );
 }
 
-function agentCreateHref(workspaceId: string) {
-  return `/workspaces/${encodeURIComponent(workspaceId || 'default')}/agents?create_agent=1`;
-}
-
 function skillCreateHref(workspaceId: string) {
   return `/workspaces/${encodeURIComponent(workspaceId || 'default')}/skills/new`;
 }
 
+function mcpServerCreateHref(workspaceId: string) {
+  return `/workspaces/${encodeURIComponent(workspaceId || 'default')}/mcp-servers/new`;
+}
+
+async function listAllWorkspaceMCPServers(orgUuid: string, workspaceId: string) {
+  const data = [];
+  let page: string | undefined;
+  const seenPages = new Set<string>();
+  while (true) {
+    const response = await listWorkspaceMCPServers(orgUuid, workspaceId, { page });
+    data.push(...response.data);
+    const nextPage = response.next_page || undefined;
+    if (!nextPage) {
+      return { data, next_page: null };
+    }
+    if (seenPages.has(nextPage)) {
+      throw new Error('MCP Servers pagination returned a repeated cursor.');
+    }
+    seenPages.add(nextPage);
+    page = nextPage;
+  }
+}
+
 function openInNewTab(path: string) {
   window.open(path, '_blank', 'noopener,noreferrer');
+}
+
+function renderedEditorPresentation(compact: boolean) {
+  return compact
+    ? {
+        container: 'flex flex-col',
+        generalFields: '[&_input]:h-9 [&_input]:bg-secondary [&_textarea]:bg-secondary',
+        description: 'min-h-[60px] resize-y',
+        system: 'min-h-20 resize-y',
+        separator: 'hidden',
+        toolsOrder: 'order-1',
+        skillsOrder: 'order-2',
+        multiagentOrder: 'order-3',
+      }
+    : {
+        container: 'space-y-0',
+        generalFields: '',
+        description: 'min-h-20 resize-y',
+        system: 'min-h-28 resize-y',
+        separator: undefined,
+        toolsOrder: undefined,
+        skillsOrder: undefined,
+        multiagentOrder: undefined,
+      };
+}
+
+function selectedConfigurationSummary(count: number, msg: ReturnType<typeof useI18n>['msg']) {
+  return count ? String(count) : msg('common.none', 'None');
+}
+
+function toolConfigurationSummary(draft: CreateAgentInput, msg: ReturnType<typeof useI18n>['msg']) {
+  if (draft.tools.length === 1 && draft.tools[0].type === 'agent_toolset_20260401')
+    return msg('managedAgents.agents.detail.builtInTools', 'Built-in tools');
+  return draft.tools.length
+    ? msg('managedAgents.agents.createDialog.configuredTools', '{count} toolsets', { count: draft.tools.length })
+    : msg('common.none', 'None');
 }

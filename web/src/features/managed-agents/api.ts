@@ -1,5 +1,11 @@
 import { anthropicBetaApi } from '../../shared/api/anthropic';
-import { consoleApi } from '../../shared/api/client';
+import {
+  consoleApi,
+  consoleRequestHeaders,
+  getScopeSignal,
+  getConsoleRequestContext,
+  reportApiAuthFailure,
+} from '../../shared/api/client';
 import { consumeSseBuffer, postJsonSseStream } from '../../shared/api/streaming';
 import { consoleResourceListLimit } from '../../shared/console-list';
 import { type QueryClient } from '@tanstack/react-query';
@@ -34,8 +40,6 @@ import {
   type MemoryStoreApiResponse,
   type PageCursor,
   type PageResponse,
-  type QuickstartCreateEnvironmentInput,
-  type QuickstartDeploymentInput,
   type QuickstartSessionEvent,
   type QuickstartStreamEvent,
   type SessionApiResponse,
@@ -49,7 +53,7 @@ import {
   type VaultApiResponse,
   type VaultCredentialApiResponse,
 } from './types';
-import { isContentSha256, objectRecord, toRecord } from './utils';
+import { isContentSha256, toRecord } from './utils';
 
 export function workspaceHeaders(workspaceId: string) {
   return workspaceId ? { 'x-workspace-id': workspaceId } : undefined;
@@ -596,16 +600,30 @@ export function retrieveFileMetadata(fileId: string, workspaceId: string) {
   return anthropicBetaApi.files.retrieveMetadata<FileMetadataApiResponse>(fileId, workspaceId);
 }
 
-export async function listSessionFileOptions(workspaceId: string): Promise<FileMetadataPageResponse> {
+export function listSessionFileOptions(workspaceId: string) {
+  return listFileMetadataPages(workspaceId);
+}
+
+export function listSessionFiles(sessionId: string, workspaceId: string, signal?: AbortSignal) {
+  return listFileMetadataPages(workspaceId, { scope_id: sessionId, betas: ['managed-agents-2026-04-01'] }, signal);
+}
+
+async function listFileMetadataPages(
+  workspaceId: string,
+  params: Record<string, unknown> = {},
+  signal?: AbortSignal,
+): Promise<FileMetadataPageResponse> {
   const data: FileMetadataApiResponse[] = [];
   let afterId: string | undefined;
   let firstId: string | null | undefined;
   let lastId: string | null | undefined;
+  const cursors = new Set<string>();
 
   for (;;) {
     const page = (await anthropicBetaApi.files.list<FileMetadataApiResponse>(
-      { limit: 1000, ...(afterId ? { after_id: afterId } : {}) },
+      { ...params, limit: 1000, ...(afterId ? { after_id: afterId } : {}) },
       workspaceId,
+      signal,
     )) as FileMetadataPageResponse;
     data.push(...page.data);
     firstId ??= page.first_id;
@@ -614,9 +632,10 @@ export async function listSessionFileOptions(workspaceId: string): Promise<FileM
     if (!page.has_more) {
       return { data, first_id: firstId, has_more: false, last_id: lastId };
     }
-    if (!lastId || lastId === afterId) {
+    if (!lastId || cursors.has(lastId)) {
       throw new Error('Files API pagination did not return a new cursor');
     }
+    cursors.add(lastId);
     afterId = lastId;
   }
 }
@@ -714,15 +733,20 @@ export async function fetchSessionEventsPage({
   const path = threadId
     ? `/v1/sessions/${encodeURIComponent(sessionId)}/threads/${encodeURIComponent(threadId)}/events?${params.toString()}`
     : `/v1/sessions/${encodeURIComponent(sessionId)}/events?${params.toString()}`;
+  signal = AbortSignal.any([getScopeSignal(), ...(signal ? [signal] : [])]);
+  const context = getConsoleRequestContext();
   const response = await fetch(path, {
     credentials: 'include',
-    headers,
+    headers: consoleRequestHeaders(headers, context),
     signal,
   });
+  signal.throwIfAborted();
   if (!response.ok) {
+    reportApiAuthFailure(response.status, context);
     throw new Error(`Could not list session events (${response.status})`);
   }
   const payload = (await response.json()) as Partial<PageResponse<QuickstartSessionEvent>>;
+  signal.throwIfAborted();
   return {
     data: Array.isArray(payload.data)
       ? payload.data.map((event) => sessionEventWithResponseThread(event, threadId))
@@ -757,122 +781,6 @@ export function sessionThreadListSignature(threads: SessionThreadApiResponse[]) 
   return threads
     .map((thread) => `${thread.id}:${thread.type}:${thread.archived_at ?? ''}:${thread.parent_thread_id ?? ''}`)
     .join('|');
-}
-
-export function createQuickstartEnvironment(input: QuickstartCreateEnvironmentInput, workspaceId: string) {
-  const reuseEnvironmentId = typeof input.reuse_environment_id === 'string' ? input.reuse_environment_id.trim() : '';
-  if (reuseEnvironmentId) {
-    return retrieveManagedEntity('environments', reuseEnvironmentId, workspaceId) as Promise<EnvironmentApiResponse>;
-  }
-  return anthropicBetaApi.environments.create<EnvironmentApiResponse>(
-    quickstartEnvironmentRequestBody(input),
-    workspaceId,
-  );
-}
-
-export function quickstartEnvironmentRequestBody(input: QuickstartCreateEnvironmentInput | Record<string, unknown>) {
-  const name = typeof input.name === 'string' && input.name.trim() ? input.name.trim() : 'Quickstart environment';
-  const body: Record<string, unknown> = {
-    name,
-    metadata: {},
-    scope: 'organization',
-    config: quickstartEnvironmentConfig(input.config),
-  };
-  if (typeof input.description === 'string' && input.description.trim()) {
-    body.description = input.description.trim();
-  }
-  return body;
-}
-
-export function quickstartEnvironmentConfig(configValue: unknown) {
-  const config = objectRecord(configValue);
-  if (config.type === 'self_hosted') {
-    return { type: 'self_hosted' };
-  }
-  return {
-    type: 'cloud',
-    packages: quickstartEnvironmentPackages(config.packages),
-    networking: quickstartEnvironmentNetworking(config.networking),
-  };
-}
-
-export function quickstartEnvironmentPackages(packagesValue: unknown) {
-  const packages = objectRecord(packagesValue);
-  return {
-    pip: quickstartPackageList(packages.pip),
-    npm: quickstartPackageList(packages.npm),
-    apt: quickstartPackageList(packages.apt),
-    cargo: quickstartPackageList(packages.cargo),
-    gem: quickstartPackageList(packages.gem),
-    go: quickstartPackageList(packages.go),
-  };
-}
-
-export function quickstartPackageList(value: unknown) {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
-}
-
-export function quickstartEnvironmentNetworking(networkingValue: unknown) {
-  const networking = objectRecord(networkingValue);
-  if (networking.type === 'limited') {
-    const allowedHosts = Array.isArray(networking.allowed_hosts)
-      ? networking.allowed_hosts.filter((host): host is string => typeof host === 'string')
-      : [];
-    return {
-      type: 'limited',
-      allow_mcp_servers: networking.allow_mcp_servers === true,
-      allow_package_managers: networking.allow_package_managers === true,
-      allowed_hosts: allowedHosts,
-    };
-  }
-  return { type: 'unrestricted' };
-}
-
-export function createQuickstartVault(input: Record<string, unknown>, workspaceId: string) {
-  const displayName =
-    typeof input.display_name === 'string' && input.display_name.trim()
-      ? input.display_name.trim()
-      : typeof input.name === 'string' && input.name.trim()
-        ? input.name.trim()
-        : 'Quickstart vault';
-  return anthropicBetaApi.vaults.create<VaultApiResponse>({ display_name: displayName, metadata: {} }, workspaceId);
-}
-
-export function createQuickstartVaultCredential(vaultId: string, input: Record<string, unknown>, workspaceId: string) {
-  const displayName =
-    typeof input.display_name === 'string' && input.display_name.trim()
-      ? input.display_name.trim()
-      : typeof input.name === 'string' && input.name.trim()
-        ? input.name.trim()
-        : 'Quickstart credential';
-  const auth = input.auth && typeof input.auth === 'object' && !Array.isArray(input.auth) ? input.auth : null;
-  if (!auth) {
-    throw new Error('Credential auth is required before a vault credential can be created.');
-  }
-  return anthropicBetaApi.vaults.credentials.create<VaultCredentialApiResponse>(
-    vaultId,
-    { display_name: displayName, auth, metadata: {} },
-    workspaceId,
-  );
-}
-
-export function createQuickstartSession(
-  agent: AgentApiResponse,
-  environmentId: string,
-  vaultIds: string[],
-  workspaceId: string,
-) {
-  return anthropicBetaApi.sessions.create<SessionApiResponse>(
-    {
-      title: null,
-      agent: { type: 'agent', id: agent.id, version: agent.version },
-      environment_id: environmentId,
-      vault_ids: vaultIds,
-      metadata: {},
-      resources: [],
-    },
-    workspaceId,
-  );
 }
 
 export function postQuickstartSessionMessage(sessionId: string, message: string, workspaceId: string) {
@@ -925,48 +833,6 @@ export function interruptQuickstartSession(sessionId: string, workspaceId: strin
   );
 }
 
-export async function streamQuickstartSessionEvents({
-  sessionId,
-  workspaceId,
-  signal,
-  onEvent,
-}: {
-  sessionId: string;
-  workspaceId: string;
-  signal: AbortSignal;
-  onEvent: (event: QuickstartSessionEvent) => void;
-}) {
-  const headers = new Headers({ Accept: 'text/event-stream' });
-  if (workspaceId) {
-    headers.set('X-Workspace-ID', workspaceId);
-  }
-  const response = await fetch(`/v1/sessions/${encodeURIComponent(sessionId)}/events/stream?beta=true`, {
-    credentials: 'include',
-    headers,
-    signal,
-  });
-
-  if (!response.ok || !response.body) {
-    return;
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
-    buffer += decoder.decode(value, { stream: true });
-    const parsed = consumeSseBuffer<QuickstartSessionEvent>(buffer);
-    buffer = parsed.remaining;
-    parsed.events.forEach((event) => onEvent(event.data));
-  }
-  buffer += decoder.decode();
-  consumeSseBuffer<QuickstartSessionEvent>(`${buffer}\n\n`).events.forEach((event) => onEvent(event.data));
-}
-
 export async function streamSessionEvents({
   sessionId,
   threadId,
@@ -992,14 +858,18 @@ export async function streamSessionEvents({
   const path = threadId
     ? `/v1/sessions/${encodeURIComponent(sessionId)}/threads/${encodeURIComponent(threadId)}/stream?${params.toString()}`
     : `/v1/sessions/${encodeURIComponent(sessionId)}/events/stream?${params.toString()}`;
+  signal = AbortSignal.any([getScopeSignal(), signal]);
+  const context = getConsoleRequestContext();
   const streamSignal = sessionLinkedAbortSignal(signal, SESSION_DETAIL_STREAM_IDLE_TIMEOUT_MS);
   try {
     const response = await fetch(path, {
       credentials: 'include',
-      headers,
+      headers: consoleRequestHeaders(headers, context),
       signal: streamSignal.signal,
     });
+    signal.throwIfAborted();
     if (!response.ok || !response.body) {
+      reportApiAuthFailure(response.status, context);
       throw new SessionStreamError(response.status);
     }
     onOpen?.();
@@ -1009,6 +879,7 @@ export async function streamSessionEvents({
     streamSignal.touch();
     for (;;) {
       const { value, done } = await reader.read();
+      signal.throwIfAborted();
       if (done) {
         break;
       }
@@ -1598,39 +1469,6 @@ export function sleepWithAbort(ms: number, signal: AbortSignal) {
     }, ms);
     signal.addEventListener('abort', abort, { once: true });
   });
-}
-
-export function createQuickstartDeployment(
-  agent: AgentApiResponse,
-  environmentId: string,
-  vaultIds: string[],
-  input: QuickstartDeploymentInput,
-  workspaceId: string,
-) {
-  const timezone =
-    typeof input.timezone === 'string' && input.timezone.trim()
-      ? input.timezone.trim()
-      : Intl.DateTimeFormat().resolvedOptions().timeZone;
-  return anthropicBetaApi.deployments.create<DeploymentApiResponse>(
-    {
-      name: input.name?.trim() || 'Quickstart deployment',
-      agent: { type: 'agent', id: agent.id, version: agent.version },
-      environment_id: environmentId,
-      ...(vaultIds.length ? { vault_ids: vaultIds } : {}),
-      initial_events: [
-        {
-          type: 'user.message',
-          content: [{ type: 'text', text: input.initial_message?.trim() || 'Run the scheduled quickstart task.' }],
-        },
-      ],
-      schedule: {
-        type: 'cron',
-        expression: input.cron_expression?.trim() || '0 9 * * 1',
-        timezone,
-      },
-    },
-    workspaceId,
-  );
 }
 
 export async function postQuickstartProxyStream({

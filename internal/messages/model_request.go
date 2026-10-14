@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	jsonv1 "encoding/json"
 	"encoding/json/v2"
 	"io"
 	"maps"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
@@ -43,10 +45,16 @@ type responseMessage struct {
 }
 
 type responseContentBlock struct {
-	ID         string `json:"id"`
-	Type       string `json:"type"`
-	Text       string `json:"text"`
-	textBuffer strings.Builder
+	ID             string            `json:"id"`
+	Type           string            `json:"type"`
+	Text           string            `json:"text"`
+	Thinking       string            `json:"thinking"`
+	Name           string            `json:"name"`
+	Input          jsonv1.RawMessage `json:"input"`
+	PartialJSON    string            `json:"partial_json"`
+	thinkingBuffer strings.Builder
+	textBuffer     strings.Builder
+	inputBuffer    strings.Builder
 }
 
 type responseStreamEvent struct {
@@ -86,6 +94,12 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 	defer response.Body.Close()
 	if request != nil {
 		observation.result.UpstreamRequestID = response.Header.Get("Request-Id")
+		if response.StatusCode == http.StatusUnauthorized {
+			observation.result.ErrorType = "http_error"
+			w.Header().Set("X-Should-Retry", "false")
+			httpapi.WriteError(w, r, upstreamAuthenticationRejectedError())
+			return
+		}
 		w.Header().Del("Request-Id")
 		response.Header.Set("Request-Id", request.StartID)
 		observation.streaming = strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream")
@@ -194,7 +208,8 @@ func (o *responseObservation) observeFrame(data []byte) {
 		}
 		block := event.ContentBlock
 		block.textBuffer.WriteString(block.Text)
-		o.contentBytes += len(block.Text)
+		block.thinkingBuffer.WriteString(block.Thinking)
+		o.contentBytes += len(block.Text) + len(block.Thinking) + len(block.Input)
 		if o.contentBytes > 4*1024*1024 {
 			o.malformed = true
 			o.result.ErrorType = "observation_limit"
@@ -205,20 +220,7 @@ func (o *responseObservation) observeFrame(data []byte) {
 			o.result.ToolUseIDs = append(o.result.ToolUseIDs, event.ContentBlock.ID)
 		}
 	case "content_block_delta":
-		if event.Delta.Type == "text_delta" {
-			o.contentBytes += len(event.Delta.Text)
-			if o.contentBytes > 4*1024*1024 {
-				o.malformed = true
-				o.result.ErrorType = "observation_limit"
-				return
-			}
-			block := o.blocks[event.Index]
-			if block == nil {
-				o.malformed = true
-				return
-			}
-			block.textBuffer.WriteString(event.Delta.Text)
-		}
+		o.observeContentDelta(event)
 	case "message_delta":
 		mergeRequestUsage(&o.result.Usage, event.Usage)
 	case "message_stop":
@@ -228,6 +230,7 @@ func (o *responseObservation) observeFrame(data []byte) {
 		for _, index := range slices.Sorted(maps.Keys(o.blocks)) {
 			block := o.blocks[index]
 			block.Text = block.textBuffer.String()
+			block.Thinking = block.thinkingBuffer.String()
 			o.addMessage(index, *block)
 		}
 		o.complete = true
@@ -240,6 +243,30 @@ func (o *responseObservation) observeFrame(data []byte) {
 		if o.onComplete != nil {
 			o.onComplete()
 		}
+	}
+}
+
+func (o *responseObservation) observeContentDelta(event responseStreamEvent) {
+	if event.Delta.Type != "text_delta" && event.Delta.Type != "input_json_delta" && event.Delta.Type != "thinking_delta" {
+		return
+	}
+	o.contentBytes += len(event.Delta.Text) + len(event.Delta.Thinking) + len(event.Delta.PartialJSON)
+	if o.contentBytes > 4*1024*1024 {
+		o.malformed = true
+		o.result.ErrorType = "observation_limit"
+		return
+	}
+	block := o.blocks[event.Index]
+	if block == nil {
+		o.malformed = true
+		return
+	}
+	if event.Delta.Type == "text_delta" {
+		block.textBuffer.WriteString(event.Delta.Text)
+	} else if event.Delta.Type == "thinking_delta" {
+		block.thinkingBuffer.WriteString(event.Delta.Thinking)
+	} else {
+		block.inputBuffer.WriteString(event.Delta.PartialJSON)
 	}
 }
 
@@ -292,7 +319,13 @@ func (o *responseObservation) finish() {
 func (o *responseObservation) addMessage(index int, block responseContentBlock) {
 	message := codesessions.ModelRequestMessage{Type: "agent.message"}
 	switch block.Type {
-	case "thinking", "redacted_thinking":
+	case "tool_use":
+		o.addToolUse(block)
+		return
+	case "thinking":
+		message.Type = "agent.thinking"
+		message.Content = []codesessions.ModelRequestContent{{Type: "thinking", Thinking: &block.Thinking}}
+	case "redacted_thinking":
 		message.Type = "agent.thinking"
 	case "text":
 		message.Content = []codesessions.ModelRequestContent{{Type: "text", Text: &block.Text}}
@@ -303,6 +336,36 @@ func (o *responseObservation) addMessage(index int, block responseContentBlock) 
 	}
 	message.ID = maevents.StableAssistantEventID(o.request.CodeSessionID, o.messageID, index, message.Type)
 	o.result.Messages = append(o.result.Messages, message)
+}
+
+type unparsedToolInput struct {
+	Raw    string `json:"raw"`
+	Length int    `json:"len"`
+}
+
+func (o *responseObservation) addToolUse(block responseContentBlock) {
+	if block.ID == "" || block.Name == "" {
+		o.malformed = true
+		return
+	}
+	input := block.Input
+	if block.inputBuffer.Len() > 0 {
+		input = jsonv1.RawMessage(block.inputBuffer.String())
+	}
+	var fields map[string]jsonv1.RawMessage
+	rejected := jsonv1.Unmarshal(input, &fields) != nil || fields == nil
+	if rejected {
+		o.malformed = true
+		raw := string(input)
+		length := 0
+		for _, character := range raw {
+			length += utf16.RuneLen(character)
+		}
+		input, _ = jsonv1.Marshal(struct {
+			Value unparsedToolInput `json:"__unparsedToolInput"`
+		}{Value: unparsedToolInput{Raw: raw, Length: length}})
+	}
+	o.result.ToolUses = append(o.result.ToolUses, codesessions.ModelRequestToolUse{ID: block.ID, Name: block.Name, Input: input, InputRejected: rejected})
 }
 
 func mergeRequestUsage(target *codesessions.ModelRequestUsage, delta codesessions.ModelRequestUsage) {

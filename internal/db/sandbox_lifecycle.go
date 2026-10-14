@@ -20,16 +20,28 @@ func (t SandboxReclaimTarget) scope() sandboxLifecycleScope {
 	return sandboxLifecycleScope{OrganizationUUID: t.OrganizationUUID, WorkspaceUUID: t.WorkspaceUUID, SandboxUUID: t.SandboxUUID}
 }
 
+func (d *DB) ListArchivedSessionSandboxes(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) ([]SandboxReclaimTarget, error) {
+	rows, err := NewSandboxLifecycleMapper(d.mapperDB).ListArchivedForSession(ctx, organizationUUID, workspaceUUID, sessionUUID)
+	if err != nil {
+		return nil, err
+	}
+	return sandboxReclaimTargets(rows), nil
+}
+
 func (d *DB) ListSandboxReclaimCandidates(ctx context.Context, cutoff time.Time, after string, limit int, reclaim bool) ([]SandboxReclaimTarget, error) {
 	rows, err := NewSandboxLifecycleMapper(d.mapperDB).ListCandidates(ctx, cutoff, after, limit, reclaim)
 	if err != nil {
 		return nil, err
 	}
+	return sandboxReclaimTargets(rows), nil
+}
+
+func sandboxReclaimTargets(rows []sandboxLifecycleRow) []SandboxReclaimTarget {
 	targets := make([]SandboxReclaimTarget, 0, len(rows))
 	for _, row := range rows {
 		targets = append(targets, row.reclaimTarget())
 	}
-	return targets, nil
+	return targets
 }
 
 // BeginSandboxReclamation serializes with public input and worker state updates.
@@ -46,7 +58,7 @@ func (d *DB) BeginSandboxReclamation(ctx context.Context, target SandboxReclaimT
 		if !found {
 			return nil
 		}
-		if current.State == "stopping" && current.StopReason != nil && *current.StopReason == "idle_timeout" {
+		if current.reclaimTarget().Reclaiming {
 			target, claimed = current.reclaimTarget(), true
 			return nil
 		}
@@ -102,14 +114,15 @@ func (d *DB) CompleteSandboxReclamation(ctx context.Context, target SandboxRecla
 		if !found {
 			return nil
 		}
-		// Lock the parent before the worker and work, matching public ingress.
-		if _, _, err := NewSessionMapper(executor).LockSessionForEvents(ctx, current.WorkspaceUUID, current.SessionExternalID); err != nil {
-			return err
-		}
-		// Keep the same lock order as claim/ingress, even when the session was terminated.
-		_, _, err = NewCodeSessionMapper(executor).LockCodeSessionByExternalID(ctx, current.CodeSessionExternalID)
-		if err != nil {
-			return err
+		if current.StopReason == nil || *current.StopReason != "session_archived" {
+			if _, _, err := NewSessionMapper(executor).LockSessionForEvents(ctx, current.WorkspaceUUID, current.SessionExternalID); err != nil {
+				return err
+			}
+			if current.CodeSessionExternalID != "" {
+				if _, _, err := NewCodeSessionMapper(executor).LockCodeSessionByExternalID(ctx, current.CodeSessionExternalID); err != nil {
+					return err
+				}
+			}
 		}
 		locked, found, err := mapper.LockTarget(ctx, target.scope())
 		if err != nil {
@@ -127,6 +140,9 @@ func (d *DB) CompleteSandboxReclamation(ctx context.Context, target SandboxRecla
 			return nil
 		}
 		completed = true
+		if current.StopReason != nil && *current.StopReason == "session_archived" {
+			return nil
+		}
 		// Input accepted during deletion uses the existing missing-sandbox recovery path.
 		// Without pending input, the stopped sandbox stays reclaimed.
 		_, err = NewEnvironmentSandboxMapper(executor).ScheduleRecoveryForCodeSession(ctx, environmentSandboxRecoveryParams{
@@ -142,5 +158,5 @@ func (d *DB) CompleteSandboxReclamation(ctx context.Context, target SandboxRecla
 func (r sandboxLifecycleRow) reclaimTarget() SandboxReclaimTarget {
 	return SandboxReclaimTarget{OrganizationUUID: r.OrganizationUUID, WorkspaceUUID: r.WorkspaceUUID,
 		SandboxUUID: r.SandboxUUID, ProviderSandboxID: r.ProviderSandboxID,
-		Reclaiming: r.State == "stopping" && r.StopReason != nil && *r.StopReason == "idle_timeout"}
+		Reclaiming: r.State == "stopping" && r.StopReason != nil && (*r.StopReason == "idle_timeout" || *r.StopReason == "session_archived")}
 }

@@ -5,15 +5,15 @@
 ## 范围
 
 项目级 `.agents/skills/verify-be` 提供固定 CLI，注册 `chat.roundtrip`、`chat.tools`、
-`chat.reliability`、`chat.instances`、`chat.public` 和 `chat.performance`。
+`chat.reliability`、`chat.instances`、`chat.public`、`chat.upstream-errors` 和 `chat.performance`。
 CLI 实现在 `cmd/verify-be`，Skill 中的 shell 入口只负责构建和执行。环境编排、进程管理、
 报告判定及其测试全部使用 Go，不依赖 Python；临时 Ed25519 密钥由 Go 标准库生成。
 验证使用实际编译的后端、真实 PostgreSQL / Redis / 三节点 NATS / MinIO、真实 Claude Worker，
 以及测试侧固定模型响应。Worker 的模型请求经过生产 `/v1/messages` 代理。
 不修改生产 API、数据库 schema 或状态机。
 
-除 `chat.public` 外，Session/CodeSession 通过现有 liveworker 夹具准备并 activation。
-隔离后端关闭后台 Runner，避免竞争 Worker。`chat.public` 通过公开 API 创建 Session，
+除 `chat.public` 和 `chat.upstream-errors` 外，Session/CodeSession 通过现有 liveworker 夹具准备并 activation。
+隔离后端关闭后台 Runner，避免竞争 Worker。上述两个公开场景通过公开 API 创建 Session，
 由实际 Runner 驱动本地 Docker Provider 分配沙箱、启动真实文件系统挂载和 environment-manager。
 本版不验证云平台分配 API、自动云端故障检测、浏览器渲染或真实模型决策。
 
@@ -85,7 +85,8 @@ CLI 解析 `go test -json`，要求目标测试和 package 均 pass、所有阶�
 `chat.tools` 复用仓库已固定版本的官方 `anthropic-sdk-go`，连接本轮本地后端。SDK 发送任务、
 读取 `requires_action` 和 `agent.tool_use`、提交 `user.tool_confirmation`、读取最终历史。
 固定模型通过真实模型代理请求 Write，由真实 Worker 执行；SDK 本身不执行工具。
-先验证拒绝，再验证允许：确认前文件必须不存在；拒绝后仍不存在；允许后文件内容必须匹配。
+先验证非法 JSON：分别使用 always_ask 和 always_allow 策略，先订阅 SSE，再发送任务；模型流式返回含控制字符、中文和 emoji 的 Bash 参数。真实 Worker 应拒绝执行，下一次模型请求保留非法参数包装及错误工具结果，随后正常回复。SSE 和历史都必须先有拒绝调用，再有同 ID 关联的错误结果；调用/结果的事件 ID 在两边相同，最终为 idle/end_turn，没有 session.error、待确认或文件副作用。观测保存为 `malformed-tool-<policy>-observations.json`。测试精确比较 JSON 解码后的 raw 与原始输入，以及 len 与 Worker 使用的 UTF-16 code unit 数量；样本为 83 个 UTF-16 code unit、87 个 UTF-8 字节。此项不要求模型遇到非法参数就终止，模型可以继续处理错误。
+随后验证拒绝，再验证允许：确认前文件必须不存在；拒绝后仍不存在；允许后文件内容必须匹配。
 同时检查一次工具调用、结果、确认和最终回复，输入与回复队列都必须清空。
 此场景不调用 Anthropic 云端，不需要真实模型凭据，不包含 custom tool 或 MCP 覆盖。
 相关协议见 [Managed Agents tools](https://platform.claude.com/docs/en/managed-agents/tools)。
@@ -118,6 +119,28 @@ Go 变更仍运行 `just lint`、`just dead-code`、`just duplicates` 和 `just 
 
 ## 可靠性场景
 
+`chat.upstream-errors` 使用真实 Worker，经生产模型代理分别接收标准 Anthropic 鉴权错误和
+通用 JSON invalid-key 错误，两种上游响应均持续返回 HTTP 401。每个用例公开创建 Session 并提交消息，
+实际 Runner 经 environment-manager 的 OAuth FD 启动 Worker，生产代理将上游 401 转为不可重试的 403。
+从消息提交开始最多观察 90 秒，包含启动时间。通过条件是模型请求 start/end 完整、历史出现
+`session.error`（`retry_status.type=exhausted`）、Session 以 `retries_exhausted` 自然恢复 idle、没有 `agent.message` 且输入队列清空。重试次数只记录，不假设固定两次。
+90 秒是验证窗口，不代表 Worker 的协议重试期限，也不能证明永久无法结束。
+
+`upstream-401-observations.json` 保存中断前状态和 `naturally_completed`；超时后若仍 running，
+测试通过公开 `user.interrupt` 清理，最多等待 15 秒恢复 idle，并单独保存
+`post_interrupt_observations`。人工清理成功不改变自然结束失败的判定。缺少模型调用、错误事件、
+完整请求 span 或清理失败均不能通过。用例边界和执行入口维护在 Skill 的功能地图中。
+
+同一场景增加持续 500 的退避中断回归。SSE 在提交输入前连接，mock 快速返回至少六次
+`500/api_error`；已观察请求的 span 全部结束且会话仍 running 时发送公开中断。验收 SSE
+与历史具有相同 ID 的 `idle/end_turn`、没有 `session.error`、下一条输入前没有新增模型请求且队列清空。
+随后放行正常文本响应，验证同一会话的新消息完成。状态证据保存于
+`upstream-backoff-observations.json`，对应必需阶段 `backoff_500_interrupted_and_recovered`。
+六次请求是为了进入较长退避窗口，不是生产重试上限；该场景不验收持续 500 的自然耗尽期限。
+本地沙箱控制 API 配置使用符合 E2B SDK 格式的虚拟 key，API 与 sandbox 地址均为 loopback。
+后续公开输入触发的 connect/timeout 必须经过生产 Provider 到达此控制 API；测试覆盖配置生成与
+Provider 续期调用，不因虚拟 key 格式错误而绕开真实投递链路。
+
 `chat.reliability` 在第一条模型请求输出首片段后暂停响应，验证第二条输入返回 409 和
 `conflict_error`，不落库且不触发模型请求。随后断开 Worker SSE 并等待真实重连，确保运行中的
 模型请求没有重复。公开 SSE 客户端在回复途中断开，模型放行后从历史恢复第一轮，空闲后重试
@@ -129,7 +152,9 @@ Go 变更仍运行 `just lint`、`just dead-code`、`just duplicates` 和 `just 
 Worker 请求，第二实例接收 SSE 订阅与历史查询；验证预览、最终回复的 ID 和文本一致。
 
 `chat.public` 使用实际 Runner、rclone-filestore 和 environment-manager。测试 Provider
-仅把沙箱分配适配为 Docker，不伪造挂载就绪或启动结果。容器需要 `/dev/fuse`、`SYS_ADMIN`
+把沙箱分配适配为 Docker，不伪造挂载就绪或启动结果。上述公开场景的本地 E2B 控制 API
+检查运行专属容器名称和 ownership label，接受正数 connect/timeout 请求并执行容器删除。
+Docker 容器没有云端 TTL，此夹具不验证真实 E2B 续租。容器需要 `/dev/fuse`、`SYS_ADMIN`
 和非受限 AppArmor 配置。凭据通过 stdin 传递，测试结束清理容器和对应工作/沙箱状态。
 
 ## 性能负载与门禁
@@ -179,7 +204,7 @@ runner 上以当前负载分别测试 PR 基准提交和候选后端，比较性
 `chat doctor [SCENARIO]` 检查 Go、Docker、Compose、Bash、git、tar、本地镜像及 18080 端口，
 并创建短期探针检查 Docker 数据卷至少有 1 GiB 可用空间。此值是小型固定负载的最低余量，
 不是容量保证；三个 NATS 节点的 16 GB 配置是各自上限，不代表必须预留 48 GB。
-`chat doctor public` 还用实际 Worker 镜像打开 `/dev/fuse` 并执行 tmpfs mount/unmount，
+`chat doctor public` 和 `chat doctor upstream-errors` 还用实际 Worker 镜像打开 `/dev/fuse` 并执行 tmpfs mount/unmount，
 检查 Docker daemon 的设备和挂载权限；不根据客户端操作系统推断可用性。
 探针不拉取镜像，携带独立 label，成功或失败均删除容器和匿名卷。
 `场景命令` 自动执行对应场景的先决检查。依赖不满足为 blocked（2），清理无法确认不能通过。

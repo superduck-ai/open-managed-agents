@@ -238,6 +238,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		startupEnv["CLAUDE_CODE_USE_CCR_V2"] != "1" ||
 		startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" ||
 		startupEnv["CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES"] != "true" ||
+		startupEnv["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"] != "1" ||
 		startupEnv["CCR_UPSTREAM_PROXY_ENABLED"] != "1" {
 		t.Fatalf("unexpected startup environment variables: %#v", startupEnv)
 	}
@@ -438,6 +439,7 @@ func TestBuildEnvironmentManagerPayloadPrefersUserTelemetryConfig(t *testing.T) 
 	}
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"CLAUDE_CODE_ENABLE_TELEMETRY":"",
+		"CLAUDE_CODE_DISABLE_TERMINAL_TITLE":"0",
 		"OTEL_METRICS_EXPORTER":"console",
 		"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com",
 		"OTEL_EXPORTER_OTLP_METRICS_HEADERS":"Authorization=Bearer stale",
@@ -459,6 +461,9 @@ func TestBuildEnvironmentManagerPayloadPrefersUserTelemetryConfig(t *testing.T) 
 	}
 	if got := startupEnv["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]; got != "" {
 		t.Fatalf("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = %#v, want empty so Claude can export OTEL", got)
+	}
+	if got := startupEnv["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"]; got != "1" {
+		t.Fatalf("CLAUDE_CODE_DISABLE_TERMINAL_TITLE = %#v, want 1", got)
 	}
 	// 用户可以保留采集偏好；连接 OMA 的 signal-specific endpoint/header
 	// 由平台覆盖，使不会动态配置 OTLP 的旧版 environment-manager 也能工作。

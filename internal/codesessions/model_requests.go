@@ -19,6 +19,7 @@ type ModelRequest struct {
 	ThreadID      string
 	Model         string
 	codeSession   db.CodeSession
+	toolThreadID  string
 }
 
 // ModelRequestUsage is cumulative within one provider response, never a turn total.
@@ -38,11 +39,19 @@ type ModelRequestCacheUsage struct {
 type ModelRequestResult struct {
 	Messages          []ModelRequestMessage
 	ToolUseIDs        []string
+	ToolUses          []ModelRequestToolUse
 	EndedAt           time.Time
 	Usage             ModelRequestUsage
 	EventIDs          []string
 	UpstreamRequestID string
 	ErrorType         string
+}
+
+type ModelRequestToolUse struct {
+	ID            string
+	Name          string
+	Input         json.RawMessage
+	InputRejected bool
 }
 
 // ModelRequestMessage is a completed public message observed at the proxy.
@@ -55,8 +64,9 @@ type ModelRequestMessage struct {
 
 // ModelRequestContent is a public agent.message content block; Text is absent for redacted blocks.
 type ModelRequestContent struct {
-	Type string  `json:"type"`
-	Text *string `json:"text,omitempty"`
+	Type     string  `json:"type"`
+	Text     *string `json:"text,omitempty"`
+	Thinking *string `json:"thinking,omitempty"`
 }
 
 type modelRequestEvent struct {
@@ -97,6 +107,9 @@ func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID,
 		return nil, err
 	}
 	request := &ModelRequest{StartID: startID, CodeSessionID: codeSessionID, ThreadID: threadID, Model: model, codeSession: codeSession}
+	if agentID != "" {
+		request.toolThreadID = threadID
+	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	err = s.publishModelRequestEvent(ctx, request, modelRequestEvent{ID: startID, Type: "span.model_request_start", CreatedAt: now, ProcessedAt: now}, nil)
 	if err != nil {
@@ -112,6 +125,13 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 		event.Error = &modelRequestError{Type: result.ErrorType}
 	}
 	payloads := make([]json.RawMessage, 0, len(result.Messages)+1)
+	if toolUses := modelRequestPublicTools(result); len(toolUses) > 0 {
+		tools, err := s.modelToolUsePayloads(ctx, request, toolUses, result.EndedAt)
+		if err != nil {
+			return err
+		}
+		payloads = append(payloads, tools...)
+	}
 	if result.ErrorType == "" {
 		for _, message := range result.Messages {
 			payload, err := jsonv2.Marshal(struct {
@@ -127,6 +147,22 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 		}
 	}
 	return s.publishModelRequestEvent(ctx, request, event, payloads)
+}
+
+func modelRequestPublicTools(result ModelRequestResult) []ModelRequestToolUse {
+	if result.ErrorType == "" {
+		return result.ToolUses
+	}
+	if result.ErrorType != "invalid_response" {
+		return nil
+	}
+	var rejected []ModelRequestToolUse
+	for _, tool := range result.ToolUses {
+		if tool.InputRejected {
+			rejected = append(rejected, tool)
+		}
+	}
+	return rejected
 }
 
 func (s *Service) publishModelRequestEvent(ctx context.Context, request *ModelRequest, event modelRequestEvent, preceding []json.RawMessage) error {

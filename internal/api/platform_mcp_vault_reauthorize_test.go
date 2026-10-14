@@ -49,7 +49,7 @@ func TestPlatformMCPOAuthReauthorizationPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
-		if err := database.DeleteVault(context.Background(), vault.WorkspaceUUID, vault.ExternalID); err != nil {
+		if _, err := database.DeleteVault(context.Background(), vault.WorkspaceUUID, vault.ExternalID); err != nil {
 			t.Error(err)
 		}
 	}()

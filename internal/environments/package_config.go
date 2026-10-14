@@ -1,6 +1,7 @@
 package environments
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +30,13 @@ type environmentPackages struct {
 	Go    []string `json:"go"`
 	NPM   []string `json:"npm"`
 	PIP   []string `json:"pip"`
+}
+
+func (p *environmentPackages) UnmarshalJSON(data []byte) error {
+	type packageFields environmentPackages
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode((*packageFields)(p))
 }
 
 // managerSpecs 把一个 Package Manager 的名字和它的 spec 列表绑在一起。specs 是

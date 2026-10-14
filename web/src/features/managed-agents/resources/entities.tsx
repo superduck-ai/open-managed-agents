@@ -1117,7 +1117,7 @@ export function ManagedEntityRow({
   const detailHref = managedEntityDetailHref(workspaceId, config.section, entity.id);
 
   return (
-    <DataTableRow selected={selected}>
+    <DataTableRow selected={selected} className="[&>td]:h-11">
       {config.columns.map((column, index) => {
         const content =
           column === 'ID' ? (

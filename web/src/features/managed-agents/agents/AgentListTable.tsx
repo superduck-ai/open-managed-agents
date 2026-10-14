@@ -161,7 +161,7 @@ function AgentListRow({
   const shortDate = (value: string) =>
     Number.isFinite(Date.parse(value)) ? dateFormatter.format(new Date(value)) : '-';
   return (
-    <DataTableRow selected={selected || previewed} className="group/agent-row">
+    <DataTableRow selected={selected || previewed} className="group/agent-row [&>td]:h-11">
       <DataTableCell edge="start" className="px-2">
         <Checkbox
           aria-label={msg('managedAgents.agents.selectAgent', 'Select {name}', { name: agent.name || agent.id })}

@@ -269,7 +269,7 @@ function EnvironmentRow({
   const format = useFormatters();
   const href = managedEntityDetailHref(workspaceId, 'environments', entity.id);
   return (
-    <DataTableRow clickable selected={selected || previewed} className="group" onClick={onPreview}>
+    <DataTableRow clickable selected={selected || previewed} className="group [&>td]:h-11" onClick={onPreview}>
       <DataTableCell edge="start" className="h-11" onClick={(event) => event.stopPropagation()}>
         <Checkbox
           aria-label={msg('environmentPage.select', 'Select {name}', { name: entity.name })}

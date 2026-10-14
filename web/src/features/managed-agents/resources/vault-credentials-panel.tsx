@@ -301,7 +301,7 @@ export function VaultCredentialsPanel({
             </TableRow>
           ) : (
             visibleCredentials.map((credential) => (
-              <DataTableRow key={credential.id}>
+              <DataTableRow key={credential.id} className="[&>td]:h-11">
                 <DataTableCell edge="start" className="truncate font-mono text-xs font-medium">
                   {compactEntityId(credential.id)}
                 </DataTableCell>

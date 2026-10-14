@@ -375,7 +375,12 @@ export function SessionListTable({
                 </TableRow>
               ))
             : table.getRowModel().rows.map((row) => (
-                <DataTableRow key={row.id} clickable onClick={(event) => previewRow(event, row.original)}>
+                <DataTableRow
+                  key={row.id}
+                  className="[&>td]:h-11"
+                  clickable
+                  onClick={(event) => previewRow(event, row.original)}
+                >
                   {row.getVisibleCells().map((cell) => (
                     <DataTableCell
                       key={cell.id}

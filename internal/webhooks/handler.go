@@ -31,6 +31,9 @@ const (
 )
 
 var supportedEndpointEventTypes = map[string]struct{}{
+	"session.created":                   {},
+	"session.pending":                   {},
+	"session.archived":                  {},
 	"session.status_run_started":        {},
 	"session.status_idled":              {},
 	"session.status_rescheduled":        {},

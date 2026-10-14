@@ -64,7 +64,7 @@ func TestWebhooksAPI(t *testing.T) {
 	})
 
 	t.Run("failure unsupported event", func(t *testing.T) {
-		resp := doWebhookRequest(t, app, http.MethodPost, "/v1/webhooks", strings.NewReader(`{"url":"https://webhook.example.com","name":"bad","enabled_events":["session.created"]}`), defaultTestKey, true)
+		resp := doWebhookRequest(t, app, http.MethodPost, "/v1/webhooks", strings.NewReader(`{"url":"https://webhook.example.com","name":"bad","enabled_events":["session.not_a_real_event"]}`), defaultTestKey, true)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 

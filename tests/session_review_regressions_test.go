@@ -33,14 +33,21 @@ func TestSessionCanAcceptNextTurnAfterWorkerReturnsIdle(t *testing.T) {
 func TestNativeTaskToolPermissions(t *testing.T) {
 	for _, test := range []struct {
 		name, tool, want string
+		coordinator      bool
 	}{
 		{name: "native write disabled", tool: "Write", want: "deny"},
 		{name: "native bash asks", tool: "Bash", want: "ask"},
 		{name: "native read allowed", tool: "Read", want: "allow"},
+		{name: "coordinator ignores child deny policy", tool: "Bash", want: "ask", coordinator: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			app := newPayloadIntegrationApp(t, newFakeStore("subagent-tool-permission"))
-			agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"parent","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"bash","permission_policy":{"type":"always_ask"}},{"name":"write","enabled":false}]}]}`)
+			config := `{"model":"claude-opus-4-6","name":"parent","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"bash","permission_policy":{"type":"always_ask"}},{"name":"write","enabled":false}]}]`
+			if test.coordinator {
+				child := createAgent(t, app, `{"model":"claude-opus-4-6","name":"child","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"bash","enabled":false}]}]}`)
+				config += `,"multiagent":{"type":"coordinator","agents":[{"type":"agent","id":` + quoteJSON(child.ID) + `}]}`
+			}
+			agent := createAgent(t, app, config+`}`)
 			env := createEnvironment(t, app, `{"name":"subagent-tool-permission"}`)
 			session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 			codeID := launchLocalCodeSession(t, app, session.ID)
@@ -52,6 +59,22 @@ func TestNativeTaskToolPermissions(t *testing.T) {
 			tool := sessionEventObjectByType(t, events, "agent.tool_use")
 			if tool["evaluated_permission"] != test.want {
 				t.Fatalf("permission=%v, want %s", tool["evaluated_permission"], test.want)
+			}
+			if test.coordinator {
+				worker, _, err := app.db.GetCodeSession(t.Context(), codeID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				thread, err := app.db.GetSessionThread(t.Context(), worker.WorkspaceUUID, session.ID, "sthr_child")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var identity struct {
+					ID string `json:"id"`
+				}
+				if err := jsonv2.Unmarshal(thread.AgentSnapshot, &identity); err != nil || identity.ID != "" {
+					t.Fatalf("OMA added a child configuration snapshot: %s %v", thread.AgentSnapshot, err)
+				}
 			}
 			if test.want == "ask" {
 				for _, event := range app.workerEvents.Pending(codeID) {

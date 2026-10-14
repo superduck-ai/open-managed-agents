@@ -73,10 +73,15 @@ func TestLegacySessionSubagentSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := agentsnapshot.ForSubagentType(resolved.AgentSnapshot, "计算Agent")
-	if err != nil {
+	var roster struct {
+		Multiagent struct {
+			Agents []json.RawMessage `json:"agents"`
+		} `json:"multiagent"`
+	}
+	if err := jsonv2.Unmarshal(resolved.AgentSnapshot, &roster); err != nil {
 		t.Fatal(err)
 	}
+	raw := roster.Multiagent.Agents[0]
 	var pinned struct {
 		ID      string `json:"id"`
 		Version int    `json:"version"`
@@ -95,10 +100,7 @@ func TestLegacySessionSubagentSnapshot(t *testing.T) {
 	if pinned.ID != child.ID || pinned.Version != 1 || pinned.System != "child-v1" || pinned.Model.ID != "claude-opus-4-6" || len(pinned.Skills) != 1 || len(pinned.MCPServers) != 1 || len(pinned.Tools) != 1 {
 		t.Fatalf("lost pinned child configuration: %s", raw)
 	}
-	self, err := agentsnapshot.ForSubagentType(resolved.AgentSnapshot, "parent")
-	if err != nil {
-		t.Fatal(err)
-	}
+	self := roster.Multiagent.Agents[1]
 	if err := jsonv2.Unmarshal(self, &pinned); err != nil {
 		t.Fatal(err)
 	}
@@ -136,10 +138,10 @@ func TestLegacySessionSubagentSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	historicalSelf, err := agentsnapshot.ForSubagentType(currentSession.AgentSnapshot, "parent")
-	if err != nil {
+	if err := jsonv2.Unmarshal(currentSession.AgentSnapshot, &roster); err != nil {
 		t.Fatal(err)
 	}
+	historicalSelf := roster.Multiagent.Agents[1]
 	if err := jsonv2.Unmarshal(historicalSelf, &pinned); err != nil {
 		t.Fatal(err)
 	}
@@ -147,29 +149,6 @@ func TestLegacySessionSubagentSnapshot(t *testing.T) {
 		t.Fatalf("updated parent changed self@V1: %s", historicalSelf)
 	}
 
-	codeID := launchLocalCodeSession(t, app, session.ExternalID)
-	epoch := registerCodeSessionWorker(t, app, codeID)
-	postCodeSessionWorkerEvents(t, app, codeID, internalPayloadRequest(epoch,
-		`{"type":"control_request","uuid":"dispatch","request_id":"dispatch-request","request":{"subtype":"can_use_tool","tool_name":"Agent","tool_use_id":"dispatch-tool","input":{"subagent_type":"计算Agent"}}}`,
-		`{"type":"session.thread_created","uuid":"child-created","session_thread_id":"sthr_child","agent_name":"计算Agent","task_id":"child-runtime","tool_use_id":"dispatch-tool"}`,
-		`{"type":"control_request","uuid":"child-permission","session_thread_id":"sthr_child","request_id":"child-request","request":{"subtype":"can_use_tool","tool_name":"Write","tool_use_id":"child-tool","input":{}}}`))
-	tool := sessionEventObjectByType(t, listThreadEvents(t, app, session.ExternalID, "sthr_child", defaultTestKey), "agent.tool_use")
-	if tool["evaluated_permission"] != "ask" {
-		t.Fatalf("lost pinned child ask policy: %v", tool["evaluated_permission"])
-	}
-	sendSessionEvents(t, app, session.ExternalID, `{"events":[{"type":"user.tool_confirmation","tool_use_id":`+quoteJSON(tool["id"].(string))+`,"result":"deny","session_thread_id":"sthr_child"}]}`, defaultTestKey)
-	_, confirmation := latestCodeSessionControlResponse(t, app, codeID)
-	var decision struct {
-		Response struct {
-			RequestID string `json:"request_id"`
-			Response  struct {
-				Behavior string `json:"behavior"`
-			} `json:"response"`
-		} `json:"response"`
-	}
-	if err := jsonv2.Unmarshal(confirmation, &decision); err != nil || decision.Response.RequestID != "child-request" || decision.Response.Response.Behavior != "deny" {
-		t.Fatalf("original child ID did not resume pending approval: %s %v", confirmation, err)
-	}
 }
 
 func TestSessionAgentSnapshotReplacementRejectsStaleAndForeignWrites(t *testing.T) {

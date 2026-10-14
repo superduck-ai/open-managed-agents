@@ -121,20 +121,20 @@ func TestParseMCPServerTargetsPreservesConfiguredURLs(t *testing.T) {
 	}
 }
 
-func TestMCPAllowedHostsIncludesSubagentsWithoutMergingServerNames(t *testing.T) {
+func TestMCPAllowedHostsUsesSessionScope(t *testing.T) {
 	snapshot := json.RawMessage(`{"mcp_servers":[{"name":"shared","type":"http","url":"https://parent.example/mcp"}],"multiagent":{"agents":[{"mcp_servers":[{"name":"shared","type":"http","url":"https://child.example/mcp"}]}]}}`)
 	hosts, err := MCPAllowedHosts(snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(hosts, []string{"parent.example", "child.example"}) {
+	if !slices.Equal(hosts, []string{"parent.example"}) {
 		t.Fatalf("MCP hosts=%v", hosts)
 	}
 	policy, err := ParsePolicy([]byte(`{"type":"cloud","networking":{"type":"limited","allow_mcp_servers":true}}`), snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !policy.AuthorizeHTTPS("child.example:443").Allow || policy.AuthorizeHTTPS("other.example:443").Allow {
-		t.Fatal("child MCP host policy is not bounded by Session configuration")
+	if !policy.AuthorizeHTTPS("parent.example:443").Allow || policy.AuthorizeHTTPS("child.example:443").Allow {
+		t.Fatal("MCP hosts must use only Session configuration")
 	}
 }

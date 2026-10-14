@@ -347,11 +347,6 @@ func (d *DB) SetSessionThreadStatus(ctx context.Context, workspaceUUID string, s
 	return nil
 }
 
-func (d *DB) FillSessionThreadAgentSnapshot(ctx context.Context, workspaceUUID, sessionExternalID, threadExternalID string, snapshot json.RawMessage) error {
-	_, err := NewSessionThreadMapper(d.mapperDB).FillAgentSnapshot(ctx, workspaceUUID, sessionExternalID, threadExternalID, snapshot)
-	return err
-}
-
 func (d *DB) CreateSessionThreadIfAbsent(ctx context.Context, thread SessionThread) (SessionThread, error) {
 	mapper := NewSessionThreadMapper(d.mapperDB)
 	row, found, err := mapper.InsertIfAbsent(ctx, sessionThreadWriteParameters(thread))

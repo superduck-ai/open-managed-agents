@@ -5,7 +5,7 @@ import { resetTestDom } from '../../../test/setup';
 import { type DisplayEventEntry, type QuickstartSessionEvent, type SessionApiResponse } from '../types';
 import { SessionInspector } from './SessionInspector';
 
-const { act, cleanup, fireEvent, render, screen } = await import('@testing-library/react');
+const { act, cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
 const originalFetch = globalThis.fetch;
 
 afterEach(() => {
@@ -547,6 +547,44 @@ function session(): SessionApiResponse {
     updated_at: '2026-08-27T07:25:22.000Z',
   };
 }
+
+test('thread tool filtering keeps the session permission policy', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
+  globalThis.fetch = async () =>
+    Response.json({
+      id: 'agent_parent',
+      tools: [
+        { type: 'agent_toolset_20260401', configs: [{ name: 'bash', permission_policy: { type: 'always_ask' } }] },
+      ],
+    });
+  const event = {
+    ...toolUseEvent('child-bash', 'Bash', '2026-08-27T08:00:00.000Z'),
+    session_thread_id: 'child',
+    evaluated_permission: 'allow',
+  };
+  renderInspector({
+    activeTab: 'tools',
+    activeLane: 'child',
+    session: { ...session(), agent: { type: 'agent', id: 'agent_parent', version: 1 } },
+    events: [event],
+    eventsByLaneId: new Map([['child', [event]]]),
+    lanes: [
+      { id: 'main', label: 'Main', isMain: true },
+      { id: 'child', label: 'Child' },
+    ],
+  });
+  await screen.findByText('Always ask');
+  const scope = screen.getByRole('combobox', { name: 'Scope' });
+  fireEvent.pointerDown(scope);
+  fireEvent.pointerUp(scope);
+  fireEvent.click(scope);
+  const option = await screen.findByRole('option', { name: 'Current thread' });
+  fireEvent.pointerDown(option);
+  fireEvent.pointerUp(option);
+  fireEvent.click(option);
+  await waitFor(() => expect(scope.textContent).toContain('Current thread'));
+  expect(screen.getByText('Always ask')).toBeTruthy();
+});
 
 test('child thread details show the pinned snapshot even when current Agent data differs', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');

@@ -47,12 +47,11 @@ func managedAgentMCPConfigFields(document any, args map[string]json.RawMessage) 
 // the current Code Session identity is available. Source declarations stay intact.
 func buildManagedAgentRuntimeMCPConfig(sessionConfig json.RawMessage, codeSessionID, sessionIngressToken string, cfg config.Config) (json.RawMessage, error) {
 	identity := codesessions.MCPRuntimeIdentity{CodeSessionID: codeSessionID, SessionIngressToken: sessionIngressToken, APIBaseURL: codeSessionSandboxAPIBaseURL(cfg)}
-	var err error
-	sessionConfig, err = buildManagedAgentSubagents(sessionConfig, identity, cfg.Tunnel)
+	document, err := codesessions.BuildMCPRuntimeConfig(sessionConfig, identity, cfg.Tunnel)
 	if err != nil {
 		return nil, err
 	}
-	document, err := codesessions.BuildMCPRuntimeConfig(sessionConfig, identity, cfg.Tunnel)
+	sessionConfig, err = buildManagedAgentSubagents(sessionConfig, document)
 	if err != nil {
 		return nil, err
 	}

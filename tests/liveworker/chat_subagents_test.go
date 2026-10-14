@@ -32,7 +32,7 @@ func TestChatSubagents(t *testing.T) {
 	started := time.Now()
 	e := newLiveEnv(t)
 	verifySubagentLifecycleOrdering(t, e)
-	chatProof(t, started, "snapshot_and_echo_order_verified")
+	chatProof(t, started, "thread_and_echo_order_verified")
 	var mcpCalls atomic.Int32
 	mcpURL := subagentMCPFixture(t, &mcpCalls)
 	skillID, skillVersion := uploadSubagentSkill(t, e)
@@ -53,7 +53,8 @@ func TestChatSubagents(t *testing.T) {
 	e.request(t, "POST", "/v1/agents/"+child.ID, e.apiKey, map[string]any{"version": 1, "system": "OMA_SUBAGENT_REVIEWER_V2"}, 200)
 	e.request(t, "POST", "/v1/agents/"+e.agent.ExternalID, e.apiKey, map[string]any{
 		"version": 1, "multiagent": map[string]any{"type": "coordinator", "agents": []map[string]any{{"type": "agent", "id": child.ID, "version": 1}}},
-		"tools": []any{map[string]any{"type": "agent_toolset_20260401", "default_config": map[string]any{"permission_policy": map[string]string{"type": "always_allow"}}}},
+		"mcp_servers": []map[string]string{{"name": "child_mcp", "type": "url", "url": mcpURL}},
+		"tools":       []any{map[string]any{"type": "agent_toolset_20260401", "default_config": map[string]any{"permission_policy": map[string]string{"type": "always_allow"}}, "configs": []any{map[string]any{"name": "write", "permission_policy": map[string]string{"type": "always_ask"}}}}, map[string]any{"type": "mcp_toolset", "mcp_server_name": "child_mcp", "configs": []any{map[string]any{"name": "verify", "permission_policy": map[string]string{"type": "always_allow"}}}}},
 	}, 200)
 	f := createPublicChat(t, e)
 	if !strings.Contains(string(f.session.AgentSnapshot), childSystem) {
@@ -101,23 +102,19 @@ func TestChatSubagents(t *testing.T) {
 	requireOK(t, err)
 	var threads struct {
 		Data []struct {
-			ID    string `json:"id"`
-			Agent struct {
-				ID      string `json:"id"`
-				Version int    `json:"version"`
-				System  string `json:"system"`
-			} `json:"agent"`
+			ID       string  `json:"id"`
+			ParentID *string `json:"parent_thread_id"`
 		} `json:"data"`
 	}
 	requireOK(t, jsonv2.Unmarshal(e.request(t, "GET", "/v1/sessions/"+f.session.ExternalID+"/threads", e.apiKey, nil, 200), &threads))
 	childThread := ""
 	for _, thread := range threads.Data {
-		if thread.Agent.ID == child.ID && thread.Agent.Version == 1 && thread.Agent.System == childSystem {
+		if thread.ParentID != nil {
 			childThread = thread.ID
 		}
 	}
 	if childThread == "" || len(threads.Data) != 2 {
-		t.Fatalf("threads do not identify the pinned child: %+v", threads)
+		t.Fatalf("threads do not identify the delegated child: %+v", threads)
 	}
 	chatProof(t, started, "configured_child_dispatched")
 	childEvents, closeChild := connectChatThreadStream(t, ctx, f, childThread)
@@ -264,7 +261,7 @@ func waitSubagentTool(t *testing.T, ctx context.Context, events <-chan chatEvent
 			}
 			if event.Type == "agent.tool_use" && event.Name == "write" {
 				if event.ThreadID != threadID || event.EvaluatedPermission != "ask" {
-					t.Fatalf("child permission used the parent policy: %+v", event)
+					t.Fatalf("child permission did not use the session policy: %+v", event)
 				}
 				return event
 			}

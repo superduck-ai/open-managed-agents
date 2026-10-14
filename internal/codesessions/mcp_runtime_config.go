@@ -16,7 +16,6 @@ type MCPRuntimeIdentity struct {
 	CodeSessionID       string
 	SessionIngressToken string
 	APIBaseURL          string
-	ConfigAgentName     string
 }
 
 type mcpRuntimeInput struct {
@@ -215,9 +214,6 @@ func (s tunnelMCPServer) build(identity MCPRuntimeIdentity) (json.RawMessage, er
 		Type:    "http",
 		URL:     strings.TrimRight(identity.APIBaseURL, "/") + "/v2/ccr-sessions/" + url.PathEscape(identity.CodeSessionID) + "/mcp/" + url.PathEscape(s.name),
 		Headers: map[string]string{"Authorization": "Bearer " + identity.SessionIngressToken},
-	}
-	if identity.ConfigAgentName != "" {
-		target.URL += "?config_agent_name=" + url.QueryEscape(identity.ConfigAgentName)
 	}
 	encoded, err := json.Marshal(target)
 	if err != nil {

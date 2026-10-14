@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"errors"
+	"fmt"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	sessionsapi "github.com/superduck-ai/open-managed-agents/internal/sessions"
@@ -15,8 +17,8 @@ import (
 func subagentApprovalFixture(t *testing.T) (*testApp, string, string, string) {
 	t.Helper()
 	app := newPayloadIntegrationApp(t, newFakeStore("subagent-identities"))
-	child := createAgent(t, app, `{"model":"claude-opus-4-6","name":"reviewer","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"write","permission_policy":{"type":"always_ask"}}]}]}`)
-	parent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"parent","multiagent":{"type":"coordinator","agents":[{"type":"agent","id":`+quoteJSON(child.ID)+`}]}}`)
+	child := createAgent(t, app, `{"model":"claude-opus-4-6","name":"reviewer"}`)
+	parent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"parent","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"write","permission_policy":{"type":"always_ask"}}]}],"multiagent":{"type":"coordinator","agents":[{"type":"agent","id":`+quoteJSON(child.ID)+`}]}}`)
 	env := createEnvironment(t, app, `{"name":"subagent-identities"}`)
 	session := createSession(t, app, `{"agent":`+quoteJSON(parent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeID := launchLocalCodeSession(t, app, session.ID)
@@ -69,6 +71,36 @@ func TestSubagentToolIDsAreScopedToInstances(t *testing.T) {
 	result := sessionEventObjectByType(t, listThreadEvents(t, app, sessionID, "sthr_second", defaultTestKey), "agent.tool_result")
 	if result["tool_use_id"] != secondTool["id"] {
 		t.Fatalf("result linked wrong child: %v", result)
+	}
+}
+
+func TestSubagentThreadMappingsAcrossPages(t *testing.T) {
+	app, sessionID, codeID, _ := subagentApprovalFixture(t)
+	worker, found, err := app.db.GetCodeSession(t.Context(), codeID)
+	if err != nil || !found {
+		t.Fatalf("load worker: found=%t error=%v", found, err)
+	}
+	service := newCodeSessionService(app, nil, nil)
+	sink := sessionsapi.NewHandler(app.cfg, app.db, service, nil, nil, app.vaultSecrets, nil)
+	service.SetPublicEventSink(sink)
+	payloads := make([]json.RawMessage, 501)
+	for i := range payloads {
+		payloads[i] = json.RawMessage(fmt.Sprintf(`{"type":"session.thread_created","id":"sevt_mapping_%d","session_thread_id":"sthr_original","agent_name":"reviewer","task_id":"task_%d","agent_id":"runtime_child","agentId":"native_alias","tool_use_id":"agent_call"}`, i, i))
+	}
+	if err := sink.PublishCodeSessionEvents(t.Context(), worker, payloads); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"task_500", "runtime_child", "native_alias", "agent_call"} {
+		request, err := service.BeginModelRequest(t.Context(), worker.WorkspaceUUID, sessionID, codeID, id, "model-mock")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if request.ThreadID != "sthr_original" {
+			t.Fatalf("instance %s routed to %s", id, request.ThreadID)
+		}
+		if err := service.EndModelRequest(t.Context(), request, codesessions.ModelRequestResult{}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

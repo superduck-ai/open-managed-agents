@@ -93,17 +93,12 @@ func runtimeSkillRefs(snapshot json.RawMessage) ([]runtimeSkillRef, error) {
 		return nil, nil
 	}
 	var roster struct {
-		Skills json.RawMessage `json:"skills"`
+		Skills []runtimeSkillRef `json:"skills"`
 	}
 	if err := json.Unmarshal(snapshot, &roster); err != nil {
 		return nil, fmt.Errorf("decode agent snapshot: %w", err)
 	}
-	var refs []runtimeSkillRef
-	if len(roster.Skills) > 0 {
-		if err := json.Unmarshal(roster.Skills, &refs); err != nil {
-			return nil, fmt.Errorf("decode agent skills: %w", err)
-		}
-	}
+	refs := roster.Skills
 	children, err := agentconfig.Children(snapshot)
 	if err != nil {
 		return nil, fmt.Errorf("decode agent snapshot: %w", err)

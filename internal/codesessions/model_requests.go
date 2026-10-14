@@ -198,11 +198,7 @@ func (s *Service) modelRequestThread(ctx context.Context, codeSession db.CodeSes
 			return "", err
 		}
 		if threadID := mappings[agentID]; threadID != "" {
-			if _, err := s.resolveSubagentThread(ctx, codeSession, threadID); err == nil {
-				return threadID, nil
-			} else if !errors.Is(err, db.ErrInvalidState) {
-				return "", err
-			}
+			return threadID, nil
 		}
 		select {
 		case <-ctx.Done():
@@ -215,28 +211,9 @@ func (s *Service) modelRequestThread(ctx context.Context, codeSession db.CodeSes
 // The task registry is already persisted as thread_created events. Page it rather
 // than maintaining a second registry or assuming at most 500 tasks per session.
 func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.CodeSession) (map[string]string, error) {
-	lifecycles, err := s.listSubagentThreadCreatedEvents(ctx, codeSession)
-	if err != nil {
-		return nil, err
-	}
-	mappings := make(map[string]string)
-	for _, task := range lifecycles {
-		if task.ThreadID == "" {
-			continue
-		}
-		for _, id := range []string{task.TaskID, task.AgentID, task.AgentIDAlt, task.ToolUseID} {
-			if id != "" {
-				mappings[id] = task.ThreadID
-			}
-		}
-	}
-	return mappings, nil
-}
-
-func (s *Service) listSubagentThreadCreatedEvents(ctx context.Context, codeSession db.CodeSession) ([]subagentLifecycle, error) {
 	params := db.ListSessionEventsPageParams{WorkspaceUUID: codeSession.WorkspaceUUID, SessionExternalID: codeSession.SessionExternalID,
 		PrimaryOnly: true, Limit: 500, Order: "asc", Types: []string{"session.thread_created"}}
-	var lifecycles []subagentLifecycle
+	mappings := make(map[string]string)
 	for {
 		events, more, err := s.eventPayloads.ListSessionEventsPage(ctx, params)
 		if err != nil {
@@ -247,10 +224,17 @@ func (s *Service) listSubagentThreadCreatedEvents(ctx context.Context, codeSessi
 			if err := jsonv2.Unmarshal(event.Payload, &task); err != nil {
 				return nil, fmt.Errorf("decode thread mapping: %w", err)
 			}
-			lifecycles = append(lifecycles, task)
+			if task.ThreadID == "" {
+				continue
+			}
+			for _, id := range []string{task.TaskID, task.AgentID, task.AgentIDAlt, task.ToolUseID} {
+				if id != "" {
+					mappings[id] = task.ThreadID
+				}
+			}
 		}
 		if !more {
-			return lifecycles, nil
+			return mappings, nil
 		}
 		if len(events) == 0 {
 			return nil, errors.New("empty thread mapping page")

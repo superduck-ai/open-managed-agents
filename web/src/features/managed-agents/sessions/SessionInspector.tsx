@@ -154,7 +154,7 @@ export function SessionInspector({
     const allowedEvents = new Set(scopedToolLanes.flatMap((lane) => eventsByLaneId.get(lane.id) ?? []));
     return events.filter((event) => allowedEvents.has(event));
   }, [events, eventsByLaneId, scopedToolLanes, toolScope]);
-  const scopedToolAgent = toolScope === 'all' || scopedToolLanes.some((lane) => lane.isMain) ? related.agent : null;
+  const scopedToolAgent = related.agent;
   const toolRows = useMemo(
     () => buildInspectorToolRows(scopedToolEvents, scopedToolAgent),
     [scopedToolAgent, scopedToolEvents],

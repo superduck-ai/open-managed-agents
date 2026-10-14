@@ -304,17 +304,6 @@ func TestSessionEventMapperLatestTurnStart(t *testing.T) {
 	})
 }
 
-func TestSessionThreadMapperFillAgentSnapshot(t *testing.T) {
-	assertMapperBuilderContract(t, mapperBuilderContract{
-		statement: sessionThreadMapperFillAgentSnapshotStatement,
-		bound:     buildSessionThreadMapperFillAgentSnapshot(yourbatis.DialectPostgres, "workspace-uuid", "ses_test", "sthr_child", []byte(`{"id":"agent_child"}`)),
-		wantID:    "SessionThreadMapper.FillAgentSnapshot", wantKind: yourbatis.StatementUpdate,
-		wantArgumentNames:          []string{"snapshot", "workspaceUUID", "sessionExternalID", "threadExternalID"},
-		wantSensitiveArgumentNames: []string{"snapshot"},
-		wantSQLFragments:           []string{"SET agent_snapshot = CAST($1 AS jsonb)", "workspace_uuid = $2", "session_external_id = $3", "external_id = $4", "parent_thread_uuid IS NOT NULL", "COALESCE(agent_snapshot->>'id', '') = ''", "deleted_at IS NULL"},
-	})
-}
-
 func TestSessionMapperReplaceAgentSnapshot(t *testing.T) {
 	assertMapperBuilderContract(t, mapperBuilderContract{
 		statement: sessionMapperReplaceAgentSnapshotStatement,

@@ -52,8 +52,6 @@ func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 		codeSessionExternalID: claims.SessionID,
 		organizationUUID:      claims.OrganizationUUID,
 		workspaceUUID:         claims.WorkspaceUUID,
-		configAgentID:         strings.TrimSpace(r.URL.Query().Get("config_agent_id")),
-		configAgentName:       strings.TrimSpace(r.URL.Query().Get("config_agent_name")),
 	}
 	if !h.authorizeMCPProxyTarget(r.Context(), identity, target, rawTarget) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "MCP upstream is not allowed"))
@@ -81,8 +79,6 @@ func (h *Handler) handleNamedMCPProxy(w http.ResponseWriter, r *http.Request) {
 		codeSessionExternalID: claims.SessionID,
 		organizationUUID:      claims.OrganizationUUID,
 		workspaceUUID:         claims.WorkspaceUUID,
-		configAgentID:         strings.TrimSpace(r.URL.Query().Get("config_agent_id")),
-		configAgentName:       strings.TrimSpace(r.URL.Query().Get("config_agent_name")),
 	}
 	policyContext, err := h.loadMCPPolicyContext(r.Context(), identity)
 	if err != nil {
@@ -124,8 +120,6 @@ func (h *Handler) HandleMCPProtectedResource(w http.ResponseWriter, r *http.Requ
 		codeSessionExternalID: claims.SessionID,
 		organizationUUID:      claims.OrganizationUUID,
 		workspaceUUID:         claims.WorkspaceUUID,
-		configAgentID:         strings.TrimSpace(r.URL.Query().Get("config_agent_id")),
-		configAgentName:       strings.TrimSpace(r.URL.Query().Get("config_agent_name")),
 	}
 	policyContext, err := h.loadMCPPolicyContext(r.Context(), identity)
 	if err != nil {
@@ -259,23 +253,13 @@ func sanitizedMCPProxyHeaders(source http.Header) http.Header {
 func runtimeMCPResourceURL(r *http.Request, codeSessionID, serverName string) string {
 	return strings.TrimRight(httpapi.RequestBaseURL(r), "/") +
 		"/v2/ccr-sessions/" + url.PathEscape(codeSessionID) +
-		"/mcp/" + url.PathEscape(serverName) + runtimeMCPAgentScope(r)
+		"/mcp/" + url.PathEscape(serverName)
 }
 
 func runtimeMCPMetadataURL(r *http.Request, codeSessionID, serverName string) string {
 	return strings.TrimRight(httpapi.RequestBaseURL(r), "/") +
 		"/.well-known/oauth-protected-resource/v2/ccr-sessions/" + url.PathEscape(codeSessionID) +
-		"/mcp/" + url.PathEscape(serverName) + runtimeMCPAgentScope(r)
-}
-
-func runtimeMCPAgentScope(r *http.Request) string {
-	if name := strings.TrimSpace(r.URL.Query().Get("config_agent_name")); name != "" {
-		return "?config_agent_name=" + url.QueryEscape(name)
-	}
-	if agentID := strings.TrimSpace(r.URL.Query().Get("config_agent_id")); agentID != "" {
-		return "?config_agent_id=" + url.QueryEscape(agentID)
-	}
-	return ""
+		"/mcp/" + url.PathEscape(serverName)
 }
 
 type mcpGatewayResponseWriter struct {

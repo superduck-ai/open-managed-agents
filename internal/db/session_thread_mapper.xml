@@ -89,17 +89,6 @@
         AND deleted_at IS NULL
     </update>
 
-    <update id="FillAgentSnapshot" result="rows">
-        UPDATE session_threads
-        SET agent_snapshot = CAST(#{snapshot,sensitive=true} AS jsonb), updated_at = NOW()
-        WHERE workspace_uuid = #{workspaceUUID}
-        AND session_external_id = #{sessionExternalID}
-        AND external_id = #{threadExternalID}
-        AND parent_thread_uuid IS NOT NULL
-        AND COALESCE(agent_snapshot-&gt;&gt;'id', '') = ''
-        AND deleted_at IS NULL
-    </update>
-
     <update id="Archive" result="returning" resultType="sessionThreadRow">
         UPDATE session_threads
         SET archived_at = COALESCE(archived_at, NOW()),

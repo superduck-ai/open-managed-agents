@@ -58,7 +58,6 @@ type SessionThreadMapper interface {
 	ListPage(ctx context.Context, params sessionThreadPageMapperParams) ([]sessionThreadRow, error)
 	List(ctx context.Context, workspaceUUID, sessionExternalID string) ([]sessionThreadRow, error)
 	SetStatus(ctx context.Context, workspaceUUID, sessionExternalID, threadExternalID, status string) (int64, error)
-	FillAgentSnapshot(ctx context.Context, workspaceUUID, sessionExternalID, threadExternalID string, snapshot []byte) (int64, error)
 	Archive(ctx context.Context, workspaceUUID, sessionExternalID, threadExternalID string) (sessionThreadRow, error)
 	SoftDeleteBySession(ctx context.Context, workspaceUUID, sessionExternalID string) (int64, error)
 }

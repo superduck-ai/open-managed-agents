@@ -18,7 +18,7 @@ import (
 
 func verifySubagentLifecycleOrdering(t *testing.T, e *liveEnv) {
 	t.Helper()
-	f := e.newSessionWithSnapshot(t, json.RawMessage(`{"model":{"id":"claude-opus-4-6"},"multiagent":{"type":"coordinator","agents":[{"id":"agent_ordering","name":"ordering-reviewer","version":1,"model":{"id":"claude-sonnet-4-6"},"tools":[{"type":"agent_toolset_20260401","default_config":{"permission_policy":{"type":"always_ask"}},"configs":[{"name":"write","enabled":false}]}]}]}}`))
+	f := e.newSessionWithSnapshot(t, json.RawMessage(`{"model":{"id":"claude-opus-4-6"},"tools":[{"type":"agent_toolset_20260401","configs":[{"name":"write","enabled":false},{"name":"read","permission_policy":{"type":"always_ask"}}]}],"multiagent":{"type":"coordinator","agents":[{"id":"agent_ordering","name":"ordering-reviewer","version":1,"model":{"id":"claude-sonnet-4-6"},"tools":[{"type":"agent_toolset_20260401","default_config":{"permission_policy":{"type":"always_allow"}}}]}]}}`))
 	post := func(payloads ...any) {
 		t.Helper()
 		events := make([]map[string]any, len(payloads))
@@ -59,7 +59,7 @@ func verifySubagentLifecycleOrdering(t *testing.T, e *liveEnv) {
 	requireOK(t, err)
 	request.Header.Set("Authorization", "Bearer "+f.modelToken)
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Claude-Code-Agent-Id", "a")
+	request.Header.Set("X-Claude-Code-Agent-Id", "unknown")
 	response, err := http.DefaultClient.Do(request)
 	cancel()
 	blockedModel.Close()
@@ -67,7 +67,7 @@ func verifySubagentLifecycleOrdering(t *testing.T, e *liveEnv) {
 		response.Body.Close()
 	}
 	if !errors.Is(err, context.DeadlineExceeded) || forwarded.Load() != 0 {
-		t.Fatalf("unresolved model dispatched: response=%v error=%v forwarded=%d", response, err, forwarded.Load())
+		t.Fatalf("unknown runtime model dispatched: response=%v error=%v forwarded=%d", response, err, forwarded.Load())
 	}
 	for _, thread := range threads.Data {
 		if thread.ParentID == nil {
@@ -80,7 +80,7 @@ func verifySubagentLifecycleOrdering(t *testing.T, e *liveEnv) {
 		}
 		requireOK(t, jsonv2.Unmarshal(e.request(t, "GET", "/v1/sessions/"+f.session.ExternalID+"/threads/"+thread.ID+"/events?types[]=agent.tool_use", e.apiKey, nil, 200), &history))
 		if len(history.Data) != 1 || history.Data[0].EvaluatedPermission != "deny" {
-			t.Fatalf("unresolved child policy must deny: %+v", history.Data)
+			t.Fatalf("session policy must deny: %+v", history.Data)
 		}
 	}
 	for _, task := range []string{"b", "a"} {
@@ -89,8 +89,8 @@ func verifySubagentLifecycleOrdering(t *testing.T, e *liveEnv) {
 	}
 	load()
 	for _, thread := range threads.Data {
-		if thread.ParentID != nil && (thread.Agent.ID != "agent_ordering" || thread.Agent.Version != 1 || thread.Agent.Model.ID != "claude-sonnet-4-6") {
-			t.Fatalf("late tool did not repair child snapshot: %+v", thread)
+		if thread.ParentID != nil && (thread.Agent.ID != "" || thread.Agent.Version != 0 || thread.Agent.Model.ID != "") {
+			t.Fatalf("OMA injected child configuration: %+v", thread)
 		}
 		if thread.ParentID == nil {
 			continue
@@ -104,7 +104,7 @@ func verifySubagentLifecycleOrdering(t *testing.T, e *liveEnv) {
 		}
 		requireOK(t, jsonv2.Unmarshal(e.request(t, "GET", "/v1/sessions/"+f.session.ExternalID+"/threads/"+thread.ID+"/events?types[]=agent.tool_use", e.apiKey, nil, 200), &history))
 		if len(history.Data) != 3 || history.Data[1].EvaluatedPermission != "deny" || history.Data[2].EvaluatedPermission != "ask" {
-			t.Fatalf("repaired child lost deny/ask policy: %+v", history.Data)
+			t.Fatalf("child lost session deny/ask policy: %+v", history.Data)
 		}
 		e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{"events": []map[string]string{{"type": "user.tool_confirmation", "tool_use_id": "sevt_unknown", "result": "deny", "session_thread_id": thread.ID}}}, 409)
 		var confirmations struct {
@@ -113,13 +113,6 @@ func verifySubagentLifecycleOrdering(t *testing.T, e *liveEnv) {
 		requireOK(t, jsonv2.Unmarshal(e.request(t, "GET", "/v1/sessions/"+f.session.ExternalID+"/events?types[]=user.tool_confirmation", e.apiKey, nil, 200), &confirmations))
 		if len(confirmations.Data) != 0 {
 			t.Fatal("invalid confirmation was persisted")
-		}
-		requireOK(t, e.database.FillSessionThreadAgentSnapshot(t.Context(), f.code.WorkspaceUUID, f.session.ExternalID, thread.ID, json.RawMessage(`{"id":"wrong","version":2}`)))
-	}
-	load()
-	for _, thread := range threads.Data {
-		if thread.ParentID != nil && (thread.Agent.ID != "agent_ordering" || thread.Agent.Version != 1) {
-			t.Fatalf("repair overwrote pinned snapshot: %+v", thread)
 		}
 	}
 	verifySubagentTranscriptDedup(t, f)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 
-	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 )
 
@@ -29,8 +28,6 @@ type mcpProxyPolicyContext struct {
 // upstreamProxyIdentity 只由已验签的 session-ingress JWT claims 构造，作为
 // Code Session 策略查询的可信租户作用域；不接受 relay 在 CONNECT 中提交作用域。
 type upstreamProxyIdentity struct {
-	configAgentID         string
-	configAgentName       string
 	codeSessionExternalID string
 	organizationUUID      string
 	workspaceUUID         string
@@ -76,19 +73,7 @@ func (h *Handler) loadMCPProxyPolicyContext(ctx context.Context, identity upstre
 	if err != nil {
 		return mcpProxyPolicyContext{}, err
 	}
-	snapshot := record.AgentSnapshot
-	if identity.configAgentName != "" {
-		snapshot, err = agentsnapshot.ForSubagentType(snapshot, identity.configAgentName)
-		if err != nil {
-			return mcpProxyPolicyContext{}, err
-		}
-	} else if identity.configAgentID != "" {
-		snapshot, err = agentsnapshot.ForSubagent(snapshot, identity.configAgentID)
-		if err != nil {
-			return mcpProxyPolicyContext{}, err
-		}
-	}
-	policy, err := networkpolicy.ParseMCPProxyPolicy(record.EnvironmentConfig, snapshot)
+	policy, err := networkpolicy.ParseMCPProxyPolicy(record.EnvironmentConfig, record.AgentSnapshot)
 	if err != nil {
 		return mcpProxyPolicyContext{}, err
 	}

@@ -6,10 +6,6 @@ import (
 	jsonv2 "encoding/json/v2"
 	"fmt"
 	"strings"
-
-	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
-	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
 const managedAgentDelegationPrompt = `## Subagent coordination
@@ -41,7 +37,7 @@ type claudeAgentDefinition struct {
 	MCPServers  []map[string]json.RawMessage `json:"mcpServers,omitempty"`
 }
 
-func buildManagedAgentSubagents(source json.RawMessage, identity codesessions.MCPRuntimeIdentity, cfg config.TunnelConfig) (json.RawMessage, error) {
+func buildManagedAgentSubagents(source, document json.RawMessage) (json.RawMessage, error) {
 	var input struct {
 		Multiagent *struct {
 			Agents []json.RawMessage `json:"agents"`
@@ -55,12 +51,20 @@ func buildManagedAgentSubagents(source json.RawMessage, identity codesessions.MC
 	if input.Multiagent == nil {
 		return source, nil
 	}
-	names, err := agentsnapshot.SubagentNames(input.Multiagent.Agents)
-	if err != nil {
-		return nil, err
+	var mcp struct {
+		Servers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if len(document) > 0 {
+		if err := jsonv2.Unmarshal(document, &mcp); err != nil {
+			return nil, err
+		}
+	}
+	var servers []map[string]json.RawMessage
+	for name, server := range mcp.Servers {
+		servers = append(servers, map[string]json.RawMessage{strings.ReplaceAll(name, ".", "_"): server})
 	}
 	agents := make(map[string]claudeAgentDefinition, len(input.Multiagent.Agents))
-	for i, raw := range input.Multiagent.Agents {
+	for _, raw := range input.Multiagent.Agents {
 		var snapshot subagentLaunchSnapshot
 		if err := jsonv2.Unmarshal(raw, &snapshot); err != nil {
 			return nil, err
@@ -68,10 +72,16 @@ func buildManagedAgentSubagents(source json.RawMessage, identity codesessions.MC
 		if snapshot.ID == "" || snapshot.Model.ID == "" {
 			return nil, fmt.Errorf("subagent snapshot must include id and model")
 		}
-		definition := claudeAgentDefinition{Description: snapshot.Description, Prompt: snapshot.System + "\n\n" + managedAgentEnvironmentPrompt, Model: snapshot.Model.ID}
+		if snapshot.Name == "" || strings.HasPrefix(snapshot.Name, "-") {
+			return nil, fmt.Errorf("subagent name must be non-empty and must not start with '-'")
+		}
+		if _, exists := agents[snapshot.Name]; exists {
+			return nil, fmt.Errorf("duplicate subagent name: %s", snapshot.Name)
+		}
+		definition := claudeAgentDefinition{Description: snapshot.Description, Prompt: snapshot.System + "\n\n" + managedAgentEnvironmentPrompt, Model: snapshot.Model.ID, MCPServers: servers}
 		if definition.Description == "" {
-			definition.Description = cmp.Or(snapshot.Name, names[i])
-		} else if snapshot.Name != "" {
+			definition.Description = snapshot.Name
+		} else {
 			definition.Description = snapshot.Name + ": " + definition.Description
 		}
 		for _, skill := range snapshot.Skills {
@@ -82,24 +92,7 @@ func buildManagedAgentSubagents(source json.RawMessage, identity codesessions.MC
 			}
 			definition.Skills = append(definition.Skills, directory)
 		}
-		childIdentity := identity
-		childIdentity.ConfigAgentName = names[i]
-		document, err := codesessions.BuildMCPRuntimeConfig(raw, childIdentity, cfg)
-		if err != nil {
-			return nil, err
-		}
-		if len(document) > 0 {
-			var mcp struct {
-				Servers map[string]json.RawMessage `json:"mcpServers"`
-			}
-			if err := jsonv2.Unmarshal(document, &mcp); err != nil {
-				return nil, err
-			}
-			for name, server := range mcp.Servers {
-				definition.MCPServers = append(definition.MCPServers, map[string]json.RawMessage{strings.ReplaceAll(name, ".", "_"): server})
-			}
-		}
-		agents[names[i]] = definition
+		agents[snapshot.Name] = definition
 	}
 	encoded, err := jsonv2.Marshal(agents)
 	if err != nil {

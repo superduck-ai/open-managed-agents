@@ -37,13 +37,6 @@ func verifyParallelConfiguredSubagents(t *testing.T, e *liveEnv, childID, childN
 		Data []struct {
 			ID       string  `json:"id"`
 			ParentID *string `json:"parent_thread_id"`
-			Agent    struct {
-				ID      string `json:"id"`
-				Version int    `json:"version"`
-				Model   struct {
-					ID string `json:"id"`
-				} `json:"model"`
-			} `json:"agent"`
 		} `json:"data"`
 	}
 	requireOK(t, jsonv2.Unmarshal(e.request(t, "GET", "/v1/sessions/"+f.session.ExternalID+"/threads", e.apiKey, nil, 200), &threads))
@@ -51,9 +44,6 @@ func verifyParallelConfiguredSubagents(t *testing.T, e *liveEnv, childID, childN
 	for _, thread := range threads.Data {
 		if thread.ParentID == nil {
 			continue
-		}
-		if thread.Agent.ID != childID || thread.Agent.Version != 1 || thread.Agent.Model.ID != "claude-sonnet-4-6" {
-			t.Fatalf("parallel child snapshot incomplete: %+v", thread)
 		}
 		children[thread.ID] = true
 	}

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"fmt"
-	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/skills"
 	"net/url"
@@ -13,17 +12,29 @@ import (
 	"testing"
 )
 
+func TestManagedAgentSubagentsRejectsInvalidNames(t *testing.T) {
+	for _, source := range []string{
+		`{"multiagent":{"agents":[{"id":"agent_a","model":{"id":"model"}}]}}`,
+		`{"multiagent":{"agents":[{"id":"agent_a","name":"-reviewer","model":{"id":"model"}}]}}`,
+		`{"multiagent":{"agents":[{"id":"agent_a","name":"reviewer","model":{"id":"model"}},{"id":"agent_b","name":"reviewer","model":{"id":"model"}}]}}`,
+	} {
+		if _, err := buildManagedAgentSubagents(json.RawMessage(source), nil); err == nil {
+			t.Fatalf("accepted invalid child names: %s", source)
+		}
+	}
+}
+
 func TestManagedAgentSubagentsPreservesNameAndDescription(t *testing.T) {
 	for _, test := range []struct {
 		name, description, want string
 	}{
 		{name: "计算Agent", description: "内置核心工具集的空白起点。", want: "计算Agent: 内置核心工具集的空白起点。"},
 		{name: "计算Agent", want: "计算Agent"},
-		{description: "Calculate results", want: "Calculate results"},
+		{name: "Explore", description: "Calculate results", want: "Explore: Calculate results"},
 	} {
 		t.Run(test.want, func(t *testing.T) {
 			source := json.RawMessage(fmt.Sprintf(`{"multiagent":{"agents":[{"id":"agent_child","name":%q,"description":%q,"model":{"id":"child-model"}}]}}`, test.name, test.description))
-			raw, err := buildManagedAgentSubagents(source, codesessions.MCPRuntimeIdentity{}, mcpConfigTestRuntimeConfig().Tunnel)
+			raw, err := buildManagedAgentSubagents(source, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -35,11 +46,7 @@ func TestManagedAgentSubagentsPreservesNameAndDescription(t *testing.T) {
 			if err := jsonv2.Unmarshal([]byte(encoded), &definitions); err != nil {
 				t.Fatal(err)
 			}
-			name := test.name
-			if name == "" {
-				name = "subagent"
-			}
-			definition, found := definitions[name]
+			definition, found := definitions[test.name]
 			if !found || len(definitions) != 1 || definition.Description != test.want || strings.Contains(encoded, "agent_child") {
 				t.Fatalf("registered by name=%t, count=%d, description=%q, want %q", found, len(definitions), definition.Description, test.want)
 			}
@@ -47,10 +54,10 @@ func TestManagedAgentSubagentsPreservesNameAndDescription(t *testing.T) {
 	}
 }
 
-func TestManagedAgentSubagentsUsesChildMCPGateway(t *testing.T) {
-	source := json.RawMessage(`{"multiagent":{"agents":[{"id":"agent_child","name":"child","model":{"id":"child-model"},"mcp_servers":[{"name":"local","type":"url","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"}]}]}}`)
+func TestManagedAgentSubagentsUsesSessionMCPGateway(t *testing.T) {
+	source := json.RawMessage(`{"mcp_servers":[{"name":"local","type":"url","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"}],"multiagent":{"agents":[{"id":"agent_child","name":"child","model":{"id":"child-model"},"mcp_servers":[{"name":"child_only","type":"url","url":"https://child.example/mcp"}]}]}}`)
 	cfg := mcpConfigTestRuntimeConfig()
-	raw, err := buildManagedAgentSubagents(source, codesessions.MCPRuntimeIdentity{APIBaseURL: "https://runtime.example", CodeSessionID: "cse_test", SessionIngressToken: "runtime-token"}, cfg.Tunnel)
+	raw, err := buildManagedAgentRuntimeMCPConfig(source, "cse_test", "runtime-token", cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,8 +77,8 @@ func TestManagedAgentSubagentsUsesChildMCPGateway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target.Query().Get("config_agent_name") != "child" || strings.Contains(encoded, "agent_child") {
-		t.Fatalf("child Tunnel uses parent MCP scope: %s", address)
+	if target.RawQuery != "" || len(definitions["child"].MCPServers) != 1 || strings.Contains(encoded, "child_only") || strings.Contains(encoded, "agent_child") {
+		t.Fatalf("child Tunnel does not use session MCP scope: %s", address)
 	}
 }
 
@@ -85,7 +92,7 @@ func TestManagedAgentSubagentSkillsPreserveVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	launch, err = buildManagedAgentSubagents(launch, codesessions.MCPRuntimeIdentity{}, mcpConfigTestRuntimeConfig().Tunnel)
+	launch, err = buildManagedAgentSubagents(launch, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

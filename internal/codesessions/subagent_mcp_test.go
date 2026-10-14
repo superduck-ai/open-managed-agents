@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/go-chi/chi/v5"
-	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"net/http"
 	"net/http/httptest"
@@ -13,25 +12,12 @@ import (
 	"testing"
 )
 
-func TestNamedMCPGatewayUsesPinnedChildScope(t *testing.T) {
+func TestNamedMCPGatewayUsesSessionScope(t *testing.T) {
 	target := "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"
 	handler, token := newNamedMCPTestHandler(t, "local", target)
-	snapshot := json.RawMessage(`{"mcp_servers":[],"multiagent":{"agents":[{"id":"agent_child","name":"计算Agent","version":2,"mcp_servers":[{"name":"local","type":"url","url":"` + target + `"}]}]}}`)
-	handler.loadMCPPolicyContext = func(_ context.Context, identity upstreamProxyIdentity) (mcpProxyPolicyContext, error) {
-		effective := snapshot
-		var err error
-		if identity.configAgentName != "" {
-			effective, err = agentsnapshot.ForSubagentType(snapshot, identity.configAgentName)
-			if err != nil {
-				return mcpProxyPolicyContext{}, err
-			}
-		} else if identity.configAgentID != "" {
-			effective, err = agentsnapshot.ForSubagent(snapshot, identity.configAgentID)
-			if err != nil {
-				return mcpProxyPolicyContext{}, err
-			}
-		}
-		policy, err := networkpolicy.ParseMCPProxyPolicy([]byte(`{"type":"cloud","networking":{"type":"unrestricted"}}`), effective)
+	snapshot := json.RawMessage(`{"mcp_servers":[{"name":"local","type":"url","url":"` + target + `"}],"multiagent":{"agents":[{"name":"child","mcp_servers":[{"name":"child_only","type":"url","url":"https://child.example/mcp"}]}]}}`)
+	handler.loadMCPPolicyContext = func(_ context.Context, _ upstreamProxyIdentity) (mcpProxyPolicyContext, error) {
+		policy, err := networkpolicy.ParseMCPProxyPolicy([]byte(`{"type":"cloud","networking":{"type":"unrestricted"}}`), snapshot)
 		return mcpProxyPolicyContext{policy: policy}, err
 	}
 	var calls int
@@ -45,30 +31,30 @@ func TestNamedMCPGatewayUsesPinnedChildScope(t *testing.T) {
 	}}
 	router := chi.NewRouter()
 	router.Route("/v2", handler.RegisterV2Routes)
-	for _, test := range []struct {
-		query  string
-		status int
-	}{{"config_agent_name=unknown", 403}, {"config_agent_id=agent_foreign", 403}, {"", 404}, {"config_agent_name=" + url.QueryEscape("计算Agent"), 204}, {"config_agent_id=agent_child", 204}} {
-		request := httptest.NewRequest("POST", "/v2/ccr-sessions/cse_test/mcp/local?"+test.query, strings.NewReader(`{}`))
+	for _, query := range []string{"", "config_agent_name=unknown&config_agent_id=agent_foreign"} {
+		request := httptest.NewRequest("POST", "/v2/ccr-sessions/cse_test/mcp/local?"+query, strings.NewReader(`{}`))
 		request.Header.Set("Authorization", "Bearer "+token)
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
-		if response.Code != test.status {
-			t.Fatalf("query=%q status=%d want=%d body=%s", test.query, response.Code, test.status, response.Body.String())
+		if response.Code != 204 {
+			t.Fatalf("query=%q status=%d body=%s", query, response.Code, response.Body.String())
 		}
+	}
+	request := httptest.NewRequest("POST", "/v2/ccr-sessions/cse_test/mcp/child_only", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != 404 {
+		t.Fatalf("child configuration changed session MCP servers: %d", response.Code)
 	}
 	if calls != 2 {
 		t.Fatalf("Tunnel called %d times, want two", calls)
 	}
-	request := httptest.NewRequest("GET", "https://runtime.example/metadata?config_agent_id=agent_child", nil)
-	if !strings.HasSuffix(runtimeMCPMetadataURL(request, "cse_test", "local"), "?config_agent_id=agent_child") || !strings.HasSuffix(runtimeMCPResourceURL(request, "cse_test", "local"), "?config_agent_id=agent_child") {
-		t.Fatal("MCP OAuth discovery lost child scope")
-	}
-	request = httptest.NewRequest("GET", "https://runtime.example/metadata?config_agent_name="+url.QueryEscape("计算Agent"), nil)
+	request = httptest.NewRequest("GET", "https://runtime.example/metadata?config_agent_name=child&config_agent_id=agent_child", nil)
 	for _, address := range []string{runtimeMCPMetadataURL(request, "cse_test", "local"), runtimeMCPResourceURL(request, "cse_test", "local")} {
 		parsed, err := url.Parse(address)
-		if err != nil || parsed.Query().Get("config_agent_name") != "计算Agent" || parsed.Query().Get("config_agent_id") != "" {
-			t.Fatalf("name scope lost: %s, error=%v", address, err)
+		if err != nil || parsed.RawQuery != "" {
+			t.Fatalf("MCP discovery retained child scope: %s, error=%v", address, err)
 		}
 	}
 }

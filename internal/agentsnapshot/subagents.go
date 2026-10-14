@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"fmt"
+	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -30,6 +31,7 @@ func Resolve(ctx context.Context, database *db.DB, agent db.Agent) (json.RawMess
 	if roster == nil {
 		return FromAgent(agent)
 	}
+	seenNames := make(map[string]struct{}, len(roster.Agents))
 	for i, raw := range roster.Agents {
 		var ref rosterReference
 		if err := jsonv2.Unmarshal(raw, &ref); err != nil {
@@ -49,6 +51,13 @@ func Resolve(ctx context.Context, database *db.DB, agent db.Agent) (json.RawMess
 				return nil, fmt.Errorf("subagent %s must not configure multiagent", ref.ID)
 			}
 		}
+		if child.Name == "" || strings.HasPrefix(child.Name, "-") {
+			return nil, fmt.Errorf("subagent name must be non-empty and must not start with '-'")
+		}
+		if _, exists := seenNames[child.Name]; exists {
+			return nil, fmt.Errorf("duplicate subagent name: %s", child.Name)
+		}
+		seenNames[child.Name] = struct{}{}
 		child.Multiagent = nil
 		expanded, err := FromAgent(child)
 		if err != nil {

@@ -21,6 +21,15 @@ func TestResolveRejectsInvalidReferences(t *testing.T) {
 	}
 }
 
+func TestResolveRejectsInvalidSelfName(t *testing.T) {
+	for _, name := range []string{"", "-parent"} {
+		agent := db.Agent{ExternalID: "agent_parent", CurrentVersion: 1, Name: name, Multiagent: json.RawMessage(`{"type":"coordinator","agents":[{"id":"agent_parent","version":1}]}`)}
+		if _, err := Resolve(t.Context(), nil, agent); err == nil {
+			t.Fatalf("accepted invalid self name: %q", name)
+		}
+	}
+}
+
 func TestResolveCurrentSelfUsesAgentCopy(t *testing.T) {
 	agent := db.Agent{ExternalID: "agent_parent", CurrentVersion: 1, Name: "parent", System: new("parent-system"), Model: json.RawMessage(`{"id":"parent-model"}`), Multiagent: json.RawMessage(`{"type":"coordinator","agents":[{"id":"agent_parent","version":1}]}`)}
 	resolved, err := Resolve(t.Context(), nil, agent)

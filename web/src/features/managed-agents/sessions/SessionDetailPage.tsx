@@ -72,6 +72,7 @@ import {
   sessionDetailEventCopyPayload,
   sessionEventEntrySelectionId,
   sessionEventEntryRowId,
+  sessionEventThreadId,
   sessionEventUpdateTimestamp,
   sessionShouldStreamEvents,
   sessionStatusIsLive,
@@ -116,9 +117,19 @@ function sessionPendingAction(
   toolCall: ToolCallEntry | null,
   onConfirm: (input: SessionToolConfirmationInput) => Promise<void>,
   disabled: boolean,
+  threadNameById: Map<string, string>,
+  mainLabel: string,
 ) {
   if (!toolCall) return undefined;
-  return <SessionRequiresActionCard toolCall={toolCall} onConfirm={onConfirm} disabled={disabled} />;
+  const threadId = sessionEventThreadId(toolCall.event);
+  return (
+    <SessionRequiresActionCard
+      toolCall={toolCall}
+      onConfirm={onConfirm}
+      disabled={disabled}
+      threadLabel={threadNameById.get(threadId) ?? (threadId === SESSION_MAIN_LANE_ID ? mainLabel : threadId)}
+    />
+  );
 }
 
 function SessionNotFound({
@@ -442,7 +453,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   );
   const currentViewCopyPayload = useMemo(() => sessionDetailEventCopyPayload(filteredEntries), [filteredEntries]);
   const fullTranscriptCopyPayload = useMemo(() => sessionDetailEventCopyPayload(entries), [entries]);
-  const actionEntries = allEntries;
+  const actionEntries = activeLane === SESSION_MAIN_LANE_ID ? allEntries : entries;
   const requiresActionEventIDs = useMemo(() => latestRequiresActionEventIDs(events), [events]);
   const activeAwaitingToolCall = useMemo(
     () => findActiveAwaitingToolCall(actionEntries, requiresActionEventIDs),
@@ -751,7 +762,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
               composer={
                 <SessionMessageComposer
                   acceptingMessages={conversationState.acceptingMessages}
-                  awaitingAction={Boolean(activeAwaitingToolCall)}
+                  awaitingAction={requiresActionEventIDs.size > 0}
                   disabled={conversationState.disabled}
                   live={conversationState.live}
                   onError={setMutationError}
@@ -807,6 +818,8 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                 activeAwaitingToolCall,
                 handleToolConfirmation,
                 conversationState.disabled,
+                threadNameById,
+                lanes[0].label,
               )}
               onClearFilters={() => {
                 setQuery('');

@@ -2488,7 +2488,7 @@
   "managedAgents.agents.archiveSelected": "归档所选智能体",
   "managedAgents.sessions.setupDescription": "在其环境中设置您的智能体实例。",
   "managedAgents.sessions.runNamePlaceholder": "为此次运行命名",
-  "managedAgents.credentialVaults.addVault": "添加密钥库",
+  "managedAgents.credentialVaults.addVault": "添加保险库",
   "managedAgents.credentialVaults.removeVault": "移除 {name}",
   "managedAgents.agents.newAgent": "新建智能体",
   "managedAgents.agents.createDialog.configuredTools": "{count} 个工具集",

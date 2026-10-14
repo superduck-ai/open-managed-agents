@@ -22,6 +22,7 @@ flowchart LR
 - Raw 输入无效时保留最后一份合法 Draft，禁止切回 Rendered、切换格式、创建，以及通过模板或 Describe 生成覆盖这段未保存文本；生成请求完成时也会重新检查 Raw 状态。
 - Raw 合法时，模板选择与 Describe 生成成功会整体替换 Draft、清除错误并折叠 Starting point。
 - 取消或离开创建页直接丢弃 Draft；生成请求会随组件卸载中止。
+- Escape 不退出独立创建页。取消返回列表；创建成功直接进入新 Agent 的配置页，不先导航到列表页。
 
 ## 配置不变量
 

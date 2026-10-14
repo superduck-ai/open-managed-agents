@@ -14,6 +14,67 @@ import {
 
 afterEach(resetManagedAgentsTestState);
 
+test('partial batch archive waits for every request and removes successful agents even if list refresh fails', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+  mockAgentsApi([serverAgent, { ...serverAgent, id: 'agent_second123456', name: 'Second agent' }]);
+  const baseFetch = globalThis.fetch;
+  let refreshFails = false;
+  let finishArchive!: () => void;
+  const archivePending = new Promise<void>((resolve) => {
+    finishArchive = resolve;
+  });
+  globalThis.fetch = mock(async (input, init) => {
+    const url = String(input);
+    if (url.includes(`/v1/agents/${serverAgent.id}/archive?`)) {
+      return Response.json({ error: { message: 'First agent could not be archived' } }, { status: 500 });
+    }
+    if (url.includes('/v1/agents/agent_second123456/archive?')) {
+      await archivePending;
+      refreshFails = true;
+    }
+    if (refreshFails && url.startsWith('/v1/agents?') && init?.method !== 'POST') {
+      return Response.json({ error: { message: 'List refresh failed' } }, { status: 500 });
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  render(<ManagedAgentsPage section="agents" />);
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Select Server agent' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Second agent' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Archive selected' }));
+  fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Archive' }));
+  await waitFor(() =>
+    expect(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancel' }).hasAttribute('disabled'),
+    ).toBe(true),
+  );
+  finishArchive();
+  await waitFor(() => expect(Boolean(screen.queryByRole('alertdialog'))).toBe(false));
+  await waitFor(() => expect(Boolean(screen.queryByRole('link', { name: 'Second agent' }))).toBe(false));
+  expect(screen.getByRole('link', { name: 'Server agent' })).toBeTruthy();
+  expect(screen.getByRole('checkbox', { name: 'Select Server agent' }).hasAttribute('data-disabled')).toBe(false);
+  expect(screen.getByRole('alert').textContent).toContain('First agent could not be archived');
+});
+
+test('partial batch archive marks only successful agents as archived in the All view', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+  mockAgentsApi([serverAgent, { ...serverAgent, id: 'agent_second123456', name: 'Second agent' }], {
+    agentArchiveErrorOnce: true,
+  });
+  render(<ManagedAgentsPage section="agents" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Status Active' }));
+  fireEvent.click(await screen.findByRole('menuitemradio', { name: 'All' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Select Server agent' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Second agent' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Archive selected' }));
+  fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Archive' }));
+  await waitFor(() => expect(Boolean(screen.queryByRole('alertdialog'))).toBe(false));
+  expect(screen.getByRole('checkbox', { name: 'Select Server agent' }).hasAttribute('data-disabled')).toBe(false);
+  expect(screen.getByRole('checkbox', { name: 'Select Second agent' }).hasAttribute('data-disabled')).toBe(true);
+  const row = screen.getByRole('link', { name: 'Second agent' }).closest('tr')!;
+  expect(within(row).getByText('Archived')).toBeTruthy();
+  expect(screen.getByRole('alert').textContent).toContain('agent archive failed');
+});
+
 test('quick view reports retrieval failures and retries without leaving the list', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/agents');
   mockAgentsApi([serverAgent]);

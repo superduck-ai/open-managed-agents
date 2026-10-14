@@ -1,4 +1,4 @@
-import { afterEach, expect, mock, test } from 'bun:test';
+import { afterEach, expect, mock, spyOn, test } from 'bun:test';
 import {
   ManagedAgentsPage,
   fireEvent,
@@ -12,6 +12,25 @@ import {
 } from '../ManagedAgentsPage.test-utils';
 
 afterEach(resetManagedAgentsTestState);
+
+test('successful agent creation navigates directly to its configuration without an intermediate list entry', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agents/new');
+  mockAgentsApi([]);
+  render(<ManagedAgentsPage section="agents" />);
+  const page = await screen.findByRole('main', { name: 'Create agent' });
+  await within(page).findByRole('textbox', { name: 'Name' });
+  const pushState = spyOn(window.history, 'pushState');
+  try {
+    fireEvent.click(within(page).getByRole('button', { name: 'Create agent' }));
+    await waitFor(() => expect(window.location.pathname).toBe('/workspaces/default/agents/agent_created123456'));
+    expect(window.location.search).toBe('?tab=config');
+    expect(pushState.mock.calls.map((call) => call[2])).toEqual([
+      '/workspaces/default/agents/agent_created123456?tab=config',
+    ]);
+  } finally {
+    pushState.mockRestore();
+  }
+});
 
 test('failed agent creation preserves the standalone page and edited draft', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/agents/new');

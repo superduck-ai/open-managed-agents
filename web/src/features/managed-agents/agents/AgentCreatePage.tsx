@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { createAgent } from '../api';
 import type { AgentApiResponse, CreateAgentInput } from '../types';
-import { navigateToInternalHref } from '../utils';
+import { navigateToAgentConfig, navigateToInternalHref } from '../utils';
 import { CreateAgentEditor } from './create-dialog';
 import { agentCreateHref } from './creation-route';
 
@@ -25,6 +25,10 @@ export function AgentCreatePage({
     <CreateAgentEditor
       workspaceId={workspaceId}
       onCreate={onCreate ?? ((input) => createAgent(input, workspaceId))}
+      onCreated={(agent) => {
+        onClose?.();
+        navigateToAgentConfig(workspaceId, agent.id);
+      }}
       onClose={() => {
         onClose?.();
         navigateToInternalHref(`/workspaces/${encodeURIComponent(workspaceId || 'default')}/agents`);

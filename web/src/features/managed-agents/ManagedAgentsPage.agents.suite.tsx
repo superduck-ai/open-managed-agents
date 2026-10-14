@@ -1260,8 +1260,8 @@ export function registerManagedAgentsAgentsTests() {
     const builtInCard = cards[0];
     expect(within(builtInCard).getByText('Custom')).toBeTruthy();
     fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+22/ }));
-    expect(within(builtInCard).getByText('bash')).toBeTruthy();
-    expect(within(builtInCard).getByText('Always deny')).toBeTruthy();
+    const bashRow = within(builtInCard).getByText('bash').parentElement!;
+    expect(within(bashRow).getByText('Always deny')).toBeTruthy();
     expect(within(builtInCard).getAllByText('Always allow').length).toBeGreaterThan(0);
 
     const customCard = cards[1];
@@ -2556,7 +2556,11 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
     expect(screen.getByRole('main', { name: 'Create agent' })).toBeTruthy();
     fireEvent.keyDown(document, { key: 'Escape' });
+    expect(Boolean(screen.queryByRole('main', { name: 'Create agent' }))).toBe(true);
+    expect(window.location.pathname).toBe('/workspaces/default/agents/new');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('main', { name: 'Create agent' })).toBeNull();
+    expect(window.location.pathname).toBe('/workspaces/default/agents');
 
     cleanup();
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');

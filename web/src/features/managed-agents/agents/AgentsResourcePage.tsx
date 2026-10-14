@@ -13,7 +13,6 @@ import { Search, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { consoleResourceListLimit } from '../../../shared/console-list';
 import {
-  archiveAgent,
   createAgent,
   defaultAgentFilters,
   exactAgentIdPattern,
@@ -58,6 +57,7 @@ import { AgentListTable } from './AgentListTable';
 import { AgentListHeader } from './AgentListHeader';
 import { AgentListOverlays } from './AgentListOverlays';
 import { agentMatchesClientFilters, emptyAgents, rowFromAgent } from './model';
+import { archiveAgentBatch } from './archive';
 
 export { AgentDetailPage } from './detail';
 export {
@@ -515,10 +515,9 @@ export function AgentsResourcePage({
     setArchiveError(null);
     setArchivingIds((current) => new Set([...current, ...ids]));
     try {
-      try {
-        await Promise.all(ids.map((id) => archiveAgent(id, workspaceId)));
-      } catch (error) {
-        setArchiveError(errorMessage(error));
+      const { archivedIds, error: archiveFailure } = await archiveAgentBatch(ids, workspaceId);
+      setArchiveError(archiveFailure);
+      if (!archivedIds.length) {
         return;
       }
       if (agentLoadMode === 'list' && statusFilter !== 'all') {
@@ -550,11 +549,11 @@ export function AgentsResourcePage({
               : current,
           );
         } catch (error) {
-          removeArchivedAgents(ids);
-          setArchiveError(errorMessage(error));
+          removeArchivedAgents(archivedIds);
+          setArchiveError(archiveFailure ?? errorMessage(error));
         }
       } else {
-        removeArchivedAgents(ids);
+        removeArchivedAgents(archivedIds);
       }
     } finally {
       setArchivingIds((current) => {

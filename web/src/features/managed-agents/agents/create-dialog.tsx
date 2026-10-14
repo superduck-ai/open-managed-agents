@@ -22,7 +22,7 @@ import {
 import { ManagedErrorAlert } from '../components/common';
 import { templateBody, templateTitle } from '../labels';
 import { type AgentApiResponse, type AgentTemplate, type CreateAgentInput } from '../types';
-import { errorMessage, navigateToAgentConfig } from '../utils';
+import { errorMessage } from '../utils';
 import { listCreateAgentModels } from './create-dialog-api';
 import { CreateDialogConfigEditor } from './create-dialog-config-editor';
 import { normalizeCreateAgentDraft } from './create-dialog-model';
@@ -34,6 +34,7 @@ type CreateAgentEditorProps = {
   workspaceId: string;
   onClose: () => void;
   onCreate: (input: CreateAgentInput) => Promise<AgentApiResponse>;
+  onCreated: (agent: AgentApiResponse) => void;
 };
 
 export function CreateAgentEditor(props: CreateAgentEditorProps) {
@@ -129,6 +130,7 @@ function CreateAgentEditorContent({
   workspaceId,
   onClose,
   onCreate,
+  onCreated,
   orgUuid,
   modelOptions,
 }: CreateAgentEditorProps & {
@@ -239,8 +241,7 @@ function CreateAgentEditorContent({
     setCreateError(null);
     try {
       const created = await onCreate(normalizeCreateAgentDraft(draftState.draft));
-      onClose();
-      navigateToAgentConfig(workspaceId, created.id);
+      onCreated(created);
     } catch (error) {
       setCreateError(errorMessage(error));
       setIsCreating(false);

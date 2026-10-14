@@ -236,7 +236,7 @@ vault:
 
 ### 故障、内存与日志
 
-阿里云 KMS 每次操作继承调用方 context，并设置 10 秒 KMS 请求上限。应用层和 KMS SDK 自动重试均关闭，不缓存明文 DEK。网络超时、限流、服务端错误、身份权限错误、CMK 禁用/不存在、篡改、返回错误 CMK、非 32 字节 DEK 均直接返回错误；不落明文、不使用本地 KEK 兜底。SDK 的身份刷新遵循其自身有界网络超时。
+阿里云 KMS 每次操作继承调用方 context，并设置 10 秒 KMS 请求上限。应用层和 KMS SDK 自动重试均关闭，不缓存明文 DEK。网络超时、限流、服务端错误、身份权限错误、CMK 禁用/不存在、篡改、返回错误 CMK、非 32 字节 DEK 均直接返回错误；不落明文、不使用本地 KEK 兜底。SDK 的身份刷新遵循其自身有界网络超时。共享的 SDK Credential 在 `GetCredential` 边界使用互斥锁串行获取和刷新，避免 ECS/ACK 角色凭据缓存的数据竞争；取得凭据后，KMS HTTP 请求仍可并发执行。
 
 业务写入发生在 Seal 成功之后；部分 auth 更新先 Open 再 merge/Seal。无秘密变更的元数据读取/更新和归档不要求 KMS 可用；归档仍可清除密文。匹配凭证需要解密而失败时，沿用 MITM 的 fail-closed 错误出口，不转发没有凭据的请求。
 
@@ -437,7 +437,7 @@ sequenceDiagram
 | 401 重试 body | **仅当** injection plan 有可注入 URL 匹配时才缓冲请求体（上限 32 MiB）以支持 inject/401 重放；无匹配 → 流式 passthrough，不触发 32 MiB 门闩。超限 **fail closed**（不静默截断重放）。打出的是 clone；snapshot 路径用 `defer closeRequestBody(req)` 关闭原始 body；passthrough 由 base RoundTripper 关闭 |
 | Open / refresh 失败 | **跳过该条**继续下一条可注入匹配（多 vault / 近似 URL），跳过路径打 Warn（credential_id / auth_type / 脱敏 error）；全部失败 → 502 |
 | 运行时错误合同 | fail-closed 出口统一为 `ErrInjectionRejected`（`errors.go` + `injectionRejected`）；客户端文案经 `InjectionPublicMessage` 选择：需要重新授权时为 `MCP OAuth credentials require reauthorization`，其余保持 `InjectionUnavailablePublicMessage`。MITM ErrorHandler / Prepare 用 `errors.Is` 映射 502，**不**走 Vaults JSON `ErrorAdapter`。skip 路径内部错误同样由 `errors.go` 命名构造，不在 injector/refresh 内散落 `errors.New` |
-| 并发 refresh | 同 credential **短租约**串行换票。组装层注入 `OAuthRefreshLease`：测试/无 Redis 默认进程内 **cap-1 channel 信号量**（ctx 取消不泄漏持有者）；生产 `NewRedisOAuthRefreshLease`（`SET NX`，TTL = `maxOAuthRefreshCASAttempts × token超时 + 5s`，尚未随 KMS I/O 延长或续约，nil Redis 拒绝）。持约后重读，读取失败直接返回，不使用旧快照换票。每次 Hold **最多一次** token-endpoint exchange。exchange 成功后必须落盘：`version` CAS 冲突时重读，信封仍是换票前那份或重读 token 不可用则 rebase 再写 R1；重读已有未过期 token 则复用。exchange 失败后重读，仅当信封 token 已变且 access 未过期时复用，否则保留换票错误（改名导致的 version +1 不再触发二次换票）。抢约失败则等待租约（尊重 ctx），不并行打 IdP |
+| 并发 refresh | 同 credential **短租约**串行换票。组装层注入 `OAuthRefreshLease`：测试/无 Redis 默认进程内 **cap-1 channel 信号量**（ctx 取消不泄漏持有者）；生产 `NewRedisOAuthRefreshLease` 使用 `SET NX` 获取租约，TTL = `maxOAuthRefreshCASAttempts × token超时 + 5s`；每 TTL/3 通过 Lua 校验随机持有者 token 并执行 `PEXPIRE`，单次续期超时为 TTL/3。续期失败、超时或所有权丢失时取消持约 context，停止后续换票和保存；释放时停止续期并等待退出，通过 token 比较删除租约，避免删除新持有者的租约。nil Redis 拒绝。`Hold` 返回的 context 用于重读、解封、换票和 CAS 保存，覆盖远程 KMS 与 CAS 重试超过初始 TTL 的路径。持约后重读，读取失败直接返回，不使用旧快照换票。每次 Hold **最多一次** token-endpoint exchange。exchange 成功后必须落盘：`version` CAS 冲突时重读，信封仍是换票前那份或重读 token 不可用则 rebase 再写 R1；重读已有未过期 token 则复用。exchange 失败后重读，仅当信封 token 已变且 access 未过期时复用，否则保留换票错误（改名导致的 version +1 不再触发二次换票）。抢约失败则等待租约（尊重 ctx），不并行打 IdP |
 | 换票成功但无法保存 | refresh 的 reseal / DB 保存失败返回 `ErrMCPOAuthReauthorizationRequired`，不返回新 token。用独立的 5 秒清理 context（不受调用方取消影响）清除换票前那份信封；匹配 workspace / vault / credential 与完整旧密文，保留并发改名，不清除其他写者新授权的密文。清理不依赖 KMS。记录仍 active，继续覆盖目标 host；缺信封的 OAuth 凭据不再换票，等待重新授权 |
 | 重新授权恢复 | Start 允许相同 URL 的 active、缺信封 OAuth 凭据重新授权；callback 成功后复用其 ID、UUID，保留用户设置的名称；Metadata 按顶层字段合并，保留原字段并以新授权字段覆盖同名值（如 `oauth_flow_id`），解析失败则拒绝保存。CAS 填回新信封，保护并发修改。健康 OAuth 或 static bearer 仍拒绝重复授权。callback 换票后封装失败将 flow 标记 failed 并清除 PKCE 密文；再次回调该 flow 不再换票，必须新建授权流程 |
 | 平台 client_secret | 不进用户信封。callback 与 refresh 共用 `ResolveMCPOAuthTokenClientSecret`。公开 `auth.client_credential_source` 为 `platform`（或遗留 confidential 且信封无 secret）时按 `mcp_server_url` 再查 registry；`sealed` 用信封值。reseal 仍不把平台 secret 写回信封 |
@@ -548,3 +548,10 @@ sequenceDiagram
 - `TestPlatformMCPOAuthReauthorizationPostgres`：真实 PostgreSQL 验证租户/父级隔离、改名后失效、并发新授权不被清除，以及 HTTP callback 换票成功但封装失败、旧 flow 不可重放、新 flow 恢复同一凭据。该测试的 KMS 故障是离线注入，不声称真实云故障。
 - 剩余边界：若 KMS 封装与数据库清理同时失败，当前请求仍失败，并保留清理错误，但无法保证旧信封已被持久化清除；需要恢复数据库后处理该凭据并重新授权。进程在换票后、失效清理前崩溃的窗口也仍存在。这里未引入持久化换票意图或分布式事务。
 - 50 秒 Redis 刷新租约的续约/超时预算问题独立存在，本轮未修改；慢 KMS 与 CAS 冲突可能使临界区超过 TTL。
+
+### 刷新租约与云角色凭据并发回归
+
+- `TestRedisOAuthRefreshLeaseRenewsWhileHeld` 验证持有时间超过初始 TTL 时，第二个请求仍无法取得同一凭据的租约。
+- 续期失败、超时和持有者被替换时，持约 context 必须取消；旧持有者释放不能删除替换后的租约。Lua 测试验证 token 校验、TTL 延长与过期租约不可恢复。
+- `TestWorkloadCredentialConcurrentRefresh` 使用本地模拟 ECS metadata 服务验证共享角色凭据在并发获取时只刷新一次。使用 `go test -race ./internal/vaults ./internal/secrets/aliyunkms -count=1` 检查数据竞争。
+- 单测不代表真实 Redis 故障切换、阿里云工作负载身份或云 KMS 验收。进程暂停或网络分区跨越租约 TTL 时，已发送给 IdP 的请求仍不能撤回；沿用换票失败与凭据重新授权的恢复边界。

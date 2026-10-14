@@ -13,7 +13,7 @@ func TestMemoryOAuthRefreshLeaseHoldCanceledWhileWaiting(t *testing.T) {
 	t.Parallel()
 
 	lease := newMemoryOAuthRefreshLease()
-	first, err := lease.Hold(t.Context(), "vcrd_a")
+	_, first, err := lease.Hold(t.Context(), "vcrd_a")
 	if err != nil {
 		t.Fatalf("Hold() error = %v", err)
 	}
@@ -21,7 +21,7 @@ func TestMemoryOAuthRefreshLeaseHoldCanceledWhileWaiting(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Millisecond)
 	defer cancel()
-	_, err = lease.Hold(ctx, "vcrd_a")
+	_, _, err = lease.Hold(ctx, "vcrd_a")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Hold() error = %v, want context deadline", err)
 	}
@@ -34,7 +34,7 @@ func TestMemoryOAuthRefreshLeaseSerializesSameCredential(t *testing.T) {
 	var holding atomic.Bool
 	var overlapped atomic.Bool
 
-	release, err := lease.Hold(t.Context(), "vcrd_a")
+	_, release, err := lease.Hold(t.Context(), "vcrd_a")
 	if err != nil {
 		t.Fatalf("Hold() error = %v", err)
 	}
@@ -44,7 +44,7 @@ func TestMemoryOAuthRefreshLeaseSerializesSameCredential(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		close(started)
-		second, holdErr := lease.Hold(t.Context(), "vcrd_a")
+		_, second, holdErr := lease.Hold(t.Context(), "vcrd_a")
 		if holdErr != nil {
 			t.Errorf("second Hold() error = %v", holdErr)
 			close(done)
@@ -79,7 +79,7 @@ func TestMemoryOAuthRefreshLeaseCancelDoesNotPinCredential(t *testing.T) {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
 			defer cancel()
-			release, err := lease.Hold(ctx, credentialID)
+			_, release, err := lease.Hold(ctx, credentialID)
 			if err != nil {
 				return
 			}
@@ -90,7 +90,7 @@ func TestMemoryOAuthRefreshLeaseCancelDoesNotPinCredential(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	release, err := lease.Hold(ctx, credentialID)
+	_, release, err := lease.Hold(ctx, credentialID)
 	if err != nil {
 		t.Fatalf("Hold after cancel storm: %v (credential likely pinned)", err)
 	}
@@ -101,12 +101,12 @@ func TestMemoryOAuthRefreshLeaseAllowsDifferentCredentials(t *testing.T) {
 	t.Parallel()
 
 	lease := newMemoryOAuthRefreshLease()
-	first, err := lease.Hold(t.Context(), "vcrd_a")
+	_, first, err := lease.Hold(t.Context(), "vcrd_a")
 	if err != nil {
 		t.Fatalf("Hold A error = %v", err)
 	}
 	defer func() { _ = first() }()
-	second, err := lease.Hold(t.Context(), "vcrd_b")
+	_, second, err := lease.Hold(t.Context(), "vcrd_b")
 	if err != nil {
 		t.Fatalf("Hold B error = %v", err)
 	}
@@ -127,7 +127,7 @@ func TestRedisOAuthRefreshLeaseHoldCanceled(t *testing.T) {
 
 	store := newFakeOAuthRefreshNXStore()
 	lease := newRedisOAuthRefreshLease(store, time.Second, 20*time.Millisecond)
-	first, err := lease.Hold(t.Context(), "vcrd_a")
+	_, first, err := lease.Hold(t.Context(), "vcrd_a")
 	if err != nil {
 		t.Fatalf("Hold() error = %v", err)
 	}
@@ -135,7 +135,7 @@ func TestRedisOAuthRefreshLeaseHoldCanceled(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Millisecond)
 	defer cancel()
-	_, err = lease.Hold(ctx, "vcrd_a")
+	_, _, err = lease.Hold(ctx, "vcrd_a")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Hold() error = %v, want context deadline", err)
 	}
@@ -147,14 +147,14 @@ func TestRedisOAuthRefreshLeaseWaitsThenAcquiresAfterRelease(t *testing.T) {
 	store := newFakeOAuthRefreshNXStore()
 	lease := newRedisOAuthRefreshLease(store, time.Second, time.Millisecond)
 
-	first, err := lease.Hold(t.Context(), "vcrd_a")
+	_, first, err := lease.Hold(t.Context(), "vcrd_a")
 	if err != nil {
 		t.Fatalf("Hold() error = %v", err)
 	}
 
 	acquired := make(chan struct{})
 	go func() {
-		second, holdErr := lease.Hold(t.Context(), "vcrd_a")
+		_, second, holdErr := lease.Hold(t.Context(), "vcrd_a")
 		if holdErr != nil {
 			t.Errorf("second Hold() error = %v", holdErr)
 			return
@@ -176,31 +176,46 @@ func TestRedisOAuthRefreshLeaseWaitsThenAcquiresAfterRelease(t *testing.T) {
 	}
 }
 
-func TestOAuthRefreshLeaseTTLCoversCASHold(t *testing.T) {
+func TestRedisOAuthRefreshLeaseRenewsWhileHeld(t *testing.T) {
 	t.Parallel()
-
-	min := time.Duration(maxOAuthRefreshCASAttempts) * oauthRefreshTimeout
-	if oauthRefreshLeaseTTL <= min {
-		t.Fatalf("oauthRefreshLeaseTTL = %s, want > %s (CAS attempts × token timeout)", oauthRefreshLeaseTTL, min)
+	store := newFakeOAuthRefreshNXStore()
+	lease := newRedisOAuthRefreshLease(store, 150*time.Millisecond, time.Millisecond)
+	_, first, err := lease.Hold(t.Context(), "vcrd_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first()
+	time.Sleep(400 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+	defer cancel()
+	_, second, err := lease.Hold(ctx, "vcrd_a")
+	if err == nil {
+		_ = second()
+		t.Fatal("second holder acquired before first refresh finished")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
 	}
 }
 
 type fakeOAuthRefreshNXStore struct {
-	mu     sync.Mutex
-	values map[string]string
+	mu      sync.Mutex
+	values  map[string]string
+	expires map[string]time.Time
 }
 
 func newFakeOAuthRefreshNXStore() *fakeOAuthRefreshNXStore {
-	return &fakeOAuthRefreshNXStore{values: map[string]string{}}
+	return &fakeOAuthRefreshNXStore{values: map[string]string{}, expires: map[string]time.Time{}}
 }
 
-func (s *fakeOAuthRefreshNXStore) SetNX(_ context.Context, key, value string, _ time.Duration) (bool, error) {
+func (s *fakeOAuthRefreshNXStore) SetNX(_ context.Context, key, value string, ttl time.Duration) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.values[key]; exists {
+	if _, exists := s.values[key]; exists && time.Now().Before(s.expires[key]) {
 		return false, nil
 	}
 	s.values[key] = value
+	s.expires[key] = time.Now().Add(ttl)
 	return true, nil
 }
 
@@ -211,4 +226,14 @@ func (s *fakeOAuthRefreshNXStore) CompareAndDelete(_ context.Context, key, value
 		delete(s.values, key)
 	}
 	return nil
+}
+
+func (s *fakeOAuthRefreshNXStore) CompareAndRenew(_ context.Context, key, value string, ttl time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.values[key] != value || !time.Now().Before(s.expires[key]) {
+		return false, nil
+	}
+	s.expires[key] = time.Now().Add(ttl)
+	return true, nil
 }

@@ -68,6 +68,51 @@ func TestRefreshFailureDoesNotUseStaleSnapshot(t *testing.T) {
 	}
 }
 
+type canceledOAuthRefreshLease struct{}
+
+func (canceledOAuthRefreshLease) Hold(ctx context.Context, _ string) (context.Context, func() error, error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	cancel(errOAuthRefreshLeaseLost)
+	return ctx, func() error { return nil }, nil
+}
+
+func TestRefreshLeaseLossPreventsExchange(t *testing.T) {
+	env := newOAuthRefreshEnv(t, "fresh-access")
+	stale := env.staleCred("single-use-refresh")
+	store := &fakeCredentialStore{get: stale}
+	injector := env.injector(store).WithRefreshLease(canceledOAuthRefreshLease{})
+	token, saved, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, env.now, true)
+	if !errors.Is(err, errOAuthRefreshLeaseLost) || token != "" || saved != nil {
+		t.Fatalf("lost lease returned usable credentials: %v", err)
+	}
+	if env.tokenCalls.Load() != 0 || store.updateCalls != 0 {
+		t.Fatal("lost lease exchanged or saved credentials")
+	}
+}
+
+func TestRefreshLeaseLossAfterExchangePreventsSave(t *testing.T) {
+	env := newOAuthRefreshEnv(t, "fresh-access")
+	stale := env.staleCred("single-use-refresh")
+	store := &fakeCredentialStore{get: stale}
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(context.Canceled)
+	injector := env.injector(store)
+	publicAuth, secret, err := injector.openMCPOAuthMaterial(ctx, stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, nextAuth, nextSecret, err := exchangeMCPOAuthRefresh(ctx, env.client, publicAuth, secret, env.now, nil)
+	defer clear(nextSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel(errOAuthRefreshLeaseLost)
+	token, saved, err := injector.persistExchangedMCPOAuth(ctx, store, &stale, secret, token, nextAuth, nextSecret, env.now)
+	if !errors.Is(err, errOAuthRefreshLeaseLost) || token != "" || saved != nil || store.updateCalls != 0 {
+		t.Fatalf("lost lease persisted or exposed exchanged token: %v", err)
+	}
+}
+
 func TestRefreshSaveFailureInvalidatesOnlyExchangedEnvelope(t *testing.T) {
 	for _, replace := range []bool{false, true} {
 		t.Run(map[bool]string{false: "same envelope", true: "concurrent reauthorization"}[replace], func(t *testing.T) {

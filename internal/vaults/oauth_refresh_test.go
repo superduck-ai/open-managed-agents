@@ -612,10 +612,10 @@ type blockingOAuthRefreshLease struct {
 	once    sync.Once
 }
 
-func (l *blockingOAuthRefreshLease) Hold(context.Context, string) (func() error, error) {
+func (l *blockingOAuthRefreshLease) Hold(ctx context.Context, _ string) (context.Context, func() error, error) {
 	l.once.Do(func() { close(l.held) })
 	<-l.release
-	return func() error { return nil }, nil
+	return ctx, func() error { return nil }, nil
 }
 
 func oauthRefreshNow() time.Time {

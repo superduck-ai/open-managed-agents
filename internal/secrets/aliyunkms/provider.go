@@ -139,7 +139,7 @@ func newCredential(cfg Config) (credentials.Credential, error) {
 	if err != nil {
 		return nil, errors.New("aliyun_kms: initialize credentials failed")
 	}
-	return credential, nil
+	return &synchronizedCredential{Credential: credential}, nil
 }
 
 // Name is persisted in the envelope's existing key_provider column.

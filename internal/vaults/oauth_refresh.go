@@ -48,7 +48,7 @@ func (i *Injector) refreshMCPOAuthCredential(
 	now time.Time,
 	force bool,
 ) (string, *db.VaultCredential, error) {
-	release, err := i.refreshLease.Hold(ctx, credential.ExternalID)
+	ctx, release, err := i.refreshLease.Hold(ctx, credential.ExternalID)
 	if err != nil {
 		return "", nil, err
 	}
@@ -88,6 +88,9 @@ func (i *Injector) refreshMCPOAuthAttempt(
 	}
 	if !hasMCPOAuthRefreshMaterial(publicAuth, secret) {
 		return "", nil, errMCPOAuthRefreshUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return "", nil, context.Cause(ctx)
 	}
 	accessToken, nextAuth, nextSecret, err := exchangeMCPOAuthRefresh(ctx, i.client(), publicAuth, secret, now, i.platformOAuthClients)
 	if err != nil {
@@ -141,6 +144,9 @@ func (i *Injector) persistExchangedMCPOAuth(
 	now time.Time,
 ) (string, *db.VaultCredential, error) {
 	for range maxOAuthRefreshCASAttempts {
+		if err := ctx.Err(); err != nil {
+			return "", nil, context.Cause(ctx)
+		}
 		updated := *current
 		updated.Auth = nextAuth
 		updated.SecretPayload = append(json.RawMessage(nil), nextSecret...)

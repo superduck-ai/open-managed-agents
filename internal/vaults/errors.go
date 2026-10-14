@@ -71,8 +71,10 @@ func SubstitutionPublicMessage(err error) string {
 }
 
 var (
-	errMCPOAuthRefreshUnavailable = errors.New("mcp_oauth refresh unavailable")
-	errCredentialStoreUnavailable = errors.New("credential store is unavailable")
+	errOAuthRefreshLeaseRedisRequired = errors.New("redis client is required for oauth refresh lease")
+	errOAuthRefreshLeaseLost          = errors.New("mcp oauth refresh lease lost")
+	errMCPOAuthRefreshUnavailable     = errors.New("mcp_oauth refresh unavailable")
+	errCredentialStoreUnavailable     = errors.New("credential store is unavailable")
 )
 
 func injectionRejected(cause error) error {

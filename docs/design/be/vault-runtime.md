@@ -547,7 +547,6 @@ sequenceDiagram
 - `TestRefreshSealFailureRequiresReauthorization`：token endpoint 成功后仅故障注入 WrapDEK；请求取消仍清除旧信封，KMS 恢复也不再发送旧 refresh token。
 - `TestPlatformMCPOAuthReauthorizationPostgres`：真实 PostgreSQL 验证租户/父级隔离、改名后失效、并发新授权不被清除，以及 HTTP callback 换票成功但封装失败、旧 flow 不可重放、新 flow 恢复同一凭据。该测试的 KMS 故障是离线注入，不声称真实云故障。
 - 剩余边界：若 KMS 封装与数据库清理同时失败，当前请求仍失败，并保留清理错误，但无法保证旧信封已被持久化清除；需要恢复数据库后处理该凭据并重新授权。进程在换票后、失效清理前崩溃的窗口也仍存在。这里未引入持久化换票意图或分布式事务。
-- 50 秒 Redis 刷新租约的续约/超时预算问题独立存在，本轮未修改；慢 KMS 与 CAS 冲突可能使临界区超过 TTL。
 
 ### 刷新租约与云角色凭据并发回归
 

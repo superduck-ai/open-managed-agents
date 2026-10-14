@@ -8,7 +8,7 @@ import (
 	urlpkg "net/url"
 	"strings"
 
-	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
+	"github.com/superduck-ai/open-managed-agents/internal/agentconfig"
 	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
 )
 
@@ -55,7 +55,7 @@ func MCPAllowedHosts(agentSnapshot json.RawMessage) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	children, err := agentsnapshot.Children(agentSnapshot)
+	children, err := agentconfig.Children(agentSnapshot)
 	if err != nil {
 		return nil, err
 	}

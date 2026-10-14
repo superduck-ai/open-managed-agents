@@ -20,6 +20,8 @@ OMA 支持父智能体在同一会话中委派任务。
 
 ## 配置与版本固定
 
+`agentconfig` 只读取配置 JSON，不依赖数据库。网络策略、技能和快照解析共用其子名单读取；按版本查询数据库仍由 `agentsnapshot` 负责。
+
 公开接口沿用 `multiagent.type = coordinator`：
 
 ```json

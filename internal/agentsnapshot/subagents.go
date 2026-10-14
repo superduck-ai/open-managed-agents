@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentconfig"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -16,21 +17,6 @@ type rosterReference struct {
 	ID      string          `json:"id"`
 	Version int             `json:"version"`
 	Model   json.RawMessage `json:"model"`
-}
-
-func Children(snapshot json.RawMessage) ([]json.RawMessage, error) {
-	var root struct {
-		Multiagent *struct {
-			Agents []json.RawMessage `json:"agents"`
-		} `json:"multiagent"`
-	}
-	if err := jsonv2.Unmarshal(snapshot, &root); err != nil {
-		return nil, err
-	}
-	if root.Multiagent == nil {
-		return nil, nil
-	}
-	return root.Multiagent.Agents, nil
 }
 
 func SubagentNames(children []json.RawMessage) ([]string, error) {
@@ -62,7 +48,7 @@ func SubagentNames(children []json.RawMessage) ([]string, error) {
 }
 
 func ForSubagentType(snapshot json.RawMessage, agentType string) (json.RawMessage, error) {
-	children, err := Children(snapshot)
+	children, err := agentconfig.Children(snapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +65,7 @@ func ForSubagentType(snapshot json.RawMessage, agentType string) (json.RawMessag
 }
 
 func ForSubagent(snapshot json.RawMessage, agentID string) (json.RawMessage, error) {
-	children, err := Children(snapshot)
+	children, err := agentconfig.Children(snapshot)
 	if err != nil {
 		return nil, err
 	}

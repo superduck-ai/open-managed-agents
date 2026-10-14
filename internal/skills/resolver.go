@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
+	"github.com/superduck-ai/open-managed-agents/internal/agentconfig"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -104,7 +104,7 @@ func runtimeSkillRefs(snapshot json.RawMessage) ([]runtimeSkillRef, error) {
 			return nil, fmt.Errorf("decode agent skills: %w", err)
 		}
 	}
-	children, err := agentsnapshot.Children(snapshot)
+	children, err := agentconfig.Children(snapshot)
 	if err != nil {
 		return nil, fmt.Errorf("decode agent snapshot: %w", err)
 	}

@@ -1,9 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { retrieveSessionDetailSession } from '../api';
 import { errorMessage } from '../utils';
+import type { SessionApiResponse } from '../types';
 
 export function useSessionIdSearch(workspaceId: string, value: string, enabled: boolean, onPage: boolean) {
+  const queryClient = useQueryClient();
   const [debouncedId, setDebouncedId] = useState('');
   const id = value.trim();
   const handled = enabled && /^sesn_[a-zA-Z0-9_]+$/.test(id) && !onPage;
@@ -11,7 +13,7 @@ export function useSessionIdSearch(workspaceId: string, value: string, enabled: 
     const timer = setTimeout(() => setDebouncedId(id), 300);
     return () => clearTimeout(timer);
   }, [id]);
-  const query = useQuery({
+  const query = useQuery<SessionApiResponse | null>({
     queryKey: ['session-id-search', workspaceId, debouncedId],
     queryFn: () => retrieveSessionDetailSession(debouncedId, workspaceId),
     enabled: handled && debouncedId === id,
@@ -23,5 +25,10 @@ export function useSessionIdSearch(workspaceId: string, value: string, enabled: 
     loading: handled && (id !== debouncedId || query.isPending),
     error: handled && id === debouncedId && query.isError ? errorMessage(query.error) : null,
     refresh: () => void query.refetch(),
+    syncSession: async (sessionId: string, session: SessionApiResponse | null) => {
+      const queryKey = ['session-id-search', workspaceId, sessionId];
+      await queryClient.cancelQueries({ queryKey, exact: true });
+      queryClient.setQueryData(queryKey, session);
+    },
   };
 }

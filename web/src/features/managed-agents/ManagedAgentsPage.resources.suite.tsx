@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import {
   ManagedAgentsPage,
+  act,
   agentResponse,
   cleanup,
   fireEvent,
@@ -2344,6 +2345,74 @@ export function registerManagedAgentsResourceTests() {
     fireEvent.click(within(row).getByRole('cell', { name: 'Running' }));
     expect(await screen.findByRole('dialog', { name: remote.title })).toBeTruthy();
     expect(window.location.pathname).toBe('/workspaces/default/sessions');
+  });
+
+  test('keeps SVG controls and portaled actions out of the session row preview', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+    const row = (await screen.findByText('Session one')).closest('tr')!;
+    const agentIcon = row.querySelector('a[href*="/agents/"] svg')!;
+    agentIcon.closest('a')!.addEventListener('click', (event) => event.preventDefault());
+    fireEvent(agentIcon, new window.MouseEvent('click', { bubbles: true, ctrlKey: true, cancelable: true }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(window.location.pathname).toBe('/workspaces/default/sessions');
+    fireEvent.click(within(row).getByRole('button', { name: 'Copy sesn_one123456' }).querySelector('svg')!);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(within(row).getByRole('button', { name: 'More actions' }).querySelector('svg')!);
+    expect(screen.getByRole('menuitem', { name: 'Edit session' })).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit session' });
+    expect(screen.queryByRole('dialog', { name: 'Session one' })).toBeNull();
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  });
+
+  test('synchronizes exact session ID results after editing, archiving, and deleting', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.sessions, (index, hidden) => ({
+      ...api.resources.sessions[0],
+      id: `sesn_mutation${index}`,
+      vault_ids: [],
+      resources: [],
+      title: hidden ? 'Remote mutation session' : `Session mutation ${index}`,
+    }));
+    const remote = api.resources.sessions.at(-1)!;
+    render(<ManagedAgentsPage section="sessions" />);
+    await screen.findByText('Session one');
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: remote.id } });
+    await screen.findByText(remote.title);
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit session' });
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Updated remote session' } });
+    await waitFor(() =>
+      expect((within(dialog).getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false),
+    );
+    await act(async () => fireEvent.submit(dialog.querySelector('form')!));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(await screen.findByText('Updated remote session')).toBeTruthy();
+    expect(screen.queryByText(remote.title)).toBeNull();
+    expect(api.resources.sessions.at(-1)!.title).toBe('Updated remote session');
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive session' }));
+    const archiveConfirmation = await screen.findByRole('alertdialog');
+    await act(async () => fireEvent.click(within(archiveConfirmation).getByRole('button', { name: 'Archive' })));
+    expect(await screen.findByText('Archived')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(screen.getByRole('menuitem', { name: 'Edit session' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('menuitem', { name: 'Archive session' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('menuitem', { name: 'View session' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete session' }));
+    const confirmation = await screen.findByRole('alertdialog');
+    await act(async () => fireEvent.click(within(confirmation).getByRole('button', { name: 'Delete' })));
+    await waitFor(() => expect(screen.queryByText('Updated remote session')).toBeNull());
+    expect(await screen.findByText('No matching sessions')).toBeTruthy();
+    expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe(remote.id);
   });
 
   test('resets the session list filters from an empty search result', async () => {

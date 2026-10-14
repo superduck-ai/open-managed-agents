@@ -321,7 +321,13 @@ export function SessionListTable({
     getRowId: (session) => session.id,
   });
   const previewRow = (event: MouseEvent<HTMLTableRowElement>, session: SessionApiResponse) => {
-    if (event.target instanceof HTMLElement && event.target.closest('a,button,input,[role="checkbox"]')) return;
+    if (
+      event.target instanceof Element &&
+      (!event.currentTarget.contains(event.target) ||
+        event.target.closest('a,button,input,select,textarea,[role="checkbox"],[role="button"],[role="menuitem"]'))
+    ) {
+      return;
+    }
     actions.onQuickView(session);
   };
   return (

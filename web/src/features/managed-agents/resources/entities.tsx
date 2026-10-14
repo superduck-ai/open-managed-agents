@@ -741,6 +741,9 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     setMutationError(null);
     if (entity) {
       const updated = await updateManagedEntity(config.section, entity.id, values, activeWorkspaceId);
+      if (config.section === 'sessions') {
+        await sessionIdSearch.syncSession(entity.id, updated as SessionApiResponse);
+      }
       setEntities((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       toast.success(managedToastMessage(config.section, 'updated', msg));
       return false;
@@ -772,10 +775,14 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     setMutationError(null);
     try {
       try {
+        let updated: ManagedEntityApiResponse | null = null;
         if (action === 'archive') {
-          await archiveManagedEntity(config.section, entity.id, activeWorkspaceId);
+          updated = await archiveManagedEntity(config.section, entity.id, activeWorkspaceId);
         } else {
           await deleteManagedEntity(config.section, entity.id, activeWorkspaceId);
+        }
+        if (config.section === 'sessions') {
+          await sessionIdSearch.syncSession(entity.id, updated as SessionApiResponse | null);
         }
       } catch (error) {
         setMutationError(managedEntityErrorMessage(config.section, error, action, msg));

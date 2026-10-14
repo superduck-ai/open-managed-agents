@@ -14,10 +14,11 @@ database:
 redis:
   url: redis://localhost:6379
 
-# Worker event 和 MCP Tunnel 共用 JetStream 集群的 seed URL；多个 URL 用于启动期故障转移，
+# Worker event、Webhook 和 MCP Tunnel 共用 JetStream 集群的 seed URL；多个 URL 用于启动期故障转移，
 # connect_timeout / drain_timeout 等可选字段见 docs/configuration-reference.yaml。
 nats:
   url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
+  # Webhook defaults: 256 MiB / 24h / 3 replicas. Single-node: webhook_stream.replicas: 1.
 
 # Stable origin used in locally generated MCP Tunnel URLs. Keep this aligned
 # with the browser-reachable server address when changing server.addr.
@@ -27,6 +28,7 @@ tunnel:
 # Optional SMTP email verification. When omitted, any non-empty verification
 # code is accepted. Configure all three fields together for real email delivery.
 # auth:
+#   console_url: https://oma.example.com
 #   smtp:
 #     addr: smtp.example.com:587
 #     username: sender@example.com
@@ -46,6 +48,9 @@ e2b:
   api_key: ""
   api_url: ""
 
+# Optional deployment package sources: see docs/configuration-reference.yaml.
+# Omit environment_packages to retain image sources and deny private CONNECT targets.
+
 # Optional: extra hosts for SSH→HTTPS rewrite in environment-manager
 # (github.com is always built-in). See docs/configuration-reference.yaml.
 # environment_runner:
@@ -54,13 +59,14 @@ e2b:
 
 vault:
   master_key:
-    # Required in every env. Example:
-    #   just generate-vault-kek config/secrets/vault-kek
-    # then set kek_file: secrets/vault-kek
-    # or paste the printed base64 into kek.
-    # Documentation placeholder only — replace before real use.
-    version: 1
-    kek: "rFF/9K42dW9xtX3zvE3rm6HzJshGCVntS62F2884M78="
+    local:
+      # Required in every env. Example:
+      #   just generate-vault-kek config/secrets/vault-kek
+      # then set kek_file: secrets/vault-kek
+      # or paste the printed base64 into kek.
+      # Documentation placeholder only — replace before real use.
+      version: 1
+      kek: "rFF/9K42dW9xtX3zvE3rm6HzJshGCVntS62F2884M78="
   # Optional Platform OAuth Clients (exact mcp_server_url match). When
   # vault-auth/start omits BYO client_id, a hit supplies platform client
   # credentials before DCR. Do not commit real client_secret values.

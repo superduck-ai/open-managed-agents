@@ -22,6 +22,7 @@ const (
 )
 
 type Principal struct {
+	WorkspaceAccess           WorkspaceAccess
 	CredentialType            string
 	APIKeyUUID                string
 	APIKeyExternalID          string

@@ -3,6 +3,7 @@ package db
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -246,12 +247,6 @@ func (d *DB) GetMemoryStoresByExternalIDs(ctx context.Context, workspaceUUID str
 	return memoryStoresFromMapperRows(rows), nil
 }
 
-func (d *DB) GetMemoryStoreByExternalID(ctx context.Context, organizationUUID, externalID string) (MemoryStore, error) {
-	mapper := NewMemoryStoreMapper(d.mapperDB)
-	row, err := mapper.FindByOrganizationAndExternalID(ctx, organizationUUID, externalID)
-	return memoryStoreFromMapperRow(row, err)
-}
-
 func (d *DB) UpdateMemoryStore(ctx context.Context, workspaceUUID, externalID string, next MemoryStore) (MemoryStore, error) {
 	var updated MemoryStore
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
@@ -279,10 +274,15 @@ func (d *DB) UpdateMemoryStore(ctx context.Context, workspaceUUID, externalID st
 	return updated, err
 }
 
-func (d *DB) ArchiveMemoryStore(ctx context.Context, workspaceUUID, externalID string) (MemoryStore, error) {
+func (d *DB) ArchiveMemoryStore(ctx context.Context, workspaceUUID, externalID string) (MemoryStore, bool, error) {
 	mapper := NewMemoryStoreMapper(d.mapperDB)
 	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, externalID)
-	return memoryStoreFromMapperRow(row, err)
+	if errors.Is(err, sql.ErrNoRows) {
+		current, loadErr := d.GetMemoryStore(ctx, workspaceUUID, externalID)
+		return current, false, loadErr
+	}
+	archived, err := memoryStoreFromMapperRow(row, err)
+	return archived, err == nil, err
 }
 
 func (d *DB) DeleteMemoryStore(ctx context.Context, workspaceUUID, externalID string) ([]ObjectRef, error) {

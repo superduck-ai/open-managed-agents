@@ -78,6 +78,14 @@ const (
 	legacyTableExistsQuery = `select to_regclass($1) is not null`
 )
 
+func OpenExisting(ctx context.Context, cfg config.Config, logger *slog.Logger) (*DB, error) {
+	pool, err := openPool(ctx, cfg.Database.URL)
+	if err != nil {
+		return nil, err
+	}
+	return newDB(pool, logger), nil
+}
+
 func Open(ctx context.Context, cfg config.Config, logger *slog.Logger) (*DB, error) {
 	pool, err := openPool(ctx, cfg.Database.URL)
 	if err == nil {
@@ -430,7 +438,6 @@ func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
 		organizationMapper := NewAdminOrganizationMapper(executor)
 		workspaceMapper := NewAdminWorkspaceMapper(executor)
 		userMapper := NewAdminUserMapper(executor)
-		memberMapper := NewAdminWorkspaceMemberMapper(executor)
 		apiKeyMapper := NewAdminAPIKeyMapper(executor)
 
 		if _, err := organizationMapper.LockSeed(ctx); err != nil {
@@ -446,16 +453,6 @@ func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
 		}
 		userUUID, err := userMapper.SeedDefault(ctx, "user_default", organizationUUID, "admin@example.local", "Local Admin")
 		if err != nil {
-			return err
-		}
-		if err := memberMapper.SeedDefault(ctx, seedAdminWorkspaceMemberParams{
-			ExternalID:          "wmem_default",
-			OrganizationUUID:    organizationUUID,
-			WorkspaceUUID:       workspaceUUID,
-			WorkspaceExternalID: "workspace_default",
-			UserUUID:            userUUID,
-			UserExternalID:      "user_default",
-		}); err != nil {
 			return err
 		}
 

@@ -496,6 +496,7 @@ func (s *fakeWorkbenchPersistenceStore) ListConsoleWorkspaces(
 		"default": {
 			UUID:       fakeWorkbenchWorkspaceUUID("default"),
 			ExternalID: "workspace_default",
+			IsDefault:  true,
 			Name:       "Default",
 		},
 		"wrkspc_previous": {

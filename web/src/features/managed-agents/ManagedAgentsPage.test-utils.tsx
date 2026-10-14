@@ -202,6 +202,18 @@ export async function selectManagedComboboxOption(
   fireEvent.click(option);
 }
 
+export function expandAgentCreateSections(container: HTMLElement) {
+  for (const button of within(container).queryAllByRole('button')) {
+    if (
+      button.dataset.slot === 'collapsible-trigger' &&
+      /^(Tools|Skills|Multiagent|工具|技能|多智能体)/.test(button.textContent ?? '') &&
+      button.getAttribute('aria-expanded') === 'false'
+    ) {
+      fireEvent.click(button);
+    }
+  }
+}
+
 export type CodeMirrorTestElement = HTMLElement & {
   __agentConfigCodeMirrorView?: EditorView;
 };
@@ -1595,11 +1607,15 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
       return jsonResponse(pageResourceRows(filteredSessions, limit, params.get('page')));
     }
     if (url.startsWith('/v1/files?') && method === 'GET') {
+      const scopeId = new URL(url, 'https://oma.duck.ai').searchParams.get('scope_id');
+      const files = scopeId
+        ? resources.files.filter((file) => (file.scope as { id?: string } | null)?.id === scopeId)
+        : resources.files;
       return jsonResponse({
-        data: resources.files,
+        data: files,
         has_more: false,
-        first_id: resources.files.at(0)?.id ?? null,
-        last_id: resources.files.at(-1)?.id ?? null,
+        first_id: files.at(0)?.id ?? null,
+        last_id: files.at(-1)?.id ?? null,
       });
     }
     const retrieveSessionMatch = url.match(/^\/v1\/sessions\/([^/?]+)\?beta=true$/);
@@ -1607,6 +1623,18 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
       const sessionId = decodeURIComponent(retrieveSessionMatch[1]);
       const session = resources.sessions.find((item) => item.id === sessionId);
       return session ? jsonResponse(session) : jsonResponse({ error: { message: 'not found' } }, 404);
+    }
+    if (retrieveSessionMatch && method === 'POST') {
+      const sessionId = decodeURIComponent(retrieveSessionMatch[1]);
+      const existing = resources.sessions.find((item) => item.id === sessionId);
+      if (!existing) return jsonResponse({ error: { message: 'not found' } }, 404);
+      const updated = {
+        ...existing,
+        title: body?.title === undefined ? existing.title : body.title,
+        updated_at: new Date().toISOString(),
+      };
+      resources.sessions = resources.sessions.map((item) => (item.id === sessionId ? updated : item));
+      return jsonResponse(updated);
     }
     const fileMetadataMatch = url.match(/^\/v1\/files\/([^/?]+)\?beta=true$/);
     if (fileMetadataMatch && method === 'GET') {

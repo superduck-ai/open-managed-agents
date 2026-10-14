@@ -10,11 +10,13 @@ type platformAuthUserContextRow struct {
 }
 
 type platformSessionIdentityRow struct {
-	OrganizationUUID    string `db:"organization_uuid"`
-	WorkspaceUUID       string `db:"workspace_uuid"`
-	WorkspaceExternalID string `db:"workspace_external_id"`
-	UserUUID            string `db:"user_uuid"`
-	UserExternalID      string `db:"user_external_id"`
+	VerifiedEmail        string `db:"verified_email"`
+	HomeOrganizationUUID string `db:"home_organization_uuid"`
+	OrganizationUUID     string `db:"organization_uuid"`
+	WorkspaceUUID        string `db:"workspace_uuid"`
+	WorkspaceExternalID  string `db:"workspace_external_id"`
+	UserUUID             string `db:"user_uuid"`
+	UserExternalID       string `db:"user_external_id"`
 }
 
 type insertPlatformAuthUserParams struct {
@@ -27,6 +29,7 @@ type insertPlatformAuthUserParams struct {
 }
 
 type PlatformAuthUserMapper interface {
+	FindActiveByEmail(ctx context.Context, organizationUUID, email string) (AdminUser, error)
 	FindContextByEmail(ctx context.Context, email string) (platformAuthUserContextRow, error)
 	UpdateEmptyName(ctx context.Context, userExternalID, defaultName string) error
 	Insert(ctx context.Context, params insertPlatformAuthUserParams) (string, error)

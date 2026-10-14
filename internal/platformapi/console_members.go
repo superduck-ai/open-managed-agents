@@ -5,13 +5,15 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
+
 	"github.com/go-chi/chi/v5"
 )
 
 type consoleMemberStore interface {
 	ListOrgUsers(ctx context.Context, orgUUID string, limit int) ([]OrgUser, error)
-	UpdateOrgUserRole(ctx context.Context, orgUUID string, userID string, role string) (*OrgUser, error)
-	RemoveOrgUser(ctx context.Context, orgUUID string, userID string) (bool, error)
+	UpdateOrgUserRole(ctx context.Context, orgUUID, userID, role, actorID string, validate func(string) error) (*OrgUser, error)
+	RemoveOrgUser(ctx context.Context, orgUUID, userID, actorID string, validate func(string) error) (bool, error)
 }
 
 type updateConsoleMemberRequest struct {
@@ -24,8 +26,11 @@ func RegisterConsoleOrganizationMemberRoutes(r chi.Router, store OrganizationSto
 
 func registerConsoleOrganizationMemberRoutes(r chi.Router, store OrganizationStore) {
 	r.Get("/members", handleListConsoleMembers(store))
-	r.Post("/members/{userId}", handleUpdateConsoleMember(store))
-	r.Delete("/members/{userId}", handleDeleteConsoleMember(store))
+	r.Group(func(r chi.Router) {
+		r.Use(requireConsoleOrganizationAdmin(store))
+		r.Post("/members/{userId}", handleUpdateConsoleMember(store))
+		r.Delete("/members/{userId}", handleDeleteConsoleMember(store))
+	})
 }
 
 func handleListConsoleMembers(store OrganizationStore) http.HandlerFunc {
@@ -58,7 +63,7 @@ func formatConsoleMember(user OrgUser) map[string]any {
 		"type":     "user",
 		"email":    user.Email,
 		"name":     consoleMemberName(user),
-		"role":     consoleMemberRole(user.Role),
+		"role":     user.Role,
 		"added_at": isoTime(user.AddedAt),
 	}
 }
@@ -68,17 +73,6 @@ func consoleMemberName(user OrgUser) string {
 		return *user.FullName
 	}
 	return user.Email
-}
-
-func consoleMemberRole(role string) string {
-	switch strings.TrimSpace(strings.ToLower(role)) {
-	case "admin", "owner", "primary_owner", "membership_admin":
-		return "admin"
-	case "developer", "billing", "claude_code_user":
-		return strings.TrimSpace(strings.ToLower(role))
-	default:
-		return "user"
-	}
 }
 
 func handleUpdateConsoleMember(store OrganizationStore) http.HandlerFunc {
@@ -110,9 +104,10 @@ func handleUpdateConsoleMember(store OrganizationStore) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "user_id_required"})
 			return
 		}
-		user, err := memberStore.UpdateOrgUserRole(r.Context(), orgUUID, userID, role)
+		principal, _ := auth.PrincipalFromContext(r.Context())
+		user, err := memberStore.UpdateOrgUserRole(r.Context(), orgUUID, userID, role, principal.UserExternalID, validateConsoleOrganizationAdminRole)
 		if err != nil {
-			internalError(w, "failed to update member")
+			writeConsoleMemberError(w, err)
 			return
 		}
 		if user == nil {
@@ -139,8 +134,14 @@ func handleDeleteConsoleMember(store OrganizationStore) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "user_id_required"})
 			return
 		}
-		if _, err := memberStore.RemoveOrgUser(r.Context(), orgUUID, userID); err != nil {
-			internalError(w, "failed to remove member")
+		principal, _ := auth.PrincipalFromContext(r.Context())
+		removed, err := memberStore.RemoveOrgUser(r.Context(), orgUUID, userID, principal.UserExternalID, validateConsoleOrganizationAdminRole)
+		if err != nil {
+			writeConsoleMemberError(w, err)
+			return
+		}
+		if !removed {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "member_not_found"})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"id": userID, "type": "user_deleted"})
@@ -148,14 +149,11 @@ func handleDeleteConsoleMember(store OrganizationStore) http.HandlerFunc {
 }
 
 func normalizeConsoleMemberRole(role string) string {
-	switch strings.TrimSpace(strings.ToLower(role)) {
-	case "user", "developer", "billing", "admin", "claude_code_user":
-		return strings.TrimSpace(strings.ToLower(role))
-	case "member":
-		return "user"
-	default:
-		return ""
+	role = strings.TrimSpace(strings.ToLower(role))
+	if role == "user" || role == "admin" {
+		return role
 	}
+	return ""
 }
 
 func taggedUserID(userUUID string) string {

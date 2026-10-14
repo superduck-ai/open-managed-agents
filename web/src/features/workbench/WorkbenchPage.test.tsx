@@ -137,7 +137,7 @@ describe('WorkbenchPage', () => {
         ...defaultAuthAccount(),
         memberships: [
           {
-            role: 'developer',
+            role: 'user',
             seat_tier: 'enterprise_standard',
             organization: {
               uuid: 'org_test',
@@ -192,7 +192,7 @@ describe('WorkbenchPage', () => {
   test('tells non-administrators to contact an administrator when no provider exists', async () => {
     resetTestDom('https://oma.duck.ai/workbench');
     mockWorkbenchApi({ modelsNotConfigured: true });
-    renderWorkbench({ auth: authContextValue(defaultAuthAccount('developer')) });
+    renderWorkbench({ auth: authContextValue(defaultAuthAccount('user')) });
 
     const emptyState = await screen.findByTestId('llm-provider-required');
     expect(emptyState.textContent).toContain('Contact your organization administrator to configure a model.');
@@ -1056,7 +1056,7 @@ describe('WorkbenchPage', () => {
         ...defaultAuthAccount(),
         memberships: [
           {
-            role: 'developer',
+            role: 'user',
             seat_tier: 'enterprise_standard',
             organization: {
               uuid: 'org_test',

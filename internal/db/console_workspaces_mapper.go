@@ -7,7 +7,7 @@ import (
 
 //go:generate go tool sqlmapgen -dir $PWD -mapper ConsoleWorkspaceMapper -sql ./console_workspaces_mapper.xml -out ./console_workspaces_mapper.sqlmap.gen.go -dialect postgres
 
-type upsertConsoleWorkspaceParams struct {
+type insertConsoleWorkspaceParams struct {
 	UUID          string
 	ExternalID    string
 	OrgUUID       string
@@ -16,7 +16,15 @@ type upsertConsoleWorkspaceParams struct {
 	DataResidency []byte
 }
 
+type updateConsoleWorkspaceParams struct {
+	OrgUUID      string
+	ExternalID   string
+	Name         string
+	DisplayColor string
+}
+
 type consoleWorkspaceRow struct {
+	IsDefault     bool       `db:"is_default"`
 	UUID          string     `db:"uuid"`
 	ExternalID    string     `db:"external_id"`
 	OrgUUID       string     `db:"org_uuid"`
@@ -32,6 +40,8 @@ type consoleWorkspaceRow struct {
 }
 
 type ConsoleWorkspaceMapper interface {
-	Upsert(ctx context.Context, params upsertConsoleWorkspaceParams) (consoleWorkspaceRow, error)
+	Insert(ctx context.Context, params insertConsoleWorkspaceParams) (consoleWorkspaceRow, error)
 	List(ctx context.Context, orgUUID string, includeArchived bool) ([]consoleWorkspaceRow, error)
+	UpdateByIdentifier(ctx context.Context, params updateConsoleWorkspaceParams) (consoleWorkspaceRow, error)
+	ArchiveByIdentifier(ctx context.Context, orgUUID string, externalID string) (consoleWorkspaceRow, error)
 }

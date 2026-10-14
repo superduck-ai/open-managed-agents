@@ -55,11 +55,11 @@ func TestConsoleInviteMapperListBuildsStatusFilters(t *testing.T) {
 		status  string
 		wantSQL []string
 	}{
-		{name: "active", wantSQL: []string{"deleted_at IS NULL"}},
+		{name: "active", wantSQL: []string{"deleted_at IS NULL", "status <> 'declined'"}},
 		{name: "pending", status: "pending", wantSQL: []string{"status = 'pending'", "expires_at > NOW()"}},
 		{name: "expired", status: "expired", wantSQL: []string{"status = 'expired'", "expires_at <= NOW()"}},
 		{name: "accepted", status: "accepted", wantSQL: []string{"status = 'accepted'"}},
-		{name: "deleted", status: "deleted", wantSQL: []string{"status = 'deleted' OR deleted_at IS NOT NULL"}},
+		{name: "deleted", status: "deleted", wantSQL: []string{"status = 'deleted' OR deleted_at IS NOT NULL OR status = 'declined'"}},
 		{name: "unknown", status: "unknown", wantSQL: []string{"AND FALSE"}},
 	}
 	for _, test := range tests {
@@ -83,7 +83,7 @@ func TestConsoleInviteMapperInsert(t *testing.T) {
 		ExternalID:       "invite_mapper",
 		OrganizationUUID: "11111111-1111-4111-8111-111111111111",
 		Email:            "invitee@example.com",
-		Role:             "developer",
+		Role:             "user",
 		InvitedAt:        invitedAt,
 		ExpiresAt:        invitedAt.Add(21 * 24 * time.Hour),
 	}
@@ -221,7 +221,7 @@ func consoleInviteMapperTestRow(externalID, status string, invitedAt time.Time) 
 	return []driver.Value{
 		externalID,
 		"invitee@example.com",
-		"developer",
+		"user",
 		status,
 		invitedAt,
 		invitedAt.Add(21 * 24 * time.Hour),

@@ -1,4 +1,5 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import '../../test/setup';
+import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { useMemo, type ReactNode } from 'react';
 import { SettingsShell } from '../../app/layout/ConsoleLayout';
@@ -11,16 +12,173 @@ import { OrganizationMembersPage } from './OrganizationMembersPage';
 import type { OrganizationInvite, OrganizationMember } from './membersApi';
 
 const testingLibrary = await import('@testing-library/react');
-const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
+const { act, cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
 
 const originalFetch = globalThis.fetch;
+const originalOnline = onlineManager.isOnline();
+const queryClients: QueryClient[] = [];
 
 afterEach(() => {
   cleanup();
+  queryClients.splice(0).forEach((client) => client.clear());
+  onlineManager.setOnline(originalOnline);
   globalThis.fetch = originalFetch;
 });
 
 describe('Organization members settings', () => {
+  for (const cachedResource of [null, 'members', 'invites'] as const) {
+    test(`does not show an empty directory while offline with ${cachedResource ?? 'no'} cached data and resumes online`, async () => {
+      resetTestDom('https://oma.duck.ai/settings/members');
+      const api = mockMembersApi();
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+      if (cachedResource) {
+        const queryKey =
+          cachedResource === 'members'
+            ? ['console', 'organization-members', 'org_test']
+            : ['console', 'organization-invites', 'org_test', 'pending'];
+        queryClient.setQueryData(queryKey, []);
+      }
+      onlineManager.setOnline(false);
+
+      const { container } = render(
+        <OrganizationMembersHarness queryClient={queryClient}>
+          <OrganizationMembersPage />
+        </OrganizationMembersHarness>,
+      );
+
+      const pendingKey =
+        cachedResource === 'members'
+          ? ['console', 'organization-invites', 'org_test', 'pending']
+          : ['console', 'organization-members', 'org_test'];
+      expect(queryClient.getQueryState(pendingKey)).toMatchObject({ status: 'pending', fetchStatus: 'paused' });
+      expect(api.memberListRequests).toBe(0);
+      expect(api.inviteListRequests).toBe(0);
+      expect(screen.queryByText('No members yet') === null).toBe(true);
+      expect(screen.queryByText('0', { exact: true }) === null).toBe(true);
+      expect(container.querySelector('[data-slot="skeleton"]') !== null).toBe(true);
+
+      await act(async () => onlineManager.setOnline(true));
+
+      const expectedCount = cachedResource === 'members' ? '1' : cachedResource === 'invites' ? '2' : '3';
+      expect(await screen.findByText(expectedCount, { exact: true })).toBeTruthy();
+      expect(screen.getByText(cachedResource === 'members' ? 'pending@example.com' : 'Ada Lovelace')).toBeTruthy();
+      expect(screen.queryByText('No members yet')).toBeNull();
+      expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+    });
+  }
+
+  test('shows zero and an empty directory only after both requests succeed with empty lists', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    globalThis.fetch = (async () => jsonResponse([])) as typeof fetch;
+
+    const { container } = render(
+      <OrganizationMembersHarness>
+        <OrganizationMembersPage />
+      </OrganizationMembersHarness>,
+    );
+
+    expect(screen.queryByText('0', { exact: true }) === null).toBe(true);
+    expect(container.querySelector('[data-slot="skeleton"]') !== null).toBe(true);
+    expect(await screen.findByText('No members yet')).toBeTruthy();
+    expect(screen.getByText('0', { exact: true })).toBeTruthy();
+    expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+  });
+
+  test('keeps the complete cached directory visible when a remount pauses its refresh offline', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    const api = mockMembersApi();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const mount = () =>
+      render(
+        <OrganizationMembersHarness queryClient={queryClient}>
+          <OrganizationMembersPage />
+        </OrganizationMembersHarness>,
+      );
+    const view = mount();
+    expect(await screen.findByText('3', { exact: true })).toBeTruthy();
+    view.unmount();
+    onlineManager.setOnline(false);
+
+    const { container } = mount();
+
+    expect(queryClient.getQueryState(['console', 'organization-members', 'org_test'])).toMatchObject({
+      status: 'success',
+      fetchStatus: 'paused',
+    });
+    expect(screen.getByText('Ada Lovelace')).toBeTruthy();
+    expect(screen.getByText('pending@example.com')).toBeTruthy();
+    expect(screen.getByText('3', { exact: true })).toBeTruthy();
+    expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+    expect(api.memberListRequests).toBe(1);
+    expect(api.inviteListRequests).toBe(1);
+  });
+
+  test('shows permission guidance without requesting members for an invited user', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    const api = mockMembersApi();
+
+    render(
+      <OrganizationMembersHarness permissions={[]}>
+        <I18nProvider initialLocale="zh-CN">
+          <OrganizationMembersPage />
+        </I18nProvider>
+      </OrganizationMembersHarness>,
+    );
+
+    expect(await screen.findByText('无权限访问')).toBeTruthy();
+    expect(screen.getByText('只有组织管理员可以查看和管理组织成员。请联系组织管理员。')).toBeTruthy();
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.queryByRole('button', { name: '邀请' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '重试' })).toBeNull();
+    expect(screen.queryByText('0')).toBeNull();
+    expect(api.memberListRequests).toBe(0);
+    expect(api.inviteListRequests).toBe(0);
+  });
+
+  for (const forbiddenResource of ['members', 'invites'] as const) {
+    test(`shows permission guidance when the server denies ${forbiddenResource} to a stale administrator`, async () => {
+      resetTestDom('https://oma.duck.ai/settings/members');
+      mockMembersApi({ forbiddenResource });
+
+      render(
+        <OrganizationMembersHarness>
+          <OrganizationMembersPage />
+        </OrganizationMembersHarness>,
+      );
+
+      expect(await screen.findByText('Access denied')).toBeTruthy();
+      expect(screen.queryByText('Members could not be loaded.')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Invite' })).toBeNull();
+      expect(screen.queryByRole('table')).toBeNull();
+      expect(screen.queryByText('0')).toBeNull();
+    });
+  }
+
+  test('hides cached administrator data when the current organization permissions change', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    mockMembersApi();
+
+    const view = render(
+      <OrganizationMembersHarness>
+        <OrganizationMembersPage />
+      </OrganizationMembersHarness>,
+    );
+    expect(await screen.findByText('Ada Lovelace')).toBeTruthy();
+
+    view.rerender(
+      <OrganizationMembersHarness permissions={[]}>
+        <OrganizationMembersPage />
+      </OrganizationMembersHarness>,
+    );
+
+    expect(await screen.findByText('Access denied')).toBeTruthy();
+    expect(screen.queryByText('Ada Lovelace')).toBeNull();
+    expect(screen.queryByText('pending@example.com')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Invite' })).toBeNull();
+    expect(screen.queryByRole('table')).toBeNull();
+  });
+
   test('renders the official members shell and table from the console API', async () => {
     resetTestDom('https://oma.duck.ai/settings/members');
     mockMembersApi();
@@ -63,7 +221,34 @@ describe('Organization members settings', () => {
     expect(within(table).getByText('Ada Lovelace')).toBeTruthy();
     expect(within(table).getByText('ada@example.com')).toBeTruthy();
     expect(screen.queryByRole('combobox', { name: 'Role for Current User' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'More actions for Current User' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'More actions for Ada Lovelace' })).toBeTruthy();
     expect(screen.getByRole('combobox', { name: 'Role for Ada Lovelace' })).toBeTruthy();
+  });
+
+  test('filters the member directory by search keyword', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    mockMembersApi();
+
+    render(
+      <OrganizationMembersHarness>
+        <OrganizationMembersPage />
+      </OrganizationMembersHarness>,
+    );
+
+    expect(await screen.findByText('Ada Lovelace')).toBeTruthy();
+    expect(screen.getByText('3')).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Role' })).toBeTruthy();
+
+    const table = screen.getByRole('table', { name: 'Members' });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search members' }), { target: { value: 'Ada' } });
+    expect(within(table).getByText('Ada Lovelace')).toBeTruthy();
+    expect(within(table).queryByText('Current User')).toBeNull();
+    expect(within(table).queryByText('pending@example.com')).toBeNull();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search members' }), { target: { value: '' } });
+    expect(within(table).getByText('Current User')).toBeTruthy();
+    expect(within(table).getByText('pending@example.com')).toBeTruthy();
   });
 
   test('retries both members and pending invites after a shared table load failure', async () => {
@@ -181,17 +366,26 @@ describe('Organization members settings', () => {
 function OrganizationMembersHarness({
   children,
   organizationName = 'default',
+  permissions = ['members:view', 'members:manage'],
+  queryClient: suppliedQueryClient,
 }: {
   children: ReactNode;
   organizationName?: string;
+  permissions?: string[];
+  queryClient?: QueryClient;
 }) {
-  const queryClient = useMemo(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }), []);
+  const queryClient = useMemo(() => {
+    const client = suppliedQueryClient ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClients.push(client);
+    return client;
+  }, [suppliedQueryClient]);
   const authValue = useMemo<AuthContextValue>(
     () => ({
       account: {
         uuid: 'acct_test',
         email_address: 'test@example.com',
         display_name: 'test',
+        permissions,
         memberships: [{ organization: { uuid: 'org_test', name: organizationName }, role: 'admin' }],
       },
       status: 'authenticated',
@@ -199,7 +393,7 @@ function OrganizationMembersHarness({
       refresh: async () => ({ account: { uuid: 'acct_test', email_address: 'test@example.com' } }),
       logout: async () => undefined,
     }),
-    [organizationName],
+    [organizationName, permissions],
   );
   const workspaceValue = useMemo<WorkspaceContextValue>(
     () => ({
@@ -225,7 +419,9 @@ function OrganizationMembersHarness({
   );
 }
 
-function mockMembersApi(options: { failMembersOnce?: boolean; failInvitesOnce?: boolean } = {}) {
+function mockMembersApi(
+  options: { failMembersOnce?: boolean; failInvitesOnce?: boolean; forbiddenResource?: 'members' | 'invites' } = {},
+) {
   let members: OrganizationMember[] = [
     {
       id: 'acct_test',
@@ -257,7 +453,7 @@ function mockMembersApi(options: { failMembersOnce?: boolean; failInvitesOnce?: 
       id: 'invite_pending',
       type: 'invite',
       email: 'pending@example.com',
-      role: 'billing',
+      role: 'user',
       status: 'pending',
       invited_at: '2026-06-24T00:00:00Z',
       expires_at: '2026-07-15T00:00:00Z',
@@ -271,6 +467,9 @@ function mockMembersApi(options: { failMembersOnce?: boolean; failInvitesOnce?: 
 
     if (requestUrl.pathname === '/api/console/organizations/org_test/members' && method === 'GET') {
       memberListRequests += 1;
+      if (options.forbiddenResource === 'members') {
+        return jsonResponse({ error: { type: 'permission_error', message: 'Action not allowed' } }, 403);
+      }
       if (remainingMemberFailures > 0) {
         remainingMemberFailures -= 1;
         return jsonResponse({ error: 'members unavailable' }, 500);
@@ -287,6 +486,9 @@ function mockMembersApi(options: { failMembersOnce?: boolean; failInvitesOnce?: 
 
     if (requestUrl.pathname === '/api/console/organizations/org_test/invites' && method === 'GET') {
       inviteListRequests += 1;
+      if (options.forbiddenResource === 'invites') {
+        return jsonResponse({ error: { type: 'permission_error', message: 'Action not allowed' } }, 403);
+      }
       if (remainingInviteFailures > 0) {
         remainingInviteFailures -= 1;
         return jsonResponse({ error: 'invites unavailable' }, 500);

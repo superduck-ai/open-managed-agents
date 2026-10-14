@@ -693,6 +693,7 @@ export type ResourceConfig = {
 };
 
 export type EventsTabProps = {
+  emptyState?: ReactNode;
   activeLane: string;
   archivedLaneCount: number;
   childLoading: boolean;
@@ -708,6 +709,7 @@ export type EventsTabProps = {
   lanes: SessionDetailLane[];
   openModelRequest: QuickstartSessionEvent | null;
   pendingAction?: ReactNode;
+  outputFiles?: ReactNode;
   onClearFilters: () => void;
   onCopyAll: () => void;
   onCloseInspector: () => void;
@@ -735,6 +737,7 @@ export type EventsTabProps = {
 export type SessionDetailSummaryChip = {
   key: string;
   icon: IconComponent;
+  copyValue?: string;
   tooltip?: string;
   value: string;
 };

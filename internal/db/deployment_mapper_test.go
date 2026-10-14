@@ -95,7 +95,7 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 			statement: deploymentMapperArchiveByExternalIDStatement,
 			bound:     buildDeploymentMapperArchiveByExternalID(yourbatis.DialectPostgres, params.WorkspaceUUID, params.ExternalID),
 			wantID:    "DeploymentMapper.ArchiveByExternalID", wantKind: yourbatis.StatementUpdate,
-			wantArgumentNames: []string{"workspaceUUID", "externalID"}, wantSQLFragments: []string{"archived_at = COALESCE", "RETURNING"},
+			wantArgumentNames: []string{"workspaceUUID", "externalID"}, wantSQLFragments: []string{"archived_at = COALESCE", "archived_at IS NULL", "workspace_uuid = $1", "external_id = $2", "RETURNING"},
 		}},
 		{"archive root agent deployments", mapperBuilderContract{
 			statement: deploymentMapperArchiveByRootAgentStatement,

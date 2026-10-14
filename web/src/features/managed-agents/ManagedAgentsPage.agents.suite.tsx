@@ -8,6 +8,7 @@ import {
   type CodeMirrorTestElement,
   createAgentRequestFixture,
   fireEvent,
+  expandAgentCreateSections,
   mockAgentsApi,
   quickstartToolStream,
   render,
@@ -39,7 +40,8 @@ export function registerManagedAgentsAgentsTests() {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
 
-    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const dialog = screen.getByRole('main', { name: 'Create agent' });
+    expandAgentCreateSections(dialog);
     const emptyState = await within(dialog).findByTestId('llm-provider-required');
     expect(emptyState.textContent).toContain('No models configured');
     expect(emptyState.textContent).toContain('Configure a model to get started.');
@@ -60,7 +62,7 @@ export function registerManagedAgentsAgentsTests() {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
 
-    const emptyState = await within(screen.getByRole('dialog', { name: 'Create agent' })).findByTestId(
+    const emptyState = await within(screen.getByRole('main', { name: 'Create agent' })).findByTestId(
       'llm-provider-required',
     );
     expect(emptyState.textContent).toContain('Contact your organization administrator to configure a model.');
@@ -80,7 +82,8 @@ export function registerManagedAgentsAgentsTests() {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
 
-    const dialog = await screen.findByRole('dialog', { name: 'Create agent' });
+    const dialog = await screen.findByRole('main', { name: 'Create agent' });
+    expandAgentCreateSections(dialog);
     expect(await within(dialog).findByText('Could not load model configuration.')).toBeTruthy();
     expect(dialog.getAttribute('aria-busy')).not.toBe('true');
   });
@@ -101,7 +104,8 @@ export function registerManagedAgentsAgentsTests() {
 
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
 
-    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const dialog = screen.getByRole('main', { name: 'Create agent' });
+    expandAgentCreateSections(dialog);
     expect(within(dialog).getByText('Start from a template or describe what you need.')).toBeTruthy();
     const startingPointTablist = within(dialog).getByRole('tablist', { name: 'Starting point' });
     expect(startingPointTablist).toBeTruthy();
@@ -117,7 +121,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(descriptionInput.closest('[data-slot="input-group"]')?.getAttribute('data-slot')).toBe('input-group');
     const startingPointButton = within(dialog).getByRole('button', { name: /^Starting point$/i });
     expect(startingPointButton.getAttribute('data-slot')).toBe('collapsible-trigger');
-    expect(startingPointButton.parentElement?.parentElement?.className).toContain('rounded-xl');
+    expect(startingPointButton.parentElement?.parentElement?.className.includes('rounded-xl')).toBe(false);
     expect(startingPointButton.parentElement?.parentElement?.className).toContain('shrink-0');
     expect(startingPointButton.className).toContain('items-center');
     expect(startingPointButton.getAttribute('aria-expanded')).toBe('true');
@@ -227,10 +231,9 @@ export function registerManagedAgentsAgentsTests() {
     ).toBe('false');
     expect(within(dialog).getByText(/· Deep researcher/)).toBeTruthy();
     expect(within(dialog).queryByRole('button', { name: /Structured extractor/i })).toBeNull();
-    expect(dialog.className).toContain('h-[calc(100dvh-2rem)]');
-    expect(dialog.className).toContain('max-w-[880px]');
-    expect(dialog.className).toContain('grid-rows-1');
-    expect(dialog.firstElementChild?.className).toContain('flex-col');
+    expect(dialog.getAttribute('role')).not.toBe('dialog');
+    expect(dialog.lastElementChild?.className).toContain('max-w-[824px]');
+    expect(within(dialog).getByRole('navigation', { name: 'Breadcrumb' })).toBeTruthy();
 
     fireEvent.click(within(dialog).getByRole('tab', { name: 'JSON' }));
     expect(
@@ -240,7 +243,7 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create agent' }));
 
     await waitFor(() => expect(api.requests.some((request) => request.method === 'POST')).toBe(true));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create agent' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('main', { name: 'Create agent' })).toBeNull());
     expect(window.location.pathname).toBe('/workspaces/default/agents/agent_created123456');
     expect(window.location.search).toBe('?tab=config');
     expect(api.requests.some((request) => request.method === 'GET' && request.url.includes('/v1/agents?'))).toBe(true);
@@ -263,9 +266,9 @@ export function registerManagedAgentsAgentsTests() {
     ]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
-    expect(screen.getByRole('dialog', { name: 'Create agent' })).toBeTruthy();
-    fireEvent.keyDown(document, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: 'Create agent' })).toBeNull();
+    expect(screen.getByRole('main', { name: 'Create agent' })).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('main', { name: 'Create agent' })).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('main', { name: 'Create agent' })).toBeNull();
   });
 
   test('uses client-side navigation for agent detail links', async () => {
@@ -315,7 +318,8 @@ export function registerManagedAgentsAgentsTests() {
 
     expect(await screen.findByText('No agents yet')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
-    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const dialog = screen.getByRole('main', { name: 'Create agent' });
+    expandAgentCreateSections(dialog);
 
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Raw' }));
     fireEvent.click(within(dialog).getByRole('tab', { name: 'JSON' }));
@@ -323,6 +327,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(within(dialog).getByText(/JSON is not valid/i)).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Create agent' }).hasAttribute('disabled')).toBe(true);
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Rendered' }));
+    expandAgentCreateSections(dialog);
     expect(within(dialog).getByRole('tab', { name: 'Raw' }).getAttribute('aria-selected')).toBe('true');
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Template' }));
     expect(within(dialog).getByRole('tab', { name: 'Raw' }).getAttribute('aria-selected')).toBe('true');
@@ -371,7 +376,7 @@ export function registerManagedAgentsAgentsTests() {
     );
     expect(createRequest?.body?.name).toBe('PR digest');
     expect(createRequest?.headers['x-workspace-id']).toBe('default');
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create agent' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('main', { name: 'Create agent' })).toBeNull());
     expect(window.location.pathname).toBe('/workspaces/default/agents/agent_created123456');
     expect(window.location.search).toBe('?tab=config');
   });
@@ -399,7 +404,8 @@ export function registerManagedAgentsAgentsTests() {
     );
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
-    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const dialog = screen.getByRole('main', { name: 'Create agent' });
+    expandAgentCreateSections(dialog);
     fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add MCP server' }));
     expect(await screen.findByText('Could not load options.')).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: 'Custom MCP' }));
@@ -511,7 +517,8 @@ export function registerManagedAgentsAgentsTests() {
     );
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
-    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const dialog = screen.getByRole('main', { name: 'Create agent' });
+    expandAgentCreateSections(dialog);
     fireEvent.change(within(dialog).getByDisplayValue('Untitled agent'), { target: { value: 'Rendered agent' } });
 
     fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add subagent' }));
@@ -636,7 +643,8 @@ export function registerManagedAgentsAgentsTests() {
     );
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
-    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const dialog = screen.getByRole('main', { name: 'Create agent' });
+    expandAgentCreateSections(dialog);
     fireEvent.change(within(dialog).getByDisplayValue('Untitled agent'), { target: { value: 'Tunnel agent' } });
     fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add MCP server' }));
     const mcpOptions = await screen.findAllByRole('option');
@@ -737,7 +745,8 @@ export function registerManagedAgentsAgentsTests() {
     );
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
-    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const dialog = screen.getByRole('main', { name: 'Create agent' });
+    expandAgentCreateSections(dialog);
     fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add MCP server' }));
     fireEvent.click(await screen.findByRole('option', { name: /Private reports/ }));
 
@@ -781,7 +790,8 @@ export function registerManagedAgentsAgentsTests() {
     );
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
-    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const dialog = screen.getByRole('main', { name: 'Create agent' });
+    expandAgentCreateSections(dialog);
     fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add MCP server' }));
     fireEvent.click(await screen.findByRole('option', { name: /Offline private tools/ }));
 
@@ -799,6 +809,14 @@ export function registerManagedAgentsAgentsTests() {
     pendingCard = document.querySelector<HTMLElement>(`[id^="agent-tunnel-card-pending-"]`)!;
     channelInput = within(pendingCard).getByRole('combobox', { name: 'Channel' }) as HTMLInputElement;
     fireEvent.change(channelInput, { target: { value: 'Future Channel' } });
+    const toolsSection = within(dialog).getByRole('button', { name: /^Tools \(optional\)$/ });
+    fireEvent.click(toolsSection);
+    expect(within(dialog).getByRole('tab', { name: 'Raw' }).getAttribute('aria-disabled')).toBe('true');
+    expect((within(dialog).getByRole('button', { name: 'Create agent' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(toolsSection);
+    expect((within(pendingCard).getByRole('combobox', { name: 'Channel' }) as HTMLInputElement).value).toBe(
+      'Future Channel',
+    );
     expect(within(pendingCard).getByText(/Enter 1–64 lowercase/)).toBeTruthy();
     expect((within(pendingCard).getByRole('button', { name: 'Add MCP server' }) as HTMLButtonElement).disabled).toBe(
       true,
@@ -833,7 +851,8 @@ export function registerManagedAgentsAgentsTests() {
     );
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
-    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const dialog = screen.getByRole('main', { name: 'Create agent' });
+    expandAgentCreateSections(dialog);
     fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add MCP server' }));
 
     expect(await screen.findByRole('option', { name: /Private MCP/ })).toBeTruthy();
@@ -863,7 +882,8 @@ export function registerManagedAgentsAgentsTests() {
     );
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
-    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const dialog = screen.getByRole('main', { name: 'Create agent' });
+    expandAgentCreateSections(dialog);
     fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add MCP server' }));
 
     expect(await screen.findByRole('option', { name: /GitHub/ })).toBeTruthy();
@@ -902,7 +922,8 @@ export function registerManagedAgentsAgentsTests() {
     );
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
-    const createDialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const createDialog = screen.getByRole('main', { name: 'Create agent' });
+    expandAgentCreateSections(createDialog);
     fireEvent.change(within(createDialog).getByDisplayValue('Untitled agent'), {
       target: { value: 'Multi-channel agent' },
     });
@@ -982,7 +1003,8 @@ export function registerManagedAgentsAgentsTests() {
     render(<ManagedAgentsPage section="agents" />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
-    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const dialog = screen.getByRole('main', { name: 'Create agent' });
+    expandAgentCreateSections(dialog);
     fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add subagent' }));
     expect(screen.queryByRole('option', { name: /Remote helper/ })).toBeNull();
 
@@ -1012,20 +1034,21 @@ export function registerManagedAgentsAgentsTests() {
     render(<ManagedAgentsPage section="agents" />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
-    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const dialog = screen.getByRole('main', { name: 'Create agent' });
+    expandAgentCreateSections(dialog);
     fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add skill' }));
 
     expect(await screen.findByRole('option', { name: /Paged skill 6/ })).toBeTruthy();
     expect(api.requests.filter((request) => request.url.startsWith('/v1/skills?')).length).toBe(6);
   });
 
-  test('opens the create dialog from the create_agent route query and consumes the query', async () => {
+  test('opens the create page from the legacy create_agent query and normalizes the URL', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents?create_agent=1');
     mockAgentsApi([]);
     render(<ManagedAgentsPage section="agents" />);
 
-    expect(await screen.findByRole('dialog', { name: 'Create agent' })).toBeTruthy();
-    expect(window.location.pathname).toBe('/workspaces/default/agents');
+    expect(await screen.findByRole('main', { name: 'Create agent' })).toBeTruthy();
+    expect(window.location.pathname).toBe('/workspaces/default/agents/new');
     expect(window.location.search).toBe('');
   });
 
@@ -1237,8 +1260,8 @@ export function registerManagedAgentsAgentsTests() {
     const builtInCard = cards[0];
     expect(within(builtInCard).getByText('Custom')).toBeTruthy();
     fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+22/ }));
-    expect(within(builtInCard).getByText('bash')).toBeTruthy();
-    expect(within(builtInCard).getByText('Always deny')).toBeTruthy();
+    const bashRow = within(builtInCard).getByText('bash').parentElement!;
+    expect(within(bashRow).getByText('Always deny')).toBeTruthy();
     expect(within(builtInCard).getAllByText('Always allow').length).toBeGreaterThan(0);
 
     const customCard = cards[1];
@@ -2531,9 +2554,13 @@ export function registerManagedAgentsAgentsTests() {
 
     expect(await screen.findByText('No agents yet')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
-    expect(screen.getByRole('dialog', { name: 'Create agent' })).toBeTruthy();
+    expect(screen.getByRole('main', { name: 'Create agent' })).toBeTruthy();
     fireEvent.keyDown(document, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: 'Create agent' })).toBeNull();
+    expect(Boolean(screen.queryByRole('main', { name: 'Create agent' }))).toBe(true);
+    expect(window.location.pathname).toBe('/workspaces/default/agents/new');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('main', { name: 'Create agent' })).toBeNull();
+    expect(window.location.pathname).toBe('/workspaces/default/agents');
 
     cleanup();
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
@@ -2625,7 +2652,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(api.requests.some((request) => request.url.includes('created_at%5Bgte%5D='))).toBe(true);
   }, 10_000);
 
-  test('does not render selection controls or a batch archive bar', async () => {
+  test('renders agent selection controls and shows batch archive only after selecting', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
     mockAgentsApi([
       { id: 'agent_one123456', name: 'First agent' },
@@ -2635,8 +2662,11 @@ export function registerManagedAgentsAgentsTests() {
     render(<ManagedAgentsPage section="agents" />);
 
     expect(await screen.findByText('First agent')).toBeTruthy();
-    expect(screen.queryByRole('checkbox', { name: 'Select all agents' })).toBeNull();
+    expect(screen.getByRole('checkbox', { name: 'Select all agents' })).toBeTruthy();
     expect(screen.queryByText('3 selected')).toBeNull();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all agents' }));
+    await waitFor(() => expect(screen.getByText('3 selected')).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Archive selected' })).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'More actions' }).length).toBe(3);
   });
 

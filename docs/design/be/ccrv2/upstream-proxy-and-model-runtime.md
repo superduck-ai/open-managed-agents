@@ -260,7 +260,7 @@ Go 官方 module proxy 对较大的 module zip（例如 `github.com/aws/aws-sdk-
 
 匹配规则：`*.example.com` 匹配任意深度子域但**不含 apex**（`example.com` 需单独列出）；无端口条目匹配该 host 的任意有效端口，显式端口条目只匹配相同端口。因 CONNECT 只接受 443，带非 443 端口的条目对 CONNECT 仍然惰性；MCP URL 则按 `http` 默认 80、`https` 默认 443 或 URL 显式端口匹配。allowlist 条目在策略解析时先校验端口范围和完整 hostname label 语义，任一非法条目使整份策略 fail-closed。合法 allowlist 条目与 target 匹配前统一归一化（小写、去尾点、IDNA→punycode）；DNS 子域与 wildcard 的字符、label 和 253 长度边界使用与 Kubernetes 同款的 RFC 1123 validator（vendored 自 `k8s.io/apimachinery` 的 `pkg/util/validation` 最小子集，位于 `internal/networkpolicy/dns1123.go`，正则与错误信息与上游逐字一致，不引入 k8s 依赖链），不在本项目维护自制正则。IDNA lookup 保留浏览器兼容映射，Unicode host 先转 punycode 再校验。IPv4/IPv6 字面量在 IDNA 前通过 `netip` 规范化，IPv4-mapped IPv6 统一为 IPv4，带 zone 的 IPv6 不接受；IP allowlist 只做精确匹配且仍须通过 SSRF/公网 IP 检查。编译后 `Policy` 使用一棵按 DNS label 倒序的 trie，节点按端口保存 exact 与 wildcard 终止规则，不在授权时逐条重复解析 allowlist。策略授权不替代既有 CONNECT 443 限制、SSRF、公网 IP、DNS rebinding 与 MITM Host/SNI 检查。
 
-`unrestricted` 保持 CONNECT 的既有行为：允许通过 SSRF 安全检查的任意公网 `host:443`；MCP proxy 仍要求 URL 精确存在于当前 Session Agent Snapshot，但允许其中通过 SSRF 检查的 HTTP(S) 实际端口。
+`unrestricted` 允许通过地址检查的任意公网 `host:443`。管理员在 `environment_packages` 中配置 npm、pip、go、cargo、gem 的软件源 URL；其精确 registry host 连接 443 时，自动允许合规的 RFC1918、ULA 与 CGNAT 私网地址，不提供单独的 `network.private_endpoints` 或 CIDR 配置。有限网络下仍须通过 Environment host 策略；`allow_package_managers` 额外包含全部配置源的 `RegistryHosts()`，关闭时需显式 `allowed_hosts`。DNS 只解析一次，连接锁定到满足公网检查或源 host 例外的 IP；loopback、link-local 与 metadata 仍拒绝。该例外仅影响 OMA CONNECT，不扩大 MCP proxy 或其他服务的私网权限，也不创建网络路由。完整配置和安装路径见 [Environment Package 安装](../environment-package-provisioning.md)。MCP proxy 仍要求 URL 精确存在于当前 Session Agent Snapshot，并通过原有公网地址检查。
 
 ### 拒绝语义与观测
 

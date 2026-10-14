@@ -18,7 +18,7 @@ func TestSessionArchiveSandboxRollbackAndIsolation(t *testing.T) {
 		f := newSandboxLifecycleFixture(t)
 		f.exec(t, `ALTER TABLE environment_sandboxes ADD CONSTRAINT reject_archive_stop CHECK (stop_reason IS DISTINCT FROM 'session_archived')`)
 		defer f.exec(t, `ALTER TABLE environment_sandboxes DROP CONSTRAINT reject_archive_stop`)
-		if _, err := f.app.db.ArchiveSession(context.Background(), f.session.WorkspaceUUID, f.session.ExternalID); err == nil {
+		if _, _, err := f.app.db.ArchiveSession(context.Background(), f.session.WorkspaceUUID, f.session.ExternalID); err == nil {
 			t.Fatal("archive should fail when sandbox cleanup cannot be recorded")
 		}
 		current := mustSessionRecord(t, f.app, f.session.ExternalID)
@@ -35,7 +35,7 @@ func TestSessionArchiveSandboxRollbackAndIsolation(t *testing.T) {
 	})
 	t.Run("wrong workspace", func(t *testing.T) {
 		f := newSandboxLifecycleFixture(t)
-		if _, err := f.app.db.ArchiveSession(context.Background(), uuid.NewV4().String(), f.session.ExternalID); err == nil {
+		if _, _, err := f.app.db.ArchiveSession(context.Background(), uuid.NewV4().String(), f.session.ExternalID); err == nil {
 			t.Fatal("cross workspace archive succeeded")
 		}
 		if work, sandbox := f.state(t); work != "active" || sandbox != "running" {
@@ -48,6 +48,47 @@ func TestSessionArchiveSandboxRollbackAndIsolation(t *testing.T) {
 		archiveSession(t, f.app, f.session.ExternalID)
 		if work, sandbox := f.state(t); work != "active" || sandbox != "running" {
 			t.Fatalf("self hosted sandbox changed: %s/%s", work, sandbox)
+		}
+	})
+}
+
+func TestSessionArchiveWebhookAndSandboxCleanup(t *testing.T) {
+	t.Run("sandbox rollback does not notify", func(t *testing.T) {
+		app, _, _ := newEventSubscription(t, []string{"session.status_terminated"})
+		f := newSandboxLifecycleFixtureWithApp(t, app)
+		f.exec(t, `ALTER TABLE environment_sandboxes ADD CONSTRAINT reject_archive_webhook_stop CHECK (stop_reason IS DISTINCT FROM 'session_archived')`)
+		defer f.exec(t, `ALTER TABLE environment_sandboxes DROP CONSTRAINT reject_archive_webhook_stop`)
+		response := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+f.session.ExternalID+"/archive?beta=true", nil, defaultTestKey, true)
+		assertError(t, response, http.StatusInternalServerError, "api_error")
+		assertWebhookCount(t, app, "session.status_terminated", f.session.ExternalID, 0)
+		current := mustSessionRecord(t, app, f.session.ExternalID)
+		if current.ArchivedAt != nil || current.Status != f.session.Status {
+			t.Fatalf("archive escaped sandbox rollback: %+v", current)
+		}
+		if work, sandbox := f.state(t); work != "active" || sandbox != "running" {
+			t.Fatalf("sandbox rollback state = %s/%s", work, sandbox)
+		}
+	})
+	t.Run("repeat archive preserves notification and timestamps", func(t *testing.T) {
+		app, _, _ := newEventSubscription(t, []string{"session.status_terminated"})
+		f := newSandboxLifecycleFixtureWithApp(t, app)
+		archiveSession(t, app, f.session.ExternalID)
+		first := mustSessionRecord(t, app, f.session.ExternalID)
+		if first.ArchivedAt == nil {
+			t.Fatal("session was not archived")
+		}
+		archiveSession(t, app, f.session.ExternalID)
+		second := mustSessionRecord(t, app, f.session.ExternalID)
+		if second.ArchivedAt == nil || !first.ArchivedAt.Equal(*second.ArchivedAt) || !first.UpdatedAt.Equal(second.UpdatedAt) {
+			t.Fatal("repeat archive changed session timestamps")
+		}
+		assertWebhookCount(t, app, "session.status_terminated", f.session.ExternalID, 1)
+		if work, sandbox := f.state(t); work != "stopped" || sandbox != "stopping" {
+			t.Fatalf("archive cleanup state = %s/%s", work, sandbox)
+		}
+		code, err := getCodeSession(app, t.Context(), f.code.ExternalID)
+		if err != nil || code.Status != "terminated" {
+			t.Fatalf("archive kept a live worker: %+v, %v", code, err)
 		}
 	})
 }

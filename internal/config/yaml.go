@@ -138,6 +138,9 @@ func validateYAMLNodeWithAliases(node *yaml.Node, target reflect.Type, prefix []
 		return fmt.Errorf("%s must not be null", path)
 	}
 	target = yamlValueType(target)
+	if target == reflect.TypeFor[MasterKeyConfig]() {
+		target = reflect.TypeFor[yamlMasterKeyConfig]()
+	}
 	switch node.Kind {
 	case yaml.DocumentNode:
 		for _, child := range node.Content {
@@ -242,16 +245,30 @@ func resolveConfigPaths(cfg *Config, configDir string) error {
 		{name: "environment_runner.claude_path", value: &cfg.EnvironmentRunner.ClaudePath},
 		{name: "code_session.jwt_signing_private_key_file", value: &cfg.CodeSession.JWTSigningPrivateKeyFile},
 		{name: "code_session.upstream_proxy_ca_key_file", value: &cfg.CodeSession.UpstreamProxyCAKeyFile},
-		{name: "vault.master_key.kek_file", value: &cfg.Vault.MasterKey.KekFile},
 	}
-	for i := range cfg.Vault.MasterKey.DecryptOnly {
+	if v := cfg.Vault.MasterKey.HashicorpVault; v != nil {
 		paths = append(paths, struct {
 			name  string
 			value *string
-		}{
-			name:  fmt.Sprintf("vault.master_key.decrypt_only[%d].kek_file", i),
-			value: &cfg.Vault.MasterKey.DecryptOnly[i].KekFile,
-		})
+		}{name: "vault.master_key.hashicorp_vault.token_file", value: &v.TokenFile}, struct {
+			name  string
+			value *string
+		}{name: "vault.master_key.hashicorp_vault.ca_file", value: &v.CAFile})
+	}
+	if local := cfg.Vault.MasterKey.Local; local != nil {
+		paths = append(paths, struct {
+			name  string
+			value *string
+		}{name: "vault.master_key.local.kek_file", value: &local.KekFile})
+		for i := range local.DecryptOnly {
+			paths = append(paths, struct {
+				name  string
+				value *string
+			}{
+				name:  fmt.Sprintf("vault.master_key.local.decrypt_only[%d].kek_file", i),
+				value: &local.DecryptOnly[i].KekFile,
+			})
+		}
 	}
 	for _, path := range paths {
 		if strings.TrimSpace(*path.value) == "" {

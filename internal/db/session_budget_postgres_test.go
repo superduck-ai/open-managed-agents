@@ -18,7 +18,7 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 		t.Fatalf("加载会话：%v", err)
 	}
 	session.Budget = json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"1","currency":"USD"}}`)
-	session, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session)
+	session, _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 	}
 	session.BudgetReachedAt = nil
 	session.Budget = json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"100","currency":"USD"}}`)
-	if _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session); err != nil {
+	if _, _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session); err != nil {
 		t.Fatal(err)
 	}
 	changes, err = store.AppendSessionBudgetReachedEvents(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{usage, idle}, transition)
@@ -84,5 +84,16 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 	totals, err := store.SumSessionUsageTotals(t.Context(), scope.WorkspaceUUID, sessionID)
 	if err != nil || totals.WebSearchRequests != 3 || totals.ListCostCents != 2 {
 		t.Fatalf("搜索计量聚合错误：%+v，%v", totals, err)
+	}
+}
+
+func TestDeploymentExecutionDetectsBudgetChanges(t *testing.T) {
+	without := Deployment{}
+	with := Deployment{Budget: json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"100","currency":"USD"}}`)}
+	if sameDeploymentExecution(without, with) || sameDeploymentExecution(with, without) {
+		t.Fatal("部署预算变更被判定为未变化")
+	}
+	if !sameDeploymentExecution(with, with) {
+		t.Fatal("相同预算被判定为变化")
 	}
 }

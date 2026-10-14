@@ -15,7 +15,7 @@ func TestConsoleMemberMapperBuilders(t *testing.T) {
 	orgUUID := "11111111-1111-4111-8111-111111111111"
 	userUUID := "22222222-2222-4222-8222-222222222222"
 	identifier := consoleUserIdentifierParams{OrgUUID: orgUUID, UserID: "user_console", UserUUID: userUUID}
-	role := updateConsoleUserRoleParams{OrgUUID: orgUUID, UserID: identifier.UserID, UserUUID: userUUID, Role: "developer"}
+	role := updateConsoleUserRoleParams{OrgUUID: orgUUID, UserID: identifier.UserID, UserUUID: userUUID, Role: "user"}
 
 	contracts := []mapperBuilderContract{
 		{
@@ -122,7 +122,7 @@ func TestConsoleMemberMapperExecution(t *testing.T) {
 			"22222222-2222-4222-8222-222222222222",
 			"console@example.com",
 			"Console User",
-			"developer",
+			"user",
 			addedAt,
 		}},
 	})

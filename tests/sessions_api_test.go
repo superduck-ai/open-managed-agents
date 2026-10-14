@@ -489,9 +489,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Webhook.EndpointURL = receiver.URL
-	cfg.Webhook.SigningKey = "whsec_c2VjcmV0Cg=="
-	cfg.Webhook.EventTypes = []string{"session.status_idled"}
+
 	cfg.Webhook.WorkerEnabled = true
 	cfg.Webhook.AllowInsecure = true
 
@@ -507,6 +505,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	clearWebhookState(t, app)
+	createWebhook(t, app, `{"url":`+quoteJSON(receiver.URL)+`,"enabled_events":["session.status_idled"]}`)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
 	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
 
@@ -521,9 +520,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if !eventPageContains(events, `"type":"agent.message"`) || !eventPageContains(events, `"type":"session.status_idle"`) || !eventPageContains(events, `hello from worker`) {
 		t.Fatalf("ingress events missing worker outputs: %+v", events)
 	}
-	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "session-ingress-webhook-worker"); err != nil {
-		t.Fatalf("deliver ingress webhook: %v", err)
-	}
+	drainWebhookQueue(t, app, webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil))
 	mu.Lock()
 	delivered := requests
 	mu.Unlock()
@@ -543,9 +540,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if len(again.Data) != 1 {
 		t.Fatalf("ingress should be idempotent, agent.message count = %d", len(again.Data))
 	}
-	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "session-ingress-webhook-worker"); err != nil {
-		t.Fatalf("deliver duplicate ingress webhook: %v", err)
-	}
+	drainWebhookQueue(t, app, webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil))
 	mu.Lock()
 	delivered = requests
 	mu.Unlock()
@@ -3551,10 +3546,7 @@ func TestSessionWebhooks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	signingKey := "whsec_c2VjcmV0Cg=="
-	cfg.Webhook.EndpointURL = receiver.URL
-	cfg.Webhook.SigningKey = signingKey
-	cfg.Webhook.EventTypes = []string{"session.created"}
+
 	cfg.Webhook.WorkerEnabled = true
 	cfg.Webhook.AllowInsecure = true
 	cfg.Webhook.Timeout = time.Second
@@ -3563,6 +3555,11 @@ func TestSessionWebhooks(t *testing.T) {
 	defer app.close()
 	clearWebhookState(t, app)
 	defer clearWebhookState(t, app)
+	endpoint := createWebhook(t, app, `{"url":`+quoteJSON(receiver.URL)+`,"enabled_events":["session.status_idled"]}`)
+	signingKey := *endpoint.SigningSecret
+	if _, err := app.pool.Exec(t.Context(), `UPDATE webhook_endpoints SET enabled_events=enabled_events || '["session.created","session.pending"]'::jsonb WHERE external_id=$1`, endpoint.ID); err != nil {
+		t.Fatal(err)
+	}
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-webhook-agent"}`)
 	defer cleanupAgentRows(t, app.pool, agent.ID)
@@ -3570,30 +3567,31 @@ func TestSessionWebhooks(t *testing.T) {
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 
-	if count := webhookJobCount(t, app, "session.created", session.ID); count != 1 {
-		t.Fatalf("session.created webhook jobs = %d, want 1", count)
+	if count := webhookJobCount(t, app, "session.status_idled", session.ID); count != 1 {
+		t.Fatalf("session.status_idled webhook jobs = %d, want 1", count)
 	}
+	assertWebhookCount(t, app, "session.created", session.ID, 0)
 	if count := webhookJobCount(t, app, "session.pending", session.ID); count != 0 {
-		t.Fatalf("session.pending webhook jobs = %d, want 0 due filter", count)
+		t.Fatalf("session.pending webhook jobs = %d, want 0", count)
 	}
 
-	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "webhook-test-worker"); err != nil {
-		t.Fatalf("webhook run once failure path: %v", err)
+	key, err := app.db.GetAPIKey(t.Context(), auth.HashAPIKey(defaultTestKey))
+	if err != nil {
+		t.Fatal(err)
 	}
-	status, attempts := latestWebhookJobStatus(t, app, "session.created", session.ID)
-	if status != "retry" || attempts != 1 {
-		t.Fatalf("after 500 status=%s attempts=%d, want retry/1", status, attempts)
-	}
-	if _, err := app.pool.Exec(context.Background(), `update jobs set run_after = now() where type = 'webhook_delivery' and payload->>'event_type' = 'session.created' and payload->'event'->'data'->>'id' = $1`, session.ID); err != nil {
-		t.Fatalf("reset webhook run_after: %v", err)
-	}
-	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "webhook-test-worker"); err != nil {
-		t.Fatalf("webhook run once success path: %v", err)
-	}
-	status, attempts = latestWebhookJobStatus(t, app, "session.created", session.ID)
-	if status != "completed" || attempts != 1 {
-		t.Fatalf("after 2xx status=%s attempts=%d, want completed/1", status, attempts)
-	}
+	workspaceUUID := key.WorkspaceUUID.String()
+	stop := startWebhookWorker(t, webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil))
+	defer stop()
+	waitWebhookCondition(t, func() bool {
+		stored, err := app.db.GetWebhookEndpoint(t.Context(), workspaceUUID, endpoint.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stored.ConsecutiveFailures == 1
+	})
+	assertWebhookQueueCount(t, app, 1)
+	waitWebhookQueueEmpty(t, app)
+	assertWebhookQueueCount(t, app, 0)
 
 	mu.Lock()
 	if len(requests) != 2 {
@@ -3616,7 +3614,7 @@ func TestSessionWebhooks(t *testing.T) {
 	if err := json.Unmarshal(delivered.Body, &deliveredPayload); err != nil {
 		t.Fatalf("unmarshal delivered webhook: %v", err)
 	}
-	if event.Type != "event" || deliveredPayload.Type != "event" || deliveredPayload.Data.Type != "session.created" || deliveredPayload.Data.ID != session.ID {
+	if event.Type != "event" || deliveredPayload.Type != "event" || deliveredPayload.Data.Type != "session.status_idled" || deliveredPayload.Data.ID != session.ID {
 		t.Fatalf("unexpected webhook event=%+v payload=%+v body=%s", event, deliveredPayload, delivered.Body)
 	}
 }
@@ -4807,33 +4805,11 @@ func sessionWorkData(t *testing.T, app *testApp, sessionID string) (string, stri
 
 func webhookJobCount(t *testing.T, app *testApp, eventType, resourceID string) int {
 	t.Helper()
-	var count int
-	if err := app.pool.QueryRow(context.Background(), `
-		select count(*)
-		from jobs
-		where type = 'webhook_delivery'
-			and payload->>'event_type' = $1
-			and payload->'event'->'data'->>'id' = $2
-	`, eventType, resourceID).Scan(&count); err != nil {
-		t.Fatalf("count webhook jobs: %v", err)
+	count := 0
+	for _, event := range queuedWebhookEvents(t, app) {
+		if event.Data.Type == eventType && event.Data.ID == resourceID {
+			count++
+		}
 	}
 	return count
-}
-
-func latestWebhookJobStatus(t *testing.T, app *testApp, eventType, resourceID string) (string, int) {
-	t.Helper()
-	var status string
-	var attempts int
-	if err := app.pool.QueryRow(context.Background(), `
-		select status, attempts
-		from jobs
-		where type = 'webhook_delivery'
-			and payload->>'event_type' = $1
-			and payload->'event'->'data'->>'id' = $2
-		order by created_at desc, id desc
-		limit 1
-	`, eventType, resourceID).Scan(&status, &attempts); err != nil {
-		t.Fatalf("load webhook job status: %v", err)
-	}
-	return status, attempts
 }

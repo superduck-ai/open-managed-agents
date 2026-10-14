@@ -488,7 +488,7 @@ func TestChildThreadArchiveKeepsSessionConsumers(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.seedConsumer(t, worker.ExternalID)
-	if _, _, err := f.app.db.ArchiveSessionThread(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID, child.ExternalID); err != nil {
+	if _, _, _, err := f.app.db.ArchiveSessionThread(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID, child.ExternalID); err != nil {
 		t.Fatal(err)
 	}
 	oldEpoch, err := strconv.ParseInt(epoch, 10, 64)
@@ -506,7 +506,7 @@ func TestChildThreadArchiveKeepsSessionConsumers(t *testing.T) {
 	if err != nil || info.State.Consumers != 2 || info.State.Msgs != 2 {
 		t.Fatalf("child archive removed parent queues: %+v %v", info, err)
 	}
-	_, removal, err := f.app.db.ArchiveSessionThread(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID, primary.ExternalID)
+	_, removal, _, err := f.app.db.ArchiveSessionThread(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID, primary.ExternalID)
 	if err != nil {
 		t.Fatal(err)
 	}

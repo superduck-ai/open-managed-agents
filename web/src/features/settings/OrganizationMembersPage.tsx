@@ -18,6 +18,7 @@ import { Button } from '../../shared/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
 import { ResourceListState } from '../../shared/ui/resource-list-state';
 import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import type { ApiError } from '../../shared/api/client';
 import { useI18n } from '../../shared/i18n';
 import {
   DropdownMenu,
@@ -32,6 +33,8 @@ import { Textarea } from '../../shared/ui/textarea';
 import { Skeleton } from '../../shared/ui/skeleton';
 import { toast } from '../../shared/ui/sonner';
 import { useAuth } from '../../shared/auth/context';
+import { notifyInvitationDelivery } from './invitationDelivery';
+import { MembersAccessDenied } from './MembersAccessDenied';
 import { canManageMembers } from '../../shared/permissions/members';
 import {
   platformRoleDescription,
@@ -40,6 +43,8 @@ import {
   type PlatformRole,
 } from '../../shared/permissions/roles';
 import { useWorkspace } from '../../shared/workspaces/context';
+import { MemberDirectoryFilters } from './MemberDirectoryFilters';
+import { OrganizationMemberRemoval } from './OrganizationMemberRemoval';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import {
   createOrganizationInvite,
@@ -59,12 +64,40 @@ const memberColumnHelper = createColumnHelper<OrganizationMemberRow>();
 
 export function OrganizationMembersPage() {
   const { msg } = useI18n();
-  const { account, csrfToken } = useAuth();
-  const { orgUuid, activeWorkspace } = useWorkspace();
-  const queryClient = useQueryClient();
+  const { account } = useAuth();
+  const { orgUuid } = useWorkspace();
   const bootstrapOrganization = account?.memberships?.find((membership) => membership.organization?.uuid)?.organization;
   const activeOrgUuid = orgUuid ?? bootstrapOrganization?.uuid;
-  const canManage = canManageMembers(account);
+
+  if (!activeOrgUuid) {
+    return (
+      <section>
+        <ResourcePageHeader contentGap="content" title={msg('members.title', 'Members')} />
+        <p className="text-[15px] leading-5 text-muted-foreground">
+          {msg('members.noOrganization', 'No organization is available for this session.')}
+        </p>
+      </section>
+    );
+  }
+
+  if (!canManageMembers(account, activeOrgUuid)) {
+    return <OrganizationMembersAccessDenied />;
+  }
+
+  return <OrganizationMembersAdminPage key={activeOrgUuid} activeOrgUuid={activeOrgUuid} />;
+}
+
+function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string }) {
+  const { msg } = useI18n();
+  const { account, csrfToken } = useAuth();
+  const { activeWorkspace } = useWorkspace();
+  const queryClient = useQueryClient();
+  const bootstrapOrganization = account?.memberships?.find((membership) => membership.organization?.uuid)?.organization;
+  const activeOrganization =
+    account?.memberships?.find((membership) => membership.organization?.uuid === activeOrgUuid)?.organization ??
+    bootstrapOrganization;
+  const [memberSearch, setMemberSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteActionError, setInviteActionError] = useState<string | null>(null);
   const [inviteToRevoke, setInviteToRevoke] = useState<OrganizationInvite | null>(null);
@@ -82,7 +115,7 @@ export function OrganizationMembersPage() {
   const invitesQuery = useQuery({
     queryKey: invitesQueryKey,
     queryFn: () => listOrganizationInvites(activeOrgUuid ?? '', 'pending'),
-    enabled: Boolean(activeOrgUuid) && canManage,
+    enabled: Boolean(activeOrgUuid),
     retry: false,
   });
 
@@ -113,7 +146,7 @@ export function OrganizationMembersPage() {
           current?.map((invite) => (invite.id === updatedInvite.id ? updatedInvite : invite)) ?? [updatedInvite],
       );
       setInviteActionError(null);
-      toast.success(msg('members.reminderSent', 'Invite reminder sent.'));
+      notifyInvitationDelivery([updatedInvite], msg);
     },
     onError: (error) => {
       setInviteActionError(errorMessage(error));
@@ -137,18 +170,27 @@ export function OrganizationMembersPage() {
   });
 
   const tableRows = useMemo<OrganizationMemberRow[]>(
-    () => [...(canManage ? (invitesQuery.data ?? []) : []), ...(membersQuery.data ?? [])],
-    [canManage, invitesQuery.data, membersQuery.data],
+    () => [...(invitesQuery.data ?? []), ...(membersQuery.data ?? [])],
+    [invitesQuery.data, membersQuery.data],
   );
-  const isInitialLoading =
-    (membersQuery.isLoading && !membersQuery.data) || (canManage && invitesQuery.isLoading && !invitesQuery.data);
-  const hasTableError = membersQuery.isError || (canManage && invitesQuery.isError);
-  const titleCount = isInitialLoading ? 0 : tableRows.length;
+  const filteredRows = useMemo(
+    () =>
+      tableRows.filter((row) => {
+        if (roleFilter !== 'all' && normalizePlatformRole(row.role) !== roleFilter) return false;
+        const keyword = memberSearch.trim().toLowerCase();
+        return (
+          !keyword ||
+          (!isInviteRow(row) && row.name?.toLowerCase().includes(keyword)) ||
+          row.email.toLowerCase().includes(keyword)
+        );
+      }),
+    [tableRows, roleFilter, memberSearch],
+  );
+  const isInitialLoading = membersQuery.isPending || invitesQuery.isPending;
+  const hasTableError = membersQuery.isError || invitesQuery.isError;
   const handleRetry = () => {
     membersQuery.refetch();
-    if (canManage) {
-      invitesQuery.refetch();
-    }
+    invitesQuery.refetch();
   };
 
   const columns = useMemo(
@@ -198,7 +240,7 @@ export function OrganizationMembersPage() {
           const role = normalizePlatformRole(member.role);
           const isSelf = isCurrentAccountMember(account, member);
 
-          if (!canManage || isSelf) {
+          if (isSelf) {
             return <span className="text-foreground">{platformRoleLabel(role, msg)}</span>;
           }
 
@@ -235,31 +277,42 @@ export function OrganizationMembersPage() {
                 setInviteToRevoke(invite);
               }}
             />
-          ) : (
+          ) : isCurrentAccountMember(account, row.original) ? (
             <span aria-hidden className="block h-8 w-8" />
+          ) : (
+            <OrganizationMemberRemoval
+              orgUuid={activeOrgUuid}
+              organizationName={activeOrganization?.name ?? msg('members.fallbackOrgName', 'this organization')}
+              member={row.original}
+              csrfToken={csrfToken}
+              disabled={updateRoleMutation.isPending}
+            />
           ),
       }),
     ],
-    [account, canManage, deleteInviteMutation, msg, pendingRoleMemberId, resendInviteMutation, updateRoleMutation],
+    [
+      account,
+      activeOrgUuid,
+      activeOrganization,
+      csrfToken,
+      deleteInviteMutation,
+      msg,
+      pendingRoleMemberId,
+      resendInviteMutation,
+      updateRoleMutation,
+    ],
   );
 
   // TanStack Table returns callback-heavy instance methods; this table instance stays local to the page.
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
-    data: tableRows,
+    data: filteredRows,
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
 
-  if (!activeOrgUuid) {
-    return (
-      <section>
-        <ResourcePageHeader contentGap="content" title={msg('members.title', 'Members')} />
-        <p className="text-[15px] leading-5 text-muted-foreground">
-          {msg('members.noOrganization', 'No organization is available for this session.')}
-        </p>
-      </section>
-    );
+  if ([membersQuery.error, invitesQuery.error].some(isPermissionDenied)) {
+    return <OrganizationMembersAccessDenied />;
   }
 
   return (
@@ -267,26 +320,35 @@ export function OrganizationMembersPage() {
       <ResourcePageHeader
         contentGap="content"
         title={msg('members.title', 'Members')}
-        description={memberAccessDescription(bootstrapOrganization, activeWorkspace.name, msg)}
+        description={memberAccessDescription(activeOrganization, activeWorkspace.name, msg)}
         titleAdornment={
-          <Badge variant="secondary" className="min-w-5 rounded-full px-1.5">
-            {titleCount}
-          </Badge>
-        }
-        actions={
-          canManage ? (
-            <Button
-              size="lg"
-              onClick={() => {
-                setInviteActionError(null);
-                setInviteOpen(true);
-              }}
-            >
-              <Plus className="size-4" aria-hidden />
-              {msg('members.invite', 'Invite')}
-            </Button>
+          !isInitialLoading && !hasTableError ? (
+            <Badge variant="secondary" className="min-w-5 rounded-full px-1.5">
+              {tableRows.length}
+            </Badge>
           ) : null
         }
+        actions={
+          <Button
+            size="lg"
+            onClick={() => {
+              setInviteActionError(null);
+              setInviteOpen(true);
+            }}
+          >
+            <Plus className="size-4" aria-hidden />
+            {msg('members.invite', 'Invite')}
+          </Button>
+        }
+      />
+
+      <MemberDirectoryFilters
+        search={memberSearch}
+        onSearch={setMemberSearch}
+        role={roleFilter}
+        onRole={setRoleFilter}
+        roles={roleOptions.map((role) => ({ value: role.value, label: platformRoleLabel(role.value, msg) }))}
+        roleLabelPrefix="members.role"
       />
 
       {updateRoleMutation.isError ? <InlineNotice>{errorMessage(updateRoleMutation.error)}</InlineNotice> : null}
@@ -356,11 +418,7 @@ export function OrganizationMembersPage() {
             ...createdInvites,
             ...(current ?? []),
           ]);
-          toast.success(
-            createdInvites.length === 1
-              ? msg('members.inviteSent', 'Invite sent.')
-              : msg('members.invitesSent', '{count} invites sent.', { count: createdInvites.length }),
-          );
+          notifyInvitationDelivery(createdInvites, msg);
         }}
       />
       <InviteRevokeDialog
@@ -379,6 +437,26 @@ export function OrganizationMembersPage() {
       />
     </section>
   );
+}
+
+function OrganizationMembersAccessDenied() {
+  const { msg } = useI18n();
+
+  return (
+    <section data-testid="organization-members-page">
+      <ResourcePageHeader contentGap="content" title={msg('members.title', 'Members')} />
+      <MembersAccessDenied
+        description={msg(
+          'members.accessDeniedDescription',
+          'Only organization administrators can view and manage organization members. Contact your organization administrator.',
+        )}
+      />
+    </section>
+  );
+}
+
+function isPermissionDenied(error: unknown) {
+  return Boolean(error && typeof error === 'object' && (error as Partial<ApiError>).status === 403);
 }
 
 function InviteMembersDialog({
@@ -788,6 +866,7 @@ function isCurrentAccountMember(account: ReturnType<typeof useAuth>['account'], 
     return false;
   }
   return (
+    account.memberships?.some((membership) => member.id === membership.user_id || member.id === membership.user_uuid) ||
     member.id === account.uuid ||
     member.id === account.tagged_id ||
     (member.email !== '' && member.email.toLowerCase() === account.email_address.toLowerCase())

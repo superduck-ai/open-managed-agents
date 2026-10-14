@@ -26,7 +26,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
-	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
 
 const (
@@ -39,14 +38,9 @@ type Handler struct {
 	secretService *secrets.Service
 	db            *db.DB
 	deployments   *Store
-	webhooks      webhookEnqueuer
 	billing       *billing.Calculator
 	errorAdapter  *httpapi.ErrorAdapter
 	router        chi.Router
-}
-
-type webhookEnqueuer interface {
-	Enqueue(context.Context, webhooks.EnqueueInput)
 }
 
 type RunsHandler struct {
@@ -235,9 +229,9 @@ type deploymentAgentSnapshot struct {
 	} `json:"skills"`
 }
 
-func NewHandler(database *db.DB, deploymentStore *Store, webhookEvents webhookEnqueuer, secretService *secrets.Service, billingCalculator *billing.Calculator, logger *slog.Logger) *Handler {
+func NewHandler(database *db.DB, deploymentStore *Store, secretService *secrets.Service, billingCalculator *billing.Calculator, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{db: database, deployments: deploymentStore, webhooks: webhookEvents, secretService: secretService, billing: billingCalculator, errorAdapter: httpapi.NewErrorAdapter(logger)}
+	h := &Handler{db: database, deployments: deploymentStore, secretService: secretService, billing: billingCalculator, errorAdapter: httpapi.NewErrorAdapter(logger)}
 	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
 	router.NotFound(wrap(h.notFound))
@@ -349,7 +343,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if env.ArchivedAt != nil {
 		return invalidRequest(errors.New("environment must not be archived"))
 	}
-	resources, resourceSecrets, err := h.normalizeResources(r, principal, jsonx.Default(body.Resources, `[]`))
+	resources, resourceSecrets, err := h.normalizeResources(r, principal, jsonx.Default(body.Resources, `[]`), nil)
 	if err != nil {
 		return resourceBuildError(err)
 	}
@@ -548,7 +542,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	if len(body.Resources) > 0 {
-		next.Resources, next.ResourceSecrets, err = h.normalizeResources(r, principal, body.Resources)
+		next.Resources, next.ResourceSecrets, err = h.normalizeResources(r, principal, body.Resources, next.ResourceSecrets)
 		if err != nil {
 			return resourceBuildError(err)
 		}
@@ -651,7 +645,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 		return h.writeRunReferenceFailure(w, r, principal, deployment, runError("session_resource_not_found_error", err.Error()))
 	}
-	run, session, thread, createdEvents, err := h.deployments.CreateManualRun(r.Context(), db.CreateManualDeploymentRunInput{
+	run, _, _, _, err := h.deployments.CreateManualRun(r.Context(), db.CreateManualDeploymentRunInput{
 		DeploymentExternalID: deployment.ExternalID,
 		Session:              preparedRun.Session,
 		Events:               preparedRun.Events,
@@ -679,29 +673,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 		return deploymentLoadError(err, deploymentID)
 	}
-	h.enqueueWebhook(r.Context(), principal, "session.created", session.ExternalID, nil)
-	h.enqueueWebhook(r.Context(), principal, "session.pending", session.ExternalID, nil)
-	h.enqueueWebhook(r.Context(), principal, "session.status_idled", session.ExternalID, nil)
-	h.enqueueWebhook(r.Context(), principal, "session.thread_created", session.ExternalID, &thread.ExternalID)
-	h.enqueueWebhook(r.Context(), principal, "session.thread_idled", session.ExternalID, &thread.ExternalID)
-	if outcomesChanged(createdEvents) {
-		h.enqueueWebhook(r.Context(), principal, "session.outcome_evaluation_ended", session.ExternalID, nil)
-	}
 	return writeRunResponse(w, run)
-}
-
-func (h *Handler) enqueueWebhook(ctx context.Context, principal auth.Principal, eventType, resourceID string, sessionThreadID *string) {
-	if h.webhooks == nil {
-		return
-	}
-	h.webhooks.Enqueue(ctx, webhooks.EnqueueInput{
-		WorkspaceUUID:       principal.WorkspaceUUID,
-		OrganizationUUID:    principal.OrganizationUUID,
-		WorkspaceExternalID: principal.WorkspaceExternalID,
-		EventType:           eventType,
-		ResourceID:          resourceID,
-		Options:             webhooks.EventOptions{SessionThreadID: sessionThreadID},
-	})
 }
 
 func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Request, principal auth.Principal, deployment db.Deployment, runError *deploymentRunError) error {
@@ -1280,15 +1252,6 @@ func classifyReferenceFailure(resourceType string, err error, archived bool) (*d
 
 func runError(errorType, message string) *deploymentRunError {
 	return &deploymentRunError{Type: errorType, Message: message}
-}
-
-func outcomesChanged(events []db.SessionEvent) bool {
-	for _, event := range events {
-		if event.EventType == "user.define_outcome" {
-			return true
-		}
-	}
-	return false
 }
 
 func newRunIDs() (sessionID, threadID, workID, runID string, err error) {

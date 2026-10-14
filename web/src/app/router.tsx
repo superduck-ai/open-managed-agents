@@ -1,7 +1,11 @@
-import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router';
+import { createRootRoute, createRoute, createRouter, Navigate } from '@tanstack/react-router';
+import { InvitationEntryGate } from '../features/organizations/InvitationEntryGate';
+import { InvitationsPage } from '../features/organizations/InvitationsPage';
+import { invitationReturnTo } from '../features/organizations/api';
 import { ConsoleLayout } from './layout/ConsoleLayout';
 import { ProtectedConsoleLayout } from './layout/ProtectedConsoleLayout';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
+import { WorkspaceSettingsRedirect } from '../features/settings/WorkspaceSettingsRedirect';
 import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../features/analytics/AnalyticsPages';
 import { LoginPage } from '../features/auth/LoginPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
@@ -16,7 +20,16 @@ import { WorkbenchPage } from '../features/workbench/WorkbenchPage';
 import { normalizeReturnTo } from '../shared/auth/redirects';
 
 const rootRoute = createRootRoute({
-  component: () => <Outlet />,
+  component: InvitationEntryGate,
+});
+
+const invitationsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'invites',
+  validateSearch: (search: Record<string, unknown>) => ({
+    returnTo: invitationReturnTo(typeof search.returnTo === 'string' ? search.returnTo : undefined),
+  }),
+  component: InvitationsPage,
 });
 
 const loginRoute = createRoute({
@@ -398,6 +411,12 @@ const agentsRoute = createRoute({
   component: () => <ManagedAgentsPage section="agents" />,
 });
 
+const agentCreateRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'agents/new',
+  component: () => <ManagedAgentsPage section="agents" />,
+});
+
 const agentDetailRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'agents/$agentId',
@@ -407,6 +426,12 @@ const agentDetailRoute = createRoute({
 const workspaceAgentsRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/agents',
+  component: () => <ManagedAgentsPage section="agents" />,
+});
+
+const workspaceAgentCreateRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/agents/new',
   component: () => <ManagedAgentsPage section="agents" />,
 });
 
@@ -437,7 +462,7 @@ const securityRoute = createRoute({
 const webhooksRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'webhooks',
-  component: () => <DashboardPage section="webhooks" />,
+  component: () => <WorkspaceSettingsRedirect resource="webhooks" />,
 });
 
 const settingsWorkspaceMcpTunnelsRoute = createRoute({
@@ -476,10 +501,16 @@ const settingsOrganizationRoute = createRoute({
   component: OrganizationSettingsPage,
 });
 
+const settingsBillingRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: 'settings/billing',
+  component: () => <Navigate to="/billing" replace />,
+});
+
 const settingsLimitsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: 'settings/limits',
-  component: () => <OrganizationSettingsPage section="limits" />,
+  component: () => <OrganizationSettingsPage section="retired" />,
 });
 
 const settingsMembersRoute = createRoute({
@@ -491,7 +522,7 @@ const settingsMembersRoute = createRoute({
 const settingsServiceAccountsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: 'settings/service-accounts',
-  component: () => <OrganizationSettingsPage section="service-accounts" />,
+  component: () => <OrganizationSettingsPage section="retired" />,
 });
 
 const settingsFallbackRoute = createRoute({
@@ -502,6 +533,7 @@ const settingsFallbackRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
+  invitationsRoute,
   protectedRoute.addChildren([
     consoleRoute.addChildren([
       dashboardRoute,
@@ -529,8 +561,10 @@ const routeTree = rootRoute.addChildren([
       quickstartRoute,
       workspaceAgentQuickstartRoute,
       agentsRoute,
+      agentCreateRoute,
       agentDetailRoute,
       workspaceAgentsRoute,
+      workspaceAgentCreateRoute,
       workspaceAgentDetailRoute,
       sessionsRoute,
       workspaceSessionsRoute,
@@ -576,6 +610,7 @@ const routeTree = rootRoute.addChildren([
       settingsWorkspaceWebhooksRoute,
     ]),
     settingsOrganizationRoute,
+    settingsBillingRoute,
     settingsLimitsRoute,
     settingsMembersRoute,
     settingsServiceAccountsRoute,

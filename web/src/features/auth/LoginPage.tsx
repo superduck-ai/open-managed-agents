@@ -57,7 +57,6 @@ export function LoginPage() {
     <LoginFlow
       onAuthenticated={async () => {
         await refresh();
-        await navigate({ href: returnTo, replace: true });
       }}
     />
   );

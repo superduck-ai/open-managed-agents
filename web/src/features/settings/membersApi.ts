@@ -11,6 +11,7 @@ export type OrganizationMember = {
 };
 
 export type OrganizationInvite = {
+  email_delivery?: 'sent' | 'failed' | 'not_configured';
   id: string;
   type?: 'invite';
   email: string;
@@ -74,6 +75,16 @@ export function updateOrganizationMemberRole(
       method: 'POST',
       csrfToken,
       body: JSON.stringify({ role }),
+    },
+  );
+}
+
+export function removeOrganizationMember(orgUuid: string, memberId: string, csrfToken?: string) {
+  return consoleApi<{ id: string; type: 'user_deleted' }>(
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/members/${encodeURIComponent(memberId)}`,
+    {
+      method: 'DELETE',
+      csrfToken,
     },
   );
 }

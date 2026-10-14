@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
 )
 
 func TestNormalizeGitRepositorySpecRejectsUnsafeInputs(t *testing.T) {
@@ -120,10 +121,11 @@ func TestNormalizeGitRepositorySpecDefaultsAndCheckout(t *testing.T) {
 
 func TestGitRepositoryTokenEnvelopeRejectsPlaintextAndDifferentWorkspaces(t *testing.T) {
 	ctx := context.Background()
-	service, err := secrets.NewLocalService(ctx, make([]byte, 32))
+	serviceProvider, err := localkeys.New(localkeys.KeyMaterial{KEK: make([]byte, 32)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	service := secrets.NewService(serviceProvider)
 	binding := secrets.ResourceBinding{OrganizationUUID: "org", WorkspaceUUID: "ws"}
 	if _, err := DecryptGitToken(ctx, service, binding, json.RawMessage(`{"authorization_token":"legacy"}`)); err == nil {
 		t.Fatal("plaintext token accepted")

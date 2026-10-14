@@ -1,5 +1,11 @@
 import { anthropicBetaApi } from '../../shared/api/anthropic';
-import { consoleApi } from '../../shared/api/client';
+import {
+  consoleApi,
+  consoleRequestHeaders,
+  getScopeSignal,
+  getConsoleRequestContext,
+  reportApiAuthFailure,
+} from '../../shared/api/client';
 import { consumeSseBuffer, postJsonSseStream } from '../../shared/api/streaming';
 import { consoleResourceListLimit } from '../../shared/console-list';
 import { type QueryClient } from '@tanstack/react-query';
@@ -607,16 +613,30 @@ export function retrieveFileMetadata(fileId: string, workspaceId: string) {
   return anthropicBetaApi.files.retrieveMetadata<FileMetadataApiResponse>(fileId, workspaceId);
 }
 
-export async function listSessionFileOptions(workspaceId: string): Promise<FileMetadataPageResponse> {
+export function listSessionFileOptions(workspaceId: string) {
+  return listFileMetadataPages(workspaceId);
+}
+
+export function listSessionFiles(sessionId: string, workspaceId: string, signal?: AbortSignal) {
+  return listFileMetadataPages(workspaceId, { scope_id: sessionId, betas: ['managed-agents-2026-04-01'] }, signal);
+}
+
+async function listFileMetadataPages(
+  workspaceId: string,
+  params: Record<string, unknown> = {},
+  signal?: AbortSignal,
+): Promise<FileMetadataPageResponse> {
   const data: FileMetadataApiResponse[] = [];
   let afterId: string | undefined;
   let firstId: string | null | undefined;
   let lastId: string | null | undefined;
+  const cursors = new Set<string>();
 
   for (;;) {
     const page = (await anthropicBetaApi.files.list<FileMetadataApiResponse>(
-      { limit: 1000, ...(afterId ? { after_id: afterId } : {}) },
+      { ...params, limit: 1000, ...(afterId ? { after_id: afterId } : {}) },
       workspaceId,
+      signal,
     )) as FileMetadataPageResponse;
     data.push(...page.data);
     firstId ??= page.first_id;
@@ -625,9 +645,10 @@ export async function listSessionFileOptions(workspaceId: string): Promise<FileM
     if (!page.has_more) {
       return { data, first_id: firstId, has_more: false, last_id: lastId };
     }
-    if (!lastId || lastId === afterId) {
+    if (!lastId || cursors.has(lastId)) {
       throw new Error('Files API pagination did not return a new cursor');
     }
+    cursors.add(lastId);
     afterId = lastId;
   }
 }
@@ -725,15 +746,20 @@ export async function fetchSessionEventsPage({
   const path = threadId
     ? `/v1/sessions/${encodeURIComponent(sessionId)}/threads/${encodeURIComponent(threadId)}/events?${params.toString()}`
     : `/v1/sessions/${encodeURIComponent(sessionId)}/events?${params.toString()}`;
+  signal = AbortSignal.any([getScopeSignal(), ...(signal ? [signal] : [])]);
+  const context = getConsoleRequestContext();
   const response = await fetch(path, {
     credentials: 'include',
-    headers,
+    headers: consoleRequestHeaders(headers, context),
     signal,
   });
+  signal.throwIfAborted();
   if (!response.ok) {
+    reportApiAuthFailure(response.status, context);
     throw new Error(`Could not list session events (${response.status})`);
   }
   const payload = (await response.json()) as Partial<PageResponse<QuickstartSessionEvent>>;
+  signal.throwIfAborted();
   return {
     data: Array.isArray(payload.data)
       ? payload.data.map((event) => sessionEventWithResponseThread(event, threadId))
@@ -845,14 +871,18 @@ export async function streamSessionEvents({
   const path = threadId
     ? `/v1/sessions/${encodeURIComponent(sessionId)}/threads/${encodeURIComponent(threadId)}/stream?${params.toString()}`
     : `/v1/sessions/${encodeURIComponent(sessionId)}/events/stream?${params.toString()}`;
+  signal = AbortSignal.any([getScopeSignal(), signal]);
+  const context = getConsoleRequestContext();
   const streamSignal = sessionLinkedAbortSignal(signal, SESSION_DETAIL_STREAM_IDLE_TIMEOUT_MS);
   try {
     const response = await fetch(path, {
       credentials: 'include',
-      headers,
+      headers: consoleRequestHeaders(headers, context),
       signal: streamSignal.signal,
     });
+    signal.throwIfAborted();
     if (!response.ok || !response.body) {
+      reportApiAuthFailure(response.status, context);
       throw new SessionStreamError(response.status);
     }
     onOpen?.();
@@ -862,6 +892,7 @@ export async function streamSessionEvents({
     streamSignal.touch();
     for (;;) {
       const { value, done } = await reader.read();
+      signal.throwIfAborted();
       if (done) {
         break;
       }

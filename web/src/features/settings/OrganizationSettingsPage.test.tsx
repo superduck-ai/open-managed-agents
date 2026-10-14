@@ -58,7 +58,7 @@ describe('Organization settings', () => {
     ).toBe(true);
     expect(screen.getByText('Back to app')).toBeTruthy();
     expect(screen.getByText('Organization settings')).toBeTruthy();
-    expect(screen.getByText('Workload identity')).toBeTruthy();
+    expect(screen.queryByText('Workload identity')).toBeNull();
 
     const organizationName = (await screen.findByLabelText('Organization name')) as HTMLInputElement;
     await waitFor(() => expect(organizationName.value).toBe('default'));

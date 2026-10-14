@@ -269,7 +269,7 @@ func TestWorkspaceLLMProvidersRequireAdministrator(t *testing.T) {
 	cookies := app.platformLoginCookies(t, email)
 	orgUUID := loadDefaultOrganizationUUID(t, app)
 	if _, err := app.pool.Exec(context.Background(), `
-		update users set role = 'developer' where organization_uuid = $1 and lower(email) = lower($2)
+		update users set role = 'user' where organization_uuid = $1 and lower(email) = lower($2)
 	`, orgUUID, email); err != nil {
 		t.Fatalf("downgrade test user: %v", err)
 	}

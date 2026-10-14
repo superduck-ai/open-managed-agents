@@ -50,7 +50,7 @@ func (emailLoginStoreStub) GetBootstrapUser(context.Context, string) (*UserRecor
 	return nil, errors.New("unexpected bootstrap lookup")
 }
 
-func (emailLoginStoreStub) ListBootstrapUserOrganizations(context.Context, string, string) ([]UserOrganizationRecord, error) {
+func (emailLoginStoreStub) ListBootstrapOrganizationsByEmail(context.Context, string) ([]UserOrganizationRecord, error) {
 	return nil, errors.New("unexpected bootstrap lookup")
 }
 
@@ -68,7 +68,7 @@ func (successfulEmailLoginStoreStub) GetBootstrapUser(context.Context, string) (
 	return &UserRecord{UUID: "user-uuid", ExternalID: "user_existing", Email: "user@example.com"}, nil
 }
 
-func (successfulEmailLoginStoreStub) ListBootstrapUserOrganizations(context.Context, string, string) ([]UserOrganizationRecord, error) {
+func (successfulEmailLoginStoreStub) ListBootstrapOrganizationsByEmail(context.Context, string) ([]UserOrganizationRecord, error) {
 	return []UserOrganizationRecord{{OrganizationRecord: OrganizationRecord{UUID: "org-existing", Name: "Test"}, Role: "admin"}}, nil
 }
 

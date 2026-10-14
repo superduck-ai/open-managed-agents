@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="InvitationMapper">
+    <sql id="columns">
+        i.external_id AS id, i.organization_uuid, o.name AS organization_name,
+        i.email, i.role,
+        CASE WHEN i.status = 'pending' AND i.expires_at &lt;= clock_timestamp()
+             THEN 'expired' ELSE i.status END AS status,
+        i.invited_at, i.expires_at
+    </sql>
+    <select id="ListByEmail" resultType="invitationRow">
+        SELECT <include refid="columns"/>
+        FROM organization_invites i JOIN organizations o ON o.uuid = i.organization_uuid
+        WHERE lower(i.email) = lower(#{email}) AND i.deleted_at IS NULL
+        AND i.status = 'pending' AND i.expires_at &gt; clock_timestamp()
+        ORDER BY i.invited_at DESC, i.uuid DESC
+    </select>
+    <select id="LockByIDAndEmail" resultType="invitationRow">
+        SELECT <include refid="columns"/>
+        FROM organization_invites i JOIN organizations o ON o.uuid = i.organization_uuid
+        WHERE i.external_id = #{id} AND lower(i.email) = lower(#{email})
+        FOR UPDATE OF i
+    </select>
+    <select id="FindActiveMember" resultType="invitationMemberRow">
+        SELECT external_id AS id, role FROM users
+        WHERE organization_uuid = #{organizationUUID} AND lower(email) = lower(#{email})
+        AND deleted_at IS NULL FOR UPDATE
+    </select>
+    <insert id="InsertMember" result="rows">
+        INSERT INTO users (external_id, organization_uuid, email, role)
+        VALUES (#{params.ID}, #{params.OrganizationUUID}, #{params.Email}, #{params.Role})
+        ON CONFLICT (organization_uuid, lower(email)) WHERE deleted_at IS NULL DO NOTHING
+    </insert>
+    <update id="UpdateStatus" result="rows">
+        UPDATE organization_invites SET status = #{status}
+        WHERE organization_uuid = #{organizationUUID} AND external_id = #{id}
+        AND status = 'pending' AND deleted_at IS NULL AND expires_at &gt; clock_timestamp()
+    </update>
+</mapper>

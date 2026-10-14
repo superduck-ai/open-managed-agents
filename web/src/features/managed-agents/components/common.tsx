@@ -610,12 +610,16 @@ export function ManagedSelectField({
   placeholder,
   options,
   onChange,
+  manageHref,
+  manageLabel,
 }: {
   label: string;
   value: string;
   placeholder: string;
   options: EntityOption[];
   onChange: (value: string) => void;
+  manageHref?: string;
+  manageLabel?: string;
 }) {
   const id = `managed-select-${useId()}`;
   const selected = options.find((option) => option.id === value);
@@ -625,9 +629,13 @@ export function ManagedSelectField({
   ];
   return (
     <div>
-      <Label htmlFor={id} className="text-sm font-medium text-foreground">
-        {label}
-      </Label>
+      {manageHref && manageLabel ? (
+        <DeploymentFieldHeader id={id} label={label} manageHref={manageHref} manageLabel={manageLabel} />
+      ) : (
+        <Label htmlFor={id} className="text-sm font-medium text-foreground">
+          {label}
+        </Label>
+      )}
       <Select<string>
         value={value}
         items={items}

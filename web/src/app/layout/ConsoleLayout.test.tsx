@@ -17,6 +17,21 @@ afterEach(() => {
 });
 
 describe('ConsoleShell', () => {
+  test.each([
+    ['en', 'User', 'Default'],
+    ['zh-CN', '用户', '默认'],
+  ] as const)('用户角色在 %s 显示正确名称', (locale, label, workspaceName) => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+    renderWithWorkspaces(
+      <ConsoleShell currentPath="/dashboard" account={testAccount('user')} onLogout={() => undefined}>
+        <div>Dashboard content</div>
+      </ConsoleShell>,
+      { locale, effectiveRole: 'workspace_user' },
+    );
+    expect(screen.getByText(`${label} · ${workspaceName}`)).toBeTruthy();
+    expect(screen.queryByText(`Member · ${workspaceName}`)).toBeNull();
+  });
+
   test.each(['/settings/workspaces/default/mcp-tunnels', '/settings/workspaces/default/mcp-tunnels/tunnel_test'])(
     'uses the full-width console layout for %s',
     (currentPath) => {
@@ -51,18 +66,20 @@ describe('ConsoleShell', () => {
     expect(screen.getByRole('link', { name: 'LLM models' }).getAttribute('href')).toBe(
       '/workspaces/default/llm-models',
     );
-    expect(screen.getByText('API keys')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'API keys' }).getAttribute('href')).toBe(
+      '/settings/workspaces/default/keys',
+    );
     expect(screen.getByText('Build')).toBeTruthy();
     expect(screen.getByText('Managed Agents')).toBeTruthy();
     expect(screen.getByText('Analytics')).toBeTruthy();
     expect(screen.queryByText('Claude Code')).toBeNull();
     expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Batches' })).toBeNull();
-    expect(screen.getByText('Manage')).toBeTruthy();
+    expect(screen.getByText('Workspace settings')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Managed Agents' }).getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('false');
     expect(screen.getByRole('button', { name: 'Analytics' }).getAttribute('aria-expanded')).toBe('false');
-    expect(screen.getByRole('button', { name: 'Manage' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Workspace settings' }).getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Caching' })).toBeNull();
     expect(screen.queryByRole('link', { name: /MCP tunnels/i })).toBeNull();
@@ -90,13 +107,20 @@ describe('ConsoleShell', () => {
     expect(screen.getByRole('link', { name: 'Caching' }).getAttribute('href')).toBe('/usage/cache');
     expect(screen.getByRole('link', { name: 'Rate limits' }).getAttribute('href')).toBe('/usage/limits');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace settings' }));
     expect(screen.getByRole('link', { name: /MCP tunnels/i }).getAttribute('href')).toBe(
       '/settings/workspaces/default/mcp-tunnels',
     );
+    expect(screen.getAllByRole('link', { name: 'API keys' }).map((link) => link.getAttribute('href'))).toEqual([
+      '/settings/workspaces/default/keys',
+      '/settings/workspaces/default/keys',
+    ]);
+    for (const name of ['Limits', 'Service accounts', 'Privacy controls', 'Security']) {
+      expect(screen.queryByRole('link', { name })).toBeNull();
+    }
     expect(screen.getByText('Preview')).toBeTruthy();
     const managedAgents = consoleNavigation.find((item) => item.type === 'group' && item.label === 'Managed Agents');
-    const manage = consoleNavigation.find((item) => item.type === 'group' && item.label === 'Manage');
+    const manage = consoleNavigation.find((item) => item.type === 'group' && item.label === 'Workspace settings');
     expect(managedAgents?.type === 'group' && managedAgents.children.some((item) => item.href === '/mcp-tunnels')).toBe(
       false,
     );
@@ -180,7 +204,7 @@ describe('ConsoleShell', () => {
   test('hides LLM model configuration from non-administrators', () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     renderWithWorkspaces(
-      <ConsoleShell currentPath="/dashboard" account={testAccount('developer')} onLogout={() => undefined}>
+      <ConsoleShell currentPath="/dashboard" account={testAccount('user')} onLogout={() => undefined}>
         <div>Dashboard content</div>
       </ConsoleShell>,
     );
@@ -434,8 +458,10 @@ describe('ConsoleShell', () => {
 
     const menu = screen.getAllByRole('menu')[0];
     expect(menu.closest('[data-sidebar-state]')).toBeNull();
-    expect(screen.getByRole('menuitemradio', { name: /Default API plan/i }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.queryByRole('menuitemradio', { name: /Default API plan/i })).toBeNull();
     expect(screen.getByRole('menuitem', { name: 'Organization settings' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Profile' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Appearance' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'Language' })).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: 'Feedback' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Get help' })).toBeNull();
@@ -508,6 +534,10 @@ describe('ConsoleShell', () => {
     expect(document.documentElement.lang).toBe('zh-CN');
     expect(screen.getByText('仪表盘')).toBeTruthy();
     expect(screen.getByText('API 密钥')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '工作区设置' }));
+    expect(screen.getAllByRole('link', { name: 'API 密钥' })[1].getAttribute('href')).toBe(
+      '/settings/workspaces/default/keys',
+    );
     expect(screen.getByText('构建')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: /test/i }));
@@ -592,7 +622,7 @@ describe('ConsoleShell', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /test/i }));
     });
-    expect(screen.getByText('Admin · foo')).toBeTruthy();
+    expect(screen.getByText('Member · foo')).toBeTruthy();
   });
 
   test('shows the role for the active organization instead of the first membership', () => {
@@ -607,7 +637,7 @@ describe('ConsoleShell', () => {
           display_name: 'test',
           memberships: [
             { role: 'user', organization: { uuid: 'org_other' } },
-            { role: 'developer', organization: { uuid: 'org_test' } },
+            { role: 'admin', organization: { uuid: 'org_test' } },
           ],
         }}
         onLogout={() => undefined}
@@ -616,7 +646,7 @@ describe('ConsoleShell', () => {
       </ConsoleShell>,
     );
 
-    expect(screen.getByText('Developer · Default')).toBeTruthy();
+    expect(screen.getByText('Admin · Default')).toBeTruthy();
   });
 
   test('uses client navigation when selecting a workspace on managed routes', async () => {
@@ -641,26 +671,27 @@ describe('ConsoleShell', () => {
     expect(getWorkspaceMenuButton(/foo/i)).toBeTruthy();
   });
 
-  test('keeps the MCP server subroute when selecting another workspace', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/mcp-servers/mcpsrv_test');
-    const navigate = mock(async () => undefined);
-
-    renderWithWorkspaces(
-      <ConsoleShell
-        currentPath="/workspaces/default/mcp-servers/mcpsrv_test"
-        account={{ uuid: 'acct_test', email_address: 'test@example.com', display_name: 'test' }}
-        onLogout={() => undefined}
-        onNavigate={navigate}
-      >
-        <div>MCP server content</div>
-      </ConsoleShell>,
-    );
-
-    fireEvent.click(getWorkspaceMenuButton(/Default/i));
-    fireEvent.click(screen.getByRole('menuitem', { name: /foo/i }));
-
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/workspaces/wrkspc_foo/mcp-servers/mcpsrv_test'));
-  });
+  test.each(['agents', 'sessions', 'environments', 'vaults', 'memory-stores', 'skills', 'mcp-servers'])(
+    '从 %s 详情切换工作区后导航到列表',
+    async (section) => {
+      const path = `/workspaces/default/${section}/old-resource`;
+      resetTestDom(`https://oma.duck.ai${path}`);
+      const navigate = mock(async () => undefined);
+      renderWithWorkspaces(
+        <ConsoleShell
+          currentPath={path}
+          account={{ uuid: 'acct_test', email_address: 'test@example.com' }}
+          onLogout={() => undefined}
+          onNavigate={navigate}
+        >
+          <div>Resource detail</div>
+        </ConsoleShell>,
+      );
+      fireEvent.click(getWorkspaceMenuButton(/Default/i));
+      fireEvent.click(screen.getByRole('menuitem', { name: /foo/i }));
+      await waitFor(() => expect(navigate).toHaveBeenCalledWith(`/workspaces/wrkspc_foo/${section}`));
+    },
+  );
 
   test('syncs the workspace selector from workspace-scoped routes', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/wrkspc_foo/logs');
@@ -676,6 +707,34 @@ describe('ConsoleShell', () => {
     );
 
     await waitFor(() => expect(getWorkspaceMenuButton(/foo/i)).toBeTruthy());
+  });
+
+  test.each([false, true])('工作区操作入口遵循管理权限：%s', async (canManageWorkspaces) => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+    const navigate = mock(async () => undefined);
+    renderWithWorkspaces(
+      <ConsoleShell
+        currentPath="/dashboard"
+        account={{ uuid: 'acct_test', email_address: 'test@example.com' }}
+        onLogout={() => undefined}
+        onNavigate={navigate}
+      >
+        <div>Dashboard</div>
+      </ConsoleShell>,
+      { canManageWorkspaces, locale: 'zh-CN' },
+    );
+    fireEvent.click(getWorkspaceMenuButton('默认'));
+    if (!canManageWorkspaces) {
+      expect(screen.queryByRole('menuitem', { name: '管理工作区' })).toBeNull();
+      expect(screen.queryByRole('menuitem', { name: /创建工作区/ })).toBeNull();
+      return;
+    }
+    expect(screen.getByRole('menuitem', { name: /创建工作区/ })).toBeTruthy();
+    const manage = screen.getByRole('menuitem', { name: '管理工作区' });
+    expect(manage.getAttribute('href')).toBe('/settings/workspaces');
+    fireEvent.click(manage);
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/settings/workspaces'));
+    await waitFor(() => expect(screen.queryByRole('menuitem', { name: '管理工作区' })).toBeNull());
   });
 
   test('creates a workspace with color and US residency', async () => {
@@ -748,21 +807,38 @@ function testAccount(role = 'admin'): AuthAccount {
 
 function renderWithWorkspaces(
   children: ReactNode,
-  options: { createWorkspace?: (input: CreateWorkspaceInput) => Promise<Workspace>; locale?: Locale } = {},
+  options: {
+    createWorkspace?: (input: CreateWorkspaceInput) => Promise<Workspace>;
+    locale?: Locale;
+    effectiveRole?: string;
+    canManageWorkspaces?: boolean;
+  } = {},
 ) {
-  const tree = <WorkspaceHarness createWorkspace={options.createWorkspace}>{children}</WorkspaceHarness>;
+  const tree = (
+    <WorkspaceHarness
+      createWorkspace={options.createWorkspace}
+      canManageWorkspaces={options.canManageWorkspaces}
+      effectiveRole={options.effectiveRole}
+    >
+      {children}
+    </WorkspaceHarness>
+  );
   return render(options.locale ? <I18nProvider initialLocale={options.locale}>{tree}</I18nProvider> : tree);
 }
 
 function WorkspaceHarness({
   children,
   createWorkspace,
+  canManageWorkspaces = true,
+  effectiveRole,
 }: {
   children: ReactNode;
   createWorkspace?: (input: CreateWorkspaceInput) => Promise<Workspace>;
+  canManageWorkspaces?: boolean;
+  effectiveRole?: string;
 }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([
-    defaultWorkspace,
+    { ...defaultWorkspace, effective_role: effectiveRole },
     {
       id: 'wrkspc_foo',
       type: 'workspace',
@@ -777,6 +853,7 @@ function WorkspaceHarness({
   const value = useMemo<WorkspaceContextValue>(
     () => ({
       orgUuid: 'org_test',
+      canManageWorkspaces,
       workspaces,
       activeWorkspace,
       activeWorkspaceId,
@@ -800,7 +877,7 @@ function WorkspaceHarness({
       },
       refreshWorkspaces: async () => undefined,
     }),
-    [activeWorkspace, activeWorkspaceId, createWorkspace, workspaces],
+    [activeWorkspace, activeWorkspaceId, canManageWorkspaces, createWorkspace, workspaces],
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

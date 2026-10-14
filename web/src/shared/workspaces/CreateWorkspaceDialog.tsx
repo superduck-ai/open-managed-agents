@@ -48,6 +48,12 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger }:
     if (!canCreate) {
       return;
     }
+    if (name.trim().toLowerCase() === 'default') {
+      setError(
+        msg('workspace.create.reservedName', 'Default is reserved for the default workspace. Choose another name.'),
+      );
+      return;
+    }
     setSubmitting(true);
     setError('');
     try {
@@ -55,7 +61,10 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger }:
       onOpenChange(false);
     } catch (createError) {
       setError(
-        createError instanceof Error
+        createError &&
+          typeof createError === 'object' &&
+          'message' in createError &&
+          typeof createError.message === 'string'
           ? createError.message
           : msg('workspace.create.error', 'Failed to create workspace.'),
       );

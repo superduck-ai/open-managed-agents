@@ -55,13 +55,14 @@ type Provider interface {
 }
 
 type E2BProvider struct {
-	cfg config.E2BConfig
+	cfg          config.E2BConfig
+	packageHosts []string
 }
 
 const defaultSandboxTimeout = 30 * time.Second
 
-func NewProvider(cfg config.E2BConfig) *E2BProvider {
-	return &E2BProvider{cfg: cfg}
+func NewProvider(cfg config.E2BConfig, packageHosts ...string) *E2BProvider {
+	return &E2BProvider{cfg: cfg, packageHosts: append([]string(nil), packageHosts...)}
 }
 
 func ConnectionOptsFromConfig(cfg config.E2BConfig) e2b.ConnectionOpts {
@@ -98,7 +99,7 @@ func (p *E2BProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (Res
 		resolved.Envs["ANTHROPIC_WORK_ID"] = work.ExternalID
 	}
 
-	network, allowInternet, err := resolveNetwork(env.Config, work)
+	network, allowInternet, err := resolveNetwork(env.Config, work, p.packageHosts)
 	if err != nil {
 		return Resolution{}, err
 	}
@@ -473,7 +474,7 @@ func (p *E2BProvider) sandboxTimeout() time.Duration {
 	return defaultSandboxTimeout
 }
 
-func resolveNetwork(raw json.RawMessage, work *db.EnvironmentWork) (*e2b.SandboxNetworkOpts, bool, error) {
+func resolveNetwork(raw json.RawMessage, work *db.EnvironmentWork, packageHosts []string) (*e2b.SandboxNetworkOpts, bool, error) {
 	if len(raw) == 0 {
 		return nil, true, nil
 	}
@@ -491,6 +492,7 @@ func resolveNetwork(raw json.RawMessage, work *db.EnvironmentWork) (*e2b.Sandbox
 	hosts := config.AllowedHostPatterns()
 	if config.AllowPackageManagers {
 		hosts = append(hosts, networkpolicy.PackageManagerHosts()...)
+		hosts = append(hosts, packageHosts...)
 	}
 	if config.AllowMCPServers {
 		mcpAllowedHosts, err := mcpAllowedHostsFromWork(work)

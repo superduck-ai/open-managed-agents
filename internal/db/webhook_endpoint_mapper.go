@@ -22,6 +22,7 @@ type webhookEndpointRow struct {
 	SigningSecret       string         `db:"signing_secret"`
 	Status              string         `db:"status"`
 	DisabledReason      sql.NullString `db:"disabled_reason"`
+	FailureStartedAt    *time.Time     `db:"failure_started_at"`
 	ConsecutiveFailures int            `db:"consecutive_failures"`
 	CreatedAt           time.Time      `db:"created_at"`
 	UpdatedAt           time.Time      `db:"updated_at"`
@@ -46,16 +47,14 @@ type insertWebhookEndpointParams struct {
 }
 
 type updateWebhookEndpointParams struct {
-	WorkspaceUUID       string
-	ExternalID          string
-	URL                 string
-	Name                string
-	Description         string
-	EnabledEvents       json.RawMessage
-	Status              string
-	DisabledReason      *string
-	ConsecutiveFailures int
-	UpdatedAt           time.Time
+	WorkspaceUUID string
+	ExternalID    string
+	URL           *string
+	Name          *string
+	Description   *string
+	EnabledEvents json.RawMessage
+	Status        *string
+	UpdatedAt     time.Time
 }
 
 type regenerateWebhookEndpointSecretParams struct {
@@ -66,20 +65,34 @@ type regenerateWebhookEndpointSecretParams struct {
 }
 
 type recordWebhookEndpointFailureParams struct {
-	EndpointUUID string
-	DisableAfter int
-	Reason       string
+	WorkspaceUUID            string
+	EndpointUUID             string
+	DisableAfterMicroseconds int64
+	ImmediateDisable         bool
+	Reason                   string
 }
 
+type webhookEndpointFailureRow struct {
+	Disabled bool `db:"disabled"`
+}
+
+type webhookEndpointIDRow struct {
+	UUID string `db:"uuid"`
+}
+type webhookDeliveryTargetRow struct {
+	URL           string `db:"url"`
+	SigningSecret string `db:"signing_secret"`
+	Status        string `db:"status"`
+}
 type WebhookEndpointMapper interface {
+	FindDeliveryTarget(ctx context.Context, workspaceUUID, endpointUUID string) (webhookDeliveryTargetRow, bool, error)
 	Insert(ctx context.Context, params insertWebhookEndpointParams) (webhookEndpointRow, error)
 	List(ctx context.Context, workspaceUUID string) ([]webhookEndpointRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (webhookEndpointRow, error)
 	UpdateByExternalID(ctx context.Context, params updateWebhookEndpointParams) (webhookEndpointRow, error)
 	UpdateSigningSecret(ctx context.Context, params regenerateWebhookEndpointSecretParams) (int64, error)
 	SoftDeleteByExternalID(ctx context.Context, workspaceUUID, externalID string) (int64, error)
-	Exists(ctx context.Context, workspaceUUID string) (bool, error)
-	ListActiveForEvent(ctx context.Context, workspaceUUID, eventType string) ([]webhookEndpointRow, error)
-	RecordDeliverySuccess(ctx context.Context, endpointUUID string) error
-	RecordDeliveryFailure(ctx context.Context, params recordWebhookEndpointFailureParams) error
+	ListActiveForEvent(ctx context.Context, workspaceUUID, eventType string) ([]webhookEndpointIDRow, error)
+	RecordDeliverySuccess(ctx context.Context, endpointUUID, workspaceUUID string) error
+	RecordDeliveryFailure(ctx context.Context, params recordWebhookEndpointFailureParams) (webhookEndpointFailureRow, error)
 }

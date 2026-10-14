@@ -40,8 +40,9 @@ func TestConfigExampleContainsOnlyCommonFields(t *testing.T) {
 		"tunnel.public_base_url",
 		"vault",
 		"vault.master_key",
-		"vault.master_key.kek",
-		"vault.master_key.version",
+		"vault.master_key.local",
+		"vault.master_key.local.kek",
+		"vault.master_key.local.version",
 	}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
@@ -59,6 +60,13 @@ func TestConfigurationReferenceCoversConfigYAMLContract(t *testing.T) {
 	want := sortedConfigPaths(wantSet)
 	if !slices.Equal(got, want) {
 		t.Fatalf("configuration reference fields =\n%s\nwant Config YAML contract =\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestConfigurationReferenceHasNoPackageSources(t *testing.T) {
+	cfg := loadValidatedConfigTestFile(t, repositoryFilePath(t, "docs", "configuration-reference.yaml"))
+	if !cfg.EnvironmentPackages.Empty() {
+		t.Fatal("configuration reference must not configure package sources")
 	}
 }
 

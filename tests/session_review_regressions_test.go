@@ -134,6 +134,9 @@ func TestSessionRemovalBeforeWorkerStarts(t *testing.T) {
 		for _, operation := range []string{"archive", "delete"} {
 			t.Run(state+"/"+operation, func(t *testing.T) {
 				app := newPayloadIntegrationApp(t, newFakeStore("remove-unstarted"))
+				clearWebhookState(t, app)
+				t.Cleanup(func() { clearWebhookState(t, app) })
+				createWebhook(t, app, `{"url":"https://example.com/hooks","enabled_events":["session.status_terminated","session.deleted"]}`)
 				agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"remove-unstarted"}`)
 				env := createEnvironment(t, app, `{"name":"remove-unstarted"}`)
 				session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
@@ -170,6 +173,8 @@ func TestSessionRemovalBeforeWorkerStarts(t *testing.T) {
 				resp := doSessionRequest(t, app, method, path, nil, defaultTestKey, true)
 				if state == "running" {
 					assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+					assertWebhookCount(t, app, "session.status_terminated", session.ID, 0)
+					assertWebhookCount(t, app, "session.deleted", session.ID, 0)
 					if got := retrieveSession(t, app, session.ID, defaultTestKey).Status; got != "running" {
 						t.Fatalf("rejected removal changed status: %s", got)
 					}
@@ -178,6 +183,17 @@ func TestSessionRemovalBeforeWorkerStarts(t *testing.T) {
 				defer resp.Body.Close()
 				if resp.StatusCode != http.StatusOK {
 					t.Fatalf("remove unstarted: %d %s", resp.StatusCode, readAll(t, resp.Body))
+				}
+				assertWebhookCount(t, app, "session.status_terminated", session.ID, 1)
+				if operation == "delete" {
+					assertWebhookCount(t, app, "session.deleted", session.ID, 1)
+				} else {
+					repeated := doSessionRequest(t, app, method, path, nil, defaultTestKey, true)
+					repeated.Body.Close()
+					if repeated.StatusCode != http.StatusOK {
+						t.Fatalf("repeat archive=%d", repeated.StatusCode)
+					}
+					assertWebhookCount(t, app, "session.status_terminated", session.ID, 1)
 				}
 				if stream != nil {
 					scanner := bufio.NewScanner(stream.Body)

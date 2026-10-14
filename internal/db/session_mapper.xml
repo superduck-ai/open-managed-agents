@@ -113,6 +113,29 @@ RETURNING <include refid="columns"/>
         RETURNING <include refid="columns"/>
     </update>
 
+    <select id="ReplaceAgentSnapshot" result="scalar">
+        WITH replaced AS (
+            UPDATE sessions
+            SET agent_snapshot = CAST(#{snapshot,sensitive=true} AS jsonb)
+            WHERE workspace_uuid = #{workspaceUUID}
+            AND uuid = #{sessionUUID}
+            AND agent_snapshot = CAST(#{previous,sensitive=true} AS jsonb)
+            AND deleted_at IS NULL
+            AND archived_at IS NULL
+            RETURNING uuid, workspace_uuid, agent_snapshot
+        ), replaced_threads AS (
+            UPDATE session_threads AS thread
+            SET agent_snapshot = replaced.agent_snapshot
+            FROM replaced
+            WHERE thread.workspace_uuid = replaced.workspace_uuid
+            AND thread.session_uuid = replaced.uuid
+            AND thread.parent_thread_uuid IS NULL
+            AND thread.deleted_at IS NULL
+            RETURNING thread.uuid
+        )
+        SELECT EXISTS (SELECT 1 FROM replaced)
+    </select>
+
     <update id="PatchMetadata" result="returning" resultType="sessionRow">
         UPDATE sessions
         SET metadata = COALESCE(metadata, CAST('{}' AS jsonb))

@@ -314,3 +314,14 @@ func TestSessionThreadMapperFillAgentSnapshot(t *testing.T) {
 		wantSQLFragments:           []string{"SET agent_snapshot = CAST($1 AS jsonb)", "workspace_uuid = $2", "session_external_id = $3", "external_id = $4", "parent_thread_uuid IS NOT NULL", "COALESCE(agent_snapshot->>'id', '') = ''", "deleted_at IS NULL"},
 	})
 }
+
+func TestSessionMapperReplaceAgentSnapshot(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionMapperReplaceAgentSnapshotStatement,
+		bound:     buildSessionMapperReplaceAgentSnapshot(yourbatis.DialectPostgres, "workspace-uuid", "session-uuid", []byte(`{"old":true}`), []byte(`{"new":true}`)),
+		wantID:    "SessionMapper.ReplaceAgentSnapshot", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames:          []string{"snapshot", "workspaceUUID", "sessionUUID", "previous"},
+		wantSensitiveArgumentNames: []string{"snapshot", "previous"},
+		wantSQLFragments:           []string{"WITH replaced AS", "workspace_uuid = $2", "uuid = $3", "agent_snapshot = CAST($4 AS jsonb)", "UPDATE session_threads AS thread", "thread.workspace_uuid = replaced.workspace_uuid", "thread.session_uuid = replaced.uuid", "thread.parent_thread_uuid IS NULL", "SELECT EXISTS"},
+	})
+}

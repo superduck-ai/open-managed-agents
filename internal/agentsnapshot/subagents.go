@@ -1,6 +1,7 @@
 package agentsnapshot
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -12,8 +13,9 @@ import (
 )
 
 type rosterReference struct {
-	ID      string `json:"id"`
-	Version int    `json:"version"`
+	ID      string          `json:"id"`
+	Version int             `json:"version"`
+	Model   json.RawMessage `json:"model"`
 }
 
 func subagentSnapshots(snapshot json.RawMessage) ([]json.RawMessage, error) {
@@ -98,43 +100,92 @@ func Resolve(ctx context.Context, database *db.DB, agent db.Agent) (json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	var roster struct {
-		Type   string            `json:"type"`
-		Agents []rosterReference `json:"agents"`
+	return resolveSnapshot(ctx, database, agent.WorkspaceUUID, snapshot)
+}
+
+func ResolveSession(ctx context.Context, database *db.DB, session db.Session) (db.Session, error) {
+	snapshot, err := resolveSnapshot(ctx, database, session.WorkspaceUUID, session.AgentSnapshot)
+	if err != nil {
+		return db.Session{}, err
 	}
-	if len(agent.Multiagent) == 0 || string(agent.Multiagent) == "null" {
-		return snapshot, nil
+	if bytes.Equal(snapshot, session.AgentSnapshot) {
+		return session, nil
 	}
-	if err := jsonv2.Unmarshal(agent.Multiagent, &roster); err != nil {
+	replaced, err := database.ReplaceSessionAgentSnapshot(ctx, session.WorkspaceUUID, session.UUID, session.AgentSnapshot, snapshot)
+	if err != nil {
+		return db.Session{}, err
+	}
+	if !replaced {
+		return db.Session{}, db.ErrInvalidState
+	}
+	session.AgentSnapshot = snapshot
+	return session, nil
+}
+
+type agentRosterSnapshot struct {
+	ID         string          `json:"id"`
+	Version    int             `json:"version"`
+	Multiagent *subagentRoster `json:"multiagent"`
+}
+
+type subagentRoster struct {
+	Type   string            `json:"type"`
+	Agents []json.RawMessage `json:"agents"`
+}
+
+func resolveSnapshot(ctx context.Context, database *db.DB, workspaceUUID string, snapshot json.RawMessage) (json.RawMessage, error) {
+	var root agentRosterSnapshot
+	if err := jsonv2.Unmarshal(snapshot, &root); err != nil {
 		return nil, err
 	}
-	children := make([]json.RawMessage, 0, len(roster.Agents))
-	for _, ref := range roster.Agents {
-		child := agent
-		if ref.ID != agent.ExternalID || ref.Version != agent.CurrentVersion {
-			child, err = database.GetAgentVersion(ctx, agent.WorkspaceUUID, ref.ID, ref.Version)
+	if root.Multiagent == nil {
+		return snapshot, nil
+	}
+	var fields map[string]json.RawMessage
+	for i, raw := range root.Multiagent.Agents {
+		var ref rosterReference
+		if err := jsonv2.Unmarshal(raw, &ref); err != nil {
+			return nil, err
+		}
+		if len(ref.Model) > 0 {
+			continue
+		}
+		if ref.ID == "" || ref.Version < 1 {
+			return nil, fmt.Errorf("subagent reference must include id and pinned version")
+		}
+		if fields == nil {
+			if err := jsonv2.Unmarshal(snapshot, &fields); err != nil {
+				return nil, err
+			}
+		}
+		if ref.ID == root.ID && ref.Version == root.Version {
+			fields["multiagent"] = json.RawMessage(`null`)
+			raw, err := jsonv2.Marshal(fields)
+			if err != nil {
+				return nil, err
+			}
+			root.Multiagent.Agents[i] = raw
+		} else {
+			child, err := database.GetAgentVersion(ctx, workspaceUUID, ref.ID, ref.Version)
 			if err != nil {
 				return nil, fmt.Errorf("resolve subagent %s@%d: %w", ref.ID, ref.Version, err)
 			}
-			if ref.ID != agent.ExternalID && len(child.Multiagent) > 0 && string(child.Multiagent) != "null" {
+			if ref.ID != root.ID && len(child.Multiagent) > 0 && string(child.Multiagent) != "null" {
 				return nil, fmt.Errorf("subagent %s must not configure multiagent", ref.ID)
 			}
+			child.Multiagent = nil
+			raw, err := FromAgent(child)
+			if err != nil {
+				return nil, err
+			}
+			root.Multiagent.Agents[i] = raw
 		}
-		child.Multiagent = nil
-		raw, err := FromAgent(child)
-		if err != nil {
-			return nil, err
-		}
-		children = append(children, raw)
 	}
-	var fields map[string]json.RawMessage
-	if err := jsonv2.Unmarshal(snapshot, &fields); err != nil {
-		return nil, err
+	if fields == nil {
+		return snapshot, nil
 	}
-	fields["multiagent"], err = jsonv2.Marshal(struct {
-		Type   string            `json:"type"`
-		Agents []json.RawMessage `json:"agents"`
-	}{Type: roster.Type, Agents: children})
+	var err error
+	fields["multiagent"], err = jsonv2.Marshal(root.Multiagent)
 	if err != nil {
 		return nil, err
 	}

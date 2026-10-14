@@ -140,6 +140,7 @@ type SessionMapper interface {
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, bool, error)
 	FindByUUID(ctx context.Context, workspaceUUID, sessionUUID string) (sessionRow, bool, error)
 	UpdateByExternalID(ctx context.Context, params sessionUpdateParams) (sessionRow, error)
+	ReplaceAgentSnapshot(ctx context.Context, workspaceUUID, sessionUUID string, previous, snapshot []byte) (bool, error)
 	PatchMetadata(ctx context.Context, workspaceUUID, sessionExternalID string, metadataPatch []byte) (sessionRow, error)
 	SetOutcomeEvaluations(ctx context.Context, workspaceUUID, sessionExternalID string, evaluations []byte) (sessionRow, error)
 	SetStatus(ctx context.Context, workspaceUUID, sessionExternalID, status string) (int64, error)

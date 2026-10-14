@@ -318,7 +318,11 @@ export function buildInspectorToolTotals(rows: InspectorToolRow[]) {
     denied: calls.filter((call) => call.lifecycle === 'denied').length,
     executingMs,
     failed: calls.filter((call) => call.lifecycle === 'failed').length,
-    inFlight: calls.filter((call) => call.lifecycle === 'running' || call.lifecycle === 'awaiting_approval').length,
+    interrupted: calls.filter((call) => call.lifecycle === 'interrupted').length,
+    inFlight: calls.filter(
+      (call) =>
+        call.lifecycle === 'running' || call.lifecycle === 'awaiting_approval' || call.lifecycle === 'awaiting_result',
+    ).length,
     timeInToolsMs,
     tools: rows.length,
     used: rows.filter((row) => row.calls.length > 0).length,
@@ -327,7 +331,10 @@ export function buildInspectorToolTotals(rows: InspectorToolRow[]) {
 }
 
 function inspectorToolExecutionMs(call: ToolCallEntry) {
-  if ((call.lifecycle !== 'completed' && call.lifecycle !== 'failed') || !call.resultEvent) {
+  if (
+    (call.lifecycle !== 'completed' && call.lifecycle !== 'failed' && call.lifecycle !== 'interrupted') ||
+    !call.resultEvent
+  ) {
     return undefined;
   }
   if (call.executionMs !== undefined && Number.isFinite(call.executionMs) && call.executionMs >= 0) {

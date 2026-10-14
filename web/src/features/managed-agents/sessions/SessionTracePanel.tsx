@@ -70,6 +70,8 @@ import {
   sessionToolBatchSummary,
 } from './sessionTraceRows';
 import { TranscriptContent } from './SessionTranscriptContent';
+import { SessionExecutionStateBadge } from './SessionExecutionStateBadge';
+import { sessionToolResultWasInterrupted } from './sessionExecutionState';
 
 export function SessionTraceSearch({
   className,
@@ -615,7 +617,7 @@ export function BatchDetailPanel({ entry }: { entry: ToolBatchEntry }) {
             value={sessionToolUseInput(call.event)}
           />
           {call.confirmationEvent ? <ToolConfirmationSection event={call.confirmationEvent} /> : null}
-          {call.resultEvent ? <ToolResultSection event={call.resultEvent} /> : null}
+          {call.resultEvent ? <ToolResultSection event={call.resultEvent} lifecycle={call.lifecycle} /> : null}
         </CallSection>
       ))}
     </div>
@@ -779,7 +781,7 @@ export function ToolCallDetailContent({ entry }: { entry: ToolCallEntry }) {
       />
       {entry.confirmationEvent ? <ToolConfirmationSection event={entry.confirmationEvent} /> : null}
       {entry.resultEvent ? (
-        <ToolResultSection event={entry.resultEvent} />
+        <ToolResultSection event={entry.resultEvent} lifecycle={entry.lifecycle} />
       ) : (
         <p className="text-xs italic text-muted-foreground">
           {msg('managedAgents.sessions.trace.noResult', 'No result')}
@@ -916,7 +918,7 @@ export function ToolUseJsonSection({ title, value }: { title: string; value: unk
   );
 }
 
-export function ToolResultSection({ event }: { event: QuickstartSessionEvent }) {
+export function ToolResultSection({ event, lifecycle }: { event: QuickstartSessionEvent; lifecycle?: ToolLifecycle }) {
   const { msg } = useI18n();
   const text = sessionToolResultText(event);
   const parsed = prettyCode(text || '(empty)');
@@ -927,6 +929,7 @@ export function ToolResultSection({ event }: { event: QuickstartSessionEvent }) 
         <span className="text-xs text-muted-foreground">
           {msg('managedAgents.sessions.trace.toolResult', 'Tool result')}
         </span>
+        {sessionToolResultWasInterrupted(event) ? <SessionExecutionStateBadge state="interrupted" /> : null}
         {typeof event.id === 'string' && event.id ? (
           <span className="font-mono text-xs text-muted-foreground">{event.id}</span>
         ) : null}
@@ -934,7 +937,7 @@ export function ToolResultSection({ event }: { event: QuickstartSessionEvent }) 
       <pre
         className={clsx(
           'subtle-scrollbar max-h-80 overflow-auto rounded-md border p-3 font-mono text-xs leading-[18px]',
-          event.is_error === true
+          (lifecycle ? lifecycle === 'failed' : event.is_error === true && !sessionToolResultWasInterrupted(event))
             ? 'border-destructive/50 bg-destructive/10 text-destructive'
             : 'border-border bg-secondary text-foreground',
         )}

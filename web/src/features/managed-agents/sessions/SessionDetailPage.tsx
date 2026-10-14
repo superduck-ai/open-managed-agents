@@ -106,6 +106,7 @@ import {
   writeSessionInspectorUrlState,
 } from './sessionInspectorModel';
 import { SessionHeaderSummary } from './SessionHeaderSummary';
+import { latestSessionIdlePresentationState } from './sessionExecutionState';
 import { SessionMessageComposer } from './SessionMessageComposer';
 import { SessionStartState } from './SessionStartState';
 import { SessionOutputFiles } from './SessionOutputFiles';
@@ -621,7 +622,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   }
 
   const archived = Boolean(session.archived_at);
-  const conversationState = sessionConversationState(session);
+  const conversationState = sessionConversationState(session, events);
   const warningError = [resourceRefreshError, metadataError, eventError].find(Boolean);
 
   return (
@@ -905,11 +906,14 @@ function sessionSummaryRefreshInterval(session: SessionApiResponse | null) {
   return session && sessionStatusIsLive(session.status) && !session.archived_at ? 1_000 : 60_000;
 }
 
-function sessionConversationState(session: SessionApiResponse) {
+function sessionConversationState(session: SessionApiResponse, events: QuickstartSessionEvent[]) {
   const archived = Boolean(session.archived_at);
   const status = session.status.toLowerCase();
+  const idleState = latestSessionIdlePresentationState(events);
   return {
-    acceptingMessages: !archived && (status === 'idle' || status === 'queued'),
+    acceptingMessages:
+      !archived &&
+      (status === 'queued' || (status === 'idle' && idleState !== 'budget_reached' && idleState !== 'awaiting_action')),
     disabled: archived || status === 'deleted' || status === 'terminated',
     live: !archived && sessionStatusIsLive(status),
   };

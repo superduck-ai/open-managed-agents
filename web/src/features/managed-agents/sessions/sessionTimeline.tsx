@@ -17,7 +17,8 @@ import {
   type ToolLifecycle,
 } from '../types';
 import clsx from 'clsx';
-import { Ban, ChevronLeft, ChevronRight, CircleX, Database, Loader2, Minus, Plus, Timer } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CircleX, Database, Loader2, Minus, Plus, Timer } from 'lucide-react';
+import { SessionExecutionStateBadge } from './SessionExecutionStateBadge';
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -1722,29 +1723,7 @@ export function ErrorStateBadge() {
 }
 
 export function ApprovalChip({ lifecycle }: { lifecycle?: ToolLifecycle }) {
-  const { msg } = useI18n();
-  if (lifecycle === 'denied') {
-    return (
-      <Badge
-        variant="secondary"
-        className="h-auto items-center gap-1 rounded bg-warning-bg px-1.5 py-0.5 font-sans text-[10px] font-semibold text-warning"
-      >
-        <Ban className="size-3" aria-hidden />
-        {msg('managedAgents.sessions.trace.denied', 'denied')}
-      </Badge>
-    );
-  }
-  if (lifecycle !== 'awaiting_approval') {
-    return null;
-  }
-  return (
-    <Badge
-      variant="secondary"
-      className="h-auto rounded bg-accent px-1.5 py-0.5 font-sans text-[10px] font-semibold text-accent-foreground"
-    >
-      {msg('managedAgents.sessions.trace.awaitingApproval', 'awaiting approval')}
-    </Badge>
-  );
+  return lifecycle ? <SessionExecutionStateBadge state={lifecycle} tool /> : null;
 }
 
 export function InProgressChip({ label, tooltip }: { label: string; tooltip?: string }) {

@@ -92,6 +92,28 @@ function mockOutputSession() {
   return api;
 }
 
+test('shows a budget pause and disables ordinary messages while retaining the draft', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+  const api = mockManagedResourceApi();
+  api.resources.sessions[0].status = 'idle';
+  api.resources.sessionThreads.length = 0;
+  api.resources.sessionEvents.length = 0;
+  api.resources.sessionEvents.push({
+    id: 'budget-pause',
+    type: 'session.status_idle',
+    processed_at: new Date().toISOString(),
+    stop_reason: { type: 'budget_reached' },
+  });
+  renderManagedAgentsPage('sessions');
+  await screen.findByText('Budget reached; increase or remove the budget to continue.');
+  const input = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
+  fireEvent.change(input, { target: { value: 'Keep my draft' } });
+  expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(true);
+  fireEvent.submit(screen.getByTestId('session-message-composer'));
+  expect(input.value).toBe('Keep my draft');
+  expect(api.requests.some((request) => request.method === 'POST' && request.url.includes('/events'))).toBe(false);
+});
+
 test('keeps downloadable output cards after the transcript when the inspector is closed', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
   const api = mockOutputSession();

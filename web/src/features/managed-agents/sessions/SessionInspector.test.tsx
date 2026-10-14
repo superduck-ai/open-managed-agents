@@ -62,7 +62,9 @@ describe('SessionInspector', () => {
     expect(toolRow.querySelectorAll('td')[4]?.textContent).toBe(expected);
     fireEvent.click(toolRow);
 
-    expect(screen.getByText('completed').closest('tr')?.textContent).toContain(expected);
+    expect(screen.getByText('Completed', { selector: '[data-tool-lifecycle]' }).closest('tr')?.textContent).toContain(
+      expected,
+    );
     expect(screen.getByText('p50', { selector: 'dt' }).nextElementSibling?.textContent).toBe(expected);
   });
 
@@ -303,7 +305,9 @@ describe('SessionInspector', () => {
     expect(writeCells?.[3]?.textContent).toBe('0');
     expect(writeCells?.[4]?.textContent).toBe('—');
     expect(screen.getByText('2 tools · 2 used · 3 calls')).toBeTruthy();
-    const outcomeRing = screen.getByRole('img', { name: '1 completed, 1 failed, 0 denied, 1 in flight' });
+    const outcomeRing = screen.getByRole('img', {
+      name: '1 completed, 1 failed, 0 denied, 0 interrupted, 1 in flight',
+    });
     expect(outcomeRing.tagName).toBe('DIV');
     expect(outcomeRing.style.background).toContain('conic-gradient');
     expect(outcomeRing.querySelector('svg')).toBeNull();
@@ -320,7 +324,7 @@ describe('SessionInspector', () => {
     expect(screen.getByRole('button', { name: 'Close tool detail' })).toBeTruthy();
     expect(screen.queryByRole('columnheader', { name: 'Waited' })).toBeNull();
     expect(screen.queryByRole('columnheader', { name: 'Thread' })).toBeNull();
-    const completedCallRow = screen.getByText('completed').closest('tr')!;
+    const completedCallRow = screen.getByText('Completed', { selector: '[data-tool-lifecycle]' }).closest('tr')!;
     fireEvent.pointerEnter(completedCallRow);
     expect(onHoverEvent).toHaveBeenCalledWith('tool_bash_ok');
     fireEvent.pointerLeave(completedCallRow);

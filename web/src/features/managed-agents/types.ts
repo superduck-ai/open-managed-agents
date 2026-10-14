@@ -416,6 +416,7 @@ export type SessionTraceEntry = {
   rawEventId: string;
   searchText: string;
   isError: boolean;
+  state?: SessionExecutionState;
 };
 
 export type DisplayEventType =
@@ -455,7 +456,18 @@ export type DisplayEvent = {
 export type TranscriptEntryKind =
   'idle_gap' | 'outcome' | 'tool_call' | 'tool_batch' | 'message' | 'status' | 'passthrough';
 
-export type ToolLifecycle = 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'denied';
+export type ToolLifecycle =
+  'running' | 'awaiting_approval' | 'awaiting_result' | 'completed' | 'failed' | 'denied' | 'interrupted';
+
+export type SessionExecutionState =
+  | ToolLifecycle
+  | 'stopping'
+  | 'stopped'
+  | 'queued'
+  | 'awaiting_action'
+  | 'budget_reached'
+  | 'rescheduled'
+  | 'terminated';
 
 export type BaseSessionEventEntry = {
   id: string;

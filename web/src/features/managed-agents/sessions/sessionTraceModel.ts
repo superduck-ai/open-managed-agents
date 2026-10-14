@@ -1535,15 +1535,11 @@ export function sessionEventFamily(event: QuickstartSessionEvent): SessionTraceF
   if (type.startsWith('span.')) {
     return 'span';
   }
-  if (
-    (type === 'user' || type.startsWith('user.')) &&
-    !sessionIsToolResultEvent(event) &&
-    type !== 'user.tool_confirmation'
-  ) {
-    return 'user';
-  }
-  if (type === 'user.tool_confirmation') {
+  if (type === 'user.interrupt' || type === 'user.tool_confirmation') {
     return 'status';
+  }
+  if ((type === 'user' || type.startsWith('user.')) && !sessionIsToolResultEvent(event)) {
+    return 'user';
   }
   if (type === 'agent.message' || type === 'assistant.message' || type === 'agent' || type === 'agent.thinking') {
     return 'agent';
@@ -1559,12 +1555,7 @@ export function sessionEventFamily(event: QuickstartSessionEvent): SessionTraceF
   if (sessionIsThreadLifecycleEvent(event)) {
     return 'thread';
   }
-  if (
-    type.startsWith('session.status_') ||
-    type === 'session.deleted' ||
-    type === 'session.updated' ||
-    type === 'user.interrupt'
-  ) {
+  if (type.startsWith('session.status_') || type === 'session.deleted' || type === 'session.updated') {
     return 'status';
   }
   if (sessionIsSubagentEvent(event)) {

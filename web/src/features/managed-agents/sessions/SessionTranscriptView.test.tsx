@@ -33,6 +33,47 @@ const EMPTY_USAGE: SessionEventUsage = {
 afterEach(() => cleanup());
 
 describe('SessionTranscriptView', () => {
+  test.each([false, true])(
+    'renders an interrupt as a status with platform filtering %s',
+    (platformTranscriptFiltering) => {
+      resetTestDom('https://oma.duck.ai/sessions/test');
+      const events = [
+        {
+          id: 'user-message',
+          type: 'user.message',
+          processed_at: '2026-10-14T06:45:46.000Z',
+          content: [{ type: 'text', text: 'Help me check this.' }],
+        },
+        {
+          id: 'sevt_interrupt',
+          type: 'user.interrupt',
+          processed_at: '2026-10-14T06:45:48.957975Z',
+        },
+        {
+          id: 'execution-error',
+          type: 'session.error',
+          processed_at: '2026-10-14T06:45:49.000Z',
+          error: { type: 'agent_execution_error', message: 'Agent execution failed.' },
+        },
+      ];
+      const entries = buildSessionEventEntries(events, 'transcript', 0, undefined, { platformTranscriptFiltering });
+
+      const { container } = render(transcriptTree(entries));
+
+      const interrupt = container.querySelector('[data-event-id^="sevt_interrupt-"]');
+      expect(interrupt?.getAttribute('data-entry-kind')).toBe('status');
+      expect(interrupt?.textContent).toContain('Run interrupted by the user.');
+      expect(interrupt?.textContent).not.toContain('processed_at');
+      expect(interrupt?.querySelector('[data-transcript-message-body]')).toBeNull();
+      expect(screen.getByText('Help me check this.')).toBeTruthy();
+      expect(screen.getAllByText('User')).toHaveLength(1);
+      expect(screen.getByText('Agent execution failed.')).toBeTruthy();
+
+      const debugEntries = buildSessionEventEntries(events, 'debug');
+      expect(debugEntries.some((entry) => 'event' in entry && entry.event.type === 'user.interrupt')).toBe(true);
+    },
+  );
+
   test.each([0, 40])('prefers reported thinking and model durations %s over bracket timing', (durationMs) => {
     resetTestDom('https://oma.duck.ai/sessions/test');
     const entries = buildSessionEventEntries(

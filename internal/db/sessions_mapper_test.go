@@ -303,14 +303,3 @@ func TestSessionEventMapperLatestTurnStart(t *testing.T) {
 		wantSQLFragments:  []string{"workspace_uuid = $1", "session_external_id = $2", "payload->>'session_thread_id' = $3", "deleted_at IS NULL", "'session.thread_status_running'", "'session.thread_status_rescheduled'", "ORDER BY id DESC LIMIT 1"},
 	})
 }
-
-func TestSessionMapperReplaceAgentSnapshot(t *testing.T) {
-	assertMapperBuilderContract(t, mapperBuilderContract{
-		statement: sessionMapperReplaceAgentSnapshotStatement,
-		bound:     buildSessionMapperReplaceAgentSnapshot(yourbatis.DialectPostgres, "workspace-uuid", "session-uuid", []byte(`{"old":true}`), []byte(`{"new":true}`)),
-		wantID:    "SessionMapper.ReplaceAgentSnapshot", wantKind: yourbatis.StatementSelect,
-		wantArgumentNames:          []string{"snapshot", "workspaceUUID", "sessionUUID", "previous"},
-		wantSensitiveArgumentNames: []string{"snapshot", "previous"},
-		wantSQLFragments:           []string{"WITH replaced AS", "workspace_uuid = $2", "uuid = $3", "agent_snapshot = CAST($4 AS jsonb)", "UPDATE session_threads AS thread", "thread.workspace_uuid = replaced.workspace_uuid", "thread.session_uuid = replaced.uuid", "thread.parent_thread_uuid IS NULL", "SELECT EXISTS"},
-	})
-}

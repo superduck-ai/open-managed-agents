@@ -1,7 +1,6 @@
 package agentsnapshot
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
@@ -22,25 +21,6 @@ func Resolve(ctx context.Context, database *db.DB, agent db.Agent) (json.RawMess
 		return nil, err
 	}
 	return resolveSnapshot(ctx, database, agent.WorkspaceUUID, snapshot)
-}
-
-func ResolveSession(ctx context.Context, database *db.DB, session db.Session) (db.Session, error) {
-	snapshot, err := resolveSnapshot(ctx, database, session.WorkspaceUUID, session.AgentSnapshot)
-	if err != nil {
-		return db.Session{}, err
-	}
-	if bytes.Equal(snapshot, session.AgentSnapshot) {
-		return session, nil
-	}
-	replaced, err := database.ReplaceSessionAgentSnapshot(ctx, session.WorkspaceUUID, session.UUID, session.AgentSnapshot, snapshot)
-	if err != nil {
-		return db.Session{}, err
-	}
-	if !replaced {
-		return db.Session{}, db.ErrInvalidState
-	}
-	session.AgentSnapshot = snapshot
-	return session, nil
 }
 
 type agentRosterSnapshot struct {

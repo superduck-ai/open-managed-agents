@@ -301,10 +301,6 @@ func (d *DB) PatchSessionMetadata(ctx context.Context, workspaceUUID string, ext
 	return row.session(), mapNoRows(err)
 }
 
-func (d *DB) ReplaceSessionAgentSnapshot(ctx context.Context, workspaceUUID, sessionUUID string, previous, snapshot json.RawMessage) (bool, error) {
-	return NewSessionMapper(d.mapperDB).ReplaceAgentSnapshot(ctx, workspaceUUID, sessionUUID, previous, snapshot)
-}
-
 func (d *DB) SetSessionOutcomeEvaluations(ctx context.Context, workspaceUUID string, externalID string, evaluations json.RawMessage) (Session, error) {
 	mapper := NewSessionMapper(d.mapperDB)
 	row, err := mapper.SetOutcomeEvaluations(ctx, workspaceUUID, externalID, agentJSONArg(evaluations))

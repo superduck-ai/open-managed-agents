@@ -12,7 +12,6 @@ import (
 	"unicode/utf8"
 	"uuid"
 
-	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -545,10 +544,6 @@ func (r *Runner) prepareManagedAgentLaunch(
 	}
 	if !found {
 		return nil, fmt.Errorf("load managed agent Session: %w", db.ErrNotFound)
-	}
-	session, err = agentsnapshot.ResolveSession(ctx, r.db, session)
-	if err != nil {
-		return nil, fmt.Errorf("resolve managed agent snapshot: %w", err)
 	}
 	resources, err := r.db.ListSessionResources(ctx, session.WorkspaceUUID, session.ExternalID)
 	if err != nil {

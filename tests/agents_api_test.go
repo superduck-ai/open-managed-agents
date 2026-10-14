@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 )
 
 type agentAPIResponse struct {
@@ -677,4 +678,42 @@ func TestSubagentReferenceVersions(t *testing.T) {
 	assertVersion(updateAgent(t, app, parent.ID, `{"version":2,"multiagent":`+latest+`}`, http.StatusOK), 2)
 	assertVersion(updateAgent(t, app, parent.ID, `{"version":3,"multiagent":`+pinned+`}`, http.StatusOK), 1)
 	assertVersion(createAgent(t, app, `{"name":"explicit","model":"claude-opus-4-6","multiagent":`+pinned+`}`), 1)
+}
+
+func TestSessionSubagentSnapshotsAreExpandedOnCreation(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("subagent-snapshot-creation"))
+	child := createAgent(t, app, `{"name":"child","model":"claude-opus-4-6","system":"child-v1"}`)
+	parent := createAgent(t, app, `{"name":"parent","model":"claude-opus-4-6","system":"parent-v1","multiagent":{"type":"coordinator","agents":[{"type":"agent","id":`+quoteJSON(child.ID)+`,"version":1},{"type":"self"}]}}`)
+	updateAgent(t, app, child.ID, `{"version":1,"model":"claude-sonnet-4-6","system":"child-v2"}`, http.StatusOK)
+	updateAgent(t, app, parent.ID, `{"version":1,"name":"parent-v2","system":"parent-v2"}`, http.StatusOK)
+	env := createEnvironment(t, app, `{"name":"subagent-snapshot-creation"}`)
+	created := createSession(t, app, `{"agent":`+quoteJSON(parent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	scope := getDefaultDBIDs(t, app.pool)
+	session, found, err := app.db.GetSession(t.Context(), scope.WorkspaceUUID, created.ID)
+	if err != nil || !found {
+		t.Fatalf("load session: %v %t", err, found)
+	}
+	var snapshot agentAPIResponse
+	decodeRawJSON(t, session.AgentSnapshot, &snapshot)
+	var roster struct {
+		Agents []agentAPIResponse `json:"agents"`
+	}
+	decodeRawJSON(t, snapshot.Multiagent, &roster)
+	if len(roster.Agents) != 2 {
+		t.Fatalf("child count=%d", len(roster.Agents))
+	}
+	for i, want := range []struct{ id, system string }{{child.ID, "child-v1"}, {parent.ID, "parent-v1"}} {
+		got := roster.Agents[i]
+		var model struct {
+			ID string `json:"id"`
+		}
+		decodeRawJSON(t, got.Model, &model)
+		if got.ID != want.id || got.Version != 1 || got.System == nil || *got.System != want.system || model.ID != "claude-opus-4-6" || string(got.Multiagent) != "null" {
+			t.Fatalf("creation lost pinned child or self configuration: %+v", got)
+		}
+	}
+	primary, found, err := app.db.GetPrimarySessionThread(t.Context(), scope.WorkspaceUUID, created.ID)
+	if err != nil || !found || !agentsnapshot.SameRawJSON(primary.AgentSnapshot, session.AgentSnapshot) {
+		t.Fatalf("creation did not persist the expanded primary snapshot: %v", err)
+	}
 }

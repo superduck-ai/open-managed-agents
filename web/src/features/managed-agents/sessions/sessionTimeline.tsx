@@ -1680,11 +1680,8 @@ export function MetaStrip({
       className="flex shrink-0 items-center gap-3 text-xs tabular-nums text-muted-foreground"
       data-testid="session-meta-strip"
     >
-      {lifecycle === 'running' ? (
-        <InProgressChip label={msg('managedAgents.sessions.trace.running', 'Running')} />
-      ) : null}
       <ApprovalChip lifecycle={lifecycle} />
-      {isError ? <ErrorStateBadge /> : null}
+      {isError && !lifecycle ? <ErrorStateBadge /> : null}
       {hasUsage && usage ? (
         <TimelineTooltip label={sessionTokenUsageTitle(usage, formatters, msg)}>
           <span className="inline-flex items-center gap-1 font-mono">

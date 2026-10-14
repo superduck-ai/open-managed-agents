@@ -92,7 +92,7 @@ export function sessionIdlePresentationState(event: QuickstartSessionEvent): Ses
 
 export function sessionEventPresentationState(
   event: QuickstartSessionEvent,
-  interruptedModelIds: Set<string>,
+  interruptedModelIds: ReadonlySet<string>,
 ): SessionExecutionState | undefined {
   switch (event.type) {
     case 'user.interrupt':

@@ -398,6 +398,7 @@ export type SessionTraceFamily =
 
 export type SessionTraceBuildOptions = {
   platformTranscriptFiltering?: boolean;
+  interruptedModelRequestIds?: ReadonlySet<string>;
 };
 
 export type SessionTraceEntry = {

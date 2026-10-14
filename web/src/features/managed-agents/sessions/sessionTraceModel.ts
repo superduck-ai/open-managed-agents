@@ -182,7 +182,7 @@ export function buildSessionTraceEntries(
     ];
   });
   if (view === 'debug') return traceEntries;
-  const interruptedModelIds = interruptedSessionModelRequestIds(displayEvents);
+  const interruptedModelIds = options.interruptedModelRequestIds ?? interruptedSessionModelRequestIds(displayEvents);
   return traceEntries.map((entry) => {
     const state = sessionEventPresentationState(entry.event, interruptedModelIds);
     if (!state) return entry;
@@ -540,6 +540,7 @@ function closeModelRequestBracket(bracket: ModelRequestBracket, endMs: number) {
 function sessionEventEndsTranscriptTurn(event: QuickstartSessionEvent) {
   const type = sessionEventType(event);
   return (
+    (type === 'user.interrupt' && typeof event.processed_at === 'string') ||
     sessionEventFamily(event) === 'user' ||
     sessionStatusFromEventType(type) !== null ||
     sessionEventFamily(event) === 'outcome'

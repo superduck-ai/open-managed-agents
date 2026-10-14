@@ -929,7 +929,9 @@ export function ToolResultSection({ event, lifecycle }: { event: QuickstartSessi
         <span className="text-xs text-muted-foreground">
           {msg('managedAgents.sessions.trace.toolResult', 'Tool result')}
         </span>
-        {sessionToolResultWasInterrupted(event) ? <SessionExecutionStateBadge state="interrupted" /> : null}
+        {!lifecycle && sessionToolResultWasInterrupted(event) ? (
+          <SessionExecutionStateBadge state="interrupted" />
+        ) : null}
         {typeof event.id === 'string' && event.id ? (
           <span className="font-mono text-xs text-muted-foreground">{event.id}</span>
         ) : null}

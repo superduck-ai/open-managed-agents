@@ -37,7 +37,7 @@ func ResolvePendingToolEventID(raw []byte, codeSessionID, primaryID, threadID, e
 		return "", err
 	}
 	for _, request := range requests {
-		if request.PublicEventID == eventID || ToolUseEventID(codeSessionID, request.ToolUseID) == eventID {
+		if request.PublicEventID == eventID || ToolUseEventID(codeSessionID, request.ToolUseID, request.SessionThreadID) == eventID {
 			return request.PublicEventID, nil
 		}
 	}
@@ -71,10 +71,11 @@ func pendingToolRequests(raw []byte, primaryID, threadID string) ([]toolPermissi
 				continue
 			}
 		}
-		if request.SessionThreadID == "" {
-			request.SessionThreadID = primaryID
+		ownerThreadID := request.SessionThreadID
+		if ownerThreadID == "" {
+			ownerThreadID = primaryID
 		}
-		if threadID == "" || request.SessionThreadID == threadID {
+		if threadID == "" || ownerThreadID == threadID {
 			requests = append(requests, request)
 		}
 	}

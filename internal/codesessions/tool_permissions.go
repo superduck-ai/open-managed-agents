@@ -74,6 +74,9 @@ func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID
 	}
 	if permission == resolvedToolPermissionAsk {
 		if err := s.persistToolPermissionRequest(ctx, codeSessionID, workerEpoch, request); err != nil {
+			if errors.Is(err, db.ErrInvalidState) {
+				return s.respondToToolPermissionRequest(ctx, codeSessionID, workerEpoch, request, resolvedToolPermissionDeny, "terminated-thread", "Subagent thread has terminated.", "", "")
+			}
 			return err
 		}
 	}
@@ -117,6 +120,9 @@ func (s *Service) resolveToolPermission(ctx context.Context, codeSessionID strin
 		}
 		if err != nil {
 			return resolvedToolPermissionDeny, parseClaudeToolIdentity(claudeToolName), err
+		}
+		if thread.Status == "terminated" {
+			return resolvedToolPermissionDeny, parseClaudeToolIdentity(claudeToolName), nil
 		}
 		permission, identity := resolveToolPermissionFromAgentSnapshot(thread.AgentSnapshot, claudeToolName)
 		return permission, identity, nil
@@ -421,6 +427,7 @@ func (s *Service) persistToolPermissionRequest(ctx context.Context, codeSessionI
 		WorkerEpoch:         workerEpoch,
 		ExternalMetadataSet: true,
 		ExternalMetadata:    metadata,
+		RequiredThreadID:    request.SessionThreadID,
 	})
 	return err
 }
@@ -634,7 +641,7 @@ func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRe
 
 func toolCallPublicPayload(codeSessionID string, request toolPermissionRequest, identity toolIdentity, permission resolvedToolPermission, at time.Time) (toolPermissionRequest, json.RawMessage, error) {
 	eventType, publicName := toolPermissionPublicIdentity(request.ToolName, identity)
-	toolEventID := maevents.ToolUseEventID(codeSessionID, request.ToolUseID)
+	toolEventID := maevents.ToolUseEventID(codeSessionID, request.ToolUseID, request.SessionThreadID)
 	request.PublicEventID = toolEventID
 	request.EventType = eventType
 	if request.SessionThreadID != "" {

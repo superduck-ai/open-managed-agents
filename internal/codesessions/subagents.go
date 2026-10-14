@@ -148,7 +148,7 @@ func (s *Service) subagentSnapshotForTool(ctx context.Context, codeSession db.Co
 	if toolUseID == "" {
 		return nil, nil
 	}
-	event, err := s.eventPayloads.GetSessionEvent(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, maevents.ToolUseEventID(codeSession.ExternalID, toolUseID))
+	event, err := s.eventPayloads.GetSessionEvent(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, maevents.ToolUseEventID(codeSession.ExternalID, toolUseID, ""))
 	if errors.Is(err, db.ErrNotFound) {
 		return nil, nil
 	}

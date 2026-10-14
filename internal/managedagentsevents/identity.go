@@ -13,8 +13,12 @@ func StableAssistantEventID(codeSessionID, messageID string, contentBlockIndex i
 	return "sevt_" + hex.EncodeToString(sum[:16])
 }
 
-func ToolUseEventID(codeSessionID, toolUseID string) string {
-	sum := sha256.Sum256([]byte(codeSessionID + "\x00public\x00tool_use\x00" + toolUseID))
+func ToolUseEventID(codeSessionID, toolUseID, threadID string) string {
+	seed := codeSessionID + "\x00public\x00tool_use\x00" + toolUseID
+	if threadID != "" {
+		seed += "\x00thread\x00" + threadID
+	}
+	sum := sha256.Sum256([]byte(seed))
 	return "sevt_" + hex.EncodeToString(sum[:16])
 }
 

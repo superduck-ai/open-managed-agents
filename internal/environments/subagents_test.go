@@ -103,3 +103,20 @@ func TestManagedAgentSubagentSkillsPreserveVersions(t *testing.T) {
 		}
 	}
 }
+
+func TestCoordinatorLaunchIncludesSubagentWaitInstructions(t *testing.T) {
+	source, err := managedAgentSessionConfig(db.Session{AgentSnapshot: json.RawMessage(`{"system":"assigned role","multiagent":{"type":"coordinator","agents":[]}}`)}, managedAgentRuntimeResources{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var launch struct {
+		System string `json:"system_prompt"`
+		Append string `json:"append_system_prompt"`
+	}
+	if err := jsonv2.Unmarshal(source, &launch); err != nil {
+		t.Fatal(err)
+	}
+	if launch.System != "assigned role" || !strings.Contains(launch.Append, "TaskOutput") || !strings.Contains(launch.Append, "ReadNotifications") {
+		t.Fatalf("coordinator launch lacks native waiting guidance: %s", source)
+	}
+}

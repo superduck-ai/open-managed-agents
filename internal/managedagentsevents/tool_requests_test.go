@@ -24,7 +24,7 @@ func TestClearPendingToolRequestsRejectsMalformedMetadata(t *testing.T) {
 }
 
 func TestResolvePendingToolEventID(t *testing.T) {
-	const childEventID = "sevt_e6def445dfa02dbc80525f1e5d2f5b6d"
+	const childEventID = "sevt_723f3e959f88f0632391956b1df81cdb"
 	const request = `{"public_event_id":"mirror","request_id":"request","provider_tool_use_id":"provider-child","session_thread_id":"child"}`
 	for _, test := range []struct {
 		name, metadata, threadID, eventID, want string

@@ -1595,11 +1595,15 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
       return jsonResponse(pageResourceRows(filteredSessions, limit, params.get('page')));
     }
     if (url.startsWith('/v1/files?') && method === 'GET') {
+      const scopeId = new URL(url, 'https://oma.duck.ai').searchParams.get('scope_id');
+      const files = scopeId
+        ? resources.files.filter((file) => (file.scope as { id?: string } | null)?.id === scopeId)
+        : resources.files;
       return jsonResponse({
-        data: resources.files,
+        data: files,
         has_more: false,
-        first_id: resources.files.at(0)?.id ?? null,
-        last_id: resources.files.at(-1)?.id ?? null,
+        first_id: files.at(0)?.id ?? null,
+        last_id: files.at(-1)?.id ?? null,
       });
     }
     const retrieveSessionMatch = url.match(/^\/v1\/sessions\/([^/?]+)\?beta=true$/);

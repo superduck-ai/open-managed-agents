@@ -1,5 +1,12 @@
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '../../../shared/ui/input-group';
-import { ArrowUp, Square } from 'lucide-react';
+import { ArrowUp, Paperclip, Square, X } from 'lucide-react';
+import { Button } from '../../../shared/ui/button';
+import {
+  createSessionAttachment,
+  prepareSessionAttachments,
+  sessionAttachmentMessage,
+  type SessionAttachment,
+} from './sessionAttachments';
 import { useRef, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { interruptQuickstartSession, postQuickstartSessionMessage } from '../api';
@@ -14,6 +21,7 @@ export function SessionMessageComposer({
   onError,
   onEventsChanged,
   onMessageSent,
+  onResourcesChanged = () => {},
   sessionId,
   workspaceId,
 }: {
@@ -24,6 +32,7 @@ export function SessionMessageComposer({
   onError: (error: string | null) => void;
   onEventsChanged: () => void;
   onMessageSent: (events: QuickstartSessionEvent[]) => void;
+  onResourcesChanged?: () => void;
   sessionId: string;
   workspaceId: string;
 }) {
@@ -31,6 +40,8 @@ export function SessionMessageComposer({
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
+  const [attachments, setAttachments] = useState<SessionAttachment[]>([]);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
   // In-flight guards are refs: state updates only apply after a re-render, so a
   // second Enter (or Enter + send click) in the same frame would pass a state
   // guard and double-post the message.
@@ -41,15 +52,21 @@ export function SessionMessageComposer({
   const sendDisabled = composerDisabled || !acceptingMessages || sending;
 
   const submit = async () => {
-    if (!trimmedDraft || sendDisabled || sendingRef.current) {
+    if ((!trimmedDraft && !attachments.length) || sendDisabled || sendingRef.current) {
       return;
     }
     sendingRef.current = true;
     setSending(true);
     onError(null);
     try {
-      const response = await postQuickstartSessionMessage(sessionId, trimmedDraft, workspaceId);
+      const paths = await prepareSessionAttachments(attachments, sessionId, workspaceId, onResourcesChanged);
+      const response = await postQuickstartSessionMessage(
+        sessionId,
+        sessionAttachmentMessage(trimmedDraft, paths),
+        workspaceId,
+      );
       setDraft('');
+      setAttachments([]);
       // Always mark the session running: even with no returned events the stream
       // loop's forced tail sync backfills the message, so no history-refresh
       // fallback is needed.
@@ -88,9 +105,48 @@ export function SessionMessageComposer({
       }}
     >
       <div className="mx-auto w-full max-w-[720px]" data-testid="session-message-composer-column">
+        <input
+          ref={uploadInputRef}
+          type="file"
+          multiple
+          className="sr-only"
+          disabled={composerDisabled || sending}
+          aria-label={msg('files.upload.inputAria', 'Choose files to upload')}
+          onChange={(event) => {
+            const selected = Array.from(event.currentTarget.files ?? []).map(createSessionAttachment);
+            setAttachments((current) => [...current, ...selected]);
+            event.currentTarget.value = '';
+          }}
+        />
+        {attachments.length ? (
+          <div className="mb-2 flex flex-wrap gap-1.5 px-1" aria-live="polite">
+            {attachments.map((attachment) => (
+              <span
+                key={attachment.id}
+                className="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-muted/80 px-2.5 py-1 text-xs text-foreground/85"
+              >
+                <Paperclip className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="min-w-0 truncate">{attachment.file.name}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="size-5 rounded-full text-muted-foreground/70 hover:bg-foreground/5 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/30 dark:hover:bg-foreground/5"
+                  disabled={sending}
+                  aria-label={msg('managedAgents.sessions.detail.removeAttachment', 'Remove {filename}', {
+                    filename: attachment.file.name,
+                  })}
+                  onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
+                >
+                  <X className="size-3" aria-hidden />
+                </Button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <InputGroup
           data-disabled={composerDisabled || sending ? 'true' : undefined}
-          className="min-h-14 items-end gap-0 overflow-hidden rounded-[22px] border-[0.5px] border-session-border bg-background p-0 shadow-none transition-[border-color,box-shadow,background-color] duration-150 hover:border-border/70 has-[[data-slot=input-group-control]:focus-visible]:border-border has-[[data-slot=input-group-control]:focus-visible]:ring-0 has-[[data-slot=input-group-control]:focus-visible]:shadow-[0_8px_24px_-22px_var(--foreground)] dark:bg-session-surface"
+          className="min-h-14 items-end gap-0 overflow-hidden rounded-[22px] border-0 bg-muted/55 p-0 shadow-none transition-[box-shadow,background-color] duration-150 hover:bg-muted/70 has-[[data-slot=input-group-control]:focus-visible]:ring-1 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/20 dark:bg-session-surface dark:hover:bg-muted/80"
         >
           <InputGroupTextarea
             value={draft}
@@ -126,6 +182,17 @@ export function SessionMessageComposer({
           />
           <InputGroupAddon align="inline-end" className="shrink-0 justify-end pb-[11px] pr-2.5 pt-0">
             <div className="flex shrink-0 items-center gap-1.5">
+              <InputGroupButton
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="size-7 rounded-full text-muted-foreground hover:bg-foreground/5 focus-visible:ring-1 focus-visible:ring-ring/30 dark:hover:bg-foreground/5"
+                aria-label={msg('managedAgents.sessions.detail.attachFiles', 'Attach files')}
+                disabled={composerDisabled || sending}
+                onClick={() => uploadInputRef.current?.click()}
+              >
+                <Paperclip className="size-4" aria-hidden />
+              </InputGroupButton>
               {live ? (
                 <InputGroupButton
                   type="button"
@@ -153,7 +220,7 @@ export function SessionMessageComposer({
                     ? msg('managedAgents.sessions.detail.sending', 'Sending message')
                     : msg('managedAgents.sessions.detail.send', 'Send message')
                 }
-                disabled={sendDisabled || !trimmedDraft}
+                disabled={sendDisabled || (!trimmedDraft && !attachments.length)}
               >
                 <ArrowUp className="size-4" aria-hidden />
               </InputGroupButton>

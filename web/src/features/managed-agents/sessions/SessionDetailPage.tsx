@@ -1,4 +1,5 @@
 import { FollowSentSessionMessage } from './FollowSentSessionMessage';
+import { useQueryClient } from '@tanstack/react-query';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
 import {
@@ -94,6 +95,7 @@ import {
   sessionEventType,
   latestRequiresActionEventIDs,
   latestOpenModelRequest,
+  sessionIsToolResultEvent,
   sessionStatusFromEvents,
 } from './sessionTraceModel';
 import { SessionTraceEmpty, SessionTraceSearch, SessionTraceSkeleton } from './SessionTracePanel';
@@ -106,6 +108,9 @@ import {
 import { SessionHeaderSummary } from './SessionHeaderSummary';
 import { SessionMessageComposer } from './SessionMessageComposer';
 import { SessionStartState } from './SessionStartState';
+import { SessionOutputFiles } from './SessionOutputFiles';
+import { sessionFilesQueryKey } from './sessionFiles';
+import { useSessionResourceRefresh } from './useSessionResourceRefresh';
 import { SessionRequiresActionCard } from './SessionRequiresActionCard';
 import { SessionTranscriptView } from './SessionTranscriptView';
 import { SessionTraceWorkspaceLayout } from './SessionTraceWorkspaceLayout';
@@ -144,6 +149,7 @@ function SessionNotFound({
 }
 
 export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {
+  const queryClient = useQueryClient();
   const { activeWorkspaceId } = useWorkspace();
   const { msg } = useI18n();
   const formatters = useFormatters();
@@ -154,7 +160,6 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [metadataError, setMetadataError] = useState<string | null>(null);
-  const [resourceRefreshError, setResourceRefreshError] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [eventRefreshKey, setEventRefreshKey] = useState(0);
@@ -198,16 +203,12 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       })().catch(() => undefined);
     }, 600);
   }, [activeWorkspaceId, session?.id]);
-  const refreshSessionResources = useCallback(() => {
-    if (!session?.id) {
-      return;
-    }
-    const activeSessionId = session.id;
-    setResourceRefreshError(null);
-    void retrieveSessionDetailSession(activeSessionId, activeWorkspaceId)
-      .then((updatedSession) => setSession((currentSession) => mergeSessionResources(currentSession, updatedSession)))
-      .catch((error) => setResourceRefreshError(errorMessage(error)));
-  }, [activeWorkspaceId, session?.id]);
+  const { refresh: refreshSessionResources, error: resourceRefreshError } = useSessionResourceRefresh(
+    session,
+    activeWorkspaceId,
+    inspectorOpen && inspectorTab === 'resources',
+    setSession,
+  );
   const handleAddFileResource = useCallback(
     (resource: SessionFileResourceFormValue) =>
       addSessionFileResource(session!.id, resource, activeWorkspaceId).then(refreshSessionResources),
@@ -236,8 +237,13 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       if (type === 'session.thread_created') {
         refreshSessionThreads();
       }
+      if (sessionIsToolResultEvent(event)) {
+        void refreshSessionResources();
+        if (activeSessionId)
+          void queryClient.invalidateQueries({ queryKey: sessionFilesQueryKey(activeWorkspaceId, activeSessionId) });
+      }
     },
-    [activeSessionId, refreshSessionThreads],
+    [activeSessionId, activeWorkspaceId, queryClient, refreshSessionResources, refreshSessionThreads],
   );
 
   useEffect(() => {
@@ -245,7 +251,6 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     setLoading(true);
     setLoadError(null);
     setMetadataError(null);
-    setResourceRefreshError(null);
     setThreads([]);
     setMetadataLoaded(false);
     void (async () => {
@@ -742,11 +747,19 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
               childLoading={eventsLoading}
               composer={
                 <SessionMessageComposer
+                  key={`${activeWorkspaceId}:${session.id}`}
                   acceptingMessages={conversationState.acceptingMessages}
                   awaitingAction={Boolean(activeAwaitingToolCall)}
                   disabled={conversationState.disabled}
                   live={conversationState.live}
                   onError={setMutationError}
+                  onResourcesChanged={() => {
+                    void queryClient.invalidateQueries({ queryKey: ['files', activeWorkspaceId] });
+                    void queryClient.invalidateQueries({
+                      queryKey: ['managed-agents', 'session-file-options', activeWorkspaceId],
+                    });
+                    void refreshSessionResources();
+                  }}
                   onEventsChanged={() => setEventRefreshKey((value) => value + 1)}
                   onMessageSent={(sentEvents) => {
                     eventData.appendPrimaryEvents(sentEvents);
@@ -759,6 +772,15 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                   }}
                   sessionId={session.id}
                   workspaceId={activeWorkspaceId}
+                />
+              }
+              outputFiles={
+                <SessionOutputFiles
+                  session={session}
+                  workspaceId={activeWorkspaceId}
+                  refreshKey={refreshKey}
+                  mainLane={activeLane === SESSION_MAIN_LANE_ID}
+                  filtered={hasFilter}
                 />
               }
               entries={entries}
@@ -879,12 +901,6 @@ function SessionDetailAlerts({
   );
 }
 
-function mergeSessionResources(currentSession: SessionApiResponse | null, updatedSession: SessionApiResponse) {
-  return currentSession?.id === updatedSession.id
-    ? { ...currentSession, resources: updatedSession.resources }
-    : currentSession;
-}
-
 function sessionSummaryRefreshInterval(session: SessionApiResponse | null) {
   return session && sessionStatusIsLive(session.status) && !session.archived_at ? 1_000 : 60_000;
 }
@@ -916,6 +932,7 @@ export function EventsTab({
   lanes,
   openModelRequest,
   pendingAction,
+  outputFiles,
   onClearFilters,
   onCopyAll,
   onCloseInspector,
@@ -1124,6 +1141,7 @@ export function EventsTab({
                           onClear={hasFilter ? onClearFilters : undefined}
                         />
                       )}
+                      {outputFiles}
                     </MessageScrollerContent>
                   </MessageScrollerViewport>
                   <MessageScrollerButton

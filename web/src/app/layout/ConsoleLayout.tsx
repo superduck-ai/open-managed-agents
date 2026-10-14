@@ -166,7 +166,6 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
   const isWide = isWideConsolePath(currentPath);
   const isSessionWorkspace = isSessionDetailPath(currentPath);
   const isQuickstart = /^(?:\/quickstart|\/workspaces\/[^/]+\/agent-quickstart)\/?$/.test(currentPath);
-  const isSessionsRoute = isSessionsPath(currentPath);
   const { msg } = useI18n();
 
   return (
@@ -175,7 +174,7 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
       <SidebarInset
         className={clsx(
           'text-foreground',
-          isSessionsRoute && 'session-route-theme',
+          isSessionWorkspace && 'session-route-theme',
           isSessionWorkspace
             ? 'h-svh min-h-0 overflow-hidden'
             : isQuickstart
@@ -1066,10 +1065,6 @@ function isWideConsolePath(currentPath: string) {
 
 function isSessionDetailPath(currentPath: string) {
   return /^\/workspaces\/[^/]+\/sessions\/[^/]+\/?$/.test(currentPath);
-}
-
-function isSessionsPath(currentPath: string) {
-  return currentPath === '/sessions' || /^\/workspaces\/[^/]+\/sessions(?:\/|$)/.test(currentPath);
 }
 
 function isBuildPath(currentPath: string) {

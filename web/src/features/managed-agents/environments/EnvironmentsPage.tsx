@@ -1,6 +1,7 @@
 import './styles.css';
 import { Cloud, Monitor } from 'lucide-react';
 import { useState } from 'react';
+import { cn } from '../../../shared/lib/utils';
 import { useLocation } from '@tanstack/react-router';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { useWorkspace } from '../../../shared/workspaces/context';
@@ -49,7 +50,7 @@ function EnvironmentPageContent({
   const preview = (next?: string) =>
     navigateToInternalHref(next ? `${listHref}?environment=${encodeURIComponent(next)}` : listHref);
   return (
-    <div data-environment-page className="environment-page min-w-0 text-foreground [&_svg]:shrink-0">
+    <div data-environment-page className={cn(id && 'environment-page', 'min-w-0 text-foreground [&_svg]:shrink-0')}>
       {id ? (
         <EnvironmentDetail workspaceId={workspaceId} id={id} listHref={listHref} onAction={setAction} />
       ) : (

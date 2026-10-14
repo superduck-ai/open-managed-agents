@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -12,20 +11,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// OAuthRefreshLease serializes one IdP refresh_token exchange per credential.
-// Hold blocks until this caller may exchange. release must be called; it is
-// idempotent. Redis adapters pin the key with a TTL that covers the full
-// refresh Hold (CAS loop × token-endpoint timeout + slack) so a live holder
-// cannot lose the lease mid-exchange; crashed holders are reclaimed after TTL.
 type OAuthRefreshLease interface {
-	Hold(ctx context.Context, credentialExternalID string) (release func() error, err error)
+	Hold(ctx context.Context, credentialExternalID string) (context.Context, func() error, error)
 }
 
-var errOAuthRefreshLeaseRedisRequired = errors.New("redis client is required for oauth refresh lease")
-
-// oauthRefreshLeaseTTL must outlive refreshMCPOAuthCredential's Hold, which
-// wraps up to maxOAuthRefreshCASAttempts token exchanges each bounded by
-// oauthRefreshTimeout. +5s covers seal/CAS/reload around those exchanges.
 const oauthRefreshLeaseTTL = maxOAuthRefreshCASAttempts*oauthRefreshTimeout + 5*time.Second
 
 func oauthRefreshLeaseKey(credentialExternalID string) string {
@@ -55,19 +44,19 @@ func (l *memoryOAuthRefreshLease) semaphore(credentialExternalID string) chan st
 	return sem
 }
 
-func (l *memoryOAuthRefreshLease) Hold(ctx context.Context, credentialExternalID string) (func() error, error) {
+func (l *memoryOAuthRefreshLease) Hold(ctx context.Context, credentialExternalID string) (context.Context, func() error, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sem := l.semaphore(credentialExternalID)
 	select {
 	case sem <- struct{}{}:
 		if err := ctx.Err(); err != nil {
 			<-sem
-			return nil, err
+			return nil, nil, err
 		}
 		released := false
-		return func() error {
+		return ctx, func() error {
 			if released {
 				return nil
 			}
@@ -76,13 +65,14 @@ func (l *memoryOAuthRefreshLease) Hold(ctx context.Context, credentialExternalID
 			return nil
 		}, nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	}
 }
 
 type oauthRefreshNXStore interface {
 	SetNX(ctx context.Context, key, value string, ttl time.Duration) (bool, error)
 	CompareAndDelete(ctx context.Context, key, value string) error
+	CompareAndRenew(ctx context.Context, key, value string, ttl time.Duration) (bool, error)
 }
 
 type redisOAuthRefreshLease struct {
@@ -101,8 +91,6 @@ func newRedisOAuthRefreshLease(store oauthRefreshNXStore, ttl, wait time.Duratio
 	return &redisOAuthRefreshLease{store: store, ttl: ttl, wait: wait}
 }
 
-// NewRedisOAuthRefreshLease holds refresh_token exchanges across API instances.
-// A nil client is rejected so production cannot silently fall back to in-process locking.
 func NewRedisOAuthRefreshLease(client *redis.Client) (OAuthRefreshLease, error) {
 	if client == nil {
 		return nil, errOAuthRefreshLeaseRedisRequired
@@ -110,38 +98,28 @@ func NewRedisOAuthRefreshLease(client *redis.Client) (OAuthRefreshLease, error) 
 	return newRedisOAuthRefreshLease(redisOAuthRefreshNXStore{client: client}, oauthRefreshLeaseTTL, 50*time.Millisecond), nil
 }
 
-func (l *redisOAuthRefreshLease) Hold(ctx context.Context, credentialExternalID string) (func() error, error) {
+func (l *redisOAuthRefreshLease) Hold(ctx context.Context, credentialExternalID string) (context.Context, func() error, error) {
 	token, err := newOAuthRefreshLeaseToken()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	key := oauthRefreshLeaseKey(credentialExternalID)
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		ok, err := l.store.SetNX(ctx, key, token, l.ttl)
 		if err != nil {
-			return nil, fmt.Errorf("acquire mcp oauth refresh lease: %w", err)
+			return nil, nil, fmt.Errorf("acquire mcp oauth refresh lease: %w", err)
 		}
 		if ok {
-			released := false
-			return func() error {
-				if released {
-					return nil
-				}
-				released = true
-				if err := l.store.CompareAndDelete(context.WithoutCancel(ctx), key, token); err != nil {
-					return fmt.Errorf("release mcp oauth refresh lease: %w", err)
-				}
-				return nil
-			}, nil
+			return l.renewHold(ctx, key, token)
 		}
 		timer := time.NewTimer(l.wait)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		case <-timer.C:
 		}
 	}
@@ -172,4 +150,16 @@ func (s redisOAuthRefreshNXStore) SetNX(ctx context.Context, key, value string, 
 
 func (s redisOAuthRefreshNXStore) CompareAndDelete(ctx context.Context, key, value string) error {
 	return oauthRefreshLeaseUnlockScript.Run(ctx, s.client, []string{key}, value).Err()
+}
+
+var oauthRefreshLeaseRenewScript = redis.NewScript(`
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("PEXPIRE", KEYS[1], ARGV[2])
+end
+return 0
+`)
+
+func (s redisOAuthRefreshNXStore) CompareAndRenew(ctx context.Context, key, value string, ttl time.Duration) (bool, error) {
+	result, err := oauthRefreshLeaseRenewScript.Run(ctx, s.client, []string{key}, value, ttl.Milliseconds()).Int64()
+	return result == 1, err
 }

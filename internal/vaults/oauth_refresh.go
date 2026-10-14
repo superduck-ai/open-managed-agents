@@ -49,7 +49,7 @@ func (i *Injector) refreshMCPOAuthCredential(
 	now time.Time,
 	force bool,
 ) (string, *db.VaultCredential, error) {
-	release, err := i.refreshLease.Hold(ctx, credential.ExternalID)
+	ctx, release, err := i.refreshLease.Hold(ctx, credential.ExternalID)
 	if err != nil {
 		return "", nil, err
 	}
@@ -60,11 +60,10 @@ func (i *Injector) refreshMCPOAuthCredential(
 	}()
 
 	current := *credential
-	// Best-effort re-read under the per-credential lease so a concurrent winner's
-	// token is visible before we exchange (one-time refresh_token safe). A failed
-	// reload keeps the caller snapshot and continues.
+	// Never exchange from a stale caller snapshot: another request may have
+	// invalidated its consumed refresh token after a failed seal.
 	if err := reloadCredential(ctx, i.store, &current); err != nil {
-		i.logger.DebugContext(ctx, "mcp_oauth refresh preload miss", "credential_id", credential.ExternalID, "error", err)
+		return "", nil, err
 	}
 	return i.refreshMCPOAuthAttempt(ctx, i.store, &current, now, force)
 }
@@ -94,11 +93,25 @@ func (i *Injector) refreshMCPOAuthAttempt(
 		}
 		return "", nil, errMCPOAuthRefreshUnavailable
 	}
+	if err := ctx.Err(); err != nil {
+		return "", nil, context.Cause(ctx)
+	}
 	accessToken, nextAuth, nextSecret, err := exchangeMCPOAuthRefresh(ctx, i.client(), publicAuth, secret, now, i.platformOAuthClients)
 	if err != nil {
 		return i.finishFailedMCPOAuthExchange(ctx, store, current, secret, now, err)
 	}
-	return i.persistExchangedMCPOAuth(ctx, store, current, secret, accessToken, nextAuth, nextSecret, now)
+	defer clear(nextSecret)
+	exchangedCredential := *current
+	token, saved, err = i.persistExchangedMCPOAuth(ctx, store, current, secret, accessToken, nextAuth, nextSecret, now)
+	if err == nil {
+		return token, saved, nil
+	}
+	// The upstream may have consumed the old refresh token. Retire that exact
+	// envelope without KMS, even if the caller canceled during the seal/write.
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	clearErr := store.ClearVaultCredentialSecret(cleanupCtx, exchangedCredential)
+	return "", nil, errors.Join(ErrMCPOAuthReauthorizationRequired, err, clearErr)
 }
 
 // finishFailedMCPOAuthExchange reloads after a token-endpoint error. A replaced
@@ -141,11 +154,15 @@ func (i *Injector) persistExchangedMCPOAuth(
 	now time.Time,
 ) (string, *db.VaultCredential, error) {
 	for range maxOAuthRefreshCASAttempts {
+		if err := ctx.Err(); err != nil {
+			return "", nil, context.Cause(ctx)
+		}
 		updated := *current
 		updated.Auth = nextAuth
-		updated.SecretPayload = nextSecret
+		updated.SecretPayload = append(json.RawMessage(nil), nextSecret...)
 		updated.UpdatedAt = now.UTC()
 		if err := SealCredentialSecret(ctx, i.secretSvc, &updated); err != nil {
+			clearCredentialSecretPayload(&updated)
 			return "", nil, err
 		}
 		row, err := store.UpdateVaultCredential(ctx, updated.WorkspaceUUID, updated.VaultExternalID, updated.ExternalID, updated)

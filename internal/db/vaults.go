@@ -268,6 +268,14 @@ func (d *DB) UpdateVaultCredential(ctx context.Context, workspaceUUID, vaultExte
 	return VaultCredential{}, ErrNotFound
 }
 
+func (d *DB) ClearVaultCredentialSecret(ctx context.Context, expected VaultCredential) error {
+	if err := requireCompleteSecretEnvelope(expected.SecretEnvelope); err != nil {
+		return err
+	}
+	return NewVaultCredentialMapper(d.mapperDB).ClearSecretIfMatches(ctx,
+		vaultCredentialUpdateParams(expected.WorkspaceUUID, expected.VaultExternalID, expected.ExternalID, expected))
+}
+
 func (d *DB) ArchiveVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (VaultCredential, bool, error) {
 	mapper := NewVaultCredentialMapper(d.mapperDB)
 	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, vaultExternalID, credentialExternalID)

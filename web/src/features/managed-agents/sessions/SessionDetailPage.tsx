@@ -91,6 +91,7 @@ import {
 } from './sessionTimeline';
 import {
   buildSessionEventEntries,
+  sessionCanonicalDisplayEvent,
   sessionEventTimestamp,
   sessionEventType,
   latestRequiresActionEventIDs,
@@ -106,6 +107,7 @@ import {
   writeSessionInspectorUrlState,
 } from './sessionInspectorModel';
 import { SessionHeaderSummary } from './SessionHeaderSummary';
+import { interruptedSessionModelRequestIds, latestSessionIdlePresentationState } from './sessionExecutionState';
 import { SessionMessageComposer } from './SessionMessageComposer';
 import { SessionStartState } from './SessionStartState';
 import { SessionOutputFiles } from './SessionOutputFiles';
@@ -388,17 +390,22 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     [events, laneIdByThreadId, lanes],
   );
   const entriesByLaneId = useMemo(() => {
+    const interruptionEvents = events
+      .map(sessionCanonicalDisplayEvent)
+      .sort((left, right) => sessionEventTimestamp(left) - sessionEventTimestamp(right));
+    const interruptedModelRequestIds = interruptedSessionModelRequestIds(interruptionEvents);
     const nextEntriesByLaneId = new Map<string, SessionEventListEntry[]>();
     lanes.forEach((lane) => {
       nextEntriesByLaneId.set(
         lane.id,
         buildSessionEventEntries(eventsByLaneId.get(lane.id) ?? [], 'transcript', traceStartMs, msg, {
           platformTranscriptFiltering: true,
+          interruptedModelRequestIds,
         }),
       );
     });
     return nextEntriesByLaneId;
-  }, [eventsByLaneId, lanes, msg, traceStartMs]);
+  }, [events, eventsByLaneId, lanes, msg, traceStartMs]);
   const entries = useMemo(() => entriesByLaneId.get(activeLane) ?? [], [activeLane, entriesByLaneId]);
   const openModelRequest = useMemo(
     () => latestOpenModelRequest(eventsByLaneId.get(activeLane) ?? []),
@@ -621,7 +628,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   }
 
   const archived = Boolean(session.archived_at);
-  const conversationState = sessionConversationState(session);
+  const conversationState = sessionConversationState(session, events);
   const warningError = [resourceRefreshError, metadataError, eventError].find(Boolean);
 
   return (
@@ -905,11 +912,14 @@ function sessionSummaryRefreshInterval(session: SessionApiResponse | null) {
   return session && sessionStatusIsLive(session.status) && !session.archived_at ? 1_000 : 60_000;
 }
 
-function sessionConversationState(session: SessionApiResponse) {
+function sessionConversationState(session: SessionApiResponse, events: QuickstartSessionEvent[]) {
   const archived = Boolean(session.archived_at);
   const status = session.status.toLowerCase();
+  const idleState = latestSessionIdlePresentationState(events);
   return {
-    acceptingMessages: !archived && (status === 'idle' || status === 'queued'),
+    acceptingMessages:
+      !archived &&
+      (status === 'queued' || (status === 'idle' && idleState !== 'budget_reached' && idleState !== 'awaiting_action')),
     disabled: archived || status === 'deleted' || status === 'terminated',
     live: !archived && sessionStatusIsLive(status),
   };

@@ -33,6 +33,88 @@ const EMPTY_USAGE: SessionEventUsage = {
 afterEach(() => cleanup());
 
 describe('SessionTranscriptView', () => {
+  test('shows user stop and interrupted model and tool states without failure styling', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const at = '2026-10-14T06:45:48.000Z';
+    const entries = buildSessionEventEntries(
+      [
+        { id: 'request', type: 'span.model_request_start', processed_at: at },
+        { id: 'tool', type: 'agent.tool_use', name: 'Bash', input: { command: 'pwd' }, processed_at: at },
+        { id: 'stop', type: 'user.interrupt', processed_at: at },
+        {
+          id: 'tool-end',
+          type: 'agent.tool_result',
+          tool_use_id: 'tool',
+          processed_at: at,
+          is_error: true,
+          content: [{ type: 'text', text: 'Tool execution was interrupted by the user.' }],
+        },
+        {
+          id: 'end',
+          type: 'span.model_request_end',
+          model_request_start_id: 'request',
+          processed_at: at,
+          is_error: true,
+          error: { type: 'cancelled' },
+        },
+        { id: 'idle', type: 'session.status_idle', processed_at: at, stop_reason: { type: 'end_turn' } },
+      ],
+      'transcript',
+      0,
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+    const { container } = render(transcriptTree(entries));
+    expect(screen.getByText('Stopped by the user.')).toBeTruthy();
+    expect(screen.getByText('Model request interrupted by the user.')).toBeTruthy();
+    expect(container.querySelector('[data-event-id^="end-"] [data-execution-state="interrupted"]')).toBeTruthy();
+    expect(container.querySelector('[data-tool-lifecycle="interrupted"]')).toBeTruthy();
+    expect(container.querySelector('[data-execution-state="failed"]')).toBeNull();
+    expect(container.querySelector('[data-transcript-tool-row]')?.className).not.toContain('text-destructive');
+    expect(screen.queryByText('Error')).toBeNull();
+  });
+
+  test.each([false, true])(
+    'renders an interrupt as a status with platform filtering %s',
+    (platformTranscriptFiltering) => {
+      resetTestDom('https://oma.duck.ai/sessions/test');
+      const events = [
+        {
+          id: 'user-message',
+          type: 'user.message',
+          processed_at: '2026-10-14T06:45:46.000Z',
+          content: [{ type: 'text', text: 'Help me check this.' }],
+        },
+        {
+          id: 'sevt_interrupt',
+          type: 'user.interrupt',
+          processed_at: '2026-10-14T06:45:48.957975Z',
+        },
+        {
+          id: 'execution-error',
+          type: 'session.error',
+          processed_at: '2026-10-14T06:45:49.000Z',
+          error: { type: 'agent_execution_error', message: 'Agent execution failed.' },
+        },
+      ];
+      const entries = buildSessionEventEntries(events, 'transcript', 0, undefined, { platformTranscriptFiltering });
+
+      const { container } = render(transcriptTree(entries));
+
+      const interrupt = container.querySelector('[data-event-id^="sevt_interrupt-"]');
+      expect(interrupt?.getAttribute('data-entry-kind')).toBe('status');
+      expect(interrupt?.textContent).toContain('Stopped by the user.');
+      expect(interrupt?.textContent).not.toContain('processed_at');
+      expect(interrupt?.querySelector('[data-transcript-message-body]')).toBeNull();
+      expect(screen.getByText('Help me check this.')).toBeTruthy();
+      expect(screen.getAllByText('User')).toHaveLength(1);
+      expect(screen.getByText('Agent execution failed.')).toBeTruthy();
+
+      const debugEntries = buildSessionEventEntries(events, 'debug');
+      expect(debugEntries.some((entry) => 'event' in entry && entry.event.type === 'user.interrupt')).toBe(true);
+    },
+  );
+
   test.each([0, 40])('prefers reported thinking and model durations %s over bracket timing', (durationMs) => {
     resetTestDom('https://oma.duck.ai/sessions/test');
     const entries = buildSessionEventEntries(
@@ -440,7 +522,7 @@ describe('SessionTranscriptView', () => {
 
     const { container } = renderTranscript([answer, tool], () => {});
 
-    expect(screen.getAllByText('awaiting approval').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Awaiting approval').length).toBeGreaterThan(0);
     expect(container.querySelector('[data-slot="collapsible-content"]')).toBeNull();
     expect(container.querySelector('[data-transcript-tool-row]')?.getAttribute('aria-expanded')).toBeNull();
   });
@@ -457,8 +539,8 @@ describe('SessionTranscriptView', () => {
 
     const { container } = renderTranscript(entries, () => {});
 
-    expect(toolLifecycleText(container, 'awaiting', 'awaiting_approval')).toBe('awaiting approval');
-    expect(toolLifecycleText(container, 'denied', 'denied')).toBe('denied');
+    expect(toolLifecycleText(container, 'awaiting', 'awaiting_approval')).toBe('Awaiting approval');
+    expect(toolLifecycleText(container, 'denied', 'denied')).toBe('Denied');
     expect(toolLifecycleText(container, 'failed', 'failed')).toBe('Failed');
     expect(toolLifecycleText(container, 'completed', 'completed')).toBe('Completed');
     expect(toolLifecycleText(container, 'running', 'running')).toBe('Executing');

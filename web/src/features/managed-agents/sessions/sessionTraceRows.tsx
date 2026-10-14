@@ -1,5 +1,4 @@
 import { useFormatters, useI18n } from '../../../shared/i18n';
-import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
 import { Bubble, BubbleContent } from '../../../shared/ui/bubble';
@@ -17,7 +16,7 @@ import {
 } from '../types';
 import { compactEntityId, numericValueFromKeys, toRecord } from '../utils';
 import clsx from 'clsx';
-import { ArrowLeft, ArrowRight, Ban, Check, ChevronRight, CircleX, Clock3, Loader2, Timer, Wrench } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronRight, Timer, Wrench } from 'lucide-react';
 import { type MouseEvent as ReactMouseEvent, type ReactNode, useContext } from 'react';
 import { SessionDetailDeltaFramesContext } from './sessionDetailData';
 import { formatSessionDuration } from './sessionDetailModel';
@@ -41,6 +40,7 @@ import {
 import { EventTypeBadge } from './SessionTracePanel';
 import { TranscriptContent } from './SessionTranscriptContent';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tooltip';
+import { SessionExecutionStateBadge } from './SessionExecutionStateBadge';
 
 export function IdleGapRow({ entry }: { entry: IdleGapEntry }) {
   const { msg } = useI18n();
@@ -103,8 +103,10 @@ export function DisplayEventRow({
     return <TranscriptThinkingRow entry={entry} selected={selected} onSelect={onSelect} presentation={presentation} />;
   }
   const title = sessionDisplayEventInlinePreview(entry, msg);
-  const textInProgress = Boolean(entry.inProgress || entry.displayEvent.isStreaming);
-  const showGenerating = Boolean(entry.inProgress || entry.displayEvent.isStreaming);
+  const state = entry.traceEntry.state;
+  const textInProgress = !state && Boolean(entry.inProgress || entry.displayEvent.isStreaming);
+  const showGenerating = textInProgress;
+  const stateInPrefix = state && entry.kind === 'status';
   return (
     <div
       data-event-id={entry.traceEntry.id}
@@ -113,8 +115,12 @@ export function DisplayEventRow({
       className="w-full"
     >
       <HeaderRow isSelected={selected} onSelect={onSelect}>
-        <span className="flex w-14 shrink-0 items-center">
-          <EventTypeBadge type={entry.displayEvent.type} variant="compact" />
+        <span className="flex min-w-14 shrink-0 items-center">
+          {stateInPrefix ? (
+            <SessionExecutionStateBadge state={state} />
+          ) : (
+            <EventTypeBadge type={entry.displayEvent.type} variant="compact" />
+          )}
         </span>
         {entry.displayEvent.type === 'subagent' ? (
           <SubagentLabel entry={entry} msg={msg} threadNameById={threadNameById} onThreadClick={onThreadClick} />
@@ -126,10 +132,11 @@ export function DisplayEventRow({
         {showGenerating ? (
           <InProgressChip label={msg('managedAgents.sessions.trace.generating', 'Generating')} />
         ) : null}
+        {state && !stateInPrefix ? <SessionExecutionStateBadge state={state} /> : null}
         <MetaStrip
           usage={entry.kind === 'passthrough' || entry.kind === 'message' ? entry.usage : undefined}
           durationMs={sessionTranscriptEntryDurationMs(entry)}
-          isError={entry.displayEvent.isError && entry.displayEvent.type !== 'error'}
+          isError={!state && entry.displayEvent.isError && entry.displayEvent.type !== 'error'}
           relativeTime={entry.relativeTime}
           processedAtMs={entry.processedAtMs}
         />
@@ -175,6 +182,7 @@ function TranscriptMessageRow({
           durationMs={speaker === 'agent' ? sessionTranscriptEntryDurationMs(entry) : undefined}
           selected={selected}
           onSelect={onSelect}
+          queued={entry.traceEntry.state === 'queued'}
         />
       ) : (
         <Button
@@ -256,6 +264,7 @@ export function TranscriptSpeakerHeader({
   durationMs,
   selected,
   onSelect,
+  queued = false,
 }: {
   label: string;
   speaker: 'agent' | 'user';
@@ -264,6 +273,7 @@ export function TranscriptSpeakerHeader({
   durationMs?: number;
   selected: boolean;
   onSelect: () => void;
+  queued?: boolean;
 }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
@@ -289,6 +299,7 @@ export function TranscriptSpeakerHeader({
         <span className="truncate">{label}</span>
       </Button>
       <time className="shrink-0 font-mono text-[11px] font-normal text-muted-foreground">{time}</time>
+      {queued ? <SessionExecutionStateBadge state="queued" /> : null}
       {durationMs !== undefined ? (
         <span className="ml-auto inline-flex items-center gap-1 font-mono">
           <Timer className="size-3.5" aria-hidden />
@@ -466,64 +477,12 @@ function CompactToolRowContent({
       ) : (
         <span className="min-w-0 flex-1 truncate text-muted-foreground">{preview}</span>
       )}
-      <CompactToolLifecycleBadge lifecycle={lifecycle} />
+      <SessionExecutionStateBadge state={lifecycle} tool />
       {lifecycle !== 'running' && duration ? (
         <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{duration}</span>
       ) : null}
     </>
   );
-}
-
-function CompactToolLifecycleBadge({ lifecycle }: { lifecycle: ToolLifecycle }) {
-  const { msg } = useI18n();
-  const state = compactToolLifecycleState(lifecycle, msg);
-  const Icon = state.icon;
-  return (
-    <Badge
-      variant="secondary"
-      data-tool-lifecycle={lifecycle}
-      role={lifecycle === 'running' ? 'status' : undefined}
-      className={clsx('h-4 shrink-0 gap-1 rounded px-1 py-0 text-[10px] leading-none font-medium', state.className)}
-    >
-      <Icon className={clsx('size-2.5!', lifecycle === 'running' && 'animate-spin')} aria-hidden />
-      {state.label}
-    </Badge>
-  );
-}
-
-function compactToolLifecycleState(lifecycle: ToolLifecycle, msg: I18nMsg) {
-  switch (lifecycle) {
-    case 'awaiting_approval':
-      return {
-        className: 'bg-accent text-accent-foreground',
-        icon: Clock3,
-        label: msg('managedAgents.sessions.trace.awaitingApproval', 'awaiting approval'),
-      };
-    case 'denied':
-      return {
-        className: 'bg-warning-bg text-warning',
-        icon: Ban,
-        label: msg('managedAgents.sessions.trace.denied', 'denied'),
-      };
-    case 'failed':
-      return {
-        className: 'bg-destructive/10 text-destructive',
-        icon: CircleX,
-        label: msg('managedAgents.sessions.inspector.failed', 'Failed'),
-      };
-    case 'completed':
-      return {
-        className: 'bg-secondary text-secondary-foreground',
-        icon: Check,
-        label: msg('managedAgents.sessions.inspector.completed', 'Completed'),
-      };
-    case 'running':
-      return {
-        className: 'bg-accent text-accent-foreground',
-        icon: Loader2,
-        label: msg('managedAgents.sessions.inspector.executing', 'Executing'),
-      };
-  }
 }
 
 export function OutcomeRow({

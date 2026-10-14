@@ -17,6 +17,117 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
+test.each([
+  { name: 'pending global stop', processed: false, threadId: undefined, errorType: 'cancelled', state: 'failed' },
+  {
+    name: 'another thread stop',
+    processed: true,
+    threadId: 'sthr_reporter123456',
+    errorType: 'cancelled',
+    state: 'failed',
+  },
+  {
+    name: 'provider failure after global stop',
+    processed: true,
+    threadId: undefined,
+    errorType: 'http_error',
+    state: 'failed',
+  },
+  { name: 'processed global stop', processed: true, threadId: undefined, errorType: 'cancelled', state: 'interrupted' },
+  {
+    name: 'processed child stop',
+    processed: true,
+    threadId: 'sthr_analyst123456',
+    errorType: 'cancelled',
+    state: 'interrupted',
+  },
+])('renders $name through the actual child lane', async ({ processed, threadId, errorType, state }) => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+  const api = mockManagedResourceApi();
+  api.resources.sessions[0].status = 'idle';
+  api.resources.sessionEvents.length = 0;
+  Object.values(api.resources.sessionThreadEvents).forEach((events) => (events.length = 0));
+  api.resources.sessionEvents.push({
+    id: 'global-stop',
+    type: 'user.interrupt',
+    created_at: '2026-10-14T06:45:02Z',
+    processed_at: processed ? '2026-10-14T06:45:02Z' : null,
+    session_thread_id: threadId,
+  });
+  api.resources.sessionEvents.unshift({
+    id: 'main-start',
+    type: 'span.model_request_start',
+    processed_at: '2026-10-14T06:45:00Z',
+  });
+  api.resources.sessionEvents.push({
+    id: 'main-end',
+    type: 'span.model_request_end',
+    model_request_start_id: 'main-start',
+    processed_at: '2026-10-14T06:45:03Z',
+    is_error: true,
+    error: { type: errorType },
+  });
+  api.resources.sessionThreadEvents.sthr_analyst123456.push(
+    {
+      session_thread_id: 'sthr_analyst123456',
+      id: 'child-start',
+      type: 'span.model_request_start',
+      processed_at: '2026-10-14T06:45:00Z',
+    },
+    {
+      session_thread_id: 'sthr_analyst123456',
+      id: 'child-answer',
+      type: 'agent.message',
+      processed_at: '2026-10-14T06:45:01Z',
+      content: 'Child partial answer',
+    },
+    {
+      id: 'child-end',
+      session_thread_id: 'sthr_analyst123456',
+      type: 'span.model_request_end',
+      model_request_start_id: 'child-start',
+      processed_at: '2026-10-14T06:45:03Z',
+      is_error: true,
+      error: { type: errorType },
+    },
+    {
+      session_thread_id: 'sthr_analyst123456',
+      id: 'child-idle',
+      type: 'session.thread_status_idle',
+      processed_at: '2026-10-14T06:45:04Z',
+    },
+    {
+      session_thread_id: 'sthr_analyst123456',
+      id: 'later-start',
+      type: 'span.model_request_start',
+      processed_at: '2026-10-14T06:45:05Z',
+    },
+    {
+      session_thread_id: 'sthr_analyst123456',
+      id: 'later-end',
+      type: 'span.model_request_end',
+      model_request_start_id: 'later-start',
+      processed_at: '2026-10-14T06:45:06Z',
+      is_error: true,
+      error: { type: 'cancelled' },
+    },
+  );
+  renderManagedAgentsPage('sessions');
+  const mainState = processed && !threadId && errorType === 'cancelled' ? 'interrupted' : 'failed';
+  await waitFor(() =>
+    expect(document.querySelector(`[data-event-id^="main-end-"] [data-execution-state="${mainState}"]`)).toBeTruthy(),
+  );
+  fireEvent.click(await screen.findByRole('tab', { name: 'analyst' }));
+  await screen.findByText('Child partial answer');
+  await waitFor(() => {
+    const row = document.querySelector('[data-event-id^="child-end-"]');
+    expect(row?.querySelector(`[data-execution-state="${state}"]`)).toBeTruthy();
+    expect(row?.querySelector('[data-execution-state="interrupted"]') !== null).toBe(state === 'interrupted');
+  });
+  expect(document.querySelector('[data-event-id^="later-end-"] [data-execution-state="failed"]')).toBeTruthy();
+  expect(document.querySelector('[data-event-id^="global-stop-"]') !== null).toBe(threadId === 'sthr_analyst123456');
+});
+
 test('sending from older history resumes following the latest session message', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
   const api = mockManagedResourceApi();
@@ -91,6 +202,28 @@ function mockOutputSession() {
   };
   return api;
 }
+
+test('shows a budget pause and disables ordinary messages while retaining the draft', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+  const api = mockManagedResourceApi();
+  api.resources.sessions[0].status = 'idle';
+  api.resources.sessionThreads.length = 0;
+  api.resources.sessionEvents.length = 0;
+  api.resources.sessionEvents.push({
+    id: 'budget-pause',
+    type: 'session.status_idle',
+    processed_at: new Date().toISOString(),
+    stop_reason: { type: 'budget_reached' },
+  });
+  renderManagedAgentsPage('sessions');
+  await screen.findByText('Budget reached; increase or remove the budget to continue.');
+  const input = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
+  fireEvent.change(input, { target: { value: 'Keep my draft' } });
+  expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(true);
+  fireEvent.submit(screen.getByTestId('session-message-composer'));
+  expect(input.value).toBe('Keep my draft');
+  expect(api.requests.some((request) => request.method === 'POST' && request.url.includes('/events'))).toBe(false);
+});
 
 test('keeps downloadable output cards after the transcript when the inspector is closed', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');

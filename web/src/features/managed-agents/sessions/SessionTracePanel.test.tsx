@@ -4,7 +4,8 @@ import { TooltipProvider } from '../../../shared/ui/tooltip';
 import { resetTestDom } from '../../../test/setup';
 import { type QuickstartSessionEvent } from '../types';
 import { SessionDetailDeltaFramesContext } from './sessionDetailData';
-import { BatchDetailPanel, DebugDetailPanel } from './SessionTracePanel';
+import { BatchDetailPanel, DebugDetailPanel, ToolCallDetailContent } from './SessionTracePanel';
+import { MetaStrip } from './sessionTimeline';
 import { buildSessionEventEntries, toolBatchEntry } from './sessionTraceModel';
 
 const { cleanup, fireEvent, render, screen } = await import('@testing-library/react');
@@ -12,6 +13,49 @@ const { cleanup, fireEvent, render, screen } = await import('@testing-library/re
 afterEach(cleanup);
 
 describe('DebugDetailPanel', () => {
+  test.each(['running', 'failed'] as const)('shows only one %s state in the metadata strip', (lifecycle) => {
+    resetTestDom();
+    const { container } = render(
+      <I18nProvider initialLocale="en">
+        <MetaStrip lifecycle={lifecycle} isError={lifecycle === 'failed'} relativeTime="0:00" />
+      </I18nProvider>,
+    );
+    expect(container.querySelectorAll('[data-execution-state]')).toHaveLength(1);
+    expect(container.querySelector('[data-execution-state]')?.getAttribute('data-execution-state')).toBe(lifecycle);
+    expect(screen.queryByText('Running')).toBeNull();
+    expect(screen.queryByText('Error')).toBeNull();
+  });
+
+  test.each(['single', 'batch'])('shows interruption once in a %s tool detail', (mode) => {
+    resetTestDom();
+    const entries = buildSessionEventEntries(
+      [
+        { id: 'tool', type: 'agent.tool_use', name: 'Bash', input: {} },
+        {
+          id: 'result',
+          type: 'agent.tool_result',
+          tool_use_id: 'tool',
+          is_error: true,
+          content: 'Tool execution was interrupted by the user.',
+        },
+      ],
+      'transcript',
+    );
+    const call = entries.find((entry) => entry.kind === 'tool_call');
+    if (!call || call.kind !== 'tool_call') throw new Error('Expected a tool call');
+    const { container } = render(
+      <I18nProvider initialLocale="en">
+        {mode === 'single' ? (
+          <ToolCallDetailContent entry={call} />
+        ) : (
+          <BatchDetailPanel entry={toolBatchEntry([call])} />
+        )}
+      </I18nProvider>,
+    );
+    expect(container.querySelectorAll('[data-execution-state="interrupted"]')).toHaveLength(1);
+    expect(container.querySelector('.text-destructive')).toBeNull();
+  });
+
   test('shows a reported zero duration in a batch call section', () => {
     resetTestDom();
     const entries = buildSessionEventEntries(

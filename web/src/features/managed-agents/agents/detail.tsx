@@ -47,7 +47,6 @@ import { agentEditConfig, agentEditSaveErrorMessage, buildAgentUpdateInput } fro
 import {
   archiveAgent,
   createAgentDetailDeployment,
-  createAgentDetailSession,
   listAgentDetailDeployments,
   listAgentDetailSessions,
   listAgentVersions,
@@ -79,14 +78,7 @@ import {
   type PageCursor,
   type SessionApiResponse,
 } from '../types';
-import {
-  agentDetailHref,
-  compactEntityId,
-  copyText,
-  errorMessage,
-  managedEntityDetailHref,
-  objectRecord,
-} from '../utils';
+import { agentDetailHref, compactEntityId, copyText, errorMessage, objectRecord } from '../utils';
 import {
   agentDetailDeploymentFromSearch,
   agentDetailSessionCreatedFromSearch,
@@ -120,6 +112,7 @@ import { listCreateAgentModels } from './create-dialog-api';
 import { CreateDialogConfigEditor } from './create-dialog-config-editor';
 import { AgentConfigRenderedEditor } from './create-dialog-rendered';
 import { useAgentEditDraft } from './use-agent-edit-draft';
+import { AgentStartSessionDialog } from './AgentStartSessionDialog';
 
 export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string; routeWorkspaceId?: string }) {
   const { msg, locale } = useI18n();
@@ -466,25 +459,7 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
         />
       ) : null}
       {startSessionOpen ? (
-        <ManagedEntityDialog
-          section="sessions"
-          title={msg('managedAgents.sessions.createLabel', 'Create session')}
-          lockedAgent={agent}
-          workspaceId={workspaceId}
-          onClose={() => setStartSessionOpen(false)}
-          onSubmit={async (values) => {
-            const session = await createAgentDetailSession(agent, values, workspaceId);
-            setStartSessionOpen(false);
-            toast.success(msg('managedAgents.sessions.toastCreated', 'Session started'));
-            window.history.pushState(
-              null,
-              '',
-              `${managedEntityDetailHref(workspaceId, 'sessions', session.id)}?interactive=true`,
-            );
-            const event = typeof PopStateEvent === 'function' ? new PopStateEvent('popstate') : new Event('popstate');
-            window.dispatchEvent(event);
-          }}
-        />
+        <AgentStartSessionDialog agent={agent} workspaceId={workspaceId} onClose={() => setStartSessionOpen(false)} />
       ) : null}
       {confirmArchiveOpen ? (
         <ConfirmAgentsArchiveDialog

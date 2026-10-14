@@ -1,0 +1,236 @@
+import { afterEach, expect, mock, test } from 'bun:test';
+import {
+  ManagedAgentsPage,
+  fireEvent,
+  mockAgentsApi,
+  render,
+  resetManagedAgentsTestState,
+  resetTestDom,
+  screen,
+  serverAgent,
+  waitFor,
+  within,
+} from '../ManagedAgentsPage.test-utils';
+
+afterEach(resetManagedAgentsTestState);
+
+test('partial batch archive waits for every request and removes successful agents even if list refresh fails', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+  mockAgentsApi([serverAgent, { ...serverAgent, id: 'agent_second123456', name: 'Second agent' }]);
+  const baseFetch = globalThis.fetch;
+  let refreshFails = false;
+  let finishArchive!: () => void;
+  const archivePending = new Promise<void>((resolve) => {
+    finishArchive = resolve;
+  });
+  globalThis.fetch = mock(async (input, init) => {
+    const url = String(input);
+    if (url.includes(`/v1/agents/${serverAgent.id}/archive?`)) {
+      return Response.json({ error: { message: 'First agent could not be archived' } }, { status: 500 });
+    }
+    if (url.includes('/v1/agents/agent_second123456/archive?')) {
+      await archivePending;
+      refreshFails = true;
+    }
+    if (refreshFails && url.startsWith('/v1/agents?') && init?.method !== 'POST') {
+      return Response.json({ error: { message: 'List refresh failed' } }, { status: 500 });
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  render(<ManagedAgentsPage section="agents" />);
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Select Server agent' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Second agent' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Archive selected' }));
+  fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Archive' }));
+  await waitFor(() =>
+    expect(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancel' }).hasAttribute('disabled'),
+    ).toBe(true),
+  );
+  finishArchive();
+  await waitFor(() => expect(Boolean(screen.queryByRole('alertdialog'))).toBe(false));
+  await waitFor(() => expect(Boolean(screen.queryByRole('link', { name: 'Second agent' }))).toBe(false));
+  expect(screen.getByRole('link', { name: 'Server agent' })).toBeTruthy();
+  expect(screen.getByRole('checkbox', { name: 'Select Server agent' }).hasAttribute('data-disabled')).toBe(false);
+  expect(screen.getByRole('alert').textContent).toContain('First agent could not be archived');
+});
+
+test('partial batch archive marks only successful agents as archived in the All view', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+  mockAgentsApi([serverAgent, { ...serverAgent, id: 'agent_second123456', name: 'Second agent' }], {
+    agentArchiveErrorOnce: true,
+  });
+  render(<ManagedAgentsPage section="agents" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Status Active' }));
+  fireEvent.click(await screen.findByRole('menuitemradio', { name: 'All' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Select Server agent' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Second agent' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Archive selected' }));
+  fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Archive' }));
+  await waitFor(() => expect(Boolean(screen.queryByRole('alertdialog'))).toBe(false));
+  expect(screen.getByRole('checkbox', { name: 'Select Server agent' }).hasAttribute('data-disabled')).toBe(false);
+  expect(screen.getByRole('checkbox', { name: 'Select Second agent' }).hasAttribute('data-disabled')).toBe(true);
+  const row = screen.getByRole('link', { name: 'Second agent' }).closest('tr')!;
+  expect(within(row).getByText('Archived')).toBeTruthy();
+  expect(screen.getByRole('alert').textContent).toContain('agent archive failed');
+});
+
+test('quick view reports retrieval failures and retries without leaving the list', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+  mockAgentsApi([serverAgent]);
+  const baseFetch = globalThis.fetch;
+  let fail = true;
+  globalThis.fetch = mock(async (input, init) => {
+    if (fail && String(input).includes(`/v1/agents/${serverAgent.id}?`)) {
+      return new Response(JSON.stringify({ error: { message: 'Agent unavailable' } }), { status: 404 });
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  render(<ManagedAgentsPage section="agents" />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Quick view Server agent' }));
+  const panel = screen.getByRole('dialog', { name: 'Agent' });
+  expect(await within(panel).findByText('Agent unavailable')).toBeTruthy();
+  fail = false;
+  fireEvent.click(within(panel).getByRole('button', { name: 'Retry' }));
+  expect(await within(panel).findByRole('heading', { name: 'Server agent' })).toBeTruthy();
+  expect(window.location.pathname).toBe('/workspaces/default/agents');
+});
+
+test('failed session creation preserves title and selected agent for retry', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+  mockAgentsApi([serverAgent]);
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = mock(async (input, init) => {
+    if (String(input).includes('/v1/sessions?') && init?.method === 'POST') {
+      return new Response(JSON.stringify({ error: { message: 'Session unavailable' } }), { status: 500 });
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  render(<ManagedAgentsPage section="agents" />);
+  await screen.findByRole('link', { name: 'Server agent' });
+  fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Start conversation' }));
+  const dialog = screen.getByRole('dialog', { name: 'Create session' });
+  fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Retry run' } });
+  const submit = within(dialog).getByRole('button', { name: 'Create session' });
+  await waitFor(() => expect(submit.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(submit);
+  expect((await within(dialog).findByRole('alert')).textContent).toContain('Session unavailable');
+  expect((within(dialog).getByLabelText(/Title/) as HTMLInputElement).value).toBe('Retry run');
+  expect(window.location.pathname).toBe('/workspaces/default/agents');
+  expect(submit.hasAttribute('disabled')).toBe(false);
+});
+
+test('quick view switches between agents and keeps full detail links available', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+  mockAgentsApi([
+    { ...serverAgent, description: 'Extract structured data.', system: 'Read the supplied schema.', version: 2 },
+    { ...serverAgent, id: 'agent_second123456', name: 'Second agent', system: 'Second prompt' },
+  ]);
+  render(<ManagedAgentsPage section="agents" />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Quick view Server agent' }));
+  const panel = screen.getByRole('dialog', { name: 'Agent' });
+  expect(await within(panel).findByText('Read the supplied schema.')).toBeTruthy();
+  expect(within(panel).getByText('V2')).toBeTruthy();
+  expect(within(panel).getByRole('link', { name: 'Open' }).getAttribute('href')).toBe(
+    '/workspaces/default/agents/agent_server123456',
+  );
+  expect(within(panel).getByRole('button', { name: 'Previous agent' }).hasAttribute('disabled')).toBe(true);
+  fireEvent.click(within(panel).getByRole('button', { name: 'Next agent' }));
+  expect(await within(panel).findByText('Second prompt')).toBeTruthy();
+  expect(within(panel).queryByText('Read the supplied schema.')).toBeNull();
+  expect(within(panel).getByRole('button', { name: 'Next agent' }).hasAttribute('disabled')).toBe(true);
+  fireEvent.click(within(panel).getByRole('button', { name: 'Close' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+});
+
+test('starting a conversation from quick view creates for that agent and opens the interactive session', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+  const api = mockAgentsApi([serverAgent]);
+  render(<ManagedAgentsPage section="agents" />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Quick view Server agent' }));
+  const panel = screen.getByRole('dialog', { name: 'Agent' });
+  fireEvent.click(await within(panel).findByRole('button', { name: 'Start conversation' }));
+  const dialog = screen.getByRole('dialog', { name: 'Create session' });
+  expect(within(dialog).queryByRole('combobox', { name: 'Agent' })).toBeNull();
+  expect(within(dialog).queryByRole('button', { name: 'Cancel' })).toBeNull();
+  expect(within(dialog).getByRole('combobox', { name: 'Credential vaults' }).textContent).toContain('Add vault');
+  fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: '  Extraction run  ' } });
+  const submit = within(dialog).getByRole('button', { name: 'Create session' });
+  await waitFor(() => expect(submit.hasAttribute('disabled')).toBe(false));
+  expect(within(dialog).getByRole('link', { name: 'Manage environments (opens in new tab)' })).toBeTruthy();
+  fireEvent.click(submit);
+  await waitFor(() => expect(window.location.pathname).toBe('/workspaces/default/sessions/sesn_created123456'));
+  expect(window.location.search).toBe('?interactive=true');
+  const request = api.requests.find((request) => request.method === 'POST' && request.url.startsWith('/v1/sessions?'));
+  expect(request?.body?.agent).toEqual({ type: 'agent', id: serverAgent.id });
+  expect(request?.body?.title).toBe('Extraction run');
+  expect(request?.body?.environment_id).toBe('env_option123456');
+});
+
+test('batch archive waits for confirmation and only archives selected agents', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+  const api = mockAgentsApi([
+    serverAgent,
+    { ...serverAgent, id: 'agent_second123456', name: 'Second agent' },
+    { ...serverAgent, id: 'agent_third123456', name: 'Third agent' },
+  ]);
+  render(<ManagedAgentsPage section="agents" />);
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Select Server agent' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Second agent' }));
+  await screen.findByText('2 selected');
+  expect(screen.getByRole('checkbox', { name: 'Select all agents' }).getAttribute('aria-checked')).toBe('mixed');
+  fireEvent.click(screen.getByRole('button', { name: 'Archive selected' }));
+  expect(screen.getByRole('alertdialog')).toBeTruthy();
+  expect(api.requests.some((request) => request.url.includes('/archive?'))).toBe(false);
+  fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: 'Archive selected' }));
+  fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Archive' }));
+  await waitFor(() => expect(screen.queryByRole('link', { name: 'Server agent' })).toBeNull());
+  expect(screen.getByRole('link', { name: 'Third agent' })).toBeTruthy();
+  const archivedIds = api.requests.filter((request) => request.url.includes('/archive?')).map((request) => request.url);
+  expect(archivedIds).toEqual([
+    '/v1/agents/agent_server123456/archive?beta=true',
+    '/v1/agents/agent_second123456/archive?beta=true',
+  ]);
+});
+
+test('searching a new set of agents clears the previous selection', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+  const api = mockAgentsApi([serverAgent, { ...serverAgent, id: 'agent_second123456', name: 'Second agent' }]);
+  render(<ManagedAgentsPage section="agents" />);
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Select Server agent' }));
+  await screen.findByText('1 selected');
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Second' } });
+  await waitFor(
+    () => expect(api.requests.some((request) => request.url === '/v1/agents:search?beta=true')).toBe(true),
+    { timeout: 2000 },
+  );
+  await waitFor(() => expect(Boolean(screen.queryByRole('link', { name: 'Server agent' }))).toBe(false));
+  expect(screen.queryByText('1 selected')).toBeNull();
+  expect(screen.getByRole('checkbox', { name: 'Select Second agent' }).getAttribute('aria-checked')).toBe('false');
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
+  const restoredCheckbox = await screen.findByRole('checkbox', { name: 'Select Server agent' });
+  expect(restoredCheckbox.getAttribute('aria-checked')).toBe('false');
+  expect(screen.queryByText('1 selected')).toBeNull();
+});
+
+test('archived agents can be previewed but cannot start a conversation', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+  mockAgentsApi([{ ...serverAgent, archived_at: '2026-10-01T00:00:00Z' }]);
+  render(<ManagedAgentsPage section="agents" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Status Active' }));
+  fireEvent.click(await screen.findByRole('menuitemradio', { name: 'All' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Quick view Server agent' }));
+  const panel = screen.getByRole('dialog', { name: 'Agent' });
+  expect((await within(panel).findByRole('button', { name: 'Start conversation' })).hasAttribute('disabled')).toBe(
+    true,
+  );
+  fireEvent.click(within(panel).getByRole('button', { name: 'Close' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+  expect((await screen.findByRole('menuitem', { name: 'Start conversation' })).getAttribute('aria-disabled')).toBe(
+    'true',
+  );
+});

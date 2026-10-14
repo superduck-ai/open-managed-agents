@@ -944,7 +944,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         />
       ) : (
         <div>
-          <Table className={cn(dataTableClassName, config.section === 'deployments' && 'min-w-[880px]')}>
+          <Table className={cn(dataTableClassName, 'min-w-[1080px]')}>
             <TableHeader>
               <TableRow className={dataTableHeaderRowClassName}>
                 {config.columns.map((column) => (

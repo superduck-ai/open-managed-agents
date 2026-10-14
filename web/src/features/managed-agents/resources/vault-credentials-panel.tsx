@@ -5,6 +5,9 @@ import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
 import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
 import {
+  DataTableRow,
+  DataTableCell,
+  MoreActionsButton,
   dataTableClassName,
   dataTableHeaderCellClassName,
   dataTableHeaderRowClassName,
@@ -16,7 +19,7 @@ import {
   DropdownMenuTrigger,
 } from '../../../shared/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
-import { AlertCircle, Archive, LockKeyhole, MoreVertical, Pencil, Plus, X } from 'lucide-react';
+import { AlertCircle, Archive, LockKeyhole, Pencil, Plus, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import {
   archiveVaultCredential,
@@ -198,7 +201,7 @@ export function VaultCredentialsPanel({
         />
       ) : null}
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="mb-7 flex flex-wrap items-center gap-2">
         <ResourceSearchField
           id="vault-credential-search"
           value={search}
@@ -228,7 +231,7 @@ export function VaultCredentialsPanel({
         </Alert>
       ) : null}
 
-      <Table className={cn(dataTableClassName, 'min-w-[960px]')}>
+      <Table className={cn(dataTableClassName, 'min-w-[1080px]')}>
         <TableHeader>
           <TableRow className={dataTableHeaderRowClassName}>
             {columns.map((column) => (
@@ -298,35 +301,31 @@ export function VaultCredentialsPanel({
             </TableRow>
           ) : (
             visibleCredentials.map((credential) => (
-              <TableRow key={credential.id} className="bg-card text-foreground hover:bg-card">
-                <TableCell className="h-11 truncate px-3 font-mono text-[13px]">
+              <DataTableRow key={credential.id}>
+                <DataTableCell edge="start" className="truncate font-mono text-xs font-medium">
                   {compactEntityId(credential.id)}
-                </TableCell>
-                <TableCell className="h-11 truncate px-3">{credential.display_name}</TableCell>
-                <TableCell className="h-11 truncate px-3">{credentialAuthLabel(credential.auth, msg)}</TableCell>
-                <TableCell className="h-11 px-3">
+                </DataTableCell>
+                <DataTableCell className="h-11 truncate px-3">{credential.display_name}</DataTableCell>
+                <DataTableCell className="h-11 truncate px-3">
+                  {credentialAuthLabel(credential.auth, msg)}
+                </DataTableCell>
+                <DataTableCell className="h-11 px-3">
                   <AgentStatusBadge archived={Boolean(credential.archived_at)} />
-                </TableCell>
-                <TableCell className="h-11 truncate px-3">
+                </DataTableCell>
+                <DataTableCell className="h-11 truncate px-3">
                   {vaultCredentialDateLabel(credential.updated_at, formatters.date)}
-                </TableCell>
-                <TableCell className="h-11 px-2">
+                </DataTableCell>
+                <DataTableCell edge="end" className="px-2">
                   <div className="flex justify-end">
                     <DropdownMenu>
                       <DropdownMenuTrigger
                         render={
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon-sm"
-                            aria-label={msg('managedAgents.common.moreActions', 'More actions')}
-                            className="text-foreground"
+                          <MoreActionsButton
+                            label={msg('managedAgents.common.moreActions', 'More actions')}
                             disabled={busyId === credential.id}
                           />
                         }
-                      >
-                        <MoreVertical className="size-4" aria-hidden />
-                      </DropdownMenuTrigger>
+                      />
                       <DropdownMenuContent align="end" className="w-[164px]">
                         <DropdownMenuItem className="h-9" onClick={() => setDialog({ mode: 'edit', credential })}>
                           <Pencil className="size-4" aria-hidden />
@@ -352,8 +351,8 @@ export function VaultCredentialsPanel({
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
-                </TableCell>
-              </TableRow>
+                </DataTableCell>
+              </DataTableRow>
             ))
           )}
         </TableBody>

@@ -68,7 +68,7 @@ export function DataTableCell({ edge, className, ...props }: DataTableCellProps)
   return (
     <TableCell
       className={cn(
-        'oma-data-table-cell h-10 px-3 align-middle transition-colors',
+        'oma-data-table-cell h-11 px-3 align-middle transition-colors',
         edge === 'start' && 'rounded-l-lg',
         edge === 'end' && 'rounded-r-lg',
         className,

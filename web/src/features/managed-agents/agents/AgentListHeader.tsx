@@ -7,13 +7,11 @@ export function AgentListHeader({
   title,
   description,
   createLabel,
-  compact,
   onCreate,
 }: {
   title: string;
   description: string;
   createLabel?: string;
-  compact: boolean;
   onCreate: () => void;
 }) {
   const { msg } = useI18n();
@@ -21,26 +19,24 @@ export function AgentListHeader({
     <ResourcePageHeader
       title={title}
       description={description}
-      compact={compact}
       actions={
         createLabel ? (
           <>
-            <Button type="button" onClick={onCreate}>
+            <Button type="button" size="lg" onClick={onCreate}>
               <Plus className="size-4" aria-hidden />
               {createLabel}
             </Button>
-            {compact ? (
-              <ButtonLink
-                href="https://oma.mintlifysite.com/"
-                target="_blank"
-                rel="noreferrer"
-                variant="secondary"
-                size="icon"
-                aria-label={msg('nav.documentation', 'Documentation')}
-              >
-                <BookOpen aria-hidden />
-              </ButtonLink>
-            ) : null}
+
+            <ButtonLink
+              href="https://oma.mintlifysite.com/"
+              target="_blank"
+              rel="noreferrer"
+              variant="outline"
+              size="icon-lg"
+              aria-label={msg('nav.documentation', 'Documentation')}
+            >
+              <BookOpen aria-hidden />
+            </ButtonLink>
           </>
         ) : null
       }

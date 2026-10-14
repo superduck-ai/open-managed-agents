@@ -4,7 +4,15 @@ import { useMemo, type MouseEvent } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { cn } from '../../../shared/lib/utils';
 import { Button } from '../../../shared/ui/button';
-import { CopyIdCell, DataTableRow, MoreActionsButton } from '../../../shared/ui/data-table-interactions';
+import {
+  CopyIdCell,
+  DataTableCell,
+  DataTableRow,
+  MoreActionsButton,
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName,
+} from '../../../shared/ui/data-table-interactions';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -332,18 +340,15 @@ export function SessionListTable({
   };
   return (
     <TooltipProvider>
-      <Table className="min-w-[1020px] table-fixed text-[13px]" data-testid="session-list-table">
-        <TableHeader className="bg-muted/30">
+      <Table className={cn(dataTableClassName, 'min-w-[1080px]')} data-testid="session-list-table">
+        <TableHeader>
           {table.getHeaderGroups().map((group) => (
-            <TableRow key={group.id} className="hover:bg-transparent">
+            <TableRow key={group.id} className={dataTableHeaderRowClassName}>
               {group.headers.map((header) => (
                 <TableHead
                   key={header.id}
-                  style={{ width: header.getSize() }}
-                  className={cn(
-                    'h-9 px-3 text-xs font-medium text-muted-foreground',
-                    ['cost', 'tokens'].includes(header.id) && 'text-right',
-                  )}
+                  style={{ width: header.id === 'name' ? undefined : header.getSize() }}
+                  className={cn(dataTableHeaderCellClassName, ['cost', 'tokens'].includes(header.id) && 'text-right')}
                   aria-label={
                     header.id === 'actions'
                       ? msg('common.actions', 'Actions')
@@ -370,22 +375,18 @@ export function SessionListTable({
                 </TableRow>
               ))
             : table.getRowModel().rows.map((row) => (
-                <DataTableRow
-                  key={row.id}
-                  className="hover:!bg-muted/40"
-                  clickable
-                  onClick={(event) => previewRow(event, row.original)}
-                >
+                <DataTableRow key={row.id} clickable onClick={(event) => previewRow(event, row.original)}>
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell
+                    <DataTableCell
                       key={cell.id}
+                      edge={cell.column.id === 'id' ? 'start' : cell.column.id === 'actions' ? 'end' : undefined}
                       className={cn(
-                        'h-11 min-w-0 truncate border-b border-border/50 px-3 py-2',
+                        'min-w-0 truncate',
                         ['cost', 'tokens'].includes(cell.column.id) && 'text-right tabular-nums',
                       )}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
+                    </DataTableCell>
                   ))}
                 </DataTableRow>
               ))}

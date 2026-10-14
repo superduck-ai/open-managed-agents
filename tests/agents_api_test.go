@@ -716,4 +716,9 @@ func TestSessionSubagentSnapshotsAreExpandedOnCreation(t *testing.T) {
 	if err != nil || !found || !agentsnapshot.SameRawJSON(primary.AgentSnapshot, session.AgentSnapshot) {
 		t.Fatalf("creation did not persist the expanded primary snapshot: %v", err)
 	}
+	deployment := createDeployment(t, app, deploymentBodyWithExtra(parent.ID, env.ID, ""))
+	storedDeployment, err := app.db.GetDeployment(t.Context(), scope.WorkspaceUUID, deployment.ID)
+	if err != nil || !agentsnapshot.SameRawJSON(storedDeployment.AgentSnapshot, session.AgentSnapshot) {
+		t.Fatalf("deployment and session creation expanded different configurations: %s %v", storedDeployment.AgentSnapshot, err)
+	}
 }

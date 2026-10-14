@@ -75,7 +75,6 @@ func managedAgentSessionConfig(
 	}
 	if len(mcpSource.Multiagent) > 0 && string(mcpSource.Multiagent) != "null" {
 		body["multiagent"] = mcpSource.Multiagent
-		body["append_system_prompt"] = managedAgentEnvironmentPrompt + "\n\n" + managedAgentDelegationPrompt
 		directories := make(map[string]string, len(runtimeSkills))
 		for _, skill := range runtimeSkills {
 			prefix := skill.Source + ":" + skill.SkillID + ":"

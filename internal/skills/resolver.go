@@ -3,11 +3,11 @@ package skills
 import (
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/superduck-ai/open-managed-agents/internal/agentconfig"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -34,6 +34,15 @@ type runtimeSkillRef struct {
 	Type    string `json:"type"`
 	SkillID string `json:"skill_id"`
 	Version string `json:"version"`
+}
+
+type runtimeSkillSnapshot struct {
+	Skills     []runtimeSkillRef `json:"skills"`
+	Multiagent *struct {
+		Agents []struct {
+			Skills []runtimeSkillRef `json:"skills"`
+		} `json:"agents,case:strict"`
+	} `json:"multiagent,case:strict"`
 }
 
 func NewRuntimeResolver(database *db.DB) *RuntimeResolver {
@@ -92,23 +101,15 @@ func runtimeSkillRefs(snapshot json.RawMessage) ([]runtimeSkillRef, error) {
 	if len(snapshot) == 0 || strings.TrimSpace(string(snapshot)) == "null" {
 		return nil, nil
 	}
-	var roster struct {
-		Skills []runtimeSkillRef `json:"skills"`
-	}
-	if err := json.Unmarshal(snapshot, &roster); err != nil {
+	var roster runtimeSkillSnapshot
+	if err := jsonv2.Unmarshal(snapshot, &roster, jsonv2.MatchCaseInsensitiveNames(true), json.MatchCaseSensitiveDelimiter(true)); err != nil {
 		return nil, fmt.Errorf("decode agent snapshot: %w", err)
 	}
 	refs := roster.Skills
-	children, err := agentconfig.Children(snapshot)
-	if err != nil {
-		return nil, fmt.Errorf("decode agent snapshot: %w", err)
-	}
-	for _, child := range children {
-		childRefs, err := runtimeSkillRefs(child)
-		if err != nil {
-			return nil, err
+	if roster.Multiagent != nil {
+		for _, child := range roster.Multiagent.Agents {
+			refs = append(refs, child.Skills...)
 		}
-		refs = append(refs, childRefs...)
 	}
 	for i, ref := range refs {
 		if strings.TrimSpace(ref.Type) != "anthropic" && strings.TrimSpace(ref.Type) != "custom" {

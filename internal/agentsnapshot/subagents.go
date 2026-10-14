@@ -10,23 +10,8 @@ import (
 )
 
 type rosterReference struct {
-	ID      string          `json:"id"`
-	Version int             `json:"version"`
-	Model   json.RawMessage `json:"model"`
-}
-
-func Resolve(ctx context.Context, database *db.DB, agent db.Agent) (json.RawMessage, error) {
-	snapshot, err := FromAgent(agent)
-	if err != nil {
-		return nil, err
-	}
-	return resolveSnapshot(ctx, database, agent.WorkspaceUUID, snapshot)
-}
-
-type agentRosterSnapshot struct {
-	ID         string          `json:"id"`
-	Version    int             `json:"version"`
-	Multiagent *subagentRoster `json:"multiagent"`
+	ID      string `json:"id"`
+	Version int    `json:"version"`
 }
 
 type subagentRoster struct {
@@ -34,61 +19,47 @@ type subagentRoster struct {
 	Agents []json.RawMessage `json:"agents"`
 }
 
-func resolveSnapshot(ctx context.Context, database *db.DB, workspaceUUID string, snapshot json.RawMessage) (json.RawMessage, error) {
-	var root agentRosterSnapshot
-	if err := jsonv2.Unmarshal(snapshot, &root); err != nil {
+func Resolve(ctx context.Context, database *db.DB, agent db.Agent) (json.RawMessage, error) {
+	if len(agent.Multiagent) == 0 {
+		return FromAgent(agent)
+	}
+	var roster *subagentRoster
+	if err := jsonv2.Unmarshal(agent.Multiagent, &roster); err != nil {
 		return nil, err
 	}
-	if root.Multiagent == nil {
-		return snapshot, nil
+	if roster == nil {
+		return FromAgent(agent)
 	}
-	var fields map[string]json.RawMessage
-	for i, raw := range root.Multiagent.Agents {
+	for i, raw := range roster.Agents {
 		var ref rosterReference
 		if err := jsonv2.Unmarshal(raw, &ref); err != nil {
 			return nil, err
 		}
-		if len(ref.Model) > 0 {
-			continue
-		}
 		if ref.ID == "" || ref.Version < 1 {
 			return nil, fmt.Errorf("subagent reference must include id and pinned version")
 		}
-		if fields == nil {
-			if err := jsonv2.Unmarshal(snapshot, &fields); err != nil {
-				return nil, err
-			}
-		}
-		if ref.ID == root.ID && ref.Version == root.Version {
-			fields["multiagent"] = json.RawMessage(`null`)
-			raw, err := jsonv2.Marshal(fields)
-			if err != nil {
-				return nil, err
-			}
-			root.Multiagent.Agents[i] = raw
-		} else {
-			child, err := database.GetAgentVersion(ctx, workspaceUUID, ref.ID, ref.Version)
+		child := agent
+		if ref.ID != agent.ExternalID || ref.Version != agent.CurrentVersion {
+			var err error
+			child, err = database.GetAgentVersion(ctx, agent.WorkspaceUUID, ref.ID, ref.Version)
 			if err != nil {
 				return nil, fmt.Errorf("resolve subagent %s@%d: %w", ref.ID, ref.Version, err)
 			}
-			if ref.ID != root.ID && len(child.Multiagent) > 0 && string(child.Multiagent) != "null" {
+			if ref.ID != agent.ExternalID && len(child.Multiagent) > 0 && string(child.Multiagent) != "null" {
 				return nil, fmt.Errorf("subagent %s must not configure multiagent", ref.ID)
 			}
-			child.Multiagent = nil
-			raw, err := FromAgent(child)
-			if err != nil {
-				return nil, err
-			}
-			root.Multiagent.Agents[i] = raw
 		}
-	}
-	if fields == nil {
-		return snapshot, nil
+		child.Multiagent = nil
+		expanded, err := FromAgent(child)
+		if err != nil {
+			return nil, err
+		}
+		roster.Agents[i] = expanded
 	}
 	var err error
-	fields["multiagent"], err = jsonv2.Marshal(root.Multiagent)
+	agent.Multiagent, err = jsonv2.Marshal(roster)
 	if err != nil {
 		return nil, err
 	}
-	return jsonv2.Marshal(fields)
+	return FromAgent(agent)
 }

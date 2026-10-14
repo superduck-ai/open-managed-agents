@@ -18,7 +18,7 @@
 - `child_tool_policy_verified`：确认前文件不存在，允许后内容正确。
 - `child_mcp_executed`：子实例通过会话级 HTTP MCP 服务完成调用。
 - `child_thread_history_verified`：事件流与历史的回复一致，结果归属子线程。
-- `child_thread_resumed`：原生 `SendMessage` 继续同一实例和线程。
+- `child_thread_resumed`：原生 `SendMessage` 在后台继续同一实例和线程；再次 Write 等待审批，批准后文件内容正确。
 
 另检查生命周期先于委派事件时的线程路由和会话策略，以及内部回复先于模型代理回复时的去重。
 并行场景只验证两个重叠后台实例、各自线程和回复。

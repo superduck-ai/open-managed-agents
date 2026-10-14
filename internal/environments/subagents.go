@@ -8,12 +8,6 @@ import (
 	"strings"
 )
 
-const managedAgentDelegationPrompt = `## Subagent coordination
-
-- SendMessage resumes a child in the background. To wait for its result, use TaskOutput with its runtime task ID, block=true and timeout=600000 when the tool is available.
-- Child completion messages arrive automatically. If a child is waiting for user approval, return control to the user. Do not repeatedly check its status.
-- ReadNotifications reads external notifications, not child completion messages. Do not poll it to wait for subagents.`
-
 type subagentLaunchSnapshot struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -81,8 +75,6 @@ func buildManagedAgentSubagents(source, document json.RawMessage) (json.RawMessa
 		definition := claudeAgentDefinition{Description: snapshot.Description, Prompt: snapshot.System + "\n\n" + managedAgentEnvironmentPrompt, Model: snapshot.Model.ID, MCPServers: servers}
 		if definition.Description == "" {
 			definition.Description = snapshot.Name
-		} else {
-			definition.Description = snapshot.Name + ": " + definition.Description
 		}
 		for _, skill := range snapshot.Skills {
 			version := cmp.Or(strings.TrimSpace(skill.Version), "latest")

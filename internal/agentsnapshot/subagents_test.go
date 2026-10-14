@@ -4,47 +4,42 @@ import (
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"testing"
+
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-func TestResolveStoredSnapshot(t *testing.T) {
+func TestResolveRejectsInvalidReferences(t *testing.T) {
 	for _, source := range []string{
 		`{`,
-		`{"multiagent":{"agents":[{"type":"agent","version":1}]}}`,
-		`{"multiagent":{"agents":[{"id":"agent_child","version":0}]}}`,
-		`{"multiagent":{"agents":[{"id":"agent_child","version":-1}]}}`,
+		`{"agents":[{"version":1}]}`,
+		`{"agents":[{"id":"agent_child","version":0,"model":{"id":"model"}}]}`,
+		`{"agents":[{"id":"agent_child","version":-1}]}`,
 	} {
-		if _, err := resolveSnapshot(t.Context(), nil, "workspace", json.RawMessage(source)); err == nil {
-			t.Fatalf("accepted invalid snapshot: %s", source)
+		if _, err := Resolve(t.Context(), nil, db.Agent{Multiagent: json.RawMessage(source)}); err == nil {
+			t.Fatalf("accepted invalid references: %s", source)
 		}
 	}
-	for _, source := range []string{
-		`{"model":{"id":"parent"},"future":9007199254740993}`,
-		`{"multiagent":{"type":"coordinator","agents":[{"id":"agent_child","version":1,"name":"计算Agent","model":{"id":"pinned"},"system":"frozen"}]},"future":9007199254740993}`,
-	} {
-		resolved, err := resolveSnapshot(t.Context(), nil, "workspace", json.RawMessage(source))
-		if err != nil || string(resolved) != source {
-			t.Fatalf("changed complete snapshot: %s %v", resolved, err)
-		}
-	}
-	source := json.RawMessage(`{"id":"agent_parent","version":1,"model":{"id":"parent-v1"},"system":"session-specific","multiagent":{"type":"coordinator","agents":[{"id":"agent_frozen","version":2,"model":{"id":"child-v2"}},{"id":"agent_parent","version":1}]},"future":9007199254740993}`)
-	resolved, err := resolveSnapshot(t.Context(), nil, "workspace", source)
+}
+
+func TestResolveCurrentSelfUsesAgentCopy(t *testing.T) {
+	agent := db.Agent{ExternalID: "agent_parent", CurrentVersion: 1, Name: "parent", System: new("parent-system"), Model: json.RawMessage(`{"id":"parent-model"}`), Multiagent: json.RawMessage(`{"type":"coordinator","agents":[{"id":"agent_parent","version":1}]}`)}
+	resolved, err := Resolve(t.Context(), nil, agent)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var roster agentRosterSnapshot
-	if err := jsonv2.Unmarshal(resolved, &roster); err != nil {
+	var root struct {
+		Multiagent subagentRoster `json:"multiagent"`
+	}
+	if err := jsonv2.Unmarshal(resolved, &root); err != nil {
 		t.Fatal(err)
 	}
-	self := roster.Multiagent.Agents[1]
-	var child map[string]json.RawMessage
-	if err := jsonv2.Unmarshal(self, &child); err != nil {
+	child := agent
+	child.Multiagent = nil
+	want, err := FromAgent(child)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if string(child["system"]) != `"session-specific"` || string(child["multiagent"]) != "null" || string(child["future"]) != "9007199254740993" {
-		t.Fatalf("lost frozen self config: %s", self)
-	}
-	frozen := roster.Multiagent.Agents[0]
-	if string(frozen) != `{"id":"agent_frozen","version":2,"model":{"id":"child-v2"}}` {
-		t.Fatalf("changed already expanded child: %s %v", frozen, err)
+	if len(root.Multiagent.Agents) != 1 || !SameRawJSON(root.Multiagent.Agents[0], want) || string(agent.Multiagent) != `{"type":"coordinator","agents":[{"id":"agent_parent","version":1}]}` {
+		t.Fatalf("self changed parent or lost configuration: %s", resolved)
 	}
 }

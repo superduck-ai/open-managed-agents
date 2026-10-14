@@ -24,6 +24,7 @@ const childSystem = "OMA_SUBAGENT_REVIEWER_V1"
 const childAnswer = "子 Agent 已完成独立线程验证。"
 const childSkillMarker = "OMA_CHILD_SKILL_PRELOADED"
 const childToolPath = "/mnt/user-data/outputs/subagent-proof.txt"
+const childResumedToolPath = childToolPath + ".resume"
 const childFollowup = "请继续同一子 Agent，并保留之前的上下文。"
 const childResumedAnswer = "子 Agent 在原线程继续完成了任务。"
 
@@ -186,9 +187,21 @@ func TestChatSubagents(t *testing.T) {
 	}
 	chatProof(t, started, "child_thread_history_verified")
 	submitChat(t, f, childFollowup)
+	tool = waitSubagentTool(t, ctx, rootEvents, childThread)
+	result, err = provider.RunCommand(ctx, *sandbox.ProviderSandboxID, e2bruntime.CommandRequest{Command: "test ! -e " + childResumedToolPath, Timeout: 10 * time.Second})
+	requireOK(t, err)
+	if result.ExitCode != 0 {
+		t.Fatal("background resumed child wrote before approval")
+	}
+	e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{"events": []any{map[string]string{"type": "user.tool_confirmation", "tool_use_id": tool.ID, "result": "allow", "session_thread_id": childThread}}}, 200)
 	resumed := waitSubagentText(t, ctx, childEvents, childResumedAnswer)
 	if resumed.ThreadID != childThread {
 		t.Fatal("resumed subagent created a different public thread")
+	}
+	result, err = provider.RunCommand(ctx, *sandbox.ProviderSandboxID, e2bruntime.CommandRequest{Command: "cat " + childResumedToolPath, Timeout: 10 * time.Second})
+	requireOK(t, err)
+	if result.ExitCode != 0 || string(result.Stdout) != "child tool verified" {
+		t.Fatal("approved background resumed child did not write the expected file")
 	}
 	waitSubagentIdle(t, f)
 	requireOK(t, jsonv2.Unmarshal(e.request(t, "GET", "/v1/sessions/"+f.session.ExternalID+"/threads", e.apiKey, nil, 200), &threads))
@@ -376,10 +389,14 @@ func subagentModelFixture(t *testing.T, childID, childName string, ready chan<- 
 		write := subagentEventWriter(t, w)
 		write("message_start", map[string]any{"message": map[string]any{"id": fmt.Sprintf("msg_subagent_%d", call), "type": "message", "role": "assistant", "model": "claude-sonnet-4-6", "content": []any{}, "stop_reason": nil, "usage": map[string]int{"input_tokens": 10, "output_tokens": 0}}})
 		reason := "end_turn"
-		if isChild && childCall == 1 {
+		if isChild && (childCall == 1 || childCall == 4) {
 			reason = "tool_use"
 			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "tool_use", "id": fmt.Sprintf("toolu_child_write_%d", childCall), "name": "Write", "input": map[string]any{}}})
-			input, _ := jsonv2.Marshal(map[string]string{"file_path": childToolPath, "content": "child tool verified"})
+			path := childToolPath
+			if childCall == 4 {
+				path = childResumedToolPath
+			}
+			input, _ := jsonv2.Marshal(map[string]string{"file_path": path, "content": "child tool verified"})
 			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(input)}})
 		} else if isChild && childCall == 2 {
 			reason = "tool_use"

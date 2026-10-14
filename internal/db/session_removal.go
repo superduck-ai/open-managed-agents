@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"math/big"
 	"time"
 	"uuid"
 
@@ -20,7 +21,7 @@ type SessionRemoval struct {
 	StatusEvents   []SessionEvent
 }
 
-func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, workspaceUUID, sessionID string, archive bool) (SessionRemoval, error) {
+func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, workspaceUUID, sessionID string, archive bool, usdPerHour *big.Rat) (SessionRemoval, error) {
 	session, err := lockSessionForEvents(ctx, NewSessionMapper(executor), workspaceUUID, sessionID)
 	if err != nil {
 		return SessionRemoval{}, err
@@ -44,7 +45,7 @@ func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, w
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	result, err := insertSessionEventsTx(ctx, executor, session, []SessionEvent{{
 		UUID: uuid.NewV4().String(), ExternalID: eventID, EventType: "session.status_terminated", CreatedAt: now, ProcessedAt: now,
-	}})
+	}}, usdPerHour)
 	removal.StatusEvents = result.Events
 	return removal, err
 }

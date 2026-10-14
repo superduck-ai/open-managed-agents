@@ -106,6 +106,10 @@ type sessionWriteParams struct {
 	CreatedAt             time.Time
 }
 
+type sessionUsageRow struct {
+	Usage []byte `db:"usage"`
+}
+
 type sessionUpdateParams struct {
 	WorkspaceUUID string
 	ExternalID    string
@@ -143,6 +147,8 @@ type SessionMapper interface {
 	PatchMetadata(ctx context.Context, workspaceUUID, sessionExternalID string, metadataPatch []byte) (sessionRow, error)
 	SetOutcomeEvaluations(ctx context.Context, workspaceUUID, sessionExternalID string, evaluations []byte) (sessionRow, error)
 	SetStatus(ctx context.Context, workspaceUUID, sessionExternalID, status string) (int64, error)
+	AddActiveMilliseconds(ctx context.Context, workspaceUUID, sessionExternalID string, durationMillis int64) (sessionUsageRow, error)
+	SetUsage(ctx context.Context, workspaceUUID, sessionExternalID string, usage []byte) (sessionUsageRow, error)
 	Archive(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, error)
 	SoftDelete(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, error)
 	ListPage(ctx context.Context, params sessionPageMapperParams) ([]sessionRow, error)

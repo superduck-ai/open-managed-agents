@@ -131,9 +131,9 @@ description: "通过按公开标价强制执行的硬性美元预算来限制会
 
 ## 监控支出
 
-会话对象包含其 `budget` 以及一个带有已跟踪支出的 `usage` 对象：`usage.list_cost` 是会话已消耗的标价成本，`usage.active_seconds` 是其运行时成本所基于的运行时间。对于因 `budget_reached` 而暂停的会话，预期 `usage.list_cost` 会等于或略微超过 `max_list_cost`：[超过上限的那个请求](/docs/zh/budgets#when-a-session-reaches-its-budget)在暂停之前已完成。会话级别的 `active_seconds` 对并发线程的重叠活动只计算一次。线程检索响应在线程自己的 `usage` 上包含相同的两个字段，按线程计价。每个线程的数值是独立舍入的，且不包括会话的运行时成本，因此它们的总和不会精确等于会话的 `list_cost`；预算强制执行所依据的是会话级别的数值。
+会话对象包含其 `budget` 以及一个带有已跟踪支出的 `usage` 对象：`usage.list_cost` 是会话已消耗的标价成本，`usage.active_milliseconds` 是其运行时成本所基于的运行毫秒整数。对于因 `budget_reached` 而暂停的会话，预期 `usage.list_cost` 会等于或略微超过 `max_list_cost`：[超过上限的那个请求](/docs/zh/budgets#when-a-session-reaches-its-budget)在暂停之前已完成。会话级别的 `active_milliseconds` 对并发线程的重叠活动只计算一次。线程检索响应在线程自己的 `usage` 上包含 `list_cost`，不包含运行时长。每个线程的数值是独立舍入的，因此它们的总和不会精确等于会话的 `list_cost`；预算强制执行所依据的是会话级别的数值。
 
-`session.usage` 事件是会话累计使用量和已跟踪标价成本的快照。它包含会话的令牌总数、`list_cost`、`active_seconds`、`server_tool_use` 请求计数（`web_search_requests` 按每次请求计入标价成本；`web_fetch_requests` 读数为 `0`，因为网络抓取请求不收取每次请求费用且不计量），以及会话 `budget` 的回显（当会话没有预算时为 `null`）。它会出现在事件列表和会话流中。无论停止原因为何，会话都会在进入空闲状态之前立即发出一个此类事件，因此达到预算的会话总会在因达到预算而产生的空闲事件之前立即发出一个。
+`session.usage` 事件是会话累计使用量和已跟踪标价成本的快照。它包含会话的令牌总数、`list_cost`、`active_milliseconds`、`server_tool_use` 请求计数（`web_search_requests` 按每次请求计入标价成本；`web_fetch_requests` 读数为 `0`，因为网络抓取请求不收取每次请求费用且不计量），以及会话 `budget` 的回显（当会话没有预算时为 `null`）。它会出现在事件列表和会话流中。无论停止原因为何，会话都会在进入空闲状态之前立即发出一个此类事件，因此达到预算的会话总会在因达到预算而产生的空闲事件之前立即发出一个。
 
 有关从流和会话对象读取使用量的信息，请参阅[跟踪使用量](/docs/zh/events-and-streaming#tracking-usage)。
 

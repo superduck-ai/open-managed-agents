@@ -698,7 +698,7 @@ function SessionUsageFacts({ usage }: { usage: InspectorSessionUsage }) {
   }
   rows.push([
     msg('managedAgents.observability.activeTime', 'Active time'),
-    usage.activeSeconds === undefined ? '—' : formatSessionDuration(usage.activeSeconds * 1000, formatters, msg),
+    usage.activeMilliseconds === undefined ? '—' : formatSessionDuration(usage.activeMilliseconds, formatters, msg),
   ]);
   return (
     <div className="border-t border-border/60 pt-3">

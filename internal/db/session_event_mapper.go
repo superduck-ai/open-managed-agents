@@ -42,6 +42,27 @@ type sessionEventWriteParams struct {
 	CreatedAt         time.Time
 }
 
+type runtimeUsageQuery struct {
+	OrganizationUUID    string
+	WorkspaceExternalID string
+	StartingAt          time.Time
+	EndingBefore        time.Time
+}
+
+type runtimeUsagePointRow struct {
+	SessionUUID         string    `db:"session_uuid"`
+	WorkspaceUUID       string    `db:"workspace_uuid"`
+	WorkspaceName       string    `db:"workspace_name"`
+	WorkspaceExternalID string    `db:"workspace_external_id"`
+	ProcessedAt         time.Time `db:"processed_at"`
+	EventID             int64     `db:"id"`
+	ActiveMilliseconds  string    `db:"active_milliseconds"`
+	RuntimeCostUSD      string    `db:"runtime_cost_usd"`
+	Model               string    `db:"model"`
+	ServiceAccountID    string    `db:"service_account_id"`
+	ServiceAccountName  string    `db:"service_account_name"`
+}
+
 type sessionEventPageMapperParams struct {
 	WorkspaceUUID     string
 	SessionExternalID string
@@ -62,6 +83,7 @@ type SessionEventMapper interface {
 	CursorExists(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (bool, error)
 	FindLatestTurnStart(ctx context.Context, workspaceUUID, sessionExternalID, threadID string) (sessionEventRow, bool, error)
 	FindLatestStatus(ctx context.Context, workspaceUUID, sessionExternalID, threadID string) (sessionEventRow, bool, error)
+	FindLatestSessionRunning(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionEventRow, bool, error)
 	Insert(ctx context.Context, params sessionEventWriteParams) (sessionEventRow, error)
 	InsertIfAbsent(ctx context.Context, params sessionEventWriteParams) (sessionEventRow, bool, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (sessionEventRow, error)
@@ -75,4 +97,5 @@ type SessionEventMapper interface {
 		workspaceUUID string,
 		sessionUUID string,
 	) ([]sessionEventRow, error)
+	ListRuntimeUsagePoints(ctx context.Context, params runtimeUsageQuery) ([]runtimeUsagePointRow, error)
 }

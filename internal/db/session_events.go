@@ -4,6 +4,7 @@ import (
 	"context"
 	jsonv2 "encoding/json/v2"
 	"errors"
+	"math/big"
 	"slices"
 
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
@@ -23,7 +24,7 @@ type sessionEventWriteResult struct {
 
 // The caller holds the Session lock. Lock the Worker second, decide acceptance,
 // then persist each action's events and state in their public order.
-func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) (sessionEventBatchResult, error) {
+func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent, usdPerHour *big.Rat) (sessionEventBatchResult, error) {
 	primary, worker, err := lockSessionEventStateTx(ctx, executor, session)
 	if err != nil {
 		return sessionEventBatchResult{}, err
@@ -49,7 +50,7 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 			return sessionEventBatchResult{}, err
 		}
 		for _, next := range batch {
-			write, err := insertSessionEventTx(ctx, executor, &session, primary, next)
+			write, err := insertSessionEventTx(ctx, executor, &session, primary, next, usdPerHour)
 			if err != nil {
 				return sessionEventBatchResult{}, err
 			}
@@ -72,7 +73,7 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 
 // History includes events seeded with a new Session and idempotent Worker reports.
 // Neither admits a new client turn.
-func insertSessionHistoryTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) (sessionEventBatchResult, error) {
+func insertSessionHistoryTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent, usdPerHour *big.Rat) (sessionEventBatchResult, error) {
 	primary, worker, err := lockSessionEventStateTx(ctx, executor, session)
 	if err != nil {
 		return sessionEventBatchResult{}, err
@@ -127,7 +128,7 @@ func insertSessionHistoryTx(ctx context.Context, executor yourbatis.Executor, se
 			return sessionEventBatchResult{}, err
 		}
 		for _, next := range batch {
-			write, err := insertSessionEventIfAbsentTx(ctx, executor, &session, primary, next)
+			write, err := insertSessionEventIfAbsentTx(ctx, executor, &session, primary, next, usdPerHour)
 			if err != nil {
 				return sessionEventBatchResult{}, err
 			}
@@ -205,8 +206,8 @@ func validateSessionInputBatch(primary SessionThread, worker codeSessionInputSta
 	return acceptedID, nil
 }
 
-func insertSessionEventTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent) (sessionEventWriteResult, error) {
-	event, write, err := prepareSessionEventTx(ctx, executor, session, primary, event)
+func insertSessionEventTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent, usdPerHour *big.Rat) (sessionEventWriteResult, error) {
+	event, write, err := prepareSessionEventTx(ctx, executor, session, primary, event, usdPerHour)
 	if err != nil || !write {
 		return sessionEventWriteResult{}, err
 	}
@@ -214,15 +215,15 @@ func insertSessionEventTx(ctx context.Context, executor yourbatis.Executor, sess
 	if err != nil {
 		return sessionEventWriteResult{}, err
 	}
-	terminated, err := applySessionEventWriteTx(ctx, executor, session, primary, event)
+	terminated, err := applySessionEventWriteTx(ctx, executor, session, primary, event, usdPerHour)
 	if err != nil {
 		return sessionEventWriteResult{}, err
 	}
 	return sessionEventWriteResult{Event: row.event(), Inserted: true, SessionTerminated: terminated}, nil
 }
 
-func insertSessionEventIfAbsentTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent) (sessionEventWriteResult, error) {
-	event, write, err := prepareSessionEventTx(ctx, executor, session, primary, event)
+func insertSessionEventIfAbsentTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent, usdPerHour *big.Rat) (sessionEventWriteResult, error) {
+	event, write, err := prepareSessionEventTx(ctx, executor, session, primary, event, usdPerHour)
 	if err != nil || !write {
 		return sessionEventWriteResult{}, err
 	}
@@ -230,14 +231,14 @@ func insertSessionEventIfAbsentTx(ctx context.Context, executor yourbatis.Execut
 	if err != nil || !inserted {
 		return sessionEventWriteResult{}, err
 	}
-	terminated, err := applySessionEventWriteTx(ctx, executor, session, primary, event)
+	terminated, err := applySessionEventWriteTx(ctx, executor, session, primary, event, usdPerHour)
 	if err != nil {
 		return sessionEventWriteResult{}, err
 	}
 	return sessionEventWriteResult{Event: row.event(), Inserted: true, SessionTerminated: terminated}, nil
 }
 
-func prepareSessionEventTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent) (SessionEvent, bool, error) {
+func prepareSessionEventTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent, usdPerHour *big.Rat) (SessionEvent, bool, error) {
 	write, err := shouldWriteSessionStatus(ctx, executor, *session, primary, event)
 	if err != nil || !write {
 		return SessionEvent{}, false, err
@@ -253,6 +254,9 @@ func prepareSessionEventTx(ctx context.Context, executor yourbatis.Executor, ses
 	}
 	event.ThreadUUID = &thread.UUID
 	if event.EventType == "session.usage" {
+		if err := closeSessionRunningInterval(ctx, executor, session, event.ProcessedAt, usdPerHour); err != nil {
+			return SessionEvent{}, false, err
+		}
 		if event.Payload, err = sessionUsagePayload(event, session.Usage); err != nil {
 			return SessionEvent{}, false, err
 		}
@@ -260,9 +264,9 @@ func prepareSessionEventTx(ctx context.Context, executor yourbatis.Executor, ses
 	return event, true, nil
 }
 
-func applySessionEventWriteTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent) (bool, error) {
+func applySessionEventWriteTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent, usdPerHour *big.Rat) (bool, error) {
 	if err := attachEventPayloadBlob(ctx, executor, session.WorkspaceUUID, event.PayloadBlobUUID); err != nil {
 		return false, err
 	}
-	return applySessionEventState(ctx, executor, session, primary.ExternalID, event)
+	return applySessionEventState(ctx, executor, session, primary.ExternalID, event, usdPerHour)
 }

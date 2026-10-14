@@ -271,6 +271,32 @@ func TestSessionEventMapperCreatedAtParametersFilterProcessingTime(t *testing.T)
 	})
 }
 
+func TestSessionRunningIntervalSQL(t *testing.T) {
+	bound := buildSessionMapperAddActiveMilliseconds(yourbatis.DialectPostgres, "workspace-uuid", "ses_test", int64(1500))
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionMapperAddActiveMillisecondsStatement, bound: bound,
+		wantID: "SessionMapper.AddActiveMilliseconds", wantKind: yourbatis.StatementUpdate,
+		wantArgumentNames: []string{"durationMillis", "workspaceUUID", "sessionExternalID"},
+		wantSQLFragments:  []string{"'{active_milliseconds}'", "status = 'running'"},
+	})
+	found := buildSessionEventMapperFindLatestSessionRunning(yourbatis.DialectPostgres, "workspace-uuid", "ses_test")
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperFindLatestSessionRunningStatement, bound: found,
+		wantID: "SessionEventMapper.FindLatestSessionRunning", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "sessionExternalID"},
+		wantSQLFragments:  []string{"event_type = 'session.status_running'", "ORDER BY id DESC LIMIT 1"},
+	})
+	usage := buildSessionEventMapperListRuntimeUsagePoints(yourbatis.DialectPostgres, runtimeUsageQuery{OrganizationUUID: "org"})
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperListRuntimeUsagePointsStatement, bound: usage,
+		wantID: "SessionEventMapper.ListRuntimeUsagePoints", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{
+			"params.OrganizationUUID", "params.EndingBefore", "params.StartingAt", "params.OrganizationUUID", "params.StartingAt",
+		},
+		wantSQLFragments: []string{"event_type = 'session.usage'", "active_milliseconds", "DISTINCT ON (baseline.session_uuid)"},
+	})
+}
+
 func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {
 	ctx := context.Background()
 	tests := []mapperExecutionErrorContract{

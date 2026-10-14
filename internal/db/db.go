@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"net/url"
 	"os/user"
 	"slices"
@@ -44,8 +45,9 @@ var (
 )
 
 type DB struct {
-	pool     *pgxpool.Pool
-	mapperDB *yourbatis.DB
+	pool              *pgxpool.Pool
+	mapperDB          *yourbatis.DB
+	runtimeUSDPerHour *big.Rat
 }
 
 type APIKey struct {
@@ -89,7 +91,7 @@ func OpenExisting(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 func Open(ctx context.Context, cfg config.Config, logger *slog.Logger) (*DB, error) {
 	pool, err := openPool(ctx, cfg.Database.URL)
 	if err == nil {
-		return newDB(pool, logger), nil
+		return openRuntimeDB(newDB(pool, logger), cfg), nil
 	}
 
 	if bootstrapErr := EnsureDatabase(ctx, cfg.Database.URL); bootstrapErr != nil {
@@ -100,7 +102,29 @@ func Open(ctx context.Context, cfg config.Config, logger *slog.Logger) (*DB, err
 	if err != nil {
 		return nil, fmt.Errorf("connect database after bootstrap: %w", err)
 	}
-	return newDB(pool, logger), nil
+	return openRuntimeDB(newDB(pool, logger), cfg), nil
+}
+
+func openRuntimeDB(database *DB, cfg config.Config) *DB {
+	rate, err := cfg.RuntimeCost.HourlyUSD()
+	if err == nil {
+		database.SetRuntimeUSDPerHour(rate)
+	}
+	return database
+}
+
+func (d *DB) SetRuntimeUSDPerHour(rate *big.Rat) {
+	if d == nil || rate == nil || rate.Sign() <= 0 {
+		return
+	}
+	d.runtimeUSDPerHour = new(big.Rat).Set(rate)
+}
+
+func (d *DB) RuntimeUSDPerHour() *big.Rat {
+	if d == nil || d.runtimeUSDPerHour == nil || d.runtimeUSDPerHour.Sign() <= 0 {
+		return nil
+	}
+	return new(big.Rat).Set(d.runtimeUSDPerHour)
 }
 
 func newDB(pool *pgxpool.Pool, logger *slog.Logger) *DB {

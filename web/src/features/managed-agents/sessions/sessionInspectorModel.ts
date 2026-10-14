@@ -86,7 +86,7 @@ export type InspectorContextPoint = {
 };
 
 export type InspectorSessionUsage = {
-  activeSeconds?: number;
+  activeMilliseconds?: number;
   cacheRead: number;
   cacheWrite: number;
   input: number;
@@ -397,11 +397,18 @@ function inspectorMoneyInCents(value: unknown) {
   };
 }
 
+function activeMilliseconds(usage: Record<string, unknown>) {
+  const milliseconds = optionalNumericValueFromKeys(usage, ['active_milliseconds']);
+  if (milliseconds !== undefined) return milliseconds;
+  const seconds = optionalNumericValueFromKeys(usage, ['active_seconds']);
+  return seconds === undefined ? undefined : seconds * 1000;
+}
+
 function inspectorSessionUsage(usage: Record<string, unknown>): InspectorSessionUsage {
   const cacheCreation = objectRecord(usage.cache_creation);
   const serverToolUse = objectRecord(usage.server_tool_use);
   return {
-    activeSeconds: optionalNumericValueFromKeys(usage, ['active_seconds']),
+    activeMilliseconds: activeMilliseconds(usage),
     cacheRead: optionalNumericValueFromKeys(usage, ['cache_read_input_tokens']) ?? 0,
     cacheWrite:
       (optionalNumericValueFromKeys(cacheCreation, ['ephemeral_5m_input_tokens']) ?? 0) +

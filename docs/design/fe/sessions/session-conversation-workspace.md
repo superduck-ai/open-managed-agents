@@ -6,7 +6,21 @@ Session 详情页同时承担继续对话和检查运行上下文两个职责。
 
 本页面不再使用旧版 `Events / Resources / Agent / Environment / Credentials` 页面级页签。主界面固定由左侧会话转录和右侧 Session Inspector 组成，用户无需离开对话即可查看上下文。
 
-Sessions 列表点击「创建会话」并提交成功后，直接进入刚创建的 Session 详情。地址与点击该行名称相同：`/workspaces/{workspaceId}/sessions/{sessionId}`。创建失败时留在列表和对话框里显示错误；编辑已有 Session 仍停在列表。这次只改变创建成功后的导航，不改变列表分页或侧边栏折叠。
+Sessions 列表点击「创建会话」并提交成功后，直接进入刚创建的 Session 详情：`/workspaces/{workspaceId}/sessions/{sessionId}?interactive=true`，聚焦消息输入框。Session 列表创建和编辑、Agent 列表/快速查看/详情发起对话统一经 `ManagedEntityDialog` 分发到 `SessionCreateDialog`，由同一组件管理表单状态、校验与引用加载。弹窗使用 Session 专属 shadcn Dialog，桌面宽度 640px，以单列依次展示 Title、Agent、Environment、Vault 和 Resources；Header/Footer 固定，字段区在窄屏或内容增多时独立滚动。Footer 以留白衔接字段区，不添加横贯弹窗的分隔线；Session 创建弹窗内输入框/选择器统一为 40px、高度与圆角一致，采用 popover 背景和轻量焦点环，禁用态使用 muted 令牌。适配样式仅作用于 `.session-create-dialog`，不覆盖其他功能弹窗。Title 最长 500 字符，Agent/Environment 字段提供管理入口；从 Agent 发起时使用只读引用，凭据库统一采用添加按钮、搜索弹层和可移除标签，集合变化后重置授权确认；引用资源加载失败可重试。提交期间禁用字段、取消和关闭，in-flight ref 阻止同帧重复提交；创建 payload 合同不变。创建失败时留在列表和对话框里显示错误；编辑已有 Session 仍停在列表。不改变列表分页或侧边栏折叠。
+
+## 创建、快速查看与标识符
+
+- 2026-10-13 提供的 `session.har` 中，`2nzfpvkf-rq47.js` 的 `ClippedId` 使用 CSS 裁剪，`CopyableId` 的点击和键盘处理始终向剪贴板传入原始 ID，并通过 Tooltip 与勾选反馈复制结果。`4264g0ol0a34b.js` 使用 `RowEndQuickview` / `SessionSlideOverContent` 展示侧边预览；新建成功后导航到带 `interactive=true` 的 Session 页面。HAR 仅用于核对这些交互，不提交原文件或其中的请求、凭据和账户数据。
+- OMA 使用 shadcn Button + Tooltip 实现 `ResourceIdButton`。面包屑、无标题 Session 的标题、摘要中的 Agent/Environment/Vault 和 Inspector 的 Session ID 都可直接复制完整原始值。文本以 CSS 裁剪而非把字符串改成含省略号的 ID；Inspector 和快速查看标题支持完整 ID 换行。点击或 Enter/空格复制，Tooltip 显示完整值，成功后显示勾选与 toast；失败不显示成功状态，传统剪贴板降级路径始终清理临时元素。
+- Session 列表使用独立的 TanStack Table + shadcn Table，以 `ID / Name / Status / Agent / Cost / Tokens in-out / Created` 排列，行高 44px、表头 36px，采用细分隔线与 hover 反馈。Agent 优先展示快照或已加载 Agent 列表中的名称和版本，未知时使用真实 ID。ID/Name 链接打开完整会话，行内非交互区域打开快速查看。Cost 保留现有计算，并提示公开定价口径；未知用量和费用保持 `—`。加载使用同尺寸 Skeleton；无会话、无匹配结果和请求失败分别提供创建、重置筛选和重试入口。
+- 搜索框移除重复的 ID 前缀；输入完整 `sesn_*` ID 且当前页没有该条目时，防抖 300ms 后按 Workspace 调用 retrieve，在原列表位置显示找到的会话，查询期间展示 Skeleton，找不到或失败时展示错误和重试。按 ID 获取的结果独立于列表分页，查询期间隐藏分页；清除搜索恢复原列表页和筛选。Created/Agent/Deployment/Status 继续使用现有筛选参数和状态预设。
+- 列表行尾提供可见的「快速查看」按钮，菜单也提供「快速查看」和「进入对话」。预览使用 shadcn Sheet，读取当前 Workspace 下的 Session 元数据和最新 20 条事件，按后端返回顺序反向展示为正序，不导航、不重置列表筛选、选择或分页。提供加载、错误、空活动与刷新状态；关闭时中止事件请求并忽略迟到结果。切换 Workspace 时关闭预览，禁止将旧预览带入新作用域。
+- 预览中可复制完整 ID、打开关联 Agent/Environment/Deployment，或进入完整对话。预览只展示近期活动，不在 Sheet 中发送消息或建立 SSE；完整历史、流式转录与审批仍由 Session Viewer 承担。已归档、terminated 或 deleted Session 的按钮使用「查看会话」。
+- 可接收消息的空会话显示 shadcn Empty「开始对话」状态，「输入消息」聚焦该 Viewer 的 Composer。归档或终止会话保留只读空状态；发送、停止与工具审批的 API 合同不变。
+
+行点击使用 `Element` 判断交互目标，覆盖 SVG 图标；来自菜单 Portal、实际不属于当前行 DOM 子树的点击不打开预览，避免菜单操作与快速查看同时执行。完整 ID 搜索缓存按 Workspace 和 Session ID 隔离。编辑和归档成功后，取消该 ID 未完成的查询并使用 mutation 返回的完整 Session 同步缓存；归档结果显示已归档状态和只读操作。删除成功后将该 ID 的缓存结果设为 `null`，即刻移除旧行；mutation 失败保留原结果。分页列表仍按原有逻辑刷新，不依赖刷新分页来更新 ID 查询。
+
+验收覆盖完整 ID DOM/复制与失败反馈、列表预览不导航、SVG 和菜单操作不误开预览、跨页 ID 查找及编辑/归档/删除后的缓存同步、空结果重置、单次创建与提交期间关闭保护、标题长度限制和创建后进入交互页面，以及 Chromium 中的键盘复制、Escape 关闭与焦点恢复、明暗主题和 390px 窄屏布局。浏览器界面检查使用隔离的 API fixtures，不代表真实沙箱或模型调用的端到端验收。
 
 ## 页面结构
 

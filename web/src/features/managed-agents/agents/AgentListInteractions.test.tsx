@@ -153,7 +153,7 @@ test('starting a conversation from quick view creates for that agent and opens t
   fireEvent.click(await within(panel).findByRole('button', { name: 'Start conversation' }));
   const dialog = screen.getByRole('dialog', { name: 'Create session' });
   expect(within(dialog).queryByRole('combobox', { name: 'Agent' })).toBeNull();
-  expect(within(dialog).queryByRole('button', { name: 'Cancel' })).toBeNull();
+  expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeTruthy();
   expect(within(dialog).getByRole('combobox', { name: 'Credential vaults' }).textContent).toContain('Add vault');
   fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: '  Extraction run  ' } });
   const submit = within(dialog).getByRole('button', { name: 'Create session' });

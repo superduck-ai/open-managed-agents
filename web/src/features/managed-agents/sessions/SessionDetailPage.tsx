@@ -30,6 +30,7 @@ import {
   sessionThreadListSignature,
 } from '../api';
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
+import { ResourceIdButton } from '../components/ResourceIdButton';
 import { ResourceNotFound, useResourceMissingCopy } from '../components/resource-not-found';
 import { ConfirmEntityDialog, ManagedErrorAlert, ManagedWarningAlert } from '../components/common';
 import { resourceTitle } from '../labels';
@@ -44,7 +45,7 @@ import {
   type SessionToolConfirmationInput,
   type ToolCallEntry,
 } from '../types';
-import { compactEntityId, copyText, errorMessage, managedEntityListHref } from '../utils';
+import { copyText, errorMessage, managedEntityListHref } from '../utils';
 import { Archive, ArrowDown, ChevronDown, Copy, PanelRightOpen, RotateCcw, X } from 'lucide-react';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -86,8 +87,6 @@ import {
   LaneTabStrip,
   scrollSessionEntryToOffset,
   SESSION_MAIN_LANE_ID,
-  SessionStatusPill,
-  SessionSummaryChip,
   sessionTimelineNow,
 } from './sessionTimeline';
 import {
@@ -106,7 +105,9 @@ import {
   type SessionInspectorTab,
   writeSessionInspectorUrlState,
 } from './sessionInspectorModel';
+import { SessionHeaderSummary } from './SessionHeaderSummary';
 import { SessionMessageComposer } from './SessionMessageComposer';
+import { SessionStartState } from './SessionStartState';
 import { SessionOutputFiles } from './SessionOutputFiles';
 import { sessionFilesQueryKey } from './sessionFiles';
 import { useSessionResourceRefresh } from './useSessionResourceRefresh';
@@ -657,7 +658,8 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
             <ManagedDetailBreadcrumb
               listHref={listHref}
               listLabel={listLabel}
-              currentLabel={compactEntityId(session.id)}
+              currentLabel={<ResourceIdButton value={session.id} className="max-w-[min(24rem,65vw)]" />}
+              currentClassName="min-w-0"
               className="min-w-0"
             />
             <div className="flex items-center gap-2 @min-[768px]:justify-self-end">
@@ -728,21 +730,11 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
             </div>
           </div>
 
-          <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
-            <div className="flex min-w-0 max-w-full items-center gap-2">
-              <h1 className="min-w-0 truncate font-serif text-[28px] font-medium leading-[1.3] tracking-[-0.015em] text-foreground">
-                {summary.title}
-              </h1>
-              <SessionStatusPill
-                status={session.archived_at ? msg('common.archived', 'Archived') : summary.statusLabel}
-              />
-            </div>
-            {summary.chips.map((chip) => (
-              <SessionSummaryChip key={chip.key} icon={chip.icon} tooltip={chip.tooltip}>
-                {chip.value}
-              </SessionSummaryChip>
-            ))}
-          </div>
+          <SessionHeaderSummary
+            session={session}
+            summary={summary}
+            archivedLabel={msg('common.archived', 'Archived')}
+          />
         </header>
 
         <SessionDetailAlerts mutationError={mutationError} warningError={warningError} />
@@ -792,6 +784,18 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                 />
               }
               entries={entries}
+              emptyState={
+                conversationState.acceptingMessages ? (
+                  <SessionStartState
+                    onStart={() =>
+                      scrollerRef.current
+                        ?.closest('section')
+                        ?.querySelector<HTMLTextAreaElement>('[data-testid="session-message-composer"] textarea')
+                        ?.focus()
+                    }
+                  />
+                ) : undefined
+              }
               events={events}
               filteredEntries={filteredEntries}
               hasFilter={hasFilter}
@@ -912,6 +916,7 @@ function sessionConversationState(session: SessionApiResponse) {
 }
 
 export function EventsTab({
+  emptyState,
   activeLane,
   archivedLaneCount,
   childLoading,
@@ -1118,6 +1123,8 @@ export function EventsTab({
                           onThreadClick={onThreadClick}
                           traceStartMs={traceStartMs}
                         />
+                      ) : entries.length === 0 && emptyState ? (
+                        emptyState
                       ) : (
                         <SessionTraceEmpty
                           message={

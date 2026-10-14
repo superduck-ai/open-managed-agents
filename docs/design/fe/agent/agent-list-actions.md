@@ -27,15 +27,16 @@ flowchart LR
     Row[列表更多操作] --> Start[AgentStartSessionDialog]
     Preview[快速查看] --> Start
     Detail[智能体详情页] --> Start
-    Start --> State[ManagedEntityDialog 表单状态]
-    State --> Form[SessionCreateDialog]
+    Start --> Dispatch[ManagedEntityDialog 分发]
+    Dispatch --> Form[SessionCreateDialog 表单状态与展示]
+    List[Session 列表创建或编辑] --> Dispatch
     Form --> API[现有 createAgentDetailSession]
     API --> Session[会话详情 interactive=true]
 ```
 
-- 列表、快速查看和详情页共享 `AgentStartSessionDialog`，固定当前智能体，复用现有 `ManagedEntityDialog` 的表单状态、引用加载、凭据确认和表单校验。会话展示由独立的 `SessionCreateDialog` 承载。
-- 会话弹窗桌面宽度为 896px、最小高度为 600px，最小和最大高度都受视口限制；长表单在正文区域滚动，底部仅显示创建会话主按钮。提交期间关闭控件禁用，避免已发出的创建请求失去反馈。
-- 从指定智能体发起时省去重复的 Agent 选择框；会话列表创建仍提供 Agent 选择。字段顺序为可选标题、环境、可选凭据库和资源，保留现有默认环境行为。
+- 列表、快速查看和详情页共享 `AgentStartSessionDialog`，固定当前智能体，经 `ManagedEntityDialog` 分发到统一的 `SessionCreateDialog`。该组件同时承载 Session 列表创建和编辑的状态、引用加载、凭据确认、校验与展示；引用查询按 Workspace 共享缓存。
+- 会话弹窗统一采用 640px 单列布局，最大高度受视口限制；长表单在正文区域滚动，底部以留白衔接取消与主按钮，不添加分隔线。输入框和选择器统一为 40px，标题最多 500 字符。提交期间禁用字段、取消和关闭，in-flight ref 阻止重复提交；失败保留草稿和重试入口。编辑时主按钮显示保存，创建成功才进入会话详情。
+- 从指定智能体发起时展示只读 Agent 引用，省去重复的 Agent 选择框；会话列表创建仍提供 Agent 选择。字段顺序为可选标题、环境、可选凭据库和资源，保留现有默认环境行为。
 - 环境与凭据库保留管理入口。会话中的凭据库使用添加按钮、搜索弹层和可移除标签，授权确认及凭据集变化后重置确认的规则保持不变。其他功能中的凭据库选择器保留原有展示。
 - 请求继续使用 `/v1/sessions?beta=true`，保持现有 workspace scope、鉴权、CSRF 和资源请求合同。
 - 创建失败在弹窗内展示错误，保留填写内容并允许重试；成功关闭弹窗，显示成功提示并进入会话详情的交互模式。

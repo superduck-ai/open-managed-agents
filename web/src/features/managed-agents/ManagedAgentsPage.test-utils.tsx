@@ -1624,6 +1624,18 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
       const session = resources.sessions.find((item) => item.id === sessionId);
       return session ? jsonResponse(session) : jsonResponse({ error: { message: 'not found' } }, 404);
     }
+    if (retrieveSessionMatch && method === 'POST') {
+      const sessionId = decodeURIComponent(retrieveSessionMatch[1]);
+      const existing = resources.sessions.find((item) => item.id === sessionId);
+      if (!existing) return jsonResponse({ error: { message: 'not found' } }, 404);
+      const updated = {
+        ...existing,
+        title: body?.title === undefined ? existing.title : body.title,
+        updated_at: new Date().toISOString(),
+      };
+      resources.sessions = resources.sessions.map((item) => (item.id === sessionId ? updated : item));
+      return jsonResponse(updated);
+    }
     const fileMetadataMatch = url.match(/^\/v1\/files\/([^/?]+)\?beta=true$/);
     if (fileMetadataMatch && method === 'GET') {
       const fileId = decodeURIComponent(fileMetadataMatch[1]);

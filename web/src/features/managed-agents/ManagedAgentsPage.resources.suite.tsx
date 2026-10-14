@@ -2605,9 +2605,7 @@ export function registerManagedAgentsResourceTests() {
         .getByRole('link', { name: /Manage credential vaults/ })
         .getAttribute('href'),
     ).toBe('/workspaces/default/vaults');
-    expect(within(dialog).getByRole('combobox', { name: /Credential vaults/ }).textContent).toContain(
-      'Select one or more vaults',
-    );
+    expect(within(dialog).getByRole('combobox', { name: /Credential vaults/ }).textContent).toContain('Add vault');
     await selectManagedComboboxOption(dialog, /Credential vaults/, /Vault one/);
     await waitFor(() =>
       expect(api.requests.some((request) => /\/v1\/vaults\/[^/?]+\/credentials\?beta=true/.test(request.url))).toBe(
@@ -2615,8 +2613,7 @@ export function registerManagedAgentsResourceTests() {
       ),
     );
     expect(await screen.findByText('Vault credential one')).toBeTruthy();
-    expect(within(dialog).getByRole('combobox', { name: /Credential vaults/ }).textContent).toContain('Vault one');
-    expect(within(dialog).getByRole('button', { name: 'Clear selected vaults' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Remove Vault one' })).toBeTruthy();
     const createButton = within(dialog).getByRole('button', { name: 'Create session' });
     expect(createButton.hasAttribute('disabled')).toBe(true);
     const vaultAck = within(dialog).getByRole('checkbox', {
@@ -2666,8 +2663,8 @@ export function registerManagedAgentsResourceTests() {
     expect((vaultAck as HTMLButtonElement).getAttribute('aria-checked') ?? vaultAck.getAttribute('data-state')).toMatch(
       /false|unchecked/,
     );
-    expect(within(dialog).getByRole('combobox', { name: /Credential vaults/ }).textContent).toContain('Vault one');
-    expect(within(dialog).getByRole('combobox', { name: /Credential vaults/ }).textContent).toContain('Vault two');
+    expect(within(dialog).getByRole('button', { name: 'Remove Vault one' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Remove Vault two' })).toBeTruthy();
   });
 
   test('validates graphical and custom schedules before submitting the cron payload', async () => {

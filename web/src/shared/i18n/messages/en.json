@@ -2498,5 +2498,20 @@
   "nav.workspaceSettings": "Workspace settings",
   "account.personalSettings": "Personal settings",
   "console.retired.title": "This page has been retired",
-  "console.retired.description": "This page is no longer available. Use the available console features to continue."
+  "console.retired.description": "This page is no longer available. Use the available console features to continue.",
+  "managedAgents.agents.quickView": "Quick view",
+  "managedAgents.agents.quickViewAgent": "Quick view {name}",
+  "managedAgents.agents.startConversation": "Start conversation",
+  "managedAgents.agents.previousAgent": "Previous agent",
+  "managedAgents.agents.nextAgent": "Next agent",
+  "managedAgents.agents.kindTitle": "Agent",
+  "managedAgents.agents.openAgent": "Open",
+  "managedAgents.agents.noDescription": "No description provided.",
+  "managedAgents.agents.selectedCount": "{count} selected",
+  "managedAgents.agents.archiveSelected": "Archive selected",
+  "managedAgents.credentialVaults.addVault": "Add vault",
+  "managedAgents.credentialVaults.removeVault": "Remove {name}",
+  "managedAgents.agents.newAgent": "New agent",
+  "managedAgents.agents.createDialog.configuredTools": "{count} toolsets",
+  "managedAgents.agents.createDialog.describeLabel": "Describe your agent"
 }

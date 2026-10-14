@@ -1,4 +1,4 @@
-import { ArrowUpRight, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
@@ -20,26 +20,28 @@ import { managedEntityDialogCanSubmit } from '../resources/entity-dialog-ready';
 import { initialFormValues } from '../resources/model';
 import { useManagedReferenceOptions } from '../resources/useManagedReferenceOptions';
 import { ManagedVaultSelectField } from '../resources/vault-select-field';
-import type { AgentApiResponse, ManagedEntityFormValues } from '../types';
+import type { AgentApiResponse, ManagedEntityFormValues, SessionApiResponse } from '../types';
 import { errorMessage } from '../utils';
 
 export function SessionCreateDialog({
   title,
   workspaceId,
   lockedAgent,
+  entity,
   onClose,
   onSubmit,
 }: {
   title: string;
   workspaceId: string;
   lockedAgent?: AgentApiResponse;
+  entity?: SessionApiResponse;
   onClose: () => void;
   onSubmit: (values: ManagedEntityFormValues) => Promise<void>;
 }) {
   const { msg } = useI18n();
   const [values, setValues] = useState<ManagedEntityFormValues>(() => ({
-    ...initialFormValues('sessions'),
-    agentId: lockedAgent?.id || '',
+    ...initialFormValues('sessions', entity),
+    ...(lockedAgent ? { agentId: lockedAgent.id } : {}),
   }));
   const references = useManagedReferenceOptions(workspaceId);
   const [acknowledged, setAcknowledged] = useState(false);
@@ -135,35 +137,27 @@ export function SessionCreateDialog({
                   onChange={(agentId) => patch({ agentId })}
                 />
               )}
-              <div className="relative">
-                <a
-                  href={`/workspaces/${workspaceId}/environments`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="absolute right-0 top-0 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                >
-                  <span>{msg('managedAgents.sessions.manageEnvironments', 'Manage environments')}</span>
-                  <ArrowUpRight className="size-3" aria-hidden />
-                </a>
-                <ManagedSelectField
-                  label={msg('managedAgents.environments.kindTitle', 'Environment')}
-                  value={values.environmentId}
-                  options={references.environments}
-                  placeholder={
-                    references.loading
-                      ? msg('managedAgents.environments.loading', 'Loading environments...')
-                      : msg('managedAgents.quickstart.selectEnvironment', 'Select an environment')
-                  }
-                  onChange={(environmentId) => patch({ environmentId })}
-                />
-              </div>
+              <ManagedSelectField
+                label={msg('managedAgents.environments.kindTitle', 'Environment')}
+                manageHref={`/workspaces/${encodeURIComponent(workspaceId)}/environments`}
+                manageLabel={msg('managedAgents.environments.manage', 'Manage environments')}
+                value={values.environmentId}
+                options={references.environments}
+                placeholder={
+                  references.loading
+                    ? msg('managedAgents.environments.loading', 'Loading environments...')
+                    : msg('managedAgents.quickstart.selectEnvironment', 'Select an environment')
+                }
+                onChange={(environmentId) => patch({ environmentId })}
+              />
               <ManagedVaultSelectField
                 label={msg('managedAgents.credentialVaults.title', 'Credential vaults')}
                 optional
+                presentation="add"
                 workspaceId={workspaceId}
                 selectedIds={values.vaultIds}
                 options={references.vaults}
-                manageHref={`/workspaces/${workspaceId}/vaults`}
+                manageHref={`/workspaces/${encodeURIComponent(workspaceId)}/vaults`}
                 manageLabel={msg('managedAgents.credentialVaults.manage', 'Manage credential vaults')}
                 acknowledged={acknowledged}
                 onAcknowledgedChange={setAcknowledged}
@@ -199,7 +193,9 @@ export function SessionCreateDialog({
             <Button type="submit" disabled={!canSubmit}>
               {submitting
                 ? msg('common.saving', 'Saving...')
-                : msg('managedAgents.sessions.createLabel', 'Create session')}
+                : entity
+                  ? msg('common.save', 'Save')
+                  : msg('managedAgents.sessions.createLabel', 'Create session')}
             </Button>
           </DialogFooter>
         </form>

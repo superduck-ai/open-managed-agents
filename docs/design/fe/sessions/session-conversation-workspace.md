@@ -6,7 +6,7 @@ Session 详情页同时承担继续对话和检查运行上下文两个职责。
 
 本页面不再使用旧版 `Events / Resources / Agent / Environment / Credentials` 页面级页签。主界面固定由左侧会话转录和右侧 Session Inspector 组成，用户无需离开对话即可查看上下文。
 
-Sessions 列表点击「创建会话」并提交成功后，直接进入刚创建的 Session 详情：`/workspaces/{workspaceId}/sessions/{sessionId}?interactive=true`，聚焦消息输入框。创建弹窗使用 Session 专属 shadcn Dialog，以单列依次展示 Title、Agent、Environment、Vault 和 Resources；Header/Footer 固定，字段区在窄屏或内容增多时独立滚动。Footer 以留白衔接字段区，不添加横贯弹窗的分隔线；Session 创建弹窗内输入框/选择器统一为 40px、高度与圆角一致，采用 popover 背景和轻量焦点环，禁用态使用 muted 令牌。适配样式仅作用于 `.session-create-dialog`，不覆盖其他功能弹窗。Title 最长 500 字符，Agent/Environment 字段提供管理入口；引用资源加载失败可重试。提交期间禁用字段、取消和关闭，in-flight ref 阻止同帧重复提交；创建 payload 合同不变。创建失败时留在列表和对话框里显示错误；编辑已有 Session 仍停在列表。不改变列表分页或侧边栏折叠。
+Sessions 列表点击「创建会话」并提交成功后，直接进入刚创建的 Session 详情：`/workspaces/{workspaceId}/sessions/{sessionId}?interactive=true`，聚焦消息输入框。Session 列表创建和编辑、Agent 列表/快速查看/详情发起对话统一经 `ManagedEntityDialog` 分发到 `SessionCreateDialog`，由同一组件管理表单状态、校验与引用加载。弹窗使用 Session 专属 shadcn Dialog，桌面宽度 640px，以单列依次展示 Title、Agent、Environment、Vault 和 Resources；Header/Footer 固定，字段区在窄屏或内容增多时独立滚动。Footer 以留白衔接字段区，不添加横贯弹窗的分隔线；Session 创建弹窗内输入框/选择器统一为 40px、高度与圆角一致，采用 popover 背景和轻量焦点环，禁用态使用 muted 令牌。适配样式仅作用于 `.session-create-dialog`，不覆盖其他功能弹窗。Title 最长 500 字符，Agent/Environment 字段提供管理入口；从 Agent 发起时使用只读引用，凭据库统一采用添加按钮、搜索弹层和可移除标签，集合变化后重置授权确认；引用资源加载失败可重试。提交期间禁用字段、取消和关闭，in-flight ref 阻止同帧重复提交；创建 payload 合同不变。创建失败时留在列表和对话框里显示错误；编辑已有 Session 仍停在列表。不改变列表分页或侧边栏折叠。
 
 ## 创建、快速查看与标识符
 

@@ -11,6 +11,8 @@ Use this project's `.agents/skills` discovery location. The default suite verifi
 
 ## Agent workflow
 
+Run backend verification only when explicitly requested by the user.
+
 Use this workflow when implementing or fixing Deployment/River, Memory/Filestore, Transcript, Files or chat paths named in the description. Read the relevant [feature map](features/README.md), then select scenarios by the behavior the change can affect. Pure documentation changes do not require starting the environment.
 
 1. Run `just verify-be DOMAIN doctor` for the affected domain: `deployment`, `memory`, `transcript`, `files` or `chat`. If prerequisites are blocked, report the missing requirement; doctor success alone is not application verification.
@@ -29,6 +31,7 @@ Use this workflow when implementing or fixing Deployment/River, Memory/Filestore
 | Busy-input rejection and retry, ACK, Worker reconnection or replacement, history recovery | `chat.reliability` |
 | NATS fanout or delivery across backend instances | `chat.instances` |
 | Session creation, Runner, mounts or Worker startup | `chat.public` |
+| Configured subagents, child skills/MCP, child tool policy or thread continuation | `chat.subagents`; read [Subagents](features/subagents.md) |
 | Chat queries, scheduling, streaming latency or other performance-sensitive paths | `chat.performance` with a baseline comparison |
 | Upstream model authentication errors and failed-turn completion | `chat.upstream-errors`; read [Upstream errors](features/upstream-errors.md) |
 
@@ -49,6 +52,7 @@ Prerequisites: macOS or Linux, repository Go toolchain, Bash, git, tar, Docker E
 ```sh
 .agents/skills/verify-be/scripts/verify-be chat doctor
 .agents/skills/verify-be/scripts/verify-be chat roundtrip
+.agents/skills/verify-be/scripts/verify-be chat subagents
 .agents/skills/verify-be/scripts/verify-be chat upstream-errors
 .agents/skills/verify-be/scripts/verify-be chat tools
 .agents/skills/verify-be/scripts/verify-be chat reliability
@@ -61,7 +65,7 @@ Worker image selection follows this order: `--worker-image IMAGE`, `OMA_WORKER_C
 
 ## Doctor
 
-`doctor` / `chat doctor [SCENARIO]` / `files doctor [SCENARIO]` / `transcript doctor [SCENARIO]` / `memory doctor [SCENARIO]` checks tools, Docker daemon, image IDs, port 18080 and at least 1 GiB of free Docker volume space. It creates and removes a short-lived probe container and anonymous volume. `chat doctor public`, `chat doctor upstream-errors`, `files doctor generated` and `memory doctor mounts` also open the daemon-side FUSE device and verifies mount permissions with the Worker image; macOS alone is not a blocker. Every run performs its own scenario-specific preflight. It does not claim the application works. Scenario execution performs dependency health checks and, when starting a standalone backend, readiness checks before testing. Do not point this runner at an existing API or database. Leave the checkout unchanged while a run is active; source changes invalidate the result.
+`doctor` / `chat doctor [SCENARIO]` / `files doctor [SCENARIO]` / `transcript doctor [SCENARIO]` / `memory doctor [SCENARIO]` checks tools, Docker daemon, image IDs, port 18080 and at least 1 GiB of free Docker volume space. It creates and removes a short-lived probe container and anonymous volume. `chat doctor public`, `chat doctor subagents`, `chat doctor upstream-errors`, `files doctor generated` and `memory doctor mounts` also open the daemon-side FUSE device and verifies mount permissions with the Worker image; macOS alone is not a blocker. Every run performs its own scenario-specific preflight. It does not claim the application works. Scenario execution performs dependency health checks and, when starting a standalone backend, readiness checks before testing. Do not point this runner at an existing API or database. Leave the checkout unchanged while a run is active; source changes invalidate the result.
 
 ## Full Go suite
 
@@ -102,7 +106,7 @@ Cloud adapter commands are `files cloud-storage` and `chat cloud-renewal`. Read 
 
 `chat roundtrip` executes `TestChatRoundtrip` with `-count=1 -json` against the newly built backend. Read [the feature map](features/README.md) first. The real Worker calls the real `/v1/messages` proxy; only its upstream response is scripted. The model waits for the public SSE client to observe each Chinese text fragment before continuing. No arbitrary sleep substitutes for that assertion. This deliberately orders preview delivery before the final response; production traffic can persist a final response before the Worker posts its last preview.
 
-Most scenarios prepare Session/CodeSession activation through existing service/DB APIs. The backend's background Runner is disabled to avoid competing for the Worker queue. Agent and Environment creation, message submission, Worker protocol, SSE, model proxy and history use real HTTP. `chat.public` and `chat.upstream-errors` instead create the Session through the public API and run the actual Runner with a local Docker Provider, real mounts and environment-manager. Their local E2B control API checks container ownership and handles connect/timeout/deletion; cloud TTL renewal is not verified. See [public startup](features/public-start.md) and [upstream errors](features/upstream-errors.md).
+Most scenarios prepare Session/CodeSession activation through existing service/DB APIs. The backend's background Runner is disabled to avoid competing for the Worker queue. Agent and Environment creation, message submission, Worker protocol, SSE, model proxy and history use real HTTP. `chat.public`, `chat.subagents` and `chat.upstream-errors` instead create the Session through the public API and run the actual Runner with a local Docker Provider, real mounts and environment-manager. Their local E2B control API checks container ownership and handles connect/timeout/deletion; cloud TTL renewal is not verified. See [public startup](features/public-start.md) and [upstream errors](features/upstream-errors.md).
 
 `chat tools` executes `TestChatTools`. It first rejects a malformed streamed Bash call, checks no file side effect, and compares the rejected call and error result IDs/order in public SSE and history. The next model request must contain the unparsed input and error result, and the turn must finish idle/end_turn. Then the existing official `anthropic-sdk-go` dependency sends `user.message`, reads pending tool events and submits `user.tool_confirmation` to the local backend. The scripted upstream requests a Write; the real Worker executes it only after approval. The test runs deny before allow, checks that the file is absent before confirmation, checks the resulting file, and verifies tool-use/result/confirmation/final-message history and drained delivery queues. The SDK does not execute tools itself. See [tool coverage](features/tools.md).
 
@@ -139,7 +143,7 @@ go test ./cmd/verify-be -count=1
 
 These tests cover CLI parsing/help, image configuration precedence and verdict rejection of missing, skipped and incomplete Go tests. They also cover configuration isolation, dependency topology, cancellation, doctor probes and cleanup, diagnostic download bounds and comparable report metadata. Update the feature map and design document when contracts change.
 
-Scenario deadlines default to 3m for roundtrip/tools/instances, 5m for reliability/performance and 6m for public/generated. Files recovery/performance and cloud renewal default to 5m; other Files scenarios default to 3m. Override with `--timeout 8m`; this excludes environment build/startup. Go testing gets 30s cleanup grace and the outer command gets 2m compile/exit grace. Read `failure_kind` to distinguish scenario/outer timeouts, prerequisite blockers and incompatible baselines. A timeout alone is not a measured performance regression.
+Scenario deadlines default to 3m for roundtrip/tools/instances, 5m for reliability/performance and 6m for public/subagents/generated. Files recovery/performance and cloud renewal default to 5m; other Files scenarios default to 3m. Override with `--timeout 8m`; this excludes environment build/startup. Go testing gets 30s cleanup grace and the outer command gets 2m compile/exit grace. Read `failure_kind` to distinguish scenario/outer timeouts, prerequisite blockers and incompatible baselines. A timeout alone is not a measured performance regression.
 
 Memory deadlines default to 3m for portable scenarios and 8m for `mounts`.
 

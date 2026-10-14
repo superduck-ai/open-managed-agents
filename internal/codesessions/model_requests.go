@@ -220,20 +220,14 @@ func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.Cod
 			return nil, err
 		}
 		for _, event := range events {
-			var task struct {
-				ThreadID   string `json:"session_thread_id"`
-				TaskID     string `json:"task_id"`
-				ToolUseID  string `json:"tool_use_id"`
-				AgentID    string `json:"agent_id"`
-				AgentIDAlt string `json:"agentId"`
-			}
-			if err := json.Unmarshal(event.Payload, &task); err != nil {
+			var task subagentLifecycle
+			if err := jsonv2.Unmarshal(event.Payload, &task); err != nil {
 				return nil, fmt.Errorf("decode thread mapping: %w", err)
 			}
-			if task.ThreadID == "" || (task.TaskID != "" && task.ThreadID != claudeTaskThreadIDFromFields(codeSession.ExternalID, task.ToolUseID, task.TaskID)) {
+			if task.ThreadID == "" {
 				continue
 			}
-			for _, id := range []string{task.TaskID, task.AgentID, task.AgentIDAlt} {
+			for _, id := range []string{task.TaskID, task.AgentID, task.AgentIDAlt, task.ToolUseID} {
 				if id != "" {
 					mappings[id] = task.ThreadID
 				}

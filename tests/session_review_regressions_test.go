@@ -30,10 +30,93 @@ func TestSessionCanAcceptNextTurnAfterWorkerReturnsIdle(t *testing.T) {
 	}
 }
 
+func TestNativeTaskToolPermissions(t *testing.T) {
+	for _, test := range []struct {
+		name, tool, want string
+		coordinator      bool
+	}{
+		{name: "native write disabled", tool: "Write", want: "deny"},
+		{name: "native bash asks", tool: "Bash", want: "ask"},
+		{name: "native read allowed", tool: "Read", want: "allow"},
+		{name: "coordinator ignores child deny policy", tool: "Bash", want: "ask", coordinator: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app := newPayloadIntegrationApp(t, newFakeStore("subagent-tool-permission"))
+			config := `{"model":"claude-opus-4-6","name":"parent","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"bash","permission_policy":{"type":"always_ask"}},{"name":"write","enabled":false}]}]`
+			if test.coordinator {
+				child := createAgent(t, app, `{"model":"claude-opus-4-6","name":"child","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"bash","enabled":false}]}]}`)
+				config += `,"multiagent":{"type":"coordinator","agents":[{"type":"agent","id":` + quoteJSON(child.ID) + `}]}`
+			}
+			agent := createAgent(t, app, config+`}`)
+			env := createEnvironment(t, app, `{"name":"subagent-tool-permission"}`)
+			session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+			codeID := launchLocalCodeSession(t, app, session.ID)
+			epoch := registerCodeSessionWorker(t, app, codeID)
+			postCodeSessionWorkerEvents(t, app, codeID, internalPayloadRequest(epoch,
+				`{"type":"session.thread_created","uuid":"child-created","session_thread_id":"sthr_child","agent_name":"child","task_id":"child-runtime","tool_use_id":"dispatch-tool"}`,
+				`{"type":"control_request","uuid":"child-permission","session_thread_id":"sthr_child","request_id":"child-request","request":{"subtype":"can_use_tool","tool_name":`+quoteJSON(test.tool)+`,"tool_use_id":"child-tool","input":{}}}`))
+			events := listThreadEvents(t, app, session.ID, "sthr_child", defaultTestKey)
+			tool := sessionEventObjectByType(t, events, "agent.tool_use")
+			if tool["evaluated_permission"] != test.want {
+				t.Fatalf("permission=%v, want %s", tool["evaluated_permission"], test.want)
+			}
+			if test.coordinator {
+				worker, _, err := app.db.GetCodeSession(t.Context(), codeID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				thread, err := app.db.GetSessionThread(t.Context(), worker.WorkspaceUUID, session.ID, "sthr_child")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var identity struct {
+					ID string `json:"id"`
+				}
+				if err := jsonv2.Unmarshal(thread.AgentSnapshot, &identity); err != nil || identity.ID != "" {
+					t.Fatalf("OMA added a child configuration snapshot: %s %v", thread.AgentSnapshot, err)
+				}
+			}
+			if test.want == "ask" {
+				for _, event := range app.workerEvents.Pending(codeID) {
+					if event.EventType == "control_response" {
+						t.Fatal("asked tool was approved without confirmation")
+					}
+				}
+				return
+			}
+			_, response := latestCodeSessionControlResponse(t, app, codeID)
+			var payload struct {
+				Response struct {
+					Response struct {
+						Behavior string `json:"behavior"`
+					} `json:"response"`
+				} `json:"response"`
+			}
+			if err := jsonv2.Unmarshal(response, &payload); err != nil || payload.Response.Response.Behavior != test.want {
+				t.Fatalf("control response=%s, want %s, error=%v", response, test.want, err)
+			}
+		})
+	}
+}
+
 func TestCustomToolResultIsProcessedOnReceiptAndNotRepublishedOnACK(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("custom-result-immediate"))
-	worker, epoch := newPayloadIntegrationSession(t, app)
-	putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"requires_action"}`)
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"custom-result-immediate","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"ask_user_question","permission_policy":{"type":"always_ask"}}]}]}`)
+	env := createEnvironment(t, app, `{"name":"custom-result-immediate"}`)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	codeID := launchLocalCodeSession(t, app, session.ID)
+	epoch := registerCodeSessionWorker(t, app, codeID)
+	worker, found, err := app.db.GetCodeSession(t.Context(), codeID)
+	if err != nil || !found {
+		t.Fatalf("load worker: found=%t, error=%v", found, err)
+	}
+	postCodeSessionWorkerEvents(t, app, codeID, internalPayloadRequest(epoch,
+		`{"type":"control_request","uuid":"custom-tool-request","request_id":"custom-request","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"custom-tool","input":{"questions":[{"header":"Color","question":"Favorite color?","options":[{"label":"Blue"},{"label":"Green"}]}]}}}`))
+	tool := sessionEventObjectByType(t, listSessionEvents(t, app, session.ID, "types[]=agent.custom_tool_use", defaultTestKey), "agent.custom_tool_use")
+	toolID, ok := tool["id"].(string)
+	if !ok || toolID == "" {
+		t.Fatal("custom tool event has no ID")
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, app.baseURL+"/v1/sessions/"+worker.SessionExternalID+"/events/stream?beta=true", nil)
@@ -50,7 +133,7 @@ func TestCustomToolResultIsProcessedOnReceiptAndNotRepublishedOnACK(t *testing.T
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("stream: %d", resp.StatusCode)
 	}
-	sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":"sevt_tool","content":[{"type":"text","text":"done"}]}]}`, defaultTestKey)
+	sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":`+quoteJSON(toolID)+`,"content":[{"type":"text","text":`+quoteJSON(`{"Color":"Blue"}`)+`}]}]}`, defaultTestKey)
 	inputID := sessionEventStringField(t, sent.Data[0], "id")
 	processedAt := sessionInputProcessedAt(t, sent.Data[0])
 	if processedAt == "" {

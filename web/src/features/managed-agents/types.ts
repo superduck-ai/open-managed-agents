@@ -330,8 +330,11 @@ export type FileMetadataPageResponse = {
   last_id?: string | null;
 };
 
+export type SessionThreadAgentSnapshot = Partial<Pick<AgentApiResponse, 'id' | 'name' | 'version' | 'model'>>;
+
 export type SessionThreadApiResponse = {
   id: string;
+  agent?: SessionThreadAgentSnapshot;
   archived_at?: string | null;
   created_at: string;
   parent_thread_id?: string | null;
@@ -752,6 +755,7 @@ export type SessionDetailSummaryChip = {
 
 export type SessionDetailLane = {
   id: string;
+  agent?: SessionThreadAgentSnapshot;
   label: string;
   group?: string;
   archived?: boolean;

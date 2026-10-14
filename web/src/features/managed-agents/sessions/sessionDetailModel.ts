@@ -161,7 +161,7 @@ export function buildSessionDetailLaneState(
       return;
     }
     laneIdByThreadId.set(thread.id, thread.id);
-    lanes.push({ id: thread.id, label: name, group, archived: sessionThreadIsArchived(thread) });
+    lanes.push({ id: thread.id, agent: thread.agent, label: name, group, archived: sessionThreadIsArchived(thread) });
   });
 
   return {
@@ -908,11 +908,11 @@ export function findActiveAwaitingToolCall(
   }
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
-    if (entry.kind === 'tool_call' && requiresActionEventIDs.has(sessionToolCallPublicID(entry))) {
+    if (entry.kind === 'tool_call' && requiresActionEventIDs.has(sessionToolCallIdentity(entry))) {
       return entry;
     }
     if (entry.kind === 'tool_batch') {
-      const call = entry.calls.find((item) => requiresActionEventIDs.has(sessionToolCallPublicID(item)));
+      const call = entry.calls.find((item) => requiresActionEventIDs.has(sessionToolCallIdentity(item)));
       if (call) {
         return call;
       }
@@ -921,7 +921,7 @@ export function findActiveAwaitingToolCall(
   return null;
 }
 
-function sessionToolCallPublicID(toolCall: ToolCallEntry) {
+function sessionToolCallIdentity(toolCall: ToolCallEntry) {
   return typeof toolCall.event.id === 'string' && toolCall.event.id.trim()
     ? toolCall.event.id.trim()
     : toolCall.rawEventId;

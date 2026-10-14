@@ -49,10 +49,12 @@ export function SessionRequiresActionCard({
   toolCall,
   onConfirm,
   disabled = false,
+  threadLabel,
 }: {
   toolCall: ToolCallEntry;
   onConfirm: (input: SessionToolConfirmationInput) => Promise<void>;
   disabled?: boolean;
+  threadLabel?: string;
 }) {
   const { msg } = useI18n();
   const isQuestionnaire = isAskUserQuestionCall(toolCall);
@@ -78,17 +80,27 @@ export function SessionRequiresActionCard({
       </div>
     );
   }
-  return <SessionToolApprovalActionCard toolCall={toolCall} onConfirm={onConfirm} disabled={disabled} />;
+  return (
+    <SessionToolApprovalActionCard
+      key={sessionToolConfirmationPublicId(toolCall)}
+      toolCall={toolCall}
+      onConfirm={onConfirm}
+      disabled={disabled}
+      threadLabel={threadLabel}
+    />
+  );
 }
 
 export function SessionToolApprovalActionCard({
   toolCall,
   onConfirm,
   disabled,
+  threadLabel,
 }: {
   toolCall: ToolCallEntry;
   onConfirm: (input: SessionToolConfirmationInput) => Promise<void>;
   disabled: boolean;
+  threadLabel?: string;
 }) {
   const { msg } = useI18n();
   const [submitting, setSubmitting] = useState(false);
@@ -117,9 +129,16 @@ export function SessionToolApprovalActionCard({
       data-testid="session-tool-approval-card"
       className="flex w-full flex-wrap items-center gap-2 rounded-md bg-muted/45 px-2 py-1.5 text-foreground"
     >
-      <span className="min-w-0 flex-1 text-xs text-muted-foreground">
-        {msg('managedAgents.sessions.detail.requiresApproval', 'Requires approval')}
-      </span>
+      <div className="min-w-0 flex-1 text-xs">
+        <span className="text-muted-foreground">
+          {msg('managedAgents.sessions.detail.requiresApproval', 'Requires approval')}
+        </span>
+        <div className="flex flex-wrap gap-x-2 break-all font-medium">
+          <span>{threadLabel ?? sessionThreadId}</span>
+          <span>{toolCall.name}</span>
+        </div>
+        <div className="break-all text-muted-foreground">{toolCall.inputPreview}</div>
+      </div>
       <div className="inline-flex shrink-0 items-center gap-1">
         <Button
           type="button"

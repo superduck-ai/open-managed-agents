@@ -3,6 +3,7 @@ import {
   type QuickstartSessionEvent,
   type SessionDetailLane,
   type SessionEventListEntry,
+  type SessionThreadAgentSnapshot,
   type ToolCallEntry,
 } from '../types';
 import { objectRecord, optionalNumericValueFromKeys, sessionListCost, stringValueFromKeys } from '../utils';
@@ -104,6 +105,7 @@ export type InspectorCostPoint = {
 };
 
 export type InspectorThreadRow = {
+  agent?: SessionThreadAgentSnapshot;
   context: number;
   contextPoints: InspectorContextPoint[];
   id: string;
@@ -429,6 +431,7 @@ export function buildInspectorThreadRows(
     const contextPoints = buildInspectorContextPoints(events);
     return {
       context: contextPoints.at(-1)?.tokens ?? 0,
+      agent: lane.agent,
       contextPoints,
       id: lane.id,
       isMain: Boolean(lane.isMain),
@@ -562,13 +565,13 @@ function inspectorThreadStatus(
   return live && lane.id === SESSION_MAIN_LANE_ID ? 'running' : 'idle';
 }
 
-export function inspectorAgentModel(agent: AgentApiResponse | null) {
+export function inspectorAgentModel(agent: SessionThreadAgentSnapshot | null) {
   if (!agent) return '—';
   const model = objectRecord(agent.model);
   return typeof agent.model === 'string' ? agent.model : typeof model.id === 'string' ? model.id : '—';
 }
 
-export function inspectorAgentEffort(agent: AgentApiResponse | null) {
+export function inspectorAgentEffort(agent: SessionThreadAgentSnapshot | null) {
   if (!agent) return '—';
   const model = objectRecord(agent.model);
   const effort = objectRecord(model.effort);

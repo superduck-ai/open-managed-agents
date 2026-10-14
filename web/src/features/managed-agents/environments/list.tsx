@@ -1,11 +1,20 @@
-import { Archive, ArrowUpRight, BookOpen, ChevronLeft, ChevronRight, Plus, Trash2, X } from 'lucide-react';
+import { Archive, ArrowUpRight, BookOpen, Plus, Trash2, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Button, ButtonLink } from '../../../shared/ui/button';
 import { Checkbox } from '../../../shared/ui/checkbox';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
-import { CopyIdCell, DataTableCell, DataTableRow } from '../../../shared/ui/data-table-interactions';
+import {
+  CopyIdCell,
+  DataTableCell,
+  DataTableRow,
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName,
+} from '../../../shared/ui/data-table-interactions';
+import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
+import { ResourceListPagination } from '../../../shared/ui/resource-list-pagination';
 import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Skeleton } from '../../../shared/ui/skeleton';
@@ -16,6 +25,8 @@ import { EnvironmentActions, type EnvironmentActionRequest } from './actions';
 import { EnvironmentHosting, EnvironmentScope } from './common';
 import { useEnvironments } from './data';
 import { environmentDocs } from './fields';
+
+const EMPTY_ENVIRONMENTS: EnvironmentApiResponse[] = [];
 
 export function EnvironmentList({
   workspaceId,
@@ -37,7 +48,7 @@ export function EnvironmentList({
   const [pages, setPages] = useState<PageCursor[]>([null]);
   const [selection, setSelection] = useState<Record<string, boolean>>({});
   const query = useEnvironments(workspaceId, pages.at(-1) ?? null, search.trim(), status);
-  const entities = query.data?.data ?? [];
+  const entities = query.data?.data ?? EMPTY_ENVIRONMENTS;
   const columns = useMemo<ColumnDef<EnvironmentApiResponse>[]>(() => [{ accessorKey: 'id' }], []);
   const table = useReactTable({
     data: entities,
@@ -56,37 +67,33 @@ export function EnvironmentList({
   ];
   const createHref = `${listHref}/new`;
   return (
-    <section className="px-0 lg:px-6">
-      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-[22px] font-medium tracking-tight">
-            {msg('managedAgents.environments.title', 'Environments')}
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {msg(
-              'managedAgents.environments.description',
-              'Configuration template for containers, such as sessions or code execution.',
-            )}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <ButtonLink href={createHref} onClick={(event) => handleInternalLinkClick(event, createHref)}>
-            <Plus className="size-4" />
-            {msg('managedAgents.environments.create', 'Create environment')}
-          </ButtonLink>
-          <ButtonLink
-            variant="outline"
-            size="icon"
-            href={environmentDocs}
-            target="_blank"
-            rel="noreferrer"
-            aria-label={msg('common.documentation', 'Documentation')}
-          >
-            <BookOpen className="size-4" strokeWidth={1.5} />
-          </ButtonLink>
-        </div>
-      </div>
-      <div className="mb-4 flex flex-wrap gap-2">
+    <section className="min-w-0 text-foreground">
+      <ResourcePageHeader
+        title={msg('managedAgents.environments.title', 'Environments')}
+        description={msg(
+          'managedAgents.environments.description',
+          'Configuration template for containers, such as sessions or code execution.',
+        )}
+        actions={
+          <>
+            <ButtonLink size="lg" href={createHref} onClick={(event) => handleInternalLinkClick(event, createHref)}>
+              <Plus className="size-4" />
+              {msg('managedAgents.environments.create', 'Create environment')}
+            </ButtonLink>
+            <ButtonLink
+              variant="outline"
+              size="icon-lg"
+              href={environmentDocs}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={msg('common.documentation', 'Documentation')}
+            >
+              <BookOpen className="size-4" strokeWidth={1.5} />
+            </ButtonLink>
+          </>
+        }
+      />
+      <div className="mb-7 flex flex-wrap items-center gap-2">
         <ResourceSearchField
           id="environments-search"
           value={search}
@@ -127,9 +134,9 @@ export function EnvironmentList({
         <Skeleton className="h-40 w-full" />
       ) : (
         <>
-          <Table className="border-separate border-spacing-y-px text-sm">
+          <Table className={`${dataTableClassName} min-w-[1080px]`}>
             <TableHeader>
-              <TableRow className="hover:bg-transparent">
+              <TableRow className={dataTableHeaderRowClassName}>
                 <TableHead className="w-10 px-3">
                   <Checkbox
                     aria-label={msg('environmentPage.selectAll', 'Select all environments')}
@@ -147,7 +154,7 @@ export function EnvironmentList({
                   msg('environmentPage.updatedAt', 'Updated at'),
                   msg('environmentPage.archivedAt', 'Archived at'),
                 ].map((label) => (
-                  <TableHead key={label} className="h-10 px-3 text-xs font-normal text-muted-foreground">
+                  <TableHead key={label} className={dataTableHeaderCellClassName}>
                     {label}
                   </TableHead>
                 ))}
@@ -183,32 +190,20 @@ export function EnvironmentList({
                 : msg('managedAgents.environments.emptyTitle', 'No environments yet')}
             </div>
           ) : null}
-          <div className="mt-4 flex gap-2">
-            <Button
-              variant="outline"
-              size="icon"
-              aria-label={msg('common.previousPage', 'Previous page')}
-              disabled={pages.length === 1 || query.isFetching}
-              onClick={() => {
-                setPages(pages.slice(0, -1));
-                setSelection({});
-              }}
-            >
-              <ChevronLeft className="size-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              aria-label={msg('common.nextPage', 'Next page')}
-              disabled={!query.data?.has_more || !query.data?.next_page || query.isFetching}
-              onClick={() => {
-                setPages([...pages, query.data?.next_page ?? null]);
-                setSelection({});
-              }}
-            >
-              <ChevronRight className="size-4" />
-            </Button>
-          </div>
+          <ResourceListPagination
+            currentPage={pages.length}
+            totalPages={null}
+            canPrevious={pages.length > 1 && !query.isFetching}
+            canNext={Boolean(query.data?.has_more && query.data?.next_page) && !query.isFetching}
+            onPrevious={() => {
+              setPages(pages.slice(0, -1));
+              setSelection({});
+            }}
+            onNext={() => {
+              setPages([...pages, query.data?.next_page ?? null]);
+              setSelection({});
+            }}
+          />
         </>
       )}
       {selected.length ? (
@@ -274,7 +269,7 @@ function EnvironmentRow({
   const format = useFormatters();
   const href = managedEntityDetailHref(workspaceId, 'environments', entity.id);
   return (
-    <DataTableRow clickable selected={selected || previewed} className="group" onClick={onPreview}>
+    <DataTableRow clickable selected={selected || previewed} className="group [&>td]:h-11" onClick={onPreview}>
       <DataTableCell edge="start" className="h-11" onClick={(event) => event.stopPropagation()}>
         <Checkbox
           aria-label={msg('environmentPage.select', 'Select {name}', { name: entity.name })}
@@ -286,7 +281,6 @@ function EnvironmentRow({
         <CopyIdCell
           value={entity.id}
           ariaLabel={msg('common.copyValue', 'Copy {value}', { value: entity.id })}
-          textClassName="text-[13px]"
           stopPropagation
         />
       </DataTableCell>

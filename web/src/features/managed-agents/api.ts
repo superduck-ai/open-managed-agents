@@ -600,16 +600,30 @@ export function retrieveFileMetadata(fileId: string, workspaceId: string) {
   return anthropicBetaApi.files.retrieveMetadata<FileMetadataApiResponse>(fileId, workspaceId);
 }
 
-export async function listSessionFileOptions(workspaceId: string): Promise<FileMetadataPageResponse> {
+export function listSessionFileOptions(workspaceId: string) {
+  return listFileMetadataPages(workspaceId);
+}
+
+export function listSessionFiles(sessionId: string, workspaceId: string, signal?: AbortSignal) {
+  return listFileMetadataPages(workspaceId, { scope_id: sessionId, betas: ['managed-agents-2026-04-01'] }, signal);
+}
+
+async function listFileMetadataPages(
+  workspaceId: string,
+  params: Record<string, unknown> = {},
+  signal?: AbortSignal,
+): Promise<FileMetadataPageResponse> {
   const data: FileMetadataApiResponse[] = [];
   let afterId: string | undefined;
   let firstId: string | null | undefined;
   let lastId: string | null | undefined;
+  const cursors = new Set<string>();
 
   for (;;) {
     const page = (await anthropicBetaApi.files.list<FileMetadataApiResponse>(
-      { limit: 1000, ...(afterId ? { after_id: afterId } : {}) },
+      { ...params, limit: 1000, ...(afterId ? { after_id: afterId } : {}) },
       workspaceId,
+      signal,
     )) as FileMetadataPageResponse;
     data.push(...page.data);
     firstId ??= page.first_id;
@@ -618,9 +632,10 @@ export async function listSessionFileOptions(workspaceId: string): Promise<FileM
     if (!page.has_more) {
       return { data, first_id: firstId, has_more: false, last_id: lastId };
     }
-    if (!lastId || lastId === afterId) {
+    if (!lastId || cursors.has(lastId)) {
       throw new Error('Files API pagination did not return a new cursor');
     }
+    cursors.add(lastId);
     afterId = lastId;
   }
 }

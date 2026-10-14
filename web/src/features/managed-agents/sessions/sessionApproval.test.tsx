@@ -48,6 +48,7 @@ test('child approval remains available while the parent is running', async () =>
       {toolCall && (
         <SessionRequiresActionCard
           toolCall={toolCall}
+          threadLabel="Alpha R"
           onConfirm={async (input) => {
             confirmations.push(input);
           }}
@@ -56,6 +57,8 @@ test('child approval remains available while the parent is running', async () =>
     </div>,
   );
   expect(screen.queryByTestId('tool-allow-button')).not.toBeNull();
+  expect(screen.getByText('Alpha R')).not.toBeNull();
+  expect(screen.getByTestId('session-tool-approval-card').textContent).toContain('/tmp/approval');
   const deny = screen.getByTestId('tool-deny-button');
   fireEvent.click(deny);
   await waitFor(() =>

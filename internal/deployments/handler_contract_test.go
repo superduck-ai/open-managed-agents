@@ -10,6 +10,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
@@ -161,10 +162,11 @@ func TestSessionResourcesFromDeploymentRejectsPlaintextToken(t *testing.T) {
 }
 
 func TestSessionResourcesFromDeploymentCopiesEncryptedToken(t *testing.T) {
-	service, err := secrets.NewLocalService(context.Background(), make([]byte, 32))
+	serviceProvider, err := localkeys.New(localkeys.KeyMaterial{KEK: make([]byte, 32)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	service := secrets.NewService(serviceProvider)
 	binding := secrets.ResourceBinding{OrganizationUUID: "org", WorkspaceUUID: "ws"}
 	encrypted, err := sessionresource.EncryptGitToken(context.Background(), service, binding, "git-token")
 	if err != nil {

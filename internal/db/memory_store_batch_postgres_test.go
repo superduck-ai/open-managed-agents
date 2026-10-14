@@ -35,7 +35,7 @@ func TestMemoryStoreBatchPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := storeDB.ArchiveMemoryStore(ctx, workspaceUUID, "archived"); err != nil {
+	if _, _, err := storeDB.ArchiveMemoryStore(ctx, workspaceUUID, "archived"); err != nil {
 		t.Fatal(err)
 	}
 	// Fixture for the legacy soft-deleted state excluded by all store reads.

@@ -22,6 +22,7 @@ import { sessionEventStringField } from '../api';
 import { sessionEventType, sessionToolUseInput } from './sessionTraceModel';
 import { Check, HelpCircle, X } from 'lucide-react';
 import { type FormEvent, useMemo, useState } from 'react';
+import { SessionExecutionStateBadge } from './SessionExecutionStateBadge';
 
 export function isAskUserQuestionCall(toolCall: ToolCallEntry): boolean {
   const rawName = (
@@ -55,6 +56,7 @@ export function SessionRequiresActionCard({
   disabled?: boolean;
   threadLabel?: string;
 }) {
+  const { msg } = useI18n();
   const isQuestionnaire = isAskUserQuestionCall(toolCall);
   if (isQuestionnaire) {
     return (
@@ -64,6 +66,18 @@ export function SessionRequiresActionCard({
         onConfirm={onConfirm}
         disabled={disabled}
       />
+    );
+  }
+  if (toolCall.lifecycle === 'awaiting_result') {
+    return (
+      <div role="status" className="space-y-2 rounded-md bg-secondary p-3 text-sm">
+        <SessionExecutionStateBadge state="awaiting_result" />
+        <p>
+          {msg('managedAgents.sessions.detail.awaitingToolResult', 'Waiting for {tool} to return its result.', {
+            tool: toolCall.name,
+          })}
+        </p>
+      </div>
     );
   }
   return (

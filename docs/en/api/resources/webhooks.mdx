@@ -3,6 +3,8 @@ title: "Webhooks"
 description: "Register endpoints, select events, and rotate signing secrets."
 ---
 
+This page describes the current OMA contract. The [official Claude AWS IAM mapping](https://platform.claude.com/docs/en/api/claude-platform-on-aws-iam-actions) confirms these management routes, but does not define their full request/response schema. Field-level compatibility and the beta header below have not been independently confirmed against Claude.
+
 Every request requires `anthropic-beta: webhooks-2026-03-01`.
 
 | Method | Path | Purpose |
@@ -16,10 +18,32 @@ Every request requires `anthropic-beta: webhooks-2026-03-01`.
   "url": "https://hooks.example.com/oma",
   "name": "production-events",
   "description": "Session and vault lifecycle",
-  "enabled_events": ["session.status_idled", "session.error"]
+  "enabled_events": ["session.status_idled", "session.updated"]
 }
 ```
 
-URLs pass SSRF and HTTPS validation unless the deployment explicitly enables insecure local targets. Events must be in the supported allowlist.
+`url` and a non-empty `enabled_events` array are required. `name` and `description` may be omitted or set to an empty string; `null` and other non-string values are rejected. The existing limits are 2048 bytes for URL/description and 255 bytes for name. POST updates accept `url`, `name`, `description`, `enabled_events`, and `status` (`enabled` or `disabled`); omitted fields are preserved.
 
-Create returns `signing_secret` once; rotation returns a replacement. List and retrieve never expose it. Consumers verify `X-Webhook-Signature` and handle duplicate delivery idempotently.
+URLs require HTTPS on port 443 without credentials or fragments. Private IP literals and localhost are rejected unless `webhook.allow_insecure` enables local HTTP targets. At delivery time, new connections resolve DNS, filter out non-public addresses, and dial a validated IP directly while retaining the original hostname for TLS verification. Webhook delivery ignores environment proxies and does not follow redirects; `allow_insecure` also bypasses the public-address restriction for local tests. Events must be in the server allowlist; the Console currently offers 38 types (including three reserved types), including `session.updated` and `session.deleted`, and starts with none selected.
+
+Endpoints belong to the authenticated workspace. List returns `{ "data": [...], "next_page": null }`; Console ID search and sorting operate on this returned collection. The Console supports editing, enabling/disabling, deleting, and rotating secrets. Failed operations retain the form or confirmation and show the server error.
+
+Create returns `signing_secret` once; rotation returns a replacement. List, retrieve, and update never expose it. The Console keeps it only in the one-time dialog state. Consumers verify the Standard Webhooks `webhook-id`, `webhook-timestamp`, and `webhook-signature` headers with the official SDK and handle duplicate delivery idempotently.
+
+The delivery worker starts by default and uses database subscriptions only. Set `webhook.worker_enabled: false` to disable delivery on this instance. The API allowlist and Console both use the same 38 event types (35 active types and three reserved types); legacy `session.error` and `session.thread_status_*` subscriptions are rejected.
+
+Sessions created by manual or scheduled Deployment runs emit `session.status_idled` after the transaction commits. Creating the primary thread does not emit child-thread events, and defining an initial outcome does not emit `session.outcome_evaluation_ended`; that event follows an actual evaluation-end event. Failed runs and duplicate scheduled occurrences do not create new notifications. Two independent manual runs notify separately.
+
+Environment subscriptions support `environment.created`, `environment.updated`, `environment.archived`, and `environment.deleted`. Creation refers to the environment record, not sandbox readiness. Updates notify only when persisted attributes change; no-op updates and repeated archives preserve timestamps and emit nothing. Deletion notifies after the existing transaction succeeds, including deletion of an archived environment; active work still blocks deletion. Work/heartbeat/sandbox state changes do not emit these resource events. Production SDK fixture bypasses have been removed; all identities follow the same persistence and notification rules. Payloads contain identifiers only. Delivery uses the retry and disable policy in the [Webhook guide](/docs/en/webhooks). Resource commits and notification enqueueing remain separate: a crash or enqueue failure can lose a notification.
+
+Memory Store subscriptions support `memory_store.created`, `memory_store.archived`, and `memory_store.deleted`. Only the first archive changes timestamps and emits a notification. Deletion emits one Store event after the Store/Memory/Version transaction commits, before object cleanup; cleanup failures and retries do not repeat it. Store updates and individual Memory/Version operations emit none of these events. Deleting an active Store does not emit archived. The data contains only `type`, Store external `id`, `organization_id`, and `workspace_id`, without content, metadata, or object storage details. There is no `memory_store.updated` or Store clone API. The same non-atomic commit/enqueue boundary applies.
+
+Agent subscriptions support `agent.created`, `agent.updated`, and `agent.archived`. Creation notifies after the Agent and its initial version commit, without an additional updated event. Updated notifies only after a new version is published; no-op updates and version conflicts emit nothing. Archived notifies once after the Agent, associated Deployments, and River schedules commit together; repeated archives preserve the Agent timestamps. The former SDK test identity now follows ordinary resource validation and persistence; rejected operations do not notify. Data contains only event type, Agent ID, and tenant identifiers. The official event model includes `agent.deleted`, but no public Agent delete API is documented; OMA accepts this reserved subscription but has no delete API or producer, so it currently generates no notification. Archiving does not emit deleted. Business commits and notification enqueueing remain non-atomic.
+
+
+Deployment subscriptions support `deployment.created`, `deployment.updated`, `deployment.paused`, `deployment.unpaused`, and `deployment.archived`. The shared Store notifies only after the resource and River schedule transaction commits. Updated requires an actual property change; pause/unpause require a status transition. Archive covers direct operations, Agent cascades, and the scheduled archive branch. No-op updates and repeated operations do not notify; last_run_at changes from ordinary runs do not emit updated. Repeating a manual pause may still change the pause reason as before, without another paused event. Data contains only event type, Deployment ID, and tenant identifiers. `deployment.deleted` is accepted as a reserved subscription. There is no Deployment delete API or producer, so it currently generates no notification; direct or cascading archival does not emit deleted. Resource commits and enqueueing remain non-atomic.
+
+
+Deployment Run subscriptions support `deployment_run.started`, `deployment_run.succeeded`, and `deployment_run.failed` for scheduled runs only; manual runs emit none. The existing transaction persists the Run and Session-creation result together. After commit, started and the result are enqueued with the same Run ID, so started is not a live in-progress signal. Succeeded means a Session was created, not that its work finished. Failed means a business failure was persisted without a Session; database rollbacks, stale jobs, and duplicate occurrences do not notify. Data contains only the four identifier fields. Follow the Run's session_id for subsequent execution.
+
+`session.budget_reached` is a reserved subscription: it can be selected, saved, retrieved, and edited, but currently generates no notifications. OMA has not implemented budget configuration, spend accounting, or budget-driven pause/resume. Ordinary idle events, including worker-reported budget stop reasons, do not trigger it. Subscribing does not enable budget enforcement.

@@ -401,6 +401,7 @@ export type SessionTraceFamily =
 
 export type SessionTraceBuildOptions = {
   platformTranscriptFiltering?: boolean;
+  interruptedModelRequestIds?: ReadonlySet<string>;
 };
 
 export type SessionTraceEntry = {
@@ -419,6 +420,7 @@ export type SessionTraceEntry = {
   rawEventId: string;
   searchText: string;
   isError: boolean;
+  state?: SessionExecutionState;
 };
 
 export type DisplayEventType =
@@ -458,7 +460,18 @@ export type DisplayEvent = {
 export type TranscriptEntryKind =
   'idle_gap' | 'outcome' | 'tool_call' | 'tool_batch' | 'message' | 'status' | 'passthrough';
 
-export type ToolLifecycle = 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'denied';
+export type ToolLifecycle =
+  'running' | 'awaiting_approval' | 'awaiting_result' | 'completed' | 'failed' | 'denied' | 'interrupted';
+
+export type SessionExecutionState =
+  | ToolLifecycle
+  | 'stopping'
+  | 'stopped'
+  | 'queued'
+  | 'awaiting_action'
+  | 'budget_reached'
+  | 'rescheduled'
+  | 'terminated';
 
 export type BaseSessionEventEntry = {
   id: string;
@@ -691,6 +704,7 @@ export type ResourceConfig = {
 };
 
 export type EventsTabProps = {
+  emptyState?: ReactNode;
   activeLane: string;
   archivedLaneCount: number;
   childLoading: boolean;
@@ -706,6 +720,7 @@ export type EventsTabProps = {
   lanes: SessionDetailLane[];
   openModelRequest: QuickstartSessionEvent | null;
   pendingAction?: ReactNode;
+  outputFiles?: ReactNode;
   onClearFilters: () => void;
   onCopyAll: () => void;
   onCloseInspector: () => void;
@@ -733,6 +748,7 @@ export type EventsTabProps = {
 export type SessionDetailSummaryChip = {
   key: string;
   icon: IconComponent;
+  copyValue?: string;
   tooltip?: string;
   value: string;
 };

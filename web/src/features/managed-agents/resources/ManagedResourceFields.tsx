@@ -15,6 +15,7 @@ export function ManagedResourceFields({
   editing = false,
   embedded = false,
   memoryStores,
+  addButtonVariant = 'outline',
 }: {
   values: ManagedEntityFormValues;
   onChange: (values: ManagedEntityFormValues) => void;
@@ -22,6 +23,7 @@ export function ManagedResourceFields({
   editing?: boolean;
   embedded?: boolean;
   memoryStores?: EntityOption[];
+  addButtonVariant?: 'outline' | 'secondary';
 }) {
   const { msg } = useI18n();
   const patch = (value: Partial<ManagedEntityFormValues>) => onChange({ ...values, ...value, resourcesChanged: true });
@@ -99,7 +101,7 @@ export function ManagedResourceFields({
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <Button type="button" variant="outline" size="sm">
+                <Button type="button" variant={addButtonVariant} size="sm">
                   <Plus aria-hidden />
                   {msg('managedAgents.sessions.resources.add', 'Add resource')}
                   <ChevronDown aria-hidden />

@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { I18nProvider } from '../../../shared/i18n';
 import { TooltipProvider } from '../../../shared/ui/tooltip';
@@ -18,26 +19,28 @@ function renderInspector(
   initialLocale: 'en' | 'zh-CN' = 'en',
 ) {
   return render(
-    <I18nProvider initialLocale={initialLocale}>
-      <TooltipProvider>
-        <SessionInspector
-          activeTab="session"
-          activeLane=""
-          events={[]}
-          eventsByLaneId={new Map()}
-          lanes={[]}
-          onActiveTabChange={() => {}}
-          onClose={() => {}}
-          onSelectEntry={() => {}}
-          onSelectLane={() => {}}
-          refreshKey={0}
-          selectedEntry={null}
-          session={session()}
-          workspaceId="default"
-          {...overrides}
-        />
-      </TooltipProvider>
-    </I18nProvider>,
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <I18nProvider initialLocale={initialLocale}>
+        <TooltipProvider>
+          <SessionInspector
+            activeTab="session"
+            activeLane=""
+            events={[]}
+            eventsByLaneId={new Map()}
+            lanes={[]}
+            onActiveTabChange={() => {}}
+            onClose={() => {}}
+            onSelectEntry={() => {}}
+            onSelectLane={() => {}}
+            refreshKey={0}
+            selectedEntry={null}
+            session={session()}
+            workspaceId="default"
+            {...overrides}
+          />
+        </TooltipProvider>
+      </I18nProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -59,7 +62,9 @@ describe('SessionInspector', () => {
     expect(toolRow.querySelectorAll('td')[4]?.textContent).toBe(expected);
     fireEvent.click(toolRow);
 
-    expect(screen.getByText('completed').closest('tr')?.textContent).toContain(expected);
+    expect(screen.getByText('Completed', { selector: '[data-tool-lifecycle]' }).closest('tr')?.textContent).toContain(
+      expected,
+    );
     expect(screen.getByText('p50', { selector: 'dt' }).nextElementSibling?.textContent).toBe(expected);
   });
 
@@ -300,7 +305,9 @@ describe('SessionInspector', () => {
     expect(writeCells?.[3]?.textContent).toBe('0');
     expect(writeCells?.[4]?.textContent).toBe('—');
     expect(screen.getByText('2 tools · 2 used · 3 calls')).toBeTruthy();
-    const outcomeRing = screen.getByRole('img', { name: '1 completed, 1 failed, 0 denied, 1 in flight' });
+    const outcomeRing = screen.getByRole('img', {
+      name: '1 completed, 1 failed, 0 denied, 0 interrupted, 1 in flight',
+    });
     expect(outcomeRing.tagName).toBe('DIV');
     expect(outcomeRing.style.background).toContain('conic-gradient');
     expect(outcomeRing.querySelector('svg')).toBeNull();
@@ -317,7 +324,7 @@ describe('SessionInspector', () => {
     expect(screen.getByRole('button', { name: 'Close tool detail' })).toBeTruthy();
     expect(screen.queryByRole('columnheader', { name: 'Waited' })).toBeNull();
     expect(screen.queryByRole('columnheader', { name: 'Thread' })).toBeNull();
-    const completedCallRow = screen.getByText('completed').closest('tr')!;
+    const completedCallRow = screen.getByText('Completed', { selector: '[data-tool-lifecycle]' }).closest('tr')!;
     fireEvent.pointerEnter(completedCallRow);
     expect(onHoverEvent).toHaveBeenCalledWith('tool_bash_ok');
     fireEvent.pointerLeave(completedCallRow);
@@ -391,6 +398,37 @@ describe('SessionInspector', () => {
     fireEvent.click(screen.getByText('bash').closest('tr')!);
     expect(screen.getByRole('columnheader', { name: 'Waited' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Thread' })).toBeTruthy();
+  });
+
+  test('enables output downloads independently of a slow uploaded-file metadata request', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
+    const value = session();
+    value.resources = [
+      { id: 'resource_input', type: 'file', file_id: 'file_input', mount_path: '/input.csv' },
+      { id: 'resource_output', type: 'file', file_id: 'file_output', mount_path: '/outputs/result.csv' },
+    ];
+    globalThis.fetch = async (input) =>
+      String(input).includes('/v1/files/file_input')
+        ? new Promise<Response>(() => {})
+        : Response.json({ id: 'file_output', filename: 'result.csv', size_bytes: 123, downloadable: true });
+    renderInspector({ activeTab: 'resources', session: value });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Download result.csv' }).hasAttribute('disabled')).toBe(false),
+    );
+    expect(screen.getByRole('button', { name: 'Download file_input' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByText('123 B')).toBeTruthy();
+  });
+
+  test('disables download for uploaded files even when metadata is loaded', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
+    const value = session();
+    value.resources = [{ type: 'file', file_id: 'file_input', mount_path: '/input.csv' }];
+    globalThis.fetch = async () =>
+      Response.json({ id: 'file_input', filename: 'input.csv', size_bytes: 10, downloadable: false });
+    renderInspector({ activeTab: 'resources', session: value });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Download input.csv' }).hasAttribute('disabled')).toBe(true),
+    );
   });
 
   test('renders the file-only resource menu trigger', async () => {

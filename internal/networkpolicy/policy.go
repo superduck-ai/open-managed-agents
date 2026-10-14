@@ -35,6 +35,7 @@ type Policy struct {
 	explicitHosts        hostMatcher
 	mcpHosts             map[string]struct{}
 	allowPackageManagers bool
+	packageHosts         map[string]struct{}
 }
 
 // MCPProxyPolicy 是 MCP HTTP proxy 的编译后授权策略，同时约束 Session
@@ -47,7 +48,7 @@ type MCPProxyPolicy struct {
 
 // ParsePolicy 在策略加载边界解析数据库 JSON，并编译归一化的 host 索引。
 // 任一已启用的策略来源格式错误，都会使整份策略失效。
-func ParsePolicy(configRaw, agentSnapshotRaw []byte) (Policy, error) {
+func ParsePolicy(configRaw, agentSnapshotRaw []byte, packageHosts ...string) (Policy, error) {
 	config, err := ParseConfig(configRaw)
 	if err != nil {
 		return Policy{}, err
@@ -60,7 +61,9 @@ func ParsePolicy(configRaw, agentSnapshotRaw []byte) (Policy, error) {
 		}
 		mcpHosts = hosts
 	}
-	return compilePolicy(config, mcpHosts), nil
+	policy := compilePolicy(config, mcpHosts)
+	policy.packageHosts = collections.StringSet(packageHosts)
+	return policy, nil
 }
 
 // ParseMCPProxyPolicy 在 MCP proxy 的策略加载边界一次性解析 Environment
@@ -165,7 +168,8 @@ func (p Policy) authorizeEndpoint(normalized string, scheme string, port string)
 	if _, ok := p.mcpHosts[normalized]; ok {
 		return Decision{Allow: true, Reason: ReasonMCPHost, Host: normalized}
 	}
-	if scheme == "https" && port == "443" && p.allowPackageManagers && isPackageManagerHost(normalized) {
+	_, customPackageHost := p.packageHosts[normalized]
+	if scheme == "https" && port == "443" && p.allowPackageManagers && (isPackageManagerHost(normalized) || customPackageHost) {
 		return Decision{Allow: true, Reason: ReasonPackageManagerHost, Host: normalized}
 	}
 	return Decision{Reason: ReasonHostNotAllowed, Host: normalized}

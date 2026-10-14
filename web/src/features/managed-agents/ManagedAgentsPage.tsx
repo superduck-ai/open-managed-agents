@@ -6,6 +6,8 @@ import { ObservabilityPage } from '../observability/ObservabilityPage';
 import { DreamingPage, ManagedResourcePage, resourceConfigs } from './resources/ManagedResources';
 import { type ManagedAgentSection } from './types';
 import { currentPathname, managedWorkspaceIdFromPath } from './utils';
+import { AgentCreatePage } from './agents/AgentCreatePage';
+import { isAgentCreateLocation } from './agents/creation-route';
 
 export function ManagedAgentsPage({ section }: { section: ManagedAgentSection }) {
   const { activeWorkspaceId, selectWorkspace } = useWorkspace();
@@ -15,6 +17,10 @@ export function ManagedAgentsPage({ section }: { section: ManagedAgentSection })
       selectWorkspace(routeWorkspaceId);
     }
   }, [activeWorkspaceId, routeWorkspaceId, selectWorkspace]);
+
+  if (section === 'agents' && isAgentCreateLocation()) {
+    return <AgentCreatePage workspaceId={routeWorkspaceId || activeWorkspaceId} />;
+  }
 
   if (section === 'quickstart') {
     return <AgentQuickstartPage />;

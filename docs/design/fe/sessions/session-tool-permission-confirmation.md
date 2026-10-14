@@ -55,16 +55,6 @@
 
 普通工具确认使用以下事件：
 
-```ts
-interface UserToolConfirmationEvent {
-  type: "user.tool_confirmation";
-  tool_use_id: string;
-  result: "allow" | "deny";
-  deny_message?: string | null;
-  session_thread_id?: string;
-}
-```
-
 `tool_use_id` 必须是对应工具事件的公开 ID。
 `result=allow` 表示允许执行，`result=deny` 表示拒绝执行。
 `deny_message` 如存在，必须是字符串或 `null`。
@@ -93,13 +83,12 @@ interface UserToolConfirmationEvent {
 原始事件通过 `primary_event_id` 指向镜像。
 
 事件合并层先建立两套 ID 到原始调用的映射。
-内部 `toolCallId` 用于工具记录去重，以及确认和结果关联。
-内部 `pendingToolCallIds` 用于待处理状态匹配。
+合并层归一化事件副本的 `id`、工具引用和 `stop_reason.event_ids`。
+工具记录、确认、结果和待处理状态使用同一调用 ID。
 两份事件都已加载时，选择原始事件。
 只加载镜像时，仍提供审批入口。
-提交确认继续使用选中事件的公开 ID。
+提交确认使用原始工具 ID 和对应线程 ID。
 
-旧子历史读取补齐可推导的关联，不改写存储历史。
 独立调用即使线程、文件、输入和时间相同，也保持独立。
 
 前端分别读取会话与各子线程的最新状态。
@@ -110,13 +99,7 @@ interface UserToolConfirmationEvent {
 
 ## 归一化展示
 
-生成回复记录前，先扫描完整事件流。
-建立结果索引和确认索引：
-
-```ts
-const toolResultsByUseId = new Map<string, SessionEvent>();
-const toolConfirmationsByUseId = new Map<string, UserToolConfirmationEvent>();
-```
+生成回复记录前，按统一调用 ID 关联结果和确认。
 
 索引键使用统一调用身份。
 工具记录通过 `resultEvent` 和 `confirmationEvent` 保存关联事件。
@@ -124,29 +107,9 @@ const toolConfirmationsByUseId = new Map<string, UserToolConfirmationEvent>();
 调试视图保留原始事件及无法关联的孤立事件。
 孤立事件不改变其他调用的状态。
 
-```ts
-type ToolLifecycle =
-  "awaiting_approval" | "running" | "failed" | "denied" | "completed";
-
-interface ToolCallEntry {
-  kind: "tool_call";
-  name: string;
-  input: unknown;
-  resultEvent?: SessionEvent;
-  confirmationEvent?: UserToolConfirmationEvent;
-  lifecycle: ToolLifecycle;
-  bracketId?: string;
-}
-```
-
 ## 调用状态
 
-按以下优先级计算状态：
-
-1. 策略或用户拒绝时，状态为 `denied`。
-2. 已有结果时，根据 `is_error` 选择 `failed` 或 `completed`。
-3. 需要确认且没有确认时，状态为 `awaiting_approval`。
-4. 其他情况为 `running`。
+按下表计算调用状态；拒绝优先于结果，结果优先于等待确认。
 
 | 条件                           | 状态                | 中文含义 |
 | ------------------------------ | ------------------- | -------- |
@@ -172,17 +135,7 @@ interface ToolCallEntry {
 - `isError` 在任一子调用失败时为 `true`。
 - 批次状态取最需要处理的子调用状态。
 
-状态优先级为等待批准、执行中、失败、拒绝、完成：
-
-```ts
-const lifecyclePriority = {
-  awaiting_approval: 0,
-  running: 1,
-  failed: 2,
-  denied: 3,
-  completed: 4,
-};
-```
+批次优先级为等待批准、执行中、失败、拒绝、完成。
 
 只要批次仍有待审批调用，整行就显示等待批准。
 
@@ -232,28 +185,6 @@ const lifecyclePriority = {
 
 ## 实现与验收
 
-实现位于 `sessionTraceModel.ts`、`sessionTraceRows.tsx`、`SessionRequiresActionCard.tsx`、`SessionDetailPage.tsx` 和 `SessionTracePanel.tsx`。
-新增事件形态时，扩展现有归一化和关联函数。
-用户拒绝必须读取确认结果，不能只读取初始权限。
-
-| 场景                   | 期望结果                                     |
-| ---------------------- | -------------------------------------------- |
-| 普通工具等待确认       | 显示等待批准及允许、拒绝按钮，普通输入框禁用 |
-| 用户允许               | 发送允许确认，工具转为执行中                 |
-| 用户拒绝               | 发送拒绝确认，工具显示已拒绝及原因           |
-| 问卷提交               | 按完整问题文本关联答案，发送自定义结果       |
-| 策略拒绝               | 无用户确认也显示已拒绝                       |
-| 结果失败               | 显示失败状态及错误标记                       |
-| 结果成功               | 显示已完成，不显示审批标签                   |
-| 批次中一项等待         | 整批显示等待批准                             |
-| 父线程运行             | 子线程仍提供审批入口                         |
-| 并行子线程             | 处理一个线程不清除另一个线程的待处理项       |
-| 原始与镜像调用同时加载 | 只显示一条工具记录，确认与结果正确关联       |
-| 独立调用内容相同       | 分别显示，不按内容合并                       |
-| 刷新历史               | 已完成调用不再出现重复执行中记录             |
-| 调试视图               | 保留原始确认、结果和孤立事件                 |
-
-组件测试覆盖操作卡和权限展示。
-`sessionApproval.test.tsx` 覆盖子线程与并行审批状态。
-`sessionToolIdentity.test.ts` 覆盖两套 ID、结果关联及独立调用。
-真实工作进程验证见[子智能体验证说明](../../../../.agents/skills/verify-be/features/subagents.md)。
+实现和组件测试见[会话功能目录](../../../../web/src/features/managed-agents/sessions/)。
+真实工作进程的运行入口与验证边界见[子智能体验证说明](../../../../.agents/skills/verify-be/features/subagents.md)。
+组件测试覆盖操作卡点击与状态关联，不代表完整浏览器验收。

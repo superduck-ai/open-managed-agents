@@ -914,7 +914,6 @@ export function findActiveAwaitingToolCall(
 }
 
 function sessionToolCallIdentity(toolCall: ToolCallEntry) {
-  if (typeof toolCall.event.toolCallId === 'string') return toolCall.event.toolCallId;
   return typeof toolCall.event.id === 'string' && toolCall.event.id.trim()
     ? toolCall.event.id.trim()
     : toolCall.rawEventId;

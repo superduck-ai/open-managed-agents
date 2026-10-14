@@ -104,6 +104,7 @@ func (s *Service) resolveSubagentThread(ctx context.Context, codeSession db.Code
 }
 
 func (s *Service) enrichSubagentLifecycle(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) ([]json.RawMessage, error) {
+	var mappings map[string]string
 	for i, raw := range payloads {
 		var lifecycle subagentLifecycle
 		if err := jsonv2.Unmarshal(raw, &lifecycle); err != nil {
@@ -112,9 +113,12 @@ func (s *Service) enrichSubagentLifecycle(ctx context.Context, codeSession db.Co
 		if lifecycle.TaskID == "" || lifecycle.ThreadID == "" {
 			continue
 		}
-		mappings, err := s.subagentThreadMappings(ctx, codeSession)
-		if err != nil {
-			return nil, err
+		if mappings == nil {
+			var err error
+			mappings, err = s.subagentThreadMappings(ctx, codeSession)
+			if err != nil {
+				return nil, err
+			}
 		}
 		fields, err := decodeRawJSONObject(raw)
 		if err != nil {

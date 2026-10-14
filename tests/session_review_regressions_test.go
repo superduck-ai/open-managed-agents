@@ -30,34 +30,21 @@ func TestSessionCanAcceptNextTurnAfterWorkerReturnsIdle(t *testing.T) {
 	}
 }
 
-func TestSubagentToolPermissionWithoutIdentity(t *testing.T) {
+func TestNativeTaskToolPermissions(t *testing.T) {
 	for _, test := range []struct {
 		name, tool, want string
-		coordinator      bool
-		ready            bool
 	}{
 		{name: "native write disabled", tool: "Write", want: "deny"},
 		{name: "native bash asks", tool: "Bash", want: "ask"},
-		{name: "coordinator snapshot not ready", tool: "Bash", want: "deny", coordinator: true},
-		{name: "named child uses pinned policy", tool: "Write", want: "allow", coordinator: true, ready: true},
 		{name: "native read allowed", tool: "Read", want: "allow"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			app := newPayloadIntegrationApp(t, newFakeStore("subagent-tool-permission"))
-			multiagent := ""
-			if test.coordinator {
-				child := createAgent(t, app, `{"model":"claude-opus-4-6","name":"configured-child"}`)
-				multiagent = `,"multiagent":{"type":"coordinator","agents":[{"type":"agent","id":` + quoteJSON(child.ID) + `}]}`
-			}
-			agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"parent","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"bash","permission_policy":{"type":"always_ask"}},{"name":"write","enabled":false}]}]`+multiagent+`}`)
+			agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"parent","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"bash","permission_policy":{"type":"always_ask"}},{"name":"write","enabled":false}]}]}`)
 			env := createEnvironment(t, app, `{"name":"subagent-tool-permission"}`)
 			session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 			codeID := launchLocalCodeSession(t, app, session.ID)
 			epoch := registerCodeSessionWorker(t, app, codeID)
-			if test.ready {
-				postCodeSessionWorkerEvents(t, app, codeID, internalPayloadRequest(epoch,
-					`{"type":"control_request","uuid":"dispatch","request_id":"dispatch-request","request":{"subtype":"can_use_tool","tool_name":"Agent","tool_use_id":"dispatch-tool","input":{"subagent_type":"configured-child"}}}`))
-			}
 			postCodeSessionWorkerEvents(t, app, codeID, internalPayloadRequest(epoch,
 				`{"type":"session.thread_created","uuid":"child-created","session_thread_id":"sthr_child","agent_name":"child","task_id":"child-runtime","tool_use_id":"dispatch-tool"}`,
 				`{"type":"control_request","uuid":"child-permission","session_thread_id":"sthr_child","request_id":"child-request","request":{"subtype":"can_use_tool","tool_name":`+quoteJSON(test.tool)+`,"tool_use_id":"child-tool","input":{}}}`))

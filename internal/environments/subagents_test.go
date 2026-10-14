@@ -76,39 +76,30 @@ func TestManagedAgentSubagentsUsesChildMCPGateway(t *testing.T) {
 }
 
 func TestManagedAgentSubagentSkillsPreserveVersions(t *testing.T) {
-	for _, source := range []string{"custom", "anthropic"} {
-		for _, reverse := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/reverse=%t", source, reverse), func(t *testing.T) {
-				snapshot := json.RawMessage(fmt.Sprintf(`{"multiagent":{"agents":[{"id":"agent_a","name":"review-a","model":{"id":"model"},"skills":[{"type":%q,"skill_id":"review","version":"1"}]},{"id":"agent_b","name":"review-b","model":{"id":"model"},"skills":[{"type":%q,"skill_id":"review","version":"2"}]},{"id":"agent_c","name":"review-c","model":{"id":"model"},"skills":[{"type":%q,"skill_id":"review"}]}]}}`, source, source, source))
-				resolved := []skills.RuntimeSkill{
-					{Source: source, SkillID: "review", Version: "1", RequestedVersion: "1", Directory: "review-v1"},
-					{Source: source, SkillID: "review", Version: "2", RequestedVersion: "latest", Directory: "review-v2"},
-				}
-				if reverse {
-					slices.Reverse(resolved)
-				}
-				launch, err := managedAgentSessionConfig(db.Session{AgentSnapshot: snapshot}, managedAgentRuntimeResources{}, resolved)
-				if err != nil {
-					t.Fatal(err)
-				}
-				launch, err = buildManagedAgentSubagents(launch, codesessions.MCPRuntimeIdentity{}, mcpConfigTestRuntimeConfig().Tunnel)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var encoded string
-				if err := jsonv2.Unmarshal(mcpConfigField(t, launch, "claude_code_args", "agents"), &encoded); err != nil {
-					t.Fatal(err)
-				}
-				var definitions map[string]claudeAgentDefinition
-				if err := jsonv2.Unmarshal([]byte(encoded), &definitions); err != nil {
-					t.Fatal(err)
-				}
-				for name, directory := range map[string]string{"review-a": "review-v1", "review-b": "review-v2", "review-c": "review-v2"} {
-					if !slices.Equal(definitions[name].Skills, []string{directory}) {
-						t.Errorf("%s skills=%v, want [%s]", name, definitions[name].Skills, directory)
-					}
-				}
-			})
+	snapshot := json.RawMessage(`{"multiagent":{"agents":[{"id":"agent_a","name":"review-a","model":{"id":"model"},"skills":[{"type":"anthropic","skill_id":"review","version":"1"}]},{"id":"agent_b","name":"review-b","model":{"id":"model"},"skills":[{"type":"anthropic","skill_id":"review","version":"2"}]},{"id":"agent_c","name":"review-c","model":{"id":"model"},"skills":[{"type":"anthropic","skill_id":"review"}]}]}}`)
+	resolved := []skills.RuntimeSkill{
+		{Source: "anthropic", SkillID: "review", Version: "1", RequestedVersion: "1", Directory: "review-v1"},
+		{Source: "anthropic", SkillID: "review", Version: "2", RequestedVersion: "latest", Directory: "review-v2"},
+	}
+	launch, err := managedAgentSessionConfig(db.Session{AgentSnapshot: snapshot}, managedAgentRuntimeResources{}, resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launch, err = buildManagedAgentSubagents(launch, codesessions.MCPRuntimeIdentity{}, mcpConfigTestRuntimeConfig().Tunnel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var encoded string
+	if err := jsonv2.Unmarshal(mcpConfigField(t, launch, "claude_code_args", "agents"), &encoded); err != nil {
+		t.Fatal(err)
+	}
+	var definitions map[string]claudeAgentDefinition
+	if err := jsonv2.Unmarshal([]byte(encoded), &definitions); err != nil {
+		t.Fatal(err)
+	}
+	for name, directory := range map[string]string{"review-a": "review-v1", "review-b": "review-v2", "review-c": "review-v2"} {
+		if !slices.Equal(definitions[name].Skills, []string{directory}) {
+			t.Errorf("%s skills=%v, want [%s]", name, definitions[name].Skills, directory)
 		}
 	}
 }

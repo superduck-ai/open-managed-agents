@@ -642,3 +642,39 @@ func decodeRawJSON(t *testing.T, raw json.RawMessage, target any) {
 		t.Fatalf("decode raw JSON %s: %v", raw, err)
 	}
 }
+
+func TestSubagentReferenceVersions(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("subagent-reference-versions"))
+	child := createAgent(t, app, `{"name":"child","model":"claude-opus-4-6"}`)
+	for _, reference := range []string{
+		`{"type":"agent","id":"agent_missing"}`,
+		`{"type":"agent","id":` + quoteJSON(child.ID) + `,"version":0}`,
+		`{"type":"agent","id":` + quoteJSON(child.ID) + `,"version":9999}`,
+	} {
+		response := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(`{"name":"invalid","model":"claude-opus-4-6","multiagent":{"type":"coordinator","agents":[`+reference+`]}}`), defaultTestKey, true)
+		assertError(t, response, http.StatusBadRequest, "invalid_request_error")
+	}
+	assertVersion := func(parent agentAPIResponse, version int) {
+		t.Helper()
+		var roster struct {
+			Agents []struct {
+				ID      string `json:"id"`
+				Version int    `json:"version"`
+			} `json:"agents"`
+		}
+		decodeRawJSON(t, parent.Multiagent, &roster)
+		if len(roster.Agents) != 1 || roster.Agents[0].ID != child.ID || roster.Agents[0].Version != version {
+			t.Fatalf("roster=%s, want child@%d", parent.Multiagent, version)
+		}
+	}
+	latest := `{"type":"coordinator","agents":[{"type":"agent","id":` + quoteJSON(child.ID) + `}]}`
+	pinned := `{"type":"coordinator","agents":[{"type":"agent","id":` + quoteJSON(child.ID) + `,"version":1}]}`
+	parent := createAgent(t, app, `{"name":"parent","model":"claude-opus-4-6","multiagent":`+latest+`}`)
+	assertVersion(parent, 1)
+	updateAgent(t, app, child.ID, `{"version":1,"name":"child-v2"}`, http.StatusOK)
+	assertVersion(retrieveAgent(t, app, parent.ID, ""), 1)
+	assertVersion(updateAgent(t, app, parent.ID, `{"version":1,"name":"renamed"}`, http.StatusOK), 1)
+	assertVersion(updateAgent(t, app, parent.ID, `{"version":2,"multiagent":`+latest+`}`, http.StatusOK), 2)
+	assertVersion(updateAgent(t, app, parent.ID, `{"version":3,"multiagent":`+pinned+`}`, http.StatusOK), 1)
+	assertVersion(createAgent(t, app, `{"name":"explicit","model":"claude-opus-4-6","multiagent":`+pinned+`}`), 1)
+}

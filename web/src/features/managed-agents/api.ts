@@ -1388,7 +1388,7 @@ export function coalesceSessionCrossPostedToolEvents(events: QuickstartSessionEv
     const originalId = sessionEventStringField(event, 'original_event_id');
     const primaryId = sessionEventStringField(event, 'primary_event_id');
     if (originalId) aliases.set(id, originalId);
-    if (primaryId && !originalId) aliases.set(primaryId, id);
+    if (primaryId) aliases.set(primaryId, originalId || id);
   });
   const output: QuickstartSessionEvent[] = [];
   const indexByKey = new Map<string, number>();
@@ -1403,7 +1403,7 @@ export function coalesceSessionCrossPostedToolEvents(events: QuickstartSessionEv
     if (existingIndex === undefined) {
       indexByKey.set(canonicalKey, output.length);
       output.push(event);
-    } else if (aliases.size && sessionEventStringField(event, 'id') === sessionEventToolUseId(event)) {
+    } else if (aliases.size && sessionEventStringField(rawEvent, 'id') === sessionEventToolUseId(event)) {
       output[existingIndex] = event;
     }
   });
@@ -1412,17 +1412,19 @@ export function coalesceSessionCrossPostedToolEvents(events: QuickstartSessionEv
 
 function sessionEventWithToolIdentity(event: QuickstartSessionEvent, aliases: Map<string, string>) {
   if (!aliases.size) return event;
-  const toolId = sessionEventToolUseId(event);
-  const toolCallId = aliases.get(toolId);
+  const normalized = { ...event };
+  for (const field of ['id', 'tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id']) {
+    const id = aliases.get(sessionEventStringField(event, field));
+    if (id) normalized[field] = id;
+  }
   const stopReason = toRecord(event.stop_reason);
-  const eventIds = Array.isArray(stopReason?.event_ids) ? stopReason.event_ids : undefined;
-  return {
-    ...event,
-    ...(toolCallId ? { toolCallId } : {}),
-    ...(eventIds
-      ? { pendingToolCallIds: eventIds.map((id) => (typeof id === 'string' ? (aliases.get(id) ?? id) : id)) }
-      : {}),
-  };
+  if (Array.isArray(stopReason?.event_ids)) {
+    normalized.stop_reason = {
+      ...stopReason,
+      event_ids: stopReason.event_ids.map((id) => (typeof id === 'string' ? (aliases.get(id) ?? id) : id)),
+    };
+  }
+  return normalized;
 }
 
 export function sessionCrossPostedToolEventKey(event: QuickstartSessionEvent) {
@@ -1444,7 +1446,6 @@ export function sessionEventOwnerThreadId(event: QuickstartSessionEvent) {
 
 export function sessionEventToolUseId(event: QuickstartSessionEvent) {
   return (
-    sessionEventStringField(event, 'toolCallId') ||
     sessionEventStringField(event, 'tool_use_id') ||
     sessionEventStringField(event, 'mcp_tool_use_id') ||
     sessionEventStringField(event, 'custom_tool_use_id') ||

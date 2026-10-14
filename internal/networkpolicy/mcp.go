@@ -8,6 +8,7 @@ import (
 	urlpkg "net/url"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
 )
 
@@ -54,23 +55,17 @@ func MCPAllowedHosts(agentSnapshot json.RawMessage) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var root struct {
-		Multiagent *struct {
-			Agents []json.RawMessage `json:"agents"`
-		} `json:"multiagent"`
-	}
-	if err := json.Unmarshal(agentSnapshot, &root); err != nil {
+	children, err := agentsnapshot.Children(agentSnapshot)
+	if err != nil {
 		return nil, err
 	}
 	hosts := targets.hosts
-	if root.Multiagent != nil {
-		for _, child := range root.Multiagent.Agents {
-			childTargets, err := parseMCPServerTargets(child)
-			if err != nil {
-				return nil, err
-			}
-			hosts = append(hosts, childTargets.hosts...)
+	for _, child := range children {
+		childTargets, err := parseMCPServerTargets(child)
+		if err != nil {
+			return nil, err
 		}
+		hosts = append(hosts, childTargets.hosts...)
 	}
 	return collections.UniqueTrimmedStrings(hosts), nil
 }

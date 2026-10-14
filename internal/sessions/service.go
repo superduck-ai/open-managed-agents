@@ -477,9 +477,6 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 		return internalError("Could not list events", fmt.Errorf("list session %q child tool projections: %w", sessionID, err))
 	}
 	data := make([]json.RawMessage, 0, len(records))
-	if err := h.linkLegacyToolEvents(r.Context(), workspaceUUIDFromRequest(r), sessionID, threadID, records); err != nil {
-		return internalError("Could not link tool events", err)
-	}
 	for _, record := range records {
 		if !maevents.IsPublicSessionHistoryEvent(record.EventType) {
 			continue

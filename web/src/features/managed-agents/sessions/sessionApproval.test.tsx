@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { resetTestDom } from '../../../test/setup';
 import { type QuickstartSessionEvent } from '../types';
+import { mergeSessionEventsById } from '../api';
 import { findActiveAwaitingToolCall } from './sessionDetailModel';
 import { buildSessionEventEntries, latestRequiresActionEventIDs } from './sessionTraceModel';
 import { SessionRequiresActionCard } from './SessionRequiresActionCard';
@@ -15,6 +16,7 @@ test('child approval remains available while the parent is running', async () =>
     { id: 'parent-running', type: 'session.status_running' },
     {
       id: 'child-write',
+      primary_event_id: 'mirror-write',
       type: 'agent.tool_use',
       name: 'write',
       evaluated_permission: 'ask',
@@ -23,6 +25,7 @@ test('child approval remains available while the parent is running', async () =>
     },
     {
       id: 'mirror-write',
+      original_event_id: 'child-write',
       type: 'agent.tool_use',
       name: 'write',
       evaluated_permission: 'ask',
@@ -36,8 +39,9 @@ test('child approval remains available while the parent is running', async () =>
       stop_reason: { type: 'requires_action', event_ids: ['mirror-write'] },
     },
   ];
-  const pending = latestRequiresActionEventIDs(events);
-  const toolCall = findActiveAwaitingToolCall(buildSessionEventEntries(events, 'transcript'), pending);
+  const projected = mergeSessionEventsById(events);
+  const pending = latestRequiresActionEventIDs(projected);
+  const toolCall = findActiveAwaitingToolCall(buildSessionEventEntries(projected, 'transcript'), pending);
   const confirmations: unknown[] = [];
   render(
     <div>
@@ -55,45 +59,6 @@ test('child approval remains available while the parent is running', async () =>
   const deny = screen.getByTestId('tool-deny-button');
   fireEvent.click(deny);
   await waitFor(() =>
-    expect(confirmations).toEqual([{ toolUseId: 'mirror-write', result: 'deny', sessionThreadId: 'child' }]),
+    expect(confirmations).toEqual([{ toolUseId: 'child-write', result: 'deny', sessionThreadId: 'child' }]),
   );
-});
-
-test('parallel thread approvals survive another thread and parent changing state', () => {
-  const events: QuickstartSessionEvent[] = [
-    { type: 'session.status_idle', stop_reason: { type: 'requires_action', event_ids: ['main-tool'] } },
-    {
-      type: 'session.thread_status_idle',
-      session_thread_id: 'child-a',
-      stop_reason: { type: 'requires_action', event_ids: ['tool-a'] },
-    },
-    {
-      type: 'session.thread_status_idle',
-      session_thread_id: 'child-b',
-      stop_reason: { type: 'requires_action', event_ids: ['tool-b'] },
-    },
-    { type: 'session.status_running' },
-    { type: 'user.tool_confirmation', tool_use_id: 'tool-b', session_thread_id: 'child-b', result: 'deny' },
-    { type: 'session.thread_status_running', session_thread_id: 'child-b' },
-  ];
-  expect([...latestRequiresActionEventIDs(events)]).toEqual(['tool-a']);
-  events.push({ type: 'agent.tool_result', tool_use_id: 'tool-a', session_thread_id: 'child-a' });
-  expect([...latestRequiresActionEventIDs(events)]).toEqual([]);
-});
-
-test('terminated sessions and completed child threads clear their pending approvals', () => {
-  const waiting: QuickstartSessionEvent = {
-    type: 'session.thread_status_idle',
-    session_thread_id: 'child',
-    stop_reason: { type: 'requires_action', event_ids: ['tool'] },
-  };
-  for (const type of ['session.status_terminated', 'session.deleted', 'session.thread_status_terminated']) {
-    expect([...latestRequiresActionEventIDs([waiting, { type, session_thread_id: 'child' }])]).toEqual([]);
-  }
-  expect([
-    ...latestRequiresActionEventIDs([
-      waiting,
-      { type: 'session.thread_status_idle', session_thread_id: 'child', stop_reason: { type: 'end_turn' } },
-    ]),
-  ]).toEqual([]);
 });

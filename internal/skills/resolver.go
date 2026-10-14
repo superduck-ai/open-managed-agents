@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -92,10 +93,7 @@ func runtimeSkillRefs(snapshot json.RawMessage) ([]runtimeSkillRef, error) {
 		return nil, nil
 	}
 	var roster struct {
-		Skills     json.RawMessage `json:"skills"`
-		Multiagent *struct {
-			Agents []json.RawMessage `json:"agents"`
-		} `json:"multiagent"`
+		Skills json.RawMessage `json:"skills"`
 	}
 	if err := json.Unmarshal(snapshot, &roster); err != nil {
 		return nil, fmt.Errorf("decode agent snapshot: %w", err)
@@ -106,14 +104,16 @@ func runtimeSkillRefs(snapshot json.RawMessage) ([]runtimeSkillRef, error) {
 			return nil, fmt.Errorf("decode agent skills: %w", err)
 		}
 	}
-	if roster.Multiagent != nil {
-		for _, child := range roster.Multiagent.Agents {
-			childRefs, err := runtimeSkillRefs(child)
-			if err != nil {
-				return nil, err
-			}
-			refs = append(refs, childRefs...)
+	children, err := agentsnapshot.Children(snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("decode agent snapshot: %w", err)
+	}
+	for _, child := range children {
+		childRefs, err := runtimeSkillRefs(child)
+		if err != nil {
+			return nil, err
 		}
+		refs = append(refs, childRefs...)
 	}
 	for i, ref := range refs {
 		if strings.TrimSpace(ref.Type) != "anthropic" && strings.TrimSpace(ref.Type) != "custom" {

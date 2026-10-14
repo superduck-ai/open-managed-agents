@@ -18,7 +18,7 @@ type rosterReference struct {
 	Model   json.RawMessage `json:"model"`
 }
 
-func subagentSnapshots(snapshot json.RawMessage) ([]json.RawMessage, error) {
+func Children(snapshot json.RawMessage) ([]json.RawMessage, error) {
 	var root struct {
 		Multiagent *struct {
 			Agents []json.RawMessage `json:"agents"`
@@ -62,7 +62,7 @@ func SubagentNames(children []json.RawMessage) ([]string, error) {
 }
 
 func ForSubagentType(snapshot json.RawMessage, agentType string) (json.RawMessage, error) {
-	children, err := subagentSnapshots(snapshot)
+	children, err := Children(snapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func ForSubagentType(snapshot json.RawMessage, agentType string) (json.RawMessag
 }
 
 func ForSubagent(snapshot json.RawMessage, agentID string) (json.RawMessage, error) {
-	children, err := subagentSnapshots(snapshot)
+	children, err := Children(snapshot)
 	if err != nil {
 		return nil, err
 	}

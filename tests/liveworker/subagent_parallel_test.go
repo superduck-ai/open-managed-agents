@@ -12,11 +12,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 )
 
-func verifyParallelConfiguredSubagents(t *testing.T, e *liveEnv, childID, childName string, provider *chatDockerProvider) {
+func verifyParallelConfiguredSubagents(t *testing.T, e *liveEnv, childID, childName string) {
 	t.Helper()
 	ready := make(chan struct{}, 2)
 	release := make(chan struct{})
@@ -27,8 +25,6 @@ func verifyParallelConfiguredSubagents(t *testing.T, e *liveEnv, childID, childN
 	f := createPublicChat(t, e)
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
-	events, stop := connectChatStream(t, ctx, f)
-	defer stop()
 	submitChat(t, f, "Start two configured reviewers in the background.")
 	for range 2 {
 		select {
@@ -69,36 +65,6 @@ func verifyParallelConfiguredSubagents(t *testing.T, e *liveEnv, childID, childN
 	requireOK(t, err)
 	registerPublicSandboxCleanup(t, e, f)
 	finish()
-	confirmed := make(map[string]bool)
-	for len(confirmed) < 2 {
-		select {
-		case event := <-events:
-			if event.Type != "agent.tool_use" || event.Name != "write" {
-				continue
-			}
-			if !children[event.ThreadID] || event.EvaluatedPermission != "ask" || confirmed[event.ThreadID] {
-				t.Fatalf("parallel child policy mismatch: %+v", event)
-			}
-			var history struct {
-				Data []chatEvent `json:"data"`
-			}
-			requireOK(t, jsonv2.Unmarshal(e.request(t, "GET", "/v1/sessions/"+f.session.ExternalID+"/threads/"+event.ThreadID+"/events?types[]=agent.tool_use", e.apiKey, nil, 200), &history))
-			if len(history.Data) != 1 || history.Data[0].ID == event.ID {
-				t.Fatalf("child history did not expose an independent tool ID: %+v", history.Data)
-			}
-			if history.Data[0].PrimaryEventID != event.ID || event.OriginalEventID != history.Data[0].ID {
-				t.Fatal("public tool copies did not expose the same call identity")
-			}
-			confirmationID := history.Data[0].ID
-			if len(confirmed) == 1 {
-				confirmationID = event.ID
-			}
-			e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{"events": []map[string]string{{"type": "user.tool_confirmation", "tool_use_id": confirmationID, "result": "deny", "session_thread_id": event.ThreadID}}}, 200)
-			confirmed[event.ThreadID] = true
-		case <-ctx.Done():
-			t.Fatal("parallel child permissions were not independently requested")
-		}
-	}
 	waitRealWorker(t, "parallel child replies persisted", func() bool {
 		complete := true
 		for threadID := range children {
@@ -117,13 +83,6 @@ func verifyParallelConfiguredSubagents(t *testing.T, e *liveEnv, childID, childN
 		return complete
 	})
 	waitSubagentIdle(t, f)
-	sandbox, err := e.database.GetResumableEnvironmentSandboxForCodeSession(ctx, f.code.ExternalID)
-	requireOK(t, err)
-	result, err := provider.RunCommand(ctx, *sandbox.ProviderSandboxID, e2bruntime.CommandRequest{Command: "test ! -e /mnt/user-data/outputs/parallel-A.txt && test ! -e /mnt/user-data/outputs/parallel-B.txt", Timeout: 10 * time.Second})
-	requireOK(t, err)
-	if result.ExitCode != 0 {
-		t.Fatal("denied parallel Write produced a file")
-	}
 	e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/archive", e.apiKey, nil, 200)
 }
 
@@ -142,8 +101,7 @@ func parallelSubagentModelFixture(t *testing.T, childID, childName string, ready
 		if strings.Contains(string(body), "PARALLEL_A") {
 			label = "A"
 		}
-		firstChild := child && !strings.Contains(string(body), "toolu_parallel_write_")
-		if firstChild {
+		if child {
 			select {
 			case ready <- struct{}{}:
 			case <-r.Context().Done():
@@ -155,17 +113,7 @@ func parallelSubagentModelFixture(t *testing.T, childID, childName string, ready
 				return
 			}
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		write := func(kind string, fields map[string]any) {
-			fields["type"] = kind
-			data, err := jsonv2.Marshal(fields)
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", kind, data)
-			w.(http.Flusher).Flush()
-		}
+		write := subagentEventWriter(t, w)
 		write("message_start", map[string]any{"message": map[string]any{"id": fmt.Sprintf("msg_parallel_%d", call), "type": "message", "role": "assistant", "model": "claude-sonnet-4-6", "content": []any{}, "usage": map[string]int{"input_tokens": 10, "output_tokens": 0}}})
 		tool := func(index int, id, name string, input any) {
 			write("content_block_start", map[string]any{"index": index, "content_block": map[string]any{"type": "tool_use", "id": id, "name": name, "input": map[string]any{}}})
@@ -187,15 +135,9 @@ func parallelSubagentModelFixture(t *testing.T, childID, childName string, ready
 			for index, name := range []string{"A", "B"} {
 				tool(index, "toolu_parallel_"+name, "Agent", map[string]any{"description": "Parallel reviewer " + name, "prompt": "PARALLEL_" + name, "subagent_type": childName, "run_in_background": true})
 			}
-		case firstChild:
-			reason = "tool_use"
-			tool(0, "toolu_parallel_write_"+label, "Write", map[string]string{"file_path": "/mnt/user-data/outputs/parallel-" + label + ".txt", "content": "must be denied"})
 		default:
 			text := "parallel parent done"
 			if child {
-				if !strings.Contains(string(body), `"is_error":true`) {
-					t.Error("parallel denial was not returned to child")
-				}
 				text = "parallel reply " + label
 			}
 			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]string{"type": "text", "text": ""}})

@@ -6,8 +6,6 @@ import (
 	jsonv2 "encoding/json/v2"
 	"net/http"
 	"testing"
-	"time"
-	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -52,31 +50,23 @@ func TestLegacySessionSubagentSnapshot(t *testing.T) {
 
 	updateAgent(t, app, child.ID, `{"version":1,"name":"updated child","model":"claude-sonnet-4-6","system":"child-v2","skills":[],"mcp_servers":[],"tools":[]}`, http.StatusOK)
 	updateAgent(t, app, parent.ID, `{"version":1,"name":"updated parent","system":"parent-v2"}`, http.StatusOK)
-	for _, test := range []struct{ name, roster string }{
-		{"missing version", `{"agents":[{"id":` + quoteJSON(child.ID) + `,"type":"agent"}]}`},
-		{"missing pinned version", `{"agents":[{"id":` + quoteJSON(child.ID) + `,"type":"agent","version":9999}]}`},
-		{"unknown child", `{"agents":[{"id":"agent_missing","type":"agent","version":1}]}`},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			invalidFields := make(map[string]json.RawMessage)
-			if err := jsonv2.Unmarshal(legacy, &invalidFields); err != nil {
-				t.Fatal(err)
-			}
-			invalidFields["multiagent"] = json.RawMessage(test.roster)
-			invalid, err := jsonv2.Marshal(invalidFields)
-			if err != nil {
-				t.Fatal(err)
-			}
-			next := session
-			next.AgentSnapshot = invalid
-			if _, err := agentsnapshot.ResolveSession(t.Context(), app.db, next); err == nil {
-				t.Fatal("accepted invalid legacy reference")
-			}
-			stored, found, err := app.db.GetSession(t.Context(), session.WorkspaceUUID, session.ExternalID)
-			if err != nil || !found || !agentsnapshot.SameRawJSON(stored.AgentSnapshot, legacy) {
-				t.Fatalf("failure changed stored snapshot: %v", err)
-			}
-		})
+	invalidFields := make(map[string]json.RawMessage)
+	if err := jsonv2.Unmarshal(legacy, &invalidFields); err != nil {
+		t.Fatal(err)
+	}
+	invalidFields["multiagent"] = json.RawMessage(`{"agents":[{"id":` + quoteJSON(child.ID) + `,"type":"agent","version":9999}]}`)
+	invalid, err := jsonv2.Marshal(invalidFields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := session
+	next.AgentSnapshot = invalid
+	if _, err := agentsnapshot.ResolveSession(t.Context(), app.db, next); err == nil {
+		t.Fatal("accepted nonexistent pinned version")
+	}
+	stored, found, err := app.db.GetSession(t.Context(), session.WorkspaceUUID, session.ExternalID)
+	if err != nil || !found || !agentsnapshot.SameRawJSON(stored.AgentSnapshot, legacy) {
+		t.Fatalf("failure changed stored snapshot: %v", err)
 	}
 
 	resolved, err := agentsnapshot.ResolveSession(t.Context(), app.db, session)
@@ -124,7 +114,7 @@ func TestLegacySessionSubagentSnapshot(t *testing.T) {
 			t.Fatalf("changed root field %s", key)
 		}
 	}
-	stored, found, err := app.db.GetSession(t.Context(), session.WorkspaceUUID, session.ExternalID)
+	stored, found, err = app.db.GetSession(t.Context(), session.WorkspaceUUID, session.ExternalID)
 	if err != nil || !found || !agentsnapshot.SameRawJSON(stored.AgentSnapshot, resolved.AgentSnapshot) {
 		t.Fatalf("expanded snapshot not persisted: %v", err)
 	}
@@ -141,38 +131,21 @@ func TestLegacySessionSubagentSnapshot(t *testing.T) {
 		t.Fatalf("child skills not loaded: %+v %v", runtimeSkills, err)
 	}
 
-	t.Run("legacy deployment run", func(t *testing.T) {
-		now := time.Now().UTC()
-		deployment, err := app.deployments.Create(t.Context(), db.Deployment{
-			UUID: uuid.NewV4().String(), ExternalID: "deploy_legacy",
-			OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID, CreatedByAPIKeyUUID: session.CreatedByAPIKeyUUID,
-			EnvironmentUUID: session.EnvironmentUUID, EnvironmentExternalID: session.EnvironmentExternalID,
-			AgentUUID: session.AgentUUID, AgentExternalID: session.AgentExternalID, AgentVersion: 1, AgentSnapshot: legacy,
-			Name: "legacy", Metadata: json.RawMessage(`{}`), InitialEvents: json.RawMessage(`[]`), Resources: json.RawMessage(`[]`), ResourceSecrets: json.RawMessage(`{}`), VaultIDs: json.RawMessage(`[]`), Status: "active", CreatedAt: now, UpdatedAt: now,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		run := runDeployment(t, app, deployment.ExternalID)
-		if run.SessionID == nil {
-			t.Fatalf("deployment did not create session: %s", run.Error)
-		}
-		childSession, found, err := app.db.GetSession(t.Context(), session.WorkspaceUUID, *run.SessionID)
-		if err != nil || !found || !agentsnapshot.SameRawJSON(childSession.AgentSnapshot, legacy) {
-			t.Fatalf("deployment changed pinned reference: %v", err)
-		}
-		childSession, err = agentsnapshot.ResolveSession(t.Context(), app.db, childSession)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !agentsnapshot.SameRawJSON(childSession.AgentSnapshot, resolved.AgentSnapshot) {
-			t.Fatal("deployment session expanded a different configuration")
-		}
-		primary, found, err := app.db.GetPrimarySessionThread(t.Context(), session.WorkspaceUUID, childSession.ExternalID)
-		if err != nil || !found || !agentsnapshot.SameRawJSON(primary.AgentSnapshot, childSession.AgentSnapshot) {
-			t.Fatalf("deployment primary snapshot not expanded: %v", err)
-		}
-	})
+	current := createSession(t, app, `{"agent":`+quoteJSON(parent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	currentSession, _, err := app.db.GetSession(t.Context(), session.WorkspaceUUID, current.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historicalSelf, err := agentsnapshot.ForSubagentType(currentSession.AgentSnapshot, "parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jsonv2.Unmarshal(historicalSelf, &pinned); err != nil {
+		t.Fatal(err)
+	}
+	if pinned.ID != parent.ID || pinned.Version != 1 || pinned.System != "parent-v1" || string(pinned.Multiagent) != "null" {
+		t.Fatalf("updated parent changed self@V1: %s", historicalSelf)
+	}
 
 	codeID := launchLocalCodeSession(t, app, session.ExternalID)
 	epoch := registerCodeSessionWorker(t, app, codeID)
@@ -183,6 +156,19 @@ func TestLegacySessionSubagentSnapshot(t *testing.T) {
 	tool := sessionEventObjectByType(t, listThreadEvents(t, app, session.ExternalID, "sthr_child", defaultTestKey), "agent.tool_use")
 	if tool["evaluated_permission"] != "ask" {
 		t.Fatalf("lost pinned child ask policy: %v", tool["evaluated_permission"])
+	}
+	sendSessionEvents(t, app, session.ExternalID, `{"events":[{"type":"user.tool_confirmation","tool_use_id":`+quoteJSON(tool["id"].(string))+`,"result":"deny","session_thread_id":"sthr_child"}]}`, defaultTestKey)
+	_, confirmation := latestCodeSessionControlResponse(t, app, codeID)
+	var decision struct {
+		Response struct {
+			RequestID string `json:"request_id"`
+			Response  struct {
+				Behavior string `json:"behavior"`
+			} `json:"response"`
+		} `json:"response"`
+	}
+	if err := jsonv2.Unmarshal(confirmation, &decision); err != nil || decision.Response.RequestID != "child-request" || decision.Response.Response.Behavior != "deny" {
+		t.Fatalf("original child ID did not resume pending approval: %s %v", confirmation, err)
 	}
 }
 

@@ -69,11 +69,10 @@ test('a pending mirror remains actionable before and after child history arrives
     const pending = latestRequiresActionEventIDs(events);
     const entry = findActiveAwaitingToolCall(buildSessionEventEntries(events, 'transcript'), pending);
     expect(entry?.lifecycle).toBe('awaiting_approval');
-    expect(entry?.event.id).toBe(tools.length === 1 ? 'sevt_mirror' : 'sevt_child');
+    expect(entry?.event.id).toBe('sevt_child');
     expect([...pending]).toEqual(['sevt_child']);
     const confirmed = mergeSessionEventsById([
-      ...tools,
-      waiting,
+      ...events,
       {
         id: 'sevt_confirm',
         type: 'user.tool_confirmation',
@@ -94,14 +93,41 @@ test('legacy child history can link an unannotated primary mirror', () => {
   expect(calls([legacyMirror, child])).toHaveLength(1);
 });
 
-test('independent calls keep separate rows even with the same thread, file, input and time', () => {
-  const second = { ...child, id: 'sevt_second', primary_event_id: 'sevt_second_mirror' };
-  const otherThread = {
-    ...child,
-    id: 'sevt_other',
-    primary_event_id: 'sevt_other_mirror',
-    session_thread_id: 'sthr_other',
+test('parallel thread approvals survive another thread and parent changing state', () => {
+  const events: QuickstartSessionEvent[] = [
+    { type: 'session.status_idle', stop_reason: { type: 'requires_action', event_ids: ['main-tool'] } },
+    {
+      type: 'session.thread_status_idle',
+      session_thread_id: 'child-a',
+      stop_reason: { type: 'requires_action', event_ids: ['tool-a'] },
+    },
+    {
+      type: 'session.thread_status_idle',
+      session_thread_id: 'child-b',
+      stop_reason: { type: 'requires_action', event_ids: ['tool-b'] },
+    },
+    { type: 'session.status_running' },
+    { type: 'user.tool_confirmation', tool_use_id: 'tool-b', session_thread_id: 'child-b', result: 'deny' },
+    { type: 'session.thread_status_running', session_thread_id: 'child-b' },
+  ];
+  expect([...latestRequiresActionEventIDs(events)]).toEqual(['tool-a']);
+  events.push({ type: 'agent.tool_result', tool_use_id: 'tool-a', session_thread_id: 'child-a' });
+  expect([...latestRequiresActionEventIDs(events)]).toEqual([]);
+});
+
+test('terminated sessions and completed child threads clear their pending approvals', () => {
+  const waiting: QuickstartSessionEvent = {
+    type: 'session.thread_status_idle',
+    session_thread_id: 'child',
+    stop_reason: { type: 'requires_action', event_ids: ['tool'] },
   };
-  const entries = calls([mirror, child, second, otherThread]);
-  expect(entries.map((entry) => entry.event.id)).toEqual(['sevt_child', 'sevt_second', 'sevt_other']);
+  for (const type of ['session.status_terminated', 'session.deleted', 'session.thread_status_terminated']) {
+    expect([...latestRequiresActionEventIDs([waiting, { type, session_thread_id: 'child' }])]).toEqual([]);
+  }
+  expect([
+    ...latestRequiresActionEventIDs([
+      waiting,
+      { type: 'session.thread_status_idle', session_thread_id: 'child', stop_reason: { type: 'end_turn' } },
+    ]),
+  ]).toEqual([]);
 });

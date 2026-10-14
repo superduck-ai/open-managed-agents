@@ -65,6 +65,13 @@
         AND external_id = #{externalID}
     </select>
 
+    <select id="FindOrganizationDefault" resultType="llmProviderRow">
+        SELECT <include refid="columns"/>
+        FROM llm_providers
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid IS NULL
+    </select>
+
     <update id="UpdateByExternalID" result="returning" resultType="llmProviderRow">
         UPDATE llm_providers
         SET name = #{params.Name},
@@ -84,10 +91,36 @@
         RETURNING <include refid="columns"/>
     </update>
 
+    <update id="UpdateOrganizationDefault" result="returning" resultType="llmProviderRow">
+        UPDATE llm_providers
+        SET name = #{params.Name},
+            base_url = #{params.BaseURL},
+            api_key_last4 = #{params.APIKeyLast4},
+            model_ids = CAST(#{params.ModelIDs} AS jsonb),
+            ciphertext = #{params.Ciphertext,sensitive=true},
+            nonce = #{params.Nonce,sensitive=true},
+            wrapped_dek = #{params.WrappedDEK,sensitive=true},
+            format_version = #{params.FormatVersion},
+            key_provider = #{params.KeyProvider},
+            key_version = #{params.KeyVersion},
+            updated_at = #{params.UpdatedAt}
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid IS NULL
+        AND external_id = #{params.ExternalID}
+        RETURNING <include refid="columns"/>
+    </update>
+
     <delete id="DeleteByExternalID" result="rows">
         DELETE FROM llm_providers
         WHERE organization_uuid = #{organizationUUID}
         AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+    </delete>
+
+    <delete id="DeleteOrganizationDefault" result="rows">
+        DELETE FROM llm_providers
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid IS NULL
         AND external_id = #{externalID}
     </delete>
 </mapper>

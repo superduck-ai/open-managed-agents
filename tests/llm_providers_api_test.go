@@ -558,6 +558,192 @@ func TestWorkspaceLLMProviderResolutionFailsClosedOnAmbiguousModel(t *testing.T)
 	}
 }
 
+func TestOrganizationLLMConsoleIsReadableByMembers(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("llm-providers-organization-console-bucket"))
+	defer app.close()
+	clearTestLLMProviders(t, app)
+
+	const email = "llm-providers-organization-member@example.com"
+	cookies := app.platformLoginCookies(t, email)
+	orgUUID := loadDefaultOrganizationUUID(t, app)
+	if _, err := app.pool.Exec(context.Background(), `
+		update users set role = 'user' where organization_uuid = $1 and lower(email) = lower($2)
+	`, orgUUID, email); err != nil {
+		t.Fatalf("downgrade test user: %v", err)
+	}
+
+	console := app.platformRequest(t, http.MethodGet, "/api/console/organizations/"+orgUUID+"/llm_console", nil, cookies)
+	defer console.Body.Close()
+	if console.StatusCode != http.StatusOK {
+		t.Fatalf("console status = %d, want 200: %s", console.StatusCode, readAll(t, console.Body))
+	}
+	var consoleBody map[string]any
+	decodeJSON(t, console.Body, &consoleBody)
+	if consoleBody["console_url"] != "https://ccloud.cvte.com/ai/tenant-management" || consoleBody["base_url"] != "https://narrows-gateway.test.seewo.com" {
+		t.Fatalf("console = %#v", consoleBody)
+	}
+
+	missing := app.platformRequest(t, http.MethodGet, "/api/console/organizations/"+orgUUID+"/llm_provider", nil, cookies)
+	defer missing.Body.Close()
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("member organization provider status = %d, want 404: %s", missing.StatusCode, readAll(t, missing.Body))
+	}
+
+	denied := app.platformRequest(t, http.MethodPut, "/api/console/organizations/"+orgUUID+"/llm_provider", strings.NewReader(`{
+		"name":"Organization default",
+		"base_url":"https://organization.example.com",
+		"api_key":"organization-provider-secret",
+		"model_ids":["org-only"]
+	}`), cookies)
+	defer denied.Body.Close()
+	if denied.StatusCode != http.StatusForbidden {
+		t.Fatalf("member put status = %d, want 403: %s", denied.StatusCode, readAll(t, denied.Body))
+	}
+	var deniedBody map[string]any
+	decodeJSON(t, denied.Body, &deniedBody)
+	if deniedBody["code"] != "llm_provider_permission_denied" {
+		t.Fatalf("permission error = %#v", deniedBody)
+	}
+}
+
+func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("llm-providers-organization-bucket"))
+	defer app.close()
+	clearTestLLMProviders(t, app)
+
+	orgUUID := loadDefaultOrganizationUUID(t, app)
+	workspaceUUID := getDefaultDBIDs(t, app.pool).WorkspaceUUID
+	cookies := app.platformLoginCookies(t, "llm-providers-organization@example.com")
+	path := "/api/console/organizations/" + orgUUID + "/llm_provider"
+	workspacePath := "/api/console/organizations/" + orgUUID + "/workspaces/default/llm_providers"
+	const orgKey = "organization-provider-secret"
+
+	if _, err := llmproviders.ListModelIDs(context.Background(), app.db, orgUUID, workspaceUUID); !errors.Is(err, llmproviders.ErrNotConfigured) {
+		t.Fatalf("empty model list error = %v, want ErrNotConfigured", err)
+	}
+	missing := app.platformRequest(t, http.MethodGet, path, nil, cookies)
+	defer missing.Body.Close()
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing organization provider status = %d, want 404: %s", missing.StatusCode, readAll(t, missing.Body))
+	}
+
+	createdResponse := app.platformRequest(t, http.MethodPut, path, strings.NewReader(`{
+		"name":"Organization default",
+		"base_url":"https://organization.example.com/anthropic",
+		"api_key":"organization-provider-secret",
+		"model_ids":["org-only","shared-model"]
+	}`), cookies)
+	defer createdResponse.Body.Close()
+	if createdResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("create organization provider status = %d, want 201: %s", createdResponse.StatusCode, readAll(t, createdResponse.Body))
+	}
+	var created map[string]any
+	decodeJSON(t, createdResponse.Body, &created)
+	if created["scope"] != "organization" || created["api_key_last4"] != "cret" {
+		t.Fatalf("organization provider = %#v", created)
+	}
+	assertJSONDoesNotContain(t, created, orgKey)
+	createdID, _ := created["id"].(string)
+
+	var storedWorkspace *string
+	if err := app.pool.QueryRow(context.Background(), `
+		select workspace_uuid from llm_providers where external_id = $1
+	`, createdID).Scan(&storedWorkspace); err != nil {
+		t.Fatalf("load organization provider workspace: %v", err)
+	}
+	if storedWorkspace != nil {
+		t.Fatalf("organization provider workspace_uuid = %v, want NULL", *storedWorkspace)
+	}
+
+	workspaceList := app.platformRequest(t, http.MethodGet, workspacePath, nil, cookies)
+	defer workspaceList.Body.Close()
+	workspaceBody := readAll(t, workspaceList.Body)
+	if workspaceList.StatusCode != http.StatusOK || bytes.Contains(workspaceBody, []byte(createdID)) {
+		t.Fatalf("workspace provider list = %d %s", workspaceList.StatusCode, workspaceBody)
+	}
+
+	orgUpstream, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "org-only")
+	if err != nil || orgUpstream.BaseURL != "https://organization.example.com/anthropic" || orgUpstream.APIKey != orgKey {
+		t.Fatalf("organization resolution = %#v, %v", orgUpstream, err)
+	}
+	otherWorkspace := "00000000-0000-4000-8000-000000000077"
+	if _, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, otherWorkspace, "org-only"); err != nil {
+		t.Fatalf("other workspace organization resolution: %v", err)
+	}
+
+	workspaceProvider := createConsoleLLMProvider(t, app, workspacePath, cookies, `{
+		"name":"Workspace",
+		"base_url":"https://workspace.example.com",
+		"api_key":"workspace-provider-secret",
+		"model_ids":["shared-model","workspace-only"]
+	}`)
+	assertJSONDoesNotContain(t, workspaceProvider, "workspace-provider-secret")
+	shared, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "shared-model")
+	if err != nil || shared.BaseURL != "https://workspace.example.com" || shared.APIKey != "workspace-provider-secret" {
+		t.Fatalf("workspace override = %#v, %v", shared, err)
+	}
+	if _, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "org-only"); err != nil {
+		t.Fatalf("organization-only model after workspace override: %v", err)
+	}
+	modelIDs, err := llmproviders.ListModelIDs(context.Background(), app.db, orgUUID, workspaceUUID)
+	if err != nil {
+		t.Fatalf("list merged models: %v", err)
+	}
+	if !slices.Equal(modelIDs, []string{"shared-model", "workspace-only", "org-only"}) {
+		t.Fatalf("merged models = %#v", modelIDs)
+	}
+
+	externalID, err := ids.New("llmprov_test_")
+	if err != nil {
+		t.Fatalf("generate duplicate organization provider ID: %v", err)
+	}
+	now := time.Now().UTC()
+	duplicate := db.LLMProvider{
+		UUID:             uuid.NewString(),
+		ExternalID:       externalID,
+		OrganizationUUID: orgUUID,
+		Name:             "Second default",
+		BaseURL:          "https://second.example.com",
+		APIKeyLast4:      "cond",
+		ModelIDs:         []string{"second-model"},
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	plaintext := []byte("second-provider-secret")
+	envelope, err := app.vaultSecrets.Seal(context.Background(), llmproviders.SecretBinding(duplicate), plaintext)
+	clear(plaintext)
+	if err != nil {
+		t.Fatalf("seal duplicate organization provider: %v", err)
+	}
+	duplicate.SecretEnvelope = &envelope
+	if _, err := app.db.CreateLLMProvider(context.Background(), duplicate); !errors.Is(err, db.ErrOrganizationLLMProviderExists) {
+		t.Fatalf("duplicate organization provider error = %v, want ErrOrganizationLLMProviderExists", err)
+	}
+
+	updated := app.platformRequest(t, http.MethodPut, path, strings.NewReader(`{
+		"name":"Organization default updated",
+		"base_url":"https://organization.example.com/anthropic",
+		"model_ids":["org-only","shared-model"]
+	}`), cookies)
+	defer updated.Body.Close()
+	if updated.StatusCode != http.StatusOK {
+		t.Fatalf("update organization provider status = %d, want 200: %s", updated.StatusCode, readAll(t, updated.Body))
+	}
+	retained, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, otherWorkspace, "org-only")
+	if err != nil || retained.APIKey != orgKey {
+		t.Fatalf("updated organization key = %#v, %v", retained, err)
+	}
+
+	deleted := app.platformRequest(t, http.MethodDelete, path, nil, cookies)
+	defer deleted.Body.Close()
+	if deleted.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete organization provider status = %d, want 204: %s", deleted.StatusCode, readAll(t, deleted.Body))
+	}
+	if _, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "org-only"); !errors.Is(err, llmproviders.ErrModelNotConfigured) {
+		t.Fatalf("deleted organization model error = %v, want ErrModelNotConfigured", err)
+	}
+}
+
 func forceTestLLMProviderModels(t *testing.T, app *testApp, externalID string, modelIDs []string) {
 	t.Helper()
 	encoded, err := json.Marshal(modelIDs)

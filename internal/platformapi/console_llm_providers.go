@@ -37,11 +37,19 @@ type llmProviderResponse struct {
 	ModelIDs        []string `json:"model_ids"`
 	CreatedAt       string   `json:"created_at"`
 	UpdatedAt       string   `json:"updated_at"`
+	Scope           string   `json:"scope,omitempty"`
 	SkippedModelIDs []string `json:"skipped_model_ids,omitempty"`
 }
 
-func RegisterConsoleLLMProviderRoutes(r chi.Router, database *db.DB, secretService *secrets.Service) {
+func RegisterConsoleLLMProviderRoutes(r chi.Router, database *db.DB, secretService *secrets.Service, organizationConsoleURL, organizationBaseURL string) {
 	client := llmproviders.NewHTTPClient(15 * time.Second)
+	r.Get("/llm_console", getOrganizationLLMConsole(organizationConsoleURL, organizationBaseURL))
+	r.Route("/llm_provider", func(r chi.Router) {
+		r.Get("/", getConsoleOrganizationLLMProvider(database))
+		r.Put("/", putConsoleOrganizationLLMProvider(database, secretService))
+		r.Delete("/", deleteConsoleOrganizationLLMProvider(database))
+		r.Post("/models/sync", syncConsoleOrganizationLLMProviderModels(database, secretService, client))
+	})
 	r.Route("/workspaces/{workspaceId}/llm_providers", func(r chi.Router) {
 		r.Get("/", listConsoleLLMProviders(database))
 		r.Post("/", createConsoleLLMProvider(database, secretService))

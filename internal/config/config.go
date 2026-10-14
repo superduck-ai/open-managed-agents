@@ -30,6 +30,8 @@ func Load() (Config, error) {
 	cfg.Auth.SMTP.Addr = strings.TrimSpace(cfg.Auth.SMTP.Addr)
 	cfg.Auth.SMTP.Username = strings.TrimSpace(cfg.Auth.SMTP.Username)
 	cfg.Auth.ConsoleURL = strings.TrimSpace(cfg.Auth.ConsoleURL)
+	cfg.OrganizationLLM.ConsoleURL = strings.TrimSpace(cfg.OrganizationLLM.ConsoleURL)
+	cfg.OrganizationLLM.BaseURL = strings.TrimSpace(cfg.OrganizationLLM.BaseURL)
 	cfg.E2B.APIKey = strings.TrimSpace(cfg.E2B.APIKey)
 	cfg.E2B.AccessToken = strings.TrimSpace(cfg.E2B.AccessToken)
 	cfg.E2B.Domain = strings.TrimSpace(cfg.E2B.Domain)
@@ -71,6 +73,9 @@ func validate(cfg Config) error {
 		return err
 	}
 	if err := validateAuthConfig(cfg.Auth); err != nil {
+		return err
+	}
+	if err := validateOrganizationLLMConfig(cfg.OrganizationLLM); err != nil {
 		return err
 	}
 	if err := validateEnvironmentPrebuildConfig(cfg.EnvironmentPrebuilds, cfg.E2B); err != nil {
@@ -125,6 +130,35 @@ func validate(cfg Config) error {
 		return err
 	}
 	return validateCodeSessionUpstreamProxyMITMConfig(cfg.CodeSession)
+}
+
+func validateOrganizationLLMConfig(cfg OrganizationLLMConfig) error {
+	if err := validateOrganizationLLMHTTPSURL(cfg.ConsoleURL, "organization_llm.console_url"); err != nil {
+		return err
+	}
+	return validateOrganizationLLMGatewayURL(cfg.BaseURL)
+}
+
+func validateOrganizationLLMHTTPSURL(rawURL, field string) error {
+	if rawURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Hostname() == "" || parsed.Scheme != "https" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("%s must be an HTTPS URL without userinfo, query, or fragment", field)
+	}
+	return nil
+}
+
+func validateOrganizationLLMGatewayURL(rawURL string) error {
+	if rawURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("organization_llm.base_url must be an HTTP(S) URL without userinfo, query, or fragment")
+	}
+	return nil
 }
 
 func validateAuthConfig(cfg AuthConfig) error {

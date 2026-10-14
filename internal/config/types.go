@@ -19,6 +19,7 @@ type Config struct {
 	Redis                RedisConfig               `yaml:"redis"`
 	NATS                 NATSConfig                `yaml:"nats"`
 	Auth                 AuthConfig                `yaml:"auth"`
+	OrganizationLLM      OrganizationLLMConfig     `yaml:"organization_llm"`
 	Tunnel               TunnelConfig              `yaml:"tunnel"`
 	Storage              StorageConfig             `yaml:"storage"`
 	Batch                BatchConfig               `yaml:"batch"`
@@ -104,6 +105,11 @@ type NATSConfig struct {
 type AuthConfig struct {
 	SMTP       EmailSMTPConfig `yaml:"smtp"`
 	ConsoleURL string          `yaml:"console_url"`
+}
+
+type OrganizationLLMConfig struct {
+	ConsoleURL string `yaml:"console_url"`
+	BaseURL    string `yaml:"base_url"`
 }
 
 type EmailSMTPConfig struct {

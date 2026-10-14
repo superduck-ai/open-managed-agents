@@ -44,6 +44,7 @@ type yamlConfig struct {
 	Redis                RedisConfig               `yaml:"redis"`
 	NATS                 yamlNATSConfig            `yaml:"nats"`
 	Auth                 AuthConfig                `yaml:"auth"`
+	OrganizationLLM      OrganizationLLMConfig     `yaml:"organization_llm"`
 	Tunnel               TunnelConfig              `yaml:"tunnel"`
 	Storage              StorageConfig             `yaml:"storage"`
 	Batch                BatchConfig               `yaml:"batch"`
@@ -110,6 +111,7 @@ func newYAMLConfig() yamlConfig {
 			DrainTimeout:      defaults.NATS.DrainTimeout,
 		},
 		Auth:                 defaults.Auth,
+		OrganizationLLM:      defaults.OrganizationLLM,
 		Tunnel:               defaults.Tunnel,
 		Storage:              defaults.Storage,
 		Batch:                defaults.Batch,
@@ -159,6 +161,7 @@ func (input yamlConfig) resolve() Config {
 			DrainTimeout:      input.NATS.DrainTimeout,
 		},
 		Auth:                 input.Auth,
+		OrganizationLLM:      input.OrganizationLLM,
 		Tunnel:               input.Tunnel,
 		Storage:              input.Storage,
 		Batch:                input.Batch,

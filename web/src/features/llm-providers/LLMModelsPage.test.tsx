@@ -44,6 +44,65 @@ describe('LLM models page', () => {
     expect(api.requests).toHaveLength(0);
   });
 
+  test('shows an organization default when the workspace has no provider', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
+    mockProvidersApi([], {
+      organizationProvider: {
+        type: 'llm_provider',
+        id: 'llmprov_org',
+        name: 'Shared gateway',
+        base_url: 'https://shared.example.com',
+        has_api_key: true,
+        api_key_last4: 'cret',
+        model_ids: ['org-only'],
+        scope: 'organization',
+        created_at: '2026-08-20T00:00:00Z',
+        updated_at: '2026-08-20T00:00:00Z',
+      },
+    });
+    renderPage();
+
+    expect((await screen.findAllByText('Shared gateway')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Organization default').length).toBeGreaterThan(0);
+    expect(screen.getByText('org-only')).toBeTruthy();
+    expect(screen.queryByText('No providers yet')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Shared gateway' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    const deleteDialog = screen.getByRole('alertdialog', { name: 'Delete provider?' });
+    expect(deleteDialog.textContent).toContain(
+      'This removes the organization default for every workspace. Workspace providers stay.',
+    );
+    expect(deleteDialog.textContent).not.toContain('in this workspace');
+  });
+
+  test('keeps workspace providers visible when the organization default cannot be loaded', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
+    mockProvidersApi([], {
+      organizationStatus: 500,
+      workspaceProviders: [
+        {
+          type: 'llm_provider',
+          id: 'provider_workspace',
+          name: 'Workspace gateway',
+          base_url: 'https://workspace.example.com',
+          has_api_key: true,
+          api_key_last4: 'work',
+          model_ids: ['workspace-only'],
+          created_at: '2026-08-20T00:00:00Z',
+          updated_at: '2026-08-20T00:00:00Z',
+        },
+      ],
+    });
+    renderPage();
+
+    expect(await screen.findByText('workspace-only')).toBeTruthy();
+    expect(screen.getAllByText('Workspace gateway').length).toBeGreaterThan(0);
+    expect(
+      screen.getByText('The organization default could not be loaded. Workspace providers are still available.'),
+    ).toBeTruthy();
+  });
+
   test('shows the workspace provider empty state', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
     mockProvidersApi();
@@ -504,9 +563,12 @@ function mockProvidersApi(
     updateModelId?: string;
     updateGate?: Promise<void>;
     syncSkippedModelIds?: string[];
+    organizationProvider?: LLMProvider;
+    organizationStatus?: number;
+    workspaceProviders?: LLMProvider[];
   } = {},
 ) {
-  let providers: LLMProvider[] = [];
+  let providers: LLMProvider[] = options.workspaceProviders ?? [];
   let nextID = 1;
   const requests: RecordedRequest[] = [];
   globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -532,6 +594,18 @@ function mockProvidersApi(
       const updated = { ...existing, model_ids: modelIds };
       providers = providers.map((provider) => (provider.id === providerID ? updated : provider));
       return jsonResponse({ ...updated, skipped_model_ids: options.syncSkippedModelIds });
+    }
+    if (url.endsWith('/llm_provider') && method === 'GET') {
+      if (options.organizationStatus && options.organizationStatus >= 400) {
+        return jsonResponse(
+          { error: 'api_error', code: 'request_failed', message: 'failed' },
+          options.organizationStatus,
+        );
+      }
+      if (!options.organizationProvider) {
+        return jsonResponse({ error: 'invalid_request', code: 'llm_provider_not_found', message: 'not found' }, 404);
+      }
+      return jsonResponse(options.organizationProvider);
     }
     if (url.endsWith('/llm_providers') && method === 'GET') {
       return jsonResponse(providers);

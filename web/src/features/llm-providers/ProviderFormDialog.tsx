@@ -178,7 +178,7 @@ export function ProviderFormDialog({
   );
 }
 
-function ModelIdFields({
+export function ModelIdFields({
   modelIds,
   discovering,
   showFetch,
@@ -246,7 +246,7 @@ function ModelIdFields({
   );
 }
 
-function mergeModelIds(existing: string[], discovered: string[]) {
+export function mergeModelIds(existing: string[], discovered: string[]) {
   const merged = [...existing, ...discovered].filter((modelId) => modelId !== '');
   return [...new Set(merged)];
 }

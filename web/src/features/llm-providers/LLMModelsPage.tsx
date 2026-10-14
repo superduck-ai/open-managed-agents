@@ -14,12 +14,12 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { Skeleton } from '../../shared/ui/skeleton';
 import { toast } from '../../shared/ui/sonner';
 import {
-  createLLMProvider,
-  deleteLLMProvider,
+  getOrganizationLLMProvider,
   listLLMProviders,
+  persistLLMProvider,
   previewProviderModels,
-  syncProviderModels,
-  updateLLMProvider,
+  removeLLMProvider,
+  syncLLMProvider,
   type LLMProvider,
   type LLMProviderInput,
 } from './api';
@@ -83,6 +83,7 @@ function LLMModelsAdminPage() {
     () => ['console', 'llm-providers', orgUuid, workspaceId] as const,
     [orgUuid, workspaceId],
   );
+  const organizationKey = useMemo(() => ['console', 'llm-providers', 'organization', orgUuid] as const, [orgUuid]);
 
   useEffect(() => {
     if (routeWorkspaceId && routeWorkspaceId !== activeWorkspaceId) {
@@ -96,12 +97,23 @@ function LLMModelsAdminPage() {
     enabled: Boolean(orgUuid && workspaceId),
     retry: false,
   });
-  const providers = providersQuery.data ?? [];
+  const organizationQuery = useQuery({
+    queryKey: organizationKey,
+    queryFn: () => getOrganizationLLMProvider(orgUuid ?? ''),
+    enabled: Boolean(orgUuid),
+    retry: false,
+  });
+  const providers = organizationQuery.data
+    ? [organizationQuery.data, ...(providersQuery.data ?? [])]
+    : (providersQuery.data ?? []);
   const activeProviderId = resolvedProviderSelection(providers, selectedProviderId);
   const catalog = catalogModels(providers);
 
   const invalidateCatalog = async () => {
-    await queryClient.invalidateQueries({ queryKey: providersKey });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: providersKey }),
+      queryClient.invalidateQueries({ queryKey: organizationKey }),
+    ]);
   };
 
   const discoverModels = useCallback(
@@ -130,7 +142,7 @@ function LLMModelsAdminPage() {
     setIsSyncing(true);
     try {
       const results = await Promise.allSettled(
-        targets.map((provider) => syncProviderModels(orgUuid, workspaceId, provider.id, csrfToken)),
+        targets.map((provider) => syncLLMProvider(orgUuid, workspaceId, provider, csrfToken)),
       );
       const skippedModelIds = new Set<string>();
       for (const result of results) {
@@ -162,9 +174,7 @@ function LLMModelsAdminPage() {
       if (!orgUuid) {
         throw new Error(msg('llmModels.noOrganization', 'No organization is available.'));
       }
-      return editing
-        ? updateLLMProvider(orgUuid, workspaceId, editing.id, input, csrfToken)
-        : createLLMProvider(orgUuid, workspaceId, input, csrfToken);
+      return persistLLMProvider(orgUuid, workspaceId, editing, input, csrfToken);
     },
     onSuccess: async () => {
       closeForm();
@@ -173,7 +183,7 @@ function LLMModelsAdminPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (provider: LLMProvider) => deleteLLMProvider(orgUuid ?? '', workspaceId, provider.id, csrfToken),
+    mutationFn: (provider: LLMProvider) => removeLLMProvider(orgUuid ?? '', workspaceId, provider, csrfToken),
     onSuccess: async () => {
       setDeleting(null);
       await invalidateCatalog();
@@ -185,7 +195,7 @@ function LLMModelsAdminPage() {
       if (!orgUuid) {
         throw new Error(msg('llmModels.noOrganization', 'No organization is available.'));
       }
-      return updateLLMProvider(orgUuid, workspaceId, provider.id, providerInput(provider, modelIds), csrfToken);
+      return persistLLMProvider(orgUuid, workspaceId, provider, providerInput(provider, modelIds), csrfToken);
     },
     onSuccess: async () => {
       setQuery('');
@@ -222,10 +232,11 @@ function LLMModelsAdminPage() {
   };
 
   const refreshCatalog = async () => {
-    const targets =
+    const targets = (
       activeProviderId === ALL_PROVIDERS_ID
         ? providers
-        : providers.filter((provider) => provider.id === activeProviderId);
+        : providers.filter((provider) => provider.id === activeProviderId)
+    ).filter((provider) => provider.scope !== 'organization');
     try {
       await syncLiveModels(targets);
     } catch (error) {
@@ -261,9 +272,10 @@ function LLMModelsAdminPage() {
         catalog={catalog}
         selectedProviderId={activeProviderId}
         query={query}
-        isLoading={providersQuery.isLoading}
+        isLoading={providersQuery.isLoading || organizationQuery.isLoading}
         providersError={providersQuery.error}
-        isRefreshing={providersQuery.isFetching || isSyncing}
+        organizationError={organizationQuery.error}
+        isRefreshing={providersQuery.isFetching || organizationQuery.isFetching || isSyncing}
         isAddingModel={updateModelsMutation.isPending}
         onOpenCreate={openCreate}
         onQueryChange={setQuery}
@@ -309,6 +321,7 @@ function CatalogBody({
   query,
   isLoading,
   providersError,
+  organizationError,
   isRefreshing,
   isAddingModel,
   onOpenCreate,
@@ -325,6 +338,7 @@ function CatalogBody({
   query: string;
   isLoading: boolean;
   providersError: unknown;
+  organizationError: unknown;
   isRefreshing: boolean;
   isAddingModel: boolean;
   onOpenCreate: () => void;
@@ -347,38 +361,50 @@ function CatalogBody({
   if (isLoading) {
     return <CatalogSkeleton />;
   }
-  if (providers.length === 0) {
-    return (
-      <Empty className="min-h-[320px] border border-dashed border-border bg-card">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <Bot aria-hidden />
-          </EmptyMedia>
-          <EmptyTitle>{msg('llmModels.catalogEmptyTitle', 'No providers yet')}</EmptyTitle>
-        </EmptyHeader>
-        <EmptyContent>
-          <Button type="button" onClick={onOpenCreate}>
-            {msg('llmModels.addProvider', 'Add provider')}
-          </Button>
-        </EmptyContent>
-      </Empty>
-    );
-  }
   return (
-    <ModelCatalog
-      providers={providers}
-      models={catalog}
-      selectedProviderId={selectedProviderId}
-      query={query}
-      isRefreshing={isRefreshing}
-      isAddingModel={isAddingModel}
-      onQueryChange={onQueryChange}
-      onRefresh={onRefresh}
-      onSelectProvider={onSelectProvider}
-      onEditProvider={onEditProvider}
-      onDeleteProvider={onDeleteProvider}
-      onAddModel={onAddModel}
-    />
+    <>
+      {organizationError ? (
+        <Alert variant="destructive" className="mb-4">
+          <AlertCircle aria-hidden />
+          <AlertDescription>
+            {msg(
+              'llmModels.organizationUnavailable',
+              'The organization default could not be loaded. Workspace providers are still available.',
+            )}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {providers.length === 0 ? (
+        <Empty className="min-h-[320px] border border-dashed border-border bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Bot aria-hidden />
+            </EmptyMedia>
+            <EmptyTitle>{msg('llmModels.catalogEmptyTitle', 'No providers yet')}</EmptyTitle>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button type="button" onClick={onOpenCreate}>
+              {msg('llmModels.addProvider', 'Add provider')}
+            </Button>
+          </EmptyContent>
+        </Empty>
+      ) : (
+        <ModelCatalog
+          providers={providers}
+          models={catalog}
+          selectedProviderId={selectedProviderId}
+          query={query}
+          isRefreshing={isRefreshing}
+          isAddingModel={isAddingModel}
+          onQueryChange={onQueryChange}
+          onRefresh={onRefresh}
+          onSelectProvider={onSelectProvider}
+          onEditProvider={onEditProvider}
+          onDeleteProvider={onDeleteProvider}
+          onAddModel={onAddModel}
+        />
+      )}
+    </>
   );
 }
 

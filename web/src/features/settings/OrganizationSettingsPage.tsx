@@ -33,6 +33,7 @@ import {
   settingsSectionFromPath,
   type SettingsPageSection,
 } from './feature-pages';
+import { OrganizationLLMProviderCard } from './OrganizationLLMProviderCard';
 import { OrganizationMembersPage } from './OrganizationMembersPage';
 import { WorkspacesSettingsPage } from './WorkspacesSettingsPage';
 import { RetiredConsolePage } from '../dashboard/RetiredConsolePage';
@@ -408,6 +409,7 @@ export function OrganizationSettingsContent() {
             />
           </CardContent>
         </Card>
+        <OrganizationLLMProviderCard />
       </div>
     </section>
   );

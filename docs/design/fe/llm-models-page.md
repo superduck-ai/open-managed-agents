@@ -4,7 +4,7 @@
 
 LLM 模型页是工作区的模型目录，而不是 Provider 卡片墙。
 
-页面只请求 `GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers`。Provider 配置及其 `model_ids` 是目录的唯一数据源，页面不再额外请求 `/v1/models`，避免同一页面出现两份模型集合和无法归属 Provider 的模型。
+页面请求当前工作区的 `GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers`，并额外请求 `GET /api/console/organizations/{orgUuid}/llm_provider`。没有组织默认时后者返回 `404`，页面把它当成未配置。Provider 配置及其 `model_ids` 仍是目录的数据源，页面不请求 `/v1/models`。组织默认显示在工作区 Provider 之前，并标成「组织默认」。它上面已被当前工作区占用的模型 ID 仍显示，并标明本工作区已覆盖；运行时不使用这些被覆盖的 ID。
 
 填写 Provider 的 Base URL 和 API Key 后，可在表单里点「获取模型列表」，请求 `POST .../llm_providers/preview_models`，用上游 `{base_url}/v1/models` 填入模型 ID。获取结果与表单内已有的非空模型 ID 合并、去重，不覆盖手工输入；上游返回空数组时只提示，不清空表单。编辑 Provider 时，读取接口不会返回旧 Key，因此只有用户输入新 Key 后才显示「获取模型列表」。
 
@@ -30,9 +30,12 @@ flowchart LR
 ## 交互
 
 - 模型配置只允许当前组织的 `admin` 管理。非管理员不显示侧栏入口；直接访问页面时展示无权限状态，且不请求 Provider API。Workbench、Quickstart 和 Agent 创建页缺少模型时，管理员看到「配置模型」，非管理员只看到「请联系组织管理员配置模型」。前端判断只用于避免无效入口，后端 RBAC 仍是最终权限边界。
+- 组织设置页在 API Key 开关下方增加「组织级模型」。管理员按两步打开部署配置的公司控制台（`GET /llm_console` 的 `console_url`，新标签页，不内嵌）：选择或创建租户，再选择或创建 API Key。回来后 Provider 名称预填「AI网关」，模型网关地址预填 `GET /llm_console` 的 `base_url`。填写网关地址和 API Key 后，「获取模型列表」才可点，仍走工作区 `preview_models`。取回的模型 ID 复用模型目录的模型行，带复制和勾选，默认全选，取消勾选的不会写入。公司控制台两步共用一个「在公司系统中打开」，已勾选模型时，保存只写入勾选的 ID，不再同步上游，避免把未勾选的模型合并回来。没有勾选任何模型时才同步上游；这次同步失败会删掉刚写入的空 Provider。模型页的刷新也不再对组织默认同步上游。更换已有密钥时保留已保存的模型 ID。已连接时只更换密钥，网关地址沿用已保存的 `base_url`。移除前需要确认。非管理员只看到是否已连接、租户名和密钥后四位。
 - 搜索没有精确模型 ID 命中且已选中 Provider 时，可以把当前输入作为新的真实模型 ID 追加到该 Provider；即使已有模糊匹配也仍显示添加入口。
 - 添加模型的请求进行中时禁用添加按钮，防止重复提交。
-- 添加、编辑、删除 Provider 仍走原有 Dialog；编辑时留空 API Key 表示保留原密钥，且不会使用不可见的旧 Key 发起模型发现。
+- 添加、编辑、删除 Provider 仍走原有 Dialog；编辑时留空 API Key 表示保留原密钥，且不会使用不可见的旧 Key 发起模型发现。组织默认的保存、删除和刷新走组织接口，工作区 Provider 仍走工作区接口。删除组织默认时，确认文案说明这会影响所有工作区，工作区自己的 Provider 会保留。
+- 组织默认读取失败时，页面仍显示已加载的工作区 Provider，并提示组织默认暂时无法加载。工作区 Provider 列表本身失败时才进入整页错误。
+- 工作区没有自己的 Provider、但组织默认存在时，页面直接显示组织默认，不进入空状态。两边都没有时才显示「添加 Provider」。
 - Provider API 的稳定校验错误在前端映射为中英文文案，动态模型 ID 作为插值保留；未知或网络错误使用本地化的通用失败提示，不直接展示后端英文原文。
 - 模型 ID 是可选配置；从 Provider 移除全部模型后，Provider 和加密 Key 仍保留，可通过获取列表、搜索添加或再次编辑恢复模型。
 - 没有 Provider 时展示精简空状态：隐藏无意义的模型数 `0` 和顶部重复操作，只保留中央的「添加 Provider」入口。

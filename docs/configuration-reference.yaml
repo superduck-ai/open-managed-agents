@@ -47,6 +47,14 @@ auth:
     # so there is no separate email-login secret to configure.
     password: replace-me
 
+# Company AI tenant console and the default model gateway opened from organization settings.
+# Omit a field to use its built-in default. Set console_url to an empty string to disable the link.
+# Set base_url to an empty string to leave the gateway field blank. Production example:
+# base_url: "https://narrows-gateway.seewo.com"
+organization_llm:
+  console_url: "https://ccloud.cvte.com/ai/tenant-management"
+  base_url: "https://narrows-gateway.test.seewo.com"
+
 tunnel:
   # Stable externally reachable OMA origin used in canonical MCP URLs and to
   # recognize Tunnel targets inside the Managed Agent Runtime Gateway.

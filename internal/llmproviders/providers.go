@@ -37,48 +37,92 @@ func Resolve(
 	if database == nil || secretService == nil {
 		return Upstream{}, ErrNotConfigured
 	}
-	providers, err := database.ListLLMProviders(ctx, organizationUUID, workspaceUUID)
+	providers, organization, err := configuredProviders(ctx, database, organizationUUID, workspaceUUID)
 	if err != nil {
 		return Upstream{}, err
 	}
-	if len(providers) == 0 {
+	if len(providers) == 0 && organization == nil {
 		return Upstream{}, ErrNotConfigured
 	}
-	var selected *db.LLMProvider
-	for index := range providers {
-		if !containsModel(providers[index].ModelIDs, modelID) {
-			continue
-		}
-		if selected != nil {
-			return Upstream{}, ErrAmbiguousModel
-		}
-		selected = &providers[index]
+	selected, err := matchingWorkspaceProvider(providers, modelID)
+	if err != nil {
+		return Upstream{}, err
+	}
+	if selected == nil && organization != nil && containsModel(organization.ModelIDs, modelID) {
+		selected = organization
 	}
 	if selected == nil {
 		return Upstream{}, ErrModelNotConfigured
 	}
-	if selected.SecretEnvelope == nil {
-		return Upstream{}, fmt.Errorf("open LLM provider API key: %w", db.ErrIncompleteLLMProviderSecret)
-	}
-	plaintext, err := secretService.Open(ctx, SecretBinding(*selected), *selected.SecretEnvelope)
-	if err != nil {
-		return Upstream{}, fmt.Errorf("open LLM provider API key: %w", err)
-	}
-	defer clear(plaintext)
-	return Upstream{BaseURL: selected.BaseURL, APIKey: string(plaintext)}, nil
+	return openProviderUpstream(ctx, secretService, *selected)
 }
 
 func ListModelIDs(ctx context.Context, database *db.DB, organizationUUID, workspaceUUID string) ([]string, error) {
 	if database == nil {
 		return nil, ErrNotConfigured
 	}
-	providers, err := database.ListLLMProviders(ctx, organizationUUID, workspaceUUID)
+	providers, organization, err := configuredProviders(ctx, database, organizationUUID, workspaceUUID)
 	if err != nil {
 		return nil, err
 	}
-	if len(providers) == 0 {
+	if len(providers) == 0 && organization == nil {
 		return nil, ErrNotConfigured
 	}
+	models, err := workspaceModelIDs(providers)
+	if err != nil {
+		return nil, err
+	}
+	if organization == nil {
+		return models, nil
+	}
+	seen := make(map[string]struct{}, len(models))
+	for _, modelID := range models {
+		seen[modelID] = struct{}{}
+	}
+	for _, modelID := range organization.ModelIDs {
+		if _, exists := seen[modelID]; exists {
+			continue
+		}
+		seen[modelID] = struct{}{}
+		models = append(models, modelID)
+	}
+	return models, nil
+}
+
+func configuredProviders(
+	ctx context.Context,
+	database *db.DB,
+	organizationUUID, workspaceUUID string,
+) ([]db.LLMProvider, *db.LLMProvider, error) {
+	providers, err := database.ListLLMProviders(ctx, organizationUUID, workspaceUUID)
+	if err != nil {
+		return nil, nil, err
+	}
+	organization, err := database.GetOrganizationLLMProvider(ctx, organizationUUID)
+	if errors.Is(err, db.ErrNotFound) {
+		return providers, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return providers, &organization, nil
+}
+
+func matchingWorkspaceProvider(providers []db.LLMProvider, modelID string) (*db.LLMProvider, error) {
+	var selected *db.LLMProvider
+	for index := range providers {
+		if !containsModel(providers[index].ModelIDs, modelID) {
+			continue
+		}
+		if selected != nil {
+			return nil, ErrAmbiguousModel
+		}
+		selected = &providers[index]
+	}
+	return selected, nil
+}
+
+func workspaceModelIDs(providers []db.LLMProvider) ([]string, error) {
 	models := make([]string, 0)
 	seen := make(map[string]struct{})
 	for _, provider := range providers {
@@ -93,10 +137,26 @@ func ListModelIDs(ctx context.Context, database *db.DB, organizationUUID, worksp
 	return models, nil
 }
 
+func openProviderUpstream(ctx context.Context, secretService *secrets.Service, provider db.LLMProvider) (Upstream, error) {
+	if provider.SecretEnvelope == nil {
+		return Upstream{}, fmt.Errorf("open LLM provider API key: %w", db.ErrIncompleteLLMProviderSecret)
+	}
+	plaintext, err := secretService.Open(ctx, SecretBinding(provider), *provider.SecretEnvelope)
+	if err != nil {
+		return Upstream{}, fmt.Errorf("open LLM provider API key: %w", err)
+	}
+	defer clear(plaintext)
+	return Upstream{BaseURL: provider.BaseURL, APIKey: string(plaintext)}, nil
+}
+
 func SecretBinding(provider db.LLMProvider) secrets.Binding {
+	workspaceUUID := provider.WorkspaceUUID
+	if workspaceUUID == "" {
+		workspaceUUID = db.OrganizationLLMProviderSecretWorkspace
+	}
 	return secrets.Binding{
 		OrganizationUUID:     provider.OrganizationUUID,
-		WorkspaceUUID:        provider.WorkspaceUUID,
+		WorkspaceUUID:        workspaceUUID,
 		VaultExternalID:      secretScope,
 		CredentialExternalID: provider.ExternalID,
 	}

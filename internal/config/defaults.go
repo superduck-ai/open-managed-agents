@@ -2,7 +2,11 @@ package config
 
 import "time"
 
-const DefaultE2BTemplate = "managed-agent-sandbox"
+const (
+	DefaultE2BTemplate               = "managed-agent-sandbox"
+	DefaultOrganizationLLMConsoleURL = "https://ccloud.cvte.com/ai/tenant-management"
+	DefaultOrganizationLLMBaseURL    = "https://narrows-gateway.test.seewo.com"
+)
 
 func defaultConfig() Config {
 	cfg := Config{
@@ -77,6 +81,10 @@ func defaultConfig() Config {
 					Timeout: 15 * time.Second,
 				},
 			},
+		},
+		OrganizationLLM: OrganizationLLMConfig{
+			ConsoleURL: DefaultOrganizationLLMConsoleURL,
+			BaseURL:    DefaultOrganizationLLMBaseURL,
 		},
 		Webhook: WebhookConfig{
 			EventTypes:  defaultWebhookEventTypes(),

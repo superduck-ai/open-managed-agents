@@ -43,6 +43,10 @@ const PROVIDER_ERROR_MESSAGES: Record<string, { id: string; defaultMessage: stri
     id: 'llmModels.errorProviderNameExists',
     defaultMessage: 'A provider with this name already exists.',
   },
+  organization_llm_provider_exists: {
+    id: 'llmModels.errorOrganizationProviderExists',
+    defaultMessage: 'This organization already has a default provider.',
+  },
   llm_provider_configuration_invalid: {
     id: 'llmModels.errorInvalidConfiguration',
     defaultMessage: 'The provider configuration is invalid.',
@@ -59,14 +63,19 @@ export type CatalogModel = {
   id: string;
   providerId: string;
   providerName: string;
+  shadowed?: boolean;
 };
 
 export function catalogModels(providers: LLMProvider[]): CatalogModel[] {
+  const workspaceModelIDs = new Set(
+    providers.filter((provider) => provider.scope !== 'organization').flatMap((provider) => provider.model_ids),
+  );
   return providers.flatMap((provider) =>
     provider.model_ids.map((modelId) => ({
       id: modelId,
       providerId: provider.id,
       providerName: provider.name,
+      ...(provider.scope === 'organization' && workspaceModelIDs.has(modelId) ? { shadowed: true } : {}),
     })),
   );
 }

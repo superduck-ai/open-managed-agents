@@ -5,6 +5,7 @@ import { cn } from '@/shared/lib/utils';
 import { useI18n } from '../../shared/i18n';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../../shared/ui/accordion';
 import { Badge } from '../../shared/ui/badge';
+import { Checkbox } from '../../shared/ui/checkbox';
 import { Button } from '../../shared/ui/button';
 import { Card } from '../../shared/ui/card';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '../../shared/ui/input-group';
@@ -149,7 +150,11 @@ function ProviderRail({
         <ProviderRailButton
           key={provider.id}
           label={provider.name}
-          detail={providerHost(provider.base_url)}
+          detail={
+            provider.scope === 'organization'
+              ? msg('llmModels.organizationDefault', 'Organization default')
+              : providerHost(provider.base_url)
+          }
           count={provider.model_ids.length}
           selected={selectedProviderId === provider.id}
           onClick={() => onSelectProvider(provider.id)}
@@ -234,10 +239,16 @@ function ProviderSection({
 }
 
 function ProviderIdentity({ provider, modelCount }: { provider: LLMProvider; modelCount: number }) {
+  const { msg } = useI18n();
   return (
     <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
       <div className="min-w-0">
-        <p className="break-words text-sm font-semibold text-foreground">{provider.name}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="break-words text-sm font-semibold text-foreground">{provider.name}</p>
+          {provider.scope === 'organization' ? (
+            <Badge variant="outline">{msg('llmModels.organizationDefault', 'Organization default')}</Badge>
+          ) : null}
+        </div>
         <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-normal text-muted-foreground">
           <span className="min-w-0 break-all">{provider.base_url}</span>
           <span className="flex shrink-0 items-center gap-1.5">
@@ -309,7 +320,17 @@ function ProviderModelGroup({ group, provider, query }: { group: CatalogGroup; p
   );
 }
 
-function ModelRows({ models, emptyMessage }: { models: CatalogModel[]; emptyMessage: string }) {
+export function ModelRows({
+  models,
+  emptyMessage,
+  selectedIds,
+  onToggle,
+}: {
+  models: CatalogModel[];
+  emptyMessage: string;
+  selectedIds?: string[];
+  onToggle?: (modelId: string) => void;
+}) {
   if (models.length === 0) {
     return (
       <p className="px-4 py-5 text-sm text-muted-foreground sm:px-6" data-testid="llm-model-empty">
@@ -320,13 +341,26 @@ function ModelRows({ models, emptyMessage }: { models: CatalogModel[]; emptyMess
   return (
     <ul className="divide-y divide-border bg-background">
       {models.map((model) => (
-        <ModelRow key={`${model.providerId}:${model.id}`} model={model} />
+        <ModelRow
+          key={`${model.providerId}:${model.id}`}
+          model={model}
+          selected={selectedIds?.includes(model.id)}
+          onToggle={onToggle}
+        />
       ))}
     </ul>
   );
 }
 
-function ModelRow({ model }: { model: CatalogModel }) {
+function ModelRow({
+  model,
+  selected,
+  onToggle,
+}: {
+  model: CatalogModel;
+  selected?: boolean;
+  onToggle?: (modelId: string) => void;
+}) {
   const { msg } = useI18n();
   const [copied, setCopied] = useState(false);
   const label = copied ? msg('common.copied', 'Copied') : msg('common.copyId', 'Copy ID');
@@ -342,7 +376,17 @@ function ModelRow({ model }: { model: CatalogModel }) {
       className="flex min-h-11 items-center justify-between gap-3 px-4 py-2 hover:bg-muted/40 sm:px-6"
       data-testid="llm-model-row"
     >
-      <p className="min-w-0 break-all font-mono text-sm text-foreground">{model.id}</p>
+      <div className="flex min-w-0 items-center gap-2">
+        {onToggle ? (
+          <Checkbox checked={Boolean(selected)} aria-label={model.id} onCheckedChange={() => onToggle(model.id)} />
+        ) : null}
+        <p className="min-w-0 break-all font-mono text-sm text-foreground">{model.id}</p>
+        {model.shadowed ? (
+          <Badge variant="outline" className="shrink-0">
+            {msg('llmModels.modelShadowed', 'Overridden in this workspace')}
+          </Badge>
+        ) : null}
+      </div>
       <Button
         type="button"
         variant="ghost"

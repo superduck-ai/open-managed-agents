@@ -33,6 +33,9 @@ tunnel:
 #     username: sender@example.com
 #     password: replace-me
 
+# organization_llm.base_url defaults to https://narrows-gateway.test.seewo.com.
+# Override it for production, for example https://narrows-gateway.seewo.com.
+
 storage:
   type: s3
   s3:

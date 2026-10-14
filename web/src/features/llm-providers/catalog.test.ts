@@ -17,6 +17,22 @@ const dashScope = provider('llmprov_dash', 'DashScope', ['kimi-k2.5', 'glm-4.7']
 const moonshot = provider('llmprov_moon', 'Moonshot', ['moonshot-v1']);
 
 describe('LLM model catalog helpers', () => {
+  test('marks organization models that the workspace already owns', () => {
+    const organization = provider('llmprov_org', 'Organization', ['shared-model', 'org-only']);
+    organization.scope = 'organization';
+    const workspace = provider('llmprov_ws', 'Workspace', ['shared-model']);
+    expect(catalogModels([organization, workspace])).toEqual([
+      {
+        id: 'shared-model',
+        providerId: 'llmprov_org',
+        providerName: 'Organization',
+        shadowed: true,
+      },
+      { id: 'org-only', providerId: 'llmprov_org', providerName: 'Organization' },
+      { id: 'shared-model', providerId: 'llmprov_ws', providerName: 'Workspace' },
+    ]);
+  });
+
   test('builds catalog rows from providers', () => {
     const fromProviders = catalogModels([dashScope, moonshot]);
     expect(fromProviders).toEqual([

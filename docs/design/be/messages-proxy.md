@@ -11,7 +11,9 @@ LLM 上游不是进程级 YAML。每个 workspace 可以配置多个 Provider；
 
 同一 workspace 内，模型 ID 只能属于一个 Provider。模型 ID 是上游真实 ID，OMA 不映射、不改写，也不提供 `claude-*` 别名或默认 Anthropic 回退。
 
-进程 YAML 不再包含 `anthropic_upstream`。上游地址和 Key 只来自 workspace Provider。
+每个组织可以另有一行默认 Provider，存在同一张 `llm_providers` 表里，`workspace_uuid` 为 `NULL`。部分唯一索引保证每个组织最多一行。工作区请求先用本工作区的 Provider；模型 ID 不在本工作区时，才用组织默认。两边可以登记同一个模型 ID，工作区胜出，这不是 `model_conflict`，也不会变成 `ErrAmbiguousModel`。工作区列表不返回这行。
+
+进程 YAML 不再包含 `anthropic_upstream`。上游地址和 Key 来自 workspace Provider，缺模型时来自组织默认 Provider。
 
 控制台入口为「LLM 模型」，API 为：
 
@@ -20,9 +22,15 @@ GET    /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_provide
 POST   /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers
 PUT    /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers/{providerId}
 DELETE /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers/{providerId}
+
+GET    /api/console/organizations/{orgUuid}/llm_console
+GET    /api/console/organizations/{orgUuid}/llm_provider
+PUT    /api/console/organizations/{orgUuid}/llm_provider
+DELETE /api/console/organizations/{orgUuid}/llm_provider
+POST   /api/console/organizations/{orgUuid}/llm_provider/models/sync
 ```
 
-这些 Provider 控制台接口只允许组织管理员访问。读取接口只返回 `has_api_key` 与 `api_key_last4`，不返回明文 Key。更新时省略或留空 `api_key` 表示保留原 Key。
+工作区 Provider 接口只允许组织管理员访问。组织默认的 `GET /llm_provider` 和 `GET /llm_console` 对当前组织成员可读；`PUT`、`DELETE` 和 `models/sync` 仍只允许组织管理员。读取接口只返回 `has_api_key` 与 `api_key_last4`，不返回明文 Key。更新时省略或留空 `api_key` 表示保留原 Key。`llm_console` 返回部署配置 `organization_llm.console_url` 和 `organization_llm.base_url`。控制台地址默认是 `https://ccloud.cvte.com/ai/tenant-management`，空字符串表示组织设置里的公司控制台入口不可用。网关地址默认是 `https://narrows-gateway.test.seewo.com`，正式环境可改成 `https://narrows-gateway.seewo.com`；空字符串表示组织设置里的网关输入框不预填。
 
 控制台在「获取模型列表」时可通过下列接口向该网关请求模型列表，而不会把 Key 回写到响应里：
 
@@ -33,7 +41,7 @@ POST   /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_provide
 
 `preview_models` 用请求里的 `base_url` 和 `api_key` 调用上游 `{base_url}/v1/models`，只返回 `model_ids`。请求同时带 `X-Api-Key`、`Authorization: Bearer` 和 `anthropic-version`，兼容 Anthropic 与智谱等只认 Bearer 的网关。`data: []` 是合法空列表；缺少 `data`、`success:false` 或带 `error` 的信封视为失败。
 
-`models/sync` 解密已保存的 Key，并按以下顺序更新：始终保留该 Provider 已保存的模型；仅从上游新发现的 ID 中过滤已被其他 Provider 占用的项；过滤后再去重、合并并应用 100 个模型的上限。响应通过 `skipped_model_ids` 返回因冲突跳过的 ID。上游失败返回 `502`，不改写现有配置。
+`models/sync` 解密已保存的 Key，并按以下顺序更新：始终保留该 Provider 已保存的模型；仅从上游新发现的 ID 中过滤已被其他 Provider 占用的项；过滤后再去重、合并并应用 100 个模型的上限。响应通过 `skipped_model_ids` 返回因冲突跳过的 ID。上游失败返回 `502`，不改写现有配置。组织默认的同步不按工作区占用过滤，因为同一个模型 ID 允许同时存在于组织默认和工作区 Provider；解析时工作区优先。
 
 Provider 控制台错误响应包含稳定的 `code`，前端不得依赖英文 `message` 判断错误。模型冲突还返回结构化的 `model_id`。例如：
 
@@ -71,7 +79,7 @@ handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发
 
 管理后台继续使用原平台路径 `POST /api/organizations/{orgUuid}/proxy/v1/messages`。该路由及其独立代理实现不作为 `/v1/messages` 的兼容别名，也不承载 Claude Code 的 session-scoped token。它与公共 Messages 入口走同一条 Provider 解析、唯一顶层 `model` 校验和 32 MiB 请求上限，也不改写请求体。
 
-`GET /v1/models` 保留 Anthropic 列表信封的 `data`、`has_more`、`first_id` 与 `last_id`。列表内容来自当前 workspace 配置的真实模型 ID；由于 Provider 配置不维护能力目录，`display_name` 使用模型 ID，`created_at` 使用 Unix epoch，token 上限与 `capabilities` 显式返回 `null`。已有 Provider 但尚无模型时返回 `200`、`data: []` 和空游标；未配置 Provider 时返回 `503` 与英文消息 `This workspace has no LLM provider configured`；配置读取失败时返回 `500` 与英文消息 `Workspace model configuration is unavailable`。不额外返回机器可读 `error.code`。
+`GET /v1/models` 保留 Anthropic 列表信封的 `data`、`has_more`、`first_id` 与 `last_id`。列表先放当前 workspace 的真实模型 ID，再追加组织默认里未被该 workspace 占用的模型 ID。由于 Provider 配置不维护能力目录，`display_name` 使用模型 ID，`created_at` 使用 Unix epoch，token 上限与 `capabilities` 显式返回 `null`。已有 Provider 但尚无模型时返回 `200`、`data: []` 和空游标；workspace 和组织默认都没有 Provider 时返回 `503` 与英文消息 `This workspace has no LLM provider configured`；配置读取失败时返回 `500` 与英文消息 `Workspace model configuration is unavailable`。不额外返回机器可读 `error.code`。
 
 服务端不提供 `/v1/code/sessions/{code_session_id}/bridge`。managed-agent 在创建 code session 时直接获得 OAuth FD、WebSocket FD 和初始 worker epoch；后续 worker 所有权切换统一使用 `/worker/register`。
 
@@ -138,7 +146,7 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 
 ## 失败语义
 
-- workspace 没有 Provider：`503 api_error`，英文消息 `This workspace has no LLM provider configured`；
+- workspace 和组织默认都没有 Provider：`503 api_error`，英文消息 `This workspace has no LLM provider configured`；
 - 请求模型未配置：`400 invalid_request_error`；
 - 重复模型、Key 解密失败、Provider 数据损坏或配置读取失败：`500 api_error`，英文消息 `Workspace model configuration is unavailable`；失败关闭，不回退；
 - 上游地址或网络不可用：`502 api_error`；

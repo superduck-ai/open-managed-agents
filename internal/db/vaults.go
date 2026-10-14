@@ -121,37 +121,62 @@ func (d *DB) UpdateVault(ctx context.Context, workspaceUUID, externalID string, 
 	return row.vault(), nil
 }
 
-func (d *DB) ArchiveVault(ctx context.Context, workspaceUUID, externalID string) (Vault, error) {
-	var archived Vault
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		vaultMapper := NewVaultMapper(executor)
-		credentialMapper := NewVaultCredentialMapper(executor)
-		row, err := vaultMapper.ArchiveByExternalID(ctx, workspaceUUID, externalID)
-		if err != nil {
-			return mapNoRows(err)
-		}
-		if err := credentialMapper.ArchiveByVaultUUID(ctx, workspaceUUID, row.UUID); err != nil {
-			return err
-		}
-		archived = row.vault()
-		return nil
-	})
-	return archived, err
+type VaultArchiveResult struct {
+	Vault         Vault
+	Changed       bool
+	CredentialIDs []string
 }
 
-func (d *DB) DeleteVault(ctx context.Context, workspaceUUID, externalID string) error {
-	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		vaultMapper := NewVaultMapper(executor)
-		credentialMapper := NewVaultCredentialMapper(executor)
-		vaultUUID, err := vaultMapper.FindUUIDForUpdate(ctx, workspaceUUID, externalID)
+func (d *DB) ArchiveVault(ctx context.Context, workspaceUUID, externalID string) (VaultArchiveResult, error) {
+	var result VaultArchiveResult
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewVaultMapper(executor)
+		row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, externalID)
+		if errors.Is(err, sql.ErrNoRows) {
+			row, err = mapper.FindByExternalID(ctx, workspaceUUID, externalID)
+			if err != nil {
+				return mapNoRows(err)
+			}
+			result.Vault = row.vault()
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		credentials, err := NewVaultCredentialMapper(executor).ArchiveByVaultUUID(ctx, workspaceUUID, row.UUID)
+		if err != nil {
+			return err
+		}
+		result = VaultArchiveResult{Vault: row.vault(), Changed: true, CredentialIDs: credentialReferenceIDs(credentials)}
+		return nil
+	})
+	return result, err
+}
+
+func (d *DB) DeleteVault(ctx context.Context, workspaceUUID, externalID string) ([]string, error) {
+	var credentialIDs []string
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewVaultMapper(executor)
+		vaultUUID, err := mapper.FindUUIDForUpdate(ctx, workspaceUUID, externalID)
 		if err != nil {
 			return mapNoRows(err)
 		}
-		if err := credentialMapper.DeleteByVaultUUID(ctx, workspaceUUID, vaultUUID); err != nil {
+		credentials, err := NewVaultCredentialMapper(executor).DeleteByVaultUUID(ctx, workspaceUUID, vaultUUID)
+		if err != nil {
 			return err
 		}
-		return vaultMapper.DeleteByUUID(ctx, workspaceUUID, vaultUUID)
+		credentialIDs = credentialReferenceIDs(credentials)
+		return mapper.DeleteByUUID(ctx, workspaceUUID, vaultUUID)
 	})
+	return credentialIDs, err
+}
+
+func credentialReferenceIDs(rows []vaultCredentialReferenceRow) []string {
+	ids := make([]string, len(rows))
+	for index, row := range rows {
+		ids[index] = row.ExternalID
+	}
+	return ids
 }
 
 func (d *DB) ListVaultsPage(ctx context.Context, params ListVaultsPageParams) ([]Vault, bool, error) {
@@ -243,13 +268,14 @@ func (d *DB) UpdateVaultCredential(ctx context.Context, workspaceUUID, vaultExte
 	return VaultCredential{}, ErrNotFound
 }
 
-func (d *DB) ArchiveVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (VaultCredential, error) {
+func (d *DB) ArchiveVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (VaultCredential, bool, error) {
 	mapper := NewVaultCredentialMapper(d.mapperDB)
 	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, vaultExternalID, credentialExternalID)
-	if err != nil {
-		return VaultCredential{}, mapNoRows(err)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return row.credential(), err == nil, err
 	}
-	return row.credential(), nil
+	current, loadErr := d.GetVaultCredential(ctx, workspaceUUID, vaultExternalID, credentialExternalID)
+	return current, false, loadErr
 }
 
 func (d *DB) DeleteVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) error {

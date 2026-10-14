@@ -3,6 +3,7 @@ package vaults
 import (
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -109,8 +110,23 @@ func unsupportedTokenAuthMethod(method string) error {
 	return fmt.Errorf("unsupported token auth method %q", method)
 }
 
-func tokenEndpointStatus(status int) error {
-	return fmt.Errorf("token endpoint status %d", status)
+type oauthTokenEndpointError struct{ status int }
+
+func (e oauthTokenEndpointError) Error() string {
+	return fmt.Sprintf("token endpoint status %d", e.status)
+}
+
+func tokenEndpointStatus(status int) error { return oauthTokenEndpointError{status: status} }
+
+var errMCPOAuthRefreshTokenMissing = fmt.Errorf("%w: refresh token is missing", errMCPOAuthRefreshUnavailable)
+
+func permanentOAuthRefreshFailure(err error) bool {
+	if errors.Is(err, errMCPOAuthRefreshTokenMissing) {
+		return true
+	}
+	var endpointError oauthTokenEndpointError
+	return errors.As(err, &endpointError) && endpointError.status >= 400 && endpointError.status < 500 &&
+		endpointError.status != http.StatusRequestTimeout && endpointError.status != http.StatusTooManyRequests
 }
 
 func tokenEndpointMissingAccessToken() error {

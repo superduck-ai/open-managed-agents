@@ -253,6 +253,7 @@ func TestWrapTransportExcludesByPlanCredIDWhenUpdateReturnsEmptyRow(t *testing.T
 }
 
 type fakeCredentialStore struct {
+	getErr          error
 	updateErr       error
 	updateErrs      []error
 	lastUpdate      db.VaultCredential
@@ -292,6 +293,9 @@ func (f *fakeCredentialStore) GetVaultCredential(
 	_, _, _ string,
 ) (db.VaultCredential, error) {
 	f.getCalls++
+	if f.getErr != nil {
+		return db.VaultCredential{}, f.getErr
+	}
 	if len(f.getResults) > 0 {
 		row := f.getResults[0]
 		f.getResults = f.getResults[1:]
@@ -507,4 +511,8 @@ func TestSnapshotRequestBodyBuffersSmallBody(t *testing.T) {
 	if !bytes.Equal(reread, payload) {
 		t.Fatalf("restored body %q", reread)
 	}
+}
+
+func (f *fakeCredentialStore) GetWorkspaceIdentifiers(context.Context, string) (db.WorkspaceIdentifiers, error) {
+	return db.WorkspaceIdentifiers{OrganizationUUID: "org-test", WorkspaceExternalID: "workspace-test"}, nil
 }

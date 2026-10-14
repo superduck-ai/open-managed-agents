@@ -168,6 +168,7 @@ export type SessionApiResponse = {
   id: string;
   agent: unknown;
   archived_at: string | null;
+  budget?: unknown;
   created_at: string;
   deployment_id?: string | null;
   environment_id: string;
@@ -185,6 +186,7 @@ export type DeploymentApiResponse = {
   id: string;
   agent: unknown;
   archived_at: string | null;
+  budget?: unknown;
   created_at: string;
   description?: string | null;
   environment_id: string;
@@ -566,6 +568,9 @@ export type ManagedEntityFormValues = {
   gitResources: GitRepositoryResourceFormValue[];
   originalResources: SessionResourceApiResponse[];
   resourcesChanged: boolean;
+  /** Budget cap in USD dollars as typed; empty string means no budget. */
+  budgetUsd: string;
+  budgetChanged: boolean;
 };
 
 export type GitRepositoryResourceFormValue = {

@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -485,15 +487,29 @@ func appendOutcomeEvaluation(raw json.RawMessage, outcomeID string, maxIteration
 	return httpapi.MarshalRaw(outcomes)
 }
 
-func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sessionResponse, error) {
+// responseFromSession renders a session API response. refreshUsage controls
+// whether the live usage aggregate is recomputed: single-session reads pass
+// true for freshness, list routes pass false to avoid a per-row aggregation
+// over session_events (the stored usage projection is kept fresh by budget
+// enforcement after every persisted batch).
+func (h *Handler) responseFromSession(r *http.Request, session db.Session, refreshUsage bool) (sessionResponse, error) {
 	resources, err := h.db.ListSessionResources(r.Context(), session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		return sessionResponse{}, err
+	}
+	usage := httpapi.RawOr(session.Usage, `{}`)
+	if refreshUsage {
+		totals, err := h.db.SumSessionUsageTotals(r.Context(), session.WorkspaceUUID, session.ExternalID)
+		if err != nil {
+			return sessionResponse{}, fmt.Errorf("sum session usage: %w", err)
+		}
+		usage = sessionUsageJSON(totals, session.Budget)
 	}
 	return sessionResponse{
 		ID:                 session.ExternalID,
 		Agent:              httpapi.RawOr(session.AgentSnapshot, `{}`),
 		ArchivedAt:         httpapi.OptionalTime(session.ArchivedAt),
+		Budget:             jsonx.Default(session.Budget, "null"),
 		CreatedAt:          httpapi.FormatTime(session.CreatedAt),
 		DeploymentID:       session.DeploymentID,
 		EnvironmentID:      session.EnvironmentExternalID,
@@ -505,7 +521,7 @@ func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sess
 		Title:              session.Title,
 		Type:               "session",
 		UpdatedAt:          httpapi.FormatTime(session.UpdatedAt),
-		Usage:              httpapi.RawOr(session.Usage, `{}`),
+		Usage:              usage,
 		VaultIDs:           append([]string{}, session.VaultIDs...),
 	}, nil
 }
@@ -524,6 +540,14 @@ func responseFromThread(thread db.SessionThread) threadResponse {
 		UpdatedAt:      httpapi.FormatTime(thread.UpdatedAt),
 		Usage:          httpapi.RawOr(thread.Usage, `{}`),
 	}
+}
+
+func (h *Handler) responseFromThreadWithUsage(ctx context.Context, workspaceUUID, sessionExternalID string, thread db.SessionThread) threadResponse {
+	response := responseFromThread(thread)
+	if totals, err := h.db.SumSessionThreadUsageTotals(ctx, workspaceUUID, sessionExternalID, thread.ExternalID); err == nil {
+		response.Usage = sessionUsageJSON(totals, nil)
+	}
+	return response
 }
 
 func resourcesToResponses(resources []db.SessionResource) []json.RawMessage {

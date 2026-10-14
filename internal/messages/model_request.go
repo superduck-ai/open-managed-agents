@@ -369,6 +369,13 @@ func (o *responseObservation) addToolUse(block responseContentBlock) {
 }
 
 func mergeRequestUsage(target *codesessions.ModelRequestUsage, delta codesessions.ModelRequestUsage) {
+	if delta.ServerToolUse != nil {
+		if target.ServerToolUse == nil {
+			target.ServerToolUse = new(codesessions.ModelRequestServerToolUsage)
+		}
+		target.ServerToolUse.WebSearchRequests = cmp.Or(delta.ServerToolUse.WebSearchRequests, target.ServerToolUse.WebSearchRequests)
+		target.ServerToolUse.WebFetchRequests = cmp.Or(delta.ServerToolUse.WebFetchRequests, target.ServerToolUse.WebFetchRequests)
+	}
 	if delta.CacheCreation != nil {
 		if target.CacheCreation == nil {
 			target.CacheCreation = new(codesessions.ModelRequestCacheUsage)

@@ -6,8 +6,10 @@ import (
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 )
@@ -24,11 +26,17 @@ type ModelRequest struct {
 
 // ModelRequestUsage is cumulative within one provider response, never a turn total.
 type ModelRequestUsage struct {
-	CacheCreation            *ModelRequestCacheUsage `json:"cache_creation,omitzero"`
-	InputTokens              *int64                  `json:"input_tokens,omitzero"`
-	OutputTokens             *int64                  `json:"output_tokens,omitzero"`
-	CacheCreationInputTokens *int64                  `json:"cache_creation_input_tokens,omitzero"`
-	CacheReadInputTokens     *int64                  `json:"cache_read_input_tokens,omitzero"`
+	ServerToolUse            *ModelRequestServerToolUsage `json:"server_tool_use,omitzero"`
+	CacheCreation            *ModelRequestCacheUsage      `json:"cache_creation,omitzero"`
+	InputTokens              *int64                       `json:"input_tokens,omitzero"`
+	OutputTokens             *int64                       `json:"output_tokens,omitzero"`
+	CacheCreationInputTokens *int64                       `json:"cache_creation_input_tokens,omitzero"`
+	CacheReadInputTokens     *int64                       `json:"cache_read_input_tokens,omitzero"`
+}
+
+type ModelRequestServerToolUsage struct {
+	WebSearchRequests *int64 `json:"web_search_requests,omitzero"`
+	WebFetchRequests  *int64 `json:"web_fetch_requests,omitzero"`
 }
 
 type ModelRequestCacheUsage struct {
@@ -70,6 +78,7 @@ type ModelRequestContent struct {
 }
 
 type modelRequestEvent struct {
+	Billing           map[string]string  `json:"billing,omitempty"`
 	IsError           *bool              `json:"is_error,omitzero"`
 	ToolUseIDs        []string           `json:"tool_use_ids,omitempty"`
 	ID                string             `json:"id"`
@@ -124,6 +133,7 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 	if result.ErrorType != "" {
 		event.Error = &modelRequestError{Type: result.ErrorType}
 	}
+	event.Billing = s.modelRequestBilling(request.Model, result.Usage)
 	payloads := make([]json.RawMessage, 0, len(result.Messages)+1)
 	if toolUses := modelRequestPublicTools(result); len(toolUses) > 0 {
 		tools, err := s.modelToolUsePayloads(ctx, request, toolUses, result.EndedAt)
@@ -247,4 +257,21 @@ func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.Cod
 		}
 		params.Cursor = &db.SessionEventPageCursor{ExternalID: events[len(events)-1].ExternalID}
 	}
+}
+
+func (s *Service) modelRequestBilling(model string, usage ModelRequestUsage) map[string]string {
+	counters := billing.TokenUsage{}
+	for _, field := range []struct{ target, value *int64 }{
+		{&counters.InputTokens, usage.InputTokens}, {&counters.OutputTokens, usage.OutputTokens},
+		{&counters.CacheReadInputTokens, usage.CacheReadInputTokens}, {&counters.CacheCreationInputTokens, usage.CacheCreationInputTokens},
+	} {
+		if field.value != nil {
+			*field.target = *field.value
+		}
+	}
+	cents, priced := s.billing.ModelRequestCents(model, counters)
+	if !priced {
+		return nil
+	}
+	return map[string]string{"list_cost": strconv.FormatInt(cents, 10), "currency": "USD"}
 }

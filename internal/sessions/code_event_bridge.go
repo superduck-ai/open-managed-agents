@@ -63,7 +63,7 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 	h.codeSessions.PurgeWorkerEvents(ctx, changes.RetiredCodeSessionIDs)
 	h.publishSessionEvents(ctx, changes.Events)
 	h.enqueueWebhooksForSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, changes.Events)
-	return nil
+	return h.enforceBudgetAfterEvents(ctx, session, events)
 }
 
 func (h *Handler) appendAndBroadcastInternal(r *http.Request, sessionID string, events []db.SessionEvent) {

@@ -13,6 +13,7 @@ func TestModelRequestEventUsageEncoding(t *testing.T) {
 		want  string
 	}{
 		{name: "absent"},
+		{name: "搜索用量", usage: &ModelRequestUsage{ServerToolUse: &ModelRequestServerToolUsage{WebSearchRequests: new(int64(3))}}, want: `{"server_tool_use":{"web_search_requests":3}}`},
 		{name: "unknown", usage: &ModelRequestUsage{}, want: `{}`},
 		{name: "explicit zero", usage: &ModelRequestUsage{
 			InputTokens: new(int64(0)), OutputTokens: new(int64(0)),

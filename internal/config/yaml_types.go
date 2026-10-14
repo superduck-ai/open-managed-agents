@@ -55,6 +55,7 @@ type yamlConfig struct {
 	Webhook              yamlWebhookConfig         `yaml:"webhook"`
 	Vault                VaultConfig               `yaml:"vault"`
 	Bootstrap            yamlBootstrapConfig       `yaml:"bootstrap"`
+	Billing              BillingConfig             `yaml:"billing"`
 }
 
 // Legacy flat fields exist only at the YAML boundary. All consumers use Local.
@@ -214,6 +215,7 @@ func (input yamlConfig) resolve() Config {
 			UpstreamProxyCAKeyFile:             input.CodeSession.UpstreamProxyCAKeyFile,
 			UpstreamProxyDisableSSRFProtection: input.CodeSession.UpstreamProxyDisableSSRFProtection,
 		},
+		Billing:       input.Billing,
 		Observability: input.Observability,
 		Webhook: WebhookConfig{
 			Concurrency:         input.Webhook.Concurrency,

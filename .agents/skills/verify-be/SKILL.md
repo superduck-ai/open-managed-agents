@@ -31,6 +31,7 @@ Use this workflow when implementing or fixing Deployment/River, Memory/Filestore
 | Tool permissions or confirmation | `chat.tools` |
 | Busy-input rejection and retry, ACK, Worker reconnection or replacement, history recovery | `chat.reliability` |
 | NATS fanout or delivery across backend instances | `chat.instances` |
+| Backend signal handling, HTTP drain or long-lived SSE shutdown | `chat.shutdown` without a model Worker |
 | Session creation, Runner, mounts or Worker startup | `chat.public` |
 | Bound Skill discovery, permission, body/reference loading or readonly mounts | `chat.skills-loading`; read [Skill loading](features/skills-loading.md) |
 | Configured subagents, child skills/MCP, child tool policy or thread continuation | `chat.subagents`; read [Subagents](features/subagents.md) |
@@ -52,7 +53,7 @@ entry point still needs Go to build the CLI. Cobra handles commands and shared o
 `--timeout` is shared. `--worker-image` belongs to `chat`, `files generated` and `memory mounts`; baseline/backend-ref/diagnostics belong to both `chat performance` and `files performance`. Cloud commands and their doctor accept `--cloud-config`. Long options use two dashes,
 such as `--worker-image`; `-h` is the short form of `--help`.
 
-Prerequisites: macOS or Linux, repository Go toolchain, Bash, git, tar, Docker Engine with Compose and enough disk space for three JetStream replicas. The CLI generates its ephemeral signing key with Go's standard library. The common images must already exist locally: `postgres:17`, `redis:8`, `nats:2.14.6-alpine`, `pgsty/minio:latest`. Chat additionally needs the Worker image containing `/opt/claude-code/bin/claude`. `files generated` and `memory mounts` need a Worker image and FUSE; other Files and Memory scenarios ignore Worker configuration. The CLI does not pull images. Record image IDs in each report; never compare performance across different images.
+Prerequisites: macOS or Linux, repository Go toolchain, Bash, git, tar, Docker Engine with Compose and enough disk space for three JetStream replicas. The CLI generates its ephemeral signing key with Go's standard library. The common images must already exist locally: `postgres:17`, `redis:8`, `nats:2.14.6-alpine`, `pgsty/minio:latest`. Chat additionally needs the Worker image containing `/opt/claude-code/bin/claude`, except `chat shutdown`, which tests backend processes without a model Worker. `files generated` and `memory mounts` need a Worker image and FUSE; other Files and Memory scenarios ignore Worker configuration. The CLI does not pull images. Record image IDs in each report; never compare performance across different images.
 
 ```sh
 .agents/skills/verify-be/scripts/verify-be chat doctor
@@ -62,6 +63,7 @@ Prerequisites: macOS or Linux, repository Go toolchain, Bash, git, tar, Docker E
 .agents/skills/verify-be/scripts/verify-be chat tools
 .agents/skills/verify-be/scripts/verify-be chat reliability
 .agents/skills/verify-be/scripts/verify-be chat instances
+.agents/skills/verify-be/scripts/verify-be chat shutdown
 .agents/skills/verify-be/scripts/verify-be chat public
 .agents/skills/verify-be/scripts/verify-be chat performance
 ```

@@ -17,7 +17,14 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-func startChatPeer(t *testing.T) string {
+type chatPeer struct {
+	url     string
+	command *exec.Cmd
+	done    chan struct{}
+	exitErr error
+}
+
+func startChatPeer(t *testing.T) *chatPeer {
 	t.Helper()
 	cfg, err := config.Load()
 	requireOK(t, err)
@@ -46,15 +53,15 @@ func startChatPeer(t *testing.T) string {
 	cmd.Stdout, cmd.Stderr = log, log
 	requireOK(t, cmd.Start())
 	requireOK(t, file.Close())
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	peer := &chatPeer{url: "http://" + cfg.Server.Addr, command: cmd, done: make(chan struct{})}
+	go func() { peer.exitErr = cmd.Wait(); close(peer.done) }()
 	t.Cleanup(func() {
 		_ = cmd.Process.Signal(syscall.SIGTERM)
 		select {
-		case <-done:
+		case <-peer.done:
 		case <-time.After(15 * time.Second):
 			_ = cmd.Process.Kill()
-			<-done
+			<-peer.done
 			t.Error("peer required forced termination")
 		}
 	})
@@ -68,7 +75,7 @@ func startChatPeer(t *testing.T) string {
 		defer response.Body.Close()
 		return response.StatusCode == 200
 	})
-	return base
+	return peer
 }
 
 func TestChatInstances(t *testing.T) {
@@ -82,7 +89,7 @@ func TestChatInstances(t *testing.T) {
 	configureChatModel(t, e, model.URL)
 	f := e.newSessionWithSnapshot(t, json.RawMessage(`{"model":{"id":"claude-sonnet-4-6"}}`))
 	remoteEnv := *e
-	remoteEnv.url = peer
+	remoteEnv.url = peer.url
 	remoteSession := *f
 	remoteSession.env = &remoteEnv
 	ctx, cancel := context.WithTimeout(t.Context(), chatTimeout(t, 60*time.Second))

@@ -12,6 +12,7 @@
 | Tool approval or rejection behaves incorrectly | [Tools](tools.md) | `chat tools` through the official Go SDK |
 | Busy rejection, idle retry or replacement Worker behaves incorrectly | [Recovery](recovery.md) | `chat reliability` |
 | Another API instance cannot stream the reply | [Recovery](recovery.md) | `chat instances` |
+| Backend waits for SSE during shutdown or ignores a second Ctrl-C | [Recovery](recovery.md) | `chat shutdown` |
 | Public Session startup fails | [Public startup](public-start.md) | `chat public` with real Runner and local Docker sandbox |
 | Configured child Agent is unavailable, uses parent permissions or loses its thread | [Subagent delegation](subagents.md) | `chat subagents` with real Runner, skills, MCP and same-thread continuation |
 | Chat latency regresses | [Performance](performance.md) | `chat performance --baseline REPORT` |

@@ -52,6 +52,8 @@ Worker restart and archive consumer cleanup coverage. The proof stages
 and manual retry stages. Both final message IDs must match the reconnected SSE and
 paginated history, and the queue must drain before the test replaces the Worker.
 
+The Chat CI artifact also includes `upstream-backoff-observations.json`, containing only the last validation phase, public status/queue counters and model request/reply counts, including failed runs. Raw diagnostic logs and configuration remain private.
+
 ## Model environment isolation
 
 Scenario subprocesses and the full Go suite remove inherited provider credentials, endpoints,

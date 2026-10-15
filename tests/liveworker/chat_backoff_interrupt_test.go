@@ -45,6 +45,20 @@ func verifyBackoffInterrupt(t *testing.T, e *liveEnv) {
 	events, closeStream := connectChatStream(t, ctx, f)
 	defer closeStream()
 	started := time.Now()
+	observation := struct {
+		Phase   string           `json:"phase"`
+		Before  upstream401State `json:"before_interrupt"`
+		After   upstream401State `json:"after_interrupt"`
+		Calls   int32            `json:"model_requests"`
+		Replies int32            `json:"recovered_replies"`
+	}{Phase: "startup"}
+	t.Cleanup(func() {
+		observation.Calls, observation.Replies = calls.Load(), replies.Load()
+		data, err := json.MarshalIndent(observation, "", "  ")
+		requireOK(t, err)
+		path := filepath.Join(filepath.Dir(os.Getenv("VERIFY_BE_SERVER")), "upstream-backoff-observations.json")
+		requireOK(t, os.WriteFile(path, append(data, '\n'), 0o600))
+	})
 	submitChat(t, f, "Reply with a short greeting.")
 	waitRealWorker(t, "backoff Code Session created", func() bool {
 		var err error
@@ -70,48 +84,54 @@ func verifyBackoffInterrupt(t *testing.T, e *liveEnv) {
 			}
 		}
 	}()
+	observation.Phase = "waiting_for_backoff"
 	before := waitUpstream401State(t, f, &calls, started, max(0, 60*time.Second-time.Since(started)), func(state upstream401State) bool {
 		return state.ModelRequests >= 6 && state.ModelStarts == int(state.ModelRequests) && state.ModelEnds == state.ModelStarts
 	})
+	observation.Before = before
+	observation.Phase = "validate_backoff"
 	if before.ModelRequests < 6 || before.ModelEnds != int(before.ModelRequests) || before.SessionStatus != "running" || len(before.SessionErrorIDs) != 0 {
 		t.Fatalf("did not observe completed failures before backoff interrupt: %+v", before)
 	}
 	interruptStarted := time.Now()
 	interruptCtx, interruptCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer interruptCancel()
+	observation.Phase = "interrupt_request"
 	sendBackoffInterrupt(t, f, interruptCtx)
+	observation.Phase = "interrupt_sse"
 	idle := nextChatEvent(t, interruptCtx, events, "session.status_idle")
 	if idle.StopReason.Type != "end_turn" {
 		t.Fatalf("backoff interrupted SSE stop reason = %s", idle.StopReason.Type)
 	}
+	observation.Phase = "interrupt_drain"
 	after := waitUpstream401State(t, f, &calls, started, max(0, 15*time.Second-time.Since(interruptStarted)), func(state upstream401State) bool {
 		return state.SessionStatus == "idle" && state.QueueReady && state.Pending == 0 && state.AckPending == 0
 	})
+	observation.After = after
+	observation.Phase = "validate_interrupt"
 	if time.Since(interruptStarted) > 15*time.Second || after.SessionStatus != "idle" || after.IdleStopReason != "end_turn" || len(after.SessionErrorIDs) != 0 ||
 		after.ModelRequests != before.ModelRequests || after.Pending != 0 || after.AckPending != 0 || !after.QueueReady {
 		t.Fatalf("backoff interrupt did not stop requests and finish cleanly: %+v", after)
 	}
+	observation.Phase = "interrupt_history"
 	assertBackoffIdleHistory(t, f, idle)
 	failing.Store(false)
+	observation.Phase = "recovery_input"
 	submitChat(t, f, "Reply after interruption.")
+	observation.Phase = "recovery_reply"
 	answer := nextChatEvent(t, ctx, events, "agent.message")
 	if len(answer.Content) != 1 || answer.Content[0].Text != "回复1" {
 		t.Fatalf("unexpected recovered answer: %+v", answer)
 	}
+	observation.Phase = "recovery_idle"
 	recoveredIdle := nextChatEvent(t, ctx, events, "session.status_idle")
 	waitChatIdle(t, f, 1)
 	assertBackoffIdleHistory(t, f, recoveredIdle)
+	observation.Phase = "recovery_count"
 	if calls.Load() != before.ModelRequests+1 || replies.Load() != 1 {
 		t.Fatalf("unexpected requests after recovery: total=%d replies=%d", calls.Load(), replies.Load())
 	}
-	data, err := json.MarshalIndent(struct {
-		Before upstream401State `json:"before_interrupt"`
-		After  upstream401State `json:"after_interrupt"`
-	}{before, after}, "", "  ")
-	requireOK(t, err)
-	path := filepath.Join(filepath.Dir(os.Getenv("VERIFY_BE_SERVER")), "upstream-backoff-observations.json")
-	requireOK(t, os.WriteFile(path, append(data, '\n'), 0o600))
-	t.Logf("backoff observations: %s", path)
+	observation.Phase = "completed"
 }
 
 func sendBackoffInterrupt(t *testing.T, f *liveSession, ctx context.Context) {

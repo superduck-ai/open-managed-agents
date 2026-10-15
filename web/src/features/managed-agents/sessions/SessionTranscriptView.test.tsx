@@ -158,8 +158,8 @@ describe('SessionTranscriptView', () => {
     );
     const { container } = render(transcriptTree(entries));
     expect(screen.getByText('Stopped by the user.')).toBeTruthy();
-    expect(screen.getByText('Model request interrupted by the user.')).toBeTruthy();
-    expect(container.querySelector('[data-event-id^="end-"] [data-execution-state="interrupted"]')).toBeTruthy();
+    expect(screen.queryByText('Model request interrupted by the user.')).toBeNull();
+    expect(container.querySelector('[data-event-id^="end-"]')).toBeNull();
     expect(container.querySelector('[data-tool-lifecycle="interrupted"]')).toBeTruthy();
     expect(container.querySelector('[data-execution-state="failed"]')).toBeNull();
     expect(container.querySelector('[data-transcript-tool-row]')?.className).not.toContain('text-destructive');
@@ -195,7 +195,7 @@ describe('SessionTranscriptView', () => {
 
       const interrupt = container.querySelector('[data-event-id^="sevt_interrupt-"]');
       expect(interrupt?.getAttribute('data-entry-kind')).toBe('status');
-      expect(interrupt?.textContent).toContain('Stopped by the user.');
+      expect(interrupt?.textContent).toContain('Stop requested; waiting for the agent to stop.');
       expect(interrupt?.textContent).not.toContain('processed_at');
       expect(interrupt?.querySelector('[data-transcript-message-body]')).toBeNull();
       expect(screen.getByText('Help me check this.')).toBeTruthy();

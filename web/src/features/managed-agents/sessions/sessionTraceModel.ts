@@ -32,6 +32,7 @@ import {
   sessionStatusFromEventType,
 } from './sessionDetailModel';
 import { sessionOutcomeIteration, sessionOutcomeStatus } from './sessionTraceRows';
+import { arrangeSessionTranscriptInterrupts } from './sessionTranscriptInterrupts';
 import {
   interruptedSessionModelRequestIds,
   sessionEventPresentationState,
@@ -352,14 +353,22 @@ export function buildSessionEventEntries(
   msg?: I18nMsg,
   options: SessionTraceBuildOptions = {},
 ): SessionEventListEntry[] {
-  const traceEntries = buildSessionTraceEntries(events, view, traceStartMs, msg, options);
+  const rawEvents = events.map(sessionCanonicalDisplayEvent);
+  if (view !== 'debug' && rawEvents.some((event) => event.type === 'user.interrupt')) {
+    rawEvents.sort((left, right) => {
+      const leftAt = sessionEventTimestamp(left);
+      const rightAt = sessionEventTimestamp(right);
+      if (leftAt && rightAt) return leftAt - rightAt;
+      return Number(Boolean(rightAt)) - Number(Boolean(leftAt));
+    });
+  }
+  const traceEntries = buildSessionTraceEntries(rawEvents, view, traceStartMs, msg, options);
   if (view === 'debug') {
     return traceEntries.map((traceEntry) => displayEntryFromTraceEntry(traceEntry, 'debug', traceStartMs, msg));
   }
 
   const entries: SessionEventListEntry[] = [];
   let lastIdleAt = 0;
-  const rawEvents = events.map(sessionCanonicalDisplayEvent);
   const rawEventKeys = new Set(rawEvents.map(sessionEventKey));
   const traceEntriesByRawKey = new Map<string, SessionTraceEntry[]>();
   traceEntries.forEach((entry) => {
@@ -394,7 +403,7 @@ export function buildSessionEventEntries(
   });
 
   const entriesWithModelMetadata = applyModelRequestBrackets(entries, rawEvents);
-  return mergeToolCallBatches(entriesWithModelMetadata);
+  return mergeToolCallBatches(arrangeSessionTranscriptInterrupts(entriesWithModelMetadata, rawEvents, msg));
 }
 
 function sessionTraceEntrySourceKey(entry: SessionTraceEntry, rawEventKeys: Set<string>) {
@@ -417,6 +426,12 @@ export function applyModelRequestBrackets(
 
   const rawEventKeys = new Set(rawEvents.map(sessionEventKey));
   const bracketsByStartId = new Map<string, ModelRequestBracket>();
+  const interruptedIds = interruptedSessionModelRequestIds(rawEvents);
+  const interruptedStarts = new Set(
+    rawEvents
+      .filter((event) => typeof event.id === 'string' && interruptedIds.has(event.id))
+      .map(sessionModelRequestStartRef),
+  );
   const entriesByRawEventId = new Map<string, SessionEventListEntry[]>();
   entries.forEach((entry) => {
     if (!('event' in entry)) {
@@ -451,9 +466,11 @@ export function applyModelRequestBrackets(
     const matchingEntries = entriesByRawEventId.get(sessionEventKey(event)) ?? [];
     matchingEntries.forEach((entry) => {
       const targetEntry = sessionModelBracketTargetEntry(entry);
-      if (activeBracket && targetEntry) {
+      const explicitStartId = sessionModelRequestStartRef(event);
+      const targetBracket = (explicitStartId ? bracketsByStartId.get(explicitStartId) : null) ?? activeBracket;
+      if (targetBracket && targetEntry) {
         if (targetEntry.kind === 'message') {
-          activeBracket.entries.forEach((candidate) => {
+          targetBracket.entries.forEach((candidate) => {
             if (candidate.bracketOpen) {
               candidate.bracketOpen = false;
               candidate.bracketEndMs ??= targetEntry.processedAtMs;
@@ -461,16 +478,23 @@ export function applyModelRequestBrackets(
           });
           targetEntry.bracketOpen = true;
         }
-        if (!targetEntry.bracketId) {
-          targetEntry.bracketId = activeBracket.startId;
+        if (interruptedStarts.has(targetBracket.startId) || !targetEntry.bracketId) {
+          targetEntry.bracketId = targetBracket.startId;
         }
-        targetEntry.bracketStartMs ??= activeBracket.startMs;
-        targetEntry.turnId ??= activeTurnId ?? activeBracket.startId;
-        if (activeBracket.softEndMs !== undefined) {
-          targetEntry.bracketEndMs ??= Math.max(activeBracket.startMs, activeBracket.softEndMs);
+        targetEntry.bracketStartMs ??= targetBracket.startMs;
+        targetEntry.turnId ??= targetBracket.entries[0]?.turnId ?? activeTurnId ?? targetBracket.startId;
+        if (targetBracket.softEndMs !== undefined) {
+          targetEntry.bracketEndMs ??= Math.max(targetBracket.startMs, targetBracket.softEndMs);
           targetEntry.bracketOpen = false;
         }
-        activeBracket.entries.push(targetEntry);
+        targetBracket.entries.push(targetEntry);
+        if (targetBracket.endMeta) {
+          closeModelRequestBracket(targetBracket, targetBracket.endMeta.startMs + targetBracket.endMeta.inferenceMs);
+          if (sessionIsAgentMessageDisplayEntry(targetEntry)) {
+            applyModelBracketMetaToDisplayEntry(targetEntry, targetBracket.endMeta);
+            if (pendingBracketMeta?.startId === targetBracket.startId) pendingBracketMeta = null;
+          }
+        }
         return;
       }
       if (pendingBracketMeta && sessionIsSubagentSentDisplayEntry(entry)) {
@@ -507,6 +531,7 @@ export function applyModelRequestBrackets(
       return;
     }
     const meta = modelRequestBracketMeta(bracket, event);
+    bracket.endMeta = meta;
     closeModelRequestBracket(bracket, meta.startMs + meta.inferenceMs);
     const agentMessage = bracket.entries.find(sessionIsAgentMessageDisplayEntry);
     const firstTool = bracket.entries.find((entry): entry is ToolCallEntry => entry.kind === 'tool_call');
@@ -523,7 +548,6 @@ export function applyModelRequestBrackets(
     } else {
       pendingBracketMeta = meta;
     }
-    bracketsByStartId.delete(bracket.startId);
     if (activeBracket?.startId === bracket.startId) {
       activeBracket = null;
     }

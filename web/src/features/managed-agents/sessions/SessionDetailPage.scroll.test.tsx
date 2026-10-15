@@ -114,13 +114,24 @@ test.each([
   );
   renderManagedAgentsPage('sessions');
   const mainState = processed && !threadId && errorType === 'cancelled' ? 'interrupted' : 'failed';
-  await waitFor(() =>
-    expect(document.querySelector(`[data-event-id^="main-end-"] [data-execution-state="${mainState}"]`)).toBeTruthy(),
-  );
+  await screen.findByTestId('session-trace-list-pane');
+  await waitFor(() => {
+    if (mainState === 'interrupted') {
+      expect(document.querySelector('[data-event-id^="global-stop-"] [data-execution-state="stopping"]')).toBeTruthy();
+      expect(document.querySelector('[data-event-id^="main-end-"]')).toBeNull();
+    } else {
+      expect(document.querySelector(`[data-event-id^="main-end-"] [data-execution-state="${mainState}"]`)).toBeTruthy();
+    }
+  });
   fireEvent.click(await screen.findByRole('tab', { name: 'analyst' }));
   await screen.findByText('Child partial answer');
   await waitFor(() => {
     const row = document.querySelector('[data-event-id^="child-end-"]');
+    if (state === 'interrupted' && threadId === 'sthr_analyst123456') {
+      expect(row === null).toBe(true);
+      expect(document.querySelector('[data-event-id^="global-stop-"] [data-execution-state="stopped"]')).toBeTruthy();
+      return;
+    }
     expect(row?.querySelector(`[data-execution-state="${state}"]`)).toBeTruthy();
     expect(row?.querySelector('[data-execution-state="interrupted"]') !== null).toBe(state === 'interrupted');
   });

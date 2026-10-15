@@ -47,7 +47,9 @@ export function useSessionFileMetadata(session: SessionApiResponse, workspaceId:
 }
 
 export function sessionOutputFiles(files: FileMetadataApiResponse[]) {
-  return [...new Map(files.filter((file) => file.downloadable === true).map((file) => [file.id, file])).values()];
+  return [...new Map(files.filter((file) => file.downloadable === true).map((file) => [file.id, file])).values()].sort(
+    (left, right) => Date.parse(right.created_at) - Date.parse(left.created_at),
+  );
 }
 
 export function useSessionOutputFiles(session: SessionApiResponse, workspaceId: string, refreshKey: number) {

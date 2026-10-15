@@ -168,5 +168,20 @@ stateDiagram-v2
 
 - `api.test.ts` 覆盖带 session scope 的全分页请求、beta/workspace/cookie/abort signal，以及循环游标终止。
 - `SessionOutputFiles.test.tsx` 覆盖上传文件排除、输出 ID 去重、无输出占位、错误重试与旧卡片保留、作用域切换取消、运行期与 idle 刷新、下载失败恢复及重复点击保护。
-- `SessionDetailPage.scroll.test.tsx` 覆盖卡片位于聊天末尾、关闭 Inspector 后可下载，以及搜索/子线程作用域切换。
+- `SessionDetailPage.scroll.test.tsx` 覆盖文件卡片独立位于所属回复下方、关闭 Inspector 后可下载，以及搜索/子线程作用域切换。
 - 对 React Query 轮询与组件验证，先通过 `bun test --preload ./src/test/setup.ts ...` 初始化 DOM，避免 Query Core 在其他纯工具测试先加载时被缓存为 server mode。
+
+
+### 按回复展示输出文件
+
+聊天区不再在事件列表末尾追加 Session 文件合集。Session 文件查询仍按 workspace/session 缓存、分页、轮询与取消；文件查询失败的重试提示放在消息列表前面，已加载的卡片继续保留。
+
+- 以用户消息划分轮次，将文件 `created_at` 落在本轮起点与下一轮起点之间的输出文件放在本轮最后一条 Agent 消息下，以独立文件框展示，保持间距，不嵌入消息正文或 iteration 的边框内；消息明确引用已有文件的 Markdown 路径链接或代码路径时，该回复也可再次展示该文件。
+- 本轮存在流式消息、未结束的模型请求或正在运行/等待批准的工具时，不展示本轮文件。Session 仍在运行或存在 pending model request 时，最新轮次也不展示文件；历史已结束轮次保持展示。
+- 文件按 `created_at` 降序，默认展示最新两个；超过两个时使用共享 shadcn Collapsible 展开全部或收起。搜索结果和子线程不投影 Session 主线程的文件合集。
+- 卡片显示文件名、真实 `resources.mount_path`、类型和大小。路径缺失时不从 basename 猜测，避免不同目录的同名文件误关联。
+- Markdown 文件链接按完整路径匹配当前 Session 的可下载文件，支持百分号编码、`sandbox:` 和 `/mnt/user-data/outputs/` 到公开 `/outputs/` 的别名；命中后通过 Files API 下载并保留文件名，继续发送 workspace/beta/cookie 上下文。普通网站链接保持原行为。
+
+现有 Files API 没有 message/turn 归属字段，以上时间区间归属是控制台推断，不是服务端持久化关系；删除或覆盖文件后不能通过该投影还原历史版本。Session resources 的输出投影存在数量上限，超出投影的文件仍按时间展示，但没有真实路径时不提供正文路径映射。后续如需永久、精确的消息附件及版本快照，需要服务端显式的消息与文件版本关系。
+
+`SessionTranscriptView.test.tsx` 验证两轮之间文件留存、流式时隐藏以及结束后归位；`SessionOutputFiles.test.tsx` 验证最新优先与展开/收起；`sessionOutputModel.test.ts` 和 `SessionTranscriptContent.test.tsx` 验证同名路径隔离、编码路径、别名及正文链接下载。

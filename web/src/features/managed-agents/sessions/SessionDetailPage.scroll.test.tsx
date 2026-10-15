@@ -225,14 +225,16 @@ test('shows a budget pause and disables ordinary messages while retaining the dr
   expect(api.requests.some((request) => request.method === 'POST' && request.url.includes('/events'))).toBe(false);
 });
 
-test('keeps downloadable output cards after the transcript when the inspector is closed', async () => {
+test('keeps downloadable output cards separate from the completed reply when the inspector is closed', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
   const api = mockOutputSession();
   api.resources.sessionThreads.length = 0;
   renderManagedAgentsPage('sessions');
   const output = await screen.findByTestId('session-output-files');
   const message = await screen.findByText('Your result is ready.');
-  expect(output.closest('[data-testid="session-trace-column"]')).toBeTruthy();
+  expect(output.closest('[data-transcript-block]')).toBeNull();
+  expect(output.closest('[data-transcript-iteration]')).toBeNull();
+  expect(output.previousElementSibling).toBe(message.closest('[data-transcript-block]'));
   expect(message.compareDocumentPosition(output) & Node.DOCUMENT_POSITION_FOLLOWING).toBeGreaterThan(0);
   fireEvent.click(screen.getByTestId('session-inspector').querySelector('[data-inspector-close]')!);
   expect(screen.getByRole('button', { name: 'Download deliverable.csv' }).hasAttribute('disabled')).toBe(false);

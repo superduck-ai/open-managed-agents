@@ -147,13 +147,14 @@ func (d *DB) GetEnvironment(ctx context.Context, workspaceUUID string, externalI
 	return row.environment(), nil
 }
 
-func (d *DB) ArchiveEnvironment(ctx context.Context, workspaceUUID string, externalID string) (Environment, error) {
+func (d *DB) ArchiveEnvironment(ctx context.Context, workspaceUUID string, externalID string) (Environment, bool, error) {
 	mapper := NewEnvironmentMapper(d.mapperDB)
 	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, externalID)
-	if err != nil {
-		return Environment{}, mapNoRows(err)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return row.environment(), err == nil, err
 	}
-	return row.environment(), nil
+	current, loadErr := d.GetEnvironment(ctx, workspaceUUID, externalID)
+	return current, false, loadErr
 }
 
 func (d *DB) DeleteEnvironment(ctx context.Context, workspaceUUID string, externalID string) error {
@@ -454,12 +455,39 @@ func (d *DB) EnvironmentWorkStats(ctx context.Context, workspaceUUID string, env
 }
 
 func (d *DB) CreateEnvironmentSandbox(ctx context.Context, sandbox EnvironmentSandbox) (EnvironmentSandbox, error) {
-	mapper := NewEnvironmentSandboxMapper(d.mapperDB)
-	row, err := mapper.Insert(ctx, environmentSandboxWriteParamsFrom(sandbox))
-	if err != nil {
-		return EnvironmentSandbox{}, err
-	}
-	return row.sandbox(), nil
+	var result EnvironmentSandbox
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewEnvironmentSandboxMapper(executor)
+		if sandbox.WorkUUID != nil && sandbox.WorkExternalID != nil {
+			work, err := NewEnvironmentWorkMapper(executor).LockByExternalID(ctx, sandbox.WorkspaceUUID, sandbox.EnvironmentExternalID, *sandbox.WorkExternalID)
+			if err != nil {
+				return mapNoRows(err)
+			}
+			if work.OrganizationUUID != sandbox.OrganizationUUID || work.UUID != *sandbox.WorkUUID {
+				return ErrNotFound
+			}
+			if work.State == "stopped" || work.State == "stopping" {
+				return ErrInvalidState
+			}
+			current, found, err := mapper.FindPendingForWork(ctx, sandbox.OrganizationUUID, sandbox.WorkspaceUUID, work.UUID)
+			if err != nil {
+				return err
+			}
+			if found {
+				result = current.sandbox()
+				return nil
+			}
+		}
+		row, err := mapper.Insert(ctx, environmentSandboxWriteParamsFrom(sandbox))
+		result = row.sandbox()
+		return err
+	})
+	return result, err
+}
+
+func (d *DB) GetPendingEnvironmentSandboxForWork(ctx context.Context, work EnvironmentWork) (EnvironmentSandbox, bool, error) {
+	row, found, err := NewEnvironmentSandboxMapper(d.mapperDB).FindPendingForWork(ctx, work.OrganizationUUID, work.WorkspaceUUID, work.UUID)
+	return row.sandbox(), found, err
 }
 
 func (d *DB) UpdateEnvironmentSandboxState(ctx context.Context, workspaceUUID string, externalID, state string, providerSandboxID *string, lastError *string, stoppedAt *time.Time) error {

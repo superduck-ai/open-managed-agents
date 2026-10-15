@@ -194,6 +194,9 @@ func isToolResultOrConfirmationEvent(eventType string) bool {
 }
 
 func sessionEventPayloadForResponse(event db.SessionEvent, threadID string) json.RawMessage {
+	if threadID == "" && event.ThreadExternalID != nil {
+		threadID = *event.ThreadExternalID
+	}
 	return eventPayloadForResponse(event.Payload, event.ProcessedAt, threadID)
 }
 
@@ -204,7 +207,16 @@ func eventPayloadForResponse(payloadRaw json.RawMessage, processedAt time.Time, 
 	}
 	_, changed := payload["created_at"]
 	delete(payload, "created_at")
-	changed = ensureSessionEventTimeField(payload, "processed_at", processedAt) || changed
+	if payload["type"] == "user.message" {
+		if processedAt.IsZero() {
+			payload["processed_at"] = nil
+		} else {
+			payload["processed_at"] = formatEventTime(processedAt)
+		}
+		changed = true
+	} else {
+		changed = ensureSessionEventTimeField(payload, "processed_at", processedAt) || changed
+	}
 	if strings.TrimSpace(threadID) != "" && !hasSessionThreadOwnerField(payload) {
 		payload["session_thread_id"] = strings.TrimSpace(threadID)
 		changed = true

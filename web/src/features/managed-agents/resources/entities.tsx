@@ -76,6 +76,10 @@ import {
   navigateToInternalHref,
 } from '../utils';
 import { DeploymentEmptyState } from './deployment-list';
+import { SessionQuickView } from '../sessions/SessionQuickView';
+import { SessionListContent } from '../sessions/SessionListContent';
+import { SessionListHeader } from '../sessions/SessionListHeader';
+import { useSessionIdSearch } from '../sessions/useSessionIdSearch';
 import { ManagedEntityDialog } from './dialogs';
 import { useManagedEntityCells } from './environment-list';
 import { managedEntityErrorMessage } from './environment-model';
@@ -161,6 +165,9 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
   const { msg } = useI18n();
   const { activeWorkspaceId } = useWorkspace();
   const [search, setSearch] = useState('');
+  const [previewSession, setPreviewSession] = useState<{ workspaceId: string; session: SessionApiResponse } | null>(
+    null,
+  );
   const [entities, setEntities] = useState<ManagedEntityApiResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -362,6 +369,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
 
   useEffect(() => {
     setCreatedFilter('all_time');
+    setPreviewSession(null);
     setDeploymentAgentOptions([]);
     setDeploymentAgentFilter('');
     setDeploymentStatusFilter('all');
@@ -476,6 +484,17 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         .includes(normalized);
     });
   }, [config.section, deploymentAgentFilter, deploymentStatusFilter, entities, search]);
+  const sessionIdSearch = useSessionIdSearch(
+    activeWorkspaceId,
+    search,
+    config.section === 'sessions',
+    entities.some((entity) => entity.id === search.trim()),
+  );
+  const sessionListEntities = sessionIdSearch.handled
+    ? sessionIdSearch.session
+      ? [sessionIdSearch.session]
+      : []
+    : (visibleEntities as SessionApiResponse[]);
   const visibleEntityIds = useMemo(() => visibleEntities.map((entity) => entity.id), [visibleEntities]);
   const hasSelectionColumn = config.columns.some((column) => !column);
   const allVisibleEntitiesSelected =
@@ -722,6 +741,9 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     setMutationError(null);
     if (entity) {
       const updated = await updateManagedEntity(config.section, entity.id, values, activeWorkspaceId);
+      if (config.section === 'sessions') {
+        await sessionIdSearch.syncSession(entity.id, updated as SessionApiResponse);
+      }
       setEntities((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       toast.success(managedToastMessage(config.section, 'updated', msg));
       return false;
@@ -736,7 +758,9 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       return false;
     }
     if (config.section === 'sessions') {
-      navigateToInternalHref(managedEntityDetailHref(activeWorkspaceId, config.section, created.id));
+      navigateToInternalHref(
+        `${managedEntityDetailHref(activeWorkspaceId, config.section, created.id)}?interactive=true`,
+      );
       return true;
     }
     return false;
@@ -751,10 +775,14 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     setMutationError(null);
     try {
       try {
+        let updated: ManagedEntityApiResponse | null = null;
         if (action === 'archive') {
-          await archiveManagedEntity(config.section, entity.id, activeWorkspaceId);
+          updated = await archiveManagedEntity(config.section, entity.id, activeWorkspaceId);
         } else {
           await deleteManagedEntity(config.section, entity.id, activeWorkspaceId);
+        }
+        if (config.section === 'sessions') {
+          await sessionIdSearch.syncSession(entity.id, updated as SessionApiResponse | null);
         }
       } catch (error) {
         setMutationError(managedEntityErrorMessage(config.section, error, action, msg));
@@ -826,125 +854,191 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     }
   };
 
+  const listFilters = (
+    <>
+      <ResourceSearchField
+        id={`${config.section}-search`}
+        value={search}
+        placeholder={searchPlaceholder}
+        prefix={config.section === 'sessions' ? undefined : config.searchPrefix}
+        onChange={setSearch}
+      />
+      {config.filters.map((filter) => renderManagedFilter(filter))}
+    </>
+  );
+  const sessionAgentNames = useMemo(
+    () => new Map(deploymentAgentOptions.map((option) => [option.id, option.label])),
+    [deploymentAgentOptions],
+  );
+  const sessionListActions = useMemo(
+    () => ({
+      onQuickView: (session: SessionApiResponse) => setPreviewSession({ workspaceId: activeWorkspaceId, session }),
+      onEdit: (session: SessionApiResponse) => setDialogState({ mode: 'edit' as const, entity: session }),
+      onArchive: (session: SessionApiResponse) => setConfirmState({ action: 'archive' as const, entity: session }),
+      onDelete: (session: SessionApiResponse) => setConfirmState({ action: 'delete' as const, entity: session }),
+    }),
+    [activeWorkspaceId],
+  );
+  const resetSessionFilters = () => {
+    setSearch('');
+    setCreatedFilter('all_time');
+    setSessionAgentFilter('');
+    setSessionDeploymentFilter('');
+    setSessionStatusFilter('active');
+    resetEntityPage();
+  };
+  const sessionListFiltered = Boolean(
+    search ||
+    createdFilter !== 'all_time' ||
+    sessionAgentFilter ||
+    sessionDeploymentFilter ||
+    sessionStatusFilter !== 'active',
+  );
   return (
     <section className="relative min-h-[calc(100vh-48px)] text-foreground">
-      <ResourcePageHeader
-        title={title}
-        description={description}
-        actions={
-          createLabel ? (
-            <Button type="button" size="lg" onClick={() => setDialogState({ mode: 'create' })}>
-              <Plus className="size-4" aria-hidden />
-              {createLabel}
-            </Button>
-          ) : null
-        }
-      />
-
-      <div className="mb-7 flex flex-wrap items-center gap-2">
-        <ResourceSearchField
-          id={`${config.section}-search`}
-          value={search}
-          placeholder={searchPlaceholder}
-          prefix={config.searchPrefix}
-          onChange={setSearch}
+      {config.section === 'sessions' ? (
+        <SessionListHeader
+          title={title}
+          description={description}
+          loading={loading || sessionIdSearch.loading}
+          filters={listFilters}
+          onCreate={() => setDialogState({ mode: 'create' })}
+          onRefresh={() => (sessionIdSearch.handled ? sessionIdSearch.refresh() : reload())}
         />
-        {config.filters.map((filter) => renderManagedFilter(filter))}
-      </div>
+      ) : (
+        <>
+          <ResourcePageHeader
+            title={title}
+            description={description}
+            actions={
+              createLabel ? (
+                <Button type="button" size="lg" onClick={() => setDialogState({ mode: 'create' })}>
+                  <Plus className="size-4" aria-hidden />
+                  {createLabel}
+                </Button>
+              ) : null
+            }
+          />
+          <div className="mb-7 flex flex-wrap items-center gap-2">{listFilters}</div>
+        </>
+      )}
 
-      {loadError ? <ManagedErrorAlert className="mb-3">{loadError}</ManagedErrorAlert> : null}
+      {loadError && config.section !== 'sessions' ? (
+        <ManagedErrorAlert className="mb-3">{loadError}</ManagedErrorAlert>
+      ) : null}
       {mutationError ? <ManagedErrorAlert className="mb-3">{mutationError}</ManagedErrorAlert> : null}
 
-      <div>
-        <Table
-          className={cn(
-            dataTableClassName,
-            config.section === 'sessions' && 'min-w-[1080px]',
-            config.section === 'deployments' && 'min-w-[880px]',
-          )}
-        >
-          <TableHeader>
-            <TableRow className={dataTableHeaderRowClassName}>
-              {config.columns.map((column) => (
+      {config.section === 'sessions' ? (
+        <SessionListContent
+          sessions={sessionListEntities}
+          agentNames={sessionAgentNames}
+          workspaceId={activeWorkspaceId}
+          loading={loading || sessionIdSearch.loading}
+          busyAction={busyAction}
+          actions={sessionListActions}
+          filtered={sessionListFiltered}
+          error={sessionIdSearch.error || loadError}
+          onCreate={() => setDialogState({ mode: 'create' })}
+          onReset={resetSessionFilters}
+          onRetry={() => (sessionIdSearch.handled ? sessionIdSearch.refresh() : reload())}
+        />
+      ) : (
+        <div>
+          <Table className={cn(dataTableClassName, 'min-w-[1080px]')}>
+            <TableHeader>
+              <TableRow className={dataTableHeaderRowClassName}>
+                {config.columns.map((column) => (
+                  <TableHead
+                    key={column || 'select'}
+                    className={cn(
+                      dataTableHeaderCellClassName,
+                      columnWidth(config.section, column),
+                      (column === 'Tokens in / out' || column === 'Cost') && 'text-right',
+                    )}
+                  >
+                    {column ? (
+                      managedColumnLabel(column, msg)
+                    ) : (
+                      <AgentSelectionCheckbox
+                        checked={allVisibleEntitiesSelected}
+                        indeterminate={!allVisibleEntitiesSelected && someVisibleEntitiesSelected}
+                        disabled={!visibleEntityIds.length || loading}
+                        label={msg('managedAgents.common.selectAllRows', 'Select all rows')}
+                        onClick={toggleAllVisibleEntities}
+                      />
+                    )}
+                  </TableHead>
+                ))}
                 <TableHead
-                  key={column || 'select'}
-                  className={cn(
-                    dataTableHeaderCellClassName,
-                    columnWidth(config.section, column),
-                    (column === 'Tokens in / out' || column === 'Cost') && 'text-right',
-                  )}
-                >
-                  {column ? (
-                    managedColumnLabel(column, msg)
-                  ) : (
-                    <AgentSelectionCheckbox
-                      checked={allVisibleEntitiesSelected}
-                      indeterminate={!allVisibleEntitiesSelected && someVisibleEntitiesSelected}
-                      disabled={!visibleEntityIds.length || loading}
-                      label={msg('managedAgents.common.selectAllRows', 'Select all rows')}
-                      onClick={toggleAllVisibleEntities}
-                    />
-                  )}
-                </TableHead>
-              ))}
-              <TableHead
-                className={cn(dataTableHeaderCellClassName, 'w-[48px] px-2')}
-                aria-label={managedColumnLabel('Actions', msg)}
-              />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow className="border-0 hover:bg-transparent">
-                <TableCell
-                  colSpan={config.columns.length + 1}
-                  className="h-[280px] text-center text-sm text-muted-foreground"
-                >
-                  {managedMessage(msg, config.section, 'loading', `Loading ${config.title.toLowerCase()}...`)}
-                </TableCell>
-              </TableRow>
-            ) : (
-              visibleEntities.map((entity) => (
-                <ManagedEntityRow
-                  key={entity.id}
-                  config={config}
-                  entity={entity}
-                  workspaceId={activeWorkspaceId}
-                  busyAction={busyAction}
-                  selected={selectedEntityIds.has(entity.id)}
-                  onCopy={() => void copyText(entity.id)}
-                  onToggleSelect={() => toggleEntitySelection(entity.id)}
-                  onEdit={() => setDialogState({ mode: 'edit', entity })}
-                  onArchive={() => setConfirmState({ action: 'archive', entity })}
-                  onDelete={() => setConfirmState({ action: 'delete', entity })}
-                  onRunDeployment={() => void handleDeploymentAction('run', entity)}
-                  onPauseDeployment={() => void handleDeploymentAction('pause', entity)}
-                  onUnpauseDeployment={() => void handleDeploymentAction('unpause', entity)}
+                  className={cn(dataTableHeaderCellClassName, 'w-[48px] px-2')}
+                  aria-label={managedColumnLabel('Actions', msg)}
                 />
-              ))
-            )}
-          </TableBody>
-        </Table>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading ? (
+                <TableRow className="border-0 hover:bg-transparent">
+                  <TableCell
+                    colSpan={config.columns.length + 1}
+                    className="h-[280px] text-center text-sm text-muted-foreground"
+                  >
+                    {managedMessage(msg, config.section, 'loading', `Loading ${config.title.toLowerCase()}...`)}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                visibleEntities.map((entity) => (
+                  <ManagedEntityRow
+                    key={entity.id}
+                    config={config}
+                    entity={entity}
+                    workspaceId={activeWorkspaceId}
+                    busyAction={busyAction}
+                    selected={selectedEntityIds.has(entity.id)}
+                    onCopy={() => void copyText(entity.id)}
+                    onToggleSelect={() => toggleEntitySelection(entity.id)}
+                    onEdit={() => setDialogState({ mode: 'edit', entity })}
+                    onArchive={() => setConfirmState({ action: 'archive', entity })}
+                    onDelete={() => setConfirmState({ action: 'delete', entity })}
+                    onRunDeployment={() => void handleDeploymentAction('run', entity)}
+                    onPauseDeployment={() => void handleDeploymentAction('pause', entity)}
+                    onUnpauseDeployment={() => void handleDeploymentAction('unpause', entity)}
+                  />
+                ))
+              )}
+            </TableBody>
+          </Table>
 
-        {!loading && !visibleEntities.length ? (
-          config.section === 'deployments' ? (
-            <DeploymentEmptyState
-              filtered={Boolean(search || deploymentAgentFilter || deploymentStatusFilter !== 'all')}
-            />
-          ) : (
-            <EmptyState config={config} />
-          )
-        ) : null}
+          {!loading && !visibleEntities.length ? (
+            config.section === 'deployments' ? (
+              <DeploymentEmptyState
+                filtered={Boolean(search || deploymentAgentFilter || deploymentStatusFilter !== 'all')}
+              />
+            ) : (
+              <EmptyState config={config} />
+            )
+          ) : null}
+        </div>
+      )}
+
+      <div hidden={sessionIdSearch.handled}>
+        <ResourceListPagination
+          currentPage={entityPageHistory.length + 1}
+          totalPages={resourceListPageCount(currentPage.totalCount, managedEntityListLimit)}
+          canPrevious={entityPageHistory.length > 0 && !loading}
+          canNext={Boolean(entityNextPage) && !loading}
+          onPrevious={goToPreviousEntityPage}
+          onNext={goToNextEntityPage}
+        />
       </div>
 
-      <ResourceListPagination
-        currentPage={entityPageHistory.length + 1}
-        totalPages={resourceListPageCount(currentPage.totalCount, managedEntityListLimit)}
-        canPrevious={entityPageHistory.length > 0 && !loading}
-        canNext={Boolean(entityNextPage) && !loading}
-        onPrevious={goToPreviousEntityPage}
-        onNext={goToNextEntityPage}
-      />
+      {previewSession?.workspaceId === activeWorkspaceId ? (
+        <SessionQuickView
+          key={`${activeWorkspaceId}:${previewSession.session.id}`}
+          session={previewSession.session}
+          workspaceId={activeWorkspaceId}
+          onClose={() => setPreviewSession(null)}
+        />
+      ) : null}
 
       {dialogState ? (
         <ManagedEntityDialog
@@ -1023,13 +1117,14 @@ export function ManagedEntityRow({
   const detailHref = managedEntityDetailHref(workspaceId, config.section, entity.id);
 
   return (
-    <DataTableRow selected={selected}>
+    <DataTableRow selected={selected} className="[&>td]:h-11">
       {config.columns.map((column, index) => {
         const content =
           column === 'ID' ? (
             <CopyIdCell
               value={entity.id}
-              displayValue={compactEntityId(entity.id)}
+              displayValue={config.section === 'sessions' ? entity.id : compactEntityId(entity.id)}
+              alwaysVisible={config.section === 'sessions'}
               ariaLabel={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: entity.id })}
             />
           ) : column === 'Name' ? (

@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { SessionFileContext } from './SessionFileContext';
+import { I18nProvider } from '../../../shared/i18n';
+import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { resetTestDom } from '../../../test/setup';
 import { MarkdownTranscriptContent, TranscriptContent } from './SessionTranscriptContent';
 
-const { cleanup, render, screen } = await import('@testing-library/react');
+const { cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
 
 afterEach(() => cleanup());
 
@@ -111,4 +113,55 @@ describe('SessionTranscriptContent', () => {
     expect(screen.getByTestId('session-trace-code-block')).toBeTruthy();
     expect(screen.getByText('Truncated — showing the first 50,000 of 50,019 characters.')).toBeTruthy();
   });
+});
+
+test('downloads path links through Files API with the current workspace and preserves the filename', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  const originalFetch = globalThis.fetch;
+  const originalCreate = URL.createObjectURL;
+  const originalClick = window.HTMLAnchorElement.prototype.click;
+  const requests: Array<{ url: string; workspace: string | null }> = [];
+  const clicks: string[] = [];
+  try {
+    globalThis.fetch = async (input, init) => {
+      requests.push({ url: String(input), workspace: new Headers(init?.headers).get('x-workspace-id') });
+      return new Response('one joke');
+    };
+    URL.createObjectURL = mock(() => 'blob:file');
+    window.HTMLAnchorElement.prototype.click = function () {
+      clicks.push(this.download);
+    };
+    render(
+      <I18nProvider initialLocale="en">
+        <SessionFileContext.Provider
+          value={{
+            workspaceId: 'workspace-links',
+            running: false,
+            files: [
+              {
+                id: 'joke-file',
+                filename: '笑话.txt',
+                path: '/outputs/one/笑话.txt',
+                type: 'file',
+                mime_type: 'text/plain',
+                size_bytes: 8,
+                downloadable: true,
+                created_at: '2026-10-15T00:00:00Z',
+              },
+            ],
+          }}
+        >
+          <MarkdownTranscriptContent value="[笑话.txt](sandbox:/mnt/user-data/outputs/one/%E7%AC%91%E8%AF%9D.txt)" />
+        </SessionFileContext.Provider>
+      </I18nProvider>,
+    );
+    fireEvent.click(screen.getByRole('link', { name: '笑话.txt' }));
+    await waitFor(() => expect(clicks).toEqual(['笑话.txt']));
+    expect(requests[0].url).toContain('/v1/files/joke-file/content?beta=true');
+    expect(requests[0].workspace).toBe('workspace-links');
+  } finally {
+    globalThis.fetch = originalFetch;
+    URL.createObjectURL = originalCreate;
+    window.HTMLAnchorElement.prototype.click = originalClick;
+  }
 });

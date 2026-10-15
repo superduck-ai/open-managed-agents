@@ -25,6 +25,7 @@ import (
 var (
 	ErrNotFound                 = platform.ErrNotFound
 	ErrInvalidState             = errors.New("invalid state")
+	ErrSessionInputPaused       = errors.New("session input is paused; resolve pending tools or budget first")
 	ErrSessionInputConflict     = errors.New("session cannot accept input")
 	ErrInvalidCursor            = errors.New("invalid page cursor")
 	ErrPreconditionFailed       = errors.New("precondition failed")
@@ -77,6 +78,14 @@ const (
 	`
 	legacyTableExistsQuery = `select to_regclass($1) is not null`
 )
+
+func OpenExisting(ctx context.Context, cfg config.Config, logger *slog.Logger) (*DB, error) {
+	pool, err := openPool(ctx, cfg.Database.URL)
+	if err != nil {
+		return nil, err
+	}
+	return newDB(pool, logger), nil
+}
 
 func Open(ctx context.Context, cfg config.Config, logger *slog.Logger) (*DB, error) {
 	pool, err := openPool(ctx, cfg.Database.URL)

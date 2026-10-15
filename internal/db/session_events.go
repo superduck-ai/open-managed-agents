@@ -28,6 +28,9 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 	if err != nil {
 		return sessionEventBatchResult{}, err
 	}
+	if err := rejectPausedSessionInput(ctx, executor, session, primary, events); err != nil {
+		return sessionEventBatchResult{}, err
+	}
 	acceptedID, err := validateSessionInputBatch(primary, worker, events)
 	if err != nil {
 		return sessionEventBatchResult{}, err
@@ -40,10 +43,11 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 			running.EventType = "session.status_running"
 			running.ExternalID = derivedStatusEventID(event.ExternalID, running.EventType)
 			running.Payload = nil
-			batch, err = sessionStatusEventsTx(ctx, executor, session, primary, worker, running)
+			running.ProcessedAt = event.CreatedAt
+			batch, err = sessionStatusEventsTx(ctx, executor, session, primary, &worker, running)
 			batch = append(batch, event)
 		} else {
-			batch, err = sessionEventBatchTx(ctx, executor, session, primary, worker, event)
+			batch, err = sessionEventBatchTx(ctx, executor, session, primary, &worker, event)
 		}
 		if err != nil {
 			return sessionEventBatchResult{}, err
@@ -115,14 +119,21 @@ func insertSessionHistoryTx(ctx context.Context, executor yourbatis.Executor, se
 				continue
 			}
 		}
-		_, err := NewSessionEventMapper(executor).FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID, event.ExternalID)
+		existing, err := NewSessionEventMapper(executor).FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID, event.ExternalID)
 		if err == nil {
+			updated, applied, err := processExistingSessionInputTx(ctx, executor, session, existing, event)
+			if err != nil {
+				return sessionEventBatchResult{}, err
+			}
+			if applied {
+				result.Events = append(result.Events, updated)
+			}
 			continue
 		}
 		if !errors.Is(mapNoRows(err), ErrNotFound) {
 			return sessionEventBatchResult{}, err
 		}
-		batch, err := sessionEventBatchTx(ctx, executor, session, primary, worker, event)
+		batch, err := sessionEventBatchTx(ctx, executor, session, primary, &worker, event)
 		if err != nil {
 			return sessionEventBatchResult{}, err
 		}
@@ -156,7 +167,7 @@ func lockSessionEventStateTx(ctx context.Context, executor yourbatis.Executor, s
 	return primaryRow.thread(), worker, err
 }
 
-func sessionEventBatchTx(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, worker codeSessionInputStateRow, event SessionEvent) ([]SessionEvent, error) {
+func sessionEventBatchTx(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, worker *codeSessionInputStateRow, event SessionEvent) ([]SessionEvent, error) {
 	if maevents.CategoryFor(event.EventType) == maevents.CategorySessionStatus || maevents.CategoryFor(event.EventType) == maevents.CategoryThreadStatus {
 		return sessionStatusEventsTx(ctx, executor, session, primary, worker, event)
 	}
@@ -172,25 +183,33 @@ func validateSessionInputBatch(primary SessionThread, worker codeSessionInputSta
 	for _, event := range events {
 		switch event.EventType {
 		case "user.message":
-			if acceptedID != "" || primary.Status != "idle" || worker.WorkerStatus == "running" || worker.WorkerStatus == "requires_action" || len(pending) > 0 ||
+			if worker.WorkerStatus == "requires_action" || len(pending) > 0 {
+				return "", ErrSessionInputPaused
+			}
+			if (primary.Status != "idle" && primary.Status != "running" && primary.Status != "rescheduling") ||
 				(event.ThreadExternalID != nil && *event.ThreadExternalID != primary.ExternalID) {
 				return "", ErrSessionInputConflict
 			}
-			acceptedID = event.ExternalID
+			if acceptedID == "" && primary.Status == "idle" {
+				acceptedID = event.ExternalID
+			}
 		case "user.interrupt":
 			if primary.Status != "running" && worker.WorkerStatus != "running" && worker.WorkerStatus != "requires_action" {
 				return "", ErrSessionInputConflict
 			}
 		case "user.tool_confirmation", "user.custom_tool_result":
+			if event.ToolUseID == nil || worker.Status != "active" || primary.Status == "terminated" {
+				return "", ErrSessionInputConflict
+			}
 			threadID := primary.ExternalID
 			if event.ThreadExternalID != nil {
 				threadID = *event.ThreadExternalID
 			}
-			threadPending, err := maevents.PendingToolEventIDs(worker.WorkerExternalMetadata, primary.ExternalID, threadID)
+			resolvedEventID, err := maevents.ResolvePendingToolEventID(worker.WorkerExternalMetadata, worker.ExternalID, primary.ExternalID, threadID, *event.ToolUseID)
 			if err != nil {
 				return "", err
 			}
-			if len(threadPending) == 0 && worker.WorkerStatus != "requires_action" {
+			if resolvedEventID == "" {
 				return "", ErrSessionInputConflict
 			}
 		case "user.tool_result":

@@ -2,11 +2,32 @@ package db
 
 import (
 	"context"
+	"database/sql/driver"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/yourbatis"
 )
+
+func TestSessionThreadMapperPrimaryExternalID(t *testing.T) {
+	for _, found := range []bool{false, true} {
+		response := mapperTestResponse{columns: []string{"external_id"}}
+		if found {
+			response.rows = [][]driver.Value{{"sthr_primary"}}
+		}
+		executor := newMapperTestExecutor(t, response)
+		id, gotFound, err := NewSessionThreadMapper(executor).FindPrimaryExternalID(t.Context(), "workspace", "session")
+		if err != nil || gotFound != found || (found && id != "sthr_primary") {
+			t.Fatalf("primary identity = %q, %t, %v", id, gotFound, err)
+		}
+		assertMapperTestExecution(t, executor, "SessionThreadMapper.FindPrimaryExternalID", yourbatis.StatementSelect, []any{"workspace", "session"})
+		want := "SELECT external_id FROM session_threads WHERE workspace_uuid = $1 AND session_external_id = $2 AND parent_thread_uuid IS NULL AND deleted_at IS NULL ORDER BY created_at ASC, uuid ASC LIMIT 1"
+		if got := strings.Join(strings.Fields(executor.bound.SQL), " "); got != want {
+			t.Fatalf("primary identity SQL = %s", got)
+		}
+	}
+}
 
 func TestSessionMapperFindByExternalIDNotFound(t *testing.T) {
 	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}})
@@ -52,7 +73,7 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 	eventParams := sessionEventWriteParams{
 		UUID: "event-uuid", ExternalID: "event_test", OrganizationUUID: "organization-uuid",
 		WorkspaceUUID: "workspace-uuid", SessionUUID: "session-uuid", SessionExternalID: "ses_test",
-		EventType: "message", Payload: []byte(`{"type":"message"}`), ProcessedAt: now, CreatedAt: now,
+		EventType: "message", Payload: []byte(`{"type":"message"}`), ProcessedAt: &now, CreatedAt: now,
 	}
 
 	tests := []mapperBuilderContract{
@@ -193,7 +214,7 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 	})
 	assertMapperSQLContains(t, eventBound, "parent_thread_uuid IS NULL")
 	assertMapperSQLContains(t, eventBound, "event_type IN ( $5 , $6 )")
-	assertMapperSQLContains(t, eventBound, `ORDER BY session_events.processed_at ASC, id ASC`)
+	assertMapperSQLContains(t, eventBound, `ORDER BY COALESCE(session_events.processed_at, session_events.created_at) ASC, id ASC`)
 
 	toolUseBound := buildSessionEventMapperChildSessionToolUseIDs(
 		yourbatis.DialectPostgres,
@@ -302,4 +323,26 @@ func TestSessionEventMapperLatestTurnStart(t *testing.T) {
 		wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "threadID"},
 		wantSQLFragments:  []string{"workspace_uuid = $1", "session_external_id = $2", "payload->>'session_thread_id' = $3", "deleted_at IS NULL", "'session.thread_status_running'", "'session.thread_status_rescheduled'", "ORDER BY id DESC LIMIT 1"},
 	})
+}
+
+func TestSessionEventQueueMapperContracts(t *testing.T) {
+	now := time.Now().UTC()
+	for _, contract := range []mapperBuilderContract{
+		{
+			statement: sessionEventMapperHasPendingInputStatement,
+			bound:     buildSessionEventMapperHasPendingInput(yourbatis.DialectPostgres, "workspace", "session", "thread"),
+			wantID:    "SessionEventMapper.HasPendingInput", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "threadID"},
+			wantSQLFragments:  []string{"workspace_uuid = $1", "session_external_id = $2", "thread_external_id = $3", "processed_at IS NULL", "deleted_at IS NULL"},
+		},
+		{
+			statement: sessionEventMapperMarkInputProcessedStatement,
+			bound:     buildSessionEventMapperMarkInputProcessed(yourbatis.DialectPostgres, "workspace", "session", "event", now),
+			wantID:    "SessionEventMapper.MarkInputProcessed", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"processedAt", "workspaceUUID", "sessionExternalID", "eventExternalID"},
+			wantSQLFragments:  []string{"UPDATE session_events SET processed_at = $1", "workspace_uuid = $2", "session_external_id = $3", "external_id = $4", "processed_at IS NULL", "RETURNING"},
+		},
+	} {
+		assertMapperBuilderContract(t, contract)
+	}
 }

@@ -28,6 +28,7 @@ type scenario struct {
 }
 
 var scenarios = map[string]scenario{
+	"chat.skills-loading":    {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatSkillsLoading", Stages: []string{"skill_loading_brain", "skill_loading_sandbox"}, Description: "Brain 与 Claude 的 Skill 目录、审批、正文与引用读取、只读挂载及沙箱复用"},
 	"deployment.lifecycle":   {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyDeploymentLifecycle", Stages: []string{"invalid_runs_leave_no_effects", "manual_run_effects_match", "durable_schedule_executed", "pause_archive_stop_schedule"}, Description: "Deployment 公开创建/运行、持久化调度执行、终态与 Session/Work/事件/挂载副作用一致"},
 	"deployment.retry":       {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyDeploymentRetry", Stages: []string{"failed_attempt_rolled_back", "automatic_retry_matches", "exhausted_job_has_no_effects", "reference_failure_paused"}, Description: "真实 River 自动退避重试、事务回滚、耗尽终态与依赖失败自动暂停"},
 	"deployment.idempotency": {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyDeploymentIdempotency", Stages: []string{"stale_jobs_have_no_effects", "duplicate_occurrence_single_effect", "distinct_occurrence_preserved"}, Description: "真实 River 并发重复投递、旧调度快照拒绝、同 occurrence 副作用唯一与不同 occurrence 保留"},
@@ -52,18 +53,26 @@ var scenarios = map[string]scenario{
 	"files.attachments":      {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesAttachments", Stages: []string{"referenced_delete_rejected", "unlink_then_delete", "expired_output_hidden", "archive_preserves_output", "session_cleanup_preserves_upload"}, Description: "会话引用阻止删除、解除引用、输出过期不可见及会话删除后的对象清理"},
 	"files.platform":         {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesPlatform", Stages: []string{"platform_invalid_rejected", "preview_and_thumbnail_match", "derived_objects_deleted"}, Description: "平台登录、Base64 上传、预览、缩略图与衍生对象清理"},
 
-	"files.lifecycle":  {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesLifecycle", Stages: []string{"upload_stored", "metadata_and_listing", "download_bytes_match", "deleted_objects_absent"}, Description: "上传和对象字节一致、元数据与列表、可下载文件内容一致、删除及对象清理"},
-	"files.isolation":  {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesIsolation", Stages: []string{"tenant_access_denied", "owner_data_unchanged"}, Description: "同组织跨工作区及跨组织的读取、下载、列表、删除隔离"},
-	"files.invalid":    {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesInvalid", Stages: []string{"invalid_uploads_rejected", "quota_rollback_verified", "valid_upload_after_rejection"}, Description: "鉴权、无效上传、大小限制、配额拒绝与对象回滚，失败后仍能正常上传"},
-	"files.storage":    {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesStorage", Stages: []string{"missing_object_rejected", "background_object_cleanup", "storage_permissions_rejected", "storage_disconnect_recovered", "multipart_abort_cleaned", "versioned_objects_cleaned"}, Description: "真实 MinIO 错误与后台清理、权限拒绝、断连恢复、分片中断及版本删除"},
-	"chat.performance": {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatPerformance", Stages: []string{"fixed_load_completed", "performance_history_verified"}, Description: "固定串行负载，测量接收、首片段、最终回复及空闲延迟，并可比较基线"},
-	"chat.instances":   {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatInstances", Stages: []string{"cross_instance_preview_final", "cross_instance_history"}, Description: "两个真实后端实例间的流式广播、最终回复及历史一致性"},
-	"chat.public":      {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatPublicStart", Stages: []string{"public_runner_error_recovered", "public_session_started", "public_runner_roundtrip", "public_runner_multiple_work"}, Description: "公开创建会话，后台 Runner 连续领取工作，经本地 Docker 沙箱完成聊天"},
-	"chat.reliability": {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatReliability", Stages: []string{"busy_input_rejected", "worker_consumers_recreated", "worker_stream_reconnected", "midstream_history_recovered", "public_stream_reconnected", "public_history_reconciled", "busy_input_retried", "worker_restarted", "archive_consumers_reclaimed"}, Description: "忙时拒绝与重试、Worker 重连与重启、公开 SSE 重订阅和历史对账、Session 归档回收 consumer"},
-	"chat.roundtrip":   {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatRoundtrip", Stages: []string{"sse_connected", "input_submitted", "preview_and_final_match", "history_recovered", "idle_and_drained"}, Description: "消息发送、中文流式预览、最终回复、历史恢复和队列清空"},
-	"chat.tools":       {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatTools", Stages: []string{"malformed_tool_rejected", "tool_denied", "tool_allowed"}, Description: "拒绝非法参数工具，核对 SSE/历史关联，再通过 Go SDK 拒绝/允许 Write 并核对副作用和队列清空"},
+	"files.lifecycle":   {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesLifecycle", Stages: []string{"upload_stored", "metadata_and_listing", "download_bytes_match", "deleted_objects_absent"}, Description: "上传和对象字节一致、元数据与列表、可下载文件内容一致、删除及对象清理"},
+	"files.isolation":   {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesIsolation", Stages: []string{"tenant_access_denied", "owner_data_unchanged"}, Description: "同组织跨工作区及跨组织的读取、下载、列表、删除隔离"},
+	"files.invalid":     {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesInvalid", Stages: []string{"invalid_uploads_rejected", "quota_rollback_verified", "valid_upload_after_rejection"}, Description: "鉴权、无效上传、大小限制、配额拒绝与对象回滚，失败后仍能正常上传"},
+	"files.storage":     {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesStorage", Stages: []string{"missing_object_rejected", "background_object_cleanup", "storage_permissions_rejected", "storage_disconnect_recovered", "multipart_abort_cleaned", "versioned_objects_cleaned"}, Description: "真实 MinIO 错误与后台清理、权限拒绝、断连恢复、分片中断及版本删除"},
+	"chat.performance":  {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatPerformance", Stages: []string{"fixed_load_completed", "performance_history_verified"}, Description: "固定串行负载，测量接收、首片段、最终回复及空闲延迟，并可比较基线"},
+	"chat.instances":    {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatInstances", Stages: []string{"cross_instance_preview_final", "cross_instance_history"}, Description: "两个真实后端实例间的流式广播、最终回复及历史一致性"},
+	"chat.public":       {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatPublicStart", Stages: []string{"public_runner_error_recovered", "public_session_started", "public_runner_roundtrip", "public_runner_multiple_work"}, Description: "公开创建会话，后台 Runner 连续领取工作，经本地 Docker 沙箱完成聊天"},
+	"chat.subagents":    {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatSubagents", Stages: []string{"configured_child_dispatched", "child_skill_preloaded", "child_stream_received", "child_tool_policy_verified", "child_mcp_executed", "child_thread_history_verified", "child_thread_resumed"}, Description: "公开配置子 Agent、真实 Runner 委派、固定版本、独立线程列表/SSE/历史"},
+	"chat.reliability":  {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatReliability", Stages: []string{"busy_input_rejected", "worker_consumers_recreated", "worker_stream_reconnected", "midstream_history_recovered", "public_stream_reconnected", "public_history_reconciled", "busy_input_retried", "worker_restarted", "archive_consumers_reclaimed"}, Description: "忙时拒绝与重试、Worker 重连与重启、公开 SSE 重订阅和历史对账、Session 归档回收 consumer"},
+	"chat.brain":        {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatBrain", Stages: []string{"brain_fencing", "brain_roundtrip", "brain_mcp_loop", "brain_takeover", "brain_retirement", "brain_lazy_denied", "brain_lazy_text", "brain_lazy_tool", "brain_lazy_cleanup"}, Description: "真实 oma-brain-dsh、NATS、多节点租约、沙箱 MCP 与检查点恢复"},
+	"chat.brain-skills": {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatBrainSkills", Stages: []string{"brain_skills_catalog", "brain_skills_read", "brain_skills_readonly", "brain_skills_snapshot", "brain_skills_cleanup"}, Description: "Brain 分层提示词、无沙箱 Skill 目录、真实 MCP 读取、只读挂载和固定版本"},
+	"chat.brain-memory": {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatBrainMemory", Stages: []string{"brain_memory_loaded"}, Description: "Brain Memory 目录发现、拒绝与批准 Read、真实 MCP/FUSE 读取及沙箱复用"},
+	"chat.roundtrip":    {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatRoundtrip", Stages: []string{"sse_connected", "input_submitted", "preview_and_final_match", "history_recovered", "idle_and_drained"}, Description: "消息发送、中文流式预览、最终回复、历史恢复和队列清空"},
+	"chat.tools":        {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatTools", Stages: []string{"malformed_tool_rejected", "tool_denied", "tool_allowed"}, Description: "拒绝非法参数工具，核对 SSE/历史关联，再通过 Go SDK 拒绝/允许 Write 并核对副作用和队列清空"},
 
 	"chat.upstream-errors": {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatUpstreamErrors", Stages: []string{"anthropic_401_failed_and_idle", "generic_401_failed_and_idle", "backoff_500_interrupted_and_recovered"}, Description: "真实 Worker 的上游 401 自然失败收敛、500 退避中断与下一轮恢复"},
+}
+
+func usesBrain(selected string) bool {
+	return strings.HasPrefix(selected, "chat.brain") || selected == "chat.skills-loading"
 }
 
 type proof struct {
@@ -254,38 +263,7 @@ func saveReport(directory string, r report) error {
 		out.WriteString("\n")
 	}
 	fmt.Fprintf(&out, "Scenario: %s\n\n", selectScenario(r.Scenario).Description)
-	if r.Scenario == "test" {
-		out.WriteString("Coverage: all default-build Go packages with disposable local dependencies, S3 and migration integration enabled. Skipped tests are unverified, not passes. Live scenarios run separately; cloud/e2e build-tag suites and external SDK language suites are outside this command. No standalone backend is started.\n\n")
-		for _, missing := range r.Result.MissingStages {
-			fmt.Fprintf(&out, "- Required test did not pass: %s\n", missing)
-		}
-		for _, skipped := range r.Result.Skipped {
-			fmt.Fprintf(&out, "- Unverified (skipped): %s\n", skipped)
-		}
-		for _, name := range slices.Sorted(maps.Keys(r.Result.Tests)) {
-			if r.Result.Tests[name] == "fail" {
-				fmt.Fprintf(&out, "- Failed: %s\n", name)
-			}
-		}
-		out.WriteString("\n")
-	} else if isCloudScenario(r.Scenario) {
-		out.WriteString("Coverage: only the selected cloud storage or E2B provider operations and final cleanup. This does not certify public chat confirmation, all IAM/network policies or cloud availability.\n\n")
-	} else if strings.HasPrefix(r.Scenario, "deployment.") {
-		out.WriteString("Coverage: production Deployment HTTP handlers and scheduled worker with real PostgreSQL/River, unique business schema and disposable public River tables. Jobs run asynchronously; retries retain their nominal occurrence. restart SIGKILLs a River worker process before and after business commit and uses real rescue with a test-only 10s job timeout/15s rescue threshold; the default one-hour rescue delay is not measured. Durable dispatch is made due through River APIs. No standalone backend or model Worker; Session execution, cloud sandbox allocation and production throughput are not verified.\n\n")
-	} else if strings.HasPrefix(r.Scenario, "transcript.") {
-		out.WriteString("Coverage: archive/export/restore/delete service, real S3 adapter, deterministic test-side interruptions and batch rollback. lifecycle also runs the actual maintenance CLI. Fixtures explicitly age rows; five-minute River sweeps, automatic River retries, crash recovery, cloud IAM and production throughput are not verified.\n\n")
-	} else if strings.HasPrefix(r.Scenario, "memory.") {
-		out.WriteString("Coverage: Memory/Filestore HTTP contracts with real PostgreSQL and MinIO; mounts additionally uses production Runner, local Docker sandbox and actual FUSE. Test-side faults and cleanup RunOnce do not certify cloud allocation, automatic background retry timing, process crash recovery, token renewal or concurrent editing throughput.\n\n")
-	} else if strings.HasPrefix(r.Scenario, "files.") {
-		out.WriteString("Coverage: real backend HTTP, PostgreSQL and MinIO. See scenario proof stages. generated runs a real Worker with FUSE and a scripted model; other Files scenarios use DB/storage fixtures where documented. recovery injects S3 errors through a local proxy and waits for the actual cleanup loop and backoff. Cloud S3 IAM and network infrastructure are not verified.\n\n")
-	} else {
-		out.WriteString("Coverage: real backend, PostgreSQL, Redis, JetStream, Core NATS and Worker; scripted upstream model.\n")
-		if r.Scenario == "chat.public" || r.Scenario == "chat.upstream-errors" {
-			out.WriteString("Sandbox allocation uses a local Docker Provider; real Runner, filesystem mounts and environment-manager execute unchanged. A local E2B control API checks container ownership and handles connect/timeout/deletion. Cloud TTL renewal and provider API/network policies are not verified.\n\n")
-		} else {
-			out.WriteString("Session activation is prepared by the fixture. Public Runner provisioning is verified separately by chat.public.\n\n")
-		}
-	}
+	writeReportCoverage(&out, r)
 	if r.Performance != nil {
 		fmt.Fprintf(&out, "Performance mode: %s\nWorkload: %s\nBaseline run: %s\nBaseline commit: %s\n\n| Metric | P50 ms | P95 ms |\n| --- | ---: | ---: |\n", r.Performance.Mode, r.Performance.Workload, r.Performance.BaselineRun, r.Performance.BaselineCommit)
 		metrics := []string{"accept", "first_preview", "final", "idle"}
@@ -312,4 +290,41 @@ func saveReport(directory string, r report) error {
 		fmt.Fprintf(&out, "- %s\n", failure)
 	}
 	return os.WriteFile(filepath.Join(directory, "report.md"), []byte(out.String()), 0o600)
+}
+
+func writeReportCoverage(out *strings.Builder, r report) {
+	if r.Scenario == "test" {
+		out.WriteString("Coverage: all default-build Go packages with disposable local dependencies, S3 and migration integration enabled. Skipped tests are unverified, not passes. Live scenarios run separately; cloud/e2e build-tag suites and external SDK language suites are outside this command. No standalone backend is started.\n\n")
+		for _, missing := range r.Result.MissingStages {
+			fmt.Fprintf(out, "- Required test did not pass: %s\n", missing)
+		}
+		for _, skipped := range r.Result.Skipped {
+			fmt.Fprintf(out, "- Unverified (skipped): %s\n", skipped)
+		}
+		for _, name := range slices.Sorted(maps.Keys(r.Result.Tests)) {
+			if r.Result.Tests[name] == "fail" {
+				fmt.Fprintf(out, "- Failed: %s\n", name)
+			}
+		}
+		out.WriteString("\n")
+	} else if isCloudScenario(r.Scenario) {
+		out.WriteString("Coverage: only the selected cloud storage or E2B provider operations and final cleanup. This does not certify public chat confirmation, all IAM/network policies or cloud availability.\n\n")
+	} else if strings.HasPrefix(r.Scenario, "deployment.") {
+		out.WriteString("Coverage: production Deployment HTTP handlers and scheduled worker with real PostgreSQL/River, unique business schema and disposable public River tables. Jobs run asynchronously; retries retain their nominal occurrence. restart SIGKILLs a River worker process before and after business commit and uses real rescue with a test-only 10s job timeout/15s rescue threshold; the default one-hour rescue delay is not measured. Durable dispatch is made due through River APIs. No standalone backend or model Worker; Session execution, cloud sandbox allocation and production throughput are not verified.\n\n")
+	} else if strings.HasPrefix(r.Scenario, "transcript.") {
+		out.WriteString("Coverage: archive/export/restore/delete service, real S3 adapter, deterministic test-side interruptions and batch rollback. lifecycle also runs the actual maintenance CLI. Fixtures explicitly age rows; five-minute River sweeps, automatic River retries, crash recovery, cloud IAM and production throughput are not verified.\n\n")
+	} else if strings.HasPrefix(r.Scenario, "memory.") {
+		out.WriteString("Coverage: Memory/Filestore HTTP contracts with real PostgreSQL and MinIO; mounts additionally uses production Runner, local Docker sandbox and actual FUSE. Test-side faults and cleanup RunOnce do not certify cloud allocation, automatic background retry timing, process crash recovery, token renewal or concurrent editing throughput.\n\n")
+	} else if strings.HasPrefix(r.Scenario, "files.") {
+		out.WriteString("Coverage: real backend HTTP, PostgreSQL and MinIO. See scenario proof stages. generated runs a real Worker with FUSE and a scripted model; other Files scenarios use DB/storage fixtures where documented. recovery injects S3 errors through a local proxy and waits for the actual cleanup loop and backoff. Cloud S3 IAM and network infrastructure are not verified.\n\n")
+	} else if usesBrain(r.Scenario) {
+		out.WriteString("Coverage: public API, production Runner, real oma-brain-dsh process, PostgreSQL, Redis, JetStream and sandbox MCP with actual FUSE mounts. skills-loading additionally runs the real Claude Worker. Only the upstream model is scripted. See required proofs for mode-specific allocation and loading behavior. Real-model Skill selection, cloud allocation, network partitions and performance are not verified.\n\n")
+	} else {
+		out.WriteString("Coverage: real backend, PostgreSQL, Redis, JetStream, Core NATS and Worker; scripted upstream model.\n")
+		if r.Scenario == "chat.public" || r.Scenario == "chat.subagents" || r.Scenario == "chat.upstream-errors" {
+			out.WriteString("Sandbox allocation uses a local Docker Provider; real Runner, filesystem mounts and environment-manager execute unchanged. A local E2B control API checks container ownership and handles connect/timeout/deletion. Cloud TTL renewal and provider API/network policies are not verified.\n\n")
+		} else {
+			out.WriteString("Session activation is prepared by the fixture. Public Runner provisioning is verified separately by chat.public.\n\n")
+		}
+	}
 }

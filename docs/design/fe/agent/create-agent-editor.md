@@ -2,7 +2,7 @@
 
 ## 目标
 
-Create Agent 弹窗同时提供结构化 `Rendered` 表单和 YAML/JSON `Raw` 编辑器。两种视图只编辑同一份 Draft，避免切换视图、切换格式或使用模板时出现字段丢失。
+Create Agent 独立页面同时提供结构化 `Rendered` 表单和 YAML/JSON `Raw` 编辑器。两种视图只编辑同一份 Draft，避免切换视图、切换格式或使用模板时出现字段丢失。
 
 本期沿用既有 `model: string | {id, speed}` 合同，不展示或接受 `model.effort`。Agents API 继续接收内嵌的 `mcp_servers` 快照；可复用自定义 MCP 由独立的工作区资源提供候选。
 
@@ -21,7 +21,8 @@ flowchart LR
 - 进入 Raw 时由 Draft 重新序列化。格式切换也从 Draft 生成，不做文本级 YAML/JSON 转换。
 - Raw 输入无效时保留最后一份合法 Draft，禁止切回 Rendered、切换格式、创建，以及通过模板或 Describe 生成覆盖这段未保存文本；生成请求完成时也会重新检查 Raw 状态。
 - Raw 合法时，模板选择与 Describe 生成成功会整体替换 Draft、清除错误并折叠 Starting point。
-- 关闭弹窗直接丢弃 Draft；生成请求会随组件卸载中止。
+- 取消或离开创建页直接丢弃 Draft；生成请求会随组件卸载中止。
+- Escape 不退出独立创建页。取消返回列表；创建成功直接进入新 Agent 的配置页，不先导航到列表页。
 
 ## 配置不变量
 
@@ -31,7 +32,7 @@ flowchart LR
 - Rendered 不主动提供 `self`，但能够展示、保留和移除合法 Raw 中的 `{type:"self"}`。
 - Agent 选择器初始加载当前工作区前 20 个候选；输入后以 300ms 防抖按名称调用服务端搜索，符合完整 Agent ID 规则时直接精确读取，不受首屏候选数量限制。
 - Skills 最多 20 个；新增选择写入 `{type, skill_id, version:"latest"}`，切换其他 Skill 时保留既有条目原始的可选 `version` 字段。
-- 新建 Agent 或 Skill 使用新标签页；原弹窗保留 Draft，并在重新获得焦点时刷新候选项。
+- 新建 Agent 或 Skill 使用新标签页；原创建页保留 Draft，并在重新获得焦点时刷新候选项。
 
 ### MCP 与 Tools
 
@@ -62,12 +63,16 @@ flowchart LR
 
 ## 数据与组件边界
 
-- 弹窗入口负责模型映射、模型目录加载、创建提交和导航。
+- 页面入口负责模型映射、模型目录加载、创建提交和导航。
 - Draft hook 负责 Rendered/Raw/格式状态及严格 codec。
 - Rendered 各区块只调用 Draft 纯函数，不直接构造请求体。
 - Models、Agents、Skills、Directory 查询经 feature API 适配；工作区 MCP 候选通过 Console API 加载。Models 通过 Anthropic `/v1` SDK client 加载，与 `/api` Console client 保持边界分离。
 - 工具权限读语义复用 Agent 详情页模型，写语义集中在创建 Draft 模型中。
-- 桌面端弹窗最大宽度为 `880px`，说明列收至 `220px`。该尺寸以改造前 `720px` 创建弹窗和项目 `780px` 宽表单为基准，为 Rendered 模式额外保留说明列空间，同时避免接近 `1120px` Raw 编辑器的视觉体量；窄屏仍使用视口内边距和单列布局。
+- 创建入口为 `/workspaces/{workspaceId}/agents/new`，也支持 `/agents/new`；旧的 `?create_agent=1` 入口规范化到工作区创建路径，静态 `new` 路由优先于 Agent 详情路由。列表点击创建、MCP/多智能体选择器中的新建 Agent 链接与直接刷新都进入同一页面。
+- 创建页使用 shadcn Breadcrumb、Collapsible、Tabs、Input Group 和表单控件。顶部面包屑位于控制台内容左侧，主表单居中且最大宽度为 824px；General 区域采用 244px 说明列与自适应字段列，窄屏自动单列。
+- Starting point 去除嵌套卡片外框，描述输入为紧凑文本框，生成按钮独立置于右下。模板网格在手机、平板、桌面分别为一、二、三列。
+- 创建页的 Tools、Skills、Multiagent 默认折叠，按 Tools、Skills、Multiagent 顺序展示；折叠时显示配置摘要。Collapsible Content 使用 `keepMounted`，保留工具编辑缓冲和未确认的 Tunnel Channel，折叠不能绕过待确认校验。详情页编辑继续使用原来的展开式布局。
+- Raw/Rendered 仍共用 Draft 与现有 CodeMirror；未支持的模型 effort 字段不因参考截图而加入 API 合同。底部取消与创建按钮在页面滚动时保持可访问，创建失败保留 Draft，并显示完整错误。
 
 ## 验收
 
@@ -75,4 +80,4 @@ flowchart LR
 - Rendered 可完成 General、Multiagent、Skills、内置工具与 Directory/工作区 MCP 选择；表单中不再出现自定义 MCP 名称或 URL 输入。既有 Custom Tool 与历史 MCP 可继续编辑权限、保存或移除。
 - MCP 与 toolset 始终成对；Tunnel Channel 的待确认状态不会污染 Draft，Channel 迁移不会丢失权限；权限聚合和 deny 序列化与运行时一致。
 - 模型、候选 Agent、Skills 和 Directory 加载失败都有可重试状态。
-- 弹窗支持键盘导航、浅深主题和窄屏单列布局。
+- 页面支持键盘导航、浅深主题和窄屏单列布局。

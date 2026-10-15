@@ -31,7 +31,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
 	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
-	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/secretservice"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -141,7 +141,7 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load filestore credentials: %w", err)
 	}
-	vaultSecrets, err := buildVaultSecretsService(ctx, cfg)
+	vaultSecrets, err := secretservice.New(cfg.Vault.MasterKey)
 	if err != nil {
 		return fmt.Errorf("load vault secrets service: %w", err)
 	}
@@ -178,11 +178,21 @@ func run(logger *slog.Logger) error {
 	}
 	stopRunner := environmentRunner.Start(ctx)
 	defer stopRunner()
-	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
+	webhookQueue, err := webhooks.NewQueue(ctx, natsConnection, cfg.NATS.WebhookStream, cfg.Webhook)
+	if err != nil {
+		return fmt.Errorf("open webhook queue: %w", err)
+	}
+	webhookEnqueuer := webhooks.NewEnqueuer(database, webhookQueue, logger.With("component", "webhooks"))
+	stopWebhookWorker, err := webhooks.NewWorker(database, webhookQueue, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
+	if err != nil {
+		return fmt.Errorf("start webhook worker: %w", err)
+	}
+	defer stopWebhookWorker()
 	workers := river.NewWorkers()
 	prebuilds := environments.NewPrebuilds(database, cfg, logger.With("component", "environment_prebuild"))
 	prebuilds.Register(workers)
-	deploymentStore := deployments.NewStore(database).WithEventPayloadStorage(objectStore)
+	deploymentStore := deployments.NewStore(database, logger.With("component", "deployments")).
+		WithEventPayloadStorage(objectStore).WithWebhooks(webhookEnqueuer)
 	deployments.RegisterWorkers(workers, deploymentStore)
 	lifecycle := environments.NewSandboxLifecycle(database, sandboxProvider,
 		cfg.SandboxLifecycle, logger.With("component", "sandbox_lifecycle"))
@@ -229,12 +239,14 @@ func run(logger *slog.Logger) error {
 			Config:                 cfg,
 			DB:                     database,
 			Deployments:            deploymentStore,
+			WebhookEnqueuer:        webhookEnqueuer,
 			ObjectStore:            objectStore,
 			Logger:                 logger,
 			PlatformStore:          platformSessions,
 			PlatformAuth:           platformAuthProvider,
 			CodeSessionCredentials: codeSessionCredentials,
 			SandboxTimeoutExtender: sandboxProvider,
+			SandboxProvisioner:     environmentRunner,
 			FilestoreCredentials:   filestoreCredentials,
 			FilestoreService:       filestoreService,
 			VaultSecrets:           vaultSecrets,
@@ -279,32 +291,4 @@ func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) er
 		}
 	}
 	return nil
-}
-
-// buildVaultSecretsService loads the vault KEK ring and returns the envelope
-// encryption service. The current KEK comes from config (kek base64 or
-// kek_file); optional decrypt_only entries keep older versions openable after
-// rotation without rewrap. A configured KEK is required in every env.
-func buildVaultSecretsService(ctx context.Context, cfg config.Config) (*secrets.Service, error) {
-	mk := cfg.Vault.MasterKey
-	kek, err := secrets.ResolveKEK(mk.Kek, mk.KekFile)
-	if err != nil {
-		return nil, err
-	}
-	current := secrets.LocalKeyMaterial{
-		Version: mk.EffectiveVersion(),
-		KEK:     kek,
-	}
-	decryptOnly := make([]secrets.LocalKeyMaterial, 0, len(mk.DecryptOnly))
-	for i, entry := range mk.DecryptOnly {
-		resolved, err := secrets.ResolveKEK(entry.Kek, entry.KekFile)
-		if err != nil {
-			return nil, fmt.Errorf("vault.master_key.decrypt_only[%d]: %w", i, err)
-		}
-		decryptOnly = append(decryptOnly, secrets.LocalKeyMaterial{
-			Version: entry.Version,
-			KEK:     resolved,
-		})
-	}
-	return secrets.NewLocalServiceWithKeys(ctx, current, decryptOnly)
 }

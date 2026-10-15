@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -37,6 +38,10 @@ type skillPackage struct {
 }
 
 func readSkillPackage(w http.ResponseWriter, r *http.Request, maxBytes int64) (skillPackage, error) {
+	allowRoot := !hasSkillsBeta(r)
+	if allowRoot {
+		maxBytes = 30 * 1024 * 1024
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes+1024*1024)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		var maxBytesErr *http.MaxBytesError
@@ -65,13 +70,13 @@ func readSkillPackage(w http.ResponseWriter, r *http.Request, maxBytes int64) (s
 		if closeErr != nil {
 			return skillPackage{}, closeErr
 		}
-		return skillPackageFromArchive(data, maxBytes)
+		return skillPackageFromArchive(data, maxBytes, allowRoot)
 	}
 
 	var files []normalizedSkillFile
 	var total int64
 	for _, header := range headers {
-		normalized, top, err := validateArchivePath(originalFilename(header))
+		normalized, top, err := validateArchivePath(originalFilename(header), allowRoot)
 		if err != nil {
 			return skillPackage{}, packageError{Status: http.StatusBadRequest, Message: err.Error()}
 		}
@@ -94,7 +99,7 @@ func readSkillPackage(w http.ResponseWriter, r *http.Request, maxBytes int64) (s
 		_ = top
 		files = append(files, normalizedSkillFile{Name: normalized, Data: data})
 	}
-	return skillPackageFromFiles(files, maxBytes)
+	return skillPackageFromFiles(files, maxBytes, allowRoot)
 }
 
 type normalizedSkillFile struct {
@@ -102,7 +107,7 @@ type normalizedSkillFile struct {
 	Data []byte
 }
 
-func skillPackageFromArchive(data []byte, maxBytes int64) (skillPackage, error) {
+func skillPackageFromArchive(data []byte, maxBytes int64, allowRoot bool) (skillPackage, error) {
 	if len(data) == 0 {
 		return skillPackage{}, packageError{Status: http.StatusBadRequest, Message: "Skill package must contain files"}
 	}
@@ -121,7 +126,7 @@ func skillPackageFromArchive(data []byte, maxBytes int64) (skillPackage, error) 
 		if shouldSkipArchiveEntry(name) || file.FileInfo().IsDir() {
 			continue
 		}
-		normalized, _, err := validateArchivePath(name)
+		normalized, _, err := validateArchivePath(name, allowRoot)
 		if err != nil {
 			return skillPackage{}, packageError{Status: http.StatusBadRequest, Message: err.Error()}
 		}
@@ -135,10 +140,18 @@ func skillPackageFromArchive(data []byte, maxBytes int64) (skillPackage, error) 
 		}
 		files = append(files, normalizedSkillFile{Name: normalized, Data: data})
 	}
-	return skillPackageFromFiles(files, maxBytes)
+	return skillPackageFromFiles(files, maxBytes, allowRoot)
 }
 
-func skillPackageFromFiles(files []normalizedSkillFile, maxBytes int64) (skillPackage, error) {
+func skillPackageFromFiles(files []normalizedSkillFile, maxBytes int64, allowRoot bool) (skillPackage, error) {
+	if allowRoot {
+		var err error
+		files, err = normalizeStableSkillFiles(files)
+		if err != nil {
+			return skillPackage{}, err
+		}
+	}
+
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].Name < files[j].Name
 	})
@@ -151,7 +164,7 @@ func skillPackageFromFiles(files []normalizedSkillFile, maxBytes int64) (skillPa
 	seen := map[string]struct{}{}
 
 	for _, file := range files {
-		normalized, top, err := validateArchivePath(file.Name)
+		normalized, top, err := validateArchivePath(file.Name, false)
 		if err != nil {
 			writer.Close()
 			return skillPackage{}, packageError{Status: http.StatusBadRequest, Message: err.Error()}
@@ -279,7 +292,7 @@ func originalFilename(header *multipart.FileHeader) string {
 	return header.Filename
 }
 
-func validateArchivePath(filename string) (string, string, error) {
+func validateArchivePath(filename string, allowRoot bool) (string, string, error) {
 	filename = strings.ReplaceAll(strings.TrimSpace(filename), "\\", "/")
 	if filename == "" {
 		filename = "anonymous_file"
@@ -287,12 +300,17 @@ func validateArchivePath(filename string) (string, string, error) {
 	if strings.HasPrefix(filename, "/") || strings.Contains(filename, "\x00") {
 		return "", "", fmt.Errorf("Invalid skill file path: %s", filename)
 	}
+	for _, part := range strings.Split(filename, "/") {
+		if part == ".." {
+			return "", "", fmt.Errorf("Invalid skill file path: %s", filename)
+		}
+	}
 	cleaned := path.Clean(filename)
 	if cleaned == "." || cleaned == "/" || strings.HasPrefix(cleaned, "../") || cleaned == ".." || path.IsAbs(cleaned) {
 		return "", "", fmt.Errorf("Invalid skill file path: %s", filename)
 	}
 	parts := strings.Split(cleaned, "/")
-	if len(parts) < 2 || parts[0] == "" || parts[0] == "." || parts[0] == ".." {
+	if (!allowRoot && len(parts) < 2) || parts[0] == "" || parts[0] == "." || parts[0] == ".." {
 		return "", "", fmt.Errorf("Skill files must be under a top-level directory")
 	}
 	for _, part := range parts {
@@ -307,4 +325,41 @@ func cleanupMultipart(form *multipart.Form) {
 	if form != nil {
 		_ = form.RemoveAll()
 	}
+}
+
+var skillSlugPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+func normalizeStableSkillFiles(files []normalizedSkillFile) ([]normalizedSkillFile, error) {
+	var rootName string
+	for _, file := range files {
+		if file.Name == "SKILL.md" {
+			rootName = parseSkillMetadata(file.Data, "").Name
+			break
+		}
+	}
+	if rootName != "" {
+		if !validSkillSlug(rootName) {
+			return nil, packageError{Status: http.StatusBadRequest, Message: "Skill name must be a kebab-case slug of at most 64 characters"}
+		}
+		normalized := make([]normalizedSkillFile, len(files))
+		for i, file := range files {
+			normalized[i] = normalizedSkillFile{Name: rootName + "/" + file.Name, Data: file.Data}
+		}
+		return normalized, nil
+	}
+	for _, file := range files {
+		if strings.HasSuffix(file.Name, "/SKILL.md") && strings.Count(file.Name, "/") == 1 {
+			directory := strings.TrimSuffix(file.Name, "/SKILL.md")
+			name := parseSkillMetadata(file.Data, directory).Name
+			if !validSkillSlug(name) || name != directory {
+				return nil, packageError{Status: http.StatusBadRequest, Message: "Skill directory must match its kebab-case name"}
+			}
+			return files, nil
+		}
+	}
+	return nil, packageError{Status: http.StatusBadRequest, Message: "Skill package must contain SKILL.md at the root or in one enclosing directory"}
+}
+
+func validSkillSlug(name string) bool {
+	return len(name) <= 64 && skillSlugPattern.MatchString(name) && !strings.Contains(name, "anthropic") && !strings.Contains(name, "claude")
 }

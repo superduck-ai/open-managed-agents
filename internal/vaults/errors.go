@@ -3,6 +3,7 @@ package vaults
 import (
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -14,10 +15,22 @@ import (
 // unavailable.
 var ErrMissingSecretEnvelope = errors.New("vault credential secret is missing; resubmit the secret")
 
+// ErrMCPOAuthReauthorizationRequired indicates that the stored OAuth grant can no
+// longer be used. It remains active to keep matching requests fail-closed.
+var ErrMCPOAuthReauthorizationRequired = errors.New("MCP OAuth credentials require reauthorization")
+
+// InjectionPublicMessage exposes the recovery action without leaking private causes.
+func InjectionPublicMessage(err error) string {
+	if errors.Is(err, ErrMCPOAuthReauthorizationRequired) {
+		return ErrMCPOAuthReauthorizationRequired.Error()
+	}
+	return InjectionUnavailablePublicMessage
+}
+
 // ErrInjectionRejected is the MITM MCP inject fail-closed sentinel: the request
 // host is covered by a vault credential but no injectable credential could be used.
 // Transport adapters match with errors.Is and must not invent a second wording
-// for the client-facing message — use InjectionUnavailablePublicMessage.
+// for the client-facing message — use InjectionPublicMessage.
 var ErrInjectionRejected = errors.New("vault credential injection rejected")
 
 // InjectionUnavailablePublicMessage is the client-safe text for MITM 502
@@ -59,8 +72,10 @@ func SubstitutionPublicMessage(err error) string {
 }
 
 var (
-	errMCPOAuthRefreshUnavailable = errors.New("mcp_oauth refresh unavailable")
-	errCredentialStoreUnavailable = errors.New("credential store is unavailable")
+	errOAuthRefreshLeaseRedisRequired = errors.New("redis client is required for oauth refresh lease")
+	errOAuthRefreshLeaseLost          = errors.New("mcp oauth refresh lease lost")
+	errMCPOAuthRefreshUnavailable     = errors.New("mcp_oauth refresh unavailable")
+	errCredentialStoreUnavailable     = errors.New("credential store is unavailable")
 )
 
 func injectionRejected(cause error) error {
@@ -109,8 +124,23 @@ func unsupportedTokenAuthMethod(method string) error {
 	return fmt.Errorf("unsupported token auth method %q", method)
 }
 
-func tokenEndpointStatus(status int) error {
-	return fmt.Errorf("token endpoint status %d", status)
+type oauthTokenEndpointError struct{ status int }
+
+func (e oauthTokenEndpointError) Error() string {
+	return fmt.Sprintf("token endpoint status %d", e.status)
+}
+
+func tokenEndpointStatus(status int) error { return oauthTokenEndpointError{status: status} }
+
+var errMCPOAuthRefreshTokenMissing = fmt.Errorf("%w: refresh token is missing", errMCPOAuthRefreshUnavailable)
+
+func permanentOAuthRefreshFailure(err error) bool {
+	if errors.Is(err, errMCPOAuthRefreshTokenMissing) {
+		return true
+	}
+	var endpointError oauthTokenEndpointError
+	return errors.As(err, &endpointError) && endpointError.status >= 400 && endpointError.status < 500 &&
+		endpointError.status != http.StatusRequestTimeout && endpointError.status != http.StatusTooManyRequests
 }
 
 func tokenEndpointMissingAccessToken() error {

@@ -174,6 +174,7 @@ type UpdateCodeSessionWorkerStateInput struct {
 	RequiresActionDetails    json.RawMessage
 	ExternalMetadataSet      bool
 	ExternalMetadata         json.RawMessage
+	RequiredThreadID         string
 }
 
 type CodeSessionWorkerHeartbeatError struct {
@@ -482,6 +483,9 @@ func (d *DB) registerCodeSessionWorker(
 		if expectedEpoch == nil && row.CurrentWorkerEpoch > 0 && row.WorkerLeaseExpiresAt == nil {
 			return ErrWorkerEpochMismatch
 		}
+		if row.Status != "active" || row.DeletedAt != nil {
+			return ErrInvalidState
+		}
 		nextEpoch := row.CurrentWorkerEpoch + 1
 		if expectedEpoch != nil {
 			if row.CurrentWorkerEpoch != *expectedEpoch {
@@ -644,10 +648,11 @@ func (d *DB) RecordCodeSessionWorkerHeartbeat(ctx context.Context, codeSessionEx
 			Now:       now,
 			ExpiresAt: expiresAt,
 		})
-		if err == nil {
-			expiresAt = row.WorkerLeaseExpiresAt
+		if err != nil {
+			return err
 		}
-		return err
+		expiresAt = row.WorkerLeaseExpiresAt
+		return NewEnvironmentWorkMapper(executor).RenewForCodeSession(ctx, leaseRow.UUID, leaseRow.OrganizationUUID, leaseRow.WorkspaceUUID)
 	})
 	return expiresAt, err
 }
@@ -701,8 +706,17 @@ func (d *DB) UpdateCodeSessionWorkerState(ctx context.Context, codeSessionExtern
 			return ErrInvalidState
 		}
 
-		if input.WorkerEpoch != current.CurrentWorkerEpoch {
+		if current.CurrentWorkerEpoch != input.WorkerEpoch {
 			return ErrWorkerEpochMismatch
+		}
+		if input.RequiredThreadID != "" {
+			thread, err := NewSessionThreadMapper(executor).FindByExternalID(ctx, current.WorkspaceUUID, current.SessionExternalID, input.RequiredThreadID)
+			if err != nil {
+				return mapNoRows(err)
+			}
+			if thread.Status == "terminated" {
+				return ErrInvalidState
+			}
 		}
 
 		workerStatus := current.WorkerStatus

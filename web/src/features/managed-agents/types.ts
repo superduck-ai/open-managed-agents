@@ -330,8 +330,11 @@ export type FileMetadataPageResponse = {
   last_id?: string | null;
 };
 
+export type SessionThreadAgentSnapshot = Partial<Pick<AgentApiResponse, 'id' | 'name' | 'version' | 'model'>>;
+
 export type SessionThreadApiResponse = {
   id: string;
+  agent?: SessionThreadAgentSnapshot;
   archived_at?: string | null;
   created_at: string;
   parent_thread_id?: string | null;
@@ -398,6 +401,7 @@ export type SessionTraceFamily =
 
 export type SessionTraceBuildOptions = {
   platformTranscriptFiltering?: boolean;
+  interruptedModelRequestIds?: ReadonlySet<string>;
 };
 
 export type SessionTraceEntry = {
@@ -416,6 +420,7 @@ export type SessionTraceEntry = {
   rawEventId: string;
   searchText: string;
   isError: boolean;
+  state?: SessionExecutionState;
 };
 
 export type DisplayEventType =
@@ -455,7 +460,18 @@ export type DisplayEvent = {
 export type TranscriptEntryKind =
   'idle_gap' | 'outcome' | 'tool_call' | 'tool_batch' | 'message' | 'status' | 'passthrough';
 
-export type ToolLifecycle = 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'denied';
+export type ToolLifecycle =
+  'running' | 'awaiting_approval' | 'awaiting_result' | 'completed' | 'failed' | 'denied' | 'interrupted';
+
+export type SessionExecutionState =
+  | ToolLifecycle
+  | 'stopping'
+  | 'stopped'
+  | 'queued'
+  | 'awaiting_action'
+  | 'budget_reached'
+  | 'rescheduled'
+  | 'terminated';
 
 export type BaseSessionEventEntry = {
   id: string;
@@ -530,6 +546,7 @@ export type ModelRequestBracket = {
   startId: string;
   startMs: number;
   softEndMs?: number;
+  endMeta?: ModelRequestBracketMeta;
   entries: ModelBracketTargetEntry[];
 };
 
@@ -688,6 +705,7 @@ export type ResourceConfig = {
 };
 
 export type EventsTabProps = {
+  emptyState?: ReactNode;
   activeLane: string;
   archivedLaneCount: number;
   childLoading: boolean;
@@ -703,6 +721,7 @@ export type EventsTabProps = {
   lanes: SessionDetailLane[];
   openModelRequest: QuickstartSessionEvent | null;
   pendingAction?: ReactNode;
+  outputFiles?: (children: ReactNode) => ReactNode;
   onClearFilters: () => void;
   onCopyAll: () => void;
   onCloseInspector: () => void;
@@ -730,12 +749,14 @@ export type EventsTabProps = {
 export type SessionDetailSummaryChip = {
   key: string;
   icon: IconComponent;
+  copyValue?: string;
   tooltip?: string;
   value: string;
 };
 
 export type SessionDetailLane = {
   id: string;
+  agent?: SessionThreadAgentSnapshot;
   label: string;
   group?: string;
   archived?: boolean;

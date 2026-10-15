@@ -47,6 +47,7 @@ type streamConnection struct {
 	streamDeltaTypes   map[string]struct{}
 	activePreviewIDs   map[string]struct{}
 	finishedPreviewIDs map[string]struct{}
+	replayedEventIDs   map[string]struct{}
 }
 
 func newStreamHub() *streamHub {
@@ -140,6 +141,9 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 		return false
 	}
 	if maevents.IsPublicSessionHistoryEvent(event.EventType) {
+		if _, replayed := c.replayedEventIDs[event.ExternalID]; replayed {
+			return false
+		}
 		delete(c.activePreviewIDs, event.ExternalID)
 		// Only preview subscribers can receive late deltas, so only they remember finished previews.
 		if len(c.streamDeltaTypes) > 0 {
@@ -185,7 +189,7 @@ func previewsFinishedBy(event sessionStreamEvent) []string {
 	switch event.EventType {
 	case "agent.message", "agent.thinking":
 		return []string{event.ExternalID}
-	case "span.model_request_end":
+	case "span.model_request_end", "system.message":
 		var end struct {
 			EventIDs []string `json:"event_ids"`
 		}
@@ -273,10 +277,22 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 		}
 	}()
 	connection := newStreamConnection(subscribeThreadID, primaryThread, streamDeltaTypes)
+	cursorID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	replay, err := h.loadStreamReplay(r.Context(), session.WorkspaceUUID, sessionID, connection, cursorID)
+	if err != nil {
+		h.errorAdapter.Write(w, r, err)
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	fmt.Fprint(w, ": connected\n\n")
+	for _, event := range replay {
+		if connection.accepts(event) {
+			writeSSE(w, event, subscribeThreadID)
+		}
+	}
+	connection.rememberReplay(cursorID, replay)
 	flusher.Flush()
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()

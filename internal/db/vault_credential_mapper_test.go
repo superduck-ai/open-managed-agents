@@ -80,3 +80,15 @@ func TestVaultCredentialMapperBuilders(t *testing.T) {
 		},
 	})
 }
+
+func TestVaultCredentialClearSecretBinding(t *testing.T) {
+	params := updateVaultCredentialParams{WorkspaceUUID: "workspace", VaultExternalID: "vault", CredentialExternalID: "credential", Ciphertext: []byte("cipher"), Nonce: []byte("nonce"), WrappedDEK: []byte("wrapped")}
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: vaultCredentialMapperClearSecretIfMatchesStatement,
+		bound:     buildVaultCredentialMapperClearSecretIfMatches(yourbatis.DialectPostgres, params),
+		wantID:    "VaultCredentialMapper.ClearSecretIfMatches", wantKind: yourbatis.StatementUpdate,
+		wantArgumentNames:          []string{"params.WorkspaceUUID", "params.VaultExternalID", "params.CredentialExternalID", "params.Ciphertext", "params.Nonce", "params.WrappedDEK"},
+		wantSensitiveArgumentNames: []string{"params.Ciphertext", "params.Nonce", "params.WrappedDEK"},
+		wantSQLFragments:           []string{"ciphertext = NULL", "version = version + 1", "workspace_uuid = $1", "vault_external_id = $2", "external_id = $3", "ciphertext = $4", "nonce = $5", "wrapped_dek = $6", "deleted_at IS NULL", "archived_at IS NULL"},
+	})
+}

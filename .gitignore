@@ -78,3 +78,14 @@ AGENTS.override.md
 .grok/
 .worktrees/
 .verify-be.cloud.local.yaml
+
+/oma-brain-dsh/node_modules/
+/oma-brain-dsh/dist/
+/oma-brain-dsh/coverage/
+/oma-brain-dsh/.dsh/
+/oma-brain-dsh/.run/
+/oma-brain-dsh/*.bun-build
+/oma-brain-dsh/*.tsbuildinfo
+/oma-brain-dsh/.env
+/oma-brain-dsh/.env.*
+!/oma-brain-dsh/.env.example

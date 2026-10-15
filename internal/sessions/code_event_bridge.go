@@ -11,6 +11,20 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
+func (h *Handler) ProcessCodeSessionInputs(ctx context.Context, codeSession db.CodeSession, epoch int64, inputIDs []string) error {
+	events, err := h.db.ProcessSessionInputsForWorker(ctx, codeSession, epoch, inputIDs)
+	if err != nil {
+		return err
+	}
+	events, err = h.eventPayloads.RestorePublicPage(ctx, events)
+	if err != nil {
+		return err
+	}
+	h.publishSessionEvents(ctx, events)
+	h.enqueueWebhooksForSessionEvents(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, events)
+	return nil
+}
+
 func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) error {
 	if h == nil || len(payloads) == 0 {
 		return nil

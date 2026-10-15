@@ -6,6 +6,7 @@ import {
   addSessionFileResource,
   listMemoryStoreOptions,
   listSessionFileOptions,
+  listSessionFiles,
   mergeSessionEventCache,
   mergeSessionEventsById,
   mergeSessionStreamFrame,
@@ -15,6 +16,7 @@ import {
   sessionDetailScopeEvents,
   sessionIncompleteStreamEventIds,
   sessionStreamingMessageFromStart,
+  sessionThreadListSignature,
   syncSessionEventHistory,
 } from './api';
 import { sessionEventUpdateTimestamp } from './sessions/sessionDetailModel';
@@ -32,6 +34,20 @@ afterEach(() => {
 });
 
 describe('managed agents API', () => {
+  test('thread metadata repair changes the refresh signature without creating another lane', () => {
+    const thread = {
+      id: 'sthr_child',
+      type: 'session_thread',
+      parent_thread_id: 'sthr_parent',
+      created_at: '2026-10-12T00:00:00Z',
+      updated_at: '2026-10-12T00:00:00Z',
+    };
+    expect(sessionThreadListSignature([thread])).not.toBe(
+      sessionThreadListSignature([
+        { ...thread, updated_at: '2026-10-12T00:00:01Z', agent: { id: 'agent_child', version: 1 } },
+      ]),
+    );
+  });
   test('session event timestamp uses processed_at without created_at', () => {
     expect(sessionEventTimestamp({ id: 'sevt_message', processed_at: '2026-08-26T13:13:00Z' })).toBe(
       Date.parse('2026-08-26T13:13:00Z'),
@@ -975,6 +991,43 @@ describe('managed agents API', () => {
     expect(page.data).toHaveLength(1001);
     expect(page.data.at(-1)?.id).toBe('file_1000');
     expect(page).toMatchObject({ first_id: 'file_0', has_more: false, last_id: 'file_1000' });
+  });
+
+  test('rejects a repeating cursor in scoped file pagination', async () => {
+    let count = 0;
+    globalThis.fetch = (async () =>
+      Response.json({ data: [], has_more: true, last_id: ++count % 2 ? 'file_a' : 'file_b' })) as typeof fetch;
+    await expect(listSessionFiles('sesn_scope', 'workspace_123')).rejects.toThrow(
+      'Files API pagination did not return a new cursor',
+    );
+    expect(count).toBe(3);
+  });
+
+  test('loads every scoped file page with workspace headers, beta and an abort signal', async () => {
+    const requests: { url: URL; init?: RequestInit }[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(requestURL(input), 'http://127.0.0.1');
+      requests.push({ url, init });
+      return Response.json(
+        url.searchParams.get('after_id')
+          ? { data: [{ id: 'file_last', downloadable: true }], has_more: false, last_id: 'file_last' }
+          : { data: [{ id: 'file_first', downloadable: true }], has_more: true, last_id: 'file_first' },
+      );
+    }) as typeof fetch;
+    const controller = new AbortController();
+    const page = await listSessionFiles('sesn_scope', 'workspace_123', controller.signal);
+    expect(page.data.map((file) => file.id)).toEqual(['file_first', 'file_last']);
+    expect(requests.map(({ url }) => url.searchParams.get('after_id'))).toEqual([null, 'file_first']);
+    for (const { url, init } of requests) {
+      expect(url.searchParams.get('scope_id')).toBe('sesn_scope');
+      expect(url.searchParams.get('beta')).toBe('true');
+      expect(new Headers(init?.headers).get('x-workspace-id')).toBe('workspace_123');
+      expect(new Headers(init?.headers).get('anthropic-beta')).toContain('files-api-2025-04-14');
+      expect(new Headers(init?.headers).get('anthropic-beta')).toContain('managed-agents-2026-04-01');
+      expect(url.searchParams.has('betas')).toBe(false);
+      expect(init?.credentials).toBe('include');
+      expect(init?.signal).toBeDefined();
+    }
   });
 
   test('loads every memory store page for session attach options', async () => {

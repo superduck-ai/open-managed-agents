@@ -28,6 +28,7 @@ type chatDockerProvider struct {
 	created            atomic.Int32
 	failNext           atomic.Bool
 	failMemoryMarkdown atomic.Bool
+	publishMCP         bool
 }
 
 func (p *chatDockerProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (e2bruntime.Resolution, error) {
@@ -43,7 +44,12 @@ func (p *chatDockerProvider) Create(ctx context.Context, _ db.Environment, _ *db
 		defer cancel()
 		_ = p.Kill(cleanupCtx, name)
 	})
-	err := exec.CommandContext(ctx, "docker", "run", "-d", "--rm", "--pull=never", "--name", name, "--label", "oma.verify-be.run="+os.Getenv("VERIFY_BE_RUN_ID"), "--cap-add", "SYS_ADMIN", "--device", "/dev/fuse", "--security-opt", "apparmor=unconfined", "--add-host", "host.docker.internal:host-gateway", "--entrypoint", "sleep", p.image, "infinity").Run()
+	args := []string{"run", "-d", "--rm", "--pull=never", "--name", name, "--label", "oma.verify-be.run=" + os.Getenv("VERIFY_BE_RUN_ID"), "--cap-add", "SYS_ADMIN", "--device", "/dev/fuse", "--security-opt", "apparmor=unconfined", "--add-host", "host.docker.internal:host-gateway"}
+	if p.publishMCP {
+		args = append(args, "-p", "127.0.0.1::3001")
+	}
+	args = append(args, "--entrypoint", "sleep", p.image, "infinity")
+	err := exec.CommandContext(ctx, "docker", args...).Run()
 	return e2bruntime.Sandbox{ID: name}, err
 }
 func (p *chatDockerProvider) Kill(ctx context.Context, id string) error {
@@ -99,7 +105,7 @@ func TestChatPublicStart(t *testing.T) {
 	e := newLiveEnv(t)
 	previewSeen := make(chan struct{}, 2)
 	var calls atomic.Int32
-	model := chatModelFixture(t, previewSeen, &calls)
+	model := chatModelFixture(t, previewSeen, &calls, false)
 	configureChatModel(t, e, model.URL)
 	provider, stopRunner := startPublicRunner(t, e)
 	defer stopRunner()
@@ -129,6 +135,7 @@ func createPublicChat(t *testing.T, e *liveEnv) *liveSession {
 	}
 	requireOK(t, json.Unmarshal(e.request(t, "POST", "/v1/sessions", e.apiKey, map[string]string{"agent": e.agent.ExternalID, "environment_id": e.environment.ExternalID}, 200), &session))
 	t.Cleanup(func() {
+		e.requestContext(context.Background(), t, "POST", "/v1/sessions/"+session.ID+"/archive", e.apiKey, nil, 200)
 		e.requestContext(context.Background(), t, "DELETE", "/v1/sessions/"+session.ID, e.apiKey, nil, 200)
 	})
 	record, _, err := e.database.GetSession(t.Context(), e.key.WorkspaceUUID.String(), session.ID)

@@ -1,4 +1,5 @@
 import { FollowSentSessionMessage } from './FollowSentSessionMessage';
+import { useQueryClient } from '@tanstack/react-query';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
 import {
@@ -29,6 +30,7 @@ import {
   sessionThreadListSignature,
 } from '../api';
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
+import { ResourceIdButton } from '../components/ResourceIdButton';
 import { ResourceNotFound, useResourceMissingCopy } from '../components/resource-not-found';
 import { ConfirmEntityDialog, ManagedErrorAlert, ManagedWarningAlert } from '../components/common';
 import { resourceTitle } from '../labels';
@@ -43,7 +45,7 @@ import {
   type SessionToolConfirmationInput,
   type ToolCallEntry,
 } from '../types';
-import { compactEntityId, copyText, errorMessage, managedEntityListHref } from '../utils';
+import { copyText, errorMessage, managedEntityListHref } from '../utils';
 import { Archive, ArrowDown, ChevronDown, Copy, PanelRightOpen, RotateCcw, X } from 'lucide-react';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -72,6 +74,7 @@ import {
   sessionDetailEventCopyPayload,
   sessionEventEntrySelectionId,
   sessionEventEntryRowId,
+  sessionEventThreadId,
   sessionEventUpdateTimestamp,
   sessionShouldStreamEvents,
   sessionStatusIsLive,
@@ -85,16 +88,16 @@ import {
   LaneTabStrip,
   scrollSessionEntryToOffset,
   SESSION_MAIN_LANE_ID,
-  SessionStatusPill,
-  SessionSummaryChip,
   sessionTimelineNow,
 } from './sessionTimeline';
 import {
   buildSessionEventEntries,
+  sessionCanonicalDisplayEvent,
   sessionEventTimestamp,
   sessionEventType,
   latestRequiresActionEventIDs,
   latestOpenModelRequest,
+  sessionIsToolResultEvent,
   sessionStatusFromEvents,
 } from './sessionTraceModel';
 import { SessionTraceEmpty, SessionTraceSearch, SessionTraceSkeleton } from './SessionTracePanel';
@@ -104,7 +107,13 @@ import {
   type SessionInspectorTab,
   writeSessionInspectorUrlState,
 } from './sessionInspectorModel';
+import { SessionHeaderSummary } from './SessionHeaderSummary';
+import { interruptedSessionModelRequestIds, latestSessionIdlePresentationState } from './sessionExecutionState';
 import { SessionMessageComposer } from './SessionMessageComposer';
+import { SessionStartState } from './SessionStartState';
+import { SessionOutputFiles } from './SessionOutputFiles';
+import { sessionFilesQueryKey } from './sessionFiles';
+import { useSessionResourceRefresh } from './useSessionResourceRefresh';
 import { SessionRequiresActionCard } from './SessionRequiresActionCard';
 import { SessionTranscriptView } from './SessionTranscriptView';
 import { SessionTraceWorkspaceLayout } from './SessionTraceWorkspaceLayout';
@@ -116,9 +125,19 @@ function sessionPendingAction(
   toolCall: ToolCallEntry | null,
   onConfirm: (input: SessionToolConfirmationInput) => Promise<void>,
   disabled: boolean,
+  threadNameById: Map<string, string>,
+  mainLabel: string,
 ) {
   if (!toolCall) return undefined;
-  return <SessionRequiresActionCard toolCall={toolCall} onConfirm={onConfirm} disabled={disabled} />;
+  const threadId = sessionEventThreadId(toolCall.event);
+  return (
+    <SessionRequiresActionCard
+      toolCall={toolCall}
+      onConfirm={onConfirm}
+      disabled={disabled}
+      threadLabel={threadNameById.get(threadId) ?? (threadId === SESSION_MAIN_LANE_ID ? mainLabel : threadId)}
+    />
+  );
 }
 
 function SessionNotFound({
@@ -143,6 +162,7 @@ function SessionNotFound({
 }
 
 export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {
+  const queryClient = useQueryClient();
   const { activeWorkspaceId } = useWorkspace();
   const { msg } = useI18n();
   const formatters = useFormatters();
@@ -153,7 +173,6 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [metadataError, setMetadataError] = useState<string | null>(null);
-  const [resourceRefreshError, setResourceRefreshError] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [eventRefreshKey, setEventRefreshKey] = useState(0);
@@ -197,16 +216,12 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       })().catch(() => undefined);
     }, 600);
   }, [activeWorkspaceId, session?.id]);
-  const refreshSessionResources = useCallback(() => {
-    if (!session?.id) {
-      return;
-    }
-    const activeSessionId = session.id;
-    setResourceRefreshError(null);
-    void retrieveSessionDetailSession(activeSessionId, activeWorkspaceId)
-      .then((updatedSession) => setSession((currentSession) => mergeSessionResources(currentSession, updatedSession)))
-      .catch((error) => setResourceRefreshError(errorMessage(error)));
-  }, [activeWorkspaceId, session?.id]);
+  const { refresh: refreshSessionResources, error: resourceRefreshError } = useSessionResourceRefresh(
+    session,
+    activeWorkspaceId,
+    inspectorOpen && inspectorTab === 'resources',
+    setSession,
+  );
   const handleAddFileResource = useCallback(
     (resource: SessionFileResourceFormValue) =>
       addSessionFileResource(session!.id, resource, activeWorkspaceId).then(refreshSessionResources),
@@ -232,11 +247,16 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
             : currentSession,
         );
       }
-      if (type === 'session.thread_created') {
+      if (type === 'session.thread_created' || type === 'session.status_idle') {
         refreshSessionThreads();
       }
+      if (sessionIsToolResultEvent(event)) {
+        void refreshSessionResources();
+        if (activeSessionId)
+          void queryClient.invalidateQueries({ queryKey: sessionFilesQueryKey(activeWorkspaceId, activeSessionId) });
+      }
     },
-    [activeSessionId, refreshSessionThreads],
+    [activeSessionId, activeWorkspaceId, queryClient, refreshSessionResources, refreshSessionThreads],
   );
 
   useEffect(() => {
@@ -244,7 +264,6 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     setLoading(true);
     setLoadError(null);
     setMetadataError(null);
-    setResourceRefreshError(null);
     setThreads([]);
     setMetadataLoaded(false);
     void (async () => {
@@ -382,17 +401,22 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     [events, laneIdByThreadId, lanes],
   );
   const entriesByLaneId = useMemo(() => {
+    const interruptionEvents = events
+      .map(sessionCanonicalDisplayEvent)
+      .sort((left, right) => sessionEventTimestamp(left) - sessionEventTimestamp(right));
+    const interruptedModelRequestIds = interruptedSessionModelRequestIds(interruptionEvents);
     const nextEntriesByLaneId = new Map<string, SessionEventListEntry[]>();
     lanes.forEach((lane) => {
       nextEntriesByLaneId.set(
         lane.id,
         buildSessionEventEntries(eventsByLaneId.get(lane.id) ?? [], 'transcript', traceStartMs, msg, {
           platformTranscriptFiltering: true,
+          interruptedModelRequestIds,
         }),
       );
     });
     return nextEntriesByLaneId;
-  }, [eventsByLaneId, lanes, msg, traceStartMs]);
+  }, [events, eventsByLaneId, lanes, msg, traceStartMs]);
   const entries = useMemo(() => entriesByLaneId.get(activeLane) ?? [], [activeLane, entriesByLaneId]);
   const openModelRequest = useMemo(
     () => latestOpenModelRequest(eventsByLaneId.get(activeLane) ?? []),
@@ -442,7 +466,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   );
   const currentViewCopyPayload = useMemo(() => sessionDetailEventCopyPayload(filteredEntries), [filteredEntries]);
   const fullTranscriptCopyPayload = useMemo(() => sessionDetailEventCopyPayload(entries), [entries]);
-  const actionEntries = allEntries;
+  const actionEntries = activeLane === SESSION_MAIN_LANE_ID ? allEntries : entries;
   const requiresActionEventIDs = useMemo(() => latestRequiresActionEventIDs(events), [events]);
   const activeAwaitingToolCall = useMemo(
     () => findActiveAwaitingToolCall(actionEntries, requiresActionEventIDs),
@@ -615,7 +639,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   }
 
   const archived = Boolean(session.archived_at);
-  const conversationState = sessionConversationState(session);
+  const conversationState = sessionConversationState(session, events);
   const warningError = [resourceRefreshError, metadataError, eventError].find(Boolean);
 
   return (
@@ -652,7 +676,8 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
             <ManagedDetailBreadcrumb
               listHref={listHref}
               listLabel={listLabel}
-              currentLabel={compactEntityId(session.id)}
+              currentLabel={<ResourceIdButton value={session.id} className="max-w-[min(24rem,65vw)]" />}
+              currentClassName="min-w-0"
               className="min-w-0"
             />
             <div className="flex items-center gap-2 @min-[768px]:justify-self-end">
@@ -723,21 +748,11 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
             </div>
           </div>
 
-          <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
-            <div className="flex min-w-0 max-w-full items-center gap-2">
-              <h1 className="min-w-0 truncate font-serif text-[28px] font-medium leading-[1.3] tracking-[-0.015em] text-foreground">
-                {summary.title}
-              </h1>
-              <SessionStatusPill
-                status={session.archived_at ? msg('common.archived', 'Archived') : summary.statusLabel}
-              />
-            </div>
-            {summary.chips.map((chip) => (
-              <SessionSummaryChip key={chip.key} icon={chip.icon} tooltip={chip.tooltip}>
-                {chip.value}
-              </SessionSummaryChip>
-            ))}
-          </div>
+          <SessionHeaderSummary
+            session={session}
+            summary={summary}
+            archivedLabel={msg('common.archived', 'Archived')}
+          />
         </header>
 
         <SessionDetailAlerts mutationError={mutationError} warningError={warningError} />
@@ -750,11 +765,19 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
               childLoading={eventsLoading}
               composer={
                 <SessionMessageComposer
+                  key={`${activeWorkspaceId}:${session.id}`}
                   acceptingMessages={conversationState.acceptingMessages}
-                  awaitingAction={Boolean(activeAwaitingToolCall)}
+                  awaitingAction={requiresActionEventIDs.size > 0}
                   disabled={conversationState.disabled}
                   live={conversationState.live}
                   onError={setMutationError}
+                  onResourcesChanged={() => {
+                    void queryClient.invalidateQueries({ queryKey: ['files', activeWorkspaceId] });
+                    void queryClient.invalidateQueries({
+                      queryKey: ['managed-agents', 'session-file-options', activeWorkspaceId],
+                    });
+                    void refreshSessionResources();
+                  }}
                   onEventsChanged={() => setEventRefreshKey((value) => value + 1)}
                   onMessageSent={(sentEvents) => {
                     eventData.appendPrimaryEvents(sentEvents);
@@ -769,7 +792,30 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                   workspaceId={activeWorkspaceId}
                 />
               }
+              outputFiles={(children) => (
+                <SessionOutputFiles
+                  session={session}
+                  workspaceId={activeWorkspaceId}
+                  refreshKey={refreshKey}
+                  mainLane={activeLane === SESSION_MAIN_LANE_ID}
+                  filtered={hasFilter}
+                >
+                  {children}
+                </SessionOutputFiles>
+              )}
               entries={entries}
+              emptyState={
+                conversationState.acceptingMessages ? (
+                  <SessionStartState
+                    onStart={() =>
+                      scrollerRef.current
+                        ?.closest('section')
+                        ?.querySelector<HTMLTextAreaElement>('[data-testid="session-message-composer"] textarea')
+                        ?.focus()
+                    }
+                  />
+                ) : undefined
+              }
               events={events}
               filteredEntries={filteredEntries}
               hasFilter={hasFilter}
@@ -807,6 +853,8 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                 activeAwaitingToolCall,
                 handleToolConfirmation,
                 conversationState.disabled,
+                threadNameById,
+                lanes[0].label,
               )}
               onClearFilters={() => {
                 setQuery('');
@@ -875,27 +923,25 @@ function SessionDetailAlerts({
   );
 }
 
-function mergeSessionResources(currentSession: SessionApiResponse | null, updatedSession: SessionApiResponse) {
-  return currentSession?.id === updatedSession.id
-    ? { ...currentSession, resources: updatedSession.resources }
-    : currentSession;
-}
-
 function sessionSummaryRefreshInterval(session: SessionApiResponse | null) {
   return session && sessionStatusIsLive(session.status) && !session.archived_at ? 1_000 : 60_000;
 }
 
-function sessionConversationState(session: SessionApiResponse) {
+function sessionConversationState(session: SessionApiResponse, events: QuickstartSessionEvent[]) {
   const archived = Boolean(session.archived_at);
   const status = session.status.toLowerCase();
+  const idleState = latestSessionIdlePresentationState(events);
   return {
-    acceptingMessages: !archived && (status === 'idle' || status === 'queued'),
+    acceptingMessages:
+      !archived &&
+      (status === 'queued' || (status === 'idle' && idleState !== 'budget_reached' && idleState !== 'awaiting_action')),
     disabled: archived || status === 'deleted' || status === 'terminated',
     live: !archived && sessionStatusIsLive(status),
   };
 }
 
 export function EventsTab({
+  emptyState,
   activeLane,
   archivedLaneCount,
   childLoading,
@@ -911,6 +957,7 @@ export function EventsTab({
   lanes,
   openModelRequest,
   pendingAction,
+  outputFiles,
   onClearFilters,
   onCopyAll,
   onCloseInspector,
@@ -1089,18 +1136,22 @@ export function EventsTab({
                       {childLoading && !events.length ? (
                         <SessionTraceSkeleton />
                       ) : filteredEntries.length ? (
-                        <SessionTranscriptView
-                          entries={entries}
-                          visibleEntries={filteredEntries}
-                          openModelRequest={query.trim() ? null : openModelRequest}
-                          selectedEntryId={selectedEntryId}
-                          hoveredEventId={hoveredEventId}
-                          onHoverEvent={onHoverEvent}
-                          onSelectEntry={onSelectEntry}
-                          threadNameById={threadNameById}
-                          onThreadClick={onThreadClick}
-                          traceStartMs={traceStartMs}
-                        />
+                        (outputFiles ?? ((children) => children))(
+                          <SessionTranscriptView
+                            entries={entries}
+                            visibleEntries={filteredEntries}
+                            openModelRequest={query.trim() ? null : openModelRequest}
+                            selectedEntryId={selectedEntryId}
+                            hoveredEventId={hoveredEventId}
+                            onHoverEvent={onHoverEvent}
+                            onSelectEntry={onSelectEntry}
+                            threadNameById={threadNameById}
+                            onThreadClick={onThreadClick}
+                            traceStartMs={traceStartMs}
+                          />,
+                        )
+                      ) : entries.length === 0 && emptyState ? (
+                        emptyState
                       ) : (
                         <SessionTraceEmpty
                           message={

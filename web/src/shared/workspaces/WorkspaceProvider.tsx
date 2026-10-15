@@ -196,10 +196,18 @@ export function WorkspaceProvider({
     async (input: CreateWorkspaceInput) => {
       const current = scopeRef.current;
       if (!current.orgUuid) throw new Error('No organization is available for workspace creation.');
+      const ticket = generation.current;
       const created = await createConsoleWorkspace(current.orgUuid, input);
-      const workspaces = await listConsoleWorkspaces(current.orgUuid);
-      if (current !== scopeRef.current) throw new DOMException('Scope changed', 'AbortError');
-      const next = { ...current, workspaces, activeWorkspaceId: chooseWorkspace(workspaces, created.id)?.id ?? '' };
+      if (ticket !== generation.current || current !== scopeRef.current) return created;
+      let workspaces: Workspace[];
+      try {
+        workspaces = await listConsoleWorkspaces(current.orgUuid);
+      } catch {
+        workspaces = current.workspaces;
+      }
+      if (ticket !== generation.current || current !== scopeRef.current) return created;
+      if (!workspaces.some((workspace) => workspace.id === created.id)) workspaces = [...workspaces, created];
+      const next = { ...current, workspaces, activeWorkspaceId: created.id };
       setSwitching(true);
       await installScope(next, ++generation.current);
       return created;

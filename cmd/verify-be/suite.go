@@ -55,7 +55,7 @@ func suiteEnvironment(e *environment) ([]string, error) {
 }
 
 func isolatedSuiteEnvironment(values []string) []string {
-	return slices.DeleteFunc(slices.Clone(values), func(value string) bool {
+	return slices.DeleteFunc(isolatedModelEnvironment(values), func(value string) bool {
 		name, _, _ := strings.Cut(value, "=")
 		return name == "CONFIG_FILE" || name == "REDIS_URL" || name == "OMA_WORKER_CONTROL_IMAGE" || strings.HasPrefix(name, "LIVE_") || strings.HasPrefix(name, "VERIFY_BE_") || strings.HasPrefix(name, "TEST_") || strings.HasPrefix(name, "OMA_TEST_") || strings.HasPrefix(name, "OMA_S3_INTEGRATION_")
 	})

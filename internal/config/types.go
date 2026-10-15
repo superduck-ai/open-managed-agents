@@ -49,24 +49,52 @@ type PlatformOAuthClientConfig struct {
 	ClientSecret string `yaml:"client_secret"`
 }
 
-// MasterKeyConfig supplies the key-encryption key (KEK) that wraps per-secret
-// DEKs. Exactly one of Kek or KekFile must be set (required in every env, same
-// as storage.s3 access keys). KekFile holds the same base64 text as Kek but
-// read from a mounted file (mirroring the
-// code_session.jwt_signing_private_key_file discipline).
-//
-// Version identifies the current wrap key (defaults to 1 when unset/0).
-// DecryptOnly holds older KEKs that may still open existing envelopes; Seal
-// always uses the current key. There is no rewrap step.
+// MasterKeyConfig selects the provider that wraps per-secret DEKs. An omitted
+// provider preserves the local KEK configuration and rotation contract.
 type MasterKeyConfig struct {
+	Provider       string                `yaml:"provider"`
+	Local          *LocalKeyConfig       `yaml:"local,omitempty"`
+	AliyunKMS      *AliyunKMSConfig      `yaml:"aliyun_kms,omitempty"`
+	HashicorpVault *HashicorpVaultConfig `yaml:"hashicorp_vault,omitempty"`
+}
+
+// LocalKeyConfig holds the current KEK and keys retained for decrypting old envelopes.
+type LocalKeyConfig struct {
 	Kek         string                 `yaml:"kek"`
 	KekFile     string                 `yaml:"kek_file"`
 	Version     int64                  `yaml:"version"`
 	DecryptOnly []DecryptOnlyKeyConfig `yaml:"decrypt_only"`
 }
 
+type HashicorpVaultConfig struct {
+	Address      string `yaml:"address"`
+	TransitMount string `yaml:"transit_mount"`
+	KeyName      string `yaml:"key_name"`
+	TokenFile    string `yaml:"token_file"`
+	Token        string `yaml:"token,omitempty"`
+	CAFile       string `yaml:"ca_file,omitempty"`
+}
+
+// AliyunKMSConfig contains deployment inputs, never key material. Empty access
+// keys select the official SDK workload identity providers (ACK RRSA first, then ECS RAM).
+type AliyunKMSConfig struct {
+	Endpoint        string `yaml:"endpoint"`
+	KeyID           string `yaml:"key_id"`
+	AccessKeyID     string `yaml:"access_key_id"`
+	AccessKeySecret string `yaml:"access_key_secret"`
+	SecurityToken   string `yaml:"security_token"`
+}
+
+// EffectiveProvider preserves existing local deployments when provider is unset.
+func (m MasterKeyConfig) EffectiveProvider() string {
+	if m.Provider == "" {
+		return "local"
+	}
+	return m.Provider
+}
+
 // DecryptOnlyKeyConfig is a prior KEK retained only for Open. Version is
-// required and must not collide with the current master_key.version.
+// required and must not collide with the current master_key.local.version.
 type DecryptOnlyKeyConfig struct {
 	Version int64  `yaml:"version"`
 	Kek     string `yaml:"kek"`
@@ -95,7 +123,14 @@ type WorkerEventStreamConfig struct {
 	MaxMsgSize                int32         `yaml:"max_msg_size"`
 }
 
+type WebhookStreamConfig struct {
+	MaxBytes int64         `yaml:"max_bytes"`
+	MaxAge   time.Duration `yaml:"max_age"`
+	Replicas int           `yaml:"replicas"`
+}
+
 type NATSConfig struct {
+	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
 	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
 	URL               string                  `yaml:"url"`
 	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
@@ -165,18 +200,24 @@ type BatchConfig struct {
 }
 
 type E2BConfig struct {
-	APIKey         string        `yaml:"api_key"`
-	AccessToken    string        `yaml:"access_token"`
-	Domain         string        `yaml:"domain"`
-	APIURL         string        `yaml:"api_url"`
-	SandboxURL     string        `yaml:"sandbox_url"`
-	Debug          bool          `yaml:"debug"`
-	Template       string        `yaml:"template"`
-	RequestTimeout time.Duration `yaml:"request_timeout"`
-	SandboxTimeout time.Duration `yaml:"sandbox_timeout"`
+	LocalPortLookup  bool          `yaml:"local_port_lookup"`
+	LocalServiceHost string        `yaml:"local_service_host"`
+	APIKey           string        `yaml:"api_key"`
+	AccessToken      string        `yaml:"access_token"`
+	Domain           string        `yaml:"domain"`
+	APIURL           string        `yaml:"api_url"`
+	SandboxURL       string        `yaml:"sandbox_url"`
+	Debug            bool          `yaml:"debug"`
+	Template         string        `yaml:"template"`
+	RequestTimeout   time.Duration `yaml:"request_timeout"`
+	SandboxTimeout   time.Duration `yaml:"sandbox_timeout"`
 }
 
 type EnvironmentRunnerConfig struct {
+	BrainSandboxPrewarm     bool          `yaml:"brain_sandbox_prewarm"`
+	AgentMode               string        `yaml:"agent_mode"`
+	SandboxMCPPort          int           `yaml:"sandbox_mcp_port"`
+	SandboxMCPPath          string        `yaml:"sandbox_mcp_path"`
 	Enabled                 bool          `yaml:"enabled"`
 	Concurrency             int           `yaml:"concurrency"`
 	PackageProvisionTimeout time.Duration `yaml:"package_provision_timeout"`
@@ -239,13 +280,12 @@ type ObservabilityOTLPConfig struct {
 }
 
 type WebhookConfig struct {
-	EndpointURL   string        `yaml:"endpoint_url"`
-	SigningKey    string        `yaml:"signing_key"`
-	EventTypes    []string      `yaml:"event_types"`
-	WorkerEnabled bool          `yaml:"worker_enabled"`
-	Timeout       time.Duration `yaml:"timeout"`
-	MaxAttempts   int           `yaml:"max_attempts"`
-	AllowInsecure bool          `yaml:"allow_insecure"`
+	Concurrency         int           `yaml:"concurrency"`
+	WorkerEnabled       bool          `yaml:"worker_enabled"`
+	Timeout             time.Duration `yaml:"timeout"`
+	FailureDisableAfter time.Duration `yaml:"failure_disable_after"`
+	MaxAttempts         int           `yaml:"max_attempts"`
+	AllowInsecure       bool          `yaml:"allow_insecure"`
 }
 
 type BootstrapConfig struct {

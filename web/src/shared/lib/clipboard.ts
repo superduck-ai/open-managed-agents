@@ -14,7 +14,10 @@ export async function copyText(value: string) {
   textArea.style.position = 'fixed';
   textArea.style.opacity = '0';
   document.body.appendChild(textArea);
-  textArea.select();
-  document.execCommand('copy');
-  textArea.remove();
+  try {
+    textArea.select();
+    if (!document.execCommand('copy')) throw new Error('Clipboard copy failed');
+  } finally {
+    textArea.remove();
+  }
 }

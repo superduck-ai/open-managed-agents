@@ -71,13 +71,12 @@ ID；JetStream 在配置允许的窗口内去重，默认 24 小时，窗口外�
 这是对 PR #340 单通道设计的修正，防止任务与其控制回应互相等待完成 ACK；分类与方案选择见
 [Worker 入站投递设计](ccr-v2-worker-events-delivery-backend-design.md#stream-与顺序)。
 
-consumer 使用 `DeliverAll`、`AckExplicit`、`MaxAckPending=1`、无限 `MaxDeliver`，退避为 1 分钟、
+consumer 使用 `DeliverAll`、`AckExplicit`、服务端默认 `MaxAckPending`、无限 `MaxDeliver`，退避为 1 分钟、
 5 分钟、15 分钟，之后保持 15 分钟。SSE 断开不删除 consumer。
 
 `sequence_num` 直接取 JetStream Stream sequence，不再由 PostgreSQL 分配。它在整个共享 Stream 内
 单调递增，但两路交付的序号可以非单调；不能按最大已见序号过滤尚未完成的输入。
-单个 Code Session 看到间断序号是正常现象。`MaxAckPending=1` 保证同一 consumer
-一次只交付一条，但并发生产方获得 Code Session 行锁的顺序不保证等于 `session_events` 的提交顺序。
+单个 Code Session 看到间断序号是正常现象。每次拉取一条；任务通道允许多条未 ACK 输入，执行端负责有序消费和去重。并发生产方获得 Code Session 行锁的顺序不保证等于 `session_events` 的提交顺序。
 若业务以后要求严格复现并发提交顺序，需要持久发布游标或单写者调度，当前无 outbox 方案不提供它。
 
 ## ACK、Redis 与大 payload
@@ -143,7 +142,7 @@ Sandbox 时，沿用既有 recovery 流程重建 Sandbox。
 
 - activation 在全部 PubAck 后才 active，模糊 PubAck 重试不产生第二条消息；
 - 普通直接发布失败返回 503，稳定 ID 重试由 JetStream 去重；
-- 三节点 Stream 配置、每 Session 两个 durable consumer 与各自的 `MaxAckPending=1`；
+- 三节点 Stream 配置、每 Session 两个 durable consumer 与服务端默认未 ACK 上限；
 - Stream sequence 暴露为 SSE sequence，允许单 Session 出现间断；
 - Redis 丢失安全重投、epoch fence、DoubleAck；
 - 大 payload 透明还原与清理；
@@ -176,7 +175,7 @@ PG/JetStream/S3；公开输入、worker register、SSE、delivery 使用现有 A
 
 - 公开 HTTP 输入经 JetStream、SSE 到 processed ACK，确认消息从 Stream 删除。
 - initialize、未知 ACK 的 ignored 行为、旧 poll 返回 405。
-- 同 ID 发布去重、串行投递、received/processing 刷新真实 Redis TTL、durable 保留。
+- 同 ID 发布去重、有序在途投递、received/processing 刷新真实 Redis TTL、durable 保留。
 - 删除本次测试事件的 ACK 映射后，等待生产配置的一分钟重投，检查 ID/sequence/payload
   不变，并重建映射；超大客户端 cursor 不跳过未确认消息。
 - 跨 Session token 拒绝，以及凭证轮换后旧 epoch 不能 ACK 尚存消息。

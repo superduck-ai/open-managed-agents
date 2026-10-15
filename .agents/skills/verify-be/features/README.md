@@ -2,6 +2,10 @@
 
 | User symptom | Map | Runnable coverage |
 | --- | --- | --- |
+| Rust Brain multi-node ownership, native loop or MCP execution | [Rust Brain](brain.md) | `chat brain` |
+| Brain system prompt composition or Skill discovery and loading | [Rust Brain](brain.md) | `chat brain-skills` |
+| Attached Memory store metadata or body loading is missing | [Memory](memory.md) | `chat brain-memory` for Brain catalog/approval/MCP; six `memory` scenarios for storage and mounts |
+| Bound Skill instructions/references cannot be read or followed | [Skill loading](skills-loading.md) | `chat skills-loading` verifies Brain and Claude; real-model Skill selection remains unverified |
 | Sending a message produces no reply | [Roundtrip](roundtrip.md) | `chat roundtrip` |
 | Upstream authentication failure or interruption during retry backoff ends incorrectly | [Upstream errors](upstream-errors.md) | `chat upstream-errors` |
 | A reply disappears after reopening | [History](history.md) | Successful-turn history in `chat.roundtrip`; mid-stream interruption in `chat.reliability` |
@@ -9,6 +13,7 @@
 | Busy rejection, idle retry or replacement Worker behaves incorrectly | [Recovery](recovery.md) | `chat reliability` |
 | Another API instance cannot stream the reply | [Recovery](recovery.md) | `chat instances` |
 | Public Session startup fails | [Public startup](public-start.md) | `chat public` with real Runner and local Docker sandbox |
+| Configured child Agent is unavailable, uses parent permissions or loses its thread | [Subagent delegation](subagents.md) | `chat subagents` with real Runner, skills, MCP and same-thread continuation |
 | Chat latency regresses | [Performance](performance.md) | `chat performance --baseline REPORT` |
 
 The upstream model is scripted. The local chat scenarios do not verify cloud allocation, automatic cloud fault detection, browser rendering, real model quality or concurrent capacity. The optional cloud adapter scenarios below verify provider operations separately. Each scenario's final report must pass; a successful individual stage is insufficient.

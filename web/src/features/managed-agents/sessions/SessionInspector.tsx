@@ -1,5 +1,7 @@
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useFormatters, useI18n } from '../../../shared/i18n';
+import { ResourceIdButton } from '../components/ResourceIdButton';
+import { SessionExecutionStateBadge } from './SessionExecutionStateBadge';
 import { cn } from '../../../shared/lib/utils';
 import { Badge } from '../../../shared/ui/badge';
 import { Button, buttonVariants } from '../../../shared/ui/button';
@@ -38,8 +40,8 @@ import { Separator } from '../../../shared/ui/separator';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tooltip';
-import { Ban, CheckCircle2, ChevronDown, CircleHelp, Database, File, Plus, Search, X } from 'lucide-react';
-import { retrieveAgent, retrieveFileMetadata, retrieveManagedEntity } from '../api';
+import { Ban, CheckCircle2, ChevronDown, CircleHelp, Database, Download, File, Plus, Search, X } from 'lucide-react';
+import { retrieveAgent, retrieveManagedEntity } from '../api';
 import {
   type AgentApiResponse,
   type EnvironmentApiResponse,
@@ -91,11 +93,40 @@ import {
 import { EventDetailPanel } from './SessionTracePanel';
 import { areSessionFileResourcesValid, SessionFileResourcesField } from './SessionFileResourcesField';
 import { SessionGitResources } from './SessionGitResources';
+import { useSessionFileMetadata, type SessionFileSummary } from './sessionFiles';
+import { useSessionFileDownload } from './useSessionFileDownload';
 import { sessionEventProcessedTimestamp, sessionEventTimestamp } from './sessionTraceModel';
 import { SessionTraceObservability } from '../../observability/traces/SessionTraceObservability';
 
 const SESSION_INSPECTOR_DETAIL_DEFAULT_HEIGHT = 360;
 const SESSION_INSPECTOR_DETAIL_MIN_HEIGHT = 120;
+
+function SessionResourceDownload({
+  file,
+  fileId,
+  workspaceId,
+}: {
+  file?: SessionFileSummary;
+  fileId?: string;
+  workspaceId: string;
+}) {
+  const { msg } = useI18n();
+  const { download, downloading } = useSessionFileDownload(workspaceId);
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      aria-label={msg('files.downloadAria', 'Download {filename}', { filename: file?.name ?? fileId ?? 'file' })}
+      disabled={!file?.downloadable || downloading}
+      onClick={() =>
+        file && fileId && void download({ id: fileId, filename: file.name, downloadable: file.downloadable })
+      }
+    >
+      <Download className="size-3.5" aria-hidden />
+    </Button>
+  );
+}
 
 export function SessionInspector({
   activeTab,
@@ -136,7 +167,7 @@ export function SessionInspector({
   const related = useSessionInspectorEntities(session, workspaceId, refreshKey);
   const agentReference = objectRecord(session.agent);
   const sessionAgentId = typeof agentReference.id === 'string' ? agentReference.id : '';
-  const filenamesByFileId = useSessionInspectorFileMetadata(session, workspaceId);
+  const filenamesByFileId = useSessionFileMetadata(session, workspaceId);
   const tabsListRef = useRef<HTMLDivElement>(null);
   const [toolScope, setToolScope] = useState<InspectorToolScope>('all');
   const showToolScope = lanes.length > 1;
@@ -154,7 +185,7 @@ export function SessionInspector({
     const allowedEvents = new Set(scopedToolLanes.flatMap((lane) => eventsByLaneId.get(lane.id) ?? []));
     return events.filter((event) => allowedEvents.has(event));
   }, [events, eventsByLaneId, scopedToolLanes, toolScope]);
-  const scopedToolAgent = toolScope === 'all' || scopedToolLanes.some((lane) => lane.isMain) ? related.agent : null;
+  const scopedToolAgent = related.agent;
   const toolRows = useMemo(
     () => buildInspectorToolRows(scopedToolEvents, scopedToolAgent),
     [scopedToolAgent, scopedToolEvents],
@@ -347,7 +378,7 @@ function SessionOverviewPanel({
     ? session.vault_ids.filter((value): value is string => typeof value === 'string' && value.length > 0)
     : [];
   const rows: Array<[string, React.ReactNode]> = [
-    [msg('common.id', 'ID'), <span className="font-mono">{compactEntityId(session.id)}</span>],
+    [msg('common.id', 'ID'), <ResourceIdButton value={session.id} wrap />],
     [msg('common.status', 'Status'), <SessionStateBadge key="status" status={session.status} />],
     [msg('common.created', 'Created'), formatInspectorDate(session.created_at, formatters)],
     [msg('managedAgents.common.updatedAt', 'Updated'), formatInspectorDate(session.updated_at, formatters)],
@@ -1241,6 +1272,15 @@ function InspectorToolsOverview({ totals }: { totals: ReturnType<typeof buildIns
                 {msg('managedAgents.sessions.inspector.completed', 'Completed')}
               </dt>
               <dd className="font-mono tabular-nums">{formatters.number(totals.completed)}</dd>
+              {totals.interrupted > 0 ? (
+                <>
+                  <dt className="flex items-center gap-1.5 text-muted-foreground">
+                    <span className="inline-block size-2 rounded-full bg-muted-foreground" aria-hidden />
+                    {msg('managedAgents.sessions.state.interrupted', 'Interrupted')}
+                  </dt>
+                  <dd className="font-mono tabular-nums">{formatters.number(totals.interrupted)}</dd>
+                </>
+              ) : null}
               {totals.inFlight > 0 ? (
                 <>
                   <dt className="flex items-center gap-1.5 text-muted-foreground">
@@ -1392,7 +1432,7 @@ function InspectorToolDetail({
                     </TableCell>
                     <TableCell className="h-6 min-w-0 truncate px-1.5 py-0">{call.inputPreview || '—'}</TableCell>
                     <TableCell className="h-6 truncate px-1.5 py-0 capitalize">
-                      {call.lifecycle.replace('_', ' ')}
+                      <SessionExecutionStateBadge state={call.lifecycle} tool />
                     </TableCell>
                     <TableCell className="h-6 truncate px-1.5 py-0 text-right font-mono tabular-nums">
                       {call.executionMs !== undefined ? formatSessionDuration(call.executionMs, formatters, msg) : '—'}
@@ -1445,7 +1485,7 @@ function InspectorResourcesPanel({
   session,
   workspaceId,
 }: {
-  filenamesByFileId: Record<string, { name: string; size: number }>;
+  filenamesByFileId: Record<string, SessionFileSummary>;
   onAddFileResource: (resource: SessionFileResourceFormValue) => Promise<void>;
   session: SessionApiResponse;
   workspaceId: string;
@@ -1517,6 +1557,7 @@ function InspectorResourcesPanel({
             <TableHead className="h-6 w-24 px-1.5 text-right">
               {msg('managedAgents.sessions.inspector.size', 'Size')}
             </TableHead>
+            <TableHead className="h-6 w-8 px-1.5" aria-label={msg('common.actions', 'Actions')} />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -1546,6 +1587,7 @@ function InspectorResourcesPanel({
                     <TableCell className="h-auto min-w-0 truncate px-1.5 py-1.5 text-right font-mono text-muted-foreground">
                       —
                     </TableCell>
+                    <TableCell />
                   </TableRow>
                 );
               }
@@ -1561,6 +1603,9 @@ function InspectorResourcesPanel({
                   </TableCell>
                   <TableCell className="h-8 min-w-0 truncate px-1.5 py-0 text-right font-mono text-muted-foreground">
                     {file ? formatters.bytes(file.size) : '—'}
+                  </TableCell>
+                  <TableCell className="h-8 px-1.5 py-0 text-right">
+                    <SessionResourceDownload file={file} fileId={resource.file_id} workspaceId={workspaceId} />
                   </TableCell>
                 </TableRow>
               );
@@ -1681,8 +1726,8 @@ function InspectorThreadsPanel({
     </ScrollArea>
   );
   if (!selected) return threadList;
-  const selectedAgent = selected.isMain ? agent : null;
-  const selectedAgentId = selected.isMain ? agentId : '';
+  const selectedAgent = selected.isMain ? agent : (selected.agent ?? null);
+  const selectedAgentId = selected.isMain ? agentId : (selectedAgent?.id ?? '');
   return (
     <InspectorListDetailSplit
       id="threads"
@@ -1705,7 +1750,9 @@ function InspectorThreadsPanel({
                         <InspectorEntityLink href={agentDetailHref(workspaceId, selectedAgentId)}>
                           {selectedAgent?.name || selectedAgentId}
                         </InspectorEntityLink>
-                        {selectedAgent ? <span className="text-muted-foreground">v{selectedAgent.version}</span> : null}
+                        {selectedAgent?.version ? (
+                          <span className="text-muted-foreground">v{selectedAgent.version}</span>
+                        ) : null}
                       </span>
                     ) : (
                       '—'
@@ -1812,19 +1859,20 @@ function ToolPermission({ permission }: { permission: InspectorToolRow['permissi
 
 function ToolOutcomeRing({ totals }: { totals: ReturnType<typeof buildInspectorToolTotals> }) {
   const { msg } = useI18n();
-  const total = totals.completed + totals.failed + totals.denied + totals.inFlight;
+  const total = totals.calls;
   const failedEnd = total ? (totals.failed / total) * 100 : 0;
   const deniedEnd = total ? failedEnd + (totals.denied / total) * 100 : 0;
   const completedEnd = total ? deniedEnd + (totals.completed / total) * 100 : 0;
+  const interruptedEnd = total ? completedEnd + (totals.interrupted / total) * 100 : 0;
   const background = total
-    ? `conic-gradient(from -90deg, var(--destructive) 0 ${failedEnd}%, var(--warning) ${failedEnd}% ${deniedEnd}%, var(--success) ${deniedEnd}% ${completedEnd}%, var(--muted) ${completedEnd}% 100%)`
+    ? `conic-gradient(from -90deg, var(--destructive) 0 ${failedEnd}%, var(--warning) ${failedEnd}% ${deniedEnd}%, var(--success) ${deniedEnd}% ${completedEnd}%, var(--muted-foreground) ${completedEnd}% ${interruptedEnd}%, var(--muted) ${interruptedEnd}% 100%)`
     : 'var(--muted)';
   return (
     <div
       role="img"
       aria-label={msg(
-        'managedAgents.sessions.inspector.toolOutcomeSummary',
-        '{completed} completed, {failed} failed, {denied} denied, {inFlight} in flight',
+        'managedAgents.sessions.inspector.toolOutcomeSummaryWithInterrupted',
+        '{completed} completed, {failed} failed, {denied} denied, {interrupted} interrupted, {inFlight} in flight',
         totals,
       )}
       className="grid size-16 flex-none place-items-center rounded-full"
@@ -1931,33 +1979,6 @@ function useSessionInspectorEntities(session: SessionApiResponse, workspaceId: s
     };
   }, [refreshKey, session.agent, session.environment_id, session.vault_ids, workspaceId]);
   return related;
-}
-
-function useSessionInspectorFileMetadata(session: SessionApiResponse, workspaceId: string) {
-  const [files, setFiles] = useState<Record<string, { name: string; size: number }>>({});
-  const fileIds = useMemo(
-    () => [...new Set(session.resources.map((resource) => resource.file_id).filter(Boolean))] as string[],
-    [session.resources],
-  );
-  useEffect(() => {
-    let active = true;
-    void Promise.allSettled(fileIds.map((id) => retrieveFileMetadata(id, workspaceId))).then((results) => {
-      if (!active) return;
-      setFiles(
-        Object.fromEntries(
-          results.flatMap((result) =>
-            result.status === 'fulfilled'
-              ? [[result.value.id, { name: result.value.filename, size: result.value.size_bytes }] as const]
-              : [],
-          ),
-        ),
-      );
-    });
-    return () => {
-      active = false;
-    };
-  }, [fileIds, workspaceId]);
-  return files;
 }
 
 function inspectorTabLabel(tab: SessionInspectorTab, msg: ReturnType<typeof useI18n>['msg']) {

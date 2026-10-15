@@ -13,7 +13,7 @@ Code Session 入站事件直接发布到共享 JetStream Stream，并通过每 S
 - 普通入站请求只有获得 JetStream PubAck 后才成功；
 - activation 只有在 initialize 和完整启动历史全部获得 PubAck 后才切换 active；
 - 同一 Code Session 的直接发布与 termination 通过 Code Session 行锁串行；
-- 任务与回应各自的 consumer 保持 `MaxAckPending=1`，各通道内当前消息 ACK 前不交付下一条；
+- 两个 consumer 均使用服务端默认 `MaxAckPending`；逐条按序拉取，执行端按事件 ID 去重并管理输入顺序；
 - `control_response` 和 `control_request/interrupt` 进入回应通道，不受任务的未完成 ACK 阻塞；
 - worker epoch 的强一致来源仍是 PostgreSQL；
 - Redis 丢失、API 重启或 SSE 断开只造成重投；
@@ -91,12 +91,11 @@ Publish initialize 和历史，并在全部 PubAck 后更新 active。部分发�
 `control_request/interrupt` 指已经转换成 Worker 协议的中断消息。公共 `user.interrupt`
 到该协议的转换属于独立问题，不在本次修复范围内，不能据此声称停止按钮已经修复。
 
-两路分别拉取、通过同一个有界 Subscription 交给原 SSE 单写入循环。每路最多一条未完成消息，
-不会为了寻找回应而把用户输入全部预取到内存。两个 consumer 均使用：
+两路分别拉取、通过同一个有界 Subscription 交给原 SSE 单写入循环。两路未完成消息数量均由服务端默认 `MaxAckPending` 限制。控制回应保留独立通道，不能被普通输入窗口耗尽阻塞。两个 consumer 使用：
 
 - `DeliverAll`；
 - `AckExplicit`；
-- `MaxAckPending=1`；
+- `MaxAckPending`：不显式指定，当前 NATS 2.14.6 默认 1000；
 - `MaxDeliver=-1`；
 - backoff 为 1 分钟、5 分钟、15 分钟，之后保持 15 分钟；
 - 单次 pull batch 为 1。
@@ -175,7 +174,7 @@ SSE 写失败不删除映射：旧连接的写失败可能晚于重连重投，�
 5. 发布前由 Broker 校验最终 envelope 不超过配置的 `max_msg_size`，默认 1 MiB。
 
 SSE 读取时限制为声明长度加一字节，并校验对象报告大小、实际大小和 SHA-256。缺失、截断、篡改或
-读取失败都不发送、不 ACK；`MaxAckPending=1` 使同通道的后续消息继续阻塞。PubAck 失败可能是模糊成功，
+读取失败都不发送、不 ACK；本次 SSE 读取失败会结束连接，未 ACK 消息保留以便重投。PubAck 失败可能是模糊成功，
 所以不立即清理对象。processed 后加速清理；否则最迟 30 天清理。
 确定未尝试发布的对象可以加速清理。清理调度在行锁事务外使用不继承请求取消的 5 秒上下文；失败
 只告警，由上传前已提交的到期任务兜底，不能依赖已经取消的请求完成清理。
@@ -229,7 +228,7 @@ consumer ACK floor。
 
 - activation 与普通发布都等待 PubAck；
 - 模糊 PubAck 的稳定 ID 重试只保留一条消息；
-- per-session 两个 durable consumer 重连并分别保持 `MaxAckPending=1`；
+- per-session 两个 durable consumer 重连并保持服务端默认未 ACK 上限；
 - 空闲或阻塞时关闭订阅、任一路解码失败，均会结束两路读取并释放 NATS 订阅，保留未 ACK 消息；
 - 第二路 purge 失败后可幂等重试，残留消息仍受自身到期规则覆盖；
 - Stream sequence 正确写入 SSE；控制回应越过排队输入，含重连后的较小序号输入仍可完成；
@@ -305,3 +304,16 @@ LIVE_WORKER_REAL_CLAUDE=1 LIVE_WORKER_API_URL=http://127.0.0.1:18080 CONFIG_FILE
 临时 consumer 回收不 purge subject。WorkQueue 保留未 ACK 消息，下一次订阅按 DeliverAll 重建 consumer，使用原 event ID 投递。已 ACK 消息已从 Stream 移除。在途消息可再次投递，Worker 必须按 event ID 保持处理幂等；该机制不提供跨进程工具副作用的 exactly-once 保证。旧 SSE 退出仅停止本地 Fetch，禁止删除新连接共享的 consumer。
 
 新增验收覆盖两路 consumer 真实过期、未 ACK 消息及 ID 保留、重建后 ACK 排空、活跃 pull 与旧连接关闭不误删；删除/整体终态的事务回滚、历史 Worker 清理、软删除后的晚订阅补偿与子线程归档保留父会话队列。
+
+
+## 回合完成信号
+
+Worker 运行状态和公开回合完成分别处理。`PUT worker` 上报 idle 只更新运行状态，不能结束公开回合。
+所有执行端通过已有 CCRv2 `result` 结束回合，不需要额外 header 或 worker binding 能力开关。
+成功结果产生 `idle/end_turn`，失败结果产生脱敏的 session.error 和 `idle/retries_exhausted`；
+执行端将已确认的用户取消上报为非失败 result，产生 end_turn，并保留 user.interrupt。后端不从历史推断取消或改判失败 result。重复 result 复用现有事件 ID 去重，
+旧 worker 继续受 epoch 校验约束，待处理输入继续使用现有队列规则。
+
+发送端顺序为消息及工具结果、model span end、result、输入 processed ACK。worker idle 可以迟到或
+重投，不影响下一轮的公开状态。具体投影和中断回归见 `tests/session_worker_terminal_test.go` 与
+`tests/session_worker_interrupt_test.go`。

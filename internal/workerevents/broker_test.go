@@ -56,7 +56,7 @@ func TestJetStreamBrokerAppliesConfiguredLimits(t *testing.T) {
 	}
 }
 
-func TestJetStreamBrokerDeliversSeriallyAndKeepsDurableConsumer(t *testing.T) {
+func TestJetStreamBrokerDeliversOrderedInputsBeforeAckAndKeepsDurableConsumer(t *testing.T) {
 	servers := runNATSCluster(t)
 	publisherConnection := connectNATS(t, servers[0].ClientURL())
 	subscriberConnection := connectNATS(t, servers[1].ClientURL())
@@ -93,17 +93,15 @@ func TestJetStreamBrokerDeliversSeriallyAndKeepsDurableConsumer(t *testing.T) {
 	if first.Envelope.EventID != envelope.EventID || string(first.Envelope.Payload) != string(envelope.Payload) || first.Envelope.SequenceNum != 1 {
 		t.Fatalf("delivery = %#v, want first stream sequence", first.Envelope)
 	}
-	select {
-	case blocked := <-subscription.Messages():
-		t.Fatalf("received sequence before ACK: %#v", blocked.Envelope)
-	case <-time.After(250 * time.Millisecond):
+	delivered := receiveWorkerDelivery(t, subscription)
+	if delivered.Envelope.EventID != second.EventID || delivered.Envelope.SequenceNum != 3 {
+		t.Fatalf("second delivery before first ACK = %#v", delivered.Envelope)
+	}
+	if err := subscriber.InProgress(t.Context(), first.AckSubject); err != nil {
+		t.Fatal(err)
 	}
 	if err := subscriber.DoubleAck(t.Context(), first.AckSubject); err != nil {
 		t.Fatal(err)
-	}
-	delivered := receiveWorkerDelivery(t, subscription)
-	if delivered.Envelope.EventID != second.EventID || delivered.Envelope.SequenceNum != 3 {
-		t.Fatalf("second delivery = %#v, want second stream sequence", delivered.Envelope)
 	}
 	if err := subscriber.DoubleAck(t.Context(), delivered.AckSubject); err != nil {
 		t.Fatal(err)
@@ -115,6 +113,14 @@ func TestJetStreamBrokerDeliversSeriallyAndKeepsDurableConsumer(t *testing.T) {
 	js, err := jetstream.New(subscriberConnection)
 	if err != nil {
 		t.Fatal(err)
+	}
+	consumer, err := js.Consumer(t.Context(), StreamName, consumerName(sessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumerInfo, err := consumer.Info(t.Context())
+	if err != nil || consumerInfo.Config.MaxAckPending != server.JsDefaultMaxAckPending {
+		t.Fatalf("consumer must use the server default pending window: %+v %v", consumerInfo, err)
 	}
 	stream, err := js.Stream(t.Context(), StreamName)
 	if err != nil {

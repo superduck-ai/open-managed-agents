@@ -166,6 +166,7 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 
 ## 验收覆盖
 
+- 组织默认 Provider 使用 `00083_organization_llm_provider.sql` 迁移，排在主干已有的版本 82 之后；`internal/db/organization_llm_migration_postgres_test.go` 验证从主干版本 82 升级，避免 Goose 拒绝低版本的缺失迁移。
 - `tests/messages_api_test.go`：缺少 Provider、未配置模型、跨资源使用、未 register、lease 过期、public session 终止、长时间运行、普通 API key、平台 cookie、header 清洗与响应 header 透传；
 - `internal/messages/handler_test.go`：有界缓冲后保留原始请求体，并拒绝重复顶层 `model`；
 - `tests/messages_upstream_auth_test.go`：三种上游 401 body 的 Worker 错误转换、不可重试 header、模型 span，以及普通 API key 调用的原始响应；

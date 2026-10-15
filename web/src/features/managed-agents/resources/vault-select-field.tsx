@@ -13,7 +13,7 @@ import {
 import { Label } from '../../../shared/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '../../../shared/ui/popover';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../../shared/ui/tooltip';
-import { Check, ChevronsUpDown, X } from 'lucide-react';
+import { Check, ChevronsUpDown, Plus, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { DeploymentFieldHeader } from '../components/common';
 import { type EntityOption } from '../types';
@@ -31,6 +31,7 @@ export function ManagedVaultSelectField({
   acknowledged = false,
   onAcknowledgedChange,
   onChange,
+  presentation = 'select',
 }: {
   label: string;
   optional?: boolean;
@@ -42,6 +43,7 @@ export function ManagedVaultSelectField({
   acknowledged?: boolean;
   onAcknowledgedChange?: (value: boolean) => void;
   onChange: (value: string[]) => void;
+  presentation?: 'select' | 'add';
 }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
@@ -101,29 +103,36 @@ export function ManagedVaultSelectField({
                 <Button
                   type="button"
                   id={id}
-                  variant="outline"
+                  variant={presentation === 'add' ? 'ghost' : 'outline'}
                   role="combobox"
                   aria-expanded={open}
                   aria-label={label}
-                  disabled={!options.length}
+                  disabled={presentation === 'select' && !options.length}
                   className={cn(
-                    'managed-resource-field mt-0 h-10 w-full justify-between gap-2 border-border bg-secondary px-3 text-sm font-normal hover:bg-secondary focus-visible:border-ring focus-visible:ring-0 disabled:cursor-not-allowed',
-                    selectedOptions.length ? 'pr-9' : 'pr-3',
+                    'mt-0 gap-2 text-sm font-normal disabled:cursor-not-allowed',
+                    presentation === 'add'
+                      ? 'h-9 justify-start px-2'
+                      : 'managed-resource-field h-10 w-full justify-between border-border bg-secondary px-3 hover:bg-secondary focus-visible:border-ring focus-visible:ring-0',
+                    presentation === 'select' && selectedOptions.length && 'pr-9',
                   )}
                 />
               }
             >
-              <span
-                className={cn(
-                  'min-w-0 flex-1 truncate text-left',
-                  selectedOptions.length ? 'text-foreground' : 'text-muted-foreground',
-                )}
-              >
-                {triggerLabel}
-              </span>
-              {selectedOptions.length ? null : <ChevronsUpDown className="size-4 shrink-0 opacity-50" aria-hidden />}
+              <VaultSelectTriggerContent
+                presentation={presentation}
+                selected={Boolean(selectedOptions.length)}
+                label={triggerLabel}
+              />
             </PopoverTrigger>
-            <PopoverContent align="start" className="w-[var(--anchor-width)] min-w-[var(--anchor-width)] gap-0 p-0">
+            <PopoverContent
+              align="start"
+              className={cn(
+                'gap-0 p-0',
+                presentation === 'add'
+                  ? 'w-[380px] max-w-[calc(100vw-3rem)]'
+                  : 'w-[var(--anchor-width)] min-w-[var(--anchor-width)]',
+              )}
+            >
               <Command>
                 <CommandInput placeholder={searchPlaceholder} />
                 <CommandList className="max-h-72">
@@ -194,7 +203,7 @@ export function ManagedVaultSelectField({
               </Command>
             </PopoverContent>
           </Popover>
-          {selectedOptions.length ? (
+          {presentation === 'select' && selectedOptions.length ? (
             <Button
               type="button"
               variant="ghost"
@@ -208,6 +217,27 @@ export function ManagedVaultSelectField({
           ) : null}
         </div>
       </TooltipProvider>
+      {presentation === 'add' && selectedOptions.length ? (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {selectedOptions.map((option) => (
+            <span
+              key={option.id}
+              className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-secondary py-1 pl-2 text-sm"
+            >
+              <span className="truncate">{option.label}</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={msg('managedAgents.credentialVaults.removeVault', 'Remove {name}', { name: option.label })}
+                onClick={() => updateSelection(selectedIds.filter((id) => id !== option.id))}
+              >
+                <X aria-hidden />
+              </Button>
+            </span>
+          ))}
+        </div>
+      ) : null}
       {selectedOptions.length && onAcknowledgedChange ? (
         <div className="mt-3 flex items-start gap-2">
           <Checkbox
@@ -227,5 +257,33 @@ export function ManagedVaultSelectField({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function VaultSelectTriggerContent({
+  presentation,
+  selected,
+  label,
+}: {
+  presentation: 'select' | 'add';
+  selected: boolean;
+  label: string;
+}) {
+  const { msg } = useI18n();
+  if (presentation === 'add') {
+    return (
+      <>
+        <Plus className="size-4" aria-hidden />
+        <span>{msg('managedAgents.credentialVaults.addVault', 'Add vault')}</span>
+      </>
+    );
+  }
+  return (
+    <>
+      <span className={cn('min-w-0 flex-1 truncate text-left', selected ? 'text-foreground' : 'text-muted-foreground')}>
+        {label}
+      </span>
+      {selected ? null : <ChevronsUpDown className="size-4 shrink-0 opacity-50" aria-hidden />}
+    </>
   );
 }

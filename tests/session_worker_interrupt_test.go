@@ -15,6 +15,7 @@ func TestSessionWorkerInterruptedResult(t *testing.T) {
 	for _, scenario := range []struct {
 		name      string
 		interrupt bool
+		success   bool
 		errorType string
 		subtype   string
 		newTurn   bool
@@ -23,6 +24,8 @@ func TestSessionWorkerInterruptedResult(t *testing.T) {
 		retry     bool
 		want      string
 	}{
+		{name: "failed result after interrupt remains failure", interrupt: true, errorType: "cancelled", want: "retries_exhausted"},
+		{name: "failed result after backoff interrupt remains failure", interrupt: true, errorType: "http_error", backoff: true, want: "retries_exhausted"},
 		{name: "connection cancelled without interrupt", errorType: "cancelled", want: "retries_exhausted"},
 		{name: "upstream failure after interrupt", interrupt: true, errorType: "http_error", want: "retries_exhausted"},
 		{name: "budget exhausted after interrupt", interrupt: true, errorType: "cancelled", subtype: "error_max_budget_usd", want: "retries_exhausted"},
@@ -30,10 +33,10 @@ func TestSessionWorkerInterruptedResult(t *testing.T) {
 		{name: "backoff interrupt previous turn", interrupt: true, errorType: "http_error", backoff: true, newTurn: true, want: "retries_exhausted"},
 		{name: "backoff interrupt budget exhausted", interrupt: true, errorType: "http_error", backoff: true, subtype: "error_max_budget_usd", want: "retries_exhausted"},
 		{name: "new request after backoff interrupt", interrupt: true, errorType: "http_error", backoff: true, retry: true, want: "retries_exhausted"},
-		{name: "backoff interrupt result before idle", interrupt: true, errorType: "http_error", backoff: true, want: "end_turn"},
-		{name: "backoff interrupt result after idle", interrupt: true, errorType: "http_error", backoff: true, idleFirst: true, want: "end_turn"},
-		{name: "interrupt result before idle", interrupt: true, errorType: "cancelled", subtype: "error_during_execution", want: "end_turn"},
-		{name: "interrupt result after idle", interrupt: true, errorType: "cancelled", idleFirst: true, want: "end_turn"},
+		{name: "backoff interrupt result before idle", success: true, interrupt: true, errorType: "http_error", backoff: true, want: "end_turn"},
+		{name: "backoff interrupt result after idle", success: true, interrupt: true, errorType: "http_error", backoff: true, idleFirst: true, want: "end_turn"},
+		{name: "interrupt result before idle", success: true, interrupt: true, errorType: "cancelled", subtype: "error_during_execution", want: "end_turn"},
+		{name: "interrupt result after idle", success: true, interrupt: true, errorType: "cancelled", idleFirst: true, want: "end_turn"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			app := newPayloadIntegrationApp(t, newFakeStore("interrupt-result"))
@@ -78,19 +81,16 @@ func TestSessionWorkerInterruptedResult(t *testing.T) {
 				endRequest()
 			}
 			if scenario.newTurn {
+				postCodeSessionWorkerEvents(t, app, record.ExternalID, internalPayloadRequest(epoch, `{"type":"result","uuid":"previous-completion","is_error":false}`))
 				workerState("idle")
 				workerState("running")
 			}
 			if scenario.idleFirst {
 				workerState("idle")
 			}
-			result := internalPayloadRequest(epoch, fmt.Sprintf(`{"type":"result","uuid":"interrupted-result","is_error":true,"subtype":%q}`, scenario.subtype))
+			result := internalPayloadRequest(epoch, fmt.Sprintf(`{"type":"result","uuid":"interrupted-result","is_error":%t,"subtype":%q}`, !scenario.success, scenario.subtype))
 			postCodeSessionWorkerEvents(t, app, record.ExternalID, result)
-			if scenario.want == "end_turn" && !scenario.idleFirst {
-				if status := retrieveSession(t, app, record.SessionExternalID, defaultTestKey).Status; status != "running" {
-					t.Fatalf("result ended session before Worker idle: %s", status)
-				}
-			}
+
 			workerState("idle")
 			if status := retrieveSession(t, app, record.SessionExternalID, defaultTestKey).Status; status != "idle" {
 				t.Fatalf("session status = %s, want idle", status)
@@ -113,6 +113,20 @@ func TestSessionWorkerInterruptedResult(t *testing.T) {
 			if len(after.Data) != wantErrors {
 				t.Fatalf("redelivery changed error count: %d", len(after.Data))
 			}
+			if scenario.want == "end_turn" {
+				next := sendSessionEvents(t, app, record.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"Next turn"}]}]}`, defaultTestKey)
+				consumePublicInput(t, app, record, epoch, sessionEventStringField(t, next.Data[0], "id"))
+				workerState("running")
+				postCodeSessionWorkerEvents(t, app, record.ExternalID, result)
+				workerState("idle")
+				if status := retrieveSession(t, app, record.SessionExternalID, defaultTestKey).Status; status != "running" {
+					t.Fatalf("cancelled result replay ended next turn: %s", status)
+				}
+				if failures := listSessionEvents(t, app, record.SessionExternalID, "types[]=session.error", defaultTestKey); len(failures.Data) != 0 {
+					t.Fatalf("cancelled result replay became failure: %s", failures.Data)
+				}
+			}
+
 		})
 	}
 }

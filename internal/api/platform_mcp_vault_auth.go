@@ -457,18 +457,7 @@ func (s *Server) handlePlatformMCPVaultAuthCallback(w http.ResponseWriter, r *ht
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
-	if err := vaultsapi.SealCredentialSecret(r.Context(), s.vaultSecrets, &credential); err != nil {
-		s.logger.ErrorContext(r.Context(), "seal mcp oauth vault credential for flow", "flow_external_id", flow.ExternalID, "error", err)
-		s.failPlatformMCPVaultAuthFlow(r.Context(), flow.ExternalID, platformMCPVaultAuthVerificationRequestFailed, now)
-		writePlatformMCPVaultAuthCallback(w, platformMCPVaultAuthCallbackPayload{
-			Type:      "vault_oauth_complete",
-			FlowID:    flow.ExternalID,
-			VaultID:   flow.VaultExternalID,
-			ErrorCode: platformMCPVaultAuthVerificationRequestFailed,
-		})
-		return
-	}
-	created, err := s.db.CreateVaultCredential(r.Context(), credential)
+	created, err := s.savePlatformMCPOAuthCredential(r.Context(), credential)
 	if err != nil {
 		errorCode := platformMCPVaultAuthVerificationRequestFailed
 		if errors.Is(err, db.ErrDuplicate) {
@@ -494,6 +483,57 @@ func (s *Server) handlePlatformMCPVaultAuthCallback(w http.ResponseWriter, r *ht
 		VaultID:      flow.VaultExternalID,
 		CredentialID: created.ExternalID,
 	})
+}
+
+// Reauthorization fills an active credential whose consumed refresh token was
+// invalidated. Keep its identity and host coverage; CAS cannot overwrite a
+// concurrent successful authorization. No new OAuth flow or API shape is needed.
+func (s *Server) savePlatformMCPOAuthCredential(ctx context.Context, next db.VaultCredential) (db.VaultCredential, error) {
+	defer clear(next.SecretPayload)
+	credentials, _, err := s.db.ListVaultCredentialsPage(ctx, db.ListVaultCredentialsPageParams{
+		WorkspaceUUID: next.WorkspaceUUID, VaultExternalID: next.VaultExternalID, Limit: 50,
+	})
+	if err != nil {
+		return db.VaultCredential{}, err
+	}
+	replacing := false
+	for _, current := range credentials {
+		if current.CredentialKey != next.CredentialKey {
+			continue
+		}
+		if current.AuthType != "mcp_oauth" || current.SecretEnvelope != nil {
+			return db.VaultCredential{}, db.ErrDuplicate
+		}
+		next.UUID = current.UUID
+		next.ExternalID = current.ExternalID
+		next.CreatedAt = current.CreatedAt
+		next.CreatedByAPIKeyUUID = current.CreatedByAPIKeyUUID
+		next.SecretVersion = current.SecretVersion
+		next.DisplayName = current.DisplayName
+		metadata := make(map[string]json.RawMessage)
+		for _, raw := range []json.RawMessage{current.Metadata, next.Metadata} {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				return db.VaultCredential{}, fmt.Errorf("decode OAuth credential metadata: %w", err)
+			}
+			for key, value := range fields {
+				metadata[key] = value
+			}
+		}
+		next.Metadata, err = json.Marshal(metadata)
+		if err != nil {
+			return db.VaultCredential{}, err
+		}
+		replacing = true
+		break
+	}
+	if err := vaultsapi.SealCredentialSecret(ctx, s.vaultSecrets, &next); err != nil {
+		return db.VaultCredential{}, err
+	}
+	if replacing {
+		return s.db.UpdateVaultCredential(ctx, next.WorkspaceUUID, next.VaultExternalID, next.ExternalID, next)
+	}
+	return s.db.CreateVaultCredential(ctx, next)
 }
 
 func (r *platformMCPVaultAuthStartRequest) trim() {
@@ -524,7 +564,7 @@ func platformMCPVaultCredentialExists(credentials []db.VaultCredential, mcpServe
 		if credential.CredentialKey != mcpServerURL {
 			continue
 		}
-		if credential.AuthType == "mcp_oauth" || credential.AuthType == "static_bearer" {
+		if (credential.AuthType == "mcp_oauth" && credential.SecretEnvelope != nil) || credential.AuthType == "static_bearer" {
 			return true
 		}
 	}
@@ -967,6 +1007,8 @@ func defaultPlatformMCPVaultCredentialName(mcpServerURL string) string {
 }
 
 func (s *Server) failPlatformMCPVaultAuthFlow(ctx context.Context, flowID, errorCode string, failedAt time.Time) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 	if err := s.db.FailMCPOAuthFlow(ctx, flowID, errorCode, failedAt); err != nil && !errors.Is(err, db.ErrNotFound) {
 		s.logger.ErrorContext(ctx, "fail mcp oauth flow", "flow_id", flowID, "error", err)
 	}

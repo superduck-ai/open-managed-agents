@@ -1,0 +1,91 @@
+package environments
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/superduck-ai/open-managed-agents/internal/config"
+)
+
+func TestBrainSandboxManagerStartsEmbeddedMCP(t *testing.T) {
+	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://sandbox.example"}}
+	cfg.EnvironmentRunner.AgentMode = "brain"
+	launch, err := brainSandboxManagerCommand("cse_test", "/workspace/project", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(launch.ShellCommand, "export ENVRUNNER_SKIP_CLAUDE_CODE=true") ||
+		!strings.Contains(launch.ShellCommand, "export MCP_ALLOWED_HOSTS=") ||
+		!strings.Contains(launch.ShellCommand, "'/usr/local/bin/environment-manager' task-run") ||
+		strings.Contains(launch.ShellCommand, "mcp-server") {
+		t.Fatalf("unexpected launch command: %q", launch.ShellCommand)
+	}
+	var payload struct {
+		StartupContext struct {
+			APIBaseURL string `json:"api_base_url"`
+		} `json:"startup_context"`
+		Environment struct {
+			Type string `json:"environment_type"`
+			CWD  string `json:"cwd"`
+		} `json:"environment"`
+	}
+	if err := json.Unmarshal(launch.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.StartupContext.APIBaseURL != "http://sandbox.example" || payload.Environment.Type != "anthropic" || payload.Environment.CWD != "/workspace/project" {
+		t.Fatalf("unexpected manager payload: %+v", payload)
+	}
+}
+
+func TestProbeSandboxMCPReady(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		status    int
+		body      string
+		wantError bool
+	}{
+		{name: "rejects unsupported version", status: http.StatusOK, body: `data: {"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","supportedVersions":["2025-11-25"],"capabilities":{"tools":{}}}}` + "\n\n", wantError: true},
+		{name: "rejects missing tools", status: http.StatusOK, body: `data: {"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{}}}` + "\n\n", wantError: true},
+		{name: "rejects failed discovery", status: http.StatusNotFound, body: `{"error":"missing"}`, wantError: true},
+		{name: "accepts Rust SSE discovery", status: http.StatusOK, body: `data: {"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"tools":{}}}}` + "\n\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/mcp" || r.Header.Get("Mcp-Protocol-Version") != "2026-07-28" || r.Header.Get("Mcp-Method") != "server/discover" {
+					t.Errorf("unexpected request: %s %s, version=%q, method=%q", r.Method, r.URL.Path, r.Header.Get("Mcp-Protocol-Version"), r.Header.Get("Mcp-Method"))
+				}
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Error(err)
+				}
+				if !strings.Contains(string(body), `"io.modelcontextprotocol/clientCapabilities":{}`) {
+					t.Errorf("missing client capabilities: %s", body)
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.WriteHeader(test.status)
+				_, _ = io.WriteString(w, test.body)
+			}))
+			defer server.Close()
+			err := probeSandboxMCPReady(context.Background(), server.URL+"/mcp")
+			if (err != nil) != test.wantError {
+				t.Fatalf("probeSandboxMCPReady() error = %v, want error %v", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestProbeSandboxMCPReadyAgainstRustServer(t *testing.T) {
+	endpoint := os.Getenv("OMA_RUST_MCP_URL")
+	if endpoint == "" {
+		t.Skip("OMA_RUST_MCP_URL is not set")
+	}
+	if err := probeSandboxMCPReady(t.Context(), endpoint); err != nil {
+		t.Fatal(err)
+	}
+}

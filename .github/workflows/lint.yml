@@ -27,12 +27,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            tools/golangci-lint/go.sum
 
       - name: Generate Go sources
         run: ./scripts/generate-go.sh
 
+      - name: Check Go package ownership
+        run: ./scripts/tests/go-packages_test.sh
+
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.13.0
-          args: --config=.golangci.yml --timeout=5m ./...
+        run: ./scripts/golangci-lint.sh run --config=.golangci.yml --timeout=5m ./...

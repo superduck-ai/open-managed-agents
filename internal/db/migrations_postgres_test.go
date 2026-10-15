@@ -460,8 +460,8 @@ func TestSessionInputProcessedAtMigrationRepairsAppliedSchema(t *testing.T) {
 	if err := database.QueryRowContext(ctx, `SELECT NOT attnotnull FROM pg_attribute WHERE attrelid = 'session_events'::regclass AND attname = 'processed_at'`).Scan(&nullable); err != nil {
 		t.Fatalf("inspect processed_at: %v", err)
 	}
-	if nullable {
-		t.Fatal("session_events.processed_at still allows queued inputs")
+	if !nullable {
+		t.Fatal("session_events.processed_at must allow queued inputs")
 	}
 }
 

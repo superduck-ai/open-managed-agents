@@ -409,6 +409,10 @@ func TestRefreshMCPOAuthCredentialPersistsExchangeAfterRenameCASConflict(t *test
 	if saved == nil || saved.DisplayName != "renamed" {
 		t.Fatalf("saved display_name = %+v, want renamed", saved)
 	}
+	_, persistedSecret, err := injector.openMCPOAuthMaterial(t.Context(), *saved)
+	if err != nil || persistedSecret.AccessToken != "fresh-access" {
+		t.Fatalf("CAS retry did not persist usable exchanged token: %v", err)
+	}
 	if saved.SecretVersion != renamed.SecretVersion {
 		t.Fatalf("persisted SecretVersion = %d, want %d", saved.SecretVersion, renamed.SecretVersion)
 	}
@@ -608,10 +612,10 @@ type blockingOAuthRefreshLease struct {
 	once    sync.Once
 }
 
-func (l *blockingOAuthRefreshLease) Hold(context.Context, string) (func() error, error) {
+func (l *blockingOAuthRefreshLease) Hold(ctx context.Context, _ string) (context.Context, func() error, error) {
 	l.once.Do(func() { close(l.held) })
 	<-l.release
-	return func() error { return nil }, nil
+	return ctx, func() error { return nil }, nil
 }
 
 func oauthRefreshNow() time.Time {

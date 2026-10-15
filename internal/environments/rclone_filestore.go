@@ -120,7 +120,7 @@ func buildRcloneMultimountConfig(filesystemID, serviceURL, readWriteToken, reado
 		}
 	}
 	mounts := []rcloneMountConfig{
-		mount("/outputs", "/mnt/user-data/outputs", 3600, false, readWriteToken),
+		mount("/outputs", rcloneOutputsDestination, 3600, false, readWriteToken),
 		mount("/uploads", rcloneUploadsDestination, 1, true, readonlyToken),
 		mount("/transcripts", "/mnt/transcripts", 10, true, readonlyToken),
 		mount("/tool_results", "/mnt/user-data/tool_results", 3, true, readonlyToken),

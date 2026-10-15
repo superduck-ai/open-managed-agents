@@ -670,11 +670,18 @@ func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIde
 	if len(mcpConfig) == 0 {
 		mcpConfig = json.RawMessage(`{}`)
 	}
+	var permissions toolPermissionSnapshot
+	if len(metadata.Config) > 0 {
+		if err := json.Unmarshal(metadata.Config, &permissions); err != nil {
+			return nil, err
+		}
+	}
 	config := codeSessionConfig(record.Metadata)
 	return map[string]any{
 		"cwd":                   record.WorkDir,
 		"system_prompt":         stringField(config, "system_prompt"),
 		"runtime_skills":        config["runtime_skills"],
+		"runtime_tools":         runtimeBuiltinTools(permissions.Tools),
 		"subagents":             config["subagents"],
 		"outcomes":              arrayConfigValue(config["outcomes"]),
 		"custom_system_prompt":  stringField(config, "custom_system_prompt"),

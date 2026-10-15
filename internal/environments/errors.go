@@ -10,6 +10,7 @@ import (
 
 var (
 	errSandboxEndpointUnsupported = errors.New("sandbox provider does not support MCP endpoints")
+	errOutputsAliasCreate         = errors.New("session outputs alias creation failed")
 	errWorkerDispatchUnavailable  = errors.New("code session service does not support worker dispatch")
 	errPrebuildUnsupported        = errors.New("this provider does not support this build operation")
 	errPrebuildUnavailable        = errors.New("package build provider is not configured for this build")

@@ -56,6 +56,7 @@ func TestEnvironmentRunnerMountsMemoryStoresAndWritesMarkdown(t *testing.T) {
 
 	if got, want := provider.operations, []string{
 		"memory-root-mkdir",
+		"outputs-alias",
 		"rclone-config-write",
 		"rclone-config-chmod",
 		"rclone-start",

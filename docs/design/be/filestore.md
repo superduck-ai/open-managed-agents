@@ -146,9 +146,9 @@ filesystem 的数据库 namespace 在 Session/resource 写事务完成时已经�
 
 五个固定挂载统一使用 `vfs_cache_mode=full`、`vfs_cache_max_size=1G`、`uid=999`、`gid=1000`、目录权限 `0755` 和文件权限 `0644`。`/outputs` 使用读写 Token，其余四个固定 source 共享只读 Token 并设置 `readonly=true`。有 memory store 时，rclone 按 Session 快照追加 N 条 `/memory/{slug}` → `/mnt/memory/{slug}`：`read_write` 使用读写 Token，`read_only` 使用只读 Token 且 `readonly=true`；cache 为 `1s`。父目录 `/mnt/memory` 由 Runner `mkdir -p` 创建在本地盘上，不是 Filestore mount，也不是第 N+1 条 rclone。两类 Token 都绑定当前 public Session 唯一 filesystem 的 external ID，`service_url` 直接取 `code_session.sandbox_api_base_url`。ready marker 表示配置中的全部 mount（5+N）已可用；随后 Runner 才把 `MEMORY.md` 写到本地 `/mnt/memory/MEMORY.md`。
 
-OMA 在 Managed Agent 的 `appendSystemPrompt` 中同步声明这组公开路径与 sandbox 路径的映射：上传输入使用 `/mnt/session/uploads/<relative-path>`，用户可下载的输出使用 `/mnt/user-data/outputs/<relative-path>`。提示词为用户提到的文件名或相对路径规定固定查找顺序：先尝试 `/mnt/session/uploads/<relative-path>`，必要时调用显式设置 `path=/mnt/session/uploads` 的 Glob 递归查找，只有 uploads 未命中后才搜索工作目录；两处都检查前不得报告文件不存在。Claude 只能使用实际命中的上传路径，不截断、改名或从 `file_id` 推断文件名；写入输出挂载的文件会投影为 `/outputs/<relative-path>` 并进入该 Session 的 Files API Catalog。普通仓库编辑仍留在工作目录，只有用户交付物写入 outputs。
+OMA 在 Managed Agent 的 `appendSystemPrompt` 中同步声明这组公开路径与 sandbox 路径的映射：上传输入使用 `/mnt/session/uploads/<relative-path>`，用户可下载的输出使用 `/mnt/session/outputs/<relative-path>`，旧路径 `/mnt/user-data/outputs` 继续可用。提示词为用户提到的文件名或相对路径规定固定查找顺序：先尝试 `/mnt/session/uploads/<relative-path>`，必要时调用显式设置 `path=/mnt/session/uploads` 的 Glob 递归查找，只有 uploads 未命中后才搜索工作目录；两处都检查前不得报告文件不存在。Claude 只能使用实际命中的上传路径，不截断、改名或从 `file_id` 推断文件名；写入输出挂载的文件会投影为 `/outputs/<relative-path>` 并进入该 Session 的 Files API Catalog。普通仓库编辑仍留在工作目录，只有用户交付物写入 outputs。
 
-Runner 不为五个固定盘单独准备挂载目录；`rclone-filestore multimount` 在内部对每个 destination 执行 `MkdirAll`。有 memory store 时 Runner 会先 `mkdir -p /mnt/memory`，再启动 rclone。镜像和 Environment Manager 不得创建 skill 软链，也不会复制或解压 archive；destination 无法创建时，由 multimount 启动或 ready 阶段失败并进入统一 Sandbox 清理。
+Runner 在启动 rclone 前创建 `/mnt/session/outputs` → `/mnt/user-data/outputs` 软链，使标准输出路径与既有挂载共享同一 namespace 和缓存。已有相同软链可复用，空目录可替换；普通文件、非空目录或其他目标软链会使启动失败并触发既有 Sandbox 清理，不覆盖数据。Runner 不为五个固定盘单独准备挂载目录；`rclone-filestore multimount` 在内部对每个 destination 执行 `MkdirAll`。有 memory store 时 Runner 会先 `mkdir -p /mnt/memory`，再启动 rclone。镜像和 Environment Manager 不得创建 skill 软链，也不会复制或解压 archive；destination 无法创建时，由 multimount 启动或 ready 阶段失败并进入统一 Sandbox 清理。
 
 Runner 先通过 E2B Files API 完整写入强类型 JSON，再将 `/tmp/rclone-mount-config.json` 权限设置为 `0600`。文件写入完成后才直接执行固定镜像命令，不使用 stdin bootstrap、临时文件或 shell trap：
 
@@ -349,13 +349,13 @@ cursor 是版本化的 Base64URL JSON，包含 filesystem ID、查询目录、`r
 
 `files.list(scope_id=<session>)` 不读取额外的兼容 File 行，而是从活动 Resource 直接组成 Catalog：
 
-- `/uploads` 收录 `payload is not null` 的 Input Resource；响应 ID、元数据与内容都来自 Source File。
+- `/uploads` 的 Input Resource 不把账户级 Source File 收入 Session Catalog；Source File 仍可从未指定 scope 的列表和原 ID 元数据接口访问。
 - `/outputs` 只收录关联 Owned File 的内部 Resource；响应 ID、元数据与内容来自 Owned File。
 - `/transcripts`、`/tool_results` 与 `/skills` 不进入 Files Catalog。
 
-同一 Source File 多次 attach 时，Catalog 按 `file_uuid` 去重，只返回一个真实 File；排序位置取该 File 最新的活动 Catalog Resource，再按 Resource 的 `(created_at, id)` 分页。Resource 列表仍保留每次 Attach，因此调用方必须用各自的 `sesrsc_` 删除指定挂载。Output move 只修改 Resource path，File UUID 与 `file_` 保持稳定；移出 `/outputs` 后立即退出 Catalog，移回后恢复同一 File ID。Worker 状态上报不承担刷新职责，成功提交的 Output 在 Session 处于任意运行状态时都可立即列出。
+Catalog 按 `file_uuid` 去重；排序位置取该 File 最新的活动 Catalog Resource，再按 Resource 的 `(created_at, uuid)` 分页。未分页列表、分页列表及游标定位共用同一输出可见性条件；账户级上传 ID 不能作为 Session 页游标，沿用不可见锚点的空页响应。Resource 列表仍保留每次 Attach，因此调用方必须用各自的 `sesrsc_` 删除指定挂载。Output move 只修改 Resource path，File UUID 与 `file_` 保持稳定；移出 `/outputs` 后立即退出 Catalog，移回后恢复同一 File ID。Worker 状态上报不承担刷新职责，成功提交的 Output 在 Session 处于任意运行状态时都可立即列出。
 
-Files metadata/download 只解析真实 File ID。Input 因而沿用 Source File 的元数据、内容与下载策略。Files delete 在删除真实 File 前检查活动 Resource 引用；删除 Attach 只能使用 Sessions Resource API。
+Files metadata/download 只解析真实 File ID。Input 的 Resource 响应仍沿用 Source File ID、元数据、内容与下载策略。Files delete 在删除真实 File 前检查活动 Resource 引用；删除 Attach 只能使用 Sessions Resource API。
 
 ## 写入、配额与清理
 
@@ -412,7 +412,7 @@ namespace 写入按 filesystem advisory lock 串行化；所有可能改变字�
 
 ## 验收
 
-自动化覆盖协议编解码、路由与 JWT 隔离、Session 自动建档、Input Resource 原子 attach/删除、同一 Source 多次 attach 与 Catalog 去重、Source ID metadata/download、Source protection、Input 通用 mutation 拒绝、Output create/overwrite/copy/move/delete、Catalog 分页、配额、递归删除、TTL、Session cleanup、Skill Archive 动态成员、`/memory/{slug}` 写回 Memory 三表，以及 migration 后旧表、旧 Input projection 与 `fse_` identity 消失。真实验收继续覆盖官方 SDK、rclone/FUSE multimount 与 E2B `/uploads`、`/outputs` 生命周期。Memory Filestore API 合同由 `tests/filestore_memory_namespace_test.go` 覆盖；`just verify-be memory mounts` 通过实际 Runner、Docker sandbox 与 FUSE 验证跨 Session 的 Memory 持久化、只读挂载、本地根重建及启动失败清理。该场景直接执行沙箱文件 I/O，不调用模型；沙箱销毁由测试显式执行，不代表云端故障检测。
+自动化覆盖协议编解码、路由与 JWT 隔离、Session 自动建档、Input Resource 原子 attach/删除、同一 Source 多次 attach、账户上传不进入 Session Catalog 与输出 Catalog 去重、Source ID metadata/download、Source protection、Input 通用 mutation 拒绝、Output create/overwrite/copy/move/delete、Catalog 分页、配额、递归删除、TTL、Session cleanup、Skill Archive 动态成员、`/memory/{slug}` 写回 Memory 三表，以及 migration 后旧表、旧 Input projection 与 `fse_` identity 消失。真实验收继续覆盖官方 SDK、rclone/FUSE multimount 与 E2B `/uploads`、`/outputs` 生命周期。Memory Filestore API 合同由 `tests/filestore_memory_namespace_test.go` 覆盖；`just verify-be memory mounts` 通过实际 Runner、Docker sandbox 与 FUSE 验证跨 Session 的 Memory 持久化、只读挂载、本地根重建及启动失败清理。该场景直接执行沙箱文件 I/O，不调用模型；沙箱销毁由测试显式执行，不代表云端故障检测。
 
 Memory 文档路径由 `internal/memorypath` 与 REST API 共享校验：只接受 NFC 规范形式，拒绝控制字符及 Unicode 格式字符，不自动归一化。M2-05 分别验证普通 `/memory` 父目录缺失时写入返回 409，以及目录存在时普通 Filestore 写入成功；两者均不得写入 Memory 三表。
 

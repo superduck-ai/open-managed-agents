@@ -218,10 +218,11 @@ These rules describe the current sandbox environment and do not replace your ass
 
 ## Output deliverables
 
-- /mnt/user-data/outputs is read-write. Write every file intended as a user-facing session output to /mnt/user-data/outputs/<relative-path>.
+- /mnt/session/outputs is read-write. Write every file intended as a user-facing session output to /mnt/session/outputs/<relative-path>.
+- /mnt/user-data/outputs remains an alias for the same output files.
 - A file written there is surfaced at the corresponding public/API path /outputs/<relative-path>. Do not write to /outputs/... inside the sandbox.
-- Files written outside /mnt/user-data/outputs are working files and are not surfaced as session outputs.
-- Keep normal repository and source-code edits in the repository working directory. Do not redirect them to /mnt/user-data/outputs; only exported, user-facing deliverables belong there.`
+- Files written outside these output paths are working files and are not surfaced as session outputs.
+- Keep normal repository and source-code edits in the repository working directory. Do not redirect them to /mnt/session/outputs; only exported, user-facing deliverables belong there.`
 	if initializeRequest["appendSystemPrompt"] != expectedManagedAgentEnvironmentPrompt {
 		t.Fatalf("initialize appendSystemPrompt = %q", initializeRequest["appendSystemPrompt"])
 	}
@@ -287,7 +288,7 @@ These rules describe the current sandbox environment and do not replace your ass
 	if len(provider.rcloneLaunches) != 1 {
 		t.Fatalf("rclone launches = %d, want 1", len(provider.rcloneLaunches))
 	}
-	if got, want := provider.operations, []string{"rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup", "environment-manager"}; !slices.Equal(got, want) {
+	if got, want := provider.operations, []string{"outputs-alias", "rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup", "environment-manager"}; !slices.Equal(got, want) {
 		t.Fatalf("sandbox operation order = %#v, want %#v", got, want)
 	}
 	if len(provider.writes) != 1 || provider.writes[0].path != "/tmp/rclone-mount-config.json" {
@@ -731,7 +732,7 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 	if !processed {
 		t.Fatal("runner did not process queued session work")
 	}
-	if got, want := provider.operations, []string{"rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup"}; !slices.Equal(got, want) {
+	if got, want := provider.operations, []string{"outputs-alias", "rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup"}; !slices.Equal(got, want) {
 		t.Fatalf("sandbox operation order = %#v, want %#v", got, want)
 	}
 	if len(provider.launches) != 0 {
@@ -1440,6 +1441,8 @@ func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string
 		operation = "command:provision"
 	case strings.HasPrefix(request.Command, "mkdir -p ") && strings.Contains(request.Command, "/mnt/memory"):
 		operation = "memory-root-mkdir"
+	case strings.HasPrefix(request.Command, "mkdir -p ") && strings.Contains(request.Command, "/mnt/session/outputs"):
+		operation = "outputs-alias"
 	case strings.HasPrefix(request.Command, "chmod 0600 "):
 		operation = "rclone-config-chmod"
 	case strings.HasPrefix(request.Command, "rm -f ") && strings.Contains(request.Command, "rclone-mount-config.json"):

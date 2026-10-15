@@ -19,6 +19,7 @@ import { CcrActivity, type CcrActivityOptions } from "./activity.ts";
 import { emptyState, object, type BrainState, type ThreadExecutionState, type Payload } from "./protocol.ts";
 import { startDeliveryProgress } from "./delivery-progress.ts";
 import { failureDiagnostic, workerDiagnostic } from "./diagnostics.ts";
+import { CcrToolResults } from "./tool-results.ts";
 import { assistantMessages, CcrAssistantStream } from "./assistant.ts";
 
 export class CcrSession {
@@ -27,14 +28,14 @@ export class CcrSession {
   private statuses: Promise<unknown> = Promise.resolve();
   private publications: Promise<unknown> = Promise.resolve();
   private previews: Promise<unknown> = Promise.resolve();
-  private inputReceipts: Promise<void> = Promise.resolve();
   private readonly controlReceipts = new Set<Promise<void>>();
   private readonly assistantStream: CcrAssistantStream;
+  private readonly toolResults = new CcrToolResults();
   private turnErrorMessage?: string;
   private interrupted = false;
   readonly approvals = new Map<
     string,
-    { resolve: (decision: Payload) => void; reject: (error: Error) => void; threadId: string; details: import("./wire.ts").RequiresActionDetails }
+    { phase: "policy" | "confirmation" | "resolved"; resolve: (decision: Payload) => void; reject: (error: Error) => void; threadId: string; details: import("./wire.ts").RequiresActionDetails }
   >();
   readonly runtime: SessionRuntime;
   readonly subagents: Subagents;
@@ -61,10 +62,7 @@ export class CcrSession {
       });
     } }, {
       setupTools: (scope) => this.subagents.register(scope),
-      beforeRequest: async () => {
-        await this.inputReceipts;
-        await this.flushEvents();
-      },
+      beforeRequest: () => this.flushEvents(),
       onEvent: (event) => this.record(event),
       onStream: (frame) => this.stream(frame),
       stop: () => this.stop(),
@@ -245,6 +243,7 @@ export class CcrSession {
   }
 
   record(event: SessionEvent, threadId?: string) {
+    const toolName = this.toolResults.record(event, threadId ?? this.id);
     const data = event.data as Payload;
     if (event.type === "turn/end") {
       this.activity.endThread(threadId ?? this.id);
@@ -276,6 +275,7 @@ export class CcrSession {
             {
               type: "tool_result",
               tool_use_id: data.message.toolCallId,
+              ...(toolName ? { tool_name: toolName } : {}),
               is_error: !!data.message.isError,
               content: data.message.content,
             },
@@ -294,7 +294,7 @@ export class CcrSession {
       tool_use_id: request.callId, request_id: requestId, input: request.input,
       ...(threadId ? { session_thread_id: threadId } : {}) };
     const decisionPromise = new Promise<Payload>((resolve, reject) => {
-      this.approvals.set(requestId, { resolve, reject, threadId: ownerId, details });
+      this.approvals.set(requestId, { phase: "policy", resolve, reject, threadId: ownerId, details });
     });
     decisionPromise.catch(() => {});
     const cancel = () =>
@@ -321,6 +321,23 @@ export class CcrSession {
           },
         },
       ]);
+      if (this.approvals.get(requestId)?.phase === "policy") {
+        const lookup = new AbortController();
+        let pending: boolean;
+        try {
+          pending = await Promise.race([
+            this.backend.isToolConfirmationPending(this.id, requestId, AbortSignal.any([signal, lookup.signal])),
+            decisionPromise.then(() => false, () => false),
+          ]);
+        } finally {
+          lookup.abort();
+        }
+        const approval = this.approvals.get(requestId);
+        if (pending && approval?.phase === "policy") {
+          approval.phase = "confirmation";
+          await this.updateStatus();
+        }
+      }
       decision = await decisionPromise;
       signal.throwIfAborted();
     } finally {
@@ -416,13 +433,15 @@ export class CcrSession {
   /** Serialize writes and compute from current activity to avoid stale status overwrites. */
   updateStatus(): Promise<void> {
     const next = this.statuses.then(async () => {
-      const pending = [...this.approvals.values()];
+      const approvals = [...this.approvals.values()];
+      const pending = approvals.filter((approval) => approval.phase === "confirmation");
       const paused = new Set(pending.map((approval) => approval.threadId));
       const children = this.state.threads?.filter((thread) => thread.status === "running") ?? [];
       const childRunning = children.some((thread) => !paused.has(thread.id));
       const root = this.state.executions?.[this.id];
       const primaryRunning = !children.length && root && !["idle", "completed", "interrupted", "blocked"].includes(root.phase) && !paused.has(this.id);
-      const status = childRunning || primaryRunning ? "running" : pending.length ? "requires_action" : "idle";
+      const evaluating = approvals.some((approval) => approval.phase === "policy");
+      const status = childRunning || primaryRunning || evaluating ? "running" : pending.length ? "requires_action" : "idle";
       const first = pending[0]?.details;
       await this.backend.setStatus(this.id, status, pending.length && first ? {
         ...first, ...(pending.length > 1 ? { pending_actions: pending.map((approval) => approval.details) } : {}),
@@ -435,14 +454,12 @@ export class CcrSession {
   async control(payload: Payload): Promise<boolean> {
     if (payload.type === "control_response") {
       const response = object(payload.response);
-      if (response.subtype === "success")
-        this.approvals
-          .get(response.request_id)
-          ?.resolve(object(response.response));
-      else
-        this.approvals
-          .get(response.request_id)
-          ?.reject(new Error("Approval response failed"));
+      const approval = this.approvals.get(response.request_id);
+      if (approval) {
+        approval.phase = "resolved";
+        if (response.subtype === "success") approval.resolve(object(response.response));
+        else approval.reject(new Error("Approval response failed"));
+      }
       return true;
     }
     if (["interrupt", "user.interrupt"].includes(payload.type)) {
@@ -492,21 +509,6 @@ export class CcrSession {
     return false;
   }
 
-  queueInput(inputId: string, input: unknown): boolean {
-    if (!this.runtime.acceptingInput || this.interrupted || this.blocked()
-      || inputId === this.state.inputId || this.state.completed.includes(inputId)
-      || this.state.turnInputs?.includes(inputId)) return false;
-    const text = userInputText(object(input));
-    (this.state.turnInputs ??= []).push(inputId);
-    this.inputReceipts = this.inputReceipts.then(async () => {
-      await this.save();
-      await this.backend.reportDelivery(this.id, inputId, "processing", this.abort.signal);
-    });
-    void this.inputReceipts.catch(() => this.stop());
-    this.runtime.steer(text);
-    return true;
-  }
-
   async receive(inputId: string, input: unknown): Promise<void> {
     const payload = object(input);
     if (await this.control(payload)) {
@@ -535,7 +537,6 @@ export class CcrSession {
           this.turnErrorMessage = undefined;
           this.interrupted = false;
           this.state.inputId = inputId;
-          this.state.turnInputs = [];
           this.state.phase = "accepted";
           this.state.approvedCalls = {};
           this.state.toolOutcomes = {};
@@ -551,7 +552,6 @@ export class CcrSession {
           return !this.interrupted;
         },
         afterRun: async (completed) => {
-          await this.inputReceipts;
           const cancelled = this.interrupted && !this.blocked();
           const failed = this.blocked() || (!completed && !cancelled);
           if (failed)
@@ -565,8 +565,7 @@ export class CcrSession {
             });
           this.endThread(this.id, completed);
           if (!this.blocked()) this.state.phase = "completed";
-          this.state.completed.push(inputId, ...(this.state.turnInputs ?? []));
-          this.state.turnInputs = [];
+          this.state.completed.push(inputId);
           await this.save();
           await this.previews;
           await this.publish();
@@ -628,7 +627,7 @@ export class CcrSession {
     const results = await Promise.allSettled([this.subagents.close(), this.heartbeat?.close(), this.activity.close()]);
     results.push(...await Promise.allSettled([this.runtime.close()]));
     // Do not let an old generation's queued writes outlive host release/forget.
-    await Promise.allSettled([this.saves, this.statuses, this.publications, this.previews, this.inputReceipts, ...this.controlReceipts]);
+    await Promise.allSettled([this.saves, this.statuses, this.publications, this.previews, ...this.controlReceipts]);
     const failed = results.find((result) => result.status === "rejected");
     if (failed?.status === "rejected") throw failed.reason;
   }

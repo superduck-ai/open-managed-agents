@@ -599,6 +599,21 @@ export class CcrClient implements CcrBackend {
     }
   }
 
+  async isToolConfirmationPending(id: string, requestId: string, signal?: AbortSignal): Promise<boolean> {
+    const { metadata } = await this.getWorkerState(id, undefined, signal);
+    const prefix = "managed_agent_tool_permission_request";
+    for (const [key, value] of Object.entries(metadata ?? {})) {
+      if (key !== prefix && !key.startsWith(`${prefix}:`)) continue;
+      if (value == null) continue;
+      const request = record(value);
+      if (request.request_id === requestId && typeof request.public_event_id === "string"
+        && request.public_event_id && typeof request.provider_tool_use_id === "string"
+        && request.provider_tool_use_id && (key === prefix || key === `${prefix}:${request.public_event_id}`))
+        return true;
+    }
+    return false;
+  }
+
   async privateEvents(id: string, options?: { subagents?: boolean }): Promise<Record<string, unknown>[]> {
     const events = await this.readHistory(id, options?.subagents ?? false);
     if (events === null) throw new Error("Private event history unavailable");

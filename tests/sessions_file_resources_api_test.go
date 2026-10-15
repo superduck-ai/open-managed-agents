@@ -295,31 +295,13 @@ func TestSessionFileResourceContract(t *testing.T) {
 			"/uploads/"+file.Filename,
 		)
 		scopedFiles := listFiles(t, app, "scope_id="+created.ID)
-		if len(scopedFiles.Data) != 1 {
-			t.Fatalf("scoped files after create = %+v, want one input catalog", scopedFiles.Data)
-		}
-		if scopedFiles.Data[0].ID != file.ID || scopedFiles.Data[0].Filename != file.Filename {
-			t.Fatalf(
-				"input catalog = %+v, want Source File ID %q with filename %q",
-				scopedFiles.Data[0],
-				file.ID,
-				file.Filename,
-			)
-		}
-		if scopedFiles.Data[0].CreatedAt != file.CreatedAt {
-			t.Fatalf(
-				"input catalog created_at = %q, want Source File created_at %q",
-				scopedFiles.Data[0].CreatedAt,
-				file.CreatedAt,
-			)
-		}
-		if scopedFiles.Data[0].Downloadable {
-			t.Fatalf("input catalog = %+v, want source download policy preserved", scopedFiles.Data[0])
+		if len(scopedFiles.Data) != 0 {
+			t.Fatalf("scoped files after create = %+v, want no account uploads", scopedFiles.Data)
 		}
 		inputDownload := app.do(
 			t,
 			http.MethodGet,
-			"/v1/files/"+scopedFiles.Data[0].ID+"/content?beta=true",
+			"/v1/files/"+file.ID+"/content?beta=true",
 			nil,
 			defaultTestKey,
 			true,
@@ -361,15 +343,8 @@ func TestSessionFileResourceContract(t *testing.T) {
 			)
 		}
 		scopedFiles = listFiles(t, app, "scope_id="+created.ID)
-		if len(scopedFiles.Data) != 1 || scopedFiles.Data[0].ID != file.ID {
-			t.Fatalf("scoped files after repeated attach = %+v, want one deduplicated Source File %q", scopedFiles.Data, file.ID)
-		}
-		if scopedFiles.Data[0].CreatedAt != file.CreatedAt {
-			t.Fatalf(
-				"repeated attach changed Source File created_at to %q, want %q",
-				scopedFiles.Data[0].CreatedAt,
-				file.CreatedAt,
-			)
+		if len(scopedFiles.Data) != 0 {
+			t.Fatalf("scoped files after repeated attach = %+v, want no account uploads", scopedFiles.Data)
 		}
 		sessionRecord := mustSessionRecord(t, app, created.ID)
 		if _, err := app.pool.Exec(context.Background(), `
@@ -451,8 +426,8 @@ func TestSessionFileResourceContract(t *testing.T) {
 			t.Fatalf("source File was changed by resource delete: %v", err)
 		}
 		scopedFiles = listFiles(t, app, "scope_id="+created.ID)
-		if len(scopedFiles.Data) != 1 {
-			t.Fatalf("scoped files after resource delete = %+v, want one remaining input", scopedFiles.Data)
+		if len(scopedFiles.Data) != 0 {
+			t.Fatalf("scoped files after resource delete = %+v, want no account uploads", scopedFiles.Data)
 		}
 	})
 
@@ -497,8 +472,8 @@ func TestSessionFileResourceContract(t *testing.T) {
 			}
 		})
 		scoped := listFiles(t, app, "scope_id="+created.ID)
-		if len(scoped.Data) != 1 {
-			t.Fatalf("scoped files before Session delete = %+v, want one input", scoped.Data)
+		if len(scoped.Data) != 0 {
+			t.Fatalf("scoped files before Session delete = %+v, want no account uploads", scoped.Data)
 		}
 		deleteSession(t, app, created.ID)
 		deleted = true
@@ -536,8 +511,18 @@ func TestSessionInputResourcePreservesSourcePolicy(t *testing.T) {
 	)
 	defer deleteSession(t, app, session.ID)
 	scopedFiles := listFiles(t, app, "scope_id="+session.ID)
-	if len(scopedFiles.Data) != 1 || scopedFiles.Data[0].Downloadable {
-		t.Fatalf("input catalog = %+v, want one non-downloadable file", scopedFiles.Data)
+	if len(scopedFiles.Data) != 0 {
+		t.Fatalf("scoped files = %+v, want no account uploads", scopedFiles.Data)
+	}
+	metadata := app.do(t, http.MethodGet, "/v1/files/"+file.ID, nil, defaultTestKey, false, "")
+	defer metadata.Body.Close()
+	if metadata.StatusCode != http.StatusOK {
+		t.Fatalf("source metadata status = %d: %s", metadata.StatusCode, readAll(t, metadata.Body))
+	}
+	var source metadataResponse
+	decodeJSON(t, metadata.Body, &source)
+	if source.ID != file.ID || source.Downloadable {
+		t.Fatalf("source metadata = %+v, want non-downloadable source %q", source, file.ID)
 	}
 }
 
@@ -584,13 +569,13 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 		"/uploads/workspace/protected.txt",
 	)
 	scopedFiles := listFiles(t, app, "scope_id="+session.ID)
-	if len(scopedFiles.Data) != 1 {
-		t.Fatalf("scoped files = %+v, want one input catalog", scopedFiles.Data)
+	if len(scopedFiles.Data) != 0 {
+		t.Fatalf("scoped files = %+v, want no account uploads", scopedFiles.Data)
 	}
 	rejectedSourceDelete := app.do(
 		t,
 		http.MethodDelete,
-		"/v1/files/"+scopedFiles.Data[0].ID+"?beta=true",
+		"/v1/files/"+file.ID+"?beta=true",
 		nil,
 		defaultTestKey,
 		true,
@@ -751,8 +736,8 @@ func TestSessionFileCatalogWorkspaceIsolation(t *testing.T) {
 	defer deleteSession(t, app, session.ID)
 
 	ownerPage := listFiles(t, app, "scope_id="+session.ID)
-	if len(ownerPage.Data) != 1 {
-		t.Fatalf("owner scoped files = %+v, want one input catalog", ownerPage.Data)
+	if len(ownerPage.Data) != 0 {
+		t.Fatalf("owner scoped files = %+v, want no account uploads", ownerPage.Data)
 	}
 
 	otherPageResponse := app.do(
@@ -781,7 +766,7 @@ func TestSessionFileCatalogWorkspaceIsolation(t *testing.T) {
 	otherDownload := app.do(
 		t,
 		http.MethodGet,
-		"/v1/files/"+ownerPage.Data[0].ID+"/content?beta=true",
+		"/v1/files/"+source.ID+"/content?beta=true",
 		nil,
 		otherKey,
 		true,

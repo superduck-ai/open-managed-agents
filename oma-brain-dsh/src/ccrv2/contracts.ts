@@ -8,6 +8,7 @@ import type { DeliveryUpdate, RequiresActionDetails, SessionState, SessionExtern
  */
 export interface CcrBackend {
   getWorkerState(id: string, workerEpoch?: number, signal?: AbortSignal): Promise<WorkerStateReadResult>;
+  isToolConfirmationPending(id: string, requestId: string, signal?: AbortSignal): Promise<boolean>;
   privateEvents(id: string, options?: { subagents?: boolean }): Promise<Payload[]>;
   persist(id: string, subtype: string, data: unknown, agentId?: string): Promise<void>;
   /** Honour cancellation for activity keepalives; durable callers omit signal. */

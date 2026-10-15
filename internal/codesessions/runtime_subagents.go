@@ -119,16 +119,6 @@ func runtimeSubagentDefinition(snapshot runtimeAgentSnapshot) (RuntimeSubagentDe
 			definition.Model = model.ID
 		}
 	}
-	for _, toolset := range snapshot.Tools {
-		if toolset.Type != "agent_toolset_20260401" {
-			continue
-		}
-		for _, name := range []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob"} {
-			if resolveAgentToolPermission(snapshot.Tools, managedAgentToolName(name)) != resolvedToolPermissionDeny {
-				definition.Tools = append(definition.Tools, name)
-			}
-		}
-		break
-	}
+	definition.Tools = runtimeBuiltinTools(snapshot.Tools)
 	return definition, nil
 }

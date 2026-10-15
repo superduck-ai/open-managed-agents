@@ -16,6 +16,7 @@ export function assignment(): Assignment {
       model: "test-model",
       work_dir: "/workspace",
       system: "You are a test agent.",
+      tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
     },
   };
 }
@@ -311,8 +312,13 @@ export class Backend {
           this.timeline.push(structuredClone(event.payload));
           if (!event.ephemeral)
             this.publicLog.set(event.payload.uuid, event.payload);
-          if (event.payload.type === "control_request")
+          if (event.payload.type === "control_request") {
+            this.workerMetadata[`managed_agent_tool_permission_request:${event.payload.request_id}`] = {
+              public_event_id: event.payload.request_id, request_id: event.payload.request_id,
+              provider_tool_use_id: event.payload.request.tool_use_id,
+            };
             await this.onApproval?.(event.payload);
+          }
         }
         return json({});
       }

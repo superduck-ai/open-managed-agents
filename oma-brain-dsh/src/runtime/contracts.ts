@@ -64,6 +64,7 @@ declare module "@deepseek-ai/cordis" {
 }
 
 export interface SessionRuntimeConfig {
+  externalMcpConfig?: unknown;
   id: string;
   provider: string;
   model: string;

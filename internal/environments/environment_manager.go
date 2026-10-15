@@ -34,10 +34,11 @@ These rules describe the current sandbox environment and do not replace your ass
 
 ## Output deliverables
 
-- /mnt/user-data/outputs is read-write. Write every file intended as a user-facing session output to /mnt/user-data/outputs/<relative-path>.
+- /mnt/session/outputs is read-write. Write every file intended as a user-facing session output to /mnt/session/outputs/<relative-path>.
+- /mnt/user-data/outputs remains an alias for the same output files.
 - A file written there is surfaced at the corresponding public/API path /outputs/<relative-path>. Do not write to /outputs/... inside the sandbox.
-- Files written outside /mnt/user-data/outputs are working files and are not surfaced as session outputs.
-- Keep normal repository and source-code edits in the repository working directory. Do not redirect them to /mnt/user-data/outputs; only exported, user-facing deliverables belong there.`
+- Files written outside these output paths are working files and are not surfaced as session outputs.
+- Keep normal repository and source-code edits in the repository working directory. Do not redirect them to /mnt/session/outputs; only exported, user-facing deliverables belong there.`
 )
 
 func managedAgentSessionConfig(

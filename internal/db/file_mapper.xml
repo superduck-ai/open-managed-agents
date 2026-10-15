@@ -39,12 +39,8 @@
                 AND resource.resource_type = 'file'
                 AND resource.deleted_at IS NULL
                 AND (resource.expires_at IS NULL OR resource.expires_at &gt; now())
-                AND (
-                    (resource.payload IS NOT NULL
-                        AND left(resource.path, char_length('/uploads/')) = '/uploads/')
-                    OR (resource.payload IS NULL
-                        AND left(resource.path, char_length('/outputs/')) = '/outputs/')
-                )
+                AND resource.payload IS NULL
+                AND left(resource.path, char_length('/outputs/')) = '/outputs/'
             ORDER BY resource.file_uuid, resource.created_at DESC, resource.uuid DESC
         )
     </sql>

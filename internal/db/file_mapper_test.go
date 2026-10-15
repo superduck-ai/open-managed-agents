@@ -558,3 +558,24 @@ func TestFileMapperResultSemantics(t *testing.T) {
 	})
 
 }
+
+func TestSessionFileCatalogExcludesUploadReferences(t *testing.T) {
+	params := newFileMapperListParams("workspace-uuid", "sesn_scope")
+	params.CursorExternalID = "file_anchor"
+	for name, bound := range map[string]yourbatis.BoundSQL{
+		"list":   buildFileMapperListSessionFiles(yourbatis.DialectPostgres, params),
+		"page":   buildFileMapperListSessionFilesPage(yourbatis.DialectPostgres, params),
+		"cursor": buildFileMapperFindSessionPageCursor(yourbatis.DialectPostgres, params),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if strings.Contains(bound.SQL, "'/uploads/'") || strings.Contains(bound.SQL, "resource.payload IS NOT NULL") {
+				t.Fatalf("session catalog includes account uploads: %s", bound.SQL)
+			}
+			for _, clause := range []string{"resource.workspace_uuid = $1", "resource.session_external_id = $2", "resource.payload IS NULL", "'/outputs/'"} {
+				if !strings.Contains(bound.SQL, clause) {
+					t.Fatalf("session catalog missing %q: %s", clause, bound.SQL)
+				}
+			}
+		})
+	}
+}

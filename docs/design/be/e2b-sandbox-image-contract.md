@@ -12,6 +12,7 @@
 - Sandbox 具有 rclone-filestore 创建五个固定 FUSE mount、以及最多 8 个 `/mnt/memory/{slug}` 附加 mount 所需的设备、capability 和 mount namespace 权限。
 - `/usr/local/bin/environment-manager` 与 `/opt/claude-code/bin/claude` 默认可执行；这两个路径仍可通过既有 Environment Runner 配置覆盖。
 - `rclone-filestore multimount` 可以创建 `/mnt/user-data/outputs`、`/mnt/session/uploads`、`/mnt/transcripts`、`/mnt/user-data/tool_results` 和 `/root/.claude/skills` 的挂载点，并能在配置包含 memory store 时创建 `/mnt/memory/{slug}`；同时必须能写入 `/tmp`，且允许 Runner 在本地盘创建 `/mnt/memory`。
+- Runner 必须能创建 `/mnt/session`，并将 `/mnt/session/outputs` 软链到 `/mnt/user-data/outputs`。标准输出路径若已存在，只接受目标一致的软链或空目录；其他内容停止启动并保留数据。
 - 镜像和 Environment Manager 不能重新创建 `/root/.claude/skills` 软链，也不能依赖 `/mnt/skills` 或 `/workspace/skills` 解压目录。
 
 `rclone-filestore` 路径固定为 `/opt/rclone/rclone-filestore`，不提供 `rclone_filestore_path` 配置。镜像若缺失该文件或没有执行权限，后台命令启动失败或 ready marker 在 `20s` 内不会出现；Runner 会把 Sandbox 标记为失败并 Kill，不会启动 Environment Manager。
@@ -43,6 +44,7 @@ ready 后镜像内必须呈现：
 
 ```text
 /mnt/user-data/outputs       # read-write
+/mnt/session/outputs         # symlink to /mnt/user-data/outputs
 /mnt/session/uploads         # readonly
 /mnt/transcripts             # readonly
 /mnt/user-data/tool_results  # readonly
@@ -67,10 +69,11 @@ flowchart TD
     R["Resolve trusted Session filesystem scope"] --> A["Create E2B Sandbox"]
     A --> M{"Session has memory stores?"}
     M -->|yes| K["mkdir -p /mnt/memory"]
-    M -->|no| W["Write config and chmod 0600"]
-    K --> W
-    W --> S["Remove legacy skill symlink and create mountpoint"]
-    S --> B["Start fixed rclone-filestore binary"]
+    M -->|no| O["Prepare standard outputs alias"]
+    K --> O
+    O -->|conflicting path| F["Fail work and kill Sandbox"]
+    O -->|ready| W["Write config and chmod 0600"]
+    W --> B["Start fixed rclone-filestore binary"]
     B --> C{"All configured mounts ready (5+N)?"}
     C -->|"probe error / 20s timeout"| F["Fail work and kill Sandbox"]
     C -->|"yes"| D["Delete token config, retry up to 3 times"]
@@ -96,7 +99,7 @@ File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Ru
 
 1. `test -x /opt/rclone/rclone-filestore` 成功。
 2. 用临时测试 filesystem 启动固定 multimount（含 0 或 N 个 `/memory/{slug}`），ready marker 在超时内出现。
-3. `/mnt/user-data/outputs` 可写，另外四个固定 destination 拒绝写入；`/root/.claude/skills/<skill>/SKILL.md` 可由 Claude Code 直接发现。有 store 时 `/mnt/memory/{slug}` 按快照权限可写或只读，父目录 `/mnt/memory` 仍是本地盘。
+3. `/mnt/session/outputs` 与 `/mnt/user-data/outputs` 可读写同一文件，经标准路径写入的文件可由 Session Files 列表发现并下载，另外四个固定 destination 拒绝写入；`/root/.claude/skills/<skill>/SKILL.md` 可由 Claude Code 直接发现。有 store 时 `/mnt/memory/{slug}` 按快照权限可写或只读，父目录 `/mnt/memory` 仍是本地盘。
 4. 只通过 Files API 上传对象并给 Session 添加 File resource，不在测试侧直接写 Filestore；确认 resource 写入已创建 `/uploads/workspace/data.csv` 的数据库引用，启动后可通过 `/mnt/session/uploads/workspace/data.csv` 读取且写入失败。
 5. 正常路径 ready 后 `/tmp/rclone-mount-config.json` 不存在；模拟删除失败时确认最多重试三次、记录脱敏告警且 Sandbox 继续运行。日志和进程命令行不包含 Filestore Token，outputs token 不能写入其他 source。
 6. 镜像不得预置 `/root/.claude/skills` 软链；`rclone-filestore multimount` 负责创建 destination，Environment Manager 启动后不得创建软链或产生 `/workspace/skills` 解压副本。

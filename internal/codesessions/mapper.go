@@ -492,16 +492,15 @@ func userPublicPayloadCandidates(codeSessionID string, object map[string]any, sc
 		}
 		threadID := firstNonEmpty(stringField(object, "_owner_session_thread_id"), stringField(object, "session_thread_id"), maevents.ClaudeTaskThreadID(codeSessionID, stringField(object, "parent_tool_use_id")))
 		toolUseID := maevents.ToolUseEventID(codeSessionID, providerToolUseID, threadID)
-		eventType := "agent.tool_result"
-		if claudeToolResultIsAgentThreadMessage(block) {
-			eventType = "agent.thread_message_received"
-		}
+		eventType, referenceField := toolResultPublicIdentity(block)
 		payload := publicPayloadWithType(object, eventType)
 		if eventType == "agent.thread_message_received" {
 			payload["from_session_thread_id"] = claudeTaskThreadIDFromKey(codeSessionID, providerToolUseID)
 		}
-		payload["tool_use_id"] = toolUseID
-		payload["content"] = claudeToolResultContent(block)
+		delete(payload, "tool_use_id")
+		delete(payload, "mcp_tool_use_id")
+		payload[referenceField] = toolUseID
+		payload["content"] = publicToolResultContent(eventType, block)
 		if isError, ok := block["is_error"]; ok {
 			payload["is_error"] = isError
 		}
@@ -513,6 +512,23 @@ func userPublicPayloadCandidates(codeSessionID string, object map[string]any, sc
 		})
 	}
 	return candidates
+}
+
+func toolResultPublicIdentity(block map[string]any) (string, string) {
+	if parseClaudeToolIdentity(stringField(block, "tool_name")).Kind == "mcp" {
+		return "agent.mcp_tool_result", "mcp_tool_use_id"
+	}
+	if claudeToolResultIsAgentThreadMessage(block) {
+		return "agent.thread_message_received", "tool_use_id"
+	}
+	return "agent.tool_result", "tool_use_id"
+}
+
+func publicToolResultContent(eventType string, block map[string]any) any {
+	if eventType == "agent.mcp_tool_result" {
+		return publicContentBlocks(block["content"])
+	}
+	return claudeToolResultContent(block)
 }
 
 func internalSubagentUserPayloadCandidates(codeSessionID string, object map[string]any, schema workerUserOutputPayload) []publicPayloadCandidate {

@@ -2,6 +2,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
+import { ExternalMcp } from "../external-mcp/index.ts";
 import * as SandboxTools from "../sandbox-tools/index.ts";
 import { workerDiagnostic } from "../ccrv2/diagnostics.ts";
 import type {
@@ -18,9 +19,9 @@ export class SessionRuntime {
   busy = false;
   lastIdle = Date.now();
   private turnCompleted = false;
-  acceptingInput = false;
   private finishing?: ReturnType<typeof Promise.withResolvers<void>>;
   private readonly sandboxScope: symbol;
+  readonly externalMcp: ExternalMcp;
 
   constructor(
     readonly ctx: Context,
@@ -29,6 +30,7 @@ export class SessionRuntime {
     readonly bridge: ToolExecutionBridge,
     readonly parent?: SessionRuntime,
   ) {
+    this.externalMcp = parent?.externalMcp ?? new ExternalMcp(config.externalMcpConfig);
     this.sandboxScope = parent?.sandboxScope ?? Symbol("sandboxExecutor");
   }
 
@@ -42,7 +44,10 @@ export class SessionRuntime {
       // dsh creates agent scopes from the loop context. Explicitly join the
       // parent's service label; agent ownership alone does not inherit services.
       const scope = agentScope.isolate("sandboxExecutor", this.sandboxScope);
-      if (!this.parent) await this.config.setup?.(scope);
+      if (!this.parent) {
+        scope.effect(() => () => this.externalMcp.close());
+        await this.config.setup?.(scope);
+      }
       if (!scope.get("sandboxExecutor")) throw new Error("Session requires a SandboxExecutor provider");
       scope.systemPrompt.section({
         name: "oma",
@@ -55,6 +60,7 @@ export class SessionRuntime {
         bridge: this.bridge,
         tools: this.config.tools,
       });
+      await this.externalMcp.register(scope, this.bridge, this.abort.signal);
       this.hooks.setupTools?.(scope);
       scope.on("session/event", (session, event) => {
         if (session.id !== this.config.id) return;
@@ -67,7 +73,6 @@ export class SessionRuntime {
         }
         this.hooks.onEvent(event);
         if (event.type === "turn/end") {
-          this.acceptingInput = false;
           this.turnCompleted = event.data.reason?.kind === "completed";
         }
       });
@@ -109,7 +114,6 @@ export class SessionRuntime {
         await hooks.afterRun(false);
         return;
       }
-      this.acceptingInput = true;
       this.agent.followup(createUserMessage({
         source: { kind: "user" },
         content: [{ type: "text", text }],
@@ -121,17 +125,10 @@ export class SessionRuntime {
       this.hooks.stop();
       throw error;
     } finally {
-      this.acceptingInput = false;
       this.busy = false;
       this.lastIdle = Date.now();
       this.finishing.resolve();
     }
-  }
-
-  steer(text: string): void {
-    this.agent.steer(createUserMessage({
-      source: { kind: "user" }, content: [{ type: "text", text }],
-    }));
   }
 
   async flushLog(): Promise<void> {
@@ -146,6 +143,7 @@ export class SessionRuntime {
   async close(): Promise<void> {
     this.stop();
     await this.finishing?.promise;
-    await this.handle?.dispose();
+    try { await this.handle?.dispose(); }
+    finally { if (!this.parent) await this.externalMcp.close(); }
   }
 }

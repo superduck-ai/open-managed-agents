@@ -8,11 +8,13 @@ export interface Assignment {
   ingress_token: string;
   model_token: string;
   mcp_config: unknown;
+  external_mcp_config?: unknown;
   launch: {
     version: number;
     model: string;
     work_dir: string;
     system: string;
+    tools: string[];
     subagents?: SubagentConfig;
     environment_prompt?: string;
     skills?: {
@@ -39,6 +41,9 @@ export function validateAssignment(a: Assignment): void {
     throw new Error("Unsupported launch version");
   if (!a.launch.model || !a.launch.work_dir.startsWith("/"))
     throw new Error("Invalid launch model or work directory");
+  const builtinTools = new Set(sandboxToolDefinitions().map((tool) => tool.name));
+  if (!Array.isArray(a.launch.tools) || a.launch.tools.some((name) => !builtinTools.has(name)))
+    throw new Error("Invalid launch tools");
   const config = a.launch.subagents;
   if (config) {
     if (config.inlineAgents !== undefined && typeof config.inlineAgents !== "boolean")

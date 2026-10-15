@@ -16,6 +16,7 @@ class MemoryBackend implements CcrBackend {
   readonly acknowledged: string[] = [];
   readonly metadata = new Map<string, Record<string, unknown>>();
   async getWorkerState(id: string) { return { metadata: structuredClone(this.metadata.get(id) ?? null), durationMs: 0 }; }
+  async isToolConfirmationPending(_id: string, _requestId: string, _signal?: AbortSignal) { return false; }
   async privateEvents(id: string, options?: { subagents?: boolean }) {
     return structuredClone((this.logs.get(id) ?? []).filter((event) =>
       options?.subagents ? !!event.agent_id : !event.agent_id));
@@ -413,7 +414,7 @@ test("the plugin reports lease loss for the claimed session without stopping oth
   }
 });
 
-test("approval bridge reports requires_action before requesting approval and resumes after a decision", async () => {
+test("automatic approval stays running while the backend evaluates permission", async () => {
   const backend = new MemoryBackend();
   const states: { status: SessionState; details?: RequiresActionDetails }[] = [];
   backend.setStatus = async (_id, status, details) => { states.push({ status, details }); };
@@ -430,8 +431,8 @@ test("approval bridge reports requires_action before requesting approval and res
       const request = events.find((event) => event.type === "control_request");
       if (!request) return;
       if (typeof request.request_id !== "string") throw new Error("Missing approval identity");
-      expect(states.at(-1)!.status).toBe("requires_action");
-      expect(states.at(-1)!.details?.request_id).toBe(request.request_id);
+      expect(states.at(-1)!.status).toBe("running");
+      expect(states.at(-1)!.details).toBeUndefined();
       await session.control({
         type: "control_response",
         response: {
@@ -444,8 +445,7 @@ test("approval bridge reports requires_action before requesting approval and res
       callId: "call", toolName: "Bash", input: { command: "original" },
     }, new AbortController().signal);
     expect(decision).toEqual({ allowed: true, input: { command: "approved" } });
-    expect(states.map((state) => state.status)).toEqual(["idle", "requires_action", "running"]);
-    expect(states[1]!.details?.input).toEqual({ command: "original" });
+    expect(states.map((state) => state.status)).toEqual(["idle", "running", "running"]);
     expect(session.approvals.size).toBe(0);
   } finally {
     await ctx.fiber.dispose();
@@ -556,5 +556,58 @@ test("CCRv2 plugin runs isolated sessions and restores history without OMA or NA
     expect(a.state.outbox).toEqual([]);
   } finally {
     await restored.ctx.fiber.dispose();
+  }
+});
+
+test("only backend-confirmed user approvals pause the worker and late lookups cannot pause resolved calls", async () => {
+  for (const mode of ["automatic", "confirmation", "late"] as const) {
+    const backend = new MemoryBackend();
+    const states: SessionState[] = [];
+    const requested = Promise.withResolvers<string>();
+    const lookingUp = Promise.withResolvers<void>();
+    const lookup = Promise.withResolvers<boolean>();
+    const paused = Promise.withResolvers<void>();
+    let lookupSignal: AbortSignal | undefined;
+    backend.isToolConfirmationPending = async (_id, _requestId, signal?: AbortSignal) => {
+      lookupSignal = signal;
+      lookingUp.resolve();
+      return lookup.promise;
+    };
+    backend.events = async (_id, events) => {
+      const request = events.find((event) => event.type === "control_request");
+      if (request) requested.resolve(request.request_id);
+    };
+    backend.setStatus = async (_id, status) => {
+      states.push(status);
+      if (status === "requires_action") paused.resolve();
+    };
+    const ctx = new Context();
+    try {
+      await mountKernel(ctx);
+      await ctx.plugin(CcrBridge, { backend });
+      const session = ctx.ccrv2.createSession({
+        id: mode, provider: "memory", model: "text", workDir: "/workspace", systemPrompt: "Test", setup,
+      });
+      await session.open();
+      const decision = session.approve({ callId: "call", toolName: "Bash", input: {} }, new AbortController().signal);
+      const requestId = await requested.promise;
+      await lookingUp.promise;
+      expect(states.at(-1)).toBe("running");
+      expect(states).not.toContain("requires_action");
+      if (mode !== "late") {
+        lookup.resolve(mode === "confirmation");
+        if (mode === "confirmation") await paused.promise;
+      }
+      await session.control({ type: "control_response", response: {
+        subtype: "success", request_id: requestId, response: { behavior: mode === "automatic" ? "deny" : "allow" },
+      } });
+      expect(await decision).toEqual({ allowed: mode !== "automatic", input: undefined });
+      lookup.resolve(true);
+      await session.updateStatus();
+      expect(states.includes("requires_action")).toBe(mode === "confirmation");
+      expect(states.at(-1)).toBe("running");
+      expect(lookupSignal?.aborted).toBe(true);
+      expect(session.approvals.size).toBe(0);
+    } finally { await ctx.fiber.dispose(); }
   }
 });

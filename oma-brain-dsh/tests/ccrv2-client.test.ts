@@ -466,3 +466,20 @@ test("requires_action reports approval metadata and clears it when execution res
   await expect(client.setStatus("session/a", "requires_action")).rejects.toThrow("details");
   expect(requests).toHaveLength(2);
 });
+
+test("tool confirmation lookup matches durable backend requests rather than transient worker status", async () => {
+  const request = { public_event_id: "tool", request_id: "request", provider_tool_use_id: "call" };
+  for (const [metadata, expected] of [
+    [{}, false],
+    [{ pending_action: request }, false],
+    [{ "managed_agent_tool_permission_request:other": request }, false],
+    [{ "managed_agent_tool_permission_request:tool": { ...request, request_id: "other" } }, false],
+    [{ "managed_agent_tool_permission_request:tool": { request_id: "request" } }, false],
+    [{ "managed_agent_tool_permission_request:tool": null }, false],
+    [{ "managed_agent_tool_permission_request:tool": request }, true],
+    [{ managed_agent_tool_permission_request: request }, true],
+  ] as const) {
+    const client = clientWith(async () => Response.json({ worker: { external_metadata: metadata } }));
+    expect(await client.isToolConfirmationPending("session/a", "request")).toBe(expected);
+  }
+});

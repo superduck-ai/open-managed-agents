@@ -123,7 +123,8 @@ describe("original dsh loop over CCRv2", () => {
     expect(result).toMatchObject({ tool_use_id: "call_1", is_error: false,
       content: [{ type: "text", text: "exact stdout\n" }] });
     const published = [...b.publicLog.values()].find((event) => event.type === "user");
-    expect(published?.message.content[0]).toEqual(result);
+    expect(published?.message.content[0]).toEqual({ ...result, tool_name: "Bash" });
+    expect(result).not.toHaveProperty("tool_name");
     expect(b.publicLog.get("stdout_result")?.is_error).toBe(false);
   });
 

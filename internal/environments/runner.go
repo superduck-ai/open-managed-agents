@@ -777,6 +777,9 @@ func (r *Runner) startManagedAgentSessionFilesystem(ctx context.Context, sandbox
 			return r.logManagedAgentRuntimeStageFailure(ctx, "memory_root_mkdir", errMemoryRootCreate, err)
 		}
 	}
+	if err := r.runSandboxCommand(ctx, sandboxID, sessionOutputsAliasCommand(rcloneOutputsDestination, sessionOutputsPath), rcloneCommandGraceTimeout); err != nil {
+		return r.logManagedAgentRuntimeStageFailure(ctx, "outputs_alias", errOutputsAliasCreate, err)
+	}
 	if err := r.startRcloneFilestore(ctx, sandboxID, launch); err != nil {
 		return err
 	}

@@ -17,6 +17,8 @@ export function createOmaSession(
     provider: "oma",
     model: assignment.launch.model,
     workDir: assignment.launch.work_dir,
+    tools: assignment.launch.tools,
+    externalMcpConfig: assignment.external_mcp_config,
     systemPrompt: omaSystemPrompt(assignment),
     subagentSystemPrompt: omaSystemPrompt(assignment, ""),
     setup: async (scope) => {

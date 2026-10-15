@@ -546,6 +546,7 @@ export type ModelRequestBracket = {
   startId: string;
   startMs: number;
   softEndMs?: number;
+  endMeta?: ModelRequestBracketMeta;
   entries: ModelBracketTargetEntry[];
 };
 

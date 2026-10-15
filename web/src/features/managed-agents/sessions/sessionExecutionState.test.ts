@@ -67,8 +67,8 @@ describe('session execution state', () => {
     const events = [start, interrupt, end, idle];
     const entries = buildSessionEventEntries(events, 'transcript', 0, undefined, { platformTranscriptFiltering: true });
     const requestEnd = entries.find((entry) => 'event' in entry && entry.event.id === end.id);
-    expect(requestEnd?.isError).toBe(false);
-    expect(requestEnd && 'traceEntry' in requestEnd && requestEnd.traceEntry.state).toBe('interrupted');
+    expect(requestEnd).toBeUndefined();
+    expect(entries.at(-1)).toMatchObject({ event: { id: 'interrupt' }, traceEntry: { state: 'stopped' } });
     expect(end.is_error).toBe(true);
     expect(end.error.type).toBe('cancelled');
     const debug = buildSessionEventEntries(events, 'debug').find(

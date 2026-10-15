@@ -18,6 +18,8 @@
   "managedAgents.sessions.startConversation": "Start a conversation",
   "managedAgents.sessions.startConversationHint": "Your session is ready. Send a message below to give your agent a task.",
   "managedAgents.sessions.writeMessage": "Write a message",
+  "managedAgents.sessions.outputs.showAll": "Show all {count} files",
+  "managedAgents.sessions.outputs.collapse": "Collapse files",
   "managedAgents.sessions.outputs.title": "Output files",
   "managedAgents.sessions.outputs.loadError": "Output files could not be refreshed.",
   "managedAgents.sessions.detail.attachFiles": "Attach files",

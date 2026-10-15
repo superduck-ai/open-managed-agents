@@ -225,14 +225,16 @@ test('shows a budget pause and disables ordinary messages while retaining the dr
   expect(api.requests.some((request) => request.method === 'POST' && request.url.includes('/events'))).toBe(false);
 });
 
-test('keeps downloadable output cards after the transcript when the inspector is closed', async () => {
+test('keeps downloadable output cards separate from the completed reply when the inspector is closed', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
   const api = mockOutputSession();
   api.resources.sessionThreads.length = 0;
   renderManagedAgentsPage('sessions');
   const output = await screen.findByTestId('session-output-files');
   const message = await screen.findByText('Your result is ready.');
-  expect(output.closest('[data-testid="session-trace-column"]')).toBeTruthy();
+  expect(output.closest('[data-transcript-block]')).toBeNull();
+  expect(output.closest('[data-transcript-iteration]')).toBeNull();
+  expect(output.previousElementSibling).toBe(message.closest('[data-transcript-block]'));
   expect(message.compareDocumentPosition(output) & Node.DOCUMENT_POSITION_FOLLOWING).toBeGreaterThan(0);
   fireEvent.click(screen.getByTestId('session-inspector').querySelector('[data-inspector-close]')!);
   expect(screen.getByRole('button', { name: 'Download deliverable.csv' }).hasAttribute('disabled')).toBe(false);
@@ -253,4 +255,25 @@ test('shows session-wide output cards on the main lane while keeping child trans
   await waitFor(() => expect(screen.queryByTestId('session-output-files')).toBeNull());
   fireEvent.click(main);
   await screen.findByTestId('session-output-files');
+});
+
+test('shows a late file automatically after completion without visiting the resources inspector', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+  const api = mockOutputSession();
+  api.resources.sessionThreads.length = 0;
+  api.resources.sessions[0].updated_at = new Date().toISOString();
+  const original = globalThis.fetch;
+  let published = false;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input), 'https://oma.duck.ai');
+    return url.pathname === '/v1/files' && url.searchParams.has('scope_id') && !published
+      ? Response.json({ data: [], has_more: false })
+      : original(input, init);
+  };
+  renderManagedAgentsPage('sessions');
+  await screen.findByText('Your result is ready.');
+  expect(screen.queryByTestId('session-output-files')).toBeNull();
+  published = true;
+  expect(await screen.findByRole('button', { name: 'Download deliverable.csv' }, { timeout: 2500 })).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Resources', exact: true }).getAttribute('aria-selected')).toBe('false');
 });

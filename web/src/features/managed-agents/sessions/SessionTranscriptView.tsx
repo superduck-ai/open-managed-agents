@@ -1,3 +1,6 @@
+import { useSessionFiles } from './SessionFileContext';
+import { sessionMessageOutputFiles } from './sessionOutputModel';
+import { SessionOutputFileList } from './SessionOutputFiles';
 import { type QuickstartSessionEvent, type SessionEventListEntry } from '../types';
 import { useI18n } from '../../../shared/i18n';
 import { Message, MessageContent } from '../../../shared/ui/message';
@@ -47,6 +50,12 @@ export function SessionTranscriptView({
 }) {
   const { msg } = useI18n();
   const generatingLabel = msg('managedAgents.sessions.trace.generatingEllipsis', 'Generating…');
+  const sessionFiles = useSessionFiles();
+  const filesByMessage = sessionMessageOutputFiles(
+    entries,
+    sessionFiles?.files ?? [],
+    Boolean(sessionFiles?.running || openModelRequest),
+  );
   const visibleIds = new Set(visibleEntries.map((entry) => entry.id));
   const transcriptBlocks = buildSessionTranscriptBlocks(entries);
   const blocks = filterSessionTranscriptBlocks(transcriptBlocks, (entry) => visibleIds.has(entry.id));
@@ -80,6 +89,15 @@ export function SessionTranscriptView({
     );
   };
 
+  const renderOutputFiles = (entry: SessionEventListEntry) =>
+    sessionFiles && filesByMessage.has(entry.id) ? (
+      <SessionOutputFileList
+        key={entry.id}
+        files={filesByMessage.get(entry.id)!}
+        workspaceId={sessionFiles.workspaceId}
+      />
+    ) : null;
+
   return (
     <>
       {blocks.map((block, index) => {
@@ -106,6 +124,7 @@ export function SessionTranscriptView({
                     {renderEntry(block.entry, 'standalone')}
                   </MessageContent>
                 </Message>
+                {renderOutputFiles(block.entry)}
               </MessageScrollerItem>
             );
           }
@@ -146,6 +165,7 @@ export function SessionTranscriptView({
                 </div>
               </MessageContent>
             </Message>
+            {block.iterations.flatMap((iteration) => iteration.entries).map(renderOutputFiles)}
           </MessageScrollerItem>
         );
       })}

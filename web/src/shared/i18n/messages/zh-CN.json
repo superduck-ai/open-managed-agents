@@ -18,6 +18,8 @@
   "managedAgents.sessions.startConversation": "开始对话",
   "managedAgents.sessions.startConversationHint": "会话已准备就绪。在下方发送消息，向 Agent 描述你的任务。",
   "managedAgents.sessions.writeMessage": "输入消息",
+  "managedAgents.sessions.outputs.showAll": "展开全部 {count} 个文件",
+  "managedAgents.sessions.outputs.collapse": "收起文件",
   "managedAgents.sessions.outputs.title": "输出文件",
   "managedAgents.sessions.outputs.loadError": "输出文件暂时无法刷新。",
   "managedAgents.sessions.detail.attachFiles": "添加附件",

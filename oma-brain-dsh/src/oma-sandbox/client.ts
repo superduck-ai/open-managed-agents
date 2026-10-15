@@ -15,7 +15,7 @@ export class SandboxMcp implements SandboxExecutor {
   constructor(readonly api: OmaApi, readonly sessionId: string) {
     const endpoint = sandboxEndpoint(api.assignment(sessionId).mcp_config, api.base);
     this.transport = new StreamableHTTPClientTransport(new URL(endpoint.url), {
-      requestInit: { headers: { ...endpoint.headers, "X-OMA-MCP-Client-ID": crypto.randomUUID() }, redirect: "error" },
+      requestInit: { headers: endpoint.headers, redirect: "error" },
       fetch: async (input, init) => {
         const request = new Request(input, init);
         if (request.method === "POST") {

@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -44,13 +42,6 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 		h.errorAdapter.Write(w, r, sandboxInvalidRequest(nil))
 		return
 	}
-	clientID := r.Header.Get("X-OMA-MCP-Client-ID")
-	if clientID != "" {
-		if _, err := uuid.Parse(clientID); err != nil {
-			h.errorAdapter.Write(w, r, sandboxInvalidRequest(err))
-			return
-		}
-	}
 	endpoint, err := h.ensureSessionSandbox(r.Context(), session)
 	if err != nil {
 		h.errorAdapter.Write(w, r, sandboxOperationError(err))
@@ -66,7 +57,6 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 		return
 	}
 	copySandboxMCPRequestHeaders(request.Header, r.Header)
-	request.Header.Set("X-OMA-MCP-Scope", session.ExternalID+":"+strconv.FormatInt(session.CurrentWorkerEpoch, 10)+":"+clientID)
 	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(request)
 	if err != nil {
@@ -94,7 +84,7 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 }
 
 func copySandboxMCPRequestHeaders(target, source http.Header) {
-	for _, key := range []string{"Content-Type", "Accept", "Mcp-Session-Id", "Mcp-Protocol-Version", "Mcp-Method", "Mcp-Name"} {
+	for _, key := range []string{"Content-Type", "Accept", "Mcp-Protocol-Version", "Mcp-Method", "Mcp-Name"} {
 		if value := source.Get(key); value != "" {
 			target.Set(key, value)
 		}
@@ -110,7 +100,7 @@ func copySandboxMCPRequestHeaders(target, source http.Header) {
 }
 
 func copySandboxMCPResponseHeaders(target, source http.Header) {
-	for _, key := range []string{"Content-Type", "Mcp-Session-Id", "Cache-Control", "X-Accel-Buffering"} {
+	for _, key := range []string{"Content-Type", "Cache-Control", "X-Accel-Buffering"} {
 		if value := source.Get(key); value != "" {
 			target.Set(key, value)
 		}

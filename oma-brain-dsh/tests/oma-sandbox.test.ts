@@ -22,6 +22,7 @@ test("OMA providers isolate roots, initialize lazily and retain separate MCP ses
     if (method === "server/discover") return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Method not found" } }, { status: 404 });
     requests.push({ id, method, mcpSession: request.headers.get("Mcp-Session-Id") });
     expect(request.headers.get("Authorization")).toBe(`Bearer mcp_${id}`);
+    expect(request.headers.has("X-OMA-MCP-Client-ID")).toBe(false);
     expect(request.headers.has("X-Brain-Epoch")).toBe(false);
     if (method === "notifications/initialized") return new Response(null, { status: 202 });
     return Response.json({

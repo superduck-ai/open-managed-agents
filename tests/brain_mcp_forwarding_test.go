@@ -147,6 +147,11 @@ func TestBrainMCPForwardingDoesNotHoldSessionLock(t *testing.T) {
 
 func TestBrainMCPForwardsModernHeaders(t *testing.T) {
 	app, worker, _, token := newBrainMCPProxyApp(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, key := range []string{"X-OMA-MCP-Client-ID", "X-OMA-MCP-Scope", "Mcp-Session-Id"} {
+			if got := r.Header.Get(key); got != "" {
+				t.Errorf("obsolete %s forwarded as %q", key, got)
+			}
+		}
 		for key, want := range map[string]string{
 			"Mcp-Protocol-Version": "2026-07-28",
 			"Mcp-Method":           "tools/call",
@@ -157,6 +162,7 @@ func TestBrainMCPForwardsModernHeaders(t *testing.T) {
 				t.Errorf("%s = %q, want %q", key, got, want)
 			}
 		}
+		w.Header().Set("Mcp-Session-Id", "obsolete-session")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[]}}`)
 	}))
@@ -171,6 +177,8 @@ func TestBrainMCPForwardsModernHeaders(t *testing.T) {
 	request.Header.Set("Mcp-Method", "tools/call")
 	request.Header.Set("Mcp-Name", "bash")
 	request.Header.Set("Mcp-Param-Region", "us-east-1")
+	request.Header.Set("X-OMA-MCP-Client-ID", "obsolete-client")
+	request.Header.Set("Mcp-Session-Id", "obsolete-session")
 	response, err := app.client.Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -178,6 +186,9 @@ func TestBrainMCPForwardsModernHeaders(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", response.StatusCode)
+	}
+	if got := response.Header.Get("Mcp-Session-Id"); got != "" {
+		t.Fatalf("obsolete session header returned as %q", got)
 	}
 }
 

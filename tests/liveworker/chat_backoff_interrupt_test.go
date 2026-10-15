@@ -46,11 +46,12 @@ func verifyBackoffInterrupt(t *testing.T, e *liveEnv) {
 	defer closeStream()
 	started := time.Now()
 	observation := struct {
-		Phase   string           `json:"phase"`
-		Before  upstream401State `json:"before_interrupt"`
-		After   upstream401State `json:"after_interrupt"`
-		Calls   int32            `json:"model_requests"`
-		Replies int32            `json:"recovered_replies"`
+		Phase      string           `json:"phase"`
+		StopReason string           `json:"sse_stop_reason"`
+		Before     upstream401State `json:"before_interrupt"`
+		After      upstream401State `json:"after_interrupt"`
+		Calls      int32            `json:"model_requests"`
+		Replies    int32            `json:"recovered_replies"`
 	}{Phase: "startup"}
 	t.Cleanup(func() {
 		observation.Calls, observation.Replies = calls.Load(), replies.Load()
@@ -100,7 +101,8 @@ func verifyBackoffInterrupt(t *testing.T, e *liveEnv) {
 	sendBackoffInterrupt(t, f, interruptCtx)
 	observation.Phase = "interrupt_sse"
 	idle := nextChatEvent(t, interruptCtx, events, "session.status_idle")
-	if idle.StopReason.Type != "end_turn" {
+	observation.StopReason = idle.StopReason.Type
+	if idle.StopReason.Type != "retries_exhausted" {
 		t.Fatalf("backoff interrupted SSE stop reason = %s", idle.StopReason.Type)
 	}
 	observation.Phase = "interrupt_drain"
@@ -109,12 +111,12 @@ func verifyBackoffInterrupt(t *testing.T, e *liveEnv) {
 	})
 	observation.After = after
 	observation.Phase = "validate_interrupt"
-	if time.Since(interruptStarted) > 15*time.Second || after.SessionStatus != "idle" || after.IdleStopReason != "end_turn" || len(after.SessionErrorIDs) != 0 ||
+	if time.Since(interruptStarted) > 15*time.Second || after.SessionStatus != "idle" || after.IdleStopReason != "retries_exhausted" || len(after.SessionErrorIDs) != 1 || after.RetryStatus != "exhausted" || after.AgentMessages != 0 ||
 		after.ModelRequests != before.ModelRequests || after.Pending != 0 || after.AckPending != 0 || !after.QueueReady {
 		t.Fatalf("backoff interrupt did not stop requests and finish cleanly: %+v", after)
 	}
 	observation.Phase = "interrupt_history"
-	assertBackoffIdleHistory(t, f, idle)
+	assertBackoffIdleHistory(t, f, idle, "retries_exhausted", 1)
 	failing.Store(false)
 	observation.Phase = "recovery_input"
 	submitChat(t, f, "Reply after interruption.")
@@ -126,7 +128,7 @@ func verifyBackoffInterrupt(t *testing.T, e *liveEnv) {
 	observation.Phase = "recovery_idle"
 	recoveredIdle := nextChatEvent(t, ctx, events, "session.status_idle")
 	waitChatIdle(t, f, 1)
-	assertBackoffIdleHistory(t, f, recoveredIdle)
+	assertBackoffIdleHistory(t, f, recoveredIdle, "end_turn", 1)
 	observation.Phase = "recovery_count"
 	if calls.Load() != before.ModelRequests+1 || replies.Load() != 1 {
 		t.Fatalf("unexpected requests after recovery: total=%d replies=%d", calls.Load(), replies.Load())
@@ -140,18 +142,22 @@ func sendBackoffInterrupt(t *testing.T, f *liveSession, ctx context.Context) {
 		map[string]any{"events": []any{map[string]string{"type": "user.interrupt"}}}, http.StatusOK)
 }
 
-func assertBackoffIdleHistory(t *testing.T, f *liveSession, idle chatEvent) {
+func assertBackoffIdleHistory(t *testing.T, f *liveSession, idle chatEvent, stopReason string, errorCount int) {
 	t.Helper()
 	found := false
+	errors := 0
 	for _, event := range chatHistory(t, f) {
 		if event.Type == "session.error" {
-			t.Fatalf("unexpected session.error after backoff interrupt: %s", event.ID)
+			errors++
+			if event.Error.RetryStatus.Type != "exhausted" {
+				t.Fatal("failed turn error is missing exhausted retry status")
+			}
 		}
 		if event.ID == idle.ID {
-			found = event.Type == "session.status_idle" && event.StopReason.Type == "end_turn" && idle.StopReason.Type == "end_turn"
+			found = event.Type == "session.status_idle" && event.StopReason.Type == stopReason && idle.StopReason.Type == stopReason
 		}
 	}
-	if !found {
-		t.Fatal("SSE idle ID and end_turn missing from history")
+	if !found || errors != errorCount {
+		t.Fatalf("SSE idle reason %s missing from history or error count=%d want=%d", stopReason, errors, errorCount)
 	}
 }

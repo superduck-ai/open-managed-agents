@@ -494,11 +494,6 @@ func TestFilesAPI(t *testing.T) {
 		assertError(t, resp, http.StatusUnauthorized, "authentication_error")
 	})
 
-	t.Run("failure missing beta header", func(t *testing.T) {
-		resp := app.do(t, http.MethodGet, "/v1/files?beta=true", nil, defaultTestKey, false, "")
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
-	})
-
 	t.Run("failure non multipart upload", func(t *testing.T) {
 		resp := app.do(t, http.MethodPost, "/v1/files?beta=true", bytes.NewBufferString(`{"file":"nope"}`), defaultTestKey, true, "application/json")
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
@@ -682,9 +677,9 @@ func TestFilesAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("success docs api files paths without beta query", func(t *testing.T) {
+	t.Run("success docs api files paths without beta header or query", func(t *testing.T) {
 		body, contentType := multipartBody(t, "docs-path.txt", "text/plain", []byte("docs path upload"), false)
-		resp := app.do(t, http.MethodPost, "/v1/files", body, defaultTestKey, true, contentType)
+		resp := app.do(t, http.MethodPost, "/v1/files", body, defaultTestKey, false, contentType)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("upload docs path status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -693,7 +688,7 @@ func TestFilesAPI(t *testing.T) {
 		decodeJSON(t, resp.Body, &uploaded)
 		defer deleteFile(t, app, uploaded.ID)
 
-		resp = app.do(t, http.MethodGet, "/v1/files?limit=20", nil, defaultTestKey, true, "")
+		resp = app.do(t, http.MethodGet, "/v1/files?limit=20", nil, defaultTestKey, false, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("list docs path status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -704,7 +699,7 @@ func TestFilesAPI(t *testing.T) {
 			t.Fatalf("list docs path did not include uploaded file %s: %+v", uploaded.ID, page.Data)
 		}
 
-		resp = app.do(t, http.MethodGet, "/v1/files/"+uploaded.ID, nil, defaultTestKey, true, "")
+		resp = app.do(t, http.MethodGet, "/v1/files/"+uploaded.ID, nil, defaultTestKey, false, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("retrieve docs path status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -721,7 +716,7 @@ func TestFilesAPI(t *testing.T) {
 			softDeleteFile(t, app, downloadableID)
 			_ = app.store.Delete(context.Background(), objectKey, storage.DeleteOptions{})
 		}()
-		resp = app.do(t, http.MethodGet, "/v1/files/"+downloadableID+"/content", nil, defaultTestKey, true, "")
+		resp = app.do(t, http.MethodGet, "/v1/files/"+downloadableID+"/content", nil, defaultTestKey, false, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("download docs path status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -730,7 +725,7 @@ func TestFilesAPI(t *testing.T) {
 			t.Fatalf("download docs path content = %q, want %q", got, content)
 		}
 
-		resp = app.do(t, http.MethodDelete, "/v1/files/"+uploaded.ID, nil, defaultTestKey, true, "")
+		resp = app.do(t, http.MethodDelete, "/v1/files/"+uploaded.ID, nil, defaultTestKey, false, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("delete docs path status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -1501,7 +1496,7 @@ func deleteFile(t *testing.T, app *testApp, fileID string) {
 
 func listFiles(t *testing.T, app *testApp, query string) pageResponse {
 	t.Helper()
-	resp := app.do(t, http.MethodGet, "/v1/files?beta=true&"+query, nil, defaultTestKey, true, "")
+	resp := app.do(t, http.MethodGet, "/v1/files?"+query, nil, defaultTestKey, false, "")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))

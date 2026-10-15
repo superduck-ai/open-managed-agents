@@ -15,6 +15,7 @@ Sessions 列表点击「创建会话」并提交成功后，直接进入刚创�
 - Session 列表使用独立的 TanStack Table + shadcn Table，以 `ID / Name / Status / Agent / Cost / Tokens in-out / Created` 排列，行高 44px、表头 36px，采用细分隔线与 hover 反馈。Agent 优先展示快照或已加载 Agent 列表中的名称和版本，未知时使用真实 ID。ID/Name 链接打开完整会话，行内非交互区域打开快速查看。Cost 保留现有计算，并提示公开定价口径；未知用量和费用保持 `—`。加载使用同尺寸 Skeleton；无会话、无匹配结果和请求失败分别提供创建、重置筛选和重试入口。
 - 搜索框移除重复的 ID 前缀；输入完整 `sesn_*` ID 且当前页没有该条目时，防抖 300ms 后按 Workspace 调用 retrieve，在原列表位置显示找到的会话，查询期间展示 Skeleton，找不到或失败时展示错误和重试。按 ID 获取的结果独立于列表分页，查询期间隐藏分页；清除搜索恢复原列表页和筛选。Created/Agent/Deployment/Status 继续使用现有筛选参数和状态预设。
 - 列表行尾提供可见的「快速查看」按钮，菜单也提供「快速查看」和「进入对话」。预览使用 shadcn Sheet，读取当前 Workspace 下的 Session 元数据和最新 20 条事件，按后端返回顺序反向展示为正序，不导航、不重置列表筛选、选择或分页。提供加载、错误、空活动与刷新状态；关闭时中止事件请求并忽略迟到结果。切换 Workspace 时关闭预览，禁止将旧预览带入新作用域。
+- 快速查看的「对话预览」复用 Session 转录模型的 `platformTranscriptFiltering`，在最新 20 条事件范围内展示消息正文、可展开的灰色思考和工具名称/路径/命令摘要；消息使用现有 Markdown 组件。用量、正常模型请求和线程状态等内部事件不逐条展示，执行错误仍可见。消息间使用留白，不添加逐条分隔线，Header/Footer 也不增加横线。窗口内只有内部事件时明确提示进入完整会话查看历史，与从未有活动的空状态区分；这不是完整轮次加载或 Claude 的轮次切换功能。
 - 预览中可复制完整 ID、打开关联 Agent/Environment/Deployment，或进入完整对话。预览只展示近期活动，不在 Sheet 中发送消息或建立 SSE；完整历史、流式转录与审批仍由 Session Viewer 承担。已归档、terminated 或 deleted Session 的按钮使用「查看会话」。
 - 可接收消息的空会话显示 shadcn Empty「开始对话」状态，「输入消息」聚焦该 Viewer 的 Composer。归档或终止会话保留只读空状态；发送、停止与工具审批的 API 合同不变。
 

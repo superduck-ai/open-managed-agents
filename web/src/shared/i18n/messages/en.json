@@ -11,6 +11,8 @@
   "common.clickToCopy": "Click to copy the full ID",
   "managedAgents.sessions.quickView": "Quick view",
   "managedAgents.sessions.quickViewHint": "Inspect this session without leaving the list.",
+  "managedAgents.sessions.conversationPreview": "Conversation preview",
+  "managedAgents.sessions.noPreviewContent": "No conversation content in the latest 20 events. Open the session for full history.",
   "managedAgents.sessions.recentActivity": "Recent activity (up to 20 events)",
   "managedAgents.sessions.noActivity": "No activity yet. Open the conversation to send the first message.",
   "managedAgents.sessions.viewSession": "View session",

@@ -11,6 +11,8 @@
   "common.clickToCopy": "点击复制完整 ID",
   "managedAgents.sessions.quickView": "快速查看",
   "managedAgents.sessions.quickViewHint": "无需离开列表即可查看会话上下文和近期活动。",
+  "managedAgents.sessions.conversationPreview": "对话预览",
+  "managedAgents.sessions.noPreviewContent": "最近 20 条事件中没有可预览的对话内容，请进入会话查看完整历史。",
   "managedAgents.sessions.recentActivity": "近期活动（最多 20 条事件）",
   "managedAgents.sessions.noActivity": "暂无活动，打开对话后即可发送第一条消息。",
   "managedAgents.sessions.viewSession": "查看会话",

@@ -226,3 +226,16 @@ test('shows the newest two files first and expands and collapses the remaining f
   fireEvent.click(screen.getByRole('button', { name: /Collapse files/ }));
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Download old.txt' })).toBeNull());
 });
+
+test('discovers files published after the idle refresh without opening resources or refocusing', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  let files: FileMetadataApiResponse[] = [];
+  const fetchMock = mock(async () => page(files));
+  globalThis.fetch = fetchMock as typeof fetch;
+  const view = renderOutputs({ session: makeSession('sesn_outputs', 'running') });
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  view.rerender({ session: makeSession() });
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  files = [file('file_late', 'late.txt')];
+  await screen.findByRole('button', { name: 'Download late.txt' }, { timeout: 2500 });
+});

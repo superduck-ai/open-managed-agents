@@ -178,6 +178,7 @@ stateDiagram-v2
 
 - 以用户消息划分轮次，将文件 `created_at` 落在本轮起点与下一轮起点之间的输出文件放在本轮最后一条 Agent 消息下，以独立文件框展示，保持间距，不嵌入消息正文或 iteration 的边框内；消息明确引用已有文件的 Markdown 路径链接或代码路径时，该回复也可再次展示该文件。
 - 本轮存在流式消息、未结束的模型请求或正在运行/等待批准的工具时，不展示本轮文件。Session 仍在运行或存在 pending model request 时，最新轮次也不展示文件；历史已结束轮次保持展示。
+- 文件列表和资源路径使用相同的刷新窗口：运行时每 3 秒刷新，运行结束后继续每 1 秒刷新、持续 30 秒，捕获晚于 idle 事件入库的文件。刚结束的 Session 在重新打开页面时也启用该窗口；旧的空闲 Session 不持续轮询，打开资源检查器时保留原有 10 秒刷新。窗口定时器在切换 Session/Workspace、归档和卸载时清理。资源页签不是发现输出文件的必要条件。
 - 文件按 `created_at` 降序，默认展示最新两个；超过两个时使用共享 shadcn Collapsible 展开全部或收起。搜索结果和子线程不投影 Session 主线程的文件合集。
 - 卡片显示文件名、真实 `resources.mount_path`、类型和大小。路径缺失时不从 basename 猜测，避免不同目录的同名文件误关联。
 - Markdown 文件链接按完整路径匹配当前 Session 的可下载文件，支持百分号编码、`sandbox:` 和 `/mnt/user-data/outputs/` 到公开 `/outputs/` 的别名；命中后通过 Files API 下载并保留文件名，继续发送 workspace/beta/cookie 上下文。普通网站链接保持原行为。

@@ -256,3 +256,24 @@ test('shows session-wide output cards on the main lane while keeping child trans
   fireEvent.click(main);
   await screen.findByTestId('session-output-files');
 });
+
+test('shows a late file automatically after completion without visiting the resources inspector', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+  const api = mockOutputSession();
+  api.resources.sessionThreads.length = 0;
+  api.resources.sessions[0].updated_at = new Date().toISOString();
+  const original = globalThis.fetch;
+  let published = false;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input), 'https://oma.duck.ai');
+    return url.pathname === '/v1/files' && url.searchParams.has('scope_id') && !published
+      ? Response.json({ data: [], has_more: false })
+      : original(input, init);
+  };
+  renderManagedAgentsPage('sessions');
+  await screen.findByText('Your result is ready.');
+  expect(screen.queryByTestId('session-output-files')).toBeNull();
+  published = true;
+  expect(await screen.findByRole('button', { name: 'Download deliverable.csv' }, { timeout: 2500 })).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Resources', exact: true }).getAttribute('aria-selected')).toBe('false');
+});

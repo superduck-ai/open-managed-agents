@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 
 	"github.com/go-chi/chi/v5"
@@ -239,6 +240,9 @@ func (h *Handler) streamThreadEventsRoute(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID, threadID string, primaryThread bool) {
+	ctx, cancel := httpapi.StreamContext(r.Context())
+	defer cancel()
+	r = r.WithContext(ctx)
 	session, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead)
 	if err != nil {
 		h.errorAdapter.Write(w, r, err)

@@ -106,14 +106,19 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		h.writeProviderError(w, r, err)
 		return
 	}
+	call := startModelCall(r.Context(), principal, modelID)
+	defer call.end()
+	r = r.WithContext(call.ctx)
 	target, err := llmproviders.Endpoint(upstream.BaseURL, "/v1/messages", r.URL.RawQuery)
 	if err != nil {
+		call.fail("build_request")
 		h.logger.ErrorContext(r.Context(), "build messages upstream endpoint", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return
 	}
 	upstreamRequest, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
+		call.fail("build_request")
 		h.logger.ErrorContext(r.Context(), "build messages upstream request", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return
@@ -124,11 +129,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	llmproviders.ApplyAPIKey(upstreamRequest.Header, upstream.APIKey)
 	request, err := h.beginModelRequest(r, principal, modelID)
 	if err != nil {
+		call.fail("begin_model_request")
 		h.logger.ErrorContext(r.Context(), "start model request", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return
 	}
-	h.proxyModelRequest(w, r, upstreamRequest, request)
+	h.proxyModelRequest(w, r, upstreamRequest, request, call)
 }
 
 func (h *Handler) writeProviderError(w http.ResponseWriter, r *http.Request, err error) {

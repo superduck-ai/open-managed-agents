@@ -52,6 +52,7 @@ type yamlConfig struct {
 	EnvironmentRunner    EnvironmentRunnerConfig   `yaml:"environment_runner"`
 	CodeSession          yamlCodeSessionConfig     `yaml:"code_session"`
 	Observability        ObservabilityConfig       `yaml:"observability"`
+	Telemetry            TelemetryConfig           `yaml:"telemetry"`
 	Webhook              yamlWebhookConfig         `yaml:"webhook"`
 	Vault                VaultConfig               `yaml:"vault"`
 	Bootstrap            yamlBootstrapConfig       `yaml:"bootstrap"`
@@ -166,6 +167,7 @@ func newYAMLConfig() yamlConfig {
 			UpstreamProxyDisableSSRFProtection: defaults.CodeSession.UpstreamProxyDisableSSRFProtection,
 		},
 		Observability: defaults.Observability,
+		Telemetry:     defaults.Telemetry,
 		Webhook: yamlWebhookConfig{
 			Concurrency:         defaults.Webhook.Concurrency,
 			Timeout:             defaults.Webhook.Timeout,
@@ -215,6 +217,7 @@ func (input yamlConfig) resolve() Config {
 			UpstreamProxyDisableSSRFProtection: input.CodeSession.UpstreamProxyDisableSSRFProtection,
 		},
 		Observability: input.Observability,
+		Telemetry:     input.Telemetry,
 		Webhook: WebhookConfig{
 			Concurrency:         input.Webhook.Concurrency,
 			Timeout:             input.Webhook.Timeout,

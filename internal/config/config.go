@@ -37,6 +37,14 @@ func Load() (Config, error) {
 	cfg.E2B.SandboxURL = strings.TrimSpace(cfg.E2B.SandboxURL)
 	cfg.E2B.Template = strings.TrimSpace(cfg.E2B.Template)
 
+	cfg.Telemetry.OTLP.BaseURL = strings.TrimSpace(cfg.Telemetry.OTLP.BaseURL)
+	cfg.Telemetry.OTLP.Organization = strings.TrimSpace(cfg.Telemetry.OTLP.Organization)
+	cfg.Telemetry.OTLP.Username = strings.TrimSpace(cfg.Telemetry.OTLP.Username)
+	cfg.Telemetry.ServiceName = strings.TrimSpace(cfg.Telemetry.ServiceName)
+	cfg.Telemetry.Logs.Level = strings.TrimSpace(cfg.Telemetry.Logs.Level)
+	cfg.Telemetry.OTLP.TracesStream = strings.TrimSpace(cfg.Telemetry.OTLP.TracesStream)
+	cfg.Telemetry.OTLP.LogsStream = strings.TrimSpace(cfg.Telemetry.OTLP.LogsStream)
+
 	normalizeEnvironmentPrebuildConfig(&cfg.EnvironmentPrebuilds)
 
 	if err := resolveConfigPaths(&cfg, configFileDirectory(configPath)); err != nil {
@@ -113,6 +121,9 @@ func validate(cfg Config) error {
 		return err
 	}
 	if err := ValidateMasterKey(cfg.Vault.MasterKey); err != nil {
+		return err
+	}
+	if err := validateTelemetryConfig(cfg.Telemetry); err != nil {
 		return err
 	}
 	if err := validateObservabilityConfig(cfg.Observability); err != nil {

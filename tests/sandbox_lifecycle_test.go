@@ -252,7 +252,7 @@ func TestSandboxReclamationDryRunAndLazyWake(t *testing.T) {
 	if len(provider.launches) != 0 {
 		t.Fatal("runner rebuilt an idle sandbox without new input")
 	}
-	if queued, err := f.app.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, f.code.ExternalID, "", nil); err != nil || queued {
+	if queued, err := f.app.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, f.code.ExternalID, "", nil, ""); err != nil || queued {
 		t.Fatalf("recovery without input = %t, %v", queued, err)
 	}
 	if err := lifecycle.Reclaim(ctx, f.target); err != nil {
@@ -318,7 +318,7 @@ func TestSandboxReclamationRecoveryRejectsIneligibleTargets(t *testing.T) {
 			if tc.archived {
 				f.exec(t, `UPDATE sessions SET archived_at = NOW() WHERE uuid = $1`, f.session.UUID)
 			}
-			if queued, err := f.app.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(context.Background(), f.code.ExternalID, "", nil); err != nil || queued {
+			if queued, err := f.app.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(context.Background(), f.code.ExternalID, "", nil, ""); err != nil || queued {
 				t.Fatalf("ineligible recovery = %t, %v", queued, err)
 			}
 		})

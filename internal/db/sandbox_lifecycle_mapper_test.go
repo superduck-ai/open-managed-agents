@@ -59,7 +59,7 @@ func TestSandboxReclamationRecoveryWithoutProviderIDOnlyTargetsReclaimed(t *test
 	assertMapperBuilderContract(t, mapperBuilderContract{
 		statement: environmentSandboxMapperScheduleRecoveryForCodeSessionStatement, bound: bound,
 		wantID: "EnvironmentSandboxMapper.ScheduleRecoveryForCodeSession", wantKind: yourbatis.StatementUpdate,
-		wantArgumentNames:          []string{"params.CodeSessionExternalID", "params.LastError"},
+		wantArgumentNames:          []string{"params.CodeSessionExternalID", "params.LastError", "params.TraceParent"},
 		wantSensitiveArgumentNames: []string{"params.LastError"},
 		wantSQLFragments: []string{"sandbox.state = 'stopped'", "sandbox.stop_reason = 'idle_timeout'",
 			"code_session.idle_since IS NULL", "s.archived_at IS NULL", "code_session.external_id = $1"},

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
 const workerDeliveryTimeout = 5 * time.Second
@@ -65,12 +66,14 @@ func (s *Service) applyLockedWorkerDeliveryUpdates(
 	for _, update := range updates {
 		reference, found := references[update.EventID]
 		if !found {
+			telemetry.RecordWorkerEventUpdate(ctx, deliveryStatusName(update.Status), "ignored")
 			result.Ignored++
 			continue
 		}
 		switch update.Status {
 		case "received", "processing":
 			if err := s.workerEvents.InProgress(ctx, reference.AckSubject); err != nil {
+				telemetry.RecordWorkerEventUpdate(ctx, deliveryStatusName(update.Status), "error")
 				return result, cleanupJobIDs, workerEventUnavailable(err)
 			}
 			if err := s.workerEventAcks.Refresh(ctx, codeSessionID, epoch, update.EventID); err != nil {
@@ -78,10 +81,17 @@ func (s *Service) applyLockedWorkerDeliveryUpdates(
 			}
 		case "processed":
 			if err := s.workerEvents.DoubleAck(ctx, reference.AckSubject); err != nil {
+				telemetry.RecordWorkerEventUpdate(ctx, deliveryStatusName(update.Status), "error")
 				return result, cleanupJobIDs, workerEventUnavailable(err)
 			}
 			if err := s.workerEventAcks.Delete(ctx, codeSessionID, epoch, update.EventID); err != nil {
 				s.logger.WarnContext(ctx, "delete processed worker event ACK", "code_session_id", codeSessionID, "event_id", update.EventID, "error", err)
+			}
+			if !reference.PublishedAt.IsZero() {
+				telemetry.RecordWorkerEventProcessed(ctx, reference.Lane, time.Since(reference.PublishedAt))
+				_, span := telemetry.StartRoot(ctx, "oma.worker_event.ack", reference.TraceParent,
+					telemetry.AttrCodeSessionID.String(codeSessionID), telemetry.AttrEventID.String(update.EventID), telemetry.AttrLane.String(reference.Lane))
+				span.End()
 			}
 			if reference.CleanupJobID != "" {
 				cleanupJobIDs = append(cleanupJobIDs, reference.CleanupJobID)
@@ -89,7 +99,17 @@ func (s *Service) applyLockedWorkerDeliveryUpdates(
 		default:
 			return result, cleanupJobIDs, db.ErrInvalidState
 		}
+		telemetry.RecordWorkerEventUpdate(ctx, deliveryStatusName(update.Status), "applied")
 		result.Applied++
 	}
 	return result, cleanupJobIDs, nil
+}
+
+func deliveryStatusName(status string) string {
+	switch status {
+	case "received", "processing", "processed":
+		return status
+	default:
+		return "other"
+	}
 }

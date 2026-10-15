@@ -198,36 +198,46 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		return false, err
 	}
 
+	runCtx, run := startRunnerRun(ctx, *work)
+	err = r.runClaimedWork(runCtx, run, work)
+	run.end(err)
+	// true 表示本轮确实消费了一条 Work；nil 表示所需启动阶段全部完成。
+	return true, err
+}
+
+func (r *Runner) runClaimedWork(ctx context.Context, run *runnerRun, work *db.EnvironmentWork) error {
 	// 领取成功后先把 Work 从 queued 推进到 starting，并清除短期 claim。
 	// 从这里开始，即使后续步骤失败，processed 也返回 true，表示本轮消费过一条 Work。
 	if _, err := r.db.AckEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID); err != nil {
-		return true, err
+		return err
 	}
+
+	ctx = run.begin("prepare")
 
 	// 加载 Work 所属的 Environment，并生成本服务对外使用的 envsbx_ ID。
 	// 此时实际的 E2B Sandbox 尚未创建；失败只需停止 Work，不存在远端资源需要清理。
 	env, err := r.db.GetEnvironmentByUUID(ctx, work.WorkspaceUUID, work.EnvironmentUUID)
 	if err != nil {
 		r.failWorkBeforeSandbox(ctx, *work)
-		return true, err
+		return err
 	}
 	sandboxID, err := ids.New("envsbx_")
 	if err != nil {
 		r.failWorkBeforeSandbox(ctx, *work)
-		return true, err
+		return err
 	}
 
 	// 在 Provider 解析之前固化 Managed Agent 的网络 metadata。这样 Resolve 和
 	// 后续 Create 使用的是同一份 MCP allowlist，避免创建时网络策略发生漂移。
 	if err := r.prepareManagedAgentNetworkMetadata(ctx, env, work); err != nil {
 		r.failWorkBeforeSandbox(ctx, *work)
-		return true, err
+		return err
 	}
 	preinstalled := hasPrebuiltTemplate(env)
 	resolution, err := r.provider.Resolve(env, work)
 	if err != nil {
 		r.failWorkBeforeSandbox(ctx, *work)
-		return true, err
+		return err
 	}
 
 	// Cloud Session Work 还要读取 Session、resources、events 和 skills，准备
@@ -236,11 +246,14 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	preparation, err := r.prepareManagedAgentLaunch(ctx, env, work)
 	if err != nil {
 		r.failWorkBeforeSandbox(ctx, *work)
-		return true, err
+		return err
 	}
+
+	run.markRecovered(isRecoveryLaunch(preparation))
 
 	// 先落一条 creating 状态的本地 Sandbox 记录，再请求 E2B 创建远端 Sandbox。
 	// 这样即使远端创建失败，数据库中仍有可查询的启动尝试和失败状态。
+	ctx = run.begin("sandbox_record")
 	record, err := r.db.CreateEnvironmentSandbox(ctx, db.EnvironmentSandbox{
 		UUID:                  uuid.NewV4().String(),
 		ExternalID:            sandboxID,
@@ -258,20 +271,22 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	})
 	if err != nil {
 		r.failWorkBeforeSandbox(ctx, *work)
-		return true, err
+		return err
 	}
 
 	// provider.Create 返回的 ID 是 E2B 的真实 Sandbox ID，与上面的 envsbx_ ID
 	// 分属远端 Provider 和本服务两个命名空间。
+	ctx = run.begin("e2b_create")
 	sandbox, err := r.provider.Create(ctx, env, work, resolution)
 	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, "", err)
-		return true, err
+		return err
 	}
 	providerSandboxID := sandbox.ID
 
 	// 将 E2B ID 写入 Work metadata；Managed Agent preparation 可能还加入了 skill
 	// mount，所以即使 Provider ID 为空，也要为该分支持久化更新后的 metadata。
+	ctx = run.begin("work_metadata")
 	if strings.TrimSpace(providerSandboxID) != "" || preparation != nil {
 		nextWorkMetadata := work.Metadata
 		if strings.TrimSpace(providerSandboxID) != "" {
@@ -280,29 +295,30 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 			})
 			if err != nil {
 				r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-				return true, err
+				return err
 			}
 		}
 		updatedWork, err := r.db.UpdateEnvironmentWorkMetadata(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, nextWorkMetadata)
 		if err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-			return true, err
+			return err
 		}
 		*work = updatedWork
 	}
 
+	ctx = run.begin("packages")
 	manifest, provision, err := buildPackageManifest(env.Config)
 	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-		return true, err
+		return err
 	}
 	if provision && !preinstalled {
 		proceed, err := r.provisionCreatedSandboxPackages(ctx, record, work, providerSandboxID, manifest)
 		if err != nil {
-			return true, err
+			return err
 		}
 		if !proceed {
-			return true, nil
+			return nil
 		}
 	}
 
@@ -310,40 +326,44 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	// attach 的 memory store。必须等 rclone ready 且 MEMORY.md 写好后才能
 	// 继续，确保 Claude 启动时 uploads、outputs、transcripts、tool_results、
 	// skills 和记忆目录已经可用。
+	ctx = run.begin("filestore")
 	if preparation != nil {
 		rcloneLaunch, err := r.prepareRcloneFilestoreLaunch(ctx, preparation.Session, preparation.MemoryMounts)
 		if err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-			return true, fmt.Errorf("prepare rclone-filestore launch: %w", err)
+			return fmt.Errorf("prepare rclone-filestore launch: %w", err)
 		}
 		if err := r.startManagedAgentSessionFilesystem(ctx, providerSandboxID, rcloneLaunch); err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-			return true, err
+			return err
 		}
 	}
 
 	// rclone 就绪后才公开 Sandbox 为 running。此后的失败统一由
 	// failCreatedSandbox 标记 Sandbox/Work 失败，并 Kill 已创建的 E2B Sandbox。
+	ctx = run.begin("mark_running")
 	if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceUUID, record.ExternalID, "running", &providerSandboxID, nil, nil); err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-		return true, err
+		return err
 	}
 
 	// 首次 heartbeat 把 Work 推进为 active，并建立 60 秒运行租约。
 	if _, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime); err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-		return true, err
+		return err
 	}
 
 	// Cloud Session 还需创建 Code Session，并在 Sandbox 内启动 Environment Manager。
 	if preparation != nil {
+		ctx = run.begin("code_session")
 		launch, err := r.createManagedAgentRuntimeLaunch(ctx, env, *work, *preparation)
 		if err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-			return true, fmt.Errorf("create managed-agent runtime launch: %w", err)
+			return fmt.Errorf("create managed-agent runtime launch: %w", err)
 		}
 		// rclone 和固定挂载已就绪；manager 随后通过 stdin 取得双凭证，
 		// 并在启动 Claude 前 register worker，建立首个 CCR lease。
+		ctx = run.begin("manager_start")
 		if err := r.provider.StartBackgroundCommand(ctx, providerSandboxID, launch.Manager.ShellCommand, launch.Manager.Payload); err != nil {
 			publicError := r.logManagedAgentRuntimeStageFailure(
 				ctx,
@@ -352,20 +372,20 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 				err,
 			)
 			r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.Session, launch, publicError)
-			return true, publicError
+			return publicError
 		}
 
 		// 只有 Manager 后台命令成功提交后才发布 runtime metadata，避免把启动失败的
 		// Code Session 暴露为可用。新建失败会终止 Code Session；恢复失败则保留其
 		// durable queue 并重新排队，只清理本次 replacement Sandbox。
+		ctx = run.begin("publish_runtime")
 		if err := r.publishManagedAgentRuntime(ctx, preparation.Session, *work, launch); err != nil {
 			r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.Session, launch, err)
-			return true, fmt.Errorf("publish managed-agent runtime metadata: %w", err)
+			return fmt.Errorf("publish managed-agent runtime metadata: %w", err)
 		}
 	}
 
-	// true 表示本轮确实消费了一条 Work；nil 表示所需启动阶段全部完成。
-	return true, nil
+	return nil
 }
 
 func (r *Runner) provisionCreatedSandboxPackages(
@@ -432,6 +452,7 @@ func (r *Runner) failManagedAgentRuntime(
 			r.logger.ErrorContext(
 				cleanupCtx,
 				"terminate failed managed agent runtime",
+				"session_id", work.SessionExternalID, "work_id", work.ExternalID,
 				"code_session_id", launch.CodeSessionID,
 				"stage_error_type", fmt.Sprintf("%T", cause),
 				"error", err,
@@ -451,7 +472,7 @@ func (r *Runner) failWorkBeforeSandbox(ctx context.Context, work db.EnvironmentW
 		return
 	}
 	if err != nil {
-		r.logger.ErrorContext(ctx, "requeue managed agent sandbox recovery", "work_id", work.ExternalID, "error", err)
+		r.logger.ErrorContext(ctx, "requeue managed agent sandbox recovery", "work_id", work.ExternalID, "session_id", work.SessionExternalID, "error", err)
 	}
 	_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, true)
 }
@@ -475,6 +496,7 @@ func (r *Runner) requeueFailedRecoverySandbox(
 		r.logger.ErrorContext(
 			ctx,
 			"requeue failed managed agent sandbox recovery",
+			"session_id", work.SessionExternalID,
 			"work_id", work.ExternalID,
 			"error", err,
 		)

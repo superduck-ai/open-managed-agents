@@ -1,0 +1,594 @@
+{
+  "version": 5,
+  "title": "OMA 会话诊断",
+  "description": "输入 session_id 后点刷新，查看单个会话的完整时间线、阶段耗时、失败 span 与日志。",
+  "tabs": [
+    {
+      "tabId": "diagnosis",
+      "name": "会话诊断",
+      "panels": [
+        {
+          "id": "Panel_diagnosis_1",
+          "type": "table",
+          "title": "时间线",
+          "description": "按时间升序列出该会话经过的每一段；code session 由 session_id 自动带出。trace_id 可复制到 Traces 页面查看瀑布图。",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT to_timestamp_micros(_timestamp) AS time, operation_name, ROUND(duration / 1000.0, 1) AS duration_ms, span_status, oma_stage, oma_outcome, oma_event_type, oma_runner_queue_wait_s, trace_id FROM oma_server WHERE oma_session_id = '$session_id' OR oma_code_session_id IN (SELECT DISTINCT oma_code_session_id FROM oma_server WHERE oma_session_id = '$session_id' AND oma_code_session_id IS NOT NULL) ORDER BY _timestamp ASC",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_server",
+                "stream_type": "traces",
+                "x": [
+                  {
+                    "label": "时间",
+                    "alias": "time",
+                    "column": "time",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "阶段",
+                    "alias": "operation_name",
+                    "column": "operation_name",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "耗时 ms",
+                    "alias": "duration_ms",
+                    "column": "duration_ms",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "状态",
+                    "alias": "span_status",
+                    "column": "span_status",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "Runner 阶段",
+                    "alias": "oma_stage",
+                    "column": "oma_stage",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "结果",
+                    "alias": "oma_outcome",
+                    "column": "oma_outcome",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "事件类型",
+                    "alias": "oma_event_type",
+                    "column": "oma_event_type",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "排队 s",
+                    "alias": "oma_runner_queue_wait_s",
+                    "column": "oma_runner_queue_wait_s",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "trace_id",
+                    "alias": "trace_id",
+                    "column": "trace_id",
+                    "color": null,
+                    "isDerived": false
+                  }
+                ],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 0,
+            "w": 48,
+            "h": 14,
+            "i": 1
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_diagnosis_2",
+          "type": "h-bar",
+          "title": "各阶段耗时汇总（秒）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT operation_name AS x_axis_1, ROUND(SUM(duration) / 1000000.0, 3) AS y_axis_1 FROM oma_server WHERE oma_session_id = '$session_id' OR oma_code_session_id IN (SELECT DISTINCT oma_code_session_id FROM oma_server WHERE oma_session_id = '$session_id' AND oma_code_session_id IS NOT NULL) GROUP BY x_axis_1 ORDER BY y_axis_1 DESC",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_server",
+                "stream_type": "traces",
+                "x": [
+                  {
+                    "label": "阶段",
+                    "alias": "x_axis_1",
+                    "column": "x_axis_1",
+                    "color": null,
+                    "isDerived": false
+                  }
+                ],
+                "y": [
+                  {
+                    "label": "总耗时 s",
+                    "alias": "y_axis_1",
+                    "column": "y_axis_1",
+                    "color": null,
+                    "isDerived": false
+                  }
+                ],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 14,
+            "w": 24,
+            "h": 11,
+            "i": 2
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_diagnosis_3",
+          "type": "table",
+          "title": "失败的 span",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT to_timestamp_micros(_timestamp) AS time, operation_name, ROUND(duration / 1000.0, 1) AS duration_ms, oma_stage, error_type, trace_id FROM oma_server WHERE span_status = 'ERROR' AND (oma_session_id = '$session_id' OR oma_code_session_id IN (SELECT DISTINCT oma_code_session_id FROM oma_server WHERE oma_session_id = '$session_id' AND oma_code_session_id IS NOT NULL)) ORDER BY _timestamp ASC",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_server",
+                "stream_type": "traces",
+                "x": [
+                  {
+                    "label": "时间",
+                    "alias": "time",
+                    "column": "time",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "阶段",
+                    "alias": "operation_name",
+                    "column": "operation_name",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "耗时 ms",
+                    "alias": "duration_ms",
+                    "column": "duration_ms",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "Runner 阶段",
+                    "alias": "oma_stage",
+                    "column": "oma_stage",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "error.type",
+                    "alias": "error_type",
+                    "column": "error_type",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "trace_id",
+                    "alias": "trace_id",
+                    "column": "trace_id",
+                    "color": null,
+                    "isDerived": false
+                  }
+                ],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 14,
+            "w": 24,
+            "h": 11,
+            "i": 3
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_diagnosis_4",
+          "type": "table",
+          "title": "该会话的日志",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT to_timestamp_micros(_timestamp) AS time, severity, component, body, error, trace_id FROM oma_server WHERE session_id = '$session_id' OR trace_id IN (SELECT DISTINCT trace_id FROM oma_server WHERE session_id = '$session_id') ORDER BY _timestamp ASC",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_server",
+                "stream_type": "logs",
+                "x": [
+                  {
+                    "label": "时间",
+                    "alias": "time",
+                    "column": "time",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "级别",
+                    "alias": "severity",
+                    "column": "severity",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "组件",
+                    "alias": "component",
+                    "column": "component",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "消息",
+                    "alias": "body",
+                    "column": "body",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "错误",
+                    "alias": "error",
+                    "column": "error",
+                    "color": null,
+                    "isDerived": false
+                  },
+                  {
+                    "label": "trace_id",
+                    "alias": "trace_id",
+                    "column": "trace_id",
+                    "color": null,
+                    "isDerived": false
+                  }
+                ],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 25,
+            "w": 48,
+            "h": 12,
+            "i": 4
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_diagnosis_5",
+          "type": "markdown",
+          "title": "判读提示",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "",
+          "queries": [],
+          "layout": {
+            "x": 0,
+            "y": 37,
+            "w": 48,
+            "h": 12,
+            "i": 5
+          },
+          "htmlContent": "",
+          "markdownContent": "**用法**：在顶部 `session_id` 输入完整的 `sesn_...`，然后点右上角的刷新按钮（只按回车不会生效）。\n\n### 判读：看最后一条记录，以及之后应出现却没有出现的 span\n\n| 最后出现 | 应接着出现 | 缺失时的含义 |\n| --- | --- | --- |\n| `POST /v1/sessions` | `oma.runner.run` | 在排队：看健康看板\"最老排队年龄\"，Runner 是否繁忙或存活 |\n| `oma.runner.run` 状态 ERROR | — | 沙箱准备失败：`Runner 阶段` 列即失败阶段，按 trace_id 查日志 |\n| `oma.runner.run` 成功 | `POST .../worker/register` | worker 未启动或未注册：看注册延迟分布、沙箱是否存活 |\n| `oma.worker_event.publish` | `oma.worker_event.deliver` | worker 未连上事件流或队头阻塞：看入站流最老消息 |\n| `oma.worker_event.deliver` | `oma.worker_event.ack` | worker 收到但未回执：看回执结果中的 ignored |\n| `chat <model>` 很慢或 ERROR | — | 上游模型慢或失败：看 error_type 与状态码 |\n| `oma.tool_permission.request` | `oma.tool_permission.respond` | 等待用户确认，不是系统问题 |\n| `oma.session.status`（running） | `oma.session.status`（idle） | 本轮仍在进行；长时间无其他 span 即卡住会话 |\n| `oma.sandbox.resume`（recovery_scheduled） | 新的 `oma.runner.run` | 沙箱已失效、正在重建：同\"排队\"一行 |\n\nworker 注册延迟（`oma_worker_register_delay_s`）与确认等待（`oma_tool_permission_wait_s`）只在对应 span 上出现，点开 trace 查看。\n",
+          "customChartContent": ""
+        }
+      ]
+    }
+  ],
+  "variables": {
+    "list": [
+      {
+        "type": "textbox",
+        "name": "session_id",
+        "label": "session_id",
+        "query_data": null,
+        "value": "sesn_",
+        "options": null,
+        "hideOnDashboard": false
+      }
+    ],
+    "showDynamicFilters": false
+  },
+  "defaultDatetimeDuration": {
+    "type": "relative",
+    "relativeTimePeriod": "1d"
+  }
+}

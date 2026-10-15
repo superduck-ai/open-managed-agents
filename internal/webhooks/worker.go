@@ -13,6 +13,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
 type deliveryStore interface {
@@ -77,6 +78,13 @@ func (w *Worker) processMessage(ctx context.Context, client *http.Client, msg je
 		w.finish(ctx, msg)
 		return
 	}
+	ctx, span := telemetry.StartRoot(ctx, "oma.webhook.deliver", msg.Headers().Get(telemetry.TraceParentHeader),
+		telemetry.AttrWorkspaceUUID.String(envelope.WorkspaceUUID),
+	)
+	defer func() {
+		telemetry.SetErrorStatus(span, err)
+		span.End()
+	}()
 	metadata, err := msg.Metadata()
 	if err != nil {
 		w.logger.ErrorContext(ctx, "webhook message metadata unavailable", "error", err)
@@ -85,27 +93,43 @@ func (w *Worker) processMessage(ctx context.Context, client *http.Client, msg je
 	target, found, err := w.database.FindWebhookDeliveryTarget(ctx, envelope.WorkspaceUUID, envelope.EndpointUUID)
 	if err != nil {
 		w.logger.ErrorContext(ctx, "webhook target lookup failed", "event_id", event.ID, "endpoint_uuid", envelope.EndpointUUID, "error", err)
-		w.retry(ctx, msg, metadata.NumDelivered)
+		dropped := w.retry(ctx, msg, metadata.NumDelivered)
+		telemetry.RecordWebhookDelivery(ctx, webhookDeliveryOutcome(err, dropped), 0)
 		return
 	}
 	if !found || target.Status != "enabled" || target.URL == "" || target.SigningSecret == "" {
 		w.finish(ctx, msg)
+		telemetry.RecordWebhookDelivery(ctx, "dropped", 0)
 		return
 	}
 	destination := deliveryTarget{URL: target.URL, SigningKey: target.SigningSecret, AllowInsecure: w.cfg.AllowInsecure}
+	startedAt := time.Now()
 	err = validateDeliveryTarget(destination, "webhook endpoint")
 	if err == nil {
 		err = deliver(ctx, client, destination, envelope.Event)
 	}
+	duration := time.Since(startedAt)
 	if ctx.Err() != nil {
 		return
 	}
 	terminal := w.recordResult(ctx, envelope, err)
+	dropped := terminal
 	if err == nil || terminal {
 		w.finish(ctx, msg)
 	} else {
-		w.retry(ctx, msg, metadata.NumDelivered)
+		dropped = w.retry(ctx, msg, metadata.NumDelivered)
 	}
+	telemetry.RecordWebhookDelivery(ctx, webhookDeliveryOutcome(err, dropped), duration)
+}
+
+func webhookDeliveryOutcome(err error, dropped bool) string {
+	if err == nil {
+		return "success"
+	}
+	if dropped {
+		return "dropped"
+	}
+	return "retry"
 }
 
 func (w *Worker) recordResult(ctx context.Context, envelope Envelope, deliveryErr error) bool {
@@ -134,15 +158,16 @@ func (w *Worker) finish(ctx context.Context, msg jetstream.Msg) {
 		w.logger.ErrorContext(ctx, "webhook acknowledgment failed", "error", err)
 	}
 }
-func (w *Worker) retry(ctx context.Context, msg jetstream.Msg, deliveries uint64) {
+func (w *Worker) retry(ctx context.Context, msg jetstream.Msg, deliveries uint64) bool {
 	if deliveries >= uint64(webhookMaxAttempts(w.cfg)) {
 		w.finish(ctx, msg)
-		return
+		return true
 	}
 	if ctx.Err() != nil {
-		return
+		return false
 	}
 	if err := msg.NakWithDelay(retryDelay(int(min(deliveries, 5)), rand.Int64N)); err != nil {
 		w.logger.ErrorContext(ctx, "webhook retry scheduling failed", "error", err)
 	}
+	return false
 }

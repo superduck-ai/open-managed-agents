@@ -17,6 +17,7 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
@@ -169,19 +170,32 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 }
 
 func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession db.CodeSession) error {
+	ctx, span := telemetry.Start(ctx, "oma.sandbox.resume", telemetry.AttrCodeSessionID.String(codeSession.ExternalID), telemetry.AttrSessionID.String(codeSession.SessionExternalID))
+	startedAt := time.Now()
+	outcome, err := s.resumeSandbox(ctx, codeSession)
+	if err != nil {
+		outcome = "error"
+	}
+	span.SetAttributes(telemetry.AttrOutcome.String(outcome))
+	telemetry.RecordSandboxResume(ctx, outcome, time.Since(startedAt))
+	telemetry.End(span, err)
+	return err
+}
+
+func (s *Service) resumeSandbox(ctx context.Context, codeSession db.CodeSession) (string, error) {
 	if s.sandboxTimeoutExtender == nil {
-		return nil
+		return "disabled", nil
 	}
 	sandbox, err := s.db.GetResumableEnvironmentSandboxForCodeSession(ctx, codeSession.ExternalID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			_, err = s.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, codeSession.ExternalID, "", nil)
-			return err
+			_, err = s.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, codeSession.ExternalID, "", nil, telemetry.TraceParent(ctx))
+			return "recovery_requested", err
 		}
-		return err
+		return "", err
 	}
 	if sandbox.ProviderSandboxID == nil || *sandbox.ProviderSandboxID == "" {
-		return nil
+		return "no_provider_id", nil
 	}
 	providerSandboxID := *sandbox.ProviderSandboxID
 	err = s.sandboxTimeoutExtender.SetTimeout(ctx, providerSandboxID, s.sandboxTimeout)
@@ -194,19 +208,20 @@ func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession d
 			providerSandboxID,
 			codeSessionWorkerLeaseTTL,
 		)
-		return err
+		return "extended", err
 	}
 	if !errors.Is(err, sandboxruntime.ErrSandboxNotFound) {
-		return err
+		return "", err
 	}
 	scheduled, scheduleErr := s.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(
 		ctx,
 		codeSession.ExternalID,
 		providerSandboxID,
 		err,
+		telemetry.TraceParent(ctx),
 	)
 	if scheduleErr != nil {
-		return fmt.Errorf("schedule replacement sandbox: %w", scheduleErr)
+		return "", fmt.Errorf("schedule replacement sandbox: %w", scheduleErr)
 	}
 	if scheduled {
 		s.logger.InfoContext(
@@ -216,7 +231,7 @@ func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession d
 			"provider_sandbox_id", providerSandboxID,
 		)
 	}
-	return nil
+	return "recovery_scheduled", nil
 }
 
 func (s *Service) QueueRawPublicSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) error {

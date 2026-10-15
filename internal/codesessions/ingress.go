@@ -13,14 +13,17 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/go-chi/chi/v5"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
-
-	"github.com/go-chi/chi/v5"
 )
 
 const (
@@ -210,6 +213,9 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 		h.errorAdapter.Write(w, r, workerEventStreamUnavailable(err))
 		return
 	}
+	streamStartedAt := time.Now()
+	telemetry.AddSSEStreams(r.Context(), "worker", 1)
+	defer telemetry.CloseSSEStream(r.Context(), "worker", streamStartedAt)
 	defer disconnect()
 	defer func() {
 		if err := subscription.Close(); err != nil {
@@ -233,9 +239,11 @@ func (h *Handler) handleCodeSessionWorkerRegister(w http.ResponseWriter, r *http
 	codeSessionID := chi.URLParam(r, "code_session_id")
 	claims, ok := h.authorizeSessionIngressClaims(w, r, codeSessionID)
 	if !ok {
+		telemetry.RecordWorkerRegister(r.Context(), "error")
 		return
 	}
 	if err := validateCodeSessionWorkerRegisterBody(w, r, codeSessionID); err != nil {
+		telemetry.RecordWorkerRegister(r.Context(), "error")
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
@@ -257,8 +265,15 @@ func (h *Handler) handleCodeSessionWorkerRegister(w http.ResponseWriter, r *http
 		epoch, _, err = h.db.RegisterCodeSessionWorker(r.Context(), codeSessionID, binding, codeSessionWorkerLeaseTTL)
 	}
 	if err != nil {
+		telemetry.RecordWorkerRegister(r.Context(), "error")
 		h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not register code session worker")
 		return
+	}
+	delay, measured := workerRegisterDelay(claims)
+	telemetry.RecordWorkerRegister(r.Context(), "ok")
+	if measured {
+		telemetry.RecordWorkerRegisterDelay(r.Context(), delay)
+		trace.SpanFromContext(r.Context()).SetAttributes(attribute.Float64("oma.worker.register_delay_s", delay.Seconds()))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"worker_epoch": strconv.FormatInt(epoch, 10)})
 }
@@ -324,10 +339,11 @@ func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer
 				h.logger.ErrorContext(ctx, "decode code session worker event ID", "code_session_id", codeSession.ExternalID, "event_id", eventID, "error", err)
 				return
 			}
-			if err := h.service.workerEventAcks.Put(ctx, codeSession.ExternalID, epoch, eventID, workerevents.AckRef{AckSubject: delivery.AckSubject, CleanupJobID: cleanupJobID, PublicEventID: publicEvent.ID}); err != nil {
+			if err := h.service.workerEventAcks.Put(ctx, codeSession.ExternalID, epoch, eventID, workerevents.AckRef{AckSubject: delivery.AckSubject, CleanupJobID: cleanupJobID, PublicEventID: publicEvent.ID, Lane: delivery.Lane, PublishedAt: delivery.PublishedAt, TraceParent: delivery.TraceParent}); err != nil {
 				h.logger.WarnContext(ctx, "store code session worker event ACK", "code_session_id", codeSession.ExternalID, "event_id", eventID, "error", err)
 				return
 			}
+			h.observeWorkerEventDelivery(ctx, codeSession, epoch, delivery, eventID)
 			if err := writeCodeSessionWorkerSSEEvent(w, flusher, event); err != nil {
 				// 保留到 TTL：旧连接写失败时，新连接可能已重投并覆盖同一个 key。
 				// 无条件删除会抹掉新投递的 ACK 定位；未 flush 的映射本身不会 ACK 消息。
@@ -473,10 +489,12 @@ func (h *Handler) handleCodeSessionWorkerDiagnostics(w http.ResponseWriter, r *h
 func (h *Handler) handleCodeSessionWorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
+		telemetry.RecordWorkerHeartbeatRejected(r.Context(), "error")
 		return
 	}
 	input, err := decodeCodeSessionWorkerHeartbeatBody(w, r, codeSessionID)
 	if err != nil {
+		telemetry.RecordWorkerHeartbeatRejected(r.Context(), "error")
 		writeCodeSessionWorkerBodyReadError(w, r, err)
 		return
 	}
@@ -487,22 +505,27 @@ func (h *Handler) handleCodeSessionWorkerHeartbeat(w http.ResponseWriter, r *htt
 			h.logger.WarnContext(r.Context(), "code session worker heartbeat rejected", "request_id", httpapi.RequestID(r.Context()), "code_session_id", codeSessionID, "provided_epoch", heartbeatErr.ProvidedEpoch, "current_epoch", heartbeatErr.CurrentEpoch, "worker_lease_expires_at", workerLeaseTimeText(heartbeatErr.WorkerLeaseExpiresAt), "reason", heartbeatErr.Err)
 		}
 		if errors.Is(err, db.ErrWorkerNotRegistered) {
+			telemetry.RecordWorkerHeartbeatRejected(r.Context(), "not_registered")
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Code session worker not registered"))
 			return
 		}
 		if errors.Is(err, db.ErrWorkerLeaseExpired) {
+			telemetry.RecordWorkerHeartbeatRejected(r.Context(), "lease_expired")
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusGone, "session_expired", "Code session worker lease expired"))
 			return
 		}
 		if errors.Is(err, db.ErrWorkerEpochMismatch) || errors.Is(err, db.ErrNotFound) {
+			telemetry.RecordWorkerHeartbeatRejected(r.Context(), "epoch_mismatch")
 			h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not record code session worker heartbeat")
 			return
 		}
+		telemetry.RecordWorkerHeartbeatRejected(r.Context(), "error")
 		h.logger.ErrorContext(r.Context(), "touch code session worker heartbeat", "code_session_id", codeSessionID, "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not record code session worker heartbeat"))
 		return
 	}
 	if err := h.extendCodeSessionSandboxTimeout(r.Context(), codeSessionID); err != nil {
+		telemetry.RecordWorkerHeartbeatRejected(r.Context(), "sandbox_timeout")
 		h.logger.ErrorContext(r.Context(), "extend code session sandbox timeout", "code_session_id", codeSessionID, "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusServiceUnavailable, "api_error", "Could not extend code session sandbox timeout"))
 		return

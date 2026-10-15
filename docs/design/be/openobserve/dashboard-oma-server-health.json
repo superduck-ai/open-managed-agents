@@ -1,0 +1,4719 @@
+{
+  "version": 5,
+  "title": "OMA 服务健康",
+  "description": "OMA 服务端全局健康：启动链路、消息投递、模型、状态与积压、基础设施。状态类 gauge 每个副本都上报，统一按 max 聚合。",
+  "tabs": [
+    {
+      "tabId": "overview",
+      "name": "总览",
+      "panels": [
+        {
+          "id": "Panel_overview_1",
+          "type": "metric",
+          "title": "运行中会话",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max(oma_sessions_live{service_instance_id=~\"$instance\",oma_state=\"running\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_sessions_live",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 0,
+            "w": 8,
+            "h": 5,
+            "i": 1
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_overview_2",
+          "type": "metric",
+          "title": "排队中启动任务",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max(oma_environment_work_live{service_instance_id=~\"$instance\",oma_state=\"queued\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_environment_work_live",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 8,
+            "y": 0,
+            "w": 8,
+            "h": 5,
+            "i": 2
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_overview_3",
+          "type": "metric",
+          "title": "最老排队年龄",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max(oma_environment_work_oldest_queued_age{service_instance_id=~\"$instance\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_environment_work_oldest_queued_age",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 16,
+            "y": 0,
+            "w": 8,
+            "h": 5,
+            "i": 3
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_overview_4",
+          "type": "metric",
+          "title": "卡住的会话",
+          "description": "running 且 updated_at 超过 stale_running_after 的会话数",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max(oma_sessions_stale_running{service_instance_id=~\"$instance\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_sessions_stale_running",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 0,
+            "w": 8,
+            "h": 5,
+            "i": 4
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_overview_5",
+          "type": "metric",
+          "title": "入站最老消息",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max(oma_nats_stream_oldest_message_age{service_instance_id=~\"$instance\",oma_nats_stream=\"OMA_WORKER_INBOUND\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_nats_stream_oldest_message_age",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 32,
+            "y": 0,
+            "w": 8,
+            "h": 5,
+            "i": 5
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_overview_6",
+          "type": "metric",
+          "title": "API 5xx 率",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "percent-1",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum(rate(http_server_request_duration_count{service_instance_id=~\"$instance\",http_response_status_code=~\"5..\"}[5m])) / sum(rate(http_server_request_duration_count{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "http_server_request_duration_count",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 40,
+            "y": 0,
+            "w": 8,
+            "h": 5,
+            "i": 6
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_overview_7",
+          "type": "line",
+          "title": "会话启动耗时 p95：排队 / Runner / worker 注册",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "histogram_quantile(0.95, sum by (le) (rate(oma_runner_queue_wait_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_runner_queue_wait_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "排队",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "histogram_quantile(0.95, sum by (le) (rate(oma_runner_run_duration_bucket{service_instance_id=~\"$instance\",oma_outcome=\"ok\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_runner_run_duration_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "Runner",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "histogram_quantile(0.95, sum by (le) (rate(oma_worker_register_delay_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_worker_register_delay_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "worker 注册",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 5,
+            "w": 24,
+            "h": 9,
+            "i": 7
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_overview_8",
+          "type": "line",
+          "title": "消息处理耗时 p95（task / reply）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "histogram_quantile(0.95, sum by (le, oma_worker_event_lane) (rate(oma_worker_event_processed_latency_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_worker_event_processed_latency_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_worker_event_lane}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 5,
+            "w": 24,
+            "h": 9,
+            "i": 8
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_overview_9",
+          "type": "line",
+          "title": "模型首 token p95（按模型）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "histogram_quantile(0.95, sum by (le, gen_ai_request_model) (rate(oma_model_time_to_first_token_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_model_time_to_first_token_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{gen_ai_request_model}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 14,
+            "w": 24,
+            "h": 9,
+            "i": 9
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_overview_10",
+          "type": "stacked",
+          "title": "上游模型状态码分布",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (http_response_status_code) (increase(gen_ai_client_operation_duration_count{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "gen_ai_client_operation_duration_count",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{http_response_status_code}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 14,
+            "w": 24,
+            "h": 9,
+            "i": 10
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_overview_11",
+          "type": "bar",
+          "title": "交接失败 / 回执被忽略 / 重投",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum(increase(oma_session_handoff_failures{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_session_handoff_failures",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "交接失败",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "sum(increase(oma_worker_event_updates{service_instance_id=~\"$instance\",oma_outcome=\"ignored\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_worker_event_updates",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "回执被忽略",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "sum(increase(oma_worker_event_redeliveries{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_worker_event_redeliveries",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "重投",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 23,
+            "w": 48,
+            "h": 9,
+            "i": 11
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        }
+      ]
+    },
+    {
+      "tabId": "startup",
+      "name": "启动与恢复",
+      "panels": [
+        {
+          "id": "Panel_startup_1",
+          "type": "h-bar",
+          "title": "Runner 各阶段耗时 p95",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "histogram_quantile(0.95, sum by (le, oma_stage) (rate(oma_runner_stage_duration_bucket{service_instance_id=~\"$instance\"}[15m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_runner_stage_duration_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_stage}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 0,
+            "w": 24,
+            "h": 9,
+            "i": 1
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_startup_2",
+          "type": "bar",
+          "title": "Runner 失败次数（按失败阶段）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (oma_stage) (increase(oma_runner_stage_duration_count{service_instance_id=~\"$instance\",oma_outcome!=\"ok\"}[15m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_runner_stage_duration_count",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_stage}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 0,
+            "w": 24,
+            "h": 9,
+            "i": 2
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_startup_3",
+          "type": "line",
+          "title": "E2B 调用耗时 p95（按操作）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "histogram_quantile(0.95, sum by (le, oma_operation) (rate(oma_sandbox_provider_duration_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_sandbox_provider_duration_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_operation}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 9,
+            "w": 24,
+            "h": 9,
+            "i": 3
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_startup_4",
+          "type": "line",
+          "title": "E2B 错误率（按操作）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "percent-1",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (oma_operation) (rate(oma_sandbox_provider_duration_count{service_instance_id=~\"$instance\",oma_outcome!~\"ok|not_found\"}[5m])) / sum by (oma_operation) (rate(oma_sandbox_provider_duration_count{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_sandbox_provider_duration_count",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_operation}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 9,
+            "w": 24,
+            "h": 9,
+            "i": 4
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_startup_5",
+          "type": "pie",
+          "title": "沙箱唤醒结果分布",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (oma_outcome) (increase(oma_sandbox_resume_duration_count{service_instance_id=~\"$instance\"}[1h]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_sandbox_resume_duration_count",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_outcome}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 18,
+            "w": 24,
+            "h": 9,
+            "i": 5
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_startup_6",
+          "type": "line",
+          "title": "worker 注册延迟 p50 / p95",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "histogram_quantile(0.5, sum by (le) (rate(oma_worker_register_delay_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_worker_register_delay_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "p50",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "histogram_quantile(0.95, sum by (le) (rate(oma_worker_register_delay_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_worker_register_delay_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "p95",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 18,
+            "w": 24,
+            "h": 9,
+            "i": 6
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_startup_7",
+          "type": "line",
+          "title": "重建型 Runner 次数与耗时 p95",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum(increase(oma_runner_runs{service_instance_id=~\"$instance\",oma_runner_recovered=\"true\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_runner_runs",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "次数",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "histogram_quantile(0.95, sum by (le) (rate(oma_runner_run_duration_bucket{service_instance_id=~\"$instance\",oma_runner_recovered=\"true\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_runner_run_duration_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "耗时 p95（秒）",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 27,
+            "w": 24,
+            "h": 9,
+            "i": 7
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_startup_8",
+          "type": "line",
+          "title": "Runner 结果与 code session 激活耗时 p95",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (oma_outcome) (increase(oma_runner_runs{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_runner_runs",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "runs {oma_outcome}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "histogram_quantile(0.95, sum by (le, oma_outcome) (rate(oma_code_session_activation_duration_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_code_session_activation_duration_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "激活 p95 {oma_outcome}（秒）",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 27,
+            "w": 24,
+            "h": 9,
+            "i": 8
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        }
+      ]
+    },
+    {
+      "tabId": "delivery",
+      "name": "消息投递",
+      "panels": [
+        {
+          "id": "Panel_delivery_1",
+          "type": "line",
+          "title": "JetStream 入队耗时 p95 与失败数",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "histogram_quantile(0.95, sum by (le, oma_worker_event_lane) (rate(oma_worker_event_publish_duration_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_worker_event_publish_duration_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "p95 {oma_worker_event_lane}（秒）",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "sum by (oma_worker_event_lane) (increase(oma_worker_event_publish_duration_count{service_instance_id=~\"$instance\",oma_outcome!=\"ok\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_worker_event_publish_duration_count",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "失败 {oma_worker_event_lane}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 0,
+            "w": 24,
+            "h": 9,
+            "i": 1
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_delivery_2",
+          "type": "line",
+          "title": "投递前排队时间 p95（按通道）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "histogram_quantile(0.95, sum by (le, oma_worker_event_lane) (rate(oma_worker_event_queue_wait_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_worker_event_queue_wait_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_worker_event_lane}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 0,
+            "w": 24,
+            "h": 9,
+            "i": 2
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_delivery_3",
+          "type": "bar",
+          "title": "重投次数（按通道）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (oma_worker_event_lane) (increase(oma_worker_event_redeliveries{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_worker_event_redeliveries",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_worker_event_lane}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 9,
+            "w": 24,
+            "h": 9,
+            "i": 3
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_delivery_4",
+          "type": "stacked",
+          "title": "回执结果",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (oma_outcome) (increase(oma_worker_event_updates{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_worker_event_updates",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_outcome}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 9,
+            "w": 24,
+            "h": 9,
+            "i": 4
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_delivery_5",
+          "type": "line",
+          "title": "worker 入站流积压与最老消息年龄",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max(oma_nats_stream_messages{service_instance_id=~\"$instance\",oma_nats_stream=\"OMA_WORKER_INBOUND\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_nats_stream_messages",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "积压条数",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "max(oma_nats_stream_oldest_message_age{service_instance_id=~\"$instance\",oma_nats_stream=\"OMA_WORKER_INBOUND\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_nats_stream_oldest_message_age",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "最老消息（秒）",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 18,
+            "w": 24,
+            "h": 9,
+            "i": 5
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_delivery_6",
+          "type": "stacked",
+          "title": "心跳被拒原因",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (oma_reason) (increase(oma_worker_heartbeat_rejected{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_worker_heartbeat_rejected",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_reason}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 18,
+            "w": 24,
+            "h": 9,
+            "i": 6
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_delivery_7",
+          "type": "line",
+          "title": "SSE 连接数（客户端 / worker）与时长 p95",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (oma_stream_kind) (oma_sse_streams{service_instance_id=~\"$instance\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_sse_streams",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "连接 {oma_stream_kind}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "histogram_quantile(0.95, sum by (le, oma_stream_kind) (rate(oma_sse_stream_duration_bucket{service_instance_id=~\"$instance\"}[15m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_sse_stream_duration_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "时长 p95 {oma_stream_kind}（秒）",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 27,
+            "w": 24,
+            "h": 9,
+            "i": 7
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_delivery_8",
+          "type": "line",
+          "title": "跨实例广播延迟 p95 与失败数",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "histogram_quantile(0.95, sum by (le) (rate(oma_fanout_lag_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_fanout_lag_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "延迟 p95（秒）",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "sum(increase(oma_fanout_publish_failures{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_fanout_publish_failures",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "发布失败",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 27,
+            "w": 24,
+            "h": 9,
+            "i": 8
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_delivery_9",
+          "type": "bar",
+          "title": "会话交接失败（按原因）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (oma_reason) (increase(oma_session_handoff_failures{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_session_handoff_failures",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_reason}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 36,
+            "w": 48,
+            "h": 9,
+            "i": 9
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        }
+      ]
+    },
+    {
+      "tabId": "model",
+      "name": "模型与工具确认",
+      "panels": [
+        {
+          "id": "Panel_model_1",
+          "type": "line",
+          "title": "模型调用耗时 p50 / p95（按模型）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "histogram_quantile(0.5, sum by (le, gen_ai_request_model) (rate(gen_ai_client_operation_duration_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "gen_ai_client_operation_duration_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "p50 {gen_ai_request_model}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "histogram_quantile(0.95, sum by (le, gen_ai_request_model) (rate(gen_ai_client_operation_duration_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "gen_ai_client_operation_duration_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "p95 {gen_ai_request_model}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 0,
+            "w": 24,
+            "h": 9,
+            "i": 1
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_model_2",
+          "type": "line",
+          "title": "首字节 / 首 token p95（按模型）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "histogram_quantile(0.95, sum by (le, gen_ai_request_model) (rate(oma_model_time_to_first_byte_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_model_time_to_first_byte_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "TTFB {gen_ai_request_model}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "histogram_quantile(0.95, sum by (le, gen_ai_request_model) (rate(oma_model_time_to_first_token_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_model_time_to_first_token_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "TTFT {gen_ai_request_model}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 0,
+            "w": 24,
+            "h": 9,
+            "i": 2
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_model_3",
+          "type": "stacked",
+          "title": "错误类型分布",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (error_type) (increase(gen_ai_client_operation_duration_count{service_instance_id=~\"$instance\",error_type!=\"\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "gen_ai_client_operation_duration_count",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{error_type}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 9,
+            "w": 24,
+            "h": 9,
+            "i": 3
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_model_4",
+          "type": "stacked",
+          "title": "token 用量（按类型）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (gen_ai_token_type) (increase(gen_ai_client_token_usage_sum{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "gen_ai_client_token_usage_sum",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{gen_ai_token_type}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 9,
+            "w": 24,
+            "h": 9,
+            "i": 4
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_model_5",
+          "type": "stacked",
+          "title": "工具权限决策",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (oma_decision) (increase(oma_tool_permission_decisions{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_tool_permission_decisions",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_decision}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 18,
+            "w": 24,
+            "h": 9,
+            "i": 5
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_model_6",
+          "type": "line",
+          "title": "用户确认等待 p50 / p95",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "histogram_quantile(0.5, sum by (le) (rate(oma_tool_permission_wait_bucket{service_instance_id=~\"$instance\"}[15m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_tool_permission_wait_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "p50",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "histogram_quantile(0.95, sum by (le) (rate(oma_tool_permission_wait_bucket{service_instance_id=~\"$instance\"}[15m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_tool_permission_wait_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "p95",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 18,
+            "w": 24,
+            "h": 9,
+            "i": 6
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        }
+      ]
+    },
+    {
+      "tabId": "state",
+      "name": "状态与积压",
+      "panels": [
+        {
+          "id": "Panel_state_1",
+          "type": "area-stacked",
+          "title": "会话状态（max）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max by (oma_state) (oma_sessions_live{service_instance_id=~\"$instance\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_sessions_live",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_state}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 0,
+            "w": 24,
+            "h": 9,
+            "i": 1
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_state_2",
+          "type": "area-stacked",
+          "title": "活跃 code session（worker 状态 / 连接）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max by (oma_worker_status, oma_connection_status) (oma_code_sessions_active{service_instance_id=~\"$instance\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_code_sessions_active",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_worker_status} / {oma_connection_status}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 0,
+            "w": 24,
+            "h": 9,
+            "i": 2
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_state_3",
+          "type": "area-stacked",
+          "title": "启动任务状态（max）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max by (oma_state) (oma_environment_work_live{service_instance_id=~\"$instance\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_environment_work_live",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_state}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 9,
+            "w": 24,
+            "h": 9,
+            "i": 3
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_state_4",
+          "type": "area-stacked",
+          "title": "沙箱状态（max）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max by (oma_state) (oma_environment_sandboxes_live{service_instance_id=~\"$instance\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_environment_sandboxes_live",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_state}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 9,
+            "w": 24,
+            "h": 9,
+            "i": 4
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_state_5",
+          "type": "line",
+          "title": "等待用户确认 / 断开连接的 worker",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum(max by (oma_connection_status) (oma_code_sessions_active{service_instance_id=~\"$instance\",oma_worker_status=\"requires_action\"}))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_code_sessions_active",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "等待确认",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "sum(max by (oma_worker_status) (oma_code_sessions_active{service_instance_id=~\"$instance\",oma_connection_status=\"disconnected\"}))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_code_sessions_active",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "断开连接",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 18,
+            "w": 24,
+            "h": 9,
+            "i": 5
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_state_6",
+          "type": "line",
+          "title": "JetStream 各流积压条数",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max by (oma_nats_stream) (oma_nats_stream_messages{service_instance_id=~\"$instance\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_nats_stream_messages",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_nats_stream}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 18,
+            "w": 24,
+            "h": 9,
+            "i": 6
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_state_7",
+          "type": "line",
+          "title": "webhook consumer 待处理 / 待 ack / 重投",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max(oma_nats_consumer_pending{service_instance_id=~\"$instance\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_nats_consumer_pending",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "待处理",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "max(oma_nats_consumer_ack_pending{service_instance_id=~\"$instance\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_nats_consumer_ack_pending",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "待 ack",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "max(oma_nats_consumer_redelivered{service_instance_id=~\"$instance\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_nats_consumer_redelivered",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "重投",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 27,
+            "w": 24,
+            "h": 9,
+            "i": 7
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_state_8",
+          "type": "line",
+          "title": "数据库连接池占用率（按实例）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "percent-1",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max by (service_instance_id) (oma_db_pool_connections{service_instance_id=~\"$instance\",oma_state=\"acquired\"}) / max by (service_instance_id) (oma_db_pool_connections{service_instance_id=~\"$instance\",oma_state=\"max\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_db_pool_connections",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{service_instance_id}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 27,
+            "w": 24,
+            "h": 9,
+            "i": 8
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        }
+      ]
+    },
+    {
+      "tabId": "infra",
+      "name": "基础设施",
+      "panels": [
+        {
+          "id": "Panel_infra_1",
+          "type": "line",
+          "title": "HTTP 路由 p95（Top 20）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "topk(20, histogram_quantile(0.95, sum by (le, http_request_method, http_route) (rate(http_server_request_duration_bucket{service_instance_id=~\"$instance\"}[15m]))))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "http_server_request_duration_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{http_request_method} {http_route}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 0,
+            "w": 48,
+            "h": 11,
+            "i": 1
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_infra_2",
+          "type": "bar",
+          "title": "HTTP 5xx（按路由）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (http_route) (increase(http_server_request_duration_count{service_instance_id=~\"$instance\",http_response_status_code=~\"5..\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "http_server_request_duration_count",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{http_route}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 11,
+            "w": 24,
+            "h": 9,
+            "i": 2
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_infra_3",
+          "type": "stacked",
+          "title": "River 任务结果（按类型）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (oma_river_kind, oma_outcome) (increase(oma_river_jobs{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_river_jobs",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_river_kind} {oma_outcome}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 11,
+            "w": 24,
+            "h": 9,
+            "i": 3
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_infra_4",
+          "type": "line",
+          "title": "River 任务耗时与排队 p95（按类型）",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "histogram_quantile(0.95, sum by (le, oma_river_kind) (rate(oma_river_job_duration_bucket{service_instance_id=~\"$instance\"}[15m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_river_job_duration_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "耗时 {oma_river_kind}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "histogram_quantile(0.95, sum by (le, oma_river_kind) (rate(oma_river_job_queue_wait_bucket{service_instance_id=~\"$instance\"}[15m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_river_job_queue_wait_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "排队 {oma_river_kind}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 20,
+            "w": 24,
+            "h": 9,
+            "i": 4
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_infra_5",
+          "type": "stacked",
+          "title": "webhook 投递结果",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (oma_outcome) (increase(oma_webhook_deliveries{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_webhook_deliveries",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_outcome}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 20,
+            "w": 24,
+            "h": 9,
+            "i": 5
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_infra_6",
+          "type": "line",
+          "title": "webhook 投递成功率",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "percent-1",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum(rate(oma_webhook_deliveries{service_instance_id=~\"$instance\",oma_outcome=\"success\"}[15m])) / sum(rate(oma_webhook_deliveries{service_instance_id=~\"$instance\"}[15m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_webhook_deliveries",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "成功率",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 29,
+            "w": 24,
+            "h": 9,
+            "i": 6
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_infra_7",
+          "type": "bar",
+          "title": "状态统计采集失败",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 0.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "smooth",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (oma_reason) (increase(oma_state_metrics_collect_failures{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "oma_state_metrics_collect_failures",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{oma_reason}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 29,
+            "w": 24,
+            "h": 9,
+            "i": 7
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        }
+      ]
+    }
+  ],
+  "variables": {
+    "list": [
+      {
+        "type": "query_values",
+        "name": "instance",
+        "label": "实例",
+        "query_data": {
+          "stream_type": "metrics",
+          "stream": "oma_db_pool_connections",
+          "field": "service_instance_id",
+          "max_record_size": 100
+        },
+        "value": "",
+        "options": [],
+        "multiSelect": true,
+        "hideOnDashboard": false,
+        "selectAllValueForMultiSelect": "all"
+      }
+    ],
+    "showDynamicFilters": false
+  },
+  "defaultDatetimeDuration": {
+    "type": "relative",
+    "relativeTimePeriod": "6h"
+  }
+}

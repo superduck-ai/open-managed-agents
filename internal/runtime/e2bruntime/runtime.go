@@ -108,7 +108,9 @@ func (p *E2BProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (Res
 	return resolved, nil
 }
 
-func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.EnvironmentWork, resolved Resolution) (Sandbox, error) {
+func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.EnvironmentWork, resolved Resolution) (result Sandbox, err error) {
+	ctx, finish := observeProviderCall(ctx, "create", "")
+	defer func() { finish(err) }()
 	if p.cfg.APIKey == "" && !p.cfg.Debug {
 		return Sandbox{}, errors.New("e2b.api_key is required to create a sandbox")
 	}
@@ -144,7 +146,9 @@ func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.E
 
 // Kill deletes by ID without Connect: paused sandboxes must not resume merely
 // to be reclaimed.
-func (p *E2BProvider) Kill(ctx context.Context, sandboxID string) error {
+func (p *E2BProvider) Kill(ctx context.Context, sandboxID string) (err error) {
+	ctx, finish := observeProviderCall(ctx, "kill", sandboxID)
+	defer func() { finish(err) }()
 	if sandboxID == "" {
 		return nil
 	}
@@ -158,14 +162,16 @@ func (p *E2BProvider) Kill(ctx context.Context, sandboxID string) error {
 	}
 	// The SDK maps a provider 404 to (false, nil); an already absent sandbox
 	// satisfies the same deletion postcondition as a successful DELETE.
-	_, err := e2b.Kill(ctx, sandboxID, opts)
+	_, err = e2b.Kill(ctx, sandboxID, opts)
 	return err
 }
 
 // SetTimeout renews the provider-side sandbox lifetime from the time of this
 // request. The heartbeat caller passes the configured sandbox lifetime rather
 // than an absolute expiration timestamp.
-func (p *E2BProvider) SetTimeout(ctx context.Context, sandboxID string, timeout time.Duration) error {
+func (p *E2BProvider) SetTimeout(ctx context.Context, sandboxID string, timeout time.Duration) (err error) {
+	ctx, finish := observeProviderCall(ctx, "set_timeout", sandboxID)
+	defer func() { finish(err) }()
 	if strings.TrimSpace(sandboxID) == "" {
 		return errors.New("sandbox id is required")
 	}
@@ -190,7 +196,9 @@ func classifySandboxError(err error) error {
 	return err
 }
 
-func (p *E2BProvider) WriteFile(ctx context.Context, sandboxID string, filePath string, data []byte) error {
+func (p *E2BProvider) WriteFile(ctx context.Context, sandboxID string, filePath string, data []byte) (err error) {
+	ctx, finish := observeProviderCall(ctx, "write_file", sandboxID)
+	defer func() { finish(err) }()
 	if strings.TrimSpace(sandboxID) == "" {
 		return errors.New("sandbox id is required")
 	}
@@ -210,7 +218,9 @@ func (p *E2BProvider) WriteFile(ctx context.Context, sandboxID string, filePath 
 	return err
 }
 
-func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, request CommandRequest) (CommandResult, error) {
+func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, request CommandRequest) (result CommandResult, err error) {
+	ctx, finish := observeProviderCall(ctx, "run_command", sandboxID)
+	defer func() { finish(err) }()
 	if strings.TrimSpace(sandboxID) == "" {
 		return CommandResult{}, errors.New("sandbox id is required")
 	}
@@ -390,7 +400,9 @@ func (p *e2bCommandProcess) Disconnect() {
 	p.handle.Disconnect()
 }
 
-func (p *E2BProvider) FileExists(ctx context.Context, sandboxID string, filePath string) (bool, error) {
+func (p *E2BProvider) FileExists(ctx context.Context, sandboxID string, filePath string) (exists bool, err error) {
+	ctx, finish := observeProviderCall(ctx, "file_exists", sandboxID)
+	defer func() { finish(err) }()
 	if strings.TrimSpace(sandboxID) == "" {
 		return false, errors.New("sandbox id is required")
 	}
@@ -413,7 +425,9 @@ func shellQuote(value string) string {
 
 // StartBackgroundCommand 通过 E2B 进程 API 启动后台命令。
 // stdin 非空时直接写入进程并关闭 EOF；为空时不启用 stdin 通道。
-func (p *E2BProvider) StartBackgroundCommand(ctx context.Context, sandboxID string, command string, stdin []byte) error {
+func (p *E2BProvider) StartBackgroundCommand(ctx context.Context, sandboxID string, command string, stdin []byte) (err error) {
+	ctx, finish := observeProviderCall(ctx, "start_background_command", sandboxID)
+	defer func() { finish(err) }()
 	if strings.TrimSpace(sandboxID) == "" {
 		return errors.New("sandbox id is required")
 	}

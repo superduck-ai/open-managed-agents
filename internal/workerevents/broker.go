@@ -16,6 +16,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
 const (
@@ -61,8 +62,12 @@ type EnvelopeV1 struct {
 }
 
 type Delivery struct {
-	Envelope   EnvelopeV1
-	AckSubject string
+	Envelope      EnvelopeV1
+	AckSubject    string
+	Lane          string
+	PublishedAt   time.Time
+	DeliveryCount uint64
+	TraceParent   string
 }
 
 // IsExpired 报告 now 是否已越过 envelope 的逻辑有效期。过期消息不允许静默跳过：
@@ -164,8 +169,21 @@ func NewJetStream(ctx context.Context, connection *nats.Conn, cfg config.WorkerE
 	return &JetStreamBroker{connection: connection, js: js, maxMessageBytes: cfg.MaxMsgSize, consumerInactiveThreshold: cfg.ConsumerInactiveThreshold}, nil
 }
 
-func (b *JetStreamBroker) Publish(ctx context.Context, messageID string, envelope EnvelopeV1) error {
-	subjectName, err := laneForEvent(envelope).subject(envelope.CodeSessionID)
+func (b *JetStreamBroker) Publish(ctx context.Context, messageID string, envelope EnvelopeV1) (err error) {
+	lane := laneForEvent(envelope)
+	ctx, span := telemetry.Start(ctx, "oma.worker_event.publish",
+		telemetry.AttrCodeSessionID.String(envelope.CodeSessionID),
+		telemetry.AttrEventID.String(envelope.EventID),
+		telemetry.AttrEventType.String(envelope.EventType),
+		telemetry.AttrLane.String(lane.name()),
+	)
+	startedAt := time.Now()
+	defer func() {
+		telemetry.RecordWorkerEventPublish(ctx, lane.name(), telemetry.Outcome(err), time.Since(startedAt))
+		telemetry.SetErrorStatus(span, err)
+		span.End()
+	}()
+	subjectName, err := lane.subject(envelope.CodeSessionID)
 	if err != nil {
 		return err
 	}
@@ -179,6 +197,9 @@ func (b *JetStreamBroker) Publish(ctx context.Context, messageID string, envelop
 	message := nats.NewMsg(subjectName)
 	message.Data = body
 	message.Header.Set(nats.MsgIdHdr, messageID)
+	if traceParent := telemetry.TraceParent(ctx); traceParent != "" {
+		message.Header.Set(telemetry.TraceParentHeader, traceParent)
+	}
 	if _, err := b.js.PublishMsg(ctx, message); err != nil {
 		return fmt.Errorf("publish worker event: %w", err)
 	}
@@ -372,7 +393,10 @@ func (s *jetStreamSubscription) receive(consumer jetstream.Consumer) {
 				return
 			}
 			envelope.SequenceNum = int64(metadata.Sequence.Stream)
-			delivery := Delivery{Envelope: envelope, AckSubject: message.Reply()}
+			delivery := Delivery{
+				Envelope: envelope, AckSubject: message.Reply(), Lane: laneForEvent(envelope).name(), PublishedAt: metadata.Timestamp,
+				DeliveryCount: metadata.NumDelivered, TraceParent: message.Headers().Get(telemetry.TraceParentHeader),
+			}
 			select {
 			case s.messages <- delivery:
 			case <-s.ctx.Done():

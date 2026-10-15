@@ -142,7 +142,8 @@ func TestTerminatedSubagentRejectsApproval(t *testing.T) {
 	}
 	postCodeSessionWorkerEvents(t, app, codeID, internalPayloadRequest(epoch,
 		`{"type":"control_request","uuid":"late-write","session_thread_id":"sthr_cancel","request_id":"late-request","request":{"subtype":"can_use_tool","tool_name":"Write","tool_use_id":"late-provider","input":{}}}`,
-		`{"type":"session.thread_status_idle","uuid":"late-child-idle","session_thread_id":"sthr_cancel","stop_reason":{"type":"requires_action","event_ids":[`+quoteJSON(tool["primary_event_id"].(string))+`]}}`))
+		`{"type":"session.thread_status_idle","uuid":"late-child-idle","session_thread_id":"sthr_cancel","stop_reason":{"type":"requires_action","event_ids":[`+quoteJSON(tool["primary_event_id"].(string))+`]}}`,
+		`{"type":"session.thread_status_running","uuid":"late-child-running","session_thread_id":"sthr_cancel"}`))
 	worker, _, err = app.db.GetCodeSession(t.Context(), codeID)
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +154,7 @@ func TestTerminatedSubagentRejectsApproval(t *testing.T) {
 	}
 	child, err = app.db.GetSessionThread(t.Context(), worker.WorkspaceUUID, sessionID, "sthr_cancel")
 	if err != nil || child.Status != "terminated" {
-		t.Fatalf("late idle revived child: %s %v", child.Status, err)
+		t.Fatalf("late status revived child: %s %v", child.Status, err)
 	}
 	sendSessionEvents(t, app, sessionID, `{"events":[{"type":"user.tool_confirmation","tool_use_id":`+quoteJSON(live["id"].(string))+`,"result":"allow","session_thread_id":"sthr_live"}]}`, defaultTestKey)
 	putCodeSessionWorkerState(t, app, codeID, `{"worker_epoch":`+epoch+`,"worker_status":"idle"}`)

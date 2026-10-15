@@ -230,11 +230,13 @@ func TestRequestBindingRespectsCallerTimeout(t *testing.T) {
 	}
 	defer listener.Close()
 	done := make(chan struct{})
+	connections := make(chan net.Conn, 1)
 	go func() {
 		defer close(done)
 		conn, err := listener.Accept()
 		if err == nil {
 			defer conn.Close()
+			connections <- conn
 			buffer := make([]byte, 1024)
 			for {
 				if _, err := conn.Read(buffer); err != nil {
@@ -244,6 +246,16 @@ func TestRequestBindingRespectsCallerTimeout(t *testing.T) {
 		}
 	}()
 	client := redis.NewClient(&redis.Options{Addr: listener.Addr().String(), ContextTimeoutEnabled: true, MaxRetries: -1})
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = listener.Close()
+		select {
+		case conn := <-connections:
+			_ = conn.Close()
+		case <-done:
+		}
+		<-done
+	})
 	store := NewRequestBindings(client, time.Minute)
 	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Millisecond)
 	defer cancel()
@@ -254,9 +266,6 @@ func TestRequestBindingRespectsCallerTimeout(t *testing.T) {
 	if time.Since(start) > time.Second {
 		t.Fatal("caller deadline ignored")
 	}
-	_ = client.Close()
-	_ = listener.Close()
-	<-done
 }
 
 func TestRedisFailureLeavesNATSHealthy(t *testing.T) {

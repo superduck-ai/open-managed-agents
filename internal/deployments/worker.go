@@ -8,10 +8,12 @@ import (
 	"uuid"
 
 	"github.com/riverqueue/river"
+
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
 func occurrenceTime(job *river.Job[deploymentjobs.Args]) (time.Time, error) {
@@ -93,6 +95,9 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[dep
 	}
 	if errors.Is(err, db.ErrFilestorePathExists) {
 		return w.recordFailure(ctx, deployment, runError("session_creation_rejected_error", "Session resource paths conflict"), scheduledAt, now)
+	}
+	if err == nil {
+		telemetry.RecordSessionCreated(ctx, "deployment_schedule")
 	}
 	return err
 }

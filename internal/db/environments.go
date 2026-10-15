@@ -56,6 +56,8 @@ type EnvironmentKey struct {
 }
 
 type EnvironmentWork struct {
+	QueuedAt              *time.Time
+	TraceParent           string
 	UUID                  string
 	ExternalID            string
 	OrganizationUUID      string
@@ -518,6 +520,7 @@ func (d *DB) ScheduleEnvironmentSandboxRecoveryForCodeSession(
 	codeSessionExternalID string,
 	providerSandboxID string,
 	cause error,
+	traceParent string,
 ) (bool, error) {
 	lastError := "provider sandbox not found"
 	if cause != nil {
@@ -528,6 +531,7 @@ func (d *DB) ScheduleEnvironmentSandboxRecoveryForCodeSession(
 		CodeSessionExternalID: codeSessionExternalID,
 		ProviderSandboxID:     providerSandboxID,
 		LastError:             lastError,
+		TraceParent:           nullableString(traceParent),
 	})
 	if err != nil {
 		return false, err
@@ -584,6 +588,7 @@ func environmentWorkWriteParamsFrom(work EnvironmentWork) environmentWorkWritePa
 		EnvironmentExternalID: work.EnvironmentExternalID,
 		SessionUUID:           work.SessionUUID, Metadata: agentJSONArg(work.Metadata),
 		Secret: work.Secret, State: work.State, CreatedAt: work.CreatedAt,
+		TraceParent: nullableString(work.TraceParent),
 	}
 }
 
@@ -641,7 +646,12 @@ func (r environmentKeyMapperRow) key() EnvironmentKey {
 }
 
 func (r environmentWorkMapperRow) work() EnvironmentWork {
+	var traceParent string
+	if r.TraceParent != nil {
+		traceParent = *r.TraceParent
+	}
 	return EnvironmentWork{
+		QueuedAt: r.QueuedAt, TraceParent: traceParent,
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, EnvironmentUUID: r.EnvironmentUUID,
 		EnvironmentExternalID: r.EnvironmentExternalID,

@@ -21,7 +21,9 @@
         stopped_at,
         created_at,
         updated_at,
-        deleted_at
+        deleted_at,
+        queued_at,
+        trace_parent
     </sql>
 
     <sql id="columns">
@@ -46,7 +48,9 @@
         work.stopped_at AS stopped_at,
         work.created_at AS created_at,
         work.updated_at AS updated_at,
-        work.deleted_at AS deleted_at
+        work.deleted_at AS deleted_at,
+        work.queued_at AS queued_at,
+        work.trace_parent AS trace_parent
     </sql>
 
     <sql id="sessionJoin">
@@ -71,7 +75,9 @@
             secret,
             state,
             created_at,
-            updated_at
+            updated_at,
+            queued_at,
+            trace_parent
             )
             SELECT
             #{params.UUID},
@@ -85,7 +91,9 @@
             #{params.Secret,sensitive=true},
             #{params.State},
             #{params.CreatedAt},
-            #{params.CreatedAt}
+            #{params.CreatedAt},
+            #{params.CreatedAt},
+            #{params.TraceParent}
             FROM sessions source_session
             WHERE source_session.organization_uuid = #{params.OrganizationUUID}
               AND source_session.workspace_uuid = #{params.WorkspaceUUID}
@@ -271,6 +279,7 @@
     <update id="RequeueIfRecoverable" result="rows">
         UPDATE environment_work
         SET state = 'queued',
+            queued_at = #{params.RetryAt},
             claimed_by_worker_id = NULL,
             claim_expires_at = #{params.RetryAt},
             latest_heartbeat_at = NULL,

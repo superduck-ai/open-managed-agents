@@ -50,7 +50,7 @@ func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 		}
 		thread = row.thread()
 	}
-	if thread.Status == "terminated" {
+	if thread.Status == "terminated" && (isThread || status != "running") {
 		return nil, nil
 	}
 	var payload sessionStatusPayload
@@ -104,17 +104,21 @@ func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 	if err != nil {
 		return nil, err
 	}
-	if sessionStatus == "running" || sessionStatus == "rescheduling" {
-		return []SessionEvent{sessionEvent, threadEvent}, nil
+	return orderedSessionStatusEvents(source, sessionEvent, threadEvent, sessionStatus), nil
+}
+
+func orderedSessionStatusEvents(source, sessionEvent, threadEvent SessionEvent, status string) []SessionEvent {
+	if status == "running" || status == "rescheduling" {
+		return []SessionEvent{sessionEvent, threadEvent}
 	}
-	if sessionStatus == "idle" {
+	if status == "idle" {
 		usage := SessionEvent{
 			UUID: uuid.NewV4().String(), ExternalID: derivedStatusEventID(source.ExternalID, "session.usage"),
 			EventType: "session.usage", CreatedAt: source.CreatedAt, ProcessedAt: source.ProcessedAt,
 		}
-		return []SessionEvent{threadEvent, usage, sessionEvent}, nil
+		return []SessionEvent{threadEvent, usage, sessionEvent}
 	}
-	return []SessionEvent{threadEvent, sessionEvent}, nil
+	return []SessionEvent{threadEvent, sessionEvent}
 }
 
 // The usage snapshot is cumulative, so it is rendered from the usage read under the Session lock.

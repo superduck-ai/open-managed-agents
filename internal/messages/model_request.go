@@ -24,6 +24,7 @@ import (
 // responseObservation forwards bytes unchanged and buffers public content until
 // message_stop, so the completed messages and their end can be published together.
 type responseObservation struct {
+	firstTokenAt time.Time
 	onComplete   func()
 	request      *codesessions.ModelRequest
 	result       codesessions.ModelRequestResult
@@ -74,8 +75,9 @@ func (h *Handler) beginModelRequest(r *http.Request, principal auth.Principal, m
 		principal.CodeSessionExternalID, strings.TrimSpace(r.Header.Get("X-Claude-Code-Agent-Id")), model)
 }
 
-func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Request, request *codesessions.ModelRequest) {
+func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Request, request *codesessions.ModelRequest, call *modelCall) {
 	observation := &responseObservation{request: request}
+	call.observation = observation
 	if request != nil {
 		// Claude Code copies this header to assistant.request_id, including HTTP errors.
 		w.Header().Set("Request-Id", request.StartID)
@@ -87,10 +89,12 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 	response, err := h.client.Do(upstream)
 	if err != nil {
 		observation.result.ErrorType = "transport_error"
+		call.fail("transport_error")
 		h.logger.ErrorContext(r.Context(), "proxy messages upstream request", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return
 	}
+	call.received(response.StatusCode)
 	defer response.Body.Close()
 	if request != nil {
 		observation.result.UpstreamRequestID = response.Header.Get("Request-Id")
@@ -109,6 +113,7 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 		response.Body = &observedResponseBody{Reader: io.TeeReader(response.Body, observation), Closer: response.Body}
 	}
 	if err := writeProxyResponse(w, response); err != nil {
+		call.fail("stream_error")
 		observation.result.ErrorType = "stream_error"
 		if r.Context().Err() == nil {
 			h.logger.ErrorContext(r.Context(), "stream Messages upstream response", "error", err)
@@ -250,6 +255,9 @@ func (o *responseObservation) observeContentDelta(event responseStreamEvent) {
 	if event.Delta.Type != "text_delta" && event.Delta.Type != "input_json_delta" && event.Delta.Type != "thinking_delta" {
 		return
 	}
+	if o.firstTokenAt.IsZero() {
+		o.firstTokenAt = time.Now()
+	}
 	o.contentBytes += len(event.Delta.Text) + len(event.Delta.Thinking) + len(event.Delta.PartialJSON)
 	if o.contentBytes > 4*1024*1024 {
 		o.malformed = true
@@ -380,4 +388,11 @@ func mergeRequestUsage(target *codesessions.ModelRequestUsage, delta codesession
 	target.OutputTokens = cmp.Or(delta.OutputTokens, target.OutputTokens)
 	target.CacheCreationInputTokens = cmp.Or(delta.CacheCreationInputTokens, target.CacheCreationInputTokens)
 	target.CacheReadInputTokens = cmp.Or(delta.CacheReadInputTokens, target.CacheReadInputTokens)
+}
+
+func (o *responseObservation) timeToFirstToken(startedAt time.Time) time.Duration {
+	if o.firstTokenAt.IsZero() {
+		return 0
+	}
+	return o.firstTokenAt.Sub(startedAt)
 }

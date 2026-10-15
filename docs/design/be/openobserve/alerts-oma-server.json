@@ -1,0 +1,506 @@
+[
+  {
+    "name": "oma_db_pool_exhausted",
+    "stream_type": "metrics",
+    "stream_name": "oma_db_pool_connections",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "promql",
+      "conditions": null,
+      "sql": null,
+      "promql": "min_over_time((max by (service_instance_id) (oma_db_pool_connections{oma_state=\"acquired\"}) / max by (service_instance_id) (oma_db_pool_connections{oma_state=\"max\"}))[5m:1m])",
+      "promql_condition": {
+        "column": "value",
+        "operator": ">=",
+        "value": 1,
+        "ignore_case": false
+      },
+      "aggregation": null,
+      "vrl_function": null,
+      "search_event_type": null,
+      "multi_time_range": null
+    },
+    "trigger_condition": {
+      "period": 5,
+      "operator": ">=",
+      "threshold": 1,
+      "frequency": 60,
+      "cron": "",
+      "frequency_type": "minutes",
+      "silence": 30,
+      "tolerance_in_secs": null,
+      "align_time": true
+    },
+    "destinations": [
+      "oma_local_webhook"
+    ],
+    "row_template": "",
+    "row_template_type": "String",
+    "description": "某实例数据库连接池持续 5 分钟占满",
+    "enabled": true,
+    "tz_offset": 0,
+    "creates_incident": false
+  },
+  {
+    "name": "oma_e2b_error_rate",
+    "stream_type": "metrics",
+    "stream_name": "oma_db_pool_connections",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "promql",
+      "conditions": null,
+      "sql": null,
+      "promql": "sum(rate(oma_sandbox_provider_duration_count{oma_outcome=\"error\"}[10m])) / sum(rate(oma_sandbox_provider_duration_count[10m]))",
+      "promql_condition": {
+        "column": "value",
+        "operator": ">",
+        "value": 0.05,
+        "ignore_case": false
+      },
+      "aggregation": null,
+      "vrl_function": null,
+      "search_event_type": null,
+      "multi_time_range": null
+    },
+    "trigger_condition": {
+      "period": 10,
+      "operator": ">=",
+      "threshold": 1,
+      "frequency": 60,
+      "cron": "",
+      "frequency_type": "minutes",
+      "silence": 30,
+      "tolerance_in_secs": null,
+      "align_time": true
+    },
+    "destinations": [
+      "oma_local_webhook"
+    ],
+    "row_template": "",
+    "row_template_type": "String",
+    "description": "E2B 调用错误率 10 分钟内大于 5%",
+    "enabled": true,
+    "tz_offset": 0,
+    "creates_incident": false
+  },
+  {
+    "name": "oma_river_jobs_discarded",
+    "stream_type": "metrics",
+    "stream_name": "oma_db_pool_connections",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "promql",
+      "conditions": null,
+      "sql": null,
+      "promql": "sum(increase(oma_river_jobs{oma_outcome=\"discarded\"}[5m]))",
+      "promql_condition": {
+        "column": "value",
+        "operator": ">",
+        "value": 0,
+        "ignore_case": false
+      },
+      "aggregation": null,
+      "vrl_function": null,
+      "search_event_type": null,
+      "multi_time_range": null
+    },
+    "trigger_condition": {
+      "period": 5,
+      "operator": ">=",
+      "threshold": 1,
+      "frequency": 60,
+      "cron": "",
+      "frequency_type": "minutes",
+      "silence": 30,
+      "tolerance_in_secs": null,
+      "align_time": true
+    },
+    "destinations": [
+      "oma_local_webhook"
+    ],
+    "row_template": "",
+    "row_template_type": "String",
+    "description": "River 任务被丢弃",
+    "enabled": true,
+    "tz_offset": 0,
+    "creates_incident": false
+  },
+  {
+    "name": "oma_session_handoff_failures",
+    "stream_type": "metrics",
+    "stream_name": "oma_db_pool_connections",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "promql",
+      "conditions": null,
+      "sql": null,
+      "promql": "sum(increase(oma_session_handoff_failures[5m]))",
+      "promql_condition": {
+        "column": "value",
+        "operator": ">",
+        "value": 0,
+        "ignore_case": false
+      },
+      "aggregation": null,
+      "vrl_function": null,
+      "search_event_type": null,
+      "multi_time_range": null
+    },
+    "trigger_condition": {
+      "period": 5,
+      "operator": ">=",
+      "threshold": 1,
+      "frequency": 60,
+      "cron": "",
+      "frequency_type": "minutes",
+      "silence": 30,
+      "tolerance_in_secs": null,
+      "align_time": true
+    },
+    "destinations": [
+      "oma_local_webhook"
+    ],
+    "row_template": "",
+    "row_template_type": "String",
+    "description": "会话交接失败（会话可能卡在 running）",
+    "enabled": true,
+    "tz_offset": 0,
+    "creates_incident": false
+  },
+  {
+    "name": "oma_sessions_stale_running",
+    "stream_type": "metrics",
+    "stream_name": "oma_sessions_stale_running",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "promql",
+      "conditions": null,
+      "sql": null,
+      "promql": "min_over_time(max(oma_sessions_stale_running)[15m:1m])",
+      "promql_condition": {
+        "column": "value",
+        "operator": ">",
+        "value": 0,
+        "ignore_case": false
+      },
+      "aggregation": null,
+      "vrl_function": null,
+      "search_event_type": null,
+      "multi_time_range": null
+    },
+    "trigger_condition": {
+      "period": 15,
+      "operator": ">=",
+      "threshold": 1,
+      "frequency": 60,
+      "cron": "",
+      "frequency_type": "minutes",
+      "silence": 60,
+      "tolerance_in_secs": null,
+      "align_time": true
+    },
+    "destinations": [
+      "oma_local_webhook"
+    ],
+    "row_template": "",
+    "row_template_type": "String",
+    "description": "运行中会话持续 15 分钟无进展",
+    "enabled": true,
+    "tz_offset": 0,
+    "creates_incident": false
+  },
+  {
+    "name": "oma_startup_queue_backlog",
+    "stream_type": "metrics",
+    "stream_name": "oma_environment_work_oldest_queued_age",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "promql",
+      "conditions": null,
+      "sql": null,
+      "promql": "min_over_time(max(oma_environment_work_oldest_queued_age)[5m:1m])",
+      "promql_condition": {
+        "column": "value",
+        "operator": ">",
+        "value": 120,
+        "ignore_case": false
+      },
+      "aggregation": null,
+      "vrl_function": null,
+      "search_event_type": null,
+      "multi_time_range": null
+    },
+    "trigger_condition": {
+      "period": 5,
+      "operator": ">=",
+      "threshold": 1,
+      "frequency": 60,
+      "cron": "",
+      "frequency_type": "minutes",
+      "silence": 30,
+      "tolerance_in_secs": null,
+      "align_time": true
+    },
+    "destinations": [
+      "oma_local_webhook"
+    ],
+    "row_template": "",
+    "row_template_type": "String",
+    "description": "启动队列积压：最老排队年龄持续 5 分钟大于 120 秒",
+    "enabled": true,
+    "tz_offset": 0,
+    "creates_incident": false
+  },
+  {
+    "name": "oma_state_metrics_collect_failures",
+    "stream_type": "metrics",
+    "stream_name": "oma_db_pool_connections",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "promql",
+      "conditions": null,
+      "sql": null,
+      "promql": "sum(increase(oma_state_metrics_collect_failures[10m]))",
+      "promql_condition": {
+        "column": "value",
+        "operator": ">",
+        "value": 0,
+        "ignore_case": false
+      },
+      "aggregation": null,
+      "vrl_function": null,
+      "search_event_type": null,
+      "multi_time_range": null
+    },
+    "trigger_condition": {
+      "period": 10,
+      "operator": ">=",
+      "threshold": 1,
+      "frequency": 60,
+      "cron": "",
+      "frequency_type": "minutes",
+      "silence": 60,
+      "tolerance_in_secs": null,
+      "align_time": true
+    },
+    "destinations": [
+      "oma_local_webhook"
+    ],
+    "row_template": "",
+    "row_template_type": "String",
+    "description": "状态统计采集失败（状态类看板数据不可信）",
+    "enabled": true,
+    "tz_offset": 0,
+    "creates_incident": false
+  },
+  {
+    "name": "oma_upstream_model_error_rate",
+    "stream_type": "metrics",
+    "stream_name": "oma_db_pool_connections",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "promql",
+      "conditions": null,
+      "sql": null,
+      "promql": "sum(rate(gen_ai_client_operation_duration_count{http_response_status_code=~\"5..\"}[10m])) / sum(rate(gen_ai_client_operation_duration_count[10m]))",
+      "promql_condition": {
+        "column": "value",
+        "operator": ">",
+        "value": 0.05,
+        "ignore_case": false
+      },
+      "aggregation": null,
+      "vrl_function": null,
+      "search_event_type": null,
+      "multi_time_range": null
+    },
+    "trigger_condition": {
+      "period": 10,
+      "operator": ">=",
+      "threshold": 1,
+      "frequency": 60,
+      "cron": "",
+      "frequency_type": "minutes",
+      "silence": 30,
+      "tolerance_in_secs": null,
+      "align_time": true
+    },
+    "destinations": [
+      "oma_local_webhook"
+    ],
+    "row_template": "",
+    "row_template_type": "String",
+    "description": "上游模型 5xx/529 占比 10 分钟内大于 5%",
+    "enabled": true,
+    "tz_offset": 0,
+    "creates_incident": false
+  },
+  {
+    "name": "oma_webhook_dropped",
+    "stream_type": "metrics",
+    "stream_name": "oma_db_pool_connections",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "promql",
+      "conditions": null,
+      "sql": null,
+      "promql": "sum(increase(oma_webhook_deliveries{oma_outcome=\"dropped\"}[5m]))",
+      "promql_condition": {
+        "column": "value",
+        "operator": ">",
+        "value": 0,
+        "ignore_case": false
+      },
+      "aggregation": null,
+      "vrl_function": null,
+      "search_event_type": null,
+      "multi_time_range": null
+    },
+    "trigger_condition": {
+      "period": 5,
+      "operator": ">=",
+      "threshold": 1,
+      "frequency": 60,
+      "cron": "",
+      "frequency_type": "minutes",
+      "silence": 30,
+      "tolerance_in_secs": null,
+      "align_time": true
+    },
+    "destinations": [
+      "oma_local_webhook"
+    ],
+    "row_template": "",
+    "row_template_type": "String",
+    "description": "webhook 投递被丢弃",
+    "enabled": true,
+    "tz_offset": 0,
+    "creates_incident": false
+  },
+  {
+    "name": "oma_work_stuck_starting",
+    "stream_type": "metrics",
+    "stream_name": "oma_environment_work_stuck_starting",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "promql",
+      "conditions": null,
+      "sql": null,
+      "promql": "min_over_time(max(oma_environment_work_stuck_starting)[10m:1m])",
+      "promql_condition": {
+        "column": "value",
+        "operator": ">",
+        "value": 0,
+        "ignore_case": false
+      },
+      "aggregation": null,
+      "vrl_function": null,
+      "search_event_type": null,
+      "multi_time_range": null
+    },
+    "trigger_condition": {
+      "period": 10,
+      "operator": ">=",
+      "threshold": 1,
+      "frequency": 60,
+      "cron": "",
+      "frequency_type": "minutes",
+      "silence": 30,
+      "tolerance_in_secs": null,
+      "align_time": true
+    },
+    "destinations": [
+      "oma_local_webhook"
+    ],
+    "row_template": "",
+    "row_template_type": "String",
+    "description": "启动任务卡在 starting 持续 10 分钟",
+    "enabled": true,
+    "tz_offset": 0,
+    "creates_incident": false
+  },
+  {
+    "name": "oma_worker_event_publish_failures",
+    "stream_type": "metrics",
+    "stream_name": "oma_db_pool_connections",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "promql",
+      "conditions": null,
+      "sql": null,
+      "promql": "sum(rate(oma_worker_event_publish_duration_count{oma_outcome!=\"ok\"}[5m])) / sum(rate(oma_worker_event_publish_duration_count[5m]))",
+      "promql_condition": {
+        "column": "value",
+        "operator": ">",
+        "value": 0.01,
+        "ignore_case": false
+      },
+      "aggregation": null,
+      "vrl_function": null,
+      "search_event_type": null,
+      "multi_time_range": null
+    },
+    "trigger_condition": {
+      "period": 5,
+      "operator": ">=",
+      "threshold": 1,
+      "frequency": 60,
+      "cron": "",
+      "frequency_type": "minutes",
+      "silence": 30,
+      "tolerance_in_secs": null,
+      "align_time": true
+    },
+    "destinations": [
+      "oma_local_webhook"
+    ],
+    "row_template": "",
+    "row_template_type": "String",
+    "description": "worker 事件入队失败率 5 分钟内大于 1%",
+    "enabled": true,
+    "tz_offset": 0,
+    "creates_incident": false
+  },
+  {
+    "name": "oma_worker_inbound_stale",
+    "stream_type": "metrics",
+    "stream_name": "oma_nats_stream_oldest_message_age",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "promql",
+      "conditions": null,
+      "sql": null,
+      "promql": "min_over_time(max(oma_nats_stream_oldest_message_age{oma_nats_stream=\"OMA_WORKER_INBOUND\"})[10m:1m])",
+      "promql_condition": {
+        "column": "value",
+        "operator": ">",
+        "value": 900,
+        "ignore_case": false
+      },
+      "aggregation": null,
+      "vrl_function": null,
+      "search_event_type": null,
+      "multi_time_range": null
+    },
+    "trigger_condition": {
+      "period": 10,
+      "operator": ">=",
+      "threshold": 1,
+      "frequency": 60,
+      "cron": "",
+      "frequency_type": "minutes",
+      "silence": 30,
+      "tolerance_in_secs": null,
+      "align_time": true
+    },
+    "destinations": [
+      "oma_local_webhook"
+    ],
+    "row_template": "",
+    "row_template_type": "String",
+    "description": "worker 入站最老消息持续 10 分钟大于 15 分钟",
+    "enabled": true,
+    "tz_offset": 0,
+    "creates_incident": false
+  }
+]

@@ -41,13 +41,13 @@ func TestRequestLoggingMiddlewareLogsRequestAndResponse(t *testing.T) {
 	}
 	if requestEntry["component"] != "http" ||
 		requestEntry["event"] != "request" ||
-		requestEntry["requestId"] != "req_test" ||
+		requestEntry["request_id"] != "req_test" ||
 		requestEntry["method"] != "GET" ||
 		requestEntry["url"] != "/v1/files" ||
 		requestEntry["path"] != "/v1/files" ||
 		requestEntry["host"] != "127.0.0.1:18080" ||
-		requestEntry["clientKind"] != "web" ||
-		requestEntry["anthropicClientPlatform"] != "claude-ai" {
+		requestEntry["client_kind"] != "web" ||
+		requestEntry["anthropic_client_platform"] != "claude-ai" {
 		t.Fatalf("request log fields mismatch: %#v", requestEntry)
 	}
 
@@ -61,12 +61,12 @@ func TestRequestLoggingMiddlewareLogsRequestAndResponse(t *testing.T) {
 	if responseEntry["event"] != "response" || responseEntry["status"] != float64(http.StatusOK) {
 		t.Fatalf("response log fields mismatch: %#v", responseEntry)
 	}
-	if _, ok := responseEntry["durationMs"].(float64); !ok {
+	if _, ok := responseEntry["duration_ms"].(float64); !ok {
 		t.Fatalf("durationMs should be numeric: %#v", responseEntry)
 	}
 }
 
-func TestRequestLoggingMiddlewareLogsNon2xxAsError(t *testing.T) {
+func TestRequestLoggingMiddlewareLogsServerError(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil)).With("component", "http")
 	handler := requestLoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -106,4 +106,21 @@ func parseSlogJSONLines(t *testing.T, logs string) []map[string]any {
 		entries = append(entries, entry)
 	}
 	return entries
+}
+
+func TestRequestLoggingResponseLevels(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		level  string
+	}{{500, "ERROR"}, {404, "WARN"}, {400, "WARN"}, {302, "INFO"}, {200, "INFO"}} {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			var output bytes.Buffer
+			handler := requestLoggingMiddleware(slog.New(slog.NewJSONHandler(&output, nil)))(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(tc.status) }))
+			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/example", nil))
+			records := parseSlogJSONLines(t, output.String())
+			if len(records) != 2 || records[1]["level"] != tc.level {
+				t.Fatalf("records = %v, want %s", records, tc.level)
+			}
+		})
+	}
 }

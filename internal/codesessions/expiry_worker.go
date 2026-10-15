@@ -9,6 +9,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
@@ -111,6 +112,7 @@ func (s *Service) expireWorkerEvent(ctx context.Context, codeSession db.CodeSess
 	}, codeSession.ExternalID); err != nil {
 		return err
 	}
+	telemetry.RecordWorkerEventsExpired(ctx, 1)
 	if envelope.PayloadRef != nil {
 		s.triggerPayloadCleanupNow(ctx, envelope.PayloadRef.CleanupJobID)
 	}

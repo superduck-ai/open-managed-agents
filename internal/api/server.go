@@ -185,6 +185,7 @@ func NewServer(deps ServerDeps) *Server {
 	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
+	router.Use(telemetryMiddleware)
 	router.Use(requestLoggingMiddleware(componentLogger("http")))
 	router.Use(s.recoverMiddleware)
 	router.NotFound(notFound)
@@ -452,6 +453,7 @@ func (s *Server) platformAuthMiddleware(next http.Handler) http.Handler {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Action not allowed"))
 			return
 		}
+		annotatePrincipalSpan(r.Context(), principal)
 		ctx := auth.WithPrincipal(r.Context(), principal)
 		if orgAlias := s.platformMirrorOrganizationAlias(r, principal); orgAlias != "" {
 			ctx = auth.WithPlatformMirrorOrganizationAlias(ctx, orgAlias)
@@ -496,6 +498,7 @@ func (s *Server) authenticated(next http.Handler, authenticate func(*http.Reques
 			httpapi.WriteError(w, r, err)
 			return
 		}
+		annotatePrincipalSpan(r.Context(), principal)
 		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 	})
 }

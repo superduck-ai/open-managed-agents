@@ -32,10 +32,12 @@ func requestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handl
 			}
 			attrs := httpLogAttrs("response", requestID, fields,
 				"status", status,
-				"durationMs", durationMilliseconds(startedAt),
+				"duration_ms", durationMilliseconds(startedAt),
 			)
-			if status >= http.StatusOK && status < http.StatusMultipleChoices {
+			if status < http.StatusBadRequest {
 				logger.InfoContext(r.Context(), "http response", attrs...)
+			} else if status < http.StatusInternalServerError {
+				logger.WarnContext(r.Context(), "http response", attrs...)
 			} else {
 				logger.ErrorContext(r.Context(), "http response", attrs...)
 			}
@@ -83,7 +85,7 @@ func requestLogURL(r *http.Request) string {
 func httpLogAttrs(event string, requestID string, fields logRequestFields, afterURL ...any) []any {
 	attrs := []any{
 		"event", event,
-		"requestId", requestID,
+		"request_id", requestID,
 		"method", fields.method,
 		"url", fields.url,
 	}
@@ -91,14 +93,14 @@ func httpLogAttrs(event string, requestID string, fields logRequestFields, after
 	attrs = append(attrs,
 		"path", fields.path,
 		"host", fields.host,
-		"userAgent", fields.userAgent,
-		"clientKind", fields.clientKind,
+		"user_agent", fields.userAgent,
+		"client_kind", fields.clientKind,
 	)
 	if fields.anthropicClientPlatform != "" {
-		attrs = append(attrs, "anthropicClientPlatform", fields.anthropicClientPlatform)
+		attrs = append(attrs, "anthropic_client_platform", fields.anthropicClientPlatform)
 	}
 	if fields.anthropicClientApp != "" {
-		attrs = append(attrs, "anthropicClientApp", fields.anthropicClientApp)
+		attrs = append(attrs, "anthropic_client_app", fields.anthropicClientApp)
 	}
 	return attrs
 }

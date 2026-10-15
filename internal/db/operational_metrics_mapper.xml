@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<mapper namespace="OperationalMetricsMapper">
+    <select id="CountLiveSessionsByStatus" resultType="operationalStateCountRow">
+        SELECT status AS state, count(*) AS total
+        FROM sessions
+        WHERE deleted_at IS NULL
+        AND archived_at IS NULL
+        AND status IN ('running', 'rescheduling')
+        GROUP BY status
+    </select>
+
+    <select id="CountStaleRunningSessions" result="scalar">
+        SELECT count(*) AS total
+        FROM sessions
+        WHERE deleted_at IS NULL
+        AND archived_at IS NULL
+        AND status = 'running'
+        AND updated_at &lt; #{staleBefore}
+    </select>
+
+    <select id="CountActiveCodeSessionsByWorkerState" resultType="operationalCodeSessionCountRow">
+        SELECT COALESCE(worker_status, 'unknown') AS worker_status, connection_status AS connection_status, count(*) AS total
+        FROM code_sessions
+        WHERE deleted_at IS NULL
+        AND status = 'active'
+        GROUP BY COALESCE(worker_status, 'unknown'), connection_status
+    </select>
+
+    <select id="CountLiveEnvironmentWorkByState" resultType="operationalStateCountRow">
+        SELECT state AS state, count(*) AS total
+        FROM environment_work
+        WHERE deleted_at IS NULL
+        AND state IN ('queued', 'starting', 'active', 'stopping')
+        GROUP BY state
+    </select>
+
+    <select id="OldestQueuedEnvironmentWorkAgeSeconds" result="scalar">
+        SELECT COALESCE(CAST(EXTRACT(EPOCH FROM (NOW() - MIN(COALESCE(queued_at, created_at)))) AS bigint), 0) AS age_seconds
+        FROM environment_work
+        WHERE deleted_at IS NULL
+        AND state = 'queued'
+        AND COALESCE(queued_at, created_at) &lt;= NOW()
+    </select>
+
+    <select id="CountStuckStartingEnvironmentWork" result="scalar">
+        SELECT count(*) AS total
+        FROM environment_work
+        WHERE deleted_at IS NULL
+        AND state = 'starting'
+        AND updated_at &lt; #{startedBefore}
+    </select>
+
+    <select id="CountLiveEnvironmentSandboxesByState" resultType="operationalStateCountRow">
+        SELECT state AS state, count(*) AS total
+        FROM environment_sandboxes
+        WHERE state IN ('creating', 'running', 'stopping')
+        GROUP BY state
+    </select>
+</mapper>

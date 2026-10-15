@@ -20,6 +20,10 @@ linters:
     - spancheck
     - sqlclosecheck
   settings:
+    spancheck:
+      extra-start-span-signatures:
+        - 'github.com/superduck-ai/open-managed-agents/internal/telemetry.StartRoot:opentelemetry'
+        - 'github.com/superduck-ai/open-managed-agents/internal/telemetry.Start:opentelemetry'
     revive:
       rules:
         - name: var-naming

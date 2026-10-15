@@ -10,8 +10,11 @@ import (
 	"time"
 	"uuid"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
 type resolvedToolPermission string
@@ -29,6 +32,7 @@ type toolIdentity struct {
 }
 
 type toolPermissionRequest struct {
+	RequestedAt     time.Time      `json:"requested_at,omitzero"`
 	PublicEventID   string         `json:"public_event_id"`
 	EventType       string         `json:"event_type"`
 	ToolName        string         `json:"tool_name"`
@@ -69,6 +73,10 @@ func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID
 	if err != nil {
 		return err
 	}
+	telemetry.RecordToolPermissionDecision(ctx, string(permission), identity.Kind)
+	_, requestSpan := telemetry.Start(ctx, "oma.tool_permission.request", telemetry.AttrCodeSessionID.String(codeSessionID),
+		telemetry.AttrDecision.String(string(permission)), telemetry.AttrToolKind.String(identity.Kind), attribute.String("oma.tool.name", toolName))
+	requestSpan.End()
 	if len(payloads) == 0 {
 		return nil
 	}
@@ -414,6 +422,7 @@ func (s *Service) persistToolPermissionRequest(ctx context.Context, codeSessionI
 		}
 		workerEpoch = codeSession.CurrentWorkerEpoch
 	}
+	request.RequestedAt = time.Now().UTC()
 	metadata, err := marshalRaw(map[string]any{toolPermissionRequestMetadataKey(request.PublicEventID): request})
 	if err != nil {
 		return err
@@ -535,6 +544,12 @@ func (s *Service) respondToToolPermissionRequest(ctx context.Context, codeSessio
 	if request.RequestID == "" {
 		return nil
 	}
+	telemetry.RecordToolPermissionResponse(ctx, string(behavior), source, request.RequestedAt)
+	_, responseSpan := telemetry.Start(ctx, "oma.tool_permission.respond", telemetry.AttrCodeSessionID.String(codeSessionID), telemetry.AttrBehavior.String(string(behavior)), telemetry.AttrSource.String(source))
+	if !request.RequestedAt.IsZero() {
+		responseSpan.SetAttributes(attribute.Float64("oma.tool_permission.wait_s", time.Since(request.RequestedAt).Seconds()))
+	}
+	responseSpan.End()
 	if request.Input == nil {
 		request.Input = map[string]any{}
 	}

@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,9 +10,10 @@ import (
 	"sync"
 	"time"
 
-	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
-
 	"github.com/go-chi/chi/v5"
+
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
 type streamHub struct {
@@ -109,6 +111,7 @@ func (h *streamHub) enqueue(id int64, sub *subscriber, delivery streamDelivery) 
 	select {
 	case sub.ch <- delivery:
 	default:
+		telemetry.RecordSSESubscriberDropped(context.Background())
 		delete(h.subscribers, id)
 		close(sub.ch)
 	}
@@ -266,6 +269,9 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 		h.errorAdapter.Write(w, r, internalError("Could not subscribe to session event stream", err))
 		return
 	}
+	streamStartedAt := time.Now()
+	telemetry.AddSSEStreams(r.Context(), "public", 1)
+	defer telemetry.CloseSSEStream(r.Context(), "public", streamStartedAt)
 	defer func() {
 		h.streams.unsubscribe(subID)
 		if err := h.eventBus.Unsubscribe(session.ExternalID); err != nil {

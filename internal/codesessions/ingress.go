@@ -161,6 +161,9 @@ func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r
 }
 
 func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := httpapi.StreamContext(r.Context())
+	defer cancel()
+	r = r.WithContext(ctx)
 	codeSessionID := chi.URLParam(r, "code_session_id")
 	claims, authorized := h.authorizeSessionIngressClaims(w, r, codeSessionID)
 	if !authorized {

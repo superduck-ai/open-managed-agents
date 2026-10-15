@@ -1,4 +1,5 @@
 import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
+import { canManageMembers } from '../../shared/permissions/members';
 import { OrganizationMenu } from '../../features/organizations/OrganizationMenu';
 import { useScopeConfirmation } from '../../features/organizations/useScopeConfirmation';
 import { useOrganizations } from '../../shared/organizations/context';
@@ -10,6 +11,7 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
+  CircleDollarSign,
   Globe2,
   ListTree,
   LogOut,
@@ -384,7 +386,9 @@ function SettingsSidebar({
   const { state } = useSidebar();
   const collapsed = state === 'collapsed';
   const personal = isPersonalSettingsPath(currentPath);
-  const navigation = personal ? personalSettingsNavigation : settingsNavigation;
+  const navigation = (personal ? personalSettingsNavigation : settingsNavigation).filter(
+    (item) => item.href !== '/settings/cost' || canManageMembers(account),
+  );
 
   return (
     <AppSidebar
@@ -729,6 +733,9 @@ function SettingsNavigationIcon({ href }: { href: string }) {
   }
   if (href === '/settings/workspaces') {
     return <Box className="size-4" aria-hidden />;
+  }
+  if (href === '/settings/cost') {
+    return <CircleDollarSign className="size-4" aria-hidden />;
   }
   return <Settings className="size-4" aria-hidden />;
 }

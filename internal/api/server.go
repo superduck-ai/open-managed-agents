@@ -306,6 +306,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterOrganizationOnboardingRoutes(r)
 			platformapi.RegisterOrganizationExperienceRoutes(r)
 			platformapi.RegisterOrganizationBillingRoutes(r)
+			platformapi.RegisterOrganizationRuntimeCostRoutes(r, s.db)
 			platformapi.RegisterOrganizationProxyRoutes(r, s.db, s.vaultSecrets)
 			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.vaultSecrets, workbenchLogger)
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)

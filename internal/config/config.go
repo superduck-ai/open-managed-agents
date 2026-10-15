@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"net/mail"
 	"net/url"
@@ -36,6 +37,7 @@ func Load() (Config, error) {
 	cfg.E2B.APIURL = strings.TrimSpace(cfg.E2B.APIURL)
 	cfg.E2B.SandboxURL = strings.TrimSpace(cfg.E2B.SandboxURL)
 	cfg.E2B.Template = strings.TrimSpace(cfg.E2B.Template)
+	cfg.RuntimeCost.USDPerHour = strings.TrimSpace(cfg.RuntimeCost.USDPerHour)
 
 	normalizeEnvironmentPrebuildConfig(&cfg.EnvironmentPrebuilds)
 
@@ -127,7 +129,21 @@ func validate(cfg Config) error {
 	if err := validateGitSSHtoHTTPSHosts(cfg.EnvironmentRunner.GitSSHtoHTTPSHosts); err != nil {
 		return err
 	}
+	if _, err := cfg.RuntimeCost.HourlyUSD(); err != nil {
+		return err
+	}
 	return validateCodeSessionUpstreamProxyMITMConfig(cfg.CodeSession)
+}
+
+func (cfg RuntimeCostConfig) HourlyUSD() (*big.Rat, error) {
+	if cfg.USDPerHour == "" {
+		return nil, nil
+	}
+	rate, ok := new(big.Rat).SetString(cfg.USDPerHour)
+	if !ok || rate.Sign() <= 0 {
+		return nil, errors.New("runtime_cost.usd_per_hour must be a positive decimal")
+	}
+	return rate, nil
 }
 
 func validateAuthConfig(cfg AuthConfig) error {

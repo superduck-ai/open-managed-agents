@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
+	"math/big"
 	"slices"
 	"time"
 	"uuid"
@@ -359,8 +360,41 @@ func shouldWriteSessionStatus(ctx context.Context, executor yourbatis.Executor, 
 	return oldReason.Type != newReason.Type || oldReason.Detail != newReason.Detail || !slices.Equal(slices.Compact(oldReason.EventIDs), slices.Compact(newReason.EventIDs)), nil
 }
 
+func closeSessionRunningInterval(ctx context.Context, executor yourbatis.Executor, session *Session, processedAt time.Time, usdPerHour *big.Rat) error {
+	if session.Status != "running" {
+		return nil
+	}
+	started, found, err := NewSessionEventMapper(executor).FindLatestSessionRunning(ctx, session.WorkspaceUUID, session.ExternalID)
+	if err != nil || !found {
+		return err
+	}
+	durationMillis := processedAt.Sub(started.ProcessedAt).Milliseconds()
+	if durationMillis <= 0 {
+		return nil
+	}
+	mapper := NewSessionMapper(executor)
+	row, err := mapper.AddActiveMilliseconds(ctx, session.WorkspaceUUID, session.ExternalID, durationMillis)
+	if err != nil {
+		return err
+	}
+	if usdPerHour == nil || usdPerHour.Sign() <= 0 {
+		session.Usage = row.Usage
+		return nil
+	}
+	usage, err := addRuntimeCostUSD(row.Usage, durationMillis, usdPerHour)
+	if err != nil {
+		return err
+	}
+	row, err = mapper.SetUsage(ctx, session.WorkspaceUUID, session.ExternalID, usage)
+	if err != nil {
+		return err
+	}
+	session.Usage = row.Usage
+	return nil
+}
+
 // applySessionEventState runs only for newly inserted facts under the session lock.
-func applySessionEventState(ctx context.Context, executor yourbatis.Executor, session *Session, primaryID string, event SessionEvent) (bool, error) {
+func applySessionEventState(ctx context.Context, executor yourbatis.Executor, session *Session, primaryID string, event SessionEvent, usdPerHour *big.Rat) (bool, error) {
 	mapper := NewSessionMapper(executor)
 	if event.UsageIncrement != nil {
 		row, err := mapper.AddUsage(ctx, session.WorkspaceUUID, session.UUID, *event.ThreadUUID, *event.UsageIncrement)
@@ -378,6 +412,11 @@ func applySessionEventState(ctx context.Context, executor yourbatis.Executor, se
 		return false, err
 	}
 	if status, ok := maevents.SessionStatus(event.EventType); ok {
+		if (status == "rescheduling" || status == "terminated") && session.Status == "running" {
+			if err := closeSessionRunningInterval(ctx, executor, session, event.ProcessedAt, usdPerHour); err != nil {
+				return false, err
+			}
+		}
 		if _, err := mapper.SetStatus(ctx, session.WorkspaceUUID, session.ExternalID, status); err != nil {
 			return false, err
 		}

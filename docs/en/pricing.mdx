@@ -1,0 +1,57 @@
+---
+title: "Pricing"
+sidebarTitle: "Pricing"
+description: "The cost of using Open Managed Agents is model tokens plus session runtime."
+---
+
+Using Open Managed Agents has two charges, both in USD: model tokens the session consumes, and sandbox time while the session status is `running`. A session's cost is the sum of the two. Token counts and runtime seconds are both stored on `session.usage`.
+
+## Tokens
+
+Model calls use the rates below. `input_tokens` is uncached input and `output_tokens` is output. `cache_creation.ephemeral_5m_input_tokens` and `cache_creation.ephemeral_1h_input_tokens` are tokens written to the prompt cache. `cache_read_input_tokens` is tokens read from that cache. MTok means one million tokens.
+
+| Model | Uncached input | 5m cache writes | 1h cache writes | Cache reads | Output |
+| --- | --- | --- | --- | --- | --- |
+| Claude Fable 5 | \$10 / MTok | \$12.50 / MTok | \$20 / MTok | \$1 / MTok | \$50 / MTok |
+| Claude Mythos 5 | \$10 / MTok | \$12.50 / MTok | \$20 / MTok | \$1 / MTok | \$50 / MTok |
+| Claude Opus 5 | \$5 / MTok | \$6.25 / MTok | \$10 / MTok | \$0.50 / MTok | \$25 / MTok |
+| Claude Opus 4.8 | \$5 / MTok | \$6.25 / MTok | \$10 / MTok | \$0.50 / MTok | \$25 / MTok |
+| Claude Opus 4.7 | \$5 / MTok | \$6.25 / MTok | \$10 / MTok | \$0.50 / MTok | \$25 / MTok |
+| Claude Opus 4.6 | \$5 / MTok | \$6.25 / MTok | \$10 / MTok | \$0.50 / MTok | \$25 / MTok |
+| Claude Sonnet 5 | \$2 / MTok | \$2.50 / MTok | \$4 / MTok | \$0.20 / MTok | \$10 / MTok |
+| Claude Sonnet 4.6 | \$3 / MTok | \$3.75 / MTok | \$6 / MTok | \$0.30 / MTok | \$15 / MTok |
+| Claude Haiku 4.5 | \$1 / MTok | \$1.25 / MTok | \$2 / MTok | \$0.10 / MTok | \$5 / MTok |
+
+Cache writes and reads use these multipliers on the uncached input price: 1.25× for a 5-minute write, 2× for a 1-hour write, and 0.1× for a cache read.
+
+When an agent's `model.inference_geo` is `"us"`, every token category above is multiplied by 1.1. When `model.speed` is `"fast"`, Claude Opus 5 and Claude Opus 4.8 use \$10 / MTok for uncached input and \$50 / MTok for output. Cache multipliers apply on top of that price.
+
+## Session runtime
+
+For example, a 2 vCPU, 4 GB sandbox priced at 0.042336 yuan per vCPU-hour and 0.0066204 yuan per GB-hour totals 0.1111536 yuan per hour. The table below converts that at the 14 October 2026 central parity rate from the China Foreign Exchange Trade System, 1 USD = 6.7249 yuan. The rate in effect is the one in the configuration.
+
+| Item | Rate | Meter |
+| --- | --- | --- |
+| CPU | \$0.00629541 per vCPU-hour | 2 vCPUs |
+| Memory | \$0.00098446 per GB-hour | 4 GB |
+| Session runtime | \$0.01652866 per hour | Time the session status is `running` |
+
+For example, 2 vCPUs and 4 GB at 0.042336 yuan per vCPU-hour and 0.0066204 yuan per GB-hour is 0.1111536 yuan per hour. At 6.7249 yuan per USD that is about \$0.01652866 per hour. Write that converted number in `runtime_cost.usd_per_hour`. When the field is omitted, the cost page says the price is not configured and does not calculate a new runtime amount. Time accrues only while the session status is `running` and is stored as an integer number of milliseconds in `active_milliseconds`. `idle` (waiting for the next message or a tool confirmation), `rescheduling`, and `terminated` do not count. Overlapping threads stay one interval; their durations are not added together.
+
+Command execution inside the sandbox is already included in `running` time and is not charged again. When that stretch ends, its dollar amount is added to `usage.runtime_cost_usd` at the price then in effect. Later changes to `runtime_cost.usd_per_hour` apply only to stretches that end afterward. Amounts already stored stay as they are. Time still inside `running` counts only after that stretch ends and is snapshotted.
+
+## Worked example
+
+A Claude Opus 4.8 session with 10,000 uncached input tokens, 40,000 cache-read tokens, 15,000 output tokens, and one hour of `running` time:
+
+| Item | Calculation | Cost |
+| --- | --- | --- |
+| Uncached input | 10,000 × \$5 / 1,000,000 | \$0.05 |
+| Cache reads | 40,000 × \$0.50 / 1,000,000 | \$0.02 |
+| Output | 15,000 × \$25 / 1,000,000 | \$0.375 |
+| Session runtime | 1.0 × \$0.01652866 | \$0.016529 |
+| Total | | \$0.461529 |
+
+## Where to read it
+
+`session.usage` carries the token counts, `active_milliseconds`, and `runtime_cost_usd` priced at the rate in effect when the stretch ended. **Analytics → Cost** totals those stored amounts by workspace, grouping (model, workspace, or service account), model, and time range, and shows daily runtime cost. Dates are UTC. The difference in `runtime_cost_usd` between two adjacent `session.usage` events is attributed to the later event's UTC date. Older snapshots that have no stored amount are priced with the rate in the deployment configuration.

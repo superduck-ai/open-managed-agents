@@ -55,6 +55,7 @@ type yamlConfig struct {
 	Webhook              yamlWebhookConfig         `yaml:"webhook"`
 	Vault                VaultConfig               `yaml:"vault"`
 	Bootstrap            yamlBootstrapConfig       `yaml:"bootstrap"`
+	RuntimeCost          RuntimeCostConfig         `yaml:"runtime_cost"`
 }
 
 // Legacy flat fields exist only at the YAML boundary. All consumers use Local.
@@ -173,7 +174,8 @@ func newYAMLConfig() yamlConfig {
 			FailureDisableAfter: defaults.Webhook.FailureDisableAfter,
 			AllowInsecure:       defaults.Webhook.AllowInsecure,
 		},
-		Vault: defaults.Vault,
+		Vault:       defaults.Vault,
+		RuntimeCost: defaults.RuntimeCost,
 		Bootstrap: yamlBootstrapConfig{
 			WorkspaceName:       defaults.Bootstrap.WorkspaceName,
 			OrganizationName:    defaults.Bootstrap.OrganizationName,
@@ -222,7 +224,8 @@ func (input yamlConfig) resolve() Config {
 			FailureDisableAfter: input.Webhook.FailureDisableAfter,
 			AllowInsecure:       input.Webhook.AllowInsecure,
 		},
-		Vault: input.Vault,
+		Vault:       input.Vault,
+		RuntimeCost: input.RuntimeCost,
 		Bootstrap: BootstrapConfig{
 			WorkspaceName:       input.Bootstrap.WorkspaceName,
 			OrganizationName:    input.Bootstrap.OrganizationName,

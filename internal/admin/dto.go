@@ -173,4 +173,5 @@ type reportQuery struct {
 	BucketWidth string
 	Limit       int
 	Page        string
+	GroupBy     []string
 }

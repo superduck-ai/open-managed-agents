@@ -30,6 +30,7 @@ type Config struct {
 	Webhook              WebhookConfig             `yaml:"webhook"`
 	Vault                VaultConfig               `yaml:"vault"`
 	Bootstrap            BootstrapConfig           `yaml:"bootstrap"`
+	RuntimeCost          RuntimeCostConfig         `yaml:"runtime_cost"`
 }
 
 // VaultConfig configures at-rest encryption for vault credential secrets and
@@ -98,6 +99,10 @@ type DecryptOnlyKeyConfig struct {
 	Version int64  `yaml:"version"`
 	Kek     string `yaml:"kek"`
 	KekFile string `yaml:"kek_file"`
+}
+
+type RuntimeCostConfig struct {
+	USDPerHour string `yaml:"usd_per_hour"`
 }
 
 type ServerConfig struct {

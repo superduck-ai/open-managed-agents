@@ -149,6 +149,8 @@ func (e *liveEnv) requestContext(ctx context.Context, t *testing.T, method, path
 	req, err := http.NewRequestWithContext(ctx, method, e.url+path+separator+"beta=true", bytes.NewReader(encoded))
 	requireOK(t, err)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

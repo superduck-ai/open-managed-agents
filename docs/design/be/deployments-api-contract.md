@@ -51,6 +51,20 @@ API 密钥请求必须携带 `anthropic-version: 2023-06-01`，并在 `anthropic
 
 公开合同没有说明的模糊行为保持不变，包括 `limit=0`、`schedule:null`、默认列表顺序，以及未记录的错误状态和幂等行为。
 
+## Agent 归档的 Webhook 边界
+
+`ArchiveAgentTx` 和 `Store.ArchiveAgent` 返回资源、changed 与 error。Agent 的条件归档只修改首次归档的记录，重复归档不刷新 Agent 时间戳；未命中时在同一 Yourbatis 事务内按 workspace 重读。无论 Agent 是否已归档，都继续保留既有 Deployment 级联及 River schedule 清理流程。任一后续步骤失败会整体回滚，Store 不返回有效 changed。
+
+Agent Handler 仅在 Store 整体提交成功且 Agent 实际改变时发送 `agent.archived`，不额外发送 updated；Store 在同一事务成功后，为实际归档的 Deployment 分别发送 `deployment.archived`。通知入队在事务之外，失败只记录日志。Agent 归档产生的一组 Deployment 通知共用 5 秒期限，定时 occurrence 的 Run、Deployment 与 Session 通知也共用 5 秒期限（包含租户信息查询）；超时停止剩余通知，不能把已提交业务重新报告为失败。`tests/agent_webhooks_test.go` 覆盖 Deployment 更新及 River schedule 删除故障回滚、并发归档、带计划/不带计划资源、实际通知及 SDK 验签。
+
+## 创建 Session 的 Webhook 通知
+
+手动和定时运行都由 `Deployment Store` 在现有事务提交成功、实际创建 Session 后发送 `session.status_idled`。共享 Enqueuer 在 River worker 启动前完成注入，按 Session 的 workspace 选择订阅；HTTP Handler 不再自行发送创建通知。
+
+创建主线程不产生 `session.thread_created` / `session.thread_idled`，初始 `user.define_outcome` 不产生 `session.outcome_evaluation_ended`；真实子线程及评估结束仍走 Session 事件入口。失败运行、事务回滚、归档分支、过期或重复定时任务不新增通知；独立手动运行各自通知。Session 创建只入队规范的 `session.status_idled`；全局兼容的 `session.created` / `session.pending` Webhook 入队已移除，Session 内部事件流不受影响。
+
+Deployment / Deployment Run 的资源通知见下文，沿用既有公开响应和调度事务。通知准备或入队失败不改变已成功提交的业务结果，业务写入与 Webhook 入队尚未原子化。`tests/deployment_webhooks_test.go` 使用真实 River worker 验证定时创建、重复 occurrence 与 SDK 验签；归档分支另通过 Store occurrence 入口验证。
+
 ## Scheduled Deployment 执行
 
 OMA 使用 River `v0.46.0`（当前替换为 `superduck-ai/river v0.46.0-oma-v0.0.1`）持久执行 schedule。River 官方 migrator 在应用 PostgreSQL database 的 `public` schema 中创建并升级 `river_job`、`river_periodic_job`、`river_queue`、`river_leader`、`river_notification` 和 `river_migration`；应用表仍由 Goose 管理。`river_migration` 持久记录已应用版本，进程启动只检查并应用缺失版本，不会重建 River 表。`cmd/migrate up` 和开发环境自动迁移会使用同一个数据库连接配置，依次推进两套 migration。River 内部表的 DDL 不复制到应用 migration，避免升级 River 时出现两套 schema 定义。
@@ -115,3 +129,23 @@ Deployment/River 的可重复验收入口为 `just verify-be deployment doctor`�
 - <https://platform.claude.com/docs/en/api/beta/deployment_runs>
 - <https://platform.claude.com/docs/en/managed-agents/scheduled-deployments>
 - <https://riverqueue.com/docs/periodic-jobs>
+
+
+## Deployment Webhook 资源通知
+
+共享 Store 在 Deployment/River 计划整体事务成功后发送 created、updated、paused、unpaused、archived；具体触发条件与 38 项目录（含三项预留）见 [Webhook 设计](../webhook-subscriptions.md)。Update 在既有行锁内比较实际配置，只在属性改变时写入；无变化更新不改 updated_at。替换 resources 时，同一位置的 Git token 若与已保存凭据相同则复用已有密文，避免随机加密导致误判变更；真实替换或移除凭据仍产生 updated。直接 Archive 为条件写入并返回 changed，重复归档不改时间戳但不跳过原计划清理。Pause 在锁内识别 active → paused；重复同原因暂停不写入，修改已有暂停原因仍保留但不重复发 paused。Unpause 使用已有 resumed 标记。
+
+Agent 归档仍在同一事务处理 Agent、所有实际归档的 Deployment 及 River 计划，事务成功后分别通知；已归档 Agent 仍执行原有下游级联。定时归档和自动暂停沿用 occurrence 幂等检查，只有成功事务通知。无计划 Deployment 同样支持资源事件；Run 和 last_run_at 变化不产生 deployment.updated。没有公开 Deployment 删除入口，deployment.deleted 作为可保存的预留订阅开放，但当前没有产生入口、不发送通知，归档也不发送 deleted，不为 Webhook 新增路由或数据库列。
+
+租户标识来自资源的 workspace 查询，不依赖 HTTP 请求。日志不含资源配置、secret 或初始事件内容。资源事务与 Webhook 入队仍有非原子边界，入队失败不改变已提交操作的响应。
+
+
+## 定时 Run Webhook 通知
+
+`ApplyScheduledOccurrenceTx` 返回实际插入的 Run；Store 仅在包含 Session、Run、Deployment 状态与 River 计划的整体事务成功后，连续入队 deployment_run.started 与 succeeded/failed，使用相同 Run external ID。无 Run 的归档分支返回空结果；回滚、过期与重复 occurrence 不通知。手动运行不产生 Run Webhook。
+
+维持一次事务完成 Session 创建结果的模型，没有新的 running 状态或中间事务；started 是提交后发出的逻辑开始通知，不提供实时创建进度。succeeded 不跟踪 Session 后续模型执行，failed 仅表示已落库的业务失败，不用于数据库/进程错误；后者继续由 River 重试。payload 只有类型、Run ID、租户标识；事件不保证投递顺序，资源提交与入队仍非原子化。
+
+## Webhook 队列迁移（2026-09-29）
+
+共享 Enqueuer 在 Deployment/River 与 HTTP 生产入口启动前注入 JetStream 发布组件；Deployment 事务、Session/Run 通知时机保持不变。通知经匹配订阅 UUID 发布到独立 WorkQueue，不再写 webhook_delivery jobs。一次 Enqueue 查询/发布最长 5 秒、允许部分成功；发布失败记录日志，不将已经提交的业务重新报告失败。事务提交与发布仍非原子，迁移不引入 Deployment outbox。升级及消息边界见 [Webhook 设计](../webhook-subscriptions.md)。

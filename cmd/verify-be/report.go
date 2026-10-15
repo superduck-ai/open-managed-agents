@@ -60,6 +60,7 @@ var scenarios = map[string]scenario{
 	"chat.performance":  {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatPerformance", Stages: []string{"fixed_load_completed", "performance_history_verified"}, Description: "固定串行负载，测量接收、首片段、最终回复及空闲延迟，并可比较基线"},
 	"chat.instances":    {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatInstances", Stages: []string{"cross_instance_preview_final", "cross_instance_history"}, Description: "两个真实后端实例间的流式广播、最终回复及历史一致性"},
 	"chat.public":       {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatPublicStart", Stages: []string{"public_runner_error_recovered", "public_session_started", "public_runner_roundtrip", "public_runner_multiple_work"}, Description: "公开创建会话，后台 Runner 连续领取工作，经本地 Docker 沙箱完成聊天"},
+	"chat.subagents":    {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatSubagents", Stages: []string{"configured_child_dispatched", "child_skill_preloaded", "child_stream_received", "child_tool_policy_verified", "child_mcp_executed", "child_thread_history_verified", "child_thread_resumed"}, Description: "公开配置子 Agent、真实 Runner 委派、固定版本、独立线程列表/SSE/历史"},
 	"chat.reliability":  {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatReliability", Stages: []string{"busy_input_rejected", "worker_consumers_recreated", "worker_stream_reconnected", "midstream_history_recovered", "public_stream_reconnected", "public_history_reconciled", "busy_input_retried", "worker_restarted", "archive_consumers_reclaimed"}, Description: "忙时拒绝与重试、Worker 重连与重启、公开 SSE 重订阅和历史对账、Session 归档回收 consumer"},
 	"chat.brain":        {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatBrain", Stages: []string{"brain_fencing", "brain_roundtrip", "brain_mcp_loop", "brain_takeover", "brain_retirement", "brain_lazy_denied", "brain_lazy_text", "brain_lazy_tool", "brain_lazy_cleanup"}, Description: "真实 oma-brain-dsh、NATS、多节点租约、沙箱 MCP 与检查点恢复"},
 	"chat.brain-skills": {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatBrainSkills", Stages: []string{"brain_skills_catalog", "brain_skills_read", "brain_skills_readonly", "brain_skills_snapshot", "brain_skills_cleanup"}, Description: "Brain 分层提示词、无沙箱 Skill 目录、真实 MCP 读取、只读挂载和固定版本"},
@@ -262,40 +263,7 @@ func saveReport(directory string, r report) error {
 		out.WriteString("\n")
 	}
 	fmt.Fprintf(&out, "Scenario: %s\n\n", selectScenario(r.Scenario).Description)
-	if r.Scenario == "test" {
-		out.WriteString("Coverage: all default-build Go packages with disposable local dependencies, S3 and migration integration enabled. Skipped tests are unverified, not passes. Live scenarios run separately; cloud/e2e build-tag suites and external SDK language suites are outside this command. No standalone backend is started.\n\n")
-		for _, missing := range r.Result.MissingStages {
-			fmt.Fprintf(&out, "- Required test did not pass: %s\n", missing)
-		}
-		for _, skipped := range r.Result.Skipped {
-			fmt.Fprintf(&out, "- Unverified (skipped): %s\n", skipped)
-		}
-		for _, name := range slices.Sorted(maps.Keys(r.Result.Tests)) {
-			if r.Result.Tests[name] == "fail" {
-				fmt.Fprintf(&out, "- Failed: %s\n", name)
-			}
-		}
-		out.WriteString("\n")
-	} else if isCloudScenario(r.Scenario) {
-		out.WriteString("Coverage: only the selected cloud storage or E2B provider operations and final cleanup. This does not certify public chat confirmation, all IAM/network policies or cloud availability.\n\n")
-	} else if strings.HasPrefix(r.Scenario, "deployment.") {
-		out.WriteString("Coverage: production Deployment HTTP handlers and scheduled worker with real PostgreSQL/River, unique business schema and disposable public River tables. Jobs run asynchronously; retries retain their nominal occurrence. restart SIGKILLs a River worker process before and after business commit and uses real rescue with a test-only 10s job timeout/15s rescue threshold; the default one-hour rescue delay is not measured. Durable dispatch is made due through River APIs. No standalone backend or model Worker; Session execution, cloud sandbox allocation and production throughput are not verified.\n\n")
-	} else if strings.HasPrefix(r.Scenario, "transcript.") {
-		out.WriteString("Coverage: archive/export/restore/delete service, real S3 adapter, deterministic test-side interruptions and batch rollback. lifecycle also runs the actual maintenance CLI. Fixtures explicitly age rows; five-minute River sweeps, automatic River retries, crash recovery, cloud IAM and production throughput are not verified.\n\n")
-	} else if strings.HasPrefix(r.Scenario, "memory.") {
-		out.WriteString("Coverage: Memory/Filestore HTTP contracts with real PostgreSQL and MinIO; mounts additionally uses production Runner, local Docker sandbox and actual FUSE. Test-side faults and cleanup RunOnce do not certify cloud allocation, automatic background retry timing, process crash recovery, token renewal or concurrent editing throughput.\n\n")
-	} else if strings.HasPrefix(r.Scenario, "files.") {
-		out.WriteString("Coverage: real backend HTTP, PostgreSQL and MinIO. See scenario proof stages. generated runs a real Worker with FUSE and a scripted model; other Files scenarios use DB/storage fixtures where documented. recovery injects S3 errors through a local proxy and waits for the actual cleanup loop and backoff. Cloud S3 IAM and network infrastructure are not verified.\n\n")
-	} else if usesBrain(r.Scenario) {
-		out.WriteString("Coverage: public API, production Runner, real oma-brain-dsh process, PostgreSQL, Redis, JetStream and sandbox MCP with actual FUSE mounts. skills-loading additionally runs the real Claude Worker. Only the upstream model is scripted. See required proofs for mode-specific allocation and loading behavior. Real-model Skill selection, cloud allocation, network partitions and performance are not verified.\n\n")
-	} else {
-		out.WriteString("Coverage: real backend, PostgreSQL, Redis, JetStream, Core NATS and Worker; scripted upstream model.\n")
-		if r.Scenario == "chat.public" || r.Scenario == "chat.upstream-errors" {
-			out.WriteString("Sandbox allocation uses a local Docker Provider; real Runner, filesystem mounts and environment-manager execute unchanged. A local E2B control API checks container ownership and handles connect/timeout/deletion. Cloud TTL renewal and provider API/network policies are not verified.\n\n")
-		} else {
-			out.WriteString("Session activation is prepared by the fixture. Public Runner provisioning is verified separately by chat.public.\n\n")
-		}
-	}
+	writeReportCoverage(&out, r)
 	if r.Performance != nil {
 		fmt.Fprintf(&out, "Performance mode: %s\nWorkload: %s\nBaseline run: %s\nBaseline commit: %s\n\n| Metric | P50 ms | P95 ms |\n| --- | ---: | ---: |\n", r.Performance.Mode, r.Performance.Workload, r.Performance.BaselineRun, r.Performance.BaselineCommit)
 		metrics := []string{"accept", "first_preview", "final", "idle"}
@@ -322,4 +290,41 @@ func saveReport(directory string, r report) error {
 		fmt.Fprintf(&out, "- %s\n", failure)
 	}
 	return os.WriteFile(filepath.Join(directory, "report.md"), []byte(out.String()), 0o600)
+}
+
+func writeReportCoverage(out *strings.Builder, r report) {
+	if r.Scenario == "test" {
+		out.WriteString("Coverage: all default-build Go packages with disposable local dependencies, S3 and migration integration enabled. Skipped tests are unverified, not passes. Live scenarios run separately; cloud/e2e build-tag suites and external SDK language suites are outside this command. No standalone backend is started.\n\n")
+		for _, missing := range r.Result.MissingStages {
+			fmt.Fprintf(out, "- Required test did not pass: %s\n", missing)
+		}
+		for _, skipped := range r.Result.Skipped {
+			fmt.Fprintf(out, "- Unverified (skipped): %s\n", skipped)
+		}
+		for _, name := range slices.Sorted(maps.Keys(r.Result.Tests)) {
+			if r.Result.Tests[name] == "fail" {
+				fmt.Fprintf(out, "- Failed: %s\n", name)
+			}
+		}
+		out.WriteString("\n")
+	} else if isCloudScenario(r.Scenario) {
+		out.WriteString("Coverage: only the selected cloud storage or E2B provider operations and final cleanup. This does not certify public chat confirmation, all IAM/network policies or cloud availability.\n\n")
+	} else if strings.HasPrefix(r.Scenario, "deployment.") {
+		out.WriteString("Coverage: production Deployment HTTP handlers and scheduled worker with real PostgreSQL/River, unique business schema and disposable public River tables. Jobs run asynchronously; retries retain their nominal occurrence. restart SIGKILLs a River worker process before and after business commit and uses real rescue with a test-only 10s job timeout/15s rescue threshold; the default one-hour rescue delay is not measured. Durable dispatch is made due through River APIs. No standalone backend or model Worker; Session execution, cloud sandbox allocation and production throughput are not verified.\n\n")
+	} else if strings.HasPrefix(r.Scenario, "transcript.") {
+		out.WriteString("Coverage: archive/export/restore/delete service, real S3 adapter, deterministic test-side interruptions and batch rollback. lifecycle also runs the actual maintenance CLI. Fixtures explicitly age rows; five-minute River sweeps, automatic River retries, crash recovery, cloud IAM and production throughput are not verified.\n\n")
+	} else if strings.HasPrefix(r.Scenario, "memory.") {
+		out.WriteString("Coverage: Memory/Filestore HTTP contracts with real PostgreSQL and MinIO; mounts additionally uses production Runner, local Docker sandbox and actual FUSE. Test-side faults and cleanup RunOnce do not certify cloud allocation, automatic background retry timing, process crash recovery, token renewal or concurrent editing throughput.\n\n")
+	} else if strings.HasPrefix(r.Scenario, "files.") {
+		out.WriteString("Coverage: real backend HTTP, PostgreSQL and MinIO. See scenario proof stages. generated runs a real Worker with FUSE and a scripted model; other Files scenarios use DB/storage fixtures where documented. recovery injects S3 errors through a local proxy and waits for the actual cleanup loop and backoff. Cloud S3 IAM and network infrastructure are not verified.\n\n")
+	} else if usesBrain(r.Scenario) {
+		out.WriteString("Coverage: public API, production Runner, real oma-brain-dsh process, PostgreSQL, Redis, JetStream and sandbox MCP with actual FUSE mounts. skills-loading additionally runs the real Claude Worker. Only the upstream model is scripted. See required proofs for mode-specific allocation and loading behavior. Real-model Skill selection, cloud allocation, network partitions and performance are not verified.\n\n")
+	} else {
+		out.WriteString("Coverage: real backend, PostgreSQL, Redis, JetStream, Core NATS and Worker; scripted upstream model.\n")
+		if r.Scenario == "chat.public" || r.Scenario == "chat.subagents" || r.Scenario == "chat.upstream-errors" {
+			out.WriteString("Sandbox allocation uses a local Docker Provider; real Runner, filesystem mounts and environment-manager execute unchanged. A local E2B control API checks container ownership and handles connect/timeout/deletion. Cloud TTL renewal and provider API/network policies are not verified.\n\n")
+		} else {
+			out.WriteString("Session activation is prepared by the fixture. Public Runner provisioning is verified separately by chat.public.\n\n")
+		}
+	}
 }

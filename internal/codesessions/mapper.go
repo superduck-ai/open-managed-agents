@@ -195,6 +195,7 @@ func publicPayloadsFromInternalSubagentEvent(codeSessionID string, event db.Code
 	if err := json.Unmarshal(event.Payload, &schema); err != nil {
 		return nil, fmt.Errorf("%w: invalid internal subagent payload: %w", ErrProtocol, err)
 	}
+	object["_owner_session_thread_id"] = threadID
 	candidates, err := publicPayloadCandidatesFromInternalSubagentEvent(codeSessionID, event.Payload, schema.Type, object)
 	if err != nil {
 		return nil, err
@@ -226,7 +227,7 @@ func publicPayloadCandidatesFromInternalSubagentEvent(codeSessionID string, raw 
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return nil, fmt.Errorf("%w: invalid user payload: %w", ErrProtocol, err)
 		}
-		return internalSubagentUserPayloadCandidates(object, payload), nil
+		return internalSubagentUserPayloadCandidates(codeSessionID, object, payload), nil
 	default:
 		return nil, nil
 	}
@@ -489,7 +490,8 @@ func userPublicPayloadCandidates(codeSessionID string, object map[string]any, sc
 		if providerToolUseID == "" {
 			continue
 		}
-		toolUseID := toolUsePublicEventID(codeSessionID, providerToolUseID)
+		threadID := firstNonEmpty(stringField(object, "_owner_session_thread_id"), stringField(object, "session_thread_id"), maevents.ClaudeTaskThreadID(codeSessionID, stringField(object, "parent_tool_use_id")))
+		toolUseID := maevents.ToolUseEventID(codeSessionID, providerToolUseID, threadID)
 		eventType := "agent.tool_result"
 		if claudeToolResultIsAgentThreadMessage(block) {
 			eventType = "agent.thread_message_received"
@@ -513,7 +515,10 @@ func userPublicPayloadCandidates(codeSessionID string, object map[string]any, sc
 	return candidates
 }
 
-func internalSubagentUserPayloadCandidates(object map[string]any, schema workerUserOutputPayload) []publicPayloadCandidate {
+func internalSubagentUserPayloadCandidates(codeSessionID string, object map[string]any, schema workerUserOutputPayload) []publicPayloadCandidate {
+	if results := userPublicPayloadCandidates(codeSessionID, object, schema); len(results) > 0 {
+		return results
+	}
 	content := publicContentBlocks(workerOutputContent(schema.Content, schema.Message.Content))
 	if content == nil {
 		return nil

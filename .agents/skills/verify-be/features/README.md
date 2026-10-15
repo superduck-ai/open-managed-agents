@@ -13,6 +13,7 @@
 | Busy rejection, idle retry or replacement Worker behaves incorrectly | [Recovery](recovery.md) | `chat reliability` |
 | Another API instance cannot stream the reply | [Recovery](recovery.md) | `chat instances` |
 | Public Session startup fails | [Public startup](public-start.md) | `chat public` with real Runner and local Docker sandbox |
+| Configured child Agent is unavailable, uses parent permissions or loses its thread | [Subagent delegation](subagents.md) | `chat subagents` with real Runner, skills, MCP and same-thread continuation |
 | Chat latency regresses | [Performance](performance.md) | `chat performance --baseline REPORT` |
 
 The upstream model is scripted. The local chat scenarios do not verify cloud allocation, automatic cloud fault detection, browser rendering, real model quality or concurrent capacity. The optional cloud adapter scenarios below verify provider operations separately. Each scenario's final report must pass; a successful individual stage is insufficient.

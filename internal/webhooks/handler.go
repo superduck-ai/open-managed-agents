@@ -21,6 +21,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -30,29 +31,48 @@ const (
 	maxWebhookBodySize = 1 << 20
 )
 
+// Budget and deleted Agent/Deployment types are reserved subscriptions without emitters.
 var supportedEndpointEventTypes = map[string]struct{}{
-	"session.status_run_started":        {},
-	"session.status_idled":              {},
-	"session.status_rescheduled":        {},
-	"session.status_terminated":         {},
-	"session.deleted":                   {},
-	"session.updated":                   {},
-	"session.error":                     {},
-	"session.thread_created":            {},
-	"session.thread_status_running":     {},
-	"session.thread_status_idle":        {},
-	"session.thread_status_rescheduled": {},
-	"session.thread_status_terminated":  {},
-	"session.thread_idled":              {},
-	"session.thread_terminated":         {},
-	"session.outcome_evaluation_ended":  {},
-	"vault.created":                     {},
-	"vault.archived":                    {},
-	"vault.deleted":                     {},
-	"vault_credential.created":          {},
-	"vault_credential.archived":         {},
-	"vault_credential.deleted":          {},
-	"vault_credential.refresh_failed":   {},
+	"deployment_run.started":   {},
+	"deployment_run.succeeded": {},
+	"deployment_run.failed":    {},
+
+	"deployment.created":  {},
+	"deployment.updated":  {},
+	"deployment.paused":   {},
+	"deployment.unpaused": {},
+	"deployment.archived": {},
+	"deployment.deleted":  {},
+
+	"agent.created":                    {},
+	"agent.updated":                    {},
+	"agent.archived":                   {},
+	"agent.deleted":                    {},
+	"memory_store.created":             {},
+	"memory_store.archived":            {},
+	"memory_store.deleted":             {},
+	"environment.created":              {},
+	"environment.updated":              {},
+	"environment.archived":             {},
+	"environment.deleted":              {},
+	"session.status_run_started":       {},
+	"session.status_idled":             {},
+	"session.status_rescheduled":       {},
+	"session.status_terminated":        {},
+	"session.deleted":                  {},
+	"session.updated":                  {},
+	"session.budget_reached":           {},
+	"session.thread_created":           {},
+	"session.thread_idled":             {},
+	"session.thread_terminated":        {},
+	"session.outcome_evaluation_ended": {},
+	"vault.created":                    {},
+	"vault.archived":                   {},
+	"vault.deleted":                    {},
+	"vault_credential.created":         {},
+	"vault_credential.archived":        {},
+	"vault_credential.deleted":         {},
+	"vault_credential.refresh_failed":  {},
 }
 
 type Handler struct {
@@ -135,16 +155,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err := validateWebhookURL(endpointURL, h.cfg.AllowInsecure); err != nil {
 		return invalidRequest(err)
 	}
-	name, err := parseWebhookRequiredString(fields, "name")
+	name, err := parseWebhookOptionalString(fields, "name")
 	if err != nil {
 		return invalidRequest(err)
 	}
-	description := ""
-	if raw, ok := fields["description"]; ok {
-		description, err = parseWebhookRawString(raw, "description")
-		if err != nil {
-			return invalidRequest(err)
-		}
+	description, err := parseWebhookOptionalString(fields, "description")
+	if err != nil {
+		return invalidRequest(err)
 	}
 	enabledEvents, err := parseEnabledEvents(fields["enabled_events"])
 	if err != nil {
@@ -221,7 +238,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		return webhookAuthenticationRequired()
 	}
 	webhookID := chi.URLParam(r, "webhook_id")
-	current, err := h.db.GetWebhookEndpoint(r.Context(), principal.WorkspaceUUID, webhookID)
+	_, err := h.db.GetWebhookEndpoint(r.Context(), principal.WorkspaceUUID, webhookID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return webhookNotFound(webhookID, err)
@@ -232,25 +249,23 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	next := current
-	if raw, ok := fields["url"]; ok {
-		next.URL, err = parseWebhookRawString(raw, "url")
-		if err != nil {
-			return invalidRequest(err)
+	next := db.WebhookEndpointUpdate{}
+	for _, field := range []struct {
+		name   string
+		target **string
+	}{
+		{"url", &next.URL}, {"name", &next.Name}, {"description", &next.Description}, {"status", &next.Status},
+	} {
+		if raw, ok := fields[field.name]; ok {
+			value, parseErr := parseWebhookRawString(raw, field.name)
+			if parseErr != nil {
+				return invalidRequest(parseErr)
+			}
+			*field.target = &value
 		}
 	}
-	if err := validateWebhookURL(next.URL, h.cfg.AllowInsecure); err != nil {
-		return invalidRequest(err)
-	}
-	if raw, ok := fields["name"]; ok {
-		next.Name, err = parseWebhookRawString(raw, "name")
-		if err != nil {
-			return invalidRequest(err)
-		}
-	}
-	if raw, ok := fields["description"]; ok {
-		next.Description, err = parseWebhookRawString(raw, "description")
-		if err != nil {
+	if next.URL != nil {
+		if err := validateWebhookURL(*next.URL, h.cfg.AllowInsecure); err != nil {
 			return invalidRequest(err)
 		}
 	}
@@ -260,23 +275,8 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 			return invalidRequest(err)
 		}
 	}
-	if raw, ok := fields["status"]; ok {
-		next.Status, err = parseWebhookRawString(raw, "status")
-		if err != nil {
-			return invalidRequest(err)
-		}
-		switch next.Status {
-		case "enabled":
-			next.DisabledReason = nil
-			next.ConsecutiveFailures = 0
-		case "disabled":
-			if next.DisabledReason == nil {
-				reason := "manual"
-				next.DisabledReason = &reason
-			}
-		default:
-			return invalidRequest(errors.New("status must be enabled or disabled"))
-		}
+	if next.Status != nil && *next.Status != "enabled" && *next.Status != "disabled" {
+		return invalidRequest(errors.New("status must be enabled or disabled"))
 	}
 	next.UpdatedAt = time.Now().UTC()
 	updated, err := h.db.UpdateWebhookEndpoint(r.Context(), principal.WorkspaceUUID, webhookID, next)
@@ -393,13 +393,20 @@ func parseWebhookRequiredString(fields map[string]json.RawMessage, name string) 
 	return parseWebhookRawString(raw, name)
 }
 
+func parseWebhookOptionalString(fields map[string]json.RawMessage, name string) (string, error) {
+	if raw, ok := fields[name]; ok {
+		return parseWebhookRawString(raw, name)
+	}
+	return "", nil
+}
+
 func parseWebhookRawString(raw json.RawMessage, name string) (string, error) {
-	var value string
-	if err := json.Unmarshal(raw, &value); err != nil {
+	var input *string
+	if err := json.Unmarshal(raw, &input); err != nil || input == nil {
 		return "", fmt.Errorf("%s must be a string", name)
 	}
-	value = strings.TrimSpace(value)
-	if value == "" && name != "description" {
+	value := strings.TrimSpace(*input)
+	if value == "" && name != "description" && name != "name" {
 		return "", fmt.Errorf("%s is required", name)
 	}
 	switch name {
@@ -457,8 +464,14 @@ func validateWebhookURL(rawURL string, allowInsecure bool) error {
 	if parsed.Scheme != "https" && !allowInsecure {
 		return errors.New("url must use https unless webhook.allow_insecure is true")
 	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return errWebhookURLScheme
+	}
 	if parsed.User != nil {
 		return errors.New("url must not include credentials")
+	}
+	if parsed.Fragment != "" {
+		return errWebhookURLFragment
 	}
 	if parsed.Port() != "" && parsed.Port() != "443" && !allowInsecure {
 		return errors.New("url must use port 443 unless webhook.allow_insecure is true")
@@ -468,7 +481,7 @@ func validateWebhookURL(rawURL string, allowInsecure bool) error {
 		return errors.New("url must include a host")
 	}
 	if isPrivateWebhookHost(host) && !allowInsecure {
-		return errors.New("url host must be publicly routable unless webhook.allow_insecure is true")
+		return errWebhookURLPrivate
 	}
 	return nil
 }
@@ -478,7 +491,7 @@ func isPrivateWebhookHost(host string) bool {
 		return true
 	}
 	if ip, err := netip.ParseAddr(host); err == nil {
-		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
+		return ip.Zone() != "" || !networkpolicy.PublicAddress(ip)
 	}
 	return false
 }

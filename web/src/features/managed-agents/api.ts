@@ -600,16 +600,30 @@ export function retrieveFileMetadata(fileId: string, workspaceId: string) {
   return anthropicBetaApi.files.retrieveMetadata<FileMetadataApiResponse>(fileId, workspaceId);
 }
 
-export async function listSessionFileOptions(workspaceId: string): Promise<FileMetadataPageResponse> {
+export function listSessionFileOptions(workspaceId: string) {
+  return listFileMetadataPages(workspaceId);
+}
+
+export function listSessionFiles(sessionId: string, workspaceId: string, signal?: AbortSignal) {
+  return listFileMetadataPages(workspaceId, { scope_id: sessionId, betas: ['managed-agents-2026-04-01'] }, signal);
+}
+
+async function listFileMetadataPages(
+  workspaceId: string,
+  params: Record<string, unknown> = {},
+  signal?: AbortSignal,
+): Promise<FileMetadataPageResponse> {
   const data: FileMetadataApiResponse[] = [];
   let afterId: string | undefined;
   let firstId: string | null | undefined;
   let lastId: string | null | undefined;
+  const cursors = new Set<string>();
 
   for (;;) {
     const page = (await anthropicBetaApi.files.list<FileMetadataApiResponse>(
-      { limit: 1000, ...(afterId ? { after_id: afterId } : {}) },
+      { ...params, limit: 1000, ...(afterId ? { after_id: afterId } : {}) },
       workspaceId,
+      signal,
     )) as FileMetadataPageResponse;
     data.push(...page.data);
     firstId ??= page.first_id;
@@ -618,9 +632,10 @@ export async function listSessionFileOptions(workspaceId: string): Promise<FileM
     if (!page.has_more) {
       return { data, first_id: firstId, has_more: false, last_id: lastId };
     }
-    if (!lastId || lastId === afterId) {
+    if (!lastId || cursors.has(lastId)) {
       throw new Error('Files API pagination did not return a new cursor');
     }
+    cursors.add(lastId);
     afterId = lastId;
   }
 }
@@ -764,7 +779,10 @@ export function sessionThreadIsArchived(thread: SessionThreadApiResponse) {
 
 export function sessionThreadListSignature(threads: SessionThreadApiResponse[]) {
   return threads
-    .map((thread) => `${thread.id}:${thread.type}:${thread.archived_at ?? ''}:${thread.parent_thread_id ?? ''}`)
+    .map(
+      (thread) =>
+        `${thread.id}:${thread.type}:${thread.archived_at ?? ''}:${thread.parent_thread_id ?? ''}:${thread.updated_at ?? ''}`,
+    )
     .join('|');
 }
 
@@ -1378,9 +1396,19 @@ export function mergeSessionEventsById(events: QuickstartSessionEvent[]) {
 }
 
 export function coalesceSessionCrossPostedToolEvents(events: QuickstartSessionEvent[]) {
+  const aliases = new Map<string, string>();
+  events.forEach((event) => {
+    if (!sessionCrossPostedToolEventKey(event)) return;
+    const id = sessionEventStringField(event, 'id');
+    const originalId = sessionEventStringField(event, 'original_event_id');
+    const primaryId = sessionEventStringField(event, 'primary_event_id');
+    if (originalId) aliases.set(id, originalId);
+    if (primaryId) aliases.set(primaryId, originalId || id);
+  });
   const output: QuickstartSessionEvent[] = [];
   const indexByKey = new Map<string, number>();
-  events.forEach((event) => {
+  events.forEach((rawEvent) => {
+    const event = sessionEventWithToolIdentity(rawEvent, aliases);
     const canonicalKey = sessionCrossPostedToolEventKey(event);
     if (!canonicalKey) {
       output.push(event);
@@ -1390,9 +1418,28 @@ export function coalesceSessionCrossPostedToolEvents(events: QuickstartSessionEv
     if (existingIndex === undefined) {
       indexByKey.set(canonicalKey, output.length);
       output.push(event);
+    } else if (aliases.size && sessionEventStringField(rawEvent, 'id') === sessionEventToolUseId(event)) {
+      output[existingIndex] = event;
     }
   });
   return output;
+}
+
+function sessionEventWithToolIdentity(event: QuickstartSessionEvent, aliases: Map<string, string>) {
+  if (!aliases.size) return event;
+  const normalized = { ...event };
+  for (const field of ['id', 'tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id']) {
+    const id = aliases.get(sessionEventStringField(event, field));
+    if (id) normalized[field] = id;
+  }
+  const stopReason = toRecord(event.stop_reason);
+  if (Array.isArray(stopReason?.event_ids)) {
+    normalized.stop_reason = {
+      ...stopReason,
+      event_ids: stopReason.event_ids.map((id) => (typeof id === 'string' ? (aliases.get(id) ?? id) : id)),
+    };
+  }
+  return normalized;
 }
 
 export function sessionCrossPostedToolEventKey(event: QuickstartSessionEvent) {

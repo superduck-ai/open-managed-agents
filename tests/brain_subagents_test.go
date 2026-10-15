@@ -21,7 +21,7 @@ func TestBrainSubagentAssignmentRejectsInvalidLookups(t *testing.T) {
 		t.Fatalf("load session: %v", err)
 	}
 	session.AgentSnapshot = json.RawMessage(`{"multiagent":{"type":"coordinator","agents":[{"type":"agent","id":"agent_missing","version":3}]}}`)
-	if _, err := app.db.UpdateSession(t.Context(), code.WorkspaceUUID, session.ExternalID, session); err != nil {
+	if _, _, err := app.db.UpdateSession(t.Context(), code.WorkspaceUUID, session.ExternalID, session); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := createRuntimeTestSession(t, app, service, code, session, json.RawMessage(`{}`)); !errors.Is(err, db.ErrNotFound) {
@@ -53,7 +53,7 @@ func TestBrainSubagentAssignmentPinsDatabaseVersion(t *testing.T) {
 		t.Fatalf("load session: %v", err)
 	}
 	session.AgentSnapshot = json.RawMessage(`{"multiagent":{"type":"coordinator","agents":[{"type":"agent","id":"agent_brain_child","version":1}]}}`)
-	if _, err := app.db.UpdateSession(t.Context(), code.WorkspaceUUID, session.ExternalID, session); err != nil {
+	if _, _, err := app.db.UpdateSession(t.Context(), code.WorkspaceUUID, session.ExternalID, session); err != nil {
 		t.Fatal(err)
 	}
 	service := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)

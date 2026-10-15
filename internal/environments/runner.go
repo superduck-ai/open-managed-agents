@@ -631,7 +631,7 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
 		runtimeResources.workerTransport = "nats"
 	}
-	sessionConfig, err := managedAgentSessionConfig(session, runtimeResources)
+	sessionConfig, err := managedAgentSessionConfig(session, runtimeResources, runtimeSkills)
 	if err != nil {
 		return nil, err
 	}

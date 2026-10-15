@@ -1,11 +1,11 @@
 /* Match the console's subtle-scrollbar treatment on the page scroll owner. */
-html:has([data-environment-page]) {
+html:has(.environment-page) {
   scrollbar-color: color-mix(in srgb, var(--muted-foreground) 36%, transparent) transparent;
   scrollbar-width: thin;
   scrollbar-gutter: stable;
 }
 
-[data-slot='sidebar-inset']:has([data-environment-page]),
+[data-slot='sidebar-inset']:has(.environment-page),
 .environment-preview,
 .environment-package-picker,
 .environment-prebuild-panel {
@@ -19,7 +19,7 @@ html:has([data-environment-page]) {
   --muted-foreground: #6b6b66;
   background-color: var(--background);
 }
-.dark [data-slot='sidebar-inset']:has([data-environment-page]),
+.dark [data-slot='sidebar-inset']:has(.environment-page),
 .dark .environment-preview,
 .dark .environment-package-picker,
 .dark .environment-prebuild-panel {

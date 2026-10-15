@@ -109,7 +109,7 @@ export const resourceConfigs: Record<
     searchPrefix: 'ID',
     searchPlaceholder: 'Search by session ID',
     filters: ['Created  All time', 'Agent  All', 'Deployment  All', 'Status  Active'],
-    columns: ['ID', 'Name', 'Status', 'Agent', 'Tokens in / out', 'Cost', 'Created'],
+    columns: ['ID', 'Name', 'Status', 'Agent', 'Cost', 'Tokens in / out', 'Created'],
     emptyTitle: 'No sessions yet',
     emptyBody: 'Create a session to trace and debug it here.',
     emptyIcon: MessageCircle,

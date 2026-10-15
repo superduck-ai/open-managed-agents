@@ -147,13 +147,14 @@ func (d *DB) GetEnvironment(ctx context.Context, workspaceUUID string, externalI
 	return row.environment(), nil
 }
 
-func (d *DB) ArchiveEnvironment(ctx context.Context, workspaceUUID string, externalID string) (Environment, error) {
+func (d *DB) ArchiveEnvironment(ctx context.Context, workspaceUUID string, externalID string) (Environment, bool, error) {
 	mapper := NewEnvironmentMapper(d.mapperDB)
 	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, externalID)
-	if err != nil {
-		return Environment{}, mapNoRows(err)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return row.environment(), err == nil, err
 	}
-	return row.environment(), nil
+	current, loadErr := d.GetEnvironment(ctx, workspaceUUID, externalID)
+	return current, false, loadErr
 }
 
 func (d *DB) DeleteEnvironment(ctx context.Context, workspaceUUID string, externalID string) error {

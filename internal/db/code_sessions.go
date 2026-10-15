@@ -174,6 +174,7 @@ type UpdateCodeSessionWorkerStateInput struct {
 	RequiresActionDetails    json.RawMessage
 	ExternalMetadataSet      bool
 	ExternalMetadata         json.RawMessage
+	RequiredThreadID         string
 }
 
 type CodeSessionWorkerHeartbeatError struct {
@@ -707,6 +708,15 @@ func (d *DB) UpdateCodeSessionWorkerState(ctx context.Context, codeSessionExtern
 
 		if current.CurrentWorkerEpoch != input.WorkerEpoch {
 			return ErrWorkerEpochMismatch
+		}
+		if input.RequiredThreadID != "" {
+			thread, err := NewSessionThreadMapper(executor).FindByExternalID(ctx, current.WorkspaceUUID, current.SessionExternalID, input.RequiredThreadID)
+			if err != nil {
+				return mapNoRows(err)
+			}
+			if thread.Status == "terminated" {
+				return ErrInvalidState
+			}
 		}
 
 		workerStatus := current.WorkerStatus

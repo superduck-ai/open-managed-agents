@@ -561,3 +561,43 @@ for (const fail of [true, false]) {
     queryClient.clear();
   });
 }
+
+for (const switchScope of [true, false]) {
+  test(`创建成功后${switchScope ? '切换组织保留成功结果' : '过期列表仍能选择新工作区'}`, async () => {
+    let finish!: (response: Response) => void;
+    let created = false;
+    globalThis.fetch = mock(async (input, init) => {
+      if (init?.method === 'POST') {
+        created = true;
+        return Response.json({ id: 'ws-created', type: 'workspace', name: 'Created' });
+      }
+      const org = String(input).split('/').at(-2)!;
+      if (created && org === 'a')
+        return new Promise<Response>((resolve) => {
+          finish = resolve;
+        });
+      return Response.json(workspaces(org));
+    }) as typeof fetch;
+    mount();
+    await waitFor(() => expect(screen.getByTestId('state').textContent).toBe('ready'));
+    let pending!: ReturnType<WorkspaceContextValue['createWorkspace']>;
+    await act(async () => {
+      pending = workspaceContext.createWorkspace({
+        name: 'Created',
+        display_color: '#9B87F5',
+        data_residency: { workspace_geo: 'us' },
+      });
+    });
+    await waitFor(() => expect(finish).toBeDefined());
+    if (switchScope)
+      await act(async () => {
+        await organizations.switchOrganization('b');
+      });
+    await act(async () => {
+      finish(Response.json(workspaces('a')));
+      expect((await pending).id).toBe('ws-created');
+    });
+    expect(workspaceContext.activeWorkspaceId).toBe(switchScope ? 'ws-b' : 'ws-created');
+    expect(getConsoleRequestContext().organizationUuid).toBe(switchScope ? 'b' : 'a');
+  });
+}

@@ -30,7 +30,7 @@ type sessionStatusPayload struct {
 	StopReason      *sessionStopReason `json:"stop_reason,omitempty"`
 }
 
-func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, worker codeSessionInputStateRow, source SessionEvent) ([]SessionEvent, error) {
+func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, worker *codeSessionInputStateRow, source SessionEvent) ([]SessionEvent, error) {
 	if source.EventType == "session.deleted" {
 		return []SessionEvent{source}, nil
 	}
@@ -50,6 +50,9 @@ func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 		}
 		thread = row.thread()
 	}
+	if thread.Status == "terminated" {
+		return nil, nil
+	}
 	var payload sessionStatusPayload
 	if len(source.Payload) > 0 {
 		if err := jsonv2.Unmarshal(source.Payload, &payload); err != nil {
@@ -62,13 +65,9 @@ func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 			return nil, err
 		}
 		payload.StopReason = reason
-		if reason != nil && reason.Type == "retries_exhausted" {
-			metadata, err := clearExhaustedToolRequestsTx(ctx, executor, session, primary, thread, worker)
-			if err != nil {
-				return nil, err
-			}
-			worker.WorkerExternalMetadata = metadata
-		}
+	}
+	if err := clearStoppedToolRequestsTx(ctx, executor, session, primary.ExternalID, thread.ExternalID, worker, source.EventType, payload.StopReason); err != nil {
+		return nil, err
 	}
 	pending, err := maevents.PendingToolEventIDs(worker.WorkerExternalMetadata, primary.ExternalID, thread.ExternalID)
 	if err != nil {
@@ -130,18 +129,29 @@ func sessionUsagePayload(event SessionEvent, usage json.RawMessage) (json.RawMes
 	})
 }
 
-func clearExhaustedToolRequestsTx(ctx context.Context, executor yourbatis.Executor, session Session, primary, thread SessionThread, worker codeSessionInputStateRow) ([]byte, error) {
-	metadata, err := maevents.ClearPendingToolRequests(worker.WorkerExternalMetadata, primary.ExternalID, thread.ExternalID)
-	if err != nil {
-		return nil, err
+func clearStoppedToolRequestsTx(ctx context.Context, executor yourbatis.Executor, session Session, primaryID, threadID string, worker *codeSessionInputStateRow, eventType string, reason *sessionStopReason) error {
+	status, isThread := maevents.ThreadStatus(eventType)
+	if !isThread {
+		status, _ = maevents.SessionStatus(eventType)
 	}
-	clearDetails := thread.ExternalID == primary.ExternalID
+	if status != "terminated" && (reason == nil || reason.Type != "retries_exhausted") {
+		return nil
+	}
+	if status == "terminated" && !isThread {
+		threadID = ""
+	}
+	metadata, err := maevents.ClearPendingToolRequests(worker.WorkerExternalMetadata, primaryID, threadID)
+	if err != nil {
+		return err
+	}
+	clearDetails := threadID == "" || threadID == primaryID
 	if clearDetails || !bytes.Equal(metadata, worker.WorkerExternalMetadata) {
 		if _, err := NewCodeSessionMapper(executor).UpdateWorkerToolMetadata(ctx, session.WorkspaceUUID, worker.ExternalID, metadata, clearDetails); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return metadata, nil
+	worker.WorkerExternalMetadata = metadata
+	return nil
 }
 
 func resolveIdleStopReasonTx(ctx context.Context, executor yourbatis.Executor, session Session, thread SessionThread, source *SessionEvent, reason *sessionStopReason) (*sessionStopReason, bool, error) {

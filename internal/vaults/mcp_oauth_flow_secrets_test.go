@@ -8,6 +8,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
 )
 
 func TestClientSecretForMCPOAuthPersistDropsPlatformSecret(t *testing.T) {
@@ -224,13 +225,14 @@ func TestSealMCPOAuthFlowSecretsRejectsNilService(t *testing.T) {
 
 func newVaultSecretsTestService(t *testing.T) *secrets.Service {
 	t.Helper()
-	kek, err := secrets.GenerateKEK()
+	kek, err := localkeys.GenerateKEK()
 	if err != nil {
 		t.Fatalf("generate KEK: %v", err)
 	}
-	svc, err := secrets.NewLocalService(context.Background(), kek)
+	svcProvider, err := localkeys.New(localkeys.KeyMaterial{KEK: kek}, nil)
 	if err != nil {
-		t.Fatalf("NewLocalService: %v", err)
+		t.Fatalf("create local provider: %v", err)
 	}
+	svc := secrets.NewService(svcProvider)
 	return svc
 }

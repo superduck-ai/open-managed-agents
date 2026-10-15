@@ -27,8 +27,7 @@ func (r *Runner) startExternalWorker(ctx context.Context, env db.Environment, wo
 	if _, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime); err != nil {
 		return err
 	}
-	err = r.finishManagedAgentRuntime(ctx, preparation.Session, *work, launch)
-	if err == nil && r.cfg.EnvironmentRunner.BrainSandboxPrewarm {
+	if r.cfg.EnvironmentRunner.BrainSandboxPrewarm {
 		code, found, loadErr := r.db.GetCodeSession(ctx, launch.CodeSessionID)
 		if loadErr != nil {
 			return loadErr
@@ -36,9 +35,11 @@ func (r *Runner) startExternalWorker(ctx context.Context, env db.Environment, wo
 		if !found {
 			return db.ErrNotFound
 		}
-		_, err = r.EnsureSessionSandbox(ctx, code)
+		if _, err := r.EnsureSessionSandbox(ctx, code); err != nil {
+			return err
+		}
 	}
-	return err
+	return r.finishManagedAgentRuntime(ctx, preparation.Session, *work, launch)
 }
 
 func (r *Runner) EnsureSessionSandbox(ctx context.Context, code db.CodeSession) (string, error) {

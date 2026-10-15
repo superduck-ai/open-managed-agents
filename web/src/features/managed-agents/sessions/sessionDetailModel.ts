@@ -39,6 +39,8 @@ import {
   sessionSubagentThreadId,
 } from './sessionTraceModel';
 
+import { latestSessionIdlePresentationState, sessionExecutionStateLabel } from './sessionExecutionState';
+
 export function buildSessionDetailSummary(
   session: SessionApiResponse,
   events: QuickstartSessionEvent[],
@@ -46,18 +48,23 @@ export function buildSessionDetailSummary(
   msg: I18nMsg,
   nowMs = Date.now(),
 ) {
-  const title = session.title || compactEntityId(session.id);
-  const statusLabel = localizedEntityStatusLabel('sessions', session, msg);
+  const title = session.title || session.id;
+  const idleState =
+    session.status === 'idle' && !session.archived_at ? latestSessionIdlePresentationState(events) : undefined;
+  const statusLabel = idleState
+    ? sessionExecutionStateLabel(idleState, msg)
+    : localizedEntityStatusLabel('sessions', session, msg);
   const chips: SessionDetailSummaryChip[] = [];
   const agentLabel = sessionAgentDisplayName(session.agent) || entityAgentId(session);
   if (agentLabel) {
-    chips.push({ key: 'agent', icon: Bot, value: agentLabel });
+    chips.push({ key: 'agent', icon: Bot, value: agentLabel, copyValue: entityAgentId(session) || undefined });
   }
   if (session.environment_id) {
     const value = compactEntityId(session.environment_id);
     chips.push({
       key: 'environment',
       icon: Cloud,
+      copyValue: session.environment_id,
       tooltip: value === session.environment_id ? undefined : session.environment_id,
       value,
     });
@@ -67,6 +74,7 @@ export function buildSessionDetailSummary(
     chips.push({
       key: 'vaults',
       icon: LockKeyhole,
+      copyValue: vaults.join(', '),
       tooltip: vaults.length === 1 && compactEntityId(vaults[0]) === vaults[0] ? undefined : vaults.join(', '),
       value:
         vaults.length === 1
@@ -153,7 +161,7 @@ export function buildSessionDetailLaneState(
       return;
     }
     laneIdByThreadId.set(thread.id, thread.id);
-    lanes.push({ id: thread.id, label: name, group, archived: sessionThreadIsArchived(thread) });
+    lanes.push({ id: thread.id, agent: thread.agent, label: name, group, archived: sessionThreadIsArchived(thread) });
   });
 
   return {
@@ -900,11 +908,11 @@ export function findActiveAwaitingToolCall(
   }
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
-    if (entry.kind === 'tool_call' && requiresActionEventIDs.has(sessionToolCallPublicID(entry))) {
+    if (entry.kind === 'tool_call' && requiresActionEventIDs.has(sessionToolCallIdentity(entry))) {
       return entry;
     }
     if (entry.kind === 'tool_batch') {
-      const call = entry.calls.find((item) => requiresActionEventIDs.has(sessionToolCallPublicID(item)));
+      const call = entry.calls.find((item) => requiresActionEventIDs.has(sessionToolCallIdentity(item)));
       if (call) {
         return call;
       }
@@ -913,7 +921,7 @@ export function findActiveAwaitingToolCall(
   return null;
 }
 
-function sessionToolCallPublicID(toolCall: ToolCallEntry) {
+function sessionToolCallIdentity(toolCall: ToolCallEntry) {
   return typeof toolCall.event.id === 'string' && toolCall.event.id.trim()
     ? toolCall.event.id.trim()
     : toolCall.rawEventId;

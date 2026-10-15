@@ -1,6 +1,6 @@
 # Backend verification
 
-`verify-be` replaces `verify-chat` with domain commands. It shares the existing isolated environment, image preflight, source fingerprint, Go test JSON verdict, reports and cleanup. `chat` retains its six scenarios and performance gate; `files` adds independent HTTP/object-store scenarios; `transcript` runs archive integration scenarios over real PostgreSQL/MinIO. `memory` adds production-handler integration scenarios and real Runner/FUSE mount coverage. `deployment` verifies production Run creation, asynchronous River execution/retry, occurrence deduplication and process recovery. No old CLI aliases are retained.
+`verify-be` replaces `verify-chat` with domain commands. It shares the existing isolated environment, image preflight, source fingerprint, Go test JSON verdict, reports and cleanup. `chat` verifies delivery, tools, recovery, public startup, subagent delegation and performance; `files` adds independent HTTP/object-store scenarios; `transcript` runs archive integration scenarios over real PostgreSQL/MinIO. `memory` adds production-handler integration scenarios and real Runner/FUSE mount coverage. `deployment` verifies production Run creation, asynchronous River execution/retry, occurrence deduplication and process recovery. No old CLI aliases are retained.
 
 ```sh
 just verify-be -h
@@ -129,6 +129,8 @@ The `recovery` scenario exercises automatic compensation after both API deletion
 Every run rejects skips, missing proof stages, package/test failure, source mutation and cleanup failure. Files doctor resolves only common images except when explicitly selecting `generated`, which also resolves the Worker image and probes FUSE. The existing [chat design](chat-verification.md) describes chat-specific workload and performance semantics.
 
 ## Validation
+
+`chat.subagents` uses public configuration and Session APIs with the real Runner and Claude Code 2.1.251. Its seven proof stages cover pinned child dispatch, uploaded skill preload, child SSE, child approval/rejection, child-only HTTP MCP execution, thread history and same-thread continuation through native `SendMessage`. Additional regressions cover event ordering, concurrent instances of the same child configuration, reply deduplication and both tool event IDs. See the [Subagent feature map](../../../.agents/skills/verify-be/features/subagents.md) and [runtime design](subagent-delegation.md). The model response is scripted; directed interruption and child recovery after Worker restart remain separate acceptance work.
 
 `just verify-be test` runs the complete default-build Go suite against disposable dependencies, including local MinIO. It reuses the Go dependency/config/cleanup implementation, creates no standalone backend, and enables `TEST_MIGRATION_DATABASE_URL`, `TEST_EVENT_PAYLOAD_S3`, `REDIS_URL`, `TEST_TUNNEL_REDIS_ADDR` and the S3 integration environment. Inherited test targets and opt-in flags are removed. This avoids the default `just test` configuration pointing at a reused development database. It does not reset or migrate that shared database.
 

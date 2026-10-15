@@ -3,6 +3,7 @@ package vaults
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,6 +26,8 @@ const oauthRefreshTimeout = 15 * time.Second
 // production only ever uses *db.DB. Tests substitute a fake to inject
 // deterministic credentials without a live database.
 type credentialStore interface {
+	ClearVaultCredentialSecret(ctx context.Context, expected db.VaultCredential) error
+	GetWorkspaceIdentifiers(context.Context, string) (db.WorkspaceIdentifiers, error)
 	UpdateVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string, next db.VaultCredential) (db.VaultCredential, error)
 	GetVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (db.VaultCredential, error)
 	GetCodeSessionVaultIDs(ctx context.Context, codeSessionExternalID, organizationUUID, workspaceUUID string) ([]string, error)
@@ -34,6 +37,7 @@ type credentialStore interface {
 // Injector loads session vault credentials per request and rewrites MCP
 // Authorization for injectable targets. Plaintext tokens are never cached.
 type Injector struct {
+	webhooks             webhookEnqueuer
 	store                credentialStore
 	secretSvc            *secrets.Service
 	logger               *slog.Logger
@@ -54,6 +58,12 @@ func NewInjector(database *db.DB, secretSvc *secrets.Service, logger *slog.Logge
 		logger:       logging.LoggerOrDefault(logger),
 		refreshLease: newMemoryOAuthRefreshLease(),
 	}
+}
+
+// WithWebhooks supplies the existing resource event enqueuer for permanent refresh failures.
+func (i *Injector) WithWebhooks(enqueuer webhookEnqueuer) *Injector {
+	i.webhooks = enqueuer
+	return i
 }
 
 // WithRefreshLease replaces the in-process lease used by tests with a
@@ -245,6 +255,7 @@ func (i *Injector) resolveFromPlan(
 	excluded map[string]struct{},
 	forceRefresh map[string]struct{},
 ) (*resolvedInjection, error) {
+	var failure error
 	for _, cred := range plan.matches {
 		if _, skip := excluded[cred.ExternalID]; skip {
 			continue
@@ -252,6 +263,7 @@ func (i *Injector) resolveFromPlan(
 		_, force := forceRefresh[cred.ExternalID]
 		result, err := i.resolveInjectableToken(ctx, cred, force)
 		if err != nil {
+			failure = errors.Join(failure, err)
 			i.logger.WarnContext(ctx, "skip injectable vault credential", "credential_id", cred.ExternalID, "auth_type", cred.AuthType, "error", err)
 			continue
 		}
@@ -260,7 +272,7 @@ func (i *Injector) resolveFromPlan(
 		return result, nil
 	}
 	if plan.hostCovered {
-		return nil, injectionRejected(nil)
+		return nil, injectionRejected(failure)
 	}
 	return nil, nil
 }

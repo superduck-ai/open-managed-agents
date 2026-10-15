@@ -1,4 +1,4 @@
-package secrets_test
+package local_test
 
 import (
 	"bytes"
@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
 )
 
 func TestResolveKEKFromBase64(t *testing.T) {
@@ -15,7 +15,7 @@ func TestResolveKEKFromBase64(t *testing.T) {
 	for i := range kek {
 		kek[i] = byte(i)
 	}
-	got, err := secrets.ResolveKEK(base64.StdEncoding.EncodeToString(kek), "")
+	got, err := localkeys.ResolveKEK(base64.StdEncoding.EncodeToString(kek), "")
 	if err != nil {
 		t.Fatalf("ResolveKEK: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestResolveKEKFromFile(t *testing.T) {
 		t.Fatalf("write kek file: %v", err)
 	}
 
-	got, err := secrets.ResolveKEK("", path)
+	got, err := localkeys.ResolveKEK("", path)
 	if err != nil {
 		t.Fatalf("ResolveKEK from file: %v", err)
 	}
@@ -45,42 +45,42 @@ func TestResolveKEKFromFile(t *testing.T) {
 
 func TestResolveKEKErrors(t *testing.T) {
 	t.Run("both set", func(t *testing.T) {
-		if _, err := secrets.ResolveKEK("AAAA", "/tmp/x"); err == nil {
+		if _, err := localkeys.ResolveKEK("AAAA", "/tmp/x"); err == nil {
 			t.Fatal("configuring both kek and kek_file must fail")
 		}
 	})
 	t.Run("neither set", func(t *testing.T) {
-		if _, err := secrets.ResolveKEK("  ", ""); err == nil {
+		if _, err := localkeys.ResolveKEK("  ", ""); err == nil {
 			t.Fatal("configuring neither kek nor kek_file must fail")
 		}
 	})
 	t.Run("wrong length", func(t *testing.T) {
 		short := base64.StdEncoding.EncodeToString([]byte("short"))
-		if _, err := secrets.ResolveKEK(short, ""); err == nil {
+		if _, err := localkeys.ResolveKEK(short, ""); err == nil {
 			t.Fatal("non-32-byte KEK must fail")
 		}
 	})
 	t.Run("invalid base64", func(t *testing.T) {
-		if _, err := secrets.ResolveKEK("not!!!base64", ""); err == nil {
+		if _, err := localkeys.ResolveKEK("not!!!base64", ""); err == nil {
 			t.Fatal("invalid base64 must fail")
 		}
 	})
 	t.Run("missing file", func(t *testing.T) {
-		if _, err := secrets.ResolveKEK("", filepath.Join(t.TempDir(), "missing")); err == nil {
+		if _, err := localkeys.ResolveKEK("", filepath.Join(t.TempDir(), "missing")); err == nil {
 			t.Fatal("missing kek_file must fail")
 		}
 	})
 }
 
 func TestGenerateKEK(t *testing.T) {
-	a, err := secrets.GenerateKEK()
+	a, err := localkeys.GenerateKEK()
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
 	if len(a) != 32 {
 		t.Fatalf("got %d bytes, want 32", len(a))
 	}
-	b, err := secrets.GenerateKEK()
+	b, err := localkeys.GenerateKEK()
 	if err != nil {
 		t.Fatalf("GenerateKEK second: %v", err)
 	}

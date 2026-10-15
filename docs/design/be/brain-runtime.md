@@ -70,7 +70,7 @@ DSH 对沙箱 MCP 先尝试 `server/discover` 协商 2026-07-28，旧版服务�
 
 本地协议联调可启动 Rust Manager，将其嵌入式 `/mcp` 地址设为 `OMA_RUST_MCP_URL`，运行 `TestProbeSandboxMCPReadyAgainstRustServer` 和 `TestBrainMCPRustServerInterop`；两项分别覆盖 Go 创建阶段的探测和 Go 网关到真实 Rust 工具的转发。
 
-`environment_runner.brain_sandbox_prewarm` 默认关闭。开启后，Runner 发布任务后调用相同准备流程；纯文本也可能预热沙箱。空闲回收和归档清理继续由共用 SandboxLifecycle 负责。
+`environment_runner.brain_sandbox_prewarm` 默认关闭。开启后，Runner 先完成沙箱准备，再发布任务；预热失败不会派发 Worker，避免已执行任务依赖失败的 Work。纯文本也可能预热沙箱。空闲回收和归档清理继续由共用 SandboxLifecycle 负责。
 
 ## 事件与执行状态
 
@@ -101,3 +101,5 @@ DSH Brain 源码作为主仓库的 `oma-brain-dsh/` 普通目录维护，使用�
 依赖锁和 build/typecheck/test 命令。历史验收模板位于
 `oma-brain-dsh/verification/testdata/`，属于复制到相应历史后端 harness 的输入数据，
 不是独立的 Go package；当前后端验收继续使用 `tests/liveworker/` 中的场景。
+
+任务准入对无效 JSON、无效任务身份以及明确拒绝的 HTTP 400/401/403/404/409/410/422 执行 JetStream TERM 并记录脱敏诊断。其他准入失败延迟 5 秒重投，最多尝试 10 次后 TERM；退出取消不终止任务。TERM 不引入 dead-letter 存储，后续恢复仍由已有 Work 恢复机制负责。

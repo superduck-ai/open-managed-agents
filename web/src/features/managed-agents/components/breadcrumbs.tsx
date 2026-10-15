@@ -38,7 +38,13 @@ export function ManagedDetailBreadcrumb({
           <>
             <BreadcrumbSeparator />
             <BreadcrumbItem className="min-w-0">
-              <BreadcrumbPage className={cn('truncate', currentClassName)}>{currentLabel}</BreadcrumbPage>
+              <BreadcrumbPage
+                role={typeof currentLabel === 'string' ? 'link' : undefined}
+                aria-disabled={typeof currentLabel === 'string' ? true : undefined}
+                className={cn('truncate', currentClassName)}
+              >
+                {currentLabel}
+              </BreadcrumbPage>
             </BreadcrumbItem>
           </>
         ) : null}

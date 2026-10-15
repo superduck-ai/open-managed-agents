@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -37,12 +38,14 @@ func (p *provisioningTestProvider) ServiceEndpoint(context.Context, string, int,
 }
 
 func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
-	for _, prewarm := range []bool{false, true} {
-		name := "lazy"
-		if prewarm {
-			name = "prewarm"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, scenario := range []struct {
+		name          string
+		prewarm, fail bool
+	}{
+		{"failed prewarm does not dispatch", true, true}, {"lazy", false, false}, {"prewarm", true, false},
+	} {
+		prewarm := scenario.prewarm
+		t.Run(scenario.name, func(t *testing.T) {
 			app := newPayloadIntegrationApp(t, newFakeStore("sandbox-provisioning"))
 			cfg := app.cfg
 			cfg.EnvironmentRunner.AgentMode = "brain"
@@ -71,10 +74,17 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			for i := range 2 {
 				providers[i] = &provisioningTestProvider{recordingRunnerProvider: &recordingRunnerProvider{sandboxID: "sandbox-provisioning", beforeCreate: func() {
 					creates.Add(1)
-					if len(broker.tasks) != 1 {
-						t.Error("sandbox created before worker task publication")
+					wantTasks := 1
+					if prewarm {
+						wantTasks = 0
+					}
+					if len(broker.tasks) != wantTasks {
+						t.Error("unexpected worker dispatch order")
 					}
 				}}, endpoint: endpoint.URL}
+				if scenario.fail {
+					providers[i].resolveErr = errors.New("prewarm unavailable")
+				}
 				var err error
 				runners[i], err = environments.NewRunner(environments.RunnerDependencies{DB: app.db, Provider: providers[i], Config: cfg, CodeSessions: service, Skills: skillsapi.NewRuntimeResolver(app.db), FilestoreTokens: app.filestoreCredentials, Logger: slog.Default()})
 				if err != nil {
@@ -84,6 +94,12 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 			defer cancel()
 			processed, err := runners[0].RunOnce(ctx, "deferred")
+			if scenario.fail {
+				if err == nil || !processed || len(broker.tasks) != 0 || service.dispatches.Load() != 0 {
+					t.Fatalf("failed prewarm dispatched worker: processed=%t err=%v tasks=%d", processed, err, len(broker.tasks))
+				}
+				return
+			}
 			if err != nil || !processed {
 				t.Fatalf("deferred launch: %t %v", processed, err)
 			}

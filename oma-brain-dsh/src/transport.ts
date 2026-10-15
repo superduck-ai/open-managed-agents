@@ -1,5 +1,7 @@
 import { connect, type NatsConnection } from "@nats-io/transport-node";
 import { jetstream, jetstreamManager, AckPolicy } from "@nats-io/jetstream";
+import { HttpError } from "./api.ts";
+import { CcrHttpError } from "./ccrv2/client.ts";
 import { ConfigurationError } from "./config.ts";
 import { failureDiagnostic, workerDiagnostic } from "./ccrv2/diagnostics.ts";
 
@@ -9,6 +11,14 @@ export async function connectNats(url: string): Promise<NatsConnection> {
 
 export type TaskAdmissionStage = "validate_assignment" | "retire_session" | "check_capacity"
   | "register_worker" | "create_session" | "open_session" | "start_inbound";
+
+export function shouldTerminateTask(error: unknown, stage: string, deliveries: number): boolean {
+  if (stage === "decode_task" || stage === "validate_assignment") return true;
+  if (error instanceof HttpError || error instanceof CcrHttpError) {
+    if ([400, 401, 403, 404, 409, 410, 422].includes(error.status)) return true;
+  }
+  return deliveries >= 10;
+}
 
 export async function consumeTasks(
   nc: NatsConnection, signal: AbortSignal,
@@ -55,9 +65,11 @@ export async function consumeTasks(
         message.ack();
         workerDiagnostic("info", "oma_task_admitted", { ...fields, duration_ms: Date.now() - startMs });
       } catch (error) {
-        message.nak(5000);
+        const terminated = !signal.aborted && shouldTerminateTask(error, stage, message.info.deliveryCount);
+        if (terminated) message.term();
+        else message.nak(5000);
         if (!signal.aborted) workerDiagnostic("error", "oma_task_admission_failed", {
-          ...fields, stage, duration_ms: Date.now() - startMs, ...failureDiagnostic(error),
+          ...fields, stage, terminated, duration_ms: Date.now() - startMs, ...failureDiagnostic(error),
         });
       } finally { clearInterval(renewal); }
     }

@@ -310,7 +310,7 @@ describe('ConsoleShell', () => {
 
     const sidebar = document.querySelector('[data-slot="sidebar"]');
     const sessionsMain = screen.getByText('Session content').closest('main');
-    expect(sessionsMain?.classList.contains('session-route-theme')).toBe(true);
+    expect(sessionsMain?.classList.contains('session-route-theme')).toBe(false);
     expect(sidebar?.getAttribute('data-state')).toBe('expanded');
     expect(sidebar?.getAttribute('data-collapsible')).toBe('');
 

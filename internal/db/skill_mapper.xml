@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="SkillMapper">
+    <update id="LockWorkspace" result="exec">
+        SELECT pg_advisory_xact_lock(hashtextextended(CAST(#{workspaceUUID} AS text), 0))
+    </update>
+
     <sql id="columns">
         uuid,
         external_id,
@@ -73,6 +77,7 @@
         FROM skills
         WHERE workspace_uuid = #{workspaceUUID}
         AND deleted_at IS NULL
+        <if test="onlyVersioned">AND latest_version IS NOT NULL</if>
         ORDER BY created_at DESC, uuid DESC
         LIMIT #{limit} OFFSET #{offset}
     </select>

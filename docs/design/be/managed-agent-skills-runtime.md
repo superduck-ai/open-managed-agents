@@ -6,18 +6,21 @@ Managed Agents API 的 agent snapshot 只保存 `{type, skill_id, version}` 引�
 built-in skill 的每个具体版本都已经是一个规范化的不可变 zip，并由 catalog version row
 记录对象存储 bucket、key、大小、SHA-256 和顶层目录。
 
-Claude Code 需要在本地 discovery 目录中看到解包后的目录树。运行时因此把 zip 内容作为
-Filestore 的虚拟只读目录直接映射到 `/root/.claude/skills`，不再建立 E2B skill volume，
-也不再由 Runner 或 Environment Manager 预热、复制或解压文件。
+Skill 解析、版本固定与文件投影由 Environment Runner 统一负责，不根据 `agent_mode` 分支。
+Claude Code 从本地 discovery 目录发现 Skill；Brain 接收名称、描述、具体版本和 SKILL.md 路径，
+再通过沙箱中的 MCP Read 按需加载内容。两种模式使用同一份只读文件视图。
+运行时把 zip 内容作为 Filestore 的虚拟只读目录直接映射到 `/root/.claude/skills`，
+不再建立 E2B skill volume，也不由 Runner 或 Environment Manager 预热、复制或解压文件。
 
 ## 启动流程
 
-Environment Runner 在创建 cloud managed-agent Sandbox 前完成：
+Environment Runner 在首次启动 cloud managed-agent runtime 前完成以下准备。
+Claude 模式先创建 Sandbox；Brain 模式可以先启动循环，在首次批准工具调用时创建 Sandbox。
 
 1. 从 Session 的 agent snapshot 严格解析 `skills[]`。
 2. `type=anthropic` 从 `builtin_skills` / `builtin_skill_versions` 解析版本；`type=custom`
    在当前 workspace 内从 `skills` / `skill_versions` 解析版本。
-3. `latest` 在启动时解析为具体 active version row。后续 catalog 的 latest 变化不会改变
+3. `latest` 在首次启动时解析为具体 active version row。后续 catalog 的 latest 变化不会改变
    已启动 Session 的视图。
 4. 在一只 Yourbatis 事务中通过生成的 Session Resource/File Mapper 锁定 filesystem 和 namespace，确保 `/skills` 固定根存在，
    并原子替换该 Session 中 `resource_type=skill_archive` 的内部 Resource 集合。
@@ -27,6 +30,13 @@ Environment Runner 在创建 cloud managed-agent Sandbox 前完成：
    在内部对 destination 执行 `MkdirAll`，Runner 不执行独立 mount preparation。
 6. `/skills` 使用只读 Filestore Token，直接挂载到 `/root/.claude/skills`。rclone ready
    后才启动 Environment Manager；Environment Manager 不再处理 skill。
+
+Runner 在解析 Skill 前查询当前 Session 在该 Environment 中的活动 Code Session。
+不存在活动 Code Session 时才解析并投影；已存在时直接复用 Resource/File 快照。
+Claude 沙箱恢复、Brain 延迟创建沙箱及 runtime 恢复均采用此规则，不重新查询 catalog，
+也不退休并重建 Skill 快照。已固定的空 Skill 集合同样直接复用。
+Brain 恢复时从现有 Code Session 的 launch 读取目录元数据，只更新 generation、模型与执行上下文，
+不因跳过 Resolver 而清空目录。旧 v1 launch 没有目录时继续保留空目录，不查询新的 `latest`。
 
 每条 Skill Archive Resource 对应一份解析后的 skill zip File 快照：
 
@@ -40,13 +50,17 @@ Environment Runner 在创建 cloud managed-agent Sandbox 前完成：
 
 ```mermaid
 flowchart LR
-    A["Session agent snapshot"] --> B["Resolve concrete catalog contents"]
+    A["Session 启动准备"] --> Check{"存在活动 Code Session?"}
+    Check -->|否| B["Resolve concrete catalog contents"]
+    Check -->|是| Reuse["复用已有 Skill 快照"]
     B --> C["Create File snapshots and skill_archive Resources"]
     C --> D["Filestore /skills virtual view"]
+    Reuse --> D
     E["Immutable zip objects"] --> D
     D --> F["rclone readonly mount"]
     F --> G["/root/.claude/skills"]
     G --> H["Claude Code discovery"]
+    G --> I["Brain 通过 MCP Read 加载"]
 ```
 
 ## 虚拟目录合同
@@ -143,6 +157,7 @@ PostgreSQL 外键。
 
 - resolver 只读取 DB metadata，不在 Session 启动路径下载 archive；
 - `latest` 在启动时解析成具体内容，Skill File + Resource 快照替换是全量且原子的；
+- 沙箱恢复和延迟创建不重新解析 Skill；catalog 变更或删除后仍复用同一 Resource/File 快照；
 - `/skills` list、recursive list、metadata 和 ranged read 返回 archive 成员；
 - checksum、路径穿越、缺少 `SKILL.md` 等损坏 archive fail closed；
 - 所有 `/skills` mutation 被拒绝；

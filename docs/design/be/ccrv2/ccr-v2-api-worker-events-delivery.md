@@ -114,7 +114,7 @@ GET /v1/code/sessions/{code_session_id}/worker/events/stream?worker_epoch=<epoch
 ```
 
 服务端分别从该 Session 的任务和回应 durable consumer 拉取消息，完成大 payload 校验与还原，在 Redis 写入
-ACK subject 后才 flush SSE。两路 consumer 各自的 `MaxAckPending=1`，因此只阻塞同一路的下一条消息。控制回应可以在
+ACK subject 后才 flush SSE。两路 consumer 使用服务端默认 `MaxAckPending`，允许活跃 turn 收到追加输入。控制回应可以在
 当前用户命令 processed 之前到达，解除工具审批等待；两路仍复用一条 SSE 和同一个 delivery API。
 
 SSE 的序号保留 Stream sequence。控制回应越过排队输入时序号可能非单调，不能用最大序号

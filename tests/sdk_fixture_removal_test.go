@@ -77,6 +77,12 @@ func TestFormerSDKIdentitySessionEventsPersistAndMatchPublicStream(t *testing.T)
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sdk-real-agent"}`)
 	env := createEnvironment(t, app, `{"name":"sdk-real-environment"}`)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	codeID := launchLocalCodeSession(t, app, session.ID)
+	epoch := registerCodeSessionWorker(t, app, codeID)
+	code, found, err := app.db.GetCodeSession(t.Context(), codeID)
+	if err != nil || !found {
+		t.Fatalf("load worker session: %v %t", err, found)
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, app.baseURL+"/v1/sessions/"+session.ID+"/events/stream?beta=true", nil)
@@ -113,6 +119,12 @@ func TestFormerSDKIdentitySessionEventsPersistAndMatchPublicStream(t *testing.T)
 	if len(history.Data) != 1 || !reflect.DeepEqual(decode(history.Data[0]), expected) {
 		t.Fatalf("history differs from send response: %+v", history)
 	}
+	consumePublicInput(t, app, code, epoch, expected["id"].(string))
+	history = listSessionEvents(t, app, session.ID, "types[]=user.message", formerSDKKey)
+	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) == "" {
+		t.Fatalf("input was not processed: %+v", history)
+	}
+	expected = decode(history.Data[0])
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()

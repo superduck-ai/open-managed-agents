@@ -141,10 +141,10 @@ Go 变更仍运行 `just lint`、`just dead-code`、`just duplicates` 和 `just 
 后续公开输入触发的 connect/timeout 必须经过生产 Provider 到达此控制 API；测试覆盖配置生成与
 Provider 续期调用，不因虚拟 key 格式错误而绕开真实投递链路。
 
-`chat.reliability` 在第一条模型请求输出首片段后暂停响应，验证第二条输入返回 409 和
-`conflict_error`，不落库且不触发模型请求。随后断开 Worker SSE 并等待真实重连，确保运行中的
-模型请求没有重复。公开 SSE 客户端在回复途中断开，模型放行后从历史恢复第一轮，空闲后重试
-第二条输入必须成功，并核对两个有序回合。再销毁 Worker 容器，通过生产恢复服务
+活跃输入契约为接受并排队：第二条输入应立即落库，`processed_at` 为 null，前一条完成后才开始处理。
+`chat.reliability` 的旧场景仍断言忙时 409，需要按此契约适配后才能用于本次验收；不能以旧断言判定队列实现。
+当前回归由 `TestSessionQueuesActiveInputs` 等本地测试覆盖，外部 `session-active-input` 用例承担真实模型验证。
+可靠性场景还覆盖断开 Worker SSE 后重连、模型请求不重复和公开 SSE 历史恢复。再销毁 Worker 容器，通过生产恢复服务
 轮换凭据，验证旧凭据被拒绝，登记新 epoch，由替代 Worker 完成排队中的第三条消息。
 它验证恢复执行路径，不验证云端故障自动检测，也不保证工具副作用执行到一半时的恢复。
 
@@ -224,7 +224,13 @@ cancelled、prerequisite、baseline_incompatible、test_failure 和 performance_
 
 公开 SSE 恢复测试在首片段后断流，完成回复后先重新订阅，再提交下一条消息，
 同时按每页 2 条扫描全量历史。要求断线前 preview 和历史 final 使用同一 ID、文本完整，
-重连 SSE 能收到新回合，最终历史顺序正确且无重复 ID。协议不承诺 Last-Event-ID 重放。
+重连 SSE 能收到新回合，最终历史顺序正确且无重复 ID。
+公开会话和线程 SSE 支持 `Last-Event-ID`：游标必须是当前会话、当前线程的持久化公开事件，
+无效游标返回 400。服务先订阅实时事件，再按历史顺序分页读取游标之后的事件，回放不包含游标本身，
+并按事件 ID 排除实时队列与回放的重叠。回放沿用历史 payload 加载逻辑；preview delta 不持久化，
+不承诺断线期间的 delta 回放。未传游标的连接仍只接收订阅后的事件。
+`TestSessionStreamReplay` 覆盖无效及跨会话游标拒绝和跨页回放；
+`TestStreamReplaySuppressesOverlappingLiveEvents` 覆盖回放与实时事件去重及无游标行为。
 Go 场景验证真实后端合同；前端的合并去重算法仍由前端现有测试负责，不声称浏览器覆盖。
 
 `chat.public` 在测试进程内启动生产 Runner.Start 循环，配置两个领取 worker。

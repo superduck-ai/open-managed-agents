@@ -70,7 +70,7 @@ type BuiltinSkillMapper interface {
 	CountSkills(ctx context.Context) (int, error)
 	FindSkillByExternalID(ctx context.Context, externalID string) (builtinSkillRow, error)
 	FindSkillIDByExternalID(ctx context.Context, externalID string) (int64, error)
-	ListVersionsPage(ctx context.Context, skillID int64, limit, offset int) ([]builtinSkillVersionRow, error)
+	ListVersionsPage(ctx context.Context, skillID int64, limit, offset int, oldestFirst bool) ([]builtinSkillVersionRow, error)
 	FindVersion(ctx context.Context, skillExternalID, version string) (builtinSkillVersionRow, error)
 	ListMissingVersions(ctx context.Context, keepExternalIDsJSON []byte) ([]builtinSkillVersionRow, error)
 	SoftDeleteMissingVersions(ctx context.Context, params pruneBuiltinSkillsParams) error

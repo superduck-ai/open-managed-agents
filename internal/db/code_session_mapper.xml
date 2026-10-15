@@ -237,7 +237,7 @@
     </select>
 
     <select id="LockWorkerLeaseByExternalID" resultType="codeSessionWorkerLeaseRow">
-        SELECT uuid, current_worker_epoch, worker_lease_expires_at
+        SELECT uuid, current_worker_epoch, worker_lease_expires_at, organization_uuid, workspace_uuid
         FROM code_sessions
         WHERE external_id = #{codeSessionExternalID}
           AND deleted_at IS NULL

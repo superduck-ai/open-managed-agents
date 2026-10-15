@@ -89,7 +89,7 @@ func TestSkillMapperBuilderContracts(t *testing.T) {
 			name: "list page",
 			contract: mapperBuilderContract{
 				statement: skillMapperListPageStatement,
-				bound:     buildSkillMapperListPage(yourbatis.DialectPostgres, workspaceUUID, 21, 2),
+				bound:     buildSkillMapperListPage(yourbatis.DialectPostgres, workspaceUUID, 21, 2, false),
 				wantID:    "SkillMapper.ListPage", wantKind: yourbatis.StatementSelect,
 				wantArgumentNames: []string{"workspaceUUID", "limit", "offset"},
 				wantSQLFragments:  []string{"workspace_uuid = $1", "ORDER BY created_at DESC, uuid DESC", "LIMIT $2 OFFSET $3"},
@@ -191,7 +191,7 @@ func TestSkillVersionMapperCRUDBuilderContracts(t *testing.T) {
 				statement: skillVersionMapperFindStatement,
 				bound:     buildSkillVersionMapperFind(yourbatis.DialectPostgres, workspaceUUID, externalID, version),
 				wantID:    "SkillVersionMapper.Find", wantKind: yourbatis.StatementSelect,
-				wantArgumentNames: []string{"workspaceUUID", "skillExternalID", "version"},
+				wantArgumentNames: []string{"workspaceUUID", "skillExternalID", "version", "version", "version"},
 				wantSQLFragments:  []string{"FROM skill_versions", "workspace_uuid = $1", "skill_external_id = $2", "version = $3"},
 			},
 		},
@@ -209,7 +209,7 @@ func TestSkillVersionMapperCRUDBuilderContracts(t *testing.T) {
 			name: "list page",
 			contract: mapperBuilderContract{
 				statement: skillVersionMapperListPageBySkillUUIDStatement,
-				bound:     buildSkillVersionMapperListPageBySkillUUID(yourbatis.DialectPostgres, workspaceUUID, skillUUID, 21, 2),
+				bound:     buildSkillVersionMapperListPageBySkillUUID(yourbatis.DialectPostgres, workspaceUUID, skillUUID, 21, 2, false),
 				wantID:    "SkillVersionMapper.ListPageBySkillUUID", wantKind: yourbatis.StatementSelect,
 				wantArgumentNames: []string{"workspaceUUID", "skillUUID", "limit", "offset"},
 				wantSQLFragments:  []string{"workspace_uuid = $1", "skill_uuid = $2", "LIMIT $3 OFFSET $4"},
@@ -289,7 +289,7 @@ func TestSkillMapperExecutionErrors(t *testing.T) {
 			return err
 		}},
 		{statementID: "SkillMapper.ListPage", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
-			_, err := NewSkillMapper(executor).ListPage(ctx, "workspace", 1, 0)
+			_, err := NewSkillMapper(executor).ListPage(ctx, "workspace", 1, 0, false)
 			return err
 		}},
 		{statementID: "SkillMapper.FindUUIDByExternalID", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
@@ -320,7 +320,7 @@ func TestSkillMapperExecutionErrors(t *testing.T) {
 			return err
 		}},
 		{statementID: "SkillVersionMapper.ListPageBySkillUUID", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
-			_, err := NewSkillVersionMapper(executor).ListPageBySkillUUID(ctx, "workspace", "skill", 1, 0)
+			_, err := NewSkillVersionMapper(executor).ListPageBySkillUUID(ctx, "workspace", "skill", 1, 0, false)
 			return err
 		}},
 		{statementID: "SkillVersionMapper.ListBySkillUUID", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {

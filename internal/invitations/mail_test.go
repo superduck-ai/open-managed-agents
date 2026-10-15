@@ -59,10 +59,13 @@ func TestInvitationMailDelivery(t *testing.T) {
 			if fixture.calls != 1 || fixture.recipient != "recipient@example.com" {
 				t.Fatal("未向邀请接收人发送")
 			}
-			for _, part := range []string{"admin@example.com", "2026-10-01 08:00 UTC", "https://oma.example.com/invites", "接受邀请", "&lt;script&gt;"} {
+			for _, part := range []string{"admin@example.com", "2026-10-01 08:00 UTC", "https://oma.example.com/invites", "Accept invitation", `lang="en"`, "Opening this link does not automatically accept the invitation.", "&lt;script&gt;"} {
 				if !strings.Contains(fixture.message, part) {
 					t.Fatalf("邮件缺少 %s", part)
 				}
+			}
+			if strings.Contains(fixture.message, "请使用") {
+				t.Fatal("email retained untranslated instructions")
 			}
 			if strings.Contains(fixture.message, "<script>") {
 				t.Fatal("组织名未转义")

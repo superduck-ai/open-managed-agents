@@ -201,10 +201,7 @@ func (e *liveEnv) newSessionWithSnapshot(t *testing.T, snapshot json.RawMessage)
 	})
 	requireOK(t, err)
 	t.Cleanup(func() {
-		_, err := e.database.DeleteSession(context.Background(), workspace, sessionID)
-		if err != nil {
-			t.Errorf("delete test session: %v", err)
-		}
+		e.requestContext(context.Background(), t, "DELETE", "/v1/sessions/"+sessionID, e.apiKey, nil, 200)
 	})
 	modelToken := uuid.NewString()
 	code, err := e.database.CreateCodeSession(ctx, db.CreateCodeSessionInput{ExternalID: "cse_" + strings.ReplaceAll(uuid.NewString(), "-", ""), OrganizationUUID: org, WorkspaceUUID: workspace, SessionUUID: session.UUID, SessionExternalID: sessionID, EnvironmentUUID: e.environment.UUID, EnvironmentExternalID: e.environment.ExternalID, Status: "initializing", Model: agentConfig.Model.ID, PermissionMode: "default", Metadata: json.RawMessage(`{"config":{}}`), OAuthAccessTokenHash: auth.HashAPIKey(modelToken), InitialWorkerEpoch: 1, CreatedAt: now})

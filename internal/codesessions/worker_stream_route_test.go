@@ -51,6 +51,10 @@ type workerStreamPublication struct {
 	payload     json.RawMessage
 }
 
+func (s *recordingWorkerStreamSink) ProcessCodeSessionInputs(context.Context, db.CodeSession, int64, []string) error {
+	return nil
+}
+
 func (s *recordingWorkerStreamSink) PublishCodeSessionEvents(context.Context, db.CodeSession, []json.RawMessage) error {
 	return nil
 }

@@ -246,6 +246,7 @@ func run(logger *slog.Logger) error {
 			PlatformAuth:           platformAuthProvider,
 			CodeSessionCredentials: codeSessionCredentials,
 			SandboxTimeoutExtender: sandboxProvider,
+			SandboxProvisioner:     environmentRunner,
 			FilestoreCredentials:   filestoreCredentials,
 			FilestoreService:       filestoreService,
 			VaultSecrets:           vaultSecrets,

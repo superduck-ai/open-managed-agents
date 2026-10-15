@@ -296,18 +296,20 @@ func TestControlDeliveryPreservesTaskOrdering(t *testing.T) {
 			if err := broker.InProgress(t.Context(), first.AckSubject); err != nil {
 				t.Fatal(err)
 			}
-			assertNoWorkerDelivery(t, sub)
+			queued := receiveWorkerDelivery(t, sub)
+			if queued.Envelope.EventID != "queued" || queued.Envelope.SequenceNum <= first.Envelope.SequenceNum {
+				t.Fatal("active input delivery lost ordering")
+			}
 			publishControlTestEvent(t, broker, sessionID, "reply", "control_response", "success")
 			reply := receiveWorkerDelivery(t, sub)
 			if reply.Envelope.EventID != "reply" {
 				t.Fatalf("got %s before approval", reply.Envelope.EventID)
 			}
 			publishControlTestEvent(t, broker, sessionID, "reply2", "control_response", "error")
-			assertNoWorkerDelivery(t, sub)
+			reply2 := receiveWorkerDelivery(t, sub)
 			if err := broker.DoubleAck(t.Context(), reply.AckSubject); err != nil {
 				t.Fatal(err)
 			}
-			reply2 := receiveWorkerDelivery(t, sub)
 			if reply2.Envelope.EventID != "reply2" {
 				t.Fatal("task ordering changed")
 			}
@@ -317,10 +319,6 @@ func TestControlDeliveryPreservesTaskOrdering(t *testing.T) {
 			assertNoWorkerDelivery(t, sub)
 			if err := broker.DoubleAck(t.Context(), first.AckSubject); err != nil {
 				t.Fatal(err)
-			}
-			queued := receiveWorkerDelivery(t, sub)
-			if queued.Envelope.EventID != "queued" || queued.Envelope.SequenceNum >= reply.Envelope.SequenceNum {
-				t.Fatal("queued input must arrive after the newer control response")
 			}
 			if err := broker.DoubleAck(t.Context(), queued.AckSubject); err != nil {
 				t.Fatal(err)

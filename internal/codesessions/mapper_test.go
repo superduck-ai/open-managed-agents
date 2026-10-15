@@ -392,7 +392,6 @@ func TestPublicWorkerDiagnosticsDoNotBecomeMessages(t *testing.T) {
 		`{"type":"system","subtype":"init"}`,
 		`{"type":"system","subtype":"hook_started"}`,
 		`{"type":"system","subtype":"hook_response","exit_code":1}`,
-		`{"type":"result","is_error":false,"duration_api_ms":12000,"result":"Done"}`,
 	} {
 		var header workerPayloadHeader
 		if err := json.Unmarshal([]byte(raw), &header); err != nil {
@@ -656,6 +655,27 @@ func TestCompactionPreservesThreadWithoutDiagnostics(t *testing.T) {
 	}
 	if len(candidates[0].payload) != 2 {
 		t.Fatalf("diagnostic fields leaked: %+v", candidates[0].payload)
+	}
+}
+
+func TestSuccessfulResultEndsTurnWithoutLeakingText(t *testing.T) {
+	for _, subtype := range []string{"", "success", "cancelled"} {
+		raw := mustRawJSON(t, map[string]any{"type": "result", "uuid": "completed", "subtype": subtype, "is_error": false, "result": "private credentials"})
+		payloads, ok, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: "result", IdempotencyKey: "completed", CreatedAt: time.Now().UTC()}, raw)
+		if err != nil || !ok || len(payloads) != 1 {
+			t.Fatalf("completed result: %s %v", payloads, err)
+		}
+		event := decodePublicPayloads(t, payloads)[0]
+		if event["type"] != "session.status_idle" || event["stop_reason"].(map[string]any)["type"] != "end_turn" || strings.Contains(string(payloads[0]), "private credentials") {
+			t.Fatalf("invalid completed result: %s", payloads)
+		}
+		prepared, err := prepareWorkerOutputEvent("cse_test", workerOutputEvent{Payload: raw}, time.Now().UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := prepared.(preparedPublicAction); !ok {
+			t.Fatalf("successful result treated as failure: %T", prepared)
+		}
 	}
 }
 

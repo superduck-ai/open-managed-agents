@@ -36,7 +36,8 @@ func TestBrainModelToolEventPrecedesEndAndDeduplicatesApproval(t *testing.T) {
 			}
 			result := codesessions.ModelRequestResult{EndedAt: time.Now(), ErrorType: test.errorType,
 				Messages: []codesessions.ModelRequestMessage{{ID: "sevt_thinking", Type: "agent.thinking",
-					Content: []codesessions.ModelRequestContent{{Type: "thinking", Thinking: new("run the command")}}}},
+					Content: []codesessions.ModelRequestContent{{Type: "thinking", Thinking: new("run the command")}}},
+					{ID: "sevt_message", Type: "agent.message", Content: []codesessions.ModelRequestContent{{Type: "text", Text: new("Executing command")}}}},
 				ToolUses: []codesessions.ModelRequestToolUse{{ID: "call_bash", Name: test.tool, Input: json.RawMessage(`{"command":"printf hello"}`)}},
 			}
 			if err := service.EndModelRequest(t.Context(), request, result); err != nil {
@@ -49,10 +50,10 @@ func TestBrainModelToolEventPrecedesEndAndDeduplicatesApproval(t *testing.T) {
 			}
 			want := []string{"span.model_request_start", "span.model_request_end"}
 			if test.errorType == "" {
-				want = slices.Insert(want, 1, "agent.thinking")
+				want = slices.Insert(want, 1, "agent.thinking", "agent.message")
 			}
 			if test.publishTool {
-				want = slices.Insert(want, 2, "agent.tool_use")
+				want = slices.Insert(want, 3, "agent.tool_use")
 			}
 			if !slices.Equal(types, want) {
 				t.Fatalf("model events = %v, want %v", types, want)
@@ -63,7 +64,7 @@ func TestBrainModelToolEventPrecedesEndAndDeduplicatesApproval(t *testing.T) {
 			postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(fmt.Sprint(claimed.CurrentWorkerEpoch),
 				`{"type":"control_request","uuid":"approve-bash","request_id":"approve-bash","request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"call_bash","input":{"command":"printf hello"}}}`))
 			tools := listSessionEvents(t, app, worker.SessionExternalID, "types[]=agent.tool_use", defaultTestKey)
-			if len(tools.Data) != 1 || sessionEventStringField(t, tools.Data[0], "id") != sessionEventStringField(t, events.Data[2], "id") {
+			if len(tools.Data) != 1 || sessionEventStringField(t, tools.Data[0], "id") != sessionEventStringField(t, events.Data[3], "id") {
 				t.Fatalf("approval duplicated the model tool event: %s", tools.Data)
 			}
 		})

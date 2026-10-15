@@ -11,13 +11,10 @@ import (
 )
 
 func (s *Service) syncPublicSessionFromWorker(ctx context.Context, record db.CodeSession, workerStatus string) error {
-	if record.SessionExternalID == "" {
+	if record.SessionExternalID == "" || workerStatus == "idle" {
 		return nil
 	}
-	if workerStatus == "idle" && !record.WorkerTurnStarted {
-		return nil
-	}
-	if workerStatus == "idle" || workerStatus == "requires_action" {
+	if workerStatus == "requires_action" {
 		requests, err := maevents.PendingToolEventIDs(record.WorkerExternalMetadata, "", "")
 		if err != nil {
 			return err
@@ -56,7 +53,7 @@ func publicEventTypeFromWorkerStatus(status string) (string, bool) {
 	switch status {
 	case "running":
 		return "session.status_running", true
-	case "idle", "requires_action":
+	case "requires_action":
 		return "session.status_idle", true
 	default:
 		return "", false

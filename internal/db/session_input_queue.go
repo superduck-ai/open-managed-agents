@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"time"
 
 	"github.com/superduck-ai/yourbatis"
 )
@@ -32,4 +33,52 @@ func processExistingSessionInputTx(ctx context.Context, executor yourbatis.Execu
 	}
 	updated, applied, err := NewSessionEventMapper(executor).MarkInputProcessed(ctx, session.WorkspaceUUID, session.ExternalID, event.ExternalID, event.ProcessedAt)
 	return updated.event(), applied, err
+}
+
+func (d *DB) ProcessSessionInputsForWorker(ctx context.Context, codeSession CodeSession, epoch int64, inputIDs []string) ([]SessionEvent, error) {
+	if epoch <= 0 {
+		return nil, ErrWorkerEpochMismatch
+	}
+	var events []SessionEvent
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		session, err := lockSessionForEvents(ctx, NewSessionMapper(executor), codeSession.WorkspaceUUID, codeSession.SessionExternalID)
+		if err != nil {
+			return err
+		}
+		if session.ArchivedAt != nil {
+			return ErrInvalidState
+		}
+		worker, found, err := NewCodeSessionMapper(executor).LockCodeSessionByExternalID(ctx, codeSession.ExternalID)
+		if err != nil {
+			return err
+		}
+		if !found || worker.WorkspaceUUID != session.WorkspaceUUID || worker.OrganizationUUID != session.OrganizationUUID || worker.SessionUUID != session.UUID {
+			return ErrNotFound
+		}
+		if worker.Status != "active" {
+			return ErrInvalidState
+		}
+		if worker.CurrentWorkerEpoch != epoch {
+			return ErrWorkerEpochMismatch
+		}
+		now := time.Now().UTC()
+		mapper := NewSessionEventMapper(executor)
+		for _, id := range inputIDs {
+			row, applied, err := mapper.MarkInputProcessed(ctx, session.WorkspaceUUID, session.ExternalID, id, now)
+			if err != nil {
+				return err
+			}
+			if applied {
+				events = append(events, row.event())
+			}
+		}
+		if len(events) > 0 {
+			return NewCodeSessionMapper(executor).ResetIdleSinceForSession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID, false)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return events, nil
 }

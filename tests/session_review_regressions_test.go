@@ -15,7 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-func TestSessionCanAcceptNextTurnAfterWorkerReturnsIdle(t *testing.T) {
+func TestSessionCanAcceptNextTurnAfterWorkerResult(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("accepted-input-recovery"))
 	worker, epoch := newPayloadIntegrationSession(t, app)
 	first := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"first"}]}]}`, defaultTestKey)
@@ -24,10 +24,11 @@ func TestSessionCanAcceptNextTurnAfterWorkerReturnsIdle(t *testing.T) {
 	}
 	consumePublicInput(t, app, worker, epoch, sessionEventStringField(t, first.Data[0], "id"))
 	putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"running"}`)
+	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch, `{"type":"result","uuid":"completed-first-input","is_error":false}`))
 	putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"idle"}`)
 	next := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"next"}]}]}`, defaultTestKey)
 	if sessionInputProcessedAt(t, next.Data[0]) != "" {
-		t.Fatal("prior accepted message blocked the next turn after idle")
+		t.Fatal("prior accepted message blocked the next turn after result")
 	}
 }
 

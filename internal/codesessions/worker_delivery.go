@@ -2,8 +2,6 @@ package codesessions
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -116,16 +114,16 @@ func (s *Service) applyLockedWorkerDeliveryUpdates(
 }
 
 func (s *Service) publishProcessingInputs(ctx context.Context, codeSessionID string, epoch int64, updates []workerDeliveryUpdate, references map[string]workerevents.AckRef) error {
-	if err := s.db.ValidateCodeSessionWorkerEpoch(ctx, codeSessionID, epoch); err != nil {
-		return err
-	}
-	var eventIDs []string
+	var inputIDs []string
 	for _, update := range updates {
-		if update.Status == "processing" || update.Status == "processed" {
-			eventIDs = append(eventIDs, update.EventID)
+		if update.Status != "processing" && update.Status != "processed" {
+			continue
+		}
+		if id := references[update.EventID].PublicEventID; id != "" {
+			inputIDs = append(inputIDs, id)
 		}
 	}
-	if len(eventIDs) == 0 {
+	if len(inputIDs) == 0 || s.sink == nil {
 		return nil
 	}
 	record, found, err := s.db.GetCodeSession(ctx, codeSessionID)
@@ -135,31 +133,5 @@ func (s *Service) publishProcessingInputs(ctx context.Context, codeSessionID str
 	if !found {
 		return db.ErrNotFound
 	}
-	payloads := make([]json.RawMessage, 0, len(eventIDs))
-	for _, id := range eventIDs {
-		reference := references[id]
-		if reference.PublicEventID == "" {
-			continue
-		}
-		event, err := s.db.GetSessionEvent(ctx, record.WorkspaceUUID, record.SessionExternalID, reference.PublicEventID)
-		if errors.Is(err, db.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if event.EventType != "user.message" || !event.ProcessedAt.IsZero() {
-			continue
-		}
-		raw, err := json.Marshal(struct {
-			ID          string    `json:"id"`
-			Type        string    `json:"type"`
-			ProcessedAt time.Time `json:"processed_at"`
-		}{reference.PublicEventID, "user.message", time.Now().UTC()})
-		if err != nil {
-			return err
-		}
-		payloads = append(payloads, raw)
-	}
-	return s.publishPublicPayloads(ctx, codeSessionID, payloads)
+	return s.sink.ProcessCodeSessionInputs(ctx, record, epoch, inputIDs)
 }

@@ -221,7 +221,7 @@ Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_starte
   最终子消息继续通过 `parent_tool_use_id` 指向同一个确定性 thread ID。
 
 代理逐帧观察响应，不修改 SSE body。code-session 上游请求不转发客户端的 `Accept-Encoding`，由 Go Transport 协商并透明解压，观测器因此读到明文帧，客户端收到的是解压后的响应。`message_start.usage` 与 `message_delta.usage` 按字段合并，
-其中输出 token 数是本次请求累计值。正常 `message_stop` 将完整 `agent.message` / 带公开 thinking 正文的 `agent.thinking` 与 end 按顺序放入同一写入批次；provider error 只发布 end；
+其中输出 token 数是本次请求累计值。正常 `message_stop` 将带正文的 `agent.thinking` / `agent.message`、允许公开的 `agent.tool_use`、model request end 按此顺序放入同一写入批次；provider error 只发布 end；
 非流式响应完成、HTTP 错误、网络错误、缺失 stop 的 EOF 和客户端取消也会收尾。非流式响应已完整读取但向客户端写入失败时，end 保留已知用量并标记 `stream_error`。
 取消后的落库使用独立 5 秒 context；end 持久化失败在该期限内每 250 毫秒重试，成功即停止，期限耗尽时记录 start ID 和错误，不记录原始响应。
 单帧、累计文本和非流式 JSON 的观察缓冲上限为 4 MiB，超过上限仍原样转发，但 end 标记
@@ -235,7 +235,7 @@ end 使用 `model_usage` 和 `is_error`，通过 `model_request_start_id` 关联
 
 完整模型响应中的工具 input 非法或不是 JSON object 时，观测器保留工具 ID/名称，把 input 包装为 `__unparsedToolInput: {raw, len}` 并标记参数拒绝，模型 end 仍标记 `invalid_response`。这类内置工具不论 snapshot 的权限策略是什么，都在 end 前发布 `evaluated_permission: deny` 的调用事件，不生成策略 evaluation 或确认请求；失败响应只发布参数被拒绝的调用，同响应里的正常调用不由此分支发布。Worker 的错误工具结果可能早于 assistant echo，因此不能等 echo 再补调用。代理在转发流式 message_stop 前持久化调用；结果使用同一稳定 ID，历史和 SSE 都先看到调用再看到结果。非流式响应仍在完整 body 转发后结束观察，不保证这项提前顺序。此分支不覆盖 custom/MCP、观测超限、传输失败或缺少 ID/名称的响应。
 
-Worker 的 runtime idle 不一定表示用户回合完成：模型返回工具调用后，工具执行和下一次模型请求仍属于同一回合。Worker idle 或 requires_action 发布前读取主线程最近的模型 end、中断或错误事实；成功模型 end 含有 `tool_use_ids` 且没有持久化的待确认请求时，不发布 idle 或 usage 快照。这也覆盖自动允许工具在等待内部许可回调时短暂上报的 requires_action，避免它被无待确认请求的状态映射变为 end_turn。真正的待确认请求仍按现有路径暂停并等待用户确认；最终无工具的模型 end、用户中断或失败后仍按现有路径收敛。该检查使用公开事件与待确认 metadata 读取边界，不引入第二份工具链状态。验收包含缺少权限回调的流式/非流式 Bash、回调重投去重，以及 Write→Read 的中间 idle/requires_action；外部 `oma-verify` 的三条内置工具用例检查 SSE/历史调用与结果 ID、真实文件内容、最终唯一 idle 和累计 usage。
+Worker 的 runtime idle 不一定表示用户回合完成：模型返回工具调用后，工具执行和下一次模型请求仍属于同一回合。Worker idle 只更新内部运行状态，不结束公开回合。requires_action 发布前读取主线程最近的模型 end、中断或错误事实；成功模型 end 含有 `tool_use_ids` 且没有持久化的待确认请求时，不发布 requires_action 对应的公开暂停或 usage 快照。这也覆盖自动允许工具在等待内部许可回调时短暂上报的 requires_action，避免它被无待确认请求的状态映射变为 end_turn。真正的待确认请求仍按现有路径暂停并等待用户确认；最终回合完成或已确认的用户取消统一由 CCRv2 result 收敛。该检查使用公开事件与待确认 metadata 读取边界，不引入第二份工具链状态。验收包含缺少权限回调的流式/非流式 Bash、回调重投去重，以及 Write→Read 的中间 idle/requires_action；外部 `oma-verify` 的三条内置工具用例检查 SSE/历史调用与结果 ID、真实文件内容、最终唯一 idle 和累计 usage。
 SSE 在最终消息后关闭该消息的预览，在 end 后只关闭其 `event_ids` 列出的预览，并忽略这些预览迟到的 start/delta；同线程重叠请求互不影响，不要求错误路径一定有最终消息。只有订阅了 stream delta 的连接记录已结束的预览 ID。
 
 历史排序、游标与 `created_at[...]` 筛选规则见上文；代理事件沿用同一写入入口。事件批次不按随机 ID 重排，
@@ -264,3 +264,5 @@ nil 保持缺失，显式 0 保留。没有来源的计费金额、active_second
 ### Thinking 正文合同
 
 代理解析流式 `thinking_delta` 并累计到对应 content block，非流式响应读取 `thinking` 字段；最终事件使用 `content: [{"type":"thinking","thinking":"..."}]`。thinking 与 text/input 共享现有 4 MiB 观察容量上限。Worker assistant 映射也保留相同正文格式，签名字段不进入公开 thinking 内容。`redacted_thinking` 继续只产生无正文的 `agent.thinking`。已持久化的无正文事件不回填；上游未公开返回正文时只能展示 Thinking 状态。
+
+Worker 输入的 processing/processed 回执先在同一个 Yourbatis 事务中按 Session → Worker 的顺序持锁，校验 Worker 的租户、Session 归属、active 状态和 epoch，再提交尚未处理消息的处理时间，并沿用原路径清除 Worker 空闲计时。凭据轮换先完成时拒绝旧 epoch；处理事务先持锁时，轮换等待提交。事务提交后恢复大消息载荷并广播 SSE，随后在 epoch 锁内执行投递 ACK。ACK 阶段失败不会回滚已经提交的处理时间；回执重试沿用相同事件 ID，保持处理时间不变。此流程不承诺 PostgreSQL 与 JetStream ACK 跨系统原子提交。回归见 `tests/worker_delivery_retry_test.go` 和 `tests/worker_processing_epoch_test.go`。

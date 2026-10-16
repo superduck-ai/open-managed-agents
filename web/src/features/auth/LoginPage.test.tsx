@@ -169,4 +169,43 @@ describe('LoginFlow', () => {
     expect(alert.textContent).toContain('验证码无效或已过期');
     expect(alert.textContent).not.toContain('Verification code is invalid or expired');
   });
+  test.each(['verify', 'resend'] as const)(
+    'localizes a tightened domain policy during %s in Chinese',
+    async (action) => {
+      resetTestDom('https://oma.duck.ai/login');
+      const domainError = {
+        status: 403,
+        code: 'email_domain_not_allowed',
+        message: 'Use an approved email address to sign in',
+      };
+      const send = mock(async () => {
+        if (send.mock.calls.length > 1) throw domainError;
+        return { sent: true };
+      });
+      const verify = mock(async () => {
+        throw domainError;
+      });
+      const authenticated = mock(async () => undefined);
+      render(
+        <I18nProvider initialLocale="zh-CN">
+          <LoginFlow onAuthenticated={authenticated} onSendMagicLink={send} onVerifyMagicLink={verify} />
+        </I18nProvider>,
+      );
+      fireEvent.input(screen.getByLabelText('邮箱 *'), { target: { value: 'user@example.org' } });
+      fireEvent.click(screen.getByRole('button', { name: '使用邮箱继续' }));
+      await screen.findByLabelText('验证码');
+      if (action === 'verify') {
+        fireEvent.input(screen.getByLabelText('验证码'), { target: { value: '123456' } });
+        fireEvent.click(screen.getByRole('button', { name: '验证邮箱' }));
+        await waitFor(() => expect(verify).toHaveBeenCalledWith('user@example.org', '123456'));
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: '重新发送验证码' }));
+        await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+      }
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain('请使用允许登录的邮箱。');
+      expect(alert.textContent).not.toContain(domainError.message);
+      expect(authenticated).not.toHaveBeenCalled();
+    },
+  );
 });

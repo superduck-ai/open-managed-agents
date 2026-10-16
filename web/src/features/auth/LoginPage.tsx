@@ -79,6 +79,13 @@ export function LoginFlow({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResending, setIsResending] = useState(false);
 
+  function loginErrorMessage(err: unknown, fallback: string) {
+    const apiError = err as { code?: unknown } | undefined;
+    return apiError?.code === 'email_domain_not_allowed'
+      ? msg('auth.login.emailDomainNotAllowed', 'Use an approved email address to sign in.')
+      : errorMessage(err, fallback);
+  }
+
   async function handleEmailSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const normalizedEmail = email.trim();
@@ -97,12 +104,7 @@ export function LoginFlow({
       setStep('code');
       setNotice(msg('auth.login.codeNotice', 'Enter the 6-digit code sent to your email.'));
     } catch (err) {
-      const apiError = err as { code?: unknown } | undefined;
-      setError(
-        apiError?.code === 'email_domain_not_allowed'
-          ? msg('auth.login.emailDomainNotAllowed', 'Use an approved email address to sign in.')
-          : errorMessage(err, msg('auth.login.sendCodeFailed', 'Could not send a code. Try again.')),
-      );
+      setError(loginErrorMessage(err, msg('auth.login.sendCodeFailed', 'Could not send a code. Try again.')));
     } finally {
       setIsSubmitting(false);
     }
@@ -127,7 +129,7 @@ export function LoginFlow({
       setError(
         apiError?.status === 401 && apiError.code === 'authentication_error'
           ? msg('auth.login.invalidOrExpiredCode', 'Verification code is invalid or expired')
-          : errorMessage(err, msg('auth.login.verifyCodeFailed', 'Could not verify that code. Try again.')),
+          : loginErrorMessage(err, msg('auth.login.verifyCodeFailed', 'Could not verify that code. Try again.')),
       );
     } finally {
       setIsSubmitting(false);
@@ -142,7 +144,7 @@ export function LoginFlow({
       await onSendMagicLink(submittedEmail);
       setNotice(msg('auth.login.codeResent', 'A new code was sent.'));
     } catch (err) {
-      setError(errorMessage(err, msg('auth.login.resendFailed', 'Could not resend the code. Try again.')));
+      setError(loginErrorMessage(err, msg('auth.login.resendFailed', 'Could not resend the code. Try again.')));
     } finally {
       setIsResending(false);
     }

@@ -289,7 +289,7 @@ test("external transport failure records unknown and blocks the turn without rep
   }
 });
 
-test("interrupting an external call stops without replay when its outcome is unknown", async () => {
+test("interrupting an external call finishes locally and permits a new turn without replay", async () => {
   const f = await fixture();
   let turn: Promise<unknown> | undefined;
   try {
@@ -302,11 +302,16 @@ test("interrupting an external call stops without replay when its outcome is unk
     await f.p.dispatched;
     await f.session.control({ type: "interrupt" });
     await turn;
-    expect(f.session.blocked()).toBe(true);
+    expect(f.session.blocked()).toBe(false);
+    expect(Object.values(f.session.state.toolOutcomes)).toContainEqual({ text: "Tool call interrupted.", failed: true, remoteOutcome: "unknown" });
     expect(
       f.p.requests.filter((request) => request.method === "tools/call"),
     ).toHaveLength(1);
     expect(f.b.requests).toHaveLength(1);
+    f.b.modelScript = [textEvents("continued")];
+    await f.session.receive("next", { content: "Continue" });
+    expect(f.b.requests).toHaveLength(2);
+    expect(f.p.requests.filter((request) => request.method === "tools/call")).toHaveLength(1);
   } finally {
     await f.close();
     await turn;

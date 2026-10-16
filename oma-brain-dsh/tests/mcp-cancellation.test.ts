@@ -83,19 +83,25 @@ test.skipIf(!binary)("lost MCP server rejects the tool outcome instead of report
   } finally { await f.close(); }
 }, 20_000);
 
-test.skipIf(!binary)("ordinary cancellation stops Bash and unknown outcomes block replay", async () => {
+for (const user of [false, true]) test.skipIf(!binary)(`ordinary ${user ? "user interruption" : "cancellation"} stops Bash without replay`, async () => {
   const f = await sandbox();
   const abort = new AbortController();
   let blocked = false;
   const events: string[] = [];
+  const calls = new Set<string>();
+  let remoteOutcome: string | undefined;
   const bridge: ToolExecutionBridge = {
     blocked: () => blocked,
     approve: async () => ({ allowed: true }),
-    recordApproved: async () => { events.push("approved"); },
+    recordApproved: async (call) => {
+      if (calls.has(call.callId)) throw new Error("Duplicate tool call");
+      calls.add(call.callId);
+      events.push("approved");
+    },
     flushLog: async () => {},
     recordDispatch: async () => { events.push("dispatched"); },
     recordUnknown: async () => { blocked = true; events.push("unknown"); },
-    recordResult: async () => { events.push("result"); },
+    recordResult: async (outcome) => { remoteOutcome = outcome.remoteOutcome; events.push("result"); },
     stop: () => { events.push("stop"); },
   };
   const execution = new ToolExecution({ provision: async () => {}, call: f.client.call.bind(f.client) }, bridge);
@@ -104,11 +110,13 @@ test.skipIf(!binary)("ordinary cancellation stops Bash and unknown outcomes bloc
     .then(() => undefined, (error: unknown) => error);
   try {
     await waitForStart(f.workdir);
-    abort.abort();
+    abort.abort(user ? { kind: "user" } : undefined);
     const error = await running;
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("outcome is unknown");
-    expect(events).toEqual(["approved", "dispatched", "unknown", "stop"]);
+    expect((error as Error).message).toContain(user ? "Tool call interrupted." : "outcome is unknown");
+    expect(events).toEqual(["approved", "dispatched", ...(user ? ["result"] : ["unknown", "stop"])]);
+    expect(blocked).toBe(!user);
+    if (user) expect(remoteOutcome).toBe("unknown");
     const pid = Number(await readFile(join(f.workdir, "pid"), "utf8"));
     const deadline = Date.now() + 5_000;
     while (true) {
@@ -118,9 +126,16 @@ test.skipIf(!binary)("ordinary cancellation stops Bash and unknown outcomes bloc
     }
     expect(await Bun.file(join(f.workdir, "forbidden")).exists()).toBe(false);
     await expect(execution.execute(tool, command, {
-      callId: ToolCallId("retry-call"), signal: new AbortController().signal, deferContext: () => {},
-    })).rejects.toThrow("requires tool outcome reconciliation");
+      callId: ToolCallId("cancelled-call"), signal: new AbortController().signal, deferContext: () => {},
+    })).rejects.toThrow(user ? "Duplicate tool call" : "requires tool outcome reconciliation");
     expect(f.methods.filter((method) => method === "tools/call")).toHaveLength(1);
+    if (user) {
+      const next = await execution.execute(tool, { command: "printf NEXT" }, {
+        callId: ToolCallId("next-call"), signal: new AbortController().signal, deferContext: () => {},
+      });
+      expect(next).toBe("NEXT");
+      expect(f.methods.filter((method) => method === "tools/call")).toHaveLength(2);
+    }
     expect(f.methods.some((method) => method.startsWith("tasks/"))).toBe(false);
   } finally {
     abort.abort();

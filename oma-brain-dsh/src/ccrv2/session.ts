@@ -418,7 +418,8 @@ export class CcrSession {
     if (entry.callPhases?.[outcome.callId] !== "dispatch") throw new Error("Tool result does not match dispatch");
     this.activity.end(threadId, "tool_exec", outcome.callId);
     entry.callPhases[outcome.callId] = "result";
-    entry.toolOutcomes[outcome.callId] = { text: outcome.text, failed: outcome.failed };
+    entry.toolOutcomes[outcome.callId] = { text: outcome.text, failed: outcome.failed,
+      ...(outcome.remoteOutcome ? { remoteOutcome: outcome.remoteOutcome } : {}) };
     if (threadId === this.id) this.state.toolOutcomes[outcome.callId] = entry.toolOutcomes[outcome.callId]!;
     this.syncCallPhase(entry);
     const changed = !isDeepStrictEqual(outcome.original, outcome.effective);

@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
-import { LlmAdapter, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { mountKernel } from "../src/kernel.ts";
 import * as CcrBridge from "../src/ccrv2/index.ts";
 import type { CcrBackend } from "../src/ccrv2/index.ts";
@@ -611,3 +611,93 @@ test("only backend-confirmed user approvals pause the worker and late lookups ca
     } finally { await ctx.fiber.dispose(); }
   }
 });
+
+
+test("user interrupts settle the tool locally, finish successfully and survive recovery without replay", async () => {
+  for (const control of [{ type: "user.interrupt" }, { type: "control_request", request_id: "interrupt", request: { subtype: "interrupt" } }]) {
+    const backend = new MemoryBackend();
+    const started = Promise.withResolvers<void>();
+    let executions = 0;
+    const executor: SandboxExecutor = {
+      provision: async () => {},
+      call: async (_tool, _args, signal) => {
+        executions++;
+        started.resolve();
+        return new Promise((_, reject) => {
+          if (signal.aborted) reject(signal.reason);
+          else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+    };
+    const config = {
+      id: "interrupt-session", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "",
+      setup: async (scope: Context) => {
+        await scope.plugin({ name: "interrupt-sandbox", apply(ctx: Context) { ctx.provide("sandboxExecutor", executor); } });
+      },
+    };
+    const model = new TextModel();
+    const stream = model.stream.bind(model);
+    model.stream = async function* (options: GenerateOptions): AsyncIterable<StreamChunk> {
+      if (this.requests.length) { yield* stream(options); return; }
+      this.requests.push(options);
+      yield { type: "block-start", index: 0, blockType: "tool-call" };
+      yield { type: "block-end", index: 0, block: {
+        type: "tool-call", id: ToolCallId("cancelled-call"), name: "Bash", arguments: JSON.stringify({ command: "sleep 120" }),
+      } };
+      yield { type: "finish", reason: { kind: "tool-calls" } };
+    };
+    let ctx = new Context();
+    let turn: Promise<void> | undefined;
+    try {
+      await mountKernel(ctx);
+      await ctx.plugin(CcrBridge, { backend });
+      ctx.llm.registerAdapter(["test"], model);
+      let session = ctx.ccrv2.createSession(config);
+      const events = backend.events.bind(backend);
+      backend.events = async (id, payloads) => {
+        await events(id, payloads);
+        for (const payload of payloads) if (payload.type === "control_request" && payload.request.subtype === "can_use_tool")
+          await session.control({ type: "control_response", response: {
+            subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
+          } });
+      };
+      await session.open();
+      turn = session.receive("first", { content: "Run Bash" });
+      await started.promise;
+      await session.receive("interrupt", control);
+      await turn;
+      expect(session.blocked()).toBe(false);
+      expect(session.abort.signal.aborted).toBe(false);
+      expect(session.state.phase).toBe("completed");
+      expect(session.state.toolOutcomes["cancelled-call"]).toMatchObject({ failed: true, remoteOutcome: "unknown" });
+      expect(backend.output.get(config.id)!.filter((event) => event.type === "result"))
+        .toEqual([{ type: "result", uuid: "first_result", subtype: "success", is_error: false }]);
+      expect(JSON.stringify(backend.output.get(config.id))).not.toContain("Remote tool outcome is unknown");
+      const results = backend.output.get(config.id)!.flatMap((event) => event.message?.content ?? [])
+        .filter((block: Payload) => block.type === "tool_result");
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({ tool_use_id: "cancelled-call", is_error: true });
+      await expect(session.recordApproved({ callId: "cancelled-call", name: "Bash", original: {}, effective: {} }))
+        .rejects.toThrow("duplicate");
+      await ctx.fiber.dispose();
+      ctx = new Context();
+      await mountKernel(ctx);
+      await ctx.plugin(CcrBridge, { backend });
+      const resumed = new TextModel();
+      ctx.llm.registerAdapter(["test"], resumed);
+      session = ctx.ccrv2.createSession(config);
+      await session.open();
+      expect(session.blocked()).toBe(false);
+      expect(session.state.toolOutcomes["cancelled-call"]?.remoteOutcome).toBe("unknown");
+      await session.receive("first", { content: "Duplicate delivery" });
+      expect(resumed.requests).toHaveLength(0);
+      await session.receive("next", { content: "Continue" });
+      expect(resumed.requests).toHaveLength(1);
+      expect(executions).toBe(1);
+      expect(backend.output.get(config.id)!.filter((event) => event.type === "result").every((event) => !event.is_error)).toBe(true);
+    } finally {
+      await ctx.fiber.dispose();
+      await turn?.catch(() => {});
+    }
+  }
+}, 15_000);

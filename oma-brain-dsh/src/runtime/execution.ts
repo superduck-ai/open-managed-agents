@@ -44,19 +44,25 @@ export class ToolExecution {
     await this.bridge.recordDispatch(exec.callId);
     let result: Payload;
     let text: string;
+    let remoteOutcome: "unknown" | undefined;
     try {
       result = await this.sandbox.call(tool, effective, exec.signal);
       text = toolText(result, tool.name);
     } catch {
-      try {
-        await this.bridge.recordUnknown(exec.callId);
-      } finally {
-        this.bridge.stop();
+      if (!exec.signal.aborted || exec.signal.reason?.kind !== "user") {
+        try {
+          await this.bridge.recordUnknown(exec.callId);
+        } finally {
+          this.bridge.stop();
+        }
+        throw new Error("Remote tool outcome is unknown; turn stopped without replay");
       }
-      throw new Error("Remote tool outcome is unknown; turn stopped without replay");
+      text = "Tool call interrupted.";
+      result = { isError: true };
+      remoteOutcome = "unknown";
     }
     const changed = !isDeepStrictEqual(original, effective);
-    await this.bridge.recordResult({ ...call, text, failed: !!result.isError });
+    await this.bridge.recordResult({ ...call, text, failed: !!result.isError, ...(remoteOutcome ? { remoteOutcome } : {}) });
     if (changed)
       exec.deferContext(createUserMessage({
         source: { kind: "user" },

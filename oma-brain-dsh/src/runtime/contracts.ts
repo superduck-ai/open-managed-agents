@@ -104,6 +104,7 @@ export interface ApprovedToolCall {
 }
 
 export interface ToolOutcome extends ApprovedToolCall {
+  remoteOutcome?: "unknown";
   text: string;
   failed: boolean;
 }

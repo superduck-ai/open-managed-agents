@@ -434,6 +434,9 @@ func TestPlatformWebSessionStream(t *testing.T) {
 	if contentType := resp.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/event-stream") {
 		t.Fatalf("platform web stream content-type = %q, want text/event-stream", contentType)
 	}
+	if buffering := resp.Header.Get("X-Accel-Buffering"); buffering != "no" {
+		t.Fatalf("platform web stream X-Accel-Buffering = %q, want no", buffering)
+	}
 
 	lineCh := make(chan string, 16)
 	go func() {

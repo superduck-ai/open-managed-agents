@@ -66,6 +66,7 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 	defer response.Body.Close()
 	if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
 		copySandboxMCPResponseHeaders(w.Header(), response.Header)
+		w.Header().Set("X-Accel-Buffering", "no")
 		w.WriteHeader(response.StatusCode)
 		streamSandboxMCPResponse(w, response.Body)
 		return

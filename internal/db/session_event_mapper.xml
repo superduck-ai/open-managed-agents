@@ -134,17 +134,17 @@
             <if test="params.CreatedAtLT != nil">AND processed_at &lt; #{params.CreatedAtLT}</if>
             <if test="params.CreatedAtLTE != nil">AND processed_at &lt;= #{params.CreatedAtLTE}</if>
             <if test="params.Cursor != nil">
-                AND (processed_at, id)
+                AND (COALESCE(processed_at, created_at), id)
                 <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>
                 (
-                    SELECT processed_at, id FROM session_events
+                    SELECT COALESCE(processed_at, created_at), id FROM session_events
                     WHERE workspace_uuid = #{params.WorkspaceUUID}
                     AND session_external_id = #{params.SessionExternalID}
                     AND external_id = #{params.Cursor.ExternalID}
                 )
             </if>
         </where>
-        ORDER BY session_events.processed_at
+        ORDER BY COALESCE(session_events.processed_at, session_events.created_at)
         <choose><when test="params.Descending">DESC, id DESC</when><otherwise>ASC, id ASC</otherwise></choose>
         LIMIT #{params.FetchLimit}
     </select>
@@ -184,5 +184,19 @@
           AND session_uuid = #{sessionUUID}
           AND deleted_at IS NULL
         ORDER BY created_at ASC, id ASC
+    </select>
+    <select id="HasPendingInput" result="scalar" resultType="bool">
+        SELECT EXISTS (SELECT 1 FROM session_events
+        WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+        AND thread_external_id = #{threadID} AND event_type = 'user.message'
+        AND processed_at IS NULL AND deleted_at IS NULL)
+    </select>
+    <select id="MarkInputProcessed" result="optional" resultType="sessionEventRow">
+        WITH updated AS (UPDATE session_events SET processed_at = #{processedAt}
+        WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+        AND external_id = #{eventExternalID} AND event_type = 'user.message'
+        AND processed_at IS NULL AND deleted_at IS NULL
+        RETURNING <include refid="columns"/>)
+        SELECT <include refid="columns"/> FROM updated
     </select>
 </mapper>

@@ -6,7 +6,8 @@ import { MessageScrollerProvider } from '../../../shared/ui/message-scroller';
 import { toast } from '../../../shared/ui/sonner';
 import { resetTestDom } from '../../../test/setup';
 import type { FileMetadataApiResponse, SessionApiResponse } from '../types';
-import { SessionOutputFiles } from './SessionOutputFiles';
+import { useSessionFiles } from './SessionFileContext';
+import { SessionOutputFileList, SessionOutputFiles } from './SessionOutputFiles';
 import { sessionFilesQueryKey } from './sessionFiles';
 
 const { act, cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
@@ -44,6 +45,11 @@ function page(files: FileMetadataApiResponse[], extra = {}) {
   return Response.json({ data: files, has_more: false, ...extra });
 }
 
+function TestFileList() {
+  const data = useSessionFiles();
+  return data ? <SessionOutputFileList files={data.files} workspaceId={data.workspaceId} /> : null;
+}
+
 function renderOutputs(overrides: Partial<Parameters<typeof SessionOutputFiles>[0]> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   const initial = { session: makeSession(), workspaceId: 'workspace_outputs', refreshKey: 0, ...overrides };
@@ -51,7 +57,9 @@ function renderOutputs(overrides: Partial<Parameters<typeof SessionOutputFiles>[
     <QueryClientProvider client={client}>
       <I18nProvider initialLocale="en">
         <MessageScrollerProvider>
-          <SessionOutputFiles {...props} />
+          <SessionOutputFiles {...props}>
+            <TestFileList />
+          </SessionOutputFiles>
         </MessageScrollerProvider>
       </I18nProvider>
     </QueryClientProvider>
@@ -197,4 +205,37 @@ test('downloads from a chat card, guards double clicks, and restores the action 
   await waitFor(() => expect(downloads).toBe(2));
   await act(async () => resolveDownload?.(new Response('a,b\n1,2')));
   await waitFor(() => expect(clicked).toHaveBeenCalledTimes(1));
+});
+
+test('shows the newest two files first and expands and collapses the remaining files', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  globalThis.fetch = async () =>
+    page([
+      { ...file('old', 'old.txt'), created_at: '2026-10-12T08:00:00Z' },
+      { ...file('new', 'new.txt'), created_at: '2026-10-12T08:02:00Z' },
+      { ...file('middle', 'middle.txt'), created_at: '2026-10-12T08:01:00Z' },
+    ]);
+  renderOutputs();
+  await screen.findByRole('button', { name: 'Download new.txt' });
+  expect(
+    screen.getAllByRole('button', { name: /^Download/ }).map((button) => button.getAttribute('aria-label')),
+  ).toEqual(['Download new.txt', 'Download middle.txt']);
+  expect(screen.queryByRole('button', { name: 'Download old.txt' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: /Show all 3 files/ }));
+  expect(await screen.findByRole('button', { name: 'Download old.txt' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: /Collapse files/ }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Download old.txt' })).toBeNull());
+});
+
+test('discovers files published after the idle refresh without opening resources or refocusing', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  let files: FileMetadataApiResponse[] = [];
+  const fetchMock = mock(async () => page(files));
+  globalThis.fetch = fetchMock as typeof fetch;
+  const view = renderOutputs({ session: makeSession('sesn_outputs', 'running') });
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  view.rerender({ session: makeSession() });
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  files = [file('file_late', 'late.txt')];
+  await screen.findByRole('button', { name: 'Download late.txt' }, { timeout: 2500 });
 });

@@ -8,6 +8,27 @@ CRUD、三张表、S3 正文、控制台列表/详情已落地。本文只补运
 
 **方案**：每个 attach 的 store 挂到 `/mnt/memory/{slug}`。Agent 用普通文件工具读写；Filestore 把这些操作变成 Postgres 元数据 + S3 正文 + 不可变 version。
 
+## Brain 的目录加载
+
+本节从废弃 Crush worktree 的 Memory 验证与目录投影迁入，适配当前 Rust Brain。
+共用 Runner 从已解析的 Session attach 快照投影名称、mount_path、access、description 和 instructions，
+保存到既有 Code Session 的 `metadata.config.sandbox_memory_stores`。投影不分 runtime 模式，
+不查询正文、不枚举文件、不访问对象存储，也不创建沙箱。
+
+Brain 将权威目录经过校验和 XML 转义后追加到 launch v2 的 `environment_prompt`，
+Agent 原始 system 保持独立。恢复优先使用持久化目录；旧 Code Session 没有该字段时，
+从已有 Session attach 快照补齐。明确的空目录仍为空，不由 Agent 自报配置或新 attach 值替换。
+非法路径、权限、重复 mount 和超长 instructions 拒绝启动。
+
+Memory Read / Glob / Grep 与 Write / Edit 继续使用沙箱 MCP。目录发现与拒绝调用不分配沙箱，
+首次获准的读取等待沙箱与 FUSE 就绪，后续调用复用沙箱。正文不会预载到提示词。
+Claude 的 `append_system_prompt` 与 `MEMORY.md` 合同保持不变，两种 runtime 使用相同挂载。
+本改动不新增数据库表、语义检索或沙箱外文件操作。
+
+`chat brain-memory` 验证首次目录、拒绝不泄露正文、无沙箱文本、实际读取与复用，以及只读挂载拒写。
+其模型是脚本模型，不代表真实模型的 Memory 选择或 TTFT。六个原有 `memory` 场景仍分别验收
+integrity、isolation、cleanup、lifecycle、filestore 和 mounts。
+
 `/mnt/memory/` 是记忆根目录。启动时在此写入 `MEMORY.md`（一行一个 store：路径、权限、description、instructions）。平台只配 store 和策略，不替 Agent 选落点，也不禁止 Agent 在 store 外写文件。
 
 跨会话能不能留下，由**写到哪里**决定，不由策略禁写：

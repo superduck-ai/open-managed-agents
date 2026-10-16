@@ -117,12 +117,14 @@ func TestWorkerDeliveryTelemetryCompatibility(t *testing.T) {
 			if tc.published {
 				reference.PublishedAt = time.Now().Add(-time.Second)
 			}
+			references := map[string]workerevents.AckRef{}
 			if tc.found {
 				if err := service.workerEventAcks.Put(t.Context(), "cse_test", 1, "evt_test", reference); err != nil {
 					t.Fatal(err)
 				}
+				references["evt_test"] = reference
 			}
-			result, _, err := service.applyLockedWorkerDeliveryUpdates(t.Context(), "cse_test", 1, []workerDeliveryUpdate{{EventID: "evt_test", Status: tc.status}})
+			result, _, err := service.applyLockedWorkerDeliveryUpdates(t.Context(), "cse_test", 1, []workerDeliveryUpdate{{EventID: "evt_test", Status: tc.status}}, references)
 			if result.Applied != tc.applied || result.Ignored != tc.ignored || (err != nil) != tc.failure {
 				t.Fatalf("result = %+v, %v", result, err)
 			}

@@ -68,14 +68,20 @@ func TestSkillsAPI(t *testing.T) {
 	defer cleanupBuiltinSkillRows(t, app.pool)
 	seedBuiltinSkill(t, app, store, "xlsx", "20260203")
 
-	t.Run("failure missing beta header", func(t *testing.T) {
+	t.Run("success stable endpoint without beta header", func(t *testing.T) {
 		resp := doSkillRequest(t, app, http.MethodGet, "/v1/skills?beta=true", nil, defaultTestKey, false, "")
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("list status: %d", resp.StatusCode)
+		}
+		resp.Body.Close()
 	})
 
-	t.Run("failure missing beta query", func(t *testing.T) {
+	t.Run("success legacy endpoint without beta query", func(t *testing.T) {
 		resp := doSkillRequest(t, app, http.MethodGet, "/v1/skills", nil, defaultTestKey, true, "")
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("list status: %d", resp.StatusCode)
+		}
+		resp.Body.Close()
 	})
 
 	t.Run("failure non multipart upload", func(t *testing.T) {
@@ -383,7 +389,7 @@ func TestSkillsAPI(t *testing.T) {
 			t.Fatalf("latest_version after delete = %s, want %s", afterDeleteVersion.LatestVersion, firstVersion.Version)
 		}
 
-		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+created.ID+"?beta=true", nil, defaultTestKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+created.ID+"?beta=true", nil, defaultTestKey, false, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("delete skill status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -412,7 +418,7 @@ func TestSkillsAPI(t *testing.T) {
 		}
 		defer cleanupApp.pool.Exec(context.Background(), `delete from jobs where payload->>'key' = $1`, objectKey)
 
-		resp := doSkillRequest(t, cleanupApp, http.MethodDelete, "/v1/skills/"+created.ID+"?beta=true", nil, defaultTestKey, true, "")
+		resp := doSkillRequest(t, cleanupApp, http.MethodDelete, "/v1/skills/"+created.ID+"?beta=true", nil, defaultTestKey, false, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("delete cleanup skill status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -510,7 +516,7 @@ func TestSkillsAPI(t *testing.T) {
 		}
 
 		officialVersions := listSkillVersionsWithKey(t, app, created.ID, "limit=10", defaultTestKey)
-		if len(officialVersions.Data) != 2 || officialVersions.Data[0].Version != secondVersion.Version {
+		if len(officialVersions.Data) != 2 || officialVersions.Data[1].Version != secondVersion.Version {
 			t.Fatalf("official versions = %+v", officialVersions)
 		}
 
@@ -533,7 +539,7 @@ func TestSkillsAPI(t *testing.T) {
 			t.Fatalf("official delete version status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
 
-		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+created.ID+"?beta=true", nil, defaultTestKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+created.ID+"?beta=true", nil, defaultTestKey, false, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("official delete skill status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -570,8 +576,8 @@ func TestSkillsDisplayTitleSchema(t *testing.T) {
 		t.Fatalf("query skills display_title unique index: %v", err)
 	}
 	normalizedIndexDef := strings.ToLower(indexDef)
-	if !strings.Contains(normalizedIndexDef, "display_title") || !strings.Contains(normalizedIndexDef, "where (deleted_at is null)") {
-		t.Fatalf("skills display_title index = %s, want active display_title unique index", indexDef)
+	if strings.Contains(normalizedIndexDef, "unique") || !strings.Contains(normalizedIndexDef, "display_title") || !strings.Contains(normalizedIndexDef, "where (deleted_at is null)") {
+		t.Fatalf("skills display_title index = %s, want non-unique active display_title lookup index", indexDef)
 	}
 	if strings.Contains(normalizedIndexDef, "display_title is not null") {
 		t.Fatalf("skills display_title index = %s, should not depend on nullable display_title predicate", indexDef)
@@ -798,7 +804,7 @@ func uniqueSkillSuffix() string {
 
 func deleteSkill(t *testing.T, app *testApp, skillID string) {
 	t.Helper()
-	resp := doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+skillID+"?beta=true", nil, defaultTestKey, true, "")
+	resp := doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+skillID+"?beta=true", nil, defaultTestKey, false, "")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("delete skill cleanup status = %d: %s", resp.StatusCode, readAll(t, resp.Body))

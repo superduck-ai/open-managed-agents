@@ -124,14 +124,11 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 	if result.ErrorType != "" {
 		event.Error = &modelRequestError{Type: result.ErrorType}
 	}
-	payloads := make([]json.RawMessage, 0, len(result.Messages)+1)
-	if toolUses := modelRequestPublicTools(result); len(toolUses) > 0 {
-		tools, err := s.modelToolUsePayloads(ctx, request, toolUses, result.EndedAt)
-		if err != nil {
-			return err
-		}
-		payloads = append(payloads, tools...)
+	tools, err := s.modelToolUsePayloads(ctx, request, modelRequestPublicTools(result), result.EndedAt)
+	if err != nil {
+		return err
 	}
+	payloads := make([]json.RawMessage, 0, len(result.Messages)+len(tools)+1)
 	if result.ErrorType == "" {
 		for _, message := range result.Messages {
 			payload, err := jsonv2.Marshal(struct {
@@ -146,6 +143,7 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 			payloads = append(payloads, payload)
 		}
 	}
+	payloads = append(payloads, tools...)
 	return s.publishModelRequestEvent(ctx, request, event, payloads)
 }
 
@@ -153,7 +151,7 @@ func modelRequestPublicTools(result ModelRequestResult) []ModelRequestToolUse {
 	if result.ErrorType == "" {
 		return result.ToolUses
 	}
-	if result.ErrorType != "invalid_response" {
+	if result.ErrorType != "" && result.ErrorType != "invalid_response" {
 		return nil
 	}
 	var rejected []ModelRequestToolUse
@@ -227,7 +225,7 @@ func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.Cod
 			if task.ThreadID == "" {
 				continue
 			}
-			for _, id := range []string{task.TaskID, task.AgentID, task.AgentIDAlt, task.ToolUseID} {
+			for _, id := range []string{task.ThreadID, task.TaskID, task.AgentID, task.AgentIDAlt, task.ToolUseID} {
 				if id != "" {
 					mappings[id] = task.ThreadID
 				}

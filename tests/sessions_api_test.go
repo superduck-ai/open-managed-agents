@@ -169,8 +169,8 @@ func TestSessionsAPI(t *testing.T) {
 		if len(sent.Data) != 1 || !bytes.Contains(sent.Data[0], []byte(`"type":"user.message"`)) {
 			t.Fatalf("unexpected sent events: %+v", sent)
 		}
-		if bytes.Contains(sent.Data[0], []byte(`"created_at"`)) || sessionEventStringField(t, sent.Data[0], "processed_at") == "" {
-			t.Fatalf("sent event must expose processed_at without created_at: %s", sent.Data[0])
+		if bytes.Contains(sent.Data[0], []byte(`"created_at"`)) || !bytes.Contains(sent.Data[0], []byte(`"processed_at":null`)) {
+			t.Fatalf("queued event must expose null processed_at without created_at: %s", sent.Data[0])
 		}
 		events := listSessionEvents(t, app, created.ID, "types[]=user.message", defaultTestKey)
 		if len(events.Data) != 1 || !bytes.Contains(events.Data[0], []byte(`"id":"sevt_`)) {
@@ -1525,16 +1525,21 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	if _, ok := idleState.Worker.ExternalMetadata["pending_action"]; ok {
 		t.Fatalf("pending_action metadata was not deleted on idle: %+v", idleState.Worker.ExternalMetadata)
 	}
+	beforeResult := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
+	if len(beforeResult.Data) != len(idleEventsBefore.Data) {
+		t.Fatalf("worker idle ended turn before result: %s", beforeResult.Data)
+	}
+	postCodeSessionWorkerEvents(t, app, codeSessionID, internalPayloadRequest(workerEpoch, `{"type":"result","uuid":"endpoints-result","is_error":false}`))
 	if got := retrieveSession(t, app, session.ID, defaultTestKey).Status; got != "idle" {
-		t.Fatalf("public session status after idle = %q, want idle", got)
+		t.Fatalf("public session status after result = %q, want idle", got)
 	}
 	threads = listSessionThreads(t, app, session.ID, defaultTestKey)
 	if len(threads.Data) != 1 || threads.Data[0].Status != "idle" {
-		t.Fatalf("primary thread status after idle = %+v, want idle", threads.Data)
+		t.Fatalf("primary thread status after result = %+v, want idle", threads.Data)
 	}
 	idleEvents := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
 	if len(idleEvents.Data) != len(idleEventsBefore.Data)+1 {
-		t.Fatalf("worker idle produced %d total idle events, want %d: %+v", len(idleEvents.Data), len(idleEventsBefore.Data)+1, idleEvents.Data)
+		t.Fatalf("result produced %d total idle events, want %d: %+v", len(idleEvents.Data), len(idleEventsBefore.Data)+1, idleEvents.Data)
 	}
 	idleEvent := sessionEventObjectByType(t, idleEvents, "session.status_idle")
 	if reason, ok := idleEvent["stop_reason"].(map[string]any); !ok || reason["type"] != "end_turn" {

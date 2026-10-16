@@ -57,12 +57,30 @@ func managedAgentSessionConfig(
 		}
 	}
 	mcpServers, tools := mcpSource.MCPServers, mcpSource.Tools
+	memoryPrompt, err := memoryCatalogPrompt(memoryStoreDefinitions(runtimeResources.memoryMounts))
+	if err != nil {
+		return nil, err
+	}
+	type runtimeSkill struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Version     string `json:"version"`
+		Path        string `json:"path"`
+	}
+	skills := make([]runtimeSkill, 0, len(runtimeResources.runtimeSkills))
+	for _, skill := range runtimeResources.runtimeSkills {
+		skills = append(skills, runtimeSkill{skill.Name, skill.Description, skill.Version, path.Join(rcloneSkillsDestination, skill.Directory, "SKILL.md")})
+	}
 	body := map[string]any{
-		"origin":               "managed_agents_api",
-		"model":                modelIDFromAgentSnapshot(session.AgentSnapshot),
-		"sources":              runtimeResources.sources,
-		"outcomes":             []any{},
-		"append_system_prompt": managedAgentEnvironmentPrompt,
+		"origin":                "managed_agents_api",
+		"model":                 modelIDFromAgentSnapshot(session.AgentSnapshot),
+		"sources":               runtimeResources.sources,
+		"outcomes":              []any{},
+		"append_system_prompt":  managedAgentEnvironmentPrompt,
+		"memory_catalog_prompt": memoryPrompt,
+		"runtime_skills":        skills,
+		"worker_transport":      runtimeResources.workerTransport,
+		"sandbox_memory_stores": memoryStoreDefinitions(runtimeResources.memoryMounts),
 	}
 	if system, ok := agentSnapshot["system"].(string); ok && system != "" {
 		body["system_prompt"] = system
@@ -285,7 +303,6 @@ func buildEnvironmentManagerCommand(codeSessionID string, cfg config.Config, pay
 		"set -eu",
 		"mkdir -p " + shellQuote(baseDir),
 		"if [ ! -x " + shellQuote(managerPath) + " ]; then printf '%s\\n' " + shellQuote("environment-manager binary missing or not executable: "+managerPath) + " >&2; exit 1; fi",
-		"if [ ! -x " + shellQuote(claudePath) + " ]; then printf '%s\\n' " + shellQuote("Claude binary missing or not executable: "+claudePath) + " >&2; exit 1; fi",
 		"export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}",
 		"export CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=${CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL:-1}",
 		"export CLAUDE_CODE_ENABLE_BACKGROUND_PLUGIN_REFRESH=${CLAUDE_CODE_ENABLE_BACKGROUND_PLUGIN_REFRESH:-0}",
@@ -300,13 +317,17 @@ func buildEnvironmentManagerCommand(codeSessionID string, cfg config.Config, pay
 		"export GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf",
 		"export GIT_CONFIG_VALUE_2=ssh://git@github.com/",
 	}
+	if cfg.EnvironmentRunner.AgentMode == "brain" {
+		commandParts = append(commandParts, "export ENVRUNNER_SKIP_CLAUDE_CODE=true", "export MCP_ALLOWED_HOSTS=")
+	} else {
+		commandParts = append(commandParts, "if [ ! -x "+shellQuote(claudePath)+" ]; then printf '%s\\n' "+shellQuote("Claude binary missing or not executable: "+claudePath)+" >&2; exit 1; fi")
+	}
 	commandParts = append(commandParts, gitConfigExportLinesFrom(environmentManagerBuiltInGitConfigCount, extraGitConfig)...)
 	commandParts = append(commandParts,
 		"export GIT_EDITOR=true",
 		"export GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt",
 		"export GIT_TERMINAL_PROMPT=0",
 		// E2B 负责把该命令作为后台进程启动；payload 通过进程 stdin 发送，不进入命令行或沙箱文件系统。
-		// 使用镜像预装的 Claude，禁止启动时安装或升级。
 		"exec "+shellQuote(managerPath)+
 			" task-run"+
 			" --session "+shellQuote(codeSessionID)+

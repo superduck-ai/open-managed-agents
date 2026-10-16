@@ -64,16 +64,23 @@ func TestSessionEventsReportIdleSandboxResumeFailure(t *testing.T) {
 		t.Fatalf("failed provider resume renewed worker lease to %v", failed.WorkerLeaseExpiresAt)
 	}
 	history := listSessionEvents(t, app, session.ID, "types[]=user.message", defaultTestKey)
-	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) == "" {
+	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) != "" {
 		t.Fatalf("failed delivery did not leave its committed input visible: %s", history.Data)
 	}
 
 	retry := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.message","content":[{"type":"text","text":"second resume attempt"}]}]}`), defaultTestKey, true)
-	assertError(t, retry, http.StatusConflict, "conflict_error")
+	retry.Body.Close()
+	if retry.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("retry status = %d, want 500 while provider remains unavailable", retry.StatusCode)
+	}
+	history = listSessionEvents(t, app, session.ID, "types[]=user.message", defaultTestKey)
+	if len(history.Data) != 2 {
+		t.Fatalf("retry input was not queued: %s", history.Data)
+	}
 
 	calls := app.sandboxTimeouts.snapshotCalls()
-	if len(calls) != 1 {
-		t.Fatalf("sandbox resume calls = %d, want only the failed attempt", len(calls))
+	if len(calls) != 2 {
+		t.Fatalf("sandbox resume calls = %d, want both failed attempts", len(calls))
 	}
 	for _, call := range calls {
 		if call.sandboxID != *sandbox.ProviderSandboxID || call.timeout != app.cfg.E2B.SandboxTimeout {

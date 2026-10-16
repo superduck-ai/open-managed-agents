@@ -25,12 +25,18 @@ func TestRunnerMetricNamesAttributesAndValues(t *testing.T) {
 		value   float64
 		counter bool
 	}{
-		{"oma.runner.stage.duration", func(ctx context.Context) { RecordRunnerStage(ctx, "prepare", "error", 2*time.Second) }, map[string]string{"oma.stage": "prepare", "oma.outcome": "error"}, 2, false},
+		{"oma.runner.stage.duration", func(ctx context.Context) {
+			RecordRunnerStage(ctx, RunnerTriggerLazyMCP, "prepare", "error", 2*time.Second)
+		}, map[string]string{"oma.runner.trigger": "lazy_mcp", "oma.stage": "prepare", "oma.outcome": "error"}, 2, false},
+		{"oma.runner.stale_recovery_claims", RecordRunnerStaleRecoveryClaim, nil, 1, true},
+		{"oma.sandbox.ensure.duration", func(ctx context.Context) { RecordSandboxEnsure(ctx, RunnerTriggerPrewarm, "joined", 2*time.Second) }, map[string]string{"oma.runner.trigger": "prewarm", "oma.outcome": "joined"}, 2, false},
 		{"oma.sandbox.provider.duration", func(ctx context.Context) { RecordSandboxProviderCall(ctx, "set_timeout", "not_found", 2*time.Second) }, map[string]string{"oma.operation": "set_timeout", "oma.outcome": "not_found"}, 2, false},
 		{"oma.code_session.activation.duration", func(ctx context.Context) { RecordActivation(ctx, "timeout", 2*time.Second) }, map[string]string{"oma.outcome": "timeout"}, 2, false},
 		{"oma.runner.queue_wait", func(ctx context.Context) { RecordRunnerQueueWait(ctx, 2*time.Second) }, nil, 2, false},
-		{"oma.runner.runs", func(ctx context.Context) { RecordRunnerRun(ctx, "ok", true, 2*time.Second) }, map[string]string{"oma.outcome": "ok", "oma.runner.recovered": "true"}, 1, true},
-		{"oma.runner.run.duration", func(ctx context.Context) { RecordRunnerRun(ctx, "ok", false, 2*time.Second) }, map[string]string{"oma.outcome": "ok", "oma.runner.recovered": "false"}, 2, false},
+		{"oma.runner.runs", func(ctx context.Context) { RecordRunnerRun(ctx, RunnerTriggerQueue, "ok", true, 2*time.Second) }, map[string]string{"oma.runner.trigger": "queue", "oma.outcome": "ok", "oma.runner.recovered": "true"}, 1, true},
+		{"oma.runner.run.duration", func(ctx context.Context) {
+			RecordRunnerRun(ctx, RunnerTriggerStaleRecovery, "ok", false, 2*time.Second)
+		}, map[string]string{"oma.runner.trigger": "stale_recovery", "oma.outcome": "ok", "oma.runner.recovered": "false"}, 2, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

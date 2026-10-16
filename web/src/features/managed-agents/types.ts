@@ -546,6 +546,7 @@ export type ModelRequestBracket = {
   startId: string;
   startMs: number;
   softEndMs?: number;
+  endMeta?: ModelRequestBracketMeta;
   entries: ModelBracketTargetEntry[];
 };
 
@@ -720,7 +721,7 @@ export type EventsTabProps = {
   lanes: SessionDetailLane[];
   openModelRequest: QuickstartSessionEvent | null;
   pendingAction?: ReactNode;
-  outputFiles?: ReactNode;
+  outputFiles?: (children: ReactNode) => ReactNode;
   onClearFilters: () => void;
   onCopyAll: () => void;
   onCloseInspector: () => void;

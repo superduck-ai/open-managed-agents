@@ -36,7 +36,7 @@ func TestRunnerTelemetry(t *testing.T) {
 	for _, fail := range []bool{true, false} {
 		t.Run(map[bool]string{true: "failure without queue timestamp", false: "recovered success with linked queue"}[fail], func(t *testing.T) {
 			start := len(recorder.Ended())
-			work := db.EnvironmentWork{ExternalID: "work_private", SessionExternalID: "session_private", WorkspaceUUID: "workspace_private", EnvironmentExternalID: "environment_private"}
+			work := db.EnvironmentWork{State: "queued", ExternalID: "work_private", SessionExternalID: "session_private", WorkspaceUUID: "workspace_private", EnvironmentExternalID: "environment_private"}
 			if !fail {
 				queued := time.Now().Add(-2 * time.Second)
 				work.QueuedAt = &queued
@@ -110,6 +110,48 @@ func TestRunnerTelemetry(t *testing.T) {
 				t.Fatalf("queue count = %d", queueCount)
 			}
 		})
+	}
+}
+
+func TestRunnerTriggerTelemetry(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+		_ = provider.Shutdown(context.Background())
+	})
+	queued := time.Now().Add(-time.Hour)
+	stale := db.EnvironmentWork{State: "active", ExternalID: "work_stale", SessionExternalID: "session_stale", QueuedAt: &queued, TraceParent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"}
+	_, staleRun := startRunnerRun(t.Context(), stale)
+	staleRun.end(errors.New("stale failure"))
+
+	parentCtx, parent := provider.Tracer("test").Start(t.Context(), "parent")
+	_, lazyRun := startSandboxRun(parentCtx, db.EnvironmentWork{State: "active", ExternalID: "work_lazy", SessionExternalID: "session_lazy"}, "lazy_mcp")
+	lazyRun.begin("e2b_create")
+	lazyRun.end(nil)
+	parent.End()
+
+	triggers := map[string]sdktrace.ReadOnlySpan{}
+	for _, span := range recorder.Ended() {
+		if span.Name() != "oma.runner.run" {
+			continue
+		}
+		for _, attr := range span.Attributes() {
+			if attr.Key == "oma.runner.queue_wait_s" {
+				t.Fatalf("queue wait recorded for %s", span.Name())
+			}
+			if attr.Key == "oma.runner.trigger" {
+				triggers[attr.Value.Emit()] = span
+			}
+		}
+	}
+	if span := triggers["stale_recovery"]; span == nil || span.Parent().IsValid() || len(span.Links()) != 1 {
+		t.Fatalf("stale recovery root: %v", triggers)
+	}
+	if span := triggers["lazy_mcp"]; span == nil || span.Parent().SpanID() != parent.SpanContext().SpanID() {
+		t.Fatalf("lazy run is not a child span: %v", triggers)
 	}
 }
 

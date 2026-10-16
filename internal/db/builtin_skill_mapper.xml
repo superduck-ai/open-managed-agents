@@ -139,7 +139,7 @@
         FROM builtin_skill_versions
         WHERE skill_id = #{skillID}
         AND deleted_at IS NULL
-        ORDER BY created_at DESC, id DESC
+        ORDER BY <choose><when test="oldestFirst">created_at ASC, id ASC</when><otherwise>created_at DESC, id DESC</otherwise></choose>
         LIMIT #{limit}
         OFFSET #{offset}
     </select>
@@ -149,7 +149,7 @@
         <include refid="versionColumns"/>
         FROM builtin_skill_versions
         WHERE skill_external_id = #{skillExternalID}
-        AND version = #{version}
+        AND (version = #{version} OR external_id = #{version} OR external_id = replace(#{version}, 'skill_version_', 'skver_'))
         AND deleted_at IS NULL
     </select>
 

@@ -932,6 +932,28 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 		strings.Contains(provider.launches[0].command, "$HOME/.claude/skills") {
 		t.Fatalf("sandbox command should not install managed agent skills directly: launches=%v", provider.launches)
 	}
+	deleteSkill(t, app, skill.ID)
+	codeSession, err := app.db.GetCodeSessionBySessionExternalID(ctx, filesystem.WorkspaceUUID, session.ID)
+	if err != nil {
+		t.Fatalf("load skill session runtime: %v", err)
+	}
+	queued, err := app.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, codeSession.ExternalID, provider.sandboxID, errors.New("sandbox removed"), "")
+	if err != nil || !queued {
+		t.Fatalf("queue skill session recovery = (%t, %v)", queued, err)
+	}
+	replacement := &recordingRunnerProvider{sandboxID: "sandbox-runner-skills-replacement"}
+	runUntilSandboxCreated(t, ctx, newManagedAgentRunner(t, app, replacement, cfg), replacement)
+	recoveredArchives, err := app.db.ListSessionSkillArchiveResources(ctx, filesystem.WorkspaceUUID, filesystem.UUID)
+	if err != nil {
+		t.Fatalf("list recovered skill archives: %v", err)
+	}
+	if !reflect.DeepEqual(recoveredArchives, archiveEntries) {
+		t.Fatalf("sandbox recovery changed skill snapshots: before=%+v after=%+v", archiveEntries, recoveredArchives)
+	}
+	if len(replacement.launches) != 1 {
+		t.Fatalf("replacement launches = %d, want one", len(replacement.launches))
+	}
+	assertSingleActiveRecoveredCodeSession(t, app, session.ID)
 }
 
 func TestEnvironmentRunnerProjectsSkillsWithoutDownloadingArchives(t *testing.T) {

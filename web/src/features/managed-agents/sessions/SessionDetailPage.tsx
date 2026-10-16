@@ -792,15 +792,17 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                   workspaceId={activeWorkspaceId}
                 />
               }
-              outputFiles={
+              outputFiles={(children) => (
                 <SessionOutputFiles
                   session={session}
                   workspaceId={activeWorkspaceId}
                   refreshKey={refreshKey}
                   mainLane={activeLane === SESSION_MAIN_LANE_ID}
                   filtered={hasFilter}
-                />
-              }
+                >
+                  {children}
+                </SessionOutputFiles>
+              )}
               entries={entries}
               emptyState={
                 conversationState.acceptingMessages ? (
@@ -1134,18 +1136,20 @@ export function EventsTab({
                       {childLoading && !events.length ? (
                         <SessionTraceSkeleton />
                       ) : filteredEntries.length ? (
-                        <SessionTranscriptView
-                          entries={entries}
-                          visibleEntries={filteredEntries}
-                          openModelRequest={query.trim() ? null : openModelRequest}
-                          selectedEntryId={selectedEntryId}
-                          hoveredEventId={hoveredEventId}
-                          onHoverEvent={onHoverEvent}
-                          onSelectEntry={onSelectEntry}
-                          threadNameById={threadNameById}
-                          onThreadClick={onThreadClick}
-                          traceStartMs={traceStartMs}
-                        />
+                        (outputFiles ?? ((children) => children))(
+                          <SessionTranscriptView
+                            entries={entries}
+                            visibleEntries={filteredEntries}
+                            openModelRequest={query.trim() ? null : openModelRequest}
+                            selectedEntryId={selectedEntryId}
+                            hoveredEventId={hoveredEventId}
+                            onHoverEvent={onHoverEvent}
+                            onSelectEntry={onSelectEntry}
+                            threadNameById={threadNameById}
+                            onThreadClick={onThreadClick}
+                            traceStartMs={traceStartMs}
+                          />,
+                        )
                       ) : entries.length === 0 && emptyState ? (
                         emptyState
                       ) : (
@@ -1164,7 +1168,6 @@ export function EventsTab({
                           onClear={hasFilter ? onClearFilters : undefined}
                         />
                       )}
-                      {outputFiles}
                     </MessageScrollerContent>
                   </MessageScrollerViewport>
                   <MessageScrollerButton

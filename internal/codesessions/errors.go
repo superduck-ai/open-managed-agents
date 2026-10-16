@@ -8,9 +8,29 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+var errRuntimeSubagentConfig = errors.New("invalid runtime subagent configuration")
+var errSandboxUnavailable = errors.New("sandbox is unavailable")
+
 var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
 
+func sandboxInvalidRequest(cause error) error {
+	return apperr.New(apperr.InvalidArgument, "Invalid sandbox MCP request", cause)
+}
+func sandboxOperationError(cause error) error {
+	if errors.Is(cause, errSandboxUnavailable) {
+		return apperr.New(apperr.Unavailable, "Sandbox is unavailable", cause)
+	}
+	if errors.Is(cause, db.ErrNotFound) {
+		return codeSessionNotFound(cause)
+	}
+	if errors.Is(cause, db.ErrInvalidState) || errors.Is(cause, db.ErrWorkerEpochMismatch) {
+		return apperr.New(apperr.Conflict, "Worker epoch or sandbox state conflict", cause)
+	}
+	return internalError("Sandbox operation failed", cause)
+}
+
 var (
+	errWorkerDispatchUnavailable      = errors.New("worker task publisher is unavailable")
 	ErrMCPDeclarationInvalid          = errors.New("MCP server declarations must have unique canonical names and valid targets")
 	ErrMCPGatewayMissing              = errors.New("code_session.sandbox_api_base_url is required for managed-agent MCP tunnels")
 	ErrMCPRuntimeIdentityMissing      = errors.New("managed-agent MCP Tunnel runtime identity is incomplete")

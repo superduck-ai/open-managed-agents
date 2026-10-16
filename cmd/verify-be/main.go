@@ -151,7 +151,7 @@ func perform(ctx context.Context, root, directory, worker string, options cliOpt
 	env.files = strings.HasPrefix(options.Scenario, "files.")
 	env.suite = options.Scenario == "test"
 	env.dependenciesOnly = selected.DependenciesOnly
-	env.publicSandbox = options.Scenario == "chat.public" || options.Scenario == "chat.subagents" || options.Scenario == "chat.upstream-errors"
+	env.publicSandbox = usesBrain(options.Scenario) || options.Scenario == "chat.public" || options.Scenario == "chat.subagents" || options.Scenario == "chat.upstream-errors"
 	defer func() {
 		r.CleanupErrors = env.close()
 		r.CleanupComplete = len(r.CleanupErrors) == 0

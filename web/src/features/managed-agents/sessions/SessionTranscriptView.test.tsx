@@ -1,3 +1,5 @@
+import { SessionFileContext } from './SessionFileContext';
+import type { SessionOutputFile } from './sessionOutputModel';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { I18nProvider } from '../../../shared/i18n';
 import {
@@ -33,6 +35,96 @@ const EMPTY_USAGE: SessionEventUsage = {
 afterEach(() => cleanup());
 
 describe('SessionTranscriptView', () => {
+  test('keeps completed turn files with their reply while hiding outputs beneath a streaming reply', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const at = Date.UTC(2026, 0, 1, 8);
+    const user = displayEntry('user-first', 'user', 'Make the first file');
+    const first = displayEntry('first', 'agent', 'First result', 'first-bracket');
+    const nextUser = { ...displayEntry('user-next', 'user', 'Make more files'), createdAtMs: at + 10000 };
+    const streaming = {
+      ...displayEntry('next', 'agent', 'Still working', 'next-bracket'),
+      createdAtMs: at + 12000,
+      inProgress: true,
+    };
+    const files: SessionOutputFile[] = [
+      {
+        id: 'first-file',
+        filename: 'first.txt',
+        path: '/outputs/first.txt',
+        type: 'file',
+        mime_type: 'text/plain',
+        size_bytes: 1,
+        downloadable: true,
+        created_at: new Date(at + 1000).toISOString(),
+      },
+      {
+        id: 'next-file',
+        filename: 'next.txt',
+        path: '/outputs/next.txt',
+        type: 'file',
+        mime_type: 'text/plain',
+        size_bytes: 2,
+        downloadable: true,
+        created_at: new Date(at + 11000).toISOString(),
+      },
+    ];
+    const tree = (running: boolean, streamingOpen = running) => (
+      <SessionFileContext.Provider value={{ files, workspaceId: 'workspace', running }}>
+        {transcriptTree([user, first, nextUser, { ...streaming, inProgress: streamingOpen }])}
+      </SessionFileContext.Provider>
+    );
+    const view = render(tree(true));
+    expect(
+      screen
+        .getByRole('button', { name: 'Download first.txt' })
+        .closest('[data-testid="session-output-files"]')
+        ?.previousElementSibling?.querySelector('article')
+        ?.getAttribute('data-event-id'),
+    ).toBe('trace-first');
+    expect(screen.queryByRole('button', { name: 'Download next.txt' })).toBeNull();
+    view.rerender(tree(true, false));
+    expect(screen.queryByRole('button', { name: 'Download next.txt' })).toBeNull();
+    view.rerender(tree(false, true));
+    expect(screen.queryByRole('button', { name: 'Download next.txt' })).toBeNull();
+    view.rerender(tree(false));
+    expect(
+      screen
+        .getByRole('button', { name: 'Download next.txt' })
+        .closest('[data-testid="session-output-files"]')
+        ?.previousElementSibling?.querySelector('article')
+        ?.getAttribute('data-event-id'),
+    ).toBe('trace-next');
+    expect(screen.getAllByTestId('session-output-files')).toHaveLength(2);
+    for (const output of screen.getAllByTestId('session-output-files')) {
+      expect(output.closest('[data-transcript-iteration]')).toBeNull();
+      expect(output.closest('[data-slot="message"]')).toBeNull();
+    }
+  });
+
+  test('can attach an older file explicitly referenced by a later reply without matching a path prefix', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const files: SessionOutputFile[] = ['result.txt', 'result.txt.backup'].map((filename) => ({
+      id: filename,
+      filename,
+      path: `/outputs/${filename}`,
+      type: 'file',
+      mime_type: 'text/plain',
+      size_bytes: 1,
+      downloadable: true,
+      created_at: '2025-01-01T00:00:00Z',
+    }));
+    render(
+      <SessionFileContext.Provider value={{ files, workspaceId: 'workspace', running: false }}>
+        {transcriptTree([
+          displayEntry('user', 'user', 'Show the older file'),
+          displayEntry('reply', 'agent', '[result](/outputs/result.txt.backup)'),
+        ])}
+      </SessionFileContext.Provider>,
+    );
+    expect(screen.getByRole('button', { name: 'Download result.txt.backup' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Download result.txt', exact: true })).toBeNull();
+  });
+
   test('shows user stop and interrupted model and tool states without failure styling', () => {
     resetTestDom('https://oma.duck.ai/sessions/test');
     const at = '2026-10-14T06:45:48.000Z';
@@ -66,8 +158,8 @@ describe('SessionTranscriptView', () => {
     );
     const { container } = render(transcriptTree(entries));
     expect(screen.getByText('Stopped by the user.')).toBeTruthy();
-    expect(screen.getByText('Model request interrupted by the user.')).toBeTruthy();
-    expect(container.querySelector('[data-event-id^="end-"] [data-execution-state="interrupted"]')).toBeTruthy();
+    expect(screen.queryByText('Model request interrupted by the user.')).toBeNull();
+    expect(container.querySelector('[data-event-id^="end-"]')).toBeNull();
     expect(container.querySelector('[data-tool-lifecycle="interrupted"]')).toBeTruthy();
     expect(container.querySelector('[data-execution-state="failed"]')).toBeNull();
     expect(container.querySelector('[data-transcript-tool-row]')?.className).not.toContain('text-destructive');
@@ -103,7 +195,7 @@ describe('SessionTranscriptView', () => {
 
       const interrupt = container.querySelector('[data-event-id^="sevt_interrupt-"]');
       expect(interrupt?.getAttribute('data-entry-kind')).toBe('status');
-      expect(interrupt?.textContent).toContain('Stopped by the user.');
+      expect(interrupt?.textContent).toContain('Stop requested; waiting for the agent to stop.');
       expect(interrupt?.textContent).not.toContain('processed_at');
       expect(interrupt?.querySelector('[data-transcript-message-body]')).toBeNull();
       expect(screen.getByText('Help me check this.')).toBeTruthy();

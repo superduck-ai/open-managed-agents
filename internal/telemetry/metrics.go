@@ -51,6 +51,8 @@ type instruments struct {
 	runnerRuns                  metric.Int64Counter
 	runnerRunDuration           metric.Float64Histogram
 	runnerStageDuration         metric.Float64Histogram
+	runnerStaleRecoveryClaims   metric.Int64Counter
+	sandboxEnsureDuration       metric.Float64Histogram
 	sandboxProviderDuration     metric.Float64Histogram
 	activationDuration          metric.Float64Histogram
 	sessionCreated              metric.Int64Counter
@@ -102,6 +104,8 @@ func metrics() *instruments {
 			runnerRuns:                  int64Counter(meter, "oma.runner.runs", "{run}", "Runner runs"),
 			runnerRunDuration:           float64Histogram(meter, "oma.runner.run.duration", "s", "Runner run duration", latencyBuckets),
 			runnerStageDuration:         float64Histogram(meter, "oma.runner.stage.duration", "s", "Runner stage duration", latencyBuckets),
+			runnerStaleRecoveryClaims:   int64Counter(meter, "oma.runner.stale_recovery_claims", "{work}", "Runner stale work recovery claims"),
+			sandboxEnsureDuration:       float64Histogram(meter, "oma.sandbox.ensure.duration", "s", "Session sandbox ensure duration", latencyBuckets),
 			sandboxProviderDuration:     float64Histogram(meter, "oma.sandbox.provider.duration", "s", "Sandbox provider duration", latencyBuckets),
 			activationDuration:          float64Histogram(meter, "oma.code_session.activation.duration", "s", "Code session activation duration", latencyBuckets),
 			sessionCreated:              int64Counter(meter, "oma.session.created", "{session}", "Sessions created"),

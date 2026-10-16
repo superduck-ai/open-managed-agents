@@ -7,6 +7,13 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
+const (
+	RunnerTriggerQueue         = "queue"
+	RunnerTriggerStaleRecovery = "stale_recovery"
+	RunnerTriggerLazyMCP       = "lazy_mcp"
+	RunnerTriggerPrewarm       = "prewarm"
+)
+
 func RecordRunnerQueueWait(ctx context.Context, duration time.Duration) {
 	if duration < 0 {
 		return
@@ -14,14 +21,22 @@ func RecordRunnerQueueWait(ctx context.Context, duration time.Duration) {
 	metrics().runnerQueueWait.Record(ctx, duration.Seconds())
 }
 
-func RecordRunnerRun(ctx context.Context, outcome string, recovered bool, duration time.Duration) {
-	attrs := metric.WithAttributes(AttrOutcome.String(outcome), AttrRecovered.Bool(recovered))
+func RecordRunnerRun(ctx context.Context, trigger, outcome string, recovered bool, duration time.Duration) {
+	attrs := metric.WithAttributes(AttrRunnerTrigger.String(trigger), AttrOutcome.String(outcome), AttrRecovered.Bool(recovered))
 	metrics().runnerRuns.Add(ctx, 1, attrs)
 	metrics().runnerRunDuration.Record(ctx, duration.Seconds(), attrs)
 }
 
-func RecordRunnerStage(ctx context.Context, stage, outcome string, duration time.Duration) {
-	metrics().runnerStageDuration.Record(ctx, duration.Seconds(), metric.WithAttributes(AttrStage.String(stage), AttrOutcome.String(outcome)))
+func RecordRunnerStage(ctx context.Context, trigger, stage, outcome string, duration time.Duration) {
+	metrics().runnerStageDuration.Record(ctx, duration.Seconds(), metric.WithAttributes(AttrRunnerTrigger.String(trigger), AttrStage.String(stage), AttrOutcome.String(outcome)))
+}
+
+func RecordRunnerStaleRecoveryClaim(ctx context.Context) {
+	metrics().runnerStaleRecoveryClaims.Add(ctx, 1)
+}
+
+func RecordSandboxEnsure(ctx context.Context, trigger, outcome string, duration time.Duration) {
+	metrics().sandboxEnsureDuration.Record(ctx, duration.Seconds(), metric.WithAttributes(AttrRunnerTrigger.String(trigger), AttrOutcome.String(outcome)))
 }
 
 func RecordSandboxProviderCall(ctx context.Context, operation, outcome string, duration time.Duration) {

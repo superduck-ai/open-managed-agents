@@ -154,7 +154,7 @@ func publicPayloadCandidatesFromWorkerEvent(codeSessionID string, event db.CodeS
 			return nil, false, fmt.Errorf("%w: invalid result payload: %w", ErrProtocol, err)
 		}
 		if !payload.IsError {
-			return nil, false, nil
+			return []publicPayloadCandidate{completedWorkerResultCandidate(firstPayloadTime(object, event.CreatedAt))}, true, nil
 		}
 		return []publicPayloadCandidate{{payload: map[string]any{
 			"type":         "session.error",
@@ -813,4 +813,12 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func completedWorkerResultCandidate(at time.Time) publicPayloadCandidate {
+	return publicPayloadCandidate{payload: map[string]any{
+		"type":         "session.status_idle",
+		"processed_at": formatTime(at),
+		"stop_reason":  map[string]any{"type": "end_turn"},
+	}, seedSuffix: "result:end_turn"}
 }

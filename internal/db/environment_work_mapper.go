@@ -103,6 +103,8 @@ type environmentWorkStatsMapperRow struct {
 }
 
 type EnvironmentWorkMapper interface {
+	RenewForCodeSession(ctx context.Context, codeSessionUUID, organizationUUID, workspaceUUID string) error
+	StopWithoutSandbox(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) error
 	Insert(ctx context.Context, params environmentWorkWriteParams) (environmentWorkMapperRow, error)
 	CountActive(ctx context.Context, workspaceUUID, environmentUUID string) (int, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, environmentExternalID, workExternalID string) (environmentWorkMapperRow, error)

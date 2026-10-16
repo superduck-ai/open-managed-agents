@@ -88,19 +88,21 @@ func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 		return nil, err
 	}
 	threadEvent.ThreadExternalID = source.ThreadExternalID
-	sessionStatus := status
-	if isThread {
-		threads, err := NewSessionThreadMapper(executor).List(ctx, session.WorkspaceUUID, session.ExternalID)
-		if err != nil {
-			return nil, err
-		}
-		sessionStatus = sessionStatusAfterThread(threads, thread.ExternalID, status)
+	sessionStatus, err := sessionStatusAfterSourceTx(ctx, executor, session, thread, source.EventType, status)
+	if err != nil {
+		return nil, err
 	}
+
 	sessionType := "session.status_" + statusEventSuffix(sessionStatus)
 	if !isThread {
 		sessionType = source.EventType
 	}
-	sessionEvent, err := newSessionStatusEvent(source, sessionType, SessionThread{}, statusStopReason(sessionStatus, payload.StopReason, allPending))
+	sessionReason := statusStopReason(sessionStatus, payload.StopReason, allPending)
+	sessionReason, err = primaryIdleStopReasonTx(ctx, executor, session, primary, thread, sessionStatus, sessionReason)
+	if err != nil {
+		return nil, err
+	}
+	sessionEvent, err := newSessionStatusEvent(source, sessionType, SessionThread{}, sessionReason)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +165,7 @@ func resolveIdleStopReasonTx(ctx context.Context, executor yourbatis.Executor, s
 	mapper := NewSessionEventMapper(executor)
 	if reason != nil && reason.Type == "retries_exhausted" {
 		start, found, err := mapper.FindLatestTurnStart(ctx, session.WorkspaceUUID, session.ExternalID, thread.ExternalID)
-		if err != nil || (found && source.ProcessedAt.Before(start.ProcessedAt)) {
+		if err != nil || (found && start.ProcessedAt != nil && source.ProcessedAt.Before(*start.ProcessedAt)) {
 			return nil, false, err
 		}
 		if thread.Status == "idle" {
@@ -171,11 +173,15 @@ func resolveIdleStopReasonTx(ctx context.Context, executor yourbatis.Executor, s
 			if err != nil {
 				return nil, false, err
 			}
-			if found && source.ProcessedAt.Before(previous.ProcessedAt) {
-				source.ProcessedAt = previous.ProcessedAt
+			if found && previous.ProcessedAt != nil && source.ProcessedAt.Before(*previous.ProcessedAt) {
+				source.ProcessedAt = *previous.ProcessedAt
 			}
 		}
 		return reason, true, nil
+	}
+	pending, err := mapper.HasPendingInput(ctx, session.WorkspaceUUID, session.ExternalID, thread.ExternalID)
+	if err != nil || pending {
+		return nil, false, err
 	}
 	if thread.Status != "idle" {
 		return reason, true, nil
@@ -390,4 +396,33 @@ func applySessionEventState(ctx context.Context, executor yourbatis.Executor, se
 		return terminated, nil
 	}
 	return false, nil
+}
+
+func primaryIdleStopReasonTx(ctx context.Context, executor yourbatis.Executor, session Session, primary, thread SessionThread, status string, reason *sessionStopReason) (*sessionStopReason, error) {
+	if status != "idle" || thread.ExternalID == primary.ExternalID {
+		return reason, nil
+	}
+	latest, found, err := NewSessionEventMapper(executor).FindLatestStatus(ctx, session.WorkspaceUUID, session.ExternalID, primary.ExternalID)
+	if err != nil || !found || latest.EventType != "session.thread_status_idle" {
+		return reason, err
+	}
+	var payload sessionStatusPayload
+	if err := jsonv2.Unmarshal(latest.Payload, &payload); err != nil {
+		return nil, err
+	}
+	if payload.StopReason != nil && payload.StopReason.Type == "retries_exhausted" {
+		return payload.StopReason, nil
+	}
+	return reason, nil
+}
+
+func sessionStatusAfterSourceTx(ctx context.Context, executor yourbatis.Executor, session Session, thread SessionThread, eventType, status string) (string, error) {
+	if _, isThread := maevents.ThreadStatus(eventType); !isThread {
+		return status, nil
+	}
+	threads, err := NewSessionThreadMapper(executor).List(ctx, session.WorkspaceUUID, session.ExternalID)
+	if err != nil {
+		return "", err
+	}
+	return sessionStatusAfterThread(threads, thread.ExternalID, status), nil
 }

@@ -55,6 +55,10 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
+	input.Config, err = s.managedAgentRuntimeConfig(ctx, input.Session, input.Config)
+	if err != nil {
+		return ManagedAgentCreateResult{}, err
+	}
 	now := time.Now().UTC()
 	metadata, err := managedAgentCodeSessionMetadata(input)
 	if err != nil {
@@ -231,4 +235,17 @@ func managedAgentCodeSessionMetadata(input ManagedAgentCreateInput) (json.RawMes
 		"dangerously_skip_permissions":   input.DangerouslySkipPermissions,
 		"managed_agent_session_work_dir": strings.TrimSpace(input.WorkDir),
 	})
+}
+
+func (s *Service) managedAgentRuntimeConfig(ctx context.Context, session db.Session, raw json.RawMessage) (json.RawMessage, error) {
+	config, err := parseManagedAgentRuntimeConfig(raw)
+	if err != nil {
+		return nil, err
+	}
+	subagents, err := resolveRuntimeSubagents(ctx, s.db, session)
+	if err != nil {
+		return nil, err
+	}
+	config.Subagents = subagents
+	return config.encode()
 }

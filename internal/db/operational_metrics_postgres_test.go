@@ -68,20 +68,17 @@ func TestOperationalStateCountsPostgres(t *testing.T) {
 			}
 		}
 	}
-	var workRows []EnvironmentWork
 	for i, state := range []string{"queued", "starting", "active", "stopping", "stopped"} {
-		work, err := database.CreateEnvironmentWork(ctx, EnvironmentWork{UUID: uuid.NewV4().String(), ExternalID: fmt.Sprintf("work_metrics_%d", i), OrganizationUUID: organization, WorkspaceUUID: workspace, EnvironmentUUID: environment.UUID, EnvironmentExternalID: environment.ExternalID, SessionUUID: owner.UUID, Metadata: json.RawMessage(`{}`), State: state, CreatedAt: old})
+		_, err := database.CreateEnvironmentWork(ctx, EnvironmentWork{UUID: uuid.NewV4().String(), ExternalID: fmt.Sprintf("work_metrics_%d", i), OrganizationUUID: organization, WorkspaceUUID: workspace, EnvironmentUUID: environment.UUID, EnvironmentExternalID: environment.ExternalID, SessionUUID: owner.UUID, Metadata: json.RawMessage(`{}`), State: state, CreatedAt: old})
 		if err != nil {
 			t.Fatal(err)
 		}
-		workRows = append(workRows, work)
 	}
 	if _, err := database.CreateEnvironmentWork(ctx, EnvironmentWork{UUID: uuid.NewV4().String(), ExternalID: "work_metrics_backoff", OrganizationUUID: organization, WorkspaceUUID: workspace, EnvironmentUUID: environment.UUID, EnvironmentExternalID: environment.ExternalID, SessionUUID: owner.UUID, Metadata: json.RawMessage(`{}`), State: "queued", CreatedAt: now.Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	for i, state := range []string{"creating", "running", "stopping", "failed", "stopped"} {
-		work := workRows[i]
-		if _, err := database.CreateEnvironmentSandbox(ctx, EnvironmentSandbox{UUID: uuid.NewV4().String(), ExternalID: fmt.Sprintf("envsbx_metrics_%d", i), OrganizationUUID: organization, WorkspaceUUID: workspace, EnvironmentUUID: environment.UUID, EnvironmentExternalID: environment.ExternalID, WorkUUID: &work.UUID, WorkExternalID: &work.ExternalID, Provider: "e2b", Template: "test", State: state, Metadata: json.RawMessage(`{}`), CreatedAt: old}); err != nil {
+		if _, err := database.CreateEnvironmentSandbox(ctx, EnvironmentSandbox{UUID: uuid.NewV4().String(), ExternalID: fmt.Sprintf("envsbx_metrics_%d", i), OrganizationUUID: organization, WorkspaceUUID: workspace, EnvironmentUUID: environment.UUID, EnvironmentExternalID: environment.ExternalID, Provider: "e2b", Template: "test", State: state, Metadata: json.RawMessage(`{}`), CreatedAt: old}); err != nil {
 			t.Fatal(err)
 		}
 	}

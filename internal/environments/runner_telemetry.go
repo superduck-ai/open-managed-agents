@@ -17,26 +17,57 @@ type runnerRun struct {
 	sessionID  string
 	startedAt  time.Time
 	recovered  bool
+	trigger    string
+	spanEnd    func(error)
 	stage      string
 	stageEnd   func(error)
 	stageStart time.Time
 }
 
 func startRunnerRun(ctx context.Context, work db.EnvironmentWork) (context.Context, *runnerRun) {
-	ctx, span := telemetry.StartRoot(ctx, "oma.runner.run", work.TraceParent,
-		telemetry.AttrWorkID.String(work.ExternalID),
-		telemetry.AttrSessionID.String(work.SessionExternalID),
-		telemetry.AttrWorkspaceUUID.String(work.WorkspaceUUID),
-		telemetry.AttrEnvironmentID.String(work.EnvironmentExternalID),
-	)
+	trigger := telemetry.RunnerTriggerQueue
+	if work.State != "queued" {
+		trigger = telemetry.RunnerTriggerStaleRecovery
+	}
+	ctx, span := telemetry.StartRoot(ctx, "oma.runner.run", work.TraceParent, runnerRunAttributes(work, trigger)...)
 	now := time.Now()
-	if work.QueuedAt != nil {
+	if trigger == telemetry.RunnerTriggerStaleRecovery {
+		telemetry.RecordRunnerStaleRecoveryClaim(ctx)
+	} else if work.QueuedAt != nil {
 		queueWait := now.Sub(*work.QueuedAt)
 		span.SetAttributes(attribute.Float64("oma.runner.queue_wait_s", queueWait.Seconds()))
 		telemetry.RecordRunnerQueueWait(ctx, queueWait)
 	}
-	run := &runnerRun{ctx: ctx, span: span, sessionID: work.SessionExternalID, startedAt: now}
+	run := newRunnerRun(ctx, span, work, trigger, now)
+	run.spanEnd = func(err error) {
+		defer span.End()
+		telemetry.SetErrorStatus(span, err)
+	}
 	return run.begin("claim"), run
+}
+
+func startSandboxRun(ctx context.Context, work db.EnvironmentWork, trigger string) (context.Context, *runnerRun) {
+	ctx, span := telemetry.Start(ctx, "oma.runner.run", runnerRunAttributes(work, trigger)...)
+	run := newRunnerRun(ctx, span, work, trigger, time.Now())
+	run.spanEnd = func(err error) {
+		defer span.End()
+		telemetry.SetErrorStatus(span, err)
+	}
+	return run.begin("prepare"), run
+}
+
+func newRunnerRun(ctx context.Context, span trace.Span, work db.EnvironmentWork, trigger string, startedAt time.Time) *runnerRun {
+	return &runnerRun{ctx: ctx, span: span, sessionID: work.SessionExternalID, startedAt: startedAt, trigger: trigger}
+}
+
+func runnerRunAttributes(work db.EnvironmentWork, trigger string) []attribute.KeyValue {
+	return []attribute.KeyValue{
+		telemetry.AttrWorkID.String(work.ExternalID),
+		telemetry.AttrSessionID.String(work.SessionExternalID),
+		telemetry.AttrWorkspaceUUID.String(work.WorkspaceUUID),
+		telemetry.AttrEnvironmentID.String(work.EnvironmentExternalID),
+		telemetry.AttrRunnerTrigger.String(trigger),
+	}
 }
 
 func (r *runnerRun) begin(stage string) context.Context {
@@ -65,15 +96,15 @@ func (r *runnerRun) end(err error) {
 	if err != nil {
 		r.span.SetAttributes(telemetry.AttrStage.String(failedStage))
 	}
-	telemetry.RecordRunnerRun(r.ctx, telemetry.Outcome(err), r.recovered, time.Since(r.startedAt))
-	telemetry.End(r.span, err)
+	telemetry.RecordRunnerRun(r.ctx, r.trigger, telemetry.Outcome(err), r.recovered, time.Since(r.startedAt))
+	r.spanEnd(err)
 }
 
 func (r *runnerRun) closeStage(err error) {
 	if r.stageEnd == nil {
 		return
 	}
-	telemetry.RecordRunnerStage(r.ctx, r.stage, telemetry.Outcome(err), time.Since(r.stageStart))
+	telemetry.RecordRunnerStage(r.ctx, r.trigger, r.stage, telemetry.Outcome(err), time.Since(r.stageStart))
 	r.stageEnd(err)
 	r.stageEnd = nil
 }

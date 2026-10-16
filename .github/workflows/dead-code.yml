@@ -5,6 +5,9 @@ on:
     paths:
       - '**/*.go'
       - 'internal/db/*_mapper.xml'
+      - 'tools/golangci-lint/**'
+      - 'scripts/golangci-lint.sh'
+      - 'scripts/go-packages.sh'
       - '.golangci-dead-code.yml'
       - 'go.mod'
       - 'go.sum'
@@ -17,6 +20,9 @@ on:
     paths:
       - '**/*.go'
       - 'internal/db/*_mapper.xml'
+      - 'tools/golangci-lint/**'
+      - 'scripts/golangci-lint.sh'
+      - 'scripts/go-packages.sh'
       - '.golangci-dead-code.yml'
       - 'go.mod'
       - 'go.sum'
@@ -43,14 +49,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version-file: tools/golangci-lint/go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            tools/golangci-lint/go.sum
 
       - name: Generate Go sources
         run: ./scripts/generate-go.sh
 
       - name: Detect unreachable Go declarations
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.13.0
-          args: --config=.golangci-dead-code.yml --timeout=5m ./...
+        run: ./scripts/golangci-lint.sh run --config=.golangci-dead-code.yml --timeout=5m ./...

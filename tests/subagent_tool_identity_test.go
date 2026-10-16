@@ -157,6 +157,7 @@ func TestTerminatedSubagentRejectsApproval(t *testing.T) {
 		t.Fatalf("late status revived child: %s %v", child.Status, err)
 	}
 	sendSessionEvents(t, app, sessionID, `{"events":[{"type":"user.tool_confirmation","tool_use_id":`+quoteJSON(live["id"].(string))+`,"result":"allow","session_thread_id":"sthr_live"}]}`, defaultTestKey)
+	postCodeSessionWorkerEvents(t, app, codeID, internalPayloadRequest(epoch, `{"type":"result","uuid":"completed-after-approvals","is_error":false}`))
 	putCodeSessionWorkerState(t, app, codeID, `{"worker_epoch":`+epoch+`,"worker_status":"idle"}`)
 	status = sessionEventObjectByType(t, listSessionEvents(t, app, sessionID, "types[]=session.status_idle&order=desc", defaultTestKey), "session.status_idle")
 	if reason, ok := status["stop_reason"].(map[string]any); ok && reason["type"] == "requires_action" {

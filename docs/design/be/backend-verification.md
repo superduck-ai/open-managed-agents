@@ -41,6 +41,42 @@ flowchart LR
     Cleanup --> Verdict[Report pass only after cleanup succeeds]
 ```
 
+## Chat reliability contract
+
+`chat.reliability` accepts a second public input during a held active turn with HTTP 200,
+requires its history entry to remain unprocessed while queued, and verifies ordered,
+exactly-once execution after release. It retains lost-ACK consumer recreation, Worker
+SSE reconnect, interrupted public SSE/history reconciliation, credential rotation,
+Worker restart and archive consumer cleanup coverage. The proof stages
+`busy_input_queued` and `busy_input_drained` replace the obsolete HTTP 409 rejection
+and manual retry stages. Both final message IDs must match the reconnected SSE and
+paginated history, and the queue must drain before the test replaces the Worker.
+
+The Chat CI artifact also includes `upstream-backoff-observations.json`, containing only the last validation phase, public status/queue counters and model request/reply counts, including failed runs. Raw diagnostic logs and configuration remain private.
+
+## Model environment isolation
+
+Scenario subprocesses and the full Go suite remove inherited provider credentials, endpoints,
+profiles, custom headers and model selection variables. The imported helper filters
+`ANTHROPIC_`, `CLAUDE_`, `OPENAI_`, `AZURE_OPENAI_`, `GEMINI_`, `GOOGLE_GENAI_`, `VERTEX_`,
+`BEDROCK_`, `COHERE_`, `MISTRAL_`, `GROQ_`, `DEEPSEEK_`, `TOGETHER_`, `OPENROUTER_`,
+`OLLAMA_`, `LLM_`, plus `GOOGLE_API_KEY` and `AWS_BEARER_TOKEN_BEDROCK`.
+Infrastructure settings such as PATH, HOME, Docker connection and AWS region remain available.
+Scripted local verification needs no external model key. Explicit cloud credentials continue
+to come from the private cloud configuration.
+
+## Skill loading verification contract
+
+`chat.skills-loading` migrates the focused loading scenario from source commit
+`a54caf7e` in the abandoned Crush worktree. Its original prewarm/deferred Host paths
+depend on that worktree's runtime and are replaced by the supported Brain/Claude paths.
+The current scenario requires both `skill_loading_brain` and `skill_loading_sandbox`,
+real public uploads, binding, approval, file reads, readonly mounts, SSE/history and cleanup.
+Brain binary identity, FUSE and MCP availability are checked by doctor.
+Missing either runtime proof rejects the verdict. Existing `chat.brain-skills` coverage remains.
+See [Skill verification](skill-verification.md) and the
+[feature map](../../../.agents/skills/verify-be/features/skills-loading.md).
+
 ## Deployment / River verification contract
 
 See the [Deployment feature map](../../../.agents/skills/verify-be/features/deployment.md). `deployment.lifecycle`, `deployment.retry`, `deployment.idempotency` and `deployment.restart` reuse existing Go integration fixtures with a unique business schema and the isolated environment's real PostgreSQL/River. `VERIFY_BE_DEPLOYMENT=1` is supplied only to selected scenarios; ordinary suites skip them explicitly. They start asynchronous River consumers and compare the Job terminal state with Run error, Deployment status/schedule, public API responses and Session/Thread/Work/initial event/Filestore rows. A completed River Job may mean a permanent failure Run or an intentional stale-job no-op, so completion alone is insufficient.
@@ -52,6 +88,14 @@ Restart launches a separate process with the production scheduled Worker, Store 
 The PR workflow adds `Deployment verification` and runs all four scenarios. Branch protection must be configured separately to require this job. Reports retain explicit boundaries, skip rejection, source identity and cleanup gates.
 
 ## Memory / Filestore verification contract
+
+The existing six `memory` scenarios are identical to source commit `a54caf7e` in the abandoned
+Crush worktree. Its added Agent Memory fixture is migrated as `chat.brain-memory`, using
+current Rust Brain and real sandbox MCP. It requires `brain_memory_loaded` after catalog,
+denial, body loading, reuse and readonly assertions. The common Runner stores metadata-only
+attachment catalogs in existing Code Session config. Brain renders that catalog; no new
+tables or backend filesystem reads are introduced. See [Memory runtime](memory-store.md)
+and the [feature map](../../../.agents/skills/verify-be/features/memory.md).
 
 See the [Memory feature map](../../../.agents/skills/verify-be/features/memory.md). `memory.integrity`, `memory.isolation`, `memory.cleanup`, `memory.lifecycle` and `memory.filestore` select existing `tests` package fixtures with unique PostgreSQL schemas and real MinIO. They use production HTTP handlers in the test process with `DependenciesOnly`, no standalone backend or Worker. `VERIFY_BE_MEMORY=1` is supplied only to the selected scenario. Default Go suites explicitly list these scenarios as skipped.
 

@@ -24,6 +24,7 @@ import (
 // Service 封装会被 sessions、environment runner 与 code-session HTTP handler 共同复用的业务能力。
 // 它不持有 HTTP 鉴权、代理连接或日志状态，因而可以安全地注入非 HTTP 调用方。
 type Service struct {
+	sandboxProvisioner     SandboxProvisioner
 	eventPayloads          *eventpayload.Store
 	db                     *db.DB
 	credentials            *SessionCredentials
@@ -331,12 +332,6 @@ type preparedPublicAction struct {
 	payloads []json.RawMessage
 }
 
-type preparedFailedResultAction struct {
-	preparedPublicAction
-	threadID string
-	at       time.Time
-}
-
 func (preparedNoopAction) implPreparedWorkerOutputEvent()      {}
 func (preparedKeepAliveAction) implPreparedWorkerOutputEvent() {}
 func (preparedStreamAction) implPreparedWorkerOutputEvent()    {}
@@ -382,7 +377,7 @@ func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now
 		return prepared, nil
 	}
 	if input.Ephemeral {
-		if meta.EventType == "stream_event" {
+		if meta.EventType == "stream_event" || maevents.IsStreamDelta(meta.EventType) {
 			return preparedStreamAction{payload: payload}, nil
 		}
 		return preparedNoopAction{}, nil
@@ -397,17 +392,7 @@ func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now
 	if !ok {
 		return preparedNoopAction{}, nil
 	}
-	if meta.EventType == "result" && (meta.EventSubtype == "" || meta.EventSubtype == "error_during_execution") {
-		var schema workerOutputCommonPayload
-		if err := json.Unmarshal(payload, &schema); err != nil {
-			return nil, err
-		}
-		return preparedFailedResultAction{
-			preparedPublicAction: preparedPublicAction{payloads: publicPayloads},
-			threadID:             schema.SessionThreadID,
-			at:                   firstWorkerPayloadTime(schema, now),
-		}, nil
-	}
+
 	return preparedPublicAction{payloads: publicPayloads}, nil
 }
 
@@ -448,12 +433,6 @@ func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessi
 		return nil
 	case preparedControlAction:
 		return s.handleToolPermissionRequest(ctx, codeSessionID, workerEpoch, &prepared.request, prepared.metadata)
-	case preparedFailedResultAction:
-		interrupted, err := s.workerResultWasInterrupted(ctx, codeSessionID, prepared)
-		if err != nil || interrupted {
-			return err
-		}
-		return s.publishWorkerPublicPayloads(ctx, codeSessionID, prepared.payloads)
 	case preparedPublicAction:
 		return s.publishWorkerPublicPayloads(ctx, codeSessionID, prepared.payloads)
 	default:

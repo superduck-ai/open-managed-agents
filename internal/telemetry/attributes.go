@@ -28,6 +28,7 @@ const (
 	AttrStage             attribute.Key = "oma.stage"
 	AttrOperation         attribute.Key = "oma.operation"
 	AttrRecovered         attribute.Key = "oma.runner.recovered"
+	AttrRunnerTrigger     attribute.Key = "oma.runner.trigger"
 	AttrRiverKind         attribute.Key = "oma.river.kind"
 	AttrRiverQueue        attribute.Key = "oma.river.queue"
 	AttrState             attribute.Key = "oma.state"

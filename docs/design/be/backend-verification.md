@@ -41,6 +41,19 @@ flowchart LR
     Cleanup --> Verdict[Report pass only after cleanup succeeds]
 ```
 
+## Chat reliability contract
+
+`chat.reliability` accepts a second public input during a held active turn with HTTP 200,
+requires its history entry to remain unprocessed while queued, and verifies ordered,
+exactly-once execution after release. It retains lost-ACK consumer recreation, Worker
+SSE reconnect, interrupted public SSE/history reconciliation, credential rotation,
+Worker restart and archive consumer cleanup coverage. The proof stages
+`busy_input_queued` and `busy_input_drained` replace the obsolete HTTP 409 rejection
+and manual retry stages. Both final message IDs must match the reconnected SSE and
+paginated history, and the queue must drain before the test replaces the Worker.
+
+The Chat CI artifact also includes `upstream-backoff-observations.json`, containing only the last validation phase, public status/queue counters and model request/reply counts, including failed runs. Raw diagnostic logs and configuration remain private.
+
 ## Model environment isolation
 
 Scenario subprocesses and the full Go suite remove inherited provider credentials, endpoints,

@@ -1,3 +1,4 @@
+import { BrandLogo } from '@/shared/brand/BrandLogo';
 import { useNavigate } from '@tanstack/react-router';
 import { ArrowLeft, CircleAlert, Loader2, MailCheck } from 'lucide-react';
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
@@ -284,7 +285,10 @@ function LoginShell({ children }: { children: ReactNode }) {
       <header className="border-b border-border bg-background/95 backdrop-blur-sm">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5 lg:px-8">
           <a className="inline-flex items-center gap-2 text-sm font-semibold tracking-tight text-foreground" href="/">
-            <span>{msg('app.productName', 'Open Managed Agents')}</span>
+            <BrandLogo decorative />
+            <span className="ml-2 border-l border-border pl-4 text-xs text-muted-foreground sm:text-sm">
+              {msg('app.productName', 'Open Managed Agents')}
+            </span>
           </a>
           <nav className="hidden items-center gap-1 md:flex">
             {topNavItems.map((item) => (

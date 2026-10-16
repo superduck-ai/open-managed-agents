@@ -1,3 +1,4 @@
+import { BrandLogo } from '@/shared/brand/BrandLogo';
 import { useCallback, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
@@ -19,7 +20,15 @@ export function InvitationsPage() {
   }, [status, location.href, navigate]);
   return (
     <div className="flex min-h-svh flex-col bg-background text-foreground">
-      <header className="px-6 py-8 text-center text-lg font-semibold">Open Managed Agents</header>
+      <header className="flex justify-center px-6 py-8">
+        <a
+          href="/"
+          aria-label="Open Managed Agents"
+          className="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <BrandLogo decorative className="h-10 w-[119px]" />
+        </a>
+      </header>
       <main className="flex flex-1 items-center justify-center px-6 pb-24">
         <section className="w-full max-w-md space-y-6 text-center" aria-label="组织邀请">
           {status === 'authenticated' ? (

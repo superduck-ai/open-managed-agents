@@ -16,8 +16,11 @@ type rosterReference struct {
 }
 
 type subagentRoster struct {
-	Type   string            `json:"type"`
-	Agents []json.RawMessage `json:"agents"`
+	Type      string            `json:"type"`
+	Agents    []json.RawMessage `json:"agents,omitempty"`
+	Subagents *delegationRoster `json:"subagents,omitempty"`
+	Workflows *delegationRoster `json:"workflows,omitempty"`
+	Advisor   json.RawMessage   `json:"advisor,omitempty"`
 }
 
 func Resolve(ctx context.Context, database *db.DB, agent db.Agent) (json.RawMessage, error) {
@@ -31,8 +34,42 @@ func Resolve(ctx context.Context, database *db.DB, agent db.Agent) (json.RawMess
 	if roster == nil {
 		return FromAgent(agent)
 	}
-	seenNames := make(map[string]struct{}, len(roster.Agents))
-	for i, raw := range roster.Agents {
+	if roster.Type == "multiagent_20261001" {
+		for _, setting := range []*delegationRoster{roster.Subagents, roster.Workflows} {
+			if setting == nil || setting.Type != "enabled" {
+				continue
+			}
+			entries, err := expandRoster(ctx, database, agent, setting.PredefinedAgents)
+			if err != nil {
+				return nil, err
+			}
+			setting.PredefinedAgents = entries
+		}
+	} else {
+		entries, err := expandRoster(ctx, database, agent, roster.Agents)
+		if err != nil {
+			return nil, err
+		}
+		roster.Agents = entries
+	}
+
+	var err error
+	agent.Multiagent, err = jsonv2.Marshal(roster)
+	if err != nil {
+		return nil, err
+	}
+	return FromAgent(agent)
+}
+
+type delegationRoster struct {
+	Type             string            `json:"type"`
+	InlineAgents     json.RawMessage   `json:"inline_agents,omitempty"`
+	PredefinedAgents []json.RawMessage `json:"predefined_agents,omitzero"`
+}
+
+func expandRoster(ctx context.Context, database *db.DB, agent db.Agent, entries []json.RawMessage) ([]json.RawMessage, error) {
+	seenNames := make(map[string]struct{}, len(entries))
+	for i, raw := range entries {
 		var ref rosterReference
 		if err := jsonv2.Unmarshal(raw, &ref); err != nil {
 			return nil, err
@@ -63,12 +100,7 @@ func Resolve(ctx context.Context, database *db.DB, agent db.Agent) (json.RawMess
 		if err != nil {
 			return nil, err
 		}
-		roster.Agents[i] = expanded
+		entries[i] = expanded
 	}
-	var err error
-	agent.Multiagent, err = jsonv2.Marshal(roster)
-	if err != nil {
-		return nil, err
-	}
-	return FromAgent(agent)
+	return entries, nil
 }

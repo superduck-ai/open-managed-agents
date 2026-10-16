@@ -63,3 +63,31 @@ func TestRuntimeSubagentsDefinitionAndEmptyTools(t *testing.T) {
 		}
 	}
 }
+
+func TestRuntimeCMASubagents(t *testing.T) {
+	for _, tc := range []struct {
+		config   string
+		inline   bool
+		agents   int
+		disabled bool
+	}{
+		{`{"type":"multiagent_20261001"}`, true, 0, false},
+		{`{"type":"multiagent_20261001","subagents":{"type":"disabled"},"workflows":{"type":"enabled"},"advisor":{"type":"enabled","model":"advisor"}}`, false, 0, true},
+		{`{"type":"multiagent_20261001","subagents":{"type":"enabled","inline_agents":{"type":"disabled"},"predefined_agents":[{"type":"agent","id":"parent","version":4}]}}`, false, 1, false},
+	} {
+		session := db.Session{AgentSnapshot: json.RawMessage(`{"id":"parent","version":4,"name":"reader","system":"override","multiagent":` + tc.config + `}`)}
+		got, err := resolveRuntimeSubagents(t.Context(), nil, session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tc.disabled {
+			if got != nil {
+				t.Fatalf("disabled: %+v", got)
+			}
+			continue
+		}
+		if got == nil || got.InlineAgents != tc.inline || len(got.Agents) != tc.agents {
+			t.Fatalf("configuration: %+v", got)
+		}
+	}
+}

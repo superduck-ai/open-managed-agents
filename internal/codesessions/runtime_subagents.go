@@ -37,8 +37,9 @@ type runtimeAgentSnapshot struct {
 	Model       json.RawMessage         `json:"model"`
 	Tools       []toolPermissionToolset `json:"tools"`
 	Multiagent  *struct {
-		Type   string                  `json:"type"`
-		Agents []runtimeAgentReference `json:"agents"`
+		Type      string                  `json:"type"`
+		Agents    []runtimeAgentReference `json:"agents"`
+		Subagents *runtimeDelegation      `json:"subagents"`
 	} `json:"multiagent"`
 }
 
@@ -54,10 +55,31 @@ func resolveRuntimeSubagents(ctx context.Context, store *db.DB, session db.Sessi
 		return nil, nil
 	}
 	roster := snapshot.Multiagent
-	if roster.Type != "coordinator" || len(roster.Agents) < 1 || len(roster.Agents) > 20 {
+	inline := false
+	switch roster.Type {
+	case "coordinator":
+		if len(roster.Agents) < 1 {
+			return nil, errRuntimeSubagentConfig
+		}
+	case "multiagent_20261001":
+		inline = true
+		if roster.Subagents != nil {
+			if roster.Subagents.Type == "disabled" {
+				return nil, nil
+			}
+			if roster.Subagents.Type != "enabled" {
+				return nil, errRuntimeSubagentConfig
+			}
+			inline = roster.Subagents.InlineAgents == nil || roster.Subagents.InlineAgents.Type == "enabled"
+			roster.Agents = roster.Subagents.PredefinedAgents
+		}
+	default:
 		return nil, errRuntimeSubagentConfig
 	}
-	config := &RuntimeSubagentConfig{Agents: make([]RuntimeSubagentDefinition, 0, len(roster.Agents))}
+	if len(roster.Agents) > 20 || (!inline && len(roster.Agents) == 0) {
+		return nil, errRuntimeSubagentConfig
+	}
+	config := &RuntimeSubagentConfig{InlineAgents: inline, Agents: make([]RuntimeSubagentDefinition, 0, len(roster.Agents))}
 	seen := make(map[string]bool, len(roster.Agents))
 	for _, ref := range roster.Agents {
 		child, err := resolveRuntimeAgent(ctx, store, session.WorkspaceUUID, snapshot, ref)
@@ -121,4 +143,12 @@ func runtimeSubagentDefinition(snapshot runtimeAgentSnapshot) (RuntimeSubagentDe
 	}
 	definition.Tools = runtimeBuiltinTools(snapshot.Tools)
 	return definition, nil
+}
+
+type runtimeDelegation struct {
+	Type         string `json:"type"`
+	InlineAgents *struct {
+		Type string `json:"type"`
+	} `json:"inline_agents"`
+	PredefinedAgents []runtimeAgentReference `json:"predefined_agents"`
 }

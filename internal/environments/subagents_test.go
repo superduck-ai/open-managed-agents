@@ -110,3 +110,30 @@ func TestManagedAgentSubagentSkillsPreserveVersions(t *testing.T) {
 		}
 	}
 }
+
+func TestManagedAgentCMASubagents(t *testing.T) {
+	for _, tc := range []struct {
+		setting string
+		count   int
+	}{
+		{`{"type":"disabled"}`, 0},
+		{`{"type":"enabled","inline_agents":{"type":"disabled"},"predefined_agents":[{"id":"child","name":"reader","model":{"id":"worker-model"}}]}`, 1},
+	} {
+		source := json.RawMessage(`{"multiagent":{"type":"multiagent_20261001","subagents":` + tc.setting + `,"workflows":{"type":"enabled"},"advisor":{"type":"enabled","model":"advisor"}}}`)
+		raw, err := buildManagedAgentSubagents(source, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var encoded string
+		if err := jsonv2.Unmarshal(mcpConfigField(t, raw, "claude_code_args", "agents"), &encoded); err != nil {
+			t.Fatal(err)
+		}
+		var definitions map[string]claudeAgentDefinition
+		if err := jsonv2.Unmarshal([]byte(encoded), &definitions); err != nil {
+			t.Fatal(err)
+		}
+		if len(definitions) != tc.count {
+			t.Fatalf("definitions = %s", encoded)
+		}
+	}
+}

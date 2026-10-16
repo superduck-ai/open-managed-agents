@@ -22,7 +22,7 @@ OMA 支持父智能体在同一会话中委派任务。
 
 `agentsnapshot` 在创建会话或部署时，直接读取 Agent 的固定版本名单，展开子配置后生成父快照。
 
-公开接口沿用 `multiagent.type = coordinator`：
+公开接口兼容 `multiagent.type = coordinator`，并接受 CMA 的 `multiagent_20261001` 配置。旧配置示例：
 
 ```json
 {
@@ -69,7 +69,37 @@ OMA 支持父智能体在同一会话中委派任务。
 系统按引用版本读取配置，并移除子快照中的 `multiagent`。
 系统不会将历史 `self` 自动升级到父智能体的当前版本。
 
-本实现仅覆盖 `coordinator` 配置。
+### CMA 20261001 配置
+
+```json
+{
+  "multiagent": {
+    "type": "multiagent_20261001",
+    "workflows": {
+      "type": "enabled",
+      "inline_agents": { "type": "enabled" },
+      "predefined_agents": []
+    },
+    "subagents": {
+      "type": "enabled",
+      "inline_agents": { "type": "enabled" },
+      "predefined_agents": []
+    },
+    "advisor": { "type": "enabled", "model": "claude-haiku-5-5" }
+  }
+}
+```
+
+`workflows` 和 `subagents` 默认启用，内部的 `inline_agents` 默认启用，`predefined_agents` 默认空名单；`advisor` 默认禁用，启用时必须提供非空模型。
+两份名单独立解析和固定版本，每份最多 20 个不重复 Agent。禁用 inline agents 后，启用的委派设置必须有至少一个预定义 Agent。
+
+保留 `multiagent_20261001` 类型的更新按字段合并。省略的设置和字段保留原值，显式 `null` 恢复默认值，发送名单替换该名单。设置切换类型时整体替换，省略的内部字段取默认值。发送的设置对象必须带 `type`，启用的 advisor 每次发送都必须带 `model`。切换顶层类型时替换整个配置，顶层 `null` 清除 multiagent。
+
+会话和部署快照保留全部设置，并展开两份名单中的固定版本 Agent。父快照中的 advisor 模型保持原值。DSH 运行时将 `subagents.predefined_agents` 和 `subagents.inline_agents` 映射到现有委派配置；禁用 subagents 时不注册委派。Claude Code 启动参数将 subagents 的预定义名单映射到 `--agents`。两份名单的技能都进入快照技能解析。
+
+本次提供配置读写兼容和现有 subagents 执行链的接入。OMA 尚未实现 CMA 的 workflow run 调度、事件和 advisor consultation 执行，也未实现 CMA advisor 模型能力配对校验。配置被接受和保存不代表这些能力已经执行；Claude Code 对 inline agents 的行为仍取决于其原生能力。
+
+配置合同依据本地 `cma-docs/claude-managed-agents/multiagent-orchestration.md` 的默认值、更新规则和类型迁移说明。回归入口为 `TestCMAMultiagent*`、`TestAgentsCMAMultiagentConfiguration`、`TestCMASnapshotPreservesIndependentSettings` 和 `TestRuntimeCMASubagents`。
 官方委派语义见 [Claude 子智能体文档](https://platform.claude.com/docs/zh-CN/managed-agents/multiagent-orchestration#delegate-to-subagents)。
 
 ## 启动与续聊

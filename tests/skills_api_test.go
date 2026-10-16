@@ -789,12 +789,7 @@ func createNamedSkill(t *testing.T, app *testApp, displayTitle, directory string
 func newSkillsPaginationTestApp(t *testing.T) (*testApp, *fakeStore) {
 	t.Helper()
 	store := newFakeStore("skills-pagination-bucket-" + uniqueSkillSuffix())
-	app := newTestAppWithStore(t, nil, store)
-	cleanupBuiltinSkillRows(t, app.pool)
-	t.Cleanup(func() {
-		cleanupBuiltinSkillRows(t, app.pool)
-		app.close()
-	})
+	app := newPayloadIntegrationApp(t, store)
 	return app, store
 }
 

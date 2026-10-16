@@ -543,7 +543,11 @@ func (h *Handler) stateFromUpdate(r *http.Request, principal auth.Principal, cur
 		state.Metadata = metadata
 	}
 	if len(body.Multiagent) > 0 {
-		multiagent, err := h.normalizeMultiagent(r, principal, current.ExternalID, current.CurrentVersion+1, body.Multiagent)
+		merged, err := mergeCMAMultiagent(current.Multiagent, body.Multiagent)
+		if err != nil {
+			return agentState{}, err
+		}
+		multiagent, err := h.normalizeMultiagent(r, principal, current.ExternalID, current.CurrentVersion+1, merged)
 		if err != nil {
 			return agentState{}, err
 		}
@@ -563,8 +567,11 @@ func (h *Handler) normalizeMultiagent(r *http.Request, principal auth.Principal,
 	if err := json.Unmarshal(raw, &body); err != nil {
 		return nil, errors.New("multiagent must be an object")
 	}
+	if body.Type == "multiagent_20261001" {
+		return h.normalizeCMAMultiagent(r, principal, selfID, selfVersion, raw)
+	}
 	if body.Type != "coordinator" {
-		return nil, errors.New("multiagent.type must be coordinator")
+		return nil, errors.New("multiagent.type must be coordinator or multiagent_20261001")
 	}
 	if len(body.Agents) < 1 || len(body.Agents) > 20 {
 		return nil, errors.New("multiagent.agents must contain between 1 and 20 entries")

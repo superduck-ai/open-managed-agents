@@ -352,7 +352,7 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("main did not reach provider")
 		}
-		postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%q,"events":[{"payload":{"type":"system","uuid":"task-lifecycle","subtype":"task_started","task_id":"task_lifecycle","tool_use_id":"tool_lifecycle","description":"Child"}}]}`, epoch))
+		postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%q,"events":[{"payload":{"type":"system","uuid":"task-lifecycle","subtype":"task_started","task_type":"local_agent","task_id":"task_lifecycle","tool_use_id":"tool_lifecycle","description":"Child"}}]}`, epoch))
 		select {
 		case mode := <-entered:
 			if mode != "child" {

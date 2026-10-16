@@ -97,7 +97,12 @@ export function LoginFlow({
       setStep('code');
       setNotice(msg('auth.login.codeNotice', 'Enter the 6-digit code sent to your email.'));
     } catch (err) {
-      setError(errorMessage(err, msg('auth.login.sendCodeFailed', 'Could not send a code. Try again.')));
+      const apiError = err as { code?: unknown } | undefined;
+      setError(
+        apiError?.code === 'email_domain_not_allowed'
+          ? msg('auth.login.emailDomainNotAllowed', 'Use an approved email address to sign in.')
+          : errorMessage(err, msg('auth.login.sendCodeFailed', 'Could not send a code. Try again.')),
+      );
     } finally {
       setIsSubmitting(false);
     }

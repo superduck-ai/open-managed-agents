@@ -44,3 +44,11 @@
 - `go test ./internal/db ./internal/platformauth ./internal/platformapi -count=1`
 - `go test ./internal/api -count=1`
 - `go test ./... -count=1`
+
+## 邮箱域名白名单
+
+`auth.allowed_email_domains` 配置允许登录的完整邮箱域名列表，例如 `[example.org, subsidiary.example]`；省略或空列表保持原有行为，不限制邮箱域名。配置加载时归一化大小写与首尾空白，非法域名、空元素、带 `@` 的邮箱或通配符会使启动失败。修改配置并重启后端后生效。
+
+生产入口 `platformauth.New` 将白名单传给邮箱认证服务。发送验证码、验证验证码和最终核销都先检查邮箱语法及完整域名，再执行验证码、邮件、用户或会话操作。未列入白名单的子域名和伪装后缀同样拒绝；显式列出的子域名允许登录。拒绝返回 HTTP 403 和 `email_domain_not_allowed`，Web 与 Android 路由别名执行同一规则。前端翻译该错误，不维护第二份白名单。现有会话、API Key 和 SMTP/验证码规则不变，不需要数据库迁移。
+
+覆盖配置加载及非法配置、SMTP 与开发验证码两种模式、白名单拒绝与允许、大小写归一化、空白名单兼容性、路由别名与编码邮箱，以及登录页错误提示。底层 `NewEmailProvider` 仍为通用依赖注入入口，生产服务统一通过 `New` 组装。

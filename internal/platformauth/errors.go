@@ -26,3 +26,7 @@ func emailLoginRateLimited(cause error) error {
 func emailLoginUnavailable(message string, cause error) error {
 	return apperr.New(apperr.Unavailable, message, cause)
 }
+
+func emailLoginDomainDenied() error {
+	return apperr.New(apperr.PermissionDenied, "Use an approved email address to sign in", nil)
+}

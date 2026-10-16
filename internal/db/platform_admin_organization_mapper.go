@@ -57,6 +57,7 @@ type PlatformAdminCreateRequest struct {
 
 type PlatformAdminOrganizationMapper interface {
 	List(ctx context.Context, params PlatformAdminPageQuery) ([]PlatformAdminOrganization, error)
+	Exists(ctx context.Context, organizationUUID string) (bool, error)
 	Find(ctx context.Context, organizationUUID string) (PlatformAdminOrganization, error)
 	Lock(ctx context.Context, organizationUUID string) (int64, error)
 	Update(ctx context.Context, params PlatformAdminOrganizationPatch) error

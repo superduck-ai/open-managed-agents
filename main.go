@@ -151,11 +151,6 @@ func run(logger *slog.Logger) error {
 	}
 	filestoreService := filestore.NewService(cfg, database, database, objectStore)
 	cleanup.NewWorker(database, storageClient, 30*time.Second, logger.With("component", "cleanup")).Start(ctx)
-	if platformAuthProvider.VerifiedLoginEnabled() {
-		mailLogger := logger.With("component", "platform_invitation_mail")
-		stopDelivery := platformadmin.NewDeliveryWorker(database, invitations.NewMailer(cfg.Auth, database, mailLogger), mailLogger).Start(ctx)
-		defer stopDelivery()
-	}
 	// 常规资源共享默认 bucket；清理任务通过 client 按各自持久化的 bucket 选择对象存储。
 	filestore.NewCleanupWorker(database, storageClient, logger.With("component", "filestore_cleanup")).Start(ctx)
 	batches.NewWorker(
@@ -197,7 +192,17 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("start webhook worker: %w", err)
 	}
 	defer stopWebhookWorker()
+	queues := map[string]river.QueueConfig{
+		environments.PrebuildQueue:         {MaxWorkers: 4},
+		deploymentjobs.Queue:               {MaxWorkers: 10},
+		environments.SandboxLifecycleQueue: {MaxWorkers: 4},
+		transcriptretention.Queue:          {MaxWorkers: 2},
+	}
 	workers := river.NewWorkers()
+	if platformAuthProvider.VerifiedLoginEnabled() {
+		queues[platformadmin.DeliveryQueue] = river.QueueConfig{MaxWorkers: 4}
+		platformadmin.RegisterDeliveryWorker(workers, database, invitations.NewMailer(cfg.Auth, database, logger.With("component", "platform_invitation_mail")))
+	}
 	prebuilds := environments.NewPrebuilds(database, cfg, logger.With("component", "environment_prebuild"))
 	prebuilds.Register(workers)
 	deploymentStore := deployments.NewStore(database, logger.With("component", "deployments")).
@@ -211,13 +216,8 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("create transcript archive service: %w", err)
 	}
 	transcripts.Register(workers)
-	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers,
-		map[string]river.QueueConfig{
-			environments.PrebuildQueue:         {MaxWorkers: 4},
-			deploymentjobs.Queue:               {MaxWorkers: 10},
-			environments.SandboxLifecycleQueue: {MaxWorkers: 4},
-			transcriptretention.Queue:          {MaxWorkers: 2},
-		})
+
+	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers, queues)
 	if err != nil {
 		return fmt.Errorf("create River client: %w", err)
 	}
@@ -243,6 +243,7 @@ func run(logger *slog.Logger) error {
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
+			InvitationJobs:         jobClient,
 			Prebuilds:              prebuilds,
 			SandboxLifecycle:       lifecycle,
 			Config:                 cfg,

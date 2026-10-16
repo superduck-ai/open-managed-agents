@@ -2645,8 +2645,6 @@
   "platformAdmin.yourInputHasBeenPreservedReviewTheLatestDetails": "Your input has been preserved. Review the latest details before editing again.",
   "platformAdmin.saveDetails": "Save details",
   "platformAdmin.cancelEditing": "Cancel editing",
-  "platformAdmin.organizationMember": "Organization member",
-  "platformAdmin.manageOrganizationDetailsAndMembers": "Manage organization details and members",
   "platformAdmin.organizationUUID": "Organization UUID",
   "platformAdmin.administrators": "Administrators",
   "platformAdmin.members": "Members",

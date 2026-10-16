@@ -2645,8 +2645,6 @@
   "platformAdmin.yourInputHasBeenPreservedReviewTheLatestDetails": "输入已保留。请核对最新资料后重新编辑。",
   "platformAdmin.saveDetails": "保存资料",
   "platformAdmin.cancelEditing": "取消编辑",
-  "platformAdmin.organizationMember": "组织普通成员",
-  "platformAdmin.manageOrganizationDetailsAndMembers": "管理组织资料与成员",
   "platformAdmin.organizationUUID": "组织 UUID",
   "platformAdmin.administrators": "管理员",
   "platformAdmin.members": "成员",

@@ -35,5 +35,5 @@ type PlatformAdminInviteMapper interface {
 	Resend(ctx context.Context, organizationUUID, invitationUUID string) error
 	Revoke(ctx context.Context, organizationUUID, invitationUUID string) error
 	CancelDeliveries(ctx context.Context, organizationUUID, invitationUUID string) error
-	Enqueue(ctx context.Context, organizationUUID, invitationUUID string) error
+	Enqueue(ctx context.Context, organizationUUID, invitationUUID string) (string, error)
 }

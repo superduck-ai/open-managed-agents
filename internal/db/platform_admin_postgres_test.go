@@ -123,6 +123,9 @@ func TestPlatformAdministrationPostgres(t *testing.T) {
 			if _, err := tx.InsertInvite(ctx, input); err != nil {
 				return err
 			}
+			if _, err := tx.EnqueueInviteDelivery(ctx, organization, invitation); err != nil {
+				return err
+			}
 			return rollback
 		}); !errors.Is(err, rollback) {
 			t.Fatal(err)
@@ -137,6 +140,10 @@ func TestPlatformAdministrationPostgres(t *testing.T) {
 		}
 		if err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
 			_, err := tx.InsertInvite(ctx, input)
+			if err != nil {
+				return err
+			}
+			_, err = tx.EnqueueInviteDelivery(ctx, organization, invitation)
 			return err
 		}); err != nil {
 			t.Fatal(err)
@@ -145,29 +152,19 @@ func TestPlatformAdministrationPostgres(t *testing.T) {
 		if err != nil || len(rows) != 1 || rows[0].DeliveryStatus != "pending" {
 			t.Fatalf("投递未持久化：%+v，%v", rows, err)
 		}
-		delivery, found, err := store.LeasePlatformAdminDelivery(ctx)
-		if err != nil || !found || delivery.Attempts != 1 {
-			t.Fatalf("领取投递：%+v，%v，%v", delivery, found, err)
-		}
-		if _, duplicate, err := store.LeasePlatformAdminDelivery(ctx); err != nil || duplicate {
-			t.Fatalf("租约重复领取：%v，%v", duplicate, err)
-		}
-		if err := store.FinishPlatformAdminDelivery(ctx, delivery.UUID, delivery.Attempts, "failed"); err != nil {
+		var deliveryUUID string
+		if err := sqlDB.QueryRowContext(ctx, "SELECT uuid FROM platform_admin_invite_deliveries WHERE invitation_uuid = $1", invitation).Scan(&deliveryUUID); err != nil {
 			t.Fatal(err)
 		}
-		if _, immediate, err := store.LeasePlatformAdminDelivery(ctx); err != nil || immediate {
-			t.Fatalf("失败后未等待重试间隔：%v，%v", immediate, err)
+		delivery, found, err := store.StartPlatformAdminDelivery(ctx, deliveryUUID)
+		if err != nil || !found {
+			t.Fatalf("开始投递：%+v %v %v", delivery, found, err)
 		}
-		execMapperFixtureSQL(t, ctx, store.mapperDB, `UPDATE platform_admin_invite_deliveries SET updated_at = now() - interval '3 minutes' WHERE uuid = $1`, delivery.UUID)
-		retry, found, err := store.LeasePlatformAdminDelivery(ctx)
-		if err != nil || !found || retry.UUID != delivery.UUID || retry.Attempts != 2 {
-			t.Fatalf("重试领取：%+v，%v，%v", retry, found, err)
-		}
-		if err := store.FinishPlatformAdminDelivery(ctx, delivery.UUID, 1, "sent"); err != nil {
+		if err := store.FinishPlatformAdminDelivery(ctx, delivery.UUID, "failed"); err != nil {
 			t.Fatal(err)
 		}
-		if ready, err := store.PlatformAdminDeliveryReady(ctx, retry.UUID, retry.Attempts); err != nil || !ready {
-			t.Fatalf("旧租约覆盖新租约：%v，%v", ready, err)
+		if _, found, err := store.StartPlatformAdminDelivery(ctx, deliveryUUID); err != nil || !found {
+			t.Fatalf("允许 River 重试：%v %v", found, err)
 		}
 		if err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
 			pending, err := tx.HasPendingInvite(ctx, organization, input.Email)
@@ -188,8 +185,8 @@ func TestPlatformAdministrationPostgres(t *testing.T) {
 		if err != nil || len(rows) != 1 || rows[0].Status != "deleted" || rows[0].DeliveryStatus != "cancelled" {
 			t.Fatalf("撤销未取消投递：%+v，%v", rows, err)
 		}
-		if ready, err := store.PlatformAdminDeliveryReady(ctx, retry.UUID, retry.Attempts); err != nil || ready {
-			t.Fatalf("撤销后仍允许投递：%v，%v", ready, err)
+		if _, found, err := store.StartPlatformAdminDelivery(ctx, deliveryUUID); err != nil || found {
+			t.Fatalf("撤销后仍允许投递：%v %v", found, err)
 		}
 		if _, err := store.RespondToInvitation(ctx, input.ExternalID, input.Email, true); !errors.Is(err, ErrInvitationRevoked) {
 			t.Fatalf("撤销后仍能接受邀请：%v", err)

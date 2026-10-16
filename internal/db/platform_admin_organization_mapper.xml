@@ -13,6 +13,9 @@
         <if test="params.After != ''">AND o.uuid &gt; #{params.After}</if>
         ORDER BY o.uuid LIMIT #{params.Limit}
     </select>
+    <select id="Exists" result="scalar">
+        SELECT EXISTS (SELECT 1 FROM organizations WHERE uuid = #{organizationUUID}) AS found
+    </select>
     <select id="Find" resultType="PlatformAdminOrganization">
         SELECT <include refid="columns"/> FROM organizations o WHERE o.uuid = #{organizationUUID}
     </select>

@@ -16,12 +16,7 @@ func (tx *PlatformAdminTx) HasPendingInvite(ctx context.Context, org, email stri
 }
 
 func (tx *PlatformAdminTx) InsertInvite(ctx context.Context, input PlatformAdminInviteInput) (PlatformAdminInvite, error) {
-	mapper := NewPlatformAdminInviteMapper(tx.executor)
-	row, err := mapper.Insert(ctx, input)
-	if err != nil {
-		return row, err
-	}
-	return row, mapper.Enqueue(ctx, input.OrganizationUUID, row.UUID)
+	return NewPlatformAdminInviteMapper(tx.executor).Insert(ctx, input)
 }
 
 func (tx *PlatformAdminTx) ResendInvite(ctx context.Context, org, invitation string) error {
@@ -29,10 +24,7 @@ func (tx *PlatformAdminTx) ResendInvite(ctx context.Context, org, invitation str
 	if err := mapper.CancelDeliveries(ctx, org, invitation); err != nil {
 		return err
 	}
-	if err := mapper.Resend(ctx, org, invitation); err != nil {
-		return err
-	}
-	return mapper.Enqueue(ctx, org, invitation)
+	return mapper.Resend(ctx, org, invitation)
 }
 
 func (tx *PlatformAdminTx) RevokeInvite(ctx context.Context, org, invitation string) error {
@@ -41,4 +33,8 @@ func (tx *PlatformAdminTx) RevokeInvite(ctx context.Context, org, invitation str
 		return err
 	}
 	return mapper.CancelDeliveries(ctx, org, invitation)
+}
+
+func (tx *PlatformAdminTx) EnqueueInviteDelivery(ctx context.Context, org, invitation string) (string, error) {
+	return NewPlatformAdminInviteMapper(tx.executor).Enqueue(ctx, org, invitation)
 }

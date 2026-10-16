@@ -28,6 +28,7 @@ func (s *Server) registerPlatformAccountRoutes(router chi.Router) {
 
 func (s *Server) registerPlatformAdminRoutes(router chi.Router) {
 	service := platformadmin.New(s.db, s.logger.With("component", "platform_admin"))
+	service.ConfigureDelivery(s.invitationJobs)
 	loader := func(r *http.Request) (platformsession.Session, error) {
 		session, err := s.loadPlatformSession(r)
 		if err != nil {

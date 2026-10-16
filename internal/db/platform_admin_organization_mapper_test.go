@@ -25,6 +25,7 @@ func TestPlatformAdminOrganizationMapperBindings(t *testing.T) {
 		kind      yourbatis.StatementKind
 		fragments []string
 	}{
+		{"Exists", func(m PlatformAdminOrganizationMapper) error { _, err := m.Exists(t.Context(), "org"); return err }, mapperTestResponse{columns: []string{"found"}, rows: [][]driver.Value{{true}}}, []any{"org"}, yourbatis.StatementSelect, []string{"SELECT EXISTS (SELECT 1 FROM organizations WHERE uuid = $1)"}},
 		{"Find", func(m PlatformAdminOrganizationMapper) error { _, err := m.Find(t.Context(), "org"); return err }, organization, []any{"org"}, yourbatis.StatementSelect, []string{"FROM organizations o WHERE o.uuid = $1", "u.organization_uuid = o.uuid AND u.deleted_at IS NULL AND u.role = 'admin'"}},
 		{"Lock", func(m PlatformAdminOrganizationMapper) error { _, err := m.Lock(t.Context(), "org"); return err }, mapperTestResponse{columns: []string{"management_version"}, rows: [][]driver.Value{{int64(2)}}}, []any{"org"}, yourbatis.StatementSelect, []string{"WHERE uuid = $1 FOR UPDATE"}},
 		{"Update", func(m PlatformAdminOrganizationMapper) error { return m.Update(t.Context(), patch) }, mapperTestResponse{}, []any{patch.Name, patch.Website, patch.Industry, "org"}, yourbatis.StatementUpdate, []string{"name = COALESCE($1, name)", "jsonb_strip_nulls(jsonb_build_object('website', CAST($2 AS text), 'industry', CAST($3 AS text)))", "WHERE uuid = $4"}},

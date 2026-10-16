@@ -6,7 +6,8 @@ import { Button } from '../../shared/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
 import { Input } from '../../shared/ui/input';
 import { Label } from '../../shared/ui/label';
-import { OrganizationRoleSelect } from './OrganizationRoleSelect';
+import { RoleSelect } from '../../shared/permissions/RoleSelect';
+import type { PlatformRole } from '../../shared/permissions/roles';
 import { usePlatformAdmin } from './context';
 import type { Organization } from './types';
 
@@ -44,7 +45,9 @@ export function InvitationDialog({
   const { client } = usePlatformAdmin();
   const [snapshot] = useState(organization);
   const [email, setEmail] = useState(action.kind === 'create' ? '' : action.invitation.email);
-  const [role, setRole] = useState(action.kind === 'create' ? 'user' : action.invitation.role);
+  const [role, setRole] = useState<PlatformRole>(
+    action.kind === 'create' ? 'user' : action.invitation.role === 'admin' ? 'admin' : 'user',
+  );
   const mutation = useMutation({
     mutationFn: () => {
       const base = `/organizations/${snapshot.uuid}/invitations`;
@@ -101,10 +104,12 @@ export function InvitationDialog({
           </div>
           <div className="space-y-2">
             <Label>{msg('platformAdmin.organizationRole', 'Organization role')}</Label>
-            <OrganizationRoleSelect
+            <RoleSelect
+              className="w-full"
+              contentClassName="w-[min(26rem,calc(100vw-3rem))]"
               value={role}
               onChange={setRole}
-              label={msg('platformAdmin.organizationRole', 'Organization role')}
+              ariaLabel={msg('platformAdmin.organizationRole', 'Organization role')}
               disabled={action.kind !== 'create' || mutation.isPending}
             />
           </div>

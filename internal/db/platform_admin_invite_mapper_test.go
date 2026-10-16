@@ -20,7 +20,6 @@ func TestPlatformAdminInviteWriteBindings(t *testing.T) {
 		{"Resend", yourbatis.StatementUpdate, func(m PlatformAdminInviteMapper) error { return m.Resend(t.Context(), org, invitation) }, "expires_at = now() + interval '21 days'"},
 		{"Revoke", yourbatis.StatementUpdate, func(m PlatformAdminInviteMapper) error { return m.Revoke(t.Context(), org, invitation) }, "status = 'deleted'"},
 		{"CancelDeliveries", yourbatis.StatementUpdate, func(m PlatformAdminInviteMapper) error { return m.CancelDeliveries(t.Context(), org, invitation) }, "status IN ('pending', 'sending', 'failed')"},
-		{"Enqueue", yourbatis.StatementInsert, func(m PlatformAdminInviteMapper) error { return m.Enqueue(t.Context(), org, invitation) }, "INSERT INTO platform_admin_invite_deliveries"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			failure := errors.New("执行失败")
@@ -104,4 +103,13 @@ func TestPlatformAdminInviteReadAndInsertBindings(t *testing.T) {
 			assertMapperTestExecution(t, executor, "PlatformAdminInviteMapper."+tc.name, tc.kind, tc.args, tc.fragments...)
 		})
 	}
+}
+
+func TestPlatformAdminEnqueueBindings(t *testing.T) {
+	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}, rows: [][]driver.Value{{"delivery"}}})
+	id, err := NewPlatformAdminInviteMapper(executor).Enqueue(t.Context(), "org", "invitation")
+	if err != nil || id != "delivery" {
+		t.Fatalf("投递记录：%s %v", id, err)
+	}
+	assertMapperTestExecution(t, executor, "PlatformAdminInviteMapper.Enqueue", yourbatis.StatementInsert, []any{"org", "invitation"}, "organization_uuid = $1", "uuid = $2", "RETURNING uuid")
 }

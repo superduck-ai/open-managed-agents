@@ -79,7 +79,7 @@ for (const kind of ['create', 'resend', 'revoke'] as const) {
       const select = screen.getByRole('combobox', { name: '组织角色' });
       select.focus();
       fireEvent.keyDown(select, { key: 'ArrowDown' });
-      const admin = await screen.findByRole('option', { name: /^Admin/ });
+      const admin = await screen.findByRole('option', { name: /^管理员/ });
       expect(screen.getAllByRole('option')).toHaveLength(2);
       fireEvent.keyDown(admin, { key: 'Enter' });
     } else {

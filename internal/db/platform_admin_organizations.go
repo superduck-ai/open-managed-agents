@@ -6,6 +6,14 @@ func (d *DB) ListPlatformAdminOrganizations(ctx context.Context, query PlatformA
 	return NewPlatformAdminOrganizationMapper(d.mapperDB).List(ctx, query)
 }
 
+func (d *DB) CheckPlatformAdminOrganization(ctx context.Context, organizationUUID string) error {
+	found, err := NewPlatformAdminOrganizationMapper(d.mapperDB).Exists(ctx, organizationUUID)
+	if err == nil && !found {
+		return ErrNotFound
+	}
+	return err
+}
+
 func (d *DB) GetPlatformAdminOrganization(ctx context.Context, organizationUUID string) (PlatformAdminOrganization, error) {
 	row, err := NewPlatformAdminOrganizationMapper(d.mapperDB).Find(ctx, organizationUUID)
 	return row, mapNoRows(err)

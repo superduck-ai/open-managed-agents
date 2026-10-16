@@ -47,7 +47,7 @@
 | [Admin API 指南](https://platform.claude.com/docs/en/manage-claude/admin-api)                                                                                            | 管理凭证所属组织的成员、邀请、工作区和 Key；`org:admin` 是整个当前组织的权限范围                         | 组织级管理凭证不能被当作跨组织的平台授权                                     |
 | [SDK Organization 资源](https://github.com/anthropics/anthropic-sdk-typescript/blob/d49bdab458000bcdffe77bd84b03293f31824fb3/src/resources/organization/organization.ts) | 根资源提供 `retrieve()` → `GET /v1/organizations/me`；此资源中没有组织创建或全组织列表方法               | “后台创建组织、枚举所有组织”是本项目扩展，应保留独立命名空间                 |
 | [SDK 成员更新参数](https://github.com/anthropics/anthropic-sdk-typescript/blob/d49bdab458000bcdffe77bd84b03293f31824fb3/src/resources/organization/users.ts)             | Console/API 组织的角色更新接受 user、developer、billing、claude_code_user，明确不能通过此 API 授予 admin | 读取角色枚举与可写角色集合不同；后台提权不能冒充官方 Admin API 的既有能力    |
-| [SDK 邀请创建参数](https://github.com/anthropics/anthropic-sdk-typescript/blob/d49bdab458000bcdffe77bd84b03293f31824fb3/src/resources/organization/invites.ts)           | 官方公开邀请创建接口同样不能指定 admin；共享类型中 managed 用于 Enterprise                               | 本方案的成员邀请属于本项目受控后台/Console 能力，不能扩散到兼容 `/v1` 接口 |
+| [SDK 邀请创建参数](https://github.com/anthropics/anthropic-sdk-typescript/blob/d49bdab458000bcdffe77bd84b03293f31824fb3/src/resources/organization/invites.ts)           | 官方公开邀请创建接口同样不能指定 admin；共享类型中 managed 用于 Enterprise                               | 本方案的成员邀请属于本项目受控后台/Console 能力，不能扩散到兼容 `/v1` 接口   |
 | [Console 组织创建与工作区说明](https://support.claude.com/en/articles/9796807-creating-and-managing-workspaces-in-the-claude-console)                                    | 一个邮箱只能自行创建一个 Console 组织，可以受邀加入其他组织并切换；注册完成自动创建组织和 Default        | 支持保留注册组织与多组织成员关系；不支持据此推导同一客户账号能创建任意多组织 |
 | [Console 角色说明](https://support.claude.com/en/articles/10186004-claude-console-roles-and-permissions)                                                                 | 组织 Admin 继承所有工作区 Admin；工作区可单独授权                                                        | 支持维持 #350 的组织与工作区边界，不证明平台级超级管理员存在                 |
 | [Enterprise 用户管理说明](https://platform.claude.com/docs/en/manage-claude/user-management)                                                                             | Console 与 Enterprise 共用部分端点，但角色及可用能力不同；组和自定义角色属于 Enterprise                  | 不能照抄 SDK 的所有角色枚举到 CMA Console                                    |
@@ -123,10 +123,10 @@ flowchart TD
 
 ## 5. 超级管理员初始化与身份生命周期
 
-一期通过受控部署端 CLI 管理超级管理员授权，不在组织设置或普通角色下拉框提供授予入口。命令入口位于 `cmd/platform-admin`：`platform-admin grant --account-uuid ... --operator ... --reason ...`、`revoke`、`list`；授权变更必须提供运维操作者和原因。
+一期通过受控部署端 CLI 管理超级管理员授权，不在组织设置或普通角色下拉框提供授予入口。命令入口位于 `cmd/platform-admin`：`platform-admin grant --account-uuid ... --operator ...`、`revoke`、`list`；授权变更必须提供运维操作者；不收集操作原因。
 
 1. 首位管理员先完成真实登录，部署运维核对账号 UUID 和邮箱，再显式授予。
-2. CLI 调用同一授权服务与 Yourbatis 事务，记录运维操作者标识、目标账号和原因；不要求直接修改 SQL。
+2. CLI 调用同一授权服务与 Yourbatis 事务，记录运维操作者标识和目标账号；不要求直接修改 SQL。
 3. 授权只接受可确定的稳定登录身份；若输入的是某组织成员 UUID，应拒绝并提示先解析账号身份。历史身份有歧义时先人工核对，不自动选择“最早的管理员”。
 4. 不使用“第一个注册用户自动成为超级管理员”、固定默认邮箱、前端白名单或每次启动重放的环境变量授予。
 5. 重复授予/撤销保持幂等；撤销最后一位有效超级管理员返回 409。所有授权变更在同一事务内使用固定的平台管理员管理锁，串行检查计数；锁先于目标授权行锁，保证并发撤销不会清空管理员。
@@ -187,8 +187,8 @@ sequenceDiagram
 | 页面                                              | 主要内容                                                                     |
 | ------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `/platform-admin/organizations`                   | 搜索、分页、创建按钮；组织名称、UUID、管理员摘要、成员数、工作区数、创建时间 |
-| `/platform-admin/organizations/new`               | 组织名称、已注册管理员选择、创建结果与可重试错误                       |
-| `/platform-admin/organizations/$organizationUuid` | 基础资料、管理员、成员目录、工作区目录                       |
+| `/platform-admin/organizations/new`               | 组织名称、已注册管理员选择、创建结果与可重试错误                             |
+| `/platform-admin/organizations/$organizationUuid` | 基础资料、管理员、成员目录、工作区目录                                       |
 
 进入后台先完成专用 bootstrap 和路由权限守卫，再请求组织数据。没有权限时不闪现表格；已登录非超级管理员直达 URL 显示 403，未登录跳转登录并保留站内返回地址。
 
@@ -202,25 +202,25 @@ sequenceDiagram
 
 全局 API 独立挂载在 `/api/platform-admin`，不复用已有 `/v1/organizations` 的组织内 Admin API。下表路径均相对此前缀，除 bootstrap 同样要求超级管理员外，没有公开的目录接口。
 
-| 方法与路径                                                                               | 语义                                                          |
-| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| GET `/bootstrap`                                                                         | 全局身份、权限、CSRF                                          |
-| GET `/accounts?query=&cursor=&limit=`                                                    | 选择已注册管理员的最小账号目录                                |
-| GET `/organizations?query=&cursor=&limit=`                                               | 全部组织分页列表                                              |
-| POST `/organizations`                                                                    | `{name, admin_account_uuids, reason}`，要求 `Idempotency-Key` |
-| GET `/organizations/{organizationUuid}`                                                  | 基础资料、管理员摘要、统计、管理版本                          |
-| PATCH `/organizations/{organizationUuid}`                                                | 白名单资料、`expected_version`、原因                          |
-| GET `/organizations/{organizationUuid}/members`                                          | 分页成员目录及角色                                            |
-| GET `/organizations/{organizationUuid}/workspaces`                                       | 分页工作区目录，标识 Default/归档                             |
-| POST `/organizations/{organizationUuid}/administrators`                                  | 按 `account_uuid` 添加/提升管理员                             |
-| PATCH `/organizations/{organizationUuid}/administrators/{memberUuid}`                    | 降为指定非 Admin 角色，含版本和原因                           |
-| POST `/organizations/{organizationUuid}/administrator-transfers`                         | 新账号、原成员、原成员新角色、版本和原因，原子交接            |
-| POST `/organizations/{organizationUuid}/invitations`                       | 为邮箱创建指定 User 或 Admin 角色的邀请                                         |
-| GET `/organizations/{organizationUuid}/invitations`                        | 待处理邀请及投递结果                                          |
-| POST `/organizations/{organizationUuid}/invitations/{invitationId}/resend` | 复用邀请重发限制与投递机制                                    |
-| DELETE `/organizations/{organizationUuid}/invitations/{invitationId}`      | 撤销尚未接受的邀请                                            |
+| 方法与路径                                                                   | 语义                                                  |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------- |
+| GET `/bootstrap`                                                             | 全局身份、权限、CSRF                                  |
+| GET `/accounts?query=&cursor=&limit=`                                        | 选择已注册管理员的最小账号目录                        |
+| GET `/organizations?query=&cursor=&limit=`                                   | 全部组织分页列表                                      |
+| POST `/organizations`                                                        | `{name, admin_account_uuids}`，要求 `Idempotency-Key` |
+| GET `/organizations/{organizationUuid}`                                      | 基础资料、管理员摘要、统计、管理版本                  |
+| PATCH `/organizations/{organizationUuid}`                                    | 白名单资料、`expected_version`                        |
+| GET `/organizations/{organizationUuid}/members`                              | 分页成员目录及角色                                    |
+| GET `/organizations/{organizationUuid}/workspaces`                           | 分页工作区目录，标识 Default/归档                     |
+| POST `/organizations/{organizationUuid}/administrators`                      | 按 `account_uuid` 添加/提升管理员                     |
+| PATCH `/organizations/{organizationUuid}/administrators/{memberUuid}`        | 降为指定非 Admin 角色，含版本                         |
+| POST `/organizations/{organizationUuid}/administrator-transfers`             | 新账号、原成员、原成员新角色、版本，原子交接          |
+| POST `/organizations/{organizationUuid}/invitations`                         | 为邮箱创建指定 User 或 Admin 角色的邀请               |
+| GET `/organizations/{organizationUuid}/invitations`                          | 待处理邀请及投递结果                                  |
+| POST `/organizations/{organizationUuid}/invitations/{invitationUuid}/resend` | 复用邀请重发限制与投递机制                            |
+| POST `/organizations/{organizationUuid}/invitations/{invitationUuid}/revoke` | 撤销尚未接受的邀请                                    |
 
-未单列的写入也需要 `expected_version` 和原因；管理员授权请求以目标账号 UUID 定位，修改既有成员以组织 UUID + 成员 UUID 定位，两种身份不能混用。路径中邀请 ID 同样必须校验所属组织。
+未单列的写入也需要 `expected_version` ；管理员授权请求以目标账号 UUID 定位，修改既有成员以组织 UUID + 成员 UUID 定位，两种身份不能混用。路径中邀请 ID 同样必须校验所属组织。
 
 列表返回 `{data, next_cursor}`，默认每页 20、最大 100，使用稳定排序和游标，不加载全部组织再由前端筛选。创建成功为 201，重放成功返回原结果；相同幂等键不同请求体返回 409。幂等键按账号 UUID + 动作隔离，保存请求摘要和响应最少 24 小时，过期后按新请求处理。
 
@@ -228,13 +228,13 @@ sequenceDiagram
 
 ## 9. 数据与模块边界
 
-| 数据                          | 设计                                                                                                     |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `platform_admins`             | `uuid`、`account_uuid` 唯一、授予时间/操作者、撤销时间/操作者；重新授予复用授权行        |
-| 创建幂等记录                  | 账号 UUID + 动作 + 幂等键唯一、请求摘要、组织 UUID、响应、过期时间；与业务创建同事务                     |
-| `organizations`               | 增加管理版本用于资料与成员管理并发控制；不为一期增加未落地的停用状态                                     |
-| 邀请创建来源                  | 兼容原组织邀请者，补充平台操作者 UUID；使用已有邀请表和邮件投递机制                                      |
-| 会话认证标记                  | 记录真实验证来源及版本，旧会话不能默认认定满足后台认证强度                                               |
+| 数据              | 设计                                                                                 |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| `platform_admins` | `uuid`、`account_uuid` 唯一、授予时间/操作者、撤销时间/操作者；重新授予复用授权行    |
+| 创建幂等记录      | 账号 UUID + 动作 + 幂等键唯一、请求摘要、组织 UUID、响应、过期时间；与业务创建同事务 |
+| `organizations`   | 增加管理版本用于资料与成员管理并发控制；不为一期增加未落地的停用状态                 |
+| 邀请创建来源      | 兼容原组织邀请者，补充平台操作者 UUID；使用已有邀请表和邮件投递机制                  |
+| 会话认证标记      | 记录真实验证来源及版本，旧会话不能默认认定满足后台认证强度                           |
 
 新增核心表遵守 identity 内部主键、稳定 UUID 和适用的 external ID 约定；跨表引用统一 UUID，不创建外键。新 goose migration 编号在实际实现分支上分配，不预占或重写 #350 已有迁移。迁移不自动提升现有 Admin、seed 用户或任何邮箱。
 
@@ -273,4 +273,12 @@ sequenceDiagram
 - `/platform-admin` 使用现有侧边栏组件。组织内按基础资料、成员、工作区、邀请四个菜单分别展示。返回组织列表位于侧栏全局导航；创建组织和编辑资料位于页面标题区右上角。
 - 后台通过现有国际化体系提供英文和简体中文，覆盖菜单、状态、表单、错误、无障碍标签、日期和计数；侧栏提供语言切换并保存偏好。
 - 原因字段不在表单中展示，后端允许旧客户端传入但不持久化。当前版本没有审计入口、查询路由、审计权限及事件写入。
-- 当前证据统一记录在 [PR 验收评论](https://github.com/superduck-ai/open-managed-agents/pull/450#issuecomment-6207321058)，历史分支截图不作为当前版本的通过证据。
+- 原始功能证据记录在 [PR 验收评论](https://github.com/superduck-ai/open-managed-agents/pull/450#issuecomment-6207321058)，本轮简化调整的结果与角色控件截图见同一 PR 的补充验收评论；历史分支截图不作为当前版本的通过证据。
+
+### 简化调整
+
+组织详情由处理器读取一次；目录仅检查组织是否存在，写操作仍在事务内锁定组织并校验版本。后台与组织设置共用角色选项、说明、翻译和角色选择器。
+
+邀请创建、重发时，业务投递记录与 River 任务在同一 Yourbatis 事务内提交。River 负责并发执行、30 秒超时、最多 5 次尝试和崩溃恢复，不再维护独立轮询、租约和重试计数。未启用真实邮箱认证时不注册邀请队列消费，保留待处理任务。投递业务表保存结果；发送前校验邀请的组织、状态、过期时间与当前投递快照，失效任务不发送，列表显示取消状态。SMTP 接受不等于收件或接受邀请。
+
+旧 `reason` 字段仅兼容接收，不校验、不持久化；CLI `--reason` 可省略。撤销邀请使用 POST `.../{invitationUuid}/revoke`。

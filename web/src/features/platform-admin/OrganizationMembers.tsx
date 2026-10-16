@@ -1,3 +1,4 @@
+import { accountRoleLabel } from '../../shared/permissions/roles';
 import { useI18n } from '../../shared/i18n';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -21,7 +22,11 @@ export function OrganizationMembers({
   const columns: ColumnDef<Member>[] = [
     { accessorKey: 'name', header: msg('platformAdmin.name', 'Name') },
     { accessorKey: 'email', header: msg('platformAdmin.email', 'Email') },
-    { accessorKey: 'role', header: msg('platformAdmin.organizationRole', 'Organization role') },
+    {
+      accessorKey: 'role',
+      header: msg('platformAdmin.organizationRole', 'Organization role'),
+      cell: ({ row }) => accountRoleLabel(row.original.role, msg),
+    },
     {
       id: 'actions',
       header: msg('platformAdmin.administratorActions', 'Administrator actions'),

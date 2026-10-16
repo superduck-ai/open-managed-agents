@@ -2,7 +2,9 @@ package platformadmin
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"github.com/riverqueue/river"
 	"log/slog"
 	"strings"
 	"uuid"
@@ -12,8 +14,9 @@ import (
 )
 
 type Service struct {
-	db     *db.DB
-	logger *slog.Logger
+	delivery *river.Client[*sql.Tx]
+	db       *db.DB
+	logger   *slog.Logger
 }
 
 func New(database *db.DB, logger *slog.Logger) *Service {

@@ -5,7 +5,8 @@ import { useMutation } from '@tanstack/react-query';
 import { Button } from '../../shared/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
 import { Label } from '../../shared/ui/label';
-import { OrganizationRoleSelect } from './OrganizationRoleSelect';
+import { RoleSelect } from '../../shared/permissions/RoleSelect';
+import type { PlatformRole } from '../../shared/permissions/roles';
 import { AccountPicker, type RegisteredAccount } from './AccountPicker';
 import { usePlatformAdmin } from './context';
 import type { Organization } from './types';
@@ -36,7 +37,9 @@ export function AdministratorDialog({
   const { client } = usePlatformAdmin();
   const [snapshot] = useState(organization);
   const [accounts, setAccounts] = useState<RegisteredAccount[]>([]);
-  const [role, setRole] = useState(action.kind === 'change-role' ? action.member.role : 'user');
+  const [role, setRole] = useState<PlatformRole>(
+    action.kind === 'change-role' ? (action.member.role === 'admin' ? 'admin' : 'user') : 'user',
+  );
   const mutation = useMutation({
     mutationFn: () => {
       const change = { expected_version: snapshot.version };
@@ -105,12 +108,14 @@ export function AdministratorDialog({
                   ? msg('platformAdmin.organizationRole', 'Organization role')
                   : msg('platformAdmin.previousAdministratorSNewRole', 'Previous administrator’s new role')}
               </Label>
-              <OrganizationRoleSelect
+              <RoleSelect
+                className="w-full"
+                contentClassName="w-[min(26rem,calc(100vw-3rem))]"
                 value={role}
                 onChange={setRole}
                 disabled={mutation.isPending}
                 includeAdmin={action.kind === 'change-role'}
-                label={
+                ariaLabel={
                   action.kind === 'change-role'
                     ? msg('platformAdmin.organizationRole', 'Organization role')
                     : msg('platformAdmin.previousAdministratorSNewRole', 'Previous administrator’s new role')

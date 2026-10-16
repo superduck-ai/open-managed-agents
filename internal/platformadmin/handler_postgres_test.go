@@ -16,7 +16,7 @@ import (
 
 func TestAdministrationHTTPPostgres(t *testing.T) {
 	database := administrationDatabase(t)
-	service := New(database, nil)
+	service := administrationService(t, database)
 	operator, ordinary := uuid.NewV4().String(), uuid.NewV4().String()
 	if err := database.WithPlatformAuthTx(t.Context(), func(tx db.PlatformAuthTxStore) error {
 		org, err := tx.InsertOrganization(t.Context(), db.PlatformAuthOrganizationInput{Name: "注册组织"})

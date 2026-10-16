@@ -2,7 +2,11 @@ package platformadmin
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
+	"github.com/riverqueue/river/rivermigrate"
 	"net/url"
 	"os"
 	"strings"
@@ -27,7 +31,7 @@ func administrationDatabase(t *testing.T) *db.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema := "platform_admin_test_" + strings.ReplaceAll(uuid.NewV4().String(), "-", "")
+	schema := "pa_test_" + strings.ReplaceAll(uuid.NewV4().String(), "-", "")
 	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		_ = admin.Close(ctx)
 		t.Fatal(err)
@@ -56,7 +60,7 @@ func administrationDatabase(t *testing.T) *db.DB {
 
 func TestAdministrationServicePostgres(t *testing.T) {
 	database := administrationDatabase(t)
-	service := New(database, nil)
+	service := administrationService(t, database)
 	ctx := t.Context()
 	a, b := uuid.NewV4().String(), uuid.NewV4().String()
 	err := database.WithPlatformAuthTx(ctx, func(tx db.PlatformAuthTxStore) error {
@@ -330,4 +334,26 @@ func TestAdministrationServicePostgres(t *testing.T) {
 			t.Fatalf("已撤权仍可写入：%v", err)
 		}
 	})
+}
+
+func administrationService(t *testing.T, database *db.DB) *Service {
+	t.Helper()
+	var schema string
+	if err := database.SQLDB().QueryRowContext(t.Context(), "SELECT current_schema()").Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	migrator, err := rivermigrate.New(riverdatabasesql.New(database.SQLDB()), &rivermigrate.Config{Schema: schema})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrator.Migrate(t.Context(), rivermigrate.DirectionUp, nil); err != nil {
+		t.Fatal(err)
+	}
+	client, err := river.NewClient[*sql.Tx](riverdatabasesql.New(database.SQLDB()), &river.Config{Schema: schema})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(database, nil)
+	service.ConfigureDelivery(client)
+	return service
 }

@@ -1,3 +1,4 @@
+import { accountRoleLabel } from '../../shared/permissions/roles';
 import { useFormatters } from '../../shared/i18n';
 import { useI18n } from '../../shared/i18n';
 import { useState } from 'react';
@@ -41,8 +42,7 @@ export function OrganizationInvitations({
     {
       accessorKey: 'role',
       header: msg('platformAdmin.organizationRole', 'Organization role'),
-      cell: ({ row }) =>
-        row.original.role === 'admin' ? 'Admin' : row.original.role === 'user' ? 'User' : row.original.role,
+      cell: ({ row }) => accountRoleLabel(row.original.role, msg),
     },
     {
       accessorKey: 'status',

@@ -2,10 +2,13 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"github.com/superduck-ai/yourbatis"
 )
 
 type PlatformAdminTx struct{ executor yourbatis.Executor }
+
+func (tx *PlatformAdminTx) SQLTx() *sql.Tx { return tx.executor.(*yourbatis.Tx).SQLTx() }
 
 func (d *DB) WithPlatformAdminTx(ctx context.Context, fn func(*PlatformAdminTx) error) error {
 	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {

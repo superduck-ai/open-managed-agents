@@ -46,8 +46,12 @@ func (s *Service) CreateInvite(ctx context.Context, actor Actor, org string, inp
 		if err != nil {
 			return err
 		}
-		_, err = tx.InsertInvite(ctx, db.PlatformAdminInviteInput{UUID: uuid.NewV4().String(), ExternalID: id, OrganizationUUID: org, AccountUUID: actor.AccountUUID, Email: input.Email, Role: input.Role})
-		return err
+		invitation := uuid.NewV4().String()
+		_, err = tx.InsertInvite(ctx, db.PlatformAdminInviteInput{UUID: invitation, ExternalID: id, OrganizationUUID: org, AccountUUID: actor.AccountUUID, Email: input.Email, Role: input.Role})
+		if err != nil {
+			return err
+		}
+		return s.enqueueInvite(ctx, tx, org, invitation)
 	})
 }
 
@@ -94,7 +98,10 @@ func (s *Service) ChangeInvite(ctx context.Context, actor Actor, org, invitation
 		if member {
 			return invalid("该邮箱已是组织成员，请在成员管理中调整角色")
 		}
-		return tx.ResendInvite(ctx, org, invitation)
+		if err := tx.ResendInvite(ctx, org, invitation); err != nil {
+			return err
+		}
+		return s.enqueueInvite(ctx, tx, org, invitation)
 	})
 }
 

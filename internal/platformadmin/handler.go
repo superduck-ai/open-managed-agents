@@ -54,12 +54,12 @@ func (h *Handler) Routes() http.Handler {
 		r.Use(h.organizationScope)
 		r.Get("/", h.organization)
 		r.Patch("/", h.updateOrganization)
-		r.Get("/members", h.members)
-		r.Get("/workspaces", h.workspaces)
+		r.With(h.requireOrganization).Get("/members", h.members)
+		r.With(h.requireOrganization).Get("/workspaces", h.workspaces)
 		r.Post("/administrators", h.grantAdministrator)
 		r.Patch("/administrators/{memberUuid}", h.demoteAdministrator)
 		r.Post("/administrator-transfers", h.transferAdministrator)
-		r.Get("/invitations", h.invites)
+		r.With(h.requireOrganization).Get("/invitations", h.invites)
 		r.Post("/invitations", h.createInvite)
 		r.Post("/invitations/{invitationUuid}/resend", h.changeInvite(true))
 		r.Post("/invitations/{invitationUuid}/revoke", h.changeInvite(false))
@@ -106,7 +106,14 @@ func (h *Handler) organizationScope(next http.Handler) http.Handler {
 			h.fail(w, r, invalid("组织 UUID 无效"))
 			return
 		}
-		if _, err := h.service.db.GetPlatformAdminOrganization(r.Context(), org); err != nil {
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (h *Handler) requireOrganization(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := h.service.db.CheckPlatformAdminOrganization(r.Context(), chi.URLParam(r, "organizationUuid")); err != nil {
 			h.fail(w, r, err)
 			return
 		}

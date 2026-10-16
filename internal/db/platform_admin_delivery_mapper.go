@@ -12,12 +12,9 @@ type PlatformAdminDelivery struct {
 	OrganizationUUID string    `db:"organization_uuid"`
 	Recipient        string    `db:"recipient"`
 	ExpiresAt        time.Time `db:"expires_at"`
-	Attempts         int       `db:"attempts"`
 }
 
 type PlatformAdminDeliveryMapper interface {
-	CancelInvalid(ctx context.Context) error
-	Lease(ctx context.Context) (PlatformAdminDelivery, error)
-	Ready(ctx context.Context, deliveryUUID string, attempts int) (bool, error)
-	Finish(ctx context.Context, deliveryUUID string, attempts int, status string) error
+	Start(ctx context.Context, deliveryUUID string) (PlatformAdminDelivery, error)
+	Finish(ctx context.Context, deliveryUUID, status string) error
 }

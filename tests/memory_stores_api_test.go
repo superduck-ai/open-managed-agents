@@ -130,6 +130,20 @@ func TestMemoryStoresAPI(t *testing.T) {
 			t.Fatalf("unexpected retrieved store: %+v", retrievedStore)
 		}
 
+		if retrievedStore.CreatedAt != createdStore.CreatedAt {
+			t.Fatalf("retrieved creation time = %q, want %q", retrievedStore.CreatedAt, createdStore.CreatedAt)
+		}
+		for _, bounds := range []url.Values{
+			{"created_at[lte]": {createdStore.CreatedAt}},
+			{"created_at[gte]": {createdStore.CreatedAt}},
+			{"created_at[gte]": {createdStore.CreatedAt}, "created_at[lte]": {createdStore.CreatedAt}},
+		} {
+			page := listMemoryStores(t, app, bounds.Encode())
+			if !containsMemoryStore(page.Data, createdStore.ID) {
+				t.Fatalf("inclusive creation bounds %v exclude store %s created at %s", bounds, createdStore.ID, createdStore.CreatedAt)
+			}
+		}
+
 		updatedStore := updateMemoryStore(t, app, createdStore.ID, `{"name":"memory-api-store-updated","description":null,"metadata":{"scenario":"updated","extra":"yes"}}`)
 		if updatedStore.Name != "memory-api-store-updated" || updatedStore.Description != "" || updatedStore.Metadata["scenario"] != "updated" {
 			t.Fatalf("unexpected updated store: %+v", updatedStore)
@@ -186,6 +200,24 @@ func TestMemoryStoresAPI(t *testing.T) {
 		}
 		if !containsMemoryPrefix(t, depthPage.Prefixes, "/projects/foo/") || !containsMemoryPrefix(t, depthPage.Prefixes, "/projects/bar/") {
 			t.Fatalf("depth page missing expected top-level prefixes: %+v", depthPage.Prefixes)
+		}
+
+		for _, depthQuery := range []string{"", "&depth=0"} {
+			subtree := listMemories(t, app, createdStore.ID, "path_prefix="+url.QueryEscape("/projects/")+"&view=full&limit=10"+depthQuery)
+			if len(subtree.Data) != 2 || len(subtree.Prefixes) != 0 || !containsMemoryItem(t, subtree.Data, createdMemory.ID) || !containsMemoryItem(t, subtree.Data, secondMemory.ID) {
+				t.Fatalf("subtree listing depth %q returned incomplete or rolled-up memories: %+v", depthQuery, subtree)
+			}
+			for _, raw := range subtree.Data {
+				var full memoryAPIResponse
+				if err := json.Unmarshal(raw, &full); err != nil {
+					t.Fatalf("decode subtree memory: %v", err)
+				}
+				content := "todo"
+				if full.ID == createdMemory.ID {
+					content = updatedContent
+				}
+				assertMemoryContent(t, full, content)
+			}
 		}
 
 		versions := listMemoryVersions(t, app, createdStore.ID, "memory_id="+url.QueryEscape(createdMemory.ID)+"&limit=10")

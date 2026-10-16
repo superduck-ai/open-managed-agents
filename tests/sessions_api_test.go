@@ -633,6 +633,8 @@ func TestSessionCanonicalMultiAgentEventsFromCodeSessionIngress(t *testing.T) {
 		`mcp__agent_inferred`,
 		`"type":"agent.message"`,
 		"child stream answer",
+		`"type":"agent.thread_message_sent"`,
+		"deliver to coordinator",
 		`"type":"span.model_request_start"`,
 		`"session_thread_id":"` + childThreadID + `"`,
 	} {
@@ -641,7 +643,7 @@ func TestSessionCanonicalMultiAgentEventsFromCodeSessionIngress(t *testing.T) {
 		}
 	}
 	for _, leaked := range []string{
-		"deliver to coordinator",
+		`"type":"agent.thread_message_received"`,
 		"stream preview only",
 		`"type":"session.thread_status_running"`,
 		`"type":"session.thread_status_idle"`,

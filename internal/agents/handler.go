@@ -23,6 +23,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/mcpnames"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -33,7 +34,7 @@ const (
 
 var (
 	customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
-	mcpNamePattern        = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	mcpToolNamePattern    = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 )
 
 type Handler struct {
@@ -123,10 +124,6 @@ func NewHandler(database *db.DB, deploymentStore *deployments.Store, logger *slo
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("beta") != "true" {
-		h.errorAdapter.Write(w, r, agentsBetaRequired())
-		return
-	}
 	h.router.ServeHTTP(w, r)
 }
 
@@ -232,9 +229,6 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) search(w http.ResponseWriter, r *http.Request) error {
-	if r.URL.Query().Get("beta") != "true" {
-		return agentsBetaRequired()
-	}
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
 		return agentAuthenticationRequired()
@@ -807,11 +801,8 @@ func normalizeMCPServers(raw json.RawMessage) (json.RawMessage, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(name) > 255 {
-			return nil, errors.New("mcp_servers.name must be at most 255 characters")
-		}
-		if !mcpNamePattern.MatchString(name) || strings.Contains(name, "__") {
-			return nil, errors.New("mcp_servers.name must match ^[A-Za-z0-9_.-]+$ and not contain consecutive underscores")
+		if !mcpnames.Valid(name) {
+			return nil, errInvalidMCPServerName
 		}
 		if _, ok := seen[name]; ok {
 			return nil, errors.New("mcp_servers.name must be unique")
@@ -898,7 +889,7 @@ func normalizeSkills(raw json.RawMessage) (json.RawMessage, error) {
 
 func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMessage, error) {
 	if httpapi.IsJSONNull(raw) {
-		return json.RawMessage(`[]`), nil
+		raw = json.RawMessage(`[]`)
 	}
 	var tools []map[string]any
 	if err := json.Unmarshal(raw, &tools); err != nil {
@@ -937,8 +928,8 @@ func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMe
 			if name == "" {
 				return nil, errors.New("mcp_toolset.mcp_server_name is required")
 			}
-			if len(name) > 255 || !mcpNamePattern.MatchString(name) || strings.Contains(name, "__") {
-				return nil, errors.New("mcp_toolset.mcp_server_name must match ^[A-Za-z0-9_.-]+$ and not contain consecutive underscores")
+			if !mcpnames.Valid(name) {
+				return nil, errInvalidMCPToolsetServerName
 			}
 			if _, ok := serverNames[name]; !ok {
 				return nil, errors.New("mcp_toolset.mcp_server_name must reference an MCP server")
@@ -974,7 +965,7 @@ func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMe
 			return nil, errors.New("tools.type must be agent_toolset_20260401, mcp_toolset, or custom")
 		}
 	}
-	if len(referencedMCPServers) > 0 && len(referencedMCPServers) != len(serverNames) {
+	if len(referencedMCPServers) != len(serverNames) {
 		return nil, errors.New("every mcp_servers entry must be referenced by an mcp_toolset")
 	}
 	if total > 128 {
@@ -1052,7 +1043,7 @@ func normalizeMCPToolConfigs(value any, defaultPolicy string) ([]map[string]any,
 	seen := map[string]struct{}{}
 	for _, config := range configs {
 		name, _ := config["name"].(string)
-		if !mcpNamePattern.MatchString(name) || len(name) > 128 {
+		if !mcpToolNamePattern.MatchString(name) || len(name) > 128 {
 			return nil, errors.New("mcp tool config name must match ^[A-Za-z0-9_.-]{1,128}$")
 		}
 		if _, exists := seen[name]; exists {
@@ -1119,6 +1110,9 @@ func permissionPolicyType(config map[string]any, fallback string) string {
 
 func normalizeCustomTool(tool map[string]any) (map[string]any, error) {
 	name, _ := tool["name"].(string)
+	if strings.HasPrefix(name, "mcp__") {
+		return nil, errors.New("custom tool name must not start with mcp__ (reserved for MCP tools)")
+	}
 	if !customToolNamePattern.MatchString(name) {
 		return nil, errors.New("custom tool name must match ^[A-Za-z0-9_-]{1,128}$")
 	}

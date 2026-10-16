@@ -222,7 +222,7 @@ func TestFileMapperOwnedBuilderContracts(t *testing.T) {
 				bound:             buildFileMapperHasActiveReference(yourbatis.DialectPostgres, "workspace-uuid", "file-uuid"),
 				wantID:            "FileMapper.HasActiveReference",
 				wantKind:          yourbatis.StatementSelect,
-				wantArgumentNames: []string{"workspaceUUID", "fileUUID"},
+				wantArgumentNames: []string{"workspaceUUID", "fileUUID", "fileUUID"},
 				wantSQLFragments:  []string{"SELECT EXISTS", "resource.workspace_uuid = $1", "resource.file_uuid = $2"},
 			},
 		},
@@ -559,7 +559,7 @@ func TestFileMapperResultSemantics(t *testing.T) {
 
 }
 
-func TestSessionFileCatalogExcludesUploadReferences(t *testing.T) {
+func TestSessionFileCatalogRequiresInputInstanceReferences(t *testing.T) {
 	params := newFileMapperListParams("workspace-uuid", "sesn_scope")
 	params.CursorExternalID = "file_anchor"
 	for name, bound := range map[string]yourbatis.BoundSQL{
@@ -568,8 +568,8 @@ func TestSessionFileCatalogExcludesUploadReferences(t *testing.T) {
 		"cursor": buildFileMapperFindSessionPageCursor(yourbatis.DialectPostgres, params),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if strings.Contains(bound.SQL, "'/uploads/'") || strings.Contains(bound.SQL, "resource.payload IS NOT NULL") {
-				t.Fatalf("session catalog includes account uploads: %s", bound.SQL)
+			if !strings.Contains(bound.SQL, "resource.source_file_uuid IS NOT NULL") {
+				t.Fatalf("session catalog does not distinguish input instances: %s", bound.SQL)
 			}
 			for _, clause := range []string{"resource.workspace_uuid = $1", "resource.session_external_id = $2", "resource.payload IS NULL", "'/outputs/'"} {
 				if !strings.Contains(bound.SQL, clause) {
@@ -578,4 +578,22 @@ func TestSessionFileCatalogExcludesUploadReferences(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFileMapperMountedSourceReferenceContract(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement:         fileMapperHasMountedSourceReferenceStatement,
+		bound:             buildFileMapperHasMountedSourceReference(yourbatis.DialectPostgres, "workspace-uuid", "resource-uuid"),
+		wantID:            "FileMapper.HasMountedSourceReference",
+		wantKind:          yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "resourceUUID"},
+		wantSQLFragments:  []string{"source.file_uuid = input.source_file_uuid", "source.workspace_uuid = input.workspace_uuid", "input.workspace_uuid = $1", "source.uuid = $2", "input.deleted_at IS NULL"},
+	})
+	assertMapperExecutionError(t, mapperExecutionErrorContract{
+		statementID: "FileMapper.HasMountedSourceReference", kind: yourbatis.StatementSelect, query: true,
+		call: func(executor yourbatis.Executor) error {
+			_, err := NewFileMapper(executor).HasMountedSourceReference(context.Background(), "workspace-uuid", "resource-uuid")
+			return err
+		},
+	})
 }

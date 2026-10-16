@@ -20,10 +20,12 @@ CMA 文档 `claude-managed-agents/files.md` 的上传与下载示例使用正式
 
 ## Session scope 与账户上传
 
+File resource 的 `mount_path` 在共享 `sandboxmount.FileBackingPath` 边界按 UTF-8 字节校验每个路径组件，单组件不得超过 255 字节，以免 API 接受后 Linux/FUSE 挂载不可读。此为本实现的文件系统可执行性限制，不宣称 CMA 官方规定该数值。Session 创建、动态资源添加及 Deployment File resource 共用校验；超限返回现有无效参数错误，不截断或改名。总路径长度、规范路径、控制字符和 uploads 根目录约束继续生效。`internal/sandboxmount` 回归覆盖 ASCII/中文超限、255 字节边界及多级路径，真实复测使用 FILE-MNT-014。
+
 2026-10-15 核对最新 [CMA Adding files](https://platform.claude.com/docs/en/managed-agents/files) 与 [Beta Files list](https://platform.claude.com/docs/en/api/beta/files/list)。前者在 Mounting files in a session 中明确挂载会创建新的 Session 文件实例 ID；后者将 `scope_id` 限定为指定作用域的文件，并把 metadata 的 `scope` 定义为文件创建时的上下文。原上传 ID 不因 attach 自动变成 Session scope 的文件，不能直接复用该 ID 并在列表响应中改写其 scope。
 
-本次修正 FILE-API-010 涉及的列表差异：Session Catalog 只投影活动 `/outputs/` Owned File，不再投影 `/uploads/` Source File 引用。未分页列表、分页列表和游标定位共用 `catalogResourceCTE`，因此 Source File ID 不会在任何 Session 分页方向泄漏，也不能作为 Session 的分页锚点。账户列表、原 ID 的 metadata/download 策略及活动 Resource 的删除保护保持原合同。测试器保留“账户列表包含原上传 ID、Session 列表包含输出 ID且排除原上传 ID”的独立断言。
+FILE-API-010 的原上传 ID 排除断言继续保留。2026-10-16 补齐 FILE-MNT-006 暴露的独立输入实例身份：每次 attach 创建真实 File 行与新 ID，并由公开 Resource 和 Session scoped Files 暴露；输入实例和活动输出共用 `catalogResourceCTE` 的租户、生命周期及分页约束。原上传 ID 仍不进入该 Session scope，也不能作为其分页锚点。实例 metadata 可查询，下载能力继承源策略；活跃引用阻止实例或源 File 被 Files API 删除。通过 Session Resource 解绑或删除 Session 原子退休实例元数据，并保留源与其他实例。
 
-兼容范围必须区分：当前 OMA Input attach 仍返回 Source File ID，尚未实现 CMA 的独立 Session 输入实例 ID；本次只修正列表错误投影，不代表输入实例生命周期、metadata/download/delete 等已完全兼容 CMA。官方文档没有逐项列举 Session 列表必须包含哪些输入实例，不能把本次输出投影视为“所有 Session 列表只能包含输出”的官方保证。
+对象与容量遵循 [Filestore 输入实例合同](./filestore.md#session-输入实例升级)：复用源对象而不额外计费，源 Output 在被引用期间阻止覆盖和物理删除。迁移回填既有活动挂载，不依赖新建 Session 才生效。该修复不把 FILE-MNT-006 的 blocked 旧证据改判为 pass，真实模型复测仍需独立运行。
 
-`tests/files_session_scope_test.go` 在真实 PostgreSQL 上覆盖 Input-only 空列表、账户 Source 可见性、挂载输入和多个输出共存时的正式 SDK 分页、未分页读取、上传 ID 游标隔离及原 metadata 不变。`internal/db/file_mapper_test.go` 覆盖三个查询共用的租户绑定和可见性 SQL。现有 Session 输入测试同步改为检查账户上传不进入 Session Catalog，保留挂载身份、只读、配额及活动引用保护检查。
+`tests/files_session_scope_test.go` 在真实 PostgreSQL 上覆盖 Input-only 独立实例列表、账户 Source 可见性、挂载输入和多个输出共存时的正式 SDK 分页、未分页读取、上传 ID 游标隔离及原 metadata 不变。`internal/db/file_mapper_test.go` 覆盖三个查询共用的租户绑定和可见性 SQL。`internal/db/session_input_file_migration_postgres_test.go` 在隔离 PostgreSQL schema 内验证旧挂载回填及回滚。现有 Session 输入测试同步改为检查账户上传不进入 Session Catalog，保留挂载身份、只读、配额及活动引用保护检查。

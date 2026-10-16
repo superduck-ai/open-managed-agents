@@ -158,7 +158,7 @@ Tunnel 构建器生成，非连接选项继续保留。已知字段使用命名 
 `Cache-Control: no-store`。启动、恢复和上下文读取都从源配置构建，不复用上一次运行的 Token。
 配置解析或编码错误向上返回，由 Runner 统一处理启动失败：新建的 Code Session 执行终止清理，恢复中的已有 Session 保留。
 
-Snapshot policy 的 server name 索引使用原始精确值并拒绝首尾空白；重复或非规范名称、畸形 MCP URL 都会
+Snapshot policy 的 server name 索引使用原始精确值，非空名称按 1–255 个 Unicode 码点校验；重复名称、超长名称、畸形 MCP URL 都会
 使策略编译 fail-closed。运行时构建同样拒绝无效声明，不把坏配置当作普通 MCP 留给 sandbox。
 
 MCP Gateway 路径中的 Code Session ID 与凭据中的 Session ID 精确比较，不修剪路径 ID；带首尾空白

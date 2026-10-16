@@ -13,6 +13,20 @@
 
 Vault CRUD 和 OAuth 注册已经有了；存库侧已切到信封加密。Managed Agent 的普通 MCP 保留 Agent Snapshot 原始 URL，经 `HTTPS_PROXY` CONNECT；当 `upstream_proxy_mitm_enabled` 开启时，OMA 在 MITM 解密后的 HTTP 边界注入凭证。Session MCP HTTP proxy（`/v2/ccr-sessions/{id}/mcp`）按 #235 作为显式兼容入口保留，Runner 不把普通 MCP 自动改写到该接口；只有 canonical Tunnel 条目会投影到独立的 named Runtime Gateway。
 
+## Credential 创建时的显示名
+
+Credential 的 `display_name` 为可选、可空字符串。省略、显式 null 或空字符串都按无显示名创建，提供字符串时保留现有边界修剪与255字符上限。其他JSON类型仍拒绝。此规则只适用于Credential创建，不改变Vault名称或更新接口的校验。
+
+新增goose迁移将Credential名称数据库约束从1..255调整为0..255，不改写现有数据。回滚会重新验证非空约束；存在无名称Credential时，回滚失败并保留数据，不自动补名或删除。
+
+名称缺省不能阻断Credential key唯一性检查。同Vault中创建重复活动 `mcp_server_url` 或 `secret_name` 时返回409，原凭据及其秘密保持不变。依据官方Create Credential的可选display_name字段及Vault凭据唯一性合同。回归覆盖名称省略/null/空/显式字符串、错误类型/长度、缺省名称的重复创建及原秘密未被覆盖。
+
+## Static Bearer 凭据的结构字段更新
+
+`static_bearer` Credential 的 `mcp_server_url` 在创建后固定。更新请求只要携带该字段，就返回400，不会改写公开URL、数据库 credential_key 或加密秘密；同值、空字符串及null也不能通过字段更新改变结构。需要更换URL时归档原Credential并新建。
+
+只更新 token、显示名或 metadata 的合法路径继续可用。拒绝URL更新时，同请求的名称、metadata 和 token 修改也不能部分落库。回归验证公开字段/时间、数据库key和解密后的原secret均保持，另验证只轮换token仍成功。
+
 ## 威胁模型（加密管到哪）
 
 | 场景 | 加密能否挡住 |

@@ -11,9 +11,11 @@ import (
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 
@@ -25,9 +27,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	body, err := httpapi.DecodeObjectBodyAs[sessionMutationRequest](w, r, maxSessionBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[sessionCreateRequest](w, r, maxSessionCreateBodySize)
 	if err != nil {
-		return invalidRequest(err)
+		return invalidSessionCreateBody(err)
 	}
 
 	agent, snapshot, err := h.resolveAgent(r, principal, body.Agent)
@@ -47,6 +49,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	}
 	if env.ArchivedAt != nil {
 		return invalidRequest(errors.New("environment must not be archived"))
+	}
+	if err := networkpolicy.ValidateSessionMCPHosts(env.Config, snapshot); err != nil {
+		return invalidRequest(err)
 	}
 	metadata, err := httpapi.NormalizeMetadata(rawOrDefault(body.Metadata, `{}`), validateMetadataEntries)
 	if err != nil {
@@ -82,7 +87,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
-	created, _, _, _, err := h.db.CreateSession(r.Context(), db.CreateSessionInput{
+	input := db.CreateSessionInput{
 		Session: db.Session{
 			UUID:                  uuid.NewV4().String(),
 			ExternalID:            sessionID,
@@ -131,14 +136,29 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 			CreatedAt:             now,
 			UpdatedAt:             now,
 		},
-	})
+	}
+	events, err := normalizeSessionInitialEvents(&input.Session, body.InitialEvents, now)
+	if err != nil {
+		return invalidRequest(err)
+	}
+	prepared, err := h.eventPayloads.PreparePublic(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, events)
+	if err != nil {
+		return internalError("Could not prepare initial events", err)
+	}
+	created, _, _, _, persisted, err := h.db.CreateSessionWithEvents(r.Context(), input, prepared)
 	if err != nil {
 		if mapped, ok := mapFileResourcePersistenceError(err); ok {
 			return mapped
 		}
 		return internalError("Could not create session", fmt.Errorf("create session %q: %w", sessionID, err))
 	}
-	h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_idled", created.ExternalID, nil, created.CreatedAt)
+	if len(events) == 0 {
+		h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_idled", created.ExternalID, nil, created.CreatedAt)
+	} else {
+		persisted = eventpayload.RestoreCreatedPublic(persisted, events)
+		h.publishSessionEvents(r.Context(), persisted)
+		h.enqueueWebhooksForSessionEvents(r.Context(), created.WorkspaceUUID, created.ExternalID, persisted)
+	}
 	response, err := h.responseFromSession(r, created)
 	if err != nil {
 		return internalError("Could not create session", fmt.Errorf("load session %q response: %w", sessionID, err))

@@ -53,6 +53,11 @@ func FileBackingPath(mountPath string) (string, error) {
 	if err := filestorepath.Validate(mountPath, false); err != nil {
 		return "", fmt.Errorf("mount_path %w", err)
 	}
+	for _, segment := range strings.Split(mountPath, "/") {
+		if len(segment) > 255 {
+			return "", errors.New("mount_path components must not exceed 255 UTF-8 bytes")
+		}
+	}
 	for _, value := range mountPath {
 		if unicode.IsControl(value) {
 			return "", errors.New("mount_path must not contain control characters")

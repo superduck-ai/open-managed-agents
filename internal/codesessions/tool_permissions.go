@@ -12,6 +12,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/mcpnames"
 )
 
 type resolvedToolPermission string
@@ -186,7 +187,7 @@ func resolveMCPToolIdentity(snapshot toolPermissionSnapshot, claudeToolName stri
 		}
 		toolName, found := strings.CutPrefix(claudeToolName, "mcp__"+serverName+"__")
 		if !found {
-			runtimeName := strings.ReplaceAll(serverName, ".", "_")
+			runtimeName := mcpnames.ToolPrefix(serverName)
 			toolName, found = strings.CutPrefix(claudeToolName, "mcp__"+runtimeName+"__")
 		}
 		if !found || toolName == "" {

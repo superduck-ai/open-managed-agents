@@ -3,6 +3,7 @@ package sessions
 import (
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
@@ -161,3 +162,11 @@ func gitTokenUpdateRequiredError() error {
 }
 
 type resourceReferenceError = sessionresource.ReferenceError
+
+func invalidSessionCreateBody(err error) error {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return apperr.New(apperr.RequestTooLarge, "Request body exceeds maximum size", err)
+	}
+	return invalidRequest(err)
+}

@@ -1,5 +1,8 @@
 # Session 生成文件下载（#261）与 Get Session 文件资源回填（#258）
 
+2026-10-16 的输入实例合同补充见 [Filestore Session 输入实例升级](./filestore.md#session-输入实例升级)：Input Resource 的 payload 与 Files 列表现在返回每次 attach 独立创建的实例 ID，原上传 ID 保持不变。下文关于 #258 中 Input“保持现状”的描述记录当时的输出下载改动范围，不再表示当前 Input 与 Source File 共用 ID。
+
+
 > 状态：实现方案（已评审）
 > 关联：issue #261、#258；上游 #259（session files/resources 对齐）已合并
 > 前置：`docs/design/be/filestore.md`（Session Resource/File 统一持久化契约）

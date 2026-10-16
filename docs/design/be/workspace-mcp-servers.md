@@ -21,6 +21,12 @@ flowchart LR
   Resource -. 不保存 .-> Credential["Credential / OAuth"]
 ```
 
+Agent API 的 `mcp_servers[].name` 和 `mcp_toolset.mcp_server_name` 按 [CMA Create Agent schema](https://platform.claude.com/docs/en/api/beta/agents/create) 接受 1–255 个 Unicode 码点，没有 ASCII pattern。名称与引用保留原值，区分大小写，不做 trim 或 Unicode normalization；引用必须精确匹配。远端工具自身的名称校验不随 server 名称规则放宽。
+
+运行时继续保留旧 ASCII 名称及点号转下划线的工具前缀。其他名称映射为 `mcp_` 加原始 UTF-8 名称 SHA-256 的前 12 字节十六进制值。Go runtime config 与 DSH 使用相同映射，模型工具名为 `mcp__<prefix>__<remote_tool>`；权限和公开事件通过 Agent snapshot 映射回原始 server 名称，远端 `tools/call` 保留原始工具名。运行时拒绝别名碰撞，包括与用户声明的 ASCII 名称碰撞，权限解析遇到歧义同样拒绝。Tunnel Gateway 使用转义后的原始 server 名称，并只解码一次。
+
+普通单测覆盖多字节名称的 255/256 字符边界、精确引用、稳定别名、碰撞拒绝、权限映射、代理路径和 DSH 工具发现及分发。真实 CMA 对比用例需另行执行。
+
 ## Console API
 
 路由挂在平台会话鉴权保护的 `/api/console/organizations/{orgUuid}` 下：
@@ -41,7 +47,7 @@ flowchart LR
 }
 ```
 
-成功响应包含 `id`、`name`、`transport_type`、`url` 和时间字段。名称 trim 后必须符合 Agent MCP 名称规则；endpoint 通过统一规范化逻辑处理 scheme、DNS 大小写、默认端口与根路径，并拒绝凭据、fragment、非 HTTP(S) 或超过 2048 字节的值。
+成功响应包含 `id`、`name`、`transport_type`、`url` 和时间字段。工作区目录项名称仍使用其现有 ASCII 校验和 trim 规则，与 Agent API 的 Unicode 名称合同分别校验；endpoint 通过统一规范化逻辑处理 scheme、DNS 大小写、默认端口与根路径，并拒绝凭据、fragment、非 HTTP(S) 或超过 2048 字节的值。
 
 错误响应属于 Console API 合同，使用 `{error,message}`，不复用 `/v1` 的 Anthropic-compatible error envelope。资源包只在最终 Console 边界记录内部错误；endpoint、查询条件和请求体不写入运行日志。
 

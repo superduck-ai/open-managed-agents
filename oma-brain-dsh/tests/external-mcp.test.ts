@@ -4,16 +4,18 @@ import { ToolCallId } from "@deepseek-ai/dsh-llm";
 import { OmaApi } from "../src/api.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import { mountOma } from "../src/plugin.ts";
+import { mcpServerPrefix } from "../src/external-mcp/server-name.ts";
 import { externalServers } from "../src/external-mcp/config.ts";
 import { registerWorkerTask } from "../src/worker-registration.ts";
 import { Backend, textEvents, toolEvents } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
 
-function peer(transport: "http" | "sse" = "http") {
+function peer(transport: "http" | "sse" = "http", serverName = "peer") {
   const requests: Payload[] = [];
   let failDiscovery = false;
   let failCall = false;
   let errorResult = false;
+  let protocolErrorCode: number | undefined;
   let hangCall = false;
   const dispatched = Promise.withResolvers<void>();
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
@@ -95,6 +97,8 @@ function peer(transport: "http" | "sse" = "http") {
         dispatched.resolve();
         if (hangCall) return new Promise<Response>(() => {});
         if (failCall) return new Response(null, { status: 503 });
+        if (protocolErrorCode !== undefined)
+          return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: protocolErrorCode, message: 'unknown tool "microsoft_docs_fetch"' } });
         return reply({
           content: [
             {
@@ -117,7 +121,7 @@ function peer(transport: "http" | "sse" = "http") {
     },
     config: {
       mcpServers: {
-        peer: {
+        [serverName]: {
           type: transport,
           url: new URL(transport === "sse" ? "/sse" : "/", server.url).href,
           headers: { Authorization: "Bearer peer-secret" },
@@ -131,6 +135,7 @@ function peer(transport: "http" | "sse" = "http") {
     failCall: () => {
       failCall = true;
     },
+    protocolError: (code?: number) => { protocolErrorCode = code; },
     errorResult: () => {
       errorResult = true;
     },
@@ -138,8 +143,11 @@ function peer(transport: "http" | "sse" = "http") {
   };
 }
 
-async function fixture(transport: "http" | "sse" = "http") {
-  const p = peer(transport);
+async function fixture(
+  transport: "http" | "sse" = "http",
+  serverName = "peer",
+) {
+  const p = peer(transport, serverName);
   const b = new Backend();
   await b.ready;
   const route = b.route.bind(b);
@@ -155,7 +163,17 @@ async function fixture(transport: "http" | "sse" = "http") {
         })
       : route(request);
   const ctx = new Context();
-  const api = new OmaApi(b.url);
+  const api = new OmaApi(b.url, (async (input, init) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    if (url.pathname === `/v2/ccr-sessions/${b.a.session_id}/mcp`) {
+      expect(request.headers.get("Authorization")).toBe(`Bearer ${b.a.ingress_token}`);
+      const upstream = new Request(url.searchParams.get("mcp_url")!, request);
+      upstream.headers.set("Authorization", "Bearer peer-secret");
+      return fetch(upstream, { redirect: "error" });
+    }
+    return fetch(request);
+  }) as typeof fetch);
   await mountOma(ctx, api);
   const a = await registerWorkerTask(api, b.a);
   const session = createOmaSession(ctx, api, a);
@@ -303,7 +321,11 @@ test("interrupting an external call finishes locally and permits a new turn with
     await f.session.control({ type: "interrupt" });
     await turn;
     expect(f.session.blocked()).toBe(false);
-    expect(Object.values(f.session.state.toolOutcomes)).toContainEqual({ text: "Tool call interrupted.", failed: true, remoteOutcome: "unknown" });
+    expect(Object.values(f.session.state.toolOutcomes)).toContainEqual({
+      text: "Tool call interrupted.",
+      failed: true,
+      remoteOutcome: "unknown",
+    });
     expect(
       f.p.requests.filter((request) => request.method === "tools/call"),
     ).toHaveLength(1);
@@ -311,7 +333,9 @@ test("interrupting an external call finishes locally and permits a new turn with
     f.b.modelScript = [textEvents("continued")];
     await f.session.receive("next", { content: "Continue" });
     expect(f.b.requests).toHaveLength(2);
-    expect(f.p.requests.filter((request) => request.method === "tools/call")).toHaveLength(1);
+    expect(
+      f.p.requests.filter((request) => request.method === "tools/call"),
+    ).toHaveLength(1);
   } finally {
     await f.close();
     await turn;
@@ -488,4 +512,83 @@ test("resuming a session rediscovers external tools without replaying completed 
     await resumed?.close();
     await f.close();
   }
+});
+
+test("server prefixes count Unicode code points and reject collisions", () => {
+  for (const name of ["", "测".repeat(256), "😀".repeat(256)]) {
+    expect(() => mcpServerPrefix(name)).toThrow();
+  }
+  for (const name of ["测".repeat(255), "😀".repeat(255)]) {
+    expect(mcpServerPrefix(name)).toMatch(/^mcp_[a-f0-9]{24}$/);
+  }
+  expect(mcpServerPrefix("peer.name")).toBe("peer_name");
+  expect(mcpServerPrefix("peer\n")).toMatch(/^mcp_[a-f0-9]{24}$/);
+  expect(mcpServerPrefix("é")).not.toBe(mcpServerPrefix("e\u0301"));
+  const server = { type: "http", url: "https://example.com/mcp" };
+  expect(() =>
+    externalServers({
+      mcpServers: {
+        "Peer-测试": server,
+        [mcpServerPrefix("Peer-测试")]: server,
+      },
+    }),
+  ).toThrow();
+});
+
+test("Unicode server aliases preserve remote tool dispatch", async () => {
+  const prefix = mcpServerPrefix("Peer-测试");
+  expect(prefix).toBe("mcp_68d87f931a770c47d39b414c");
+  const f = await fixture("http", "Peer-测试");
+  try {
+    await f.session.open();
+    const events = mcpEvents();
+    events[1]!.content_block.name = `mcp__${prefix}__microsoft_docs_fetch`;
+    f.b.modelScript = [events, textEvents("Document fetched")];
+    await f.session.receive("unicode_input", {
+      content: "Fetch documentation",
+    });
+    expect(f.b.requests[0]!.tools.map((tool: Payload) => tool.name)).toContain(
+      `mcp__${prefix}__microsoft_docs_fetch`,
+    );
+    const calls = f.p.requests.filter(
+      (request) => request.method === "tools/call",
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.params.name).toBe("microsoft_docs_fetch");
+  } finally {
+    await f.close();
+  }
+});
+
+
+test("external InvalidParams response records known failure and permits next real call", async () => {
+  const f = await fixture();
+  try {
+    await f.session.open();
+    f.p.protocolError(-32602);
+    f.b.modelScript = [mcpEvents(), textEvents("The tool no longer exists")];
+    await f.session.receive("missing_tool", { content: "Fetch documentation" });
+    expect(f.session.blocked()).toBe(false);
+    expect(f.session.state.toolOutcomes?.mcp_call?.failed).toBe(true);
+    expect(f.session.state.toolOutcomes?.mcp_call?.text).toContain('unknown tool "microsoft_docs_fetch"');
+    expect(f.session.state.toolOutcomes?.mcp_call?.remoteOutcome).toBeUndefined();
+    f.p.protocolError();
+    f.b.modelScript = [mcpEvents("next_call"), textEvents("Fetched successfully")];
+    await f.session.receive("next_input", { content: "Fetch documentation again" });
+    expect(f.session.blocked()).toBe(false);
+    expect(f.session.state.toolOutcomes?.next_call?.failed).toBe(false);
+    expect(f.p.requests.filter((r) => r.method === "tools/call")).toHaveLength(2);
+  } finally { await f.close(); }
+});
+
+test("external server InternalError keeps unknown outcome without replay", async () => {
+  const f = await fixture();
+  try {
+    await f.session.open();
+    f.p.protocolError(-32603);
+    f.b.modelScript = [mcpEvents()];
+    await expect(f.session.receive("server_error", { content: "Fetch documentation" })).rejects.toThrow();
+    expect(f.session.blocked()).toBe(true);
+    expect(f.p.requests.filter((r) => r.method === "tools/call")).toHaveLength(1);
+  } finally { await f.close(); }
 });

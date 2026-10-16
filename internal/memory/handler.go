@@ -1088,7 +1088,7 @@ func responseFromStore(record db.MemoryStore) storeResponse {
 	}
 	return storeResponse{
 		ID:          record.ExternalID,
-		CreatedAt:   formatTime(record.CreatedAt),
+		CreatedAt:   record.CreatedAt.UTC().Format(time.RFC3339Nano),
 		Name:        record.Name,
 		Type:        "memory_store",
 		UpdatedAt:   formatTime(record.UpdatedAt),
@@ -1433,8 +1433,11 @@ func parseOptionalDepth(r *http.Request) (*int, error) {
 		return nil, nil
 	}
 	value, err := strconv.Atoi(raw)
-	if err != nil || value < 1 {
-		return nil, errors.New("depth must be at least 1")
+	if err != nil || value < 0 || value > 1 {
+		return nil, errInvalidMemoryDepth
+	}
+	if value == 0 {
+		return nil, nil
 	}
 	return &value, nil
 }

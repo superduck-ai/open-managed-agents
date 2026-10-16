@@ -7,6 +7,29 @@ import (
 	"testing"
 )
 
+func TestAgentCreateAndSearchIgnoreBetaQuery(t *testing.T) {
+	handler := NewHandler(nil, nil, nil)
+	for _, query := range []string{"", "?beta=true", "?beta=false"} {
+		for _, route := range []struct {
+			method string
+			path   string
+			serve  http.HandlerFunc
+		}{
+			{http.MethodPost, "/", handler.ServeHTTP},
+			{http.MethodPost, "/v1/agents:search", handler.Search},
+		} {
+			t.Run(route.method+route.path+query, func(t *testing.T) {
+				request := httptest.NewRequest(route.method, route.path+query, nil)
+				response := httptest.NewRecorder()
+				route.serve(response, request)
+				if response.Code != http.StatusUnauthorized {
+					t.Fatalf("status = %d, want 401: %s", response.Code, response.Body.String())
+				}
+			})
+		}
+	}
+}
+
 func TestDecodeSearchRequestRejectsNull(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/agents/search", strings.NewReader(`null`))
 

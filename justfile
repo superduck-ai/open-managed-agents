@@ -28,6 +28,9 @@ server:
 restart-server:
   PORT="${PORT:-38080}" ./scripts/restart-server.sh
 
+restart-brain:
+  cd oma-brain-dsh && bun run restart
+
 # Restart frontend Vite dev server in foreground. Override with: PORT=4173 API_PORT=18080 just web
 # Only stops listeners from this checkout; uses the next port when another checkout/process owns the requested port.
 web:

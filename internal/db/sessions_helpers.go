@@ -66,7 +66,7 @@ func insertSessionTx(
 		if createErr != nil {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, createErr
 		}
-		if _, createErr = bindSessionFileResourceWithLockedFilesystemTx(
+		if created, createErr = bindSessionFileResourceWithLockedFilesystemTx(
 			ctx,
 			executor,
 			session,

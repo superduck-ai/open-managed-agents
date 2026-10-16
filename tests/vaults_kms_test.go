@@ -66,7 +66,7 @@ func TestVaultAliyunKMSLifecycle(t *testing.T) {
 	fake.Failure.Store("Forbidden.NoPermission")
 	response := doVaultRequest(t, app, http.MethodPost, "/v1/vaults/"+vault.ID+"/credentials?beta=true", strings.NewReader(staticBearerBody("must fail", "https://failed.example/mcp", "never-persist-this")), defaultTestKey, true)
 	assertKMSHTTPFailure(t, response)
-	response = doVaultRequest(t, app, http.MethodPost, "/v1/vaults/"+vault.ID+"/credentials/"+credential.ID+"?beta=true", strings.NewReader(`{"auth":{"type":"static_bearer","mcp_server_url":"https://mcp.example.com/mcp"}}`), defaultTestKey, true)
+	response = doVaultRequest(t, app, http.MethodPost, "/v1/vaults/"+vault.ID+"/credentials/"+credential.ID+"?beta=true", strings.NewReader(`{"auth":{"type":"static_bearer"}}`), defaultTestKey, true)
 	assertKMSHTTPFailure(t, response)
 	if err := kmsMITMRoundTrip(t, egress, session, recorder); !errors.Is(err, vaults.ErrInjectionRejected) {
 		t.Fatalf("MITM outage error = %v", err)
@@ -103,7 +103,7 @@ func TestVaultAliyunKMSLifecycle(t *testing.T) {
 		t.Fatalf("updated MITM injection: %v", err)
 	}
 	// A partial auth update preserves the secret through Open/merge/Seal.
-	updateVaultCredential(t, app, vault.ID, credential.ID, `{"display_name":"preserved","auth":{"type":"static_bearer","mcp_server_url":"https://mcp.example.com/mcp"}}`)
+	updateVaultCredential(t, app, vault.ID, credential.ID, `{"display_name":"preserved","auth":{"type":"static_bearer"}}`)
 	// Actual persisted wrapped-key tampering must block injection too.
 	if _, err := app.pool.Exec(t.Context(), `update vault_credentials set wrapped_dek = '\x00'::bytea where external_id = $1`, credential.ID); err != nil {
 		t.Fatal(err)

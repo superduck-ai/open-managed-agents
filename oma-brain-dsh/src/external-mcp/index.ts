@@ -12,9 +12,9 @@ export class ExternalMcp {
     { client: ExternalMcpClient; tool: RemoteTool }[]
   >;
 
-  constructor(config: unknown) {
+  constructor(config: unknown, fetcher?: typeof fetch) {
     this.clients = externalServers(config).map(
-      (server) => new ExternalMcpClient(server),
+      (server) => new ExternalMcpClient(server, fetcher),
     );
   }
 

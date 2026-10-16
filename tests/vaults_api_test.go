@@ -286,13 +286,13 @@ func TestVaultsAPI(t *testing.T) {
 		assertRawContains(t, updated.Auth, `"scope":"channels:read chat:write"`)
 
 		staticRotated := updateVaultCredential(t, app, vault.ID, static.ID, `{
-			"display_name":"static bearer moved",
+			"display_name":"static bearer rotated",
 			"auth":{
 				"type":"static_bearer",
-				"mcp_server_url":"https://mcp.github.example/mcp"
+				"token":"rotated-bearer-secret"
 			}
 		}`)
-		assertRawContains(t, staticRotated.Auth, `"mcp_server_url":"https://mcp.github.example/mcp"`)
+		assertRawContains(t, staticRotated.Auth, `"mcp_server_url":"https://mcp.github.example/sse"`)
 		assertRawNotContains(t, staticRotated.Auth, "bearer-secret")
 		var credentialKey string
 		if err := app.pool.QueryRow(context.Background(), `
@@ -300,8 +300,8 @@ func TestVaultsAPI(t *testing.T) {
 		`, static.ID).Scan(&credentialKey); err != nil {
 			t.Fatalf("load credential_key: %v", err)
 		}
-		if credentialKey != "https://mcp.github.example/mcp" {
-			t.Fatalf("credential_key = %q, want updated mcp_server_url", credentialKey)
+		if credentialKey != "https://mcp.github.example/sse" {
+			t.Fatalf("credential_key = %q, want original mcp_server_url", credentialKey)
 		}
 		dupURL := doVaultRequest(t, app, http.MethodPost, "/v1/vaults/"+vault.ID+"/credentials/"+static.ID+"?beta=true", strings.NewReader(`{
 			"auth":{
@@ -309,7 +309,7 @@ func TestVaultsAPI(t *testing.T) {
 				"mcp_server_url":"https://mcp.slack.example/mcp"
 			}
 		}`), defaultTestKey, true)
-		assertError(t, dupURL, http.StatusConflict, "conflict_error")
+		assertError(t, dupURL, http.StatusBadRequest, "invalid_request_error")
 
 		validation := validateVaultCredential(t, app, vault.ID, mcp.ID)
 		if validation.Type != "vault_credential_validation" || validation.CredentialID != mcp.ID || !validation.HasRefreshToken || validation.Refresh.Status != "connect_error" {

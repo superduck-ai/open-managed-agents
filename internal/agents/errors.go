@@ -7,6 +7,9 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 )
 
+var errInvalidMCPServerName = errors.New("mcp_servers.name must contain 1 to 255 characters")
+var errInvalidMCPToolsetServerName = errors.New("mcp_toolset.mcp_server_name must contain 1 to 255 characters")
+
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)
 }
@@ -36,10 +39,6 @@ func configuredModelError(err error) error {
 
 func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
-}
-
-func agentsBetaRequired() error {
-	return apperr.New(apperr.InvalidArgument, "Agents API requires beta=true", nil)
 }
 
 func agentRouteNotFound() error {

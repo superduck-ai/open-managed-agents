@@ -8,6 +8,18 @@ CRUD、三张表、S3 正文、控制台列表/详情已落地。本文只补运
 
 **方案**：每个 attach 的 store 挂到 `/mnt/memory/{slug}`。Agent 用普通文件工具读写；Filestore 把这些操作变成 Postgres 元数据 + S3 正文 + 不可变 version。
 
+## Store 创建时间边界
+
+Store 的 `created_at` 响应保留数据库实际保存的小数秒精度，以 UTC RFC3339Nano 编码。创建、读取和列表使用同一个响应映射。列表的 `created_at[gte]` 和 `created_at[lte]` 均为包含式边界；客户端将返回的创建时间用作任一边界或同时用作上下界时，结果必须包含该 Store。响应不能截为整秒，否则原始创建时间可能超过客户端收到的上界。
+
+依据 [CMA List memory stores](https://platform.claude.com/docs/en/api/beta/memory_stores/list)。`tests/memory_stores_api_test.go` 使用实际创建响应的时间检查读取一致性，以及包含式下界、上界和相等双边界。其他时间字段和分页排序保持原有行为。
+
+## Memory 列表深度合同
+
+公开 Memory API 的 `depth` 只接受 `0` 或 `1`。省略或显式 `0` 表示返回 `path_prefix` 下整个子树，走相同的普通分页路径，保留实际 Memory 对象和 `view=full` 正文；不会将根目录折叠成 prefix。`1` 表示直接子项，继续使用目录聚合路径。负数、大于 `1`、非整数值返回 `400 invalid_request_error`。
+
+依据 CMA Memory 文档的 List memories 深度规则。`internal/memory/depth_test.go` 覆盖非法值、缺省、零和一；Memory API 回归以两个不同子目录中的 Memory 对照缺省和零的完整 ID、全文及 hash/size，原 `depth=1` 聚合断言保持。
+
 ## Brain 的目录加载
 
 本节从废弃 Crush worktree 的 Memory 验证与目录投影迁入，适配当前 Rust Brain。

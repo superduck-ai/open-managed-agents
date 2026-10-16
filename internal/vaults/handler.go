@@ -400,11 +400,8 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return invalidRequest(err)
 	}
-	displayName, err := requireNonEmptyString(request.DisplayName, "display_name")
-	if err == nil {
-		err = validateDisplayName(displayName)
-	}
-	if err != nil {
+	displayName := strings.TrimSpace(request.DisplayName)
+	if err := validateDisplayName(displayName); err != nil {
 		return invalidRequest(err)
 	}
 	metadata, err := normalizeMetadata(request.Metadata)

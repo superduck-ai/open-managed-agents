@@ -34,8 +34,8 @@ func TestSessionFilesExcludeAccountUploads(t *testing.T) {
 
 	t.Run("success input alone does not scope source", func(t *testing.T) {
 		page := listFiles(t, app, scope)
-		if len(page.Data) != 0 || page.HasMore || page.NextPage != nil {
-			t.Fatalf("input-only session list = %+v, want empty", page)
+		if len(page.Data) != 1 || page.Data[0].ID == source.ID || page.HasMore || page.NextPage != nil {
+			t.Fatalf("input-only session list = %+v, want new instance", page)
 		}
 		if all := listFiles(t, app, ""); !containsFile(all.Data, source.ID) {
 			t.Fatal("source missing from account list")
@@ -47,7 +47,7 @@ func TestSessionFilesExcludeAccountUploads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var outputIDs []string
+	var scopedFileIDs []string
 	for _, path := range []string{"first.txt", "second.txt", "third.txt"} {
 		if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
 			WorkspaceUUID: record.WorkspaceUUID, FilesystemUUID: filesystem.UUID,
@@ -57,14 +57,14 @@ func TestSessionFilesExcludeAccountUploads(t *testing.T) {
 		}
 	}
 	files, err := app.db.ListFiles(context.Background(), record.WorkspaceUUID, session.ID)
-	if err != nil || len(files) != 3 {
-		t.Fatalf("unpaged scoped files = %+v, %v, want three outputs", files, err)
+	if err != nil || len(files) != 4 {
+		t.Fatalf("unpaged scoped files = %+v, %v, want an input instance and three outputs", files, err)
 	}
 	for _, file := range files {
 		if file.ExternalID == source.ID {
 			t.Fatal("source leaked through unpaged query")
 		}
-		outputIDs = append(outputIDs, file.ExternalID)
+		scopedFileIDs = append(scopedFileIDs, file.ExternalID)
 	}
 
 	t.Run("failure source cursor remains outside scope with outputs", func(t *testing.T) {
@@ -80,15 +80,15 @@ func TestSessionFilesExcludeAccountUploads(t *testing.T) {
 		seen := make(map[string]bool)
 		for pager.Next() {
 			id := pager.Current().ID
-			if id == source.ID || seen[id] || len(seen) >= len(outputIDs) {
+			if id == source.ID || seen[id] || len(seen) >= len(scopedFileIDs) {
 				t.Fatalf("unexpected scoped file %q", id)
 			}
 			seen[id] = true
 		}
-		if pager.Err() != nil || len(seen) != len(outputIDs) {
+		if pager.Err() != nil || len(seen) != len(scopedFileIDs) {
 			t.Fatalf("scoped pagination = %v, %v", seen, pager.Err())
 		}
-		for _, id := range outputIDs {
+		for _, id := range scopedFileIDs {
 			if !seen[id] {
 				t.Fatalf("missing output %q", id)
 			}

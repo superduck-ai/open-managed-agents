@@ -152,7 +152,7 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 			SessionUUID:       session.UUID,
 			SessionExternalID: session.ExternalID,
 			ThreadExternalID:  spec.OwnerThreadID,
-			EventType:         eventType,
+			EventType:         sessionPayloadString(spec.Payload, "type"),
 			Payload:           payloadRaw,
 			ProcessedAt:       processedAt,
 			CreatedAt:         createdAt,
@@ -316,6 +316,9 @@ func (h *Handler) sessionEventCopySpecs(ctx context.Context, session db.Session,
 			return nil, err
 		}
 		return h.dualSessionEventCopySpecs(codeSessionID, eventType, eventID, payload, threadID, true), nil
+	}
+	if eventType == "agent.thread_message_sent" || eventType == "agent.thread_message_received" {
+		return h.threadMessageCopySpecs(ctx, session, codeSessionID, eventType, eventID, payload)
 	}
 	if maevents.IsPrimaryCoordinationEvent(eventType) {
 		return []sessionEventCopySpec{newSessionEventCopySpec(eventID, payload, nil, false)}, nil

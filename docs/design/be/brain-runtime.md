@@ -2,6 +2,8 @@
 
 当前执行端为 `oma-brain-dsh`。Go 后端负责 NATS 启动任务派发，执行端通过原有 CCRv2 完成注册、输入接收、模型代理、工具审批、事件持久化、状态更新和心跳。后端没有独立的 Brain assignment、注册凭据、租约表或完成状态补丁。
 
+本地在仓库根目录运行 `just restart-brain`，复用 `oma-brain-dsh/scripts/restart.sh`，先构建，再停止当前 Brain 目录启动的 Bun 入口进程，并在前台启动新进程。构建失败时保留旧进程，旧进程未能在 30 秒内退出时取消重启。
+
 ## 启动与多节点恢复
 
 ```mermaid
@@ -81,11 +83,13 @@ DSH 内嵌 Bash、Read、Write、Edit、Grep、Glob 的模型工具定义，启�
 
 外部 MCP 与沙箱 MCP 分开传递。`registerWorkerTask` 将 `/v2/sessions/{id}` 返回的 `session_context.mcp_config` 原样保存在 assignment 的 `external_mcp_config`，包括连接地址、headers、工具配置和未知扩展；assignment 的 `mcp_config` 仍由 DSH 构造，只包含平台拥有的 `sandbox` endpoint。外部服务器即使名为 `sandbox`，也不会覆盖内置工具的沙箱连接。两份配置只存在于运行时边界，不新增数据库字段或公开 API 字段。
 
-根会话在第一次模型请求前逐个连接外部服务器并执行 `tools/list`。Streamable HTTP 使用 MCP SDK 的自动版本协商，旧式 SSE 使用 legacy initialize；SDK 聚合分页目录。当前外部传输支持 `http`、`streamable-http` 和 `sse`，不支持 stdio、WebSocket 或主机命令。配置缺失时保留原有无外部 MCP 行为。非法配置、发现失败、非法工具名或名称冲突会停止初始化并关闭已创建的连接，不能静默丢弃服务器后继续向模型请求。发现和调用都携带该服务器的 headers，禁止自动跟随 HTTP 重定向，不将沙箱或模型凭据拼接到外部请求。
+Brain 宿主机上的外部 MCP 请求经现有 `/v2/ccr-sessions/{id}/mcp?mcp_url=...` 代理发送。后端校验当前 Session 身份与网络策略，并由 Vault 注入远端凭证。Brain 只向 OMA 发送当前 assignment 的 ingress token，不把该 token 发到远端 MCP。HTTP 和旧式 SSE 的每次实际请求都使用该通道，包括 SSE 返回的消息地址。已有同 Session named Tunnel 网关请求保持原路由。普通沙箱的远端连接仍使用沙箱 HTTP(S) Proxy/MITM。此适配不改写 `external_mcp_config`，不保存 Vault 秘密。
+
+根会话在第一次模型请求前逐个连接外部服务器并执行 `tools/list`。Streamable HTTP 使用 MCP SDK 的自动版本协商，旧式 SSE 使用 legacy initialize；SDK 聚合分页目录。当前外部传输支持 `http`、`streamable-http` 和 `sse`，不支持 stdio、WebSocket 或主机命令。配置缺失时保留原有无外部 MCP 行为。非法配置、发现失败、非法工具名或名称冲突会停止初始化并关闭已创建的连接，不能静默丢弃服务器后继续向模型请求。发现和调用保留服务器协议 headers，代理入口的 Authorization 使用当前 Session 凭据。后端删除入口凭据并注入 Vault 凭据。禁止自动跟随 HTTP 重定向，不将沙箱或模型凭据拼接到外部请求。
 
 DSH 将发现的工具注册为 `mcp__<server>__<tool>`，服务器名中的 `.` 转为 `_`，远端调用仍使用原始工具名。拒绝服务器名归一化冲突及完整工具名碰撞，避免将权限或调用路由到错误服务器。显式配置为 `enabled: false` 的工具不注册；其他工具仍必须通过 Go 的实际权限判定，目录过滤不能替代权限检查。服务器名保留在带前缀的审批工具名中，Go 按现有快照解析原始服务器与工具身份，发布裸工具名的 `agent.mcp_tool_use`，关联结果按既有 CCRv2 转换成为 `agent.mcp_tool_result`。DSH 不自行重复发布一套公共 MCP 事件。DSH 从本线程的 `tool/call` 记录工具名，在对应 `tool/result` 的内部 `tool_result` block 中携带 `tool_name`；Go 在结果映射边界根据该身份选择 `agent.mcp_tool_result` 和 `mcp_tool_use_id`，引用与原调用相同的稳定公开事件 ID。内部 `tool_name` 不进入公开结果。内置工具继续使用 `agent.tool_result` / `tool_use_id`，无身份的旧 Worker 结果不从正文猜测 MCP 类型。调用身份按线程和 provider call ID 隔离，结果消费后或轮次结束时释放；已持久化的 outbox 自带身份，不依赖跨进程内存重建或重放工具。失败与成功 MCP 结果使用相同关联规则，保留 `is_error` 和原始 content，不使用子 Agent 文本启发式过滤 MCP 文档中的 `agentId:` 或 `<usage>`。
 
-外部工具复用 `ToolExecution` 的参数 schema 校验、审批后参数再校验、持久化批准、dispatch 与结果检查点。它们不触发沙箱 provision；工具声明为串行执行。当前结果沿用 Brain 的文本结果边界，非文本 MCP content 不在本次支持范围内。MCP 返回 `isError` 时记录失败结果；非主动中断的断流、超时或 Worker 停止导致结果缺失时记录 unknown、阻断会话且禁止重放。主动用户中断按下述本地中断结果收尾，不把本地取消当作远端停止确认。发现和列表请求超时为 30 秒，工具调用超时为 185 秒。
+外部工具复用 `ToolExecution` 的参数 schema 校验、审批后参数再校验、持久化批准、dispatch 与结果检查点。它们不触发沙箱 provision；工具声明为串行执行。当前结果沿用 Brain 的文本结果边界，非文本 MCP content 不在本次支持范围内。MCP 返回 `isError` 时记录失败结果；外部 MCP tools/call 收到官方 SDK `ProtocolError` 的 `InvalidParams`（例如已删除的工具名）时，保留服务端错误文案并记录已知失败结果，允许模型及后续轮次继续，不记 unknown、不重放旧调用。其他协议错误如 InternalError 不据此推定执行结果已知；非主动中断的断流、超时或 Worker 停止导致结果缺失时记录 unknown、阻断会话且禁止重放。主动用户中断按下述本地中断结果收尾，不把本地取消当作远端停止确认。发现和列表请求超时为 30 秒，工具调用超时为 185 秒。
 
 根会话拥有外部连接与发现目录，子会话复用目录和连接，在自身 scope 注册工具，并使用自身的审批与结果记录器。释放子会话不关闭根连接；根 scope 释放及初始化回滚会关闭连接，关闭失败向上传递。恢复会话时重新发现目录，并沿用现有执行日志恢复规则，不重放已完成或结果未知的调用。当前目录是单次运行时快照，不订阅 `tools/list_changed` 热更新。
 
@@ -122,7 +126,7 @@ DSH 对沙箱 MCP 先尝试 `server/discover` 协商 2026-07-28，旧版服务�
 
 ## 事件与执行状态
 
-模型代理统一发布消息、工具调用、model request end，保留 thinking 内容及稳定消息 ID。DSH 使用标准 CCRv2 私有事件恢复日志、公开事件及 worker 状态更新。所有执行端统一用 CCRv2 `result` 结束回合：DSH 先保存完成状态及待发送事件，等待消息、工具结果和 model span 发布完成，再发送稳定 UUID 的 result，最后确认输入 ACK。worker idle 只更新执行端状态和空闲时间，不推导公开回合结束；running 和 requires_action 的同步保留。注册不再协商终止事件能力，也不再在 worker binding 中保存该能力。
+模型代理统一发布消息、工具调用和 model request end。Thinking 只作为无正文的状态事件公开，沿用稳定消息 ID。DSH 使用标准 CCRv2 私有事件恢复日志、公开事件及 worker 状态更新。所有执行端统一用 CCRv2 `result` 结束回合：DSH 先保存完成状态及待发送事件，等待消息、工具结果和 model span 发布完成，再发送稳定 UUID 的 result，最后确认输入 ACK。worker idle 只更新执行端状态和空闲时间，不推导公开回合结束；running 和 requires_action 的同步保留。注册不再协商终止事件能力，也不再在 worker binding 中保存该能力。
 
 成功 result（含旧客户端未填写 subtype 的成功结果）映射为 `idle/end_turn`；失败 result 复用后端的安全错误分类，映射为 session.error 和 `idle/retries_exhausted`。DSH 不再自行发送公开终止事件或重复的 session.error，详细安全提示仍通过已有 system.message 发布。已确认的用户取消发送非失败 result，保留内部取消状态。后端直接按 result 的成功或失败字段映射，不查询历史推断取消，也不将失败 result 改判为正常结束。
 
@@ -173,3 +177,38 @@ DSH Brain 源码作为主仓库的 `oma-brain-dsh/` 普通目录维护，使用�
 不是独立的 Go package；当前后端验收继续使用 `tests/liveworker/` 中的场景。
 
 任务准入对无效 JSON、无效任务身份以及明确拒绝的 HTTP 400/401/403/404/409/410/422 执行 JetStream TERM 并记录脱敏诊断。其他准入失败延迟 5 秒重投，最多尝试 10 次后 TERM；退出取消不终止任务。TERM 不引入 dead-letter 存储，后续恢复仍由已有 Work 恢复机制负责。
+
+Session 创建在解析实际 Agent 版本快照和 Environment 后、生成 Session/Thread/Work 或资源前，校验声明的全部 MCP URL。limited 网络且 allow_mcp_servers 未开启时，每个主机和端口必须匹配 allowed_hosts，复用 networkpolicy 的规范化及通配符规则，否则公开 API 返回400且不持久化 Session。allow_package_managers 不豁免 MCP 主机检查。unrestricted 或 allow_mcp_servers=true 跳过此创建阶段主机限制。此校验不访问 DNS、不握手也不校验凭据；运行时连接、代理策略和审计仍各自生效。公开合同见 https://platform.claude.com/docs/en/managed-agents/mcp-connector#provide-authentication-at-session-creation 。
+
+
+### Thinking 状态事件
+
+每个 thinking 或 redacted thinking 内容块开始时，模型代理立即持久化并发布一次 `agent.thinking`，在向 Worker 转发该起始帧前完成发布。事件只包含稳定 ID、线程、请求关联和处理时间，不包含 thinking 正文、签名或脱敏数据。代理不再累积 thinking 正文，只保留输入大小计数和原有上限。公开事件边界同时清除旧 Worker 完整回传中的 thinking 内容，并丢弃 thinking 内容 delta。
+
+DSH Worker 在 `block-start` 且块类型为 reasoning 时创建 `event_start`，空 thinking 也会创建。后续 reasoning delta 不生成公开预览，`block-end` 仅发送同一 ID 的 `event_stop`。每次模型请求内保留已创建的块索引，重复起始帧和结束后的重复帧不会重新创建预览。完整 assistant 回传也只包含无正文 thinking 状态。
+
+代理、DSH 预览、完整回传和旧 Claude Worker 映射统一以 code session ID、上游 message ID、原生 block index、事件类型生成 `StableAssistantEventID`。后端已在起始帧成功发布的 thinking 不再放入请求结束批次，span 的 `event_ids` 仍保留该 ID。Worker 回传和发布重试通过相同 ID 幂等去重，不改变首次事件位置和处理时间。起始发布失败时记录错误，请求结束时以同一 ID 回补无正文状态。非流式响应在解析完整内容时生成无正文状态。
+
+```mermaid
+sequenceDiagram
+    participant Upstream as 模型上游
+    participant Proxy as 模型代理
+    participant Events as 公开事件存储
+    participant Worker as Worker
+    participant UI as 会话页面
+    Upstream->>Proxy: thinking content_block_start
+    Proxy->>Events: agent.thinking，稳定 ID，无正文
+    Events->>UI: thinking 状态
+    Proxy->>Worker: 原始起始帧
+    Worker->>UI: event_start，同一 ID
+    Upstream->>Proxy: thinking delta
+    Proxy->>Worker: 原始 delta，供内部续聊
+    Upstream->>Proxy: text 和 message_stop
+    Proxy->>Events: agent.message，span.model_request_end
+    Worker->>Events: 完整回传，同一 thinking ID
+    Events->>Events: 按 ID 去重
+```
+
+模型内部的推理正文、签名和恢复日志仍按模型协议保留，公开状态简化不改写发给 Worker 的上游响应，也不改变后续模型请求的推理上下文。此次不重写历史事件。
+
+回归入口：`TestThinkingStatus*`、`TestModelThinkingStartHasStableIdentityAndNoContent`、`TestThinkingIdentitySharedWithWorker`、`TestWorkerPreviewConverterEmitsThinkingStatusOnly` 及 Worker 的 `assistant-thinking.test.ts`。共享身份向量位于 `internal/managedagentsevents/testdata/thinking-identity.json`。HTTP 回归在收到答案前检查 thinking 已落库，并重复注入 Worker 回传，核对顺序、单条记录和首次时间；Worker 回归核对空块、重复起始帧、无正文预览以及内部带签名推理的续聊恢复。

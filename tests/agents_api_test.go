@@ -99,9 +99,14 @@ func TestAgentsAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("failure missing beta query", func(t *testing.T) {
-		resp := doAgentRequest(t, app, http.MethodGet, "/v1/agents", nil, defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	t.Run("success optional beta query", func(t *testing.T) {
+		for _, query := range []string{"", "?beta=true", "?beta=false"} {
+			resp := doAgentRequest(t, app, http.MethodGet, "/v1/agents"+query, nil, defaultTestKey, true)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("query %q status = %d: %s", query, resp.StatusCode, readAll(t, resp.Body))
+			}
+			resp.Body.Close()
+		}
 	})
 
 	t.Run("failure invalid created_at filter", func(t *testing.T) {
@@ -109,9 +114,14 @@ func TestAgentsAPI(t *testing.T) {
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 
-	t.Run("failure search missing beta query", func(t *testing.T) {
-		resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents:search", strings.NewReader(`{"name":"agent"}`), defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	t.Run("success search optional beta query", func(t *testing.T) {
+		for _, query := range []string{"", "?beta=true", "?beta=false"} {
+			resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents:search"+query, strings.NewReader(`{"name":"agent"}`), defaultTestKey, true)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("query %q status = %d: %s", query, resp.StatusCode, readAll(t, resp.Body))
+			}
+			resp.Body.Close()
+		}
 	})
 
 	t.Run("failure search malformed body", func(t *testing.T) {
@@ -127,8 +137,6 @@ func TestAgentsAPI(t *testing.T) {
 
 	t.Run("failure invalid mcp inputs", func(t *testing.T) {
 		for _, body := range []string{
-			`{"model":"claude-opus-4-6","name":"bad mcp name","mcp_servers":[{"name":"you__search","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"you__search"}]}`,
-			`{"model":"claude-opus-4-6","name":"bad mcp name","mcp_servers":[{"name":"unsafe name","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"unsafe name"}]}`,
 			`{"model":"claude-opus-4-6","name":"bad mcp url","mcp_servers":[{"name":"search","type":"url","url":"ftp://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search"}]}`,
 			`{"model":"claude-opus-4-6","name":"bad mcp credentials","mcp_servers":[{"name":"search","type":"url","url":"https://user:secret@example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search"}]}`,
 			`{"model":"claude-opus-4-6","name":"bad mcp fragment","mcp_servers":[{"name":"search","type":"url","url":"https://example.com/mcp#tools"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search"}]}`,
@@ -511,7 +519,7 @@ func createAgent(t *testing.T, app *testApp, body string) agentAPIResponse {
 
 func createAgentWithKey(t *testing.T, app *testApp, body string, key string) agentAPIResponse {
 	t.Helper()
-	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(body), key, true)
+	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents", strings.NewReader(body), key, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("create agent status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -531,7 +539,7 @@ func searchAgents(t *testing.T, app *testApp, body string) agentPageResponse {
 
 func searchAgentsWithKey(t *testing.T, app *testApp, body string, key string) agentPageResponse {
 	t.Helper()
-	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents:search?beta=true", strings.NewReader(body), key, true)
+	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents:search", strings.NewReader(body), key, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("search agents status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -543,7 +551,7 @@ func searchAgentsWithKey(t *testing.T, app *testApp, body string, key string) ag
 
 func updateAgent(t *testing.T, app *testApp, agentID, body string, wantStatus int) agentAPIResponse {
 	t.Helper()
-	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+agentID+"?beta=true", strings.NewReader(body), defaultTestKey, true)
+	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+agentID, strings.NewReader(body), defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != wantStatus {
 		t.Fatalf("update agent status = %d, want %d: %s", resp.StatusCode, wantStatus, readAll(t, resp.Body))
@@ -557,9 +565,9 @@ func updateAgent(t *testing.T, app *testApp, agentID, body string, wantStatus in
 
 func retrieveAgent(t *testing.T, app *testApp, agentID, query string) agentAPIResponse {
 	t.Helper()
-	path := "/v1/agents/" + agentID + "?beta=true"
+	path := "/v1/agents/" + agentID
 	if query != "" {
-		path += "&" + query
+		path += "?" + query
 	}
 	resp := doAgentRequest(t, app, http.MethodGet, path, nil, defaultTestKey, true)
 	defer resp.Body.Close()
@@ -573,7 +581,7 @@ func retrieveAgent(t *testing.T, app *testApp, agentID, query string) agentAPIRe
 
 func archiveAgent(t *testing.T, app *testApp, agentID string) agentAPIResponse {
 	t.Helper()
-	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+agentID+"/archive?beta=true", nil, defaultTestKey, true)
+	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+agentID+"/archive", nil, defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("archive agent status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -585,7 +593,7 @@ func archiveAgent(t *testing.T, app *testApp, agentID string) agentAPIResponse {
 
 func listAgents(t *testing.T, app *testApp, query string) agentPageResponse {
 	t.Helper()
-	resp := doAgentRequest(t, app, http.MethodGet, "/v1/agents?beta=true&"+query, nil, defaultTestKey, true)
+	resp := doAgentRequest(t, app, http.MethodGet, "/v1/agents?"+query, nil, defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list agents status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -597,7 +605,7 @@ func listAgents(t *testing.T, app *testApp, query string) agentPageResponse {
 
 func listAgentVersions(t *testing.T, app *testApp, agentID, query string) agentPageResponse {
 	t.Helper()
-	resp := doAgentRequest(t, app, http.MethodGet, "/v1/agents/"+agentID+"/versions?beta=true&"+query, nil, defaultTestKey, true)
+	resp := doAgentRequest(t, app, http.MethodGet, "/v1/agents/"+agentID+"/versions?"+query, nil, defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list agent versions status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -660,7 +668,7 @@ func TestSubagentReferenceVersions(t *testing.T) {
 		`{"type":"agent","id":` + quoteJSON(child.ID) + `,"version":0}`,
 		`{"type":"agent","id":` + quoteJSON(child.ID) + `,"version":9999}`,
 	} {
-		response := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(`{"name":"invalid","model":"claude-opus-4-6","multiagent":{"type":"coordinator","agents":[`+reference+`]}}`), defaultTestKey, true)
+		response := doAgentRequest(t, app, http.MethodPost, "/v1/agents", strings.NewReader(`{"name":"invalid","model":"claude-opus-4-6","multiagent":{"type":"coordinator","agents":[`+reference+`]}}`), defaultTestKey, true)
 		assertError(t, response, http.StatusBadRequest, "invalid_request_error")
 	}
 	assertVersion := func(parent agentAPIResponse, version int) {
@@ -778,5 +786,32 @@ func TestAgentsMCPReferenceUpdatesAreAtomic(t *testing.T) {
 	cleared := updateAgent(t, app, created.ID, `{"version":1,"mcp_servers":null,"tools":null}`, http.StatusOK)
 	if cleared.Version != created.Version+1 || string(cleared.MCPServers) != `[]` || string(cleared.Tools) != `[]` {
 		t.Fatalf("joint clear failed: %+v", cleared)
+	}
+}
+
+func TestAgentsMCPUnicodeNamesRoundTrip(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("agents-mcp-unicode"))
+	defer app.close()
+	body := `{"model":"claude-opus-4-6","name":"Unicode MCP","mcp_servers":[{"name":"Peer-测试","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"Peer-测试"}]}`
+	created := createAgent(t, app, body)
+	defer cleanupAgentRows(t, app.pool, created.ID)
+	for _, result := range []agentAPIResponse{created, retrieveAgent(t, app, created.ID, "")} {
+		if !strings.Contains(string(result.MCPServers), "Peer-测试") || !strings.Contains(string(result.Tools), "Peer-测试") {
+			t.Fatalf("Unicode name not preserved: %+v", result)
+		}
+	}
+	updateAgent(t, app, created.ID, `{"version":1,"tools":[{"type":"mcp_toolset","mcp_server_name":"peer-测试"}]}`, http.StatusBadRequest)
+	name := strings.Repeat("😀", 255)
+	raw, err := json.Marshal(map[string]any{
+		"version":     1,
+		"mcp_servers": []map[string]string{{"name": name, "type": "url", "url": "https://example.com/mcp"}},
+		"tools":       []map[string]string{{"type": "mcp_toolset", "mcp_server_name": name}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := updateAgent(t, app, created.ID, string(raw), http.StatusOK)
+	if updated.Version != 2 || !strings.Contains(string(updated.MCPServers), name) || !strings.Contains(string(updated.Tools), name) {
+		t.Fatalf("Unicode update not preserved: %+v", updated)
 	}
 }

@@ -297,7 +297,7 @@ func TestSessionsMemoryAttachContract(t *testing.T) {
 			switch envelope.Type {
 			case "file":
 				sawFile = true
-				assertRawContains(t, raw, `"file_id":`+quoteJSON(file.ID))
+				assertFileResourcePayload(t, raw, file.ID, "/uploads/workspace/regression.txt")
 				assertRawNotContains(t, raw, `"memory_store_id"`)
 			case "github_repository":
 				sawGithub = true

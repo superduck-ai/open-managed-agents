@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/mcpnames"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
@@ -163,12 +164,12 @@ func (h *Handler) HandleMCPProtectedResource(w http.ResponseWriter, r *http.Requ
 }
 
 func canonicalMCPServerName(name string) bool {
-	return name != "" && strings.TrimSpace(name) == name
+	return mcpnames.Valid(name)
 }
 
 func namedMCPServerName(r *http.Request) string {
 	if name := chi.URLParam(r, "*"); name != "" {
-		if decoded, err := url.PathUnescape(name); err == nil {
+		if decoded, err := url.PathUnescape(name); r.URL.RawPath != "" && err == nil {
 			return decoded
 		}
 		return name

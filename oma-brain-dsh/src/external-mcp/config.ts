@@ -1,4 +1,5 @@
 import { object } from "../json.ts";
+import { mcpServerPrefix } from "./server-name.ts";
 
 export interface ExternalServer {
   name: string;
@@ -17,7 +18,7 @@ export function externalServers(config: unknown): ExternalServer[] {
   const prefixes = new Set<string>();
   return Object.entries(servers).map(([name, value]) => {
     const server = object(value);
-    const prefix = name.replaceAll(".", "_");
+    const prefix = mcpServerPrefix(name);
     if (!/^[a-zA-Z0-9_-]+$/.test(prefix) || prefixes.has(prefix))
       throw new Error("Invalid or ambiguous external MCP server name");
     prefixes.add(prefix);

@@ -316,7 +316,7 @@ func validatePublicInputEvent(eventType string, payload map[string]any) error {
 	var err error
 	switch eventType {
 	case "user.message":
-		err = validateContentBlocks(payload, "content", true)
+		err = validateUserMessageContent(payload)
 	case "system.message":
 		err = validateContentBlocks(payload, "content", true)
 	case "user.interrupt":
@@ -334,6 +334,19 @@ func validatePublicInputEvent(eventType string, payload map[string]any) error {
 		return err
 	}
 	return validateSessionThreadIDPayload(payload)
+}
+
+func validateUserMessageContent(payload map[string]any) error {
+	if err := validateContentBlocks(payload, "content", true); err != nil {
+		return err
+	}
+	for _, item := range payload["content"].([]any) {
+		block := item.(map[string]any)
+		if block["type"] == "text" && strings.TrimSpace(block["text"].(string)) == "" {
+			return errors.New("content text must be non-empty and not whitespace-only")
+		}
+	}
+	return nil
 }
 
 func validateToolConfirmationPayload(payload map[string]any) error {

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
+	"github.com/superduck-ai/open-managed-agents/internal/mcpnames"
 )
 
 // ErrMalformedAgentSnapshot 表示 Session AgentSnapshot 或其中的 MCP URL
@@ -76,8 +77,8 @@ func parseMCPServerTargets(agentSnapshot json.RawMessage) (mcpServerTargets, err
 		if rawURL := strings.TrimSpace(server.URL); rawURL != "" {
 			urls = append(urls, rawURL)
 			name := server.Name
-			if strings.TrimSpace(name) != name {
-				return mcpServerTargets{}, fmt.Errorf("%w: MCP server name %q must not contain surrounding whitespace", ErrMalformedAgentSnapshot, name)
+			if name != "" && !mcpnames.Valid(name) {
+				return mcpServerTargets{}, fmt.Errorf("%w: MCP server name %q must contain 1 to 255 characters", ErrMalformedAgentSnapshot, name)
 			}
 			if name != "" {
 				if _, exists := urlsByName[name]; exists {

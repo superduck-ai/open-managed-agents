@@ -318,7 +318,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 			"/uploads/"+file.ID,
 		)
 		scopedFiles := listFiles(t, app, "scope_id="+created.ID)
-		if len(scopedFiles.Data) != 0 {
+		if containsFile(scopedFiles.Data, file.ID) {
 			t.Fatalf("scoped files after create = %+v, want no account uploads", scopedFiles.Data)
 		}
 		inputDownload := app.do(
@@ -366,7 +366,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 			)
 		}
 		scopedFiles = listFiles(t, app, "scope_id="+created.ID)
-		if len(scopedFiles.Data) != 0 {
+		if containsFile(scopedFiles.Data, file.ID) {
 			t.Fatalf("scoped files after repeated attach = %+v, want no account uploads", scopedFiles.Data)
 		}
 		sessionRecord := mustSessionRecord(t, app, created.ID)
@@ -449,7 +449,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 			t.Fatalf("source File was changed by resource delete: %v", err)
 		}
 		scopedFiles = listFiles(t, app, "scope_id="+created.ID)
-		if len(scopedFiles.Data) != 0 {
+		if containsFile(scopedFiles.Data, file.ID) {
 			t.Fatalf("scoped files after resource delete = %+v, want no account uploads", scopedFiles.Data)
 		}
 	})
@@ -495,7 +495,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 			}
 		})
 		scoped := listFiles(t, app, "scope_id="+created.ID)
-		if len(scoped.Data) != 0 {
+		if len(scoped.Data) != 1 || containsFile(scoped.Data, file.ID) {
 			t.Fatalf("scoped files before Session delete = %+v, want no account uploads", scoped.Data)
 		}
 		deleteSession(t, app, created.ID)
@@ -534,9 +534,14 @@ func TestSessionInputResourcePreservesSourcePolicy(t *testing.T) {
 	)
 	defer deleteSession(t, app, session.ID)
 	scopedFiles := listFiles(t, app, "scope_id="+session.ID)
-	if len(scopedFiles.Data) != 0 {
+	if containsFile(scopedFiles.Data, file.ID) {
 		t.Fatalf("scoped files = %+v, want no account uploads", scopedFiles.Data)
 	}
+	if len(scopedFiles.Data) != 1 || scopedFiles.Data[0].Downloadable {
+		t.Fatalf("instance policy=%+v", scopedFiles.Data)
+	}
+	instanceDownload := app.do(t, http.MethodGet, "/v1/files/"+scopedFiles.Data[0].ID+"/content", nil, defaultTestKey, false, "")
+	assertError(t, instanceDownload, http.StatusBadRequest, "invalid_request_error")
 	metadata := app.do(t, http.MethodGet, "/v1/files/"+file.ID, nil, defaultTestKey, false, "")
 	defer metadata.Body.Close()
 	if metadata.StatusCode != http.StatusOK {
@@ -592,7 +597,7 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 		"/uploads/workspace/protected.txt",
 	)
 	scopedFiles := listFiles(t, app, "scope_id="+session.ID)
-	if len(scopedFiles.Data) != 0 {
+	if containsFile(scopedFiles.Data, file.ID) {
 		t.Fatalf("scoped files = %+v, want no account uploads", scopedFiles.Data)
 	}
 	rejectedSourceDelete := app.do(
@@ -759,7 +764,7 @@ func TestSessionFileCatalogWorkspaceIsolation(t *testing.T) {
 	defer deleteSession(t, app, session.ID)
 
 	ownerPage := listFiles(t, app, "scope_id="+session.ID)
-	if len(ownerPage.Data) != 0 {
+	if len(ownerPage.Data) != 1 || containsFile(ownerPage.Data, source.ID) {
 		t.Fatalf("owner scoped files = %+v, want no account uploads", ownerPage.Data)
 	}
 
@@ -789,7 +794,7 @@ func TestSessionFileCatalogWorkspaceIsolation(t *testing.T) {
 	otherDownload := app.do(
 		t,
 		http.MethodGet,
-		"/v1/files/"+source.ID+"/content?beta=true",
+		"/v1/files/"+ownerPage.Data[0].ID+"/content?beta=true",
 		nil,
 		otherKey,
 		true,
@@ -1621,8 +1626,8 @@ func assertFileResourcePayload(t *testing.T, raw json.RawMessage, sourceFileID, 
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatalf("decode file resource: %v", err)
 	}
-	if payload.FileID != sourceFileID || payload.MountPath != mountPath {
-		t.Fatalf("file resource = %+v, want Source File %q, mount_path=%q", payload, sourceFileID, mountPath)
+	if payload.FileID == "" || payload.FileID == sourceFileID || !strings.HasPrefix(payload.FileID, "file_") || payload.MountPath != mountPath {
+		t.Fatalf("file resource = %+v, want new instance of Source File %q, mount_path=%q", payload, sourceFileID, mountPath)
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
@@ -1671,6 +1676,11 @@ func assertSessionFileReference(
 	if err != nil {
 		t.Fatalf("load source File: %v", err)
 	}
+	instance, err := app.db.GetFile(context.Background(), session.WorkspaceUUID, payload.FileID)
+	if err != nil || instance.UUID == file.UUID || instance.ScopeID == nil || *instance.ScopeID != sessionExternalID ||
+		instance.Filename != file.Filename || instance.S3Key != file.S3Key || instance.Downloadable != file.Downloadable {
+		t.Fatalf("invalid session File instance = %+v, source = %+v, error = %v", instance, file, err)
+	}
 	resource, err := app.db.GetSessionResource(
 		context.Background(),
 		session.WorkspaceUUID,
@@ -1682,7 +1692,7 @@ func assertSessionFileReference(
 	}
 	if entry.Kind != db.SessionResourceFileKindFile ||
 		entry.UUID != resource.UUID ||
-		payload.FileID != fileExternalID ||
+		payload.FileID == "" || payload.FileID == fileExternalID ||
 		entry.SourceFileUUID == nil ||
 		*entry.SourceFileUUID != file.UUID ||
 		entry.MD5 != nil ||

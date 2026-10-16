@@ -18,6 +18,7 @@ import (
 )
 
 const maxSessionBodySize = 4 << 20
+const maxSessionCreateBodySize = 32 << 20
 
 type Handler struct {
 	secretService   *secrets.Service
@@ -88,6 +89,11 @@ type deleteResponse struct {
 
 type sendEventsResponse struct {
 	Data []json.RawMessage `json:"data,omitempty"`
+}
+
+type sessionCreateRequest struct {
+	sessionMutationRequest
+	InitialEvents json.RawMessage `json:"initial_events"`
 }
 
 type sessionMutationRequest struct {

@@ -2,8 +2,24 @@ package sandboxmount
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
+
+func TestFileMountPathComponentByteLimits(t *testing.T) {
+	for _, name := range []string{strings.Repeat("a", 256), strings.Repeat("p", 260), strings.Repeat("界", 86)} {
+		for _, prefix := range []string{"/", "/parent/", "/uploads/"} {
+			if err := ValidateFileMountPath(prefix + name); err == nil {
+				t.Fatalf("accepted unmountable component of %d bytes", len(name))
+			}
+		}
+	}
+	for _, name := range []string{strings.Repeat("a", 255), strings.Repeat("界", 85), strings.Repeat("a", 200) + "/" + strings.Repeat("b", 200)} {
+		if err := ValidateFileMountPath("/" + name); err != nil {
+			t.Fatalf("rejected mountable components: %v", err)
+		}
+	}
+}
 
 func TestNormalizeFileSource(t *testing.T) {
 	for _, test := range []struct {

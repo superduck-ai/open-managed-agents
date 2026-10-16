@@ -1,5 +1,6 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "./api.ts";
+import { externalMcpFetch } from "./external-mcp/proxy.ts";
 import * as OmaSandboxProvider from "./oma-sandbox/index.ts";
 import { validateAssignment, type Assignment } from "./assignment.ts";
 import type { CcrSession } from "./ccrv2/index.ts";
@@ -19,6 +20,7 @@ export function createOmaSession(
     workDir: assignment.launch.work_dir,
     tools: assignment.launch.tools,
     externalMcpConfig: assignment.external_mcp_config,
+    externalMcpFetch: externalMcpFetch(api, assignment.session_id),
     systemPrompt: omaSystemPrompt(assignment),
     subagentSystemPrompt: omaSystemPrompt(assignment, ""),
     setup: async (scope) => {

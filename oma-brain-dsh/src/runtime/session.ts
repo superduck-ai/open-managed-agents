@@ -30,7 +30,7 @@ export class SessionRuntime {
     readonly bridge: ToolExecutionBridge,
     readonly parent?: SessionRuntime,
   ) {
-    this.externalMcp = parent?.externalMcp ?? new ExternalMcp(config.externalMcpConfig);
+    this.externalMcp = parent?.externalMcp ?? new ExternalMcp(config.externalMcpConfig, config.externalMcpFetch);
     this.sandboxScope = parent?.sandboxScope ?? Symbol("sandboxExecutor");
   }
 

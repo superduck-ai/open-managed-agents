@@ -19,7 +19,6 @@ func TestMCPRuntimeConfigRejectsInvalidDeclarations(t *testing.T) {
 		`{"mcp_servers":[{"name":"bad","type":"url","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef?x=1"}]}`,
 		`{"mcp_servers":[{"name":"bad","url":"https://oma.example/v1/mcp/%zz"}]}`,
 		`{"mcp_servers":[{"url":"https://docs.example/mcp"}]}`,
-		`{"mcp_servers":[{"name":" bad ","url":"https://docs.example/mcp"}]}`,
 		`{"mcp_servers":[{"name":"bad"}]}`,
 		`{"mcp_servers":[{"name":"same","url":"https://docs.example/one"},{"name":"same","url":"https://docs.example/two"}]}`,
 		`{"mcp_config":{"mcpServers":{"bad":null}}}`,

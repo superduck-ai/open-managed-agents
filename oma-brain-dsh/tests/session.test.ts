@@ -65,7 +65,7 @@ describe("original dsh loop over CCRv2", () => {
     const messages = [...b.publicLog.values()].filter((event) => ["agent.thinking", "agent.message"].includes(event.type));
     expect(messages.map((event) => event.type)).toEqual(["agent.message", "agent.thinking", "agent.message"]);
     expect(messages.map((event) => event.content)).toEqual([
-      [{ type: "text", text: "" }], [{ type: "thinking", thinking: "检查回复" }], [{ type: "text", text: "你好" }],
+      [{ type: "text", text: "" }], undefined, [{ type: "text", text: "你好" }],
     ]);
     const replay = session.state.outbox;
     expect(replay).toEqual([]);
@@ -76,7 +76,7 @@ describe("original dsh loop over CCRv2", () => {
       expect(b.timeline.filter((event) => event.type === "event_stop" && event.event_id === message.id)).toHaveLength(1);
     }
     const reasoning = b.timeline.find((event) => event.type === "event_delta" && event.event_id === messages[1]!.id);
-    expect(reasoning?.delta.content).toEqual({ type: "thinking", thinking: "检查回复" });
+    expect(reasoning).toBeUndefined();
     expect(b.publicLog.get("thinking_result")?.is_error).toBe(false);
   });
 
@@ -766,7 +766,7 @@ describe("original dsh loop over CCRv2", () => {
     }
     expect(b.executions).toHaveLength(1);
     expect([...b.publicLog.values()].filter((p) => p.type === "agent.thinking").map((p) => p.content)).toEqual([
-      [{ type: "thinking", thinking: "test reasoning" }],
+      undefined,
     ]);
     expect(JSON.stringify([...b.publicLog.values()])).not.toContain("opaque-signature");
   });

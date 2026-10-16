@@ -74,8 +74,8 @@ type mcpOAuthRefreshUpdateInput struct {
 }
 
 type staticBearerCredentialUpdateInput struct {
-	MCPServerURL *string `json:"mcp_server_url"`
-	Token        *string `json:"token"`
+	MCPServerURL json.RawMessage `json:"mcp_server_url"`
+	Token        *string         `json:"token"`
 }
 
 type environmentVariableCredentialUpdateInput struct {
@@ -398,17 +398,8 @@ func normalizeStaticBearerForUpdate(current db.VaultCredential, currentSecret []
 			return credentialAuthState{}, err
 		}
 	}
-	key := current.CredentialKey
-	if input.MCPServerURL != nil {
-		serverURL, err := requireNonEmptyString(*input.MCPServerURL, "auth.mcp_server_url")
-		if err != nil {
-			return credentialAuthState{}, err
-		}
-		if err := validateHTTPURL(serverURL, "auth.mcp_server_url"); err != nil {
-			return credentialAuthState{}, err
-		}
-		publicAuth.MCPServerURL = serverURL
-		key = serverURL
+	if len(input.MCPServerURL) != 0 {
+		return credentialAuthState{}, immutableCredentialServerURL()
 	}
 	if input.Token != nil {
 		token, err := requireNonEmptyString(*input.Token, "auth.token")
@@ -420,7 +411,7 @@ func normalizeStaticBearerForUpdate(current db.VaultCredential, currentSecret []
 	if secretPayload.Token == "" {
 		return credentialAuthState{}, ErrMissingSecretEnvelope
 	}
-	return credentialAuthStateFromValues(credentialAuthTypeStaticBearer, key, publicAuth, secretPayload)
+	return credentialAuthStateFromValues(credentialAuthTypeStaticBearer, current.CredentialKey, publicAuth, secretPayload)
 }
 
 func normalizeEnvironmentVariableForUpdate(current db.VaultCredential, currentSecret []byte, input environmentVariableCredentialUpdateInput, publicAuth *environmentVariableCredentialAuth) (credentialAuthState, error) {

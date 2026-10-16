@@ -219,3 +219,7 @@ func credentialSecretError(err error, internalMessage string) error {
 	}
 	return internalError(internalMessage, err)
 }
+
+func immutableCredentialServerURL() error {
+	return errors.New("auth.mcp_server_url is immutable")
+}

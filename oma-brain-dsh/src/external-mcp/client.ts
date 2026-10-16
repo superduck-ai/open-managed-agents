@@ -1,5 +1,7 @@
 import {
   Client,
+  ProtocolError,
+  ProtocolErrorCode,
   SSEClientTransport,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
@@ -11,7 +13,7 @@ export class ExternalMcpClient implements SandboxExecutor {
   private readonly client: Client;
   private readonly transport;
 
-  constructor(readonly server: ExternalServer) {
+  constructor(readonly server: ExternalServer, fetcher: typeof fetch = fetch) {
     this.client = new Client(
       { name: "oma-brain-dsh", version: "0.1.0" },
       {
@@ -21,7 +23,7 @@ export class ExternalMcpClient implements SandboxExecutor {
     const options = {
       requestInit: { headers: server.headers, redirect: "error" as const },
       fetch: (input: string | URL | Request, init?: RequestInit) =>
-        fetch(input, { ...init, redirect: "error" }),
+        fetcher(input, { ...init, redirect: "error" }),
     };
     this.transport =
       server.type === "sse"
@@ -54,12 +56,21 @@ export class ExternalMcpClient implements SandboxExecutor {
     args: Payload,
     signal: AbortSignal,
   ): Promise<Payload> {
-    return object(
-      await this.client.callTool(
-        { name: tool.remoteName, arguments: args },
-        { signal, timeout: 185_000 },
-      ),
-    );
+    try {
+      return object(
+        await this.client.callTool(
+          { name: tool.remoteName, arguments: args },
+          { signal, timeout: 185_000 },
+        ),
+      );
+    } catch (error) {
+      if (!(error instanceof ProtocolError) || error.code !== ProtocolErrorCode.InvalidParams)
+        throw error;
+      return {
+        isError: true,
+        content: [{ type: "text", text: `MCP tool call failed: ${error.message}` }],
+      };
+    }
   }
 
   async close(): Promise<void> {

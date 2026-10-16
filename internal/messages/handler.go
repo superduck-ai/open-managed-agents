@@ -9,11 +9,13 @@ import (
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/metering"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
@@ -68,6 +70,11 @@ type flushingResponseWriter struct {
 func NewHandler(database *db.DB, secretService *secrets.Service, codeSessionService *codesessions.Service, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
 	return &Handler{codeSessions: codeSessionService, database: database, secrets: secretService, client: llmproviders.NewHTTPClient(0), logger: logger}
+}
+
+func (h *Handler) WithMetering(calculator *billing.Calculator) *Handler {
+	h.client.Transport = &metering.Transport{Base: h.client.Transport, Store: h.database, Calculator: calculator, Source: "api", Logger: h.logger}
+	return h
 }
 
 // Create 处理 canonical POST /v1/messages，并以有界内存完成请求校验和响应流式转发。

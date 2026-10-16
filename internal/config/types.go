@@ -2,17 +2,7 @@ package config
 
 import (
 	"time"
-
-	"github.com/superduck-ai/open-managed-agents/internal/billing"
 )
-
-// BillingConfig holds the model list prices used for session budget
-// enforcement. Prices are USD per million tokens; web search ($10 per 1k
-// requests) and active time ($0.08/h) are platform constants, not
-// configuration.
-type BillingConfig struct {
-	ModelPrices map[string]billing.ModelPrice `yaml:"model_prices"`
-}
 
 const (
 	EnvironmentDev                  = "dev"
@@ -42,7 +32,6 @@ type Config struct {
 	Webhook              WebhookConfig             `yaml:"webhook"`
 	Vault                VaultConfig               `yaml:"vault"`
 	Bootstrap            BootstrapConfig           `yaml:"bootstrap"`
-	Billing              BillingConfig             `yaml:"billing"`
 }
 
 // VaultConfig configures at-rest encryption for vault credential secrets and

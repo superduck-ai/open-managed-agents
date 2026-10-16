@@ -28,6 +28,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/natsclient"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/pricing"
 	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
 	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
@@ -83,6 +84,9 @@ func run(logger *slog.Logger) error {
 	}
 	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
 		return fmt.Errorf("seed database: %w", err)
+	}
+	if err := pricing.Sync(ctx, database); err != nil {
+		logger.Warn("sync model prices", "source", "openrouter", "error", err)
 	}
 	redisClient, err := redisclient.Open(ctx, cfg.Redis.URL)
 	if err != nil {

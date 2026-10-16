@@ -85,6 +85,14 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 	if err != nil || totals.WebSearchRequests != 3 || totals.ListCostCents != 2 {
 		t.Fatalf("搜索计量聚合错误：%+v，%v", totals, err)
 	}
+
+	analytics, err := store.AggregateUsage(t.Context(), UsageQuery{OrganizationUUID: scope.OrganizationUUID, WorkspaceUUIDs: []string{scope.WorkspaceUUID}, SessionID: sessionID, Start: now.Add(-time.Hour), End: now.Add(time.Hour), AsOf: time.Now().Add(time.Hour), Timezone: "UTC"})
+	if err != nil || len(analytics) != 1 || analytics[0].ModelCents != totals.ListCostCents || analytics[0].SearchRequests != totals.WebSearchRequests {
+		t.Fatalf("分析与会话分项不一致：%+v %+v %v", analytics, totals, err)
+	}
+	if count, err := store.BackfillUsageRecords(t.Context(), 500); err != nil || count != 0 {
+		t.Fatalf("已计量事件被重复回填：%d %v", count, err)
+	}
 }
 
 func TestDeploymentExecutionDetectsBudgetChanges(t *testing.T) {

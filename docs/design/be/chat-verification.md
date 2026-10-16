@@ -43,7 +43,7 @@ sequenceDiagram
 ## 隔离与生命周期
 
 CLI 不读取开发配置。每轮创建唯一 Compose project，依赖端口由 Docker 分配，后端固定绑定
-`127.0.0.1:18080`。端口占用时阻止运行，不调用会终止既有监听进程的 restart 脚本。
+`127.0.0.1:18080`（可通过全局参数 `--api-port` 选择其他端口）。预检、端口锁、服务配置和 Worker 使用同一端口。端口占用时阻止运行，不调用会终止既有监听进程的 restart 脚本。
 NATS 每节点显式配置 16 GB store 上限，支持当前默认 256 MiB 三副本 stream，也支持旧基准提交的 10 GiB 配置。
 所有镜像必须预先存在，报告记录解析出的 image ID，实际启动也使用这些不可变 ID；CLI 不自动拉取镜像。
 同一主机上的 CLI 使用文件锁串行占用固定 E2E 端口，不删除活跃锁文件。
@@ -201,7 +201,7 @@ runner 上以当前负载分别测试 PR 基准提交和候选后端，比较性
 
 ## 验证器的可靠性边界
 
-`chat doctor [SCENARIO]` 检查 Go、Docker、Compose、Bash、git、tar、本地镜像及 18080 端口，
+`chat doctor [SCENARIO]` 检查 Go、Docker、Compose、Bash、git、tar、本地镜像及所选 API 端口（默认 18080），
 并创建短期探针检查 Docker 数据卷至少有 1 GiB 可用空间。此值是小型固定负载的最低余量，
 不是容量保证；三个 NATS 节点的 16 GB 配置是各自上限，不代表必须预留 48 GB。
 `chat doctor public` 和 `chat doctor upstream-errors` 还用实际 Worker 镜像打开 `/dev/fuse` 并执行 tmpfs mount/unmount，

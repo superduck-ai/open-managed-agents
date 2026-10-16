@@ -47,11 +47,11 @@ func TestMemoryDependencyIsolation(t *testing.T) {
 		t.Fatal("real mounts do not require Worker")
 	}
 	fakeDocker(t)
-	result, err := doctor(t.Context(), directory, "", "memory.cleanup")
+	result, err := doctor(t.Context(), directory, "", "memory.cleanup", 0)
 	if err != nil || len(result.Images) != 4 || result.PublicSandboxChecked {
 		t.Fatalf("portable doctor: %+v %v", result, err)
 	}
-	result, err = doctor(t.Context(), directory, "example:latest", "memory.mounts")
+	result, err = doctor(t.Context(), directory, "example:latest", "memory.mounts", 0)
 	if err != nil || !result.PublicSandboxChecked {
 		t.Fatalf("mount doctor skipped FUSE: %+v %v", result, err)
 	}

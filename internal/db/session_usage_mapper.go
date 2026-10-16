@@ -12,6 +12,8 @@ type sessionUsageTotalsRow struct {
 	OutputTokens             int64 `db:"output_tokens"`
 	CacheReadInputTokens     int64 `db:"cache_read_input_tokens"`
 	CacheCreationInputTokens int64 `db:"cache_creation_input_tokens"`
+	CacheWrite5mTokens       int64 `db:"cache_write_5m_tokens"`
+	CacheWrite1hTokens       int64 `db:"cache_write_1h_tokens"`
 	WebSearchRequests        int64 `db:"web_search_requests"`
 }
 
@@ -22,6 +24,8 @@ type SessionUsageTotals struct {
 	OutputTokens             int64
 	CacheReadInputTokens     int64
 	CacheCreationInputTokens int64
+	CacheWrite5mTokens       int64
+	CacheWrite1hTokens       int64
 	WebSearchRequests        int64
 	ActiveSeconds            float64
 }
@@ -72,6 +76,8 @@ func (d *DB) sumUsageTotals(ctx context.Context, params sessionUsageTotalsParams
 		OutputTokens:             row.OutputTokens,
 		CacheReadInputTokens:     row.CacheReadInputTokens,
 		CacheCreationInputTokens: row.CacheCreationInputTokens,
+		CacheWrite5mTokens:       row.CacheWrite5mTokens,
+		CacheWrite1hTokens:       row.CacheWrite1hTokens,
 		WebSearchRequests:        row.WebSearchRequests,
 		ActiveSeconds:            activeSeconds,
 	}, nil

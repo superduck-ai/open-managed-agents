@@ -351,7 +351,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	budget, err := h.deploymentBudgetPatch(nil, body.Budget, agent.snapshot)
+	budget, err := h.scopedDeploymentBudgetPatch(r, principal, nil, body.Budget, agent.snapshot)
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -553,7 +553,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 			return invalidRequest(err)
 		}
 	}
-	budget, err := h.deploymentBudgetPatch(next.Budget, body.Budget, next.AgentSnapshot)
+	budget, err := h.scopedDeploymentBudgetPatch(r, principal, next.Budget, body.Budget, next.AgentSnapshot)
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -1669,4 +1669,13 @@ func (h *Handler) deploymentBudgetPatch(current, raw, snapshot json.RawMessage) 
 		return nil, fmt.Errorf("budget requires models with a list price; no list price configured for: %s", strings.Join(unpriced, ", "))
 	}
 	return budget, nil
+}
+
+func (h *Handler) scopedDeploymentBudgetPatch(r *http.Request, principal auth.Principal, current, raw, snapshot json.RawMessage) (json.RawMessage, error) {
+	calculator, err := h.billing.Scope(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID)
+	if err != nil {
+		return nil, err
+	}
+	scoped := Handler{billing: calculator}
+	return scoped.deploymentBudgetPatch(current, raw, snapshot)
 }

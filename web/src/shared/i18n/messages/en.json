@@ -2550,5 +2550,17 @@
   "managedAgents.credentialVaults.removeVault": "Remove {name}",
   "managedAgents.agents.newAgent": "New agent",
   "managedAgents.agents.createDialog.configuredTools": "{count} toolsets",
-  "managedAgents.agents.createDialog.describeLabel": "Describe your agent"
+  "managedAgents.agents.createDialog.describeLabel": "Describe your agent",
+  "analytics.real.apiKey": "API key",
+  "analytics.real.selectOrg": "Select an organization to view usage.",
+  "analytics.real.failed": "Could not load usage. Check your access and retry.",
+  "analytics.real.uncached": "Uncached input tokens",
+  "analytics.real.cacheRead": "Cache read tokens",
+  "analytics.real.cacheWrite": "Cache write tokens",
+  "analytics.real.incomplete": "Some requests have missing prices or incomplete usage. Shown costs are the known subtotal, not the full cost.",
+  "analytics.real.costDescription": "Your organization’s usage costs over time. All dates are in UTC.",
+  "analytics.real.usageDescription": "Your organization’s token usage over time. All dates are in UTC.",
+  "analytics.cost.totalCost": "Total cost",
+  "analytics.cost.totalSessionRuntimeCost": "Total session runtime cost",
+  "analytics.real.costFailed": "Could not load costs. Check your access and retry."
 }

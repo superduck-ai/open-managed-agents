@@ -66,8 +66,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		return invalidRequest(err)
 	}
 	if budget != nil {
-		if unpriced := h.codeSessions.Billing().UnpricedSnapshotModels(snapshot); len(unpriced) > 0 {
-			return invalidRequest(fmt.Errorf("budget requires models with a list price; no list price configured for: %s", strings.Join(unpriced, ", ")))
+		if err := h.codeSessions.Billing().ValidateSnapshot(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, snapshot); err != nil {
+			return invalidRequest(err)
 		}
 	}
 	sessionBudgetRaw := json.RawMessage(nil)
@@ -314,8 +314,8 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 	// that still carries a budget: unpriced requests accrue no cost, so the
 	// budget would silently never trigger.
 	if len(body.Agent) > 0 && len(next.Budget) > 0 {
-		if unpriced := h.codeSessions.Billing().UnpricedSnapshotModels(next.AgentSnapshot); len(unpriced) > 0 {
-			return invalidRequest(fmt.Errorf("budget requires models with a list price; no list price configured for: %s", strings.Join(unpriced, ", ")))
+		if err := h.codeSessions.Billing().ValidateSnapshot(r.Context(), next.OrganizationUUID, next.WorkspaceUUID, next.AgentSnapshot); err != nil {
+			return invalidRequest(err)
 		}
 	}
 	updated := current
@@ -374,8 +374,8 @@ func (h *Handler) applyBudgetUpdate(r *http.Request, next *db.Session, raw json.
 	}
 	// Validate the final agent snapshot: a same-request agent patch could
 	// otherwise introduce an unpriced model that silently accrues no cost.
-	if unpriced := h.codeSessions.Billing().UnpricedSnapshotModels(next.AgentSnapshot); len(unpriced) > 0 {
-		return invalidRequest(fmt.Errorf("budget requires models with a list price; no list price configured for: %s", strings.Join(unpriced, ", ")))
+	if err := h.codeSessions.Billing().ValidateSnapshot(r.Context(), next.OrganizationUUID, next.WorkspaceUUID, next.AgentSnapshot); err != nil {
+		return invalidRequest(err)
 	}
 	totals, err := h.db.SumSessionUsageTotals(r.Context(), next.WorkspaceUUID, next.ExternalID)
 	if err != nil {

@@ -11,10 +11,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"math/big"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -24,9 +24,6 @@ const (
 	WebSearchCentsPerRequest = 1 // $10 per 1,000 searches
 	ActiveTimeCentsPerHour   = 8 // $0.08 per hour
 
-	// TokensPerMillion is the price unit basis: model prices are quoted in
-	// USD per million tokens.
-	TokensPerMillion = 1_000_000
 )
 
 // Budget is a parsed session/deployment budget:
@@ -109,14 +106,18 @@ func ParseCentsAmount(value string) (int64, error) {
 
 // ModelPrice holds USD list prices per million tokens for one model.
 type ModelPrice struct {
-	InputPerMTok      float64 `json:"input" yaml:"input"`
-	OutputPerMTok     float64 `json:"output" yaml:"output"`
-	CacheReadPerMTok  float64 `json:"cache_read" yaml:"cache_read"`
-	CacheWritePerMTok float64 `json:"cache_write" yaml:"cache_write"`
+	Source       string          `json:"source,omitempty" yaml:"-"`
+	SourceModel  string          `json:"source_model,omitempty" yaml:"-"`
+	PricedAt     time.Time       `json:"priced_at,omitzero" yaml:"-"`
+	Overrides    []PriceOverride `json:"overrides,omitempty" yaml:"-"`
+	Rates        *Rates          `json:"rates,omitempty" yaml:"-"`
+	Version      string          `json:"version,omitempty" yaml:"-"`
+	ProviderUUID string          `json:"provider_uuid,omitempty" yaml:"-"`
 }
 
 // Calculator prices model requests from configured list prices.
 type Calculator struct {
+	loader PriceLoader
 	Models map[string]ModelPrice
 }
 
@@ -135,8 +136,8 @@ func (c *Calculator) HasModel(model string) bool {
 	if c == nil {
 		return false
 	}
-	_, ok := c.Models[normalizeModelName(model)]
-	return ok
+	price, ok := c.Models[normalizeModelName(model)]
+	return ok && (price.Rates != nil && price.Rates.Input != nil && price.Rates.Output != nil)
 }
 
 // UnpricedModels returns the sorted subset of models without a list price.
@@ -159,6 +160,8 @@ type TokenUsage struct {
 	OutputTokens             int64
 	CacheReadInputTokens     int64
 	CacheCreationInputTokens int64
+	CacheWrite5mTokens       int64
+	CacheWrite1hTokens       int64
 }
 
 func (c *Calculator) ModelRequestCents(model string, usage TokenUsage) (cents int64, ok bool) {
@@ -169,31 +172,10 @@ func (c *Calculator) ModelRequestCents(model string, usage TokenUsage) (cents in
 	if !priced {
 		return 0, false
 	}
-	total := new(big.Rat)
-	for _, term := range []struct {
-		tokens int64
-		price  float64
-	}{
-		{usage.InputTokens, price.InputPerMTok}, {usage.OutputTokens, price.OutputPerMTok},
-		{usage.CacheReadInputTokens, price.CacheReadPerMTok}, {usage.CacheCreationInputTokens, price.CacheWritePerMTok},
-	} {
-		tokens := new(big.Rat).SetInt64(term.tokens)
-		rate, rateOK := new(big.Rat).SetString(strconv.FormatFloat(term.price, 'f', -1, 64))
-		if !rateOK {
-			return 0, false
-		}
-		total.Add(total, tokens.Mul(tokens, rate))
-	}
-	total.Quo(total, big.NewRat(TokensPerMillion, 100))
-	if total.Sign() < 0 {
+	if price.Rates == nil {
 		return 0, false
 	}
-	total.Add(total, big.NewRat(1, 2))
-	rounded := new(big.Int).Quo(total.Num(), total.Denom())
-	if !rounded.IsInt64() {
-		return 0, false
-	}
-	return rounded.Int64(), true
+	return price.effectiveRates(usage).Cost(usage)
 }
 
 // MeteringCents converts web-search request counts and active seconds into

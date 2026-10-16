@@ -66,8 +66,8 @@ func sessionUsageJSON(totals db.SessionUsageTotals, budget json.RawMessage) json
 		"output_tokens":           totals.OutputTokens,
 		"cache_read_input_tokens": totals.CacheReadInputTokens,
 		"cache_creation": map[string]any{
-			"ephemeral_5m_input_tokens": totals.CacheCreationInputTokens,
-			"ephemeral_1h_input_tokens": 0,
+			"ephemeral_5m_input_tokens": totals.CacheWrite5mTokens,
+			"ephemeral_1h_input_tokens": totals.CacheWrite1hTokens,
 		},
 		"list_cost":      billing.CostAmount{Amount: totalCents, Currency: billing.CurrencyUSD},
 		"active_seconds": totals.ActiveSeconds,

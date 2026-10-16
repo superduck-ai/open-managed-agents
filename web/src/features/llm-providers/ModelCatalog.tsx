@@ -342,7 +342,7 @@ function ModelRow({ model }: { model: CatalogModel }) {
       className="flex min-h-11 items-center justify-between gap-3 px-4 py-2 hover:bg-muted/40 sm:px-6"
       data-testid="llm-model-row"
     >
-      <p className="min-w-0 break-all font-mono text-sm text-foreground">{model.id}</p>
+      <p className="min-w-0 flex-1 break-all font-mono text-sm text-foreground">{model.id}</p>
       <Button
         type="button"
         variant="ghost"

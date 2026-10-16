@@ -13,7 +13,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/agents"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
-	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -131,7 +130,7 @@ func NewServer(deps ServerDeps) *Server {
 	if workerEventAcks == nil {
 		workerEventAcks = workerevents.NewMemoryAcknowledgementStore()
 	}
-	billingCalculator := billing.NewCalculator(deps.Config.Billing.ModelPrices)
+	billingCalculator := deps.DB.BillingCalculator()
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger).
 		WithWorkerEventBroker(deps.WorkerEventBroker).
 		WithWorkerEventState(workerEventAcks, deps.ObjectStore).
@@ -174,7 +173,7 @@ func NewServer(deps ServerDeps) *Server {
 		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
 		filestore:            filestoreHandler,
 		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
-		messages:             messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")),
+		messages:             messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithMetering(billingCalculator),
 		models:               modelsapi.NewHandler(deps.DB),
 		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")),
 		skills:               skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")),
@@ -309,8 +308,9 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterOrganizationOnboardingRoutes(r)
 			platformapi.RegisterOrganizationExperienceRoutes(r)
 			platformapi.RegisterOrganizationBillingRoutes(r)
-			platformapi.RegisterOrganizationProxyRoutes(r, s.db, s.vaultSecrets)
-			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.vaultSecrets, workbenchLogger)
+			platformapi.RegisterOrganizationUsageRoutes(r, s.db)
+			platformapi.RegisterOrganizationProxyRoutes(r, s.db, s.vaultSecrets, s.db.BillingCalculator(), s.logger.With("component", "console_metering"))
+			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.vaultSecrets, workbenchLogger, s.db.BillingCalculator())
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)
 			if s.cfg.Observability.Enabled {
 				obsLogger := s.logger.With("component", "observability")

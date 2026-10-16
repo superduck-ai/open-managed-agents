@@ -49,7 +49,7 @@ func mainCode() int {
 			fmt.Fprintln(os.Stdout, "Cloud configuration valid; credentials, remote behavior and cleanup require a scenario run.")
 			return 0
 		}
-		result, err := doctor(ctx, root, worker, options.Scenario)
+		result, err := doctor(ctx, root, worker, options.Scenario, options.APIPort)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "BLOCKED:", err)
 			return 2
@@ -63,14 +63,14 @@ func mainCode() int {
 	if options.Timeout > 0 {
 		selected.Timeout = options.Timeout
 	}
-	lock, err := os.OpenFile(filepath.Join(os.TempDir(), "oma-verify-be-18080.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	lock, err := os.OpenFile(filepath.Join(os.TempDir(), fmt.Sprintf("oma-verify-be-%d.lock", options.APIPort)), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
 	defer lock.Close()
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		fmt.Fprintln(os.Stderr, "BLOCKED: another verification owns port 18080:", err)
+		fmt.Fprintf(os.Stderr, "BLOCKED: another verification owns port %d: %v\n", options.APIPort, err)
 		return 2
 	}
 	return run(ctx, root, worker, options, selected)
@@ -135,7 +135,7 @@ func perform(ctx context.Context, root, directory, worker string, options cliOpt
 	if isCloudScenario(r.Scenario) {
 		return performCloud(ctx, root, directory, options, selected, r)
 	}
-	r.Doctor, err = doctor(ctx, root, worker, options.Scenario)
+	r.Doctor, err = doctor(ctx, root, worker, options.Scenario, options.APIPort)
 	if err != nil {
 		r.Status = "blocked"
 		r.FailureKind = "prerequisite"
@@ -147,6 +147,7 @@ func perform(ctx context.Context, root, directory, worker string, options cliOpt
 		return err
 	}
 	env := newEnvironment(root, directory, r.RunID)
+	env.apiPort = options.APIPort
 	env.backendRef, env.diagnostics = options.BackendRef, options.Diagnostics
 	env.files = strings.HasPrefix(options.Scenario, "files.")
 	env.suite = options.Scenario == "test"

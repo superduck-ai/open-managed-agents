@@ -101,7 +101,7 @@ func TestParseCentsAmount(t *testing.T) {
 
 func TestCalculatorModelRequestCents(t *testing.T) {
 	prices := map[string]ModelPrice{
-		"claude-sonnet-4-5-20250929": {InputPerMTok: 3.0, OutputPerMTok: 15.0, CacheReadPerMTok: 0.3, CacheWritePerMTok: 3.75},
+		"claude-sonnet-4-5-20250929": {Rates: &Rates{Input: new("3.0"), Output: new("15.0"), CacheRead: new("0.3"), CacheWrite: new("3.75")}},
 	}
 	calculator := NewCalculator(prices)
 
@@ -163,7 +163,7 @@ func TestTotalListCostCents(t *testing.T) {
 }
 
 func TestModelRequestCentsDecimalRounding(t *testing.T) {
-	calculator := NewCalculator(map[string]ModelPrice{"priced": {InputPerMTok: 1}})
+	calculator := NewCalculator(map[string]ModelPrice{"priced": {Rates: &Rates{Input: new("1"), Output: new("0")}}})
 	for _, test := range []struct {
 		tokens int64
 		want   int64
@@ -178,7 +178,7 @@ func TestModelRequestCentsDecimalRounding(t *testing.T) {
 }
 
 func TestSnapshotModelPricing(t *testing.T) {
-	c := NewCalculator(map[string]ModelPrice{"priced": {InputPerMTok: 1}})
+	c := NewCalculator(map[string]ModelPrice{"priced": {Rates: &Rates{Input: new("1"), Output: new("0")}}})
 	for _, test := range []struct {
 		raw  string
 		want string

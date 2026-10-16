@@ -10,7 +10,7 @@ import (
 
 func TestDeploymentBudgetPatchRejectsAgentOnlyUnpricedModel(t *testing.T) {
 	handler := &Handler{billing: billing.NewCalculator(map[string]billing.ModelPrice{
-		"claude-sonnet-4-5-20250929": {InputPerMTok: 3, OutputPerMTok: 15},
+		"claude-sonnet-4-5-20250929": {Rates: &billing.Rates{Input: new("3"), Output: new("15")}},
 	})}
 	current := json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"500","currency":"USD"}}`)
 

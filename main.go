@@ -24,9 +24,11 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/invitations"
 	"github.com/superduck-ai/open-managed-agents/internal/listeners"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/natsclient"
+	"github.com/superduck-ai/open-managed-agents/internal/platformadmin"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
@@ -149,6 +151,11 @@ func run(logger *slog.Logger) error {
 	}
 	filestoreService := filestore.NewService(cfg, database, database, objectStore)
 	cleanup.NewWorker(database, storageClient, 30*time.Second, logger.With("component", "cleanup")).Start(ctx)
+	if platformAuthProvider.VerifiedLoginEnabled() {
+		mailLogger := logger.With("component", "platform_invitation_mail")
+		stopDelivery := platformadmin.NewDeliveryWorker(database, invitations.NewMailer(cfg.Auth, database, mailLogger), mailLogger).Start(ctx)
+		defer stopDelivery()
+	}
 	// 常规资源共享默认 bucket；清理任务通过 client 按各自持久化的 bucket 选择对象存储。
 	filestore.NewCleanupWorker(database, storageClient, logger.With("component", "filestore_cleanup")).Start(ctx)
 	batches.NewWorker(

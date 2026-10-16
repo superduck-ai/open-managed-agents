@@ -6,6 +6,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { PanelLeft } from 'lucide-react';
 import * as React from 'react';
 
+import { useI18n } from '@/shared/i18n';
 import { useIsMobile } from '@/shared/hooks/use-mobile';
 import { cn } from '@/shared/lib/utils';
 import { Button } from '@/shared/ui/button';
@@ -154,6 +155,7 @@ function Sidebar({
   collapsible?: 'offcanvas' | 'icon' | 'none';
 }) {
   const { isMobile, openMobile, setOpenMobile, state } = useSidebar();
+  const { msg } = useI18n();
 
   if (collapsible === 'none') {
     return (
@@ -184,8 +186,8 @@ function Sidebar({
           }
         >
           <SheetHeader className="sr-only">
-            <SheetTitle>Sidebar</SheetTitle>
-            <SheetDescription>Displays the mobile sidebar.</SheetDescription>
+            <SheetTitle>{msg('common.sidebar', 'Sidebar')}</SheetTitle>
+            <SheetDescription>{msg('common.mobileSidebar', 'Displays the mobile sidebar.')}</SheetDescription>
           </SheetHeader>
           <div className="flex h-full w-full flex-col">{children}</div>
         </SheetContent>
@@ -239,6 +241,7 @@ function Sidebar({
 
 function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
   const { toggleSidebar } = useSidebar();
+  const { msg } = useI18n();
 
   return (
     <Button
@@ -254,21 +257,22 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       {...props}
     >
       <PanelLeft className="cn-rtl-flip" />
-      <span className="sr-only">Toggle Sidebar</span>
+      <span className="sr-only">{msg('common.toggleSidebar', 'Toggle Sidebar')}</span>
     </Button>
   );
 }
 
 function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
   const { toggleSidebar } = useSidebar();
+  const { msg } = useI18n();
 
   return (
     <button
       data-sidebar="rail"
       data-slot="sidebar-rail"
-      aria-label="Toggle Sidebar"
+      aria-label={msg('common.toggleSidebar', 'Toggle Sidebar')}
       tabIndex={-1}
-      title="Toggle Sidebar"
+      title={msg('common.toggleSidebar', 'Toggle Sidebar')}
       onClick={toggleSidebar}
       className={cn(
         'absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:start-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex ltr:-translate-x-1/2 rtl:-translate-x-1/2',

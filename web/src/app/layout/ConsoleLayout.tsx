@@ -3,6 +3,7 @@ import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
 import { OrganizationMenu } from '../../features/organizations/OrganizationMenu';
 import { useScopeConfirmation } from '../../features/organizations/useScopeConfirmation';
 import { useOrganizations } from '../../shared/organizations/context';
+import { PlatformAdminMenuItem } from '../../features/platform-admin/PlatformAdminMenuItem';
 import {
   ArrowLeft,
   BookOpen,
@@ -853,6 +854,7 @@ export function AccountMenu({
             </DropdownMenuGroup>
 
             <OrganizationMenu />
+            <PlatformAdminMenuItem onNavigate={handleMenuNavigation} />
 
             <DropdownMenuSeparator />
 

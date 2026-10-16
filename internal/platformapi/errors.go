@@ -75,3 +75,7 @@ func writeConsoleWorkspaceMemberError(w http.ResponseWriter, err error) {
 		Message string `json:"message"`
 	}{Error: code, Message: message})
 }
+
+func platformAccessUnavailable(w http.ResponseWriter) {
+	writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform_access_unavailable", "message": "Could not load platform access."})
+}

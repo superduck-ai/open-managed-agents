@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="PlatformAdminInviteMapper">
+    <sql id="columns">
+        i.uuid, i.external_id, i.email, i.role,
+        CASE WHEN i.status = 'pending' AND i.expires_at &lt;= now() THEN 'expired' ELSE i.status END AS status,
+        i.invited_at, i.expires_at,
+        COALESCE((SELECT d.status FROM platform_admin_invite_deliveries d
+            WHERE d.organization_uuid = i.organization_uuid AND d.invitation_uuid = i.uuid
+            ORDER BY d.created_at DESC, d.uuid DESC LIMIT 1), 'not_queued') AS delivery_status
+    </sql>
+    <select id="List" resultType="PlatformAdminInvite">
+        SELECT <include refid="columns"/> FROM organization_invites i
+        WHERE i.organization_uuid = #{params.OrganizationUUID}
+        <if test="params.Query != ''">AND i.email ILIKE '%' || #{params.Query} || '%'</if>
+        <if test="params.After != ''">AND i.uuid &gt; #{params.After}</if>
+        ORDER BY i.uuid LIMIT #{params.Limit}
+    </select>
+    <select id="Lock" resultType="PlatformAdminInvite">
+        SELECT <include refid="columns"/> FROM organization_invites i
+        WHERE i.organization_uuid = #{organizationUUID} AND i.uuid = #{invitationUUID}
+        FOR UPDATE OF i
+    </select>
+    <select id="HasPending" result="scalar">
+        SELECT EXISTS (SELECT 1 FROM organization_invites WHERE organization_uuid = #{organizationUUID}
+            AND lower(email) = lower(#{email}) AND status = 'pending' AND deleted_at IS NULL AND expires_at &gt; now()) AS pending
+    </select>
+    <insert id="Insert" result="returning" resultType="PlatformAdminInvite">
+        INSERT INTO organization_invites (uuid, external_id, organization_uuid, email, role, status, invited_at, expires_at, platform_actor_uuid)
+        VALUES (#{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.Email}, #{params.Role}, 'pending', now(), now() + interval '21 days', #{params.AccountUUID})
+        RETURNING uuid, external_id, email, role, status, invited_at, expires_at, 'pending' AS delivery_status
+    </insert>
+    <update id="Resend" result="exec">
+        UPDATE organization_invites SET status = 'pending', invited_at = now(), expires_at = now() + interval '21 days'
+        WHERE organization_uuid = #{organizationUUID} AND uuid = #{invitationUUID}
+    </update>
+    <update id="Revoke" result="exec">
+        UPDATE organization_invites SET status = 'deleted', deleted_at = now()
+        WHERE organization_uuid = #{organizationUUID} AND uuid = #{invitationUUID}
+    </update>
+    <update id="CancelDeliveries" result="exec">
+        UPDATE platform_admin_invite_deliveries SET status = 'cancelled', updated_at = now()
+        WHERE organization_uuid = #{organizationUUID} AND invitation_uuid = #{invitationUUID}
+            AND status IN ('pending', 'sending', 'failed')
+    </update>
+    <insert id="Enqueue" result="exec">
+        INSERT INTO platform_admin_invite_deliveries (organization_uuid, invitation_uuid, recipient, expires_at)
+        SELECT organization_uuid, uuid, email, expires_at FROM organization_invites
+        WHERE organization_uuid = #{organizationUUID} AND uuid = #{invitationUUID}
+    </insert>
+</mapper>

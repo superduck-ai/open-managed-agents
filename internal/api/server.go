@@ -285,6 +285,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 	mcpCatalogHandler *mcpcatalogs.Handler,
 	mcpServerHandler *mcpservers.Handler,
 ) {
+	s.registerPlatformAdminRoutes(router)
 	router.Group(func(r chi.Router) {
 		r.Use(s.platformIdentityMiddleware)
 		r.Route("/api/invitations", func(r chi.Router) {
@@ -294,8 +295,9 @@ func (s *Server) registerPlatformConsoleRoutes(
 	router.Group(func(r chi.Router) {
 		r.Use(s.optionalPlatformAuthMiddleware)
 		platformapi.RegisterDirectoryRoutes(r)
-		platformapi.RegisterPlatformAccountRoutes(r, s.db)
-		platformapi.RegisterPlatformEmailLoginRoutes(r, s.db, s.platformAuth, s.platformStore)
+		s.registerPlatformAccountRoutes(r)
+		secureCookies := s.cfg.Env == config.EnvironmentProd || strings.HasPrefix(s.cfg.Auth.ConsoleURL, "https://")
+		platformapi.RegisterPlatformEmailLoginRoutes(r, s.db, s.platformAuth, s.platformStore, secureCookies)
 		platformapi.RegisterPlatformBillingRoutes(r)
 	})
 	router.Get("/oauth/vault/success", s.handlePlatformMCPVaultAuthCallback)

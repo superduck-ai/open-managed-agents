@@ -41,6 +41,14 @@ func TestInvitationMapperBindings(t *testing.T) {
 		}
 		assertMapperTestExecution(t, executor, "InvitationMapper.ListByEmail", yourbatis.StatementSelect, []any{email}, "i.status = 'pending'", "i.expires_at > clock_timestamp()", "ORDER BY i.invited_at DESC, i.uuid DESC")
 	})
+	t.Run("先锁定邀请所属组织", func(t *testing.T) {
+		executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}, rows: [][]driver.Value{{org}}})
+		got, err := NewInvitationMapper(executor).LockOrganizationByIDAndEmail(t.Context(), id, email)
+		if err != nil || got != org {
+			t.Fatalf("组织 = %q，错误 = %v", got, err)
+		}
+		assertMapperTestExecution(t, executor, "InvitationMapper.LockOrganizationByIDAndEmail", yourbatis.StatementSelect, []any{id, email}, "i.organization_uuid = o.uuid", "FOR UPDATE OF o")
+	})
 	t.Run("成员查询", func(t *testing.T) {
 		executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"id", "role"}, rows: [][]driver.Value{{"user_test", "admin"}}})
 		member, found, err := NewInvitationMapper(executor).FindActiveMember(t.Context(), org, email)

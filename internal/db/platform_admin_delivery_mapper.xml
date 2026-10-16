@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="PlatformAdminDeliveryMapper">
+    <sql id="validInvitation">
+        EXISTS (SELECT 1 FROM organization_invites i WHERE i.uuid = d.invitation_uuid
+            AND i.organization_uuid = d.organization_uuid AND i.status = 'pending' AND i.deleted_at IS NULL
+            AND i.expires_at = d.expires_at AND i.expires_at &gt; clock_timestamp())
+    </sql>
+    <update id="CancelInvalid" result="exec">
+        UPDATE platform_admin_invite_deliveries d SET status = 'cancelled', updated_at = now()
+        WHERE d.status IN ('pending', 'sending', 'failed') AND NOT <include refid="validInvitation"/>
+    </update>
+    <update id="Lease" result="returning" resultType="PlatformAdminDelivery">
+        WITH candidate AS (
+            SELECT d.uuid FROM platform_admin_invite_deliveries d
+            WHERE <include refid="validInvitation"/>
+            AND (d.status = 'pending' OR (d.status = 'failed' AND d.attempts &lt; 5 AND d.updated_at &lt; now() - interval '1 minute')
+                OR (d.status = 'sending' AND d.updated_at &lt; now() - interval '2 minutes'))
+            ORDER BY d.created_at, d.uuid LIMIT 1 FOR UPDATE SKIP LOCKED
+        )
+        UPDATE platform_admin_invite_deliveries d SET status = 'sending', attempts = attempts + 1, updated_at = now()
+        FROM candidate c WHERE d.uuid = c.uuid
+        RETURNING d.uuid, d.organization_uuid, d.recipient, d.expires_at, d.attempts
+    </update>
+    <select id="Ready" result="scalar">
+        SELECT EXISTS (SELECT 1 FROM platform_admin_invite_deliveries d
+            WHERE d.uuid = #{deliveryUUID} AND d.attempts = #{attempts} AND d.status = 'sending'
+            AND <include refid="validInvitation"/>) AS ready
+    </select>
+    <update id="Finish" result="exec">
+        UPDATE platform_admin_invite_deliveries SET status = #{status}, updated_at = now()
+        WHERE uuid = #{deliveryUUID} AND attempts = #{attempts} AND status = 'sending'
+    </update>
+</mapper>

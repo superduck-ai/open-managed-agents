@@ -197,7 +197,6 @@ func TestBrainMCPStreamsSSEWithoutWaitingForCompletion(t *testing.T) {
 	defer close(release)
 	app, worker, _, token := newBrainMCPProxyApp(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("X-Accel-Buffering", "no")
 		_, _ = io.WriteString(w, "data: first\n\n")
 		w.(http.Flusher).Flush()
 		select {

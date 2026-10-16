@@ -1171,3 +1171,23 @@ func unsetEnv(t *testing.T, key string) {
 		}
 	})
 }
+
+func TestAllowedEmailDomains(t *testing.T) {
+	for _, domain := range []string{"", "@example.org", "*.example.org", "example.org/evil", "example..org", "-example.org", "example.org.", "user@example.org"} {
+		t.Run(domain, func(t *testing.T) {
+			if err := validateAuthConfig(AuthConfig{AllowedEmailDomains: []string{domain}}); err == nil {
+				t.Fatal("invalid domain accepted")
+			}
+		})
+	}
+	t.Run("normalize configured domains", func(t *testing.T) {
+		prepareLoadTest(t)
+		cfg, err := loadConfigTestYAML(t, "auth:\n  allowed_email_domains: [' EXAMPLE.ORG ', 'Subsidiary.Example']\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(cfg.Auth.AllowedEmailDomains, []string{"example.org", "subsidiary.example"}) {
+			t.Fatalf("domains = %v", cfg.Auth.AllowedEmailDomains)
+		}
+	})
+}

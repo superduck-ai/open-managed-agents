@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/mail"
+	"slices"
 	"strings"
 	"time"
 
@@ -167,9 +168,9 @@ func (s *redisEmailCodeStore) Revoke(ctx context.Context, emailHash, challengeID
 }
 
 func (s *EmailProvider) RequestEmailLogin(ctx context.Context, rawEmail string) error {
-	email, err := normalizeLoginEmail(rawEmail)
+	email, err := s.normalizeLoginEmail(rawEmail)
 	if err != nil {
-		return invalidEmail(err)
+		return err
 	}
 	if s != nil && s.acceptAnyCode {
 		return nil
@@ -240,9 +241,9 @@ func (s *EmailProvider) CompleteEmailLogin(ctx context.Context, rawEmail, code s
 }
 
 func (s *EmailProvider) prepareEmailLoginCode(rawEmail, code string) (string, string, string, error) {
-	email, err := normalizeLoginEmail(rawEmail)
+	email, err := s.normalizeLoginEmail(rawEmail)
 	if err != nil {
-		return "", "", "", invalidEmail(err)
+		return "", "", "", err
 	}
 	if s != nil && s.acceptAnyCode {
 		if strings.TrimSpace(code) == "" {
@@ -267,11 +268,17 @@ func (s *EmailProvider) loginCodeStoreError(ctx context.Context, operation strin
 	return emailLoginUnavailable("Could not verify that code. Try again", err)
 }
 
-func normalizeLoginEmail(raw string) (string, error) {
+func (s *EmailProvider) normalizeLoginEmail(raw string) (string, error) {
 	email := strings.ToLower(strings.TrimSpace(raw))
 	parsed, err := mail.ParseAddress(email)
 	if err != nil || parsed.Address != email {
-		return "", errors.New("invalid email address")
+		return "", invalidEmail(errors.New("invalid email address"))
+	}
+	if s != nil && len(s.loginEmailDomains) > 0 {
+		_, domain, _ := strings.CutLast(email, "@")
+		if !slices.Contains(s.loginEmailDomains, domain) {
+			return "", emailLoginDomainDenied()
+		}
 	}
 	return email, nil
 }

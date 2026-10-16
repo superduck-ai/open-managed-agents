@@ -2561,5 +2561,6 @@
   "managedAgents.credentialVaults.removeVault": "移除 {name}",
   "managedAgents.agents.newAgent": "新建智能体",
   "managedAgents.agents.createDialog.configuredTools": "{count} 个工具集",
-  "managedAgents.agents.createDialog.describeLabel": "描述您的智能体"
+  "managedAgents.agents.createDialog.describeLabel": "描述您的智能体",
+  "auth.login.emailDomainNotAllowed": "请使用允许登录的邮箱。"
 }

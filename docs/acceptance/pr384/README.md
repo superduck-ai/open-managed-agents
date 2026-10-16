@@ -27,24 +27,20 @@
 
 ## 本次截图索引
 
-所有以下截图均于本轮对重启后的实际页面采集，没有模拟或修改页面数据，单张小于 1 MiB。用户生成的会话标题和回复保留原语言。
+截图仅保存在本机 `tmp/analytics-manual/pr384-final-screenshots/`，不提交到 Git 或 PR。以下保留文件索引和验收结果；截图均来自重启后的实际页面，没有模拟或修改页面数据。用户生成的会话标题和回复保留原语言。
 
 | 证据 | 验收内容 |
 | --- | --- |
-| [中文用量](screenshots/usage-zh.jpg) | 21,803 输入、54 输出；中文筛选与日期轴 |
-| [英文用量](screenshots/usage-en.jpg) | 同一数据；英文筛选、日期和紧凑刻度 |
-| [中文成本](screenshots/cost-zh.jpg) | 总额与 Token 费用 USD 0.02，五张卡片及两个零占位 |
-| [英文成本](screenshots/cost-en.jpg) | 同一金额、英文日期与五张卡片 |
-| [中文会话预算](screenshots/session-budget-zh.jpg) | 已使用 US$0.02 / 预算 US$1.00，真实回复和累计 Token |
-| [英文会话预算](screenshots/session-budget-en.jpg) | 英文预算与会话累计 USD 0.02 |
-| [模型筛选空态](screenshots/model-filter-empty.jpg) | 同会话切换不匹配模型，汇总归零且图表显示 No data，URL 更新 |
-| [日期选项与大数轴](screenshots/range-options-large-axis.jpg) | 月份由真实数据生成；30,585,210 输入，刻度 7.5M–30M 完整可见 |
-| [七天与 API 密钥](screenshots/api-key-seven-days.jpg) | 选择七天后日期为 10–16 日；选择真实密钥后输入变为 30,387,799、输出 469,639 |
-| [历史缺价提示](screenshots/cost-unpriced-zh.jpg) | 已知费用 USD 0.54，明确提示部分请求缺价格或完整用量 |
-
-![中文成本页面](screenshots/cost-zh.jpg)
-
-![会话预算与用量](screenshots/session-budget-zh.jpg)
+| 中文用量（`usage-zh.jpg`） | 21,803 输入、54 输出；中文筛选与日期轴 |
+| 英文用量（`usage-en.jpg`） | 同一数据；英文筛选、日期和紧凑刻度 |
+| 中文成本（`cost-zh.jpg`） | 总额与 Token 费用 USD 0.02，五张卡片及两个零占位 |
+| 英文成本（`cost-en.jpg`） | 同一金额、英文日期与五张卡片 |
+| 中文会话预算（`session-budget-zh.jpg`） | 已使用 US$0.02 / 预算 US$1.00，真实回复和累计 Token |
+| 英文会话预算（`session-budget-en.jpg`） | 英文预算与会话累计 USD 0.02 |
+| 模型筛选空态（`model-filter-empty.jpg`） | 同会话切换不匹配模型，汇总归零且图表显示 No data，URL 更新 |
+| 日期选项与大数轴（`range-options-large-axis.jpg`） | 月份由真实数据生成；30,585,210 输入，刻度 7.5M–30M 完整可见 |
+| 七天与 API 密钥（`api-key-seven-days.jpg`） | 选择七天后日期为 10–16 日；选择真实密钥后输入变为 30,387,799、输出 469,639 |
+| 历史缺价提示（`cost-unpriced-zh.jpg`） | 已知费用 USD 0.54，明确提示部分请求缺价格或完整用量 |
 
 ### 历史截图处置
 

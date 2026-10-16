@@ -34,6 +34,7 @@ type Membership struct {
 }
 
 type BootstrapCompatibilityResponse struct {
+	PlatformAccess           PlatformAccess         `json:"platform_access"`
 	CSRFToken                string                 `json:"csrf_token"`
 	Account                  *Account               `json:"account"`
 	Statsig                  *BootstrapStatsig      `json:"statsig,omitempty"`
@@ -49,6 +50,11 @@ type BootstrapCompatibilityResponse struct {
 	ServerLocalizations      map[string]string      `json:"server_localizations,omitempty"`
 	ClaudeAITranslationsPath string                 `json:"claude_ai_translations_path,omitempty"`
 	Metadata                 map[string]any         `json:"metadata,omitempty"`
+}
+
+type PlatformAccess struct {
+	Role        *string  `json:"role"`
+	Permissions []string `json:"permissions"`
 }
 
 type BootstrapStatsig struct {

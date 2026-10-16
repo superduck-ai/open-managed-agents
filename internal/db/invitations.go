@@ -48,6 +48,9 @@ func (d *DB) RespondToInvitation(ctx context.Context, id, email string, accept b
 	var result Invitation
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		mapper := NewInvitationMapper(executor)
+		if _, err := mapper.LockOrganizationByIDAndEmail(ctx, id, email); err != nil {
+			return mapNoRows(err)
+		}
 		row, found, err := mapper.LockByIDAndEmail(ctx, id, email)
 		if err != nil {
 			return err

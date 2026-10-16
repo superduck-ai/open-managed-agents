@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="PlatformAdminMapper">
+    <sql id="accountColumns">
+        u.uuid, u.email, u.name,
+        EXISTS (SELECT 1 FROM platform_admins a WHERE a.account_uuid = u.uuid AND a.revoked_at IS NULL) AS granted
+    </sql>
+    <select id="FindAccount" resultType="PlatformAdminAccount">
+        SELECT <include refid="accountColumns"/> FROM users u
+        WHERE u.uuid = #{accountUUID} AND u.registration_identity
+    </select>
+    <select id="ListAccounts" resultType="PlatformAdminAccount">
+        SELECT <include refid="accountColumns"/> FROM users u
+        WHERE u.registration_identity
+        AND (u.email ILIKE '%' || #{params.Query} || '%' OR u.name ILIKE '%' || #{params.Query} || '%')
+        <if test="params.After != ''">AND u.uuid &gt; #{params.After}</if>
+        ORDER BY u.uuid LIMIT #{params.Limit}
+    </select>
+    <select id="ListAdmins" resultType="PlatformAdminAccount">
+        SELECT <include refid="accountColumns"/> FROM users u
+        JOIN platform_admins a ON a.account_uuid = u.uuid AND a.revoked_at IS NULL
+        ORDER BY u.uuid
+    </select>
+    <select id="LockGrant" result="scalar">
+        SELECT revoked_at IS NULL AS granted FROM platform_admins WHERE account_uuid = #{accountUUID} FOR UPDATE
+    </select>
+    <select id="LockAdministration" result="scalar">
+        SELECT 1::bigint AS locked FROM (SELECT pg_advisory_xact_lock(734001928)) AS lock
+    </select>
+    <select id="CountAdmins" result="scalar">
+        SELECT COUNT(*) AS count FROM platform_admins WHERE revoked_at IS NULL
+    </select>
+    <insert id="Grant" result="exec">
+        INSERT INTO platform_admins (account_uuid, granted_by) VALUES (#{params.AccountUUID}, #{params.Operator})
+        ON CONFLICT (account_uuid) DO UPDATE SET granted_at = now(), granted_by = EXCLUDED.granted_by, revoked_at = NULL, revoked_by = NULL
+    </insert>
+    <update id="Revoke" result="exec">
+        UPDATE platform_admins SET revoked_at = now(), revoked_by = #{params.Operator} WHERE account_uuid = #{params.AccountUUID}
+    </update>
+</mapper>

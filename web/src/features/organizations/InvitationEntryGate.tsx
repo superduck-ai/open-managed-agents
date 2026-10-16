@@ -8,6 +8,8 @@ import { invitationReturnTo, listInvitations } from './api';
 
 export function InvitationEntryGate() {
   const { status, account } = useAuth();
+  const location = useLocation();
+  if (location.pathname === '/platform-admin' || location.pathname.startsWith('/platform-admin/')) return <Outlet />;
   if (status !== 'authenticated' || !account) return <Outlet />;
   return (
     <AuthenticatedInvitationEntry key={account.uuid} accountUuid={account.uuid}>

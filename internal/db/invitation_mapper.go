@@ -31,6 +31,7 @@ type invitationMemberParams struct {
 }
 
 type InvitationMapper interface {
+	LockOrganizationByIDAndEmail(ctx context.Context, id, email string) (string, error)
 	ListByEmail(ctx context.Context, email string) ([]invitationRow, error)
 	LockByIDAndEmail(ctx context.Context, id, email string) (invitationRow, bool, error)
 	FindActiveMember(ctx context.Context, organizationUUID, email string) (invitationMemberRow, bool, error)

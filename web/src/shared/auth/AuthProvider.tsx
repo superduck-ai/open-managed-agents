@@ -35,6 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthContextValue>(
     () => ({
       account,
+      platformAccess: bootstrapQuery.data?.platform_access,
       status,
       csrfToken: bootstrapQuery.data?.csrf_token,
       refresh: async () => {

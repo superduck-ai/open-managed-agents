@@ -14,6 +14,11 @@
         AND i.status = 'pending' AND i.expires_at &gt; clock_timestamp()
         ORDER BY i.invited_at DESC, i.uuid DESC
     </select>
+    <select id="LockOrganizationByIDAndEmail" result="scalar">
+        SELECT o.uuid FROM organizations o JOIN organization_invites i ON i.organization_uuid = o.uuid
+        WHERE i.external_id = #{id} AND lower(i.email) = lower(#{email})
+        FOR UPDATE OF o
+    </select>
     <select id="LockByIDAndEmail" resultType="invitationRow">
         SELECT <include refid="columns"/>
         FROM organization_invites i JOIN organizations o ON o.uuid = i.organization_uuid

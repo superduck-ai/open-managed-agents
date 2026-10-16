@@ -67,7 +67,8 @@ func TestMCPToolCatalogConsoleAPI(t *testing.T) {
 		"mcp_servers":[
 			{"name":"weather","type":"url","url":%q},
 			{"name":"empty","type":"url","url":%q}
-		]
+		],
+		"tools":[{"type":"mcp_toolset","mcp_server_name":"weather"},{"type":"mcp_toolset","mcp_server_name":"empty"}]
 		}`, weatherEndpoint, empty.server.URL))
 	defer cleanupAgentRows(t, app.pool, agent.ID)
 	defer deleteTestMCPCatalogByEndpoint(t, app.pool, weatherEndpoint)
@@ -199,7 +200,8 @@ func TestMCPToolCatalogConsoleAPI(t *testing.T) {
 		other := createAgent(t, app, fmt.Sprintf(`{
 			"model":"claude-opus-4-6",
 			"name":"shared-mcp-catalog-agent",
-			"mcp_servers":[{"name":"shared_weather","type":"url","url":%q}]
+			"mcp_servers":[{"name":"shared_weather","type":"url","url":%q}],
+			"tools":[{"type":"mcp_toolset","mcp_server_name":"shared_weather"}]
 			}`, weatherEndpoint))
 		defer cleanupAgentRows(t, app.pool, other.ID)
 

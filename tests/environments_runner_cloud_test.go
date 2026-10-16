@@ -1060,7 +1060,8 @@ func TestEnvironmentRunnerResolvesLimitedNetworkWithManagedAgentMCPHosts(t *test
 	agent := createAgent(t, app, `{
 		"model":"claude-opus-4-8",
 		"name":"Runner MCP Network Agent",
-		"mcp_servers":[{"type":"url","name":"notion","url":"https://mcp.notion.com/mcp"}]
+		"mcp_servers":[{"type":"url","name":"notion","url":"https://mcp.notion.com/mcp"}],
+		"tools":[{"type":"mcp_toolset","mcp_server_name":"notion"}]
 	}`)
 	defer archiveAgent(t, app, agent.ID)
 	environment := createEnvironment(t, app, `{

@@ -211,6 +211,14 @@ func TestAgentsAPI(t *testing.T) {
 		}
 	})
 
+	t.Run("failure MCP servers without any matching toolset", func(t *testing.T) {
+		for _, tools := range []string{"", `,"tools":[]`, `,"tools":null`, `,"tools":[{"type":"agent_toolset_20260401"}]`} {
+			body := `{"model":"claude-opus-4-6","name":"unreferenced server","mcp_servers":[{"name":"peer","type":"url","url":"https://example.com/mcp"}]` + tools + `}`
+			response := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(body), defaultTestKey, true)
+			assertError(t, response, http.StatusBadRequest, "invalid_request_error")
+		}
+	})
+
 	t.Run("failure unreferenced mcp server when using mcp toolsets", func(t *testing.T) {
 		body := `{
 			"model":"claude-opus-4-6",
@@ -747,5 +755,28 @@ func TestSessionSubagentSnapshotsAreExpandedOnCreation(t *testing.T) {
 	storedDeployment, err := app.db.GetDeployment(t.Context(), scope.WorkspaceUUID, deployment.ID)
 	if err != nil || !agentsnapshot.SameRawJSON(storedDeployment.AgentSnapshot, session.AgentSnapshot) {
 		t.Fatalf("deployment and session creation expanded different configurations: %s %v", storedDeployment.AgentSnapshot, err)
+	}
+}
+
+func TestAgentsMCPReferenceUpdatesAreAtomic(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("agents-mcp-references"))
+	defer app.close()
+	created := createAgent(t, app, `{"model":"claude-opus-4-6","name":"mcp updates","mcp_servers":[{"name":"peer","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"peer"}]}`)
+	defer cleanupAgentRows(t, app.pool, created.ID)
+	for _, body := range []string{
+		`{"version":1,"tools":[]}`,
+		`{"version":1,"tools":null}`,
+		`{"version":1,"mcp_servers":[]}`,
+		`{"version":1,"mcp_servers":null}`,
+	} {
+		updateAgent(t, app, created.ID, body, http.StatusBadRequest)
+		unchanged := retrieveAgent(t, app, created.ID, "")
+		if unchanged.Version != created.Version || string(unchanged.MCPServers) != string(created.MCPServers) || string(unchanged.Tools) != string(created.Tools) {
+			t.Fatalf("rejected update changed Agent: %+v", unchanged)
+		}
+	}
+	cleared := updateAgent(t, app, created.ID, `{"version":1,"mcp_servers":null,"tools":null}`, http.StatusOK)
+	if cleared.Version != created.Version+1 || string(cleared.MCPServers) != `[]` || string(cleared.Tools) != `[]` {
+		t.Fatalf("joint clear failed: %+v", cleared)
 	}
 }

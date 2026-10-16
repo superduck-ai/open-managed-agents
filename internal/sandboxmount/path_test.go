@@ -111,10 +111,7 @@ func TestValidateFileMountPaths(t *testing.T) {
 }
 
 func TestDefaultFileMountPath(t *testing.T) {
-	if mountPath := DefaultFileMountPath("file_abc123", "quarterly report.csv"); mountPath != "/uploads/quarterly report.csv" {
+	if mountPath := DefaultFileMountPath("file_abc123"); mountPath != "/uploads/file_abc123" {
 		t.Fatalf("default mount path = %q", mountPath)
-	}
-	if mountPath := DefaultFileMountPath("file_abc123", ""); mountPath != "/uploads/file_abc123" {
-		t.Fatalf("fallback mount path = %q", mountPath)
 	}
 }

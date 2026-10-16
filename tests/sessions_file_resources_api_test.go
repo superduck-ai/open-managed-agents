@@ -278,6 +278,29 @@ func TestSessionFileResourceContract(t *testing.T) {
 		}
 	})
 
+	t.Run("success add resource defaults to file ID", func(t *testing.T) {
+		created := createSession(t, app, `{`+base+`}`)
+		defer deleteSession(t, app, created.ID)
+
+		resp := doSessionRequest(
+			t,
+			app,
+			http.MethodPost,
+			"/v1/sessions/"+created.ID+"/resources?beta=true",
+			strings.NewReader(`{"type":"file","file_id":`+quoteJSON(file.ID)+`}`),
+			defaultTestKey,
+			true,
+		)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("add file resource status = %d: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		var added json.RawMessage
+		decodeJSON(t, resp.Body, &added)
+		assertFileResourcePayload(t, added, file.ID, "/uploads/"+file.ID)
+		assertSessionFileReference(t, app, created.ID, added, file.ID, "/uploads/"+file.ID)
+	})
+
 	t.Run("success defaults and add resource use uploads", func(t *testing.T) {
 		expectedBytes := defaultWorkspaceStorageBytes(t, app)
 		created := createSession(t, app, `{`+base+`,"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`}]}`)
@@ -285,14 +308,14 @@ func TestSessionFileResourceContract(t *testing.T) {
 		if len(created.Resources) != 1 {
 			t.Fatalf("created resources = %d, want 1", len(created.Resources))
 		}
-		assertFileResourcePayload(t, created.Resources[0], file.ID, "/uploads/"+file.Filename)
+		assertFileResourcePayload(t, created.Resources[0], file.ID, "/uploads/"+file.ID)
 		createdResourceID := assertSessionFileReference(
 			t,
 			app,
 			created.ID,
 			created.Resources[0],
 			file.ID,
-			"/uploads/"+file.Filename,
+			"/uploads/"+file.ID,
 		)
 		scopedFiles := listFiles(t, app, "scope_id="+created.ID)
 		if len(scopedFiles.Data) != 0 {

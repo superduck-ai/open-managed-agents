@@ -161,8 +161,7 @@ func (h *Handler) resourceFromRequest(
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		file, err := h.db.GetFile(r.Context(), session.WorkspaceUUID, fileID)
-		if err != nil {
+		if _, err := h.db.GetFile(r.Context(), session.WorkspaceUUID, fileID); err != nil {
 			if errors.Is(err, db.ErrNotFound) {
 				return normalizedSessionResource{}, db.ErrFileReferenceNotFound
 			}
@@ -170,7 +169,6 @@ func (h *Handler) resourceFromRequest(
 		}
 		fileSpec, err := sessionresource.NormalizeFileSpec(
 			fileID,
-			file.Filename,
 			body.Source,
 			body.MountPath,
 		)

@@ -6,6 +6,10 @@ Workspace MCP Server 是“构建”域中的可复用远程 MCP 配置目录项
 
 Agent 版本仍是运行时配置事实来源：用户选择工作区目录项时，前端复制 `{name,type:"url",url}` 到 Agent 的 `mcp_servers`，并创建同名 `mcp_toolset`。Agent 不保存目录项 ID，因此目录项后续修改或删除不会改变已有 Agent 版本，也不需要在删除时检查 Agent 使用情况。
 
+Agent 创建和更新时，`mcp_servers` 与 `tools` 必须双向匹配：每个已声明 server 都要有同名 `mcp_toolset`，每个 `mcp_toolset.mcp_server_name` 都必须引用已声明 server。此规则来自 CMA `mcp-connector.md` 的 Agent 声明约束，与工作区目录项的独立创建无关。零个引用也必须校验；省略 `tools` 的创建请求、`tools: []`、`tools: null` 以及只有内置工具的配置，都不能与非空 `mcp_servers` 共存，否则返回 HTTP 400 `invalid_request_error`。
+
+更新按请求字段与当前 Agent 合并后的配置校验。保留 servers 时清空 tools，或保留 toolsets 时清空 servers，都应拒绝，且不能写入新版本或改变原配置。同时清空两者时，`[]` 和 `null` 均归一化为空数组并允许更新。普通单测覆盖零引用、部分引用、悬空引用及合并校验；Agent API 回归覆盖创建返回 400、失败更新保持版本和配置不变、同时清空成功。
+
 ```mermaid
 flowchart LR
   Page["构建 / MCP Servers"] -->|CRUD| Resource["Workspace MCP Server"]

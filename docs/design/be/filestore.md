@@ -195,7 +195,9 @@ Session 与 Deployment File resource 的公开合同固定为：
 }
 ```
 
-公开响应不返回内部 Filestore `source` 字段，并统一将 `mount_path` 规范化为 `/uploads` 前缀。为兼容既有请求，边界仍接受省略的 `source` 并在持久化 payload 中补为 `/uploads`，显式传入 `null` 或其他值均拒绝。显式传入 `/workspace/data.csv` 时，公开响应返回 `/uploads/workspace/data.csv`，对应同名 Filestore 路径和 Sandbox 访问路径 `/mnt/session/uploads/workspace/data.csv`；已有数据库记录即使仍保存旧式 `/workspace/data.csv`，序列化时也会补齐前缀。未传 `mount_path` 时，服务端读取 Files API 记录中的原始文件名，公开响应按 Anthropic 示例返回 `/uploads/<filename>`；仅当旧数据缺少文件名时才回退到 `/uploads/<file_id>`。
+公开响应不返回内部 Filestore `source` 字段，并统一将 `mount_path` 规范化为 `/uploads` 前缀。为兼容既有请求，边界仍接受省略的 `source` 并在持久化 payload 中补为 `/uploads`，显式传入 `null` 或其他值均拒绝。显式传入 `/workspace/data.csv` 时，公开响应返回 `/uploads/workspace/data.csv`，对应同名 Filestore 路径和 Sandbox 访问路径 `/mnt/session/uploads/workspace/data.csv`；已有数据库记录即使仍保存旧式 `/workspace/data.csv`，序列化时也会补齐前缀。未传 `mount_path` 时，使用请求中的 `file_id` 生成 `/uploads/<file_id>`，Sandbox 访问路径为 `/mnt/session/uploads/<file_id>`，不再按原始文件名生成默认路径。该规则对齐 CMA `files.md` 的 File paths 契约，Session 创建、运行中添加资源和 Deployment 模板使用同一默认值。已有资源中持久化的路径及显式指定的路径保持不变；本次不新增独立 Session 输入文件实例 ID。
+
+普通测试覆盖省略路径时的资源响应、Filestore 绑定、运行中添加与 Deployment 执行，以及显式路径回归。真实沙箱中的可读性、长度和 SHA256 需单独复测 FILE-MNT-002，普通测试不替代该验收。
 
 GitHub Repository 未传 `mount_path` 时使用 `/workspace/<repo-name>`；仓库名从 URL 最后一个路径段派生并去掉 `.git` 后缀，无法解析时回退到 `/workspace/repository`。Session 与 Deployment 共用同一默认值函数。
 

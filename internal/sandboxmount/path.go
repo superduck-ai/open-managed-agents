@@ -37,11 +37,8 @@ func NormalizeFileSource(raw json.RawMessage) (string, error) {
 }
 
 // DefaultFileMountPath 返回 File resource 在 uploads namespace 中的默认路径。
-func DefaultFileMountPath(fileID, filename string) string {
-	if filename == "" {
-		filename = fileID
-	}
-	return FileSource + "/" + filename
+func DefaultFileMountPath(fileID string) string {
+	return FileSource + "/" + fileID
 }
 
 // ValidateFileMountPath 校验 File resource 在固定 uploads 根目录下的相对命名空间路径。

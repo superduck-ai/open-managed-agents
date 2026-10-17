@@ -50,11 +50,12 @@ DSH 开始模型执行前等待首个 `processing` 回执确认；后端通过�
 - `cwd`、`model`、`system_prompt`、`custom_system_prompt`、`append_system_prompt`。
 - `runtime_skills`：Skill 名称、描述、固定版本及沙箱内 `SKILL.md` 路径。
 - `subagents`：由会话 Agent 快照中的固定版本引用解析出的子 Agent 定义及工具权限。
+- `runtime_tools`：主 Agent 启用的沙箱工具名，按与权限执行相同的规则从会话 Agent 快照计算；缺失时注册全部沙箱工具。
 - 原有 `outcomes` 和 `mcp_config`。
 
 创建 Code Session 时，Go 对 prompt、Skill 和子 Agent 字段按 schema 解析，拒绝类型错误；子 Agent 定义从固定版本快照解析后写入配置。MCP 声明、outcomes 与未识别扩展字段在 JSON 边界原样透传，避免改写第三方字段或高精度数字。
 
-系统规则由 DSH 原生提示词、OMA 环境约束和用户 Agent 指令共同组成。Memory 目录来自已解析的挂载资源，通过公共 `memory_catalog_prompt` 字段提供给执行端；DSH 将其追加到环境提示词。原有沙箱客户端的 `append_system_prompt` 保持不变。Skill 和子 Agent 配置在创建 Code Session 时固定，凭据恢复不重新解析，因此不会因 Agent 或 Skill 更新而漂移。
+系统规则按稳定性分层组装，详见 [agent-system-prompt](agent-system-prompt.md)。`append_system_prompt` 由 Go 按 Environment 的 `networking` 与 `packages` 渲染。Memory 目录来自已解析的挂载资源，通过公共 `memory_catalog_prompt` 字段单独提供给执行端，DSH 将其放在 Agent 指令之后的会话层。Skill 和子 Agent 配置在创建 Code Session 时固定，凭据恢复不重新解析，因此不会因 Agent 或 Skill 更新而漂移。
 
 DSH 在本地把公共配置转换为运行时对象，并根据 `OMA_API_URL` 构造沙箱 MCP URL；Go 不再提供 `brain.launch` 或完整 assignment 响应。`environment_runner.brain_api_base_url` 已删除。
 

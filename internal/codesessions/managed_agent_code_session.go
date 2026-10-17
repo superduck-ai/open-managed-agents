@@ -247,5 +247,9 @@ func (s *Service) managedAgentRuntimeConfig(ctx context.Context, session db.Sess
 		return nil, err
 	}
 	config.Subagents = subagents
+	config.RuntimeTools, err = runtimeRootTools(session.AgentSnapshot)
+	if err != nil {
+		return nil, err
+	}
 	return config.encode()
 }

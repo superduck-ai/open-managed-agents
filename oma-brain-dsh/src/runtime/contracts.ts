@@ -71,7 +71,7 @@ export interface SessionRuntimeConfig {
   systemPrompt: string;
   /** Mount root-session services before tool registration. Children share these services. */
   setup?(scope: Context): Promise<void>;
-  subagentSystemPrompt?: string;
+  subagentSystemPrompt?(thread: SubagentThread): string;
   tools?: string[];
   subagents?: SubagentConfig;
   /** Host binds a child model identity to the parent's credentials. */

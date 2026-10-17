@@ -628,6 +628,7 @@ func (r *Runner) prepareManagedAgentLaunch(
 		}
 	}
 	runtimeResources.runtimeSkills = runtimeSkills
+	runtimeResources.environmentConfig = env.Config
 	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
 		runtimeResources.workerTransport = "nats"
 	}

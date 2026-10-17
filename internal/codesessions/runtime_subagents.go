@@ -120,15 +120,20 @@ func runtimeSubagentDefinition(snapshot runtimeAgentSnapshot) (RuntimeSubagentDe
 		}
 	}
 	for _, toolset := range snapshot.Tools {
-		if toolset.Type != "agent_toolset_20260401" {
-			continue
+		if toolset.Type == "agent_toolset_20260401" {
+			definition.Tools = enabledSandboxTools(snapshot.Tools)
+			break
 		}
-		for _, name := range []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob"} {
-			if resolveAgentToolPermission(snapshot.Tools, managedAgentToolName(name)) != resolvedToolPermissionDeny {
-				definition.Tools = append(definition.Tools, name)
-			}
-		}
-		break
 	}
 	return definition, nil
+}
+
+func enabledSandboxTools(tools []toolPermissionToolset) []string {
+	enabled := make([]string, 0, 6)
+	for _, name := range []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob"} {
+		if resolveAgentToolPermission(tools, managedAgentToolName(name)) != resolvedToolPermissionDeny {
+			enabled = append(enabled, name)
+		}
+	}
+	return enabled
 }

@@ -243,3 +243,16 @@ test("backend launch roster is listed and delegated by agent_name without inline
   await expect(f.session.subagents.send({ agent_name: "missing", message: "Run" }, new AbortController().signal))
     .rejects.toThrow("Unknown predefined agent");
 });
+
+test("root registers only enabled sandbox tools and inline agents inherit them", async () => {
+  const b = new Backend();
+  cleanups.push(async () => b.stop());
+  b.a.launch.tools = ["Read", "Grep"];
+  b.a.launch.subagents = {};
+  const f = await fixture(b);
+  b.modelScript = [call("send_to_agent", { name: "inline", system_prompt: "Inspect only", message: "Inspect" }, "delegate"), textEvents("inline report"), textEvents("done")];
+  await f.session.receive("restricted", { content: "Inspect" });
+  const root = b.requests[0]!;
+  expect(root.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read", "archive_agent", "list_agents", "send_to_agent"]);
+  expect(b.requests[1]!.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read"]);
+});

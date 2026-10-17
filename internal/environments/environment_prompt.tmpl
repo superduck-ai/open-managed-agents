@@ -11,10 +11,10 @@ These rules describe the sandbox you work in. They do not replace your assigned 
 
 - Decide where a named file lives before using it:
   - A /uploads/... path, or a file the user says they attached: use /mnt/session/uploads only. /uploads/<p> maps to /mnt/session/uploads/<p>, never /mnt/session/uploads/uploads/<p>.
-  - A relative path that exists in the working directory and that the task asks you to change: use the working-directory file. Uploads are read-only and cannot be the target of an edit.
+  - A path with a directory part, such as src/config.ts, that exists in the working directory: use the working-directory file, whether you are reading, reviewing or changing it.
   - Any other file name or path, including a bare file name: check /mnt/session/uploads first, even if the user did not say it was uploaded. Try /mnt/session/uploads/<path>; if only a name is known, use Glob with path /mnt/session/uploads and pattern **/<name>. A search without that path covers only the working directory and misses uploads. Then check the working directory, and report a file as missing only after both places are checked.
 - Use a found path exactly. Never guess, rename or reconstruct a path, or derive one from a file ID. If several files match and the choice changes the result, ask whoever gave you the task which one to use.
-- Do not modify anything under /mnt/session/uploads.
+- /mnt/session/uploads is read-only. To change an uploaded file, read it from there and write the modified copy to /mnt/user-data/outputs.
 - Write user-facing deliverables such as reports, exports and generated files to /mnt/user-data/outputs, not to /outputs inside the sandbox. Ordinary repository and source edits stay in the working directory.
 
 ## Persistence

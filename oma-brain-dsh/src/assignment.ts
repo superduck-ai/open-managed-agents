@@ -14,6 +14,7 @@ export interface Assignment {
     work_dir: string;
     system: string;
     subagents?: SubagentConfig;
+    tools?: string[];
     environment_prompt?: string;
     memory_catalog_prompt?: string;
     skills?: {
@@ -40,6 +41,10 @@ export function validateAssignment(a: Assignment): void {
     throw new Error("Unsupported launch version");
   if (!a.launch.model || !a.launch.work_dir.startsWith("/"))
     throw new Error("Invalid launch model or work directory");
+  const tools = new Set(sandboxToolDefinitions().map((tool) => tool.name));
+  if (a.launch.tools !== undefined && (!Array.isArray(a.launch.tools)
+    || a.launch.tools.some((name) => !tools.has(name))))
+    throw new Error("Invalid launch tools");
   const config = a.launch.subagents;
   if (config) {
     if (config.inlineAgents !== undefined && typeof config.inlineAgents !== "boolean")
@@ -47,7 +52,6 @@ export function validateAssignment(a: Assignment): void {
     if (config.agents !== undefined && !Array.isArray(config.agents))
       throw new Error("Invalid subagent definitions");
     const names = new Set<string>();
-    const tools = new Set(sandboxToolDefinitions().map((tool) => tool.name));
     for (const agent of config.agents ?? []) {
       if (!agent || typeof agent.name !== "string" || !agent.name || names.has(agent.name)
         || typeof agent.description !== "string" || typeof agent.systemPrompt !== "string"

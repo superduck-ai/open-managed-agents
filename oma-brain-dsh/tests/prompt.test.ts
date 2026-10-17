@@ -80,6 +80,10 @@ test("root and child share trust, precedence and verification rules", () => {
   expect(root).toContain("Before declaring the work done, verify the result");
   expect(root).toContain("ask whoever gave you the task how to proceed");
   expect(root).not.toContain("and ask how to proceed");
+  expect(root).toContain("Delegation never widens what you are allowed to do.");
+  expect(child).not.toContain("Delegation never widens");
+  expect(root).toContain("It can change defaults such as language, format, length and way of working, unless the configured instructions say a default is fixed.");
+  expect(root).toContain("A repository convention file applies to its own directory and below");
 });
 
 test("child prompt routes questions to the parent report", () => {

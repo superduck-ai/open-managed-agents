@@ -18,6 +18,7 @@ export function createOmaSession(
     provider: "oma",
     model: assignment.launch.model,
     workDir: assignment.launch.work_dir,
+    tools: assignment.launch.tools,
     systemPrompt: rootSystemPrompt(assignment.launch),
     subagentSystemPrompt: (thread) => childSystemPrompt(assignment.launch, thread),
     setup: async (scope) => {

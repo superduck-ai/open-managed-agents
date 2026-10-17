@@ -28,7 +28,21 @@ DSH 只注册一个 `complete: true` 的 section，各层在 `oma-brain-dsh/src/
 ## 主 Agent 与子 Agent
 
 - 主 Agent：L0 主规则 → L1 → L2 → `# Agent instructions` → L4。
-- 子 Agent：L0 子规则 → L1 → L2 → `# Specialist instructions` → L4。子规则以 `You are subagent <name>.` 开头，说明报告对象是父 Agent、不能继续委派、没有用户可以询问，并且不包含 `list_agents`/`send_to_agent` 说明。
+- 子 Agent：L0 子规则 → L1 → L2 → `# Specialist instructions` → L4。子规则以 `# Subagent rules` 和 `You are subagent <name>.` 开头，`## Execution mode` 列出不能继续委派、不能直接询问用户、只向父 Agent 汇报以及报告必须包含的内容项，并且不包含 `list_agents`/`send_to_agent` 说明。
+- Agent 或 specialist 指令为空时省略对应标题。
+
+## 身份与托管 Agent 指令
+
+平台是托管多个客户 Agent 的运行时，L0 只描述运行环境，不定义身份：主规则标题为 `# Platform rules`，名字、身份、人设和语气由 Agent 指令决定，L0 与子规则中不出现平台名称。默认白标：除非任务需要或用户询问工作方式，不向用户提及平台、沙箱或这些规则。
+
+Agent 指令与平台规则的关系分两类：
+
+| 类别 | 内容 | 能否被 Agent 或 specialist 指令覆盖 |
+|---|---|---|
+| 平台保证 | 审批、不可信内容、凭据、交付物写入位置；子 Agent 的执行模式 | 不能 |
+| 默认行为 | 提问与直接执行的取舍、沟通方式、工作方式、最终回复格式；子 Agent 报告的语气与格式 | 能，例如要求只输出 JSON、先访谈再开始、逐步解释依据 |
+
+子 Agent 的 specialist 指令可能按独立 Agent 编写（例如要求询问用户或调用其他专家），执行模式规则说明这些角色与表达方式只在执行模式内生效。
 - Claude Code 执行路径的子 Agent 定义由 `buildManagedAgentSubagents` 生成，提示词为子 Agent `system` 加上会话配置中已渲染的 `append_system_prompt`，与主 Agent 使用同一份 Environment 文本。
 
 主、子 Agent 共用 Working、Approvals 和 Instructions and trust 三段文本，测试断言两者逐字一致。需要询问时，规则统一写成“询问给你任务的一方”：主 Agent 询问用户，子 Agent 不能直接询问用户，而是停止并在报告中列出阻塞点和所需信息，由父 Agent 决定。
@@ -37,7 +51,7 @@ DSH 只注册一个 `complete: true` 的 section，各层在 `oma-brain-dsh/src/
 
 指令冲突时按以下顺序裁决：
 
-1. 平台保证：审批、不可信内容、凭据和交付物写入位置的规则，不可被覆盖。
+1. 平台保证：审批、不可信内容、凭据和交付物写入位置的规则，以及子 Agent 的执行模式，不可被覆盖。
 2. 环境事实：Environment 段描述沙箱现状，任何指令都不能改变这些事实。
 3. 配置指令：Agent 或 specialist 指令决定角色与领域、明确的限制和禁止事项，以及默认行为。
 4. 当前请求：决定本次做什么。语言、格式、详略和工作方式等默认值可被当前请求的明确要求覆盖，除非配置指令声明该默认值固定（例如嵌入产品需要固定 JSON 输出）；角色边界和明确限制不可被覆盖，冲突时遵循配置指令并说明未能完成的部分。
@@ -52,7 +66,7 @@ DSH 只注册一个 `complete: true` 的 section，各层在 `oma-brain-dsh/src/
 
 ## 委派与限制继承
 
-硬限制由运行时对主、子 Agent 一致执行：子 Agent 线程的工具调用按会话（父 Agent）快照判定权限，被禁用的工具直接拒绝，`always_ask` 照常审批；网络策略属于 Environment，主、子 Agent 共用；inline 子 Agent 继承父 Agent 的可用工具集。只写在父 Agent 自然语言指令中的限制（如只读分析、不得外发数据）不会自动进入子 Agent，L0 委派说明因此要求父 Agent 在委派时传递所有适用的授权范围、禁止事项和数据处理限制，委派不能扩大权限。需要强制执行的限制应配置为工具权限或网络策略，而不是只写在提示词中；本版本不新增“可继承限制”字段，以免偏离 Agent API schema。
+硬限制由运行时对主、子 Agent 一致执行：子 Agent 线程的工具调用按会话（父 Agent）快照判定权限，被禁用的工具直接拒绝，`always_ask` 照常审批；网络策略属于 Environment，主、子 Agent 共用；inline 子 Agent 继承父 Agent 的可用工具集，预定义 specialist 的可见工具与父 Agent 的可用工具取交集。只写在父 Agent 自然语言指令中的限制（如只读分析、不得外发数据）不会自动进入子 Agent，L0 委派说明因此要求父 Agent 在委派时传递所有适用的授权范围、禁止事项和数据处理限制，委派不能扩大权限。需要强制执行的限制应配置为工具权限或网络策略，而不是只写在提示词中；本版本不新增“可继承限制”字段，以免偏离 Agent API schema。
 
 完成前验证属于 Working 段：按风险选择验证方式（重跑相关测试、读回写入的文件、查询修改的记录）；无法验证时区分已完成、已尝试和未验证。
 
@@ -74,7 +88,7 @@ DSH 只注册一个 `complete: true` 的 section，各层在 `oma-brain-dsh/src/
 - `send_to_agent` 的每个参数都有说明，并写明 `thread_id`、`agent_name`、`name` 三者只能选择一个。
 - 线程上限统一使用 `MAX_LIVE_SUBAGENT_THREADS`，工具说明、L0 文本和运行时校验共用该常量。
 - 工具说明不包含会话级数据，避免工具定义变化导致后续缓存失效。
-- 主 Agent 只注册启用的沙箱工具。Go 在创建 Code Session 时用与权限执行相同的 `resolveAgentToolPermission` 计算启用工具，写入 `runtime_tools` 并经 `session_context` 下发；DSH 校验工具名后按该列表注册，inline 子 Agent 继承同一列表。快照没有 `agent_toolset_20260401` 时与权限执行一致视为全部启用；缺少该字段的存量 Code Session 保持注册全部沙箱工具。
+- 主 Agent 只注册启用的沙箱工具。Go 在创建 Code Session 时用与权限执行相同的 `resolveAgentToolPermission` 计算启用工具，写入 `runtime_tools` 并经 `session_context` 下发；DSH 校验工具名后按该列表注册，inline 子 Agent 继承同一列表；预定义 specialist 只注册自身配置与该列表的交集，与服务端按父 Agent 快照判定权限的结果一致。快照没有 `agent_toolset_20260401` 时与权限执行一致视为全部启用；缺少该字段的存量 Code Session 保持注册全部沙箱工具。
 
 ## 调试输出
 
@@ -94,7 +108,8 @@ DSH 设置 `OMA_DEBUG_SYSTEM_PROMPT=1` 时，在发送模型请求前以 `oma_sy
 - `internal/environments/environment_prompt_test.go`：非法配置、默认 unrestricted、limited 网络与 packages 渲染、无白名单主机、长列表截断。
 - `internal/environments/subagents_test.go`：Claude Code 子 Agent 定义带有渲染后的 Environment 提示词。
 - `internal/codesessions/runtime_config_test.go`：`runtime_tools` 与权限执行规则一致（无工具集、全部禁用后单独启用、单独禁用），非法快照拒绝。
-- `oma-brain-dsh/tests/subagents.test.ts`：主 Agent 只注册 `runtime_tools` 中的沙箱工具，inline 子 Agent 继承同一列表；`worker-registration.test.ts` 拒绝未知工具名。
+- `oma-brain-dsh/tests/subagents.test.ts`：主 Agent 只注册 `runtime_tools` 中的沙箱工具，inline 子 Agent 继承同一列表，预定义 specialist 的工具与父 Agent 取交集；`worker-registration.test.ts` 拒绝未知工具名。
+- `oma-brain-dsh/tests/prompt.test.ts` 另覆盖：L0 与子规则不出现平台名称、默认行为可覆盖的声明、子 Agent 执行模式、空指令省略。
 - `tests/environments_runner_cloud_test.go`：Runner 下发的 `appendSystemPrompt` 含有 Environment 各段标题，不再固定整段文本。
 
 以上测试只证明组装顺序、文本内容和字段传递正确，不证明模型行为改善。
@@ -118,3 +133,8 @@ DSH 设置 `OMA_DEBUG_SYSTEM_PROMPT=1` 时，在发送模型请求前以 `oma_sy
 | 用户要求修改附件 | 修改后的副本写入 outputs | 文件查找 |
 | 父 Agent 指令要求只读分析，委派 inline 子 Agent | 委派消息中传递只读限制，子 Agent 不写文件 | 限制继承（提示词） |
 | 父 Agent 禁用 Write/Edit，子 Agent 尝试写文件 | 工具不可见或调用被运行时拒绝 | 限制继承（运行时） |
+| 白标人设，用户问“你是谁” | 按人设回答，不提平台名称 | 身份 |
+| Agent 配置“最终只输出 JSON” | 最终回复保持合法 JSON，不追加收尾说明 | 默认行为覆盖 |
+| Agent 配置“先访谈、逐步澄清再开始” | 先提问，不直接开工 | 默认行为覆盖 |
+| Agent 配置“每个阶段解释依据” | 逐步解释，不被“少叙述”默认值压制 | 默认行为覆盖 |
+| specialist 指令按独立 Agent 编写，要求询问用户 | 不直接询问用户，在报告中列出所需信息 | 子 Agent 执行模式 |

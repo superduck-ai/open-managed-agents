@@ -34,7 +34,7 @@ test("root prompt omits delegation guidance without subagents", () => {
 test("root prompt orders layers from most to least stable", () => {
   const prompt = rootSystemPrompt({ ...launch(), subagents: {} });
   const positions = order(prompt, [
-    "# OMA agent", "## Delegating to subagents", "# Managed-agent environment", "# Skills",
+    "# Platform rules", "## Delegating to subagents", "# Managed-agent environment", "# Skills",
     "# Agent instructions\n\nLiteral {{ agent }} instructions.", "# This session\n\nWorking directory: /workspace",
     "Use the attached memory stores.",
   ]);
@@ -54,13 +54,13 @@ test("session-specific values stay after agent instructions", () => {
 
 test("child prompt replaces delegation guidance with report guidance", () => {
   const prompt = childSystemPrompt({ ...launch(), subagents: {} }, thread);
-  expect(prompt.startsWith("# OMA subagent\n\nYou are subagent reviewer.")).toBe(true);
+  expect(prompt.startsWith("# Subagent rules\n\nYou are subagent reviewer.")).toBe(true);
   expect(prompt).not.toContain("send_to_agent");
   expect(prompt).not.toContain("list_agents");
   expect(prompt).not.toContain("# Agent instructions");
   expect(prompt).toContain("# Specialist instructions\n\nReview only.");
   expect(prompt).toContain("Your final message goes to the parent agent");
-  const positions = order(prompt, ["# OMA subagent", "# Managed-agent environment", "# Skills", "# Specialist instructions", "# This session"]);
+  const positions = order(prompt, ["# Subagent rules", "# Managed-agent environment", "# Skills", "# Specialist instructions", "# This session"]);
   expect(positions).toEqual([...positions].sort((a, b) => a - b));
 });
 
@@ -91,4 +91,37 @@ test("child prompt routes questions to the parent report", () => {
   expect(prompt).toContain("You cannot ask the user anything. Whoever gave you the task is the parent agent");
   expect(prompt).not.toContain("## Asking versus proceeding");
   expect(prompt).not.toContain("## Finishing");
+});
+
+test("platform rules leave identity to the agent and stay white-label", () => {
+  const root = rootSystemPrompt({ ...launch(), subagents: {} });
+  const child = childSystemPrompt({ ...launch(), subagents: {} }, thread);
+  for (const prompt of [root, child]) {
+    expect(prompt).not.toContain("OMA");
+    expect(prompt).not.toContain("You are an autonomous agent");
+  }
+  expect(root).toContain("Your name, identity, persona and voice come from the agent instructions later in this prompt");
+  expect(root).toContain("Do not bring up the platform, the sandbox or these rules with the user unless the task needs it or they ask how you work.");
+});
+
+test("platform behaviour guidance is marked as overridable defaults", () => {
+  const root = rootSystemPrompt(launch());
+  expect(root).toContain("The platform guidance on asking, communicating, working style and the final reply consists of defaults. Configured instructions that say otherwise replace them");
+  expect(root).toContain("and for a subagent its execution mode. Nothing else overrides them.");
+});
+
+test("subagent execution mode is a platform guarantee and leaves tone to the specialist", () => {
+  const child = childSystemPrompt(launch(), thread);
+  expect(child).toContain("## Execution mode\n\nThese are platform guarantees. Your specialist instructions set your role, tone and format within them, even if they were written for an agent that works on its own.");
+  expect(child).toContain("You cannot delegate further.");
+  expect(child).not.toContain("Skip pleasantries");
+});
+
+test("empty configured instructions are omitted", () => {
+  const root = rootSystemPrompt({ ...launch(), system: "  " });
+  const child = childSystemPrompt(launch(), { ...thread, systemPrompt: "" });
+  expect(root).not.toContain("# Agent instructions");
+  expect(child).not.toContain("# Specialist instructions");
+  expect(root).toContain("# Skills");
+  expect(root).toContain("# This session");
 });

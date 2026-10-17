@@ -9,7 +9,7 @@ export function rootSystemPrompt(launch: Launch): string {
     rootPlatformPrompt(launch.subagents !== undefined),
     launch.environment_prompt,
     skillsPrompt(launch.skills),
-    `# Agent instructions\n\n${launch.system}`,
+    instructionsPrompt("Agent instructions", launch.system),
     sessionPrompt(launch),
   ]);
 }
@@ -19,9 +19,13 @@ export function childSystemPrompt(launch: Launch, thread: SubagentThread): strin
     childPlatformPrompt(thread.name),
     launch.environment_prompt,
     skillsPrompt(launch.skills),
-    `# Specialist instructions\n\n${thread.systemPrompt}`,
+    instructionsPrompt("Specialist instructions", thread.systemPrompt),
     sessionPrompt(launch),
   ]);
+}
+
+function instructionsPrompt(heading: string, text: string): string {
+  return text.trim() ? `# ${heading}\n\n${text}` : "";
 }
 
 function skillsPrompt(skills: Launch["skills"]): string {

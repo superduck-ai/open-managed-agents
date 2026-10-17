@@ -25,13 +25,15 @@ test("registration rejects missing and malformed session context envelopes", asy
 
 test("NATS admission reuses CCR registration and session context", async () => {
  const a = assignment();
+ a.launch.environment_prompt = "# Managed-agent environment";
+ a.launch.memory_catalog_prompt = "<attached_memory_stores/>";
  const task = {session_id:a.session_id, worker_epoch:a.worker_epoch, ingress_token:a.ingress_token, model_token:a.model_token};
  const calls: Request[] = [];
  const api = new OmaApi("http://oma.test", (async (url, init) => {
   const request = new Request(url, init); calls.push(request);
   return Response.json(request.method === "POST" ? {worker_epoch:String(a.worker_epoch)} : {session_context: {
    cwd:a.launch.work_dir, model:a.launch.model, system_prompt:a.launch.system,
-   append_system_prompt:a.launch.environment_prompt, runtime_skills:a.launch.skills, subagents:a.launch.subagents,
+   append_system_prompt:a.launch.environment_prompt, memory_catalog_prompt:a.launch.memory_catalog_prompt, runtime_skills:a.launch.skills, subagents:a.launch.subagents,
   }});
  }) as typeof fetch);
  const result = await registerWorkerTask(api, task);
@@ -40,6 +42,8 @@ test("NATS admission reuses CCR registration and session context", async () => {
  expect(result.launch.system).toBe(a.launch.system);
  expect(result.launch.model).toBe(a.launch.model);
  expect(result.launch.work_dir).toBe(a.launch.work_dir);
+ expect(result.launch.environment_prompt).toBe("# Managed-agent environment");
+ expect(result.launch.memory_catalog_prompt).toBe("<attached_memory_stores/>");
  expect(calls).toHaveLength(2);
  expect(calls[0]!.headers.has("X-Worker-ID")).toBe(false);
  expect(calls[0]!.headers.has("X-Worker-Terminal-Events")).toBe(false);

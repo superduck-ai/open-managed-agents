@@ -34,7 +34,8 @@ export async function registerWorkerTask(api: OmaApi, task: BrainTask, signal?: 
     launch: {
       version: 2, model: context.model, work_dir: context.cwd,
       system: context.system_prompt || context.custom_system_prompt || "",
-      environment_prompt: (context.append_system_prompt ?? "") + (context.memory_catalog_prompt ?? ""),
+      environment_prompt: context.append_system_prompt ?? "",
+      memory_catalog_prompt: context.memory_catalog_prompt ?? "",
       skills: context.runtime_skills ?? [], subagents: context.subagents ?? undefined,
     },
     mcp_config: { mcpServers: { sandbox: {

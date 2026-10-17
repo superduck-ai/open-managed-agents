@@ -15,6 +15,7 @@ export interface Assignment {
     system: string;
     subagents?: SubagentConfig;
     environment_prompt?: string;
+    memory_catalog_prompt?: string;
     skills?: {
       name: string;
       description: string;

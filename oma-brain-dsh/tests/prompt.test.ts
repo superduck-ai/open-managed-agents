@@ -49,7 +49,7 @@ test("session-specific values stay after agent instructions", () => {
   const second = rootSystemPrompt({ ...launch(), work_dir: "/other", memory_catalog_prompt: "" });
   const prefix = first.slice(0, first.indexOf("# This session"));
   expect(second.startsWith(prefix)).toBe(true);
-  expect(second).not.toContain("attached memory stores");
+  expect(second).not.toContain("Use the attached memory stores.");
 });
 
 test("child prompt replaces delegation guidance with report guidance", () => {
@@ -62,4 +62,29 @@ test("child prompt replaces delegation guidance with report guidance", () => {
   expect(prompt).toContain("Your final message goes to the parent agent");
   const positions = order(prompt, ["# OMA subagent", "# Managed-agent environment", "# Skills", "# Specialist instructions", "# This session"]);
   expect(positions).toEqual([...positions].sort((a, b) => a - b));
+});
+
+test("root and child share trust, precedence and verification rules", () => {
+  const root = rootSystemPrompt({ ...launch(), subagents: {} });
+  const child = childSystemPrompt({ ...launch(), subagents: {} }, thread);
+  const block = (prompt: string, heading: string) => {
+    const start = prompt.indexOf(heading);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const end = prompt.indexOf("\n## ", start + heading.length);
+    const next = prompt.indexOf("\n# ", start + heading.length);
+    return prompt.slice(start, [end, next].filter((index) => index >= 0).reduce((a, b) => Math.min(a, b), prompt.length));
+  };
+  for (const heading of ["## Instructions and trust", "## Working", "## Approvals"])
+    expect(block(child, heading)).toBe(block(root, heading));
+  expect(root).toContain("Skills listed in this prompt, the instructions of attached memory stores, and convention files");
+  expect(root).toContain("Before declaring the work done, verify the result");
+  expect(root).toContain("ask whoever gave you the task how to proceed");
+  expect(root).not.toContain("and ask how to proceed");
+});
+
+test("child prompt routes questions to the parent report", () => {
+  const prompt = childSystemPrompt(launch(), thread);
+  expect(prompt).toContain("You cannot ask the user anything. Whoever gave you the task is the parent agent");
+  expect(prompt).not.toContain("## Asking versus proceeding");
+  expect(prompt).not.toContain("## Finishing");
 });

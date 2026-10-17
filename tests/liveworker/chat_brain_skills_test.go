@@ -224,7 +224,7 @@ func brainSkillsModel(t *testing.T, read bool, version, marker string) *brainSki
 		if r.Header.Get("Anthropic-Version") != "2023-06-01" {
 			t.Error("missing Anthropic-Version")
 		}
-		for _, fragment := range []string{"All filesystem and command tools execute in the remote sandbox.", "OMA environment:", "Available skills, read SKILL.md through Read before use:", "Configured agent instructions:", "You are a research agent", "${{ agent_example }}", "Verify Brain skill loading", brainSkillPath, version} {
+		for _, fragment := range []string{"File, search and command tools run in the remote sandbox, not on the Brain host.", "OMA environment:", "Available skills. Read a skill's SKILL.md with Read before using it:", "Configured agent instructions define your role", "You are a research agent", "${{ agent_example }}", "Verify Brain skill loading", brainSkillPath, version} {
 			if !bytes.Contains(request.System, []byte(fragment)) {
 				t.Errorf("missing Brain prompt fragment %q", fragment)
 			}

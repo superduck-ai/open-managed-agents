@@ -54,7 +54,7 @@ DSH 开始模型执行前等待首个 `processing` 回执确认；后端通过�
 
 创建 Code Session 时，Go 对 prompt、Skill 和子 Agent 字段按 schema 解析，拒绝类型错误；子 Agent 定义从固定版本快照解析后写入配置。MCP 声明、outcomes 与未识别扩展字段在 JSON 边界原样透传，避免改写第三方字段或高精度数字。
 
-系统规则由 DSH 原生提示词、OMA 环境约束和用户 Agent 指令共同组成。Memory 目录来自已解析的挂载资源，通过公共 `memory_catalog_prompt` 字段提供给执行端；DSH 将其追加到环境提示词。原有沙箱客户端的 `append_system_prompt` 保持不变。Skill 和子 Agent 配置在创建 Code Session 时固定，凭据恢复不重新解析，因此不会因 Agent 或 Skill 更新而漂移。
+系统规则由 DSH 原生提示词、OMA 环境约束和用户 Agent 指令共同组成。OMA 提示词分为共享执行规则、会话环境、Skill 列表三段；父会话额外包含委派规则和用户 Agent 指令，并声明用户指令不能授予工具、权限或沙箱访问。子 Agent 使用独立的提示词：包含共享执行规则和会话环境，不包含委派工具说明及父会话的用户指令，子 Agent 自己的专长指令由子 Agent 运行时追加。Memory 目录来自已解析的挂载资源，通过公共 `memory_catalog_prompt` 字段提供给执行端；DSH 将其追加到环境提示词。原有沙箱客户端的 `append_system_prompt` 保持不变。Skill 和子 Agent 配置在创建 Code Session 时固定，凭据恢复不重新解析，因此不会因 Agent 或 Skill 更新而漂移。
 
 DSH 在本地把公共配置转换为运行时对象，并根据 `OMA_API_URL` 构造沙箱 MCP URL；Go 不再提供 `brain.launch` 或完整 assignment 响应。`environment_runner.brain_api_base_url` 已删除。
 

@@ -17,27 +17,6 @@ const (
 	defaultClaudePath             = "/opt/claude-code/bin/claude"
 	defaultEnvironmentWorkDir     = "/home/user"
 	launcherSettingsPath          = "/root/.claude/launcher-settings.json"
-	managedAgentEnvironmentPrompt = `# Managed-agent environment
-
-These rules describe the current sandbox environment and do not replace your assigned role.
-
-## Uploaded inputs
-
-- A public/API path /uploads/<relative-path> is available inside the sandbox at /mnt/session/uploads/<relative-path>. Use the sandbox path when accessing the file; do not try to open /uploads/... inside the sandbox.
-- If the user provides a public/API path /uploads/<relative-path>, use /mnt/session/uploads/<relative-path> inside the sandbox. Never form /mnt/session/uploads/uploads/<relative-path>.
-- /mnt/session/uploads is read-only. Do not modify files under this directory.
-- Mandatory lookup order: for every filename or relative file path mentioned by the user, check /mnt/session/uploads before the working directory, even if the user does not say the file was uploaded. Never run a working-directory-only search first.
-- First try the exact sandbox path /mnt/session/uploads/<user-provided-relative-path>. If only a filename is known or that exact path is absent, search recursively with Glob using path /mnt/session/uploads and pattern **/<filename>. Omitting path searches only the working directory and does not satisfy this rule.
-- Search the working directory only after the uploads check finds no match. Do not report a file missing until both locations have been checked in this order.
-- Uploaded filenames and paths are authoritative. Use an exact path when provided; otherwise, use only a path returned by inspecting /mnt/session/uploads. If multiple files match, ask the user which one to use.
-- Never guess, truncate, rename, or reconstruct an uploaded input path. Do not infer an upload path from metadata such as a file ID.
-
-## Output deliverables
-
-- /mnt/user-data/outputs is read-write. Write every file intended as a user-facing session output to /mnt/user-data/outputs/<relative-path>.
-- A file written there is surfaced at the corresponding public/API path /outputs/<relative-path>. Do not write to /outputs/... inside the sandbox.
-- Files written outside /mnt/user-data/outputs are working files and are not surfaced as session outputs.
-- Keep normal repository and source-code edits in the repository working directory. Do not redirect them to /mnt/user-data/outputs; only exported, user-facing deliverables belong there.`
 )
 
 func managedAgentSessionConfig(
@@ -76,7 +55,7 @@ func managedAgentSessionConfig(
 		"model":                 modelIDFromAgentSnapshot(session.AgentSnapshot),
 		"sources":               runtimeResources.sources,
 		"outcomes":              []any{},
-		"append_system_prompt":  managedAgentEnvironmentPrompt,
+		"append_system_prompt":  runtimeResources.environmentPrompt(),
 		"memory_catalog_prompt": memoryPrompt,
 		"runtime_skills":        skills,
 		"worker_transport":      runtimeResources.workerTransport,

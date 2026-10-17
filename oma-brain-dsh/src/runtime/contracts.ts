@@ -4,6 +4,8 @@ import type { ToolDefinition } from "@deepseek-ai/dsh-tools";
 import type { Payload } from "../json.ts";
 import type { Context } from "@deepseek-ai/cordis";
 
+export const MAX_LIVE_SUBAGENT_THREADS = 25;
+
 export interface SubagentDefinition {
   name: string;
   description: string;
@@ -71,7 +73,7 @@ export interface SessionRuntimeConfig {
   systemPrompt: string;
   /** Mount root-session services before tool registration. Children share these services. */
   setup?(scope: Context): Promise<void>;
-  subagentSystemPrompt?: string;
+  subagentSystemPrompt?(thread: Pick<SubagentThread, "name" | "systemPrompt">): string;
   tools?: string[];
   subagents?: SubagentConfig;
   /** Host binds a child model identity to the parent's credentials. */

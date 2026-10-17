@@ -15,7 +15,7 @@ CRUD、三张表、S3 正文、控制台列表/详情已落地。本文只补运
 保存到既有 Code Session 的 `metadata.config.sandbox_memory_stores`。投影不分 runtime 模式，
 不查询正文、不枚举文件、不访问对象存储，也不创建沙箱。
 
-Brain 将权威目录经过校验和 XML 转义后追加到 launch v2 的 `environment_prompt`，
+Brain 将权威目录经过校验和 XML 转义后放入 launch v2 的 `memory_prompt`，位于系统提示词末尾的会话段，
 Agent 原始 system 保持独立。恢复优先使用持久化目录；旧 Code Session 没有该字段时，
 从已有 Session attach 快照补齐。明确的空目录仍为空，不由 Agent 自报配置或新 attach 值替换。
 非法路径、权限、重复 mount 和超长 instructions 拒绝启动。

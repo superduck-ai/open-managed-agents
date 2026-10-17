@@ -628,6 +628,10 @@ func (r *Runner) prepareManagedAgentLaunch(
 		}
 	}
 	runtimeResources.runtimeSkills = runtimeSkills
+	runtimeResources.environment, err = environmentPromptInputFromConfig(env.Config)
+	if err != nil {
+		return nil, fmt.Errorf("resolve managed agent environment prompt: %w", err)
+	}
 	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
 		runtimeResources.workerTransport = "nats"
 	}

@@ -31,7 +31,7 @@ test("NATS admission reuses CCR registration and session context", async () => {
   const request = new Request(url, init); calls.push(request);
   return Response.json(request.method === "POST" ? {worker_epoch:String(a.worker_epoch)} : {session_context: {
    cwd:a.launch.work_dir, model:a.launch.model, system_prompt:a.launch.system,
-   append_system_prompt:a.launch.environment_prompt, runtime_skills:a.launch.skills, subagents:a.launch.subagents,
+   append_system_prompt:"# Environment", memory_catalog_prompt:"memory catalog", runtime_skills:a.launch.skills, subagents:a.launch.subagents,
   }});
  }) as typeof fetch);
  const result = await registerWorkerTask(api, task);
@@ -40,6 +40,8 @@ test("NATS admission reuses CCR registration and session context", async () => {
  expect(result.launch.system).toBe(a.launch.system);
  expect(result.launch.model).toBe(a.launch.model);
  expect(result.launch.work_dir).toBe(a.launch.work_dir);
+ expect(result.launch.environment_prompt).toBe("# Environment");
+ expect(result.launch.memory_prompt).toBe("memory catalog");
  expect(calls).toHaveLength(2);
  expect(calls[0]!.headers.has("X-Worker-ID")).toBe(false);
  expect(calls[0]!.headers.has("X-Worker-Terminal-Events")).toBe(false);

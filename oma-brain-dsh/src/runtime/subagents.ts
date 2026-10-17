@@ -1,7 +1,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { object, type Payload } from "../json.ts";
 import { SessionRuntime } from "./session.ts";
-import type { SubagentBridge, SubagentThread, ToolExecutionBridge } from "./contracts.ts";
+import { MAX_LIVE_SUBAGENT_THREADS, type SubagentBridge, type SubagentThread, type ToolExecutionBridge } from "./contracts.ts";
 
 /** Child turns are awaited so the existing single-dispatch journal stays valid. */
 export class Subagents {
@@ -43,7 +43,7 @@ export class Subagents {
         execute: (args, exec) => execute(object(args), exec.signal),
       });
     };
-    register("list_agents", "List predefined specialists and retained subagent threads. Idle threads retain history and count toward the 25-thread limit.", {}, [], async () => JSON.stringify({
+    register("list_agents", `List predefined specialists and retained subagent threads. Idle threads retain history and count toward the ${MAX_LIVE_SUBAGENT_THREADS}-thread limit.`, {}, [], async () => JSON.stringify({
       agents: (config.agents ?? []).map(({ name, description }) => ({ name, description })),
       inline_agents: config.inlineAgents !== false,
       threads: this.threads.map(({ id, name, status }) => ({ id, name, status })),
@@ -86,8 +86,8 @@ export class Subagents {
         throw new Error("Follow-up accepts only thread_id and message");
       thread = this.thread(args.thread_id);
     } else {
-      if (this.threads.filter((entry) => entry.status !== "terminated").length >= 25)
-        throw new Error("A session can have at most 25 live subagent threads; archive an idle thread first");
+      if (this.threads.filter((entry) => entry.status !== "terminated").length >= MAX_LIVE_SUBAGENT_THREADS)
+        throw new Error(`A session can have at most ${MAX_LIVE_SUBAGENT_THREADS} live subagent threads; archive an idle thread first`);
       const definition = args.agent_name
         ? config.agents?.find((agent) => agent.name === args.agent_name) : undefined;
       if (args.agent_name && !definition) throw new Error("Unknown predefined agent");
@@ -178,7 +178,8 @@ export class Subagents {
     child = new SessionRuntime(this.parent.ctx, {
       ...config, id: thread.id, model: thread.model, tools: thread.tools,
       subagents: undefined, bindThread: undefined, setup: undefined,
-      systemPrompt: `${config.subagentSystemPrompt ?? config.systemPrompt}\n\nYou are subagent ${thread.name}. Your conversation is isolated. Delegation tools are unavailable. Report your findings to the parent.\nSpecialist instructions:\n${thread.systemPrompt}`,
+      systemPrompt: config.subagentSystemPrompt?.(thread)
+        ?? `${config.systemPrompt}\n\nYou are subagent ${thread.name}. Your conversation is isolated. Delegation tools are unavailable. Report your findings to the parent.\nSpecialist instructions:\n${thread.systemPrompt}`,
     }, {
       beforeRequest: async () => { await child.flushLog(); await this.bridge.beforeRequest(); },
       onEvent: (event) => this.bridge.onEvent(thread.id, event),

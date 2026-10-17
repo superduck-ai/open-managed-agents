@@ -17,6 +17,8 @@ type managedAgentRuntimeResources struct {
 	sources         []json.RawMessage
 	workDir         string
 	memoryMounts    []memoryRuntimeMount
+	repositories    []repositoryMount
+	environment     environmentPromptInput
 }
 
 type gitRepositoryRuntimeSource struct {
@@ -78,6 +80,7 @@ func resolveManagedAgentRuntimeResources(resources []db.SessionResource) (manage
 				return managedAgentRuntimeResources{}, err
 			}
 			resolved.sources = append(resolved.sources, source)
+			resolved.repositories = append(resolved.repositories, repositoryMount{repo: strings.TrimPrefix(repositoryURL.Path, "/"), mountPath: spec.MountPath})
 		case sessionresource.MemoryStoreType:
 			mount, ok := parseMemoryRuntimeMount(resource.Payload)
 			if !ok {

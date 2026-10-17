@@ -76,6 +76,10 @@ DSH 只注册一个 `complete: true` 的 section，各层在 `oma-brain-dsh/src/
 - 工具说明不包含会话级数据，避免工具定义变化导致后续缓存失效。
 - 主 Agent 只注册启用的沙箱工具。Go 在创建 Code Session 时用与权限执行相同的 `resolveAgentToolPermission` 计算启用工具，写入 `runtime_tools` 并经 `session_context` 下发；DSH 校验工具名后按该列表注册，inline 子 Agent 继承同一列表。快照没有 `agent_toolset_20260401` 时与权限执行一致视为全部启用；缺少该字段的存量 Code Session 保持注册全部沙箱工具。
 
+## 调试输出
+
+DSH 设置 `OMA_DEBUG_SYSTEM_PROMPT=1` 时，在发送模型请求前以 `oma_system_prompt` 事件输出实际发送的 `system` 文本、工具名和二者的 SHA-256。同一会话或子 Agent 线程只在内容变化时输出一次，最多跟踪 1000 个会话。输出包含 Agent 指令和 Memory 目录，默认关闭，只用于本地调试；该开关不进入 Go 侧 slog 运行日志。
+
 ## 未纳入本版本
 
 - `<oma-context>`/`<oma-reminder>` 运行时注入：当前没有定时或 webhook 触发的会话，触发来源信号尚不存在。

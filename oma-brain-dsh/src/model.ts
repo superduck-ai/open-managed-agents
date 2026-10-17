@@ -6,6 +6,7 @@ import { OmaApi } from "./api.ts";
 import { object, type Payload } from "./json.ts";
 import { sse } from "./sse.ts";
 import { workerDiagnostic } from "./ccrv2/diagnostics.ts";
+import { logSystemPrompt } from "./prompt/debug.ts";
 
 export class MessagesAdapter extends LlmAdapter {
   constructor(readonly api: OmaApi) { super(); }
@@ -23,7 +24,9 @@ export class MessagesAdapter extends LlmAdapter {
     if (process.env.OMA_DEBUG_TIMING === "1") workerDiagnostic("info", "oma_model_started", {
       session_id: options.sessionId, timestamp: new Date().toISOString(), tools: options.tools?.length ?? 0,
     });
-    const response = await this.api.requestResponse("/v1/messages", assignment.model_token, "POST", messagesRequest(options),
+    const request = messagesRequest(options);
+    logSystemPrompt(options.sessionId, request);
+    const response = await this.api.requestResponse("/v1/messages", assignment.model_token, "POST", request,
       { "anthropic-version": "2023-06-01", Accept: "text/event-stream",
         ...(options.sessionId !== assignment.session_id ? { "X-Claude-Code-Agent-Id": options.sessionId } : {}),
       }, options.signal, 300_000);

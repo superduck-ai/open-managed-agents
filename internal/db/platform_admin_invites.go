@@ -20,21 +20,14 @@ func (tx *PlatformAdminTx) InsertInvite(ctx context.Context, input PlatformAdmin
 }
 
 func (tx *PlatformAdminTx) ResendInvite(ctx context.Context, org, invitation string) error {
-	mapper := NewPlatformAdminInviteMapper(tx.executor)
-	if err := mapper.CancelDeliveries(ctx, org, invitation); err != nil {
-		return err
-	}
-	return mapper.Resend(ctx, org, invitation)
+	return NewPlatformAdminInviteMapper(tx.executor).Resend(ctx, org, invitation)
 }
 
 func (tx *PlatformAdminTx) RevokeInvite(ctx context.Context, org, invitation string) error {
-	mapper := NewPlatformAdminInviteMapper(tx.executor)
-	if err := mapper.Revoke(ctx, org, invitation); err != nil {
-		return err
-	}
-	return mapper.CancelDeliveries(ctx, org, invitation)
+	return NewPlatformAdminInviteMapper(tx.executor).Revoke(ctx, org, invitation)
 }
 
-func (tx *PlatformAdminTx) EnqueueInviteDelivery(ctx context.Context, org, invitation string) (string, error) {
-	return NewPlatformAdminInviteMapper(tx.executor).Enqueue(ctx, org, invitation)
+func (tx *PlatformAdminTx) EnqueueInviteDelivery(ctx context.Context, org, invitation string) (PlatformAdminInvite, error) {
+	row, err := NewPlatformAdminInviteMapper(tx.executor).Enqueue(ctx, org, invitation)
+	return row, mapNoRows(err)
 }

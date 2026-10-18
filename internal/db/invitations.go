@@ -27,6 +27,23 @@ type Invitation struct {
 	UserID           string
 }
 
+type InvitationDelivery struct {
+	InvitationUUID   string
+	OrganizationUUID string
+	Recipient        string
+	InvitedAt        time.Time
+	ExpiresAt        time.Time
+}
+
+func (d *DB) StartInvitationDelivery(ctx context.Context, snapshot InvitationDelivery) (bool, error) {
+	count, err := NewInvitationMapper(d.mapperDB).StartDelivery(ctx, snapshot)
+	return count == 1, err
+}
+
+func (d *DB) FinishInvitationDelivery(ctx context.Context, snapshot InvitationDelivery, status string) error {
+	return NewInvitationMapper(d.mapperDB).FinishDelivery(ctx, snapshot, status)
+}
+
 func (r invitationRow) invitation() Invitation {
 	return Invitation{ID: r.ID, OrganizationUUID: r.OrganizationUUID, OrganizationName: r.OrganizationName,
 		Email: r.Email, Role: r.Role, Status: r.Status, InvitedAt: r.InvitedAt, ExpiresAt: r.ExpiresAt}

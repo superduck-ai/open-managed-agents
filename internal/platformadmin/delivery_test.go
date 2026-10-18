@@ -17,10 +17,10 @@ type deliveryStub struct {
 	sends    int
 }
 
-func (s *deliveryStub) StartPlatformAdminDelivery(context.Context, string) (db.PlatformAdminDelivery, bool, error) {
-	return db.PlatformAdminDelivery{UUID: "delivery", OrganizationUUID: "organization"}, s.found, s.err
+func (s *deliveryStub) StartInvitationDelivery(context.Context, db.InvitationDelivery) (bool, error) {
+	return s.found, s.err
 }
-func (s *deliveryStub) FinishPlatformAdminDelivery(_ context.Context, _, status string) error {
+func (s *deliveryStub) FinishInvitationDelivery(_ context.Context, _ db.InvitationDelivery, status string) error {
 	s.finished = status
 	return nil
 }
@@ -44,7 +44,7 @@ func TestInvitationDeliveryWorker(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			worker := &DeliveryWorker{db: &tc.stub, mailer: &tc.stub}
-			err := worker.Work(t.Context(), &river.Job[deliveryArgs]{Args: deliveryArgs{DeliveryUUID: "delivery"}})
+			err := worker.Work(t.Context(), &river.Job[deliveryArgs]{Args: deliveryArgs{InvitationUUID: "invitation", OrganizationUUID: "organization"}})
 			if (err != nil) != tc.wantErr || tc.stub.finished != tc.wantStatus || tc.stub.sends != tc.wantSends {
 				t.Fatalf("投递结果：%v %+v", err, tc.stub)
 			}

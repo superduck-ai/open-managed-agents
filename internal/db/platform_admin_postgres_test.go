@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/superduck-ai/yourbatis"
@@ -134,10 +135,6 @@ func TestPlatformAdministrationPostgres(t *testing.T) {
 		if err != nil || len(rows) != 0 {
 			t.Fatalf("邀请未回滚：%+v，%v", rows, err)
 		}
-		var count int
-		if err := sqlDB.QueryRowContext(ctx, "SELECT count(*) FROM platform_admin_invite_deliveries WHERE invitation_uuid = $1", invitation).Scan(&count); err != nil || count != 0 {
-			t.Fatalf("投递未回滚：%d，%v", count, err)
-		}
 		if err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
 			_, err := tx.InsertInvite(ctx, input)
 			if err != nil {
@@ -152,19 +149,78 @@ func TestPlatformAdministrationPostgres(t *testing.T) {
 		if err != nil || len(rows) != 1 || rows[0].DeliveryStatus != "pending" {
 			t.Fatalf("投递未持久化：%+v，%v", rows, err)
 		}
-		var deliveryUUID string
-		if err := sqlDB.QueryRowContext(ctx, "SELECT uuid FROM platform_admin_invite_deliveries WHERE invitation_uuid = $1", invitation).Scan(&deliveryUUID); err != nil {
-			t.Fatal(err)
-		}
-		delivery, found, err := store.StartPlatformAdminDelivery(ctx, deliveryUUID)
+		snapshot := InvitationDelivery{InvitationUUID: invitation, OrganizationUUID: organization, Recipient: input.Email, InvitedAt: rows[0].InvitedAt, ExpiresAt: rows[0].ExpiresAt}
+		found, err := store.StartInvitationDelivery(ctx, snapshot)
 		if err != nil || !found {
-			t.Fatalf("开始投递：%+v %v %v", delivery, found, err)
+			t.Fatalf("开始投递：%v %v", found, err)
 		}
-		if err := store.FinishPlatformAdminDelivery(ctx, delivery.UUID, "failed"); err != nil {
+		if err := store.FinishInvitationDelivery(ctx, snapshot, "failed"); err != nil {
 			t.Fatal(err)
 		}
-		if _, found, err := store.StartPlatformAdminDelivery(ctx, deliveryUUID); err != nil || !found {
+		if found, err := store.StartInvitationDelivery(ctx, snapshot); err != nil || !found {
 			t.Fatalf("允许 River 重试：%v %v", found, err)
+		}
+
+		if err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
+			if err := tx.ResendInvite(ctx, organization, invitation); err != nil {
+				return err
+			}
+			_, err := tx.EnqueueInviteDelivery(ctx, organization, invitation)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.FinishInvitationDelivery(ctx, snapshot, "sent"); err != nil {
+			t.Fatal(err)
+		}
+		if found, err := store.StartInvitationDelivery(ctx, snapshot); err != nil || found {
+			t.Fatalf("重发后旧任务仍有效：%v %v", found, err)
+		}
+		rows, err = store.ListPlatformAdminInvites(ctx, PlatformAdminPageQuery{OrganizationUUID: organization, Limit: 10})
+		if err != nil || rows[0].DeliveryStatus != "pending" {
+			t.Fatalf("旧结果覆盖重发状态：%+v %v", rows, err)
+		}
+		snapshot.InvitedAt, snapshot.ExpiresAt = rows[0].InvitedAt, rows[0].ExpiresAt
+		for _, stale := range []InvitationDelivery{
+			{InvitationUUID: snapshot.InvitationUUID, OrganizationUUID: uuid.NewV4().String(), Recipient: snapshot.Recipient, InvitedAt: snapshot.InvitedAt, ExpiresAt: snapshot.ExpiresAt},
+			{InvitationUUID: snapshot.InvitationUUID, OrganizationUUID: snapshot.OrganizationUUID, Recipient: "wrong@example.com", InvitedAt: snapshot.InvitedAt, ExpiresAt: snapshot.ExpiresAt},
+			{InvitationUUID: snapshot.InvitationUUID, OrganizationUUID: snapshot.OrganizationUUID, Recipient: snapshot.Recipient, InvitedAt: snapshot.InvitedAt.Add(time.Second), ExpiresAt: snapshot.ExpiresAt},
+		} {
+			if found, err := store.StartInvitationDelivery(ctx, stale); err != nil || found {
+				t.Fatalf("错误快照被执行：%+v %v", stale, err)
+			}
+		}
+		if found, err := store.StartInvitationDelivery(ctx, snapshot); err != nil || !found {
+			t.Fatalf("新任务不能投递：%v %v", found, err)
+		}
+		wrong := snapshot
+		wrong.OrganizationUUID = uuid.NewV4().String()
+		if err := store.FinishInvitationDelivery(ctx, wrong, "sent"); err != nil {
+			t.Fatal(err)
+		}
+		current, err := store.ListPlatformAdminInvites(ctx, PlatformAdminPageQuery{OrganizationUUID: organization, Limit: 10})
+		if err != nil || current[0].DeliveryStatus != "sending" {
+			t.Fatalf("跨组织结果被写入：%+v %v", current, err)
+		}
+		if _, err := store.ResendConsoleInvite(ctx, organization, input.ExternalID); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.FinishInvitationDelivery(ctx, snapshot, "sent"); err != nil {
+			t.Fatal(err)
+		}
+		rows, err = store.ListPlatformAdminInvites(ctx, PlatformAdminPageQuery{OrganizationUUID: organization, Limit: 10})
+		if err != nil || rows[0].DeliveryStatus != "not_queued" {
+			t.Fatalf("Console 重发保留了旧平台结果：%+v %v", rows, err)
+		}
+		if err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
+			_, err := tx.EnqueueInviteDelivery(ctx, organization, invitation)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		snapshot.InvitedAt, snapshot.ExpiresAt = rows[0].InvitedAt, rows[0].ExpiresAt
+		if found, err := store.StartInvitationDelivery(ctx, snapshot); err != nil || !found {
+			t.Fatalf("撤销前任务状态：%v %v", found, err)
 		}
 		if err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
 			pending, err := tx.HasPendingInvite(ctx, organization, input.Email)
@@ -181,15 +237,47 @@ func TestPlatformAdministrationPostgres(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
+		if err := store.FinishInvitationDelivery(ctx, snapshot, "sent"); err != nil {
+			t.Fatal(err)
+		}
 		rows, err = store.ListPlatformAdminInvites(ctx, PlatformAdminPageQuery{OrganizationUUID: organization, Limit: 10})
 		if err != nil || len(rows) != 1 || rows[0].Status != "deleted" || rows[0].DeliveryStatus != "cancelled" {
 			t.Fatalf("撤销未取消投递：%+v，%v", rows, err)
 		}
-		if _, found, err := store.StartPlatformAdminDelivery(ctx, deliveryUUID); err != nil || found {
+		if found, err := store.StartInvitationDelivery(ctx, snapshot); err != nil || found {
 			t.Fatalf("撤销后仍允许投递：%v %v", found, err)
 		}
 		if _, err := store.RespondToInvitation(ctx, input.ExternalID, input.Email, true); !errors.Is(err, ErrInvitationRevoked) {
 			t.Fatalf("撤销后仍能接受邀请：%v", err)
 		}
 	})
+	t.Run("失效邀请快照不得执行或回写", func(t *testing.T) {
+		for _, state := range []string{"accepted", "declined", "expired"} {
+			t.Run(state, func(t *testing.T) {
+				snapshot := InvitationDelivery{InvitationUUID: uuid.NewV4().String(), OrganizationUUID: organization,
+					Recipient: state + "@example.com", InvitedAt: time.Now().UTC().Truncate(time.Microsecond), ExpiresAt: time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)}
+				status := state
+				if state == "expired" {
+					status = "pending"
+					snapshot.ExpiresAt = snapshot.InvitedAt.Add(-time.Minute)
+					snapshot.InvitedAt = snapshot.InvitedAt.Add(-24 * time.Hour)
+				}
+				if _, err := sqlDB.ExecContext(ctx, `INSERT INTO organization_invites (uuid, external_id, organization_uuid, email, role, status, invited_at, expires_at, email_delivery_status)
+ VALUES ($1,$2,$3,$4,'user',$5,$6,$7,'sending')`, snapshot.InvitationUUID, "invite_"+snapshot.InvitationUUID, organization, snapshot.Recipient, status, snapshot.InvitedAt, snapshot.ExpiresAt); err != nil {
+					t.Fatal(err)
+				}
+				if found, err := store.StartInvitationDelivery(ctx, snapshot); err != nil || found {
+					t.Fatalf("失效邀请仍被发送：%v %v", found, err)
+				}
+				if err := store.FinishInvitationDelivery(ctx, snapshot, "sent"); err != nil {
+					t.Fatal(err)
+				}
+				var result string
+				if err := sqlDB.QueryRowContext(ctx, "SELECT email_delivery_status FROM organization_invites WHERE uuid=$1", snapshot.InvitationUUID).Scan(&result); err != nil || result != "sending" {
+					t.Fatalf("失效邀请仍被回写：%s %v", result, err)
+				}
+			})
+		}
+	})
+
 }

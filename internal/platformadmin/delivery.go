@@ -13,7 +13,11 @@ import (
 const DeliveryQueue = "platform_invitation_delivery"
 
 type deliveryArgs struct {
-	DeliveryUUID string `json:"delivery_uuid"`
+	InvitationUUID   string    `json:"invitation_uuid"`
+	OrganizationUUID string    `json:"organization_uuid"`
+	Recipient        string    `json:"recipient"`
+	InvitedAt        time.Time `json:"invited_at"`
+	ExpiresAt        time.Time `json:"expires_at"`
 }
 
 func (deliveryArgs) Kind() string { return DeliveryQueue }
@@ -22,8 +26,8 @@ func (deliveryArgs) InsertOpts() river.InsertOpts {
 }
 
 type deliveryStore interface {
-	StartPlatformAdminDelivery(context.Context, string) (db.PlatformAdminDelivery, bool, error)
-	FinishPlatformAdminDelivery(context.Context, string, string) error
+	StartInvitationDelivery(context.Context, db.InvitationDelivery) (bool, error)
+	FinishInvitationDelivery(context.Context, db.InvitationDelivery, string) error
 }
 type deliveryMailer interface {
 	NotifyPlatform(context.Context, string, string, time.Time) string
@@ -40,15 +44,16 @@ func RegisterDeliveryWorker(workers *river.Workers, database *db.DB, mailer deli
 }
 func (w *DeliveryWorker) Timeout(*river.Job[deliveryArgs]) time.Duration { return 30 * time.Second }
 func (w *DeliveryWorker) Work(ctx context.Context, job *river.Job[deliveryArgs]) error {
-	delivery, found, err := w.db.StartPlatformAdminDelivery(ctx, job.Args.DeliveryUUID)
+	snapshot := db.InvitationDelivery{InvitationUUID: job.Args.InvitationUUID, OrganizationUUID: job.Args.OrganizationUUID, Recipient: job.Args.Recipient, InvitedAt: job.Args.InvitedAt, ExpiresAt: job.Args.ExpiresAt}
+	found, err := w.db.StartInvitationDelivery(ctx, snapshot)
 	if err != nil || !found {
 		return err
 	}
-	status := w.mailer.NotifyPlatform(ctx, delivery.OrganizationUUID, delivery.Recipient, delivery.ExpiresAt)
+	status := w.mailer.NotifyPlatform(ctx, snapshot.OrganizationUUID, snapshot.Recipient, snapshot.ExpiresAt)
 	if status != "sent" {
 		status = "failed"
 	}
-	if err := w.db.FinishPlatformAdminDelivery(ctx, delivery.UUID, status); err != nil {
+	if err := w.db.FinishInvitationDelivery(ctx, snapshot, status); err != nil {
 		return err
 	}
 	if status == "failed" {
@@ -65,6 +70,6 @@ func (s *Service) enqueueInvite(ctx context.Context, tx *db.PlatformAdminTx, org
 	if err != nil {
 		return err
 	}
-	_, err = s.delivery.InsertTx(ctx, tx.SQLTx(), deliveryArgs{DeliveryUUID: delivery}, nil)
+	_, err = s.delivery.InsertTx(ctx, tx.SQLTx(), deliveryArgs{InvitationUUID: delivery.UUID, OrganizationUUID: org, Recipient: delivery.Email, InvitedAt: delivery.InvitedAt, ExpiresAt: delivery.ExpiresAt}, nil)
 	return err
 }

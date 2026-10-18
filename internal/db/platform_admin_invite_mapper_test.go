@@ -19,7 +19,6 @@ func TestPlatformAdminInviteWriteBindings(t *testing.T) {
 	}{
 		{"Resend", yourbatis.StatementUpdate, func(m PlatformAdminInviteMapper) error { return m.Resend(t.Context(), org, invitation) }, "expires_at = now() + interval '21 days'"},
 		{"Revoke", yourbatis.StatementUpdate, func(m PlatformAdminInviteMapper) error { return m.Revoke(t.Context(), org, invitation) }, "status = 'deleted'"},
-		{"CancelDeliveries", yourbatis.StatementUpdate, func(m PlatformAdminInviteMapper) error { return m.CancelDeliveries(t.Context(), org, invitation) }, "status IN ('pending', 'sending', 'failed')"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			failure := errors.New("执行失败")
@@ -83,8 +82,8 @@ func TestPlatformAdminInviteReadAndInsertBindings(t *testing.T) {
 		{"Lock", func(m PlatformAdminInviteMapper) error {
 			_, err := m.Lock(t.Context(), input.OrganizationUUID, input.UUID)
 			return err
-		}, invitation, yourbatis.StatementSelect, []any{input.OrganizationUUID, input.UUID}, []string{"i.organization_uuid = $1 AND i.uuid = $2", "FOR UPDATE OF i", "d.organization_uuid = i.organization_uuid AND d.invitation_uuid = i.uuid", "ORDER BY d.created_at DESC, d.uuid DESC LIMIT 1"}},
-		{"Insert", func(m PlatformAdminInviteMapper) error { _, err := m.Insert(t.Context(), input); return err }, invitation, yourbatis.StatementInsert, []any{input.UUID, input.ExternalID, input.OrganizationUUID, input.Email, input.Role, input.AccountUUID}, []string{"VALUES ($1, $2, $3, $4, $5, 'pending', now(), now() + interval '21 days', $6)", "RETURNING uuid, external_id, email, role, status, invited_at, expires_at, 'pending' AS delivery_status"}},
+		}, invitation, yourbatis.StatementSelect, []any{input.OrganizationUUID, input.UUID}, []string{"i.organization_uuid = $1 AND i.uuid = $2", "FOR UPDATE OF i", "i.email_delivery_status", "THEN 'cancelled' ELSE i.email_delivery_status END AS delivery_status"}},
+		{"Insert", func(m PlatformAdminInviteMapper) error { _, err := m.Insert(t.Context(), input); return err }, invitation, yourbatis.StatementInsert, []any{input.UUID, input.ExternalID, input.OrganizationUUID, input.Email, input.Role, input.AccountUUID}, []string{"VALUES ($1, $2, $3, $4, $5, 'pending', now(), now() + interval '21 days', $6)", "RETURNING uuid, external_id, email, role, status, invited_at, expires_at, email_delivery_status AS delivery_status"}},
 		{"HasPending", func(m PlatformAdminInviteMapper) error {
 			_, err := m.HasPending(t.Context(), input.OrganizationUUID, input.Email)
 			return err
@@ -106,10 +105,12 @@ func TestPlatformAdminInviteReadAndInsertBindings(t *testing.T) {
 }
 
 func TestPlatformAdminEnqueueBindings(t *testing.T) {
-	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}, rows: [][]driver.Value{{"delivery"}}})
-	id, err := NewPlatformAdminInviteMapper(executor).Enqueue(t.Context(), "org", "invitation")
-	if err != nil || id != "delivery" {
-		t.Fatalf("投递记录：%s %v", id, err)
+	columns := []string{"uuid", "external_id", "email", "role", "status", "invited_at", "expires_at", "delivery_status"}
+	now := time.Now()
+	executor := newMapperTestExecutor(t, mapperTestResponse{columns: columns, rows: [][]driver.Value{{"invitation", "invite_external", "a@example.com", "user", "pending", now, now.Add(time.Hour), "pending"}}})
+	row, err := NewPlatformAdminInviteMapper(executor).Enqueue(t.Context(), "org", "invitation")
+	if err != nil || row.UUID != "invitation" || row.DeliveryStatus != "pending" {
+		t.Fatalf("邀请快照：%+v %v", row, err)
 	}
-	assertMapperTestExecution(t, executor, "PlatformAdminInviteMapper.Enqueue", yourbatis.StatementInsert, []any{"org", "invitation"}, "organization_uuid = $1", "uuid = $2", "RETURNING uuid")
+	assertMapperTestExecution(t, executor, "PlatformAdminInviteMapper.Enqueue", yourbatis.StatementUpdate, []any{"org", "invitation"}, "UPDATE organization_invites SET email_delivery_status = 'pending'", "organization_uuid = $1", "uuid = $2", "RETURNING uuid")
 }

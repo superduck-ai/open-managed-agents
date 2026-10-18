@@ -71,10 +71,6 @@ func TestInvitationRiverPostgres(t *testing.T) {
 	if err != nil || after.Version != before.Version {
 		t.Fatalf("版本未回滚：%+v %v", after, err)
 	}
-	var count int
-	if err := database.SQLDB().QueryRowContext(ctx, "SELECT count(*) FROM platform_admin_invite_deliveries").Scan(&count); err != nil || count != 0 {
-		t.Fatalf("投递记录未回滚：%d %v", count, err)
-	}
 	input.Email = "retry@example.com"
 	if _, err := service.CreateInvite(ctx, Actor{AccountUUID: account}, org, input); err != nil {
 		t.Fatal(err)
@@ -118,8 +114,8 @@ func TestInvitationRiverPostgres(t *testing.T) {
 					t.Fatalf("失败未回读：%+v %v", rows, err)
 				}
 				retried = true
-				if _, err := client.JobRetry(ctx, event.Job.ID); err != nil {
-					t.Fatal(err)
+				if !event.Job.ScheduledAt.After(*event.Job.AttemptedAt) {
+					t.Fatal("失败任务未安排自动重试")
 				}
 				continue
 			}

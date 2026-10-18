@@ -40,4 +40,18 @@
         WHERE organization_uuid = #{organizationUUID} AND external_id = #{id}
         AND status = 'pending' AND deleted_at IS NULL AND expires_at &gt; clock_timestamp()
     </update>
+    <sql id="deliverySnapshot">
+        uuid = #{snapshot.InvitationUUID} AND organization_uuid = #{snapshot.OrganizationUUID}
+        AND email = #{snapshot.Recipient} AND invited_at = #{snapshot.InvitedAt} AND expires_at = #{snapshot.ExpiresAt}
+        AND status = 'pending' AND deleted_at IS NULL AND expires_at &gt; clock_timestamp()
+    </sql>
+    <update id="StartDelivery" result="rows">
+        UPDATE organization_invites SET email_delivery_status = 'sending'
+        WHERE <include refid="deliverySnapshot"/>
+        AND email_delivery_status IN ('pending', 'sending', 'failed')
+    </update>
+    <update id="FinishDelivery" result="exec">
+        UPDATE organization_invites SET email_delivery_status = #{status}
+        WHERE <include refid="deliverySnapshot"/> AND email_delivery_status = 'sending'
+    </update>
 </mapper>

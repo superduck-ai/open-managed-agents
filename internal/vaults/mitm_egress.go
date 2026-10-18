@@ -92,6 +92,13 @@ func (e *MITMEgress) Prepare(
 	), nil
 }
 
+func (e *MITMEgress) SubstituteHTTP(ctx context.Context, session EgressSession, req *http.Request, host, port string) error {
+	if e == nil || e.env == nil {
+		return nil
+	}
+	return e.env.SubstituteEnvSecrets(ctx, session.CodeSessionExternalID, session.OrganizationUUID, session.WorkspaceUUID, req, host, port)
+}
+
 func (e *MITMEgress) rewriteOutbound(
 	ctx context.Context,
 	session EgressSession,

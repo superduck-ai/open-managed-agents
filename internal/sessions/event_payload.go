@@ -133,6 +133,9 @@ func primaryToolProjectionHidden(event db.SessionEvent, hiddenToolUseIDs map[str
 }
 
 func primaryOrphanToolProjectionUseID(event db.SessionEvent) string {
+	if event.EventType == "user.tool_confirmation" {
+		return ""
+	}
 	var payload map[string]any
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return ""

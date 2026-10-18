@@ -3,9 +3,11 @@ package codesessions
 import (
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 var errRuntimeSubagentConfig = errors.New("invalid runtime subagent configuration")
@@ -50,6 +52,10 @@ func internalError(message string, cause error) error {
 
 func sessionMCPConfigFailure(cause error) error {
 	return internalError("Could not build session MCP configuration", cause)
+}
+
+func mcpUpstreamAuthenticationRejected() *httpapi.Error {
+	return httpapi.NewError(http.StatusUnauthorized, "authentication_error", "MCP upstream authentication failed")
 }
 
 func codeSessionRouteNotFound() error {

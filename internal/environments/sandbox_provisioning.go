@@ -61,7 +61,7 @@ func (r *Runner) EnsureSessionSandbox(ctx context.Context, code db.CodeSession) 
 	if err != nil {
 		return "", err
 	}
-	manager, err := brainSandboxManagerCommand(code.ExternalID, code.WorkDir, r.cfg)
+	manager, err := brainSandboxManagerCommand(code.ExternalID, code.WorkDir, r.cfg, nil, "")
 	if err != nil {
 		return "", err
 	}
@@ -94,8 +94,12 @@ func (r *Runner) EnsureSessionSandbox(ctx context.Context, code db.CodeSession) 
 }
 
 type brainSandboxManagerPayload struct {
+	Auth           []AuthConfig `json:"auth"`
 	StartupContext struct {
-		APIBaseURL string `json:"api_base_url"`
+		APIBaseURL           string            `json:"api_base_url"`
+		EnvironmentVariables map[string]string `json:"environment_variables,omitempty"`
+		UseCodeSessions      bool              `json:"use_code_sessions"`
+		SessionID            string            `json:"session_id"`
 	} `json:"startup_context"`
 	Environment struct {
 		Type string `json:"environment_type"`
@@ -103,9 +107,18 @@ type brainSandboxManagerPayload struct {
 	} `json:"environment"`
 }
 
-func brainSandboxManagerCommand(codeSessionID, workDir string, cfg config.Config) (environmentManagerCommand, error) {
+func brainSandboxManagerCommand(codeSessionID, workDir string, cfg config.Config, placeholders map[string]string, ingressToken string) (environmentManagerCommand, error) {
 	request := brainSandboxManagerPayload{}
 	request.StartupContext.APIBaseURL = codeSessionSandboxAPIBaseURL(cfg)
+	request.StartupContext.EnvironmentVariables = make(map[string]string, len(placeholders)+2)
+	for key, value := range placeholders {
+		request.StartupContext.EnvironmentVariables[key] = value
+	}
+	request.StartupContext.EnvironmentVariables["CLAUDE_CODE_REMOTE"] = "true"
+	request.StartupContext.EnvironmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] = "1"
+	request.StartupContext.UseCodeSessions = true
+	request.StartupContext.SessionID = codeSessionID
+	request.Auth = []AuthConfig{{Type: "session_ingress", Token: ingressToken}}
 	request.Environment.Type = "anthropic"
 	request.Environment.CWD = workDir
 	payload, err := json.Marshal(request)

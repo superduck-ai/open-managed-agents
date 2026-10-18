@@ -18,12 +18,22 @@ export class ExternalMcp {
     );
   }
 
-  private async discover(signal: AbortSignal) {
+  private async discover(signal: AbortSignal, authenticationFailure: (serverName: string) => Promise<void>) {
     const bindings: { client: ExternalMcpClient; tool: RemoteTool }[] = [];
     const names = new Set<string>();
     try {
       for (const client of this.clients) {
-        for (const tool of await client.discover(signal)) {
+        let tools: RemoteTool[];
+        try {
+          tools = await client.discover(signal);
+        } catch (error) {
+          signal.throwIfAborted();
+          if (!client.authenticationFailed) throw error;
+          await client.close();
+          await authenticationFailure(client.server.name);
+          continue;
+        }
+        for (const tool of tools) {
           if (!/^mcp__[a-zA-Z0-9_-]+$/.test(tool.name) || names.has(tool.name))
             throw new Error("Invalid or duplicate external MCP tool name");
           names.add(tool.name);
@@ -46,8 +56,9 @@ export class ExternalMcp {
     ctx: Context,
     bridge: ToolExecutionBridge,
     signal: AbortSignal,
+    authenticationFailure: (serverName: string) => Promise<void>,
   ): Promise<void> {
-    const bindings = await (this.discovery ??= this.discover(signal));
+    const bindings = await (this.discovery ??= this.discover(signal, authenticationFailure));
     signal.throwIfAborted();
     for (const { client, tool } of bindings) {
       const execution = new ToolExecution(client, bridge);

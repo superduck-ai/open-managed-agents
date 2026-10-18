@@ -15,11 +15,12 @@ type RuntimeSubagentConfig struct {
 }
 
 type RuntimeSubagentDefinition struct {
-	Name         string   `json:"name"`
-	Description  string   `json:"description"`
-	SystemPrompt string   `json:"systemPrompt"`
-	Model        string   `json:"model,omitempty"`
-	Tools        []string `json:"tools"`
+	AgentSnapshot json.RawMessage `json:"agentSnapshot,omitempty"`
+	Name          string          `json:"name"`
+	Description   string          `json:"description"`
+	SystemPrompt  string          `json:"systemPrompt"`
+	Model         string          `json:"model,omitempty"`
+	Tools         []string        `json:"tools"`
 }
 
 type runtimeAgentReference struct {
@@ -29,14 +30,15 @@ type runtimeAgentReference struct {
 }
 
 type runtimeAgentSnapshot struct {
-	ID          string                  `json:"id"`
-	Version     int                     `json:"version"`
-	Name        string                  `json:"name"`
-	Description string                  `json:"description"`
-	System      string                  `json:"system"`
-	Model       json.RawMessage         `json:"model"`
-	Tools       []toolPermissionToolset `json:"tools"`
-	Multiagent  *struct {
+	publicSnapshot json.RawMessage
+	ID             string                  `json:"id"`
+	Version        int                     `json:"version"`
+	Name           string                  `json:"name"`
+	Description    string                  `json:"description"`
+	System         string                  `json:"system"`
+	Model          json.RawMessage         `json:"model"`
+	Tools          []toolPermissionToolset `json:"tools"`
+	Multiagent     *struct {
 		Type      string                  `json:"type"`
 		Agents    []runtimeAgentReference `json:"agents"`
 		Subagents *runtimeDelegation      `json:"subagents"`
@@ -51,6 +53,7 @@ func resolveRuntimeSubagents(ctx context.Context, store *db.DB, session db.Sessi
 	if err := json.Unmarshal(session.AgentSnapshot, &snapshot); err != nil {
 		return nil, err
 	}
+	snapshot.publicSnapshot = session.AgentSnapshot
 	if snapshot.Multiagent == nil {
 		return nil, nil
 	}
@@ -119,6 +122,7 @@ func resolveRuntimeAgent(ctx context.Context, store *db.DB, workspaceUUID string
 	}
 	var snapshot runtimeAgentSnapshot
 	err = json.Unmarshal(raw, &snapshot)
+	snapshot.publicSnapshot = raw
 	return snapshot, err
 }
 
@@ -142,6 +146,19 @@ func runtimeSubagentDefinition(snapshot runtimeAgentSnapshot) (RuntimeSubagentDe
 		}
 	}
 	definition.Tools = runtimeBuiltinTools(snapshot.Tools)
+	if len(snapshot.publicSnapshot) > 0 {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(snapshot.publicSnapshot, &fields); err != nil {
+			return definition, err
+		}
+		delete(fields, "multiagent")
+		fields["type"] = json.RawMessage(`"agent"`)
+		var err error
+		definition.AgentSnapshot, err = json.Marshal(fields)
+		if err != nil {
+			return definition, err
+		}
+	}
 	return definition, nil
 }
 

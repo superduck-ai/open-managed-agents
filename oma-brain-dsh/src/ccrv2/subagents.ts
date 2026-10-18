@@ -16,7 +16,11 @@ export class CcrSubagentBridge implements SubagentBridge {
     const { thread } = event;
     let fields: Payload;
     switch (event.kind) {
-      case "created": fields = { type: "session.thread_created", parent_thread_id: this.session.id }; break;
+      case "created":
+        fields = { type: "session.thread_created", parent_thread_id: this.session.id };
+        if (thread.inline) fields.agent = { type: "inline", name: thread.name, system: thread.systemPrompt };
+        else if (thread.agentSnapshot) fields.agent = thread.agentSnapshot;
+        break;
       case "running":
         this.session.beginThread(thread.id);
         fields = { type: "session.thread_status_running" }; break;

@@ -39,6 +39,7 @@ var (
 // CodeSessionRuntime exposes the managed-agent Code Session operations needed
 // by Runner without coupling it to the concrete service implementation.
 type CodeSessionRuntime interface {
+	SandboxIngressToken(context.Context, db.Session, string) (string, error)
 	CreateManagedAgentCodeSession(context.Context, codesessions.ManagedAgentCreateInput) (codesessions.ManagedAgentCreateResult, error)
 	RecoverManagedAgentCodeSession(context.Context, codesessions.ManagedAgentRecoverInput) (codesessions.ManagedAgentCreateResult, error)
 	TerminateManagedAgentCodeSession(context.Context, db.Session, string) error
@@ -353,12 +354,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 
 	// Cloud Session 还需创建 Code Session，并在 Sandbox 内启动 Environment Manager。
 	if preparation != nil {
-		var launch managedAgentRuntimeLaunch
-		if existingLaunch != nil {
-			launch = *existingLaunch
-		} else {
-			launch, err = r.createManagedAgentRuntimeLaunch(ctx, env, *work, *preparation)
-		}
+		launch, err := r.prepareSandboxRuntimeLaunch(ctx, env, *work, *preparation, existingLaunch)
 		if err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, fmt.Errorf("create managed-agent runtime launch: %w", err)
@@ -671,6 +667,28 @@ func (r *Runner) prepareEnvCredentialPlaceholders(ctx context.Context, session d
 	return placeholders, nil
 }
 
+func (r *Runner) prepareSandboxRuntimeLaunch(ctx context.Context, env db.Environment, work db.EnvironmentWork, preparation managedAgentLaunchPreparation, existing *managedAgentRuntimeLaunch) (managedAgentRuntimeLaunch, error) {
+	if existing == nil {
+		return r.createManagedAgentRuntimeLaunch(ctx, env, work, preparation)
+	}
+	launch := *existing
+	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
+		if launch.Credentials.SessionIngressToken == "" {
+			token, err := r.codeSessions.SandboxIngressToken(ctx, preparation.Session, launch.CodeSessionID)
+			if err != nil {
+				return managedAgentRuntimeLaunch{}, err
+			}
+			launch.Credentials.SessionIngressToken = token
+		}
+		manager, err := brainSandboxManagerCommand(launch.CodeSessionID, preparation.WorkDir, r.cfg, preparation.EnvPlaceholders, launch.Credentials.SessionIngressToken)
+		if err != nil {
+			return managedAgentRuntimeLaunch{}, err
+		}
+		launch.Manager = manager
+	}
+	return launch, nil
+}
+
 func (r *Runner) createManagedAgentRuntimeLaunch(
 	ctx context.Context,
 	env db.Environment,
@@ -701,7 +719,7 @@ func (r *Runner) createManagedAgentRuntimeLaunch(
 		return managedAgentRuntimeLaunch{}, err
 	}
 	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
-		manager, err := brainSandboxManagerCommand(local.CodeSessionID, preparation.WorkDir, r.cfg)
+		manager, err := brainSandboxManagerCommand(local.CodeSessionID, preparation.WorkDir, r.cfg, preparation.EnvPlaceholders, local.SessionIngressToken)
 		if err != nil {
 			return managedAgentRuntimeLaunch{}, err
 		}

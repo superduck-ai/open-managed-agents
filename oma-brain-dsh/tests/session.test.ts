@@ -18,8 +18,14 @@ async function open(backend: Backend) {
   const ctx = new Context();
   const api = new OmaApi(backend.url);
   const client = await mountOma(ctx, api);
-  const session = createOmaSession(ctx, api, structuredClone(backend.a));
-  await session.open();
+  let session!: ReturnType<typeof createOmaSession>;
+  await ctx.plugin({
+    inject: ["ccrv2"],
+    apply: async (scope: Context) => {
+      session = createOmaSession(scope, api, structuredClone(backend.a));
+      await session.open();
+    },
+  });
   cleanups.push(async () => {
     if (!session.abort.signal.aborted) session.stop();
     await session.handle?.dispose();
@@ -47,6 +53,63 @@ function toolsWithText(text: string, ...calls: string[]): Payload[] {
 }
 
 describe("original dsh loop over CCRv2", () => {
+  test("invalid mixed input publishes a failed terminal result without model work and allows the next turn", async () => {
+    for (const invalid of [
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "not an image" } },
+      { type: "document", source: { type: "text", media_type: "text/plain", data: 42 } },
+    ]) {
+      const b = backend();
+      b.modelScript = [textEvents("recovered")];
+      const { session } = await open(b);
+      await session.receive("invalid_input", { content: [{ type: "text", text: "read it" }, invalid] });
+      expect(b.requests).toHaveLength(0);
+      expect(b.publicLog.get("invalid_input_failed_result")?.is_error).toBe(true);
+      expect(b.statuses.at(-1)).toBe("idle");
+      expect(session.state.completed).toContain("invalid_input");
+      await session.receive("valid_followup", { content: "continue" });
+      expect(b.requests).toHaveLength(1);
+      expect(b.publicLog.get("valid_followup_result")?.is_error).toBe(false);
+    }
+  });
+
+  test("mixed image input reaches the model in order and survives a second turn", async () => {
+    const b = backend();
+    b.modelScript = [textEvents("image read"), textEvents("remembered")];
+    const { session } = await open(b);
+    const content = [
+      { type: "text", text: "read image" },
+      { type: "image", source: { type: "base64", media_type: "image/png",
+        data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC" } },
+      { type: "text", text: "then answer" },
+    ];
+    await session.receive("image_input", { content });
+    const first = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
+    expect(first.map((block: Payload) => block.type)).toEqual(["text", "image", "text"]);
+    expect(first[0]).toEqual(content[0]);
+    expect(first[2]).toEqual(content[2]);
+    expect(first[1].source.type).toBe("base64");
+    expect(first[1].source.data.length).toBeGreaterThan(0);
+    await session.receive("image_followup", { content: "remember it" });
+    expect(b.requests[1]!.messages.some((m: Payload) => m.content.some((block: Payload) => block.type === "image"))).toBe(true);
+    expect(b.publicLog.get("image_input_result")?.is_error).toBe(false);
+  });
+
+  test("plain text documents reach text model routes with their boundary and title", async () => {
+    const b = backend();
+    b.modelScript = [textEvents("DOC-42")];
+    const { session } = await open(b);
+    const content = [
+      { type: "text", text: "read document" },
+      { type: "document", title: "source", source: { type: "text", media_type: "text/plain", data: "number=DOC-42" } },
+    ];
+    await session.receive("document_input", { message: { content } });
+    const requestContent = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
+    expect(requestContent[0]).toEqual(content[0]);
+    expect(requestContent[1].type).toBe("text");
+    expect(JSON.parse(requestContent[1].text)).toEqual({ type: "document", title: "source", content: "number=DOC-42" });
+    expect(b.publicLog.get("document_input_result")?.is_error).toBe(false);
+  });
+
   test("thinking and text preserve native block identities across previews and durable messages", async () => {
     const b = backend();
     const events = textEvents("你好");

@@ -400,7 +400,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 | MITM | **硬前置（仅 env）**：Session 挂载时若有活跃 env 凭证且 `upstream_proxy_mitm_enabled=false` → 失败（`ErrMITMRequiredForEnvCredentials`）。MCP 凭证不要求 MITM 才能挂载 |
 | Placeholder | 创建时随机持久化（`oma_ph_` 前缀）；轮换 `secret_value` 不改 placeholder；缺 placeholder / injection_location 的旧凭证作废（archive 重建，无惰性补齐） |
 | Egress 替换 | header / body 各对原始文本单次扫描；密钥若等于另一凭证 placeholder，不再二次替换 |
-| Injection Location | API + runtime 支持 header 与 body；省略 → header-only；全关 → 400 |
+| Injection Location | API + runtime 支持 header 与 body；创建省略对象时两处均开启；提供对象时未指定的字段为 false；更新按字段合并；全关 → 400 |
 | Networking | 省略 → 400；limited 至少一 host |
 | 平台保留名 | create 400（大小写不敏感）；`secret_name` 须为 POSIX 标识符（`[A-Za-z_][A-Za-z0-9_]*`），两端空白 trim 后持久化；挂载合并时平台键不被覆盖 |
 | Vault Attachment Order | `vault_ids` 先到先得（同 `secret_name`） |
@@ -568,3 +568,21 @@ sequenceDiagram
 - 续期失败、超时和持有者被替换时，持约 context 必须取消；旧持有者释放不能删除替换后的租约。Lua 测试验证 token 校验、TTL 延长与过期租约不可恢复。
 - `TestWorkloadCredentialConcurrentRefresh` 使用本地模拟 ECS metadata 服务验证共享角色凭据在并发获取时只刷新一次。使用 `go test -race ./internal/vaults ./internal/secrets/aliyunkms -count=1` 检查数据竞争。
 - 单测不代表真实 Redis 故障切换、阿里云工作负载身份或云 KMS 验收。进程暂停或网络分区跨越租约 TTL 时，已发送给 IdP 的请求仍不能撤回；沿用换票失败与凭据重新授权的恢复边界。
+
+
+## Vault metadata input contract, 2026-10-17
+
+Vault creation keeps `metadata` as raw JSON at the HTTP boundary to distinguish omission from explicit null. Omission and an empty object normalize to `{}`. Whole null, non-object input and non-string values, including null values, return an invalid-request error before resource IDs or database writes. Valid string maps still use the existing 16/64/512 validation.
+
+Vault updates preserve all existing metadata when metadata is omitted, `{}`, or whole null. Whole-null preservation is the user-approved OMA contract oma_metadata_types_v1 from VAULT-API-011; the current official schema explicitly accepts whole null but does not define its clear-versus-preserve semantics. Per-key null deletion and string upsert continue through the existing patch logic. This Vault-specific wrapper does not change Credential whole-null reset behavior. Failed numeric updates never reach persistence.
+
+Regression: `TestVaultCreateInvalidMetadataRejectedBeforePersistence`, `TestVaultMetadataNoOpPatchPreservesSeedWithoutChangingCredentialReset`, and `TestVaultCreateMetadataOmissionAndStringObjectRemainValid`. The external fresh-source VAULT-API-011 case verifies the complete eight-request matrix, no orphan after rejected create, unchanged public state after rejected update, real cleanup and secret audit. Public source/contract record: oma-verify/docs/vault-api-011-oma-contract.md.
+
+
+## Vault list cursor workspace anchor, 2026-10-17
+
+Vault list cursors remain opaque created_at/UUID positions. ListPage now requires the cursor anchor UUID and timestamp to match a real Vault in the requesting workspace, in the same SQL snapshot as the page selection. A cursor from another workspace or an unknown/mismatched anchor returns an empty terminal page, never a local unfiltered or nonempty page. Workspace isolation still filters every returned row independently. A deleted anchor also produces an empty terminal page; this introduces no TTL and makes no expiry claim. The anchor need not pass the current archived filter, so changing include_archived does not itself erase an existing position.
+
+This implements the user-approved VAULT-API-015 OMA contract: invalid/foreign cursor rejection or strict empty terminal result, without fallback or cross-workspace data. The SQL uses bound UUID/timestamp parameters through the existing Yourbatis VaultMapper; no schema or token-format change. Credential cursor semantics are outside this fix.
+
+Regression: TestVaultCursorCannotSelectAnotherWorkspacePosition uses real PostgreSQL and two authenticated workspaces, obtains actual cursors, checks foreign-cursor empty terminal pages in both directions and normal same-workspace continuation. It failed before the change. TestVaultMapperBuilders checks workspace/UUID/timestamp anchor bindings and the no-cursor/include-archived branch. Existing TestVaultsAPI retains normal pagination coverage. Fresh external015 must pass after the coordinated HTTP restart; local tests alone do not count as platform pass.

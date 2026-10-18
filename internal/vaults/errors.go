@@ -33,6 +33,11 @@ func InjectionPublicMessage(err error) string {
 // for the client-facing message — use InjectionPublicMessage.
 var ErrInjectionRejected = errors.New("vault credential injection rejected")
 
+// ErrUpstreamAuthenticationRejected marks a candidate set whose every credential
+// was actually rejected by upstream HTTP 401. Local resolution failures do not
+// carry this marker; MCP adapters may distinguish authentication from outage.
+var ErrUpstreamAuthenticationRejected = errors.New("upstream rejected all matching credentials")
+
 // InjectionUnavailablePublicMessage is the client-safe text for MITM 502
 // when MCP credential injection rejects.
 const InjectionUnavailablePublicMessage = "MCP upstream credentials are unavailable"
@@ -222,4 +227,8 @@ func credentialSecretError(err error, internalMessage string) error {
 
 func immutableCredentialServerURL() error {
 	return errors.New("auth.mcp_server_url is immutable")
+}
+
+func invalidVaultCreateMetadata() error {
+	return errors.New("metadata must be an object with string values")
 }

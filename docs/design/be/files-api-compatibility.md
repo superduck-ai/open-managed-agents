@@ -16,7 +16,7 @@ CMA 文档 `claude-managed-agents/files.md` 的上传与下载示例使用正式
 
 `internal/files/handler_test.go` 覆盖双引号与百分号接受、既有非法名称拒绝，以及 multipart 双引号转义解析和对象键转换。双端上传、Session 挂载读取及 SSE/历史一致性需单独复测 FILE-UP-010；此兼容调整不把发现性观察升级为正式 CMA 契约。
 
-`tests/files_api_test.go` 的 `TestFilesAPI` 覆盖无 beta 头和 query 的上传、列表、元数据、生成文件下载及删除，并以无 beta 头的列表请求覆盖 `scope_id` 与游标分页。既有旧 beta 上传等用例继续覆盖兼容性。回归入口为 `just test`；完整真实上传、挂载、模型读取及 SSE/历史一致性需另行执行 FILE-UP-001。
+`tests/files_api_test.go` 的 `TestFilesAPI` 覆盖无 beta 头和 query 的上传、列表、元数据、生成文件下载及删除，并以无 beta 头的列表请求覆盖 `scope_id` 与游标分页。既有旧 beta 上传等用例继续覆盖兼容性。回归入口为 `just test-integration ./tests -run '^TestFilesAPI$'`；完整真实上传、挂载、模型读取及 SSE/历史一致性需另行执行 FILE-UP-001。
 
 ## Session scope 与账户上传
 

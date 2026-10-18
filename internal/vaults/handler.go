@@ -42,8 +42,8 @@ type webhookEnqueuer interface {
 }
 
 type createVaultRequest struct {
-	DisplayName string            `json:"display_name"`
-	Metadata    map[string]string `json:"metadata"`
+	DisplayName string          `json:"display_name"`
+	Metadata    json.RawMessage `json:"metadata"`
 }
 
 type updateVaultRequest struct {
@@ -196,7 +196,7 @@ func (h *Handler) createVault(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	metadata, err := normalizeMetadata(request.Metadata)
+	metadata, err := normalizeVaultCreateMetadata(request.Metadata)
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -305,7 +305,7 @@ func (h *Handler) updateVaultRoute(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return invalidRequest(err)
 	}
-	next.Metadata, err = patchMetadata(next.Metadata, request.Metadata)
+	next.Metadata, err = patchVaultMetadata(next.Metadata, request.Metadata)
 	if err != nil {
 		return invalidRequest(err)
 	}

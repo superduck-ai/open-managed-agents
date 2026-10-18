@@ -262,7 +262,11 @@ func normalizeEnvironmentVariableForCreate(input environmentVariableCredentialCr
 	if err != nil {
 		return credentialAuthState{}, err
 	}
-	injectionLocation, err := applyInjectionLocation(credentialInjectionLocation{Header: true, Body: false}, input.InjectionLocation)
+	locationDefaults := credentialInjectionLocation{}
+	if len(input.InjectionLocation) == 0 {
+		locationDefaults = credentialInjectionLocation{Header: true, Body: true}
+	}
+	injectionLocation, err := applyInjectionLocation(locationDefaults, input.InjectionLocation)
 	if err != nil {
 		return credentialAuthState{}, err
 	}

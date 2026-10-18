@@ -5,6 +5,7 @@ import type { Payload } from "../json.ts";
 import type { Context } from "@deepseek-ai/cordis";
 
 export interface SubagentDefinition {
+  agentSnapshot?: Payload;
   name: string;
   description: string;
   systemPrompt: string;
@@ -18,7 +19,9 @@ export interface SubagentConfig {
 }
 
 export interface SubagentThread {
+  agentSnapshot?: Payload;
   id: string;
+  inline?: boolean;
   name: string;
   systemPrompt: string;
   model: string;
@@ -90,6 +93,7 @@ export interface ToolApproval {
   callId: string;
   toolName: string;
   input: Payload;
+  available?: boolean;
 }
 
 export interface ApprovalDecision {
@@ -123,6 +127,7 @@ export interface ToolExecutionBridge {
 }
 
 export interface SessionRuntimeHooks {
+  onExternalMcpAuthenticationFailure?(serverName: string): Promise<void>;
   setupTools?(scope: Context): void;
   beforeRequest(): Promise<void>;
   onEvent(event: SessionEvent): void;

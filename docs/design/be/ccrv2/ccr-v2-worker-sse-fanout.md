@@ -266,3 +266,23 @@ nil 保持缺失，显式 0 保留。没有来源的计费金额、active_second
 公开 `agent.thinking` 只表示块开始，不携带正文、签名或脱敏数据。代理在块起始帧即时发布，DSH Worker 在 reasoning block-start 创建预览；两者及最终回传都使用原始 message ID 与 block index 生成同一个稳定事件 ID。thinking delta 不再公开发送，完整 Worker 回传也会清除 thinking 内容。代理只对 thinking 输入保留容量计数，与 text/input 共用现有 4 MiB 上限，不再累计正文。模型内部签名推理和原始上游响应保持原协议；历史事件不重写。起始发布失败时，请求结束以同一 ID 回补无正文状态。详细时序与回归入口见 [Brain 运行时](../brain-runtime.md#thinking-状态事件)。
 
 Worker 输入的 processing/processed 回执先在同一个 Yourbatis 事务中按 Session → Worker 的顺序持锁，校验 Worker 的租户、Session 归属、active 状态和 epoch，再提交尚未处理消息的处理时间，并沿用原路径清除 Worker 空闲计时。凭据轮换先完成时拒绝旧 epoch；处理事务先持锁时，轮换等待提交。事务提交后恢复大消息载荷并广播 SSE，随后在 epoch 锁内执行投递 ACK。ACK 阶段失败不会回滚已经提交的处理时间；回执重试沿用相同事件 ID，保持处理时间不变。此流程不承诺 PostgreSQL 与 JetStream ACK 跨系统原子提交。回归见 `tests/worker_delivery_retry_test.go` 和 `tests/worker_processing_epoch_test.go`。
+
+
+## 排队用户事件的实时 SSE 生命周期
+
+2026-10-17 CMA 合同修正。当前发送接口允许已运行会话中的用户消息进入队列；本节覆盖上文旧的“忙碌一律409”和“接收即processed_at”描述。Qoder的忙碌409属于另一平台合同，不作为OMA的排队合同。
+
+`normalizeInputEvent` 将 `user.message` 的初始 `processed_at` 设为 null。事务提交后，`publishSessionEvents` 必须广播该未处理版本，不能因 `ProcessedAt` 为零值而跳过。该发布发生在 `QueuePublicSessionEvents` 投递之前。后续处理确认仍通过既有路径广播同一 ID 的时间戳版本；实时 SSE 保留两次投递，客户端按 ID 升级确认状态，不能按 ID 丢弃第二版或重复计为两条消息。原始内容和线程归属保持不变，最终history仍是一条消息的最新状态。
+
+排队版本与处理版本共用现有session fanout、workspace/session路由及连接线程过滤，不新增数据库行、消息ID、跨租户广播或模型调用。此修正针对已连接的实时SSE，不合成历史null帧，也不改变cursor重放和历史分页策略。
+
+普通回归 `TestQueuedUserMessagePublishesNullThenProcessedSSE` 覆盖fanout、Hub、连接接受和SSE序列化的两版同ID事件。外部 `CHAT-ACK-005` 在Bash运行时发送第二条消息，校验同ID原始null先于时间戳、最终history归并一致、任务完成及清理；send响应null不替代原始SSE证据。
+
+
+### 工具确认后迟到的 requires_action 报告
+
+Worker 状态转换为公开工具暂停报告时，必须携带当时待确认工具的公开 `event_ids`。公开状态事务随后根据当前待确认请求校验报告。工具确认已投递并清除请求后，迟到的带工具ID报告没有待确认请求支撑，必须丢弃，不得降级为 `idle/end_turn`。线程级工具暂停须有本线程待确认请求，会话级工具暂停须有当前待确认请求。
+
+保留没有工具ID的 Worker `requires_action` 分支。这包括 CMA 自托管环境无法完成工作项而暂停、没有客户端工具确认可回答的故障。工具暂停和这类故障暂停不能混用，不能仅因为当前没有待确认工具就把所有暂停报告丢弃。
+
+回归覆盖公开状态转换保留一个或多个工具ID、确认后迟到报告、其他线程仍待确认、有效线程/会话暂停、正常结束及自托管无工具暂停。外部 CHAT-STATE-002 必须观察 `requires_action`、公开确认、工具结果、最终回复，然后才出现自然 `idle/end_turn`。

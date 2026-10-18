@@ -12,6 +12,9 @@ import type { ExternalServer } from "./config.ts";
 export class ExternalMcpClient implements SandboxExecutor {
   private readonly client: Client;
   private readonly transport;
+  private authenticationRejected = false;
+
+  get authenticationFailed(): boolean { return this.authenticationRejected; }
 
   constructor(readonly server: ExternalServer, fetcher: typeof fetch = fetch) {
     this.client = new Client(
@@ -22,8 +25,11 @@ export class ExternalMcpClient implements SandboxExecutor {
     );
     const options = {
       requestInit: { headers: server.headers, redirect: "error" as const },
-      fetch: (input: string | URL | Request, init?: RequestInit) =>
-        fetcher(input, { ...init, redirect: "error" }),
+      fetch: async (input: string | URL | Request, init?: RequestInit) => {
+        const response = await fetcher(input, { ...init, redirect: "error" });
+        if (response.status === 401 || response.status === 403) this.authenticationRejected = true;
+        return response;
+      },
     };
     this.transport =
       server.type === "sse"

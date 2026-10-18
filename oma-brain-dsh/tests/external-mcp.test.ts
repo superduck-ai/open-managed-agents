@@ -13,6 +13,7 @@ import type { Payload } from "../src/json.ts";
 function peer(transport: "http" | "sse" = "http", serverName = "peer") {
   const requests: Payload[] = [];
   let failDiscovery = false;
+  let authenticationStatus: number | undefined;
   let failCall = false;
   let errorResult = false;
   let protocolErrorCode: number | undefined;
@@ -50,6 +51,7 @@ function peer(transport: "http" | "sse" = "http", serverName = "peer") {
       expect(request.headers.get("Authorization")).toBe("Bearer peer-secret");
       const body = (await request.json()) as Payload;
       requests.push(body);
+      if (authenticationStatus !== undefined) return new Response(null, { status: authenticationStatus });
       if (body.method.startsWith("notifications/"))
         return new Response(null, { status: 202 });
       if (body.method === "server/discover")
@@ -129,6 +131,7 @@ function peer(transport: "http" | "sse" = "http", serverName = "peer") {
         },
       },
     },
+    failAuthentication: (status: number) => { authenticationStatus = status; },
     failDiscovery: () => {
       failDiscovery = true;
     },
@@ -146,6 +149,7 @@ function peer(transport: "http" | "sse" = "http", serverName = "peer") {
 async function fixture(
   transport: "http" | "sse" = "http",
   serverName = "peer",
+  extraServers: Payload = {},
 ) {
   const p = peer(transport, serverName);
   const b = new Backend();
@@ -158,7 +162,7 @@ async function fixture(
             cwd: "/workspace",
             model: "test-model",
             runtime_tools: [],
-            mcp_config: p.config,
+            mcp_config: { mcpServers: { ...p.config.mcpServers, ...extraServers } },
           },
         })
       : route(request);
@@ -591,4 +595,50 @@ test("external server InternalError keeps unknown outcome without replay", async
     expect(f.session.blocked()).toBe(true);
     expect(f.p.requests.filter((r) => r.method === "tools/call")).toHaveLength(1);
   } finally { await f.close(); }
+});
+
+for (const status of [401, 403]) {
+  test(`external MCP ${status} discovery emits a public authentication error and leaves chat usable`, async () => {
+    const f = await fixture();
+    try {
+      f.p.failAuthentication(status);
+      await f.session.open();
+      const errors = [...f.b.publicLog.values()].filter(event => event.type === "session.error");
+      expect(errors).toHaveLength(1);
+      expect(errors[0]!.error).toEqual({
+        type: "mcp_authentication_failed_error", mcp_server_name: "peer",
+        message: "MCP server authentication failed during tool discovery.",
+        retry_status: { type: "exhausted" },
+      });
+      expect(JSON.stringify(errors)).not.toContain("peer-secret");
+      expect(JSON.stringify(errors)).not.toContain(String(f.p.config.mcpServers.peer!.url));
+      expect(f.b.requests).toHaveLength(0);
+      f.b.modelScript = [textEvents("still interactive")];
+      await f.session.receive("after_auth_failure", { content: "Say still interactive" });
+      expect(f.b.requests).toHaveLength(1);
+      expect(f.b.requests[0]!.tools.some((tool: Payload) => tool.name.startsWith("mcp__"))).toBe(false);
+      expect(f.p.requests.filter(request => request.method === "tools/call")).toHaveLength(0);
+      expect(f.session.blocked()).toBe(false);
+      expect(f.session.busy).toBe(false);
+    } finally { await f.close(); }
+  });
+}
+
+test("authentication failure disables only its server and preserves healthy real MCP dispatch", async () => {
+  const healthy = peer("http", "healthy");
+  const f = await fixture("http", "peer", healthy.config.mcpServers);
+  try {
+    f.p.failAuthentication(401);
+    await f.session.open();
+    const call = mcpEvents();
+    call[1]!.content_block.name = "mcp__healthy__microsoft_docs_fetch";
+    f.b.modelScript = [call, textEvents("healthy server succeeded")];
+    await f.session.receive("healthy_after_auth_failure", { content: "Fetch with healthy" });
+    const tools = f.b.requests[0]!.tools.map((tool: Payload) => tool.name);
+    expect(tools).toContain("mcp__healthy__microsoft_docs_fetch");
+    expect(tools.some((name: string) => name.startsWith("mcp__peer__"))).toBe(false);
+    expect(healthy.requests.filter(request => request.method === "tools/call")).toHaveLength(1);
+    expect(f.p.requests.filter(request => request.method === "tools/call")).toHaveLength(0);
+    expect([...f.b.publicLog.values()].filter(event => event.type === "session.error")).toHaveLength(1);
+  } finally { await f.close(); healthy.close(); }
 });

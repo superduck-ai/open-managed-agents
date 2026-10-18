@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -241,6 +243,10 @@ func TestSessionMountedOutputCleanupWaitsWithoutExhaustingRetries(t *testing.T) 
 		t.Fatal(err)
 	}
 	source := listFiles(t, app, "scope_id="+parent.ID).Data[0]
+	sourceRecord, err := app.db.GetFile(t.Context(), record.WorkspaceUUID, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	child := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`,"resources":[{"type":"file","file_id":`+quoteJSON(source.ID)+`,"mount_path":"/source.txt"}]}`)
 	childDeleted := false
 	defer func() {
@@ -276,8 +282,11 @@ func TestSessionMountedOutputCleanupWaitsWithoutExhaustingRetries(t *testing.T) 
 			t.Fatal("cleanup completed while source was mounted")
 		}
 	}
-	if _, err := app.db.GetFile(t.Context(), record.WorkspaceUUID, source.ID); err != nil {
-		t.Fatalf("waiting cleanup retired source: %v", err)
+	if _, err := app.db.GetFile(t.Context(), record.WorkspaceUUID, source.ID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("deleted session source remains public: %v", err)
+	}
+	if _, err := app.db.GetFileByUUID(t.Context(), record.WorkspaceUUID, sourceRecord.UUID); err != nil {
+		t.Fatalf("waiting cleanup retired source metadata: %v", err)
 	}
 	var objectJobs int
 	if err := app.pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs WHERE type='filestore_object_cleanup' AND payload->>'filesystem_uuid'=$1`, filesystem.UUID).Scan(&objectJobs); err != nil || objectJobs != 0 {

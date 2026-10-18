@@ -301,57 +301,66 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 	if err != nil {
 		return invalidRequest(err)
 	}
-	if len(body.Version) == 0 {
-		return invalidRequest(errors.New("version is required"))
-	}
-	expectedVersion, err := parseRequiredVersion(body.Version)
-	if err != nil {
-		return invalidRequest(err)
-	}
-	current, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, agentID)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return agentNotFound(agentID, err)
+	expectedVersion := 0
+	if len(body.Version) > 0 {
+		expectedVersion, err = parseRequiredVersion(body.Version)
+		if err != nil {
+			return invalidRequest(err)
 		}
-		return internalError("Could not update agent", fmt.Errorf("retrieve agent %q for update: %w", agentID, err))
 	}
-	nextState, err := h.stateFromUpdate(r, principal, current, body)
-	if err != nil {
-		return agentMutationError(err)
-	}
-	versionID, err := ids.New("agentver_")
-	if err != nil {
-		return internalError("Could not generate agent version ID", fmt.Errorf("generate agent version ID: %w", err))
-	}
-	updated, err := h.db.UpdateAgent(r.Context(), principal.WorkspaceUUID, agentID, expectedVersion, db.Agent{
-		Name:        nextState.Name,
-		Description: nextState.Description,
-		System:      nextState.System,
-		Model:       nextState.Model,
-		MCPServers:  nextState.MCPServers,
-		Metadata:    nextState.Metadata,
-		Multiagent:  nextState.Multiagent,
-		Skills:      nextState.Skills,
-		Tools:       nextState.Tools,
-		UpdatedAt:   time.Now().UTC(),
-	}, versionID)
-	if err != nil {
-		if errors.Is(err, db.ErrInvalidState) {
-			return archivedAgentCannotBeUpdated(err)
+	for {
+		current, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, agentID)
+		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				return agentNotFound(agentID, err)
+			}
+			return internalError("Could not update agent", fmt.Errorf("retrieve agent %q for update: %w", agentID, err))
 		}
-		if errors.Is(err, db.ErrVersionConflict) {
-			return agentVersionConflict(err)
+		nextState, err := h.stateFromUpdate(r, principal, current, body)
+		if err != nil {
+			return agentMutationError(err)
 		}
-		if errors.Is(err, db.ErrNotFound) {
-			return agentNotFound(agentID, err)
+		updateVersion := expectedVersion
+		if updateVersion == 0 {
+			updateVersion = current.CurrentVersion
 		}
-		return internalError("Could not update agent", fmt.Errorf("update agent %q: %w", agentID, err))
+		versionID, err := ids.New("agentver_")
+		if err != nil {
+			return internalError("Could not generate agent version ID", fmt.Errorf("generate agent version ID: %w", err))
+		}
+		updated, err := h.db.UpdateAgent(r.Context(), principal.WorkspaceUUID, agentID, updateVersion, db.Agent{
+			Name:        nextState.Name,
+			Description: nextState.Description,
+			System:      nextState.System,
+			Model:       nextState.Model,
+			MCPServers:  nextState.MCPServers,
+			Metadata:    nextState.Metadata,
+			Multiagent:  nextState.Multiagent,
+			Skills:      nextState.Skills,
+			Tools:       nextState.Tools,
+			UpdatedAt:   time.Now().UTC(),
+		}, versionID)
+		if errors.Is(err, db.ErrVersionConflict) && expectedVersion == 0 {
+			continue
+		}
+		if err != nil {
+			if errors.Is(err, db.ErrInvalidState) {
+				return archivedAgentCannotBeUpdated(err)
+			}
+			if errors.Is(err, db.ErrVersionConflict) {
+				return agentVersionConflict(err)
+			}
+			if errors.Is(err, db.ErrNotFound) {
+				return agentNotFound(agentID, err)
+			}
+			return internalError("Could not update agent", fmt.Errorf("update agent %q: %w", agentID, err))
+		}
+		if updated.CurrentVersion > current.CurrentVersion {
+			h.enqueueWebhook(r.Context(), principal, "agent.updated", updated.ExternalID, updated.UpdatedAt)
+		}
+		httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(updated))
+		return nil
 	}
-	if updated.CurrentVersion > expectedVersion {
-		h.enqueueWebhook(r.Context(), principal, "agent.updated", updated.ExternalID, updated.UpdatedAt)
-	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(updated))
-	return nil
 }
 
 func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
@@ -631,10 +640,11 @@ func (h *Handler) resolveRosterEntry(r *http.Request, principal auth.Principal, 
 		return agentReference{ID: selfID, Type: "agent", Version: selfVersion}, false, nil
 	}
 	if version > 0 {
-		if _, err := h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, id, version); err != nil {
+		record, err := h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, id, version)
+		if err != nil {
 			return agentReference{}, false, errors.New("multiagent referenced agent version not found")
 		}
-		return agentReference{ID: id, Type: "agent", Version: version}, false, nil
+		return resolvedRosterReference(record, selfID)
 	}
 	record, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, id)
 	if err != nil {
@@ -643,7 +653,14 @@ func (h *Handler) resolveRosterEntry(r *http.Request, principal auth.Principal, 
 	if record.ArchivedAt != nil {
 		return agentReference{}, false, errors.New("multiagent referenced agent must not be archived")
 	}
-	return agentReference{ID: id, Type: "agent", Version: record.CurrentVersion}, false, nil
+	return resolvedRosterReference(record, selfID)
+}
+
+func resolvedRosterReference(record db.Agent, selfID string) (agentReference, bool, error) {
+	if record.ExternalID != selfID && len(record.Multiagent) > 0 && !httpapi.IsJSONNull(record.Multiagent) {
+		return agentReference{}, false, errNestedMultiagentReference
+	}
+	return agentReference{ID: record.ExternalID, Type: "agent", Version: record.CurrentVersion}, false, nil
 }
 
 func decodeSearchRequest(w http.ResponseWriter, r *http.Request) (*searchRequest, error) {

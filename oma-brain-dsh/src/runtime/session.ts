@@ -1,10 +1,12 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
-import { createUserMessage } from "@deepseek-ai/dsh-llm";
+import { createUserMessage, type ContentBlock } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { ExternalMcp } from "../external-mcp/index.ts";
 import * as SandboxTools from "../sandbox-tools/index.ts";
-import { workerDiagnostic } from "../ccrv2/diagnostics.ts";
+import { failureDiagnostic, workerDiagnostic } from "../ccrv2/diagnostics.ts";
+import { approveToolCall, releaseToolApproval, clearToolApprovals } from "./tool-approvals.ts";
+import { object } from "../json.ts";
 import type {
   SessionRuntimeConfig,
   SessionRuntimeHooks,
@@ -60,8 +62,27 @@ export class SessionRuntime {
         bridge: this.bridge,
         tools: this.config.tools,
       });
-      await this.externalMcp.register(scope, this.bridge, this.abort.signal);
+      await this.externalMcp.register(scope, this.bridge, this.abort.signal, async (serverName) => {
+        await this.hooks.onExternalMcpAuthenticationFailure?.(serverName);
+      });
       this.hooks.setupTools?.(scope);
+      scope.on("tools/pre-execute", async (exec, next) => {
+        const decision = await next();
+        if (decision.kind !== "allow") return decision;
+        if (scope.tools.get(exec.name, exec.agent)) return decision;
+        const approval = await approveToolCall(this.bridge, {
+          callId: exec.callId, toolName: exec.name, input: object(exec.arguments),
+          available: false,
+        }, exec.signal);
+        return approval.allowed ? decision : { kind: "deny", reason: "Tool use denied by OMA" };
+      });
+      scope.on("tools/execute", async (exec, next) => {
+        const approval = await approveToolCall(this.bridge, {
+          callId: exec.callId, toolName: exec.name, input: object(exec.arguments), available: true,
+        }, exec.signal);
+        if (!approval.allowed) throw new Error("Tool use denied by OMA");
+        return next();
+      });
       scope.on("session/event", (session, event) => {
         if (session.id !== this.config.id) return;
         if (process.env.OMA_DEBUG_TIMING === "1" && ["assistant/message", "tool/result", "turn/end"].includes(event.type)) {
@@ -72,7 +93,9 @@ export class SessionRuntime {
           });
         }
         this.hooks.onEvent(event);
+        if (event.type === "tool/result") releaseToolApproval(this.bridge, event.data.message.toolCallId);
         if (event.type === "turn/end") {
+          clearToolApprovals(this.bridge);
           this.turnCompleted = event.data.reason?.kind === "completed";
         }
       });
@@ -103,7 +126,7 @@ export class SessionRuntime {
         });
   }
 
-  async run(text: string, hooks: TurnHooks): Promise<void> {
+  async run(input: string | (() => Promise<ContentBlock[]>), hooks: TurnHooks): Promise<void> {
     if (this.busy || this.abort.signal.aborted)
       throw new Error("Session is busy or stopped");
     this.busy = true;
@@ -114,9 +137,17 @@ export class SessionRuntime {
         await hooks.afterRun(false);
         return;
       }
+      let content: ContentBlock[];
+      try {
+        content = typeof input === "string" ? [{ type: "text", text: input }] : await input();
+      } catch (error) {
+        workerDiagnostic("error", "oma_runtime_input_failed", { session_id: this.config.id, ...failureDiagnostic(error) });
+        await hooks.afterRun(false);
+        return;
+      }
       this.agent.followup(createUserMessage({
         source: { kind: "user" },
-        content: [{ type: "text", text }],
+        content,
       }));
       await this.agent.whenIdle();
       await this.flushLog();

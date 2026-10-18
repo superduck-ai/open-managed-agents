@@ -65,6 +65,9 @@ func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID
 		s.logger.ErrorContext(ctx, "resolve tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "error", err)
 		return s.respondToToolPermissionRequest(ctx, codeSessionID, workerEpoch, toolPermissionRequestFromWorkerEvent(payload, meta), resolvedToolPermissionDeny, "invalid-thread", "Tool permission could not be resolved.", "", "")
 	}
+	if payload.Request.ToolAvailable != nil && !*payload.Request.ToolAvailable {
+		permission = resolvedToolPermissionDeny
+	}
 	s.logger.InfoContext(ctx, "resolved tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "tool_kind", identity.Kind, "server_name", identity.ServerName, "normalized_tool_name", identity.ToolName, "permission", permission)
 	request, payloads, err := toolPermissionPublicPayloads(codeSessionID, payload, meta, identity, permission)
 	if err != nil {
@@ -122,6 +125,16 @@ func (s *Service) resolveToolPermission(ctx context.Context, codeSessionID strin
 		if thread.Status == "terminated" {
 			return resolvedToolPermissionDeny, parseClaudeToolIdentity(claudeToolName), nil
 		}
+		if isDelegationTool(claudeToolName) && thread.ParentThreadExternalID != nil {
+			return resolvedToolPermissionDeny, toolIdentity{Kind: "delegation", ToolName: claudeToolName}, nil
+		}
+		if thread.ParentThreadExternalID != nil {
+			if len(thread.AgentSnapshot) == 0 || string(thread.AgentSnapshot) == "null" {
+				return resolvedToolPermissionDeny, parseClaudeToolIdentity(claudeToolName), nil
+			}
+			permission, identity := resolveToolPermissionFromAgentSnapshot(thread.AgentSnapshot, claudeToolName)
+			return permission, identity, nil
+		}
 	}
 	session, found, err := s.db.GetSession(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
 	if err != nil {
@@ -144,6 +157,7 @@ type toolPermissionToolset struct {
 type toolPermissionSnapshot struct {
 	MCPServers []mcpServerDeclaration  `json:"mcp_servers"`
 	Tools      []toolPermissionToolset `json:"tools"`
+	Multiagent json.RawMessage         `json:"multiagent"`
 }
 
 func resolveToolPermissionFromAgentSnapshot(agentSnapshot json.RawMessage, claudeToolName string) (resolvedToolPermission, toolIdentity) {
@@ -153,6 +167,8 @@ func resolveToolPermissionFromAgentSnapshot(agentSnapshot json.RawMessage, claud
 		return resolvedToolPermissionAsk, identity
 	}
 	switch {
+	case isDelegationTool(claudeToolName):
+		return delegationToolPermission(snapshot.Multiagent), toolIdentity{Kind: "delegation", ToolName: claudeToolName}
 	case strings.HasPrefix(claudeToolName, "mcp__"):
 		canonical, found := resolveMCPToolIdentity(snapshot, claudeToolName)
 		if !found {
@@ -162,7 +178,7 @@ func resolveToolPermissionFromAgentSnapshot(agentSnapshot json.RawMessage, claud
 	case identity.Kind == "agent_toolset":
 		return resolveAgentToolPermission(snapshot.Tools, identity.ToolName), identity
 	default:
-		return resolvedToolPermissionAsk, identity
+		return resolvedToolPermissionDeny, identity
 	}
 }
 

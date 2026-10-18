@@ -431,6 +431,12 @@ func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *
 			request.Out.Host = target.Host
 		},
 		ErrorHandler: func(writer http.ResponseWriter, request *http.Request, err error) {
+			if errors.Is(err, vaults.ErrUpstreamAuthenticationRejected) {
+				h.logger.WarnContext(request.Context(), "MCP upstream authentication rejected", "code_session_id", codeSessionID, "host", target.Hostname())
+				writer.Header().Set("WWW-Authenticate", "Bearer")
+				httpapi.WriteError(writer, request, mcpUpstreamAuthenticationRejected())
+				return
+			}
 			if errors.Is(err, vaults.ErrInjectionRejected) {
 				h.logger.ErrorContext(request.Context(), "inject MCP proxy credentials", "code_session_id", codeSessionID, "host", target.Hostname(), "error", err)
 				httpapi.WriteError(writer, request, httpapi.NewError(http.StatusBadGateway, "api_error", vaults.InjectionPublicMessage(err)))

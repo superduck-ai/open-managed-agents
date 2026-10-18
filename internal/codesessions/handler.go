@@ -110,7 +110,7 @@ func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaul
 		injector = injector.WithRefreshLease(refreshLease)
 	}
 	h.wrapMCPVaultTransport = func(ctx context.Context, claims SessionCredentialClaims, target *url.URL, base http.RoundTripper) http.RoundTripper {
-		return injector.WrapTransport(
+		return injector.WrapMCPTransport(
 			ctx,
 			claims.SessionID,
 			claims.OrganizationUUID,

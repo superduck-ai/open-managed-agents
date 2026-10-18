@@ -9,6 +9,7 @@ import (
 
 var errInvalidMCPServerName = errors.New("mcp_servers.name must contain 1 to 255 characters")
 var errInvalidMCPToolsetServerName = errors.New("mcp_toolset.mcp_server_name must contain 1 to 255 characters")
+var errNestedMultiagentReference = errors.New("multiagent referenced agent must not have multiagent configured")
 
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)

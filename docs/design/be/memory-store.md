@@ -8,6 +8,22 @@ CRUD、三张表、S3 正文、控制台列表/详情已落地。本文只补运
 
 **方案**：每个 attach 的 store 挂到 `/mnt/memory/{slug}`。Agent 用普通文件工具读写；Filestore 把这些操作变成 Postgres 元数据 + S3 正文 + 不可变 version。
 
+## Memory 路径字符校验
+
+创建与路径更新遵守官方 Memory SDK 的路径合同：绝对路径、NFC、UTF8 总长至多1024字节，不含空段、`.`、`..`、控制字符、格式字符，以及 Unicode 行分隔符 U+2028 和段分隔符 U+2029。后两个字符分别属于 Zl/Zp，必须单独拒绝，不能只用控制字符和格式字符分类代替。
+
+Memory HTTP 创建与更新在访问数据库前返回 `400 invalid_request_error`。共享的 Memory/Filestore 文件路径校验采用相同规则。普通空格、不换行空格和合法中文仍可作为路径字符。该修复不改列表前缀、分页、已有对象和版本策略。
+
+`internal/memorypath/path_test.go` 覆盖两个分隔符及普通路径对照；`internal/memory/path_separators_test.go` 覆盖创建与更新在数据访问前拒绝。
+
+## 每次成功更新生成版本
+
+用户指定的版本策略：每次成功的 Memory 更新都追加一个新的不可变 `modified` 版本，并推进当前 `memory_version_id`，即使提交的正文、路径与现值完全相同，或更新对象为空。省略正文时复制当前真实正文到本次新快照；显式空字符串仍保持零字节内容。共享 Memory 更新事务同样覆盖 Filestore 写入，不按路径或内容摘要相等跳过版本创建。
+
+条件和冲突检查先于版本提交。提供的 `content_sha256` 前置条件不匹配时始终返回 `409 memory_precondition_failed_error`，即使目标正文恰好等于现值，也不将失败的条件请求当成幂等成功。拒绝的请求不改变 head 或历史，预上传对象沿既有补偿路径清理。匹配的条件更新仍生成新版本。已有版本的内容、hash、路径及审计字段保持不变，当前 Memory ID 保持稳定。
+
+`tests/memory_update_versions_test.go` 覆盖错误条件且同正文的拒绝、同正文、同路径、两者同值、空更新和匹配CAS更新。每次成功更新都核对唯一新版本、版本计数、当前读取及所有旧完整快照。
+
 ## Store 创建时间边界
 
 Store 的 `created_at` 响应保留数据库实际保存的小数秒精度，以 UTC RFC3339Nano 编码。创建、读取和列表使用同一个响应映射。列表的 `created_at[gte]` 和 `created_at[lte]` 均为包含式边界；客户端将返回的创建时间用作任一边界或同时用作上下界时，结果必须包含该 Store。响应不能截为整秒，否则原始创建时间可能超过客户端收到的上界。
@@ -387,3 +403,9 @@ Agent 可以改运行中的 `MEMORY.md`。下一 Session 按快照重建，不�
 `memory cleanup` 在真实非版本化 MinIO 上检查同步删除、删除失败后的持久化重试、相同正文和 metadata 拒绝后的补偿，并通过实际读取确认所有待删除的 Memory 对象返回 NotFound。测试只读检查桶从未开启版本控制；Memory 业务历史版本使用独立对象 key，不依赖 MinIO 版本控制。清理由测试显式 `RunOnce` 驱动，重试等待时间也由测试推进；不宣称覆盖自动后台时序、进程崩溃恢复或云端 IAM。
 
 `memory cleanup` 还用 schema 内的 trigger 拒绝任务写入，验证 store 删除和 version redact 返回失败、清理任务及元数据均回滚，恢复任务持久化后可以重试。此保护覆盖元数据变更提交后的进程退出；正文 upload 到 metadata 提交前的崩溃窗口仍未覆盖。
+
+## Memory 列表目录前缀边界
+
+公开 Memory List API 的非空 `path_prefix` 必须以 `/` 结尾。空值表示不筛选，`/` 表示根范围。`/notes/` 限定该目录子树，不包含 `/notes-archive/`；`/notes` 等非目录边界在查询数据前返回 `400 invalid_request_error`，不自动归一或执行原始字符串模糊匹配。分页依照 `next_page`，不承诺 Qoder 风格 `has_more`。该限制放在 Memory HTTP 资源边界，Filestore 共用路径校验保持原语义。
+
+合同来源：[CMA List memories](https://platform.claude.com/docs/en/api/beta/memory_stores/memories/list)。回归覆盖无尾斜线拒绝、结构化错误及合法空值/根/目录/Unicode路径；实际目录子树和邻近目录隔离由 Memory 列表回归验证。

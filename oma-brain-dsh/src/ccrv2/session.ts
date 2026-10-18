@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { Context } from "@deepseek-ai/cordis";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import type { SessionEvent } from "@deepseek-ai/dsh-session";
-import { ACCOUNT_QUOTA_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE } from "@deepseek-ai/dsh-llm";
+import { ACCOUNT_QUOTA_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { SessionRuntime } from "../runtime/session.ts";
 import { Subagents } from "../runtime/subagents.ts";
 import { CcrSubagentBridge } from "./subagents.ts";
@@ -21,6 +21,13 @@ import { startDeliveryProgress } from "./delivery-progress.ts";
 import { failureDiagnostic, workerDiagnostic } from "./diagnostics.ts";
 import { CcrToolResults } from "./tool-results.ts";
 import { assistantMessages, CcrAssistantStream } from "./assistant.ts";
+import { userInputContent } from "./user-content.ts";
+
+declare module "@deepseek-ai/dsh-llm" {
+  interface MessageSourceMap {
+    "oma-interruption": { kind: "oma-interruption"; inputId: string };
+  }
+}
 
 export class CcrSession {
   state: BrainState = emptyState();
@@ -61,6 +68,15 @@ export class CcrSession {
         return this.modelOverride ? { ...call, model: this.modelOverride } : call;
       });
     } }, {
+      onExternalMcpAuthenticationFailure: (serverName) => this.backend.events(this.id, [{
+        type: "session.error", uuid: `${this.id}_mcp_auth_${serverName}`,
+        processed_at: new Date().toISOString(),
+        error: {
+          type: "mcp_authentication_failed_error", mcp_server_name: serverName,
+          message: "MCP server authentication failed during tool discovery.",
+          retry_status: { type: "exhausted" },
+        },
+      }]),
       setupTools: (scope) => this.subagents.register(scope),
       beforeRequest: () => this.flushEvents(),
       onEvent: (event) => this.record(event),
@@ -318,6 +334,7 @@ export class CcrSession {
             tool_name: request.toolName,
             tool_use_id: request.callId,
             input: request.input,
+            ...(request.available === false ? { tool_available: false } : {}),
           },
         },
       ]);
@@ -530,10 +547,9 @@ export class CcrSession {
       throw new Error("Session requires operator reconciliation");
     if (this.busy || this.abort.signal.aborted)
       throw new Error("Session is busy or stopped");
-    const text = userInputText(payload);
     let stopProgress = () => {};
     try {
-      await this.runtime.run(text, {
+      await this.runtime.run(() => userInputContent(payload, this.ctx.attachments), {
         beforeRun: async () => {
           this.turnErrorMessage = undefined;
           this.interrupted = false;
@@ -554,6 +570,13 @@ export class CcrSession {
         },
         afterRun: async (completed) => {
           const cancelled = this.interrupted && !this.blocked();
+          if (cancelled) {
+            this.agent.session.append("user/message", createUserMessage({
+              source: { kind: "oma-interruption", inputId },
+              content: [{ type: "text", text: "The user interrupted the preceding agent turn. Its unfinished work is cancelled. Do not continue or retry that work unless a later user message explicitly requests it. Follow the next user message." }],
+            }), { surfaceOp: "append" });
+            await this.runtime.flushLog();
+          }
           const failed = this.blocked() || (!completed && !cancelled);
           if (failed)
             this.addError(this.turnErrorMessage ?? "The turn stopped before successful completion.", "failed");
@@ -632,18 +655,4 @@ export class CcrSession {
     const failed = results.find((result) => result.status === "rejected");
     if (failed?.status === "rejected") throw failed.reason;
   }
-}
-
-function userInputText(payload: Payload): string {
-  const content = payload.message?.content ?? payload.content;
-  const text =
-    typeof content === "string"
-    ? content
-    : Array.isArray(content) &&
-      content.every((b: Payload) => b.type === "text")
-      ? content.map((b: Payload) => b.text).join("\n")
-      : undefined;
-  if (typeof text !== "string")
-    throw new Error("Only text user input is supported");
-  return text;
 }

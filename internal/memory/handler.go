@@ -527,8 +527,8 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 		writeBadRequest(w, r, err)
 		return
 	}
-	pathPrefix := strings.TrimSpace(r.URL.Query().Get("path_prefix"))
-	if err := memorypath.ValidatePrefix(pathPrefix); err != nil {
+	pathPrefix, err := parseMemoryListPrefix(r)
+	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
@@ -726,33 +726,11 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 			h.writeMemoryLoadError(w, r, err, storeID, memoryID)
 			return
 		}
-		targetPath := record.Path
-		if pathPresent {
-			targetPath = path
-		}
 		targetContent := ""
 		targetContentKnown := false
 		if contentPresent {
 			targetContent = content
 			targetContentKnown = true
-		}
-		targetSHA := record.ContentSHA256
-		if contentPresent {
-			targetSHA = sha256Hex([]byte(content))
-		}
-		if expectedHash != nil && record.ContentSHA256 != *expectedHash && record.Path == targetPath && record.ContentSHA256 == targetSHA {
-			httpapi.WriteJSON(w, http.StatusOK, h.responseFromMemoryWithKnownContent(record, view, content))
-			return
-		}
-		if record.Path == targetPath && record.ContentSHA256 == targetSHA {
-			resp, err := h.responseFromMemory(r.Context(), record, view)
-			if err != nil {
-				h.logger.ErrorContext(r.Context(), "read memory no-op content", "memory_id", memoryID, "key", record.S3Key, "error", err)
-				writeAPIError(w, r, "Could not read memory content")
-				return
-			}
-			httpapi.WriteJSON(w, http.StatusOK, resp)
-			return
 		}
 
 		if !contentPresent {

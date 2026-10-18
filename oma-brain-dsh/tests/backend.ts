@@ -105,6 +105,7 @@ export class Backend {
   onCancel?: (params: Payload) => Promise<void>;
   onTool?: (params: Payload) => Promise<Payload>;
   onApproval?: (payload: Payload) => Promise<void>;
+  onDelegationApproval?: (payload: Payload) => Promise<void>;
   hangTool = false;
   failWrites = false;
   failPublicEvents = false;
@@ -317,7 +318,8 @@ export class Backend {
               public_event_id: event.payload.request_id, request_id: event.payload.request_id,
               provider_tool_use_id: event.payload.request.tool_use_id,
             };
-            await this.onApproval?.(event.payload);
+            const delegation = ["list_agents", "send_to_agent", "archive_agent"].includes(event.payload.request.tool_name);
+            await (delegation && this.onDelegationApproval ? this.onDelegationApproval : this.onApproval)?.(event.payload);
           }
         }
         return json({});

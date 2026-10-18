@@ -20,6 +20,12 @@ async function fixture(b = new Backend()) {
   const api = new OmaApi(b.url);
   await mountOma(ctx, api);
   const session = createOmaSession(ctx, api, b.a);
+  b.onApproval = async (payload) => {
+    if (!["list_agents", "send_to_agent", "archive_agent"].includes(payload.request.tool_name)) return;
+    await session.control({ type: "control_response", response: {
+      subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
+    } });
+  };
   await session.open();
   const close = async () => { await session.close(); await ctx.fiber.dispose(); };
   cleanups.push(close);
@@ -89,13 +95,16 @@ test("delegates with isolated history, no nested delegation, shared approvals, a
     toolEvents("pwd", "child_bash"), textEvents("child report"), textEvents("parent synthesis"),
   ];
   f.b.onApproval = async (payload) => {
-    expect(payload.session_thread_id).toStartWith("sthr_");
+    if (payload.request.tool_name === "Bash") expect(payload.session_thread_id).toStartWith("sthr_");
     await f.session.control({ type: "control_response", response: {
       subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
     } });
   };
   await f.session.receive("first", { content: "Delegate this work" });
   expect(f.b.requests).toHaveLength(4);
+  const created = [...f.b.publicLog.values()].find((event) => event.type === "session.thread_created");
+  expect(created?.agent).toEqual({ type: "inline", name: "researcher", system: "Inspect files" });
+  expect(f.session.state.threads?.[0]?.inline).toBe(true);
   const parentTools = f.b.requests[0]!.tools.map((tool: Payload) => tool.name);
   expect(parentTools).toContain("send_to_agent");
   const childTools = f.b.requests[1]!.tools.map((tool: Payload) => tool.name);
@@ -125,14 +134,26 @@ test("delegates with isolated history, no nested delegation, shared approvals, a
 test("predefined specialist uses its own prompt, model and restricted tools", async () => {
   const b = new Backend();
   cleanups.push(async () => b.stop());
+  const agentSnapshot = {
+    type: "agent", id: "agent_reviewer", version: 3, name: "reviewer", system: "Review only", model: "review-model",
+    tools: [{ type: "agent_toolset_20260401", default_config: { enabled: false }, configs: [
+      { name: "read", enabled: true, permission_policy: { type: "always_ask" } },
+      { name: "grep", enabled: true, permission_policy: { type: "always_allow" } },
+    ] }], mcp_servers: [], skills: [],
+  };
   b.a.launch.subagents = { inlineAgents: false, agents: [{
     name: "reviewer", description: "Read-only reviewer", systemPrompt: "Review only", model: "review-model", tools: ["Read", "Grep"],
+    agentSnapshot,
   }] };
   const f = await fixture(b);
   b.modelScript = [call("send_to_agent", { agent_name: "reviewer", message: "Review the code" }, "delegate"), textEvents("review report"), textEvents("done")];
   await f.session.receive("specialist", { content: "Review" });
   const child = b.requests[1]!;
   expect(child.model).toBe("review-model");
+  const created = [...b.publicLog.values()].find((event) => event.type === "session.thread_created");
+  expect(created?.agent).toEqual(agentSnapshot);
+  expect(f.session.state.threads?.[0]?.inline).toBe(false);
+  expect(f.session.state.threads?.[0]?.agentSnapshot?.id).toBe("agent_reviewer");
   expect(modelSystemText(child)).toContain("Review only");
   expect(child.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read"]);
   await expect(f.session.subagents.send({ name: "inline", system_prompt: "test", message: "test" }, new AbortController().signal)).rejects.toThrow("Inline agents");

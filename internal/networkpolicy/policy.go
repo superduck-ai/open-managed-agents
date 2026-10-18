@@ -124,6 +124,24 @@ func (p Policy) AuthorizeHTTPS(target string) Decision {
 	return p.authorizeEndpoint(normalized, "https", port)
 }
 
+func (p Policy) AuthorizeHTTPURL(target *url.URL) Decision {
+	if target == nil || target.Scheme != "http" || target.Hostname() == "" || target.User != nil || target.Fragment != "" || target.Opaque != "" {
+		return Decision{Reason: ReasonInvalidTarget}
+	}
+	host, err := NormalizeHost(target.Hostname())
+	if err != nil {
+		return Decision{Reason: ReasonInvalidTarget}
+	}
+	port := target.Port()
+	if port == "" {
+		port = "80"
+	}
+	if !validAllowedPort(port) {
+		return Decision{Reason: ReasonInvalidTarget}
+	}
+	return p.authorizeEndpoint(host, "http", port)
+}
+
 // AuthorizeMCPURL 授权原始 MCP HTTP(S) URL。调用方不得改写 scheme、host 或 port。
 func (p MCPProxyPolicy) AuthorizeMCPURL(rawURL string) Decision {
 	target, err := url.Parse(rawURL)

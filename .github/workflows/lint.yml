@@ -37,5 +37,8 @@ jobs:
       - name: Check Go package ownership
         run: ./scripts/tests/go-packages_test.sh
 
+      - name: Check Go test suite boundaries
+        run: ./scripts/tests/test-suites_test.sh
+
       - name: Run golangci-lint
         run: ./scripts/golangci-lint.sh run --config=.golangci.yml --timeout=5m ./...

@@ -27,9 +27,9 @@ export async function mountOma(
     },
   });
   await ctx.plugin({
-    inject: ["llm"],
+    inject: ["llm", "attachments"],
     apply: (scope: Context) => {
-      scope.llm.registerAdapter(["oma"], new MessagesAdapter(api));
+      scope.llm.registerAdapter(["oma"], new MessagesAdapter(api, scope.attachments));
     },
   });
   return client;

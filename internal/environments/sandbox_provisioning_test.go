@@ -16,7 +16,7 @@ import (
 func TestBrainSandboxManagerStartsEmbeddedMCP(t *testing.T) {
 	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://sandbox.example"}}
 	cfg.EnvironmentRunner.AgentMode = "brain"
-	launch, err := brainSandboxManagerCommand("cse_test", "/workspace/project", cfg)
+	launch, err := brainSandboxManagerCommand("cse_test", "/workspace/project", cfg, nil, "ingress-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,8 +27,12 @@ func TestBrainSandboxManagerStartsEmbeddedMCP(t *testing.T) {
 		t.Fatalf("unexpected launch command: %q", launch.ShellCommand)
 	}
 	var payload struct {
+		Auth           []AuthConfig `json:"auth"`
 		StartupContext struct {
-			APIBaseURL string `json:"api_base_url"`
+			APIBaseURL           string            `json:"api_base_url"`
+			UseCodeSessions      bool              `json:"use_code_sessions"`
+			SessionID            string            `json:"session_id"`
+			EnvironmentVariables map[string]string `json:"environment_variables"`
 		} `json:"startup_context"`
 		Environment struct {
 			Type string `json:"environment_type"`
@@ -37,6 +41,9 @@ func TestBrainSandboxManagerStartsEmbeddedMCP(t *testing.T) {
 	}
 	if err := json.Unmarshal(launch.Payload, &payload); err != nil {
 		t.Fatal(err)
+	}
+	if !payload.StartupContext.UseCodeSessions || payload.StartupContext.SessionID != "cse_test" || payload.StartupContext.EnvironmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] != "1" || payload.StartupContext.EnvironmentVariables["CLAUDE_CODE_REMOTE"] != "true" || len(payload.Auth) != 1 || payload.Auth[0].Token != "ingress-test" {
+		t.Fatal("relay startup configuration missing")
 	}
 	if payload.StartupContext.APIBaseURL != "http://sandbox.example" || payload.Environment.Type != "anthropic" || payload.Environment.CWD != "/workspace/project" {
 		t.Fatalf("unexpected manager payload: %+v", payload)

@@ -250,7 +250,7 @@ func TestGoToolStderrDoesNotCorruptTestEvidence(t *testing.T) {
 	if err := os.WriteFile(evidence, []byte(events), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\nprintf 'go: downloading example.test/module v1.0.0\\n' >&2\ncat \"$VERIFY_TEST_EVENTS\"\n"
+	script := "#!/bin/sh\n[ \"$1\" = test ] && [ \"$2\" = -tags=integration ] || exit 37\nprintf 'go: downloading example.test/module v1.0.0\\n' >&2\ncat \"$VERIFY_TEST_EVENTS\"\n"
 	if err := os.WriteFile(filepath.Join(directory, "go"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

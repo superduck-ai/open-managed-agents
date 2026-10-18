@@ -201,7 +201,7 @@ func validateSessionInputBatch(primary SessionThread, worker codeSessionInputSta
 			if event.ToolUseID == nil || worker.Status != "active" || primary.Status == "terminated" {
 				return "", ErrSessionInputConflict
 			}
-			threadID := primary.ExternalID
+			threadID := ""
 			if event.ThreadExternalID != nil {
 				threadID = *event.ThreadExternalID
 			}

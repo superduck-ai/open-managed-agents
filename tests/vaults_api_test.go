@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -260,7 +262,7 @@ func TestVaultsAPI(t *testing.T) {
 		assertRawContains(t, envCred.Auth, `"secret_name":"NOTION_TOKEN"`)
 		assertRawContains(t, envCred.Auth, `"allowed_hosts":["api.notion.com","*.example.com"]`)
 		assertRawContains(t, envCred.Auth, `"placeholder":"oma_ph_`)
-		assertRawContains(t, envCred.Auth, `"injection_location":{"header":true,"body":false}`)
+		assertRawContains(t, envCred.Auth, `"injection_location":{"header":true,"body":true}`)
 		assertRawNotContains(t, envCred.Auth, "env-secret")
 
 		retrieved := retrieveVaultCredential(t, app, vault.ID, mcp.ID)

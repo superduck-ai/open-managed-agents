@@ -229,7 +229,7 @@ func runTest(ctx context.Context, env *environment, worker string, selected scen
 	if strings.HasPrefix(selected.Test, "TestVerifyDeployment") {
 		values = append(values, "VERIFY_BE_DEPLOYMENT=1")
 	}
-	args := []string{"go", "test", selected.Package, "-json", "-count=1", "-timeout=" + (selected.Timeout + 30*time.Second).String()}
+	args := []string{"go", "test", "-tags=integration", selected.Package, "-json", "-count=1", "-timeout=" + (selected.Timeout + 30*time.Second).String()}
 	if env.suite {
 		values, err = suiteEnvironment(env)
 		if err != nil {

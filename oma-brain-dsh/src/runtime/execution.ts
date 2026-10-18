@@ -3,6 +3,7 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { validateJsonSchemaValue, type JsonSchemaNode } from "@deepseek-ai/dsh-tools";
 import { object, type Payload } from "../json.ts";
 import { toolText } from "./tools.ts";
+import { approveToolCall } from "./tool-approvals.ts";
 import type {
   RemoteTool,
   SandboxExecutor,
@@ -26,7 +27,7 @@ export class ToolExecution {
         throw new Error(`Invalid ${tool.name} arguments: ${errors.join("; ")}`);
     };
     validate(original);
-    const decision = await this.bridge.approve({
+    const decision = await approveToolCall(this.bridge, {
       callId: exec.callId,
       toolName: tool.name,
       input: original,

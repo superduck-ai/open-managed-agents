@@ -95,7 +95,8 @@ export class Subagents {
         throw new Error("Predefined agents cannot override name or system prompt");
       if (!definition && (config.inlineAgents === false || !args.name || typeof args.system_prompt !== "string"))
         throw new Error("Inline agents require name and system_prompt and must be enabled");
-      thread = { id: `sthr_${crypto.randomUUID()}`, name: definition?.name ?? args.name,
+      thread = { id: `sthr_${crypto.randomUUID()}`, inline: !definition, agentSnapshot: definition?.agentSnapshot ? structuredClone(definition.agentSnapshot) : undefined,
+        name: definition?.name ?? args.name,
         systemPrompt: definition?.systemPrompt ?? args.system_prompt,
         model: definition?.model ?? this.parent.config.model,
         tools: definition?.tools ?? this.parent.config.tools, status: "idle" };

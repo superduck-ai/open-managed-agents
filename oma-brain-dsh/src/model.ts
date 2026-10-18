@@ -6,9 +6,10 @@ import { OmaApi } from "./api.ts";
 import { object, type Payload } from "./json.ts";
 import { sse } from "./sse.ts";
 import { workerDiagnostic } from "./ccrv2/diagnostics.ts";
+import type { AttachmentStore } from "@deepseek-ai/dsh-attachment";
 
 export class MessagesAdapter extends LlmAdapter {
-  constructor(readonly api: OmaApi) { super(); }
+  constructor(readonly api: OmaApi, readonly attachments?: AttachmentStore) { super(); }
 
   async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     return { provider, id: model, name: model };
@@ -23,7 +24,7 @@ export class MessagesAdapter extends LlmAdapter {
     if (process.env.OMA_DEBUG_TIMING === "1") workerDiagnostic("info", "oma_model_started", {
       session_id: options.sessionId, timestamp: new Date().toISOString(), tools: options.tools?.length ?? 0,
     });
-    const response = await this.api.requestResponse("/v1/messages", assignment.model_token, "POST", messagesRequest(options),
+    const response = await this.api.requestResponse("/v1/messages", assignment.model_token, "POST", await messagesRequest(options, this.attachments),
       { "anthropic-version": "2023-06-01", Accept: "text/event-stream",
         ...(options.sessionId !== assignment.session_id ? { "X-Claude-Code-Agent-Id": options.sessionId } : {}),
       }, options.signal, 300_000);
@@ -128,7 +129,7 @@ function providerError(message: string, status?: number): LlmError {
   return new LlmError(message, code, { status });
 }
 
-function messagesRequest(options: GenerateOptions): Payload {
+async function messagesRequest(options: GenerateOptions, attachments?: AttachmentStore): Promise<Payload> {
   const system: string[] = options.system ? [options.system] : [];
   const messages: { role: string; content: Payload[] }[] = [];
   for (const message of options.messages) {
@@ -137,8 +138,19 @@ function messagesRequest(options: GenerateOptions): Payload {
       continue;
     }
     const replay = message.role === "assistant" ? message.source.replayState as Payload | undefined : undefined;
-    const content = message.content.flatMap((block, index): Payload[] => {
+    const parts = await Promise.all(message.content.map(async (block, index): Promise<Payload[]> => {
       if (block.type === "text") return [{ type: "text", text: block.text }];
+      if (block.type === "image") {
+        if (!attachments) throw new LlmError("Image attachment storage is unavailable", "INVALID_ARGS");
+        const image = await attachments.readImage(block.attachment, options.signal);
+        return [{ type: "image", source: { type: "base64", media_type: image.ref.mediaType, data: Buffer.from(image.data).toString("base64") } }];
+      }
+      if (block.type === "oma-document") {
+        const document = block.document;
+        if (document.source.type === "text" && document.source.media_type === "text/plain" && !document.citations?.enabled)
+          return [{ type: "text", text: JSON.stringify({ type: "document", title: document.title, context: document.context, content: document.source.data }) }];
+        return [structuredClone(document)];
+      }
       if (block.type === "reasoning") {
         const signature = replay?.response?.format === "oma-messages-v1" ? replay.blocks?.[index]?.signature
           : replay?.response?.kind === "pi-ai" ? replay.blocks?.[index]?.thinkingSignature : undefined;
@@ -147,7 +159,8 @@ function messagesRequest(options: GenerateOptions): Payload {
       }
       if (block.type === "tool-call") return [{ type: "tool_use", id: block.id, name: block.name, input: replayToolInput(block.arguments) }];
       throw new LlmError(`Unsupported Messages input block: ${block.type}`, "INVALID_ARGS");
-    });
+    }));
+    const content = parts.flat();
     if (message.role === "tool") {
       const toolResult = { type: "tool_result", tool_use_id: message.source.callId, content, is_error: message.isError ?? false };
       appendMessage(messages, "user", [toolResult]);

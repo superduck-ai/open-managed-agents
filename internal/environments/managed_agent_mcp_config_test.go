@@ -382,3 +382,7 @@ func TestManagedAgentWithoutMCPDoesNotCreateConfigFile(t *testing.T) {
 		t.Fatal("empty MCP source acquired launch fields")
 	}
 }
+
+func (r *mcpConfigCodeSessionRuntime) SandboxIngressToken(context.Context, db.Session, string) (string, error) {
+	return "test-ingress", nil
+}

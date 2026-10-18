@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -54,7 +56,12 @@ func newPayloadIntegrationApp(t *testing.T, objects storage.ObjectStore) *testAp
 
 func newPayloadIntegrationSession(t *testing.T, app *testApp) (db.CodeSession, string) {
 	t.Helper()
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"payload-integration"}`)
+	return newPayloadIntegrationSessionWithAgent(t, app, `{"model":"claude-opus-4-6","name":"payload-integration"}`)
+}
+
+func newPayloadIntegrationSessionWithAgent(t *testing.T, app *testApp, body string) (db.CodeSession, string) {
+	t.Helper()
+	agent := createAgent(t, app, body)
 	env := createEnvironment(t, app, `{"name":"payload-integration"}`)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeID := launchLocalCodeSession(t, app, session.ID)

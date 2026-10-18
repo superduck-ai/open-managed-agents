@@ -11,6 +11,14 @@ import (
 // match requestURL. hostCovered is true when any credential covers the host
 // (including non-injectable types), for reject-vs-passthrough.
 func listInjectableMatches(requestURL *url.URL, credentials []db.VaultCredential) ([]*db.VaultCredential, bool, error) {
+	return listCredentialMatches(requestURL, credentials, false)
+}
+
+func listMCPInjectableMatches(requestURL *url.URL, credentials []db.VaultCredential) ([]*db.VaultCredential, bool, error) {
+	return listCredentialMatches(requestURL, credentials, true)
+}
+
+func listCredentialMatches(requestURL *url.URL, credentials []db.VaultCredential, exactMCPPath bool) ([]*db.VaultCredential, bool, error) {
 	if requestURL == nil {
 		return nil, false, nil
 	}
@@ -45,7 +53,11 @@ func listInjectableMatches(requestURL *url.URL, credentials []db.VaultCredential
 			continue
 		}
 		hostCovered = true
-		if !pathPrefixMatch(serverURL.Path, requestURL.Path) {
+		matchesPath := pathPrefixMatch(serverURL.Path, requestURL.Path)
+		if exactMCPPath {
+			matchesPath = strings.TrimRight(serverURL.EscapedPath(), "/") == strings.TrimRight(requestURL.EscapedPath(), "/")
+		}
+		if !matchesPath {
 			continue
 		}
 		if !isInjectableAuthType(authType) {

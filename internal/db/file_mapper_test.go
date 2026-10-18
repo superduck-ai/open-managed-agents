@@ -57,7 +57,7 @@ func TestFileMapperBuildsPostgresArguments(t *testing.T) {
 			name:         "get visible file",
 			bound:        buildFileMapperGetFile(yourbatis.DialectPostgres, workspaceUUID, file.ExternalID),
 			wantArgCount: 2,
-			wantClauses:  []string{"owner.payload IS NULL", "'/outputs/'"},
+			wantClauses:  []string{"owner.payload IS NULL", "'/outputs/'", "session.uuid = owner.session_uuid", "session.workspace_uuid = owner.workspace_uuid", "session.deleted_at IS NULL"},
 		},
 		{
 			name:         "list scoped files",
@@ -85,7 +85,7 @@ func TestFileMapperBuildsPostgresArguments(t *testing.T) {
 			name:         "session page cursor",
 			bound:        buildFileMapperFindSessionPageCursor(yourbatis.DialectPostgres, sessionPageParams),
 			wantArgCount: 3,
-			wantClauses:  []string{"session_resources", "file.external_id = $3"},
+			wantClauses:  []string{"session_resources", "file.external_id = $3", "session.uuid = resource.session_uuid", "session.workspace_uuid = resource.workspace_uuid", "session.deleted_at IS NULL"},
 		},
 		{
 			name:         "session page",

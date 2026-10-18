@@ -15,6 +15,11 @@ async function fixture(b = new Backend()) {
   const api = new OmaApi(b.url);
   await mountOma(ctx, api);
   const session = createOmaSession(ctx, api, b.a);
+  b.onDelegationApproval = async (payload) => {
+    await session.control({ type: "control_response", response: {
+      subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
+    } });
+  };
   let closed = false;
   const close = async () => { if (closed) return; closed = true; await session.close(); await ctx.fiber.dispose(); };
   cleanups.push(async () => { await close(); b.stop(); });

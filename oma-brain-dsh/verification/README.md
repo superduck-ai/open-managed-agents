@@ -49,9 +49,8 @@ processes. Its stages check:
 
 Parameter replacement is verified at the Brain's CCRv2 input boundary. A public
 approval editor still requires backend support. The Brain gateway is inherited
-from the Rust service. CCRv2 SSE can replace Brain NATS consumption and the private
-`delivery` route. Initial assignment and lazy sandbox creation need separate
-scheduling/resource APIs.
+from the Rust service. These recorded runs predate HTTP worker claims; Brain
+processes now receive sessions from `POST /v1/code/brain/claims` instead of NATS.
 
 Read the final `report.json`, `report.md` and `dsh-live-evidence.json` after cleanup.
 Raw logs and private configurations are not copied into this project.

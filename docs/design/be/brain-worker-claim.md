@@ -231,7 +231,7 @@ RETURNING cs.uuid, cs.external_id, cs.organization_uuid, cs.workspace_uuid,
 
 ## 权限边界
 
-- fleet token 是部署级凭据，可以领取任意租户的 Brain 会话，信任级别与当前 NATS 账号相同。配置项为 `code_session.brain_claim_token_file`，与 JWT 签名密钥同样以文件方式挂载，不进入 `config.Config` 的明文字段，也不写日志。
+- fleet token 每个部署只有一个，所有 DSH 进程共用，可以领取任意租户的 Brain 会话，信任级别与当前 NATS 账号相同。以后如需按 environment 隔离 Brain 集群，可改用现有 environment key，并在领取 SQL 中增加 `environment_uuid` 条件。配置项为 `code_session.brain_claim_token_file`，与 JWT 签名密钥同样以文件方式挂载，不进入 `config.Config` 的明文字段，也不写日志。
 - fleet token 只能调用领取与释放两个接口；领取之后的所有 CCRv2 调用继续使用 per-session ingress JWT，租户、epoch 与租约校验不变。
 - 领取 SQL 关联 `sessions` 时显式带上 `organization_uuid`、`workspace_uuid`，与现有多租户规则一致。
 - 运行日志只记录 `worker_id`、`session_id`、`worker_epoch`、`attempts`、`reason`，不记录响应体或 token。
@@ -284,10 +284,13 @@ DSH（使用 `tests/backend.ts` 受控后端）：
 
 如果已有环境在运行 JetStream 方案，再增加过渡期：后端按 `worker_transport` 同时支持两种派发，DSH 通过 `OMA_BRAIN_TRANSPORT` 切换，全部切换后执行上述删除。
 
+## 已决定
+
+- fleet token 全部署共用一个（2026-10-18）。
+
 ## 待定问题
 
-1. **fleet token 粒度**：一个部署一个 token 是否足够，还是需要按 environment 或 workspace 签发，以支持多个隔离的 Brain 集群。
-2. **崩溃检测延迟**：注册后崩溃仍需等待 60 + 10 秒租约。是否为 `claim` transport 单独缩短 TTL（例如 20 + 5 秒），代价是心跳频率更高。
-3. **Runner 多余的凭据签发**：brain 模式下是否让 `CreateManagedAgentCodeSession` 跳过签发，以省掉首次领取前的一次轮换。
-4. **失败可见性**：attempts 超限时公共事件的具体内容和安全错误分类，需要与现有 `session.error` 映射对齐。
-5. **首次启动判定**：确认 Runner 调用 `DispatchWorker` 时公共 Session 状态与 requested 标记的先后关系，确保 prewarm 关闭时也不会出现“可领取但沙箱准备未完成”的窗口。
+1. **崩溃检测延迟**：注册后崩溃仍需等待 60 + 10 秒租约。是否为 `claim` transport 单独缩短 TTL（例如 20 + 5 秒），代价是心跳频率更高。
+2. **Runner 多余的凭据签发**：brain 模式下是否让 `CreateManagedAgentCodeSession` 跳过签发，以省掉首次领取前的一次轮换。
+3. **失败可见性**：attempts 超限时公共事件的具体内容和安全错误分类，需要与现有 `session.error` 映射对齐。
+4. **首次启动判定**：确认 Runner 调用 `DispatchWorker` 时公共 Session 状态与 requested 标记的先后关系，确保 prewarm 关闭时也不会出现“可领取但沙箱准备未完成”的窗口。

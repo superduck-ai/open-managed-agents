@@ -16,7 +16,7 @@ func TestPlatformAdminOrganizationMapperBindings(t *testing.T) {
 	organization := mapperTestResponse{columns: []string{"uuid", "name", "website", "industry", "management_version", "created_at", "member_count", "admin_count", "workspace_count"}, rows: [][]driver.Value{{"org", "组织", "", "", int64(2), time.Now(), int64(3), int64(1), int64(2)}}}
 	patch := PlatformAdminOrganizationPatch{OrganizationUUID: "org", Name: new("组织'名称"), Website: new(""), Industry: nil}
 	input := PlatformAdminMemberInput{UUID: "member", ExternalID: "user_member", OrganizationUUID: "org", Email: "a@example.com", Name: "成员", Role: "admin"}
-	request := PlatformAdminCreateRequest{AccountUUID: "account", Key: "request-key", Hash: "request-hash", Response: []byte(`{"uuid":"org"}`)}
+	request := PlatformAdminOrganizationInput{Name: "组织", AccountUUID: "account", Key: "request-key", Hash: "request-hash"}
 	for _, tc := range []struct {
 		name      string
 		call      func(PlatformAdminOrganizationMapper) error
@@ -41,11 +41,20 @@ func TestPlatformAdminOrganizationMapperBindings(t *testing.T) {
 		{"SetMemberRole", func(m PlatformAdminOrganizationMapper) error {
 			return m.SetMemberRole(t.Context(), "org", "member", "developer")
 		}, mapperTestResponse{}, []any{"developer", "org", "member"}, yourbatis.StatementUpdate, []string{"role = $1", "organization_uuid = $2 AND uuid = $3 AND deleted_at IS NULL"}},
-		{"FindCreateRequest", func(m PlatformAdminOrganizationMapper) error {
-			_, _, err := m.FindCreateRequest(t.Context(), request.AccountUUID, request.Key)
+		{"FindCreation", func(m PlatformAdminOrganizationMapper) error {
+			row, err := m.FindCreation(t.Context(), request.AccountUUID, request.Key)
+			if err == nil && (row.UUID != "org" || row.Hash != request.Hash) {
+				t.Fatalf("创建信息扫描错误：%+v", row)
+			}
 			return err
-		}, mapperTestResponse{columns: []string{"request_hash", "response"}, rows: [][]driver.Value{{request.Hash, request.Response}}}, []any{request.AccountUUID, request.Key}, yourbatis.StatementSelect, []string{"account_uuid = $1 AND idempotency_key = $2 AND expires_at > now()"}},
-		{"SaveCreateRequest", func(m PlatformAdminOrganizationMapper) error { return m.SaveCreateRequest(t.Context(), request) }, mapperTestResponse{}, []any{request.AccountUUID, request.Key, request.Hash, request.Response}, yourbatis.StatementInsert, []string{"VALUES ($1, $2, $3, $4, now() + interval '24 hours')", "ON CONFLICT (account_uuid, idempotency_key) DO UPDATE"}},
+		}, mapperTestResponse{columns: []string{"uuid", "creation_request_hash"}, rows: [][]driver.Value{{"org", request.Hash}}}, []any{request.AccountUUID, request.Key}, yourbatis.StatementSelect, []string{"FROM organizations", "creation_account_uuid = $1 AND creation_idempotency_key = $2"}},
+		{"Insert", func(m PlatformAdminOrganizationMapper) error {
+			row, err := m.Insert(t.Context(), request)
+			if err == nil && (row.UUID != "org" || row.Hash != request.Hash) {
+				t.Fatalf("创建结果扫描错误：%+v", row)
+			}
+			return err
+		}, mapperTestResponse{columns: []string{"uuid", "creation_request_hash"}, rows: [][]driver.Value{{"org", request.Hash}}}, []any{request.Name, request.AccountUUID, request.Key, request.Hash}, yourbatis.StatementInsert, []string{"VALUES ($1, $2, $3, $4)", "ON CONFLICT (creation_account_uuid, creation_idempotency_key) DO NOTHING", "RETURNING uuid, creation_request_hash"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			failure := errors.New("执行失败")
@@ -58,6 +67,12 @@ func TestPlatformAdminOrganizationMapperBindings(t *testing.T) {
 				t.Fatal(err)
 			}
 			assertMapperTestExecution(t, executor, "PlatformAdminOrganizationMapper."+tc.name, tc.kind, tc.args, tc.fragments...)
+			for i, arg := range executor.bound.Args {
+				sensitive := tc.name == "Insert" && i >= 2 || tc.name == "FindCreation" && i == 1
+				if arg.Sensitive != sensitive {
+					t.Fatalf("参数敏感标记：%s %d", tc.name, i)
+				}
+			}
 		})
 	}
 }
@@ -125,8 +140,11 @@ func TestPlatformAdminOrganizationMapperMissingAndInvalidRows(t *testing.T) {
 	if _, found, err := m.FindMemberByEmail(t.Context(), "org", "a@example.com"); err != nil || found {
 		t.Fatalf("缺失成员：found=%v err=%v", found, err)
 	}
-	m = NewPlatformAdminOrganizationMapper(newMapperTestExecutor(t, mapperTestResponse{columns: []string{"request_hash", "response"}}))
-	if _, found, err := m.FindCreateRequest(t.Context(), "account", "key"); err != nil || found {
-		t.Fatalf("缺失幂等请求：found=%v err=%v", found, err)
+	m = NewPlatformAdminOrganizationMapper(newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid", "creation_request_hash"}}))
+	if _, err := m.FindCreation(t.Context(), "account", "key"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("缺失创建记录：%v", err)
+	}
+	if _, err := m.Insert(t.Context(), PlatformAdminOrganizationInput{}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("并发已创建：%v", err)
 	}
 }

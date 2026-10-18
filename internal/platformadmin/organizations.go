@@ -74,40 +74,32 @@ func (s *Service) CreateOrganization(ctx context.Context, actor Actor, input Cre
 	}
 	replayed := false
 	err = s.mutate(ctx, actor, func(tx *db.PlatformAdminTx) error {
-		cached, found, err := tx.CreateRequest(ctx, actor.AccountUUID, key)
-		if err != nil {
-			return err
-		}
-		if found {
-			if cached.Hash != auth.HashSecret(string(body)) {
-				return ErrIdempotency
-			}
-			replayed = true
-			return json.Unmarshal(cached.Response, &result)
-		}
 		workspaceID, err := ids.New("wrkspc_")
 		if err != nil {
 			return err
 		}
-		org, err := tx.CreateOrganization(ctx, input.Name, db.PlatformAuthWorkspaceInput{UUID: uuid.NewV4().String(), ExternalID: workspaceID, Name: "default", CompartmentID: uuid.NewV4().String()})
+		hash := auth.HashSecret(string(body))
+		org, created, err := tx.CreateOrganization(ctx, db.PlatformAdminOrganizationInput{Name: input.Name, AccountUUID: actor.AccountUUID, Key: key, Hash: hash}, db.PlatformAuthWorkspaceInput{UUID: uuid.NewV4().String(), ExternalID: workspaceID, Name: "default", CompartmentID: uuid.NewV4().String()})
 		if err != nil {
 			return err
 		}
-		for _, account := range input.AdminAccountUUIDs {
-			if _, err := grantOrganizationAdmin(ctx, tx, org, account); err != nil {
-				return err
+		if org.Hash != hash {
+			return ErrIdempotency
+		}
+		replayed = !created
+		if created {
+			for _, account := range input.AdminAccountUUIDs {
+				if _, err := grantOrganizationAdmin(ctx, tx, org.UUID, account); err != nil {
+					return err
+				}
 			}
 		}
-		row, err := tx.Organization(ctx, org)
+		row, err := tx.Organization(ctx, org.UUID)
 		if err != nil {
 			return err
 		}
 		result = organizationDTO(row)
-		response, err := json.Marshal(result)
-		if err != nil {
-			return err
-		}
-		return tx.SaveCreateRequest(ctx, db.PlatformAdminCreateRequest{AccountUUID: actor.AccountUUID, Key: key, Hash: auth.HashSecret(string(body)), Response: response})
+		return nil
 	})
 	return result, replayed, err
 }

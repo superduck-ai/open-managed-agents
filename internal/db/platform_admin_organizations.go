@@ -1,6 +1,10 @@
 package db
 
-import "context"
+import (
+	"context"
+	"database/sql"
+	"errors"
+)
 
 func (d *DB) ListPlatformAdminOrganizations(ctx context.Context, query PlatformAdminPageQuery) ([]PlatformAdminOrganization, error) {
 	return NewPlatformAdminOrganizationMapper(d.mapperDB).List(ctx, query)
@@ -37,14 +41,19 @@ func (tx *PlatformAdminTx) Organization(ctx context.Context, organizationUUID st
 	return row, mapNoRows(err)
 }
 
-func (tx *PlatformAdminTx) CreateOrganization(ctx context.Context, name string, workspace PlatformAuthWorkspaceInput) (string, error) {
-	org, err := (PlatformAuthTx{executor: tx.executor}).InsertOrganization(ctx, PlatformAuthOrganizationInput{Name: name})
+func (tx *PlatformAdminTx) CreateOrganization(ctx context.Context, input PlatformAdminOrganizationInput, workspace PlatformAuthWorkspaceInput) (PlatformAdminOrganizationCreation, bool, error) {
+	mapper := NewPlatformAdminOrganizationMapper(tx.executor)
+	org, err := mapper.Insert(ctx, input)
+	if errors.Is(err, sql.ErrNoRows) {
+		org, err = mapper.FindCreation(ctx, input.AccountUUID, input.Key)
+		return org, false, err
+	}
 	if err != nil {
-		return "", err
+		return org, false, err
 	}
 	workspace.OrganizationUUID = org.UUID
 	_, err = (PlatformAuthTx{executor: tx.executor}).InsertWorkspace(ctx, workspace)
-	return org.UUID, err
+	return org, true, err
 }
 
 func (tx *PlatformAdminTx) UpdateOrganization(ctx context.Context, patch PlatformAdminOrganizationPatch) error {
@@ -70,12 +79,4 @@ func (tx *PlatformAdminTx) SetMemberRole(ctx context.Context, organizationUUID, 
 
 func (tx *PlatformAdminTx) CountOrganizationAdmins(ctx context.Context, organizationUUID string) (int64, error) {
 	return NewOrganizationMemberMapper(tx.executor).CountAdmins(ctx, organizationUUID)
-}
-
-func (tx *PlatformAdminTx) CreateRequest(ctx context.Context, accountUUID, key string) (PlatformAdminCreateRequest, bool, error) {
-	return NewPlatformAdminOrganizationMapper(tx.executor).FindCreateRequest(ctx, accountUUID, key)
-}
-
-func (tx *PlatformAdminTx) SaveCreateRequest(ctx context.Context, request PlatformAdminCreateRequest) error {
-	return NewPlatformAdminOrganizationMapper(tx.executor).SaveCreateRequest(ctx, request)
 }

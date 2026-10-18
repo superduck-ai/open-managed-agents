@@ -48,11 +48,16 @@ type PlatformAdminMemberInput struct {
 	Name             string
 	Role             string
 }
-type PlatformAdminCreateRequest struct {
+type PlatformAdminOrganizationInput struct {
+	Name        string
 	AccountUUID string
 	Key         string
-	Hash        string `db:"request_hash"`
-	Response    []byte `db:"response"`
+	Hash        string
+}
+
+type PlatformAdminOrganizationCreation struct {
+	UUID string `db:"uuid"`
+	Hash string `db:"creation_request_hash"`
 }
 
 type PlatformAdminOrganizationMapper interface {
@@ -67,6 +72,6 @@ type PlatformAdminOrganizationMapper interface {
 	FindMemberByEmail(ctx context.Context, organizationUUID, email string) (PlatformAdminMember, bool, error)
 	InsertMember(ctx context.Context, params PlatformAdminMemberInput) error
 	SetMemberRole(ctx context.Context, organizationUUID, memberUUID, role string) error
-	FindCreateRequest(ctx context.Context, accountUUID, key string) (PlatformAdminCreateRequest, bool, error)
-	SaveCreateRequest(ctx context.Context, params PlatformAdminCreateRequest) error
+	FindCreation(ctx context.Context, accountUUID, key string) (PlatformAdminOrganizationCreation, error)
+	Insert(ctx context.Context, params PlatformAdminOrganizationInput) (PlatformAdminOrganizationCreation, error)
 }

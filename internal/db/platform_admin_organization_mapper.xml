@@ -53,14 +53,14 @@
     <update id="SetMemberRole" result="exec">
         UPDATE users SET role = #{role}, updated_at = now() WHERE organization_uuid = #{organizationUUID} AND uuid = #{memberUUID} AND deleted_at IS NULL
     </update>
-    <select id="FindCreateRequest" resultType="PlatformAdminCreateRequest">
-        SELECT request_hash, response FROM platform_admin_create_requests
-        WHERE account_uuid = #{accountUUID} AND idempotency_key = #{key} AND expires_at &gt; now()
+    <select id="FindCreation" resultType="PlatformAdminOrganizationCreation">
+        SELECT uuid, creation_request_hash FROM organizations
+        WHERE creation_account_uuid = #{accountUUID} AND creation_idempotency_key = #{key, sensitive=true}
     </select>
-    <insert id="SaveCreateRequest" result="exec">
-        INSERT INTO platform_admin_create_requests (account_uuid, idempotency_key, request_hash, response, expires_at)
-        VALUES (#{params.AccountUUID}, #{params.Key}, #{params.Hash}, #{params.Response}, now() + interval '24 hours')
-        ON CONFLICT (account_uuid, idempotency_key) DO UPDATE
-        SET request_hash = EXCLUDED.request_hash, response = EXCLUDED.response, expires_at = EXCLUDED.expires_at
+    <insert id="Insert" result="returning" resultType="PlatformAdminOrganizationCreation">
+        INSERT INTO organizations (name, creation_account_uuid, creation_idempotency_key, creation_request_hash)
+        VALUES (#{params.Name}, #{params.AccountUUID}, #{params.Key, sensitive=true}, #{params.Hash, sensitive=true})
+        ON CONFLICT (creation_account_uuid, creation_idempotency_key) DO NOTHING
+        RETURNING uuid, creation_request_hash
     </insert>
 </mapper>

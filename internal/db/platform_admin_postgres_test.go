@@ -3,6 +3,7 @@ package db
 import (
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 	"uuid"
@@ -27,8 +28,8 @@ func TestPlatformAdministrationPostgres(t *testing.T) {
 		rollback := errors.New("主动回滚")
 		var organization string
 		err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
-			var err error
-			organization, err = tx.CreateOrganization(ctx, "回滚组织", workspace())
+			row, _, err := tx.CreateOrganization(ctx, PlatformAdminOrganizationInput{Name: "回滚组织", AccountUUID: uuid.NewV4().String(), Key: "rollback", Hash: "digest"}, workspace())
+			organization = row.UUID
 			if err != nil {
 				return err
 			}
@@ -50,8 +51,8 @@ func TestPlatformAdministrationPostgres(t *testing.T) {
 	member := uuid.NewV4().String()
 	t.Run("创建目录和授权", func(t *testing.T) {
 		err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
-			var err error
-			organization, err = tx.CreateOrganization(ctx, "验收组织", workspace())
+			row, _, err := tx.CreateOrganization(ctx, PlatformAdminOrganizationInput{Name: "验收组织", AccountUUID: account, Key: "test-key", Hash: "digest"}, workspace())
+			organization = row.UUID
 			if err != nil {
 				return err
 			}
@@ -85,7 +86,7 @@ func TestPlatformAdministrationPostgres(t *testing.T) {
 			t.Fatalf("真实 Default 工作区：%+v，%v", rows, err)
 		}
 	})
-	t.Run("资料版本和幂等 JSON 绑定", func(t *testing.T) {
+	t.Run("资料版本和创建信息绑定", func(t *testing.T) {
 		before, err := store.GetPlatformAdminOrganization(ctx, organization)
 		if err != nil {
 			t.Fatal(err)
@@ -97,7 +98,7 @@ func TestPlatformAdministrationPostgres(t *testing.T) {
 			if err := tx.UpdateOrganization(ctx, PlatformAdminOrganizationPatch{OrganizationUUID: organization, Website: new("https://example.com")}); err != nil {
 				return err
 			}
-			return tx.SaveCreateRequest(ctx, PlatformAdminCreateRequest{AccountUUID: account, Key: "test-key", Hash: "digest", Response: []byte(`{"created":true}`)})
+			return nil
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -107,13 +108,57 @@ func TestPlatformAdministrationPostgres(t *testing.T) {
 			t.Fatalf("资料更新：%+v，%v", after, err)
 		}
 		if err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
-			result, found, err := tx.CreateRequest(ctx, account, "test-key")
-			if err != nil || !found || result.Hash != "digest" || len(result.Response) == 0 {
-				t.Fatalf("幂等结果：%+v，%v，%v", result, found, err)
+			result, created, err := tx.CreateOrganization(ctx, PlatformAdminOrganizationInput{Name: "不能覆盖", AccountUUID: account, Key: "test-key", Hash: "different"}, workspace())
+			if err != nil || created || result.Hash != "digest" || result.UUID != organization {
+				t.Fatalf("幂等结果：%+v，%v，%v", result, created, err)
 			}
 			return nil
 		}); err != nil {
 			t.Fatal(err)
+		}
+	})
+	t.Run("组织唯一约束在独立事务并发下只创建一次", func(t *testing.T) {
+		start := make(chan struct{})
+		type outcome struct {
+			row     PlatformAdminOrganizationCreation
+			created bool
+			err     error
+		}
+		results := make(chan outcome, 8)
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Go(func() {
+				<-start
+				var result outcome
+				result.err = store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
+					var err error
+					result.row, result.created, err = tx.CreateOrganization(ctx, PlatformAdminOrganizationInput{Name: "并发组织", AccountUUID: account, Key: "concurrent", Hash: "same"}, workspace())
+					return err
+				})
+				results <- result
+			})
+		}
+		close(start)
+		wg.Wait()
+		close(results)
+		created, target := 0, ""
+		for result := range results {
+			if result.err != nil {
+				t.Fatal(result.err)
+			}
+			if target == "" {
+				target = result.row.UUID
+			}
+			if result.row.UUID != target || result.row.Hash != "same" {
+				t.Fatalf("重复组织：%+v", result)
+			}
+			if result.created {
+				created++
+			}
+		}
+		rows, err := store.ListPlatformAdminWorkspaces(ctx, PlatformAdminPageQuery{OrganizationUUID: target, Limit: 10})
+		if err != nil || created != 1 || len(rows) != 1 || !rows[0].IsDefault {
+			t.Fatalf("重复创建：%d %+v %v", created, rows, err)
 		}
 	})
 	t.Run("邀请与投递原子回滚和撤销", func(t *testing.T) {

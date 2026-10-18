@@ -120,6 +120,56 @@ func TestAdministrationServicePostgres(t *testing.T) {
 			t.Fatalf("幂等冲突：%v", err)
 		}
 	})
+	t.Run("幂等重放返回修改后的组织资料", func(t *testing.T) {
+		updated, err := service.UpdateOrganization(ctx, actor, org.UUID, OrganizationPatch{Change: Change{ExpectedVersion: org.Version}, Name: new("更新后的组织"), Website: new("https://example.com")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		replayed, hit, err := service.CreateOrganization(ctx, actor, input, "create")
+		if err != nil || !hit || replayed != updated {
+			t.Fatalf("未返回当前资料：%+v %+v %v %v", replayed, updated, hit, err)
+		}
+		org = updated
+	})
+	t.Run("失败请求不占用键且不同账号同键独立", func(t *testing.T) {
+		first, hit, err := service.CreateOrganization(ctx, actor, input, "rollback")
+		if err != nil || hit {
+			t.Fatalf("回滚占用了键：%+v %v %v", first, hit, err)
+		}
+		second, hit, err := service.CreateOrganization(ctx, Actor{AccountUUID: b}, input, "rollback")
+		if err != nil || hit || second.UUID == first.UUID {
+			t.Fatalf("跨账号键冲突：%+v %v %v", second, hit, err)
+		}
+	})
+	t.Run("并发同键不同参数返回冲突", func(t *testing.T) {
+		start := make(chan struct{})
+		results := make(chan error, 2)
+		var wg sync.WaitGroup
+		for _, name := range []string{"并发甲", "并发乙"} {
+			wg.Go(func() {
+				<-start
+				_, _, err := service.CreateOrganization(ctx, actor, CreateOrganization{Name: name, AdminAccountUUIDs: []string{a}}, "conflict")
+				results <- err
+			})
+		}
+		close(start)
+		wg.Wait()
+		close(results)
+		success, conflicts := 0, 0
+		for err := range results {
+			switch {
+			case err == nil:
+				success++
+			case errors.Is(err, ErrIdempotency):
+				conflicts++
+			default:
+				t.Fatal(err)
+			}
+		}
+		if success != 1 || conflicts != 1 {
+			t.Fatalf("并发冲突：成功 %d，冲突 %d", success, conflicts)
+		}
+	})
 	members, err := database.ListPlatformAdminMembers(ctx, db.PlatformAdminPageQuery{OrganizationUUID: org.UUID, Limit: 10})
 	if err != nil || len(members) != 1 {
 		t.Fatalf("初始管理员：%+v，%v", members, err)

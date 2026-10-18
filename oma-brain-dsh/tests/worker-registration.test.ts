@@ -23,7 +23,7 @@ test("registration rejects missing and malformed session context envelopes", asy
  }
 });
 
-test("NATS admission reuses CCR registration and session context", async () => {
+test("claim admission reuses CCR registration and session context", async () => {
  const a = assignment();
  const task = {session_id:a.session_id, worker_epoch:a.worker_epoch, ingress_token:a.ingress_token, model_token:a.model_token};
  const calls: Request[] = [];

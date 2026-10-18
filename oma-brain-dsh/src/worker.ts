@@ -3,15 +3,38 @@ import { OmaApi } from "./api.ts";
 import { consumeInbound, type CcrClient, type CcrSession } from "./ccrv2/index.ts";
 import { createOmaSession } from "./oma-session.ts";
 import { registerWorkerTask, validateBrainTask } from "./worker-registration.ts";
-import { connectNats, consumeTasks, type TaskAdmissionStage } from "./transport.ts";
-import { required } from "./config.ts";
+import { CapacityExhaustedError, claimTasks, releaseClaim, type ClaimClient, type TaskAdmissionStage } from "./claim.ts";
 
-export async function startWorkers(ctx: Context, api: OmaApi, client: CcrClient, maxSessions: number): Promise<void> {
-  const nc = await connectNats(required("NATS_URL"));
+export interface WorkerOptions {
+  maxSessions: number;
+  claimConcurrency: number;
+}
+
+export async function startWorkers(
+  ctx: Context, api: OmaApi, client: CcrClient, claims: ClaimClient, options: WorkerOptions,
+): Promise<void> {
+  const { maxSessions } = options;
   const abort = new AbortController();
   const sessions = new Map<string, CcrSession>();
   const running = new Set<Promise<void>>();
   const retiring = new Map<string, Promise<void>>();
+  let slotWaiters: (() => void)[] = [];
+  const notifySlot = () => {
+    const waiters = slotWaiters;
+    slotWaiters = [];
+    for (const wake of waiters) wake();
+  };
+  const slotFreed = (signal: AbortSignal) => new Promise<void>((resolve) => {
+    const timer = setTimeout(done, 1_000);
+    function done() {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    }
+    slotWaiters.push(done);
+    signal.addEventListener("abort", done, { once: true });
+  });
+  const capacity = () => maxSessions - [...sessions.values()].filter((session) => session.busy).length;
   const watch = (promise: Promise<void>) => {
     const task = promise.catch(() => {
       if (!abort.signal.aborted) console.error("OMA session task stopped");
@@ -29,6 +52,7 @@ export async function startWorkers(ctx: Context, api: OmaApi, client: CcrClient,
       api.assignments.delete(session.id);
       api.modelResponses.delete(session.id);
       retiring.delete(session.id);
+      notifySlot();
     });
     retiring.set(session.id, result);
     return result;
@@ -40,16 +64,13 @@ export async function startWorkers(ctx: Context, api: OmaApi, client: CcrClient,
     const task = value;
     const existing = sessions.get(task.session_id);
     if (existing) {
-      const epoch = api.assignment(existing.id).worker_epoch;
-      if (task.worker_epoch <= epoch && !existing.abort.signal.aborted) return;
       stage("retire_session");
       await retire(existing);
     }
-    stage("check_capacity");
     if (sessions.size >= maxSessions) {
       const idle = [...sessions.values()].filter((session) => !session.busy)
         .sort((a, b) => a.lastIdle - b.lastIdle)[0];
-      if (!idle) throw new Error("Worker capacity exhausted");
+      if (!idle) throw new CapacityExhaustedError();
       stage("retire_session");
       await retire(idle);
     }
@@ -79,14 +100,18 @@ export async function startWorkers(ctx: Context, api: OmaApi, client: CcrClient,
   ctx.effect(() => async () => {
     abort.abort();
     clearInterval(timer);
+    const handoff = [...sessions.values()].filter((session) => session.busy)
+      .map((session) => ({ session_id: session.id, worker_epoch: api.assignment(session.id).worker_epoch }));
     for (const session of sessions.values()) session.stop();
+    await Promise.allSettled(handoff.map((task) => releaseClaim(claims, task, "shutdown")));
     await Promise.allSettled([...running]);
     await Promise.allSettled([...sessions.values()].map(retire));
-    await nc.close();
   });
   const ready = Promise.withResolvers<void>();
-  const consuming = consumeTasks(nc, abort.signal, admit, () => ready.resolve());
-  watch(consuming.catch((error) => { ready.reject(error); throw error; }));
+  const claiming = claimTasks(claims, abort.signal, {
+    concurrency: options.claimConcurrency, capacity, slotFreed, admit, ready: () => ready.resolve(),
+  });
+  watch(claiming.catch((error) => { ready.reject(error); throw error; }));
   await ready.promise;
   console.info("oma-brain-dsh ready");
 }

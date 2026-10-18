@@ -87,7 +87,7 @@ func (e *environment) writeConfig(ctx context.Context) error {
 		"tunnel":       map[string]string{"public_base_url": "http://127.0.0.1:18080"},
 		"storage":      map[string]any{"type": "s3", "s3": map[string]any{"endpoint": "http://127.0.0.1:" + ports["minio"], "bucket": "verify-be", "region": "us-east-1", "access_key_id": "verifychat", "secret_access_key": "verifychat-local-only", "force_path_style": true}},
 		"vault":        map[string]any{"master_key": map[string]any{"version": 1, "kek": base64.StdEncoding.EncodeToString(kek)}},
-		"code_session": map[string]string{"jwt_signing_private_key_file": filepath.Join(e.directory, "jwt.pem")},
+		"code_session": map[string]string{"jwt_signing_private_key_file": filepath.Join(e.directory, "jwt.pem"), "brain_claim_token_file": filepath.Join(e.directory, "brain-claim-token")},
 	}
 	if e.publicSandbox {
 		e.sandboxAPI = newLocalSandboxAPI(e.runID)
@@ -113,6 +113,13 @@ func (e *environment) writeConfig(ctx context.Context) error {
 		config["server"] = map[string]string{"addr": "127.0.0.1:18080", "diagnostics_addr": e.diagnosticsAddr}
 	}
 	if err := writeJSON(filepath.Join(e.directory, "config.json"), config); err != nil {
+		return err
+	}
+	brainClaimToken := make([]byte, 32)
+	if _, err := rand.Read(brainClaimToken); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(e.directory, "brain-claim-token"), []byte(base64.RawURLEncoding.EncodeToString(brainClaimToken)), 0o600); err != nil {
 		return err
 	}
 	_, key, err := ed25519.GenerateKey(rand.Reader)
@@ -253,7 +260,7 @@ func (e *environment) close() []string {
 			failures = append(failures, "could not confirm container cleanup: "+filter)
 		}
 	}
-	for _, name := range []string{"config.json", "jwt.pem", "server", "server.pid"} {
+	for _, name := range []string{"config.json", "jwt.pem", "brain-claim-token", "server", "server.pid"} {
 		if err := os.Remove(filepath.Join(e.directory, name)); err != nil && !os.IsNotExist(err) {
 			failures = append(failures, "could not remove "+name)
 		}

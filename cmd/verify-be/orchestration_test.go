@@ -86,7 +86,7 @@ func TestEnvironmentCleanupOwnershipAndFailure(t *testing.T) {
 				t.Setenv("CLEANUP_FAIL", "1")
 			}
 			directory := t.TempDir()
-			for _, file := range []string{"config.json", "jwt.pem", "server", "server.pid", "report.md"} {
+			for _, file := range []string{"config.json", "jwt.pem", "brain-claim-token", "server", "server.pid", "report.md"} {
 				if err := os.WriteFile(filepath.Join(directory, file), []byte("private"), 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -105,7 +105,7 @@ func TestEnvironmentCleanupOwnershipAndFailure(t *testing.T) {
 			if workerIndex < 0 || downIndex <= workerIndex || !strings.Contains(string(data), "label=com.docker.compose.project=test-owned-run") {
 				t.Fatalf("unsafe cleanup sequence: %s", data)
 			}
-			for _, file := range []string{"config.json", "jwt.pem", "server", "server.pid"} {
+			for _, file := range []string{"config.json", "jwt.pem", "brain-claim-token", "server", "server.pid"} {
 				if _, err := os.Stat(filepath.Join(directory, file)); !os.IsNotExist(err) {
 					t.Fatalf("secret remains %s: %v", file, err)
 				}

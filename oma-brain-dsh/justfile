@@ -10,6 +10,6 @@ install:
 build: install
     bun run build:executable
 
-# Build and test the executable with isolated NATS (requires Docker).
+# Build the executable and run the test suite against it.
 verify: install
     bun run verify:executable

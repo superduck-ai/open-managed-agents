@@ -1,10 +1,10 @@
 # Brain Worker 领取（替代 NATS 任务派发）
 
-状态：草案，待评审。实现落地时同步更新 `brain-runtime.md` 中“启动与多节点恢复”与 NATS 准入相关段落，以及 `oma-brain-dsh/README.md`。
+状态：已实现。运行时概要见 `brain-runtime.md`“启动与多节点恢复”，执行端配置见 `oma-brain-dsh/README.md`。
 
 ## 背景与问题
 
-当前 Brain 启动链路为：Runner 领取 Environment Work → 创建或恢复 Code Session（轮换凭据和 epoch）→ 向 JetStream `OMA_BRAIN_TASKS` 发布携带凭据的任务 → 任一 DSH 进程通过共享 durable consumer `oma_brain` 拉取并准入，完成后 ACK。
+此前的 Brain 启动链路为：Runner 领取 Environment Work → 创建或恢复 Code Session（轮换凭据和 epoch）→ 向 JetStream `OMA_BRAIN_TASKS` 发布携带凭据的任务 → 任一 DSH 进程通过共享 durable consumer `oma_brain` 拉取并准入，完成后 ACK。
 
 这条链路存在两个任务队列：PostgreSQL 中的 `environment_work` 与 JetStream 中的任务消息。两者各自维护超时与归属，判断“任务归谁”的依据并不一致：
 
@@ -53,7 +53,7 @@ sequenceDiagram
     participant D as DSH 进程
     R->>DB: 准备沙箱与 Code Session（不变）
     R->>DB: 置位 worker_claim_requested_at
-    R-->>D: Core NATS oma.brain.work.available（无数据，可丢失）
+    R-->>API: Core NATS oma.brain.work.available 唤醒各实例的长轮询（无数据，可丢失）
     loop 存在空闲槽位
         D->>API: POST /v1/code/brain/claims (block_ms, X-Worker-ID)
         API->>DB: SKIP LOCKED 选一行，epoch+1，写领取者与期限，替换 token hash
@@ -91,7 +91,7 @@ create index if not exists code_sessions_worker_claim_v1_idx
 
 崩溃后重领依赖已有的 `code_sessions_worker_lease_expiry_v1_idx`。
 
-`code_sessions.metadata.config.worker_transport` 新增取值 `claim`，由 Runner 在 brain 模式下写入（当前写入 `nats`，见 `internal/environments/runner.go` 中 `runtimeResources.workerTransport`）。
+`code_sessions.metadata.config.worker_transport` 取值 `claim`，由 Runner 在 brain 模式下写入（`internal/environments/runner.go` 中 `runtimeResources.workerTransport`），替代原来的 `nats`。
 
 ## 状态机
 
@@ -109,13 +109,14 @@ stateDiagram-v2
     Connected --> Requested: 租约过期且公共 Session running
     Connected --> Idle: 租约过期且公共 Session 非 running
     Requested --> Failed: 领取时 attempts 已达上限
+    Failed --> Idle: 发布 session.error 后重置 attempts
     Requested --> Terminated: Code Session 终止
     Connected --> Terminated: Code Session 终止
 ```
 
 | 状态 | 判定 |
 | --- | --- |
-| Requested | `worker_claim_requested_at` 非空，或公共 Session `running` 且租约为空或已超过宽限期；同时领取期限为空或已过期 |
+| Requested | `worker_claim_requested_at` 非空，或公共 Session `running`/`rescheduling` 且租约为空或已超过宽限期；同时领取期限为空或已过期 |
 | Claimed | `worker_claim_expires_at > now()` 且 `worker_lease_expires_at` 为空 |
 | Registered / Connected | `worker_lease_expires_at > now()`；Connected 另有 `connection_status = 'connected'` |
 | Idle | 无 requested 标记、租约失效、公共 Session 非 `running` |
@@ -125,9 +126,9 @@ stateDiagram-v2
 1. `cs.status = 'active'`、`cs.deleted_at is null`、`worker_transport = 'claim'`。
 2. `worker_claim_expires_at is null or worker_claim_expires_at <= now()`。
 3. `worker_lease_expires_at is null or worker_lease_expires_at + 宽限期 < now()`。宽限期内旧进程的心跳仍会被接受（见 `RecordCodeSessionWorkerHeartbeat`），不能在这段时间内抢走会话。
-4. `worker_claim_requested_at is not null`，或关联公共 Session `status = 'running'` 且未删除。
+4. `worker_claim_requested_at is not null`，或关联公共 Session `status IN ('running', 'rescheduling')` 且未删除。
 
-第 4 条后半与现有 `ClaimNext` 的 nats 恢复分支判定相同，因此空闲后收到新输入的会话、执行端崩溃的会话，都通过同一条件重新进入领取，不再依赖 Work 恢复分支轮换凭据。公共 Session 为 idle 时即使租约失效也不可领取，与现状一致。
+第 4 条后半沿用原 `ClaimNext` nats 恢复分支的判定（另外接受 `rescheduling`），因此空闲后收到新输入的会话、执行端崩溃的会话，都通过同一条件重新进入领取，不再依赖 Work 恢复分支轮换凭据。公共 Session 为 idle 时即使租约失效也不可领取，与现状一致。
 
 ## 接口
 
@@ -145,66 +146,65 @@ stateDiagram-v2
   - `401`：fleet token 无效。
   - `400`：缺少 `X-Worker-ID` 或参数越界。
 
-领取事务（Yourbatis Mapper，`code_session_claim_mapper.xml`）：
+领取事务（`DB.ClaimNextCodeSession`，Mapper 为 `code_session_claim_mapper.xml`）在一个 Yourbatis transaction 内执行两步：
 
 ```sql
-WITH picked AS (
-    SELECT cs.uuid
-    FROM code_sessions cs
-    LEFT JOIN sessions s
-      ON s.uuid = cs.session_uuid
-     AND s.organization_uuid = cs.organization_uuid
-     AND s.workspace_uuid = cs.workspace_uuid
-     AND s.deleted_at IS NULL
-    WHERE cs.deleted_at IS NULL AND cs.status = 'active'
-      AND cs.metadata #>> '{config,worker_transport}' = 'claim'
-      AND (cs.worker_claim_expires_at IS NULL OR cs.worker_claim_expires_at <= NOW())
-      AND (cs.worker_lease_expires_at IS NULL
-           OR cs.worker_lease_expires_at + #{params.LeaseGrace} * INTERVAL '1 microsecond' < NOW())
-      AND (cs.worker_claim_requested_at IS NOT NULL OR s.status = 'running')
-    ORDER BY COALESCE(cs.worker_claim_requested_at, cs.worker_lease_expires_at) ASC, cs.uuid ASC
-    LIMIT 1
-    FOR UPDATE OF cs SKIP LOCKED
-)
-UPDATE code_sessions cs
-SET current_worker_epoch = cs.current_worker_epoch + 1,
+-- LockNextClaimable
+SELECT cs.uuid, cs.external_id, cs.organization_uuid, cs.workspace_uuid, cs.session_external_id,
+       cs.current_worker_epoch, cs.worker_claim_attempts
+FROM code_sessions cs
+LEFT JOIN sessions s
+  ON s.uuid = cs.session_uuid
+ AND s.organization_uuid = cs.organization_uuid
+ AND s.workspace_uuid = cs.workspace_uuid
+ AND s.deleted_at IS NULL
+WHERE cs.deleted_at IS NULL AND cs.status = 'active'
+  AND cs.metadata #>> '{config,worker_transport}' = 'claim'
+  AND (cs.worker_claim_expires_at IS NULL OR cs.worker_claim_expires_at <= NOW())
+  AND (cs.worker_lease_expires_at IS NULL
+       OR cs.worker_lease_expires_at + #{leaseGraceMicros} * INTERVAL '1 microsecond' < NOW())
+  AND (cs.worker_claim_requested_at IS NOT NULL OR s.status IN ('running', 'rescheduling'))
+ORDER BY COALESCE(cs.worker_claim_requested_at, cs.worker_lease_expires_at, cs.updated_at) ASC, cs.uuid ASC
+LIMIT 1
+FOR UPDATE OF cs SKIP LOCKED;
+
+-- Claim（attempts 未达上限时）
+UPDATE code_sessions
+SET current_worker_epoch = current_worker_epoch + 1,
     oauth_access_token_hash = #{params.OAuthAccessTokenHash,sensitive=true},
-    worker_lease_expires_at = NULL,
-    connection_status = 'disconnected',
-    idle_since = NULL,
-    worker_claimed_by = #{params.WorkerID},
-    worker_claim_expires_at = #{params.ClaimExpiresAt},
-    worker_claim_attempts = cs.worker_claim_attempts + 1,
-    updated_at = NOW()
-FROM picked
-WHERE cs.uuid = picked.uuid
-RETURNING cs.uuid, cs.external_id, cs.organization_uuid, cs.workspace_uuid,
-          cs.current_worker_epoch, cs.worker_claim_attempts
+    worker_lease_expires_at = NULL, connection_status = 'disconnected', idle_since = NULL,
+    worker_claimed_by = #{params.WorkerID}, worker_claim_expires_at = #{params.ClaimExpiresAt},
+    worker_claim_attempts = worker_claim_attempts + 1, updated_at = NOW()
+WHERE uuid = #{params.UUID}
+RETURNING current_worker_epoch;
 ```
 
-- 提交后由 `codesessions.Service` 复用 `managedAgentCreateResult` 签发带 epoch 的 ingress JWT。model token 在事务前生成，事务内只写 hash。
-- `worker_claim_attempts` 超过上限（默认 5）时，同一事务不返回凭据：清空 requested 标记，并走现有失败映射（公共 `session.error` + `idle/retries_exhausted`），然后继续寻找下一行。
-- 领取期限默认 30 秒，只需覆盖“领取 → 注册”的两次 HTTP 往返。注册后由租约保护归属。
+- 提交后由 `codesessions.Service.ClaimBrainWorker` 读取签发上下文并签发带 epoch 的 ingress JWT。model token 在事务前生成，事务内只写 hash。
+- `worker_claim_attempts` 已达上限（5）时，事务改为 `HoldExhausted`：清空 requested 标记，并把领取期限设为 1 分钟后，不返回凭据。事务提交后服务发布 `session.error`（`retry_status: exhausted`）与 `session.status_idle(retries_exhausted)`，事件 ID 由 Code Session ID 和当前 epoch 稳定派生，重试发布不会重复；发布成功后 `ResetExhausted` 把 attempts 归零并清空期限。发布失败时 1 分钟后再次进入同一路径。公共会话变为 idle 后不再满足可领取条件，直到新输入使其重新 running。一次长轮询最多连续处理 10 个耗尽的行，然后继续寻找可领取的行。
+- 领取期限为 30 秒，只需覆盖“领取 → 注册”的两次 HTTP 往返。注册后由租约保护归属。
 
 长轮询等待不能沿用 `environments.pollWorkRoute` 每 50ms 查一次 DB 的做法：
 
-- 处理器订阅进程内的 Core NATS `oma.brain.work.available` 通知，收到通知或每 1 秒兜底时查询一次，直到 `block_ms` 到期。
-- 每个等待中的 DSH 约产生每秒 1 次查询；通知只用于缩短延迟，丢失不影响正确性。
+- 处理器通过 worker event broker 的 `BrainWorkSignal` 订阅 Core NATS `oma.brain.work.available`（内存 broker 在进程内广播），收到通知或每 1 秒兜底时查询一次，直到 `block_ms` 到期；客户端断开时立即结束。
+- 每个等待中的 DSH 约产生每秒 1 次查询；通知只用于缩短延迟，丢失不影响正确性。DSH 自身不连接 NATS。
 
 ### 释放
 
 `POST /v1/code/brain/claims/{code_session_id}/release`
 
-- 鉴权同领取；请求体 `{"worker_epoch": N, "reason": "admission_failed" | "shutdown" | "capacity"}`。
-- 仅当 `current_worker_epoch = N`、`worker_claimed_by = X-Worker-ID` 且租约为空时生效：把领取期限设为 `now() + backoff(attempts)`，退避为 `min(5s × 2^(attempts-1), 5min)`；`shutdown` 与 `capacity` 不退避，也不计入 attempts（同一事务内减一）。
-- 不满足条件返回 `409`，DSH 忽略即可。
+- 鉴权同领取；请求体 `{"worker_epoch": N, "reason": "admission_failed" | "shutdown"}`。
+- 仅当 Code Session active、`current_worker_epoch = N` 且 `worker_claimed_by = X-Worker-ID` 时生效。注册前后都可以调用：清空租约、置 `connection_status = 'disconnected'`，并把 `worker_claim_requested_at` 设为已有值或当前时间，使会话无论公共状态如何都能再被领取。
+- `admission_failed` 把领取期限设为 `now() + min(5s × 2^(attempts-1), 5min)`；`shutdown` 立即可领取，并把 attempts 减一，不计为失败。DSH 本地容量竞争导致的放弃也使用 `shutdown`。
+- 不满足条件返回 `409`，DSH 只记录告警。
 
 ### 现有接口的变化
 
 - `worker/register`：在 `RegisterCodeSessionWorkerAtEpoch` 的同一事务内清空 `worker_claim_requested_at` 与 `worker_claim_expires_at`。其余行为不变；旧 epoch 仍按现有 fence 拒绝。
 - worker 事件流连接：`MarkCodeSessionWorkerConnectedForEpoch` 同时将 `worker_claim_attempts` 归零，作为“准入完成”的信号。
-- `codesessions.Service.DispatchWorker`：由发布 JetStream 改为置位 `worker_claim_requested_at` 并发布无数据的 Core NATS 通知。签名不变，Runner 调用点 `finishManagedAgentRuntime` 无需修改。
-- `EnvironmentWorkMapper.ClaimNext`：nats 恢复分支删除；`claim` transport 的崩溃恢复完全由领取条件覆盖。Work 的活动时间仍由 worker 心跳经公共 Work 续租路径更新。
+- `codesessions.Service.DispatchWorker(ctx, session, codeSessionID)`：由发布 JetStream 改为置位 `worker_claim_requested_at` 并发布无数据的 Core NATS 通知；Runner 在 `finishManagedAgentRuntime` 中传入公共 Session 与 Code Session ID。
+- `EnvironmentWorkMapper.ClaimNext`：nats 恢复分支删除，只领取 queued Work；`claim` transport 的崩溃恢复完全由领取条件覆盖。
+- 公共输入入队后的 `resumeSandboxForCodeSession` 对 `claim` transport 直接返回，不再用 sandbox 续期延长 Brain worker 租约，也不安排 Work 恢复；沙箱由惰性沙箱网关按需准备。
+- `workerevents`：删除 `PublishBrainTask` 与 `OMA_BRAIN_TASKS` stream，新增 `BrainWorkSignal`（JetStream broker 用 Core NATS，内存 broker 用进程内广播）。
 
 ## 租约时长
 
@@ -217,11 +217,11 @@ RETURNING cs.uuid, cs.external_id, cs.organization_uuid, cs.workspace_uuid,
 | DSH 心跳间隔（`OMA_CCR_HEARTBEAT_INTERVAL_MS` 默认值） | 6 秒 | 20 秒 |
 | 崩溃后最长不可领取时间 | 30 秒 | 70 秒 |
 
-- 常量集中在 `internal/codesessions/ingress.go`，与现有 `codeSessionWorkerLeaseTTL`、`codeSessionWorkerLeaseGrace` 并列。register 与 heartbeat 处理时按该 code session 的 `metadata.config.worker_transport` 选择参数，再传给 `RegisterCodeSessionWorkerAtEpoch` 和 `RecordCodeSessionWorkerHeartbeat`；这两个 DB 方法已经接收 TTL 和宽限期参数，无需改签名。
+- 常量位于 `internal/codesessions/brain_dispatch.go`，默认值仍是 `ingress.go` 的 `codeSessionWorkerLeaseTTL`、`codeSessionWorkerLeaseGrace`。register 与 heartbeat 先用 `DB.GetCodeSessionWorkerTransport` 读取 `metadata.config.worker_transport`，再把对应参数传给 `RegisterCodeSessionWorkerAtEpoch` 和 `RecordCodeSessionWorkerHeartbeat`；这两个 DB 方法已经接收 TTL 和宽限期参数，无需改签名。
 - 领取 SQL 用同一宽限期判断租约是否失效，保证“心跳仍被接受”和“可被重新领取”两个判定互斥。
 - 心跳间隔 6 秒、抖动 ±10%、请求超时 5 秒时，单次心跳最晚约 11.6 秒完成，20 秒租约可容忍连续丢失 2 次心跳，再加 10 秒宽限。DSH 启动时校验 `间隔 × (1 + 抖动) + 超时 < 租约 TTL`，不满足则拒绝启动。
 - 代价：心跳请求和对应的 DB 写入约为原来的 3.3 倍（每会话每 6 秒一次）；GC 停顿、网络抖动或后端变慢超过约 30 秒时，会话会被判定失效并被其他进程领取，旧进程的写入随即被 epoch fence 拒绝，正在执行的工具调用走现有 blocked 恢复流程。
-- 进程正常退出时调用 release，不需要等待租约过期。
+- 进程正常退出时 release 准入中的领取和仍有活跃 turn 的会话，不需要等待租约过期；空闲会话不 release，避免被无意义地重新领取。
 
 ## 并发与幂等
 
@@ -240,12 +240,14 @@ RETURNING cs.uuid, cs.external_id, cs.organization_uuid, cs.workspace_uuid,
 
 ## DSH 侧变化
 
-- 新增 `src/claim.ts` 替代 `src/transport.ts` 的 JetStream 消费；`admit` 去掉 ACK/NAK，其余阶段保持不变。
-- 领取循环并发数为 `min(OMA_BRAIN_CLAIM_CONCURRENCY（默认 4）, maxSessions - sessions.size - 准入中数量)`；无空闲槽位时不发请求，有会话退役时唤醒。
-- 不再在满载时淘汰空闲会话来腾位置。空闲会话仍按现有 60 秒规则退役。
-- 准入失败调用 `release(reason=admission_failed)` 后退役本地会话；SIGTERM 时对准入中的会话调用 `release(reason=shutdown)`。
-- 新增配置 `OMA_BRAIN_CLAIM_TOKEN`（必填）；`NATS_URL` 变为可选，仅用于订阅唤醒通知，未配置时按 1 秒间隔长轮询。
+- `src/claim.ts` 替代 `src/transport.ts` 的 JetStream 消费：`BrainClaimClient` 调用领取与释放接口，`claimTasks` 运行 `OMA_BRAIN_CLAIM_CONCURRENCY`（默认 4，1–32）个长轮询循环，每个循环在 `capacity() - 正在领取或准入的数量 > 0` 时才发起 `block_ms=25000` 的请求，否则等待槽位释放（会话退役时唤醒，最多 1 秒重查）。
+- `capacity()` 为 `maxSessions` 减去忙碌会话数；准入时若会话数已满，仍按原规则淘汰最久空闲的会话，没有可淘汰的会话时抛出 `CapacityExhaustedError` 并以 `shutdown` 原因 release。
+- 启动时先做一次 `block_ms=0` 的领取作为探测：401/403 转为 `ConfigurationError` 并退出，提示核对 `OMA_BRAIN_CLAIM_TOKEN`；探测领到的会话交给第一个循环准入。运行期领取失败按 1、2、5、10、30 秒退避重试。
+- 准入失败以 `admission_failed` release（停机期间以 `shutdown`）；SIGTERM 时先停止会话，再 release 准入中的领取和忙碌会话，然后等待会话关闭。
+- 同一会话被再次领取时一定是更高 epoch，本地旧会话直接退役。
+- 新增 `OMA_BRAIN_CLAIM_TOKEN`（必填）与 `OMA_BRAIN_CLAIM_CONCURRENCY`；删除 `NATS_URL` 与 `@nats-io/*` 依赖。心跳默认间隔改为 6 秒，启动时校验 `间隔 × (1 + 抖动) + 超时 < 20000 ms`。
 - 删除 `shouldTerminateTask` 及“第 10 次 TERM”逻辑；失败上限由服务端 `worker_claim_attempts` 统一判定。
+- `scripts/verify.ts` 不再启动 NATS 容器，只构建产物并运行测试。
 
 ## 权限边界
 
@@ -258,60 +260,38 @@ RETURNING cs.uuid, cs.external_id, cs.organization_uuid, cs.workspace_uuid,
 
 在 `internal/codesessions/errors.go` 中新增：
 
-- `errBrainClaimUnauthorized`（401）
-- `errBrainClaimInvalidRequest`（400）
-- `errBrainClaimReleaseConflict`（409）
+- `brainClaimUnauthenticated()`（401）
+- `brainClaimInvalidRequest(message, cause)`（400）
+- `brainClaimFailure(cause)`（500）
+- `mapBrainClaimReleaseError(err)`：`db.ErrPreconditionFailed` 映射为 409，其余为 500
 
-handler 只调用这些构造函数；DB 层返回 `ErrNotFound`、`ErrWorkerEpochMismatch` 等现有可识别错误，由 `errors.go` 映射。
+handler 只调用这些函数；DB 层返回 `ErrPreconditionFailed`、`ErrNotFound` 等现有可识别错误。`code_session.brain_claim_token_file` 少于 32 个字符或无法读取时，Handler 构造失败，服务启动即报错。
 
-## 测试计划
+## 测试与验证
 
-按仓库约定先写失败场景，再写成功场景。
+已实现的自动化测试（失败场景在前）：
 
-Go：
+- `internal/db/code_session_claim_mapper_test.go`：领取、释放和请求语句的 SQL 片段与参数绑定，token hash 标记为 sensitive。
+- `internal/db/code_session_claims_postgres_test.go`（`TEST_MIGRATION_DATABASE_URL`）：非 claim transport、idle 会话、跨组织请求和未持有领取的 release 被拒绝；8 个并发领取只成功 1 个；领取期限、release 退避与立即释放；旧 epoch 注册被拒；注册清除请求、连接重置 attempts；宽限期内不可领取且旧心跳仍成功，超过宽限期后接管并拒绝旧心跳；耗尽后的 hold、reset 与新输入后恢复领取。
+- `internal/workerevents/brain_test.go`：取消订阅后不再收到通知；Core NATS 与内存 broker 都能唤醒订阅者，且不再创建 `OMA_BRAIN_TASKS`。
+- `internal/codesessions/brain_dispatch_test.go`：fleet token 文件长度与读取校验、Bearer 比较、`block_ms` 边界、transport 判定与租约参数。
+- `internal/config`：brain 模式缺少 `code_session.brain_claim_token_file` 时拒绝启动。
+- `tests/brain_worker_claim_test.go`（真实 PostgreSQL 与 HTTP 服务）：鉴权与参数错误；长轮询在派发后被唤醒、第二个 worker 领不到、注册成功且心跳返回约 20 秒租约；宽限期边界接管与旧 worker fence；release 冲突、失败退避、5 次后发布 `session.error` 与 `retries_exhausted` 并保持 idle。`tests/brain_sandbox_provisioning_test.go` 改为统计 `DispatchWorker` 调用。
+- DSH：`tests/claim-loop.test.ts` 覆盖 401 启动失败、准入失败 release 且不阻塞后续领取、容量为零时停止领取、准入中停机 release、临时错误退避恢复；`tests/claim-process.test.ts` 用独立进程覆盖错误或缺失 token 的启动失败、领取到 SSE 审批的完整回合，以及 SIGTERM 时忙碌会话以 `shutdown` 交还；`tests/oma-heartbeat.test.ts` 覆盖心跳与租约约束和领取配置。
 
-- Mapper 单测：领取与释放语句的 SQL 片段（`FOR UPDATE OF cs SKIP LOCKED`、退避表达式）和参数绑定，token hash 标记为 sensitive。
-- 真实 PostgreSQL：
-  - 两个并发领取只得到一行；
-  - 领取期限内不可重领，过期后可重领且 epoch 加一；
-  - idle 公共 Session 租约失效时不可领取；
-  - attempts 达到上限后转为失败并跳过；
-  - register 清除 requested 标记；
-  - 事件流连接后 attempts 归零；
-  - 旧 epoch register 被拒绝。
-  - 租约过期但仍在宽限期内时不可领取，且旧进程心跳成功；超过宽限期后可领取，旧进程心跳被拒绝；
-  - `claim` transport 注册和心跳使用 20 + 10 秒，其他 transport 保持 60 + 10 秒。
-- Handler：fleet token 缺失或错误、`X-Worker-ID` 缺失、`block_ms` 越界、`204` 空结果、`Cache-Control: no-store`、通知唤醒在 `block_ms` 内返回。
-- 保留 `tests/files_api_test.go` 的 no-FK 守卫；运行 `just lint`、`just test`、`just dead-code`、`just duplicates`、`just complexity`。
-
-DSH（使用 `tests/backend.ts` 受控后端）：
-
-- 心跳间隔、抖动和超时之和不小于租约 TTL 时拒绝启动。
-- 满载时不发领取请求，会话退役后恢复领取。
-- 准入失败调用 release，且不阻塞其他领取。
-- SIGTERM 释放准入中的领取。
-- SIGKILL 后第二个进程在租约过期后重领，并恢复 journal（复用 `crash.test.ts` 场景）。
-- 未配置 `NATS_URL` 时仍能领取。
-
-真实集成（chat 相关 `verify-be` 场景）仅在用户明确要求时执行。
+`verify-be` 生成的配置写入 `code_session.brain_claim_token_file`，清理阶段与其他密钥一起删除；`tests/liveworker` 启动 Brain 时传入 `OMA_BRAIN_CLAIM_TOKEN`。真实 Brain、模型与 Docker 沙箱的 chat 场景未在本次改动中运行，仅在用户明确要求时执行。
 
 ## 上线方式
 
-`brain-runtime.md` 记录 Brain 实现尚未部署，因此建议直接替换，不保留 `nats` / `claim` 双 transport 兼容：
-
-1. 后端：migration、领取与释放接口、`DispatchWorker` 改为置位、删除 `ClaimNext` 的 nats 分支、删除 `PublishBrainTask` 与 `OMA_BRAIN_TASKS` stream 创建。
-2. DSH：`claim.ts` 替换 `transport.ts`，删除 `@nats-io/jetstream` 依赖；保留 `@nats-io/transport-node` 用于唤醒通知。
-3. 文档：更新 `brain-runtime.md`、`nats-messaging-foundation.md`（说明 Brain 只使用 Core NATS 通知）与 `oma-brain-dsh/README.md`。
-
-如果已有环境在运行 JetStream 方案，再增加过渡期：后端按 `worker_transport` 同时支持两种派发，DSH 通过 `OMA_BRAIN_TRANSPORT` 切换，全部切换后执行上述删除。
+Brain 尚未部署，因此直接替换，不保留 `nats` / `claim` 双 transport：迁移 83 增加领取列，后端删除 `OMA_BRAIN_TASKS` stream 与 `PublishBrainTask`，DSH 删除 JetStream 消费与 NATS 依赖。部署时后端与 DSH 一起更新，并为两者配置同一个 fleet token。
 
 ## 已决定
 
 - fleet token 全部署共用一个（2026-10-18）。
 - `claim` transport 租约调整为 20 秒 TTL 加 10 秒宽限（2026-10-18），参数见“租约时长”。
+- 领取失败耗尽后发布的公共错误使用 `unknown_error` 类型和固定文案，不暴露内部原因。
+- 首次启动由 `worker_claim_requested_at` 驱动，不依赖公共 Session 状态；Brain 使用惰性沙箱，领取不需要等待沙箱准备完成。
 
 ## 待定问题
 
-1. **Runner 多余的凭据签发**：brain 模式下是否让 `CreateManagedAgentCodeSession` 跳过签发，以省掉首次领取前的一次轮换。
-2. **失败可见性**：attempts 超限时公共事件的具体内容和安全错误分类，需要与现有 `session.error` 映射对齐。
-3. **首次启动判定**：确认 Runner 调用 `DispatchWorker` 时公共 Session 状态与 requested 标记的先后关系，确保 prewarm 关闭时也不会出现“可领取但沙箱准备未完成”的窗口。
+1. **Runner 多余的凭据签发**：brain 模式下 `CreateManagedAgentCodeSession` 仍会签发一次凭据并在首次领取时再轮换。是否跳过以省掉这次轮换，留待后续评估。

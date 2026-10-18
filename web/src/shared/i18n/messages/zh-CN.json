@@ -2695,5 +2695,6 @@
   "platformAdmin.errors.unavailable": "管理服务暂不可用",
   "platformAdmin.errors.requestFailed": "请求失败，请重试",
   "common.sidebar": "侧边栏",
-  "common.mobileSidebar": "显示移动端侧边栏。"
+  "common.mobileSidebar": "显示移动端侧边栏。",
+  "auth.login.emailDomainNotAllowed": "请使用允许登录的邮箱。"
 }

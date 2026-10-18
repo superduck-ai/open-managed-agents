@@ -290,6 +290,7 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 	fmt.Fprint(w, ": connected\n\n")
 	for _, event := range replay {
 		if connection.accepts(event) {

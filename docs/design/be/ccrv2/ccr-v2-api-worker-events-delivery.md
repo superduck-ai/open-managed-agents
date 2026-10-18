@@ -117,6 +117,9 @@ GET /v1/code/sessions/{code_session_id}/worker/events/stream?worker_epoch=<epoch
 ACK subject 后才 flush SSE。两路 consumer 使用服务端默认 `MaxAckPending`，允许活跃 turn 收到追加输入。控制回应可以在
 当前用户命令 processed 之前到达，解除工具审批等待；两路仍复用一条 SSE 和同一个 delivery API。
 
+SSE 响应设置 `Cache-Control: no-cache` 与 `X-Accel-Buffering: no`。服务端直接声明关闭反向代理缓冲，
+网关将该路径直接转发给 oma-server 时，事件仍会逐条到达 worker，不依赖前置代理补写响应头。
+
 SSE 的序号保留 Stream sequence。控制回应越过排队输入时序号可能非单调，不能用最大序号
 过滤尚未处理的输入。ACK 定位仍按 session、epoch 和 event ID 隔离，能够指向任一路 consumer。
 

@@ -2695,5 +2695,6 @@
   "platformAdmin.errors.unavailable": "Platform administration is temporarily unavailable.",
   "platformAdmin.errors.requestFailed": "The request failed. Please try again.",
   "common.sidebar": "Sidebar",
-  "common.mobileSidebar": "Displays the mobile sidebar."
+  "common.mobileSidebar": "Displays the mobile sidebar.",
+  "auth.login.emailDomainNotAllowed": "Use an approved email address to sign in."
 }

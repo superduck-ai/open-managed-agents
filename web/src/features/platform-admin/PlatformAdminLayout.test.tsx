@@ -153,21 +153,21 @@ test('组织菜单每次只加载对应列表，直达与返回保留当前菜�
   expect(screen.getByRole('link', { name: '基础资料' }).getAttribute('aria-current')).toBe('page');
 });
 
-test('后台英文与中文切换同步菜单及权限提示', async () => {
-  globalThis.fetch = mock(async () =>
-    Response.json({
-      account: { uuid: 'operator', email: 'operator@example.com', name: '' },
-      platform_access: { role: 'super_admin', permissions: ['platform:access'] },
-      csrf_token: 'verified-csrf',
-    }),
-  ) as typeof fetch;
-  mount('/platform-admin', 'en');
-  expect(await screen.findByRole('link', { name: 'Organizations' })).toBeTruthy();
-  expect(screen.queryByRole('link', { name: '组织管理' })).toBeNull();
-  const language = screen.getByRole('combobox', { name: 'Language' });
-  language.focus();
-  fireEvent.keyDown(language, { key: 'ArrowDown' });
-  fireEvent.keyDown(await screen.findByRole('option', { name: '简体中文' }), { key: 'Enter' });
-  expect(await screen.findByRole('link', { name: '组织管理' })).toBeTruthy();
-  expect(document.documentElement.lang).toBe('zh-CN');
-});
+for (const [locale, label] of [
+  ['en', 'Organizations'],
+  ['zh-CN', '组织管理'],
+] as const) {
+  test(`后台沿用 ${locale} 语言偏好且不提供临时切换入口`, async () => {
+    globalThis.fetch = mock(async () =>
+      Response.json({
+        account: { uuid: 'operator', email: 'operator@example.com', name: '' },
+        platform_access: { role: 'super_admin', permissions: ['platform:access'] },
+        csrf_token: 'verified-csrf',
+      }),
+    ) as typeof fetch;
+    mount('/platform-admin', locale);
+    expect(await screen.findByRole('link', { name: label })).toBeTruthy();
+    expect(screen.queryByRole('combobox', { name: /Language|语言/ })).toBeNull();
+    expect(document.documentElement.lang).toBe(locale);
+  });
+}

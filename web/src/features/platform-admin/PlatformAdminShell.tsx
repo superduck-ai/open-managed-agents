@@ -1,5 +1,3 @@
-import { useLocale, localeLabels } from '../../shared/i18n';
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../../shared/ui/select';
 import { useI18n } from '../../shared/i18n';
 import { ArrowLeft, Building2, ShieldCheck } from 'lucide-react';
 import { Link, Outlet, useParams, useSearch } from '@tanstack/react-router';
@@ -46,7 +44,6 @@ function AdminSidebar({ email }: { email: string }) {
   const { msg } = useI18n();
 
   const { setOpenMobile } = useSidebar();
-  const { locale, setLocale, supportedLocales } = useLocale();
   const { organizationUuid } = useParams({ strict: false });
   const search = useSearch({ strict: false });
   const view = organizationSection(search.view);
@@ -136,23 +133,6 @@ function AdminSidebar({ email }: { email: string }) {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-        <Select
-          value={locale}
-          onValueChange={(next) => {
-            if (next) setLocale(next);
-          }}
-        >
-          <SelectTrigger className="w-full" aria-label={msg('language.label', 'Language')}>
-            <SelectValue>{localeLabels[locale]}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {supportedLocales.map((language) => (
-              <SelectItem key={language} value={language}>
-                {localeLabels[language]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
         <div className="min-w-0 px-2 pb-1">
           <p className="truncate text-sm" title={email}>
             {email}

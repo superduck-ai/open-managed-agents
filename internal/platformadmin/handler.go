@@ -174,8 +174,6 @@ func decodeRequest[T any](w http.ResponseWriter, r *http.Request) (T, error) {
 	return input, nil
 }
 
-func cleanChange(c *Change) { c.Reason = strings.TrimSpace(c.Reason) }
-
 func (h *Handler) writeChange(w http.ResponseWriter, r *http.Request, result Organization, err error) {
 	if err != nil {
 		h.fail(w, r, err)
@@ -209,7 +207,6 @@ func (h *Handler) updateOrganization(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	cleanChange(&input.Change)
 	for _, field := range []*string{input.Name, input.Website, input.Industry} {
 		if field != nil {
 			*field = strings.TrimSpace(*field)
@@ -225,7 +222,6 @@ func (h *Handler) grantAdministrator(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	cleanChange(&input.Change)
 	result, err := h.service.GrantAdministrator(r.Context(), actorFromRequest(r), chi.URLParam(r, "organizationUuid"), input)
 	h.writeChange(w, r, result, err)
 }
@@ -240,7 +236,6 @@ func (h *Handler) demoteAdministrator(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, invalid("成员 UUID 无效"))
 		return
 	}
-	cleanChange(&input.Change)
 	result, err := h.service.DemoteAdministrator(r.Context(), actorFromRequest(r), chi.URLParam(r, "organizationUuid"), chi.URLParam(r, "memberUuid"), input)
 	h.writeChange(w, r, result, err)
 }
@@ -251,7 +246,6 @@ func (h *Handler) transferAdministrator(w http.ResponseWriter, r *http.Request) 
 		h.fail(w, r, err)
 		return
 	}
-	cleanChange(&input.Change)
 	result, err := h.service.TransferAdministrator(r.Context(), actorFromRequest(r), chi.URLParam(r, "organizationUuid"), input)
 	h.writeChange(w, r, result, err)
 }

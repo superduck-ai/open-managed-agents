@@ -2585,7 +2585,6 @@
   "platformAdmin.createOrganization": "创建组织",
   "platformAdmin.chooseAtLeastOneRegisteredAdministratorADefaultWorkspace": "至少选择一位已注册管理员。系统会同时创建 Default 工作区。",
   "platformAdmin.organizationName": "组织名称",
-  "platformAdmin.creationFailedPleaseTryAgain": "创建失败，请重试。",
   "platformAdmin.creating": "正在创建…",
   "platformAdmin.previous": "上一页",
   "platformAdmin.next": "下一页",

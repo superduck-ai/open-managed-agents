@@ -127,7 +127,6 @@ func (h *Handler) createInvite(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	cleanChange(&input.Change)
 	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 	result, err := h.service.CreateInvite(r.Context(), actorFromRequest(r), chi.URLParam(r, "organizationUuid"), input)
 	h.writeChange(w, r, result, err)
@@ -140,7 +139,6 @@ func (h *Handler) changeInvite(resend bool) http.HandlerFunc {
 			h.fail(w, r, err)
 			return
 		}
-		cleanChange(&input)
 		result, err := h.service.ChangeInvite(r.Context(), actorFromRequest(r), chi.URLParam(r, "organizationUuid"), chi.URLParam(r, "invitationUuid"), input, resend)
 		h.writeChange(w, r, result, err)
 	}

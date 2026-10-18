@@ -2585,7 +2585,6 @@
   "platformAdmin.createOrganization": "Create organization",
   "platformAdmin.chooseAtLeastOneRegisteredAdministratorADefaultWorkspace": "Choose at least one registered administrator. A Default workspace will be created.",
   "platformAdmin.organizationName": "Organization name",
-  "platformAdmin.creationFailedPleaseTryAgain": "Creation failed. Please try again.",
   "platformAdmin.creating": "Creating…",
   "platformAdmin.previous": "Previous",
   "platformAdmin.next": "Next",

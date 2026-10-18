@@ -83,8 +83,7 @@ export function CreateOrganizationDialog({
           </fieldset>
           {mutation.isError && (
             <p role="alert" className="text-destructive">
-              {errorMessage(mutation.error) ||
-                msg('platformAdmin.creationFailedPleaseTryAgain', 'Creation failed. Please try again.')}
+              {errorMessage(mutation.error)}
             </p>
           )}
           <div className="flex justify-end gap-2">

@@ -4,6 +4,8 @@ import type { ToolDefinition } from "@deepseek-ai/dsh-tools";
 import type { Payload } from "../json.ts";
 import type { Context } from "@deepseek-ai/cordis";
 
+export const MAX_LIVE_SUBAGENT_THREADS = 25;
+
 export interface SubagentDefinition {
   name: string;
   description: string;

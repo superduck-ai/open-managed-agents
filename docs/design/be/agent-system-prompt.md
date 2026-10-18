@@ -74,7 +74,7 @@ Agent 指令与平台规则的关系分两类：
 
 ## L1 渲染规则
 
-- `networking` 由 `networkpolicy.ParseConfig` 解析，非 cloud 或缺失时视为 unrestricted。limited 模式列出 `allowed_hosts`，最多 50 项，超出部分写为 `and N more`；`allow_package_managers` 和 `allow_mcp_servers` 分别追加一句说明。配置非法时启动失败，与网络策略执行端一致地 fail closed。
+- `networking` 由 `networkpolicy.ParseConfig` 解析，非 cloud 或缺失时视为 unrestricted。limited 模式把可访问目标合成一句：`allow_package_managers` 对应 package registries，`allow_mcp_servers` 对应 configured MCP servers，`allowed_hosts` 最多列 50 项、超出部分写为 `and N more`；三者都为空时写明全部出站访问被阻断，避免出现“全部阻断”后又说“某些可达”的矛盾表述。配置非法时启动失败，与网络策略执行端一致地 fail closed。
 - `packages` 复用 `decodeEnvironmentPackages`，按 apt → cargo → gem → go → npm → pip 列出，每个包管理器最多 20 项。
 - 持久化说明与 [sandbox-lifecycle](sandbox-lifecycle.md) 一致：idle 时暂停，长时间 idle 后可能被替换；替换后保留 `/mnt/user-data`、`/mnt/session/uploads` 和已挂载的 Memory store。
 - Memory 目录不进入 L1，仍通过 `memory_catalog_prompt` 单独下发，由 DSH 放入 L4。
@@ -86,7 +86,7 @@ Agent 指令与平台规则的关系分两类：
 
 - 沙箱工具说明位于 `oma-brain-dsh/src/sandbox-tools/definitions.ts`，补充了 Bash 每次调用不继承 shell 状态、`on_timeout=background` 的读取方式、Read 的 0-based/exclusive 行号、Edit 的唯一匹配要求，以及 Grep/Glob 默认路径不包含 uploads。
 - `send_to_agent` 的每个参数都有说明，并写明 `thread_id`、`agent_name`、`name` 三者只能选择一个。
-- 线程上限统一使用 `MAX_LIVE_SUBAGENT_THREADS`，工具说明、L0 文本和运行时校验共用该常量。
+- 线程上限统一使用定义在 `runtime/contracts.ts` 的 `MAX_LIVE_SUBAGENT_THREADS`，工具说明、L0 文本和运行时校验共用该常量；提示词模块依赖运行时契约，运行时不依赖提示词模块。
 - 工具说明不包含会话级数据，避免工具定义变化导致后续缓存失效。
 - 主 Agent 只注册启用的沙箱工具。Go 在创建 Code Session 时用与权限执行相同的 `resolveAgentToolPermission` 计算启用工具，写入 `runtime_tools` 并经 `session_context` 下发；DSH 校验工具名后按该列表注册，inline 子 Agent 继承同一列表；预定义 specialist 只注册自身配置与该列表的交集，与服务端按父 Agent 快照判定权限的结果一致。快照没有 `agent_toolset_20260401` 时与权限执行一致视为全部启用；缺少该字段的存量 Code Session 保持注册全部沙箱工具。
 

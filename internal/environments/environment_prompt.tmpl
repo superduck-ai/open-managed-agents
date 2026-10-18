@@ -26,10 +26,8 @@ The sandbox is paused when idle and may be replaced after a long idle period. A 
 {{if .Unrestricted -}}
 Outbound network access is unrestricted.
 {{- else -}}
-{{if .AllowedHosts}}Outbound network access is limited to these hosts: {{.AllowedHosts}}.{{else}}Outbound network access is blocked.{{end}}
-{{- if .AllowPackageManagers}} Package registries are also reachable.{{end}}
-{{- if .AllowMCPServers}} Configured MCP servers are also reachable.{{end}}
-Requests to any other host are blocked by the environment's network policy, whichever tool or library makes them. When a request is blocked, do not retry it with another client or command; tell the user which host you needed and why.
+{{if .Reachable}}Outbound network access is limited to {{.Reachable}}. Requests to any other host are blocked by the environment's network policy, whichever tool or library makes them.{{else}}All outbound network access is blocked by the environment's network policy, whichever tool or library makes the request.{{end}}
+When a request is blocked, do not retry it with another client or command; tell the user which host you needed and why.
 {{- end}}
 
 ## Installed software

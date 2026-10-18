@@ -21,11 +21,9 @@ var environmentPromptSource string
 var environmentPromptTemplate = template.Must(template.New("environment").Parse(environmentPromptSource))
 
 type environmentPromptData struct {
-	Unrestricted         bool
-	AllowedHosts         string
-	AllowPackageManagers bool
-	AllowMCPServers      bool
-	Packages             string
+	Unrestricted bool
+	Reachable    string
+	Packages     string
 }
 
 func managedAgentEnvironmentPrompt(environmentConfig json.RawMessage) (string, error) {
@@ -34,10 +32,8 @@ func managedAgentEnvironmentPrompt(environmentConfig json.RawMessage) (string, e
 		return "", fmt.Errorf("parse environment networking: %w", err)
 	}
 	data := environmentPromptData{
-		Unrestricted:         policy.Type != networkpolicy.TypeLimited,
-		AllowedHosts:         truncatedList(policy.AllowedHostPatterns(), maxPromptAllowedHosts),
-		AllowPackageManagers: policy.AllowPackageManagers,
-		AllowMCPServers:      policy.AllowMCPServers,
+		Unrestricted: policy.Type != networkpolicy.TypeLimited,
+		Reachable:    reachableDestinations(policy),
 	}
 	if len(environmentConfig) > 0 {
 		packages, err := decodeEnvironmentPackages(environmentConfig)
@@ -51,6 +47,27 @@ func managedAgentEnvironmentPrompt(environmentConfig json.RawMessage) (string, e
 		return "", fmt.Errorf("render environment prompt: %w", err)
 	}
 	return strings.TrimRight(prompt.String(), "\n"), nil
+}
+
+func reachableDestinations(policy networkpolicy.Config) string {
+	var destinations []string
+	if policy.AllowPackageManagers {
+		destinations = append(destinations, "package registries")
+	}
+	if policy.AllowMCPServers {
+		destinations = append(destinations, "configured MCP servers")
+	}
+	if hosts := policy.AllowedHostPatterns(); len(hosts) > 0 {
+		destinations = append(destinations, "these hosts: "+truncatedList(hosts, maxPromptAllowedHosts))
+	}
+	switch len(destinations) {
+	case 0:
+		return ""
+	case 1:
+		return destinations[0]
+	default:
+		return strings.Join(destinations[:len(destinations)-1], ", ") + " and " + destinations[len(destinations)-1]
+	}
 }
 
 func packagesSummary(packages *environmentPackages) string {

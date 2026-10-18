@@ -64,7 +64,7 @@ func TestManagedAgentEnvironmentPromptRendersLimitedNetworkAndPackages(t *testin
 		"packages":{"type":"packages","apt":["ripgrep"],"pip":["pandas==2.2.0","numpy"]}
 	}`))
 	for _, want := range []string{
-		"Outbound network access is limited to these hosts: api.example.com, *.example.org. Package registries are also reachable. Configured MCP servers are also reachable.\nRequests to any other host are blocked",
+		"Outbound network access is limited to package registries, configured MCP servers and these hosts: api.example.com, *.example.org. Requests to any other host are blocked",
 		"Preinstalled for this environment: apt: ripgrep; pip: pandas==2.2.0, numpy.\nYou can install",
 	} {
 		if !strings.Contains(prompt, want) {
@@ -78,7 +78,7 @@ func TestManagedAgentEnvironmentPromptRendersLimitedNetworkAndPackages(t *testin
 
 func TestManagedAgentEnvironmentPromptBlocksWithoutAllowedHosts(t *testing.T) {
 	prompt := mustEnvironmentPrompt(t, json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":[]}}`))
-	if !strings.Contains(prompt, "Outbound network access is blocked.\nRequests to any other host") || strings.Contains(prompt, "also reachable") {
+	if !strings.Contains(prompt, "All outbound network access is blocked by the environment's network policy") || strings.Contains(prompt, "limited to") {
 		t.Fatalf("unexpected network section:\n%s", prompt)
 	}
 }
@@ -95,5 +95,19 @@ func TestManagedAgentEnvironmentPromptTruncatesLongLists(t *testing.T) {
 	prompt := mustEnvironmentPrompt(t, json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":`+string(encoded)+`}}`))
 	if !strings.Contains(prompt, "h49.example.com and 3 more.") || strings.Contains(prompt, "h50.example.com") {
 		t.Fatalf("host list not truncated:\n%s", prompt)
+	}
+}
+
+func TestManagedAgentEnvironmentPromptDescribesRegistriesWithoutAllowedHosts(t *testing.T) {
+	for raw, want := range map[string]string{
+		`{"type":"cloud","networking":{"type":"limited","allowed_hosts":[],"allow_package_managers":true}}`:             "Outbound network access is limited to package registries. Requests to any other host are blocked",
+		`{"type":"cloud","networking":{"type":"limited","allow_mcp_servers":true}}`:                                     "Outbound network access is limited to configured MCP servers. Requests to any other host are blocked",
+		`{"type":"cloud","networking":{"type":"limited","allow_package_managers":true,"allow_mcp_servers":true}}`:       "Outbound network access is limited to package registries and configured MCP servers. Requests",
+		`{"type":"cloud","networking":{"type":"limited","allowed_hosts":["api.example.com"],"allow_mcp_servers":true}}`: "Outbound network access is limited to configured MCP servers and these hosts: api.example.com. Requests",
+	} {
+		prompt := mustEnvironmentPrompt(t, json.RawMessage(raw))
+		if !strings.Contains(prompt, want) || strings.Contains(prompt, "access is blocked") {
+			t.Errorf("config %s rendered:\n%s", raw, prompt)
+		}
 	}
 }

@@ -1,4 +1,4 @@
-export const MAX_LIVE_SUBAGENT_THREADS = 25;
+import { MAX_LIVE_SUBAGENT_THREADS } from "../runtime/contracts.ts";
 
 const situation = `# Platform rules
 

@@ -1,8 +1,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { object, type Payload } from "../json.ts";
 import { SessionRuntime } from "./session.ts";
-import type { SubagentBridge, SubagentThread, ToolExecutionBridge } from "./contracts.ts";
-import { MAX_LIVE_SUBAGENT_THREADS } from "../prompt/platform.ts";
+import { MAX_LIVE_SUBAGENT_THREADS, type SubagentBridge, type SubagentThread, type ToolExecutionBridge } from "./contracts.ts";
 
 /** Child turns are awaited so the existing single-dispatch journal stays valid. */
 export class Subagents {

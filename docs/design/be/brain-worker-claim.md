@@ -39,11 +39,11 @@
 - 不改变 Runner 的沙箱准备、vault、memory、skill 解析和 Code Session 创建流程。
 - 不改变 CCRv2 的输入投递、事件持久化、工具审批和心跳协议。
 - 不做推送式调度（后端为指定 DSH 节点分配任务）。
-- 不缩短现有 CCR worker 租约 TTL（见“待定问题”）。
+- 不改变非 `claim` transport（沙箱内 worker）的租约时长。
 
 ## 方案概述
 
-Runner 不再向 NATS 发布任务，只把 Code Session 标记为“需要执行端”。DSH 通过 HTTP 长轮询领取：一次领取在同一事务中锁定一行、推进 epoch、签发新凭据并记录领取者。凭据只返回给这一个领取者，因此同一 epoch 天然只有一个持有方。注册成功后，领取转为现有 CCR worker 租约，由现有心跳续约；租约失效即可再次领取。
+Runner 不再向 NATS 发布任务，只把 Code Session 标记为“需要执行端”。DSH 通过 HTTP 长轮询领取：一次领取在同一事务中锁定一行、推进 epoch、签发新凭据并记录领取者。凭据只返回给这一个领取者，因此同一 epoch 天然只有一个持有方。注册成功后，领取转为 CCR worker 租约，由现有心跳续约；`claim` transport 的租约为 20 秒加 10 秒宽限，租约和宽限都过去后即可再次领取。
 
 ```mermaid
 sequenceDiagram
@@ -115,7 +115,7 @@ stateDiagram-v2
 
 | 状态 | 判定 |
 | --- | --- |
-| Requested | `worker_claim_requested_at` 非空，或公共 Session `running` 且租约为空或已过期；同时领取期限为空或已过期 |
+| Requested | `worker_claim_requested_at` 非空，或公共 Session `running` 且租约为空或已超过宽限期；同时领取期限为空或已过期 |
 | Claimed | `worker_claim_expires_at > now()` 且 `worker_lease_expires_at` 为空 |
 | Registered / Connected | `worker_lease_expires_at > now()`；Connected 另有 `connection_status = 'connected'` |
 | Idle | 无 requested 标记、租约失效、公共 Session 非 `running` |
@@ -124,7 +124,7 @@ stateDiagram-v2
 
 1. `cs.status = 'active'`、`cs.deleted_at is null`、`worker_transport = 'claim'`。
 2. `worker_claim_expires_at is null or worker_claim_expires_at <= now()`。
-3. `worker_lease_expires_at is null or worker_lease_expires_at < now()`。
+3. `worker_lease_expires_at is null or worker_lease_expires_at + 宽限期 < now()`。宽限期内旧进程的心跳仍会被接受（见 `RecordCodeSessionWorkerHeartbeat`），不能在这段时间内抢走会话。
 4. `worker_claim_requested_at is not null`，或关联公共 Session `status = 'running'` 且未删除。
 
 第 4 条后半与现有 `ClaimNext` 的 nats 恢复分支判定相同，因此空闲后收到新输入的会话、执行端崩溃的会话，都通过同一条件重新进入领取，不再依赖 Work 恢复分支轮换凭据。公共 Session 为 idle 时即使租约失效也不可领取，与现状一致。
@@ -159,7 +159,8 @@ WITH picked AS (
     WHERE cs.deleted_at IS NULL AND cs.status = 'active'
       AND cs.metadata #>> '{config,worker_transport}' = 'claim'
       AND (cs.worker_claim_expires_at IS NULL OR cs.worker_claim_expires_at <= NOW())
-      AND (cs.worker_lease_expires_at IS NULL OR cs.worker_lease_expires_at < NOW())
+      AND (cs.worker_lease_expires_at IS NULL
+           OR cs.worker_lease_expires_at + #{params.LeaseGrace} * INTERVAL '1 microsecond' < NOW())
       AND (cs.worker_claim_requested_at IS NOT NULL OR s.status = 'running')
     ORDER BY COALESCE(cs.worker_claim_requested_at, cs.worker_lease_expires_at) ASC, cs.uuid ASC
     LIMIT 1
@@ -205,6 +206,23 @@ RETURNING cs.uuid, cs.external_id, cs.organization_uuid, cs.workspace_uuid,
 - `codesessions.Service.DispatchWorker`：由发布 JetStream 改为置位 `worker_claim_requested_at` 并发布无数据的 Core NATS 通知。签名不变，Runner 调用点 `finishManagedAgentRuntime` 无需修改。
 - `EnvironmentWorkMapper.ClaimNext`：nats 恢复分支删除；`claim` transport 的崩溃恢复完全由领取条件覆盖。Work 的活动时间仍由 worker 心跳经公共 Work 续租路径更新。
 
+## 租约时长
+
+`claim` transport 使用独立的租约参数，其他 transport 保持 60 + 10 秒不变：
+
+| 参数 | `claim` | 其他 transport |
+| --- | --- | --- |
+| 租约 TTL | 20 秒 | 60 秒 |
+| 宽限期 | 10 秒 | 10 秒 |
+| DSH 心跳间隔（`OMA_CCR_HEARTBEAT_INTERVAL_MS` 默认值） | 6 秒 | 20 秒 |
+| 崩溃后最长不可领取时间 | 30 秒 | 70 秒 |
+
+- 常量集中在 `internal/codesessions/ingress.go`，与现有 `codeSessionWorkerLeaseTTL`、`codeSessionWorkerLeaseGrace` 并列。register 与 heartbeat 处理时按该 code session 的 `metadata.config.worker_transport` 选择参数，再传给 `RegisterCodeSessionWorkerAtEpoch` 和 `RecordCodeSessionWorkerHeartbeat`；这两个 DB 方法已经接收 TTL 和宽限期参数，无需改签名。
+- 领取 SQL 用同一宽限期判断租约是否失效，保证“心跳仍被接受”和“可被重新领取”两个判定互斥。
+- 心跳间隔 6 秒、抖动 ±10%、请求超时 5 秒时，单次心跳最晚约 11.6 秒完成，20 秒租约可容忍连续丢失 2 次心跳，再加 10 秒宽限。DSH 启动时校验 `间隔 × (1 + 抖动) + 超时 < 租约 TTL`，不满足则拒绝启动。
+- 代价：心跳请求和对应的 DB 写入约为原来的 3.3 倍（每会话每 6 秒一次）；GC 停顿、网络抖动或后端变慢超过约 30 秒时，会话会被判定失效并被其他进程领取，旧进程的写入随即被 epoch fence 拒绝，正在执行的工具调用走现有 blocked 恢复流程。
+- 进程正常退出时调用 release，不需要等待租约过期。
+
 ## 并发与幂等
 
 | 场景 | 结果 |
@@ -212,7 +230,7 @@ RETURNING cs.uuid, cs.external_id, cs.organization_uuid, cs.workspace_uuid,
 | 多个 DSH 同时领取 | `FOR UPDATE SKIP LOCKED` 保证每行只被一个事务选中 |
 | 领取响应丢失（提交后连接断开） | 领取者拿不到凭据；领取期限过期后他人重领，epoch 再加一 |
 | DSH 拿到凭据后崩溃、未注册 | 同上，最长延迟为领取期限（30 秒） |
-| 注册后崩溃 | 租约过期（60 + 10 秒）后，若公共 Session running 则可重领 |
+| 注册后崩溃 | 租约和宽限期过去后（最长 20 + 10 秒），若公共 Session running 则可重领 |
 | 旧进程恢复连接 | 其 JWT epoch 小于 `current_worker_epoch`，register、事件流、心跳均被现有 epoch fence 拒绝 |
 | 注册与领取并发 | 两者都锁同一 `code_sessions` 行，串行执行；领取会推进 epoch，使在途注册失败 |
 | 同一进程重试注册 | 同一 epoch 允许重复注册，行为与现在一致 |
@@ -261,11 +279,14 @@ Go：
   - register 清除 requested 标记；
   - 事件流连接后 attempts 归零；
   - 旧 epoch register 被拒绝。
+  - 租约过期但仍在宽限期内时不可领取，且旧进程心跳成功；超过宽限期后可领取，旧进程心跳被拒绝；
+  - `claim` transport 注册和心跳使用 20 + 10 秒，其他 transport 保持 60 + 10 秒。
 - Handler：fleet token 缺失或错误、`X-Worker-ID` 缺失、`block_ms` 越界、`204` 空结果、`Cache-Control: no-store`、通知唤醒在 `block_ms` 内返回。
 - 保留 `tests/files_api_test.go` 的 no-FK 守卫；运行 `just lint`、`just test`、`just dead-code`、`just duplicates`、`just complexity`。
 
 DSH（使用 `tests/backend.ts` 受控后端）：
 
+- 心跳间隔、抖动和超时之和不小于租约 TTL 时拒绝启动。
 - 满载时不发领取请求，会话退役后恢复领取。
 - 准入失败调用 release，且不阻塞其他领取。
 - SIGTERM 释放准入中的领取。
@@ -287,10 +308,10 @@ DSH（使用 `tests/backend.ts` 受控后端）：
 ## 已决定
 
 - fleet token 全部署共用一个（2026-10-18）。
+- `claim` transport 租约调整为 20 秒 TTL 加 10 秒宽限（2026-10-18），参数见“租约时长”。
 
 ## 待定问题
 
-1. **崩溃检测延迟**：注册后崩溃仍需等待 60 + 10 秒租约。是否为 `claim` transport 单独缩短 TTL（例如 20 + 5 秒），代价是心跳频率更高。
-2. **Runner 多余的凭据签发**：brain 模式下是否让 `CreateManagedAgentCodeSession` 跳过签发，以省掉首次领取前的一次轮换。
-3. **失败可见性**：attempts 超限时公共事件的具体内容和安全错误分类，需要与现有 `session.error` 映射对齐。
-4. **首次启动判定**：确认 Runner 调用 `DispatchWorker` 时公共 Session 状态与 requested 标记的先后关系，确保 prewarm 关闭时也不会出现“可领取但沙箱准备未完成”的窗口。
+1. **Runner 多余的凭据签发**：brain 模式下是否让 `CreateManagedAgentCodeSession` 跳过签发，以省掉首次领取前的一次轮换。
+2. **失败可见性**：attempts 超限时公共事件的具体内容和安全错误分类，需要与现有 `session.error` 映射对齐。
+3. **首次启动判定**：确认 Runner 调用 `DispatchWorker` 时公共 Session 状态与 requested 标记的先后关系，确保 prewarm 关闭时也不会出现“可领取但沙箱准备未完成”的窗口。

@@ -188,21 +188,7 @@
                 SELECT uuid
                 FROM environment_work
                 WHERE deleted_at IS NULL
-                AND (state = 'queued' OR (
-                    state IN ('active', 'starting') AND updated_at &lt; NOW() - INTERVAL '60 seconds'
-                    AND EXISTS (
-                        SELECT 1 FROM code_sessions cs JOIN sessions s ON s.uuid = cs.session_uuid
-                            AND s.organization_uuid = cs.organization_uuid AND s.workspace_uuid = cs.workspace_uuid
-                        WHERE cs.session_uuid = environment_work.session_uuid
-                            AND cs.organization_uuid = environment_work.organization_uuid
-                            AND cs.workspace_uuid = environment_work.workspace_uuid
-                            AND cs.environment_uuid = environment_work.environment_uuid
-                            AND cs.status = 'active' AND cs.deleted_at IS NULL
-                            AND cs.metadata #>> '{config,worker_transport}' = 'nats'
-                            AND (cs.worker_lease_expires_at IS NULL OR cs.worker_lease_expires_at &lt; NOW())
-                            AND s.status = 'running' AND s.deleted_at IS NULL
-                    )
-                ))
+                AND state = 'queued'
                 AND (claim_expires_at IS NULL OR claim_expires_at &lt;= NOW())
                 ORDER BY created_at ASC, uuid ASC
                 LIMIT 1

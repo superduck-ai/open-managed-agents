@@ -3,7 +3,6 @@ package environments
 import (
 	"context"
 
-	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -19,12 +18,12 @@ func (r *Runner) finishManagedAgentRuntime(ctx context.Context, session db.Sessi
 		return nil
 	}
 	dispatcher, ok := r.codeSessions.(interface {
-		DispatchWorker(context.Context, codesessions.ManagedAgentCreateResult) error
+		DispatchWorker(context.Context, db.Session, string) error
 	})
 	if !ok {
 		return errWorkerDispatchUnavailable
 	}
-	return dispatcher.DispatchWorker(ctx, launch.Credentials)
+	return dispatcher.DispatchWorker(ctx, session, launch.CodeSessionID)
 }
 
 func (r *Runner) sandboxMCPEndpoint(ctx context.Context, sandboxID string) (string, error) {

@@ -198,7 +198,9 @@ func startBrainNode(t *testing.T, e *liveEnv, cfg config.Config, name string) *b
 	requireOK(t, err)
 	t.Cleanup(func() { _ = log.Close() })
 	command := exec.Command(os.Getenv("OMA_BRAIN_BINARY"))
-	command.Env = append(os.Environ(), "OMA_API_URL="+e.url, "NATS_URL="+cfg.NATS.URL)
+	claimToken, err := os.ReadFile(cfg.CodeSession.BrainClaimTokenFile)
+	requireOK(t, err)
+	command.Env = append(os.Environ(), "OMA_API_URL="+e.url, "OMA_BRAIN_CLAIM_TOKEN="+string(bytes.TrimSpace(claimToken)))
 	command.Stdout, command.Stderr = log, log
 	requireOK(t, command.Start())
 	node := &brainNode{command: command, done: make(chan error, 1)}

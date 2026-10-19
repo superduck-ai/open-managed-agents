@@ -31,7 +31,7 @@ type environment struct {
 	files                                      bool
 	suite                                      bool
 	dependenciesOnly                           bool
-	publicSandbox                              bool
+	publicSandbox, brain                       bool
 	sandboxAPI                                 *httptest.Server
 	storageFault                               *storageFault
 	root, directory, runID                     string
@@ -90,6 +90,12 @@ func (e *environment) writeConfig(ctx context.Context) error {
 		"vault":        map[string]any{"master_key": map[string]any{"version": 1, "kek": base64.StdEncoding.EncodeToString(kek)}},
 		"code_session": map[string]string{"jwt_signing_private_key_file": filepath.Join(e.directory, "jwt.pem")},
 	}
+	if e.brain {
+		if err := e.writeBrainClaimToken(); err != nil {
+			return err
+		}
+		config["code_session"].(map[string]string)["brain_claim_token_file"] = filepath.Join(e.directory, "brain-claim-token")
+	}
 	if e.publicSandbox {
 		e.sandboxAPI = newLocalSandboxAPI(e.runID)
 		config["e2b"] = map[string]any{"api_key": "e2b_0000000000000000000000000000000000000000", "api_url": e.sandboxAPI.URL, "sandbox_url": e.sandboxAPI.URL}
@@ -126,6 +132,14 @@ func (e *environment) writeConfig(ctx context.Context) error {
 	}
 	return os.WriteFile(filepath.Join(e.directory, "jwt.pem"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: encoded}), 0o600)
 }
+func (e *environment) writeBrainClaimToken() error {
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(e.directory, "brain-claim-token"), []byte(base64.RawURLEncoding.EncodeToString(token)), 0o600)
+}
+
 func (e *environment) start(ctx context.Context, images map[string]string) error {
 	if err := writeJSON(filepath.Join(e.directory, "compose.json"), dependencySpec(images)); err != nil {
 		return err
@@ -254,7 +268,7 @@ func (e *environment) close() []string {
 			failures = append(failures, "could not confirm container cleanup: "+filter)
 		}
 	}
-	for _, name := range []string{"config.json", "jwt.pem", "server", "server.pid"} {
+	for _, name := range []string{"config.json", "jwt.pem", "brain-claim-token", "server", "server.pid"} {
 		if err := os.Remove(filepath.Join(e.directory, name)); err != nil && !os.IsNotExist(err) {
 			failures = append(failures, "could not remove "+name)
 		}

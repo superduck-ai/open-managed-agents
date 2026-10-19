@@ -190,7 +190,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 }
 
 func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession db.CodeSession) error {
-	if s.sandboxTimeoutExtender == nil {
+	if s.sandboxTimeoutExtender == nil || usesBrainClaimTransport(codeSession) {
 		return nil
 	}
 	sandbox, err := s.db.GetResumableEnvironmentSandboxForCodeSession(ctx, codeSession.ExternalID)

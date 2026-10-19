@@ -1,6 +1,7 @@
 package messages
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,9 +15,9 @@ import (
 )
 
 func TestChatRequestRejectsUnsupportedModes(t *testing.T) {
-	for _, body := range []string{`{}`, `{"stream":false}`, `{"stream":true,"n":2}`, `{"stream":true,"n":0}`, `{"stream":"true"}`} {
-		if validateChatRequest([]byte(body)) == nil {
-			t.Fatalf("accepted %s", body)
+	for _, body := range []string{`{}`, `{"stream":false}`, `{"stream":true,"n":2}`, `{"stream":true,"n":0}`, `{"stream":"true"}`, `{"stream":true,"n":"1"}`} {
+		if err := validateChatRequest([]byte(body)); !errors.Is(err, errChatStreamRequired) {
+			t.Fatalf("body=%s err=%v", body, err)
 		}
 	}
 	handler := &Handler{}

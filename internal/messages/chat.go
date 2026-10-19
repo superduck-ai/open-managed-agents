@@ -32,8 +32,8 @@ func validateChatRequest(body []byte) error {
 		Stream bool `json:"stream"`
 		N      *int `json:"n"`
 	}
-	if err := json.Unmarshal(body, &request); err != nil {
-		return err
+	if json.Unmarshal(body, &request) != nil {
+		return errChatStreamRequired
 	}
 	if !request.Stream || (request.N != nil && *request.N != 1) {
 		return errChatStreamRequired

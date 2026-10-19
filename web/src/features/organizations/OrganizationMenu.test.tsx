@@ -124,21 +124,21 @@ test('组织菜单显示当前 membership 的中文角色，邀请卡片也显�
 test('组织很多时菜单只保留当前组织，搜索后再切换', async () => {
   globalThis.fetch = mock(async () => Response.json({ data: [] })) as typeof fetch;
   const memberships = [
-    { organization: { uuid: 'current', name: '视源股份-平台-财务中心-财务部' }, role: 'admin' },
-    { organization: { uuid: 'other', name: '合作公司-闪畅-财务部' }, role: 'user' },
+    { organization: { uuid: 'current', name: '集团-总部-财务中心-财务部' }, role: 'admin' },
+    { organization: { uuid: 'other', name: '伙伴公司-星河-财务部' }, role: 'user' },
     ...Array.from({ length: 8 }, (_, index) => ({
-      organization: { uuid: `org-${index}`, name: `视源股份-部门-${index}` },
+      organization: { uuid: `org-${index}`, name: `集团-部门-${index}` },
       role: 'admin',
     })),
   ];
   const { switchOrganization } = mount(memberships);
-  expect(screen.queryByText('部门-7 / 视源股份')).toBeNull();
+  expect(screen.queryByText('部门-7 / 集团')).toBeNull();
   expect(screen.getAllByRole('menuitemradio')).toHaveLength(3);
-  expect(screen.getByText('财务中心 / 平台 / 视源股份')).toBeTruthy();
+  expect(screen.getByText('财务中心 / 总部 / 集团')).toBeTruthy();
   fireEvent.click(screen.getByRole('menuitem', { name: '切换组织' }));
   expect(await screen.findByText(/还有 9 个组织/)).toBeTruthy();
-  fireEvent.change(screen.getByPlaceholderText('搜索组织'), { target: { value: '闪畅' } });
-  fireEvent.click(await screen.findByRole('option', { name: /闪畅/ }));
+  fireEvent.change(screen.getByPlaceholderText('搜索组织'), { target: { value: '星河' } });
+  fireEvent.click(await screen.findByRole('option', { name: /星河/ }));
   expect(switchOrganization).toHaveBeenCalledWith('other');
 });
 

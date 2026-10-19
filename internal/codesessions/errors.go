@@ -30,7 +30,6 @@ func sandboxOperationError(cause error) error {
 }
 
 var (
-	errWorkerDispatchUnavailable      = errors.New("worker task publisher is unavailable")
 	ErrMCPDeclarationInvalid          = errors.New("MCP server declarations must have unique canonical names and valid targets")
 	ErrMCPGatewayMissing              = errors.New("code_session.sandbox_api_base_url is required for managed-agent MCP tunnels")
 	ErrMCPRuntimeIdentityMissing      = errors.New("managed-agent MCP Tunnel runtime identity is incomplete")
@@ -108,3 +107,22 @@ type workerPayloadError struct {
 func (e *workerPayloadError) Error() string { return e.message }
 
 func (e *workerPayloadError) Unwrap() error { return e.cause }
+
+func brainClaimUnauthenticated() error {
+	return apperr.New(apperr.Unauthenticated, "Invalid brain claim token", nil)
+}
+
+func brainClaimInvalidRequest(message string, cause error) error {
+	return apperr.New(apperr.InvalidArgument, message, cause)
+}
+
+func brainClaimFailure(cause error) error {
+	return internalError("Could not claim code session", cause)
+}
+
+func mapBrainClaimReleaseError(err error) error {
+	if errors.Is(err, db.ErrPreconditionFailed) {
+		return apperr.New(apperr.Conflict, "Brain claim is no longer held", err)
+	}
+	return internalError("Could not release code session claim", err)
+}

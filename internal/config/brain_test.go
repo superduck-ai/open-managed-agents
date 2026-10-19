@@ -24,8 +24,14 @@ func TestLoadBrainSandboxPrewarm(t *testing.T) {
 	}
 }
 
-func TestBrainRuntimeConfigUsesEmbeddedMCP(t *testing.T) {
-	if err := validateBrainRuntimeConfig(EnvironmentRunnerConfig{AgentMode: "brain"}); err != nil {
+func TestBrainRuntimeConfigRequiresClaimToken(t *testing.T) {
+	if err := validateBrainRuntimeConfig(EnvironmentRunnerConfig{AgentMode: "brain"}, CodeSessionConfig{}); err == nil {
+		t.Fatal("brain mode accepted without a claim token file")
+	}
+	if err := validateBrainRuntimeConfig(EnvironmentRunnerConfig{AgentMode: "sandbox"}, CodeSessionConfig{}); err != nil {
+		t.Fatalf("sandbox config: %v", err)
+	}
+	if err := validateBrainRuntimeConfig(EnvironmentRunnerConfig{AgentMode: "brain"}, CodeSessionConfig{BrainClaimTokenFile: "/run/secrets/brain"}); err != nil {
 		t.Fatalf("Brain config: %v", err)
 	}
 }

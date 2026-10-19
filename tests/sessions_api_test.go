@@ -667,7 +667,7 @@ func TestSessionClaudeCodeStoppedTaskTerminatesThread(t *testing.T) {
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[
-		{"payload":{"type":"system","uuid":"stopped-task-start","subtype":"task_started","task_id":"stopped-task","tool_use_id":"stopped-tool","description":"Stopped task"}},
+		{"payload":{"type":"system","uuid":"stopped-task-start","subtype":"task_started","task_type":"local_agent","task_id":"stopped-task","tool_use_id":"stopped-tool","description":"Stopped task"}},
 		{"payload":{"type":"system","uuid":"stopped-task-end","subtype":"task_notification","task_id":"stopped-task","tool_use_id":"stopped-tool","status":"stopped"}}
 	]}`)
 	threads := listSessionThreads(t, app, session.ID, defaultTestKey)
@@ -2706,7 +2706,7 @@ func TestCodeSessionWorkerEpochZeroRejectedAtDBLayer(t *testing.T) {
 	if err := app.db.ValidateCodeSessionWorkerEpoch(ctx, codeSessionID, 0); !errors.Is(err, db.ErrWorkerEpochMismatch) {
 		t.Fatalf("validate epoch 0 error = %v, want worker epoch mismatch", err)
 	}
-	if _, err := app.db.RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, 0, time.Minute, 10*time.Second); !errors.Is(err, db.ErrWorkerEpochMismatch) {
+	if _, err := app.db.RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, 0, fixedWorkerLease(time.Minute, 10*time.Second)); !errors.Is(err, db.ErrWorkerEpochMismatch) {
 		t.Fatalf("record heartbeat epoch 0 error = %v, want worker epoch mismatch", err)
 	}
 	if _, err := app.db.HeartbeatCodeSessionWorker(ctx, codeSessionID, 0, time.Minute); !errors.Is(err, db.ErrWorkerEpochMismatch) {

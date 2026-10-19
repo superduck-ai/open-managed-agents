@@ -96,6 +96,10 @@ export class Backend {
   readonly server;
   readonly ready: Promise<void>;
   readonly streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
+  readonly claimQueue: Payload[] = [];
+  readonly claimRequests: { workerId: string; blockMs: number }[] = [];
+  readonly releases: Payload[] = [];
+  claimToken = "test-claim-token";
   registrations = 0;
   connections = 0;
   sandboxCount = 0;
@@ -171,6 +175,12 @@ export class Backend {
     this.delivered.set(id, payload);
     for (const stream of this.streams) stream.enqueue(this.frame(id, payload));
   }
+  queueClaim() {
+    this.claimQueue.push({
+      session_id: this.a.session_id, worker_epoch: this.a.worker_epoch,
+      ingress_token: this.a.ingress_token, model_token: this.a.model_token,
+    });
+  }
   disconnect() {
     for (const stream of this.streams) stream.close();
     this.streams.clear();
@@ -194,7 +204,7 @@ export class Backend {
     }
     if (path === `/v2/sessions/${this.a.session_id}`) return json({session_context: {
       cwd: this.a.launch.work_dir, model: this.a.launch.model, system_prompt: this.a.launch.system,
-      append_system_prompt: this.a.launch.environment_prompt, runtime_skills: this.a.launch.skills, subagents: this.a.launch.subagents,
+      append_system_prompt: this.a.launch.environment_prompt, memory_catalog_prompt: this.a.launch.memory_catalog_prompt, runtime_skills: this.a.launch.skills, subagents: this.a.launch.subagents, runtime_tools: this.a.launch.tools,
     }});
     if (path === "/v1/messages") {
       expect(request.headers.get("Authorization")).toBe(
@@ -328,6 +338,21 @@ export class Backend {
         this.timeline.push({ type: "worker.status", status: body.worker_status, ...body });
         return json({});
       }
+    }
+    if (path === "/v1/code/brain/claims" || path.startsWith("/v1/code/brain/claims/")) {
+      if (request.headers.get("Authorization") !== `Bearer ${this.claimToken}`) return json({}, 401);
+      const workerId = request.headers.get("X-Worker-ID");
+      if (!workerId) return json({}, 400);
+      if (path.endsWith("/release")) {
+        this.releases.push({ session_id: decodeURIComponent(path.split("/")[5]!), worker_id: workerId, ...body });
+        return json({ ok: true });
+      }
+      const blockMs = Number(url.searchParams.get("block_ms"));
+      this.claimRequests.push({ workerId, blockMs });
+      const deadline = Date.now() + blockMs;
+      while (this.claimQueue.length === 0 && Date.now() < deadline && !request.signal.aborted) await delay(10);
+      const task = this.claimQueue.shift();
+      return task ? json(task) : new Response(null, { status: 204 });
     }
     return json({ error: "missing route" }, 404);
   }

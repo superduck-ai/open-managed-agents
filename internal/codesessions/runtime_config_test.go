@@ -2,6 +2,7 @@ package codesessions
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -41,5 +42,43 @@ func TestManagedAgentRuntimeConfigPreservesExtensionsAndPinsSubagents(t *testing
 	}
 	if len(subagents.Agents) != 1 || subagents.Agents[0].Name != "reader" || subagents.Agents[0].SystemPrompt != "pinned" {
 		t.Fatalf("subagents = %+v", subagents)
+	}
+}
+
+func TestRuntimeRootToolsRejectsInvalidSnapshot(t *testing.T) {
+	if _, err := runtimeRootTools(json.RawMessage(`{"tools":"invalid"}`)); err == nil {
+		t.Fatal("invalid tool snapshot accepted")
+	}
+}
+
+func TestRuntimeRootToolsMatchPermissionEnforcement(t *testing.T) {
+	all := []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob"}
+	for snapshot, want := range map[string][]string{
+		``:                   all,
+		`{"system":"plain"}`: all,
+		`{"tools":[]}`:       all,
+		`{"tools":[{"type":"agent_toolset_20260401","default_config":{"enabled":false},"configs":[{"name":"read","enabled":true},{"name":"grep","enabled":true}]}]}`:                           {"Read", "Grep"},
+		`{"tools":[{"type":"agent_toolset_20260401","configs":[{"name":"write","enabled":false},{"name":"edit","enabled":false},{"name":"bash","permission_policy":{"type":"always_ask"}}]}]}`: {"Bash", "Read", "Grep", "Glob"},
+	} {
+		got, err := runtimeRootTools(json.RawMessage(snapshot))
+		if err != nil || !slices.Equal(got, want) {
+			t.Errorf("runtimeRootTools(%s) = %v, %v; want %v", snapshot, got, err, want)
+		}
+	}
+}
+
+func TestManagedAgentRuntimeConfigPublishesRootTools(t *testing.T) {
+	service := &Service{}
+	session := db.Session{AgentSnapshot: json.RawMessage(`{"tools":[{"type":"agent_toolset_20260401","default_config":{"enabled":false},"configs":[{"name":"read","enabled":true}]}]}`)}
+	result, err := service.managedAgentRuntimeConfig(t.Context(), session, json.RawMessage(`{"system_prompt":"instructions"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(result, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if string(fields["runtime_tools"]) != `["Read"]` {
+		t.Fatalf("runtime_tools = %s", fields["runtime_tools"])
 	}
 }

@@ -237,7 +237,8 @@
     </select>
 
     <select id="LockWorkerLeaseByExternalID" resultType="codeSessionWorkerLeaseRow">
-        SELECT uuid, current_worker_epoch, worker_lease_expires_at, organization_uuid, workspace_uuid
+        SELECT uuid, current_worker_epoch, worker_lease_expires_at, organization_uuid, workspace_uuid,
+               COALESCE(metadata #>> '{config,worker_transport}', '') AS worker_transport
         FROM code_sessions
         WHERE external_id = #{codeSessionExternalID}
           AND deleted_at IS NULL
@@ -263,6 +264,8 @@
             connection_status = 'connected',
             last_worker_connected_at = #{params.Now},
             last_worker_activity_at = #{params.Now},
+            worker_claim_requested_at = NULL,
+            worker_claim_expires_at = NULL,
             updated_at = #{params.Now}
         WHERE uuid = #{params.UUID}
         RETURNING current_worker_epoch
@@ -396,6 +399,7 @@
         SET connection_status = #{params.Status},
             <if test="params.Connected">
                 last_worker_connected_at = #{params.Now},
+                worker_claim_attempts = 0,
             </if>
             last_worker_activity_at = #{params.Now},
             updated_at = #{params.Now}

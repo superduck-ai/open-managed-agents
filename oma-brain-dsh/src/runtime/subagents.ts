@@ -1,7 +1,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { object, type Payload } from "../json.ts";
 import { SessionRuntime } from "./session.ts";
-import type { SubagentBridge, SubagentThread, ToolExecutionBridge } from "./contracts.ts";
+import { MAX_LIVE_SUBAGENT_THREADS, type SubagentBridge, type SubagentThread, type ToolExecutionBridge } from "./contracts.ts";
 
 /** Child turns are awaited so the existing single-dispatch journal stays valid. */
 export class Subagents {
@@ -43,17 +43,17 @@ export class Subagents {
         execute: (args, exec) => execute(object(args), exec.signal),
       });
     };
-    register("list_agents", "List predefined specialists and retained subagent threads. Idle threads retain history and count toward the 25-thread limit.", {}, [], async () => JSON.stringify({
+    register("list_agents", `List predefined specialists and retained subagent threads. Idle threads retain history and count toward the ${MAX_LIVE_SUBAGENT_THREADS}-thread limit.`, {}, [], async () => JSON.stringify({
       agents: (config.agents ?? []).map(({ name, description }) => ({ name, description })),
       inline_agents: config.inlineAgents !== false,
       threads: this.threads.map(({ id, name, status }) => ({ id, name, status })),
     }));
-    register("send_to_agent", "Delegate a task and wait for its report. Supply thread_id for a follow-up retaining history, agent_name for a new predefined specialist, or name and system_prompt for a new inline agent. Inline agents inherit your model and sandbox tools. Only one delegation level is supported.", {
-      message: { type: "string", minLength: 1 },
-      thread_id: { type: "string", minLength: 1 },
-      agent_name: { type: "string", minLength: 1 },
-      name: { type: "string", minLength: 1 },
-      system_prompt: { type: "string" },
+    register("send_to_agent", "Delegate a task and wait for the subagent's final report, which is returned as this tool's result. Supply exactly one target: thread_id for a follow-up that keeps the thread's history, agent_name for a new predefined specialist, or name with system_prompt for a new inline agent. Inline agents inherit your model and sandbox tools. Subagents cannot delegate further.", {
+      message: { type: "string", minLength: 1, description: "The complete task. The subagent sees nothing else from your conversation, so include every path, constraint and expected output it needs." },
+      thread_id: { type: "string", minLength: 1, description: "Follow up on an existing thread from list_agents. Use instead of agent_name and name." },
+      agent_name: { type: "string", minLength: 1, description: "Start a new thread from a predefined specialist listed by list_agents. Use instead of thread_id and name." },
+      name: { type: "string", minLength: 1, description: "Name for a new inline agent. Requires system_prompt. Use instead of thread_id and agent_name." },
+      system_prompt: { type: "string", description: "Role and standing instructions for a new inline agent created with name." },
     }, ["message"], (args, signal) => this.send(args, signal));
     register("archive_agent", "Archive an idle subagent thread to free capacity. Archived threads cannot receive follow-up messages.", {
       thread_id: { type: "string" },
@@ -86,8 +86,8 @@ export class Subagents {
         throw new Error("Follow-up accepts only thread_id and message");
       thread = this.thread(args.thread_id);
     } else {
-      if (this.threads.filter((entry) => entry.status !== "terminated").length >= 25)
-        throw new Error("A session can have at most 25 live subagent threads; archive an idle thread first");
+      if (this.threads.filter((entry) => entry.status !== "terminated").length >= MAX_LIVE_SUBAGENT_THREADS)
+        throw new Error(`A session can have at most ${MAX_LIVE_SUBAGENT_THREADS} live subagent threads; archive an idle thread first`);
       const definition = args.agent_name
         ? config.agents?.find((agent) => agent.name === args.agent_name) : undefined;
       if (args.agent_name && !definition) throw new Error("Unknown predefined agent");
@@ -98,7 +98,7 @@ export class Subagents {
       thread = { id: `sthr_${crypto.randomUUID()}`, name: definition?.name ?? args.name,
         systemPrompt: definition?.systemPrompt ?? args.system_prompt,
         model: definition?.model ?? this.parent.config.model,
-        tools: definition?.tools ?? this.parent.config.tools, status: "idle" };
+        tools: inheritedTools(definition?.tools, this.parent.config.tools), status: "idle" };
       this.threads.push(thread);
       this.bridge.bindPersistence(thread.id);
       await this.bridge.emit({ kind: "created", thread });
@@ -178,7 +178,8 @@ export class Subagents {
     child = new SessionRuntime(this.parent.ctx, {
       ...config, id: thread.id, model: thread.model, tools: thread.tools,
       subagents: undefined, bindThread: undefined, setup: undefined,
-      systemPrompt: `${config.subagentSystemPrompt ?? config.systemPrompt}\n\nYou are subagent ${thread.name}. Your conversation is isolated. Delegation tools are unavailable. Report your findings to the parent.\nSpecialist instructions:\n${thread.systemPrompt}`,
+      systemPrompt: config.subagentSystemPrompt?.(thread)
+        ?? `${config.systemPrompt}\n\nYou are subagent ${thread.name}. Your conversation is isolated. Delegation tools are unavailable. Report your findings to the parent.\nSpecialist instructions:\n${thread.systemPrompt}`,
     }, {
       beforeRequest: async () => { await child.flushLog(); await this.bridge.beforeRequest(); },
       onEvent: (event) => this.bridge.onEvent(thread.id, event),
@@ -203,4 +204,9 @@ export class Subagents {
     for (const unbind of this.unbind.values()) unbind();
     this.unbind.clear();
   }
+}
+
+function inheritedTools(own: string[] | undefined, parent: string[] | undefined): string[] | undefined {
+  if (!own) return parent;
+  return parent ? own.filter((name) => parent.includes(name)) : own;
 }

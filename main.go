@@ -139,6 +139,10 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load code-session credentials: %w", err)
 	}
+	brainClaims, err := codesessions.LoadBrainClaimAuthenticator(cfg.CodeSession.BrainClaimTokenFile)
+	if err != nil {
+		return fmt.Errorf("load brain claim token: %w", err)
+	}
 	// Filestore 与 code-session ingress 使用独立的 claims 与验证器；
 	// 生产环境可共用同一 Ed25519 私钥文件，但两种 token 绝不互相代用。
 	filestoreCredentials, err := filestore.NewTokenCredentials(cfg)
@@ -192,17 +196,8 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("start webhook worker: %w", err)
 	}
 	defer stopWebhookWorker()
-	queues := map[string]river.QueueConfig{
-		environments.PrebuildQueue:         {MaxWorkers: 4},
-		deploymentjobs.Queue:               {MaxWorkers: 10},
-		environments.SandboxLifecycleQueue: {MaxWorkers: 4},
-		transcriptretention.Queue:          {MaxWorkers: 2},
-	}
 	workers := river.NewWorkers()
-	if platformAuthProvider.VerifiedLoginEnabled() {
-		queues[platformadmin.DeliveryQueue] = river.QueueConfig{MaxWorkers: 4}
-		platformadmin.RegisterDeliveryWorker(workers, database, invitations.NewMailer(cfg.Auth, database, logger.With("component", "platform_invitation_mail")))
-	}
+	queues := jobQueues(workers, database, cfg, logger, platformAuthProvider.VerifiedLoginEnabled())
 	prebuilds := environments.NewPrebuilds(database, cfg, logger.With("component", "environment_prebuild"))
 	prebuilds.Register(workers)
 	deploymentStore := deployments.NewStore(database, logger.With("component", "deployments")).
@@ -255,6 +250,7 @@ func run(logger *slog.Logger) error {
 			PlatformStore:          platformSessions,
 			PlatformAuth:           platformAuthProvider,
 			CodeSessionCredentials: codeSessionCredentials,
+			BrainClaims:            brainClaims,
 			SandboxTimeoutExtender: sandboxProvider,
 			SandboxProvisioner:     environmentRunner,
 			FilestoreCredentials:   filestoreCredentials,
@@ -274,6 +270,20 @@ func run(logger *slog.Logger) error {
 	}
 
 	return serveHTTP(ctx, server, logger)
+}
+
+func jobQueues(workers *river.Workers, database *db.DB, cfg config.Config, logger *slog.Logger, invitationsEnabled bool) map[string]river.QueueConfig {
+	queues := map[string]river.QueueConfig{
+		environments.PrebuildQueue:         {MaxWorkers: 4},
+		deploymentjobs.Queue:               {MaxWorkers: 10},
+		environments.SandboxLifecycleQueue: {MaxWorkers: 4},
+		transcriptretention.Queue:          {MaxWorkers: 2},
+	}
+	if invitationsEnabled {
+		queues[platformadmin.DeliveryQueue] = river.QueueConfig{MaxWorkers: 4}
+		platformadmin.RegisterDeliveryWorker(workers, database, invitations.NewMailer(cfg.Auth, database, logger.With("component", "platform_invitation_mail")))
+	}
+	return queues
 }
 
 func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) error {

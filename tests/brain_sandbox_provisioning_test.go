@@ -13,6 +13,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
@@ -23,9 +24,9 @@ type provisioningCodeSessions struct {
 	dispatches atomic.Int32
 }
 
-func (s *provisioningCodeSessions) DispatchWorker(ctx context.Context, credentials codesessions.ManagedAgentCreateResult) error {
+func (s *provisioningCodeSessions) DispatchWorker(ctx context.Context, session db.Session, codeSessionID string) error {
 	s.dispatches.Add(1)
-	return s.Service.DispatchWorker(ctx, credentials)
+	return s.Service.DispatchWorker(ctx, session, codeSessionID)
 }
 
 type provisioningTestProvider struct {
@@ -66,19 +67,18 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 				_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"resultType\":\"complete\",\"supportedVersions\":[\"2026-07-28\"],\"capabilities\":{\"tools\":{}}}}\n\n"))
 			}))
 			defer endpoint.Close()
-			broker := &brainTaskRecorder{MemoryBroker: workerevents.NewMemory()}
-			service := &provisioningCodeSessions{Service: codesessions.NewServiceWithCredentials(app.db, app.credentials, slog.Default()).WithWorkerEventBroker(broker)}
+			service := &provisioningCodeSessions{Service: codesessions.NewServiceWithCredentials(app.db, app.credentials, slog.Default()).WithWorkerEventBroker(workerevents.NewMemory())}
 			var creates atomic.Int32
 			providers := make([]*provisioningTestProvider, 2)
 			runners := make([]*environments.Runner, 2)
 			for i := range 2 {
 				providers[i] = &provisioningTestProvider{recordingRunnerProvider: &recordingRunnerProvider{sandboxID: "sandbox-provisioning", beforeCreate: func() {
 					creates.Add(1)
-					wantTasks := 1
+					wantDispatches := int32(1)
 					if prewarm {
-						wantTasks = 0
+						wantDispatches = 0
 					}
-					if len(broker.tasks) != wantTasks {
+					if service.dispatches.Load() != wantDispatches {
 						t.Error("unexpected worker dispatch order")
 					}
 				}}, endpoint: endpoint.URL}
@@ -95,8 +95,8 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			defer cancel()
 			processed, err := runners[0].RunOnce(ctx, "deferred")
 			if scenario.fail {
-				if err == nil || !processed || len(broker.tasks) != 0 || service.dispatches.Load() != 0 {
-					t.Fatalf("failed prewarm dispatched worker: processed=%t err=%v tasks=%d", processed, err, len(broker.tasks))
+				if err == nil || !processed || service.dispatches.Load() != 0 {
+					t.Fatalf("failed prewarm dispatched worker: processed=%t err=%v dispatches=%d", processed, err, service.dispatches.Load())
 				}
 				return
 			}

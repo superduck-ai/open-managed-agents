@@ -32,9 +32,9 @@ export function PlatformAdminShell({ email }: { email: string }) {
             {msg('platformAdmin.platformAdministration', 'Platform administration')}
           </span>
         </header>
-        <main className="w-full min-w-0 px-6 py-6 lg:px-8">
+        <div className="w-full min-w-0 px-6 py-6 lg:px-8">
           <Outlet />
-        </main>
+        </div>
       </SidebarInset>
     </SidebarProvider>
   );

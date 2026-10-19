@@ -102,6 +102,8 @@ test('严格模式重挂载后可重试授权故障并显示无组织账号的�
   fireEvent.click(screen.getByRole('button', { name: '重试' }));
   expect(await screen.findByText('受保护组织目录')).toBeTruthy();
   expect(screen.getByText('operator@example.com')).toBeTruthy();
+  expect(screen.getAllByRole('main')).toHaveLength(1);
+  expect(screen.getByRole('main').parentElement?.closest('main')).toBeNull();
   expect(screen.getByRole('navigation', { name: '后台导航' })).toBeTruthy();
   expect(screen.getByRole('link', { name: '组织管理' }).getAttribute('aria-current')).toBe('page');
   expect(screen.queryByRole('link', { name: '审计记录' })).toBeNull();

@@ -2,7 +2,7 @@
 
 状态：2026-10-16。审计独立保存在 `codex/platform-admin-audit`；当前版本不提供审计与操作原因表单。外部 SMTP 收件验收按用户要求跳过。
 
-设计起点为 [PR #350](https://github.com/superduck-ai/open-managed-agents/pull/350)。该 PR 及其依赖已合并；当前交付基于主线 `e914f566`，直接复用主线 User/Admin 两种组织角色和现有组织加入流程。
+设计起点为 [PR #350](https://github.com/superduck-ai/open-managed-agents/pull/350)。该 PR 及其依赖已合并；实现最初基于主线 `e914f566`，后续已合并主线提交 `1c97f77b`，直接复用主线 User/Admin 两种组织角色和现有组织加入流程。
 
 ## 1. 目标与范围
 
@@ -303,3 +303,5 @@ sequenceDiagram
 后台账号查询复用邮箱登录的身份选择顺序：同一邮箱（忽略大小写）优先 `registration_identity=true`，否则按 `added_at`、UUID 选择现有登录会使用的历史身份。只读解析不推断注册来源、不回填标记、不改变 Home/组织归属，也不自动授权；运维或已有超级管理员仍必须按账号 UUID 显式授予超级管理员。seed 账号和历史账号可按相同规则查询、授权和设置为组织管理员，同邮箱的其他成员行不能冒充登录身份。
 
 搜索长度按 Unicode 码点统计，账号检索至少 2 个字符、最多 200 个字符。管理员及邀请弹窗遇到 `version_conflict` 后刷新组织详情和当前目录，保留输入并提示关闭重开；不以旧表单自动重试写入。401 返回当前后台路径和查询参数；403 仅在 `platform_access_denied` 或 `verified_login_required` 时清空后台状态，CSRF 失败保留页面并提示刷新。
+
+全局登录身份查询由迁移 `00087_global_login_identity_index.sql` 增加 `users_login_identity_idx`，覆盖 `LOWER(email), registration_identity DESC, added_at, uuid`，用于邮箱匹配和稳定身份排序。迁移在事务外并发创建及删除索引；创建前移除同名索引，以支持失败构建留下索引时重新执行，不修改历史迁移或账号数据。

@@ -521,6 +521,19 @@ func TestPublicPayloadFromWorkerEventNormalizesIdleStopReasonVariants(t *testing
 	}
 }
 
+func TestPublicPayloadsFromWorkerEventIgnoresNonAgentTasks(t *testing.T) {
+	for _, taskType := range []string{"local_bash", "local_workflow", "monitor_mcp", "dream", "unknown", ""} {
+		t.Run(taskType, func(t *testing.T) {
+			payloads, ok, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: "system"}, mustRawJSON(t, map[string]any{
+				"type": "system", "subtype": "task_started", "task_id": "task", "tool_use_id": "tool", "task_type": taskType,
+			}))
+			if err != nil || ok || len(payloads) != 0 {
+				t.Fatalf("non-agent task produced public events: %s, ok=%t, err=%v", payloads, ok, err)
+			}
+		})
+	}
+}
+
 func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 	startPayloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
 		ExternalID:     "csev_task_started",
@@ -531,6 +544,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 		"type":        "system",
 		"uuid":        "system-task-started",
 		"subtype":     "task_started",
+		"task_type":   "local_agent",
 		"task_id":     "abc123",
 		"tool_use_id": "tool_translate",
 		"description": "Translate to Japanese",
@@ -585,7 +599,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 	if len(doneObjects) != 1 || doneObjects[0]["type"] != "session.thread_status_idle" {
 		t.Fatalf("task_notification payloads = %#v", doneObjects)
 	}
-	if doneObjects[0]["session_thread_id"] != expectedThreadID {
+	if doneObjects[0]["session_thread_id"] != nil {
 		t.Fatalf("thread_status_idle payload = %#v", doneObjects[0])
 	}
 	stopReason, ok := doneObjects[0]["stop_reason"].(map[string]any)
@@ -602,7 +616,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 		t.Fatalf("stopped task_notification: ok=%v err=%v", ok, err)
 	}
 	stoppedObjects := decodePublicPayloads(t, stoppedPayloads)
-	if len(stoppedObjects) != 1 || stoppedObjects[0]["type"] != "session.thread_status_terminated" || stoppedObjects[0]["session_thread_id"] != expectedThreadID {
+	if len(stoppedObjects) != 1 || stoppedObjects[0]["type"] != "session.thread_status_terminated" || stoppedObjects[0]["session_thread_id"] != nil {
 		t.Fatalf("stopped task_notification payloads = %#v", stoppedObjects)
 	}
 	if _, hasReason := stoppedObjects[0]["stop_reason"]; hasReason {

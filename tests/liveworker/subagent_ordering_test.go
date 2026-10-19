@@ -28,7 +28,7 @@ func verifySubagentLifecycleOrdering(t *testing.T, e *liveEnv) {
 		e.request(t, "POST", f.path("/worker/events"), f.token, map[string]any{"worker_epoch": "1", "events": events}, 200)
 	}
 	for _, task := range []string{"a", "b"} {
-		post(map[string]string{"type": "system", "subtype": "task_started", "uuid": "start-" + task, "task_id": task, "tool_use_id": "agent-" + task, "description": "reviewer"})
+		post(map[string]string{"type": "system", "subtype": "task_started", "task_type": "local_agent", "uuid": "start-" + task, "task_id": task, "tool_use_id": "agent-" + task, "description": "reviewer"})
 	}
 	var threads struct {
 		Data []struct {

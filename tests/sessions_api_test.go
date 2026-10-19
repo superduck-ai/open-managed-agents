@@ -667,7 +667,7 @@ func TestSessionClaudeCodeStoppedTaskTerminatesThread(t *testing.T) {
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[
-		{"payload":{"type":"system","uuid":"stopped-task-start","subtype":"task_started","task_id":"stopped-task","tool_use_id":"stopped-tool","description":"Stopped task"}},
+		{"payload":{"type":"system","uuid":"stopped-task-start","subtype":"task_started","task_type":"local_agent","task_id":"stopped-task","tool_use_id":"stopped-tool","description":"Stopped task"}},
 		{"payload":{"type":"system","uuid":"stopped-task-end","subtype":"task_notification","task_id":"stopped-task","tool_use_id":"stopped-tool","status":"stopped"}}
 	]}`)
 	threads := listSessionThreads(t, app, session.ID, defaultTestKey)

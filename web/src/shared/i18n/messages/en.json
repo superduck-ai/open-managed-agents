@@ -2561,5 +2561,6 @@
   "managedAgents.credentialVaults.removeVault": "Remove {name}",
   "managedAgents.agents.newAgent": "New agent",
   "managedAgents.agents.createDialog.configuredTools": "{count} toolsets",
-  "managedAgents.agents.createDialog.describeLabel": "Describe your agent"
+  "managedAgents.agents.createDialog.describeLabel": "Describe your agent",
+  "auth.login.emailDomainNotAllowed": "Use an approved email address to sign in."
 }

@@ -24,7 +24,7 @@ func TestManagedRuntimePromptAndSkills(t *testing.T) {
 	if err := json.Unmarshal(raw, &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.System != "literal ${{ instructions }}" || config.Append != managedAgentEnvironmentPrompt || !strings.Contains(string(raw), "/root/.claude/skills/pdf/SKILL.md") {
+	if config.System != "literal ${{ instructions }}" || config.Append != mustEnvironmentPrompt(t, nil) || !strings.Contains(string(raw), "/root/.claude/skills/pdf/SKILL.md") {
 		t.Fatalf("invalid shared startup config: %s", raw)
 	}
 }

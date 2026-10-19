@@ -111,6 +111,40 @@ func TestServiceEmailLogin(t *testing.T) {
 	})
 }
 
+func TestAllowedEmailLoginDomains(t *testing.T) {
+	for _, cfg := range []config.AuthConfig{{AllowedEmailDomains: []string{"example.org"}}, {AllowedEmailDomains: []string{"example.org"}, SMTP: config.EmailSMTPConfig{Addr: "smtp.example.com:587"}}} {
+		for _, email := range []string{"user@gmail.com", "user@example.com", "user@sub.example.org", "user@example.org.evil", "user@evilexample.org", "user@example.org@evil.com"} {
+			t.Run(cfg.SMTP.Addr+"/reject/"+email, func(t *testing.T) {
+				service := New(cfg, nil, nil, nil)
+				want := apperr.PermissionDenied
+				if email == "user@example.org@evil.com" {
+					want = apperr.InvalidArgument
+				}
+				if err := service.RequestEmailLogin(t.Context(), email); applicationErrorKind(err) != want {
+					t.Fatalf("request email login: %v", err)
+				}
+				if _, _, err := service.VerifyEmailLogin(t.Context(), email, "123456"); applicationErrorKind(err) != want {
+					t.Fatalf("verify email login: %v", err)
+				}
+				if err := service.CompleteEmailLogin(t.Context(), email, "123456"); applicationErrorKind(err) != want {
+					t.Fatalf("complete email login: %v", err)
+				}
+			})
+		}
+	}
+	t.Run("accept normalized company account", func(t *testing.T) {
+		tx := &fakePlatformAuthTx{findContext: db.PlatformAuthUserContext{UserExternalID: "user_existing", OrgUUID: "org-existing"}}
+		service := New(config.AuthConfig{AllowedEmailDomains: []string{"example.org"}}, &fakePlatformAuthStore{tx: tx}, nil, nil)
+		if err := service.RequestEmailLogin(t.Context(), " User@EXAMPLE.ORG "); err != nil {
+			t.Fatal(err)
+		}
+		userID, _, err := service.VerifyEmailLogin(t.Context(), " User@EXAMPLE.ORG ", "123456")
+		if err != nil || userID != "user_existing" {
+			t.Fatalf("verify company login = %q, %v", userID, err)
+		}
+	})
+}
+
 func applicationErrorKind(err error) apperr.Kind {
 	appErr, _ := errors.AsType[*apperr.Error](err)
 	if appErr == nil {
@@ -175,4 +209,41 @@ func (s *fakeLoginCodeSender) SendLoginCode(_ context.Context, recipient, code s
 	s.recipient = recipient
 	s.code = code
 	return nil
+}
+
+func TestConfiguredCompanyEmailDomains(t *testing.T) {
+	for _, smtp := range []config.EmailSMTPConfig{{}, {Addr: "smtp.example.com:587"}} {
+		service := New(config.AuthConfig{SMTP: smtp, AllowedEmailDomains: []string{"example.org", "subsidiary.example"}}, nil, nil, nil)
+		for _, email := range []string{"user@sub.subsidiary.example", "user@subsidiary.example.evil", "user@gmail.com"} {
+			if err := service.RequestEmailLogin(t.Context(), email); applicationErrorKind(err) != apperr.PermissionDenied {
+				t.Fatalf("request %s: %v", email, err)
+			}
+			if _, _, err := service.VerifyEmailLogin(t.Context(), email, "123456"); applicationErrorKind(err) != apperr.PermissionDenied {
+				t.Fatalf("verify %s: %v", email, err)
+			}
+			if err := service.CompleteEmailLogin(t.Context(), email, "123456"); applicationErrorKind(err) != apperr.PermissionDenied {
+				t.Fatalf("complete %s: %v", email, err)
+			}
+		}
+		for _, email := range []string{"person@example.org", " Person@SUBSIDIARY.EXAMPLE "} {
+			if _, _, err := service.VerifyEmailLogin(t.Context(), email, ""); applicationErrorKind(err) != apperr.Unauthenticated {
+				t.Fatalf("allowed domain should reach code validation: %v", err)
+			}
+		}
+	}
+	service := New(config.AuthConfig{AllowedEmailDomains: []string{"subsidiary.example"}}, nil, nil, nil)
+	if err := service.RequestEmailLogin(t.Context(), "person@example.org"); applicationErrorKind(err) != apperr.PermissionDenied {
+		t.Fatalf("unlisted domain must be rejected: %v", err)
+	}
+}
+
+func TestEmailLoginWithoutDomainRestriction(t *testing.T) {
+	for _, domains := range [][]string{nil, {}} {
+		service := New(config.AuthConfig{AllowedEmailDomains: domains}, nil, nil, nil)
+		for _, email := range []string{"user@example.org", "user@unrelated.example", "user@sub.example.org"} {
+			if _, _, err := service.VerifyEmailLogin(t.Context(), email, ""); applicationErrorKind(err) != apperr.Unauthenticated {
+				t.Fatalf("empty allowlist must reach code validation for %s: %v", email, err)
+			}
+		}
+	}
 }

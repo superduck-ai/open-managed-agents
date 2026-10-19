@@ -434,6 +434,9 @@ func TestPlatformWebSessionStream(t *testing.T) {
 	if contentType := resp.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/event-stream") {
 		t.Fatalf("platform web stream content-type = %q, want text/event-stream", contentType)
 	}
+	if buffering := resp.Header.Get("X-Accel-Buffering"); buffering != "no" {
+		t.Fatalf("platform web stream X-Accel-Buffering = %q, want no", buffering)
+	}
 
 	lineCh := make(chan string, 16)
 	go func() {
@@ -664,7 +667,7 @@ func TestSessionClaudeCodeStoppedTaskTerminatesThread(t *testing.T) {
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[
-		{"payload":{"type":"system","uuid":"stopped-task-start","subtype":"task_started","task_id":"stopped-task","tool_use_id":"stopped-tool","description":"Stopped task"}},
+		{"payload":{"type":"system","uuid":"stopped-task-start","subtype":"task_started","task_type":"local_agent","task_id":"stopped-task","tool_use_id":"stopped-tool","description":"Stopped task"}},
 		{"payload":{"type":"system","uuid":"stopped-task-end","subtype":"task_notification","task_id":"stopped-task","tool_use_id":"stopped-tool","status":"stopped"}}
 	]}`)
 	threads := listSessionThreads(t, app, session.ID, defaultTestKey)
@@ -2703,7 +2706,7 @@ func TestCodeSessionWorkerEpochZeroRejectedAtDBLayer(t *testing.T) {
 	if err := app.db.ValidateCodeSessionWorkerEpoch(ctx, codeSessionID, 0); !errors.Is(err, db.ErrWorkerEpochMismatch) {
 		t.Fatalf("validate epoch 0 error = %v, want worker epoch mismatch", err)
 	}
-	if _, err := app.db.RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, 0, time.Minute, 10*time.Second); !errors.Is(err, db.ErrWorkerEpochMismatch) {
+	if _, err := app.db.RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, 0, fixedWorkerLease(time.Minute, 10*time.Second)); !errors.Is(err, db.ErrWorkerEpochMismatch) {
 		t.Fatalf("record heartbeat epoch 0 error = %v, want worker epoch mismatch", err)
 	}
 	if _, err := app.db.HeartbeatCodeSessionWorker(ctx, codeSessionID, 0, time.Minute); !errors.Is(err, db.ErrWorkerEpochMismatch) {

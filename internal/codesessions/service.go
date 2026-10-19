@@ -187,6 +187,9 @@ func (s *Service) resumeSandbox(ctx context.Context, codeSession db.CodeSession)
 	if s.sandboxTimeoutExtender == nil {
 		return "disabled", nil
 	}
+	if usesBrainClaimTransport(codeSession) {
+		return "brain_claim", nil
+	}
 	sandbox, err := s.db.GetResumableEnvironmentSandboxForCodeSession(ctx, codeSession.ExternalID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {

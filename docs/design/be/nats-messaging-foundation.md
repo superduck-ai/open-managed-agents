@@ -5,6 +5,7 @@
 应用在组装层创建一条全局 NATS 连接，确认目标账号已启用 JetStream，并在退出时 drain。Session SSE
 preview 使用 Core NATS Pub/Sub；Code Session worker 入站事件使用同一连接上的 JetStream。handler
 和业务 service 不建立独立连接池。
+Brain 领取长轮询通过同一连接订阅 Core NATS `oma.brain.work.available`，派发时发布无数据通知唤醒各实例；通知可丢失，任务归属以 PostgreSQL 领取状态为准，不使用 JetStream stream（见 [Brain Worker 领取](brain-worker-claim.md)）。
 
 HTTP 退出时，组装层通过 `httpapi.WithStreamShutdown` 向请求传入进程退出通知。
 Session SSE 与 Worker SSE 在资源入口使用 `httpapi.StreamContext` 派生流 context，

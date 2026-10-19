@@ -168,15 +168,6 @@ func NewJetStream(ctx context.Context, connection *nats.Conn, cfg config.WorkerE
 	if err != nil {
 		return nil, fmt.Errorf("ensure worker event stream: %w", err)
 	}
-	_, err = js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
-		Name: "OMA_BRAIN_TASKS", Subjects: []string{"oma.brain.tasks.v1"},
-		Retention: jetstream.WorkQueuePolicy, Storage: jetstream.FileStorage,
-		MaxAge: time.Minute, Duplicates: time.Minute, Replicas: cfg.Replicas,
-	})
-	if err != nil {
-		return nil, err
-	}
-
 	return &JetStreamBroker{connection: connection, js: js, maxMessageBytes: cfg.MaxMsgSize, consumerInactiveThreshold: cfg.ConsumerInactiveThreshold}, nil
 }
 
@@ -445,6 +436,7 @@ type MemoryBroker struct {
 	subs          map[string]*memorySubscription
 	ackSubjectMap map[string]*memoryMessage
 	messageIDs    map[string]time.Time
+	brainWork     brainWorkHub
 }
 
 func NewMemory() *MemoryBroker {

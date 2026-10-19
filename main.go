@@ -138,6 +138,10 @@ func run(bootstrap *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load code-session credentials: %w", err)
 	}
+	brainClaims, err := codesessions.LoadBrainClaimAuthenticator(cfg.CodeSession.BrainClaimTokenFile)
+	if err != nil {
+		return fmt.Errorf("load brain claim token: %w", err)
+	}
 	// Filestore 与 code-session ingress 使用独立的 claims 与验证器；
 	// 生产环境可共用同一 Ed25519 私钥文件，但两种 token 绝不互相代用。
 	filestoreCredentials, err := filestore.NewTokenCredentials(cfg)
@@ -254,6 +258,7 @@ func run(bootstrap *slog.Logger) error {
 			PlatformStore:          platformSessions,
 			PlatformAuth:           platformAuthProvider,
 			CodeSessionCredentials: codeSessionCredentials,
+			BrainClaims:            brainClaims,
 			SandboxTimeoutExtender: sandboxProvider,
 			SandboxProvisioner:     environmentRunner,
 			FilestoreCredentials:   filestoreCredentials,

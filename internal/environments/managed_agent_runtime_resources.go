@@ -12,11 +12,12 @@ import (
 )
 
 type managedAgentRuntimeResources struct {
-	runtimeSkills   []skillsapi.RuntimeSkill
-	workerTransport string
-	sources         []json.RawMessage
-	workDir         string
-	memoryMounts    []memoryRuntimeMount
+	runtimeSkills     []skillsapi.RuntimeSkill
+	workerTransport   string
+	sources           []json.RawMessage
+	workDir           string
+	memoryMounts      []memoryRuntimeMount
+	environmentConfig json.RawMessage
 }
 
 type gitRepositoryRuntimeSource struct {

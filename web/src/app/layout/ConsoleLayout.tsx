@@ -776,8 +776,8 @@ export function AccountMenu({
   const { isMobile } = useSidebar();
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const identity = getIdentity(account);
   const { activeWorkspace, orgUuid } = useWorkspace();
+  const identity = getIdentity(account, orgUuid);
   const organizationRole = membershipRoleForOrganization(account?.memberships, orgUuid);
   const { locale, setLocale, supportedLocales: locales } = useLocale();
   const { msg } = useI18n();
@@ -1029,12 +1029,15 @@ async function navigateToMatchingWorkspacePath(currentPath: string, workspaceId:
   }
 }
 
-function getIdentity(account?: AuthAccount | null) {
+function getIdentity(account?: AuthAccount | null, orgUuid?: string) {
+  const organization = account?.memberships?.find(
+    (membership) => membership.organization?.uuid === orgUuid,
+  )?.organization;
   const email = account?.email_address ?? 'test@openmanagedagent.local';
   const emailName = email.split('@')[0] || 'test';
   return {
     email,
-    name: account?.display_name ?? account?.full_name ?? emailName,
+    name: organization?.name || organization?.uuid || (account?.display_name ?? account?.full_name ?? emailName),
   };
 }
 

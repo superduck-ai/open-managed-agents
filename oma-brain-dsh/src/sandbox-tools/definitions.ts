@@ -45,6 +45,7 @@ const definitions: RemoteTool[] = [
   {
     "name": "Read",
     "remoteName": "read",
+    "readOnly": true,
     "description": "Read a text file in the remote sandbox. file_path must be absolute. start_line is 0-based and end_line is exclusive, so start_line=0 with end_line=50 returns the first 50 lines; omit both to read the whole file. Binary files and images are not supported.",
     "inputSchema": {
       "properties": {
@@ -119,6 +120,7 @@ const definitions: RemoteTool[] = [
   {
     "name": "Grep",
     "remoteName": "grep",
+    "readOnly": true,
     "description": "Search remote sandbox files with ripgrep. Choose content, files_with_matches or count using output_mode; include and type filter files.",
     "inputSchema": {
       "properties": {
@@ -193,6 +195,7 @@ const definitions: RemoteTool[] = [
   {
     "name": "Glob",
     "remoteName": "glob",
+    "readOnly": true,
     "description": "Find remote sandbox files by glob pattern. Optional path selects the directory; results are sorted by modification time, oldest first.",
     "inputSchema": {
       "properties": {

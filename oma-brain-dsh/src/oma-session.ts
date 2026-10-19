@@ -1,7 +1,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "./api.ts";
 import * as OmaSandboxProvider from "./oma-sandbox/index.ts";
-import { validateAssignment, type Assignment } from "./assignment.ts";
+import { validateAssignment, validateToolPermissions, type Assignment } from "./assignment.ts";
 import type { CcrSession } from "./ccrv2/index.ts";
 import { childSystemPrompt, rootSystemPrompt } from "./prompt/assemble.ts";
 
@@ -19,6 +19,14 @@ export function createOmaSession(
     model: assignment.launch.model,
     workDir: assignment.launch.work_dir,
     tools: assignment.launch.tools,
+    toolPermissions: { ...assignment.launch.tool_permissions },
+    refreshToolPermissions: async (signal) => {
+      const response = await api.request(`/v2/sessions/${encodeURIComponent(assignment.session_id)}`,
+        assignment.ingress_token, "GET", undefined, undefined, signal);
+      const permissions = response.session_context?.runtime_tool_permissions;
+      validateToolPermissions(permissions);
+      return permissions;
+    },
     systemPrompt: rootSystemPrompt(assignment.launch),
     subagentSystemPrompt: (thread) => childSystemPrompt(assignment.launch, thread),
     setup: async (scope) => {

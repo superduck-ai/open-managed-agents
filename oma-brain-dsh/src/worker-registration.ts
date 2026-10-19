@@ -39,6 +39,7 @@ export async function registerWorkerTask(api: OmaApi, task: BrainTask, signal?: 
       memory_catalog_prompt: context.memory_catalog_prompt ?? "",
       skills: context.runtime_skills ?? [], subagents: context.subagents ?? undefined,
       tools: context.runtime_tools ?? undefined,
+      tool_permissions: context.runtime_tool_permissions ?? undefined,
     },
     mcp_config: { mcpServers: { sandbox: {
       type: "http", url: `${api.base.replace(/\/$/, "")}/v2/ccr-sessions/${id}/sandbox/mcp`,

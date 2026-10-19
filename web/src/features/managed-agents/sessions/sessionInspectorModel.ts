@@ -115,15 +115,19 @@ export type InspectorThreadRow = {
 };
 
 export function buildInspectorEventRows(events: QuickstartSessionEvent[]) {
-  return events.map((event, index): InspectorEventRow => {
+  return events.flatMap((event, index): InspectorEventRow[] => {
+    const processedAtMs = sessionEventProcessedTimestamp(event);
+    if (event.is_streaming === true && !processedAtMs) return [];
     const type = sessionEventType(event) || 'unknown';
-    return {
-      event,
-      id: inspectorEventId(event, index),
-      preview: sessionIsToolUseEvent(event) ? sessionToolDisplayText(event) : sessionEventSummary(event),
-      processedAtMs: sessionEventProcessedTimestamp(event),
-      type,
-    };
+    return [
+      {
+        event,
+        id: inspectorEventId(event, index),
+        preview: sessionIsToolUseEvent(event) ? sessionToolDisplayText(event) : sessionEventSummary(event),
+        processedAtMs,
+        type,
+      },
+    ];
   });
 }
 

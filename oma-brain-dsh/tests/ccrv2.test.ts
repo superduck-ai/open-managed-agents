@@ -506,7 +506,7 @@ test("child history resumes across scoped and legacy foreground logs", async () 
   }
 });
 
-test("CCRv2 plugin runs isolated sessions and restores history without OMA or NATS", async () => {
+test("CCRv2 plugin runs isolated sessions and restores history without OMA", async () => {
   const backend = new MemoryBackend();
   const config = (id: string) => ({
     id, provider: "memory", model: "text", workDir: "/workspace",

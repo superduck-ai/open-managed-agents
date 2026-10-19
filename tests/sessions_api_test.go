@@ -2706,7 +2706,7 @@ func TestCodeSessionWorkerEpochZeroRejectedAtDBLayer(t *testing.T) {
 	if err := app.db.ValidateCodeSessionWorkerEpoch(ctx, codeSessionID, 0); !errors.Is(err, db.ErrWorkerEpochMismatch) {
 		t.Fatalf("validate epoch 0 error = %v, want worker epoch mismatch", err)
 	}
-	if _, err := app.db.RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, 0, time.Minute, 10*time.Second); !errors.Is(err, db.ErrWorkerEpochMismatch) {
+	if _, err := app.db.RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, 0, fixedWorkerLease(time.Minute, 10*time.Second)); !errors.Is(err, db.ErrWorkerEpochMismatch) {
 		t.Fatalf("record heartbeat epoch 0 error = %v, want worker epoch mismatch", err)
 	}
 	if _, err := app.db.HeartbeatCodeSessionWorker(ctx, codeSessionID, 0, time.Minute); !errors.Is(err, db.ErrWorkerEpochMismatch) {

@@ -6,7 +6,8 @@ import * as CcrBridge from "./ccrv2/index.ts";
 import { mountKernel } from "./kernel.ts";
 import { MessagesAdapter } from "./model.ts";
 import { startWorkers } from "./worker.ts";
-import { required, readCcrHeartbeatOptions } from "./config.ts";
+import { BrainClaimClient } from "./claim.ts";
+import { required, readBrainClaimOptions, readCcrHeartbeatOptions } from "./config.ts";
 
 export const name = "oma-brain";
 
@@ -41,10 +42,12 @@ export async function apply(ctx: Context): Promise<void> {
   const maxSessions = Number(process.env.OMA_BRAIN_MAX_SESSIONS ?? "8");
   if (!Number.isSafeInteger(maxSessions) || maxSessions < 1)
     throw new Error("OMA_BRAIN_MAX_SESSIONS must be positive");
+  const claim = readBrainClaimOptions();
   const api = new OmaApi(base.replace(/\/$/, ""));
   const client = await mountOma(ctx, api, heartbeat);
+  const claims = new BrainClaimClient(api, claim.token, crypto.randomUUID());
   await ctx.plugin({
     inject: ["ccrv2"],
-    apply: (scope: Context) => startWorkers(scope, api, client, maxSessions),
+    apply: (scope: Context) => startWorkers(scope, api, client, claims, { maxSessions, claimConcurrency: claim.concurrency }),
   });
 }

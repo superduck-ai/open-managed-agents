@@ -86,7 +86,7 @@ func TestBrainMCPFailureDoesNotBlockCCRv2(t *testing.T) {
 			if response.Header.Get("X-Oma-Sandbox-Not-Forwarded") != "" {
 				t.Fatal("forwarded failure was marked as not forwarded")
 			}
-			if _, err := app.db.RecordCodeSessionWorkerHeartbeat(t.Context(), worker.ExternalID, epoch, time.Minute, 0); err != nil {
+			if _, err := app.db.RecordCodeSessionWorkerHeartbeat(t.Context(), worker.ExternalID, epoch, fixedWorkerLease(time.Minute, 0)); err != nil {
 				t.Fatalf("MCP failure blocked heartbeat: %v", err)
 			}
 			_, err := app.db.AppendCodeSessionInternalEvents(t.Context(), worker.ExternalID, epoch, []db.AppendCodeSessionInternalEventInput{{
@@ -175,7 +175,7 @@ func TestBrainMCPForwardingDoesNotHoldSessionLock(t *testing.T) {
 	waitStarted()
 	heartbeatCtx, heartbeatCancel := context.WithTimeout(ctx, 3*time.Second)
 	defer heartbeatCancel()
-	if _, err := app.db.RecordCodeSessionWorkerHeartbeat(heartbeatCtx, worker.ExternalID, epoch, time.Minute, 0); err != nil {
+	if _, err := app.db.RecordCodeSessionWorkerHeartbeat(heartbeatCtx, worker.ExternalID, epoch, fixedWorkerLease(time.Minute, 0)); err != nil {
 		t.Fatalf("MCP forwarding held the session lock: %v", err)
 	}
 	go forward()
@@ -350,4 +350,8 @@ func registerTaskTestWorker(t *testing.T, app *testApp, worker db.CodeSession) (
 	_, _, err := app.db.RegisterCodeSessionWorkerAtEpoch(t.Context(), worker.ExternalID, worker.CurrentWorkerEpoch,
 		db.CodeSessionWorkerBinding{TokenSessionID: worker.ExternalID}, time.Minute)
 	return worker, err
+}
+
+func fixedWorkerLease(ttl, grace time.Duration) db.WorkerLeasePolicy {
+	return func(string) db.WorkerLeaseTimings { return db.WorkerLeaseTimings{TTL: ttl, Grace: grace} }
 }

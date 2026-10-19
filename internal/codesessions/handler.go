@@ -36,6 +36,7 @@ type Handler struct {
 	loadMCPPolicyContext      func(ctx context.Context, identity upstreamProxyIdentity) (mcpProxyPolicyContext, error)
 	otlpSink                  otlpSink
 	otlpAdmission             *otlpAdmission
+	brainClaims               BrainClaimAuthenticator
 }
 
 // TunnelInvoker is implemented by the Tunnel DataPlane. Named Runtime Gateway

@@ -71,7 +71,7 @@ func validate(cfg Config) error {
 	if strings.TrimSpace(cfg.NATS.URL) == "" {
 		return errors.New("nats.url is required")
 	}
-	if err := validateBrainRuntimeConfig(cfg.EnvironmentRunner); err != nil {
+	if err := validateBrainRuntimeConfig(cfg.EnvironmentRunner, cfg.CodeSession); err != nil {
 		return err
 	}
 	if err := validateWebhookStream(cfg.NATS.WebhookStream); err != nil {

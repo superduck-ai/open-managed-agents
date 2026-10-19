@@ -19,6 +19,41 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+func TestBrainMCPGatewayRejectsDeniedSandboxTool(t *testing.T) {
+	var forwarded []string
+	sandbox := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var call struct {
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&call)
+		forwarded = append(forwarded, call.Params.Name)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}]}}`)
+	}))
+	t.Cleanup(sandbox.Close)
+	app, worker, _, token := newBrainMCPProxyAppWithAgent(t, sandbox.URL,
+		`{"model":"claude-opus-4-6","name":"denied-bash","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"bash","enabled":false}]}]}`)
+	call := func(name string) int {
+		response := doSessionRequest(t, app, http.MethodPost, "/v2/ccr-sessions/"+worker.ExternalID+"/sandbox/mcp",
+			strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"`+name+`","arguments":{}}}`), token, false)
+		response.Body.Close()
+		return response.StatusCode
+	}
+	for _, name := range []string{"bash", "unknown"} {
+		if status := call(name); status != http.StatusForbidden {
+			t.Fatalf("%s status=%d", name, status)
+		}
+	}
+	if len(forwarded) != 0 || len(app.sandboxTimeouts.snapshotCalls()) != 0 {
+		t.Fatalf("denied tool reached sandbox: forwarded=%v renewals=%d", forwarded, len(app.sandboxTimeouts.snapshotCalls()))
+	}
+	if status := call("read"); status != http.StatusOK || len(forwarded) != 1 || forwarded[0] != "read" {
+		t.Fatalf("allowed tool status=%d forwarded=%v", status, forwarded)
+	}
+}
+
 func TestBrainMCPFailureDoesNotBlockCCRv2(t *testing.T) {
 	for _, mode := range []string{"upstream error", "lost response", "oversized response"} {
 		t.Run(mode, func(t *testing.T) {
@@ -281,8 +316,13 @@ func newBrainMCPProxyApp(t *testing.T, handler http.Handler) (*testApp, db.CodeS
 
 func newBrainMCPProxyAppWithEndpoint(t *testing.T, endpoint string) (*testApp, db.CodeSession, int64, string) {
 	t.Helper()
+	return newBrainMCPProxyAppWithAgent(t, endpoint, `{"model":"claude-opus-4-6","name":"payload-integration"}`)
+}
+
+func newBrainMCPProxyAppWithAgent(t *testing.T, endpoint string, agentJSON string) (*testApp, db.CodeSession, int64, string) {
+	t.Helper()
 	app := newPayloadIntegrationApp(t, newFakeStore("brain-mcp-proxy"))
-	worker, _ := newPayloadIntegrationSession(t, app)
+	worker, _ := newPayloadIntegrationSessionWithAgent(t, app, agentJSON)
 	service := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil).WithSandboxProvisioner(fixedSandboxProvisioner(endpoint))
 	proxyHandler := codesessions.NewHandler(app.cfg, service, app.sandboxTimeouts, nil)
 	router := chi.NewRouter()

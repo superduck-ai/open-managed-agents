@@ -119,11 +119,11 @@ The `OmaSandboxProvider` entry is `src/oma-sandbox/index.ts`. The OMA host loads
 
 Model requests use `MessagesAdapter` in `src/model.ts` to call the Anthropic-compatible `/v1/messages` API directly, using the session's OMA model token and the host's injected `OmaApi.fetcher`. The adapter maps DSH messages and tools into Anthropic request fields and parses text, thinking signatures and tool-call SSE blocks. It remains independent of pi-ai and writes `oma-messages-v1` replay metadata. Existing pi-ai thinking signatures are accepted when reading old histories. Incomplete streams without `message_stop` fail instead of completing a turn; DSH normalizes adapter failures and cancellation for the runtime.
 
-The sandbox provider uses the same official `@modelcontextprotocol/client` SDK as `dsh-mcp-client` for initialization, protocol negotiation, request IDs, session headers, JSON/SSE responses, cancellation and stream cleanup. The complete DSH MCP plugin cannot replace this provider directly: it connects and discovers/registers tools on activation, while this host initializes only after the durable approval checkpoint and exposes its fixed sandbox tools through `ToolExecution`. One SDK connection belongs to each root provider, is shared by its children, and closes when that provider is disposed. `src/sse.ts` parses the worker and Anthropic Messages SSE streams; the MCP SDK owns sandbox SSE parsing.
+The sandbox provider uses the same official `@modelcontextprotocol/client` SDK as `dsh-mcp-client` for initialization, protocol negotiation, request IDs, session headers, JSON/SSE responses, cancellation and stream cleanup. The complete DSH MCP plugin cannot replace this provider directly: it connects and discovers/registers tools on activation, while this host initializes only after tool approval and exposes its fixed sandbox tools through `ToolExecution`. One SDK connection belongs to each root provider, is shared by its children, and closes when that provider is disposed. `src/sse.ts` parses the worker and Anthropic Messages SSE streams; the MCP SDK owns sandbox SSE parsing.
 
 The `SandboxTools` entry is `src/sandbox-tools/index.ts`. It injects the existing `sandboxExecutor` and binds a separate execution bridge for each agent. It registers built-in Bash, Read, Write, Edit, Grep and Glob definitions from `definitions.ts`, with a fresh schema copy for every plugin instance. Each definition delegates execution to `ToolExecution`. The plugin preserves the inherited-tool restriction and serial sandbox dispatch, and its registrations are removed when its fiber or agent is disposed. Archiving a child leaves the shared provider available to the root and other children. Updating the sandbox wire contract requires updating the built-in definitions; startup does not call `tools/list`.
 
-`CcrSession` implements that bridge contract. It translates `can_use_tool` responses into a neutral approval decision, records approved arguments, dispatch and results in the unchanged `dsh_brain_state` format, and manages CCRv2 event mapping and outbox publication. It delegates native execution to `SessionRuntime`. The execution pipeline awaits every checkpoint before advancing; moving these responsibilities does not turn persistence into asynchronous event notifications.
+`ToolExecution` reads the launch `tool_permissions` table keyed by sandbox MCP tool name. Tools whose policy is `allow` skip the `can_use_tool` request and never report `requires_action`; `ask`, `deny` and tools without a policy keep the CCRv2 approval request. Read, Glob and Grep are marked `readOnly`: they skip the dispatch checkpoint, retry a failed sandbox call once, and on a second failure return a failed tool result to the model instead of recording an unknown outcome. `CcrSession` implements that bridge contract. It translates `can_use_tool` responses into a neutral approval decision, records approved arguments, dispatch and results in the unchanged `dsh_brain_state` format, and manages CCRv2 event mapping and outbox publication. It delegates native execution to `SessionRuntime`. The execution pipeline awaits every checkpoint before advancing; moving these responsibilities does not turn persistence into asynchronous event notifications.
 
 `CcrClient` in `src/ccrv2/client.ts` implements the HTTP backend contract. It owns worker registration, SSE parsing and reconnection, worker paths, epoch fields, private event pagination, durable envelopes and their content-derived IDs, retries, ephemeral event flags, delivery confirmation, status updates and heartbeat requests. Its config supplies a generic HTTP transport returning raw `Response` objects, current credentials and session IDs. Tokens are resolved again for every retry; each write retains its original worker epoch. Protocol structures in `src/ccrv2/wire.ts` are copied from the local `superduck-code` implementation using `unknown` for opaque fields.
 
@@ -311,7 +311,7 @@ and Edit wait for preceding calls and finish before subsequent calls start.
 Shared filesystem writes across threads must be coordinated by the agent.
 
 The journal's optional `executions` map records primary and child execution
-states by native session ID. Each thread records `callPhases`, approved
+states by native session ID. Each thread records `callPhases` for Bash, Write and Edit, approved
 original/effective arguments and confirmed outcomes by call ID. Results may
 arrive out of order without replacing another call's state. Identical tool call
 IDs in separate threads cannot overwrite each other. The legacy top-level phase is an aggregate:
@@ -331,7 +331,8 @@ others' approvals intact. Durable publication and status writes are serialized
 to prevent concurrent outbox removal or stale status overwrites.
 
 Recovery never replays an interrupted turn. Pending approval or pre-dispatch
-work becomes interrupted and permits a fresh input. A dispatched call without a
+work, including in-flight read-only calls, becomes interrupted and permits a
+fresh input. A dispatched Bash, Write or Edit call without a
 confirmed result makes its thread blocked and blocks the entire session for
 operator reconciliation. Confirmed sibling outcomes remain recorded. Native
 logs for interrupted child threads are repaired on recovery without sampling

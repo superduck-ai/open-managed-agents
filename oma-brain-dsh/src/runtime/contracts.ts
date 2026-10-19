@@ -50,7 +50,11 @@ export interface RemoteTool {
   remoteName: string;
   description: string;
   inputSchema: Payload;
+  readOnly?: boolean;
 }
+
+export type ToolPermission = "allow" | "ask" | "deny";
+export type ToolPermissions = Record<string, ToolPermission>;
 
 /** Host-provided sandbox readiness and execution. Resource creation belongs to the provider service. */
 export interface SandboxExecutor {
@@ -75,6 +79,7 @@ export interface SessionRuntimeConfig {
   setup?(scope: Context): Promise<void>;
   subagentSystemPrompt?(thread: SubagentThread): string;
   tools?: string[];
+  toolPermissions?: ToolPermissions;
   subagents?: SubagentConfig;
   /** Host binds a child model identity to the parent's credentials. */
   bindThread?(id: string): () => void;
@@ -102,6 +107,7 @@ export interface ApprovedToolCall {
   name: string;
   original: Payload;
   effective: Payload;
+  readOnly: boolean;
 }
 
 export interface ToolOutcome extends ApprovedToolCall {

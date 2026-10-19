@@ -684,17 +684,18 @@ func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIde
 	}
 	config := codeSessionConfig(record.Metadata)
 	return map[string]any{
-		"cwd":                   record.WorkDir,
-		"system_prompt":         stringField(config, "system_prompt"),
-		"runtime_skills":        config["runtime_skills"],
-		"subagents":             config["subagents"],
-		"runtime_tools":         config["runtime_tools"],
-		"outcomes":              arrayConfigValue(config["outcomes"]),
-		"custom_system_prompt":  stringField(config, "custom_system_prompt"),
-		"append_system_prompt":  stringField(config, "append_system_prompt"),
-		"memory_catalog_prompt": stringField(config, "memory_catalog_prompt"),
-		"model":                 firstNonEmpty(record.Model, stringField(config, "model")),
-		"mcp_config":            mcpConfig,
+		"cwd":                      record.WorkDir,
+		"system_prompt":            stringField(config, "system_prompt"),
+		"runtime_skills":           config["runtime_skills"],
+		"subagents":                config["subagents"],
+		"runtime_tools":            config["runtime_tools"],
+		"runtime_tool_permissions": config["runtime_tool_permissions"],
+		"outcomes":                 arrayConfigValue(config["outcomes"]),
+		"custom_system_prompt":     stringField(config, "custom_system_prompt"),
+		"append_system_prompt":     stringField(config, "append_system_prompt"),
+		"memory_catalog_prompt":    stringField(config, "memory_catalog_prompt"),
+		"model":                    firstNonEmpty(record.Model, stringField(config, "model")),
+		"mcp_config":               mcpConfig,
 	}, nil
 }
 

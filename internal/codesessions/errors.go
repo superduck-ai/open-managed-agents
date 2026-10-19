@@ -16,6 +16,9 @@ var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
 func sandboxInvalidRequest(cause error) error {
 	return apperr.New(apperr.InvalidArgument, "Invalid sandbox MCP request", cause)
 }
+func sandboxToolDenied() error {
+	return apperr.New(apperr.PermissionDenied, "Sandbox tool is not permitted for this session", nil)
+}
 func sandboxOperationError(cause error) error {
 	if errors.Is(cause, errSandboxUnavailable) {
 		return apperr.New(apperr.Unavailable, "Sandbox is unavailable", cause)

@@ -29,6 +29,7 @@ test("NATS admission reuses CCR registration and session context", async () => {
  a.launch.environment_prompt = "# Managed-agent environment";
  a.launch.memory_catalog_prompt = "<attached_memory_stores/>";
  a.launch.tools = ["Read", "Grep"];
+ a.launch.tool_permissions = { read: "allow", grep: "ask" };
  const task = {session_id:a.session_id, worker_epoch:a.worker_epoch, ingress_token:a.ingress_token, model_token:a.model_token};
  const calls: Request[] = [];
  const api = new OmaApi("http://oma.test", (async (url, init) => {
@@ -36,6 +37,7 @@ test("NATS admission reuses CCR registration and session context", async () => {
   return Response.json(request.method === "POST" ? {worker_epoch:String(a.worker_epoch)} : {session_context: {
    cwd:a.launch.work_dir, model:a.launch.model, system_prompt:a.launch.system,
    append_system_prompt:a.launch.environment_prompt, memory_catalog_prompt:a.launch.memory_catalog_prompt, runtime_skills:a.launch.skills, subagents:a.launch.subagents, runtime_tools:a.launch.tools,
+   runtime_tool_permissions:a.launch.tool_permissions,
   }});
  }) as typeof fetch);
  const result = await registerWorkerTask(api, task);
@@ -47,11 +49,20 @@ test("NATS admission reuses CCR registration and session context", async () => {
  expect(result.launch.environment_prompt).toBe("# Managed-agent environment");
  expect(result.launch.memory_catalog_prompt).toBe("<attached_memory_stores/>");
  expect(result.launch.tools).toEqual(["Read", "Grep"]);
+ expect(result.launch.tool_permissions).toEqual({ read: "allow", grep: "ask" });
  expect(calls).toHaveLength(2);
  expect(calls[0]!.headers.has("X-Worker-ID")).toBe(false);
  expect(calls[0]!.headers.has("X-Worker-Terminal-Events")).toBe(false);
  expect(await calls[0]!.json()).toEqual({});
  expect(new URL(calls[1]!.url).pathname).toBe(`/v2/sessions/${a.session_id}`);
+});
+
+test("assignment rejects invalid launch tool permissions", () => {
+ for (const permissions of [[], { read: "always_allow" }, null]) {
+  const a = assignment();
+  a.launch.tool_permissions = permissions as never;
+  expect(() => validateAssignment(a)).toThrow("Invalid launch tool permissions");
+ }
 });
 
 test("assignment rejects unknown launch tools", () => {

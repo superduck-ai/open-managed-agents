@@ -4,10 +4,12 @@ import { validateJsonSchemaValue, type JsonSchemaNode } from "@deepseek-ai/dsh-t
 import { object, type Payload } from "../json.ts";
 import { toolText } from "./tools.ts";
 import type {
+  ApprovalDecision,
   RemoteTool,
   SandboxExecutor,
   ToolExecutionBridge,
   ToolExecutionContext,
+  ToolPermissions,
 } from "./contracts.ts";
 
 /** Ordered tool execution. The bridge supplies policy and confirmed journal writes. */
@@ -15,6 +17,7 @@ export class ToolExecution {
   constructor(
     readonly sandbox: SandboxExecutor,
     readonly bridge: ToolExecutionBridge,
+    readonly permissions?: ToolPermissions,
   ) {}
 
   async execute(tool: RemoteTool, original: Payload, exec: ToolExecutionContext): Promise<string> {
@@ -26,28 +29,34 @@ export class ToolExecution {
         throw new Error(`Invalid ${tool.name} arguments: ${errors.join("; ")}`);
     };
     validate(original);
-    const decision = await this.bridge.approve({
-      callId: exec.callId,
-      toolName: tool.name,
-      input: original,
-    }, exec.signal);
+    const decision: ApprovalDecision = this.permissions?.[tool.remoteName] === "allow"
+      ? { allowed: true }
+      : await this.bridge.approve({ callId: exec.callId, toolName: tool.name, input: original }, exec.signal);
     if (!decision.allowed)
       throw new Error("Tool use denied by OMA");
     const effective = decision.input === undefined ? original : object(decision.input);
     validate(effective);
     exec.signal.throwIfAborted();
-    const call = { callId: exec.callId, name: tool.name, original, effective };
+    const readOnly = !!tool.readOnly;
+    const call = { callId: exec.callId, name: tool.name, original, effective, readOnly };
     await this.bridge.recordApproved(call);
     await this.sandbox.provision(exec.signal);
     exec.signal.throwIfAborted();
-    await this.bridge.flushLog();
-    await this.bridge.recordDispatch(exec.callId);
+    if (!readOnly) {
+      await this.bridge.flushLog();
+      await this.bridge.recordDispatch(exec.callId);
+    }
     let result: Payload;
     let text: string;
     try {
-      result = await this.sandbox.call(tool, effective, exec.signal);
+      result = readOnly ? await this.callWithRetry(tool, effective, exec.signal) : await this.sandbox.call(tool, effective, exec.signal);
       text = toolText(result, tool.name);
     } catch {
+      if (readOnly) {
+        const failure = exec.signal.aborted ? "Read-only tool call was cancelled" : "Read-only tool outcome is unknown";
+        await this.bridge.recordResult({ ...call, text: failure, failed: true });
+        throw new Error(failure);
+      }
       try {
         await this.bridge.recordUnknown(exec.callId);
       } finally {
@@ -67,5 +76,14 @@ export class ToolExecution {
       }));
     if (result.isError) throw new Error(text || "Remote tool failed");
     return text;
+  }
+
+  private async callWithRetry(tool: RemoteTool, args: Payload, signal: AbortSignal): Promise<Payload> {
+    try {
+      return await this.sandbox.call(tool, args, signal);
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return await this.sandbox.call(tool, args, signal);
+    }
   }
 }

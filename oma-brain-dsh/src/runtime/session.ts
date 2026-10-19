@@ -54,6 +54,7 @@ export class SessionRuntime {
       await scope.plugin(SandboxTools, {
         bridge: this.bridge,
         tools: this.config.tools,
+        permissions: this.config.toolPermissions,
       });
       this.hooks.setupTools?.(scope);
       scope.on("session/event", (session, event) => {

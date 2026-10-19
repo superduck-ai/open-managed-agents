@@ -370,10 +370,12 @@ export class CcrSession {
     const phases = entry.callPhases ??= {};
     if (this.blocked() || phases[call.callId] || entry.approvedCalls[call.callId] || entry.toolOutcomes[call.callId])
       throw new Error("Invalid or duplicate tool approval");
-    phases[call.callId] = "approved";
     entry.approvedCalls[call.callId] = { name: call.name, original: call.original, effective: call.effective };
     if (threadId === this.id) this.state.approvedCalls[call.callId] = entry.approvedCalls[call.callId]!;
-    this.syncCallPhase(entry);
+    if (!call.readOnly) {
+      phases[call.callId] = "approved";
+      this.syncCallPhase(entry);
+    }
     this.activity.start(threadId, "tool_exec", call.callId);
   }
 
@@ -397,19 +399,22 @@ export class CcrSession {
 
   async recordResult(outcome: ToolOutcome, threadId = this.id): Promise<void> {
     const entry = this.execution(threadId);
-    if (entry.callPhases?.[outcome.callId] !== "dispatch") throw new Error("Tool result does not match dispatch");
+    if (outcome.readOnly ? !entry.approvedCalls[outcome.callId] || entry.callPhases?.[outcome.callId] || entry.toolOutcomes[outcome.callId]
+      : entry.callPhases?.[outcome.callId] !== "dispatch") throw new Error("Tool result does not match dispatch");
     this.activity.end(threadId, "tool_exec", outcome.callId);
-    entry.callPhases[outcome.callId] = "result";
     entry.toolOutcomes[outcome.callId] = { text: outcome.text, failed: outcome.failed };
     if (threadId === this.id) this.state.toolOutcomes[outcome.callId] = entry.toolOutcomes[outcome.callId]!;
-    this.syncCallPhase(entry);
+    if (!outcome.readOnly) {
+      entry.callPhases![outcome.callId] = "result";
+      this.syncCallPhase(entry);
+    }
     const changed = !isDeepStrictEqual(outcome.original, outcome.effective);
     if (changed) this.state.outbox.push({
       type: "system.message", uuid: `${this.state.inputId}_${threadId}_approved_${outcome.callId}`,
       ...(threadId === this.id ? {} : { session_thread_id: threadId }),
       content: [{ type: "text", text: `Approved ${outcome.name} arguments: ${JSON.stringify(outcome.effective)}` }],
     });
-    await this.save();
+    if (!outcome.readOnly || changed) await this.save();
   }
 
   /** Serialize writes and compute from current activity to avoid stale status overwrites. */

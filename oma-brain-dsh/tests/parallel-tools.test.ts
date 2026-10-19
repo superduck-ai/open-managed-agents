@@ -43,6 +43,71 @@ const approved = (callId: string, readOnly = false) => ({ callId, name: "Read", 
 const outcome = (callId: string) => ({ ...approved(callId), text: callId, failed: false });
 const result = (text: string) => ({ content: [{ type: "text", text }] });
 
+test("a failed permission refresh cannot reuse a previous allow", async () => {
+  const { session, b } = await fixture((backend) => {
+    backend.a.launch.tool_permissions = { bash: "allow" };
+  });
+  b.modelScript = [toolEvents("echo first", "first"), textEvents("first done")];
+  await session.receive("first-turn", { content: "Run first" });
+  const route = b.route.bind(b);
+  b.route = async (request) => new URL(request.url).pathname === `/v2/sessions/${b.a.session_id}`
+    ? new Response("unavailable", { status: 503 }) : route(request);
+  b.modelScript = [toolEvents("echo second", "second"), textEvents("second done")];
+  await session.receive("second-turn", { content: "Run second" });
+  expect(b.requests).toHaveLength(2);
+  expect(b.executions).toHaveLength(1);
+});
+
+test("a missing refreshed permission table clears a previous allow", async () => {
+  const { session, b } = await fixture((backend) => {
+    backend.a.launch.tool_permissions = { bash: "allow" };
+  });
+  b.modelScript = [toolEvents("echo first", "first"), textEvents("first done")];
+  await session.receive("first-turn", { content: "Run first" });
+  delete b.a.launch.tool_permissions;
+  b.onApproval = async (request) => {
+    await session.control({ type: "control_response", response: {
+      subtype: "success", request_id: request.request_id, response: { behavior: "deny" },
+    } });
+  };
+  b.modelScript = [toolEvents("echo second", "second"), textEvents("second done")];
+  await session.receive("second-turn", { content: "Run second" });
+  expect(b.timeline.filter((event) => event.type === "control_request")).toHaveLength(1);
+  expect(b.executions).toHaveLength(1);
+  expect(session.blocked()).toBe(false);
+});
+
+for (const policy of ["ask", "deny"] as const) {
+  test(`changing allow to ${policy} takes effect in the same session`, async () => {
+    const { session, b } = await fixture((backend) => {
+      backend.a.launch.tool_permissions = { bash: "allow" };
+    });
+    b.modelScript = [toolEvents("echo first", "first"), textEvents("first done")];
+    await session.receive("first-turn", { content: "Run first" });
+    expect(b.executions).toHaveLength(1);
+    expect(b.timeline.filter((event) => event.type === "control_request")).toHaveLength(0);
+    b.a.launch.tool_permissions = { bash: policy };
+    const approvals: Payload[] = [];
+    b.onApproval = async (request) => { approvals.push(request); };
+    b.modelScript = [toolEvents("echo second", "second"), textEvents("second done")];
+    const turn = session.receive("second-turn", { content: "Run second" });
+    const settled = turn.catch(() => {});
+    try {
+      await eventually(() => approvals.length === 1 || b.executions.length > 1);
+      expect(approvals).toHaveLength(1);
+      expect(b.executions).toHaveLength(1);
+      expect(approvals[0]!.request.tool_name).toBe("Bash");
+      await session.control({ type: "control_response", response: {
+        subtype: "success", request_id: approvals[0]!.request_id,
+        response: { behavior: policy === "ask" ? "allow" : "deny" },
+      } });
+      await turn;
+      expect(b.executions).toHaveLength(policy === "ask" ? 2 : 1);
+      expect(session.blocked()).toBe(false);
+    } finally { session.stop(); await settled; }
+  });
+}
+
 test("unapproved, duplicate and already finished calls cannot dispatch or overwrite results", async () => {
   const { session } = await fixture();
   await expect(session.recordDispatch("missing")).rejects.toThrow("Invalid or blocked tool dispatch");

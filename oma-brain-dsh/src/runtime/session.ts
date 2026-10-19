@@ -51,10 +51,11 @@ export class SessionRuntime {
         interpolate: false,
         text: this.config.systemPrompt,
       });
+      const toolPermissions = this.config.toolPermissions ??= {};
       await scope.plugin(SandboxTools, {
         bridge: this.bridge,
         tools: this.config.tools,
-        permissions: this.config.toolPermissions,
+        permissions: toolPermissions,
       });
       this.hooks.setupTools?.(scope);
       scope.on("session/event", (session, event) => {
@@ -74,6 +75,11 @@ export class SessionRuntime {
       });
       scope.on("agent/request", async ({ signal }, next) => {
         signal.throwIfAborted();
+        if (this.config.refreshToolPermissions) {
+          const permissions = await this.config.refreshToolPermissions(signal);
+          for (const name of Object.keys(toolPermissions)) delete toolPermissions[name];
+          Object.assign(toolPermissions, permissions);
+        }
         await this.hooks.beforeRequest();
         signal.throwIfAborted();
         return next();

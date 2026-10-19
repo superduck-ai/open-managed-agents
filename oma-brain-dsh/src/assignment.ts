@@ -46,10 +46,7 @@ export function validateAssignment(a: Assignment): void {
   if (a.launch.tools !== undefined && (!Array.isArray(a.launch.tools)
     || a.launch.tools.some((name) => !tools.has(name))))
     throw new Error("Invalid launch tools");
-  const permissions = a.launch.tool_permissions;
-  if (permissions !== undefined && (!permissions || typeof permissions !== "object" || Array.isArray(permissions)
-    || Object.values(permissions).some((policy) => !["allow", "ask", "deny"].includes(policy))))
-    throw new Error("Invalid launch tool permissions");
+  validateToolPermissions(a.launch.tool_permissions);
   const config = a.launch.subagents;
   if (config) {
     if (config.inlineAgents !== undefined && typeof config.inlineAgents !== "boolean")
@@ -69,4 +66,10 @@ export function validateAssignment(a: Assignment): void {
     if (names.size > 20 || (config.inlineAgents === false && !names.size))
       throw new Error("Subagents require 1–20 predefined agents when inline agents are disabled");
   }
+}
+
+export function validateToolPermissions(permissions: unknown): asserts permissions is ToolPermissions | undefined {
+  if (permissions !== undefined && (!permissions || typeof permissions !== "object" || Array.isArray(permissions)
+    || Object.values(permissions).some((policy) => !["allow", "ask", "deny"].includes(policy))))
+    throw new Error("Invalid launch tool permissions");
 }

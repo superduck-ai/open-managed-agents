@@ -660,6 +660,14 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 		h.errorAdapter.Write(w, r, sessionMCPConfigFailure(err))
 		return
 	}
+	policies, err := h.service.currentRuntimeToolPolicies(r.Context(), record)
+	if err != nil {
+		h.errorAdapter.Write(w, r, sessionMCPConfigFailure(err))
+		return
+	}
+	if policies != nil {
+		sessionContext["runtime_tool_permissions"] = policies
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{
 		"session_context": sessionContext,

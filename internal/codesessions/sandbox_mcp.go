@@ -49,12 +49,13 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 		return
 	}
 	if call.Method == "tools/call" {
-		permitted, err := sandboxToolPermitted(session.Metadata, call.Params.Name)
+		policies, err := h.service.currentRuntimeToolPolicies(r.Context(), session)
 		if err != nil {
 			h.errorAdapter.Write(w, r, sandboxOperationError(err))
 			return
 		}
-		if !permitted {
+		policy, known := policies[call.Params.Name]
+		if policies != nil && (!known || policy == string(resolvedToolPermissionDeny)) {
 			h.errorAdapter.Write(w, r, sandboxToolDenied())
 			return
 		}
@@ -100,25 +101,6 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 	copySandboxMCPResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(responseBody)
-}
-
-func sandboxToolPermitted(metadata json.RawMessage, toolName string) (bool, error) {
-	var record struct {
-		Config struct {
-			RuntimeToolPolicies map[string]string `json:"runtime_tool_permissions"`
-		} `json:"config"`
-	}
-	if len(metadata) > 0 {
-		if err := json.Unmarshal(metadata, &record); err != nil {
-			return false, err
-		}
-	}
-	policies := record.Config.RuntimeToolPolicies
-	if policies == nil {
-		return true, nil
-	}
-	policy, ok := policies[toolName]
-	return ok && policy != string(resolvedToolPermissionDeny), nil
 }
 
 func copySandboxMCPRequestHeaders(target, source http.Header) {

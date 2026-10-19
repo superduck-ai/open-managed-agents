@@ -82,6 +82,7 @@ export interface SessionRuntimeConfig {
   subagentSystemPrompt?(thread: SubagentThread): string;
   tools?: string[];
   toolPermissions?: ToolPermissions;
+  refreshToolPermissions?(signal: AbortSignal): Promise<ToolPermissions | undefined>;
   subagents?: SubagentConfig;
   /** Host binds a child model identity to the parent's credentials. */
   bindThread?(id: string): () => void;

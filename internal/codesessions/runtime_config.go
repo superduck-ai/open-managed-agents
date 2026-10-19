@@ -1,6 +1,11 @@
 package codesessions
 
-import "encoding/json"
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/superduck-ai/open-managed-agents/internal/db"
+)
 
 type runtimeSkillConfig struct {
 	Name        string `json:"name"`
@@ -84,4 +89,22 @@ func runtimeToolPolicies(tools []toolPermissionToolset) map[string]string {
 		policies[remoteName] = string(resolveAgentToolPermission(tools, remoteName))
 	}
 	return policies
+}
+
+func (s *Service) currentRuntimeToolPolicies(ctx context.Context, record db.CodeSession) (map[string]string, error) {
+	if record.SessionExternalID == "" {
+		return nil, nil
+	}
+	session, found, err := s.db.GetSession(ctx, record.WorkspaceUUID, record.SessionExternalID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, db.ErrNotFound
+	}
+	tools, err := runtimeRootToolsets(session.AgentSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	return runtimeToolPolicies(tools), nil
 }

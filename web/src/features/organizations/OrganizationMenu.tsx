@@ -3,11 +3,16 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowRightLeft, Mail } from 'lucide-react';
 import { useAuth } from '../../shared/auth/context';
 import { useOrganizations, type OrganizationContextValue } from '../../shared/organizations/context';
-import { DropdownMenuItem, DropdownMenuSeparator } from '../../shared/ui/dropdown-menu';
+import {
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+} from '../../shared/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
 import { organizationRoleLabel, listInvitations } from './api';
 import { InvitationList } from './InvitationList';
-import { organizationNameParts, type OrganizationPickerItem } from './organizationPicker';
+import { menuOrganizationPreview, organizationNameParts, type OrganizationPickerItem } from './organizationPicker';
 import { OrganizationSwitcher } from './OrganizationSwitcher';
 import { useScopeConfirmation } from './useScopeConfirmation';
 
@@ -31,8 +36,7 @@ function ConnectedOrganizationMenu({ organizations }: { organizations: Organizat
   const confirmation = useScopeConfirmation();
   const invitations = useQuery({ queryKey: ['invitations', account?.uuid], queryFn: listInvitations, retry: false });
   const items = pickerItems(organizations);
-  const current = items.find((item) => item.uuid === organizations.orgUuid);
-  const currentParts = organizationNameParts(current?.name ?? '');
+  const preview = menuOrganizationPreview(items, organizations.orgUuid);
   const enter = (orgUuid: string) =>
     confirmation.request(() => {
       setSwitcherOpen(false);
@@ -40,19 +44,36 @@ function ConnectedOrganizationMenu({ organizations }: { organizations: Organizat
     });
   return (
     <>
-      {current ? (
-        <div className="px-3 py-2">
-          <span className="block truncate text-sm text-foreground">{currentParts.title}</span>
-          {currentParts.detail ? (
-            <span className="block truncate text-xs text-muted-foreground">{currentParts.detail}</span>
-          ) : null}
-          <span className="block text-xs text-muted-foreground">{organizationRoleLabel(current.role)}</span>
-        </div>
+      <DropdownMenuRadioGroup value={organizations.orgUuid ?? ''}>
+        {preview.map((item) => {
+          const parts = organizationNameParts(item.name);
+          return (
+            <DropdownMenuRadioItem
+              key={item.uuid}
+              value={item.uuid}
+              closeOnClick={false}
+              disabled={organizations.switching}
+              onClick={() => {
+                if (item.uuid !== organizations.orgUuid) enter(item.uuid);
+              }}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{parts.title}</span>
+                {parts.detail ? (
+                  <span className="block truncate text-xs text-muted-foreground">{parts.detail}</span>
+                ) : null}
+                <span className="block text-xs text-muted-foreground">{organizationRoleLabel(item.role)}</span>
+              </span>
+            </DropdownMenuRadioItem>
+          );
+        })}
+      </DropdownMenuRadioGroup>
+      {items.length > preview.length ? (
+        <DropdownMenuItem closeOnClick={false} disabled={organizations.switching} onClick={() => setSwitcherOpen(true)}>
+          <ArrowRightLeft className="size-4" />
+          切换组织
+        </DropdownMenuItem>
       ) : null}
-      <DropdownMenuItem closeOnClick={false} disabled={organizations.switching} onClick={() => setSwitcherOpen(true)}>
-        <ArrowRightLeft className="size-4" />
-        切换组织
-      </DropdownMenuItem>
       <OrganizationSwitcher
         open={switcherOpen}
         onOpenChange={setSwitcherOpen}

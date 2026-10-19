@@ -114,9 +114,9 @@ test('拒绝邀请后保持当前组织，失败操作仍可重试', async () =>
 test('组织菜单显示当前 membership 的中文角色，邀请卡片也显示中文角色', async () => {
   globalThis.fetch = mock(async () => Response.json({ data: [invitation] })) as typeof fetch;
   mount();
-  expect(await screen.findByText('当前组织')).toBeTruthy();
+  expect(await screen.findByRole('menuitemradio', { name: /当前组织/ })).toBeTruthy();
   expect(screen.getByText('管理员')).toBeTruthy();
-  expect(screen.queryByRole('menuitemradio')).toBeNull();
+  expect(screen.queryByRole('menuitem', { name: '切换组织' })).toBeNull();
   fireEvent.click(await screen.findByRole('menuitem', { name: '组织邀请 (1)' }));
   expect(await screen.findByText(/用户 · 有效期至/)).toBeTruthy();
 });
@@ -132,7 +132,8 @@ test('组织很多时菜单只保留当前组织，搜索后再切换', async ()
     })),
   ];
   const { switchOrganization } = mount(memberships);
-  expect(screen.queryByText('合作公司-闪畅-财务部')).toBeNull();
+  expect(screen.queryByText('部门-7 / 视源股份')).toBeNull();
+  expect(screen.getAllByRole('menuitemradio')).toHaveLength(3);
   expect(screen.getByText('财务中心 / 平台 / 视源股份')).toBeTruthy();
   fireEvent.click(screen.getByRole('menuitem', { name: '切换组织' }));
   expect(await screen.findByText(/还有 9 个组织/)).toBeTruthy();

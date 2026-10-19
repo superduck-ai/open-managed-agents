@@ -1,4 +1,5 @@
 export const organizationPickerResultLimit = 40;
+export const organizationMenuPreviewLimit = 3;
 
 export type OrganizationPickerItem = {
   uuid: string;
@@ -16,6 +17,12 @@ export function organizationNameParts(name: string) {
   const segments = name.split('-').filter((segment) => segment.length > 0);
   if (segments.length <= 1) return { title: name, detail: '' };
   return { title: segments[segments.length - 1], detail: segments.slice(0, -1).reverse().join(' / ') };
+}
+
+export function menuOrganizationPreview(items: OrganizationPickerItem[], currentUuid?: string) {
+  const current = items.find((item) => item.uuid === currentUuid);
+  const others = items.filter((item) => item.uuid !== current?.uuid);
+  return [...(current ? [current] : []), ...others].slice(0, organizationMenuPreviewLimit);
 }
 
 export function filterOrganizations(

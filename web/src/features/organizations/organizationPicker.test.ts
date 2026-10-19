@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import {
   filterOrganizations,
+  menuOrganizationPreview,
   organizationNameParts,
   organizationPickerRemainder,
   organizationPickerResultLimit,
@@ -45,6 +46,12 @@ test('按完整路径过滤，当前组织排在前面，超出上限的匹配�
   expect(shifts.matches).toHaveLength(organizationPickerResultLimit);
   expect(shifts.hiddenCount).toBe(45 - organizationPickerResultLimit);
   expect(organizationPickerRemainder(shifts)).toBe(`还有 ${shifts.hiddenCount} 个匹配，继续输入以缩小范围。`);
+});
+
+test('账号菜单默认只预览当前组织和另外两个', () => {
+  const preview = menuOrganizationPreview(items, 'other');
+  expect(preview.map((item) => item.uuid)).toEqual(['other', 'current', 'shift-0']);
+  expect(menuOrganizationPreview(items.slice(0, 2), 'current')).toHaveLength(2);
 });
 
 test('没有匹配时不提示剩余数量', () => {

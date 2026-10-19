@@ -114,13 +114,21 @@ async function admitClaim(
   }
 }
 
+function claimRejection(error: unknown): number | undefined {
+  return error instanceof HttpError && (error.status === 401 || error.status === 403) ? error.status : undefined;
+}
+
+function claimRejectedMessage(status: number): string {
+  return `Brain claim rejected with HTTP ${status}. Check that OMA_BRAIN_CLAIM_TOKEN matches the backend code_session.brain_claim_token_file.`;
+}
+
 async function probeClaims(client: ClaimClient, signal: AbortSignal): Promise<unknown> {
   for (let failures = 0; ; failures++) {
     try {
       return await client.claim(0, signal);
     } catch (error) {
-      if (error instanceof HttpError && (error.status === 401 || error.status === 403))
-        throw new ConfigurationError(`Brain claim rejected with HTTP ${error.status}. Check that OMA_BRAIN_CLAIM_TOKEN matches the backend code_session.brain_claim_token_file.`);
+      const rejected = claimRejection(error);
+      if (rejected !== undefined) throw new ConfigurationError(claimRejectedMessage(rejected));
       if (signal.aborted) throw error;
       workerDiagnostic("warn", "oma_task_claim_probe_failed", { attempt: failures + 1, ...failureDiagnostic(error) });
       await sleep(retryDelaysMs[Math.min(failures, retryDelaysMs.length - 1)]!, signal);
@@ -133,6 +141,7 @@ export async function claimTasks(client: ClaimClient, signal: AbortSignal, optio
   const initial = await probeClaims(client, signal);
   options.ready?.();
   let claiming = 0;
+  let rejectionReported = false;
   const loop = async (first: unknown) => {
     let pending = first;
     let failures = 0;
@@ -146,10 +155,16 @@ export async function claimTasks(client: ClaimClient, signal: AbortSignal, optio
         const value = pending ?? await client.claim(blockMs, signal);
         pending = undefined;
         failures = 0;
+        rejectionReported = false;
         if (value !== undefined) await admitClaim(client, signal, value, options.admit);
       } catch (error) {
         if (signal.aborted) break;
-        workerDiagnostic("warn", "oma_task_claim_failed", failureDiagnostic(error));
+        const rejected = claimRejection(error);
+        if (rejected === undefined) workerDiagnostic("warn", "oma_task_claim_failed", failureDiagnostic(error));
+        else if (!rejectionReported) {
+          rejectionReported = true;
+          console.error(claimRejectedMessage(rejected));
+        }
         await sleep(retryDelaysMs[Math.min(failures++, retryDelaysMs.length - 1)]!, signal);
       } finally {
         claiming--;

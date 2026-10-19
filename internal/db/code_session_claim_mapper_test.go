@@ -20,7 +20,7 @@ func TestCodeSessionClaimMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{"leaseGraceMicros"},
 			wantSQLFragments: []string{
 				"worker_transport}' = 'claim'", "worker_lease_expires_at + $1 * INTERVAL '1 microsecond'",
-				"s.status IN ('running', 'rescheduling')", "s.organization_uuid = cs.organization_uuid",
+				"s.status IN ('running', 'rescheduling')", "s.organization_uuid = cs.organization_uuid", "AND s.uuid IS NOT NULL",
 				"FOR UPDATE OF cs SKIP LOCKED",
 			},
 		}},

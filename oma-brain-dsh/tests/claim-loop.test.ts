@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { HttpError } from "../src/api.ts";
 import { CapacityExhaustedError, PermanentAdmissionError, claimTasks, type ClaimClient, type ClaimedTask, type ReleaseReason } from "../src/claim.ts";
 import { ConfigurationError } from "../src/config.ts";
@@ -132,4 +132,28 @@ test("transient claim failures back off and recover", async () => {
   await eventually(() => admitted.includes("after-retry"), 5_000);
   abort.abort();
   await running;
+});
+
+test("claims rejected while running are reported once and keep retrying", async () => {
+  const claims = new FakeClaims();
+  const errors = spyOn(console, "error").mockImplementation(() => {});
+  const abort = new AbortController();
+  const admitted: string[] = [];
+  try {
+    const running = claimTasks(claims, abort.signal, {
+      concurrency: 1, blockMs: 50, capacity: () => 1, slotFreed: async () => {},
+      admit: async (value) => { admitted.push((value as ClaimedTask).session_id); },
+    });
+    await eventually(() => claims.calls.length >= 1);
+    claims.failures.push(new HttpError(401), new HttpError(401));
+    await eventually(() => claims.failures.length === 0, 6_000);
+    claims.queue.push(task("after-rotation"));
+    await eventually(() => admitted.includes("after-rotation"), 6_000);
+    abort.abort();
+    await running;
+    const rejections = errors.mock.calls.filter(([message]) => String(message).includes("Brain claim rejected with HTTP 401"));
+    expect(rejections).toHaveLength(1);
+  } finally {
+    errors.mockRestore();
+  }
 });

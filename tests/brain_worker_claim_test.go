@@ -303,7 +303,7 @@ func TestBrainClaimExhaustionPublishesSessionError(t *testing.T) {
 	}
 }
 
-func TestBrainClaimSkipsSessionDeletedAfterClaim(t *testing.T) {
+func TestBrainClaimIgnoresDeletedPublicSession(t *testing.T) {
 	app := newBrainClaimApp(t)
 	code, public := prepareBrainClaimSession(t, app)
 	if err := newCodeSessionService(app, nil, nil).DispatchWorker(t.Context(), public, code.ExternalID); err != nil {
@@ -316,8 +316,9 @@ func TestBrainClaimSkipsSessionDeletedAfterClaim(t *testing.T) {
 		t.Fatalf("deleted session handed out: %+v", claim)
 	}
 	var attempts int
-	if err := app.pool.QueryRow(t.Context(), `SELECT worker_claim_attempts FROM code_sessions WHERE uuid = $1`, code.UUID).Scan(&attempts); err != nil || attempts != 1 {
-		t.Fatalf("deleted session was not claimed before credential issue: attempts=%d err=%v", attempts, err)
+	var epoch int64
+	if err := app.pool.QueryRow(t.Context(), `SELECT worker_claim_attempts, current_worker_epoch FROM code_sessions WHERE uuid = $1`, code.UUID).Scan(&attempts, &epoch); err != nil || attempts != 0 || epoch != code.CurrentWorkerEpoch {
+		t.Fatalf("deleted public session consumed a claim: attempts=%d epoch=%d err=%v", attempts, epoch, err)
 	}
 }
 

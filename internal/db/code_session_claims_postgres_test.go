@@ -80,6 +80,11 @@ func TestCodeSessionClaimsPostgresRejectsIneligibleSessions(t *testing.T) {
 	idle := seedClaimCodeSession(t, ctx, database, 2, "claim", "idle")
 	live := seedClaimCodeSession(t, ctx, database, 3, "claim", "running")
 	execClaimTest(t, ctx, database, `update code_sessions set worker_lease_expires_at = now() - interval '5 seconds' where external_id = $1`, live)
+	deleted := seedClaimCodeSession(t, ctx, database, 4, "claim", "running")
+	if err := store.RequestCodeSessionWorker(ctx, claimTestOrganization, claimTestWorkspace, deleted); err != nil {
+		t.Fatal(err)
+	}
+	execClaimTest(t, ctx, database, `update sessions set deleted_at = now() where external_id = 'sesn_claim_4'`)
 
 	if _, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-a")); err != nil || found {
 		t.Fatalf("ineligible sessions claimed: found=%t err=%v", found, err)

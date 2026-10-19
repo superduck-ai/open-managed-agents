@@ -100,4 +100,4 @@ DSH Brain 源码作为主仓库的 `oma-brain-dsh/` 普通目录维护，使用�
 `oma-brain-dsh/verification/testdata/`，属于复制到相应历史后端 harness 的输入数据，
 不是独立的 Go package；当前后端验收继续使用 `tests/liveworker/` 中的场景。
 
-领取接口对缺少或错误的 fleet token 返回 401，对缺少 `X-Worker-ID` 或越界的 `block_ms` 返回 400；release 只接受 `admission_failed` 与 `shutdown`，领取已不属于调用方时返回 409。响应设置 `Cache-Control: no-store`，运行日志只记录 `worker_id`、`code_session_id`、`worker_epoch` 等元数据，不记录凭据。
+领取接口对缺少或错误的 fleet token 返回 401，对缺少 `X-Worker-ID` 或越界的 `block_ms` 返回 400；release 接受 `admission_failed`、`shutdown` 与 `permanent` 三种原因，领取已不属于调用方时返回 409。响应设置 `Cache-Control: no-store`，运行日志只记录 `worker_id`、`code_session_id`、`worker_epoch` 等元数据，不记录凭据。

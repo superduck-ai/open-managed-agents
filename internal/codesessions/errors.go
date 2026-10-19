@@ -3,6 +3,7 @@ package codesessions
 import (
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -13,8 +14,17 @@ var errSandboxUnavailable = errors.New("sandbox is unavailable")
 
 var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
 
+const maxSandboxMCPRequestBytes = 1 << 20
+
 func sandboxInvalidRequest(cause error) error {
 	return apperr.New(apperr.InvalidArgument, "Invalid sandbox MCP request", cause)
+}
+func sandboxRequestReadError(cause error) error {
+	var tooLarge *http.MaxBytesError
+	if errors.As(cause, &tooLarge) {
+		return apperr.New(apperr.InvalidArgument, "Sandbox MCP request exceeds 1 MiB; split large file writes into smaller edits", cause)
+	}
+	return sandboxInvalidRequest(cause)
 }
 func sandboxToolDenied() error {
 	return apperr.New(apperr.PermissionDenied, "Sandbox tool is not permitted for this session", nil)

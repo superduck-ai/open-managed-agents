@@ -3,13 +3,14 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { validateJsonSchemaValue, type JsonSchemaNode } from "@deepseek-ai/dsh-tools";
 import { object, type Payload } from "../json.ts";
 import { toolText } from "./tools.ts";
-import type {
-  ApprovalDecision,
-  RemoteTool,
-  SandboxExecutor,
-  ToolExecutionBridge,
-  ToolExecutionContext,
-  ToolPermissions,
+import {
+  ToolNotForwardedError,
+  type ApprovalDecision,
+  type RemoteTool,
+  type SandboxExecutor,
+  type ToolExecutionBridge,
+  type ToolExecutionContext,
+  type ToolPermissions,
 } from "./contracts.ts";
 
 /** Ordered tool execution. The bridge supplies policy and confirmed journal writes. */
@@ -47,13 +48,12 @@ export class ToolExecution {
       await this.bridge.recordDispatch(exec.callId);
     }
     let result: Payload;
-    let text: string;
     try {
       result = readOnly ? await this.callWithRetry(tool, effective, exec.signal) : await this.sandbox.call(tool, effective, exec.signal);
-      text = toolText(result, tool.name);
-    } catch {
-      if (readOnly) {
-        const failure = exec.signal.aborted ? "Read-only tool call was cancelled" : "Read-only tool outcome is unknown";
+    } catch (error) {
+      if (readOnly || error instanceof ToolNotForwardedError) {
+        const failure = error instanceof ToolNotForwardedError ? error.message
+          : exec.signal.aborted ? "Read-only tool call was cancelled" : "Read-only tool outcome is unknown";
         await this.bridge.recordResult({ ...call, text: failure, failed: true });
         throw new Error(failure);
       }
@@ -64,8 +64,16 @@ export class ToolExecution {
       }
       throw new Error("Remote tool outcome is unknown; turn stopped without replay");
     }
+    let text: string;
+    let failed = !!result.isError;
+    try {
+      text = toolText(result, tool.name);
+    } catch (error) {
+      text = `Sandbox tool returned an unsupported result: ${(error as Error).message}`;
+      failed = true;
+    }
     const changed = !isDeepStrictEqual(original, effective);
-    await this.bridge.recordResult({ ...call, text, failed: !!result.isError });
+    await this.bridge.recordResult({ ...call, text, failed });
     if (changed)
       exec.deferContext(createUserMessage({
         source: { kind: "user" },
@@ -74,7 +82,7 @@ export class ToolExecution {
           text: `OMA approval changed ${tool.name} arguments to ${JSON.stringify(effective)}. The returned result is for these approved arguments.`,
         }],
       }));
-    if (result.isError) throw new Error(text || "Remote tool failed");
+    if (failed) throw new Error(text || "Remote tool failed");
     return text;
   }
 

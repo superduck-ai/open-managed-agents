@@ -56,6 +56,8 @@ export interface RemoteTool {
 export type ToolPermission = "allow" | "ask" | "deny";
 export type ToolPermissions = Record<string, ToolPermission>;
 
+export class ToolNotForwardedError extends Error {}
+
 /** Host-provided sandbox readiness and execution. Resource creation belongs to the provider service. */
 export interface SandboxExecutor {
   provision(signal: AbortSignal): Promise<void>;

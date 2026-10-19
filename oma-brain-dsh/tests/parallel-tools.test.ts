@@ -265,3 +265,34 @@ test("a read-only call that fails twice returns an error result to the model wit
   expect(toolResult).toContain('"is_error":true');
   expect(toolResult).toContain("Read-only tool outcome is unknown");
 });
+
+test("a gateway rejection before forwarding becomes a failed result instead of an unknown outcome", async () => {
+  const { session, b } = await fixture();
+  b.rejectTool = (params) => params.name === "bash";
+  b.modelScript = [toolEvents("too large", "call_bash"), textEvents("recovered")];
+  await session.receive("rejected-bash", { content: "Run it" });
+  expect(b.executions).toHaveLength(0);
+  expect(session.blocked()).toBe(false);
+  expect(session.state.phase).toBe("completed");
+  expect(session.execution(session.id).callPhases).toEqual({ call_bash: "result" });
+  expect(session.execution(session.id).toolOutcomes.call_bash).toEqual({
+    text: "Sandbox tool call was not executed: Sandbox MCP request exceeds 1 MiB", failed: true,
+  });
+  const messages = JSON.stringify(b.requests.at(-1)!.messages);
+  expect(messages).toContain('"is_error":true');
+  expect(messages).toContain("exceeds 1 MiB");
+});
+
+test("an executed call with unsupported content becomes a failed result instead of an unknown outcome", async () => {
+  const { session, b } = await fixture();
+  b.onTool = async () => ({ content: [{ type: "image", data: "AA==", mimeType: "image/png" }] });
+  b.modelScript = [toolEvents("render", "call_bash"), textEvents("recovered")];
+  await session.receive("image-bash", { content: "Run it" });
+  expect(b.executions).toHaveLength(1);
+  expect(session.blocked()).toBe(false);
+  expect(session.state.phase).toBe("completed");
+  expect(session.execution(session.id).toolOutcomes.call_bash).toEqual({
+    text: "Sandbox tool returned an unsupported result: Only text MCP results are supported", failed: true,
+  });
+  expect(JSON.stringify(b.requests.at(-1)!.messages)).toContain('"is_error":true');
+});

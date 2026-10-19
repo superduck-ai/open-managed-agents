@@ -105,6 +105,7 @@ export class Backend {
   onTool?: (params: Payload) => Promise<Payload>;
   onApproval?: (payload: Payload) => Promise<void>;
   hangTool = false;
+  rejectTool?: (params: Payload) => boolean;
   failWrites = false;
   failPublicEvents = false;
   failPublicType?: string;
@@ -232,6 +233,11 @@ export class Backend {
             serverInfo: { name: "test", version: "1" },
           };
         } else if (body.method === "tools/call") {
+          if (this.rejectTool?.(body.params)) {
+            this.timeline.push({ type: "tool.rejected", ...body.params });
+            return Response.json({ type: "error", error: { type: "invalid_request_error", message: "Sandbox MCP request exceeds 1 MiB" } },
+              { status: 400, headers: { "X-Oma-Sandbox-Not-Forwarded": "true" } });
+          }
           this.executions.push(body.params);
           this.timeline.push({ type: "tool.dispatch", ...body.params });
           const states = [...this.privateLog.values()].filter(

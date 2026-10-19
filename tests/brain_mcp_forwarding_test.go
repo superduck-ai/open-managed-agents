@@ -35,22 +35,27 @@ func TestBrainMCPGatewayRejectsDeniedSandboxTool(t *testing.T) {
 	t.Cleanup(sandbox.Close)
 	app, worker, _, token := newBrainMCPProxyAppWithAgent(t, sandbox.URL,
 		`{"model":"claude-opus-4-6","name":"denied-bash","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"bash","enabled":false}]}]}`)
-	call := func(name string) int {
-		response := doSessionRequest(t, app, http.MethodPost, "/v2/ccr-sessions/"+worker.ExternalID+"/sandbox/mcp",
-			strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"`+name+`","arguments":{}}}`), token, false)
+	send := func(body string) *http.Response {
+		response := doSessionRequest(t, app, http.MethodPost, "/v2/ccr-sessions/"+worker.ExternalID+"/sandbox/mcp", strings.NewReader(body), token, false)
 		response.Body.Close()
-		return response.StatusCode
+		return response
 	}
 	for _, name := range []string{"bash", "unknown"} {
-		if status := call(name); status != http.StatusForbidden {
-			t.Fatalf("%s status=%d", name, status)
+		response := send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + name + `","arguments":{}}}`)
+		if response.StatusCode != http.StatusForbidden || response.Header.Get("X-Oma-Sandbox-Not-Forwarded") != "true" {
+			t.Fatalf("%s status=%d marker=%q", name, response.StatusCode, response.Header.Get("X-Oma-Sandbox-Not-Forwarded"))
 		}
+	}
+	oversized := send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read","arguments":{"file_path":"` + strings.Repeat("x", 1<<20) + `"}}}`)
+	if oversized.StatusCode != http.StatusBadRequest || oversized.Header.Get("X-Oma-Sandbox-Not-Forwarded") != "true" {
+		t.Fatalf("oversized status=%d marker=%q", oversized.StatusCode, oversized.Header.Get("X-Oma-Sandbox-Not-Forwarded"))
 	}
 	if len(forwarded) != 0 || len(app.sandboxTimeouts.snapshotCalls()) != 0 {
 		t.Fatalf("denied tool reached sandbox: forwarded=%v renewals=%d", forwarded, len(app.sandboxTimeouts.snapshotCalls()))
 	}
-	if status := call("read"); status != http.StatusOK || len(forwarded) != 1 || forwarded[0] != "read" {
-		t.Fatalf("allowed tool status=%d forwarded=%v", status, forwarded)
+	allowed := send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read","arguments":{}}}`)
+	if allowed.StatusCode != http.StatusOK || len(forwarded) != 1 || forwarded[0] != "read" || allowed.Header.Get("X-Oma-Sandbox-Not-Forwarded") != "" {
+		t.Fatalf("allowed tool status=%d forwarded=%v", allowed.StatusCode, forwarded)
 	}
 }
 
@@ -77,6 +82,9 @@ func TestBrainMCPFailureDoesNotBlockCCRv2(t *testing.T) {
 			response.Body.Close()
 			if response.StatusCode < 500 {
 				t.Fatalf("failed upstream status=%d", response.StatusCode)
+			}
+			if response.Header.Get("X-Oma-Sandbox-Not-Forwarded") != "" {
+				t.Fatal("forwarded failure was marked as not forwarded")
 			}
 			if _, err := app.db.RecordCodeSessionWorkerHeartbeat(t.Context(), worker.ExternalID, epoch, time.Minute, 0); err != nil {
 				t.Fatalf("MCP failure blocked heartbeat: %v", err)

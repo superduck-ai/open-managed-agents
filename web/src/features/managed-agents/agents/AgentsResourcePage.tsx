@@ -1,6 +1,5 @@
 import { type ApiError } from '../../../shared/api/client';
 import { useI18n } from '../../../shared/i18n';
-import { cn } from '../../../shared/lib/utils';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
 import {
@@ -589,21 +588,18 @@ export function AgentsResourcePage({
   }
 
   return (
-    <section
-      className={cn('min-h-[calc(100vh-48px)] text-foreground', isAgentsPage && 'mx-auto w-full max-w-[1280px]')}
-    >
+    <section className="min-h-[calc(100vh-48px)] text-foreground">
       <AgentListHeader
         title={title}
         description={description}
         createLabel={createLabel}
-        compact={isAgentsPage}
         onCreate={() => {
           setCreateOpen(true);
           if (isAgentsPage) navigateToInternalHref(agentCreateHref(workspaceId));
         }}
       />
 
-      <div className="mb-3 flex flex-wrap items-center gap-2 [&_button]:text-[13px] [&_input]:text-[13px]">
+      <div className="mb-7 flex flex-wrap items-center gap-2">
         <ResourceSearchField
           id={`${config.section}-search`}
           value={search}
@@ -716,7 +712,6 @@ export function AgentsResourcePage({
       </div>
 
       <ResourceListPagination
-        compact={isAgentsPage}
         {...agentListPager(
           agentLoadMode,
           agentPageHistory.length,

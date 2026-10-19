@@ -32,6 +32,14 @@ import {
   sessionStatusFromEventType,
 } from './sessionDetailModel';
 import { sessionOutcomeIteration, sessionOutcomeStatus } from './sessionTraceRows';
+import { arrangeSessionTranscriptInterrupts } from './sessionTranscriptInterrupts';
+import {
+  interruptedSessionModelRequestIds,
+  sessionEventPresentationState,
+  sessionExecutionStateDescription,
+  sessionIdlePresentationState,
+  sessionToolResultWasInterrupted,
+} from './sessionExecutionState';
 
 export function sessionCanonicalDisplayEvent(event: QuickstartSessionEvent): QuickstartSessionEvent {
   const currentType = sessionEventType(event);
@@ -116,7 +124,7 @@ export function buildSessionTraceEntries(
     }
   });
 
-  return displayEvents.flatMap((event, index) => {
+  const traceEntries = displayEvents.flatMap((event, index) => {
     const type = sessionEventType(event);
     const eventFamily = sessionEventFamily(event);
     if (
@@ -128,7 +136,10 @@ export function buildSessionTraceEntries(
       return [];
     }
     let enrichedEvent = sessionEventWithThreadHint(event, threadHints.byThreadId);
-    if (requiresActionEventIDs.has(sessionEventKey(enrichedEvent))) {
+    if (
+      requiresActionEventIDs.has(sessionEventKey(enrichedEvent)) ||
+      requiresActionEventIDs.has(sessionToolUseId(enrichedEvent))
+    ) {
       enrichedEvent = { ...enrichedEvent, requires_action: true };
     }
     if (view === 'transcript' && !sessionEventAppearsInTranscript(event, options)) {
@@ -174,6 +185,20 @@ export function buildSessionTraceEntries(
       sessionTraceEntryFromEvent(enrichedEvent, index, family, resultEvent, confirmationEvent, traceStartMs, msg),
     ];
   });
+  if (view === 'debug') return traceEntries;
+  const interruptedModelIds = options.interruptedModelRequestIds ?? interruptedSessionModelRequestIds(displayEvents);
+  return traceEntries.map((entry) => {
+    const state = sessionEventPresentationState(entry.event, interruptedModelIds);
+    if (!state) return entry;
+    const preview = sessionExecutionStateDescription(state, msg) ?? entry.preview;
+    return {
+      ...entry,
+      state,
+      preview,
+      searchText: `${entry.searchText}\n${preview.toLowerCase()}`,
+      isError: state === 'interrupted' || state === 'completed' ? false : entry.isError,
+    };
+  });
 }
 
 function sessionComparableTranscriptText(value: string) {
@@ -209,38 +234,38 @@ function sessionIdleResultDuplicatesAgentMessage(events: QuickstartSessionEvent[
 }
 
 export function latestRequiresActionEventIDs(events: QuickstartSessionEvent[]) {
-  let latestStatusIndex = -1;
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    if (sessionStatusFromEventType(sessionEventType(events[index]))) {
-      latestStatusIndex = index;
-      break;
+  const pendingByScope = new Map<string, Set<string>>();
+  events.forEach((event) => {
+    const type = sessionEventType(event);
+    const threadStatus = type.startsWith('session.thread_status_');
+    const status = sessionStatusFromEventType(type.replace('session.thread_status_', 'session.status_'));
+    if (status) {
+      if (!threadStatus && (status === 'terminated' || status === 'deleted')) pendingByScope.clear();
+      const scope = threadStatus ? normalizedStringValue(event.session_thread_id) : '';
+      pendingByScope.set(scope, status === 'idle' ? sessionRequiresActionEventIDs(event) : new Set());
     }
-  }
-  const latestStatus = events[latestStatusIndex];
-  if (!latestStatus || sessionEventType(latestStatus) !== 'session.status_idle') {
-    return new Set<string>();
-  }
-  const stopReason = toRecord(latestStatus.stop_reason);
-  if (normalizedStringValue(stopReason?.type) !== 'requires_action' || !Array.isArray(stopReason?.event_ids)) {
-    return new Set<string>();
-  }
-  const eventIDs = new Set(
-    stopReason.event_ids
-      .filter((eventID): eventID is string => typeof eventID === 'string' && Boolean(eventID.trim()))
-      .map((eventID) => eventID.trim()),
-  );
-  events.slice(latestStatusIndex + 1).forEach((event) => {
     const handledEventID =
-      sessionEventType(event) === 'user.tool_confirmation'
+      type === 'user.tool_confirmation'
         ? sessionToolConfirmationToolUseId(event)
         : sessionIsToolResultEvent(event)
           ? sessionToolResultToolUseId(event)
           : '';
-    if (handledEventID) {
-      eventIDs.delete(handledEventID);
-    }
+    if (handledEventID) pendingByScope.forEach((eventIDs) => eventIDs.delete(handledEventID));
   });
-  return eventIDs;
+  return new Set([...pendingByScope.values()].flatMap((eventIDs) => [...eventIDs]));
+}
+
+function sessionRequiresActionEventIDs(event: QuickstartSessionEvent) {
+  const stopReason = toRecord(event.stop_reason);
+  if (normalizedStringValue(stopReason?.type) !== 'requires_action' || !Array.isArray(stopReason?.event_ids)) {
+    return new Set<string>();
+  }
+  const eventIds = stopReason.event_ids;
+  return new Set(
+    eventIds
+      .filter((eventID): eventID is string => typeof eventID === 'string' && Boolean(eventID.trim()))
+      .map((eventID) => eventID.trim()),
+  );
 }
 
 function addSessionToolCompanionEvent(
@@ -328,14 +353,22 @@ export function buildSessionEventEntries(
   msg?: I18nMsg,
   options: SessionTraceBuildOptions = {},
 ): SessionEventListEntry[] {
-  const traceEntries = buildSessionTraceEntries(events, view, traceStartMs, msg, options);
+  const rawEvents = events.map(sessionCanonicalDisplayEvent);
+  if (view !== 'debug' && rawEvents.some((event) => event.type === 'user.interrupt')) {
+    rawEvents.sort((left, right) => {
+      const leftAt = sessionEventTimestamp(left);
+      const rightAt = sessionEventTimestamp(right);
+      if (leftAt && rightAt) return leftAt - rightAt;
+      return Number(Boolean(rightAt)) - Number(Boolean(leftAt));
+    });
+  }
+  const traceEntries = buildSessionTraceEntries(rawEvents, view, traceStartMs, msg, options);
   if (view === 'debug') {
     return traceEntries.map((traceEntry) => displayEntryFromTraceEntry(traceEntry, 'debug', traceStartMs, msg));
   }
 
   const entries: SessionEventListEntry[] = [];
   let lastIdleAt = 0;
-  const rawEvents = events.map(sessionCanonicalDisplayEvent);
   const rawEventKeys = new Set(rawEvents.map(sessionEventKey));
   const traceEntriesByRawKey = new Map<string, SessionTraceEntry[]>();
   traceEntries.forEach((entry) => {
@@ -349,7 +382,7 @@ export function buildSessionEventEntries(
     const type = sessionEventType(event);
     if (type === 'session.status_idle' && !sessionIsResultEvent(event)) {
       lastIdleAt = sessionEventTimestamp(event);
-      return;
+      if (sessionIdleEventIsHidden(event)) return;
     }
     const rawKey = sessionEventKey(event);
     const matchingTraceEntries = traceEntriesByRawKey.get(rawKey) ?? [];
@@ -370,7 +403,7 @@ export function buildSessionEventEntries(
   });
 
   const entriesWithModelMetadata = applyModelRequestBrackets(entries, rawEvents);
-  return mergeToolCallBatches(entriesWithModelMetadata);
+  return mergeToolCallBatches(arrangeSessionTranscriptInterrupts(entriesWithModelMetadata, rawEvents, msg));
 }
 
 function sessionTraceEntrySourceKey(entry: SessionTraceEntry, rawEventKeys: Set<string>) {
@@ -393,6 +426,12 @@ export function applyModelRequestBrackets(
 
   const rawEventKeys = new Set(rawEvents.map(sessionEventKey));
   const bracketsByStartId = new Map<string, ModelRequestBracket>();
+  const interruptedIds = interruptedSessionModelRequestIds(rawEvents);
+  const interruptedStarts = new Set(
+    rawEvents
+      .filter((event) => typeof event.id === 'string' && interruptedIds.has(event.id))
+      .map(sessionModelRequestStartRef),
+  );
   const entriesByRawEventId = new Map<string, SessionEventListEntry[]>();
   entries.forEach((entry) => {
     if (!('event' in entry)) {
@@ -427,9 +466,11 @@ export function applyModelRequestBrackets(
     const matchingEntries = entriesByRawEventId.get(sessionEventKey(event)) ?? [];
     matchingEntries.forEach((entry) => {
       const targetEntry = sessionModelBracketTargetEntry(entry);
-      if (activeBracket && targetEntry) {
+      const explicitStartId = sessionModelRequestStartRef(event);
+      const targetBracket = (explicitStartId ? bracketsByStartId.get(explicitStartId) : null) ?? activeBracket;
+      if (targetBracket && targetEntry) {
         if (targetEntry.kind === 'message') {
-          activeBracket.entries.forEach((candidate) => {
+          targetBracket.entries.forEach((candidate) => {
             if (candidate.bracketOpen) {
               candidate.bracketOpen = false;
               candidate.bracketEndMs ??= targetEntry.processedAtMs;
@@ -437,16 +478,23 @@ export function applyModelRequestBrackets(
           });
           targetEntry.bracketOpen = true;
         }
-        if (!targetEntry.bracketId) {
-          targetEntry.bracketId = activeBracket.startId;
+        if (interruptedStarts.has(targetBracket.startId) || !targetEntry.bracketId) {
+          targetEntry.bracketId = targetBracket.startId;
         }
-        targetEntry.bracketStartMs ??= activeBracket.startMs;
-        targetEntry.turnId ??= activeTurnId ?? activeBracket.startId;
-        if (activeBracket.softEndMs !== undefined) {
-          targetEntry.bracketEndMs ??= Math.max(activeBracket.startMs, activeBracket.softEndMs);
+        targetEntry.bracketStartMs ??= targetBracket.startMs;
+        targetEntry.turnId ??= targetBracket.entries[0]?.turnId ?? activeTurnId ?? targetBracket.startId;
+        if (targetBracket.softEndMs !== undefined) {
+          targetEntry.bracketEndMs ??= Math.max(targetBracket.startMs, targetBracket.softEndMs);
           targetEntry.bracketOpen = false;
         }
-        activeBracket.entries.push(targetEntry);
+        targetBracket.entries.push(targetEntry);
+        if (targetBracket.endMeta) {
+          closeModelRequestBracket(targetBracket, targetBracket.endMeta.startMs + targetBracket.endMeta.inferenceMs);
+          if (sessionIsAgentMessageDisplayEntry(targetEntry)) {
+            applyModelBracketMetaToDisplayEntry(targetEntry, targetBracket.endMeta);
+            if (pendingBracketMeta?.startId === targetBracket.startId) pendingBracketMeta = null;
+          }
+        }
         return;
       }
       if (pendingBracketMeta && sessionIsSubagentSentDisplayEntry(entry)) {
@@ -483,6 +531,7 @@ export function applyModelRequestBrackets(
       return;
     }
     const meta = modelRequestBracketMeta(bracket, event);
+    bracket.endMeta = meta;
     closeModelRequestBracket(bracket, meta.startMs + meta.inferenceMs);
     const agentMessage = bracket.entries.find(sessionIsAgentMessageDisplayEntry);
     const firstTool = bracket.entries.find((entry): entry is ToolCallEntry => entry.kind === 'tool_call');
@@ -499,7 +548,6 @@ export function applyModelRequestBrackets(
     } else {
       pendingBracketMeta = meta;
     }
-    bracketsByStartId.delete(bracket.startId);
     if (activeBracket?.startId === bracket.startId) {
       activeBracket = null;
     }
@@ -519,6 +567,7 @@ function closeModelRequestBracket(bracket: ModelRequestBracket, endMs: number) {
 function sessionEventEndsTranscriptTurn(event: QuickstartSessionEvent) {
   const type = sessionEventType(event);
   return (
+    (type === 'user.interrupt' && typeof event.processed_at === 'string') ||
     sessionEventFamily(event) === 'user' ||
     sessionStatusFromEventType(type) !== null ||
     sessionEventFamily(event) === 'outcome'
@@ -753,6 +802,7 @@ export function toolCallEntryFromTraceEntry(
   const event = traceEntry.event;
   const resultEvent = traceEntry.resultEvent;
   const confirmationEvent = traceEntry.confirmationEvent;
+  const lifecycle = sessionToolLifecycle(event, resultEvent, confirmationEvent);
   return {
     ...baseEventEntry(traceEntry, 'tool_call', traceStartMs, msg),
     kind: 'tool_call',
@@ -763,9 +813,9 @@ export function toolCallEntryFromTraceEntry(
     usage: extractSessionEventUsage(event),
     inferenceMs: sessionEventInferenceMs(event) ?? 0,
     executionMs: sessionToolExecutionMs(event, resultEvent, confirmationEvent),
-    lifecycle: sessionToolLifecycle(event, resultEvent, confirmationEvent),
+    lifecycle,
     bracketId: sessionEventBracketId(event),
-    isError: traceEntry.isError || sessionToolResultIsError(resultEvent),
+    isError: lifecycle === 'failed',
   };
 }
 
@@ -917,9 +967,11 @@ export function toolBatchEntry(calls: ToolCallEntry[]): ToolBatchEntry {
   ].map(([name, count]) => ({ name, count }));
   const lifecyclePriority: Record<ToolLifecycle, number> = {
     awaiting_approval: 0,
+    awaiting_result: 0,
     running: 1,
     failed: 2,
     denied: 3,
+    interrupted: 3,
     completed: 4,
   };
   const lifecycle = calls
@@ -966,16 +1018,18 @@ export function sessionToolLifecycle(
     return 'denied';
   }
   if (resultEvent) {
+    if (sessionToolResultWasInterrupted(resultEvent)) return 'interrupted';
     return resultIsError ? 'failed' : 'completed';
   }
-  if (permission === 'ask' && !confirmationEvent) {
+  if (event.type === 'agent.custom_tool_use') return 'awaiting_result';
+  if (permission === 'ask' && confirmationResult !== 'allow') {
     return 'awaiting_approval';
   }
   return 'running';
 }
 
 export function sessionToolResultIsError(event?: QuickstartSessionEvent) {
-  return event?.is_error === true || Boolean(toRecord(event?.error));
+  return !sessionToolResultWasInterrupted(event) && (event?.is_error === true || Boolean(toRecord(event?.error)));
 }
 
 export function normalizedToolPermission(event: QuickstartSessionEvent): 'ask' | 'allow' | 'deny' {
@@ -1105,7 +1159,7 @@ function firstNormalizedString(values: unknown[]) {
 }
 
 export function normalizedToolConfirmationResult(event?: QuickstartSessionEvent): 'allow' | 'deny' | undefined {
-  if (!event) {
+  if (!event || event.processed_at === null) {
     return undefined;
   }
   const result = normalizedStringValue(event.result);
@@ -1458,6 +1512,14 @@ export function sessionTraceDetailTitle(entry: SessionTraceEntry) {
   return entry.label;
 }
 
+function sessionIdleEventIsHidden(event: QuickstartSessionEvent) {
+  return (
+    sessionEventType(event) === 'session.status_idle' &&
+    !sessionIsResultEvent(event) &&
+    !sessionIdlePresentationState(event)
+  );
+}
+
 export function sessionEventAppearsInTranscript(event: QuickstartSessionEvent, options: SessionTraceBuildOptions = {}) {
   if (sessionIsClaudeUserEchoEvent(event)) {
     return false;
@@ -1482,7 +1544,7 @@ export function sessionEventAppearsInTranscript(event: QuickstartSessionEvent, o
     if (sessionEventType(event) === 'session.status_running') {
       return false;
     }
-    if (sessionEventType(event) === 'session.status_idle' && !sessionIsResultEvent(event)) {
+    if (sessionIdleEventIsHidden(event)) {
       return false;
     }
   }
@@ -1535,15 +1597,11 @@ export function sessionEventFamily(event: QuickstartSessionEvent): SessionTraceF
   if (type.startsWith('span.')) {
     return 'span';
   }
-  if (
-    (type === 'user' || type.startsWith('user.')) &&
-    !sessionIsToolResultEvent(event) &&
-    type !== 'user.tool_confirmation'
-  ) {
-    return 'user';
-  }
-  if (type === 'user.tool_confirmation') {
+  if (type === 'user.interrupt' || type === 'user.tool_confirmation') {
     return 'status';
+  }
+  if ((type === 'user' || type.startsWith('user.')) && !sessionIsToolResultEvent(event)) {
+    return 'user';
   }
   if (type === 'agent.message' || type === 'assistant.message' || type === 'agent' || type === 'agent.thinking') {
     return 'agent';
@@ -1559,12 +1617,7 @@ export function sessionEventFamily(event: QuickstartSessionEvent): SessionTraceF
   if (sessionIsThreadLifecycleEvent(event)) {
     return 'thread';
   }
-  if (
-    type.startsWith('session.status_') ||
-    type === 'session.deleted' ||
-    type === 'session.updated' ||
-    type === 'user.interrupt'
-  ) {
+  if (type.startsWith('session.status_') || type === 'session.deleted' || type === 'session.updated') {
     return 'status';
   }
   if (sessionIsSubagentEvent(event)) {

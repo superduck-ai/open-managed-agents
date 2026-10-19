@@ -76,10 +76,10 @@ export function AgentListTable({
           </Button>
         </div>
       ) : null}
-      <Table className={cn(dataTableClassName, 'min-w-[1080px] text-[13px]')}>
+      <Table className={cn(dataTableClassName, 'min-w-[1080px]')}>
         <TableHeader>
           <TableRow className={dataTableHeaderRowClassName}>
-            <TableHead className="h-8 w-9 px-2">
+            <TableHead className="h-10 w-9 px-2">
               <Checkbox
                 aria-label={msg('managedAgents.agents.selectAll', 'Select all agents')}
                 checked={selection.allSelected}
@@ -94,13 +94,13 @@ export function AgentListTable({
               .map((header) => (
                 <TableHead
                   key={header.id}
-                  className={cn(dataTableHeaderCellClassName, 'h-8 text-xs')}
+                  className={cn(dataTableHeaderCellClassName)}
                   style={{ width: header.id === 'name' ? undefined : header.getSize() }}
                 >
                   {flexRender(header.column.columnDef.header, header.getContext())}
                 </TableHead>
               ))}
-            <TableHead className="h-8 w-[136px] px-2" aria-label={managedColumnLabel('Actions', msg)} />
+            <TableHead className="h-10 w-[136px] px-2" aria-label={managedColumnLabel('Actions', msg)} />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -161,7 +161,7 @@ function AgentListRow({
   const shortDate = (value: string) =>
     Number.isFinite(Date.parse(value)) ? dateFormatter.format(new Date(value)) : '-';
   return (
-    <DataTableRow selected={selected || previewed} className="group/agent-row [&>td]:h-9">
+    <DataTableRow selected={selected || previewed} className="group/agent-row [&>td]:h-11">
       <DataTableCell edge="start" className="px-2">
         <Checkbox
           aria-label={msg('managedAgents.agents.selectAgent', 'Select {name}', { name: agent.name || agent.id })}

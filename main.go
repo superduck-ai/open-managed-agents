@@ -23,6 +23,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/diagnostics"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/listeners"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/natsclient"
@@ -55,6 +56,7 @@ func main() {
 func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	context.AfterFunc(ctx, stop)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -248,6 +250,7 @@ func run(logger *slog.Logger) error {
 			PlatformAuth:           platformAuthProvider,
 			CodeSessionCredentials: codeSessionCredentials,
 			SandboxTimeoutExtender: sandboxProvider,
+			SandboxProvisioner:     environmentRunner,
 			FilestoreCredentials:   filestoreCredentials,
 			FilestoreService:       filestoreService,
 			VaultSecrets:           vaultSecrets,
@@ -273,6 +276,7 @@ func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) er
 		return fmt.Errorf("listen: %w", err)
 	}
 	defer listener.Close()
+	server.Handler = httpapi.WithStreamShutdown(ctx, server.Handler)
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("claude api server listening", "addr", server.Addr)
@@ -283,9 +287,7 @@ func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) er
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("shutdown server: %w", err)
-		}
+		return shutdownHTTP(shutdownCtx, server)
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("serve: %w", err)
@@ -301,4 +303,11 @@ func syncModelPrices(ctx context.Context, database *db.DB, logger *slog.Logger) 
 	if err := pricing.SyncNarrows(ctx, database); err != nil {
 		logger.Warn("sync model prices", "source", "narrows", "error", err)
 	}
+}
+
+func shutdownHTTP(ctx context.Context, server *http.Server) error {
+	if err := server.Shutdown(ctx); err != nil {
+		return errors.Join(fmt.Errorf("shutdown server: %w", err), server.Close())
+	}
+	return nil
 }

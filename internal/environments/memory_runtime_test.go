@@ -290,7 +290,7 @@ func TestManagedAgentSessionConfigMemoryPrompt(t *testing.T) {
 	session := db.Session{
 		AgentSnapshot: json.RawMessage(`{"model":{"id":"claude-opus-4-8"},"system":"You are a concise coding assistant."}`),
 	}
-	withoutStores, err := managedAgentSessionConfig(session, mustResolveRuntimeResources(t, nil))
+	withoutStores, err := managedAgentSessionConfig(session, mustResolveRuntimeResources(t, nil), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestManagedAgentSessionConfigMemoryPrompt(t *testing.T) {
 			"用户的饮食与语言偏好",
 			"问饮食或语言先读此目录",
 		),
-	}))
+	}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func assertSessionConfigPromptExcludesMemory(t *testing.T, raw json.RawMessage, 
 		t.Fatalf("decode session config: %v", err)
 	}
 	prompt, _ := body["append_system_prompt"].(string)
-	if prompt != managedAgentEnvironmentPrompt {
+	if prompt != mustEnvironmentPrompt(t, nil) {
 		t.Fatalf("append_system_prompt = %q", prompt)
 	}
 	if strings.Contains(prompt, sessionresource.MemoryMountRoot) ||

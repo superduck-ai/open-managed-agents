@@ -17,7 +17,8 @@ import {
   managedEntityDetailHref,
   navigateToInternalHref,
 } from '../utils';
-import { sessionEventSummary, sessionEventType } from './sessionTraceModel';
+import { buildSessionTraceEntries } from './sessionTraceModel';
+import { SessionQuickViewActivity } from './SessionQuickViewActivity';
 import { SessionStatusPill } from './sessionTimeline';
 
 export function SessionQuickView({
@@ -60,13 +61,14 @@ export function SessionQuickView({
       controller.abort();
     };
   }, [session.id, workspaceId, refreshKey]);
+  const entries = buildSessionTraceEntries(events, 'transcript', 0, msg, { platformTranscriptFiltering: true });
   const href = `${managedEntityDetailHref(workspaceId, 'sessions', session.id)}?interactive=true`;
   const viewOnly = Boolean(detail.archived_at) || ['terminated', 'deleted'].includes(detail.status);
   return (
     <TooltipProvider>
       <Sheet open onOpenChange={(open) => !open && onClose()}>
         <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
-          <SheetHeader className="border-b p-5 pr-12">
+          <SheetHeader className="p-5 pr-12">
             <SheetTitle className="break-words">
               {detail.title || msg('managedAgents.sessions.quickView', 'Quick view')}
             </SheetTitle>
@@ -79,7 +81,7 @@ export function SessionQuickView({
             <SessionQuickViewFacts session={detail} workspaceId={workspaceId} />
             <div className="mt-6 flex items-center justify-between gap-2">
               <h3 className="text-sm font-medium">
-                {msg('managedAgents.sessions.recentActivity', 'Recent activity (up to 20 events)')}
+                {msg('managedAgents.sessions.conversationPreview', 'Conversation preview')}
               </h3>
               <Button
                 variant="ghost"
@@ -98,27 +100,23 @@ export function SessionQuickView({
                 <Skeleton className="h-16" />
               </div>
             ) : (
-              <ol className="mt-3 divide-y">
-                {events.map((event, index) => (
-                  <li key={typeof event.id === 'string' ? event.id : index} className="py-3">
-                    <p className="text-xs text-muted-foreground">{sessionEventType(event)}</p>
-                    <p className="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-sm">
-                      {sessionEventSummary(event)}
-                    </p>
-                  </li>
-                ))}
-              </ol>
+              <SessionQuickViewActivity entries={entries} />
             )}
-            {!loading && !loadError && !events.length ? (
+            {!loading && !loadError && !entries.length ? (
               <p className="py-6 text-sm text-muted-foreground">
-                {msg(
-                  'managedAgents.sessions.noActivity',
-                  'No activity yet. Open the conversation to send the first message.',
-                )}
+                {events.length
+                  ? msg(
+                      'managedAgents.sessions.noPreviewContent',
+                      'No conversation content in the latest 20 events. Open the session for full history.',
+                    )
+                  : msg(
+                      'managedAgents.sessions.noActivity',
+                      'No activity yet. Open the conversation to send the first message.',
+                    )}
               </p>
             ) : null}
           </div>
-          <SheetFooter className="border-t p-5">
+          <SheetFooter className="p-5">
             <Button
               onClick={() => {
                 onClose();

@@ -62,7 +62,9 @@ describe('SessionInspector', () => {
     expect(toolRow.querySelectorAll('td')[4]?.textContent).toBe(expected);
     fireEvent.click(toolRow);
 
-    expect(screen.getByText('completed').closest('tr')?.textContent).toContain(expected);
+    expect(screen.getByText('Completed', { selector: '[data-tool-lifecycle]' }).closest('tr')?.textContent).toContain(
+      expected,
+    );
     expect(screen.getByText('p50', { selector: 'dt' }).nextElementSibling?.textContent).toBe(expected);
   });
 
@@ -303,7 +305,9 @@ describe('SessionInspector', () => {
     expect(writeCells?.[3]?.textContent).toBe('0');
     expect(writeCells?.[4]?.textContent).toBe('—');
     expect(screen.getByText('2 tools · 2 used · 3 calls')).toBeTruthy();
-    const outcomeRing = screen.getByRole('img', { name: '1 completed, 1 failed, 0 denied, 1 in flight' });
+    const outcomeRing = screen.getByRole('img', {
+      name: '1 completed, 1 failed, 0 denied, 0 interrupted, 1 in flight',
+    });
     expect(outcomeRing.tagName).toBe('DIV');
     expect(outcomeRing.style.background).toContain('conic-gradient');
     expect(outcomeRing.querySelector('svg')).toBeNull();
@@ -320,7 +324,7 @@ describe('SessionInspector', () => {
     expect(screen.getByRole('button', { name: 'Close tool detail' })).toBeTruthy();
     expect(screen.queryByRole('columnheader', { name: 'Waited' })).toBeNull();
     expect(screen.queryByRole('columnheader', { name: 'Thread' })).toBeNull();
-    const completedCallRow = screen.getByText('completed').closest('tr')!;
+    const completedCallRow = screen.getByText('Completed', { selector: '[data-tool-lifecycle]' }).closest('tr')!;
     fireEvent.pointerEnter(completedCallRow);
     expect(onHoverEvent).toHaveBeenCalledWith('tool_bash_ok');
     fireEvent.pointerLeave(completedCallRow);
@@ -581,3 +585,61 @@ function session(): SessionApiResponse {
     updated_at: '2026-08-27T07:25:22.000Z',
   };
 }
+
+test('thread tool filtering keeps the session permission policy', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
+  globalThis.fetch = async () =>
+    Response.json({
+      id: 'agent_parent',
+      tools: [
+        { type: 'agent_toolset_20260401', configs: [{ name: 'bash', permission_policy: { type: 'always_ask' } }] },
+      ],
+    });
+  const event = {
+    ...toolUseEvent('child-bash', 'Bash', '2026-08-27T08:00:00.000Z'),
+    session_thread_id: 'child',
+    evaluated_permission: 'allow',
+  };
+  renderInspector({
+    activeTab: 'tools',
+    activeLane: 'child',
+    session: { ...session(), agent: { type: 'agent', id: 'agent_parent', version: 1 } },
+    events: [event],
+    eventsByLaneId: new Map([['child', [event]]]),
+    lanes: [
+      { id: 'main', label: 'Main', isMain: true },
+      { id: 'child', label: 'Child' },
+    ],
+  });
+  await screen.findByText('Always ask');
+  const scope = screen.getByRole('combobox', { name: 'Scope' });
+  fireEvent.pointerDown(scope);
+  fireEvent.pointerUp(scope);
+  fireEvent.click(scope);
+  const option = await screen.findByRole('option', { name: 'Current thread' });
+  fireEvent.pointerDown(option);
+  fireEvent.pointerUp(option);
+  fireEvent.click(option);
+  await waitFor(() => expect(scope.textContent).toContain('Current thread'));
+  expect(screen.getByText('Always ask')).toBeTruthy();
+});
+
+test('child thread details show the pinned snapshot even when current Agent data differs', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
+  renderInspector({
+    activeTab: 'threads',
+    activeLane: 'child',
+    lanes: [
+      { id: 'main', label: 'Main', isMain: true },
+      {
+        id: 'child',
+        label: 'Reviewer thread',
+        agent: { id: 'agent_child', name: 'Pinned reviewer', version: 1, model: { id: 'deepseek-flash' } },
+      },
+    ],
+  });
+  await act(async () => Promise.resolve());
+  expect(screen.getByRole('link', { name: 'Pinned reviewer' }).getAttribute('href')).toContain('agent_child');
+  expect(screen.getByText('v1')).toBeTruthy();
+  expect(screen.getByText('deepseek-flash')).toBeTruthy();
+});

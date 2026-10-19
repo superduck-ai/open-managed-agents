@@ -196,6 +196,18 @@ func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID strin
 	if err != nil {
 		return db.SessionEventChanges{}, err
 	}
+	originalUUIDs := make(map[string]string, len(events))
+	for _, event := range events {
+		originalUUIDs[event.ExternalID] = event.UUID
+	}
+	for i := range changes.Events {
+		if changes.Events[i].EventType == "user.message" && originalUUIDs[changes.Events[i].ExternalID] != changes.Events[i].UUID {
+			changes.Events[i], err = s.RestorePublic(ctx, changes.Events[i])
+			if err != nil {
+				return db.SessionEventChanges{}, err
+			}
+		}
+	}
 	changes.Events = RestoreCreatedPublic(changes.Events, events)
 	return changes, nil
 }
@@ -223,13 +235,15 @@ func (s *Store) skipPersistedLargeEvents(ctx context.Context, workspaceUUID, ses
 // Idempotent conflicts must load the persisted event instead.
 func RestoreCreatedPublic(created, originals []db.SessionEvent) []db.SessionEvent {
 	payloads := make(map[string]json.RawMessage, len(originals))
+	uuidByID := make(map[string]string, len(originals))
 	for _, event := range originals {
 		if _, exists := payloads[event.ExternalID]; !exists {
 			payloads[event.ExternalID] = event.Payload
+			uuidByID[event.ExternalID] = event.UUID
 		}
 	}
 	for i := range created {
-		if payload, ok := payloads[created[i].ExternalID]; ok && (created[i].PayloadBlobUUID != nil || strings.Contains(string(created[i].Payload), `"_echo_key"`)) {
+		if payload, ok := payloads[created[i].ExternalID]; ok && uuidByID[created[i].ExternalID] == created[i].UUID && (created[i].PayloadBlobUUID != nil || strings.Contains(string(created[i].Payload), `"_echo_key"`)) {
 			created[i].Payload = payload
 		}
 	}

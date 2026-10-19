@@ -68,7 +68,7 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 	if agent.ArchivedAt != nil {
 		return db.Agent{}, nil, errors.New("agent must not be archived")
 	}
-	snapshot, err := agentsnapshot.FromAgent(agent)
+	snapshot, err := agentsnapshot.Resolve(r.Context(), h.db, agent)
 	if err != nil {
 		return db.Agent{}, nil, err
 	}
@@ -257,6 +257,11 @@ func normalizeInputEvent(
 	}
 	payload["id"] = eventID
 	payload["processed_at"] = formatEventTime(now)
+	processedAt := now
+	if eventType == "user.message" {
+		payload["processed_at"] = nil
+		processedAt = time.Time{}
+	}
 	delete(payload, "created_at")
 	var threadExternalID *string
 	if value, ok := payload["session_thread_id"].(string); ok && strings.TrimSpace(value) != "" {
@@ -302,7 +307,7 @@ func normalizeInputEvent(
 		ThreadExternalID:  threadExternalID,
 		EventType:         eventType,
 		Payload:           payloadRaw,
-		ProcessedAt:       now,
+		ProcessedAt:       processedAt,
 		CreatedAt:         now,
 	}, session.OutcomeEvaluations, outcomesChanged, nil
 }

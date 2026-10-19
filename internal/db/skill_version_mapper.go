@@ -60,7 +60,7 @@ type SkillVersionMapper interface {
 	Insert(ctx context.Context, params insertSkillVersionParams) (skillVersionRow, error)
 	Find(ctx context.Context, workspaceUUID, skillExternalID, version string) (skillVersionRow, error)
 	FindLatest(ctx context.Context, workspaceUUID, skillExternalID string) (skillVersionRow, error)
-	ListPageBySkillUUID(ctx context.Context, workspaceUUID, skillUUID string, limit, offset int) ([]skillVersionRow, error)
+	ListPageBySkillUUID(ctx context.Context, workspaceUUID, skillUUID string, limit, offset int, oldestFirst bool) ([]skillVersionRow, error)
 	ListBySkillUUID(ctx context.Context, workspaceUUID, skillUUID string) ([]skillVersionRow, error)
 	SoftDeleteBySkillUUID(ctx context.Context, workspaceUUID, skillUUID string) error
 	SoftDeleteByVersion(ctx context.Context, workspaceUUID, skillUUID, version string) (skillVersionRow, error)

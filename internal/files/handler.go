@@ -29,8 +29,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-const filesBeta = "files-api-2025-04-14"
-
 type Handler struct {
 	cfg    config.Config
 	db     *db.DB
@@ -73,11 +71,6 @@ func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, l
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !hasFilesBeta(r) {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Files API requires anthropic-beta: files-api-2025-04-14"))
-		return
-	}
-
 	h.router.ServeHTTP(w, r)
 }
 
@@ -329,17 +322,6 @@ func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context,
 			h.logger.ErrorContext(ctx, "enqueue object cleanup after metadata failure", "file_id", record.ExternalID, "key", record.S3Key, "error", enqueueErr)
 		}
 	}
-}
-
-func hasFilesBeta(r *http.Request) bool {
-	for _, value := range r.Header.Values("anthropic-beta") {
-		for _, part := range strings.Split(value, ",") {
-			if strings.TrimSpace(part) == filesBeta {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func validateFilename(filename string) error {

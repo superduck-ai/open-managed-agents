@@ -7,7 +7,7 @@ import {
   sessionAttachmentMessage,
   type SessionAttachment,
 } from './sessionAttachments';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { interruptQuickstartSession, postQuickstartSessionMessage } from '../api';
 import { type QuickstartSessionEvent } from '../types';
@@ -49,7 +49,13 @@ export function SessionMessageComposer({
   const interruptingRef = useRef(false);
   const trimmedDraft = draft.trim();
   const composerDisabled = disabled || awaitingAction;
-  const sendDisabled = composerDisabled || !acceptingMessages || sending;
+  const sendDisabled = composerDisabled || !acceptingMessages || sending || interrupting;
+  useEffect(() => {
+    if (!live) {
+      interruptingRef.current = false;
+      setInterrupting(false);
+    }
+  }, [live]);
 
   const submit = async () => {
     if ((!trimmedDraft && !attachments.length) || sendDisabled || sendingRef.current) {
@@ -89,7 +95,6 @@ export function SessionMessageComposer({
       onEventsChanged();
     } catch (error) {
       onError(errorMessage(error));
-    } finally {
       interruptingRef.current = false;
       setInterrupting(false);
     }

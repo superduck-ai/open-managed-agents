@@ -93,7 +93,7 @@ func TestModelPriceTTLReconciliationPostgres(t *testing.T) {
 	}
 	payload := []byte(`{"model":"priced","model_usage":{"input_tokens":1000000,"output_tokens":1000000,"cache_read_input_tokens":1000000,"cache_creation_input_tokens":2000000,"cache_creation":{"ephemeral_5m_input_tokens":1000000,"ephemeral_1h_input_tokens":1000000}},"billing":{"list_cost":"2805","currency":"USD"}}`)
 	event := SessionEvent{UUID: uuid.NewV4().String(), ExternalID: "event_ttl", OrganizationUUID: org, WorkspaceUUID: ws, SessionUUID: session, SessionExternalID: "sesn_ttl", EventType: "span.model_request_end", Payload: payload, CreatedAt: now}
-	_, err := NewSessionEventMapper(d.mapperDB).Insert(t.Context(), sessionEventWriteParams{UUID: event.UUID, ExternalID: event.ExternalID, OrganizationUUID: org, WorkspaceUUID: ws, SessionUUID: session, SessionExternalID: event.SessionExternalID, EventType: event.EventType, Payload: payload, CreatedAt: now, ProcessedAt: now})
+	_, err := NewSessionEventMapper(d.mapperDB).Insert(t.Context(), sessionEventWriteParams{UUID: event.UUID, ExternalID: event.ExternalID, OrganizationUUID: org, WorkspaceUUID: ws, SessionUUID: session, SessionExternalID: event.SessionExternalID, EventType: event.EventType, Payload: payload, CreatedAt: now, ProcessedAt: new(now)})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -538,7 +538,7 @@ func TestManagedAgentSessionConfigDefersMCPBuildUntilLaunch(t *testing.T) {
 		VaultIDs: []string{"vault_cred_123"},
 	}
 
-	raw, err := managedAgentSessionConfig(session, mustResolveRuntimeResources(t, nil))
+	raw, err := managedAgentSessionConfig(session, mustResolveRuntimeResources(t, nil), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

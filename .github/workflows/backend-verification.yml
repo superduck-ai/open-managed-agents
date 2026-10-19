@@ -68,6 +68,7 @@ jobs:
           path: |
             tmp/verify-be/*/report.json
             tmp/verify-be/*/report.md
+            tmp/verify-be/*/upstream-backoff-observations.json
           retention-days: 14
           if-no-files-found: warn
 

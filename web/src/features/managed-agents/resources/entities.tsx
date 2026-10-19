@@ -944,7 +944,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         />
       ) : (
         <div>
-          <Table className={cn(dataTableClassName, config.section === 'deployments' && 'min-w-[880px]')}>
+          <Table className={cn(dataTableClassName, 'min-w-[1080px]')}>
             <TableHeader>
               <TableRow className={dataTableHeaderRowClassName}>
                 {config.columns.map((column) => (
@@ -1117,7 +1117,7 @@ export function ManagedEntityRow({
   const detailHref = managedEntityDetailHref(workspaceId, config.section, entity.id);
 
   return (
-    <DataTableRow selected={selected}>
+    <DataTableRow selected={selected} className="[&>td]:h-11">
       {config.columns.map((column, index) => {
         const content =
           column === 'ID' ? (

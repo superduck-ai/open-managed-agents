@@ -43,7 +43,7 @@ export function ResourceSearchField({
   };
 
   return (
-    <div className="relative block h-8 w-[320px] max-w-full">
+    <div className="relative block h-9 w-[320px] max-w-full">
       <Label className="sr-only" htmlFor={id}>
         {placeholder}
       </Label>
@@ -64,7 +64,7 @@ export function ResourceSearchField({
         value={value}
         placeholder={placeholder}
         className={cn(
-          'h-8 border-border bg-secondary text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-border',
+          'h-9 border-border bg-background text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-border',
           prefix ? 'pl-[64px]' : 'pl-9',
           value ? 'pr-9' : 'pr-3',
         )}
@@ -115,7 +115,7 @@ export function ResourceFilterDropdown<TValue extends string, TMenu extends stri
           <Button
             type="button"
             variant="outline"
-            className={cn('h-8 gap-2 bg-secondary px-3 text-sm', open && 'border-border')}
+            className={cn('h-9 gap-2 bg-background px-3 text-sm', open && 'border-border')}
             data-resource-filter-menu
           />
         }

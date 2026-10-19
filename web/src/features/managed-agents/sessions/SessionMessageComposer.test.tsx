@@ -176,6 +176,21 @@ describe('SessionMessageComposer', () => {
     expect(body.events[0]?.type).toBe('user.interrupt');
     resolveRequest?.(jsonResponse({}));
     await waitFor(() => expect(onEventsChanged).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('button', { name: 'Stopping session' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(stop);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('allows retry when the interrupt request fails', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/session-test');
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response(JSON.stringify({ error: { message: 'Stop failed' } }), { status: 500 })),
+    ) as typeof fetch;
+    const onError = mock(() => {});
+    renderComposer({ live: true, onError });
+    fireEvent.click(screen.getByRole('button', { name: 'Stop session' }));
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('Stop failed'));
+    expect(screen.getByRole('button', { name: 'Stop session' }).hasAttribute('disabled')).toBe(false);
   });
 
   test('keeps a draft without sending while the session is busy', async () => {

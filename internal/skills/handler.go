@@ -71,7 +71,8 @@ type pageResponse[T any] struct {
 }
 
 type pageCursor struct {
-	Offset int `json:"offset"`
+	Stable bool `json:"stable,omitempty"`
+	Offset int  `json:"offset"`
 }
 
 func NewHandler(database *db.DB, store storage.ObjectStore, logger *slog.Logger) *Handler {
@@ -100,10 +101,6 @@ func NewHandler(database *db.DB, store storage.ObjectStore, logger *slog.Logger)
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("beta") != "true" || !hasSkillsBeta(r) {
-		h.errorAdapter.Write(w, r, skillsBetaRequired())
-		return
-	}
 	h.router.ServeHTTP(w, r)
 }
 
@@ -129,7 +126,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalError("Could not generate skill ID", fmt.Errorf("generate skill ID: %w", err))
 	}
-	versionID, err := ids.New("skillver_")
+	versionID, err := ids.New("skver_")
 	if err != nil {
 		return internalError("Could not generate skill version ID", fmt.Errorf("generate skill version ID: %w", err))
 	}
@@ -138,12 +135,15 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	versionValue := newVersionString()
 	objectKey := fmt.Sprintf("workspaces/%s/skills/%s/versions/%s/%s.zip", principal.WorkspaceUUID, skillUUID, versionValue, sanitizeForKey(pkg.Directory))
 
+	displayTitle, err := skillDisplayLabel(r, pkg)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
 	if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(pkg.Zip), storage.UploadOptions{Size: pkg.Size, ContentType: skillArchiveContentType}); err != nil {
 		return internalError("Could not store skill", fmt.Errorf("store skill %q archive: %w", skillID, err))
 	}
 
-	now := time.Now().UTC()
-	displayTitle := firstNonEmpty(r.FormValue("display_title"), pkg.Name, pkg.Directory)
 	createdSkill, _, err := h.db.CreateSkillWithVersion(r.Context(), db.Skill{
 		UUID:                skillUUID,
 		ExternalID:          skillID,
@@ -165,7 +165,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		SHA256:              pkg.SHA256,
 		CreatedByAPIKeyUUID: principal.APIKeyUUID,
 		CreatedAt:           now,
-	})
+	}, !hasSkillsBeta(r))
 	if err != nil {
 		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), principal.WorkspaceUUID, h.store.Name(), objectKey, versionID)
 		var displayTitleConflict *db.SkillDisplayTitleConflictError
@@ -175,22 +175,27 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		return internalError("Could not create skill", fmt.Errorf("create skill %q metadata: %w", skillID, err))
 	}
 
-	httpapi.WriteJSON(w, http.StatusOK, responseFromSkill(createdSkill))
-	return nil
+	return h.writeSkill(w, r, responseFromSkill(createdSkill))
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	source := strings.TrimSpace(r.URL.Query().Get("source"))
-	if source != "" && source != "custom" && source != "anthropic" {
-		httpapi.WriteJSON(w, http.StatusOK, pageResponse[skillResponse]{Data: []skillResponse{}, HasMore: false, NextPage: nil})
-		return nil
+	if !hasSkillsBeta(r) && source == "anthropic_example" {
+		source = "anthropic"
 	}
-	limit, err := parseLimitParam(r, defaultSkillsLimit, maxSkillsLimit)
+	if source != "" && source != "custom" && source != "anthropic" {
+		return h.writeSkillsPage(w, r, pageResponse[skillResponse]{Data: []skillResponse{}})
+	}
+	maximum := maxSkillsLimit
+	if !hasSkillsBeta(r) {
+		maximum = 1000
+	}
+	limit, err := parseLimitParam(r, defaultSkillsLimit, maximum)
 	if err != nil {
 		return invalidRequest(err)
 	}
-	offset, err := decodePageOffset(r.URL.Query().Get("page"))
+	offset, err := decodePageOffset(r.URL.Query().Get("page"), hasSkillsBeta(r))
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -210,6 +215,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 		hasMore = more
 	case "custom":
 		records, more, err := h.db.ListSkillsPage(r.Context(), db.ListSkillsPageParams{
+			OnlyVersioned: !hasSkillsBeta(r),
 			WorkspaceUUID: principal.WorkspaceUUID,
 			Limit:         limit,
 			Offset:        offset,
@@ -228,11 +234,10 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 
 	var nextPage *string
 	if hasMore {
-		value := encodePageOffset(offset + len(data))
+		value := encodePageOffset(offset+len(data), hasSkillsBeta(r))
 		nextPage = &value
 	}
-	httpapi.WriteJSON(w, http.StatusOK, pageResponse[skillResponse]{Data: data, HasMore: hasMore, NextPage: nextPage})
-	return nil
+	return h.writeSkillsPage(w, r, pageResponse[skillResponse]{Data: data, HasMore: hasMore, NextPage: nextPage})
 }
 
 func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offset, limit int) ([]skillResponse, bool, error) {
@@ -258,6 +263,7 @@ func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offse
 				// If builtin rows exactly fill this page at the boundary, probe
 				// custom rows so has_more still exposes the next custom page.
 				records, _, err := h.db.ListSkillsPage(r.Context(), db.ListSkillsPageParams{
+					OnlyVersioned: !hasSkillsBeta(r),
 					WorkspaceUUID: principal.WorkspaceUUID,
 					Limit:         1,
 					Offset:        0,
@@ -273,6 +279,7 @@ func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offse
 		// no custom rows have been consumed yet.
 		customLimit := limit - len(data)
 		records, customMore, err := h.db.ListSkillsPage(r.Context(), db.ListSkillsPageParams{
+			OnlyVersioned: !hasSkillsBeta(r),
 			WorkspaceUUID: principal.WorkspaceUUID,
 			Limit:         customLimit,
 			Offset:        0,
@@ -287,6 +294,7 @@ func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offse
 	// Once the offset has passed all builtin rows, translate the combined
 	// offset into the custom-only feed.
 	records, hasMore, err := h.db.ListSkillsPage(r.Context(), db.ListSkillsPageParams{
+		OnlyVersioned: !hasSkillsBeta(r),
 		WorkspaceUUID: principal.WorkspaceUUID,
 		Limit:         limit,
 		Offset:        offset - builtinCount,
@@ -317,8 +325,7 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, skillID strin
 	if skill, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
 		return internalError("Could not retrieve skill", fmt.Errorf("retrieve built-in skill %q: %w", skillID, err))
 	} else if ok {
-		httpapi.WriteJSON(w, http.StatusOK, responseFromBuiltinSkill(skill))
-		return nil
+		return h.writeSkill(w, r, responseFromBuiltinSkill(skill))
 	}
 	record, err := h.db.GetSkill(r.Context(), principal.WorkspaceUUID, skillID)
 	if err != nil {
@@ -327,8 +334,7 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, skillID strin
 		}
 		return internalError("Could not retrieve skill", fmt.Errorf("retrieve skill %q: %w", skillID, err))
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromSkill(record))
-	return nil
+	return h.writeSkill(w, r, responseFromSkill(record))
 }
 
 func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
@@ -344,15 +350,21 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, skillID string)
 		return err
 	}
 	if _, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
+		if mapped := mapSkillDeleteError(err); mapped != err {
+			return mapped
+		}
 		return internalError("Could not delete skill", fmt.Errorf("retrieve built-in skill %q before delete: %w", skillID, err))
 	} else if ok {
 		return readOnlyBuiltinError()
 	}
 
-	_, _, err := h.db.SoftDeleteSkill(r.Context(), principal.WorkspaceUUID, skillID)
+	_, _, err := h.db.SoftDeleteSkill(r.Context(), principal.WorkspaceUUID, skillID, !hasSkillsBeta(r))
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return skillNotFound(skillID, err)
+		}
+		if mapped := mapSkillDeleteError(err); mapped != err {
+			return mapped
 		}
 		return internalError("Could not delete skill", fmt.Errorf("delete skill %q: %w", skillID, err))
 	}
@@ -388,7 +400,16 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 		return internalError("Could not create skill version", fmt.Errorf("retrieve skill %q before version create: %w", skillID, err))
 	}
 
-	versionID, err := ids.New("skillver_")
+	if !hasSkillsBeta(r) && skill.LatestVersion != nil {
+		previous, lookupErr := h.db.GetLatestSkillVersion(r.Context(), principal.WorkspaceUUID, skillID)
+		if lookupErr != nil {
+			return internalError("Could not load skill name", lookupErr)
+		}
+		if previous.Name != pkg.Name {
+			return skillNameImmutable()
+		}
+	}
+	versionID, err := ids.New("skver_")
 	if err != nil {
 		return internalError("Could not generate skill version ID", fmt.Errorf("generate skill version ID: %w", err))
 	}
@@ -421,7 +442,7 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 		}
 		return internalError("Could not create skill version", fmt.Errorf("create skill %q version metadata: %w", skillID, err))
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromSkillVersion(version))
+	writeVersion(w, r, responseFromSkillVersion(version))
 	return nil
 }
 
@@ -438,11 +459,12 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID s
 		if err != nil {
 			return invalidRequest(err)
 		}
-		offset, err := decodePageOffset(r.URL.Query().Get("page"))
+		offset, err := decodePageOffset(r.URL.Query().Get("page"), hasSkillsBeta(r))
 		if err != nil {
 			return invalidRequest(err)
 		}
 		versions, hasMore, err := h.db.ListBuiltinSkillVersionsPage(r.Context(), db.ListBuiltinSkillVersionsPageParams{
+			OldestFirst:     hasSkillsBeta(r),
 			SkillExternalID: skillID,
 			Limit:           limit,
 			Offset:          offset,
@@ -455,10 +477,10 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID s
 		}
 		var nextPage *string
 		if hasMore {
-			value := encodePageOffset(offset + len(versions))
+			value := encodePageOffset(offset+len(versions), hasSkillsBeta(r))
 			nextPage = &value
 		}
-		httpapi.WriteJSON(w, http.StatusOK, pageResponse[skillVersionResponse]{
+		writeVersionsPage(w, r, pageResponse[skillVersionResponse]{
 			Data:     responsesFromBuiltinSkillVersions(versions),
 			HasMore:  hasMore,
 			NextPage: nextPage,
@@ -470,11 +492,12 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID s
 	if err != nil {
 		return invalidRequest(err)
 	}
-	offset, err := decodePageOffset(r.URL.Query().Get("page"))
+	offset, err := decodePageOffset(r.URL.Query().Get("page"), hasSkillsBeta(r))
 	if err != nil {
 		return invalidRequest(err)
 	}
 	versions, hasMore, err := h.db.ListSkillVersionsPage(r.Context(), db.ListSkillVersionsPageParams{
+		OldestFirst:     hasSkillsBeta(r),
 		WorkspaceUUID:   principal.WorkspaceUUID,
 		SkillExternalID: skillID,
 		Limit:           limit,
@@ -488,10 +511,10 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID s
 	}
 	var nextPage *string
 	if hasMore {
-		value := encodePageOffset(offset + len(versions))
+		value := encodePageOffset(offset+len(versions), hasSkillsBeta(r))
 		nextPage = &value
 	}
-	httpapi.WriteJSON(w, http.StatusOK, pageResponse[skillVersionResponse]{
+	writeVersionsPage(w, r, pageResponse[skillVersionResponse]{
 		Data:     responsesFromSkillVersions(versions),
 		HasMore:  hasMore,
 		NextPage: nextPage,
@@ -515,7 +538,7 @@ func (h *Handler) retrieveVersion(w http.ResponseWriter, r *http.Request, skillI
 			}
 			return internalError("Could not retrieve skill version", fmt.Errorf("retrieve built-in skill %q version %q: %w", skillID, version, err))
 		}
-		httpapi.WriteJSON(w, http.StatusOK, responseFromBuiltinVersion(record))
+		writeVersion(w, r, responseFromBuiltinVersion(record))
 		return nil
 	}
 
@@ -530,7 +553,7 @@ func (h *Handler) retrieveVersion(w http.ResponseWriter, r *http.Request, skillI
 		}
 		return internalError("Could not retrieve skill version", fmt.Errorf("retrieve skill %q version %q: %w", skillID, resolved, err))
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromSkillVersion(record))
+	writeVersion(w, r, responseFromSkillVersion(record))
 	return nil
 }
 
@@ -544,6 +567,9 @@ func (h *Handler) deleteVersion(w http.ResponseWriter, r *http.Request, skillID,
 		return err
 	}
 	if _, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
+		if mapped := mapSkillDeleteError(err); mapped != err {
+			return mapped
+		}
 		return internalError("Could not delete skill version", fmt.Errorf("retrieve built-in skill %q before version delete: %w", skillID, err))
 	} else if ok {
 		return readOnlyBuiltinError()
@@ -553,14 +579,21 @@ func (h *Handler) deleteVersion(w http.ResponseWriter, r *http.Request, skillID,
 	if err != nil {
 		return mapResolveVersionError(skillID, version, err)
 	}
-	_, _, err = h.db.SoftDeleteSkillVersion(r.Context(), principal.WorkspaceUUID, skillID, resolved)
+	deletedVersion, _, err := h.db.SoftDeleteSkillVersion(r.Context(), principal.WorkspaceUUID, skillID, resolved, hasSkillsBeta(r))
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return skillVersionNotFound(version, err)
 		}
+		if mapped := mapSkillDeleteError(err); mapped != err {
+			return mapped
+		}
 		return internalError("Could not delete skill version", fmt.Errorf("delete skill %q version %q: %w", skillID, resolved, err))
 	}
-	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": resolved, "type": "skill_version_deleted"})
+	deletedID := resolved
+	if !hasSkillsBeta(r) {
+		deletedID = deletedVersion.ExternalID
+	}
+	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": deletedID, "type": "skill_version_deleted"})
 	return nil
 }
 
@@ -624,7 +657,11 @@ func (h *Handler) downloadVersion(w http.ResponseWriter, r *http.Request, skillI
 
 func (h *Handler) resolveVersion(ctx context.Context, workspaceUUID string, skillID, version string) (string, error) {
 	if version != "latest" {
-		return version, nil
+		record, err := h.db.GetSkillVersion(ctx, workspaceUUID, skillID, version)
+		if err != nil {
+			return "", err
+		}
+		return record.Version, nil
 	}
 	skill, err := h.db.GetSkill(ctx, workspaceUUID, skillID)
 	if err != nil {
@@ -760,11 +797,11 @@ func parseLimitParam(r *http.Request, defaultLimit, maxLimit int) (int, error) {
 	if err != nil {
 		return 0, errors.New("limit must be an integer")
 	}
-	if limit == 0 {
+	if limit == 0 && hasSkillsBeta(r) {
 		return defaultLimit, nil
 	}
-	if limit < 0 {
-		return 0, errors.New("limit must be at least 0")
+	if limit < 0 || (limit == 0 && !hasSkillsBeta(r)) {
+		return 0, errors.New("limit must be at least 1")
 	}
 	if limit > maxLimit {
 		return 0, fmt.Errorf("limit must be at most %d", maxLimit)
@@ -772,7 +809,7 @@ func parseLimitParam(r *http.Request, defaultLimit, maxLimit int) (int, error) {
 	return limit, nil
 }
 
-func decodePageOffset(raw string) (int, error) {
+func decodePageOffset(raw string, legacy bool) (int, error) {
 	if strings.TrimSpace(raw) == "" {
 		return 0, nil
 	}
@@ -784,14 +821,14 @@ func decodePageOffset(raw string) (int, error) {
 	if err := json.Unmarshal(data, &cursor); err != nil {
 		return 0, errors.New("page is invalid")
 	}
-	if cursor.Offset < 0 {
+	if cursor.Offset < 0 || cursor.Stable == legacy {
 		return 0, errors.New("page is invalid")
 	}
 	return cursor.Offset, nil
 }
 
-func encodePageOffset(offset int) string {
-	data, _ := json.Marshal(pageCursor{Offset: offset})
+func encodePageOffset(offset int, legacy bool) string {
+	data, _ := json.Marshal(pageCursor{Offset: offset, Stable: !legacy})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 

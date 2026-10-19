@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { consoleResourceListLimit } from '../../../shared/console-list';
 import { anthropicBetaApi } from '../../../shared/api/anthropic';
 import { getConsoleRequestContext } from '../../../shared/api/client';
 import type { EnvironmentApiResponse, PageCursor } from '../types';
@@ -22,7 +23,7 @@ export function useEnvironments(workspaceId: string, page: PageCursor, search = 
     queryFn: () =>
       anthropicBetaApi.environments.list<EnvironmentApiResponse>(
         {
-          limit: 50,
+          limit: consoleResourceListLimit,
           include_archived: status !== 'active',
           status,
           ...(search ? { search } : {}),

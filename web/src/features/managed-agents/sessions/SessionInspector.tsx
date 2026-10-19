@@ -1,6 +1,7 @@
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { ResourceIdButton } from '../components/ResourceIdButton';
+import { SessionExecutionStateBadge } from './SessionExecutionStateBadge';
 import { cn } from '../../../shared/lib/utils';
 import { Badge } from '../../../shared/ui/badge';
 import { Button, buttonVariants } from '../../../shared/ui/button';
@@ -184,7 +185,7 @@ export function SessionInspector({
     const allowedEvents = new Set(scopedToolLanes.flatMap((lane) => eventsByLaneId.get(lane.id) ?? []));
     return events.filter((event) => allowedEvents.has(event));
   }, [events, eventsByLaneId, scopedToolLanes, toolScope]);
-  const scopedToolAgent = toolScope === 'all' || scopedToolLanes.some((lane) => lane.isMain) ? related.agent : null;
+  const scopedToolAgent = related.agent;
   const toolRows = useMemo(
     () => buildInspectorToolRows(scopedToolEvents, scopedToolAgent),
     [scopedToolAgent, scopedToolEvents],
@@ -1271,6 +1272,15 @@ function InspectorToolsOverview({ totals }: { totals: ReturnType<typeof buildIns
                 {msg('managedAgents.sessions.inspector.completed', 'Completed')}
               </dt>
               <dd className="font-mono tabular-nums">{formatters.number(totals.completed)}</dd>
+              {totals.interrupted > 0 ? (
+                <>
+                  <dt className="flex items-center gap-1.5 text-muted-foreground">
+                    <span className="inline-block size-2 rounded-full bg-muted-foreground" aria-hidden />
+                    {msg('managedAgents.sessions.state.interrupted', 'Interrupted')}
+                  </dt>
+                  <dd className="font-mono tabular-nums">{formatters.number(totals.interrupted)}</dd>
+                </>
+              ) : null}
               {totals.inFlight > 0 ? (
                 <>
                   <dt className="flex items-center gap-1.5 text-muted-foreground">
@@ -1422,7 +1432,7 @@ function InspectorToolDetail({
                     </TableCell>
                     <TableCell className="h-6 min-w-0 truncate px-1.5 py-0">{call.inputPreview || '—'}</TableCell>
                     <TableCell className="h-6 truncate px-1.5 py-0 capitalize">
-                      {call.lifecycle.replace('_', ' ')}
+                      <SessionExecutionStateBadge state={call.lifecycle} tool />
                     </TableCell>
                     <TableCell className="h-6 truncate px-1.5 py-0 text-right font-mono tabular-nums">
                       {call.executionMs !== undefined ? formatSessionDuration(call.executionMs, formatters, msg) : '—'}
@@ -1716,8 +1726,8 @@ function InspectorThreadsPanel({
     </ScrollArea>
   );
   if (!selected) return threadList;
-  const selectedAgent = selected.isMain ? agent : null;
-  const selectedAgentId = selected.isMain ? agentId : '';
+  const selectedAgent = selected.isMain ? agent : (selected.agent ?? null);
+  const selectedAgentId = selected.isMain ? agentId : (selectedAgent?.id ?? '');
   return (
     <InspectorListDetailSplit
       id="threads"
@@ -1740,7 +1750,9 @@ function InspectorThreadsPanel({
                         <InspectorEntityLink href={agentDetailHref(workspaceId, selectedAgentId)}>
                           {selectedAgent?.name || selectedAgentId}
                         </InspectorEntityLink>
-                        {selectedAgent ? <span className="text-muted-foreground">v{selectedAgent.version}</span> : null}
+                        {selectedAgent?.version ? (
+                          <span className="text-muted-foreground">v{selectedAgent.version}</span>
+                        ) : null}
                       </span>
                     ) : (
                       '—'
@@ -1847,19 +1859,20 @@ function ToolPermission({ permission }: { permission: InspectorToolRow['permissi
 
 function ToolOutcomeRing({ totals }: { totals: ReturnType<typeof buildInspectorToolTotals> }) {
   const { msg } = useI18n();
-  const total = totals.completed + totals.failed + totals.denied + totals.inFlight;
+  const total = totals.calls;
   const failedEnd = total ? (totals.failed / total) * 100 : 0;
   const deniedEnd = total ? failedEnd + (totals.denied / total) * 100 : 0;
   const completedEnd = total ? deniedEnd + (totals.completed / total) * 100 : 0;
+  const interruptedEnd = total ? completedEnd + (totals.interrupted / total) * 100 : 0;
   const background = total
-    ? `conic-gradient(from -90deg, var(--destructive) 0 ${failedEnd}%, var(--warning) ${failedEnd}% ${deniedEnd}%, var(--success) ${deniedEnd}% ${completedEnd}%, var(--muted) ${completedEnd}% 100%)`
+    ? `conic-gradient(from -90deg, var(--destructive) 0 ${failedEnd}%, var(--warning) ${failedEnd}% ${deniedEnd}%, var(--success) ${deniedEnd}% ${completedEnd}%, var(--muted-foreground) ${completedEnd}% ${interruptedEnd}%, var(--muted) ${interruptedEnd}% 100%)`
     : 'var(--muted)';
   return (
     <div
       role="img"
       aria-label={msg(
-        'managedAgents.sessions.inspector.toolOutcomeSummary',
-        '{completed} completed, {failed} failed, {denied} denied, {inFlight} in flight',
+        'managedAgents.sessions.inspector.toolOutcomeSummaryWithInterrupted',
+        '{completed} completed, {failed} failed, {denied} denied, {interrupted} interrupted, {inFlight} in flight',
         totals,
       )}
       className="grid size-16 flex-none place-items-center rounded-full"

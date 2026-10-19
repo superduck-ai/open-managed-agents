@@ -1,3 +1,5 @@
+import { SessionFileContext } from './SessionFileContext';
+import type { SessionOutputFile } from './sessionOutputModel';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { I18nProvider } from '../../../shared/i18n';
 import {
@@ -33,6 +35,178 @@ const EMPTY_USAGE: SessionEventUsage = {
 afterEach(() => cleanup());
 
 describe('SessionTranscriptView', () => {
+  test('keeps completed turn files with their reply while hiding outputs beneath a streaming reply', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const at = Date.UTC(2026, 0, 1, 8);
+    const user = displayEntry('user-first', 'user', 'Make the first file');
+    const first = displayEntry('first', 'agent', 'First result', 'first-bracket');
+    const nextUser = { ...displayEntry('user-next', 'user', 'Make more files'), createdAtMs: at + 10000 };
+    const streaming = {
+      ...displayEntry('next', 'agent', 'Still working', 'next-bracket'),
+      createdAtMs: at + 12000,
+      inProgress: true,
+    };
+    const files: SessionOutputFile[] = [
+      {
+        id: 'first-file',
+        filename: 'first.txt',
+        path: '/outputs/first.txt',
+        type: 'file',
+        mime_type: 'text/plain',
+        size_bytes: 1,
+        downloadable: true,
+        created_at: new Date(at + 1000).toISOString(),
+      },
+      {
+        id: 'next-file',
+        filename: 'next.txt',
+        path: '/outputs/next.txt',
+        type: 'file',
+        mime_type: 'text/plain',
+        size_bytes: 2,
+        downloadable: true,
+        created_at: new Date(at + 11000).toISOString(),
+      },
+    ];
+    const tree = (running: boolean, streamingOpen = running) => (
+      <SessionFileContext.Provider value={{ files, workspaceId: 'workspace', running }}>
+        {transcriptTree([user, first, nextUser, { ...streaming, inProgress: streamingOpen }])}
+      </SessionFileContext.Provider>
+    );
+    const view = render(tree(true));
+    expect(
+      screen
+        .getByRole('button', { name: 'Download first.txt' })
+        .closest('[data-testid="session-output-files"]')
+        ?.previousElementSibling?.querySelector('article')
+        ?.getAttribute('data-event-id'),
+    ).toBe('trace-first');
+    expect(screen.queryByRole('button', { name: 'Download next.txt' })).toBeNull();
+    view.rerender(tree(true, false));
+    expect(screen.queryByRole('button', { name: 'Download next.txt' })).toBeNull();
+    view.rerender(tree(false, true));
+    expect(screen.queryByRole('button', { name: 'Download next.txt' })).toBeNull();
+    view.rerender(tree(false));
+    expect(
+      screen
+        .getByRole('button', { name: 'Download next.txt' })
+        .closest('[data-testid="session-output-files"]')
+        ?.previousElementSibling?.querySelector('article')
+        ?.getAttribute('data-event-id'),
+    ).toBe('trace-next');
+    expect(screen.getAllByTestId('session-output-files')).toHaveLength(2);
+    for (const output of screen.getAllByTestId('session-output-files')) {
+      expect(output.closest('[data-transcript-iteration]')).toBeNull();
+      expect(output.closest('[data-slot="message"]')).toBeNull();
+    }
+  });
+
+  test('can attach an older file explicitly referenced by a later reply without matching a path prefix', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const files: SessionOutputFile[] = ['result.txt', 'result.txt.backup'].map((filename) => ({
+      id: filename,
+      filename,
+      path: `/outputs/${filename}`,
+      type: 'file',
+      mime_type: 'text/plain',
+      size_bytes: 1,
+      downloadable: true,
+      created_at: '2025-01-01T00:00:00Z',
+    }));
+    render(
+      <SessionFileContext.Provider value={{ files, workspaceId: 'workspace', running: false }}>
+        {transcriptTree([
+          displayEntry('user', 'user', 'Show the older file'),
+          displayEntry('reply', 'agent', '[result](/outputs/result.txt.backup)'),
+        ])}
+      </SessionFileContext.Provider>,
+    );
+    expect(screen.getByRole('button', { name: 'Download result.txt.backup' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Download result.txt', exact: true })).toBeNull();
+  });
+
+  test('shows user stop and interrupted model and tool states without failure styling', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const at = '2026-10-14T06:45:48.000Z';
+    const entries = buildSessionEventEntries(
+      [
+        { id: 'request', type: 'span.model_request_start', processed_at: at },
+        { id: 'tool', type: 'agent.tool_use', name: 'Bash', input: { command: 'pwd' }, processed_at: at },
+        { id: 'stop', type: 'user.interrupt', processed_at: at },
+        {
+          id: 'tool-end',
+          type: 'agent.tool_result',
+          tool_use_id: 'tool',
+          processed_at: at,
+          is_error: true,
+          content: [{ type: 'text', text: 'Tool execution was interrupted by the user.' }],
+        },
+        {
+          id: 'end',
+          type: 'span.model_request_end',
+          model_request_start_id: 'request',
+          processed_at: at,
+          is_error: true,
+          error: { type: 'cancelled' },
+        },
+        { id: 'idle', type: 'session.status_idle', processed_at: at, stop_reason: { type: 'end_turn' } },
+      ],
+      'transcript',
+      0,
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+    const { container } = render(transcriptTree(entries));
+    expect(screen.getByText('Stopped by the user.')).toBeTruthy();
+    expect(screen.queryByText('Model request interrupted by the user.')).toBeNull();
+    expect(container.querySelector('[data-event-id^="end-"]')).toBeNull();
+    expect(container.querySelector('[data-tool-lifecycle="interrupted"]')).toBeTruthy();
+    expect(container.querySelector('[data-execution-state="failed"]')).toBeNull();
+    expect(container.querySelector('[data-transcript-tool-row]')?.className).not.toContain('text-destructive');
+    expect(screen.queryByText('Error')).toBeNull();
+  });
+
+  test.each([false, true])(
+    'renders an interrupt as a status with platform filtering %s',
+    (platformTranscriptFiltering) => {
+      resetTestDom('https://oma.duck.ai/sessions/test');
+      const events = [
+        {
+          id: 'user-message',
+          type: 'user.message',
+          processed_at: '2026-10-14T06:45:46.000Z',
+          content: [{ type: 'text', text: 'Help me check this.' }],
+        },
+        {
+          id: 'sevt_interrupt',
+          type: 'user.interrupt',
+          processed_at: '2026-10-14T06:45:48.957975Z',
+        },
+        {
+          id: 'execution-error',
+          type: 'session.error',
+          processed_at: '2026-10-14T06:45:49.000Z',
+          error: { type: 'agent_execution_error', message: 'Agent execution failed.' },
+        },
+      ];
+      const entries = buildSessionEventEntries(events, 'transcript', 0, undefined, { platformTranscriptFiltering });
+
+      const { container } = render(transcriptTree(entries));
+
+      const interrupt = container.querySelector('[data-event-id^="sevt_interrupt-"]');
+      expect(interrupt?.getAttribute('data-entry-kind')).toBe('status');
+      expect(interrupt?.textContent).toContain('Stop requested; waiting for the agent to stop.');
+      expect(interrupt?.textContent).not.toContain('processed_at');
+      expect(interrupt?.querySelector('[data-transcript-message-body]')).toBeNull();
+      expect(screen.getByText('Help me check this.')).toBeTruthy();
+      expect(screen.getAllByText('User')).toHaveLength(1);
+      expect(screen.getByText('Agent execution failed.')).toBeTruthy();
+
+      const debugEntries = buildSessionEventEntries(events, 'debug');
+      expect(debugEntries.some((entry) => 'event' in entry && entry.event.type === 'user.interrupt')).toBe(true);
+    },
+  );
+
   test.each([0, 40])('prefers reported thinking and model durations %s over bracket timing', (durationMs) => {
     resetTestDom('https://oma.duck.ai/sessions/test');
     const entries = buildSessionEventEntries(
@@ -440,7 +614,7 @@ describe('SessionTranscriptView', () => {
 
     const { container } = renderTranscript([answer, tool], () => {});
 
-    expect(screen.getAllByText('awaiting approval').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Awaiting approval').length).toBeGreaterThan(0);
     expect(container.querySelector('[data-slot="collapsible-content"]')).toBeNull();
     expect(container.querySelector('[data-transcript-tool-row]')?.getAttribute('aria-expanded')).toBeNull();
   });
@@ -457,8 +631,8 @@ describe('SessionTranscriptView', () => {
 
     const { container } = renderTranscript(entries, () => {});
 
-    expect(toolLifecycleText(container, 'awaiting', 'awaiting_approval')).toBe('awaiting approval');
-    expect(toolLifecycleText(container, 'denied', 'denied')).toBe('denied');
+    expect(toolLifecycleText(container, 'awaiting', 'awaiting_approval')).toBe('Awaiting approval');
+    expect(toolLifecycleText(container, 'denied', 'denied')).toBe('Denied');
     expect(toolLifecycleText(container, 'failed', 'failed')).toBe('Failed');
     expect(toolLifecycleText(container, 'completed', 'completed')).toBe('Completed');
     expect(toolLifecycleText(container, 'running', 'running')).toBe('Executing');

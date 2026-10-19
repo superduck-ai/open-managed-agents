@@ -46,7 +46,7 @@ func newEnvironment(root, directory, runID string) *environment {
 	return &environment{apiPort: 18080, root: root, directory: directory, runID: runID, compose: []string{"docker", "compose", "-p", runID, "-f", filepath.Join(directory, "compose.json")}}
 }
 func (e *environment) env() []string {
-	values := append(os.Environ(), "CONFIG_FILE="+filepath.Join(e.directory, "config.json"), "LIVE_WORKER_API_URL=http://"+e.apiAddress(), "LIVE_WORKER_REAL_CLAUDE=1", "TEST_API_KEY=sk-ant-local-default", "VERIFY_BE_SERVER="+filepath.Join(e.directory, "server"), "VERIFY_BE_PROFILE_READY="+filepath.Join(e.directory, "profile.ready"), "VERIFY_BE_RUN_ID="+e.runID, "VERIFY_BE_API_URL=http://"+e.apiAddress())
+	values := append(isolatedModelEnvironment(os.Environ()), "CONFIG_FILE="+filepath.Join(e.directory, "config.json"), "LIVE_WORKER_API_URL=http://"+e.apiAddress(), "LIVE_WORKER_REAL_CLAUDE=1", "TEST_API_KEY=sk-ant-local-default", "VERIFY_BE_SERVER="+filepath.Join(e.directory, "server"), "VERIFY_BE_PROFILE_READY="+filepath.Join(e.directory, "profile.ready"), "VERIFY_BE_RUN_ID="+e.runID, "VERIFY_BE_API_URL=http://"+e.apiAddress())
 	if e.storageFault != nil {
 		values = append(values, "VERIFY_BE_STORAGE_CONTROL="+e.storageFault.control.URL)
 	}

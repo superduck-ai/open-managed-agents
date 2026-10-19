@@ -25,6 +25,22 @@ const EMPTY_USAGE: SessionEventUsage = {
 };
 
 describe('sessionTranscriptModel', () => {
+  test.each([false, true])('closes a model bracket only after a stop is processed: %s', (processed) => {
+    const at = (seconds: number) => `2026-10-14T06:45:0${seconds}Z`;
+    const events = [
+      { id: 'request', type: 'span.model_request_start', processed_at: at(0) },
+      { id: 'answer', type: 'agent.message', processed_at: at(1), content: 'Partial answer' },
+      { id: 'stop', type: 'user.interrupt', created_at: at(2), processed_at: processed ? at(2) : null },
+      { id: 'error', type: 'session.error', processed_at: at(3), error: { message: 'Agent execution failed.' } },
+    ];
+    expect(latestOpenModelRequest(events)?.id ?? null).toBe(processed ? null : 'request');
+    const entries = buildSessionEventEntries(events, 'transcript', 0, undefined, { platformTranscriptFiltering: true });
+    const answer = entries.find((entry) => 'event' in entry && entry.event.id === 'answer');
+    expect(answer?.bracketOpen).toBe(!processed);
+    if (processed) expect(answer?.bracketEndMs).toBe(Date.parse(at(2)));
+    expect(entries.some((entry) => 'event' in entry && entry.event.id === 'error')).toBe(true);
+  });
+
   test('keeps distinct user messages with the same text', () => {
     const first = {
       id: 'sevt_first',

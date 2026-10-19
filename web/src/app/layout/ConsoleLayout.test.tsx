@@ -8,7 +8,7 @@ import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/works
 import { consoleNavigation } from './navigation';
 
 const testingLibrary = await import('@testing-library/react');
-const { ConsoleShell } = await import('./ConsoleLayout');
+const { ConsoleShell, SettingsShell } = await import('./ConsoleLayout');
 
 const { act, cleanup, fireEvent, render, screen, waitFor } = testingLibrary;
 
@@ -249,6 +249,60 @@ describe('ConsoleShell', () => {
     expect(content?.className).not.toContain('max-w-[928px]');
   });
 
+  test.each([
+    {
+      Shell: ConsoleShell,
+      path: '/dashboard',
+      locale: 'en' as const,
+      collapseLabel: 'Collapse',
+      expandLabel: 'Expand',
+    },
+    {
+      Shell: SettingsShell,
+      path: '/settings/organization',
+      locale: 'zh-CN' as const,
+      collapseLabel: '收起',
+      expandLabel: '展开',
+    },
+  ])('toggles the sidebar beside OMA on $path', ({ Shell, path, locale, collapseLabel, expandLabel }) => {
+    resetTestDom(`https://oma.duck.ai${path}`);
+    const navigate = mock(async () => undefined);
+    renderWithWorkspaces(
+      <Shell currentPath={path} account={testAccount()} onLogout={() => undefined} onNavigate={navigate}>
+        <div>Sidebar toggle content</div>
+      </Shell>,
+      { locale },
+    );
+
+    const sidebar = document.querySelector('[data-slot="sidebar"]');
+    const brand = screen.getByRole('link', { name: 'Open Managed Agents' });
+    const trigger = screen.getByRole('button', { name: collapseLabel });
+    expect(trigger.parentElement).toBe(brand.parentElement);
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+
+    fireEvent.click(trigger);
+
+    expect(sidebar?.getAttribute('data-state')).toBe('collapsed');
+    const expand = screen.getByRole('button', { name: expandLabel });
+    expect(expand.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('link', { name: 'Open Managed Agents' })).toBeNull();
+    expect(expand.parentElement?.querySelectorAll('button').length).toBe(1);
+    expect(expand.parentElement?.querySelector('img')).toBeNull();
+    expect(document.cookie).toContain('sidebar_state=false');
+    expect(navigate).not.toHaveBeenCalled();
+
+    fireEvent.click(expand);
+
+    expect(sidebar?.getAttribute('data-state')).toBe('expanded');
+    expect(screen.getByRole('button', { name: collapseLabel }).getAttribute('aria-expanded')).toBe('true');
+    expect(document.cookie).toContain('sidebar_state=true');
+
+    fireEvent.click(screen.getByRole('link', { name: 'Open Managed Agents' }));
+
+    expect(navigate).toHaveBeenCalledWith('/dashboard');
+    expect(sidebar?.getAttribute('data-state')).toBe('expanded');
+  });
+
   test('collapses and expands the desktop sidebar from the sidebar rail', () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     renderWithWorkspaces(
@@ -310,7 +364,7 @@ describe('ConsoleShell', () => {
 
     const sidebar = document.querySelector('[data-slot="sidebar"]');
     const sessionsMain = screen.getByText('Session content').closest('main');
-    expect(sessionsMain?.classList.contains('session-route-theme')).toBe(true);
+    expect(sessionsMain?.classList.contains('session-route-theme')).toBe(false);
     expect(sidebar?.getAttribute('data-state')).toBe('expanded');
     expect(sidebar?.getAttribute('data-collapsible')).toBe('');
 

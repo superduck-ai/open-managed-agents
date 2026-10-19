@@ -189,6 +189,7 @@ describe('session inspector tool metrics', () => {
       denied: 0,
       executingMs: 4000,
       failed: 1,
+      interrupted: 0,
       inFlight: 1,
       timeInToolsMs: 4000,
       tools: 2,

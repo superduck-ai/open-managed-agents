@@ -132,19 +132,19 @@ Go 变更仍运行 `just lint`、`just dead-code`、`just duplicates` 和 `just 
 完整请求 span 或清理失败均不能通过。用例边界和执行入口维护在 Skill 的功能地图中。
 
 同一场景增加持续 500 的退避中断回归。SSE 在提交输入前连接，mock 快速返回至少六次
-`500/api_error`；已观察请求的 span 全部结束且会话仍 running 时发送公开中断。验收 SSE
-与历史具有相同 ID 的 `idle/end_turn`、没有 `session.error`、下一条输入前没有新增模型请求且队列清空。
-随后放行正常文本响应，验证同一会话的新消息完成。状态证据保存于
-`upstream-backoff-observations.json`，对应必需阶段 `backoff_500_interrupted_and_recovered`。
-六次请求是为了进入较长退避窗口，不是生产重试上限；该场景不验收持续 500 的自然耗尽期限。
-本地沙箱控制 API 配置使用符合 E2B SDK 格式的虚拟 key，API 与 sandbox 地址均为 loopback。
-后续公开输入触发的 connect/timeout 必须经过生产 Provider 到达此控制 API；测试覆盖配置生成与
-Provider 续期调用，不因虚拟 key 格式错误而绕开真实投递链路。
+500；在已观察到的 model span 全部结束且 Session 仍 running 时发送公开 user.interrupt。
+真实 Worker 返回失败 result 时，要求 SSE 与历史具有相同 ID 的 idle/retries_exhausted、
+恰好一条 exhausted session.error、失败轮没有 agent.message、队列清空，且下一条用户消息前不再请求上游。
+随后 mock 恢复成功，同一 Session 的下一条消息必须产生正常回复及 end_turn，不增加错误。
+公开中断不覆盖 Worker 的 is_error=true，和 TestSessionWorkerInterruptedResult 保持一致。
+失败与成功运行均保存只含状态/计数及校验阶段的 upstream-backoff-observations.json，
+对应必需阶段 backoff_500_failed_turn_and_recovered。六次请求用于进入较长退避窗口，
+不定义生产重试上限；此场景不验证持续 500 自然耗尽期限。
 
-`chat.reliability` 在第一条模型请求输出首片段后暂停响应，验证第二条输入返回 409 和
-`conflict_error`，不落库且不触发模型请求。随后断开 Worker SSE 并等待真实重连，确保运行中的
-模型请求没有重复。公开 SSE 客户端在回复途中断开，模型放行后从历史恢复第一轮，空闲后重试
-第二条输入必须成功，并核对两个有序回合。再销毁 Worker 容器，通过生产恢复服务
+活跃输入契约为接受并排队：第二条输入应立即落库，`processed_at` 为 null，前一条完成后才开始处理。
+`chat.reliability` 的旧场景仍断言忙时 409，需要按此契约适配后才能用于本次验收；不能以旧断言判定队列实现。
+当前回归由 `TestSessionQueuesActiveInputs` 等本地测试覆盖，外部 `session-active-input` 用例承担真实模型验证。
+可靠性场景还覆盖断开 Worker SSE 后重连、模型请求不重复和公开 SSE 历史恢复。再销毁 Worker 容器，通过生产恢复服务
 轮换凭据，验证旧凭据被拒绝，登记新 epoch，由替代 Worker 完成排队中的第三条消息。
 它验证恢复执行路径，不验证云端故障自动检测，也不保证工具副作用执行到一半时的恢复。
 
@@ -224,7 +224,13 @@ cancelled、prerequisite、baseline_incompatible、test_failure 和 performance_
 
 公开 SSE 恢复测试在首片段后断流，完成回复后先重新订阅，再提交下一条消息，
 同时按每页 2 条扫描全量历史。要求断线前 preview 和历史 final 使用同一 ID、文本完整，
-重连 SSE 能收到新回合，最终历史顺序正确且无重复 ID。协议不承诺 Last-Event-ID 重放。
+重连 SSE 能收到新回合，最终历史顺序正确且无重复 ID。
+公开会话和线程 SSE 支持 `Last-Event-ID`：游标必须是当前会话、当前线程的持久化公开事件，
+无效游标返回 400。服务先订阅实时事件，再按历史顺序分页读取游标之后的事件，回放不包含游标本身，
+并按事件 ID 排除实时队列与回放的重叠。回放沿用历史 payload 加载逻辑；preview delta 不持久化，
+不承诺断线期间的 delta 回放。未传游标的连接仍只接收订阅后的事件。
+`TestSessionStreamReplay` 覆盖无效及跨会话游标拒绝和跨页回放；
+`TestStreamReplaySuppressesOverlappingLiveEvents` 覆盖回放与实时事件去重及无游标行为。
 Go 场景验证真实后端合同；前端的合并去重算法仍由前端现有测试负责，不声称浏览器覆盖。
 
 `chat.public` 在测试进程内启动生产 Runner.Start 循环，配置两个领取 worker。

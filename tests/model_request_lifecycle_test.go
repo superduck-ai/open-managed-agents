@@ -375,6 +375,23 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 				}
 			}
 		}
+		threadID := maevents.ClaudeTaskThreadID(codeSession.ExternalID, "tool_lifecycle")
+		resumed := send(threadID, "resumed_child")
+		select {
+		case mode := <-entered:
+			if mode != "resumed_child" {
+				t.Fatalf("unexpected request %s", mode)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("retained thread ID did not reach provider")
+		}
+		release <- struct{}{}
+		resumedID := <-resumed
+		for _, event := range requestLifecycleEvents(t, app, codeSession, completed*2+6) {
+			if event.ExternalID == resumedID && (event.ThreadExternalID == nil || *event.ThreadExternalID != threadID) {
+				t.Fatalf("retained child event has wrong owner: %+v", event)
+			}
+		}
 	})
 	t.Run("history preserves insertion order at equal processed times", func(t *testing.T) {
 		at := time.Now().UTC().Truncate(time.Microsecond)

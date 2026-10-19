@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 )
 
 type agentAPIResponse struct {
@@ -640,5 +641,111 @@ func decodeRawJSON(t *testing.T, raw json.RawMessage, target any) {
 	t.Helper()
 	if err := json.Unmarshal(raw, target); err != nil {
 		t.Fatalf("decode raw JSON %s: %v", raw, err)
+	}
+}
+
+func TestSubagentReferenceVersions(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("subagent-reference-versions"))
+	child := createAgent(t, app, `{"name":"child","model":"claude-opus-4-6"}`)
+	for _, reference := range []string{
+		`{"type":"agent","id":"agent_missing"}`,
+		`{"type":"agent","id":` + quoteJSON(child.ID) + `,"version":0}`,
+		`{"type":"agent","id":` + quoteJSON(child.ID) + `,"version":9999}`,
+	} {
+		response := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(`{"name":"invalid","model":"claude-opus-4-6","multiagent":{"type":"coordinator","agents":[`+reference+`]}}`), defaultTestKey, true)
+		assertError(t, response, http.StatusBadRequest, "invalid_request_error")
+	}
+	assertVersion := func(parent agentAPIResponse, version int) {
+		t.Helper()
+		var roster struct {
+			Agents []struct {
+				ID      string `json:"id"`
+				Version int    `json:"version"`
+			} `json:"agents"`
+		}
+		decodeRawJSON(t, parent.Multiagent, &roster)
+		if len(roster.Agents) != 1 || roster.Agents[0].ID != child.ID || roster.Agents[0].Version != version {
+			t.Fatalf("roster=%s, want child@%d", parent.Multiagent, version)
+		}
+	}
+	latest := `{"type":"coordinator","agents":[{"type":"agent","id":` + quoteJSON(child.ID) + `}]}`
+	pinned := `{"type":"coordinator","agents":[{"type":"agent","id":` + quoteJSON(child.ID) + `,"version":1}]}`
+	parent := createAgent(t, app, `{"name":"parent","model":"claude-opus-4-6","multiagent":`+latest+`}`)
+	assertVersion(parent, 1)
+	updateAgent(t, app, child.ID, `{"version":1,"name":"child-v2"}`, http.StatusOK)
+	assertVersion(retrieveAgent(t, app, parent.ID, ""), 1)
+	assertVersion(updateAgent(t, app, parent.ID, `{"version":1,"name":"renamed"}`, http.StatusOK), 1)
+	assertVersion(updateAgent(t, app, parent.ID, `{"version":2,"multiagent":`+latest+`}`, http.StatusOK), 2)
+	assertVersion(updateAgent(t, app, parent.ID, `{"version":3,"multiagent":`+pinned+`}`, http.StatusOK), 1)
+	assertVersion(createAgent(t, app, `{"name":"explicit","model":"claude-opus-4-6","multiagent":`+pinned+`}`), 1)
+}
+
+func TestSessionAndDeploymentRejectInvalidSubagentNames(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("subagent-name-validation"))
+	env := createEnvironment(t, app, `{"name":"subagent-name-validation"}`)
+	for _, test := range []struct {
+		name       string
+		childNames []string
+	}{
+		{name: "leading hyphen", childNames: []string{"-reviewer"}},
+		{name: "duplicate names with distinct IDs", childNames: []string{"reviewer", "reviewer"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			references := make([]string, 0, len(test.childNames))
+			var child agentAPIResponse
+			for _, name := range test.childNames {
+				child = createAgent(t, app, `{"name":`+quoteJSON(name)+`,"model":"claude-opus-4-6"}`)
+				references = append(references, `{"type":"agent","id":`+quoteJSON(child.ID)+`,"version":1}`)
+			}
+			parent := createAgent(t, app, `{"name":"parent","model":"claude-opus-4-6","multiagent":{"type":"coordinator","agents":[`+strings.Join(references, ",")+`]}}`)
+			updateAgent(t, app, child.ID, `{"version":1,"name":"valid-latest"}`, http.StatusOK)
+			response := doSessionRequest(t, app, http.MethodPost, "/v1/sessions", strings.NewReader(`{"agent":`+quoteJSON(parent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`), defaultTestKey, true)
+			assertError(t, response, http.StatusBadRequest, "invalid_request_error")
+			response = doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments", strings.NewReader(deploymentBodyWithExtra(parent.ID, env.ID, "")), defaultTestKey, true)
+			assertError(t, response, http.StatusBadRequest, "invalid_request_error")
+		})
+	}
+}
+
+func TestSessionSubagentSnapshotsAreExpandedOnCreation(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("subagent-snapshot-creation"))
+	child := createAgent(t, app, `{"name":"child","model":"claude-opus-4-6","system":"child-v1"}`)
+	parent := createAgent(t, app, `{"name":"parent","model":"claude-opus-4-6","system":"parent-v1","multiagent":{"type":"coordinator","agents":[{"type":"agent","id":`+quoteJSON(child.ID)+`,"version":1},{"type":"self"}]}}`)
+	updateAgent(t, app, child.ID, `{"version":1,"name":"-child-v2","model":"claude-sonnet-4-6","system":"child-v2"}`, http.StatusOK)
+	updateAgent(t, app, parent.ID, `{"version":1,"name":"parent-v2","system":"parent-v2"}`, http.StatusOK)
+	env := createEnvironment(t, app, `{"name":"subagent-snapshot-creation"}`)
+	created := createSession(t, app, `{"agent":`+quoteJSON(parent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	scope := getDefaultDBIDs(t, app.pool)
+	session, found, err := app.db.GetSession(t.Context(), scope.WorkspaceUUID, created.ID)
+	if err != nil || !found {
+		t.Fatalf("load session: %v %t", err, found)
+	}
+	var snapshot agentAPIResponse
+	decodeRawJSON(t, session.AgentSnapshot, &snapshot)
+	var roster struct {
+		Agents []agentAPIResponse `json:"agents"`
+	}
+	decodeRawJSON(t, snapshot.Multiagent, &roster)
+	if len(roster.Agents) != 2 {
+		t.Fatalf("child count=%d", len(roster.Agents))
+	}
+	for i, want := range []struct{ id, system string }{{child.ID, "child-v1"}, {parent.ID, "parent-v1"}} {
+		got := roster.Agents[i]
+		var model struct {
+			ID string `json:"id"`
+		}
+		decodeRawJSON(t, got.Model, &model)
+		if got.ID != want.id || got.Version != 1 || got.System == nil || *got.System != want.system || model.ID != "claude-opus-4-6" || string(got.Multiagent) != "null" {
+			t.Fatalf("creation lost pinned child or self configuration: %+v", got)
+		}
+	}
+	primary, found, err := app.db.GetPrimarySessionThread(t.Context(), scope.WorkspaceUUID, created.ID)
+	if err != nil || !found || !agentsnapshot.SameRawJSON(primary.AgentSnapshot, session.AgentSnapshot) {
+		t.Fatalf("creation did not persist the expanded primary snapshot: %v", err)
+	}
+	deployment := createDeployment(t, app, deploymentBodyWithExtra(parent.ID, env.ID, ""))
+	storedDeployment, err := app.db.GetDeployment(t.Context(), scope.WorkspaceUUID, deployment.ID)
+	if err != nil || !agentsnapshot.SameRawJSON(storedDeployment.AgentSnapshot, session.AgentSnapshot) {
+		t.Fatalf("deployment and session creation expanded different configurations: %s %v", storedDeployment.AgentSnapshot, err)
 	}
 }

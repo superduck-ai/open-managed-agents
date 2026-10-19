@@ -44,7 +44,7 @@ func TestSessionUsageCacheTokensPostgres(t *testing.T) {
 					payload := []byte(fmt.Sprintf(`{"%s":{"input_tokens":5,"cache_creation":%s},"billing":{"list_cost":"1"}}`, field, cache))
 					_, err := NewSessionEventMapper(d.mapperDB).Insert(t.Context(), sessionEventWriteParams{
 						UUID: uuid.NewV4().String(), ExternalID: "event_" + uuid.NewV4().String(), OrganizationUUID: org, WorkspaceUUID: ws,
-						SessionUUID: session, SessionExternalID: session, EventType: "span.model_request_end", Payload: payload, CreatedAt: now, ProcessedAt: now,
+						SessionUUID: session, SessionExternalID: session, EventType: "span.model_request_end", Payload: payload, CreatedAt: now, ProcessedAt: new(now),
 					})
 					if err != nil {
 						t.Fatal(err)

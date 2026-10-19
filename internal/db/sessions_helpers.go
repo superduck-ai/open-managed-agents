@@ -3,6 +3,7 @@ package db
 import (
 	"bytes"
 	"context"
+	"time"
 
 	"github.com/superduck-ai/yourbatis"
 )
@@ -144,13 +145,17 @@ func sessionResourceWriteParameters(resource SessionResource) sessionResourceWri
 }
 
 func sessionEventWriteParameters(event SessionEvent) sessionEventWriteParams {
+	var processedAt *time.Time
+	if !event.ProcessedAt.IsZero() {
+		processedAt = &event.ProcessedAt
+	}
 	return sessionEventWriteParams{
 		UUID: event.UUID, ExternalID: event.ExternalID, OrganizationUUID: event.OrganizationUUID,
 		WorkspaceUUID: event.WorkspaceUUID, SessionUUID: event.SessionUUID,
 		SessionExternalID: event.SessionExternalID, ThreadUUID: event.ThreadUUID,
 		ThreadExternalID: event.ThreadExternalID, EventType: event.EventType,
 		PayloadBlobUUID: event.PayloadBlobUUID, ToolUseID: event.ToolUseID,
-		Payload: agentJSONArg(event.Payload), ProcessedAt: event.ProcessedAt, CreatedAt: event.CreatedAt,
+		Payload: agentJSONArg(event.Payload), ProcessedAt: processedAt, CreatedAt: event.CreatedAt,
 	}
 }
 
@@ -245,12 +250,16 @@ func (r sessionResourceRow) resource() SessionResource {
 }
 
 func (r sessionEventRow) event() SessionEvent {
+	var processedAt time.Time
+	if r.ProcessedAt != nil {
+		processedAt = *r.ProcessedAt
+	}
 	return SessionEvent{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ThreadUUID: r.ThreadUUID, ThreadExternalID: r.ThreadExternalID, EventType: r.EventType,
 		PayloadBlobUUID: r.PayloadBlobUUID, ToolUseID: r.ToolUseID,
-		Payload: bytes.Clone(r.Payload), ProcessedAt: r.ProcessedAt, CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
+		Payload: bytes.Clone(r.Payload), ProcessedAt: processedAt, CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
 	}
 }
 

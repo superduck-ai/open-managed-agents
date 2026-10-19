@@ -34,6 +34,8 @@ func TestSessionWorkerFailedTurnStopReason(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("retry input status=%d: %s", response.StatusCode, readAll(t, response.Body))
 	}
+	queued := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.message", defaultTestKey)
+	consumePublicInput(t, app, worker, epoch, sessionEventStringField(t, queued.Data[0], "id"))
 	state("running")
 	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch,
 		`{"type":"assistant","uuid":"normal-message","message":{"id":"normal-reply","content":[{"type":"text","text":"Recovered"}]}}`,
@@ -79,5 +81,5 @@ func TestSessionWorkerFailedTurnIgnoresChildReply(t *testing.T) {
 		`{"type":"system","uuid":"child-completed","subtype":"task_notification","task_id":"child-task","tool_use_id":"child-tool","status":"completed"}`,
 	))
 	putCodeSessionWorkerState(t, app, worker.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
-	assertWorkerIdleReasons(t, app, worker.SessionExternalID, "end_turn", "retries_exhausted")
+	assertWorkerIdleReasons(t, app, worker.SessionExternalID, "retries_exhausted")
 }

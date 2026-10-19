@@ -24,22 +24,26 @@ type Store interface {
 }
 
 type EmailProvider struct {
-	store         Store
-	codes         EmailCodeStore
-	sender        LoginCodeSender
-	codeHMACKey   []byte
-	acceptAnyCode bool
-	logger        *slog.Logger
+	loginEmailDomains []string
+	store             Store
+	codes             EmailCodeStore
+	sender            LoginCodeSender
+	codeHMACKey       []byte
+	acceptAnyCode     bool
+	logger            *slog.Logger
 }
 
 func New(cfg config.AuthConfig, store Store, redisClient *redis.Client, logger *slog.Logger) *EmailProvider {
+	domains := cfg.AllowedEmailDomains
 	if cfg.SMTP.Addr == "" {
 		logger = logging.LoggerOrDefault(logger)
 		logger.Warn("SMTP is not configured; email login accepts any non-empty verification code")
-		return &EmailProvider{store: store, acceptAnyCode: true, logger: logger}
+		return &EmailProvider{store: store, acceptAnyCode: true, logger: logger, loginEmailDomains: domains}
 	}
 	key := sha256.Sum256([]byte("open-managed-agents/email-login-code/v1\x00" + cfg.SMTP.Password))
-	return NewEmailProvider(store, newRedisEmailCodeStore(redisClient), newSMTPSender(cfg.SMTP), key[:], logger)
+	provider := NewEmailProvider(store, newRedisEmailCodeStore(redisClient), newSMTPSender(cfg.SMTP), key[:], logger)
+	provider.loginEmailDomains = domains
+	return provider
 }
 
 func NewEmailProvider(store Store, codes EmailCodeStore, sender LoginCodeSender, codeHMACKey []byte, logger *slog.Logger) *EmailProvider {

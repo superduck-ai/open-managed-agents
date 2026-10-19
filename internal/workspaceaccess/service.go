@@ -47,7 +47,6 @@ func (s *Service) Resolve(ctx context.Context, organizationUUID, userID, workspa
 	return workspace, access, err
 }
 
-// Effective 只读取组织角色和普通空间显式角色；默认空间忽略所有历史成员记录。
 func Effective(organizationRole string, isDefault bool, explicitRole string) (auth.WorkspaceAccess, error) {
 	inherited := map[string]string{"admin": "workspace_admin", "user": "workspace_user"}
 	role, known := inherited[organizationRole]

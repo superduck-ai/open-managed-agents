@@ -6,6 +6,23 @@
 preview 使用 Core NATS Pub/Sub；Code Session worker 入站事件使用同一连接上的 JetStream。handler
 和业务 service 不建立独立连接池。
 
+HTTP 退出时，组装层通过 `httpapi.WithStreamShutdown` 向请求传入进程退出通知。
+Session SSE 与 Worker SSE 在资源入口使用 `httpapi.StreamContext` 派生流 context，
+收到通知后结束订阅，执行原有断连清理；退出不会推进 Worker epoch，也不会删除仍活跃会话的 consumer。
+普通 HTTP 请求不随该通知取消，继续在 `http.Server.Shutdown` 的 10 秒预算内完成。
+超时后组装层调用 `Server.Close` 关闭剩余连接，再清理后台组件、NATS、Redis 和数据库；
+HTTP 超时仍作为错误返回。此预算仅覆盖 HTTP 排空，不是整个进程清理的总时限。
+第一次 SIGINT 或 SIGTERM 后解除信号接管，后续信号恢复默认行为，允许再次 Ctrl-C 中断等待。
+
+执行 `just generate` 后，回归入口为
+`go test . ./internal/httpapi -run 'TestShutdownHTTP|TestServeHTTP|TestStreamContext' -count=1`，
+覆盖超时关闭活跃连接、退出时结束长流、普通请求继续完成及客户端取消传播。
+完整静态检查与单测按仓库质量门禁执行；这些测试不替代真实 Worker、NATS 和数据库集成验收。
+真实退出验收使用 `just verify-be chat doctor shutdown` 与 `just verify-be chat shutdown`，
+在隔离 PostgreSQL、Redis、NATS 和 MinIO 上启动真实后端进程，覆盖部分请求体阻塞时的十秒排空、
+第二次中断立即退出，以及同时保持 Session/Worker SSE 时的正常退出。
+该场景不需要模型 Worker，不覆盖云端退出或全部后台组件的总清理时间；聊天回合另运行 `chat roundtrip`。
+
 MCP Tunnel 复用同一连接：命令使用 R3 WorkQueue（共享 consumer，MaxDeliver=1），不可覆盖响应绑定改由 Redis String key 保存，NATS 不再创建 Request KV。
 通知和最终响应正文均通过 Core NATS request-reply 直接交付原 OMA；不保存终态、不定时恢复，完成标记仅在原实例内存中保留。
 Tunnel Broker 只关闭自身订阅，共享连接由组装层统一 drain。Broker 依赖 Redis 保存和读取领取绑定；绑定写入失败不交付命令，读取失败拒绝响应，不回退到 NATS KV 或 PostgreSQL。
@@ -61,8 +78,8 @@ worker 强制执行。容量满时新 Publish 被拒绝并返回调用方；没�
 每个 Code Session 使用任务 subject `oma.worker.inbound.v2.<code-session-id>` 和回应 subject
 `oma.worker.inbound.v2.<code-session-id>.reply`，各创建一个稳定 durable pull consumer。精确 filter
 互不重叠，满足 `WorkQueuePolicy` 限制。两路均配置为 `DeliverAll`、`AckExplicit`、
-`MaxAckPending=1`、无限 `MaxDeliver`，退避 1 分钟、5 分钟、15 分钟，之后保持 15 分钟。
-各路内部串行；控制回应可以越过未完成任务及排队输入，解除循环等待。分类及顺序约束见
+无限 `MaxDeliver`，退避 1 分钟、5 分钟、15 分钟，之后保持 15 分钟。
+两路均使用服务端默认 `MaxAckPending`，当前 NATS 2.14.6 为 1000；每次按序拉取一条，执行端负责输入顺序和幂等。控制回应可以越过未完成任务及排队输入，解除循环等待。分类及顺序约束见
 [Worker 入站投递设计](ccrv2/ccr-v2-worker-events-delivery-backend-design.md#stream-与顺序)。
 
 SSE 断开不删除 consumer。worker 上报 `received` 或 `processing` 时发送 InProgress；只有

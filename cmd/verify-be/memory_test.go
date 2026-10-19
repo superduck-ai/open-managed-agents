@@ -4,10 +4,22 @@ import (
 	"bytes"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
+func TestMemoryLoadingVerdictRequiresCatalogAndReadProof(t *testing.T) {
+	selected := scenarios["chat.brain-memory"]
+	if !usesBrain("chat.brain-memory") || !slices.Contains(selected.Stages, "brain_memory_loaded") {
+		t.Fatal("Brain Memory prerequisites or proof removed")
+	}
+	output := testOutput(t, selected, []testEvent{{Test: selected.Test, Action: "pass"}, {Action: "pass"}}, false)
+	result, err := evaluate(strings.NewReader(output), 0, selected)
+	if err != nil || result.Status != "fail" || !slices.Equal(result.MissingStages, []string{"brain_memory_loaded"}) {
+		t.Fatalf("missing Memory evidence accepted: %+v %v", result, err)
+	}
+}
 func TestMemoryCommands(t *testing.T) {
 	for _, args := range [][]string{{"memory"}, {"memory", "doctor", "unknown"}, {"memory", "cleanup", "--worker-image=x"}, {"memory", "mounts", "--baseline=x"}} {
 		if _, err := parseCLI(args, &bytes.Buffer{}); err == nil {

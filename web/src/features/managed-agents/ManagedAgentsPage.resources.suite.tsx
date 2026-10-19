@@ -1293,15 +1293,15 @@ export function registerManagedAgentsResourceTests() {
     ) as HTMLElement;
     const batchRow = document.querySelector('[data-entry-kind="tool_batch"]') as HTMLElement;
 
-    expect(waitingRow.textContent).toContain('awaiting approval');
+    expect(waitingRow.textContent).toContain('Awaiting approval');
     expect(policyObjectWaitingRow.textContent).toContain('echo permission policy');
-    expect(policyObjectWaitingRow.textContent).toContain('awaiting approval');
+    expect(policyObjectWaitingRow.textContent).toContain('Awaiting approval');
     expect(allowedRow.textContent).toContain('npm run build');
-    expect(allowedRow.textContent).not.toContain('awaiting approval');
-    expect(deniedRow.textContent).toContain('denied');
+    expect(allowedRow.textContent).not.toContain('Awaiting approval');
+    expect(deniedRow.textContent).toContain('Denied');
     expect(deniedRow.textContent).toContain(' Github  Search Repositories');
     expect(requiresActionWaitingRow.textContent).toContain('Beijing');
-    expect(requiresActionWaitingRow.textContent).toContain('awaiting approval');
+    expect(requiresActionWaitingRow.textContent).toContain('Awaiting approval');
     expect(screen.queryByText('Needs owner approval')).toBeNull();
     expect(batchRow.textContent).toContain('Read');
     expect(batchRow.textContent).toContain('Glob');
@@ -1405,7 +1405,7 @@ export function registerManagedAgentsResourceTests() {
       expect(mainRow).toBeTruthy();
     });
     expect(mainRow?.textContent).toContain('/workspace/main.txt');
-    expect(mainRow?.textContent).toContain('awaiting approval');
+    expect(mainRow?.textContent).toContain('Awaiting approval');
     expect(await screen.findByTestId('session-tool-approval-card')).toBeTruthy();
     expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
     expect(screen.queryByText('Paris')).toBeNull();
@@ -1422,7 +1422,7 @@ export function registerManagedAgentsResourceTests() {
       expect(reporterRow).toBeTruthy();
     });
     expect(reporterRow?.textContent).toContain('Paris');
-    expect(reporterRow?.textContent).toContain('denied');
+    expect(reporterRow?.textContent).toContain('Denied');
     expect(screen.getByTestId('session-tool-approval-card')).toBeTruthy();
     expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
     expect(

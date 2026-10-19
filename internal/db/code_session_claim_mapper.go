@@ -31,11 +31,20 @@ type releaseCodeSessionClaimParams struct {
 	Failed     bool
 }
 
+type failCodeSessionClaimParams struct {
+	ExternalID  string
+	WorkerID    string
+	Epoch       int64
+	MaxAttempts int
+	HoldUntil   time.Time
+}
+
 type CodeSessionClaimMapper interface {
 	LockNextClaimable(ctx context.Context, leaseGraceMicros int64) (codeSessionClaimCandidateRow, bool, error)
 	Claim(ctx context.Context, params claimCodeSessionParams) (int64, error)
 	HoldExhausted(ctx context.Context, uuid string, holdUntil time.Time) (int64, error)
-	ResetExhausted(ctx context.Context, uuid string) (int64, error)
+	ResetExhausted(ctx context.Context, uuid string, epoch int64) (int64, error)
+	FailPermanently(ctx context.Context, params failCodeSessionClaimParams) (string, error)
 	Release(ctx context.Context, params releaseCodeSessionClaimParams) (int64, error)
 	FindWorkerTransport(ctx context.Context, externalID string) (string, error)
 	Request(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (int64, error)

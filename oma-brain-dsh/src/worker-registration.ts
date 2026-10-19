@@ -1,5 +1,6 @@
 import { validateAssignment, type Assignment } from "./assignment.ts";
 import type { OmaApi } from "./api.ts";
+import { PermanentAdmissionError } from "./claim.ts";
 
 export interface BrainTask {
   session_id: string;
@@ -10,13 +11,13 @@ export interface BrainTask {
 
 export function validateBrainTask(value: unknown): asserts value is BrainTask {
   if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Invalid task envelope");
+    throw new PermanentAdmissionError("Invalid task envelope");
   const task = value as Partial<BrainTask>;
   if (typeof task.session_id !== "string" || !task.session_id
     || typeof task.ingress_token !== "string" || !task.ingress_token
     || typeof task.model_token !== "string" || !task.model_token
     || typeof task.worker_epoch !== "number" || !Number.isSafeInteger(task.worker_epoch) || task.worker_epoch <= 0)
-    throw new Error("Invalid task identity or credentials");
+    throw new PermanentAdmissionError("Invalid task identity or credentials");
 }
 
 export async function registerWorkerTask(api: OmaApi, task: BrainTask, signal?: AbortSignal): Promise<Assignment> {
@@ -28,7 +29,7 @@ export async function registerWorkerTask(api: OmaApi, task: BrainTask, signal?: 
   const response = await api.request(`/v2/sessions/${id}`, task.ingress_token, "GET", undefined, undefined, signal);
   const context = response.session_context;
   if (!context || typeof context !== "object" || Array.isArray(context))
-    throw new Error("Invalid session_context");
+    throw new PermanentAdmissionError("Invalid session_context");
   const assignment: Assignment = {
     ...task,
     launch: {
@@ -42,6 +43,10 @@ export async function registerWorkerTask(api: OmaApi, task: BrainTask, signal?: 
       headers: { Authorization: `Bearer ${task.ingress_token}` },
     } } },
   };
-  validateAssignment(assignment);
+  try {
+    validateAssignment(assignment);
+  } catch (error) {
+    throw new PermanentAdmissionError(error instanceof Error ? error.message : "Invalid assignment");
+  }
   return assignment;
 }

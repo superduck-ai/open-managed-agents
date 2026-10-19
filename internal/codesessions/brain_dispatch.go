@@ -3,6 +3,7 @@ package codesessions
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"time"
 
@@ -24,6 +25,14 @@ const (
 	brainClaimExhaustedMessage = "The agent worker could not start this session after repeated attempts."
 )
 
+type BrainClaimReleaseReason string
+
+const (
+	BrainClaimAdmissionFailed BrainClaimReleaseReason = "admission_failed"
+	BrainClaimShutdown        BrainClaimReleaseReason = "shutdown"
+	BrainClaimPermanent       BrainClaimReleaseReason = "permanent"
+)
+
 type BrainClaim struct {
 	CodeSessionID  string
 	WorkerEpoch    int64
@@ -32,22 +41,17 @@ type BrainClaim struct {
 	ClaimExpiresAt time.Time
 }
 
-type workerLeaseTimings struct {
-	ttl   time.Duration
-	grace time.Duration
-}
-
 type codeSessionTransportMetadata struct {
 	Config struct {
 		WorkerTransport string `json:"worker_transport"`
 	} `json:"config"`
 }
 
-func leaseTimingsForTransport(transport string) workerLeaseTimings {
+func leaseTimingsForTransport(transport string) db.WorkerLeaseTimings {
 	if transport == brainWorkerTransport {
-		return workerLeaseTimings{ttl: brainWorkerLeaseTTL, grace: brainWorkerLeaseGrace}
+		return db.WorkerLeaseTimings{TTL: brainWorkerLeaseTTL, Grace: brainWorkerLeaseGrace}
 	}
-	return workerLeaseTimings{ttl: codeSessionWorkerLeaseTTL, grace: codeSessionWorkerLeaseGrace}
+	return db.WorkerLeaseTimings{TTL: codeSessionWorkerLeaseTTL, Grace: codeSessionWorkerLeaseGrace}
 }
 
 func usesBrainClaimTransport(codeSession db.CodeSession) bool {
@@ -58,10 +62,10 @@ func usesBrainClaimTransport(codeSession db.CodeSession) bool {
 	return metadata.Config.WorkerTransport == brainWorkerTransport
 }
 
-func (s *Service) workerLeaseTimings(ctx context.Context, codeSessionID string) (workerLeaseTimings, error) {
+func (s *Service) workerLeaseTimings(ctx context.Context, codeSessionID string) (db.WorkerLeaseTimings, error) {
 	transport, err := s.db.GetCodeSessionWorkerTransport(ctx, codeSessionID)
 	if err != nil {
-		return workerLeaseTimings{}, err
+		return db.WorkerLeaseTimings{}, err
 	}
 	return leaseTimingsForTransport(transport), nil
 }
@@ -75,12 +79,16 @@ func (s *Service) DispatchWorker(ctx context.Context, session db.Session, codeSe
 	if err := s.db.RequestCodeSessionWorker(ctx, session.OrganizationUUID, session.WorkspaceUUID, codeSessionID); err != nil {
 		return err
 	}
+	s.notifyBrainWork(ctx, codeSessionID)
+	return nil
+}
+
+func (s *Service) notifyBrainWork(ctx context.Context, codeSessionID string) {
 	if signal := s.brainWorkSignal(); signal != nil {
 		if err := signal.NotifyBrainWork(ctx); err != nil {
 			s.logger.WarnContext(ctx, "notify brain workers", "code_session_id", codeSessionID, "error", err)
 		}
 	}
-	return nil
 }
 
 func (s *Service) ClaimBrainWorker(ctx context.Context, workerID string, block time.Duration) (BrainClaim, bool, error) {
@@ -138,6 +146,10 @@ func (s *Service) claimNextBrainWorker(ctx context.Context, workerID string) (Br
 			continue
 		}
 		credentialContext, err := s.db.GetCodeSessionCredentialContextForIssue(ctx, claim.OrganizationUUID, claim.WorkspaceUUID, claim.CodeSessionExternalID)
+		if errors.Is(err, db.ErrNotFound) {
+			s.logger.InfoContext(ctx, "claimed code session disappeared before credential issue", "code_session_id", claim.CodeSessionExternalID, "worker_id", workerID)
+			continue
+		}
 		if err != nil {
 			return BrainClaim{}, false, err
 		}
@@ -181,17 +193,32 @@ func (s *Service) failExhaustedBrainClaim(ctx context.Context, claim db.CodeSess
 		s.logger.ErrorContext(ctx, "publish brain claim failure", "code_session_id", claim.CodeSessionExternalID, "error", err)
 		return
 	}
-	if err := s.db.ResetExhaustedCodeSessionClaim(ctx, claim.CodeSessionUUID); err != nil {
-		s.logger.ErrorContext(ctx, "reset exhausted brain claim", "code_session_id", claim.CodeSessionExternalID, "error", err)
+	if err := s.db.ResetExhaustedCodeSessionClaim(ctx, claim.CodeSessionUUID, claim.WorkerEpoch); err != nil {
+		s.logger.WarnContext(ctx, "reset exhausted brain claim", "code_session_id", claim.CodeSessionExternalID, "worker_epoch", claim.WorkerEpoch, "error", err)
 		return
 	}
 	s.logger.WarnContext(ctx, "brain worker claims exhausted", "code_session_id", claim.CodeSessionExternalID, "attempts", brainClaimMaxAttempts)
 }
 
-func (s *Service) ReleaseBrainClaim(ctx context.Context, codeSessionID, workerID string, epoch int64, failed bool) error {
-	if err := s.db.ReleaseCodeSessionClaim(ctx, codeSessionID, workerID, epoch, failed); err != nil {
+func (s *Service) ReleaseBrainClaim(ctx context.Context, codeSessionID, workerID string, epoch int64, reason BrainClaimReleaseReason) error {
+	if reason == BrainClaimPermanent {
+		claim, err := s.db.FailCodeSessionClaimPermanently(ctx, db.FailCodeSessionClaimInput{
+			CodeSessionExternalID: codeSessionID, WorkerID: workerID, WorkerEpoch: epoch,
+			MaxAttempts: brainClaimMaxAttempts, Hold: brainClaimExhaustedHold,
+		})
+		if err != nil {
+			return err
+		}
+		s.logger.WarnContext(ctx, "brain worker reported permanent admission failure", "code_session_id", codeSessionID, "worker_id", workerID, "worker_epoch", epoch)
+		s.failExhaustedBrainClaim(ctx, claim)
+		return nil
+	}
+	if err := s.db.ReleaseCodeSessionClaim(ctx, codeSessionID, workerID, epoch, reason == BrainClaimAdmissionFailed); err != nil {
 		return err
 	}
-	s.logger.InfoContext(ctx, "brain worker released code session", "code_session_id", codeSessionID, "worker_id", workerID, "worker_epoch", epoch, "failed", failed)
+	s.logger.InfoContext(ctx, "brain worker released code session", "code_session_id", codeSessionID, "worker_id", workerID, "worker_epoch", epoch, "reason", string(reason))
+	if reason == BrainClaimShutdown {
+		s.notifyBrainWork(ctx, codeSessionID)
+	}
 	return nil
 }

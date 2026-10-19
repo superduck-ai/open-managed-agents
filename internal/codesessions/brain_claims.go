@@ -136,11 +136,12 @@ func (h *Handler) handleBrainClaimRelease(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		return brainClaimInvalidRequest("Invalid JSON body", err)
 	}
-	if request.WorkerEpoch <= 0 || (request.Reason != "admission_failed" && request.Reason != "shutdown") {
-		return brainClaimInvalidRequest("worker_epoch must be positive and reason must be admission_failed or shutdown", nil)
+	reason := BrainClaimReleaseReason(request.Reason)
+	if request.WorkerEpoch <= 0 || (reason != BrainClaimAdmissionFailed && reason != BrainClaimShutdown && reason != BrainClaimPermanent) {
+		return brainClaimInvalidRequest("worker_epoch must be positive and reason must be admission_failed, shutdown or permanent", nil)
 	}
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	if err := h.service.ReleaseBrainClaim(r.Context(), codeSessionID, workerID, request.WorkerEpoch, request.Reason == "admission_failed"); err != nil {
+	if err := h.service.ReleaseBrainClaim(r.Context(), codeSessionID, workerID, request.WorkerEpoch, reason); err != nil {
 		return mapBrainClaimReleaseError(err)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})

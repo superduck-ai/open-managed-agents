@@ -131,6 +131,35 @@ func heartbeatBrainWorker(t *testing.T, app *testApp, claim brainClaimTestRespon
 	return response, string(readAll(t, response.Body))
 }
 
+func assertBrainClaimFailurePublished(t *testing.T, app *testApp, code db.CodeSession, public db.Session) {
+	t.Helper()
+	page := listSessionEvents(t, app, public.ExternalID, "", defaultTestKey)
+	var sawError, sawIdle bool
+	for _, raw := range page.Data {
+		var event struct {
+			Type  string `json:"type"`
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+			StopReason struct {
+				Type string `json:"type"`
+			} `json:"stop_reason"`
+		}
+		if err := json.Unmarshal(raw, &event); err != nil {
+			t.Fatal(err)
+		}
+		sawError = sawError || (event.Type == "session.error" && strings.Contains(event.Error.Message, "repeated attempts"))
+		sawIdle = sawIdle || (event.Type == "session.status_idle" && event.StopReason.Type == "retries_exhausted")
+	}
+	if !sawError || !sawIdle {
+		t.Fatalf("exhaustion events missing: error=%t idle=%t", sawError, sawIdle)
+	}
+	stored, _, err := app.db.GetSession(t.Context(), code.WorkspaceUUID, code.SessionExternalID)
+	if err != nil || stored.Status != "idle" {
+		t.Fatalf("session status after exhaustion = %q err=%v", stored.Status, err)
+	}
+}
+
 func TestBrainClaimRejectsInvalidRequests(t *testing.T) {
 	app := newBrainClaimApp(t)
 	code, _ := prepareBrainClaimSession(t, app)
@@ -268,32 +297,56 @@ func TestBrainClaimExhaustionPublishesSessionError(t *testing.T) {
 	if _, found := claimBrainWorker(t, app, "worker-a", 0); found {
 		t.Fatal("exhausted session handed out")
 	}
-	page := listSessionEvents(t, app, public.ExternalID, "", defaultTestKey)
-	var sawError, sawIdle bool
-	for _, raw := range page.Data {
-		var event struct {
-			Type  string `json:"type"`
-			Error struct {
-				Message string `json:"message"`
-			} `json:"error"`
-			StopReason struct {
-				Type string `json:"type"`
-			} `json:"stop_reason"`
-		}
-		if err := json.Unmarshal(raw, &event); err != nil {
-			t.Fatal(err)
-		}
-		sawError = sawError || (event.Type == "session.error" && strings.Contains(event.Error.Message, "repeated attempts"))
-		sawIdle = sawIdle || (event.Type == "session.status_idle" && event.StopReason.Type == "retries_exhausted")
-	}
-	if !sawError || !sawIdle {
-		t.Fatalf("exhaustion events missing: error=%t idle=%t", sawError, sawIdle)
-	}
-	stored, _, err := app.db.GetSession(t.Context(), code.WorkspaceUUID, code.SessionExternalID)
-	if err != nil || stored.Status != "idle" {
-		t.Fatalf("session status after exhaustion = %q err=%v", stored.Status, err)
-	}
+	assertBrainClaimFailurePublished(t, app, code, public)
 	if _, found := claimBrainWorker(t, app, "worker-a", 0); found {
 		t.Fatal("failed idle session reclaimed")
+	}
+}
+
+func TestBrainClaimSkipsSessionDeletedAfterClaim(t *testing.T) {
+	app := newBrainClaimApp(t)
+	code, public := prepareBrainClaimSession(t, app)
+	if err := newCodeSessionService(app, nil, nil).DispatchWorker(t.Context(), public, code.ExternalID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.pool.Exec(t.Context(), `UPDATE sessions SET deleted_at = now() WHERE uuid = $1`, code.SessionUUID); err != nil {
+		t.Fatal(err)
+	}
+	if claim, found := claimBrainWorker(t, app, "worker-a", 0); found {
+		t.Fatalf("deleted session handed out: %+v", claim)
+	}
+	var attempts int
+	if err := app.pool.QueryRow(t.Context(), `SELECT worker_claim_attempts FROM code_sessions WHERE uuid = $1`, code.UUID).Scan(&attempts); err != nil || attempts != 1 {
+		t.Fatalf("deleted session was not claimed before credential issue: attempts=%d err=%v", attempts, err)
+	}
+}
+
+func TestBrainClaimPermanentReleasePublishesSessionErrorImmediately(t *testing.T) {
+	app := newBrainClaimApp(t)
+	code, public := prepareBrainClaimSession(t, app)
+	if err := newCodeSessionService(app, nil, nil).DispatchWorker(t.Context(), public, code.ExternalID); err != nil {
+		t.Fatal(err)
+	}
+	setBrainClaimSessionStatus(t, app, code, "running")
+	claim, found := claimBrainWorker(t, app, "worker-a", 0)
+	if !found {
+		t.Fatal("dispatched session not claimable")
+	}
+	if status := releaseBrainClaim(t, app, claim, "worker-b", "permanent"); status != http.StatusConflict {
+		t.Fatalf("permanent release by another worker = %d", status)
+	}
+	if status := releaseBrainClaim(t, app, claim, "worker-a", "permanent"); status != http.StatusOK {
+		t.Fatalf("permanent release = %d", status)
+	}
+	assertBrainClaimFailurePublished(t, app, code, public)
+	if _, found := claimBrainWorker(t, app, "worker-a", 0); found {
+		t.Fatal("permanently failed session reclaimed")
+	}
+	setBrainClaimSessionStatus(t, app, code, "running")
+	if _, err := app.pool.Exec(t.Context(), `UPDATE code_sessions SET worker_claim_expires_at = NULL WHERE uuid = $1`, code.UUID); err != nil {
+		t.Fatal(err)
+	}
+	if retry, found := claimBrainWorker(t, app, "worker-a", 0); !found || retry.WorkerEpoch != claim.WorkerEpoch+1 {
+		t.Fatalf("new input after permanent failure = %+v found=%t", retry, found)
 	}
 }

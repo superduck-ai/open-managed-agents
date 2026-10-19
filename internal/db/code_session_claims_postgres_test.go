@@ -185,7 +185,7 @@ func TestCodeSessionClaimsPostgresLifecycle(t *testing.T) {
 	if _, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-d")); err != nil || found {
 		t.Fatalf("running session claimed within lease grace: found=%t err=%v", found, err)
 	}
-	if _, err := store.RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, third.WorkerEpoch, 20*time.Second, 10*time.Second); err != nil {
+	if _, err := store.RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, third.WorkerEpoch, fixedWorkerLease(20*time.Second, 10*time.Second)); err != nil {
 		t.Fatalf("heartbeat within grace: %v", err)
 	}
 	execClaimTest(t, ctx, database, `update code_sessions set worker_lease_expires_at = now() - interval '11 seconds' where external_id = $1`, codeSessionID)
@@ -193,7 +193,7 @@ func TestCodeSessionClaimsPostgresLifecycle(t *testing.T) {
 	if err != nil || !found || takeover.WorkerEpoch != 5 {
 		t.Fatalf("takeover after grace = %+v found=%t err=%v", takeover, found, err)
 	}
-	if _, err := store.RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, third.WorkerEpoch, 20*time.Second, 10*time.Second); err == nil {
+	if _, err := store.RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, third.WorkerEpoch, fixedWorkerLease(20*time.Second, 10*time.Second)); err == nil {
 		t.Fatal("stale worker heartbeat accepted after takeover")
 	}
 }
@@ -216,7 +216,10 @@ func TestCodeSessionClaimsPostgresExhaustion(t *testing.T) {
 	if _, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-a")); err != nil || found {
 		t.Fatalf("claim during exhausted hold: found=%t err=%v", found, err)
 	}
-	if err := store.ResetExhaustedCodeSessionClaim(ctx, exhausted.CodeSessionUUID); err != nil {
+	if err := store.ResetExhaustedCodeSessionClaim(ctx, exhausted.CodeSessionUUID, exhausted.WorkerEpoch-1); !errors.Is(err, ErrPreconditionFailed) {
+		t.Fatalf("reset with stale epoch: %v", err)
+	}
+	if err := store.ResetExhaustedCodeSessionClaim(ctx, exhausted.CodeSessionUUID, exhausted.WorkerEpoch); err != nil {
 		t.Fatal(err)
 	}
 	execClaimTest(t, ctx, database, `update sessions set status = 'idle' where external_id = 'sesn_claim_1'`)
@@ -227,4 +230,66 @@ func TestCodeSessionClaimsPostgresExhaustion(t *testing.T) {
 	if claim, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-a")); err != nil || !found || claim.Exhausted {
 		t.Fatalf("claim after new input = %+v found=%t err=%v", claim, found, err)
 	}
+}
+
+func TestCodeSessionClaimsPostgresExhaustionClearsCrashedRegistration(t *testing.T) {
+	ctx, database, store := newCodeSessionClaimTestStore(t)
+	codeSessionID := seedClaimCodeSession(t, ctx, database, 1, "claim", "running")
+	claim, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-a"))
+	if err != nil || !found {
+		t.Fatalf("claim = %+v found=%t err=%v", claim, found, err)
+	}
+	if _, _, err := store.RegisterCodeSessionWorkerAtEpoch(ctx, codeSessionID, claim.WorkerEpoch, CodeSessionWorkerBinding{}, 20*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	execClaimTest(t, ctx, database, `update code_sessions
+		set worker_lease_expires_at = now() - interval '11 seconds', worker_claim_attempts = 3
+		where external_id = $1`, codeSessionID)
+	exhausted, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-b"))
+	if err != nil || !found || !exhausted.Exhausted || exhausted.WorkerEpoch != claim.WorkerEpoch {
+		t.Fatalf("exhausted claim = %+v found=%t err=%v", exhausted, found, err)
+	}
+	var leaseCleared bool
+	if err := database.QueryRowContext(ctx, `select worker_lease_expires_at is null from code_sessions where external_id = $1`, codeSessionID).Scan(&leaseCleared); err != nil || !leaseCleared {
+		t.Fatalf("exhaustion kept the crashed worker lease: cleared=%t err=%v", leaseCleared, err)
+	}
+	if err := store.ResetExhaustedCodeSessionClaim(ctx, exhausted.CodeSessionUUID, exhausted.WorkerEpoch); err != nil {
+		t.Fatalf("reset after crashed registration: %v", err)
+	}
+	execClaimTest(t, ctx, database, `update code_sessions set worker_claim_expires_at = null where external_id = $1`, codeSessionID)
+	if recovered, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-b")); err != nil || !found || recovered.Exhausted {
+		t.Fatalf("claim after reset = %+v found=%t err=%v", recovered, found, err)
+	}
+}
+
+func TestCodeSessionClaimsPostgresPermanentFailure(t *testing.T) {
+	ctx, database, store := newCodeSessionClaimTestStore(t)
+	codeSessionID := seedClaimCodeSession(t, ctx, database, 1, "claim", "running")
+	claim, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-a"))
+	if err != nil || !found {
+		t.Fatalf("claim = %+v found=%t err=%v", claim, found, err)
+	}
+	input := FailCodeSessionClaimInput{CodeSessionExternalID: codeSessionID, WorkerID: "worker-b", WorkerEpoch: claim.WorkerEpoch, MaxAttempts: 3, Hold: time.Minute}
+	if _, err := store.FailCodeSessionClaimPermanently(ctx, input); !errors.Is(err, ErrPreconditionFailed) {
+		t.Fatalf("permanent failure by another worker: %v", err)
+	}
+	input.WorkerID = "worker-a"
+	failed, err := store.FailCodeSessionClaimPermanently(ctx, input)
+	if err != nil || !failed.Exhausted || failed.CodeSessionUUID == "" || failed.WorkerEpoch != claim.WorkerEpoch {
+		t.Fatalf("permanent failure = %+v err=%v", failed, err)
+	}
+	if _, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-b")); err != nil || found {
+		t.Fatalf("permanently failed session claimed during hold: found=%t err=%v", found, err)
+	}
+	execClaimTest(t, ctx, database, `update code_sessions set worker_claim_expires_at = now() - interval '1 second' where external_id = $1`, codeSessionID)
+	if again, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-b")); err != nil || !found || !again.Exhausted {
+		t.Fatalf("unreset permanent failure must stay exhausted: %+v found=%t err=%v", again, found, err)
+	}
+	if err := store.ResetExhaustedCodeSessionClaim(ctx, failed.CodeSessionUUID, failed.WorkerEpoch); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func fixedWorkerLease(ttl, grace time.Duration) WorkerLeasePolicy {
+	return func(string) WorkerLeaseTimings { return WorkerLeaseTimings{TTL: ttl, Grace: grace} }
 }

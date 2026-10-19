@@ -77,7 +77,8 @@ adapter addition. Its inherited report text says Rust; `OMA_BRAIN_BINARY` actual
 pointed to this project's Bun launcher. The live run used the current runtime
 recorded in [runtime-fingerprints.json](runtime-fingerprints.json). The verifier
 hashes the launcher; this additional manifest also hashes the bundled module,
-source and dependency lockfile.
+source and dependency lockfile. It is a snapshot of that run and intentionally
+does not track later source changes; for example, it still lists `src/transport.ts`.
 
 The real model passed public allow approval and exact file writes, completed-turn
 history restoration after SIGKILL and natural lease expiry, epoch fencing, and

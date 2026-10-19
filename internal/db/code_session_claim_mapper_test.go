@@ -52,6 +52,36 @@ func TestCodeSessionClaimMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{"params.ExternalID", "params.Epoch", "params.WorkerID"},
 			wantSQLFragments:  []string{"worker_claim_expires_at = NOW()", "worker_claim_attempts = GREATEST(worker_claim_attempts - 1, 0)"},
 		}},
+		{"heartbeat lease lock reads transport", mapperBuilderContract{
+			statement: codeSessionMapperLockWorkerLeaseByExternalIDStatement,
+			bound:     buildCodeSessionMapperLockWorkerLeaseByExternalID(yourbatis.DialectPostgres, "cse_test"),
+			wantID:    "CodeSessionMapper.LockWorkerLeaseByExternalID", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"codeSessionExternalID"},
+			wantSQLFragments:  []string{"metadata #>> '{config,worker_transport}'", "AS worker_transport", "FOR UPDATE"},
+		}},
+		{"reset exhausted", mapperBuilderContract{
+			statement: codeSessionClaimMapperResetExhaustedStatement,
+			bound:     buildCodeSessionClaimMapperResetExhausted(yourbatis.DialectPostgres, "code-session-uuid", 4),
+			wantID:    "CodeSessionClaimMapper.ResetExhausted", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{"uuid", "epoch"},
+			wantSQLFragments:  []string{"worker_claim_attempts = 0", "current_worker_epoch = $2"},
+		}},
+		{"hold exhausted", mapperBuilderContract{
+			statement: codeSessionClaimMapperHoldExhaustedStatement,
+			bound:     buildCodeSessionClaimMapperHoldExhausted(yourbatis.DialectPostgres, "code-session-uuid", expiresAt),
+			wantID:    "CodeSessionClaimMapper.HoldExhausted", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{"holdUntil", "uuid"},
+			wantSQLFragments:  []string{"worker_lease_expires_at = NULL", "worker_claim_requested_at = NULL"},
+		}},
+		{"fail permanently", mapperBuilderContract{
+			statement: codeSessionClaimMapperFailPermanentlyStatement,
+			bound: buildCodeSessionClaimMapperFailPermanently(yourbatis.DialectPostgres, failCodeSessionClaimParams{
+				ExternalID: "cse_test", WorkerID: "worker", Epoch: 2, MaxAttempts: 5, HoldUntil: expiresAt,
+			}),
+			wantID: "CodeSessionClaimMapper.FailPermanently", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{"params.HoldUntil", "params.MaxAttempts", "params.ExternalID", "params.Epoch", "params.WorkerID"},
+			wantSQLFragments:  []string{"GREATEST(worker_claim_attempts, $2)", "worker_claimed_by = $5", "RETURNING uuid"},
+		}},
 		{"request", mapperBuilderContract{
 			statement: codeSessionClaimMapperRequestStatement,
 			bound:     buildCodeSessionClaimMapperRequest(yourbatis.DialectPostgres, "org-uuid", "workspace-uuid", "cse_test"),

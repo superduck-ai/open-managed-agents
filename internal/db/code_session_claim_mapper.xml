@@ -43,6 +43,8 @@
     <update id="HoldExhausted" result="rows">
         UPDATE code_sessions
         SET worker_claim_requested_at = NULL,
+            worker_lease_expires_at = NULL,
+            connection_status = 'disconnected',
             worker_claim_expires_at = #{holdUntil},
             updated_at = NOW()
         WHERE uuid = #{uuid}
@@ -54,8 +56,24 @@
             worker_claim_expires_at = NULL,
             updated_at = NOW()
         WHERE uuid = #{uuid}
+          AND current_worker_epoch = #{epoch}
           AND worker_claim_requested_at IS NULL
-          AND worker_lease_expires_at IS NULL
+    </update>
+
+    <update id="FailPermanently" result="returning" resultType="string">
+        UPDATE code_sessions
+        SET worker_claim_requested_at = NULL,
+            worker_lease_expires_at = NULL,
+            connection_status = 'disconnected',
+            worker_claim_expires_at = #{params.HoldUntil},
+            worker_claim_attempts = GREATEST(worker_claim_attempts, #{params.MaxAttempts}),
+            updated_at = NOW()
+        WHERE external_id = #{params.ExternalID}
+          AND current_worker_epoch = #{params.Epoch}
+          AND worker_claimed_by = #{params.WorkerID}
+          AND status = 'active'
+          AND deleted_at IS NULL
+        RETURNING uuid
     </update>
 
     <update id="Release" result="rows">

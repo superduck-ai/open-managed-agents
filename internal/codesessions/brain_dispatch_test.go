@@ -95,10 +95,10 @@ func TestBrainClaimTransportSelectsShortLease(t *testing.T) {
 	if !usesBrainClaimTransport(db.CodeSession{Metadata: []byte(`{"config":{"worker_transport":"claim"}}`)}) {
 		t.Fatal("claim session not detected")
 	}
-	if got := leaseTimingsForTransport(""); got.ttl != 60*time.Second || got.grace != 10*time.Second {
+	if got := leaseTimingsForTransport(""); got.TTL != 60*time.Second || got.Grace != 10*time.Second {
 		t.Fatalf("default lease = %+v", got)
 	}
-	if got := leaseTimingsForTransport("claim"); got.ttl != 20*time.Second || got.grace != 10*time.Second {
+	if got := leaseTimingsForTransport("claim"); got.TTL != 20*time.Second || got.Grace != 10*time.Second {
 		t.Fatalf("claim lease = %+v", got)
 	}
 }

@@ -3,7 +3,8 @@ import { OmaApi } from "./api.ts";
 import { consumeInbound, type CcrClient, type CcrSession } from "./ccrv2/index.ts";
 import { createOmaSession } from "./oma-session.ts";
 import { registerWorkerTask, validateBrainTask } from "./worker-registration.ts";
-import { CapacityExhaustedError, claimTasks, releaseClaim, type ClaimClient, type TaskAdmissionStage } from "./claim.ts";
+import { claimTasks, releaseClaim, type ClaimClient, type TaskAdmissionStage } from "./claim.ts";
+import { SessionCapacity } from "./capacity.ts";
 
 export interface WorkerOptions {
   maxSessions: number;
@@ -34,7 +35,6 @@ export async function startWorkers(
     slotWaiters.push(done);
     signal.addEventListener("abort", done, { once: true });
   });
-  const capacity = () => maxSessions - [...sessions.values()].filter((session) => session.busy).length;
   const watch = (promise: Promise<void>) => {
     const task = promise.catch(() => {
       if (!abort.signal.aborted) console.error("OMA session task stopped");
@@ -57,6 +57,7 @@ export async function startWorkers(
     retiring.set(session.id, result);
     return result;
   };
+  const capacity = new SessionCapacity(maxSessions, sessions, retiring, (idle) => watch(retire(idle)));
   const admit = async (value: unknown, stage: (stage: TaskAdmissionStage) => void) => {
     abort.signal.throwIfAborted();
     stage("validate_assignment");
@@ -67,19 +68,18 @@ export async function startWorkers(
       stage("retire_session");
       await retire(existing);
     }
-    if (sessions.size >= maxSessions) {
-      const idle = [...sessions.values()].filter((session) => !session.busy)
-        .sort((a, b) => a.lastIdle - b.lastIdle)[0];
-      if (!idle) throw new CapacityExhaustedError();
-      stage("retire_session");
-      await retire(idle);
+    const releaseSlot = capacity.reserve();
+    let session: CcrSession;
+    try {
+      stage("register_worker");
+      const assignment = await registerWorkerTask(api, task, abort.signal);
+      abort.signal.throwIfAborted();
+      stage("create_session");
+      session = createOmaSession(ctx, api, assignment);
+      sessions.set(session.id, session);
+    } finally {
+      releaseSlot();
     }
-    stage("register_worker");
-    const assignment = await registerWorkerTask(api, task, abort.signal);
-    abort.signal.throwIfAborted();
-    stage("create_session");
-    const session = createOmaSession(ctx, api, assignment);
-    sessions.set(session.id, session);
     try {
       stage("open_session");
       await session.open();
@@ -109,7 +109,7 @@ export async function startWorkers(
   });
   const ready = Promise.withResolvers<void>();
   const claiming = claimTasks(claims, abort.signal, {
-    concurrency: options.claimConcurrency, capacity, slotFreed, admit, ready: () => ready.resolve(),
+    concurrency: options.claimConcurrency, capacity: () => capacity.available(), slotFreed, admit, ready: () => ready.resolve(),
   });
   watch(claiming.catch((error) => { ready.reject(error); throw error; }));
   await ready.promise;

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { OmaApi, HttpError } from "../src/api.ts";
 import { registerWorkerTask, validateBrainTask } from "../src/worker-registration.ts";
+import { PermanentAdmissionError } from "../src/claim.ts";
 import { assignment } from "./backend.ts";
 
 test("registration rejects conflicts and stale epochs", async () => {
@@ -20,6 +21,7 @@ test("registration rejects missing and malformed session context envelopes", asy
    new Request(url, init).method === "POST" ? {worker_epoch:String(a.worker_epoch)} : response,
   )) as typeof fetch);
   await expect(registerWorkerTask(api, task)).rejects.toThrow("Invalid session_context");
+  await expect(registerWorkerTask(api, task)).rejects.toBeInstanceOf(PermanentAdmissionError);
  }
 });
 

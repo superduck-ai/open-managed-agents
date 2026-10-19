@@ -69,9 +69,47 @@ func (d *DB) ClaimNextCodeSession(ctx context.Context, input ClaimCodeSessionInp
 	return claim, found, nil
 }
 
-func (d *DB) ResetExhaustedCodeSessionClaim(ctx context.Context, codeSessionUUID string) error {
-	_, err := NewCodeSessionClaimMapper(d.mapperDB).ResetExhausted(ctx, codeSessionUUID)
-	return err
+func (d *DB) ResetExhaustedCodeSessionClaim(ctx context.Context, codeSessionUUID string, epoch int64) error {
+	rows, err := NewCodeSessionClaimMapper(d.mapperDB).ResetExhausted(ctx, codeSessionUUID, epoch)
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrPreconditionFailed
+	}
+	return nil
+}
+
+type FailCodeSessionClaimInput struct {
+	CodeSessionExternalID string
+	WorkerID              string
+	WorkerEpoch           int64
+	MaxAttempts           int
+	Hold                  time.Duration
+}
+
+func (d *DB) FailCodeSessionClaimPermanently(ctx context.Context, input FailCodeSessionClaimInput) (CodeSessionClaim, error) {
+	holdUntil := time.Now().UTC().Add(input.Hold)
+	codeSessionUUID, err := NewCodeSessionClaimMapper(d.mapperDB).FailPermanently(ctx, failCodeSessionClaimParams{
+		ExternalID:  input.CodeSessionExternalID,
+		WorkerID:    input.WorkerID,
+		Epoch:       input.WorkerEpoch,
+		MaxAttempts: input.MaxAttempts,
+		HoldUntil:   holdUntil,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return CodeSessionClaim{}, ErrPreconditionFailed
+	}
+	if err != nil {
+		return CodeSessionClaim{}, err
+	}
+	return CodeSessionClaim{
+		CodeSessionUUID:       codeSessionUUID,
+		CodeSessionExternalID: input.CodeSessionExternalID,
+		WorkerEpoch:           input.WorkerEpoch,
+		ClaimExpiresAt:        holdUntil,
+		Exhausted:             true,
+	}, nil
 }
 
 func (d *DB) ReleaseCodeSessionClaim(ctx context.Context, codeSessionExternalID, workerID string, epoch int64, failed bool) error {

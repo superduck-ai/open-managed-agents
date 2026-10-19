@@ -5,7 +5,7 @@ import { failureDiagnostic, workerDiagnostic } from "./ccrv2/diagnostics.ts";
 export type TaskAdmissionStage = "validate_assignment" | "retire_session"
   | "register_worker" | "create_session" | "open_session" | "start_inbound";
 
-export type ReleaseReason = "admission_failed" | "shutdown";
+export type ReleaseReason = "admission_failed" | "shutdown" | "permanent";
 
 export interface ClaimedTask {
   session_id: string;
@@ -32,6 +32,13 @@ export class CapacityExhaustedError extends Error {
   constructor() {
     super("Worker capacity exhausted");
   }
+}
+
+export class PermanentAdmissionError extends Error {}
+
+function releaseReason(error: unknown, signal: AbortSignal): ReleaseReason {
+  if (signal.aborted || error instanceof CapacityExhaustedError) return "shutdown";
+  return error instanceof PermanentAdmissionError ? "permanent" : "admission_failed";
 }
 
 export class BrainClaimClient implements ClaimClient {
@@ -100,24 +107,30 @@ async function admitClaim(
     await admit(value, (next) => { stage = next; });
     workerDiagnostic("info", "oma_task_admitted", { ...fields, duration_ms: Date.now() - startMs });
   } catch (error) {
-    const reason: ReleaseReason = signal.aborted || error instanceof CapacityExhaustedError ? "shutdown" : "admission_failed";
-    if (task) await releaseClaim(client, task, reason);
+    if (task) await releaseClaim(client, task, releaseReason(error, signal));
     if (!signal.aborted) workerDiagnostic("error", "oma_task_admission_failed", {
       ...fields, stage, duration_ms: Date.now() - startMs, ...failureDiagnostic(error),
     });
   }
 }
 
+async function probeClaims(client: ClaimClient, signal: AbortSignal): Promise<unknown> {
+  for (let failures = 0; ; failures++) {
+    try {
+      return await client.claim(0, signal);
+    } catch (error) {
+      if (error instanceof HttpError && (error.status === 401 || error.status === 403))
+        throw new ConfigurationError(`Brain claim rejected with HTTP ${error.status}. Check that OMA_BRAIN_CLAIM_TOKEN matches the backend code_session.brain_claim_token_file.`);
+      if (signal.aborted) throw error;
+      workerDiagnostic("warn", "oma_task_claim_probe_failed", { attempt: failures + 1, ...failureDiagnostic(error) });
+      await sleep(retryDelaysMs[Math.min(failures, retryDelaysMs.length - 1)]!, signal);
+    }
+  }
+}
+
 export async function claimTasks(client: ClaimClient, signal: AbortSignal, options: ClaimLoopOptions): Promise<void> {
   const blockMs = options.blockMs ?? 25_000;
-  let initial: unknown;
-  try {
-    initial = await client.claim(0, signal);
-  } catch (error) {
-    if (error instanceof HttpError && (error.status === 401 || error.status === 403))
-      throw new ConfigurationError(`Brain claim rejected with HTTP ${error.status}. Check that OMA_BRAIN_CLAIM_TOKEN matches the backend code_session.brain_claim_token_file.`);
-    throw error;
-  }
+  const initial = await probeClaims(client, signal);
   options.ready?.();
   let claiming = 0;
   const loop = async (first: unknown) => {

@@ -237,7 +237,8 @@
     </select>
 
     <select id="LockWorkerLeaseByExternalID" resultType="codeSessionWorkerLeaseRow">
-        SELECT uuid, current_worker_epoch, worker_lease_expires_at, organization_uuid, workspace_uuid
+        SELECT uuid, current_worker_epoch, worker_lease_expires_at, organization_uuid, workspace_uuid,
+               COALESCE(metadata #>> '{config,worker_transport}', '') AS worker_transport
         FROM code_sessions
         WHERE external_id = #{codeSessionExternalID}
           AND deleted_at IS NULL

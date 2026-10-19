@@ -6,7 +6,7 @@ The application entry creates a Cordis Context and loads the OMA host plugin. Th
 
 ## Run
 
-Requires Bun 1.3 or newer and an OMA backend exposing the task and CCRv2 contracts below. The pinned dsh version is `0.2.1-alpha.2`, with Cordis `4.0.5-alpha.1`.
+Requires Bun 1.3 or newer and an OMA backend exposing the claim and CCRv2 contracts below. The pinned dsh version is `0.2.1-alpha.2`, with Cordis `4.0.5-alpha.1`.
 
 ```sh
 bun install --frozen-lockfile
@@ -58,9 +58,9 @@ bun run restart
 
 The restart script sends SIGTERM to direct Bun entry processes whose working directory is this project, including `bun start` launches. It waits up to thirty seconds for shutdown and cancels the restart if a process remains. It then starts `dist/main.js` in the foreground with output in the current terminal. Press Ctrl+C to stop the service. Run the script as the same user that started the service. A concurrent restart is refused during build and shutdown. If the script is killed and leaves a stale lock, remove `.run/restart.lock` after confirming no restart is running.
 
-The Brain claims Code Sessions with `POST /v1/code/brain/claims?block_ms=25000`, sending the shared fleet token in `OMA_BRAIN_CLAIM_TOKEN` and its process UUID in `X-Worker-ID`. Each claim advances the worker epoch and returns fresh ingress and model credentials to exactly one process. Up to `OMA_BRAIN_CLAIM_CONCURRENCY` long polls run at once, and only while a session slot is free; a busy process stops claiming. Admission registers the worker, loads the session context and restores its journal. If admission fails, the host calls `POST /v1/code/brain/claims/{id}/release` with `reason: "admission_failed"` so another process can retry after the backend's backoff. Repeated failures end the session with `session.error`. On SIGTERM the host releases claims still being admitted and sessions with an active turn using `reason: "shutdown"`, so another process can take them without waiting for the lease. A crashed process loses its claims when the 20-second lease and 10-second grace period expire.
+The Brain claims Code Sessions with `POST /v1/code/brain/claims?block_ms=25000`, sending the shared fleet token in `OMA_BRAIN_CLAIM_TOKEN` and its process UUID in `X-Worker-ID`. Each claim advances the worker epoch and returns fresh ingress and model credentials to exactly one process. Up to `OMA_BRAIN_CLAIM_CONCURRENCY` long polls run at once, and only while a session slot is free; a busy process stops claiming. Admission registers the worker, loads the session context and restores its journal. If admission fails, the host calls `POST /v1/code/brain/claims/{id}/release`. Transient failures use `reason: "admission_failed"`, so another process can retry after the backend's backoff (5, 10, 20, 40 and 80 seconds); five consecutive failures end the session with `session.error`. Failures that cannot succeed on retry, such as an invalid task envelope, session context or assignment, use `reason: "permanent"`, and the backend publishes `session.error` immediately. Admission is also abandoned with `reason: "shutdown"` when the process is stopping or every local slot is busy, which does not count as a failure. Concurrent admissions reserve a slot before evicting an idle session, so the process never holds more than `OMA_BRAIN_MAX_SESSIONS` sessions. On SIGTERM the host releases claims still being admitted and sessions with an active turn using `reason: "shutdown"`, so another process can take them without waiting for the lease. A crashed process loses its claims when the 20-second lease and 10-second grace period expire.
 
-At startup the host makes one non-blocking claim. If the backend rejects the token, startup fails with `Brain claim rejected with HTTP 401` and the process exits. The token must match the backend `code_session.brain_claim_token_file`. Startup errors appear directly in the terminal, and `bun run restart` returns the service's exit code.
+At startup the host makes a non-blocking claim before reporting ready. If the backend rejects the token, startup fails with `Brain claim rejected with HTTP 401` and the process exits. Other probe failures, such as a backend that is still starting, are retried after 1, 2, 5, 10 and then every 30 seconds. The token must match the backend `code_session.brain_claim_token_file`. Startup errors appear directly in the terminal, and `bun run restart` returns the service's exit code.
 
 Each session reads `/worker/events/stream` through the CCRv2 plugin. User turns run serially; control messages use a separate queue so approval and interruption remain responsive during a turn. The bridge acknowledges `envelope.event_id`, not the SSE sequence number. Reconnection keeps the registered epoch and relies on server redelivery without advancing a local cursor. It never registers a new worker or restarts the active turn just because the stream reconnects.
 
@@ -206,7 +206,7 @@ The claim rotates the credential pair and epoch in one transaction, so only the 
 | Interface | Purpose |
 | --- | --- |
 | `POST /v1/code/brain/claims?block_ms=N` | Claim a session with the fleet token; returns credentials or `204` |
-| `POST /v1/code/brain/claims/{id}/release` | Release an unfinished claim with `admission_failed` or `shutdown` |
+| `POST /v1/code/brain/claims/{id}/release` | Release an unfinished claim with `admission_failed`, `permanent` or `shutdown` |
 | `POST /v1/code/sessions/{id}/worker/register` | Register the worker and return its epoch |
 | `GET /v1/code/sessions/{id}/worker/events/stream?worker_epoch=N` | Receive user and control events |
 | `/v1/code/sessions/{id}/worker/*` | Private events, public events, delivery confirmation, status and heartbeat |
@@ -418,7 +418,8 @@ the scenario source, verifier-only patch, reports and public approval limitation
 | `src/model.ts`              | Messages adapter with signed thinking replay             |
 | `src/oma-sandbox/index.ts`   | Root-session sandbox executor provider plugin           |
 | `src/oma-sandbox/client.ts`  | Server-configured MCP initialization and execution               |
-| `src/claim.ts`              | Claim long polling, capacity backpressure and release        |
+| `src/claim.ts`              | Claim long polling, startup probe and release classification |
+| `src/capacity.ts`           | Admission slot reservation and idle-session eviction         |
 
 ## Messages and sandbox result recovery
 

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { HttpError } from "../src/api.ts";
-import { CapacityExhaustedError, claimTasks, type ClaimClient, type ClaimedTask, type ReleaseReason } from "../src/claim.ts";
+import { CapacityExhaustedError, PermanentAdmissionError, claimTasks, type ClaimClient, type ClaimedTask, type ReleaseReason } from "../src/claim.ts";
 import { ConfigurationError } from "../src/config.ts";
 import { eventually } from "./backend.ts";
 
@@ -35,9 +35,26 @@ test("startup rejects an unauthorized claim token", async () => {
   })).rejects.toBeInstanceOf(ConfigurationError);
 });
 
+test("startup retries transient probe failures before reporting ready", async () => {
+  const claims = new FakeClaims();
+  claims.failures.push(new HttpError(503));
+  const abort = new AbortController();
+  let ready = false;
+  const running = claimTasks(claims, abort.signal, {
+    concurrency: 1, blockMs: 50, capacity: () => 1, slotFreed: async () => {}, admit: async () => {},
+    ready: () => { ready = true; },
+  });
+  await Bun.sleep(100);
+  expect(ready).toBe(false);
+  await eventually(() => ready, 3_000);
+  expect(claims.calls.slice(0, 2)).toEqual([0, 0]);
+  abort.abort();
+  await running;
+});
+
 test("failed and invalid admissions are released without blocking later claims", async () => {
   const claims = new FakeClaims();
-  claims.queue.push("not a task", task("broken"), task("full"), task("healthy"));
+  claims.queue.push("not a task", task("broken"), task("invalid-context"), task("full"), task("healthy"));
   const abort = new AbortController();
   const admitted: string[] = [];
   const running = claimTasks(claims, abort.signal, {
@@ -46,6 +63,7 @@ test("failed and invalid admissions are released without blocking later claims",
       const id = (value as ClaimedTask).session_id;
       if (typeof value !== "object") throw new Error("Invalid task envelope");
       if (id === "broken") throw new HttpError(503);
+      if (id === "invalid-context") throw new PermanentAdmissionError("Invalid session_context");
       if (id === "full") throw new CapacityExhaustedError();
       admitted.push(id);
     },
@@ -55,6 +73,7 @@ test("failed and invalid admissions are released without blocking later claims",
   await running;
   expect(claims.releases).toEqual([
     { task: { session_id: "broken", worker_epoch: 2 }, reason: "admission_failed" },
+    { task: { session_id: "invalid-context", worker_epoch: 2 }, reason: "permanent" },
     { task: { session_id: "full", worker_epoch: 2 }, reason: "shutdown" },
   ]);
 });

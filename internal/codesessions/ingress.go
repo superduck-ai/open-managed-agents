@@ -254,12 +254,12 @@ func (h *Handler) handleCodeSessionWorkerRegister(w http.ResponseWriter, r *http
 	timings, err := h.service.workerLeaseTimings(r.Context(), codeSessionID)
 	if err == nil && claims.WorkerEpoch > 0 {
 		epoch, _, err = h.db.RegisterCodeSessionWorkerAtEpoch(
-			r.Context(), codeSessionID, claims.WorkerEpoch, binding, timings.ttl,
+			r.Context(), codeSessionID, claims.WorkerEpoch, binding, timings.TTL,
 		)
 	} else if err == nil {
 		// Legacy credentials issued before worker epochs were bound to JWT claims
 		// retain the original monotonic register behavior until their next rotation.
-		epoch, _, err = h.db.RegisterCodeSessionWorker(r.Context(), codeSessionID, binding, timings.ttl)
+		epoch, _, err = h.db.RegisterCodeSessionWorker(r.Context(), codeSessionID, binding, timings.TTL)
 	}
 	if err != nil {
 		h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not register code session worker")
@@ -485,11 +485,7 @@ func (h *Handler) handleCodeSessionWorkerHeartbeat(w http.ResponseWriter, r *htt
 		writeCodeSessionWorkerBodyReadError(w, r, err)
 		return
 	}
-	timings, err := h.service.workerLeaseTimings(r.Context(), codeSessionID)
-	var expiresAt time.Time
-	if err == nil {
-		expiresAt, err = h.db.RecordCodeSessionWorkerHeartbeat(r.Context(), codeSessionID, input.WorkerEpoch, timings.ttl, timings.grace)
-	}
+	expiresAt, err := h.db.RecordCodeSessionWorkerHeartbeat(r.Context(), codeSessionID, input.WorkerEpoch, leaseTimingsForTransport)
 	if err != nil {
 		var heartbeatErr *db.CodeSessionWorkerHeartbeatError
 		if errors.As(err, &heartbeatErr) && (errors.Is(err, db.ErrWorkerEpochMismatch) || errors.Is(err, db.ErrWorkerLeaseExpired)) {

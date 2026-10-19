@@ -7,6 +7,7 @@ import (
 )
 
 type PriceOverride struct {
+	MaxPromptTokens *int64   `json:"max_prompt_tokens,omitzero"`
 	MinPromptTokens *int64   `json:"min_prompt_tokens,omitzero"`
 	UTCStart        *int     `json:"utc_start,omitzero"`
 	UTCEnd          *int     `json:"utc_end,omitzero"`
@@ -20,6 +21,9 @@ func (p ModelPrice) effectiveRates(u TokenUsage) Rates {
 	at := p.PricedAt.UTC()
 	clock := at.Hour()*100 + at.Minute()
 	for _, o := range p.Overrides {
+		if o.MaxPromptTokens != nil && total > *o.MaxPromptTokens {
+			continue
+		}
 		if o.MinPromptTokens != nil && total <= *o.MinPromptTokens {
 			continue
 		}

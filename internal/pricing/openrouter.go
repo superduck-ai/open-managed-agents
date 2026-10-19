@@ -39,8 +39,12 @@ type sourcePrice struct {
 }
 
 func Sync(ctx context.Context, database *db.DB) error {
+	return syncCatalog(ctx, database, endpoint, "openrouter", Parse)
+}
+
+func syncCatalog(ctx context.Context, database *db.DB, url, source string, parse func([]byte) ([]db.CatalogPrice, error)) error {
 	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
@@ -50,20 +54,20 @@ func Sync(ctx context.Context, database *db.DB) error {
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return errors.New("OpenRouter 价格源返回非成功状态")
+		return errors.New("模型价格源返回非成功状态")
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
 	if err != nil {
 		return err
 	}
 	if len(body) > 8<<20 {
-		return errors.New("OpenRouter 价格目录超过大小限制")
+		return errors.New("模型价格目录超过大小限制")
 	}
-	prices, err := Parse(body)
+	prices, err := parse(body)
 	if err != nil {
 		return err
 	}
-	return database.ReplaceModelPriceCatalog(ctx, "openrouter", prices)
+	return database.ReplaceModelPriceCatalog(ctx, source, prices)
 }
 
 func Parse(body []byte) ([]db.CatalogPrice, error) {

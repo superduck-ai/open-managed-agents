@@ -135,7 +135,11 @@ func TestNarrowsModelsOpenRouterReconciliation(t *testing.T) {
 					if last.InputTokens != *usage.InputTokens || last.OutputTokens != *usage.OutputTokens || last.CacheReadTokens != *usage.CacheReadTokens || last.CacheWriteTokens != *usage.CacheWriteTokens {
 						t.Fatalf("响应用量落账错误：%+v", last)
 					}
-					query := db.UsageQuery{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUIDs: []string{provider.WorkspaceUUID}, Model: tc.Model, Start: last.StartedAt, End: time.Now().UTC().Add(time.Second), AsOf: time.Now().UTC(), Timezone: "UTC"}
+					var databaseNow time.Time
+					if err := app.db.SQLDB().QueryRowContext(t.Context(), "SELECT CURRENT_TIMESTAMP").Scan(&databaseNow); err != nil {
+						t.Fatal(err)
+					}
+					query := db.UsageQuery{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUIDs: []string{provider.WorkspaceUUID}, Model: tc.Model, Start: last.StartedAt, End: time.Now().UTC().Add(time.Second), AsOf: databaseNow, Timezone: "UTC"}
 					rows, err := app.db.AggregateUsage(t.Context(), query)
 					if err != nil {
 						t.Fatal(err)

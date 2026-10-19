@@ -195,7 +195,7 @@ flowchart LR
 
 ## 数据库来源标价与缓存 TTL
 
-价格由服务端从 OpenRouter `https://openrouter.ai/api/v1/models` 获取，启动时同步到全局公开价格目录 `model_price_catalog`。Narrows 暂不接入。用户无需填写、选择或保存价格；原手工标价弹窗、参考价接口、YAML 导入接口均已移除。旧 `llm_model_prices` 表保留历史数据，但不参与新请求计费。
+价格由服务端从 OpenRouter `https://openrouter.ai/api/v1/models` 获取，启动时同步到全局公开价格目录 `model_price_catalog`。Narrows 网关（`narrows-gateway.test.seewo.com`）使用独立的 `https://narrows.seewo.com/pricing/api/rules` 目录，固定以 1 USD = 7.2 CNY 换算；缺失 Narrows 价格时不回退至 OpenRouter。用户无需填写、选择或保存价格；原手工标价弹窗、参考价接口、YAML 导入接口均已移除。旧 `llm_model_prices` 表保留历史数据，但不参与新请求计费。
 
 同步保留原始 pricing JSON、转换后的 USD/百万 Token 价格及价格内容摘要版本。HTTP 超时 15 秒、响应最多 8 MiB；成功解析后事务替换目录。同步失败保留上次成功数据并记录告警，不把未知价当成零，不回退到 YAML 或手工标价。当前在服务启动时更新，不增加定时任务或管理页面。
 
@@ -217,8 +217,18 @@ flowchart LR
 
 ### 多模型计费验收
 
-使用 Narrows 价格 API 仅确定待测模型，计费仍采用 OpenRouter 美元目录，不将人民币单价代入。
+原 OpenRouter 对账夹具继续验证美元目录。Narrows 独立对账使用其价格 API 的全部模型，按固定 7.2 汇率计费。
 固定日期的 61 模型夹具覆盖精确匹配、未定价、缓存用量和分档阈值两侧，预期金额由原始每 Token
 单价独立计算。回归贯通价格解析、目录入库、工作区模型选择、流式/非流式响应计量、账本和每日汇总。
 真实请求另以显式启用的 `TestLiveNarrowsBilling` 验证，结果区分费用匹配、未定价、调用受阻和对账不一致；
 不能用合成用量的回归结果代替真实供应商验证。输入来源、运行参数及限制见 `tests/testdata/billing/README.md`。
+
+### Narrows 价格与换汇
+
+启动时分别同步两个来源，任一来源失败均保留该来源的旧目录。Narrows 仅精确匹配模型 ID；当前已接入的网关域名使用 Narrows 价格，其他现有 Provider 保持 OpenRouter 参考价策略。OpenRouter 也可作为模型调用供应商，但获取价格目录不等于配置了调用凭据。
+
+价格快照保存原币每百万 Token 单价、`source_currency=CNY`、`exchange_rate=7.2`、来源模型及包含汇率的版本摘要。所有用量项先按原币有理数求和，再除以汇率，最后一次四舍五入为美元美分；不先舍入换算后的单价。历史金额与在途快照不重新计价。
+
+Narrows 分档支持严格下界、包含下界及包含上界，按原 API 顺序应用。当前用量协议无法区分思考模式输出、图像输出及隐式缓存：存在这些独立单价时，对应类别保持未定价，不能按普通输出或显式缓存价格猜测收费。嵌入模型虽可登记在 Provider 中，但不能以 Messages 成功测试代替 Embeddings 接口验收。
+
+回归夹具 `internal/pricing/testdata/narrows.json` 为 2026-10-19 原价格快照；`narrows-expected.json` 使用独立 Decimal 计算 302 组基础价格与分档边界预期。真实测试设置 `LIVE_BILLING_SOURCE=narrows`、`LIVE_BILLING_PRICES` 为原规则 JSON，并核对实际用量、价格来源、固定汇率与最终账本美分。

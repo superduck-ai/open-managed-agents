@@ -61,6 +61,23 @@ func TestLiveNarrowsBilling(t *testing.T) {
 	for _, p := range catalog.Data {
 		prices[p.ID] = p.Pricing
 	}
+	if os.Getenv("LIVE_BILLING_SOURCE") == "narrows" {
+		var catalog struct {
+			Rules []jsontext.Value `json:"rules"`
+		}
+		if err := json.Unmarshal(raw, &catalog); err != nil {
+			t.Fatal(err)
+		}
+		for _, rule := range catalog.Rules {
+			var id struct {
+				Model string `json:"model"`
+			}
+			if err := json.Unmarshal(rule, &id); err != nil {
+				t.Fatal(err)
+			}
+			prices[id.Model] = rule
+		}
+	}
 	raw, err = os.ReadFile("testdata/billing/narrows-openrouter.json")
 	if err != nil {
 		t.Fatal(err)
@@ -194,6 +211,9 @@ func checkLiveBilling(ctx context.Context, database *db.DB, base, key, model str
 		result.Status = "mismatch"
 		result.Detail = "响应用量与账本不一致"
 		return result
+	}
+	if os.Getenv("LIVE_BILLING_SOURCE") == "narrows" {
+		return reconcileNarrowsLive(result, prices[model], tokens)
 	}
 	var price billing.ModelPrice
 	expectedSource := liveSourceModel(prices, model)

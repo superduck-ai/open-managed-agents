@@ -104,15 +104,17 @@ func ParseCentsAmount(value string) (int64, error) {
 	return amount, nil
 }
 
-// ModelPrice holds USD list prices per million tokens for one model.
+// ModelPrice 保存每百万 Token 的原币价格和美元换算快照。
 type ModelPrice struct {
-	Source       string          `json:"source,omitempty" yaml:"-"`
-	SourceModel  string          `json:"source_model,omitempty" yaml:"-"`
-	PricedAt     time.Time       `json:"priced_at,omitzero" yaml:"-"`
-	Overrides    []PriceOverride `json:"overrides,omitempty" yaml:"-"`
-	Rates        *Rates          `json:"rates,omitempty" yaml:"-"`
-	Version      string          `json:"version,omitempty" yaml:"-"`
-	ProviderUUID string          `json:"provider_uuid,omitempty" yaml:"-"`
+	SourceCurrency string          `json:"source_currency,omitempty" yaml:"-"`
+	ExchangeRate   string          `json:"exchange_rate,omitempty" yaml:"-"`
+	Source         string          `json:"source,omitempty" yaml:"-"`
+	SourceModel    string          `json:"source_model,omitempty" yaml:"-"`
+	PricedAt       time.Time       `json:"priced_at,omitzero" yaml:"-"`
+	Overrides      []PriceOverride `json:"overrides,omitempty" yaml:"-"`
+	Rates          *Rates          `json:"rates,omitempty" yaml:"-"`
+	Version        string          `json:"version,omitempty" yaml:"-"`
+	ProviderUUID   string          `json:"provider_uuid,omitempty" yaml:"-"`
 }
 
 // Calculator prices model requests from configured list prices.
@@ -175,7 +177,7 @@ func (c *Calculator) ModelRequestCents(model string, usage TokenUsage) (cents in
 	if price.Rates == nil {
 		return 0, false
 	}
-	return price.effectiveRates(usage).Cost(usage)
+	return price.effectiveRates(usage).cost(usage, price.ExchangeRate)
 }
 
 // MeteringCents converts web-search request counts and active seconds into

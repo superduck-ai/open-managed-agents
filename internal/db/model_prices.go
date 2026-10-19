@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"net/url"
 	"slices"
 	"time"
 
@@ -56,35 +57,43 @@ func (d *DB) BillingCalculator() *billing.Calculator {
 		if err != nil {
 			return nil, err
 		}
-		modelIDs := []string{}
+		models := make(map[string]billing.ModelPrice)
+		now := time.Now().UTC()
 		for _, provider := range providers {
+			modelIDs := []string{}
 			for _, model := range provider.ModelIDs {
 				if len(requested) == 0 || slices.Contains(requested, model) {
 					modelIDs = append(modelIDs, model)
 				}
 			}
-		}
-		if len(modelIDs) == 0 {
-			return map[string]billing.ModelPrice{}, nil
-		}
-		rows, err := NewModelPriceCatalogMapper(d.mapperDB).Find(ctx, "openrouter", modelIDs)
-		if err != nil {
-			return nil, err
-		}
-		catalog := make(map[string]billing.ModelPrice, len(rows))
-		for _, row := range rows {
-			var p billing.ModelPrice
-			if err := json.Unmarshal(row.Price, &p); err != nil {
+			if len(modelIDs) == 0 {
+				continue
+			}
+			source := "openrouter"
+			parsed, err := url.Parse(provider.BaseURL)
+			if err != nil {
 				return nil, err
 			}
-			catalog[row.Model] = p
-		}
-		aliases := billing.PriceAliases(catalog)
-		models := make(map[string]billing.ModelPrice)
-		now := time.Now().UTC()
-		for _, provider := range providers {
-			for _, model := range provider.ModelIDs {
-				if p, ok := aliases[model]; ok {
+			if parsed.Hostname() == "narrows-gateway.test.seewo.com" {
+				source = "narrows"
+			}
+			rows, err := NewModelPriceCatalogMapper(d.mapperDB).Find(ctx, source, modelIDs)
+			if err != nil {
+				return nil, err
+			}
+			catalog := make(map[string]billing.ModelPrice, len(rows))
+			for _, row := range rows {
+				var p billing.ModelPrice
+				if err := json.Unmarshal(row.Price, &p); err != nil {
+					return nil, err
+				}
+				catalog[row.Model] = p
+			}
+			if source == "openrouter" {
+				catalog = billing.PriceAliases(catalog)
+			}
+			for _, model := range modelIDs {
+				if p, ok := catalog[model]; ok {
 					p.ProviderUUID = provider.UUID
 					p.PricedAt = now
 					models[model] = p

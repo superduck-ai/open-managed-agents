@@ -112,3 +112,38 @@ func TestModelPriceTTLReconciliationPostgres(t *testing.T) {
 		t.Fatalf("对账失败: %+v %+v", totals, rows[0])
 	}
 }
+
+func TestNarrowsPriceSourcePostgres(t *testing.T) {
+	d, _ := newTranscriptArchiveTestDB(t)
+	org, ws := uuid.NewV4().String(), uuid.NewV4().String()
+	provider, err := d.CreateLLMProvider(t.Context(), LLMProvider{UUID: uuid.NewV4().String(), ExternalID: "provider_narrows", OrganizationUUID: org, WorkspaceUUID: ws, Name: "Narrows", BaseURL: "https://narrows-gateway.test.seewo.com", ModelIDs: []string{"priced"}, SecretEnvelope: &secrets.Envelope{Ciphertext: []byte("test"), Nonce: []byte("test"), WrappedDEK: []byte("test"), FormatVersion: 1, KeyProvider: "test", KeyVersion: 1}, CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := CatalogPrice{Model: "priced", Original: []byte(`{}`), Price: billing.ModelPrice{Source: "openrouter", SourceModel: "priced", Rates: &billing.Rates{Input: new("100"), Output: new("100")}}}
+	if err := d.ReplaceModelPriceCatalog(t.Context(), "openrouter", []CatalogPrice{p}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := d.BillingCalculator().Scope(t.Context(), org, ws, "priced")
+	if err != nil || before.HasModel("priced") {
+		t.Fatal("Narrows 不应回退至 OpenRouter", err)
+	}
+	p.Price.Source = "narrows"
+	p.Price.SourceCurrency = "CNY"
+	p.Price.ExchangeRate = "7.2"
+	p.Price.Rates.Input = new("7.2")
+	if err := d.ReplaceModelPriceCatalog(t.Context(), "narrows", []CatalogPrice{p}); err != nil {
+		t.Fatal(err)
+	}
+	scoped, err := d.BillingCalculator().Scope(t.Context(), org, ws, "priced")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := scoped.PriceSnapshot("priced")
+	if snapshot == nil || snapshot.ProviderUUID != provider.UUID || snapshot.Source != "narrows" || snapshot.ExchangeRate != "7.2" {
+		t.Fatal("价格来源快照错误")
+	}
+	if cents, ok := scoped.ModelRequestCents("priced", billing.TokenUsage{InputTokens: 1000000}); !ok || cents != 100 {
+		t.Fatalf("人民币换美元错误: %d/%v", cents, ok)
+	}
+}

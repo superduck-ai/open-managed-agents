@@ -31,6 +31,10 @@ func (r Rates) Validate() error {
 }
 
 func (r Rates) Cost(u TokenUsage) (int64, bool) {
+	return r.cost(u, "")
+}
+
+func (r Rates) cost(u TokenUsage, exchangeRate string) (int64, bool) {
 	if u.CacheWrite5mTokens+u.CacheWrite1hTokens > u.CacheCreationInputTokens {
 		return 0, false
 	}
@@ -58,6 +62,13 @@ func (r Rates) Cost(u TokenUsage) (int64, bool) {
 			return 0, false
 		}
 		total.Add(total, rate.Mul(rate, new(big.Rat).SetInt64(term.tokens)))
+	}
+	if exchangeRate != "" {
+		rate, ok := new(big.Rat).SetString(exchangeRate)
+		if !ok || rate.Sign() <= 0 {
+			return 0, false
+		}
+		total.Quo(total, rate)
 	}
 	total.Quo(total, big.NewRat(10000, 1))
 	total.Add(total, big.NewRat(1, 2))

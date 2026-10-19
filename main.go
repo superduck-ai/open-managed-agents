@@ -85,9 +85,7 @@ func run(logger *slog.Logger) error {
 	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
-	if err := pricing.Sync(ctx, database); err != nil {
-		logger.Warn("sync model prices", "source", "openrouter", "error", err)
-	}
+	syncModelPrices(ctx, database, logger)
 	redisClient, err := redisclient.Open(ctx, cfg.Redis.URL)
 	if err != nil {
 		return fmt.Errorf("open redis client: %w", err)
@@ -294,4 +292,13 @@ func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) er
 		}
 	}
 	return nil
+}
+
+func syncModelPrices(ctx context.Context, database *db.DB, logger *slog.Logger) {
+	if err := pricing.Sync(ctx, database); err != nil {
+		logger.Warn("sync model prices", "source", "openrouter", "error", err)
+	}
+	if err := pricing.SyncNarrows(ctx, database); err != nil {
+		logger.Warn("sync model prices", "source", "narrows", "error", err)
+	}
 }

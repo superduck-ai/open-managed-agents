@@ -3,6 +3,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { LlmError, type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { OmaApi } from "./api.ts";
 import type { Assignment } from "./assignment.ts";
+import { normalizeChatReasoning } from "./chat-reasoning.ts";
 import type { AiSdkRoute } from "./llm-ai-sdk/index.ts";
 
 type ModelBackend = "messages" | "chat_completions";
@@ -27,7 +28,7 @@ export function omaRoute(api: OmaApi, options: GenerateOptions): AiSdkRoute {
       replayFormat: "oma-messages-v1", signedReasoning: true, maxOutputTokens: MESSAGES_DEFAULT_MAX_TOKENS,
       providerOptions: { anthropic: { toolStreaming: false } } };
   }
-  const fetcher = proxyFetch(api, `${root}/chat/completions`, agentID);
+  const fetcher = proxyFetch(api, `${root}/chat/completions`, agentID, normalizeChatReasoning);
   return { model: createOpenAICompatible({ name: "oma", baseURL: root, apiKey: assignment.model_token, includeUsage: true,
     fetch: fetcher, transformRequestBody: chatRequestBody })(options.model), replayFormat: "oma-chat-completions-v1" };
 }
@@ -43,7 +44,8 @@ function chatRequestBody({ max_tokens: maxTokens, ...body }: Record<string, any>
   return maxTokens === undefined ? body : { ...body, max_completion_tokens: maxTokens };
 }
 
-function proxyFetch(api: OmaApi, endpoint: string, agentID: string | undefined): typeof fetch {
+function proxyFetch(api: OmaApi, endpoint: string, agentID: string | undefined,
+  response: (value: Response) => Response = (value) => value): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url !== endpoint || init?.method !== "POST")
@@ -52,7 +54,7 @@ function proxyFetch(api: OmaApi, endpoint: string, agentID: string | undefined):
     headers.delete("x-api-key");
     if (agentID) headers.set("X-Claude-Code-Agent-Id", agentID);
     const timeout = AbortSignal.timeout(MODEL_TIMEOUT_MS);
-    return api.fetcher(endpoint, { method: "POST", headers, body: init.body, redirect: "error",
-      signal: init.signal ? AbortSignal.any([init.signal, timeout]) : timeout });
+    return response(await api.fetcher(endpoint, { method: "POST", headers, body: init.body, redirect: "error",
+      signal: init.signal ? AbortSignal.any([init.signal, timeout]) : timeout }));
   }) as typeof fetch;
 }

@@ -102,7 +102,7 @@ func chatFrame(data string) string {
 	return "data: " + strings.ReplaceAll(data, "\n", "\ndata: ") + "\r\n\r\n"
 }
 
-func TestChatObservationOfficialAdapterBlockIdentity(t *testing.T) {
+func TestChatObservationBlockIdentity(t *testing.T) {
 	for _, field := range []string{"reasoning_content", "reasoning", "reasoning_text"} {
 		t.Run(field, func(t *testing.T) {
 			body := chatFrame(`{"id":"chat_order","choices":[{"index":0,"delta":{"tool_calls":[{"index":9,"id":"call","function":{"name":"Bash","arguments":"{}"}}]}}]}`) +
@@ -125,7 +125,28 @@ func TestChatObservationOfficialAdapterBlockIdentity(t *testing.T) {
 	}
 }
 
-func TestChatObservationOfficialAdapterFinishAtEOF(t *testing.T) {
+func TestChatObservationReasoningPrecedesContentInSameFrame(t *testing.T) {
+	for _, delta := range []string{
+		`{"content":"answer","reasoning_content":"thinking"}`,
+		`{"content":"answer","reasoning_content":"","reasoning":"thinking"}`,
+		`{"content":"answer","reasoning_text":"thinking"}`,
+	} {
+		t.Run(delta, func(t *testing.T) {
+			body := chatFrame(`{"id":"chat_mixed","choices":[{"index":0,"delta":`+delta+`,"finish_reason":"stop"}]}`) + chatFrame(`[DONE]`)
+			result := observeChat(t, body, len(body)).result
+			if result.ErrorType != "" || len(result.Messages) != 2 {
+				t.Fatalf("result=%+v", result)
+			}
+			for index, kind := range []string{"agent.thinking", "agent.message"} {
+				if result.Messages[index].ID != maevents.StableAssistantEventID("cse_chat", "chat_mixed", index, kind) {
+					t.Fatalf("message=%+v", result.Messages[index])
+				}
+			}
+		})
+	}
+}
+
+func TestChatObservationFinishAtEOF(t *testing.T) {
 	body := chatFrame(`{"id":"chat_eof","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"stop"}]}`)
 	observation := observeChat(t, body, 1)
 	if !observation.complete || observation.result.ErrorType != "" || len(observation.result.Messages) != 1 {

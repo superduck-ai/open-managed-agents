@@ -151,8 +151,8 @@ stream part，并精确锁定版本。Brain 不引入 `ai` 核心包，也不使
   （Chat 为 `reasoning_content`）。temperature 与 stop 原样传递，每次调用附带 DSH
   `attributionHeaders()`。
 - `stream.ts`：把 stream part 映射为 DSH `StreamChunk`。内容块按 SDK part ID 首次出现顺序
-  编号：Messages 的文本与 thinking 对应原生 content block index，Chat 依次为文本、reasoning
-  和各工具，与 Go observer 的编号一致。block-end 在终态统一发出；`tool-calls` 必须含工具，
+  编号：Messages 的文本与 thinking 对应原生 content block index，Chat 依次为 reasoning、
+  文本和各工具，与 Go observer 的编号一致（规则见 `messages-proxy.md`）。block-end 在终态统一发出；`tool-calls` 必须含工具，
   `stop` 不能含工具，`length` 映射为 max-tokens，其余结束原因或缺少终态均视为
   `TRANSPORT` 失败，无内容为 `EMPTY_RESPONSE`。
 - `adapter.ts`：`AiSdkAdapter` 串联上述步骤，处理取消并把错误转换为 `LlmError`。
@@ -166,6 +166,10 @@ OMA 侧只提供配置，由 `plugin.ts` 以 `providers: ["oma"]` 加载插件�
   `X-Claude-Code-Agent-Id`，禁止重定向，总超时 300 秒。Messages 路由默认输出上限 8192，
   关闭 SDK 默认的 `eager_input_streaming`；Chat 未显式指定时不发送上限，并把 `max_tokens`
   改名为 `max_completion_tokens`。
+- `chat-reasoning.ts`：Chat 响应进入 AI SDK 前按与 Go 相同的规则规范化 reasoning 字段，
+  只保留 `reasoning_content`，弥补 SDK 只识别 `reasoning_content ?? reasoning` 的差异。
+  仅解析包含 `"reasoning` 的 `data:` 行，其余字节原样通过；跨网络分片的行先缓冲，
+  保留 CRLF，并移除失效的 `content-length`。
 - `model.ts`：`omaModelOptions` 组合路由，并用回调维护 `modelResponses`、记录系统提示诊断；
   `history` 把旧 `kind=pi-ai` replay 中的 `thinkingSignature` 转为 `oma-messages-v1` 签名。
 

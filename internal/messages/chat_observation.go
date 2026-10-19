@@ -120,15 +120,15 @@ func (o *responseObservation) mergeChatUsage(usage *chatUsage) {
 }
 
 func (c *chatObservation) observeDelta(o *responseObservation, delta chatDelta) {
-	if delta.Content != "" {
-		block := c.block(o, "text", "text")
-		block.textBuffer.WriteString(delta.Content)
-		o.contentBytes += len(delta.Content)
-	}
 	if reasoning := firstChatReasoning(delta); reasoning != "" {
 		block := c.block(o, "thinking", "thinking")
 		block.thinkingBuffer.WriteString(reasoning)
 		o.contentBytes += len(reasoning)
+	}
+	if delta.Content != "" {
+		block := c.block(o, "text", "text")
+		block.textBuffer.WriteString(delta.Content)
+		o.contentBytes += len(delta.Content)
 	}
 	for _, tool := range delta.ToolCalls {
 		if tool.Index < 0 || tool.Index >= 1024 || (tool.Type != "" && tool.Type != "function") {

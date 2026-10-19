@@ -162,3 +162,30 @@ test("OMA selects backend by actual model while isolating concurrent session cre
   expect(requests.at(-1)!.headers.get("authorization")).toBe("Bearer rotated");
   await expect(collect(adapter.stream(options(a.session_id, "missing")))).rejects.toMatchObject({ code: "INVALID_ARGS" });
 });
+
+test("Chat adapter normalizes reasoning fields with the Go observer's ordering", async () => {
+  for (const delta of [{ content: "answer", reasoning_content: "thinking" }, { content: "answer", reasoning_content: "", reasoning: "thinking" },
+    { content: "answer", reasoning_text: "thinking" }, { reasoning: "ignored", reasoning_content: "thinking", content: "answer" }]) {
+    const { a, adapter } = setup([{ id: "chat_1", choices: [{ index: 0, delta, finish_reason: "stop" }] }, "[DONE]"]);
+    const assembler = new BlockAssembler(); for (const chunk of await collect(adapter.stream(options(a.session_id)))) assembler.push(chunk);
+    expect(assembler.message({ provider: "oma", model: "chat-model" }).content).toEqual([
+      { type: "reasoning", text: "thinking" }, { type: "text", text: "answer" },
+    ]);
+  }
+});
+
+test("Chat adapter normalizes reasoning across split network chunks and CRLF frames", async () => {
+  const body = [{ id: "chat_1", choices: [{ index: 0, delta: { reasoning_text: "think" } }] },
+    { id: "chat_1", choices: [{ index: 0, delta: { reasoning_text: "ing", content: "done" }, finish_reason: "stop" }] }, "[DONE]"]
+    .map((chunk) => `data: ${typeof chunk === "string" ? chunk : JSON.stringify(chunk)}\r\n\r\n`).join("");
+  const bytes = new TextEncoder().encode(body);
+  const api = new OmaApi("http://model.test", (async (_input, _init) => new Response(new ReadableStream<Uint8Array>({
+    start(controller) { for (const byte of bytes) controller.enqueue(new Uint8Array([byte])); controller.close(); },
+  }), { headers: { "Content-Type": "text/event-stream", "Content-Length": String(bytes.length) } })) as typeof fetch);
+  const a = assignment(); a.launch.model_backends = { "chat-model": "chat_completions" }; api.assignments.set(a.session_id, a);
+  const assembler = new BlockAssembler();
+  for (const chunk of await collect(new AiSdkAdapter(omaModelOptions(api)).stream(options(a.session_id)))) assembler.push(chunk);
+  expect(assembler.message({ provider: "oma", model: "chat-model" }).content).toEqual([
+    { type: "reasoning", text: "thinking" }, { type: "text", text: "done" },
+  ]);
+});

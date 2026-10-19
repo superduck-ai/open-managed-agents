@@ -41,6 +41,8 @@ DSH 开始模型执行前等待首个 `processing` 回执确认；后端通过�
 
 队列非空时，前一轮的普通 `idle/end_turn` 不结束公开会话；最后一条处理完成后才公开 idle。处于 `requires_action` 或 `budget_reached` 暂停时，新消息返回 400，仍需先提交相应工具结果或解除预算暂停。显式中断继续保留 `user.interrupt`，公开 stop reason 为 `end_turn`，不添加取消提示消息。
 
+用户消息可以包含 `image` 和 `document` 块。服务端投递前把内联字节和 Files 引用物化为会话私有文件，Brain 只收到 `file_id` 或 `url` 引用，以 dsh `message-media` 块原样传给 Messages 代理，由代理展开字节；因此 Brain 的 internal-events 不含附件原始内容。其他块类型以错误结果结束本轮并 ACK，不停止会话。详见 [message-media-attachments](message-media-attachments.md)。
+
 本地测试覆盖并发提交、批量及大消息、处理时间、暂停拒绝和队列排空；真实模型的 `session-active-input` 用例需单独运行验证。
 
 ## 会话配置

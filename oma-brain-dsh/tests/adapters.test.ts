@@ -271,3 +271,29 @@ test("modern MCP tool interruption closes the original request", async () => {
     expect(cancellationNotifications).toBe(0);
   } finally { await executor.close(); }
 });
+
+test("OMA Messages adapter forwards user media references verbatim and rejects assistant media", async () => {
+  let body: Payload = {};
+  const api = new OmaApi("http://model.test", (async (_input, init) => {
+    body = JSON.parse(init!.body as string);
+    return eventsResponse(textEvents("seen"));
+  }) as typeof fetch);
+  const a = assignment(); api.assignments.set(a.session_id, a);
+  const image = { type: "image", source: { type: "file", file_id: "file_image" }, cache_control: { type: "ephemeral" } };
+  const document = { type: "document", title: "Spec", context: "v2", source: { type: "url", url: "https://example.com/spec.pdf" } };
+  const request = options(a.session_id);
+  request.messages = [{ role: "user", content: [
+    { type: "text", text: "Compare" },
+    { type: "message-media", block: image },
+    { type: "message-media", block: document },
+  ] }];
+  await collect(new MessagesAdapter(api).stream(request));
+  expect(body.messages).toEqual([{ role: "user", content: [{ type: "text", text: "Compare" }, image, document] }]);
+
+  const assistant = options(a.session_id);
+  assistant.messages.push({
+    id: MessageId("assistant-media"), role: "assistant", source: { kind: "model", provider: "oma", model: "test-model" },
+    content: [{ type: "message-media", block: image }],
+  });
+  await expect(collect(new MessagesAdapter(api).stream(assistant))).rejects.toMatchObject({ code: "INVALID_ARGS" });
+});

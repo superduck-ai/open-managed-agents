@@ -4,6 +4,7 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import * as SandboxTools from "../sandbox-tools/index.ts";
 import { workerDiagnostic } from "../ccrv2/diagnostics.ts";
+import { userContentBlocks, type UserContent } from "./media.ts";
 import type {
   SessionRuntimeConfig,
   SessionRuntimeHooks,
@@ -98,7 +99,7 @@ export class SessionRuntime {
         });
   }
 
-  async run(text: string, hooks: TurnHooks): Promise<void> {
+  async run(input: UserContent, hooks: TurnHooks): Promise<void> {
     if (this.busy || this.abort.signal.aborted)
       throw new Error("Session is busy or stopped");
     this.busy = true;
@@ -112,7 +113,7 @@ export class SessionRuntime {
       this.acceptingInput = true;
       this.agent.followup(createUserMessage({
         source: { kind: "user" },
-        content: [{ type: "text", text }],
+        content: userContentBlocks(input),
       }));
       await this.agent.whenIdle();
       await this.flushLog();
@@ -128,9 +129,9 @@ export class SessionRuntime {
     }
   }
 
-  steer(text: string): void {
+  steer(input: UserContent): void {
     this.agent.steer(createUserMessage({
-      source: { kind: "user" }, content: [{ type: "text", text }],
+      source: { kind: "user" }, content: userContentBlocks(input),
     }));
   }
 

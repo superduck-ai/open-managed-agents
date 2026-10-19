@@ -50,3 +50,10 @@ func providerResolveError(err error) *httpapi.Error {
 		return providerConfigurationUnavailableError()
 	}
 }
+
+func attachmentError(err error) *httpapi.Error {
+	if errors.Is(err, errAttachmentsTooLarge) {
+		return requestTooLargeError()
+	}
+	return httpapi.NewError(http.StatusInternalServerError, "api_error", "Message attachments are unavailable")
+}

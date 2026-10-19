@@ -559,8 +559,7 @@ test("CCRv2 plugin runs isolated sessions and restores history without OMA or NA
   }
 });
 
-test("unsupported user input completes with an error result and keeps the session usable", async () => {
-  const backend = new MemoryBackend();
+async function mountMediaKernel(backend: MemoryBackend) {
   const ctx = new Context();
   await mountKernel(ctx);
   const model = new TextModel();
@@ -569,30 +568,64 @@ test("unsupported user input completes with an error result and keeps the sessio
     apply(scope: Context) { scope.llm.registerAdapter(["memory"], model); },
   });
   await ctx.plugin(CcrBridge, { backend });
+  const session = ctx.ccrv2.createSession({
+    id: "a", provider: "memory", model: "text", workDir: "/workspace",
+    systemPrompt: "Standalone test instructions", setup,
+  });
+  await session.open();
+  return { ctx, model, session };
+}
+
+test("unsupported user content blocks complete with an error result and keep the session usable", async () => {
+  const backend = new MemoryBackend();
+  const { ctx, model, session } = await mountMediaKernel(backend);
   try {
-    const session = ctx.ccrv2.createSession({
-      id: "a", provider: "memory", model: "text", workDir: "/workspace",
-      systemPrompt: "Standalone test instructions", setup,
-    });
-    await session.open();
-    const image = { type: "image", source: { type: "base64", media_type: "image/png", data: "AA==" } };
-    await session.receive("image_input", { content: [{ type: "text", text: "look" }, image] });
+    const audio = { type: "audio", source: { type: "base64", media_type: "audio/wav", data: "AA==" } };
+    await session.receive("audio_input", { content: [{ type: "text", text: "listen" }, audio] });
     expect(model.requests).toHaveLength(0);
-    expect(backend.acknowledged).toEqual(["a:image_input"]);
-    expect(session.state.completed).toEqual(["image_input"]);
+    expect(backend.acknowledged).toEqual(["a:audio_input"]);
+    expect(session.state.completed).toEqual(["audio_input"]);
     expect(session.state.phase).toBe("completed");
-    expect(session.state.outbox).toEqual([]);
     expect(backend.output.get("a")).toEqual([
-      { type: "system.message", uuid: "image_input_unsupported_message",
-        content: [{ type: "text", text: "Only text user input is supported." }] },
-      { type: "result", uuid: "image_input_unsupported_result", subtype: "error_during_execution", is_error: true },
+      { type: "system.message", uuid: "audio_input_unsupported_message",
+        content: [{ type: "text", text: "Only text, image and document user input is supported." }] },
+      { type: "result", uuid: "audio_input_unsupported_result", subtype: "error_during_execution", is_error: true },
     ]);
-    await session.receive("image_input", { content: [image] });
-    expect(backend.acknowledged).toEqual(["a:image_input", "a:image_input"]);
+    await session.receive("empty_input", { content: [] });
+    expect(backend.acknowledged).toEqual(["a:audio_input", "a:empty_input"]);
     await session.receive("next_input", { content: "continue" });
     expect(model.requests).toHaveLength(1);
     expect(backend.acknowledged.at(-1)).toBe("a:next_input");
   } finally {
     await ctx.fiber.dispose();
+  }
+});
+
+test("image and document references reach the model and survive history restoration", async () => {
+  const backend = new MemoryBackend();
+  const image = { type: "image", source: { type: "file", file_id: "file_image" } };
+  const document = { type: "document", title: "Spec", source: { type: "url", url: "https://example.com/spec.pdf" } };
+  const first = await mountMediaKernel(backend);
+  try {
+    await first.session.receive("media_input", { message: { role: "user", content: [{ type: "text", text: "Compare" }, image, document] } });
+    expect(backend.acknowledged).toEqual(["a:media_input"]);
+    const user = first.model.requests[0]!.messages.find((message) => message.role === "user")!;
+    expect(user.content).toEqual([
+      { type: "text", text: "Compare" },
+      { type: "message-media", block: image },
+      { type: "message-media", block: document },
+    ]);
+    expect(JSON.stringify(backend.logs.get("a"))).not.toContain("base64");
+  } finally {
+    await first.ctx.fiber.dispose();
+  }
+  const restored = await mountMediaKernel(backend);
+  try {
+    await restored.session.receive("follow_up", { content: "And now?" });
+    const history = restored.model.requests[0]!.messages.filter((message) => message.role === "user");
+    expect(history[0]!.content).toContainEqual({ type: "message-media", block: image });
+    expect(history.at(-1)!.content).toEqual([{ type: "text", text: "And now?" }]);
+  } finally {
+    await restored.ctx.fiber.dispose();
   }
 });

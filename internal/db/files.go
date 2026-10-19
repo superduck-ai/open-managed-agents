@@ -52,6 +52,18 @@ func (d *DB) GetFile(ctx context.Context, workspaceUUID string, fileExternalID s
 	return fileRecordFromMapperRow(row, err)
 }
 
+func (d *DB) GetSessionAttachmentFileByPath(ctx context.Context, workspaceUUID, sessionUUID, entryPath string) (FileRecord, error) {
+	mapper := NewFileMapper(d.mapperDB)
+	row, err := mapper.GetSessionAttachmentFileByPath(ctx, workspaceUUID, sessionUUID, entryPath)
+	return fileRecordFromMapperRow(row, err)
+}
+
+func (d *DB) GetSessionAttachmentFile(ctx context.Context, workspaceUUID, sessionUUID, fileExternalID string) (FileRecord, error) {
+	mapper := NewFileMapper(d.mapperDB)
+	row, err := mapper.GetSessionAttachmentFile(ctx, workspaceUUID, sessionUUID, fileExternalID)
+	return fileRecordFromMapperRow(row, err)
+}
+
 func (d *DB) GetFileByUUID(ctx context.Context, workspaceUUID string, fileUUID string) (FileRecord, error) {
 	mapper := NewFileMapper(d.mapperDB)
 	row, err := mapper.GetFileByUUID(ctx, workspaceUUID, fileUUID)

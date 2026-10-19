@@ -1,0 +1,92 @@
+package messagemedia
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestValidateInlineRejectsUnsupportedSources(t *testing.T) {
+	tests := []struct {
+		name  string
+		block Block
+	}{
+		{name: "invalid base64", block: Block{Type: BlockImage, Source: Source{Type: SourceBase64, MediaType: "image/png", Data: "%%%"}}},
+		{name: "empty base64", block: Block{Type: BlockImage, Source: Source{Type: SourceBase64, MediaType: "image/png", Data: ""}}},
+		{name: "unsupported image type", block: Block{Type: BlockImage, Source: Source{Type: SourceBase64, MediaType: "image/tiff", Data: "AA=="}}},
+		{name: "base64 text document", block: Block{Type: BlockDocument, Source: Source{Type: SourceBase64, MediaType: MediaTypeText, Data: "AA=="}}},
+		{name: "text image", block: Block{Type: BlockImage, Source: Source{Type: SourceText, MediaType: MediaTypeText, Data: "x"}}},
+		{name: "unknown source", block: Block{Type: BlockImage, Source: Source{Type: "ftp"}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := ValidateInline(test.block); err == nil {
+				t.Fatal("ValidateInline() error = nil")
+			}
+		})
+	}
+}
+
+func TestValidateInlineAcceptsContractSources(t *testing.T) {
+	blocks := []Block{
+		{Type: BlockImage, Source: Source{Type: SourceBase64, MediaType: "image/webp", Data: "AA=="}},
+		{Type: BlockImage, Source: Source{Type: SourceURL, URL: "https://example.com/a.png"}},
+		{Type: BlockImage, Source: Source{Type: SourceFile, FileID: "file_1"}},
+		{Type: BlockDocument, Source: Source{Type: SourceBase64, MediaType: MediaTypePDF, Data: "JVBERg=="}},
+		{Type: BlockDocument, Source: Source{Type: SourceText, MediaType: MediaTypeText, Data: "notes"}},
+	}
+	for _, block := range blocks {
+		if err := ValidateInline(block); err != nil {
+			t.Fatalf("ValidateInline(%+v) error = %v", block, err)
+		}
+	}
+}
+
+func TestParseBlockRejectsNonMediaBlocks(t *testing.T) {
+	if _, err := ParseBlock(json.RawMessage(`{"type":"text","text":"hi"}`)); err == nil {
+		t.Fatal("ParseBlock(text) error = nil")
+	}
+	if _, err := ParseBlock(json.RawMessage(`[]`)); err == nil {
+		t.Fatal("ParseBlock(array) error = nil")
+	}
+}
+
+func TestAttachmentPathAndReferencesPreserveDocumentFields(t *testing.T) {
+	if got := AttachmentPath("sevt_1", 2, BlockImage, "image/png"); got != "/uploads/message_attachments/sevt_1/2.png" {
+		t.Fatalf("AttachmentPath(image) = %q", got)
+	}
+	if got := AttachmentPath("sevt_1", 0, BlockDocument, MediaTypeText); got != "/uploads/message_attachments/sevt_1/0.txt" {
+		t.Fatalf("AttachmentPath(text) = %q", got)
+	}
+	title := "Report"
+	block := Block{Type: BlockDocument, Title: &title, Source: Source{Type: SourceBase64, MediaType: MediaTypePDF, Data: "JVBERg=="}}
+	raw, err := json.Marshal(block.WithFileReference("file_9"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != `{"type":"document","source":{"type":"file","file_id":"file_9"},"title":"Report"}` {
+		t.Fatalf("WithFileReference() = %s", raw)
+	}
+}
+
+func TestWithContentRestoresProviderSources(t *testing.T) {
+	text, err := Block{Type: BlockDocument, Source: Source{Type: SourceFile, FileID: "file_1"}}.WithContent(MediaTypeText, []byte("notes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text.Source != (Source{Type: SourceText, MediaType: MediaTypeText, Data: "notes"}) {
+		t.Fatalf("text source = %+v", text.Source)
+	}
+	image, err := Block{Type: BlockImage, Source: Source{Type: SourceFile, FileID: "file_2"}}.WithContent("image/png", []byte{0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if image.Source != (Source{Type: SourceBase64, MediaType: "image/png", Data: "AA=="}) {
+		t.Fatalf("image source = %+v", image.Source)
+	}
+	if _, err := (Block{Type: BlockImage}).WithContent("application/zip", []byte{0}); err == nil {
+		t.Fatal("WithContent(zip) error = nil")
+	}
+	if _, err := (Block{Type: BlockDocument}).WithContent(MediaTypeText, []byte{0xff}); err == nil {
+		t.Fatal("WithContent(invalid utf8) error = nil")
+	}
+}

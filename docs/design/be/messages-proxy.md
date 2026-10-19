@@ -56,7 +56,7 @@ Provider 控制台错误响应包含稳定的 `code`，前端不得依赖英文 
 POST /v1/messages
 ```
 
-handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发前将这段有界请求体读入内存。完整扫描顶层对象可以确认 `model` 恰好出现一次，避免不同 JSON 解析器对重复键取值不同而绕过 Provider 白名单；校验后仍按原始字节转发，不改写模型 ID 或其他字段。响应 body 继续逐块流式转发，不做整包缓冲。
+handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发前将这段有界请求体读入内存。完整扫描顶层对象可以确认 `model` 恰好出现一次，避免不同 JSON 解析器对重复键取值不同而绕过 Provider 白名单；校验后仍按原始字节转发，不改写模型 ID 或其他字段。唯一例外是 `code_session_oauth` 凭证请求中引用本会话消息附件的 `source.type=file` 图片和文档块：代理在转发前把它们展开为 `base64` 或 `text` 来源，规则见 [message-media-attachments](message-media-attachments.md)；不含 `file_id` 的请求仍按原字节转发。响应 body 继续逐块流式转发，不做整包缓冲。
 
 顶层 `model` 必须是没有首尾空白的非空字符串；服务端不会通过 trim 把另一个输入静默归一化为已配置模型。
 

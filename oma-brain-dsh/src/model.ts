@@ -149,6 +149,7 @@ function messagesRequest(options: GenerateOptions): Payload {
           ? [{ type: "thinking", thinking: block.text, signature }] : [{ type: "text", text: block.text }];
       }
       if (block.type === "tool-call") return [{ type: "tool_use", id: block.id, name: block.name, input: replayToolInput(block.arguments) }];
+      if (block.type === "message-media" && message.role === "user") return [structuredClone(block.block)];
       throw new LlmError(`Unsupported Messages input block: ${block.type}`, "INVALID_ARGS");
     });
     if (message.role === "tool") {

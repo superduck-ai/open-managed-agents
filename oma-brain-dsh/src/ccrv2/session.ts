@@ -20,6 +20,8 @@ import { emptyState, object, type BrainState, type ThreadExecutionState, type Pa
 import { startDeliveryProgress } from "./delivery-progress.ts";
 import { failureDiagnostic, workerDiagnostic } from "./diagnostics.ts";
 import { assistantMessages, CcrAssistantStream } from "./assistant.ts";
+import type { ContentBlock } from "@deepseek-ai/dsh-llm";
+import "../runtime/media.ts";
 
 export class CcrSession {
   state: BrainState = emptyState();
@@ -496,15 +498,15 @@ export class CcrSession {
     if (!this.runtime.acceptingInput || this.interrupted || this.blocked()
       || inputId === this.state.inputId || this.state.completed.includes(inputId)
       || this.state.turnInputs?.includes(inputId)) return false;
-    const text = userInputText(object(input));
-    if (text === undefined) return false;
+    const content = userInputContent(object(input));
+    if (content === undefined) return false;
     (this.state.turnInputs ??= []).push(inputId);
     this.inputReceipts = this.inputReceipts.then(async () => {
       await this.save();
       await this.backend.reportDelivery(this.id, inputId, "processing", this.abort.signal);
     });
     void this.inputReceipts.catch(() => this.stop());
-    this.runtime.steer(text);
+    this.runtime.steer(content);
     return true;
   }
 
@@ -528,14 +530,14 @@ export class CcrSession {
       throw new Error("Session requires operator reconciliation");
     if (this.busy || this.abort.signal.aborted)
       throw new Error("Session is busy or stopped");
-    const text = userInputText(payload);
-    if (text === undefined) {
-      await this.rejectInput(inputId, "Only text user input is supported.");
+    const content = userInputContent(payload);
+    if (content === undefined) {
+      await this.rejectInput(inputId, "Only text, image and document user input is supported.");
       return;
     }
     let stopProgress = () => {};
     try {
-      await this.runtime.run(text, {
+      await this.runtime.run(content, {
         beforeRun: async () => {
           this.turnErrorMessage = undefined;
           this.interrupted = false;
@@ -651,14 +653,16 @@ export class CcrSession {
   }
 }
 
-function userInputText(payload: Payload): string | undefined {
+function userInputContent(payload: Payload): ContentBlock[] | undefined {
   const content = payload.message?.content ?? payload.content;
-  const text =
-    typeof content === "string"
-    ? content
-    : Array.isArray(content) &&
-      content.every((b: Payload) => b.type === "text")
-      ? content.map((b: Payload) => b.text).join("\n")
-      : undefined;
-  return typeof text === "string" ? text : undefined;
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  if (!Array.isArray(content) || !content.length) return undefined;
+  const blocks: ContentBlock[] = [];
+  for (const block of content) {
+    if (block?.type === "text" && typeof block.text === "string") blocks.push({ type: "text", text: block.text });
+    else if ((block?.type === "image" || block?.type === "document") && block.source && typeof block.source === "object")
+      blocks.push({ type: "message-media", block: structuredClone(block) });
+    else return undefined;
+  }
+  return blocks;
 }

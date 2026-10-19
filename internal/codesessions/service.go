@@ -34,6 +34,7 @@ type Service struct {
 	workerEvents           workerevents.Broker
 	workerEventAcks        workerevents.AckStore
 	workerEventObjects     storage.ObjectStore
+	attachments            SessionAttachmentStore
 }
 
 func (s *Service) PurgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {
@@ -152,7 +153,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 			queued = true
 			continue
 		}
-		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event)
+		payload, err := s.workerPayloadForEvent(ctx, codeSession.ExternalID, event)
 		if err != nil {
 			return fmt.Errorf("convert public session event %s: %w", event.ExternalID, err)
 		}

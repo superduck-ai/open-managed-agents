@@ -28,6 +28,7 @@ const (
 
 type filestoreDatabase interface {
 	GetFilestoreFilesystem(context.Context, string, string) (db.FilestoreFilesystem, error)
+	GetFilestoreFilesystemBySession(context.Context, string, string) (db.FilestoreFilesystem, error)
 	GetSessionResourceFile(context.Context, string, string, string) (db.SessionResourceFile, error)
 	ListSessionResourceFilesPage(context.Context, db.ListSessionResourceFilesPageParams) (db.SessionResourceFilePage, error)
 	ListSessionSkillArchiveResources(context.Context, string, string) ([]db.SessionResourceFile, error)

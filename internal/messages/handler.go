@@ -56,6 +56,7 @@ type Handler struct {
 	secrets      *secrets.Service
 	client       *http.Client
 	logger       *slog.Logger
+	attachments  AttachmentOpener
 }
 
 // flushingResponseWriter 在每次复制一块响应后主动 flush，避免 SSE 被 net/http 缓冲。
@@ -94,6 +95,11 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, invalidRequestError(err))
 		return
 	}
+	body, err = h.expandSessionAttachments(r.Context(), principal, body)
+	if err != nil {
+		h.writeAttachmentError(w, r, err)
+		return
+	}
 	upstream, err := llmproviders.Resolve(
 		r.Context(),
 		h.database,
@@ -129,6 +135,14 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.proxyModelRequest(w, r, upstreamRequest, request)
+}
+
+func (h *Handler) writeAttachmentError(w http.ResponseWriter, r *http.Request, err error) {
+	mapped := attachmentError(err)
+	if mapped.Status >= http.StatusInternalServerError {
+		h.logger.ErrorContext(r.Context(), "expand Messages attachments", "error", err)
+	}
+	httpapi.WriteError(w, r, mapped)
 }
 
 func (h *Handler) writeProviderError(w http.ResponseWriter, r *http.Request, err error) {

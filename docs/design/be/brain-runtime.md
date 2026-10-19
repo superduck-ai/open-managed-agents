@@ -88,6 +88,12 @@ Brain 实现尚未部署，不保留开发阶段创建独立 Brain 表、延迟�
 
 后端与 DSH 需要一起更新；JetStream `OMA_BRAIN_TASKS` stream 已删除，迁移 83 为 `code_sessions` 增加领取列。多实例后端继续共用 CCRv2 签名密钥、数据库、NATS 和事件对象存储；任一实例的派发都通过 Core NATS 唤醒所有实例上的长轮询，通知丢失只会让领取退回到每秒一次的兜底查询。
 
+## 可观测
+
+服务端 trace、指标与 DSH 的 `traceparent` 透传约定见 `docs/design/be/server-observability.md` 的 P8 节：Runner 派发时把 `traceparent` 写入 `code_sessions.worker_claim_trace_parent`，领取响应以 `trace_parent` 字段下发，DSH 原样附加到同一会话凭据发出的请求与沙箱 MCP 配置中，服务端只把它作为 span link。领取长轮询不建 HTTP span，由领取耗时、排队等待与领取队列 gauge 覆盖。
+
+DSH 的服务级诊断日志与指标（任务准入、领取失败、会话退役原因、任务失败位置、租约与心跳、回调失败）在配置 `OTEL_EXPORTER_OTLP_ENDPOINT` 后通过 OTLP 写入与 oma-server 相同的 `oma_server` 流，`service.name=oma-brain`，见 `server-observability.md` 的 P9.3 节。agent loop 内部可观测属于二期独立插件，不与服务端数据关联。
+
 ## 验证边界
 
 普通测试覆盖并发领取互斥、领取期限与宽限期边界、idle 排除、失败退避与耗尽后的公开错误、旧 epoch 注册与心跳拒绝、20 秒租约、恢复保留配置、子 Agent 固定版本、惰性沙箱并发创建、MCP 转发和消息顺序。DSH 的测试使用真实原生 loop、受控模型/MCP/CCRv2 与领取服务，覆盖容量背压、准入失败与停机 release。

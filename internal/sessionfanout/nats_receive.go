@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
@@ -79,5 +80,9 @@ func observeFanoutLag(ctx context.Context, message *nats.Msg) {
 	if err != nil {
 		return
 	}
-	telemetry.RecordFanoutLag(ctx, time.Since(time.Unix(0, publishedAt)))
+	telemetry.RecordWait(ctx, fanoutLag.Get(), time.Since(time.Unix(0, publishedAt)))
 }
+
+var fanoutLag = telemetry.NewInstruments(func(meter metric.Meter) metric.Float64Histogram {
+	return telemetry.Histogram(meter, "oma.fanout.lag", "s", "Fanout lag", telemetry.LatencyBuckets)
+})

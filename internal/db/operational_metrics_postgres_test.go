@@ -22,6 +22,16 @@ func TestOperationalStateCountsPostgres(t *testing.T) {
 	if _, err := migrations.Up(ctx); err != nil {
 		t.Fatal(err)
 	}
+	var heartbeatIndexes, liveStateIndexes int
+	if err := standard.QueryRowContext(ctx, `
+		select count(*) filter (where indexdef like '%updated_at%'), count(*) filter (where indexname = 'environment_work_live_state_v2_idx')
+		from pg_indexes where schemaname = current_schema() and tablename = 'environment_work'
+	`).Scan(&heartbeatIndexes, &liveStateIndexes); err != nil {
+		t.Fatal(err)
+	}
+	if heartbeatIndexes != 0 || liveStateIndexes != 1 {
+		t.Fatalf("environment_work indexes: updated_at=%d live_state=%d", heartbeatIndexes, liveStateIndexes)
+	}
 	database := &DB{mapperDB: yourbatis.NewDB(standard, yourbatis.DialectPostgres)}
 	now := time.Now().UTC()
 	old := now.Add(-time.Hour)
@@ -30,7 +40,19 @@ func TestOperationalStateCountsPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(empty.Sessions)+len(empty.CodeSessions)+len(empty.EnvironmentWork)+len(empty.EnvironmentSandboxes) != 0 || empty.StaleRunningSessions+empty.StuckStartingWork+empty.OldestQueuedWorkSeconds != 0 {
+	total := int64(0)
+	for _, counts := range []map[string]int64{empty.Sessions, empty.EnvironmentWork, empty.EnvironmentSandboxes} {
+		for _, value := range counts {
+			total += value
+		}
+	}
+	for _, value := range empty.CodeSessions {
+		total += value
+	}
+	if !reflect.DeepEqual(empty.BrainClaims, map[string]int64{"waiting": 0, "claimed": 0, "takeover": 0}) || empty.OldestWaitingBrainClaimSeconds != 0 {
+		t.Fatalf("empty brain claim counts: %+v", empty)
+	}
+	if total != 0 || len(empty.Sessions) != 2 || len(empty.CodeSessions) != 8 || empty.StaleRunningSessions+empty.StuckStartingWork+empty.OldestQueuedWorkSeconds != 0 {
 		t.Fatalf("empty database counts: %+v", empty)
 	}
 	if err := database.Seed(ctx, []config.SeedAPIKey{{ExternalID: "apikey_ops_metrics", Key: "state-metrics-test-key"}}); err != nil {
@@ -46,13 +68,15 @@ func TestOperationalStateCountsPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	sessionMapper := NewSessionMapper(database.mapperDB)
-	var owner Session
-	for i, status := range []string{"running", "rescheduling", "idle", "idle", "idle"} {
+	var owner, runningOwner Session
+	for i, status := range []string{"running", "rescheduling", "idle", "idle", "idle", "running"} {
 		session := Session{UUID: uuid.NewV4().String(), ExternalID: fmt.Sprintf("ses_metrics_%d", i), OrganizationUUID: organization, WorkspaceUUID: workspace, CreatedByAPIKeyUUID: key.UUID.String(), EnvironmentUUID: environment.UUID, EnvironmentExternalID: environment.ExternalID, AgentUUID: uuid.NewV4().String(), AgentExternalID: "agent_metrics", AgentVersion: 1, AgentSnapshot: json.RawMessage(`{}`), Metadata: json.RawMessage(`{}`), Status: status, Usage: json.RawMessage(`{}`), Stats: json.RawMessage(`{}`), OutcomeEvaluations: json.RawMessage(`[]`), CreatedAt: old}
 		if _, err := sessionMapper.Insert(ctx, sessionWriteParameters(session)); err != nil {
 			t.Fatal(err)
 		}
 		switch i {
+		case 0:
+			runningOwner = session
 		case 2:
 			owner = session
 		case 3:
@@ -64,6 +88,13 @@ func TestOperationalStateCountsPostgres(t *testing.T) {
 			}
 		case 4:
 			if _, err := sessionMapper.SoftDelete(ctx, workspace, session.ExternalID); err != nil {
+				t.Fatal(err)
+			}
+		case 5:
+			if _, err := standard.ExecContext(ctx, `
+				insert into session_events (external_id, session_external_id, event_type, payload, organization_uuid, workspace_uuid, session_uuid, created_at)
+				values ('sevt_metrics_progress', $1, 'agent.message', '{}', $2, $3, $4, $5)
+			`, session.ExternalID, organization, workspace, session.UUID, now); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -97,31 +128,45 @@ func TestOperationalStateCountsPostgres(t *testing.T) {
 			}
 		}
 	}
+	if _, err := standard.ExecContext(ctx, `
+		update code_sessions
+		set metadata = '{"config":{"worker_transport":"claim"}}',
+			worker_claim_requested_at = now() - interval '90 seconds',
+			worker_claim_expires_at = case external_id when 'cse_metrics_1' then now() + interval '30 seconds' end
+		where external_id in ('cse_metrics_0', 'cse_metrics_1', 'cse_metrics_3')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	takeover, err := codeMapper.Insert(ctx, createCodeSessionParams{ExternalID: "cse_metrics_takeover", OrganizationUUID: organization, WorkspaceUUID: workspace, SessionUUID: runningOwner.UUID, SessionExternalID: runningOwner.ExternalID, EnvironmentUUID: environment.UUID, EnvironmentExternalID: environment.ExternalID, WorkDir: "/workspace", PermissionMode: "default", Model: "model", Status: "active", Metadata: []byte(`{"config":{"worker_transport":"claim"}}`), CreatedAt: old})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := standard.ExecContext(ctx, `update code_sessions set worker_lease_expires_at = now() - interval '1 minute' where uuid = $1`, takeover.UUID); err != nil {
+		t.Fatal(err)
+	}
 	counts, err := database.OperationalStateCounts(ctx, cutoff, cutoff)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stateMap := func(rows []StateCount) map[string]int64 {
-		result := map[string]int64{}
-		for _, row := range rows {
-			result[row.State] = row.Total
-		}
-		return result
+	if !reflect.DeepEqual(counts.BrainClaims, map[string]int64{"waiting": 1, "claimed": 1, "takeover": 1}) || counts.OldestWaitingBrainClaimSeconds < 89 || counts.OldestWaitingBrainClaimSeconds > 95 {
+		t.Fatalf("brain claim counts: %+v oldest=%d", counts.BrainClaims, counts.OldestWaitingBrainClaimSeconds)
 	}
-	if !reflect.DeepEqual(stateMap(counts.Sessions), map[string]int64{"running": 1, "rescheduling": 1}) || counts.StaleRunningSessions != 1 {
+	if !reflect.DeepEqual(counts.Sessions, map[string]int64{"running": 2, "rescheduling": 1}) || counts.StaleRunningSessions != 1 {
 		t.Fatalf("session counts: %+v", counts)
 	}
-	if !reflect.DeepEqual(stateMap(counts.EnvironmentWork), map[string]int64{"queued": 2, "starting": 1, "active": 1, "stopping": 1}) || counts.StuckStartingWork != 1 || counts.OldestQueuedWorkSeconds < 3599 || counts.OldestQueuedWorkSeconds > 3605 {
+	if !reflect.DeepEqual(counts.EnvironmentWork, map[string]int64{"queued": 2, "starting": 1, "active": 1, "stopping": 1}) || counts.StuckStartingWork != 1 || counts.OldestQueuedWorkSeconds < 3599 || counts.OldestQueuedWorkSeconds > 3605 {
 		t.Fatalf("work counts: %+v", counts)
 	}
-	if !reflect.DeepEqual(stateMap(counts.EnvironmentSandboxes), map[string]int64{"creating": 1, "running": 1, "stopping": 1}) {
+	if !reflect.DeepEqual(counts.EnvironmentSandboxes, map[string]int64{"creating": 1, "running": 1, "stopping": 1}) {
 		t.Fatalf("sandbox counts: %+v", counts)
 	}
 	codeCounts := map[string]int64{}
-	for _, row := range counts.CodeSessions {
-		codeCounts[row.WorkerStatus+"/"+row.ConnectionStatus] = row.Total
+	for state, total := range counts.CodeSessions {
+		if total > 0 {
+			codeCounts[state.WorkerStatus+"/"+state.ConnectionStatus] = total
+		}
 	}
-	if !reflect.DeepEqual(codeCounts, map[string]int64{"idle/disconnected": 1, "running/connected": 1}) {
+	if !reflect.DeepEqual(codeCounts, map[string]int64{"idle/disconnected": 2, "running/connected": 1}) {
 		t.Fatalf("code session counts: %v", codeCounts)
 	}
 	fresh, err := database.OperationalStateCounts(ctx, old.Add(-time.Minute), old.Add(-time.Minute))

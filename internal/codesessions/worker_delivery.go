@@ -64,6 +64,9 @@ func (s *Service) applyWorkerDeliveryUpdates(
 			err = s.db.WithLockedCodeSessionWorkerEpoch(ackCtx, codeSessionID, epoch, apply)
 		}
 	}
+	if err != nil {
+		recordFailedWorkerDeliveryUpdates(ctx, updates, result, err)
+	}
 	cancel()
 	// 对象清理会访问 jobs 表，必须在释放 Code Session 事务后执行，避免回调
 	// 另取 DB 连接。即使后续 update 失败，已 DoubleAck 的对象仍可以清理。
@@ -85,14 +88,13 @@ func (s *Service) applyLockedWorkerDeliveryUpdates(
 	for _, update := range updates {
 		reference, found := references[update.EventID]
 		if !found {
-			telemetry.RecordWorkerEventUpdate(ctx, deliveryStatusName(update.Status), "ignored")
+			recordWorkerEventUpdate(ctx, update.Status, "ignored")
 			result.Ignored++
 			continue
 		}
 		switch update.Status {
 		case "received", "processing":
 			if err := s.workerEvents.InProgress(ctx, reference.AckSubject); err != nil {
-				telemetry.RecordWorkerEventUpdate(ctx, deliveryStatusName(update.Status), "error")
 				return result, cleanupJobIDs, workerEventUnavailable(err)
 			}
 			if err := s.workerEventAcks.Refresh(ctx, codeSessionID, epoch, update.EventID); err != nil {
@@ -100,36 +102,31 @@ func (s *Service) applyLockedWorkerDeliveryUpdates(
 			}
 		case "processed":
 			if err := s.workerEvents.DoubleAck(ctx, reference.AckSubject); err != nil {
-				telemetry.RecordWorkerEventUpdate(ctx, deliveryStatusName(update.Status), "error")
 				return result, cleanupJobIDs, workerEventUnavailable(err)
 			}
 			if err := s.workerEventAcks.Delete(ctx, codeSessionID, epoch, update.EventID); err != nil {
 				s.logger.WarnContext(ctx, "delete processed worker event ACK", "code_session_id", codeSessionID, "event_id", update.EventID, "error", err)
 			}
-			if !reference.PublishedAt.IsZero() {
-				telemetry.RecordWorkerEventProcessed(ctx, reference.Lane, time.Since(reference.PublishedAt))
-				_, span := telemetry.StartRoot(ctx, "oma.worker_event.ack", reference.TraceParent,
-					telemetry.AttrCodeSessionID.String(codeSessionID), telemetry.AttrEventID.String(update.EventID), telemetry.AttrLane.String(reference.Lane))
-				span.End()
-			}
+			observeWorkerEventAck(ctx, codeSessionID, update.EventID, reference)
 			if reference.CleanupJobID != "" {
 				cleanupJobIDs = append(cleanupJobIDs, reference.CleanupJobID)
 			}
 		default:
 			return result, cleanupJobIDs, db.ErrInvalidState
 		}
-		telemetry.RecordWorkerEventUpdate(ctx, deliveryStatusName(update.Status), "applied")
+		recordWorkerEventUpdate(ctx, update.Status, "applied")
 		result.Applied++
 	}
 	return result, cleanupJobIDs, nil
 }
 
-func deliveryStatusName(status string) string {
-	switch status {
-	case "received", "processing", "processed":
-		return status
-	default:
-		return "other"
+func recordFailedWorkerDeliveryUpdates(ctx context.Context, updates []workerDeliveryUpdate, result workerDeliveryResult, err error) {
+	outcome := telemetry.Outcome(err)
+	if ctx.Err() != nil {
+		outcome = telemetry.OutcomeCanceled
+	}
+	for _, update := range updates[min(result.Applied+result.Ignored, len(updates)):] {
+		recordWorkerEventUpdate(ctx, update.Status, outcome)
 	}
 }
 

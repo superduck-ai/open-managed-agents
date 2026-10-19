@@ -147,7 +147,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		return internalError("Could not create session", fmt.Errorf("load session %q response: %w", sessionID, err))
 	}
 	trace.SpanFromContext(r.Context()).SetAttributes(telemetry.AttrSessionID.String(sessionID))
-	telemetry.RecordSessionCreated(r.Context(), "api")
 	httpapi.WriteJSON(w, http.StatusOK, response)
 	return nil
 }
@@ -520,6 +519,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return err
 	}
+	annotateSessionInputShape(r.Context(), inputs)
 	now := time.Now().UTC()
 	events := make([]db.SessionEvent, 0, len(inputs))
 	var outcomesChanged bool
@@ -527,7 +527,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	for _, raw := range inputs {
 		event, outcomes, changed, err := normalizeInputEvent(normalizedSession, raw, now)
 		if err != nil {
-			telemetry.RecordSessionEventsRejected(r.Context(), "invalid")
+			recordSessionEventsRejected(r.Context(), "invalid")
 			return invalidRequest(err)
 		}
 		if changed {
@@ -542,7 +542,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	}
 	changes, err := h.eventPayloads.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
 	if err != nil {
-		telemetry.RecordSessionEventsRejected(r.Context(), sessionEventRejectionReason(err))
+		recordSessionEventsRejected(r.Context(), sessionEventRejectionReason(err))
 		if errors.Is(err, db.ErrInvalidState) {
 			return invalidRequest(errors.New("archived sessions do not accept new events"))
 		}
@@ -556,7 +556,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if h.codeSessions != nil {
 		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created); err != nil {
 			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)
-			telemetry.RecordSessionHandoffFailure(r.Context(), sessionHandoffFailureReason(err))
+			recordSessionHandoffFailure(r.Context(), err)
 			return queueCodeSessionEventsError(err)
 		}
 	}

@@ -17,7 +17,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
-// requestHeadersToRemove 包含 hop-by-hop header、调用方凭证和不可由 sandbox 伪造的租户 header。
+// requestHeadersToRemove 包含 hop-by-hop header、调用方凭证、不可由 sandbox 伪造的租户 header 和 OMA 内部 trace 上下文。
 var requestHeadersToRemove = map[string]struct{}{
 	"Authorization":       {},
 	"Connection":          {},
@@ -28,6 +28,8 @@ var requestHeadersToRemove = map[string]struct{}{
 	"Proxy-Authorization": {},
 	"Proxy-Connection":    {},
 	"Te":                  {},
+	"Traceparent":         {},
+	"Tracestate":          {},
 	"Trailer":             {},
 	"Transfer-Encoding":   {},
 	"Upgrade":             {},
@@ -111,14 +113,14 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(call.ctx)
 	target, err := llmproviders.Endpoint(upstream.BaseURL, "/v1/messages", r.URL.RawQuery)
 	if err != nil {
-		call.fail("build_request")
+		call.failBeforeProxy("build_request")
 		h.logger.ErrorContext(r.Context(), "build messages upstream endpoint", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return
 	}
 	upstreamRequest, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
-		call.fail("build_request")
+		call.failBeforeProxy("build_request")
 		h.logger.ErrorContext(r.Context(), "build messages upstream request", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return
@@ -129,7 +131,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	llmproviders.ApplyAPIKey(upstreamRequest.Header, upstream.APIKey)
 	request, err := h.beginModelRequest(r, principal, modelID)
 	if err != nil {
-		call.fail("begin_model_request")
+		call.failBeforeProxy("begin_model_request")
 		h.logger.ErrorContext(r.Context(), "start model request", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return

@@ -22,17 +22,17 @@ func (r *Runner) startExternalWorker(ctx context.Context, run *runnerRun, env db
 		return err
 	}
 	run.markRecovered(isRecoveryLaunch(preparation))
-	ctx = run.begin("code_session")
+	ctx = run.begin(ctx, "code_session")
 	launch, err := r.createManagedAgentRuntimeLaunch(ctx, env, *work, *preparation)
 	if err != nil {
 		return err
 	}
-	ctx = run.begin("mark_running")
+	ctx = run.begin(ctx, "mark_running")
 	if _, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime); err != nil {
 		return err
 	}
 	if r.cfg.EnvironmentRunner.BrainSandboxPrewarm {
-		ctx = run.begin("sandbox_prewarm")
+		ctx = run.begin(ctx, "sandbox_prewarm")
 		code, found, loadErr := r.db.GetCodeSession(ctx, launch.CodeSessionID)
 		if loadErr != nil {
 			return loadErr
@@ -40,7 +40,7 @@ func (r *Runner) startExternalWorker(ctx context.Context, run *runnerRun, env db
 		if !found {
 			return db.ErrNotFound
 		}
-		if _, err := r.ensureSessionSandbox(ctx, code, telemetry.RunnerTriggerPrewarm); err != nil {
+		if _, err := r.ensureSessionSandbox(ctx, code, runnerTriggerPrewarm); err != nil {
 			return err
 		}
 	}
@@ -48,7 +48,7 @@ func (r *Runner) startExternalWorker(ctx context.Context, run *runnerRun, env db
 }
 
 func (r *Runner) EnsureSessionSandbox(ctx context.Context, code db.CodeSession) (string, error) {
-	return r.ensureSessionSandbox(ctx, code, telemetry.RunnerTriggerLazyMCP)
+	return r.ensureSessionSandbox(ctx, code, runnerTriggerLazyMCP)
 }
 
 func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, trigger string) (endpoint string, err error) {
@@ -58,7 +58,7 @@ func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, 
 		if err != nil {
 			ensureOutcome = telemetry.Outcome(err)
 		}
-		telemetry.RecordSandboxEnsure(ctx, trigger, ensureOutcome, time.Since(startedAt))
+		recordSandboxEnsure(ctx, trigger, ensureOutcome, startedAt)
 	}()
 	ctx, cancel := context.WithTimeout(ctx, 150*time.Second)
 	defer cancel()
@@ -85,7 +85,7 @@ func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, 
 	launch := managedAgentRuntimeLaunch{CodeSessionID: code.ExternalID, Recovered: true, Manager: manager}
 	runCtx, run := startSandboxRun(ctx, work, trigger)
 	created, err := r.createEnvironmentSandbox(runCtx, run, env, &work, &launch)
-	run.end(err)
+	run.end(runCtx, err)
 	if err != nil {
 		return "", err
 	}

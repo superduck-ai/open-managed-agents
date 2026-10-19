@@ -355,7 +355,6 @@ type TelemetryLogsConfig struct {
 }
 
 type TelemetryStateMetricsConfig struct {
-	Enabled            bool          `yaml:"enabled"`
 	Interval           time.Duration `yaml:"interval"`
 	StaleRunningAfter  time.Duration `yaml:"stale_running_after"`
 	StuckStartingAfter time.Duration `yaml:"stuck_starting_after"`

@@ -10,56 +10,89 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
-	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry/telemetrytest"
 )
 
 func TestHTTPTraceMiddleware(t *testing.T) {
-	recorder := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-	previous := otel.GetTracerProvider()
-	previousMeter := otel.GetMeterProvider()
-	reader := sdkmetric.NewManualReader()
-	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	otel.SetTracerProvider(provider)
-	otel.SetMeterProvider(meterProvider)
-	t.Cleanup(func() {
-		otel.SetTracerProvider(previous)
-		otel.SetMeterProvider(previousMeter)
-		_ = provider.Shutdown(context.Background())
-		_ = meterProvider.Shutdown(context.Background())
-	})
-	t.Run("excluded paths", func(t *testing.T) {
-		paths := []string{"/healthz", "/readyz", "/v1/sessions/sesn_a/stream", "/v1/code/sessions/cse_a/stream", "/web-api/sessions/sesn_a/stream", "/v1/code/upstreamproxy/ws", "/v1/code/sessions/cse_a/worker/heartbeat", "/v1/code/sessions/cse_a/worker/otlp/logs", "/v1/filestore/fs_a/file", "/connector/poll"}
+	recorder := telemetrytest.SpanRecorder(t)
+	reader := telemetrytest.MetricReader(t)
+	t.Run("excluded routes produce no spans or metrics", func(t *testing.T) {
 		before := len(recorder.Ended())
-		handler := telemetryMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
-		for _, path := range paths {
-			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
+		router := chi.NewRouter()
+		router.Use(telemetryMiddleware(router))
+		noContent := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }
+		router.Get("/healthz", noContent)
+		router.Get("/v1/code/sessions/{code_session_id}/worker/events/stream", noContent)
+		router.Route("/v1/code/brain/claims", func(r chi.Router) { r.Post("/", noContent) })
+		router.Mount("/connector", http.HandlerFunc(noContent))
+		for _, request := range []*http.Request{
+			httptest.NewRequest(http.MethodGet, "/healthz", nil),
+			httptest.NewRequest(http.MethodGet, "/v1/code/sessions/cse_a/worker/events/stream", nil),
+			httptest.NewRequest(http.MethodPost, "/v1/code/brain/claims", nil),
+			httptest.NewRequest(http.MethodGet, "/connector/poll", nil),
+		} {
+			router.ServeHTTP(httptest.NewRecorder(), request)
 		}
 		if len(recorder.Ended()) != before {
-			t.Fatal("excluded paths produced spans")
+			t.Fatal("excluded routes produced spans")
 		}
-		var measurements metricdata.ResourceMetrics
-		if err := reader.Collect(t.Context(), &measurements); err != nil {
-			t.Fatal(err)
+		if data := telemetrytest.Collect(t, reader); len(data) != 0 {
+			t.Fatal("excluded routes produced metrics")
 		}
-		if len(measurements.ScopeMetrics) != 0 {
-			t.Fatal("excluded paths produced metrics")
+	})
+	t.Run("heartbeat measured without span", func(t *testing.T) {
+		before := len(recorder.Ended())
+		router := chi.NewRouter()
+		router.Use(telemetryMiddleware(router))
+		router.Post("/v1/code/sessions/{code_session_id}/worker/heartbeat", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusGone) })
+		router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/code/sessions/cse_a/worker/heartbeat", nil))
+		if len(recorder.Ended()) != before {
+			t.Fatal("heartbeat produced a span")
+		}
+		telemetrytest.AssertSingle(t, telemetrytest.Collect(t, reader), "http.server.request.duration", 0, map[string]string{
+			"http.request.method": "POST", "http.route": "/v1/code/sessions/{code_session_id}/worker/heartbeat", "http.response.status_code": "410",
+		})
+	})
+	t.Run("worker routes link caller trace without parenting", func(t *testing.T) {
+		traceParent := "00-01010101010101010101010101010101-0202020202020202-01"
+		handler := telemetryMiddleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+		for path, links := range map[string]int{
+			"/v1/agents": 0,
+			"/v1/code/sessions/cse_a/worker/register": 1,
+			"/v1/code/sessions/cse_a/worker":          0,
+			"/v2/ccr-sessions/cse_a/sandbox/mcp":      1,
+			"/v2/sessions/cse_a":                      1,
+			"/v1/messages":                            1,
+		} {
+			request := httptest.NewRequest(http.MethodPost, path, nil)
+			if path != "/v1/code/sessions/cse_a/worker" {
+				request.Header.Set("traceparent", traceParent)
+			} else {
+				request.Header.Set("traceparent", "invalid")
+			}
+			handler.ServeHTTP(httptest.NewRecorder(), request)
+			spans := recorder.Ended()
+			span := spans[len(spans)-1]
+			if span.Parent().IsValid() || len(span.Links()) != links {
+				t.Fatalf("%s: parent=%v links=%d", path, span.Parent(), len(span.Links()))
+			}
+			if links == 1 && span.Links()[0].SpanContext.TraceID().String() != "01010101010101010101010101010101" {
+				t.Fatalf("%s: wrong link", path)
+			}
 		}
 	})
 	t.Run("unmatched route", func(t *testing.T) {
 		router := chi.NewRouter()
-		router.Use(telemetryMiddleware)
+		router.Use(telemetryMiddleware(router))
 		router.Get("/known", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 		router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/unknown-secret-id", nil))
 		spans := recorder.Ended()
@@ -69,7 +102,7 @@ func TestHTTPTraceMiddleware(t *testing.T) {
 	})
 	t.Run("server error", func(t *testing.T) {
 		router := chi.NewRouter()
-		router.Use(telemetryMiddleware)
+		router.Use(telemetryMiddleware(router))
 		router.Get("/failure", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) })
 		router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/failure", nil))
 		spans := recorder.Ended()
@@ -77,10 +110,27 @@ func TestHTTPTraceMiddleware(t *testing.T) {
 			t.Fatal("server error span is not an error")
 		}
 	})
+	t.Run("client canceled server error", func(t *testing.T) {
+		router := chi.NewRouter()
+		router.Use(telemetryMiddleware(router))
+		router.Get("/canceled", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) })
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/canceled", nil).WithContext(ctx))
+		spans := recorder.Ended()
+		span := spans[len(spans)-1]
+		attrs := map[string]string{}
+		for _, attr := range span.Attributes() {
+			attrs[string(attr.Key)] = attr.Value.Emit()
+		}
+		if span.Status().Code == codes.Error || attrs["http.response.status_code"] != "499" || attrs["oma.client_canceled"] != "true" {
+			t.Fatalf("canceled request span: status=%v attrs=%v", span.Status(), attrs)
+		}
+	})
 	t.Run("panic recovered before span ends", func(t *testing.T) {
 		server := &Server{logger: slog.New(slog.DiscardHandler)}
 		router := chi.NewRouter()
-		router.Use(telemetryMiddleware)
+		router.Use(telemetryMiddleware(router))
 		router.Use(server.recoverMiddleware)
 		router.Get("/panic", func(http.ResponseWriter, *http.Request) { panic("test panic") })
 		response := httptest.NewRecorder()
@@ -92,10 +142,10 @@ func TestHTTPTraceMiddleware(t *testing.T) {
 	})
 	t.Run("route principal and log correlation", func(t *testing.T) {
 		var logs bytes.Buffer
-		logger := slog.New(logging.NewContextHandler(slog.NewJSONHandler(&logs, nil), telemetry.LogContextAttrs))
+		logger := slog.New(logging.NewContextHandler(slog.NewJSONHandler(&logs, nil), traceLogAttrs))
 		router := chi.NewRouter()
-		router.Use(telemetryMiddleware)
-		router.Use(requestLoggingMiddleware(logger))
+		router.Use(telemetryMiddleware(router))
+		router.Use(requestLoggingMiddleware(logger, router))
 		router.Post("/v1/sessions/{session_id}/events", func(w http.ResponseWriter, r *http.Request) {
 			annotatePrincipalSpan(r.Context(), auth.Principal{OrganizationUUID: "org-test", WorkspaceUUID: "workspace-test"})
 			w.WriteHeader(http.StatusCreated)
@@ -128,4 +178,66 @@ func TestHTTPTraceMiddleware(t *testing.T) {
 			}
 		}
 	})
+}
+
+func traceLogAttrs(ctx context.Context) []slog.Attr {
+	spanContext := trace.SpanContextFromContext(ctx)
+	if !spanContext.IsValid() {
+		return nil
+	}
+	return []slog.Attr{slog.String("trace_id", spanContext.TraceID().String()), slog.String("span_id", spanContext.SpanID().String())}
+}
+
+func TestRequestTelemetryPolicyFollowsServerRoutes(t *testing.T) {
+	credentials, err := codesessions.NewSessionCredentials(config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	filestoreCredentials, err := filestore.NewTokenCredentials(config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(ServerDeps{CodeSessionCredentials: credentials, FilestoreCredentials: filestoreCredentials})
+	for _, tc := range []struct {
+		method string
+		path   string
+		want   requestTelemetry
+	}{
+		{http.MethodGet, "/v1/unknown-route", tracedRequest},
+		{http.MethodGet, "/v1/sessions/sesn_a/events", tracedRequest},
+		{http.MethodPost, "/v1/messages", tracedRequest},
+		{http.MethodPost, "/v1/code/brain/claims/cse_a/release", tracedRequest},
+		{http.MethodGet, "/v1/code/upstreamproxy/ca-cert", tracedRequest},
+		{http.MethodPost, "/v1/code/sessions/cse_a/worker/events", tracedRequest},
+		{http.MethodGet, "/healthz", unobservedRequest},
+		{http.MethodGet, "/readyz", unobservedRequest},
+		{http.MethodGet, "/v1/sessions/sesn_a/events/stream", unobservedRequest},
+		{http.MethodGet, "/v1/sessions/sesn_a/threads/sthr_a/stream", unobservedRequest},
+		{http.MethodGet, "/web-api/sessions/sesn_a/stream", unobservedRequest},
+		{http.MethodGet, "/v1/code/upstreamproxy/ws", unobservedRequest},
+		{http.MethodGet, "/v1/code/sessions/cse_a/worker/events/stream", unobservedRequest},
+		{http.MethodPost, "/v1/code/sessions/cse_a/worker/otlp/metrics", unobservedRequest},
+		{http.MethodPost, "/v1/code/sessions/cse_a/worker/otlp/logs", unobservedRequest},
+		{http.MethodPost, "/v1/code/sessions/cse_a/worker/otlp/v1/logs", unobservedRequest},
+		{http.MethodPost, "/v1/code/sessions/cse_a/worker/otlp/v1/traces", unobservedRequest},
+		{http.MethodPut, "/v1/filestore/fs/fs_a/file", unobservedRequest},
+		{http.MethodPost, "/v1/code/sessions/cse_a/worker/heartbeat", measuredRequest},
+		{http.MethodPost, "/v1/code/brain/claims", longPollRequest},
+	} {
+		if got := requestTelemetryFor(server.router, httptest.NewRequest(tc.method, tc.path, nil)); got != tc.want {
+			t.Errorf("%s %s: policy=%+v want %+v", tc.method, tc.path, got, tc.want)
+		}
+	}
+	resolved := map[string]bool{}
+	if err := chi.Walk(server.router, func(_, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		resolved[route] = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for pattern := range routeTelemetry {
+		if !resolved[pattern] && !resolved[pattern+"/"] && pattern != "/connector/*" {
+			t.Errorf("telemetry policy pattern %q is not registered", pattern)
+		}
+	}
 }

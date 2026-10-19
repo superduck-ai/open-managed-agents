@@ -36,13 +36,15 @@ type responseObservation struct {
 	messageID    string
 	blocks       map[int]*responseContentBlock
 	contentBytes int
+	stopReason   string
 }
 
 type responseMessage struct {
-	ID      string                         `json:"id"`
-	Type    string                         `json:"type"`
-	Usage   codesessions.ModelRequestUsage `json:"usage"`
-	Content []responseContentBlock         `json:"content"`
+	ID         string                         `json:"id"`
+	Type       string                         `json:"type"`
+	Usage      codesessions.ModelRequestUsage `json:"usage"`
+	Content    []responseContentBlock         `json:"content"`
+	StopReason string                         `json:"stop_reason"`
 }
 
 type responseContentBlock struct {
@@ -53,6 +55,7 @@ type responseContentBlock struct {
 	Name           string            `json:"name"`
 	Input          jsonv1.RawMessage `json:"input"`
 	PartialJSON    string            `json:"partial_json"`
+	StopReason     string            `json:"stop_reason"`
 	thinkingBuffer strings.Builder
 	textBuffer     strings.Builder
 	inputBuffer    strings.Builder
@@ -89,7 +92,6 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 	response, err := h.client.Do(upstream)
 	if err != nil {
 		observation.result.ErrorType = "transport_error"
-		call.fail("transport_error")
 		h.logger.ErrorContext(r.Context(), "proxy messages upstream request", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return
@@ -113,11 +115,12 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 		response.Body = &observedResponseBody{Reader: io.TeeReader(response.Body, observation), Closer: response.Body}
 	}
 	if err := writeProxyResponse(w, response); err != nil {
-		call.fail("stream_error")
-		observation.result.ErrorType = "stream_error"
-		if r.Context().Err() == nil {
-			h.logger.ErrorContext(r.Context(), "stream Messages upstream response", "error", err)
+		if httpapi.ClientGone(r) {
+			observation.result.ErrorType = "cancelled"
+			return
 		}
+		observation.result.ErrorType = "stream_error"
+		h.logger.ErrorContext(r.Context(), "stream Messages upstream response", "error", err)
 	}
 }
 
@@ -228,6 +231,9 @@ func (o *responseObservation) observeFrame(data []byte) {
 		o.observeContentDelta(event)
 	case "message_delta":
 		mergeRequestUsage(&o.result.Usage, event.Usage)
+		if event.Delta.StopReason != "" {
+			o.stopReason = event.Delta.StopReason
+		}
 	case "message_stop":
 		if o.messageID == "" {
 			o.malformed = true
@@ -301,6 +307,7 @@ func (o *responseObservation) finish() {
 		} else {
 			o.messageID = message.ID
 			o.result.Usage = message.Usage
+			o.stopReason = message.StopReason
 			for index, block := range message.Content {
 				o.addEventID(index, block.Type)
 				o.addMessage(index, block)

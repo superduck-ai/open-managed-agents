@@ -40,6 +40,18 @@ func TestOperationalMetricsMapperErrors(t *testing.T) {
 			_, err := NewOperationalMetricsMapper(ex).CountLiveEnvironmentSandboxesByState(context.Background())
 			return err
 		}},
+		{statementID: "OperationalMetricsMapper.CountRequestedBrainClaimsByState", kind: yourbatis.StatementSelect, query: true, call: func(ex yourbatis.Executor) error {
+			_, err := NewOperationalMetricsMapper(ex).CountRequestedBrainClaimsByState(context.Background())
+			return err
+		}},
+		{statementID: "OperationalMetricsMapper.CountTakeoverPendingBrainClaims", kind: yourbatis.StatementSelect, query: true, call: func(ex yourbatis.Executor) error {
+			_, err := NewOperationalMetricsMapper(ex).CountTakeoverPendingBrainClaims(context.Background())
+			return err
+		}},
+		{statementID: "OperationalMetricsMapper.OldestWaitingBrainClaimAgeSeconds", kind: yourbatis.StatementSelect, query: true, call: func(ex yourbatis.Executor) error {
+			_, err := NewOperationalMetricsMapper(ex).OldestWaitingBrainClaimAgeSeconds(context.Background())
+			return err
+		}},
 	}
 	for _, contract := range calls {
 		t.Run(contract.statementID, func(t *testing.T) { assertMapperExecutionError(t, contract) })
@@ -50,12 +62,15 @@ func TestOperationalMetricsMapperBindings(t *testing.T) {
 	cutoff := time.Date(2026, time.October, 15, 0, 0, 0, 0, time.UTC)
 	for _, contract := range []mapperBuilderContract{
 		{statement: operationalMetricsMapperCountLiveSessionsByStatusStatement, bound: buildOperationalMetricsMapperCountLiveSessionsByStatus(yourbatis.DialectPostgres), wantID: "OperationalMetricsMapper.CountLiveSessionsByStatus", wantKind: yourbatis.StatementSelect, wantArgumentNames: []string{}, wantSQLFragments: []string{"deleted_at IS NULL", "archived_at IS NULL", "status IN ('running', 'rescheduling')", "GROUP BY status"}},
-		{statement: operationalMetricsMapperCountStaleRunningSessionsStatement, bound: buildOperationalMetricsMapperCountStaleRunningSessions(yourbatis.DialectPostgres, cutoff), wantID: "OperationalMetricsMapper.CountStaleRunningSessions", wantKind: yourbatis.StatementSelect, wantArgumentNames: []string{"staleBefore"}, wantSQLFragments: []string{"status = 'running'", "updated_at < $1", "archived_at IS NULL"}},
+		{statement: operationalMetricsMapperCountStaleRunningSessionsStatement, bound: buildOperationalMetricsMapperCountStaleRunningSessions(yourbatis.DialectPostgres, cutoff), wantID: "OperationalMetricsMapper.CountStaleRunningSessions", wantKind: yourbatis.StatementSelect, wantArgumentNames: []string{"staleBefore", "staleBefore"}, wantSQLFragments: []string{"s.status = 'running'", "s.updated_at < $1", "s.archived_at IS NULL", "e.session_uuid = s.uuid", "e.created_at >= $2"}},
 		{statement: operationalMetricsMapperCountActiveCodeSessionsByWorkerStateStatement, bound: buildOperationalMetricsMapperCountActiveCodeSessionsByWorkerState(yourbatis.DialectPostgres), wantID: "OperationalMetricsMapper.CountActiveCodeSessionsByWorkerState", wantKind: yourbatis.StatementSelect, wantArgumentNames: []string{}, wantSQLFragments: []string{"COALESCE(worker_status, 'unknown')", "status = 'active'", "GROUP BY COALESCE(worker_status, 'unknown'), connection_status"}},
 		{statement: operationalMetricsMapperCountLiveEnvironmentWorkByStateStatement, bound: buildOperationalMetricsMapperCountLiveEnvironmentWorkByState(yourbatis.DialectPostgres), wantID: "OperationalMetricsMapper.CountLiveEnvironmentWorkByState", wantKind: yourbatis.StatementSelect, wantArgumentNames: []string{}, wantSQLFragments: []string{"state IN ('queued', 'starting', 'active', 'stopping')", "deleted_at IS NULL", "GROUP BY state"}},
 		{statement: operationalMetricsMapperOldestQueuedEnvironmentWorkAgeSecondsStatement, bound: buildOperationalMetricsMapperOldestQueuedEnvironmentWorkAgeSeconds(yourbatis.DialectPostgres), wantID: "OperationalMetricsMapper.OldestQueuedEnvironmentWorkAgeSeconds", wantKind: yourbatis.StatementSelect, wantArgumentNames: []string{}, wantSQLFragments: []string{"MIN(COALESCE(queued_at, created_at))", "state = 'queued'", "deleted_at IS NULL", "COALESCE(queued_at, created_at) <= NOW()"}},
 		{statement: operationalMetricsMapperCountStuckStartingEnvironmentWorkStatement, bound: buildOperationalMetricsMapperCountStuckStartingEnvironmentWork(yourbatis.DialectPostgres, cutoff), wantID: "OperationalMetricsMapper.CountStuckStartingEnvironmentWork", wantKind: yourbatis.StatementSelect, wantArgumentNames: []string{"startedBefore"}, wantSQLFragments: []string{"state = 'starting'", "updated_at < $1"}},
 		{statement: operationalMetricsMapperCountLiveEnvironmentSandboxesByStateStatement, bound: buildOperationalMetricsMapperCountLiveEnvironmentSandboxesByState(yourbatis.DialectPostgres), wantID: "OperationalMetricsMapper.CountLiveEnvironmentSandboxesByState", wantKind: yourbatis.StatementSelect, wantArgumentNames: []string{}, wantSQLFragments: []string{"state IN ('creating', 'running', 'stopping')", "GROUP BY state"}},
+		{statement: operationalMetricsMapperCountRequestedBrainClaimsByStateStatement, bound: buildOperationalMetricsMapperCountRequestedBrainClaimsByState(yourbatis.DialectPostgres), wantID: "OperationalMetricsMapper.CountRequestedBrainClaimsByState", wantKind: yourbatis.StatementSelect, wantArgumentNames: []string{}, wantSQLFragments: []string{"WHEN worker_claim_expires_at > NOW() THEN 'claimed' ELSE 'waiting'", "worker_transport}' = 'claim'", "worker_claim_requested_at IS NOT NULL", "status = 'active'"}},
+		{statement: operationalMetricsMapperCountTakeoverPendingBrainClaimsStatement, bound: buildOperationalMetricsMapperCountTakeoverPendingBrainClaims(yourbatis.DialectPostgres), wantID: "OperationalMetricsMapper.CountTakeoverPendingBrainClaims", wantKind: yourbatis.StatementSelect, wantArgumentNames: []string{}, wantSQLFragments: []string{"cs.worker_claim_requested_at IS NULL", "cs.worker_lease_expires_at IS NULL OR cs.worker_lease_expires_at < NOW()", "s.status IN ('running', 'rescheduling')", "s.organization_uuid = cs.organization_uuid"}},
+		{statement: operationalMetricsMapperOldestWaitingBrainClaimAgeSecondsStatement, bound: buildOperationalMetricsMapperOldestWaitingBrainClaimAgeSeconds(yourbatis.DialectPostgres), wantID: "OperationalMetricsMapper.OldestWaitingBrainClaimAgeSeconds", wantKind: yourbatis.StatementSelect, wantArgumentNames: []string{}, wantSQLFragments: []string{"MIN(worker_claim_requested_at)", "worker_claim_expires_at IS NULL OR worker_claim_expires_at <= NOW()", "worker_transport}' = 'claim'"}},
 	} {
 		t.Run(contract.wantID, func(t *testing.T) {
 			assertMapperBuilderContract(t, contract)
@@ -73,12 +88,12 @@ func TestOperationalMetricsMapperScanning(t *testing.T) {
 	}
 	executor = newMapperTestExecutor(t, mapperTestResponse{columns: []string{"state", "total"}, rows: [][]driver.Value{{"running", int64(2)}}})
 	rows, err := NewOperationalMetricsMapper(executor).CountLiveSessionsByStatus(t.Context())
-	if err != nil || !reflect.DeepEqual(stateCounts(rows), []StateCount{{State: "running", Total: 2}}) {
+	if err != nil || !reflect.DeepEqual(stateCounts(rows, liveSessionStates), map[string]int64{"running": 2, "rescheduling": 0}) {
 		t.Fatalf("state counts: %v, %v", rows, err)
 	}
 	executor = newMapperTestExecutor(t, mapperTestResponse{columns: []string{"worker_status", "connection_status", "total"}, rows: [][]driver.Value{{"idle", "connected", int64(3)}}})
 	codeRows, err := NewOperationalMetricsMapper(executor).CountActiveCodeSessionsByWorkerState(t.Context())
-	if err != nil || !reflect.DeepEqual(codeSessionStateCounts(codeRows), []CodeSessionStateCount{{WorkerStatus: "idle", ConnectionStatus: "connected", Total: 3}}) {
+	if err != nil || codeSessionStateCounts(codeRows)[CodeSessionState{WorkerStatus: "idle", ConnectionStatus: "connected"}] != 3 || len(codeSessionStateCounts(codeRows)) != 8 {
 		t.Fatalf("code session counts: %v, %v", codeRows, err)
 	}
 }

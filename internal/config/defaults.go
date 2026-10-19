@@ -85,7 +85,7 @@ func defaultConfig() Config {
 			Traces:       TelemetryTracesConfig{Enabled: true},
 			Metrics:      TelemetryMetricsConfig{Enabled: true, ExportInterval: 30 * time.Second},
 			Logs:         TelemetryLogsConfig{Enabled: true, Level: "info"},
-			StateMetrics: TelemetryStateMetricsConfig{Enabled: true, Interval: time.Minute, StaleRunningAfter: 30 * time.Minute, StuckStartingAfter: 10 * time.Minute},
+			StateMetrics: TelemetryStateMetricsConfig{Interval: time.Minute, StaleRunningAfter: 10 * time.Minute, StuckStartingAfter: 10 * time.Minute},
 		},
 		Webhook: WebhookConfig{
 			Concurrency:         10,

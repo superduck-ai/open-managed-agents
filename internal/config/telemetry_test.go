@@ -45,7 +45,7 @@ func TestTelemetryConfigurationDefaults(t *testing.T) {
 	if cfg.Enabled || cfg.ServiceName != "oma-server" || cfg.OTLP.BaseURL != "http://openobserve:5080" || cfg.OTLP.Organization != "oma" || cfg.OTLP.TracesStream != "oma_server" || cfg.OTLP.LogsStream != "oma_server" || cfg.OTLP.Timeout != 10*time.Second {
 		t.Fatalf("unexpected telemetry defaults: %+v", cfg)
 	}
-	if !cfg.Traces.Enabled || !cfg.Metrics.Enabled || cfg.Metrics.ExportInterval != 30*time.Second || !cfg.Logs.Enabled || cfg.Logs.SlogLevel() != slog.LevelInfo || !cfg.StateMetrics.Enabled || cfg.StateMetrics.Interval != time.Minute || cfg.StateMetrics.StaleRunningAfter != 30*time.Minute || cfg.StateMetrics.StuckStartingAfter != 10*time.Minute {
+	if !cfg.Traces.Enabled || !cfg.Metrics.Enabled || cfg.Metrics.ExportInterval != 30*time.Second || !cfg.Logs.Enabled || cfg.Logs.SlogLevel() != slog.LevelInfo || cfg.StateMetrics.Interval != time.Minute || cfg.StateMetrics.StaleRunningAfter != 10*time.Minute || cfg.StateMetrics.StuckStartingAfter != 10*time.Minute {
 		t.Fatalf("unexpected signal defaults: %+v", cfg)
 	}
 	if err := validateTelemetryConfig(TelemetryConfig{}); err != nil {
@@ -61,7 +61,7 @@ func TestTelemetryConfigurationDefaults(t *testing.T) {
 	if err := validateTelemetryConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
-	cfg.Traces.Enabled, cfg.Metrics.Enabled, cfg.Logs.Enabled, cfg.StateMetrics.Enabled = false, false, false, false
+	cfg.Traces.Enabled, cfg.Metrics.Enabled, cfg.Logs.Enabled = false, false, false
 	cfg.OTLP.TracesStream, cfg.OTLP.LogsStream = "", ""
 	cfg.Metrics.ExportInterval, cfg.StateMetrics.Interval = 0, 0
 	cfg.Logs.Level = "invalid"
@@ -98,10 +98,10 @@ func TestLoadTelemetryTrimsExternalValues(t *testing.T) {
 }
 
 func TestStateMetricsActive(t *testing.T) {
-	for _, tc := range []struct{ enabled, metrics, state, want bool }{
-		{false, true, true, false}, {true, false, true, false}, {true, true, false, false}, {true, true, true, true},
+	for _, tc := range []struct{ enabled, metrics, want bool }{
+		{false, true, false}, {true, false, false}, {true, true, true},
 	} {
-		cfg := TelemetryConfig{Enabled: tc.enabled, Metrics: TelemetryMetricsConfig{Enabled: tc.metrics}, StateMetrics: TelemetryStateMetricsConfig{Enabled: tc.state}}
+		cfg := TelemetryConfig{Enabled: tc.enabled, Metrics: TelemetryMetricsConfig{Enabled: tc.metrics}}
 		if got := cfg.StateMetricsActive(); got != tc.want {
 			t.Fatalf("state metrics active=%t for %+v", got, tc)
 		}

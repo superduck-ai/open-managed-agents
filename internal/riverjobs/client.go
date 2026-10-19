@@ -32,9 +32,13 @@ func NewClient(database *db.DB, logger *slog.Logger, workers *river.Workers, que
 			Middleware:          []rivertype.Middleware{&telemetryMiddleware{}},
 			Workers:             workers,
 			Queues:              queues,
-			Logger:              logging.LoggerOrDefault(logger),
+			Logger:              riverClientLogger(logger),
 			JobTimeout:          2 * time.Minute,
 			SoftStopTimeout:     10 * time.Second,
 			DurablePeriodicJobs: river.DurablePeriodicJobsConfig{Enabled: true},
 		})
+}
+
+func riverClientLogger(logger *slog.Logger) *slog.Logger {
+	return slog.New(logging.NewLevelHandler(logging.LoggerOrDefault(logger).Handler(), slog.LevelWarn))
 }

@@ -1,9 +1,12 @@
 package riverjobs
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,11 +14,10 @@ import (
 	"github.com/riverqueue/river/rivertype"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry/telemetrytest"
 )
 
 func TestRiverTraceMetadata(t *testing.T) {
@@ -53,7 +55,7 @@ func TestRiverOutcomeAndQueueWait(t *testing.T) {
 		attempt, max int
 		want         string
 	}{
-		{failure, 3, 3, "discarded"}, {failure, 1, 3, "retry"}, {river.JobCancel(failure), 3, 3, "cancelled"}, {river.JobSnooze(time.Second), 3, 3, "snoozed"}, {nil, 1, 3, "ok"},
+		{failure, 3, 3, "discarded"}, {failure, 1, 3, "retry"}, {river.JobCancel(failure), 3, 3, "canceled"}, {river.JobSnooze(time.Second), 3, 3, "snoozed"}, {nil, 1, 3, "ok"},
 	} {
 		job := &rivertype.JobRow{Attempt: tc.attempt, MaxAttempts: tc.max}
 		if got := riverOutcome(job, tc.err); got != tc.want {
@@ -77,11 +79,7 @@ func TestRiverOutcomeAndQueueWait(t *testing.T) {
 }
 
 func TestRiverMiddlewarePropagationAndCompletion(t *testing.T) {
-	recorder := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-	previous := otel.GetTracerProvider()
-	otel.SetTracerProvider(provider)
-	t.Cleanup(func() { otel.SetTracerProvider(previous); _ = provider.Shutdown(context.Background()) })
+	recorder := telemetrytest.SpanRecorder(t)
 	middleware := &telemetryMiddleware{}
 	var insertion rivertype.JobInsertMiddleware = middleware
 	var worker rivertype.WorkerMiddleware = middleware
@@ -135,5 +133,32 @@ func TestRiverMiddlewarePropagationAndCompletion(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRiverClientLoggerDropsRoutineInfo(t *testing.T) {
+	var output bytes.Buffer
+	logger := riverClientLogger(slog.New(slog.NewJSONHandler(&output, nil)).With("component", "river_jobs"))
+	logger.Info("producer: Producer job counts", "queue", "sandbox_lifecycle")
+	logger.Warn("producer: job stuck", "queue", "sandbox_lifecycle")
+	if strings.Count(output.String(), "\\n") != 0 && strings.Count(output.String(), "\\n") > 1 || strings.Contains(output.String(), "Producer job counts") || !strings.Contains(output.String(), `"component":"river_jobs"`) {
+		t.Fatalf("river logs: %s", output.String())
+	}
+}
+
+func TestRiverJobMetrics(t *testing.T) {
+	reader := telemetrytest.MetricReader(t)
+	scheduled := time.Now()
+	attempted := scheduled.Add(3 * time.Second)
+	recordRiverJob(t.Context(), &rivertype.JobRow{Kind: "sandbox_lifecycle_sweep", Queue: "sandbox_lifecycle", ScheduledAt: scheduled, AttemptedAt: &attempted}, "ok", 2*time.Second)
+	data := telemetrytest.Collect(t, reader)
+	attrs := map[string]string{"oma.river.kind": "sandbox_lifecycle_sweep", "oma.river.queue": "sandbox_lifecycle", "oma.outcome": "ok"}
+	telemetrytest.AssertSingle(t, data, "oma.river.jobs", 1, attrs)
+	telemetrytest.AssertSingle(t, data, "oma.river.job.duration", 2, attrs)
+	telemetrytest.AssertSingle(t, data, "oma.river.job.queue_wait", 3, map[string]string{"oma.river.kind": "sandbox_lifecycle_sweep", "oma.river.queue": "sandbox_lifecycle"})
+	reader = telemetrytest.MetricReader(t)
+	recordRiverJob(t.Context(), &rivertype.JobRow{Kind: "k", Queue: "q"}, "retry", time.Second)
+	if _, ok := telemetrytest.Collect(t, reader)["oma.river.job.queue_wait"]; ok {
+		t.Fatal("unmeasured queue wait recorded")
 	}
 }

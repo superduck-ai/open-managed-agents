@@ -11,6 +11,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -203,7 +204,7 @@ func (h *Handler) writeOTLPDatabaseError(w http.ResponseWriter, r *http.Request,
 	case errors.Is(err, db.ErrWorkerLeaseExpired):
 		writeOTLPStatus(w, protocol, http.StatusGone, "code session worker lease expired", "")
 	default:
-		h.logger.ErrorContext(r.Context(), "validate code session OTLP lifecycle", "code_session_id", codeSessionID, "error", err)
+		httpapi.LogFailure(h.logger, r, "validate code session OTLP lifecycle", "code_session_id", codeSessionID, "error", err)
 		writeOTLPStatus(w, protocol, http.StatusServiceUnavailable, "could not validate code session lifecycle", "")
 	}
 }

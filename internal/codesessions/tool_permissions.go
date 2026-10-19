@@ -10,11 +10,8 @@ import (
 	"time"
 	"uuid"
 
-	"go.opentelemetry.io/otel/attribute"
-
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
-	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
 type resolvedToolPermission string
@@ -68,15 +65,12 @@ func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID
 		s.logger.ErrorContext(ctx, "resolve tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "error", err)
 		return s.respondToToolPermissionRequest(ctx, codeSessionID, workerEpoch, toolPermissionRequestFromWorkerEvent(payload, meta), resolvedToolPermissionDeny, "invalid-thread", "Tool permission could not be resolved.", "", "")
 	}
-	s.logger.InfoContext(ctx, "resolved tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "tool_kind", identity.Kind, "server_name", identity.ServerName, "normalized_tool_name", identity.ToolName, "permission", permission)
+	s.logger.DebugContext(ctx, "resolved tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "tool_kind", identity.Kind, "server_name", identity.ServerName, "normalized_tool_name", identity.ToolName, "permission", permission)
 	request, payloads, err := toolPermissionPublicPayloads(codeSessionID, payload, meta, identity, permission)
 	if err != nil {
 		return err
 	}
-	telemetry.RecordToolPermissionDecision(ctx, string(permission), identity.Kind)
-	_, requestSpan := telemetry.Start(ctx, "oma.tool_permission.request", telemetry.AttrCodeSessionID.String(codeSessionID),
-		telemetry.AttrDecision.String(string(permission)), telemetry.AttrToolKind.String(identity.Kind), attribute.String("oma.tool.name", toolName))
-	requestSpan.End()
+	observeToolPermissionDecision(ctx, codeSessionID, toolName, permission, identity)
 	if len(payloads) == 0 {
 		return nil
 	}
@@ -381,7 +375,7 @@ func (s *Service) queueControlResponseForToolConfirmation(ctx context.Context, c
 	request, err := toolPermissionRequestFromMetadata(codeSession.WorkerExternalMetadata, codeSession.ExternalID, toolUseID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			return false, db.ErrSessionInputConflict
+			return false, db.ErrSessionToolUseNotPending
 		}
 		return false, err
 	}
@@ -544,12 +538,7 @@ func (s *Service) respondToToolPermissionRequest(ctx context.Context, codeSessio
 	if request.RequestID == "" {
 		return nil
 	}
-	telemetry.RecordToolPermissionResponse(ctx, string(behavior), source, request.RequestedAt)
-	_, responseSpan := telemetry.Start(ctx, "oma.tool_permission.respond", telemetry.AttrCodeSessionID.String(codeSessionID), telemetry.AttrBehavior.String(string(behavior)), telemetry.AttrSource.String(source))
-	if !request.RequestedAt.IsZero() {
-		responseSpan.SetAttributes(attribute.Float64("oma.tool_permission.wait_s", time.Since(request.RequestedAt).Seconds()))
-	}
-	responseSpan.End()
+	observeToolPermissionResponse(ctx, codeSessionID, behavior, source, request.RequestedAt)
 	if request.Input == nil {
 		request.Input = map[string]any{}
 	}

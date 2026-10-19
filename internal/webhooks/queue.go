@@ -84,9 +84,7 @@ func (q *Queue) Publish(ctx context.Context, envelope Envelope) error {
 	}
 	message := nats.NewMsg(deliverySubject)
 	message.Data = body
-	if traceParent := telemetry.TraceParent(ctx); traceParent != "" {
-		message.Header.Set(telemetry.TraceParentHeader, traceParent)
-	}
+	telemetry.InjectTraceParent(ctx, message.Header.Set)
 	_, err = q.js.PublishMsg(ctx, message, jetstream.WithMsgID(event.ID+":"+envelope.EndpointUUID), jetstream.WithRetryAttempts(0))
 	return err
 }

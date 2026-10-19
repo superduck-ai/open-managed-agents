@@ -357,7 +357,6 @@ telemetry:
     enabled: true
     level: info
   state_metrics:
-    enabled: true
     interval: 60s
-    stale_running_after: 30m
+    stale_running_after: 10m
     stuck_starting_after: 10m

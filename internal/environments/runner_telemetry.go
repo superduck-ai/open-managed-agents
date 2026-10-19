@@ -5,59 +5,98 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
+const (
+	runnerTriggerQueue         = "queue"
+	runnerTriggerStaleRecovery = "stale_recovery"
+	runnerTriggerLazyMCP       = "lazy_mcp"
+	runnerTriggerPrewarm       = "prewarm"
+)
+
+type runnerInstruments struct {
+	queueWait           metric.Float64Histogram
+	runs                metric.Int64Counter
+	runDuration         metric.Float64Histogram
+	stageDuration       metric.Float64Histogram
+	staleRecoveryClaims metric.Int64Counter
+	sandboxEnsure       metric.Float64Histogram
+}
+
+var runnerMetrics = telemetry.NewInstruments(func(meter metric.Meter) runnerInstruments {
+	return runnerInstruments{
+		queueWait:           telemetry.Histogram(meter, "oma.runner.queue_wait", "s", "Runner queue wait", telemetry.LongWaitBuckets),
+		runs:                telemetry.Counter(meter, "oma.runner.runs", "{run}", "Runner runs"),
+		runDuration:         telemetry.Histogram(meter, "oma.runner.run.duration", "s", "Runner run duration", telemetry.LatencyBuckets),
+		stageDuration:       telemetry.Histogram(meter, "oma.runner.stage.duration", "s", "Runner stage duration", telemetry.LatencyBuckets),
+		staleRecoveryClaims: telemetry.Counter(meter, "oma.runner.stale_recovery_claims", "{work}", "Runner stale work recovery claims"),
+		sandboxEnsure:       telemetry.Histogram(meter, "oma.sandbox.ensure.duration", "s", "Session sandbox ensure duration", telemetry.LatencyBuckets),
+	}
+})
+
 type runnerRun struct {
-	ctx        context.Context
-	span       trace.Span
-	sessionID  string
-	startedAt  time.Time
-	recovered  bool
-	trigger    string
-	spanEnd    func(error)
-	stage      string
-	stageEnd   func(error)
-	stageStart time.Time
+	span           trace.Span
+	sessionID      string
+	startedAt      time.Time
+	recovered      bool
+	trigger        string
+	endRun         func(error)
+	stage          string
+	endStage       func(error)
+	stageStartedAt time.Time
 }
 
 func startRunnerRun(ctx context.Context, work db.EnvironmentWork) (context.Context, *runnerRun) {
-	trigger := telemetry.RunnerTriggerQueue
+	trigger := runnerTriggerQueue
 	if work.State != "queued" {
-		trigger = telemetry.RunnerTriggerStaleRecovery
+		trigger = runnerTriggerStaleRecovery
 	}
 	ctx, span := telemetry.StartRoot(ctx, "oma.runner.run", work.TraceParent, runnerRunAttributes(work, trigger)...)
 	now := time.Now()
-	if trigger == telemetry.RunnerTriggerStaleRecovery {
-		telemetry.RecordRunnerStaleRecoveryClaim(ctx)
+	instruments := runnerMetrics.Get()
+	if trigger == runnerTriggerStaleRecovery {
+		span.SetAttributes(staleRecoveryAttributes(work, now)...)
+		instruments.staleRecoveryClaims.Add(ctx, 1)
 	} else if work.QueuedAt != nil {
 		queueWait := now.Sub(*work.QueuedAt)
 		span.SetAttributes(attribute.Float64("oma.runner.queue_wait_s", queueWait.Seconds()))
-		telemetry.RecordRunnerQueueWait(ctx, queueWait)
+		telemetry.RecordWait(ctx, instruments.queueWait, queueWait)
 	}
-	run := newRunnerRun(ctx, span, work, trigger, now)
-	run.spanEnd = func(err error) {
-		defer span.End()
+	run := &runnerRun{span: span, sessionID: work.SessionExternalID, startedAt: now, trigger: trigger, endRun: func(err error) {
 		telemetry.SetErrorStatus(span, err)
-	}
-	return run.begin("claim"), run
+		span.End()
+	}}
+	return run.begin(ctx, "claim"), run
 }
 
 func startSandboxRun(ctx context.Context, work db.EnvironmentWork, trigger string) (context.Context, *runnerRun) {
 	ctx, span := telemetry.Start(ctx, "oma.runner.run", runnerRunAttributes(work, trigger)...)
-	run := newRunnerRun(ctx, span, work, trigger, time.Now())
-	run.spanEnd = func(err error) {
-		defer span.End()
+	run := &runnerRun{span: span, sessionID: work.SessionExternalID, startedAt: time.Now(), trigger: trigger, endRun: func(err error) {
 		telemetry.SetErrorStatus(span, err)
-	}
-	return run.begin("prepare"), run
+		span.End()
+	}}
+	return run.begin(ctx, "prepare"), run
 }
 
-func newRunnerRun(ctx context.Context, span trace.Span, work db.EnvironmentWork, trigger string, startedAt time.Time) *runnerRun {
-	return &runnerRun{ctx: ctx, span: span, sessionID: work.SessionExternalID, startedAt: startedAt, trigger: trigger}
+func staleRecoveryAttributes(work db.EnvironmentWork, now time.Time) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{attribute.String("oma.environment_work.state", work.State)}
+	if work.LatestHeartbeatAt != nil {
+		attrs = append(attrs, attribute.Float64("oma.environment_work.heartbeat_age_s", now.Sub(*work.LatestHeartbeatAt).Seconds()))
+	}
+	return attrs
+}
+
+func staleRecoveryLogAttrs(work db.EnvironmentWork, now time.Time) []any {
+	attrs := []any{"work_id", work.ExternalID, "session_id", work.SessionExternalID, "state", work.State}
+	if work.LatestHeartbeatAt != nil {
+		attrs = append(attrs, "heartbeat_age_s", now.Sub(*work.LatestHeartbeatAt).Seconds())
+	}
+	return attrs
 }
 
 func runnerRunAttributes(work db.EnvironmentWork, trigger string) []attribute.KeyValue {
@@ -70,43 +109,53 @@ func runnerRunAttributes(work db.EnvironmentWork, trigger string) []attribute.Ke
 	}
 }
 
-func (r *runnerRun) begin(stage string) context.Context {
-	r.closeStage(nil)
-	ctx, span := telemetry.Start(r.ctx, "oma.runner."+stage,
+func (r *runnerRun) begin(ctx context.Context, stage string) context.Context {
+	r.closeStage(ctx, nil)
+	ctx, span := telemetry.Start(trace.ContextWithSpan(ctx, r.span), "oma.runner."+stage,
 		telemetry.AttrStage.String(stage),
 		telemetry.AttrSessionID.String(r.sessionID),
 	)
-	r.stage = stage
-	r.stageEnd = func(err error) {
-		defer span.End()
+	r.stage, r.stageStartedAt = stage, time.Now()
+	r.endStage = func(err error) {
 		telemetry.SetErrorStatus(span, err)
+		span.End()
 	}
-	r.stageStart = time.Now()
 	return ctx
 }
 
 func (r *runnerRun) markRecovered(recovered bool) {
+	if r.trigger == runnerTriggerLazyMCP || r.trigger == runnerTriggerPrewarm {
+		recovered = false
+	}
 	r.recovered = recovered
 	r.span.SetAttributes(telemetry.AttrRecovered.Bool(recovered))
 }
 
-func (r *runnerRun) end(err error) {
+func (r *runnerRun) end(ctx context.Context, err error) {
 	failedStage := r.stage
-	r.closeStage(err)
+	r.closeStage(ctx, err)
 	if err != nil {
 		r.span.SetAttributes(telemetry.AttrStage.String(failedStage))
 	}
-	telemetry.RecordRunnerRun(r.ctx, r.trigger, telemetry.Outcome(err), r.recovered, time.Since(r.startedAt))
-	r.spanEnd(err)
+	attrs := metric.WithAttributes(telemetry.AttrRunnerTrigger.String(r.trigger), telemetry.AttrOutcome.String(telemetry.Outcome(err)), telemetry.AttrRecovered.Bool(r.recovered))
+	instruments := runnerMetrics.Get()
+	instruments.runs.Add(ctx, 1, attrs)
+	instruments.runDuration.Record(ctx, time.Since(r.startedAt).Seconds(), attrs)
+	r.endRun(err)
 }
 
-func (r *runnerRun) closeStage(err error) {
-	if r.stageEnd == nil {
+func (r *runnerRun) closeStage(ctx context.Context, err error) {
+	if r.endStage == nil {
 		return
 	}
-	telemetry.RecordRunnerStage(r.ctx, r.trigger, r.stage, telemetry.Outcome(err), time.Since(r.stageStart))
-	r.stageEnd(err)
-	r.stageEnd = nil
+	runnerMetrics.Get().stageDuration.Record(ctx, time.Since(r.stageStartedAt).Seconds(), metric.WithAttributes(
+		telemetry.AttrRunnerTrigger.String(r.trigger), telemetry.AttrStage.String(r.stage), telemetry.AttrOutcome.String(telemetry.Outcome(err))))
+	r.endStage(err)
+	r.endStage = nil
+}
+
+func recordSandboxEnsure(ctx context.Context, trigger, outcome string, startedAt time.Time) {
+	runnerMetrics.Get().sandboxEnsure.Record(ctx, time.Since(startedAt).Seconds(), metric.WithAttributes(telemetry.AttrRunnerTrigger.String(trigger), telemetry.AttrOutcome.String(outcome)))
 }
 
 func isRecoveryLaunch(preparation *managedAgentLaunchPreparation) bool {

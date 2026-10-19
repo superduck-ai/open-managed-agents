@@ -29,7 +29,7 @@ func (s *Service) ActivateManagedAgentCodeSession(ctx context.Context, codeSessi
 	)
 	startedAt := time.Now()
 	defer func() {
-		telemetry.RecordActivation(ctx, telemetry.Outcome(err), time.Since(startedAt))
+		observeOperation(ctx, codeSessionMetrics.Get().activation, telemetry.Outcome(err), startedAt)
 		telemetry.SetErrorStatus(span, err)
 		span.End()
 	}()

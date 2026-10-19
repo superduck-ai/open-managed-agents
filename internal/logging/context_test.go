@@ -35,14 +35,6 @@ func (h *contextRecordHandler) WithGroup(name string) slog.Handler {
 	return &next
 }
 
-func TestContextHandlerWithoutExtractor(t *testing.T) {
-	var records []slog.Record
-	slog.New(NewContextHandler(&contextRecordHandler{records: &records}, nil)).Info("event")
-	if len(records) != 1 || records[0].NumAttrs() != 0 {
-		t.Fatal("nil extractor must preserve record")
-	}
-}
-
 func TestContextHandlerKeepsExplicitAttrs(t *testing.T) {
 	var records []slog.Record
 	handler := NewContextHandler(&contextRecordHandler{records: &records}, func(context.Context) []slog.Attr {

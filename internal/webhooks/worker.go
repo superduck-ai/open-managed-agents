@@ -81,26 +81,34 @@ func (w *Worker) processMessage(ctx context.Context, client *http.Client, msg je
 	ctx, span := telemetry.StartRoot(ctx, "oma.webhook.deliver", msg.Headers().Get(telemetry.TraceParentHeader),
 		telemetry.AttrWorkspaceUUID.String(envelope.WorkspaceUUID),
 	)
-	defer func() {
-		telemetry.SetErrorStatus(span, err)
-		span.End()
-	}()
+	result := w.deliverEnvelope(ctx, client, msg, envelope, event)
+	if result.outcome != "" {
+		recordWebhookDelivery(ctx, result)
+	}
+	telemetry.SetErrorStatus(span, result.err)
+	span.End()
+}
+
+type deliveryResult struct {
+	outcome  string
+	duration time.Duration
+	err      error
+}
+
+func (w *Worker) deliverEnvelope(ctx context.Context, client *http.Client, msg jetstream.Msg, envelope Envelope, event Event) deliveryResult {
 	metadata, err := msg.Metadata()
 	if err != nil {
 		w.logger.ErrorContext(ctx, "webhook message metadata unavailable", "error", err)
-		return
+		return deliveryResult{err: err}
 	}
 	target, found, err := w.database.FindWebhookDeliveryTarget(ctx, envelope.WorkspaceUUID, envelope.EndpointUUID)
 	if err != nil {
 		w.logger.ErrorContext(ctx, "webhook target lookup failed", "event_id", event.ID, "endpoint_uuid", envelope.EndpointUUID, "error", err)
-		dropped := w.retry(ctx, msg, metadata.NumDelivered)
-		telemetry.RecordWebhookDelivery(ctx, webhookDeliveryOutcome(err, dropped), 0)
-		return
+		return w.settle(ctx, msg, metadata.NumDelivered, deliveryResult{err: err}, false)
 	}
 	if !found || target.Status != "enabled" || target.URL == "" || target.SigningSecret == "" {
 		w.finish(ctx, msg)
-		telemetry.RecordWebhookDelivery(ctx, "dropped", 0)
-		return
+		return deliveryResult{outcome: "dropped"}
 	}
 	destination := deliveryTarget{URL: target.URL, SigningKey: target.SigningSecret, AllowInsecure: w.cfg.AllowInsecure}
 	startedAt := time.Now()
@@ -108,28 +116,27 @@ func (w *Worker) processMessage(ctx context.Context, client *http.Client, msg je
 	if err == nil {
 		err = deliver(ctx, client, destination, envelope.Event)
 	}
-	duration := time.Since(startedAt)
+	result := deliveryResult{duration: time.Since(startedAt), err: err}
 	if ctx.Err() != nil {
-		return
+		return result
 	}
-	terminal := w.recordResult(ctx, envelope, err)
-	dropped := terminal
-	if err == nil || terminal {
-		w.finish(ctx, msg)
-	} else {
-		dropped = w.retry(ctx, msg, metadata.NumDelivered)
-	}
-	telemetry.RecordWebhookDelivery(ctx, webhookDeliveryOutcome(err, dropped), duration)
+	return w.settle(ctx, msg, metadata.NumDelivered, result, w.recordResult(ctx, envelope, err))
 }
 
-func webhookDeliveryOutcome(err error, dropped bool) string {
-	if err == nil {
-		return "success"
+func (w *Worker) settle(ctx context.Context, msg jetstream.Msg, deliveries uint64, result deliveryResult, terminal bool) deliveryResult {
+	switch {
+	case result.err == nil:
+		w.finish(ctx, msg)
+		result.outcome = telemetry.OutcomeOK
+	case terminal:
+		w.finish(ctx, msg)
+		result.outcome = "dropped"
+	case w.retry(ctx, msg, deliveries):
+		result.outcome = "dropped"
+	default:
+		result.outcome = "retry"
 	}
-	if dropped {
-		return "dropped"
-	}
-	return "retry"
+	return result
 }
 
 func (w *Worker) recordResult(ctx context.Context, envelope Envelope, deliveryErr error) bool {

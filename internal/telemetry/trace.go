@@ -13,6 +13,13 @@ import (
 
 const TraceParentHeader = "traceparent"
 
+const (
+	OutcomeOK       = "ok"
+	OutcomeError    = "error"
+	OutcomeCanceled = "canceled"
+	OutcomeTimeout  = "timeout"
+)
+
 func tracer() trace.Tracer {
 	return otel.Tracer(InstrumentationName)
 }
@@ -22,8 +29,16 @@ func StartRoot(ctx context.Context, name string, traceParent string, attrs ...at
 	if link, ok := LinkFromTraceParent(traceParent); ok {
 		options = append(options, trace.WithLinks(link))
 	}
-	ctx, span := tracer().Start(ctx, name, options...)
-	return ctx, span
+	return tracer().Start(ctx, name, options...)
+}
+
+func Mark(ctx context.Context, name, linkedTraceParent string, attrs ...attribute.KeyValue) {
+	options := []trace.SpanStartOption{trace.WithAttributes(attrs...)}
+	if link, ok := LinkFromTraceParent(linkedTraceParent); ok {
+		options = append(options, trace.WithLinks(link))
+	}
+	_, span := tracer().Start(ctx, name, options...)
+	span.End()
 }
 
 func LinkFromTraceParent(traceParent string) (trace.Link, bool) {
@@ -39,19 +54,16 @@ func LinkFromTraceParent(traceParent string) (trace.Link, bool) {
 }
 
 func Start(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
-	ctx, span := tracer().Start(ctx, name, trace.WithAttributes(attrs...))
-	return ctx, span
-}
-
-func End(span trace.Span, err error) {
-	SetErrorStatus(span, err)
-	span.End()
+	return tracer().Start(ctx, name, trace.WithAttributes(attrs...))
 }
 
 func SetErrorStatus(span trace.Span, err error) {
-	if err != nil {
-		outcome := Outcome(err)
-		span.SetAttributes(attribute.String("error.type", outcome))
+	if err == nil {
+		return
+	}
+	outcome := Outcome(err)
+	span.SetAttributes(AttrErrorType.String(outcome))
+	if outcome != OutcomeCanceled {
 		span.SetStatus(codes.Error, outcome)
 	}
 }
@@ -59,13 +71,13 @@ func SetErrorStatus(span trace.Span, err error) {
 func Outcome(err error) string {
 	switch {
 	case err == nil:
-		return "ok"
+		return OutcomeOK
 	case errors.Is(err, context.Canceled):
-		return "canceled"
+		return OutcomeCanceled
 	case errors.Is(err, context.DeadlineExceeded):
-		return "timeout"
+		return OutcomeTimeout
 	default:
-		return "error"
+		return OutcomeError
 	}
 }
 
@@ -73,4 +85,10 @@ func TraceParent(ctx context.Context) string {
 	carrier := propagation.MapCarrier{}
 	propagation.TraceContext{}.Inject(ctx, carrier)
 	return carrier.Get(TraceParentHeader)
+}
+
+func InjectTraceParent(ctx context.Context, set func(key, value string)) {
+	if traceParent := TraceParent(ctx); traceParent != "" {
+		set(TraceParentHeader, traceParent)
+	}
 }

@@ -210,7 +210,7 @@ func validateSessionInputBatch(primary SessionThread, worker codeSessionInputSta
 				return "", err
 			}
 			if resolvedEventID == "" {
-				return "", ErrSessionInputConflict
+				return "", ErrSessionToolUseNotPending
 			}
 		case "user.tool_result":
 			if primary.Status != "running" && worker.WorkerStatus != "requires_action" {

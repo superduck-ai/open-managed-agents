@@ -1,4 +1,4 @@
-package opsmetrics
+package statemetrics
 
 import (
 	"context"

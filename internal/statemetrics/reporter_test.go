@@ -1,11 +1,10 @@
-package opsmetrics
+package statemetrics
 
 import (
 	"context"
 	"errors"
 	"io"
 	"log/slog"
-	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry/telemetrytest"
 )
 
 type testStateDatabase struct {
@@ -27,7 +27,7 @@ type testStateDatabase struct {
 	calls  atomic.Int64
 }
 
-func (d *testStateDatabase) ListenerPool() *pgxpool.Pool { return d.pool }
+func (d *testStateDatabase) PoolStat() *pgxpool.Stat { return d.pool.Stat() }
 func (d *testStateDatabase) OperationalStateCounts(ctx context.Context, _, _ time.Time) (db.OperationalStateCounts, error) {
 	d.calls.Add(1)
 	if err := ctx.Err(); err != nil {
@@ -49,20 +49,6 @@ func reporterForTest(t *testing.T) (*Reporter, *testStateDatabase) {
 	t.Cleanup(pool.Close)
 	database := &testStateDatabase{pool: pool}
 	return &Reporter{deps: Dependencies{DB: database, Config: config.TelemetryStateMetricsConfig{Interval: time.Minute, StaleRunningAfter: time.Hour, StuckStartingAfter: time.Minute}}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}, database
-}
-
-func TestWithZeroStates(t *testing.T) {
-	if got := withZeroStates(nil, []string{"running", "rescheduling"}); !reflect.DeepEqual(got, map[string]int64{"running": 0, "rescheduling": 0}) {
-		t.Fatalf("zero states: %v", got)
-	}
-	got := withZeroStates([]db.StateCount{{State: "running", Total: 3}}, []string{"running", "rescheduling"})
-	if got["running"] != 3 || got["rescheduling"] != 0 {
-		t.Fatalf("state counts: %v", got)
-	}
-	code := withZeroCodeSessionStates([]db.CodeSessionStateCount{{WorkerStatus: "running", ConnectionStatus: "connected", Total: 2}})
-	if len(code) != 8 || code[codeSessionState{worker: "running", connection: "connected"}] != 2 || code[codeSessionState{worker: "unknown", connection: "disconnected"}] != 0 {
-		t.Fatalf("code session states: %v", code)
-	}
 }
 
 func TestReporterObservesOnlyPoolUntilReady(t *testing.T) {
@@ -104,9 +90,21 @@ func TestReporterObservesOnlyPoolUntilReady(t *testing.T) {
 			t.Fatalf("pool point: %+v", point)
 		}
 	}
-	reporter.store(snapshot{ready: true, states: db.OperationalStateCounts{Sessions: []db.StateCount{{State: "running", Total: 2}}, StaleRunningSessions: 1, CodeSessions: []db.CodeSessionStateCount{{WorkerStatus: "running", ConnectionStatus: "connected", Total: 3}}, EnvironmentWork: []db.StateCount{{State: "queued", Total: 4}}, OldestQueuedWorkSeconds: 5, StuckStartingWork: 6, EnvironmentSandboxes: []db.StateCount{{State: "creating", Total: 7}}}, streams: []streamState{{name: "OMA_WORKER_INBOUND", messages: 8, oldestAge: 9}}, consumers: []consumerState{{name: "oma_webhook_delivery", pending: 10, ackPending: 11, redelivered: 12}}})
+	codeSessions := map[db.CodeSessionState]int64{}
+	for _, worker := range []string{"unknown", "idle", "running", "requires_action"} {
+		for _, connection := range []string{"connected", "disconnected"} {
+			codeSessions[db.CodeSessionState{WorkerStatus: worker, ConnectionStatus: connection}] = 0
+		}
+	}
+	codeSessions[db.CodeSessionState{WorkerStatus: "running", ConnectionStatus: "connected"}] = 3
+	reporter.store(snapshot{ready: true, states: db.OperationalStateCounts{
+		Sessions: map[string]int64{"running": 2, "rescheduling": 0}, StaleRunningSessions: 1, CodeSessions: codeSessions,
+		EnvironmentWork: map[string]int64{"queued": 4, "starting": 0, "active": 0, "stopping": 0}, OldestQueuedWorkSeconds: 5, StuckStartingWork: 6,
+		EnvironmentSandboxes: map[string]int64{"creating": 7, "running": 0, "stopping": 0},
+		BrainClaims:          map[string]int64{"waiting": 13, "claimed": 0, "takeover": 0}, OldestWaitingBrainClaimSeconds: 14,
+	}, streams: []streamState{{name: "OMA_WORKER_INBOUND", messages: 8, oldestAge: 9}}, consumers: []consumerState{{name: "oma_webhook_delivery", pending: 10, ackPending: 11, redelivered: 12}}})
 	data = collect()
-	expected := map[string]int{"oma.sessions.live": 2, "oma.sessions.stale_running": 1, "oma.code_sessions.active": 8, "oma.environment_work.live": 4, "oma.environment_work.oldest_queued_age": 1, "oma.environment_work.stuck_starting": 1, "oma.environment_sandboxes.live": 3, "oma.nats.stream.messages": 1, "oma.nats.stream.oldest_message_age": 1, "oma.nats.consumer.pending": 1, "oma.nats.consumer.ack_pending": 1, "oma.nats.consumer.redelivered": 1, "oma.db.pool.connections": 4}
+	expected := map[string]int{"oma.sessions.live": 2, "oma.sessions.stale_running": 1, "oma.code_sessions.active": 8, "oma.environment_work.live": 4, "oma.environment_work.oldest_queued_age": 1, "oma.environment_work.stuck_starting": 1, "oma.environment_sandboxes.live": 3, "oma.brain_claims.pending": 3, "oma.brain_claims.oldest_waiting_age": 1, "oma.nats.stream.messages": 1, "oma.nats.stream.oldest_message_age": 1, "oma.nats.consumer.pending": 1, "oma.nats.consumer.ack_pending": 1, "oma.nats.consumer.redelivered": 1, "oma.db.pool.connections": 4}
 	if len(data) != len(expected) {
 		t.Fatalf("gauge names: %v", data)
 	}
@@ -115,7 +113,7 @@ func TestReporterObservesOnlyPoolUntilReady(t *testing.T) {
 			t.Fatalf("%s points=%d want %d", name, len(data[name].DataPoints), count)
 		}
 	}
-	for name, want := range map[string]int64{"oma.sessions.live": 2, "oma.sessions.stale_running": 1, "oma.code_sessions.active": 3, "oma.environment_work.live": 4, "oma.environment_work.oldest_queued_age": 5, "oma.environment_work.stuck_starting": 6, "oma.environment_sandboxes.live": 7, "oma.nats.stream.messages": 8, "oma.nats.stream.oldest_message_age": 9, "oma.nats.consumer.pending": 10, "oma.nats.consumer.ack_pending": 11, "oma.nats.consumer.redelivered": 12} {
+	for name, want := range map[string]int64{"oma.sessions.live": 2, "oma.sessions.stale_running": 1, "oma.code_sessions.active": 3, "oma.environment_work.live": 4, "oma.environment_work.oldest_queued_age": 5, "oma.environment_work.stuck_starting": 6, "oma.environment_sandboxes.live": 7, "oma.brain_claims.pending": 13, "oma.brain_claims.oldest_waiting_age": 14, "oma.nats.stream.messages": 8, "oma.nats.stream.oldest_message_age": 9, "oma.nats.consumer.pending": 10, "oma.nats.consumer.ack_pending": 11, "oma.nats.consumer.redelivered": 12} {
 		var total int64
 		for _, point := range data[name].DataPoints {
 			total += point.Value
@@ -176,6 +174,24 @@ func TestReporterStartStopUnregisters(t *testing.T) {
 			if _, ok := m.Data.(metricdata.Gauge[int64]); ok {
 				t.Fatalf("callback remained registered: %s", m.Name)
 			}
+		}
+	}
+}
+
+func TestCollectFailureLabels(t *testing.T) {
+	reader := telemetrytest.MetricReader(t)
+	for _, reason := range []string{"database", "nats"} {
+		recordCollectFailure(t.Context(), reason)
+	}
+	points := telemetrytest.Points(t, telemetrytest.Collect(t, reader), "oma.state_metrics.collect.failures")
+	if len(points) != 2 {
+		t.Fatalf("failure points: %v", points)
+	}
+	for _, point := range points {
+		reason, _ := point.Attributes.Value("oma.reason")
+		telemetrytest.AssertAttributes(t, "oma.state_metrics.collect.failures", point.Attributes, map[string]string{"oma.reason": reason.AsString()})
+		if point.Value != 1 || (reason.AsString() != "database" && reason.AsString() != "nats") {
+			t.Fatalf("failure point: %+v", point)
 		}
 	}
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -181,7 +182,7 @@ func (b *JetStreamBroker) Publish(ctx context.Context, messageID string, envelop
 	)
 	startedAt := time.Now()
 	defer func() {
-		telemetry.RecordWorkerEventPublish(ctx, lane.name(), telemetry.Outcome(err), time.Since(startedAt))
+		publishMetrics.Get().workerEvent.Record(ctx, time.Since(startedAt).Seconds(), metric.WithAttributes(telemetry.AttrLane.String(lane.name()), telemetry.AttrOutcome.String(telemetry.Outcome(err))))
 		telemetry.SetErrorStatus(span, err)
 		span.End()
 	}()
@@ -199,9 +200,7 @@ func (b *JetStreamBroker) Publish(ctx context.Context, messageID string, envelop
 	message := nats.NewMsg(subjectName)
 	message.Data = body
 	message.Header.Set(nats.MsgIdHdr, messageID)
-	if traceParent := telemetry.TraceParent(ctx); traceParent != "" {
-		message.Header.Set(telemetry.TraceParentHeader, traceParent)
-	}
+	telemetry.InjectTraceParent(ctx, message.Header.Set)
 	if _, err := b.js.PublishMsg(ctx, message); err != nil {
 		return fmt.Errorf("publish worker event: %w", err)
 	}

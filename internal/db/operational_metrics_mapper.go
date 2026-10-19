@@ -15,6 +15,9 @@ type OperationalMetricsMapper interface {
 	OldestQueuedEnvironmentWorkAgeSeconds(ctx context.Context) (int64, error)
 	CountStuckStartingEnvironmentWork(ctx context.Context, startedBefore time.Time) (int64, error)
 	CountLiveEnvironmentSandboxesByState(ctx context.Context) ([]operationalStateCountRow, error)
+	CountRequestedBrainClaimsByState(ctx context.Context) ([]operationalStateCountRow, error)
+	OldestWaitingBrainClaimAgeSeconds(ctx context.Context) (int64, error)
+	CountTakeoverPendingBrainClaims(ctx context.Context) (int64, error)
 }
 
 type operationalStateCountRow struct {

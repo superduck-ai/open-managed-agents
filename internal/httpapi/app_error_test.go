@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -186,5 +187,35 @@ func assertAppError(t *testing.T, recorder *httptest.ResponseRecorder, response 
 	}
 	if gotType != errorType || gotMessage != message {
 		t.Fatalf("error = (%q, %q), want (%q, %q)", gotType, gotMessage, errorType, message)
+	}
+}
+
+func TestErrorAdapterLogsClientCancellationAtInfo(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		canceled  bool
+		wantLevel string
+		wantMsg   string
+	}{
+		{"server side cancellation", false, "ERROR", "http request failed"},
+		{"client cancellation", true, "INFO", "http request canceled by client"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			adapter, logs := testErrorAdapter()
+			request := testErrorRequest()
+			if tc.canceled {
+				ctx, cancel := context.WithCancel(request.Context())
+				cancel()
+				request = request.WithContext(ctx)
+			}
+			adapter.Write(httptest.NewRecorder(), request, fmt.Errorf("proxy: %w", context.Canceled))
+			var record map[string]any
+			if err := json.Unmarshal(logs.Bytes(), &record); err != nil {
+				t.Fatalf("decode log: %v: %s", err, logs.String())
+			}
+			if record["level"] != tc.wantLevel || record["msg"] != tc.wantMsg || record["request_id"] != "req_test" {
+				t.Fatalf("log record: %v", record)
+			}
+		})
 	}
 }

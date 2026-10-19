@@ -11,11 +11,18 @@
 
     <select id="CountStaleRunningSessions" result="scalar">
         SELECT count(*) AS total
-        FROM sessions
-        WHERE deleted_at IS NULL
-        AND archived_at IS NULL
-        AND status = 'running'
-        AND updated_at &lt; #{staleBefore}
+        FROM sessions s
+        WHERE s.deleted_at IS NULL
+        AND s.archived_at IS NULL
+        AND s.status = 'running'
+        AND s.updated_at &lt; #{staleBefore}
+        AND NOT EXISTS (
+            SELECT 1 FROM session_events e
+            WHERE e.workspace_uuid = s.workspace_uuid
+            AND e.session_uuid = s.uuid
+            AND e.deleted_at IS NULL
+            AND e.created_at &gt;= #{staleBefore}
+        )
     </select>
 
     <select id="CountActiveCodeSessionsByWorkerState" resultType="operationalCodeSessionCountRow">
@@ -48,6 +55,43 @@
         WHERE deleted_at IS NULL
         AND state = 'starting'
         AND updated_at &lt; #{startedBefore}
+    </select>
+
+    <select id="CountRequestedBrainClaimsByState" resultType="operationalStateCountRow">
+        SELECT CASE WHEN worker_claim_expires_at &gt; NOW() THEN 'claimed' ELSE 'waiting' END AS state, count(*) AS total
+        FROM code_sessions
+        WHERE deleted_at IS NULL
+        AND status = 'active'
+        AND metadata #>> '{config,worker_transport}' = 'claim'
+        AND worker_claim_requested_at IS NOT NULL
+        GROUP BY 1
+    </select>
+
+    <select id="CountTakeoverPendingBrainClaims" result="scalar">
+        SELECT count(*) AS total
+        FROM code_sessions cs
+        JOIN sessions s
+          ON s.uuid = cs.session_uuid
+         AND s.organization_uuid = cs.organization_uuid
+         AND s.workspace_uuid = cs.workspace_uuid
+         AND s.deleted_at IS NULL
+        WHERE cs.deleted_at IS NULL
+        AND cs.status = 'active'
+        AND cs.metadata #>> '{config,worker_transport}' = 'claim'
+        AND cs.worker_claim_requested_at IS NULL
+        AND (cs.worker_claim_expires_at IS NULL OR cs.worker_claim_expires_at &lt;= NOW())
+        AND (cs.worker_lease_expires_at IS NULL OR cs.worker_lease_expires_at &lt; NOW())
+        AND s.status IN ('running', 'rescheduling')
+    </select>
+
+    <select id="OldestWaitingBrainClaimAgeSeconds" result="scalar">
+        SELECT COALESCE(CAST(EXTRACT(EPOCH FROM (NOW() - MIN(worker_claim_requested_at))) AS bigint), 0) AS age_seconds
+        FROM code_sessions
+        WHERE deleted_at IS NULL
+        AND status = 'active'
+        AND metadata #>> '{config,worker_transport}' = 'claim'
+        AND worker_claim_requested_at IS NOT NULL
+        AND (worker_claim_expires_at IS NULL OR worker_claim_expires_at &lt;= NOW())
     </select>
 
     <select id="CountLiveEnvironmentSandboxesByState" resultType="operationalStateCountRow">

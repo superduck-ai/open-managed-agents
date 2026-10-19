@@ -1,7 +1,6 @@
 package messages
 
 import (
-	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,15 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry/telemetrytest"
 )
 
 func TestModelObservationErrorTypes(t *testing.T) {
@@ -26,6 +21,9 @@ func TestModelObservationErrorTypes(t *testing.T) {
 		want := input
 		if input == "invalid_response" || input == "incomplete_response" || input == "provider_error" {
 			want = "stream_error"
+		}
+		if input == "cancelled" {
+			want = "canceled"
 		}
 		if got := modelObservationErrorType(input); got != want {
 			t.Fatalf("%s maps to %s, want %s", input, got, want)
@@ -52,19 +50,8 @@ func TestResponseObservationFirstToken(t *testing.T) {
 }
 
 func TestModelProxyTelemetry(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	meters := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	recorder := tracetest.NewSpanRecorder()
-	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-	oldMeter, oldTrace := otel.GetMeterProvider(), otel.GetTracerProvider()
-	otel.SetMeterProvider(meters)
-	otel.SetTracerProvider(traces)
-	t.Cleanup(func() {
-		otel.SetMeterProvider(oldMeter)
-		otel.SetTracerProvider(oldTrace)
-		_ = meters.Shutdown(context.Background())
-		_ = traces.Shutdown(context.Background())
-	})
+	reader := telemetrytest.MetricReader(t)
+	recorder := telemetrytest.SpanRecorder(t)
 	for _, tc := range []struct {
 		name                           string
 		upstreamStatus, responseStatus int
@@ -113,32 +100,21 @@ func TestModelProxyTelemetry(t *testing.T) {
 					t.Fatal("payload leaked to span")
 				}
 			}
-			var data metricdata.ResourceMetrics
-			if err := reader.Collect(t.Context(), &data); err != nil {
-				t.Fatal(err)
-			}
 			found := false
-			for _, scope := range data.ScopeMetrics {
-				for _, m := range scope.Metrics {
-					if m.Name != "gen_ai.client.operation.duration" {
-						continue
-					}
-					for _, point := range m.Data.(metricdata.Histogram[float64]).DataPoints {
-						model, _ := point.Attributes.Value(attribute.Key("gen_ai.request.model"))
-						if model.AsString() != tc.name {
-							continue
-						}
-						found = true
-						errorType, _ := point.Attributes.Value(attribute.Key("error.type"))
-						status, _ := point.Attributes.Value(attribute.Key("http.response.status_code"))
-						wantStatus := tc.upstreamStatus
-						if tc.closed {
-							wantStatus = 0
-						}
-						if point.Count != 1 || errorType.AsString() != tc.errorType || status.AsInt64() != int64(wantStatus) {
-							t.Fatalf("operation metric: %+v", point)
-						}
-					}
+			for _, point := range telemetrytest.Points(t, telemetrytest.Collect(t, reader), "gen_ai.client.operation.duration") {
+				model, _ := point.Attributes.Value(attribute.Key("gen_ai.request.model"))
+				if model.AsString() != tc.name {
+					continue
+				}
+				found = true
+				errorType, _ := point.Attributes.Value(attribute.Key("error.type"))
+				status, _ := point.Attributes.Value(attribute.Key("http.response.status_code"))
+				wantStatus := tc.upstreamStatus
+				if tc.closed {
+					wantStatus = 0
+				}
+				if point.Count != 1 || errorType.AsString() != tc.errorType || status.AsInt64() != int64(wantStatus) {
+					t.Fatalf("operation metric: %+v", point)
 				}
 			}
 			if !found {
@@ -156,5 +132,56 @@ func TestModelTokenUsagePreservesNilAndZero(t *testing.T) {
 	got := modelTokenUsage(codesessions.ModelRequestUsage{OutputTokens: &zero})
 	if got.Output == nil || *got.Output != 0 {
 		t.Fatal("explicit zero token count lost")
+	}
+}
+
+func TestModelResponseAttributes(t *testing.T) {
+	for _, tc := range []struct {
+		name, stopReason string
+		want             map[string]string
+		absent           []string
+	}{
+		{"unknown stop reason", "private_reason", map[string]string{"gen_ai.response.finish_reasons": `["other"]`}, []string{"gen_ai.usage.input_tokens"}},
+		{"missing observation fields", "", nil, []string{"gen_ai.response.finish_reasons", "oma.model.time_to_first_token_s", "oma.model.upstream_request_id"}},
+		{"complete", "tool_use", map[string]string{
+			"gen_ai.response.finish_reasons": `["tool_use"]`, "gen_ai.usage.output_tokens": "0", "gen_ai.usage.input_tokens": "12",
+			"oma.model.time_to_first_token_s": "1.5", "oma.model.upstream_request_id": "req_upstream",
+		}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			observation := &responseObservation{stopReason: tc.stopReason}
+			measurement := telemetryMeasurementFor(tc.name)
+			if tc.name == "complete" {
+				observation.result.UpstreamRequestID = "req_upstream"
+			}
+			attrs := map[string]string{}
+			for _, attr := range modelResponseAttributes(observation, measurement) {
+				attrs[string(attr.Key)] = attr.Value.Emit()
+			}
+			for key, value := range tc.want {
+				if attrs[key] != value {
+					t.Fatalf("%s = %q, attrs %v", key, attrs[key], attrs)
+				}
+			}
+			for _, key := range tc.absent {
+				if _, ok := attrs[key]; ok {
+					t.Fatalf("unexpected %s in %v", key, attrs)
+				}
+			}
+			if strings.Contains(attrs["gen_ai.response.finish_reasons"], "private") {
+				t.Fatal("unbounded stop reason leaked")
+			}
+		})
+	}
+}
+
+func telemetryMeasurementFor(name string) modelCallMeasurement {
+	if name != "complete" {
+		return modelCallMeasurement{}
+	}
+	input, output := int64(12), int64(0)
+	return modelCallMeasurement{
+		Usage:            tokenUsage{Input: &input, Output: &output},
+		TimeToFirstToken: 1500 * time.Millisecond,
 	}
 }

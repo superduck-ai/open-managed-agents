@@ -26,9 +26,9 @@ func validateTelemetryConfig(cfg TelemetryConfig) error {
 		{!cfg.Traces.Enabled || cfg.OTLP.TracesStream != "", "telemetry.otlp.traces_stream is required when traces are enabled"},
 		{!cfg.Metrics.Enabled || cfg.Metrics.ExportInterval >= time.Second, "telemetry.metrics.export_interval must be at least 1s"},
 		{!cfg.Logs.Enabled || cfg.OTLP.LogsStream != "", "telemetry.otlp.logs_stream is required when logs are enabled"},
-		{!cfg.StateMetrics.Enabled || cfg.StateMetrics.Interval >= 10*time.Second, "telemetry.state_metrics.interval must be at least 10s"},
-		{!cfg.StateMetrics.Enabled || cfg.StateMetrics.StaleRunningAfter > 0, "telemetry.state_metrics.stale_running_after must be positive"},
-		{!cfg.StateMetrics.Enabled || cfg.StateMetrics.StuckStartingAfter > 0, "telemetry.state_metrics.stuck_starting_after must be positive"},
+		{!cfg.Metrics.Enabled || cfg.StateMetrics.Interval >= 10*time.Second, "telemetry.state_metrics.interval must be at least 10s"},
+		{!cfg.Metrics.Enabled || cfg.StateMetrics.StaleRunningAfter > 0, "telemetry.state_metrics.stale_running_after must be positive"},
+		{!cfg.Metrics.Enabled || cfg.StateMetrics.StuckStartingAfter > 0, "telemetry.state_metrics.stuck_starting_after must be positive"},
 	}
 	for _, check := range checks {
 		if !check.valid {
@@ -51,5 +51,5 @@ func (c TelemetryLogsConfig) SlogLevel() slog.Level {
 }
 
 func (c TelemetryConfig) StateMetricsActive() bool {
-	return c.Enabled && c.Metrics.Enabled && c.StateMetrics.Enabled
+	return c.Enabled && c.Metrics.Enabled
 }

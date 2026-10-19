@@ -21,7 +21,9 @@ type publishedPort struct {
 	URL           string `json:"url"`
 }
 
-func (p *E2BProvider) ServiceEndpoint(ctx context.Context, sandboxID string, port int, path string) (string, error) {
+func (p *E2BProvider) ServiceEndpoint(ctx context.Context, sandboxID string, port int, path string) (endpoint string, err error) {
+	ctx, finish := observeProviderCall(ctx, "service_endpoint", sandboxID)
+	defer func() { finish(err) }()
 	if p.cfg.LocalPortLookup {
 		return p.publishedServiceEndpoint(ctx, sandboxID, port, path)
 	}

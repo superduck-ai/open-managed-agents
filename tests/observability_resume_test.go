@@ -22,7 +22,7 @@ func TestSandboxResumeTelemetryOutcomes(t *testing.T) {
 	previous := otel.GetTracerProvider()
 	otel.SetTracerProvider(provider)
 	t.Cleanup(func() { otel.SetTracerProvider(previous); _ = provider.Shutdown(context.Background()) })
-	for _, outcome := range []string{"error", "disabled", "no_provider_id", "recovery_requested", "recovery_scheduled", "extended"} {
+	for _, outcome := range []string{"error", "disabled", "no_provider_id", "no_sandbox", "recovery_requested", "recovery_scheduled", "extended"} {
 		t.Run(outcome, func(t *testing.T) {
 			app := newTestAppWithStore(t, nil, newFakeStore("resume-telemetry-"+outcome))
 			defer app.close()
@@ -53,10 +53,18 @@ func TestSandboxResumeTelemetryOutcomes(t *testing.T) {
 				if err := app.db.UpdateEnvironmentSandboxState(t.Context(), sandbox.WorkspaceUUID, sandbox.ExternalID, "running", &empty, nil, nil); err != nil {
 					t.Fatal(err)
 				}
-			case "recovery_requested":
+			case "no_sandbox", "recovery_requested":
 				now := time.Now()
 				if err := app.db.UpdateEnvironmentSandboxState(t.Context(), sandbox.WorkspaceUUID, sandbox.ExternalID, "stopped", nil, nil, &now); err != nil {
 					t.Fatal(err)
+				}
+				if outcome == "recovery_requested" {
+					if _, err := app.pool.Exec(t.Context(), `UPDATE environment_sandboxes SET stop_reason = 'idle_timeout' WHERE uuid = $1`, sandbox.UUID); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := app.pool.Exec(t.Context(), `UPDATE code_sessions SET idle_since = NULL WHERE external_id = $1`, codeSessionID); err != nil {
+						t.Fatal(err)
+					}
 				}
 			}
 			service := newCodeSessionService(app, nil, nil)

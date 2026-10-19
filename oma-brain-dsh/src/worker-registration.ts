@@ -1,12 +1,14 @@
 import { validateAssignment, type Assignment } from "./assignment.ts";
 import type { OmaApi } from "./api.ts";
 import { PermanentAdmissionError } from "./claim.ts";
+import { traceHeaders, validTraceParent } from "./trace-context.ts";
 
 export interface BrainTask {
   session_id: string;
   worker_epoch: number;
   ingress_token: string;
   model_token: string;
+  trace_parent?: string;
 }
 
 export function validateBrainTask(value: unknown): asserts value is BrainTask {
@@ -20,18 +22,22 @@ export function validateBrainTask(value: unknown): asserts value is BrainTask {
     throw new PermanentAdmissionError("Invalid task identity or credentials");
 }
 
-export async function registerWorkerTask(api: OmaApi, task: BrainTask, signal?: AbortSignal): Promise<Assignment> {
+export async function registerWorkerTask(api: OmaApi, claimed: BrainTask, signal?: AbortSignal): Promise<Assignment> {
+  const { trace_parent: claimedTraceParent, ...task } = claimed;
+  const traceParent = validTraceParent(claimedTraceParent);
   const id = encodeURIComponent(task.session_id);
+  const trace = traceHeaders(traceParent);
   const registered = await api.request(`/v1/code/sessions/${id}/worker/register`,
-    task.ingress_token, "POST", {}, undefined, signal);
+    task.ingress_token, "POST", {}, trace, signal);
   if (Number(registered.worker_epoch) !== task.worker_epoch)
     throw new Error("Registered epoch does not match dispatched task");
-  const response = await api.request(`/v2/sessions/${id}`, task.ingress_token, "GET", undefined, undefined, signal);
+  const response = await api.request(`/v2/sessions/${id}`, task.ingress_token, "GET", undefined, trace, signal);
   const context = response.session_context;
   if (!context || typeof context !== "object" || Array.isArray(context))
     throw new PermanentAdmissionError("Invalid session_context");
   const assignment: Assignment = {
     ...task,
+    ...(traceParent ? { trace_parent: traceParent } : {}),
     launch: {
       version: 2, model: context.model, work_dir: context.cwd,
       system: context.system_prompt || context.custom_system_prompt || "",
@@ -42,7 +48,7 @@ export async function registerWorkerTask(api: OmaApi, task: BrainTask, signal?: 
     },
     mcp_config: { mcpServers: { sandbox: {
       type: "http", url: `${api.base.replace(/\/$/, "")}/v2/ccr-sessions/${id}/sandbox/mcp`,
-      headers: { Authorization: `Bearer ${task.ingress_token}` },
+      headers: { Authorization: `Bearer ${task.ingress_token}`, ...trace },
     } } },
   };
   try {

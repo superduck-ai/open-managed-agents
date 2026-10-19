@@ -163,6 +163,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 		return nil
 	}
 	if len(payloads) > 0 {
+		s.observeInputWorkerAvailability(ctx, codeSession, len(payloads), time.Now())
 		if err := s.QueueRawPublicSessionEvents(ctx, codeSession, payloads); err != nil {
 			return err
 		}
@@ -175,11 +176,12 @@ func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession d
 	startedAt := time.Now()
 	outcome, err := s.resumeSandbox(ctx, codeSession)
 	if err != nil {
-		outcome = "error"
+		outcome = telemetry.OutcomeError
 	}
 	span.SetAttributes(telemetry.AttrOutcome.String(outcome))
-	telemetry.RecordSandboxResume(ctx, outcome, time.Since(startedAt))
-	telemetry.End(span, err)
+	observeOperation(ctx, codeSessionMetrics.Get().sandboxResume, outcome, startedAt)
+	telemetry.SetErrorStatus(span, err)
+	span.End()
 	return err
 }
 
@@ -193,7 +195,10 @@ func (s *Service) resumeSandbox(ctx context.Context, codeSession db.CodeSession)
 	sandbox, err := s.db.GetResumableEnvironmentSandboxForCodeSession(ctx, codeSession.ExternalID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			_, err = s.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, codeSession.ExternalID, "", nil, telemetry.TraceParent(ctx))
+			scheduled, err := s.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, codeSession.ExternalID, "", nil, telemetry.TraceParent(ctx))
+			if err == nil && !scheduled {
+				return "no_sandbox", nil
+			}
 			return "recovery_requested", err
 		}
 		return "", err
@@ -300,7 +305,8 @@ func (s *Service) AppendWorkerOutputEventsForEpoch(ctx context.Context, route Co
 		return db.ErrWorkerEpochMismatch
 	}
 	now := time.Now().UTC()
-	prepared, err := prepareWorkerOutputEvents(codeSessionID, events, now)
+	prepared, eventTypes, err := prepareWorkerOutputEvents(codeSessionID, events, now)
+	annotateWorkerEventBatch(ctx, len(events), eventTypes)
 	if err != nil {
 		return err
 	}
@@ -341,25 +347,37 @@ func (preparedStreamAction) implPreparedWorkerOutputEvent()    {}
 func (preparedControlAction) implPreparedWorkerOutputEvent()   {}
 func (preparedPublicAction) implPreparedWorkerOutputEvent()    {}
 
-func prepareWorkerOutputEvents(codeSessionID string, events []workerOutputEvent, now time.Time) ([]preparedWorkerOutputEvent, error) {
+func prepareWorkerOutputEvents(codeSessionID string, events []workerOutputEvent, now time.Time) ([]preparedWorkerOutputEvent, []string, error) {
 	prepared := make([]preparedWorkerOutputEvent, 0, len(events))
+	eventTypes := make([]string, 0, len(events))
 	for i, event := range events {
-		output, err := prepareWorkerOutputEvent(codeSessionID, event, now)
+		header, err := decodeWorkerPayloadHeader(event.Payload)
+		if err == nil {
+			eventTypes = append(eventTypes, header.Type)
+		}
+		var output preparedWorkerOutputEvent
+		if err == nil {
+			output, err = prepareDecodedWorkerOutputEvent(codeSessionID, header, event, now)
+		}
 		if err != nil {
-			return nil, fmt.Errorf("%w: events[%d]: %v", ErrProtocol, i, err)
+			return nil, eventTypes, fmt.Errorf("%w: events[%d]: %v", ErrProtocol, i, err)
 		}
 		prepared = append(prepared, output)
 	}
-	return prepared, nil
+	return prepared, eventTypes, nil
 }
 
 func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now time.Time) (preparedWorkerOutputEvent, error) {
-	if codeSessionID == "" {
-		return nil, ErrProtocol
-	}
 	header, err := decodeWorkerPayloadHeader(input.Payload)
 	if err != nil {
 		return nil, err
+	}
+	return prepareDecodedWorkerOutputEvent(codeSessionID, header, input, now)
+}
+
+func prepareDecodedWorkerOutputEvent(codeSessionID string, header workerPayloadHeader, input workerOutputEvent, now time.Time) (preparedWorkerOutputEvent, error) {
+	if codeSessionID == "" {
+		return nil, ErrProtocol
 	}
 	if header.Type == "keep_alive" {
 		return preparedKeepAliveAction{}, nil

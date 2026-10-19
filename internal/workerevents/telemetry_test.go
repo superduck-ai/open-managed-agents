@@ -1,16 +1,15 @@
 package workerevents
 
 import (
-	"context"
 	"encoding/json"
+	"testing"
+	"time"
+
 	server "github.com/nats-io/nats-server/v2/server"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry/telemetrytest"
 	"go.opentelemetry.io/otel"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"testing"
-	"time"
 )
 
 func TestTelemetryAckRefCompatibility(t *testing.T) {
@@ -46,11 +45,8 @@ func TestLaneForEventName(t *testing.T) {
 }
 
 func TestJetStreamTelemetryPropagation(t *testing.T) {
-	recorder := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-	previous := otel.GetTracerProvider()
-	otel.SetTracerProvider(provider)
-	t.Cleanup(func() { otel.SetTracerProvider(previous); _ = provider.Shutdown(context.Background()) })
+	recorder := telemetrytest.SpanRecorder(t)
+	reader := telemetrytest.MetricReader(t)
 	srv := runNATSServer(t, server.Options{Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir()})
 	broker, err := NewJetStream(t.Context(), connectNATS(t, srv.ClientURL()), config.WorkerEventStreamConfig{ConsumerInactiveThreshold: time.Minute, MaxBytes: 1 << 20, MaxMsgSize: 1024, Replicas: 1})
 	if err != nil {
@@ -64,7 +60,7 @@ func TestJetStreamTelemetryPropagation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer subscription.Close()
-	ctx, parent := provider.Tracer("test").Start(t.Context(), "parent")
+	ctx, parent := otel.Tracer("test").Start(t.Context(), "parent")
 	defer parent.End()
 	envelope := EventEnvelope("cse_telemetry", "evt_telemetry", "", "control_response", "", []byte(`{"private":"not an attribute"}`), time.Now().Add(time.Hour))
 	if err := broker.Publish(ctx, "valid", envelope); err != nil {
@@ -84,5 +80,11 @@ func TestJetStreamTelemetryPropagation(t *testing.T) {
 	}
 	if len(spans[1].Attributes()) != 4 || len(spans[1].Events()) != 0 {
 		t.Fatalf("unexpected telemetry data: %v", spans[1].Attributes())
+	}
+	for _, point := range telemetrytest.Points(t, telemetrytest.Collect(t, reader), "oma.worker_event.publish.duration") {
+		lane, _ := point.Attributes.Value("oma.worker_event.lane")
+		if outcome, _ := point.Attributes.Value("oma.outcome"); outcome.AsString() == "ok" && lane.AsString() != "reply" {
+			t.Fatalf("publish metric lane: %v", point.Attributes.ToSlice())
+		}
 	}
 }

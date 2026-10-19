@@ -8,39 +8,29 @@ import (
 	"strings"
 	"time"
 
-	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/go-chi/chi/v5"
 
-	"github.com/go-chi/chi/v5/middleware"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 var apiClientUserAgentPattern = regexp.MustCompile(`\b(anthropic-sdk|curl|httpie|postman|insomnia|python-requests|okhttp)\b`)
 
-func requestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+func requestLoggingMiddleware(logger *slog.Logger, routes chi.Routes) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			fields := requestLogFields(r)
 			requestID := httpapi.RequestID(r.Context())
 			startedAt := time.Now()
-			logger.InfoContext(r.Context(), "http request", httpLogAttrs("request", requestID, fields)...)
+			logger.DebugContext(r.Context(), "http request", httpLogAttrs("request", requestID, fields)...)
 
-			wrapped := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
-			next.ServeHTTP(wrapped, r)
-
-			status := wrapped.Status()
-			if status == 0 {
-				status = http.StatusOK
-			}
+			response := serveObserved(w, r, next)
+			elapsed := time.Since(startedAt)
 			attrs := httpLogAttrs("response", requestID, fields,
-				"status", status,
-				"duration_ms", durationMilliseconds(startedAt),
+				"status", response.status,
+				"duration_ms", durationMilliseconds(elapsed),
 			)
-			if status < http.StatusBadRequest {
-				logger.InfoContext(r.Context(), "http response", attrs...)
-			} else if status < http.StatusInternalServerError {
-				logger.WarnContext(r.Context(), "http response", attrs...)
-			} else {
-				logger.ErrorContext(r.Context(), "http response", attrs...)
-			}
+			attrs = append(attrs, routeParamLogAttrs(r)...)
+			logger.Log(r.Context(), responseLogLevel(response.status, response.canceled, elapsed, requestTelemetryFor(routes, r).longPoll), "http response", attrs...)
 		})
 	}
 }
@@ -105,8 +95,23 @@ func httpLogAttrs(event string, requestID string, fields logRequestFields, after
 	return attrs
 }
 
-func durationMilliseconds(startedAt time.Time) float64 {
-	ms := float64(time.Since(startedAt).Microseconds()) / 1000
+func responseLogLevel(status int, canceled bool, elapsed time.Duration, longPoll bool) slog.Level {
+	switch {
+	case canceled:
+		return slog.LevelInfo
+	case status >= http.StatusInternalServerError:
+		return slog.LevelError
+	case status >= http.StatusBadRequest:
+		return slog.LevelWarn
+	case !longPoll && elapsed >= slowRequestLogThreshold:
+		return slog.LevelInfo
+	default:
+		return slog.LevelDebug
+	}
+}
+
+func durationMilliseconds(elapsed time.Duration) float64 {
+	ms := float64(elapsed.Microseconds()) / 1000
 	return math.Round(ms*10) / 10
 }
 

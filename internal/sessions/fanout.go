@@ -3,14 +3,12 @@ package sessions
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
-	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
 type sessionEventsFanout struct {
@@ -37,7 +35,7 @@ type codeSessionStreamFanout struct {
 }
 
 func (h *Handler) publishSessionEvents(ctx context.Context, events []db.SessionEvent) {
-	h.logSessionStatusEvents(ctx, events)
+	h.observeSessionOutcomeEvents(ctx, events)
 	if len(events) == 0 {
 		return
 	}
@@ -59,7 +57,7 @@ func (h *Handler) publishSessionEvents(ctx context.Context, events []db.SessionE
 		payload := payloads[sessionID]
 		if err := h.publishFanout(ctx, sessionID, sessionfanout.KindSessionEvents, payload); err != nil {
 			h.logger.WarnContext(ctx, "publish session events fanout", "session_id", sessionID, "event_count", len(payload.Events), "error", err)
-			telemetry.RecordFanoutPublishFailure(ctx)
+			sessionMetrics.Get().fanoutPublishFailures.Add(ctx, 1)
 		}
 	}
 }
@@ -142,16 +140,5 @@ func sessionStreamEventFrom(event db.SessionEvent) sessionStreamEvent {
 		EventType:         event.EventType,
 		Payload:           event.Payload,
 		ProcessedAt:       event.ProcessedAt,
-	}
-}
-
-func (h *Handler) logSessionStatusEvents(ctx context.Context, events []db.SessionEvent) {
-	for _, event := range events {
-		if !strings.HasPrefix(event.EventType, "session.status_") {
-			continue
-		}
-		h.logger.InfoContext(ctx, "session status event", "session_id", event.SessionExternalID, "event_id", event.ExternalID, "event_type", event.EventType)
-		_, span := telemetry.Start(ctx, "oma.session.status", telemetry.AttrSessionID.String(event.SessionExternalID), telemetry.AttrEventID.String(event.ExternalID), telemetry.AttrEventType.String(event.EventType))
-		span.End()
 	}
 }

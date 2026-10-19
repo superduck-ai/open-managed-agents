@@ -21,11 +21,9 @@ func (h *ContextHandler) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 func (h *ContextHandler) Handle(ctx context.Context, record slog.Record) error {
-	if ctx != nil && h.extract != nil {
-		if attrs := missingAttrs(record, h.extract(ctx)); len(attrs) > 0 {
-			record = record.Clone()
-			record.AddAttrs(attrs...)
-		}
+	if attrs := missingAttrs(record, h.extract(ctx)); len(attrs) > 0 {
+		record = record.Clone()
+		record.AddAttrs(attrs...)
 	}
 	return h.next.Handle(ctx, record)
 }

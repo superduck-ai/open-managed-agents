@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -19,7 +18,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
-	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 func TestSetupDisabled(t *testing.T) {
@@ -56,22 +54,6 @@ func TestOTLPEndpointsAndHeaders(t *testing.T) {
 		if headers["stream-name"] != "oma_server" || headers["Authorization"] != "Basic "+base64.StdEncoding.EncodeToString([]byte("writer:password")) {
 			t.Fatal("missing OTLP headers")
 		}
-	}
-}
-
-func TestLogContextAttrs(t *testing.T) {
-	if got := LogContextAttrs(context.Background()); len(got) != 0 {
-		t.Fatalf("unexpected empty-context attrs: %v", got)
-	}
-	spanContext := trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}})
-	ctx := trace.ContextWithSpanContext(httpapi.WithRequestID(t.Context(), "req_test"), spanContext)
-	got := map[string]string{}
-	for _, attr := range LogContextAttrs(ctx) {
-		got[attr.Key] = attr.Value.String()
-	}
-	want := map[string]string{"request_id": "req_test", "trace_id": spanContext.TraceID().String(), "span_id": spanContext.SpanID().String()}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("context attrs = %v, want %v", got, want)
 	}
 }
 

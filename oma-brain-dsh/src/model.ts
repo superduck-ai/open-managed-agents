@@ -5,6 +5,7 @@ import {
 import { OmaApi } from "./api.ts";
 import { object, type Payload } from "./json.ts";
 import { sse } from "./sse.ts";
+import { traceHeaders } from "./trace-context.ts";
 import { workerDiagnostic } from "./ccrv2/diagnostics.ts";
 import { logSystemPrompt } from "./prompt/debug.ts";
 
@@ -27,7 +28,7 @@ export class MessagesAdapter extends LlmAdapter {
     const request = messagesRequest(options);
     logSystemPrompt(options.sessionId, request);
     const response = await this.api.requestResponse("/v1/messages", assignment.model_token, "POST", request,
-      { "anthropic-version": "2023-06-01", Accept: "text/event-stream",
+      { "anthropic-version": "2023-06-01", Accept: "text/event-stream", ...traceHeaders(assignment.trace_parent),
         ...(options.sessionId !== assignment.session_id ? { "X-Claude-Code-Agent-Id": options.sessionId } : {}),
       }, options.signal, 300_000);
     if (!response.ok) {

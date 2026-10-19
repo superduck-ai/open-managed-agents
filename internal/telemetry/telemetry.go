@@ -84,7 +84,7 @@ func (r *Runtime) LogHandler() slog.Handler {
 	if r == nil || r.loggerProvider == nil {
 		return nil
 	}
-	return otelslog.NewHandler(InstrumentationName, otelslog.WithLoggerProvider(r.loggerProvider))
+	return newScalarValueHandler(otelslog.NewHandler(InstrumentationName, otelslog.WithLoggerProvider(r.loggerProvider)))
 }
 
 func (r *Runtime) Shutdown(ctx context.Context) error {

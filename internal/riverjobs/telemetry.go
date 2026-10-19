@@ -9,11 +9,26 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
 const traceParentMetadataKey = "oma_trace_parent"
+
+type riverInstruments struct {
+	jobs      metric.Int64Counter
+	duration  metric.Float64Histogram
+	queueWait metric.Float64Histogram
+}
+
+var riverMetrics = telemetry.NewInstruments(func(meter metric.Meter) riverInstruments {
+	return riverInstruments{
+		jobs:      telemetry.Counter(meter, "oma.river.jobs", "{job}", "River jobs"),
+		duration:  telemetry.Histogram(meter, "oma.river.job.duration", "s", "River job duration", telemetry.LatencyBuckets),
+		queueWait: telemetry.Histogram(meter, "oma.river.job.queue_wait", "s", "River job queue wait", telemetry.LongWaitBuckets),
+	}
+})
 
 type telemetryMiddleware struct {
 	river.MiddlewareDefaults
@@ -39,11 +54,22 @@ func (m *telemetryMiddleware) Work(ctx context.Context, job *rivertype.JobRow, d
 	)
 	err := doInner(ctx)
 	outcome := riverOutcome(job, err)
-	telemetry.RecordRiverJob(ctx, job.Kind, job.Queue, outcome, time.Since(startedAt), riverQueueWait(job))
+	recordRiverJob(ctx, job, outcome, time.Since(startedAt))
 	span.SetAttributes(telemetry.AttrOutcome.String(outcome))
 	telemetry.SetErrorStatus(span, riverSpanError(outcome, err))
 	span.End()
 	return err
+}
+
+func recordRiverJob(ctx context.Context, job *rivertype.JobRow, outcome string, duration time.Duration) {
+	instruments := riverMetrics.Get()
+	kind, queue := telemetry.AttrRiverKind.String(job.Kind), telemetry.AttrRiverQueue.String(job.Queue)
+	attrs := metric.WithAttributes(kind, queue, telemetry.AttrOutcome.String(outcome))
+	instruments.jobs.Add(ctx, 1, attrs)
+	instruments.duration.Record(ctx, duration.Seconds(), attrs)
+	if queueWait := riverQueueWait(job); queueWait > 0 {
+		instruments.queueWait.Record(ctx, queueWait.Seconds(), metric.WithAttributes(kind, queue))
+	}
 }
 
 func riverOutcome(job *rivertype.JobRow, err error) string {
@@ -51,11 +77,11 @@ func riverOutcome(job *rivertype.JobRow, err error) string {
 	var cancel *rivertype.JobCancelError
 	switch {
 	case err == nil:
-		return "ok"
+		return telemetry.OutcomeOK
 	case errors.As(err, &snooze):
 		return "snoozed"
 	case errors.As(err, &cancel):
-		return "cancelled"
+		return telemetry.OutcomeCanceled
 	case job.Attempt >= job.MaxAttempts:
 		return "discarded"
 	default:
@@ -82,15 +108,8 @@ func withTraceParent(metadata []byte, traceParent string) []byte {
 	if len(metadata) > 0 && (json.Unmarshal(metadata, &fields) != nil || fields == nil) {
 		return metadata
 	}
-	encoded, err := json.Marshal(traceParent)
-	if err != nil {
-		return metadata
-	}
-	fields[traceParentMetadataKey] = encoded
-	merged, err := json.Marshal(fields)
-	if err != nil {
-		return metadata
-	}
+	fields[traceParentMetadataKey], _ = json.Marshal(traceParent)
+	merged, _ := json.Marshal(fields)
 	return merged
 }
 

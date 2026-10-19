@@ -1,72 +1,48 @@
 package telemetry
 
 import (
-	"context"
-	"sync"
 	"testing"
 	"time"
 
 	"go.opentelemetry.io/otel"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/metric"
+
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry/telemetrytest"
 )
 
-func metricReader(t *testing.T) *sdkmetric.ManualReader {
-	t.Helper()
-	reader := sdkmetric.NewManualReader()
-	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	previous := otel.GetMeterProvider()
-	otel.SetMeterProvider(provider)
-	instrumentsOnce = sync.Once{}
-	registry = instruments{}
-	t.Cleanup(func() {
-		otel.SetMeterProvider(previous)
-		instrumentsOnce = sync.Once{}
-		registry = instruments{}
-		_ = provider.Shutdown(context.Background())
-	})
-	return reader
+var testCounters = NewInstruments(func(meter metric.Meter) metric.Int64Counter {
+	return Counter(meter, "oma.test.counter", "{event}", "Test counter")
+})
+
+func TestInstrumentsFollowGlobalProvider(t *testing.T) {
+	for range 2 {
+		reader := telemetrytest.MetricReader(t)
+		testCounters.Get().Add(t.Context(), 1)
+		telemetrytest.AssertSingle(t, telemetrytest.Collect(t, reader), "oma.test.counter", 1, nil)
+	}
 }
 
-func collectedMetrics(t *testing.T, reader *sdkmetric.ManualReader) map[string]metricdata.Aggregation {
-	t.Helper()
-	var data metricdata.ResourceMetrics
-	if err := reader.Collect(t.Context(), &data); err != nil {
-		t.Fatal(err)
+func TestRecordWaitRejectsNegativeDurations(t *testing.T) {
+	reader := telemetrytest.MetricReader(t)
+	histogram := Histogram(otel.GetMeterProvider().Meter(InstrumentationName), "oma.test.wait", "s", "Test wait", LongWaitBuckets)
+	RecordWait(t.Context(), histogram, -time.Second)
+	if data := telemetrytest.Collect(t, reader); len(data) != 0 {
+		t.Fatalf("negative wait recorded: %v", data)
 	}
-	result := map[string]metricdata.Aggregation{}
-	for _, scope := range data.ScopeMetrics {
-		for _, measurement := range scope.Metrics {
-			result[measurement.Name] = measurement.Data
-		}
-	}
-	return result
+	RecordWait(t.Context(), histogram, 2*time.Second)
+	telemetrytest.AssertSingle(t, telemetrytest.Collect(t, reader), "oma.test.wait", 2, nil)
 }
 
-func TestHTTPRequestMetric(t *testing.T) {
-	reader := metricReader(t)
-	if len(collectedMetrics(t, reader)) != 0 {
-		t.Fatal("empty registry produced measurements")
-	}
-	RecordHTTPRequest(t.Context(), "POST", "/v1/sessions/{session_id}/events", 503, 2*time.Second)
-	data := collectedMetrics(t, reader)
-	histogram, ok := data["http.server.request.duration"].(metricdata.Histogram[float64])
-	if !ok || len(histogram.DataPoints) != 1 {
-		t.Fatalf("unexpected histogram: %v", data)
-	}
-	point := histogram.DataPoints[0]
-	if point.Count != 1 || point.Sum != 2 || point.Attributes.Len() != 3 {
-		t.Fatalf("unexpected measurement: %+v", point)
-	}
-	for key, want := range map[string]string{"http.request.method": "POST", "http.route": "/v1/sessions/{session_id}/events", "http.response.status_code": "503"} {
-		found := false
-		for _, attr := range point.Attributes.ToSlice() {
-			if string(attr.Key) == key {
-				found = attr.Value.Emit() == want
-			}
+func TestEnumAndToken(t *testing.T) {
+	enum := NewEnum("end_turn", "requires_action")
+	for input, want := range map[string]string{"end_turn": "end_turn", "Private Value": OtherValue, "": OtherValue} {
+		if got := enum.Normalize(input); got != want {
+			t.Fatalf("Normalize(%q) = %q, want %q", input, got, want)
 		}
-		if !found {
-			t.Fatalf("attribute %s missing or incorrect", key)
+	}
+	for input, want := range map[string]string{"stream_event": "stream_event", "control.response": "control.response", "Private Payload": OtherValue, "": OtherValue} {
+		if got := Token(input); got != want {
+			t.Fatalf("Token(%q) = %q, want %q", input, got, want)
 		}
 	}
 }

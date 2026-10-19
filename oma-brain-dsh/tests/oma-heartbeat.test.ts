@@ -135,7 +135,7 @@ test("a failing diagnostic sink cannot prevent the host from stopping the sessio
   try {
     expect(() => stopOmaSessionOnLeaseLoss({ id: "test", stop: () => { stopped = true; } }, {
       status: "rejected", httpStatus: 409, reason: "epoch_mismatch", workerEpoch: 7, consecutiveFailures: 1,
-    })).toThrow("Log sink unavailable");
+    })).not.toThrow();
     expect(stopped).toBe(true);
   } finally {
     warn.mockRestore();

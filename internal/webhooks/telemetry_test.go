@@ -16,14 +16,12 @@ import (
 	"github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry/telemetrytest"
 )
 
 func TestWebhookTracePublication(t *testing.T) {
@@ -58,19 +56,8 @@ func TestWebhookTracePublication(t *testing.T) {
 }
 
 func TestWebhookDeliveryTelemetry(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	meters := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	recorder := tracetest.NewSpanRecorder()
-	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-	oldMeter, oldTrace := otel.GetMeterProvider(), otel.GetTracerProvider()
-	otel.SetMeterProvider(meters)
-	otel.SetTracerProvider(traces)
-	t.Cleanup(func() {
-		otel.SetMeterProvider(oldMeter)
-		otel.SetTracerProvider(oldTrace)
-		_ = meters.Shutdown(context.Background())
-		_ = traces.Shutdown(context.Background())
-	})
+	reader := telemetrytest.MetricReader(t)
+	recorder := telemetrytest.SpanRecorder(t)
 	counters := map[string]int64{}
 	durations := map[string]uint64{}
 	parent := "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
@@ -88,7 +75,7 @@ func TestWebhookDeliveryTelemetry(t *testing.T) {
 		{name: "disabled target", disabled: true, outcome: "dropped", ack: 1},
 		{name: "delivery retry", status: 500, attempts: 1, outcome: "retry", measured: true},
 		{name: "delivery exhausted", status: 500, attempts: 3, outcome: "dropped", measured: true, ack: 1},
-		{name: "delivery success", status: 204, attempts: 1, outcome: "success", measured: true, ack: 1},
+		{name: "delivery success", status: 204, attempts: 1, outcome: "ok", measured: true, ack: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before := len(recorder.Ended())
@@ -142,31 +129,24 @@ func TestWebhookDeliveryTelemetry(t *testing.T) {
 			if tc.measured {
 				durations[tc.outcome]++
 			}
-			var data metricdata.ResourceMetrics
-			if err := reader.Collect(t.Context(), &data); err != nil {
-				t.Fatal(err)
-			}
+			data := telemetrytest.Collect(t, reader)
 			gotCounters := map[string]int64{}
 			gotDurations := map[string]uint64{}
-			for _, scope := range data.ScopeMetrics {
-				for _, m := range scope.Metrics {
-					switch m.Name {
-					case "oma.webhook.deliveries":
-						for _, point := range m.Data.(metricdata.Sum[int64]).DataPoints {
-							outcome, _ := point.Attributes.Value(attribute.Key("oma.outcome"))
-							if point.Attributes.Len() != 1 {
-								t.Fatal("delivery metric identity leaked")
-							}
-							gotCounters[outcome.AsString()] = point.Value
-						}
-					case "oma.webhook.delivery.duration":
-						for _, point := range m.Data.(metricdata.Histogram[float64]).DataPoints {
-							outcome, _ := point.Attributes.Value(attribute.Key("oma.outcome"))
-							gotDurations[outcome.AsString()] = point.Count
-							if point.Attributes.Len() != 1 || point.Sum <= 0 {
-								t.Fatalf("duration: %+v", point)
-							}
-						}
+			if len(counters) > 0 {
+				for _, point := range telemetrytest.Points(t, data, "oma.webhook.deliveries") {
+					outcome, _ := point.Attributes.Value(attribute.Key("oma.outcome"))
+					if point.Attributes.Len() != 1 {
+						t.Fatal("delivery metric identity leaked")
+					}
+					gotCounters[outcome.AsString()] = int64(point.Value)
+				}
+			}
+			if len(durations) > 0 {
+				for _, point := range telemetrytest.Points(t, data, "oma.webhook.delivery.duration") {
+					outcome, _ := point.Attributes.Value(attribute.Key("oma.outcome"))
+					gotDurations[outcome.AsString()] = point.Count
+					if point.Attributes.Len() != 1 || point.Value <= 0 {
+						t.Fatalf("duration: %+v", point)
 					}
 				}
 			}

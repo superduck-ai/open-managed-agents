@@ -28,7 +28,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/listeners"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/natsclient"
-	"github.com/superduck-ai/open-managed-agents/internal/opsmetrics"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
@@ -37,12 +36,14 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secretservice"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
+	"github.com/superduck-ai/open-managed-agents/internal/statemetrics"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func main() {
@@ -311,7 +312,21 @@ func newApplicationLogger(console slog.Handler, telemetryRuntime *telemetry.Runt
 	if otelHandler := telemetryRuntime.LogHandler(); otelHandler != nil {
 		handler = slog.NewMultiHandler(console, logging.NewLevelHandler(otelHandler, level))
 	}
-	return slog.New(logging.NewContextHandler(handler, telemetry.LogContextAttrs))
+	return slog.New(logging.NewContextHandler(handler, logContextAttrs))
+}
+
+func logContextAttrs(ctx context.Context) []slog.Attr {
+	attrs := make([]slog.Attr, 0, 3)
+	if spanContext := trace.SpanContextFromContext(ctx); spanContext.IsValid() {
+		attrs = append(attrs,
+			slog.String("trace_id", spanContext.TraceID().String()),
+			slog.String("span_id", spanContext.SpanID().String()),
+		)
+	}
+	if requestID := httpapi.RequestID(ctx); requestID != "" {
+		attrs = append(attrs, slog.String("request_id", requestID))
+	}
+	return attrs
 }
 
 func shutdownTelemetry(telemetryRuntime *telemetry.Runtime, bootstrap *slog.Logger) {
@@ -326,10 +341,10 @@ func startStateMetrics(ctx context.Context, cfg config.Config, database *db.DB, 
 	if !cfg.Telemetry.StateMetricsActive() {
 		return func() {}, nil
 	}
-	reporter, err := opsmetrics.New(opsmetrics.Dependencies{
+	reporter, err := statemetrics.New(statemetrics.Dependencies{
 		DB: database, NATS: natsConnection, Config: cfg.Telemetry.StateMetrics,
 		Streams:   []string{workerevents.StreamName, webhooks.StreamName, tunnels.CommandStreamName},
-		Consumers: []opsmetrics.ConsumerTarget{{Stream: webhooks.StreamName, Consumer: webhooks.DeliveryConsumerName}},
+		Consumers: []statemetrics.ConsumerTarget{{Stream: webhooks.StreamName, Consumer: webhooks.DeliveryConsumerName}},
 		Logger:    logger.With("component", "state_metrics"),
 	})
 	if err != nil {

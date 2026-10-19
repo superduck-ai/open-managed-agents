@@ -177,6 +177,7 @@ export function agentDetailTabFromSearch(): AgentDetailTab {
     case 'sessions':
     case 'deployments':
     case 'observability':
+    case 'channels':
       return tab;
     case 'agent':
     case 'config':

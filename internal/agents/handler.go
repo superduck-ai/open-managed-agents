@@ -122,6 +122,12 @@ func NewHandler(database *db.DB, deploymentStore *deployments.Store, logger *slo
 	return h
 }
 
+// WithChannels 将渠道控制面挂载到当前智能体资源下。
+func (h *Handler) WithChannels(channelHandler http.Handler) *Handler {
+	h.router.Mount("/{agent_id}/channels", channelHandler)
+	return h
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("beta") != "true" {
 		h.errorAdapter.Write(w, r, agentsBetaRequired())

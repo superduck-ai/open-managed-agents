@@ -336,3 +336,8 @@ transcript_archive:
   target_segment_raw_bytes: 8388608
   delete_batch_rows: 500
   max_rows_per_job: 50000
+
+# 飞书渠道桥接服务；令牌仅用于 OMA 到桥接服务的内部调用。
+channel_bridge:
+  url: ""
+  token: ""

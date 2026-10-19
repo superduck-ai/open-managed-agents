@@ -75,8 +75,7 @@ describe("original dsh loop over CCRv2", () => {
       expect(b.timeline.filter((event) => event.type === "event_start" && event.event.id === message.id)).toHaveLength(1);
       expect(b.timeline.filter((event) => event.type === "event_stop")).toHaveLength(0);
     }
-    const reasoning = b.timeline.find((event) => event.type === "event_delta" && event.event_id === messages[1]!.id);
-    expect(reasoning?.delta.content).toEqual({ type: "thinking", thinking: "检查回复" });
+    expect(b.timeline.filter((event) => event.type === "event_delta" && event.event_id === messages[1]!.id)).toHaveLength(0);
     expect(b.publicLog.get("thinking_result")?.is_error).toBe(false);
   });
 

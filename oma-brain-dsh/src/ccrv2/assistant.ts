@@ -61,10 +61,8 @@ export class CcrAssistantStream {
       stream.blocks.set(chunk.index, id);
       payloads.push({ type: "event_start", event: { type, id } });
     }
-    payloads.push({ type: "event_delta", event_id: id, delta: {
-      type: "content_delta", index: 0, content: chunk.type === "reasoning-delta"
-        ? { type: "thinking", thinking: chunk.text } : { type: "text", text: chunk.text },
-    } });
+    if (type === "agent.message")
+      payloads.push({ type: "event_delta", event_id: id, delta: { type: "content_delta", index: 0, content: { type: "text", text: chunk.text } } });
     return payloads;
   }
 }

@@ -229,7 +229,8 @@ model request. The Brain persists their outbox first and waits for text previews
 to finish before publishing the corresponding final message. A model step without
 text does not create an empty message preview. Previews follow the Claude Managed
 Agents event-delta shape: one `event_start` per previewed text or thinking block,
-then `event_delta` with `delta.index: 0`; there is no `event_stop`. Approval argument notices are
+then `event_delta` with `delta.index: 0` for text only (thinking previews are
+start-only); there is no `event_stop`. Approval argument notices are
 published only when the argument values changed; object key order does not count
 as a change and does not add model context. The private journal records every
 approved call. dsh log flushes with no new events write nothing; only session

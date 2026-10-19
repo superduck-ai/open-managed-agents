@@ -52,7 +52,7 @@ sequenceDiagram
 - Preview 的 `message_start.message.id` 与最终 assistant payload 的 `message.id` 都在各自 Worker JSON 解码边界修剪首尾空白，再参与确定性 ID 计算。
 - `content_block_start` 根据 block type 发送一次 `event_start`。
 - `text_delta.text` 原样映射成 `event_delta.delta.content.text`，公开 `delta.index` 固定为 `0`。
-- `thinking_delta.thinking` 原样映射成 `event_delta.delta.content.thinking`，content type 为 `thinking`，公开 `delta.index` 固定为 `0`；只接受与 thinking block 匹配的 delta，签名不产生公开预览。
+- 按 CMA 契约，thinking 预览只有 `event_start`：`thinking_delta` 与签名都不产生公开 `event_delta`。Brain 原生发布的 thinking `event_delta` 同样被丢弃。
 - 缺少 message start、block start 或消息总线重连后丢失上下文时，后续 delta 直接舍弃。
 - `parent_tool_use_id` 为空时归属主线程；非空时使用既有确定性 child thread ID。
 - Preview JSON envelope 没有自己的 `id`、`created_at` 或 `processed_at`；关联 ID 位于 `event_start.event.id` / `event_delta.event_id`，同时写入对应 SSE 帧的 `id:`。内部接收时间只用于转换与清理，不进入公开 preview envelope。

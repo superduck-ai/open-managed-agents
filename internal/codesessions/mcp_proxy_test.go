@@ -488,6 +488,40 @@ func TestMCPProxyVaultInjectionRejectedReturns502(t *testing.T) {
 	}
 }
 
+func TestMCPProxyDisablesProxyBufferingForEventStreams(t *testing.T) {
+	targetURL := "https://mcp.example.com/mcp"
+	handler, token := newMCPProxyTestHandler(t, targetURL, slog.Default())
+	handler.wrapMCPVaultTransport = func(context.Context, SessionCredentialClaims, *url.URL, http.RoundTripper) http.RoundTripper {
+		return roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": {"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader("data: {}\n\n")),
+				Request:    request,
+			}, nil
+		})
+	}
+
+	router := chi.NewRouter()
+	router.Route("/v2", handler.RegisterV2Routes)
+	proxyServer := httptest.NewServer(router)
+	t.Cleanup(proxyServer.Close)
+
+	request, err := http.NewRequest(http.MethodGet, proxyServer.URL+"/v2/ccr-sessions/cse_test/mcp?"+url.Values{"mcp_url": {targetURL}}.Encode(), nil)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.Header.Get("X-Accel-Buffering") != "no" {
+		t.Fatalf("status = %d, X-Accel-Buffering = %q", response.StatusCode, response.Header.Get("X-Accel-Buffering"))
+	}
+}
+
 func TestMCPProxyForwardsProtocolHeadersAndUsesCredentialInjector(t *testing.T) {
 	type capturedRequest struct {
 		method  string

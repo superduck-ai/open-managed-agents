@@ -55,11 +55,11 @@ func ParsePolicy(configRaw, agentSnapshotRaw []byte, packageHosts ...string) (Po
 	}
 	var mcpHosts []string
 	if config.AllowMCPServers {
-		targets, err := parseMCPServerTargets(agentSnapshotRaw)
+		hosts, err := MCPAllowedHosts(agentSnapshotRaw)
 		if err != nil {
 			return Policy{}, err
 		}
-		mcpHosts = targets.hosts
+		mcpHosts = hosts
 	}
 	policy := compilePolicy(config, mcpHosts)
 	policy.packageHosts = collections.StringSet(packageHosts)

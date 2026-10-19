@@ -3,6 +3,7 @@ import {
   type QuickstartSessionEvent,
   type SessionDetailLane,
   type SessionEventListEntry,
+  type SessionThreadAgentSnapshot,
   type ToolCallEntry,
 } from '../types';
 import { objectRecord, optionalNumericValueFromKeys, sessionListCost, stringValueFromKeys } from '../utils';
@@ -104,6 +105,7 @@ export type InspectorCostPoint = {
 };
 
 export type InspectorThreadRow = {
+  agent?: SessionThreadAgentSnapshot;
   context: number;
   contextPoints: InspectorContextPoint[];
   id: string;
@@ -113,15 +115,19 @@ export type InspectorThreadRow = {
 };
 
 export function buildInspectorEventRows(events: QuickstartSessionEvent[]) {
-  return events.map((event, index): InspectorEventRow => {
+  return events.flatMap((event, index): InspectorEventRow[] => {
+    const processedAtMs = sessionEventProcessedTimestamp(event);
+    if (event.is_streaming === true && !processedAtMs) return [];
     const type = sessionEventType(event) || 'unknown';
-    return {
-      event,
-      id: inspectorEventId(event, index),
-      preview: sessionIsToolUseEvent(event) ? sessionToolDisplayText(event) : sessionEventSummary(event),
-      processedAtMs: sessionEventProcessedTimestamp(event),
-      type,
-    };
+    return [
+      {
+        event,
+        id: inspectorEventId(event, index),
+        preview: sessionIsToolUseEvent(event) ? sessionToolDisplayText(event) : sessionEventSummary(event),
+        processedAtMs,
+        type,
+      },
+    ];
   });
 }
 
@@ -318,7 +324,11 @@ export function buildInspectorToolTotals(rows: InspectorToolRow[]) {
     denied: calls.filter((call) => call.lifecycle === 'denied').length,
     executingMs,
     failed: calls.filter((call) => call.lifecycle === 'failed').length,
-    inFlight: calls.filter((call) => call.lifecycle === 'running' || call.lifecycle === 'awaiting_approval').length,
+    interrupted: calls.filter((call) => call.lifecycle === 'interrupted').length,
+    inFlight: calls.filter(
+      (call) =>
+        call.lifecycle === 'running' || call.lifecycle === 'awaiting_approval' || call.lifecycle === 'awaiting_result',
+    ).length,
     timeInToolsMs,
     tools: rows.length,
     used: rows.filter((row) => row.calls.length > 0).length,
@@ -327,7 +337,10 @@ export function buildInspectorToolTotals(rows: InspectorToolRow[]) {
 }
 
 function inspectorToolExecutionMs(call: ToolCallEntry) {
-  if ((call.lifecycle !== 'completed' && call.lifecycle !== 'failed') || !call.resultEvent) {
+  if (
+    (call.lifecycle !== 'completed' && call.lifecycle !== 'failed' && call.lifecycle !== 'interrupted') ||
+    !call.resultEvent
+  ) {
     return undefined;
   }
   if (call.executionMs !== undefined && Number.isFinite(call.executionMs) && call.executionMs >= 0) {
@@ -422,6 +435,7 @@ export function buildInspectorThreadRows(
     const contextPoints = buildInspectorContextPoints(events);
     return {
       context: contextPoints.at(-1)?.tokens ?? 0,
+      agent: lane.agent,
       contextPoints,
       id: lane.id,
       isMain: Boolean(lane.isMain),
@@ -555,13 +569,13 @@ function inspectorThreadStatus(
   return live && lane.id === SESSION_MAIN_LANE_ID ? 'running' : 'idle';
 }
 
-export function inspectorAgentModel(agent: AgentApiResponse | null) {
+export function inspectorAgentModel(agent: SessionThreadAgentSnapshot | null) {
   if (!agent) return '—';
   const model = objectRecord(agent.model);
   return typeof agent.model === 'string' ? agent.model : typeof model.id === 'string' ? model.id : '—';
 }
 
-export function inspectorAgentEffort(agent: AgentApiResponse | null) {
+export function inspectorAgentEffort(agent: SessionThreadAgentSnapshot | null) {
   if (!agent) return '—';
   const model = objectRecord(agent.model);
   const effort = objectRecord(model.effort);

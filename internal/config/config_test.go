@@ -512,6 +512,7 @@ func TestLoadYAMLRequiresDeploymentFields(t *testing.T) {
 		{name: "database URL", overrides: "database:\n  url: \"\"", wantError: "database.url is required"},
 		{name: "Redis URL", overrides: "redis:\n  url: \"\"", wantError: "redis.url is required"},
 		{name: "NATS URL", overrides: "nats:\n  url: \"\"", wantError: "nats.url is required"},
+		{name: "brain claim token file", overrides: "environment_runner:\n  agent_mode: brain", wantError: "code_session.brain_claim_token_file is required"},
 		{name: "email SMTP address", overrides: "auth:\n  smtp:\n    addr: smtp.example.com", wantError: "auth.smtp.addr must include a host and port"},
 		{name: "email SMTP host", overrides: "auth:\n  smtp:\n    addr: :465", wantError: "auth.smtp.addr must include a host and port"},
 		{name: "email SMTP port", overrides: "auth:\n  smtp:\n    addr: 'smtp.example.com:'", wantError: "auth.smtp.addr must include a host and port"},
@@ -1168,6 +1169,26 @@ func unsetEnv(t *testing.T, key string) {
 			_ = os.Setenv(key, oldValue)
 		} else {
 			_ = os.Unsetenv(key)
+		}
+	})
+}
+
+func TestAllowedEmailDomains(t *testing.T) {
+	for _, domain := range []string{"", "@example.org", "*.example.org", "example.org/evil", "example..org", "-example.org", "example.org.", "user@example.org"} {
+		t.Run(domain, func(t *testing.T) {
+			if err := validateAuthConfig(AuthConfig{AllowedEmailDomains: []string{domain}}); err == nil {
+				t.Fatal("invalid domain accepted")
+			}
+		})
+	}
+	t.Run("normalize configured domains", func(t *testing.T) {
+		prepareLoadTest(t)
+		cfg, err := loadConfigTestYAML(t, "auth:\n  allowed_email_domains: [' EXAMPLE.ORG ', 'Subsidiary.Example']\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(cfg.Auth.AllowedEmailDomains, []string{"example.org", "subsidiary.example"}) {
+			t.Fatalf("domains = %v", cfg.Auth.AllowedEmailDomains)
 		}
 	})
 }

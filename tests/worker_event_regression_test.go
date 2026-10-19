@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -26,14 +27,44 @@ func TestPublicWorkerInputConversionFailureIsReturned(t *testing.T) {
 	}
 }
 
+func TestPublicInputPublishesOnlySuppliedEvents(t *testing.T) {
+	app, codeSession := workerEventRegressionFixture(t, newFakeStore("input-direct-publication"))
+	broker := workerevents.NewMemory()
+	events := make([]db.SessionEvent, 2)
+	for i := range events {
+		eventID := "sevt_" + uuid.NewV4().String()
+		events[i] = db.SessionEvent{
+			UUID: uuid.NewV4().String(), ExternalID: eventID, EventType: "user.message",
+			CreatedAt: time.Now().UTC(),
+			Payload:   json.RawMessage(`{"type":"user.message","id":` + quoteJSON(eventID) + `,"processed_at":null,"content":[{"type":"text","text":"hello"}]}`),
+		}
+	}
+	if _, err := app.db.AppendSessionEvents(t.Context(), codeSession.WorkspaceUUID, codeSession.SessionExternalID, events, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := newCodeSessionService(app, broker, nil).QueuePublicSessionEvents(t.Context(), db.Session{
+		WorkspaceUUID: codeSession.WorkspaceUUID, ExternalID: codeSession.SessionExternalID,
+	}, events[1:]); err != nil {
+		t.Fatal(err)
+	}
+	pending := broker.Pending(codeSession.ExternalID)
+	if len(pending) != 1 || pending[0].PayloadEventID != events[1].ExternalID {
+		t.Fatalf("expected only new input %s, got %+v", events[1].ExternalID, pending)
+	}
+}
+
 func TestRealtimePublicInputUsesRecordedReceiveTime(t *testing.T) {
 	app, codeSession := workerEventRegressionFixture(t, newFakeStore("input-receive-time"))
 	broker := workerevents.NewMemory()
 	receivedAt := time.Date(2026, time.September, 27, 8, 10, 0, 0, time.UTC)
+	eventID := "sevt_" + uuid.NewV4().String()
 	event := db.SessionEvent{
-		UUID: "event-uuid", ExternalID: "sevt_live", EventType: "user.message",
-		CreatedAt: receivedAt, ProcessedAt: receivedAt,
-		Payload: json.RawMessage(`{"type":"user.message","id":"sevt_live","processed_at":"2026-09-27T08:10:00Z","content":[{"type":"text","text":"hello"}]}`),
+		UUID: uuid.NewV4().String(), ExternalID: eventID, EventType: "user.message",
+		CreatedAt: receivedAt,
+		Payload:   json.RawMessage(`{"type":"user.message","id":` + quoteJSON(eventID) + `,"processed_at":null,"content":[{"type":"text","text":"hello"}]}`),
+	}
+	if _, err := app.db.AppendSessionEvents(t.Context(), codeSession.WorkspaceUUID, codeSession.SessionExternalID, []db.SessionEvent{event}, nil); err != nil {
+		t.Fatal(err)
 	}
 	if err := newCodeSessionService(app, broker, nil).QueuePublicSessionEvents(t.Context(), db.Session{
 		WorkspaceUUID: codeSession.WorkspaceUUID, ExternalID: codeSession.SessionExternalID,

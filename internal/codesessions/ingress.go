@@ -161,6 +161,9 @@ func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r
 }
 
 func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := httpapi.StreamContext(r.Context())
+	defer cancel()
+	r = r.WithContext(ctx)
 	codeSessionID := chi.URLParam(r, "code_session_id")
 	claims, authorized := h.authorizeSessionIngressClaims(w, r, codeSessionID)
 	if !authorized {
@@ -224,6 +227,7 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 	header.Set("Content-Type", "text/event-stream")
 	header.Set("Cache-Control", "no-cache")
 	header.Set("Connection", "keep-alive")
+	header.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 	h.streamCodeSessionWorkerEvents(r.Context(), w, flusher, subscription, codeSession, epoch)
@@ -231,6 +235,7 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 
 func (h *Handler) handleCodeSessionWorkerRegister(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
+
 	claims, ok := h.authorizeSessionIngressClaims(w, r, codeSessionID)
 	if !ok {
 		return
@@ -246,15 +251,15 @@ func (h *Handler) handleCodeSessionWorkerRegister(w http.ResponseWriter, r *http
 		Issuer:         "claude-api-server",
 	}
 	var epoch int64
-	var err error
-	if claims.WorkerEpoch > 0 {
+	timings, err := h.service.workerLeaseTimings(r.Context(), codeSessionID)
+	if err == nil && claims.WorkerEpoch > 0 {
 		epoch, _, err = h.db.RegisterCodeSessionWorkerAtEpoch(
-			r.Context(), codeSessionID, claims.WorkerEpoch, binding, codeSessionWorkerLeaseTTL,
+			r.Context(), codeSessionID, claims.WorkerEpoch, binding, timings.TTL,
 		)
-	} else {
+	} else if err == nil {
 		// Legacy credentials issued before worker epochs were bound to JWT claims
 		// retain the original monotonic register behavior until their next rotation.
-		epoch, _, err = h.db.RegisterCodeSessionWorker(r.Context(), codeSessionID, binding, codeSessionWorkerLeaseTTL)
+		epoch, _, err = h.db.RegisterCodeSessionWorker(r.Context(), codeSessionID, binding, timings.TTL)
 	}
 	if err != nil {
 		h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not register code session worker")
@@ -480,7 +485,7 @@ func (h *Handler) handleCodeSessionWorkerHeartbeat(w http.ResponseWriter, r *htt
 		writeCodeSessionWorkerBodyReadError(w, r, err)
 		return
 	}
-	expiresAt, err := h.db.RecordCodeSessionWorkerHeartbeat(r.Context(), codeSessionID, input.WorkerEpoch, codeSessionWorkerLeaseTTL, codeSessionWorkerLeaseGrace)
+	expiresAt, err := h.db.RecordCodeSessionWorkerHeartbeat(r.Context(), codeSessionID, input.WorkerEpoch, leaseTimingsForTransport)
 	if err != nil {
 		var heartbeatErr *db.CodeSessionWorkerHeartbeatError
 		if errors.As(err, &heartbeatErr) && (errors.Is(err, db.ErrWorkerEpochMismatch) || errors.Is(err, db.ErrWorkerLeaseExpired)) {
@@ -518,6 +523,10 @@ func (h *Handler) extendCodeSessionSandboxTimeout(ctx context.Context, codeSessi
 	if err != nil {
 		return fmt.Errorf("resolve active sandbox: %w", err)
 	}
+	return h.renewSandboxTimeout(ctx, sandbox)
+}
+
+func (h *Handler) renewSandboxTimeout(ctx context.Context, sandbox db.EnvironmentSandbox) error {
 	if h.sandboxTimeoutExtender == nil {
 		return errors.New("sandbox timeout extender is not configured")
 	}
@@ -638,7 +647,7 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 		CodeSessionID:       record.ExternalID,
 		SessionIngressToken: auth.ExtractAPIKey(r),
 		APIBaseURL:          h.cfg.CodeSession.SandboxAPIBaseURL,
-	}, h.cfg.Tunnel)
+	}, h.cfg)
 	if err != nil {
 		h.errorAdapter.Write(w, r, sessionMCPConfigFailure(err))
 		return
@@ -649,7 +658,7 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIdentity, cfg config.TunnelConfig) (map[string]any, error) {
+func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIdentity, cfg config.Config) (map[string]any, error) {
 	var metadata struct {
 		Config json.RawMessage `json:"config"`
 	}
@@ -658,7 +667,7 @@ func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIde
 			return nil, err
 		}
 	}
-	mcpConfig, err := BuildMCPRuntimeConfig(metadata.Config, identity, cfg)
+	mcpConfig, err := BuildMCPRuntimeConfig(metadata.Config, identity, cfg.Tunnel)
 	if err != nil {
 		return nil, err
 	}
@@ -667,12 +676,17 @@ func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIde
 	}
 	config := codeSessionConfig(record.Metadata)
 	return map[string]any{
-		"cwd":                  record.WorkDir,
-		"outcomes":             arrayConfigValue(config["outcomes"]),
-		"custom_system_prompt": stringField(config, "custom_system_prompt"),
-		"append_system_prompt": stringField(config, "append_system_prompt"),
-		"model":                firstNonEmpty(record.Model, stringField(config, "model")),
-		"mcp_config":           mcpConfig,
+		"cwd":                   record.WorkDir,
+		"system_prompt":         stringField(config, "system_prompt"),
+		"runtime_skills":        config["runtime_skills"],
+		"subagents":             config["subagents"],
+		"runtime_tools":         config["runtime_tools"],
+		"outcomes":              arrayConfigValue(config["outcomes"]),
+		"custom_system_prompt":  stringField(config, "custom_system_prompt"),
+		"append_system_prompt":  stringField(config, "append_system_prompt"),
+		"memory_catalog_prompt": stringField(config, "memory_catalog_prompt"),
+		"model":                 firstNonEmpty(record.Model, stringField(config, "model")),
+		"mcp_config":            mcpConfig,
 	}, nil
 }
 
@@ -1096,7 +1110,7 @@ func validateCodeSessionWorkerRegisterBody(w http.ResponseWriter, r *http.Reques
 		SessionID string `json:"session_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil && !errors.Is(err, io.EOF) {
-		return errors.New("Invalid JSON body")
+		return errors.New("invalid JSON body")
 	}
 	if sessionID := strings.TrimSpace(envelope.SessionID); sessionID != "" && sessionID != codeSessionID {
 		return errors.New("session_id does not match code session id")

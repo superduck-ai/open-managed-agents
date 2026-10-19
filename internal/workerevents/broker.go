@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,6 +37,7 @@ const (
 	// received/processing 回执会续期；映射过期后依靠消息重投重建，不代表消息已完成。
 	AcknowledgementStoreTTL = 20 * time.Minute
 	duplicateWindow         = 24 * time.Hour
+	memoryMaxAckPending     = 1000
 )
 
 type PayloadReference struct {
@@ -222,7 +224,6 @@ func (b *JetStreamBroker) laneConsumer(ctx context.Context, codeSessionID string
 		FilterSubject:     filter,
 		MaxDeliver:        -1,
 		BackOff:           []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute},
-		MaxAckPending:     1,
 		MaxRequestBatch:   1,
 		InactiveThreshold: b.consumerInactiveThreshold,
 	})
@@ -411,6 +412,7 @@ type MemoryBroker struct {
 	subs          map[string]*memorySubscription
 	ackSubjectMap map[string]*memoryMessage
 	messageIDs    map[string]time.Time
+	brainWork     brainWorkHub
 }
 
 func NewMemory() *MemoryBroker {
@@ -486,13 +488,13 @@ func (b *MemoryBroker) Subscribe(ctx context.Context, codeSessionID string) (Sub
 	}
 	b.mu.Lock()
 	if existing := b.subs[codeSessionID]; existing != nil {
-		b.undeliverHeadLocked(codeSessionID)
+		b.undeliverLocked(codeSessionID)
 		select {
 		case existing.errors <- errors.New("worker event consumer was superseded"):
 		default:
 		}
 	}
-	s := &memorySubscription{broker: b, codeSessionID: codeSessionID, messages: make(chan Delivery, len(deliveryLanes)), errors: make(chan error, 1), done: make(chan struct{})}
+	s := &memorySubscription{broker: b, codeSessionID: codeSessionID, messages: make(chan Delivery, memoryMaxAckPending*len(deliveryLanes)), errors: make(chan error, 1), done: make(chan struct{})}
 	b.subs[codeSessionID] = s
 	b.dispatchLocked(codeSessionID)
 	b.mu.Unlock()
@@ -521,26 +523,23 @@ func (b *MemoryBroker) DoubleAck(_ context.Context, ackSubject string) error {
 	sessionID := message.envelope.CodeSessionID
 	queueKey := sessionID + string(laneForEvent(message.envelope))
 	queue := b.queues[queueKey]
-	if len(queue) == 0 || queue[0] != message {
-		return errMemoryAckNotQueueHead
+	index := slices.Index(queue, message)
+	if index < 0 {
+		return errMemoryAckNotFound
 	}
 	delete(b.ackSubjectMap, ackSubject)
-	queue[0] = nil
-	b.queues[queueKey] = queue[1:]
+	b.queues[queueKey] = slices.Delete(queue, index, index+1)
 	b.dispatchLocked(sessionID)
 	return nil
 }
 
-// undeliverHeadLocked 将队头消息重置回未投递状态并清除其 ACK subject 映射，
-// 供订阅被抢占或关闭后重新投递使用。
-func (b *MemoryBroker) undeliverHeadLocked(codeSessionID string) {
+func (b *MemoryBroker) undeliverLocked(codeSessionID string) {
 	for _, lane := range deliveryLanes {
 		queue := b.queues[codeSessionID+string(lane)]
-		if len(queue) == 0 {
-			continue
+		for _, message := range queue {
+			message.delivered = false
+			delete(b.ackSubjectMap, b.ackSubject(message))
 		}
-		queue[0].delivered = false
-		delete(b.ackSubjectMap, b.ackSubject(queue[0]))
 	}
 }
 
@@ -594,8 +593,10 @@ func (b *MemoryBroker) dispatchLocked(codeSessionID string) {
 	}
 	for _, lane := range deliveryLanes {
 		queue := b.queues[codeSessionID+string(lane)]
-		if len(queue) != 0 && !queue[0].delivered {
-			b.dispatchHeadLocked(subscription, queue[0])
+		for _, message := range queue[:min(len(queue), memoryMaxAckPending)] {
+			if !message.delivered {
+				b.dispatchHeadLocked(subscription, message)
+			}
 		}
 	}
 }
@@ -633,7 +634,7 @@ func (s *memorySubscription) Close() error {
 		s.broker.mu.Lock()
 		if s.broker.subs[s.codeSessionID] == s {
 			delete(s.broker.subs, s.codeSessionID)
-			s.broker.undeliverHeadLocked(s.codeSessionID)
+			s.broker.undeliverLocked(s.codeSessionID)
 		}
 		close(s.done)
 		s.broker.mu.Unlock()

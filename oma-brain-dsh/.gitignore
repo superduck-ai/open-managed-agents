@@ -1,0 +1,35 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+/bin/
+*.bun-build
+*.tsbuildinfo
+
+# 环境变量
+.env
+.env.*
+
+# 运行时数据
+.dsh/
+
+# 测试与覆盖率
+coverage/
+/verification/reports/
+/dsh-picture-guide.html
+/dsh-project-guide.html
+
+# IDE
+.idea/
+.run/
+
+# 日志
+*.log
+npm-debug.log*
+
+# 操作系统
+.DS_Store
+
+!.env.example
+/assets/

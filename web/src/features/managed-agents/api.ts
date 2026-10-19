@@ -779,7 +779,10 @@ export function sessionThreadIsArchived(thread: SessionThreadApiResponse) {
 
 export function sessionThreadListSignature(threads: SessionThreadApiResponse[]) {
   return threads
-    .map((thread) => `${thread.id}:${thread.type}:${thread.archived_at ?? ''}:${thread.parent_thread_id ?? ''}`)
+    .map(
+      (thread) =>
+        `${thread.id}:${thread.type}:${thread.archived_at ?? ''}:${thread.parent_thread_id ?? ''}:${thread.updated_at ?? ''}`,
+    )
     .join('|');
 }
 
@@ -1393,9 +1396,19 @@ export function mergeSessionEventsById(events: QuickstartSessionEvent[]) {
 }
 
 export function coalesceSessionCrossPostedToolEvents(events: QuickstartSessionEvent[]) {
+  const aliases = new Map<string, string>();
+  events.forEach((event) => {
+    if (!sessionCrossPostedToolEventKey(event)) return;
+    const id = sessionEventStringField(event, 'id');
+    const originalId = sessionEventStringField(event, 'original_event_id');
+    const primaryId = sessionEventStringField(event, 'primary_event_id');
+    if (originalId) aliases.set(id, originalId);
+    if (primaryId) aliases.set(primaryId, originalId || id);
+  });
   const output: QuickstartSessionEvent[] = [];
   const indexByKey = new Map<string, number>();
-  events.forEach((event) => {
+  events.forEach((rawEvent) => {
+    const event = sessionEventWithToolIdentity(rawEvent, aliases);
     const canonicalKey = sessionCrossPostedToolEventKey(event);
     if (!canonicalKey) {
       output.push(event);
@@ -1405,9 +1418,28 @@ export function coalesceSessionCrossPostedToolEvents(events: QuickstartSessionEv
     if (existingIndex === undefined) {
       indexByKey.set(canonicalKey, output.length);
       output.push(event);
+    } else if (aliases.size && sessionEventStringField(rawEvent, 'id') === sessionEventToolUseId(event)) {
+      output[existingIndex] = event;
     }
   });
   return output;
+}
+
+function sessionEventWithToolIdentity(event: QuickstartSessionEvent, aliases: Map<string, string>) {
+  if (!aliases.size) return event;
+  const normalized = { ...event };
+  for (const field of ['id', 'tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id']) {
+    const id = aliases.get(sessionEventStringField(event, field));
+    if (id) normalized[field] = id;
+  }
+  const stopReason = toRecord(event.stop_reason);
+  if (Array.isArray(stopReason?.event_ids)) {
+    normalized.stop_reason = {
+      ...stopReason,
+      event_ids: stopReason.event_ids.map((id) => (typeof id === 'string' ? (aliases.get(id) ?? id) : id)),
+    };
+  }
+  return normalized;
 }
 
 export function sessionCrossPostedToolEventKey(event: QuickstartSessionEvent) {

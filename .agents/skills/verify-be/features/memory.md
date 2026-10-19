@@ -28,6 +28,30 @@ The portable tests live in `tests/memory_verify_*_test.go`. They reuse existing 
 
 Portable fixtures assert the disposable bucket has never enabled S3 versioning. Memory history uses independent object keys; deletion checks require actual reads to return NotFound. Storage faults surround real calls in test code; schema-local triggers reject queue persistence. Cleanup uses the real generic/Filestore Workers with `RunOnce` and explicitly advances retry eligibility and a rejected ordinary upload's scheduled orphan guard. The tests do not wait for automatic background backoff. Assertion failures happen before fixture cleanup; the latter removes remaining run-owned objects but cannot turn a failed assertion into success. Final CLI cleanup removes containers, volumes and private configuration; failed cleanup prevents a passing verdict.
 
+## Agent Memory discovery and loading
+
+`chat brain-memory` migrates the abandoned Crush worktree's `verifyHostMemory` regression.
+Its old prewarm/deferred modes depend on the removed Go Host runtime. The current scenario
+uses actual Rust Brain with deferred sandbox creation. It attaches writable and readonly stores
+through the public Session API and checks names, paths, access, descriptions and instructions
+in the first model request. The catalog comes from persisted Code Session configuration;
+it contains no Memory body or file listing.
+
+The test denies Read before successful steps, checks the related public tool result and confirmation,
+then completes a text turn with zero sandbox allocations. Approved Read loads a body-only marker
+from the real readonly FUSE mount through sandbox MCP. A second Read reuses exactly one sandbox.
+Actual mutation of the readonly mount must fail and leave original bytes unchanged. The required
+proof is `brain_memory_loaded`; missing it rejects a completed test. The model is scripted.
+
+```sh
+OMA_BRAIN_BINARY=/absolute/path/oma-brain just verify-be chat doctor brain-memory
+OMA_BRAIN_BINARY=/absolute/path/oma-brain just verify-be chat brain-memory
+```
+
+This supplements the unchanged six Memory scenarios; it does not replace their object integrity,
+scope, cleanup, lifecycle or Claude mount assertions. It does not verify real-model Memory selection,
+cloud prewarming or an old backend Host filesystem path. Read [the design](../../../../docs/design/be/memory-store.md).
+
 ## Resource ownership
 
 ```mermaid

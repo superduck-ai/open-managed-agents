@@ -94,6 +94,26 @@ describe('SessionRequiresActionCard', () => {
     expect(sessionToolConfirmationPublicId(fallbackCall)).toBe('evt_bash_123');
   });
 
+  test('shows a pending custom result without offering tool approval', () => {
+    const call = {
+      ...baseToolCall,
+      lifecycle: 'awaiting_result' as const,
+      name: 'ComputeReport',
+      event: { ...baseToolCall.event, type: 'agent.custom_tool_use', name: 'ComputeReport' },
+    };
+    render(
+      <SessionRequiresActionCard
+        toolCall={call}
+        onConfirm={async () => {
+          throw new Error('Unexpected approval');
+        }}
+      />,
+    );
+    expect(screen.getByText('Waiting for ComputeReport to return its result.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
+  });
+
   test('renders inline tool approval actions and calls onConfirm with allow and deny', async () => {
     const confirmations: unknown[] = [];
     const handleConfirm = async (input: unknown) => {

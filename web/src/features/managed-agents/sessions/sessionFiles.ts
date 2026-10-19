@@ -2,7 +2,7 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
 import { listSessionFiles, retrieveFileMetadata } from '../api';
 import type { FileMetadataApiResponse, SessionApiResponse, SessionResourceApiResponse } from '../types';
-import { sessionStatusIsLive } from './sessionDetailModel';
+import { useSessionFileRefreshInterval } from './useSessionFileRefreshInterval';
 
 export type SessionFileSummary = { name: string; size: number; downloadable?: boolean };
 
@@ -47,16 +47,18 @@ export function useSessionFileMetadata(session: SessionApiResponse, workspaceId:
 }
 
 export function sessionOutputFiles(files: FileMetadataApiResponse[]) {
-  return [...new Map(files.filter((file) => file.downloadable === true).map((file) => [file.id, file])).values()];
+  return [...new Map(files.filter((file) => file.downloadable === true).map((file) => [file.id, file])).values()].sort(
+    (left, right) => Date.parse(right.created_at) - Date.parse(left.created_at),
+  );
 }
 
 export function useSessionOutputFiles(session: SessionApiResponse, workspaceId: string, refreshKey: number) {
   const queryClient = useQueryClient();
-  const running = sessionStatusIsLive(session.status) && !session.archived_at;
+  const refetchInterval = useSessionFileRefreshInterval(session, workspaceId);
   const query = useQuery({
     queryKey: sessionFilesQueryKey(workspaceId, session.id),
     queryFn: ({ signal }) => listSessionFiles(session.id, workspaceId, signal),
-    refetchInterval: running ? 3000 : false,
+    refetchInterval,
     refetchOnWindowFocus: true,
     retry: false,
   });

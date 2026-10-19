@@ -19,6 +19,18 @@ import {
 import { buildSessionEventEntries } from './sessionTraceModel';
 
 describe('session inspector event order', () => {
+  test('excludes local streaming placeholders while preserving queued inputs and durable messages', () => {
+    const events: QuickstartSessionEvent[] = [
+      { id: 'input', type: 'user.message', processed_at: null },
+      { id: 'preview', type: 'agent.message', processed_at: null, is_streaming: true },
+      { id: 'thinking-preview', type: 'agent.thinking', processed_at: null, is_streaming: true },
+      { id: 'answer', type: 'agent.message', processed_at: '2026-08-27T08:00:02.000Z', content: 'Answer' },
+    ];
+
+    expect(buildInspectorEventRows(events).map((row) => row.id)).toEqual(['input', 'answer']);
+    expect(events).toHaveLength(4);
+  });
+
   test('uses real URLs for inspector tabs and restores the selected tab', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test?event=evt_1&inspector=tools');
 
@@ -189,6 +201,7 @@ describe('session inspector tool metrics', () => {
       denied: 0,
       executingMs: 4000,
       failed: 1,
+      interrupted: 0,
       inFlight: 1,
       timeInToolsMs: 4000,
       tools: 2,

@@ -195,6 +195,7 @@ func (h *IngressHandler) forwardTunnel(
 			writeIngressHeaders(w.Header(), notification.ResponseHeaders, canonicalTunnelOAuthMetadataURL(r, h.cfg, tunnel.ExternalID, channel))
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("X-Accel-Buffering", "no")
 			status := notification.ResponseCode
 			if status == 0 {
 				status = http.StatusOK
@@ -380,6 +381,7 @@ func writeIngressResponse(w http.ResponseWriter, response TunnelResponse, oauthM
 	eventStream := strings.EqualFold(strings.TrimSpace(strings.SplitN(w.Header().Get("Content-Type"), ";", 2)[0]), "text/event-stream")
 	if eventStream {
 		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("X-Accel-Buffering", "no")
 	}
 	status := response.ResponseCode
 	if status == 0 {

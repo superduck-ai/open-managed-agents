@@ -7,6 +7,7 @@ import (
 	"net/mail"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,9 @@ func Load() (Config, error) {
 	cfg, err := loadYAMLConfig(configPath)
 	if err != nil {
 		return Config{}, err
+	}
+	for i, domain := range cfg.Auth.AllowedEmailDomains {
+		cfg.Auth.AllowedEmailDomains[i] = strings.ToLower(strings.TrimSpace(domain))
 	}
 	cfg.Auth.SMTP.Addr = strings.TrimSpace(cfg.Auth.SMTP.Addr)
 	cfg.Auth.SMTP.Username = strings.TrimSpace(cfg.Auth.SMTP.Username)
@@ -66,6 +70,9 @@ func validate(cfg Config) error {
 	}
 	if strings.TrimSpace(cfg.NATS.URL) == "" {
 		return errors.New("nats.url is required")
+	}
+	if err := validateBrainRuntimeConfig(cfg.EnvironmentRunner, cfg.CodeSession); err != nil {
+		return err
 	}
 	if err := validateWebhookStream(cfg.NATS.WebhookStream); err != nil {
 		return err
@@ -131,6 +138,13 @@ func validate(cfg Config) error {
 }
 
 func validateAuthConfig(cfg AuthConfig) error {
+	for _, domain := range cfg.AllowedEmailDomains {
+		valid, _ := regexp.MatchString(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`, domain)
+		if !valid || len(domain) > 253 {
+			return errors.New("auth.allowed_email_domains must contain exact email domains without @ or wildcards")
+		}
+	}
+
 	if cfg.ConsoleURL != "" {
 		u, err := url.Parse(cfg.ConsoleURL)
 		if err != nil || u.Hostname() == "" || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {

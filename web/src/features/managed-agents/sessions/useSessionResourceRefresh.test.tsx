@@ -17,14 +17,14 @@ function makeSession(id = 'sesn_refresh', status = 'running') {
   return { id, status, resources: [], type: 'session' } as unknown as SessionApiResponse;
 }
 
-function renderRefresh(initial: SessionApiResponse) {
+function renderRefresh(initial: SessionApiResponse, resourcesVisible = true) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   let latest: SessionApiResponse | null = initial;
   const setSession: Dispatch<SetStateAction<SessionApiResponse | null>> = (update) => {
     latest = typeof update === 'function' ? update(latest) : update;
   };
   const hook = renderHook(
-    ({ session, workspaceId }) => useSessionResourceRefresh(session, workspaceId, true, setSession),
+    ({ session, workspaceId }) => useSessionResourceRefresh(session, workspaceId, resourcesVisible, setSession),
     {
       initialProps: { session: initial, workspaceId: 'workspace_first' },
       wrapper: ({ children }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>,
@@ -112,4 +112,17 @@ test('preserves Session identity when only non-resource response fields change',
   expect(hook.latest()).not.toBe(initial);
   expect(hook.latest()?.status).toBe('running');
   expect(hook.latest()?.updated_at).toBe(initial.updated_at);
+});
+
+test('discovers late resources after idle with the resources inspector closed', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  let resources: SessionApiResponse['resources'] = [];
+  const fetchMock = mock(async () => Response.json({ ...makeSession(), resources }));
+  globalThis.fetch = fetchMock as typeof fetch;
+  const hook = renderRefresh(makeSession(), false);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  hook.rerender({ session: makeSession('sesn_refresh', 'idle'), workspaceId: 'workspace_first' });
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  resources = [{ type: 'file', file_id: 'file_late', mount_path: '/outputs/late.txt' }];
+  await waitFor(() => expect(hook.latest()?.resources[0]?.file_id).toBe('file_late'), { timeout: 2500 });
 });

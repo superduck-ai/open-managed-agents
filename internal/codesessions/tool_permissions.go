@@ -43,10 +43,26 @@ func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID
 		return nil
 	}
 	toolName := firstNonEmpty(payload.Request.ToolName, payload.ToolName)
-	permission, identity, err := s.resolveToolPermission(ctx, codeSessionID, toolName)
+	threadID := workerOutputSessionThreadID(payload)
+	if payload.Request.AgentID != "" {
+		codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return db.ErrNotFound
+		}
+		threadID, err = s.modelRequestThread(ctx, codeSession, payload.Request.AgentID)
+		if err != nil {
+			s.logger.ErrorContext(ctx, "resolve subagent permission thread", "code_session_id", codeSessionID, "error", err)
+			return s.respondToToolPermissionRequest(ctx, codeSessionID, workerEpoch, toolPermissionRequestFromWorkerEvent(payload, meta), resolvedToolPermissionDeny, "unknown-subagent", "Subagent thread could not be resolved.", "", "")
+		}
+		payload.Request.SessionThreadID = threadID
+	}
+	permission, identity, err := s.resolveToolPermission(ctx, codeSessionID, toolName, threadID)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "resolve tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "error", err)
-		return nil
+		return s.respondToToolPermissionRequest(ctx, codeSessionID, workerEpoch, toolPermissionRequestFromWorkerEvent(payload, meta), resolvedToolPermissionDeny, "invalid-thread", "Tool permission could not be resolved.", "", "")
 	}
 	s.logger.InfoContext(ctx, "resolved tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "tool_kind", identity.Kind, "server_name", identity.ServerName, "normalized_tool_name", identity.ToolName, "permission", permission)
 	request, payloads, err := toolPermissionPublicPayloads(codeSessionID, payload, meta, identity, permission)
@@ -58,6 +74,9 @@ func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID
 	}
 	if permission == resolvedToolPermissionAsk {
 		if err := s.persistToolPermissionRequest(ctx, codeSessionID, workerEpoch, request); err != nil {
+			if errors.Is(err, db.ErrInvalidState) {
+				return s.respondToToolPermissionRequest(ctx, codeSessionID, workerEpoch, request, resolvedToolPermissionDeny, "terminated-thread", "Subagent thread has terminated.", "", "")
+			}
 			return err
 		}
 	}
@@ -86,13 +105,22 @@ func toolPermissionRequestFromWorkerEvent(payload *workerControlRequestPayload, 
 	}
 }
 
-func (s *Service) resolveToolPermission(ctx context.Context, codeSessionID string, claudeToolName string) (resolvedToolPermission, toolIdentity, error) {
+func (s *Service) resolveToolPermission(ctx context.Context, codeSessionID string, claudeToolName string, threadID string) (resolvedToolPermission, toolIdentity, error) {
 	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
 	if err != nil {
 		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), err
 	}
 	if !found {
 		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), db.ErrNotFound
+	}
+	if threadID != "" {
+		thread, err := s.db.GetSessionThread(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, threadID)
+		if err != nil {
+			return resolvedToolPermissionDeny, parseClaudeToolIdentity(claudeToolName), err
+		}
+		if thread.Status == "terminated" {
+			return resolvedToolPermissionDeny, parseClaudeToolIdentity(claudeToolName), nil
+		}
 	}
 	session, found, err := s.db.GetSession(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
 	if err != nil {
@@ -342,10 +370,10 @@ func (s *Service) queueControlResponseForToolConfirmation(ctx context.Context, c
 	if toolUseID == "" {
 		return false, nil
 	}
-	request, err := toolPermissionRequestFromMetadata(codeSession.WorkerExternalMetadata, toolUseID)
+	request, err := toolPermissionRequestFromMetadata(codeSession.WorkerExternalMetadata, codeSession.ExternalID, toolUseID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			return false, nil
+			return false, db.ErrSessionInputConflict
 		}
 		return false, err
 	}
@@ -394,19 +422,24 @@ func (s *Service) persistToolPermissionRequest(ctx context.Context, codeSessionI
 		WorkerEpoch:         workerEpoch,
 		ExternalMetadataSet: true,
 		ExternalMetadata:    metadata,
+		RequiredThreadID:    request.SessionThreadID,
 	})
 	return err
 }
 
-func toolPermissionRequestFromMetadata(raw json.RawMessage, publicEventID string) (toolPermissionRequest, error) {
-	if len(raw) == 0 {
+func toolPermissionRequestFromMetadata(raw json.RawMessage, codeSessionID, publicEventID string) (toolPermissionRequest, error) {
+	resolvedID, err := maevents.ResolvePendingToolEventID(raw, codeSessionID, "", "", publicEventID)
+	if err != nil {
+		return toolPermissionRequest{}, err
+	}
+	if resolvedID == "" {
 		return toolPermissionRequest{}, db.ErrNotFound
 	}
 	var metadata map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &metadata); err != nil {
 		return toolPermissionRequest{}, err
 	}
-	requestRaw := metadata[toolPermissionRequestMetadataKey(publicEventID)]
+	requestRaw := metadata[toolPermissionRequestMetadataKey(resolvedID)]
 	if len(requestRaw) == 0 {
 		requestRaw = metadata[legacyToolPermissionRequestMetadataKey]
 	}
@@ -417,7 +450,7 @@ func toolPermissionRequestFromMetadata(raw json.RawMessage, publicEventID string
 	if err := json.Unmarshal(requestRaw, &request); err != nil {
 		return toolPermissionRequest{}, err
 	}
-	if request.PublicEventID != publicEventID || request.RequestID == "" || request.ToolUseID == "" {
+	if request.PublicEventID != resolvedID || request.RequestID == "" || request.ToolUseID == "" {
 		return toolPermissionRequest{}, db.ErrNotFound
 	}
 	return request, nil
@@ -438,9 +471,9 @@ func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, c
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return false, err
 	}
-	request, err := toolPermissionRequestFromMetadata(codeSession.WorkerExternalMetadata, payload.CustomToolUseID)
+	request, err := toolPermissionRequestFromMetadata(codeSession.WorkerExternalMetadata, codeSession.ExternalID, payload.CustomToolUseID)
 	if errors.Is(err, db.ErrNotFound) {
-		return false, nil
+		return false, db.ErrSessionInputConflict
 	}
 	if err != nil {
 		return false, err
@@ -571,12 +604,6 @@ func controlResponseUUID(codeSessionID, requestID string) string {
 	return result.String()
 }
 
-// toolUsePublicEventID translates the private provider tool id into the stable
-// public event id used by confirmations and tool results.
-func toolUsePublicEventID(codeSessionID string, toolUseID string) string {
-	return stablePublicEventID(codeSessionID, "tool_use\x00"+toolUseID)
-}
-
 func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRequestPayload, meta EventMetadata, identity toolIdentity, permission resolvedToolPermission) (toolPermissionRequest, []json.RawMessage, error) {
 	request := toolPermissionRequestFromWorkerEvent(payload, meta)
 	if request.ToolName == "" || request.ToolUseID == "" || request.RequestID == "" {
@@ -609,7 +636,7 @@ func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRe
 
 func toolCallPublicPayload(codeSessionID string, request toolPermissionRequest, identity toolIdentity, permission resolvedToolPermission, at time.Time) (toolPermissionRequest, json.RawMessage, error) {
 	eventType, publicName := toolPermissionPublicIdentity(request.ToolName, identity)
-	toolEventID := toolUsePublicEventID(codeSessionID, request.ToolUseID)
+	toolEventID := maevents.ToolUseEventID(codeSessionID, request.ToolUseID, request.SessionThreadID)
 	request.PublicEventID = toolEventID
 	request.EventType = eventType
 	if request.SessionThreadID != "" {

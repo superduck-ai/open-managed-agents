@@ -10,7 +10,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 )
 
-// ChangeMember 先锁定组织成员，再锁定工作区，校验和写入共享一个事务。
 func ChangeMember(ctx context.Context, database *db.DB, principal auth.Principal, workspaceID, userID, role, operation string) (db.AdminWorkspaceMember, error) {
 	var result db.AdminWorkspaceMember
 	err := database.WithWorkspaceMemberTx(ctx, principal.OrganizationUUID, principal.UserExternalID, userID, workspaceID, func(tx *db.WorkspaceMemberTx) error {
@@ -41,7 +40,6 @@ func ChangeMember(ctx context.Context, database *db.DB, principal auth.Principal
 }
 
 func authorizeMemberChange(ctx context.Context, tx *db.WorkspaceMemberTx, principal auth.Principal, workspaceID string) error {
-	// 工作区 Key 没有用户主体，不能因此取得组织成员管理权限。
 	if principal.UserExternalID == "" {
 		return ErrDenied
 	}

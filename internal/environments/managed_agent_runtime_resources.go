@@ -8,12 +8,16 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
 type managedAgentRuntimeResources struct {
-	sources      []json.RawMessage
-	workDir      string
-	memoryMounts []memoryRuntimeMount
+	runtimeSkills     []skillsapi.RuntimeSkill
+	workerTransport   string
+	sources           []json.RawMessage
+	workDir           string
+	memoryMounts      []memoryRuntimeMount
+	environmentConfig json.RawMessage
 }
 
 type gitRepositoryRuntimeSource struct {

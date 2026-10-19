@@ -38,6 +38,9 @@ func TestWriteIngressResponseFramesTerminalEventStream(t *testing.T) {
 	if cacheControl := recorder.Header().Get("Cache-Control"); cacheControl != "no-cache" {
 		t.Fatalf("Cache-Control = %q, want no-cache", cacheControl)
 	}
+	if buffering := recorder.Header().Get("X-Accel-Buffering"); buffering != "no" {
+		t.Fatalf("X-Accel-Buffering = %q, want no", buffering)
+	}
 	want := "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{}}\n\n"
 	if recorder.Body.String() != want {
 		t.Fatalf("body = %q, want %q", recorder.Body.String(), want)

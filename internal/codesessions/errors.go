@@ -8,7 +8,26 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+var errRuntimeSubagentConfig = errors.New("invalid runtime subagent configuration")
+var errSandboxUnavailable = errors.New("sandbox is unavailable")
+
 var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
+
+func sandboxInvalidRequest(cause error) error {
+	return apperr.New(apperr.InvalidArgument, "Invalid sandbox MCP request", cause)
+}
+func sandboxOperationError(cause error) error {
+	if errors.Is(cause, errSandboxUnavailable) {
+		return apperr.New(apperr.Unavailable, "Sandbox is unavailable", cause)
+	}
+	if errors.Is(cause, db.ErrNotFound) {
+		return codeSessionNotFound(cause)
+	}
+	if errors.Is(cause, db.ErrInvalidState) || errors.Is(cause, db.ErrWorkerEpochMismatch) {
+		return apperr.New(apperr.Conflict, "Worker epoch or sandbox state conflict", cause)
+	}
+	return internalError("Sandbox operation failed", cause)
+}
 
 var (
 	ErrMCPDeclarationInvalid          = errors.New("MCP server declarations must have unique canonical names and valid targets")
@@ -88,3 +107,22 @@ type workerPayloadError struct {
 func (e *workerPayloadError) Error() string { return e.message }
 
 func (e *workerPayloadError) Unwrap() error { return e.cause }
+
+func brainClaimUnauthenticated() error {
+	return apperr.New(apperr.Unauthenticated, "Invalid brain claim token", nil)
+}
+
+func brainClaimInvalidRequest(message string, cause error) error {
+	return apperr.New(apperr.InvalidArgument, message, cause)
+}
+
+func brainClaimFailure(cause error) error {
+	return internalError("Could not claim code session", cause)
+}
+
+func mapBrainClaimReleaseError(err error) error {
+	if errors.Is(err, db.ErrPreconditionFailed) {
+		return apperr.New(apperr.Conflict, "Brain claim is no longer held", err)
+	}
+	return internalError("Could not release code session claim", err)
+}

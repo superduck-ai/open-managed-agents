@@ -238,6 +238,8 @@ func writeEmailLoginError(w http.ResponseWriter, r *http.Request, err error) {
 		status, code = http.StatusBadRequest, "invalid_request_error"
 	case apperr.Unauthenticated:
 		status, code = http.StatusUnauthorized, "authentication_error"
+	case apperr.PermissionDenied:
+		status, code = http.StatusForbidden, "email_domain_not_allowed"
 	case apperr.RateLimited:
 		status, code = http.StatusTooManyRequests, "rate_limit_error"
 	case apperr.Unavailable:

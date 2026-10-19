@@ -69,7 +69,7 @@ func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.Objec
 		if err != nil {
 			return BuiltinSeedResult{}, err
 		}
-		pkg, err := skillPackageFromArchive(data, MaxSkillPackageBytes)
+		pkg, err := skillPackageFromArchive(data, MaxSkillPackageBytes, false)
 		if err != nil {
 			return BuiltinSeedResult{}, fmt.Errorf("%s: %w", archivePath, err)
 		}

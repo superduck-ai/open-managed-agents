@@ -95,22 +95,44 @@ builtin-skills/{skill_id}/versions/{version}/{sha256}.skill
 - `source=custom`：只查询 workspace 表。
 - 未指定 `source`：返回 builtin catalog 和当前 workspace custom skills 的合并页。
 
-未指定 `source` 的合并分页按逻辑序列 `builtin catalog -> workspace custom skills` 处理，`next_page` cursor 覆盖这个合并序列的 offset。即使当前页刚好在 builtin 尾部结束，只要后面仍存在 custom skill，响应也必须返回 `has_more=true` 和下一页 cursor，避免 custom 资源被隐藏。
+未指定 `source` 的合并分页按逻辑序列 `builtin catalog -> workspace custom skills` 处理，`next_page` cursor 覆盖这个合并序列的 offset。即使当前页刚好在 builtin 尾部结束，只要后面仍存在 custom skill，旧版响应必须返回 `has_more=true`，两套契约均须返回下一页 cursor，避免 custom 资源被隐藏。
 
 Builtin retrieve、versions 和 content/download 都从 DB metadata 定位 S3-compatible archive；服务不再读取 `assets` 目录。
 
-Custom create 是纯创建语义，不会把同名 skill 自动合并成新版本。`display_title` 是当前 workspace 内 custom skill 的业务唯一键：
+## 正式 Skills 与旧版兼容
 
-- migration `00011_unique_skill_display_title.sql` 最初在 `skills(workspace_id, display_title)` 上创建
-  active-row partial unique index；`00041_use_uuid_resource_references.sql` 将该索引和查询边界迁移为
-  `skills(workspace_uuid, display_title)`，并将 `skill_versions.skill_id` 改为
-  `skill_versions.skill_uuid`。
-- migration 假设已有 active `display_title` 数据在 workspace 内唯一；若存在重复数据，索引创建会失败并暴露需要人工清理的数据问题。
-- migration `00012_require_skill_display_title.sql` 把 `skills.display_title` 改为 `NOT NULL`，避免未来写入路径绕过业务唯一键。
-- 唯一索引用 `CREATE UNIQUE INDEX CONCURRENTLY` 创建，降低迁移期间对 `skills` 表写入的锁影响。
-- `POST /v1/skills` 若复用未删除 custom skill 的 `display_title`，返回 `400 invalid_request_error`。
-- 正确更新路径是 `POST /v1/skills/{skill_id}/versions?beta=true`。
-- soft delete 后同一 workspace 可以重新创建相同 `display_title`。
+`/v1/skills` 默认使用正式契约，不要求 Skills beta header 或 `beta=true`。只有显式包含
+`skills-2025-10-02` 的 `anthropic-beta` 才选择旧契约；多个 header 值和逗号分隔的组合均可使用。
+`managed-agents-2026-04-01` 不选择旧 Skills 契约，Agent/Session 等资源原有的 header 检查保持不变。
+
+| 项目 | 正式契约 | 显式旧 Skills header |
+| --- | --- | --- |
+| 显示名称 | `display_name`，最多 255 字符，省略时取 Skill name，允许重名 | `display_title`，最多 64 字符，workspace 内检查重名 |
+| 最新版本 | `latest_version_id`，具体版本 ID | `latest_version`，时间戳字符串 |
+| 来源 | `source.type` 为 `custom` 或 `anthropic_example` | `source` 为 `custom` 或 `anthropic` |
+| 版本响应 | `id`、`created_at`、`description`、`name`、`skill_id`、`type` | 额外保留 `directory` 和 `version` |
+| 分页 | `data`、`next_page`；limit 1–1000 | 保留 `has_more` 和旧 limit 行为 |
+| 版本排序 | 新到旧 | 旧到新 |
+| 删除 Skill | 软删除 Skill 及全部版本 | 存在版本时返回 400 |
+| 删除最后一个版本 | 返回 400 | 允许，留下无版本 Skill |
+| 上传布局 | 根目录 SKILL.md 或与 name 一致的单层包目录 | 保留旧版单包目录布局 |
+
+两套接口共享已有 `skills`、`skill_versions` 和 archive，不增加表。新版本生成 `skver_` ID；既有
+版本 ID 保持可用，`skill_version_` 前缀可作为相同后缀 `skver_` ID 的输入别名。`versions/latest`
+直接返回最新版本。执行端和 Agent 版本固定继续通过同一个 DB 查询解析 ID 或既有版本值。
+正式版不返回旧版 `directory`、`version`；路径和下载归档仍统一带 Skill name 顶层目录。
+正式版后续上传不得更改 name。正式上传包上限为 30 MiB，旧版保留 8 MiB 上限。
+
+迁移 `00081_skills_display_names.sql` 把 active display title 唯一索引改为普通查询索引，保留现有
+非空列。创建事务使用 workspace 锁，旧版在锁内检查重名；正式版在同一锁下允许创建独立同名
+Skill。版本删除和新增沿用 Skill 行锁，最后版本保护和删除操作位于同一事务中。
+回滚该迁移要求先处理正式版产生的重名数据，不能静默删除或重命名已有 Skill。
+
+旧版删除完全部版本后，正式 retrieve 返回 400，正式列表不包含该 Skill；可继续上传新版本或直接
+删除 Skill。分页游标带契约标记，不允许跨新旧契约使用。软删除不立即删除 archive，以保证已经
+启动的 Session 仍能读取钉住版本。
+
+契约来源：[官方迁移说明](https://platform.claude.com/docs/en/build-with-claude/skills-guide#migrate-from-skills-2025-10-02)。
 
 Builtin 写操作保持只读：
 
@@ -129,5 +151,7 @@ Builtin 写操作保持只读：
 - `--prune` 软删除。
 - API 从 DB + S3-compatible storage 返回 builtin list/retrieve/version/content。
 - builtin update/delete 只读。
-- custom create 复用同 workspace `display_title` 返回 `400 invalid_request_error`，并提示使用 version update。
+- 新旧字段、显示名称重名规则、版本 ID/别名、latest、两种版本顺序及跨契约游标拒绝。
+- 两套删除语义、无版本 Skill 的正式列表过滤和 archive 保留。
+- 正式根目录上传、slug 校验与旧版目录上传兼容。
 - custom 单 `.zip` / `.skill` archive 与目录 multipart 上传。

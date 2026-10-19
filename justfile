@@ -56,7 +56,7 @@ generate-yourbatis-mappers:
 
 # Run the repository's configured Go static-analysis and formatting checks.
 lint: generate
-  golangci-lint run --config .golangci.yml ./...
+  ./scripts/golangci-lint.sh run --config .golangci.yml ./...
 
 dead-code: generate
   ./scripts/go-dead-code.sh

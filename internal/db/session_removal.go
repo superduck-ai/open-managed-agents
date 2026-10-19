@@ -51,6 +51,9 @@ func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, w
 
 func (d *DB) retireSessionWorkersTx(ctx context.Context, executor yourbatis.Executor, removal *SessionRemoval) error {
 	session := removal.Session
+	if err := NewEnvironmentWorkMapper(executor).StopWithoutSandbox(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID); err != nil {
+		return err
+	}
 	ids, err := NewCodeSessionMapper(executor).TerminateBySession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID)
 	if err != nil {
 		return err

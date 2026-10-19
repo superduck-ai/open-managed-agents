@@ -83,7 +83,7 @@ func TestBuiltinSkillMapperStatements(t *testing.T) {
 			id:        "BuiltinSkillMapper.ListSkillsPage",
 			kind:      yourbatis.StatementSelect,
 			values:    []any{21, 2},
-			fragments: []string{"ORDER BY created_at DESC, id DESC", "LIMIT $1", "OFFSET $2"},
+			fragments: []string{"created_at DESC, id DESC", "LIMIT $1", "OFFSET $2"},
 		},
 		{
 			name:      "count skills",
@@ -115,11 +115,11 @@ func TestBuiltinSkillMapperStatements(t *testing.T) {
 		{
 			name:      "list versions",
 			statement: builtinSkillMapperListVersionsPageStatement,
-			bound:     buildBuiltinSkillMapperListVersionsPage(yourbatis.DialectPostgres, versionParams.SkillID, 21, 2),
+			bound:     buildBuiltinSkillMapperListVersionsPage(yourbatis.DialectPostgres, versionParams.SkillID, 21, 2, false),
 			id:        "BuiltinSkillMapper.ListVersionsPage",
 			kind:      yourbatis.StatementSelect,
 			values:    []any{versionParams.SkillID, 21, 2},
-			fragments: []string{"skill_id = $1", "ORDER BY created_at DESC, id DESC", "LIMIT $2", "OFFSET $3"},
+			fragments: []string{"skill_id = $1", "created_at DESC, id DESC", "LIMIT $2", "OFFSET $3"},
 		},
 		{
 			name:      "find version",
@@ -131,7 +131,7 @@ func TestBuiltinSkillMapperStatements(t *testing.T) {
 			),
 			id:        "BuiltinSkillMapper.FindVersion",
 			kind:      yourbatis.StatementSelect,
-			values:    []any{versionParams.SkillExternalID, versionParams.Version},
+			values:    []any{versionParams.SkillExternalID, versionParams.Version, versionParams.Version, versionParams.Version},
 			fragments: []string{"skill_external_id = $1", "version = $2", "deleted_at IS NULL"},
 		},
 		{
@@ -229,7 +229,7 @@ func TestBuiltinSkillMapperResultSemantics(t *testing.T) {
 
 	t.Run("many rows empty and populated", func(t *testing.T) {
 		emptyExecutor := newMapperTestExecutor(t, mapperTestResponse{columns: builtinSkillVersionMapperTestColumns()})
-		rows, err := NewBuiltinSkillMapper(emptyExecutor).ListVersionsPage(context.Background(), 7, 20, 0)
+		rows, err := NewBuiltinSkillMapper(emptyExecutor).ListVersionsPage(context.Background(), 7, 20, 0, false)
 		if err != nil || len(rows) != 0 {
 			t.Fatalf("ListVersionsPage() = (%+v, %v), want empty result", rows, err)
 		}

@@ -30,7 +30,7 @@ type environment struct {
 	files                                      bool
 	suite                                      bool
 	dependenciesOnly                           bool
-	publicSandbox                              bool
+	publicSandbox, brain                       bool
 	sandboxAPI                                 *httptest.Server
 	storageFault                               *storageFault
 	root, directory, runID                     string
@@ -87,7 +87,13 @@ func (e *environment) writeConfig(ctx context.Context) error {
 		"tunnel":       map[string]string{"public_base_url": "http://127.0.0.1:18080"},
 		"storage":      map[string]any{"type": "s3", "s3": map[string]any{"endpoint": "http://127.0.0.1:" + ports["minio"], "bucket": "verify-be", "region": "us-east-1", "access_key_id": "verifychat", "secret_access_key": "verifychat-local-only", "force_path_style": true}},
 		"vault":        map[string]any{"master_key": map[string]any{"version": 1, "kek": base64.StdEncoding.EncodeToString(kek)}},
-		"code_session": map[string]string{"jwt_signing_private_key_file": filepath.Join(e.directory, "jwt.pem"), "brain_claim_token_file": filepath.Join(e.directory, "brain-claim-token")},
+		"code_session": map[string]string{"jwt_signing_private_key_file": filepath.Join(e.directory, "jwt.pem")},
+	}
+	if e.brain {
+		if err := e.writeBrainClaimToken(); err != nil {
+			return err
+		}
+		config["code_session"].(map[string]string)["brain_claim_token_file"] = filepath.Join(e.directory, "brain-claim-token")
 	}
 	if e.publicSandbox {
 		e.sandboxAPI = newLocalSandboxAPI(e.runID)
@@ -115,13 +121,6 @@ func (e *environment) writeConfig(ctx context.Context) error {
 	if err := writeJSON(filepath.Join(e.directory, "config.json"), config); err != nil {
 		return err
 	}
-	brainClaimToken := make([]byte, 32)
-	if _, err := rand.Read(brainClaimToken); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(e.directory, "brain-claim-token"), []byte(base64.RawURLEncoding.EncodeToString(brainClaimToken)), 0o600); err != nil {
-		return err
-	}
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return err
@@ -132,6 +131,14 @@ func (e *environment) writeConfig(ctx context.Context) error {
 	}
 	return os.WriteFile(filepath.Join(e.directory, "jwt.pem"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: encoded}), 0o600)
 }
+func (e *environment) writeBrainClaimToken() error {
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(e.directory, "brain-claim-token"), []byte(base64.RawURLEncoding.EncodeToString(token)), 0o600)
+}
+
 func (e *environment) start(ctx context.Context, images map[string]string) error {
 	if err := writeJSON(filepath.Join(e.directory, "compose.json"), dependencySpec(images)); err != nil {
 		return err

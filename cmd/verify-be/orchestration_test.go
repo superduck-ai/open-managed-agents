@@ -311,3 +311,39 @@ func TestFilesEnvironmentLimits(t *testing.T) {
 		t.Fatalf("Files limits=%+v", cfg.Storage)
 	}
 }
+
+func TestEnvironmentConfigWritesBrainClaimTokenOnlyForBrainScenarios(t *testing.T) {
+	for _, brain := range []bool{false, true} {
+		t.Run(stringBool(brain), func(t *testing.T) {
+			fakeDocker(t)
+			directory := t.TempDir()
+			env := newEnvironment(directory, directory, "test-brain-config")
+			env.brain = brain
+			if err := env.writeConfig(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			defer env.close()
+			data, err := os.ReadFile(filepath.Join(directory, "config.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cfg struct {
+				CodeSession map[string]string `json:"code_session"`
+			}
+			if err := json.Unmarshal(data, &cfg); err != nil {
+				t.Fatal(err)
+			}
+			tokenFile, configured := cfg.CodeSession["brain_claim_token_file"]
+			_, statErr := os.Stat(filepath.Join(directory, "brain-claim-token"))
+			if configured != brain || (statErr == nil) != brain {
+				t.Fatalf("brain=%t configured=%t token file err=%v", brain, configured, statErr)
+			}
+			if brain {
+				token, err := os.ReadFile(tokenFile)
+				if err != nil || len(token) < 32 {
+					t.Fatalf("brain claim token too short: %d %v", len(token), err)
+				}
+			}
+		})
+	}
+}

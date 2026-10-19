@@ -32,7 +32,6 @@
   "account.logout": "Log out",
   "account.loggingOut": "Logging out...",
   "account.organizationSettings": "Organization settings",
-  "account.subtitle": "{role} · {workspaceName}",
   "account.role.workspace_admin": "Admin",
   "account.role.workspace_user": "User",
   "account.role.unknown": "Member",

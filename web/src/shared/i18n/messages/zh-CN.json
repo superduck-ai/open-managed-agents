@@ -32,7 +32,6 @@
   "account.logout": "退出登录",
   "account.loggingOut": "正在退出...",
   "account.organizationSettings": "组织设置",
-  "account.subtitle": "{role} · {workspaceName}",
   "account.role.workspace_admin": "管理员",
   "account.role.workspace_user": "用户",
   "account.role.unknown": "成员",

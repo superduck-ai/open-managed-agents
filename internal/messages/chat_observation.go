@@ -3,6 +3,7 @@ package messages
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"slices"
 	"time"
@@ -10,6 +11,7 @@ import (
 
 type chatObservation struct {
 	finishReason string
+	blockIndices map[string]int
 }
 
 type chatChunk struct {
@@ -29,6 +31,8 @@ type chatDelta struct {
 	Content          string          `json:"content"`
 	Refusal          string          `json:"refusal"`
 	ReasoningContent string          `json:"reasoning_content"`
+	Reasoning        string          `json:"reasoning"`
+	ReasoningText    string          `json:"reasoning_text"`
 	ToolCalls        []chatToolDelta `json:"tool_calls"`
 }
 
@@ -56,6 +60,9 @@ func (c *chatObservation) observe(o *responseObservation, data []byte) {
 	}
 	if bytes.Equal(bytes.TrimSuffix(data, []byte{'\n'}), []byte("[DONE]")) {
 		c.complete(o)
+		if o.complete && o.onComplete != nil {
+			o.onComplete()
+		}
 		return
 	}
 	var chunk chatChunk
@@ -79,11 +86,11 @@ func (c *chatObservation) observe(o *responseObservation, data []byte) {
 		o.mergeChatUsage(chunk.Usage)
 	}
 	for _, choice := range chunk.Choices {
-		if o.messageID == "" || choice.Index != 0 || c.finishReason != "" || choice.Delta.Refusal != "" || choice.Delta.ReasoningContent != "" {
+		if o.messageID == "" || choice.Index != 0 || c.finishReason != "" || choice.Delta.Refusal != "" {
 			o.malformed = true
 			return
 		}
-		o.observeChatDelta(choice.Delta)
+		c.observeDelta(o, choice.Delta)
 		if choice.FinishReason != "" {
 			c.finishReason = choice.FinishReason
 		}
@@ -112,20 +119,29 @@ func (o *responseObservation) mergeChatUsage(usage *chatUsage) {
 	}
 }
 
-func (o *responseObservation) observeChatDelta(delta chatDelta) {
+func (c *chatObservation) observeDelta(o *responseObservation, delta chatDelta) {
 	if delta.Content != "" {
-		block := o.chatBlock(0, "text")
+		block := c.block(o, "text", "text")
 		block.textBuffer.WriteString(delta.Content)
 		o.contentBytes += len(delta.Content)
+	}
+	if reasoning := firstChatReasoning(delta); reasoning != "" {
+		block := c.block(o, "thinking", "thinking")
+		block.thinkingBuffer.WriteString(reasoning)
+		o.contentBytes += len(reasoning)
 	}
 	for _, tool := range delta.ToolCalls {
 		if tool.Index < 0 || tool.Index >= 1024 || (tool.Type != "" && tool.Type != "function") {
 			o.malformed = true
 			return
 		}
-		block := o.chatBlock(tool.Index+1, "tool_use")
-		block.ID += tool.ID
-		block.Name += tool.Function.Name
+		block := c.block(o, fmt.Sprintf("tool_%d", tool.Index), "tool_use")
+		if block.ID == "" {
+			block.ID = tool.ID
+		}
+		if block.Name == "" {
+			block.Name = tool.Function.Name
+		}
 		block.inputBuffer.WriteString(tool.Function.Arguments)
 		o.contentBytes += len(tool.ID) + len(tool.Function.Name) + len(tool.Function.Arguments)
 	}
@@ -135,7 +151,15 @@ func (o *responseObservation) observeChatDelta(delta chatDelta) {
 	}
 }
 
-func (o *responseObservation) chatBlock(index int, kind string) *responseContentBlock {
+func (c *chatObservation) block(o *responseObservation, key, kind string) *responseContentBlock {
+	if c.blockIndices == nil {
+		c.blockIndices = make(map[string]int)
+	}
+	index, found := c.blockIndices[key]
+	if !found {
+		index = len(c.blockIndices)
+		c.blockIndices[key] = index
+	}
 	if o.blocks == nil {
 		o.blocks = make(map[int]*responseContentBlock)
 	}
@@ -153,6 +177,7 @@ func (c *chatObservation) complete(o *responseObservation) {
 	for _, index := range slices.Sorted(maps.Keys(o.blocks)) {
 		block := o.blocks[index]
 		block.Text = block.textBuffer.String()
+		block.Thinking = block.thinkingBuffer.String()
 		if block.Type == "tool_use" && block.inputBuffer.Len() == 0 {
 			block.Input = json.RawMessage(`{}`)
 		}
@@ -164,9 +189,6 @@ func (c *chatObservation) complete(o *responseObservation) {
 	}
 	o.complete = true
 	o.result.EndedAt = time.Now().UTC().Truncate(time.Microsecond)
-	if o.onComplete != nil {
-		o.onComplete()
-	}
 }
 
 func validChatFinish(reason string, blocks map[int]*responseContentBlock) bool {
@@ -182,4 +204,13 @@ func validChatFinish(reason string, blocks map[int]*responseContentBlock) bool {
 	default:
 		return false
 	}
+}
+
+func firstChatReasoning(delta chatDelta) string {
+	for _, value := range []string{delta.ReasoningContent, delta.Reasoning, delta.ReasoningText} {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

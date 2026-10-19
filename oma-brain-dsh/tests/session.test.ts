@@ -80,7 +80,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(b.publicLog.get("thinking_result")?.is_error).toBe(false);
   });
 
-  test("malformed tool JSON retains a failed result and continues with correlated history", async () => {
+  test("official tool JSON parsing retains a correlated validation failure", async () => {
     const b = backend();
     const raw = '{"x": 2, "y": \u0001}';
     const events = toolEvents();
@@ -92,10 +92,11 @@ describe("original dsh loop over CCRv2", () => {
     expect(b.requests).toHaveLength(2);
     const blocks = b.requests[1]!.messages.flatMap((m: Payload) => m.content);
     expect(blocks).toContainEqual({ type: "tool_use", id: "call_1", name: "Bash",
-      input: { __unparsedToolInput: { raw, len: raw.length } } });
+      input: { x: 2 } });
     const result = blocks.find((block: Payload) => block.type === "tool_result");
     expect(result).toMatchObject({ tool_use_id: "call_1", is_error: true });
-    expect(result.content[0].text.length).toBeGreaterThan(0);
+    expect(typeof result.content).toBe("string");
+    expect(result.content.length).toBeGreaterThan(0);
     const published = [...b.publicLog.values()].find((event) => event.type === "user");
     expect(published?.message.content[0]).toMatchObject({ tool_use_id: "call_1", is_error: true });
     expect(b.publicLog.get("malformed_result")?.is_error).toBe(false);
@@ -121,9 +122,10 @@ describe("original dsh loop over CCRv2", () => {
     const result = b.requests[1]!.messages.flatMap((m: Payload) => m.content)
       .find((block: Payload) => block.type === "tool_result");
     expect(result).toMatchObject({ tool_use_id: "call_1", is_error: false,
-      content: [{ type: "text", text: "exact stdout\n" }] });
+      content: "exact stdout\n" });
     const published = [...b.publicLog.values()].find((event) => event.type === "user");
-    expect(published?.message.content[0]).toEqual(result);
+    expect(published?.message.content[0]).toMatchObject({ tool_use_id: "call_1", is_error: false,
+      content: [{ type: "text", text: result.content }] });
     expect(b.publicLog.get("stdout_result")?.is_error).toBe(false);
   });
 

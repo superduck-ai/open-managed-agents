@@ -4,8 +4,8 @@ import type { AssistantMessage } from "@deepseek-ai/dsh-llm";
 import type { Payload } from "./protocol.ts";
 
 interface MessageReplay {
-  response?: { format?: string; messageID?: string; requestID?: string };
-  blocks?: { index?: number }[];
+  response?: { format?: string; messageID?: string; requestID?: string; oma?: { messageID?: string; requestID?: string } };
+  blocks?: { index?: number; omaIndex?: number }[];
 }
 
 function assistantEventID(codeSessionID: string, messageID: string | undefined, index: number, type: string, fallback: string): string {
@@ -16,14 +16,14 @@ function assistantEventID(codeSessionID: string, messageID: string | undefined, 
 
 export function assistantMessages(codeSessionID: string, fallback: string, message: AssistantMessage, threadId?: string): Payload[] {
   const replay = message.source.replayState as MessageReplay | undefined;
-  const identity = ["oma-messages-v1", "oma-chat-completions-v1"].includes(replay?.response?.format ?? "") ? replay : undefined;
+  const identity = replay?.response?.oma ?? (["oma-messages-v1", "oma-chat-completions-v1"].includes(replay?.response?.format ?? "") ? replay?.response : undefined);
   return message.content.flatMap((block, index): Payload[] => {
     if (block.type !== "text" && block.type !== "reasoning") return [];
     const type = block.type === "reasoning" ? "agent.thinking" : "agent.message";
-    const id = assistantEventID(codeSessionID, identity?.response?.messageID, identity?.blocks?.[index]?.index ?? index, type, fallback);
+    const id = assistantEventID(codeSessionID, identity?.messageID, replay?.blocks?.[index]?.omaIndex ?? replay?.blocks?.[index]?.index ?? index, type, fallback);
     return [{ type, id, uuid: id,
       content: [block.type === "reasoning" ? { type: "thinking", thinking: block.text } : { type: "text", text: block.text }],
-      ...(identity?.response?.requestID ? { model_request_start_id: identity.response.requestID } : {}),
+      ...(identity?.requestID ? { model_request_start_id: identity.requestID } : {}),
       ...(threadId ? { session_thread_id: threadId } : {}),
     }];
   });

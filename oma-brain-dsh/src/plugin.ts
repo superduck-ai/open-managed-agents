@@ -4,7 +4,7 @@ import { createOmaCcrClient, logOmaHeartbeatHealth, stopOmaSessionOnLeaseLoss } 
 import type { CcrClient } from "./ccrv2";
 import * as CcrBridge from "./ccrv2/index.ts";
 import { mountKernel } from "./kernel.ts";
-import { OmaModelAdapter } from "./model-router.ts";
+import { OmaModelAdapter } from "./model.ts";
 import { startWorkers } from "./worker.ts";
 import { BrainClaimClient } from "./claim.ts";
 import { required, readBrainClaimOptions, readCcrHeartbeatOptions } from "./config.ts";

@@ -297,6 +297,9 @@ func (o *responseObservation) addEventID(index int, blockType string) {
 }
 
 func (o *responseObservation) finish() {
+	if o.chat != nil && !o.complete && !o.malformed && o.result.ErrorType == "" && o.chat.finishReason != "" {
+		o.chat.complete(o)
+	}
 	if !o.streaming && !o.complete && !o.malformed && (o.result.ErrorType == "" || o.result.ErrorType == "stream_error") {
 		var message responseMessage
 		if err := json.Unmarshal(o.buffer, &message); err != nil || message.ID == "" || message.Type != "message" {

@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
@@ -41,7 +43,6 @@ func TestChatObservationRejectsInvalidStreams(t *testing.T) {
 		{"tool index", chatFrame(`{"id":"chat_1","choices":[{"index":0,"delta":{"tool_calls":[{"index":-1}]}}]}`), "invalid_response"},
 		{"error", chatFrame(`{"error":{"message":"denied"}}`), "provider_error"},
 		{"cache", chatFrame(`{"usage":{"prompt_tokens":1,"prompt_tokens_details":{"cached_tokens":2}}}`), "invalid_response"},
-		{"reasoning", chatFrame(`{"id":"chat_1","choices":[{"index":0,"delta":{"reasoning_content":"hidden"}}]}`), "invalid_response"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			observation := observeChat(t, test.body, 1)
@@ -68,7 +69,7 @@ func TestChatObservationFragmentedToolsAndUsage(t *testing.T) {
 		if result.Messages[0].ID != maevents.StableAssistantEventID("cse_chat", "chat_1", 0, "agent.message") {
 			t.Fatal("message identity differs")
 		}
-		if result.ToolUses[0].ID != "call_a" || string(result.ToolUses[0].Input) != `{"command":"pwd"}` || result.ToolUses[1].ID != "call_b" {
+		if result.ToolUses[0].ID != "call_b" || string(result.ToolUses[1].Input) != `{"command":"pwd"}` || result.ToolUses[1].ID != "call_a" {
 			t.Fatalf("tools=%+v", result.ToolUses)
 		}
 	}
@@ -99,4 +100,61 @@ func observeChat(t *testing.T, body string, size int) *responseObservation {
 
 func chatFrame(data string) string {
 	return "data: " + strings.ReplaceAll(data, "\n", "\ndata: ") + "\r\n\r\n"
+}
+
+func TestChatObservationOfficialAdapterBlockIdentity(t *testing.T) {
+	for _, field := range []string{"reasoning_content", "reasoning", "reasoning_text"} {
+		t.Run(field, func(t *testing.T) {
+			body := chatFrame(`{"id":"chat_order","choices":[{"index":0,"delta":{"tool_calls":[{"index":9,"id":"call","function":{"name":"Bash","arguments":"{}"}}]}}]}`) +
+				chatFrame(`{"id":"chat_order","choices":[{"index":0,"delta":{"`+field+`":"thinking"}}]}`) +
+				chatFrame(`{"id":"chat_order","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"tool_calls"}]}`) + chatFrame(`[DONE]`)
+			observation := observeChat(t, body, 1)
+			result := observation.result
+			if result.ErrorType != "" || len(result.Messages) != 2 {
+				t.Fatalf("result=%+v", result)
+			}
+			for index, kind := range []string{"agent.thinking", "agent.message"} {
+				if result.Messages[index].ID != maevents.StableAssistantEventID("cse_chat", "chat_order", index+1, kind) {
+					t.Fatalf("message=%+v", result.Messages[index])
+				}
+			}
+			if result.Messages[0].Content[0].Thinking == nil || *result.Messages[0].Content[0].Thinking != "thinking" {
+				t.Fatalf("thinking=%+v", result.Messages[0])
+			}
+		})
+	}
+}
+
+func TestChatObservationOfficialAdapterFinishAtEOF(t *testing.T) {
+	body := chatFrame(`{"id":"chat_eof","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"stop"}]}`)
+	observation := observeChat(t, body, 1)
+	if !observation.complete || observation.result.ErrorType != "" || len(observation.result.Messages) != 1 {
+		t.Fatalf("result=%+v", observation.result)
+	}
+}
+
+func TestChatObservationEOFFinalizerDoesNotReenter(t *testing.T) {
+	observation := &responseObservation{chat: &chatObservation{}, streaming: true, request: &codesessions.ModelRequest{CodeSessionID: "cse_chat"}}
+	completed := make(chan struct{})
+	observation.onComplete = sync.OnceFunc(func() { observation.finish(); close(completed) })
+	_, _ = observation.Write([]byte(chatFrame(`{"id":"chat_eof","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"stop"}]}`)))
+	go observation.onComplete()
+	select {
+	case <-completed:
+	case <-time.After(time.Second):
+		t.Fatal("model request finalizer reentered")
+	}
+	if observation.result.ErrorType != "" || !observation.complete {
+		t.Fatalf("result=%+v", observation.result)
+	}
+}
+
+func TestChatObservationEOFDoesNotMaskTransportFailure(t *testing.T) {
+	observation := &responseObservation{chat: &chatObservation{}, streaming: true, request: &codesessions.ModelRequest{CodeSessionID: "cse_chat"}}
+	_, _ = observation.Write([]byte(chatFrame(`{"id":"chat_eof","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"stop"}]}`)))
+	observation.result.ErrorType = "stream_error"
+	observation.finish()
+	if observation.complete || observation.result.ErrorType != "stream_error" || len(observation.result.Messages) != 0 {
+		t.Fatalf("result=%+v", observation.result)
+	}
 }

@@ -2,13 +2,12 @@ import { expect, test } from "bun:test";
 import { BlockAssembler, MessageId, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { OmaApi } from "../src/api.ts";
-import { ChatCompletionsAdapter } from "../src/chat-model.ts";
-import { OmaModelAdapter } from "../src/model-router.ts";
+import { OmaModelAdapter } from "../src/model.ts";
 import { assistantMessages } from "../src/ccrv2/assistant.ts";
 import { assignment, textEvents } from "./backend.ts";
-import type { ChatChunk } from "../src/chat-stream.ts";
+import type { Payload } from "../src/json.ts";
 
-function response(chunks: (ChatChunk | string)[]) {
+function response(chunks: (Payload | string)[]) {
   return new Response(chunks.map((chunk) => `data: ${typeof chunk === "string" ? chunk : JSON.stringify(chunk)}\r\n\r\n`).join(""),
     { headers: { "Content-Type": "text/event-stream", "Request-Id": "span_chat" } });
 }
@@ -20,68 +19,63 @@ async function collect(stream: AsyncIterable<StreamChunk>) {
   for await (const chunk of stream) chunks.push(chunk);
   return chunks;
 }
-function setup(chunks: (ChatChunk | string)[]) {
+function setup(chunks: (Payload | string)[]) {
   const requests: Request[] = [];
   const api = new OmaApi("http://model.test", (async (input, init) => {
     requests.push(new Request(input, init));
     return response(chunks);
   }) as typeof fetch);
-  const a = assignment(); api.assignments.set(a.session_id, a);
-  return { api, a, requests, adapter: new ChatCompletionsAdapter(api) };
+  const a = assignment(); a.launch.model_backends = { "chat-model": "chat_completions" };
+  api.assignments.set(a.session_id, a);
+  return { api, a, requests, adapter: new OmaModelAdapter(api) };
 }
-function textChunk(text = "answer", finish = "stop"): ChatChunk {
+function textChunk(text = "answer", finish = "stop"): Payload {
   return { id: "chat_1", choices: [{ index: 0, delta: { content: text }, finish_reason: finish }] };
 }
 
-test("Chat Completions rejects truncated, filtered, invalid tool and unsupported streams", async () => {
-  for (const chunks of [
-    [textChunk()],
-    [{ id: "chat_1", choices: [{ index: 0, delta: { content: "partial" } }] }, "[DONE]"],
-    [textChunk("refused", "content_filter"), "[DONE]"],
-    [{ id: "chat_1", choices: [{ index: 0, delta: { tool_calls: [{ index: -1 }] } }] }, "[DONE]"],
-    [{ id: "chat_1", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: "{}" } }] }, finish_reason: "tool_calls" }] }, "[DONE]"],
-    [{ id: "chat_1", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call", function: { name: "Bash", arguments: "[]" } }] }, finish_reason: "tool_calls" }] }, "[DONE]"],
-    [{ id: "chat_1", choices: [{ index: 0, delta: { reasoning_content: "thinking" } }] }, "[DONE]"],
-    ["{broken"],
-  ] satisfies (ChatChunk | string)[][]) {
-    const { a, adapter } = setup(chunks);
-    await expect(collect(adapter.stream(options(a.session_id)))).rejects.toThrow();
-  }
-});
-
-test("Chat Completions maps HTTP and stream errors and honors preflight abort", async () => {
+test("official adapter reports HTTP errors without retrying the OMA model request", async () => {
   for (const [status, code] of [[401, "AUTH"], [403, "AUTH"], [429, "RATE_LIMIT"], [503, "SERVER"]] as const) {
-    const api = new OmaApi("http://model.test", (async (_input, _init) => Response.json({ error: { message: "denied" } }, { status })) as typeof fetch);
-    const a = assignment(); api.assignments.set(a.session_id, a);
-    await expect(collect(new ChatCompletionsAdapter(api).stream(options(a.session_id)))).rejects.toMatchObject({ code });
+    let requests = 0;
+    const api = new OmaApi("http://model.test", (async (_input, _init) => { requests++; return Response.json({ error: { message: "denied" } }, { status }); }) as typeof fetch);
+    const a = assignment(); a.launch.model_backends = { "chat-model": "chat_completions" }; api.assignments.set(a.session_id, a);
+    const chunks = await collect(new OmaModelAdapter(api).stream(options(a.session_id)));
+    expect(chunks.at(-1)).toMatchObject({ type: "finish", reason: { kind: "error", failure: { code } } });
+    expect(requests).toBe(1);
   }
-  const { a, adapter, requests } = setup([{ error: { message: "quota exceeded" } }]);
-  await expect(collect(adapter.stream(options(a.session_id)))).rejects.toThrow("quota exceeded");
-  await expect(collect(adapter.stream({ ...options(a.session_id), signal: AbortSignal.abort() }))).rejects.toThrow();
-  expect(requests).toHaveLength(1);
 });
 
-test("Chat Completions cancellation closes an active response body", async () => {
+test("official adapter rejects incomplete streams and unsupported options before transport", async () => {
+  for (const chunks of [[{ id: "chat_1", choices: [{ index: 0, delta: { content: "partial" } }] }], ["{broken"]]) {
+    const { a, adapter } = setup(chunks);
+    expect((await collect(adapter.stream(options(a.session_id)))).at(-1)).toMatchObject({ type: "finish", reason: { kind: "error" } });
+  }
+  const { a, adapter, requests } = setup([textChunk(), "[DONE]"]);
+  await expect(collect(adapter.stream({ ...options(a.session_id), stop: ["END"] }))).rejects.toMatchObject({ code: "UNSUPPORTED_OPTION" });
+  await expect(collect(adapter.stream({ ...options(a.session_id), signal: AbortSignal.abort() }))).rejects.toThrow();
+  expect(requests).toHaveLength(0);
+});
+
+test("official adapter cancellation cancels the OMA HTTP stream", async () => {
   let cancelled = false;
   const api = new OmaApi("http://model.test", (async (_input, _init) => new Response(new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ id: "chat_cancel", choices: [{ index: 0, delta: { content: "partial" } }] })}\n\n`));
-    },
+    start(controller) { controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ id: "chat_cancel", choices: [{ index: 0, delta: { content: "partial" } }] })}\n\n`)); },
     cancel() { cancelled = true; },
   }))) as typeof fetch);
-  const a = assignment(); api.assignments.set(a.session_id, a);
+  const a = assignment(); a.launch.model_backends = { "chat-model": "chat_completions" }; api.assignments.set(a.session_id, a);
   const controller = new AbortController();
-  const iterator = new ChatCompletionsAdapter(api).stream({ ...options(a.session_id), signal: controller.signal })[Symbol.asyncIterator]();
+  const iterator = new OmaModelAdapter(api).stream({ ...options(a.session_id), signal: controller.signal })[Symbol.asyncIterator]();
   expect((await iterator.next()).value).toMatchObject({ type: "block-start" });
   expect((await iterator.next()).value).toMatchObject({ type: "text-delta", text: "partial" });
   controller.abort();
-  await expect(iterator.next()).rejects.toThrow();
+  const remaining: StreamChunk[] = [];
+  for (;;) { const next = await iterator.next(); if (next.done) break; remaining.push(next.value); }
+  expect(remaining.at(-1)).toMatchObject({ type: "finish", reason: { kind: "aborted" } });
   expect(cancelled).toBe(true);
 });
 
-
-test("Chat Completions preserves fragmented parallel tools and consumes the usage tail", async () => {
+test("official Chat adapter assembles reasoning, fragmented parallel tools and usage", async () => {
   const { a, api, adapter, requests } = setup([
+    { id: "chat_1", choices: [{ index: 0, delta: { reasoning_content: "thinking" } }] },
     { id: "chat_1", choices: [{ index: 0, delta: { content: "running", tool_calls: [
       { index: 1, id: "call_b", type: "function", function: { name: "Read", arguments: "{" } },
       { index: 0, id: "call_a", type: "function", function: { name: "Bash", arguments: '{"command":' } },
@@ -89,95 +83,66 @@ test("Chat Completions preserves fragmented parallel tools and consumes the usag
     { id: "chat_1", choices: [{ index: 0, delta: { tool_calls: [
       { index: 0, function: { arguments: '"pwd"}' } }, { index: 1, function: { arguments: "}" } },
     ] }, finish_reason: "tool_calls" }] },
-    { id: "chat_1", choices: [], usage: { prompt_tokens: 20, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 12 } } },
-    "[DONE]",
+    { id: "chat_1", choices: [], usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25, prompt_tokens_details: { cached_tokens: 12 } } }, "[DONE]",
   ]);
   const result = await collect(adapter.stream(options(a.session_id)));
-  expect(result.filter((chunk) => chunk.type === "block-end")).toEqual([
-    { type: "block-end", index: 0, block: { type: "text", text: "running" } },
-    { type: "block-end", index: 1, block: { type: "tool-call", id: ToolCallId("call_a"), name: "Bash", arguments: '{"command":"pwd"}' } },
-    { type: "block-end", index: 2, block: { type: "tool-call", id: ToolCallId("call_b"), name: "Read", arguments: "{}" } },
+  const assembler = new BlockAssembler(); for (const chunk of result) assembler.push(chunk);
+  expect(assembler.message({ provider: "oma", model: "chat-model" }).content).toEqual([
+    { type: "reasoning", text: "thinking" }, { type: "text", text: "running" },
+    { type: "tool-call", id: ToolCallId("call_b"), name: "Read", arguments: "{}" },
+    { type: "tool-call", id: ToolCallId("call_a"), name: "Bash", arguments: '{"command":"pwd"}' },
   ]);
-  expect(result).toContainEqual({ type: "usage", usage: { inputTokens: 8, outputTokens: 5, cacheReadTokens: 12 } });
+  expect(result).toContainEqual({ type: "usage", usage: { inputTokens: 8, outputTokens: 5, cacheReadTokens: 12, totalTokens: 25 } });
   expect(result.at(-1)).toMatchObject({ type: "finish", reason: { kind: "tool-calls" }, replayState: {
-    response: { format: "oma-chat-completions-v1", messageID: "chat_1", requestID: "span_chat" }, blocks: [{ index: 0 }, { index: 2 }, { index: 1 }],
+    response: { kind: "pi-ai", version: 2, api: "openai-completions", oma: { messageID: "chat_1", requestID: "span_chat" } },
   } });
   expect(api.modelResponses.get(a.session_id)).toBe("chat_1");
-  expect(new URL(requests[0]!.url).pathname).toBe("/v1/chat/completions");
+  expect(requests[0]!.url).toBe("http://model.test/v1/chat/completions");
+  expect(requests[0]!.headers.get("authorization")).toBe(`Bearer ${a.model_token}`);
+  expect(requests[0]!.headers.has("x-api-key")).toBe(false);
   expect(requests[0]!.headers.has("anthropic-version")).toBe(false);
 });
 
-test("Chat history round-trips tool results and stable assistant identity", async () => {
-  const { a, adapter, requests } = setup([textChunk(), "[DONE]"]);
-  const request = options(a.session_id);
-  request.system = "instructions"; request.maxTokens = 100; request.temperature = 0.5; request.stop = ["END"];
+test("official adapter sends tool history and retains OMA event identity after replay", async () => {
+  const { a, adapter, requests } = setup([
+    { id: "chat_1", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "Bash", arguments: "{}" } }] } }] },
+    textChunk("done"), "[DONE]",
+  ]);
+  const request = options(a.session_id); request.maxTokens = 100; request.temperature = 0.5;
   request.tools = [{ name: "Bash", description: "Run", parameters: { type: "object" } }];
-  request.messages.push({ id: MessageId("saved"), role: "assistant", content: [
-    { type: "tool-call", id: ToolCallId("call_a"), name: "Bash", arguments: '{"command":"pwd"}' },
+  request.messages.push({ id: MessageId("old"), role: "assistant", content: [
+    { type: "text", text: "running" }, { type: "tool-call", id: ToolCallId("old_call"), name: "Bash", arguments: '{"command":"pwd"}' },
   ], source: { kind: "model", provider: "oma", model: "chat-model", replayState: { response: { format: "oma-chat-completions-v1" } } } },
-  { id: MessageId("result"), role: "tool", toolCallId: ToolCallId("call_a"), source: { kind: "tool", callId: ToolCallId("call_a") },
-    content: [{ type: "text", text: "permission denied" }], isError: true });
-  const chunks = await collect(adapter.stream(request));
+  { id: MessageId("tool"), role: "tool", content: [{ type: "text", text: "stdout" }], source: { kind: "tool", callId: ToolCallId("old_call") }, toolCallId: ToolCallId("old_call") });
+  const assembler = new BlockAssembler(); for (const chunk of await collect(adapter.stream(request))) assembler.push(chunk);
+  const saved = assembler.message({ provider: "oma", model: "chat-model", replayState: assembler.replayState });
+  expect(saved.source.replayState).toMatchObject({ blocks: [{ omaIndex: 0 }, { omaIndex: 1 }] });
+  const first = assistantMessages(a.session_id, "fallback", saved)[0]!;
+  expect(first.model_request_start_id).toBe("span_chat");
+  expect(assistantMessages(a.session_id, "other", saved)[0]!.id).toBe(first.id);
   const body = await requests[0]!.json();
-  expect(body).toMatchObject({ model: "chat-model", stream: true, n: 1, max_completion_tokens: 100, temperature: 0.5, stop: ["END"],
-    stream_options: { include_usage: true }, tools: [{ type: "function", function: { name: "Bash", parameters: { type: "object" } } }] });
-  expect(body.messages).toEqual([
-    { role: "system", content: "instructions" }, { role: "user", content: "Hello" },
-    { role: "assistant", content: null, tool_calls: [{ id: "call_a", type: "function", function: { name: "Bash", arguments: '{"command":"pwd"}' } }] },
-    { role: "tool", tool_call_id: "call_a", content: "permission denied" },
-  ]);
-  expect(chunks.some((chunk) => chunk.type === "usage")).toBe(false);
-  const finish = chunks.find((chunk) => chunk.type === "finish")!;
-  if (finish.type !== "finish") throw new Error("No finish");
-  const events = assistantMessages(a.session_id, "fallback", {
-    id: MessageId("saved"), role: "assistant", content: [{ type: "text", text: "answer" }],
-    source: { kind: "model", provider: "oma", model: "chat-model", replayState: finish.replayState },
-  });
-  expect(events[0]?.model_request_start_id).toBe("span_chat");
-  expect(events[0]?.id).not.toContain("fallback");
+  expect(body).toMatchObject({ model: "chat-model", stream: true, max_completion_tokens: 100, temperature: 0.5,
+    tools: [{ type: "function", function: { name: "Bash" } }] });
+  expect(body.messages.at(-1)).toMatchObject({ role: "tool", tool_call_id: "old_call", content: "stdout" });
+  expect(body.messages[1].tool_calls[0].function.arguments).toBe('{"command":"pwd"}');
 });
 
-test("model router selects root and child backends and re-reads rotated credentials", async () => {
-  const paths: string[] = [];
-  const tokens: string[] = [];
-  const agents: (string | null)[] = [];
+test("OMA selects backend by actual model while isolating concurrent session credentials", async () => {
+  const requests: Request[] = [];
   const api = new OmaApi("http://model.test", (async (input, init) => {
-    const request = new Request(input, init); const path = new URL(request.url).pathname;
-    paths.push(path); tokens.push(request.headers.get("Authorization")!);
-    agents.push(request.headers.get("X-Claude-Code-Agent-Id"));
-    if (path === "/v1/chat/completions") return response([textChunk(), "[DONE]"]);
-    return new Response(textEvents("root").map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""));
+    const request = new Request(input, init); requests.push(request);
+    if (new URL(request.url).pathname === "/v1/messages") return new Response(textEvents("anthropic").map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "Content-Type": "text/event-stream" } });
+    return response([textChunk(), "[DONE]"]);
   }) as typeof fetch);
-  const a = assignment(); a.launch.model_backends = { "anthropic-model": "messages", "chat-model": "chat_completions" };
-  api.assignments.set(a.session_id, a); api.modelSessions.set("child", a.session_id);
+  const a = assignment(); a.launch.model_backends = { "anthropic-model": "messages", "chat-model": "chat_completions" }; a.model_token = "root-token";
+  const b = assignment(); b.launch.model_backends = a.launch.model_backends; b.model_token = "other-token";
+  api.assignments.set(a.session_id, a); api.assignments.set(b.session_id, b); api.modelSessions.set("child", a.session_id);
   const adapter = new OmaModelAdapter(api);
-  await collect(adapter.stream(options(a.session_id, "anthropic-model")));
-  await collect(adapter.stream(options("child")));
-  a.model_token = "rotated";
-  await collect(adapter.stream(options(a.session_id)));
-  await collect(adapter.stream(options("child", "anthropic-model")));
-  expect(paths).toEqual(["/v1/messages", "/v1/chat/completions", "/v1/chat/completions", "/v1/messages"]);
-  expect(tokens.at(-1)).toBe("Bearer rotated");
-  expect(agents).toEqual([null, "child", null, "child"]);
-  expect(() => adapter.stream(options("child", "removed"))).toThrow("reload");
-});
-
-test("replay indices follow native assembly when tools precede text", async () => {
-  const { a, adapter } = setup([
-    { id: "chat_1", choices: [{ index: 0, delta: { tool_calls: [
-      { index: 1, id: "call_b", function: { name: "Read", arguments: "{}" } },
-      { index: 0, id: "call_a", function: { name: "Bash", arguments: "{}" } },
-    ] } }] },
-    { id: "chat_1", choices: [{ index: 0, delta: { content: "running" }, finish_reason: "tool_calls" }] },
-    "[DONE]",
+  await Promise.all([collect(adapter.stream(options(a.session_id, "anthropic-model"))), collect(adapter.stream(options("child"))), collect(adapter.stream(options(b.session_id)))]);
+  expect(requests.map((request) => [new URL(request.url).pathname, request.headers.get("authorization"), request.headers.get("x-claude-code-agent-id")])).toEqual([
+    ["/v1/messages", "Bearer root-token", null], ["/v1/chat/completions", "Bearer root-token", "child"], ["/v1/chat/completions", "Bearer other-token", null],
   ]);
-  const assembler = new BlockAssembler();
-  for (const chunk of await collect(adapter.stream(options(a.session_id)))) assembler.push(chunk);
-  const message = assembler.message({ provider: "oma", model: "chat-model", replayState: assembler.replayState });
-  expect(message.content.map((block) => block.type)).toEqual(["tool-call", "tool-call", "text"]);
-  expect(message.source.replayState).toMatchObject({ blocks: [{ index: 2 }, { index: 1 }, { index: 0 }] });
-  const events = assistantMessages(a.session_id, "fallback", message);
-  const textOnly = assistantMessages(a.session_id, "fallback", { ...message, content: [{ type: "text", text: "running" }],
-    source: { ...message.source, replayState: { response: { format: "oma-chat-completions-v1", messageID: "chat_1", requestID: "span_chat" }, blocks: [{ index: 0 }] } } });
-  expect(events[0]?.id).toBe(textOnly[0]?.id);
+  a.model_token = "rotated"; await collect(adapter.stream(options("child")));
+  expect(requests.at(-1)!.headers.get("authorization")).toBe("Bearer rotated");
+  await expect(collect(adapter.stream(options(a.session_id, "missing")))).rejects.toMatchObject({ code: "INVALID_ARGS" });
 });

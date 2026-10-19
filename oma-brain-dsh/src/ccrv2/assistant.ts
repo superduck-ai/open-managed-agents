@@ -22,7 +22,7 @@ export function assistantMessages(codeSessionID: string, fallback: string, messa
     const type = block.type === "reasoning" ? "agent.thinking" : "agent.message";
     const id = assistantEventID(codeSessionID, identity?.response?.messageID, identity?.blocks?.[index]?.index ?? index, type, fallback);
     return [{ type, id, uuid: id,
-      content: [block.type === "reasoning" ? { type: "thinking", thinking: block.text } : { type: "text", text: block.text }],
+      ...(block.type === "reasoning" ? {} : { content: [{ type: "text", text: block.text }] }),
       ...(identity?.response?.requestID ? { model_request_start_id: identity.response.requestID } : {}),
       ...(threadId ? { session_thread_id: threadId } : {}),
     }];

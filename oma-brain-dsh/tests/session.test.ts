@@ -65,7 +65,7 @@ describe("original dsh loop over CCRv2", () => {
     const messages = [...b.publicLog.values()].filter((event) => ["agent.thinking", "agent.message"].includes(event.type));
     expect(messages.map((event) => event.type)).toEqual(["agent.message", "agent.thinking", "agent.message"]);
     expect(messages.map((event) => event.content)).toEqual([
-      [{ type: "text", text: "" }], [{ type: "thinking", thinking: "检查回复" }], [{ type: "text", text: "你好" }],
+      [{ type: "text", text: "" }], undefined, [{ type: "text", text: "你好" }],
     ]);
     const replay = session.state.outbox;
     expect(replay).toEqual([]);
@@ -767,10 +767,11 @@ describe("original dsh loop over CCRv2", () => {
       });
     }
     expect(b.executions).toHaveLength(1);
-    expect([...b.publicLog.values()].filter((p) => p.type === "agent.thinking").map((p) => p.content)).toEqual([
-      [{ type: "thinking", thinking: "test reasoning" }],
-    ]);
+    const thinking = [...b.publicLog.values()].filter((p) => p.type === "agent.thinking");
+    expect(thinking).toHaveLength(1);
+    expect(thinking[0]).not.toHaveProperty("content");
     expect(JSON.stringify([...b.publicLog.values()])).not.toContain("opaque-signature");
+    expect(JSON.stringify([...b.publicLog.values()])).not.toContain("test reasoning");
   });
 
   test("a follow-up retains the completed assistant reply before the next user message", async () => {

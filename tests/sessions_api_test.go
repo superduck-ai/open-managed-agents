@@ -1018,7 +1018,6 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 		`"type":"user.message"`,
 		"private child prompt only in child stream",
 		`"type":"agent.thinking"`,
-		"private child thinking only in child stream",
 		`"type":"agent.message"`,
 		"private child answer only in child stream",
 		`"session_thread_id":"` + child.ID + `"`,
@@ -1027,7 +1026,7 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 			t.Fatalf("child transcript missing %q: %+v", want, childEvents.Data)
 		}
 	}
-	for _, leaked := range []string{`"agentId":"agent-a"`, `"_owner_session_thread_id"`, `"type":"session.thread_status_running"`} {
+	for _, leaked := range []string{`"agentId":"agent-a"`, `"_owner_session_thread_id"`, `"type":"session.thread_status_running"`, "private child thinking only in child stream"} {
 		if eventPageContains(childEvents, leaked) {
 			t.Fatalf("child transcript leaked internal field %q: %+v", leaked, childEvents.Data)
 		}

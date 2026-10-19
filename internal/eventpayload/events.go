@@ -171,6 +171,10 @@ func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID strin
 	if !found {
 		return db.SessionEventChanges{}, db.ErrNotFound
 	}
+	events, err = withoutThinkingContent(events)
+	if err != nil {
+		return db.SessionEventChanges{}, err
+	}
 	if ifAbsent {
 		events, err = s.skipPersistedLargeEvents(ctx, workspaceUUID, sessionID, events)
 		if err != nil {

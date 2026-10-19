@@ -32,6 +32,14 @@
 
 规则变更应先在本地通过 `just lint`、`just dead-code` 和 `just duplicates`，再提交配置与必要的代码修复；不要通过全局排除、提高重复率预算、`nolint`、伪造引用或跳过标记隐藏既有问题。
 
+## Herdr 辅助审查
+
+`herdr/review.py` 在当前 Herdr tab 中启动 grok 和 cckimi 并行审查，再将两份终端记录交给独立的 Codex agent。Codex 合并发现、核实代码依据并决定是否修复，修复结果仍受本文件的质量门禁约束。默认范围为当前工作区相对 HEAD 的全部未提交改动，也可显式指定范围。
+
+review 阶段只允许读取代码，终端记录不完整时允许另写临时报告。脚本比较 review 前后的工作区内容摘要，发生变化时停止后续修复。该检查不提供文件系统隔离。审批、失败或超时均中断编排，不代答审批、不自动重投任务，保留 pane 和 `tmp/herdr-review/<run_id>/` 下的记录供检查。终端记录缺少报告首尾标记时，Grok 通过指定 session 的 `export` 恢复，cckimi 按 Herdr 恢复流程写出完整临时报告；无法取得完整报告时停止修复。Grok 的 `agent_prompt_stalled` 仅在已处于 idle/done 且 session 导出含完整最终报告时接受，原错误仍保留。`finished` 表示回合结束且结论文件存在，具体修复和检查结果以 `conclusion.md` 为准。
+
+该编排不自动提交或推送，也不授权 `verify-be`。脚本逻辑通过 `python3 -m unittest discover -s herdr -p 'test_*.py'` 验证；运行入口、依赖和现场处理见 `herdr/README.md`。
+
 ## 验收
 
 生成缓存的验收使用 `go test ./cmd/generate-go -count=1`，覆盖失败、中断、并发、输入和产物变化、删除 Mapper、强制重建、无关代码修改及重启脚本。两个 Just 入口另用 `just --dry-run server` 和 `just --dry-run restart-server` 确认只调用一次重启脚本；Go 单测不依赖 Just。DB 实际生成后执行 `go test ./internal/db -count=1`，确认生成代码可编译且 Mapper 测试通过。

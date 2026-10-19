@@ -1,3 +1,4 @@
+import type { APIBackend } from './api';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from '@tanstack/react-router';
@@ -105,14 +106,14 @@ function LLMModelsAdminPage() {
   };
 
   const discoverModels = useCallback(
-    async (baseUrl: string, apiKey: string) => {
+    async (baseUrl: string, apiKey: string, apiBackend: APIBackend) => {
       if (!orgUuid) {
         throw new Error(msg('llmModels.noOrganization', 'No organization is available.'));
       }
       const preview = await previewProviderModels(
         orgUuid,
         workspaceId,
-        { base_url: baseUrl, api_key: apiKey },
+        { base_url: baseUrl, api_key: apiKey, api_backend: apiBackend },
         csrfToken,
       );
       return preview.model_ids ?? [];

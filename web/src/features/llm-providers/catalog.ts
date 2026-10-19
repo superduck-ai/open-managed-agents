@@ -152,6 +152,7 @@ export function providerHost(baseUrl: string): string {
 export function providerInput(provider: LLMProvider, modelIds: string[]) {
   return {
     name: provider.name,
+    api_backend: provider.api_backend,
     base_url: provider.base_url,
     model_ids: modelIds,
   };

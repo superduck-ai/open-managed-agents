@@ -106,3 +106,90 @@ DSH Brain 源码作为主仓库的 `oma-brain-dsh/` 普通目录维护，使用�
 不是独立的 Go package；当前后端验收继续使用 `tests/liveworker/` 中的场景。
 
 领取接口对缺少或错误的 fleet token 返回 401，对缺少 `X-Worker-ID` 或越界的 `block_ms` 返回 400；release 接受 `admission_failed`、`shutdown`、`idle` 与 `permanent` 四种原因，领取已不属于调用方时返回 409。响应设置 `Cache-Control: no-store`，运行日志只记录 `worker_id`、`code_session_id`、`worker_epoch` 等元数据，不记录凭据。
+
+## 模型 API backend
+
+Provider 的 `api_backend` 决定 Brain 模型适配器，当前支持 `messages` 和 `chat_completions`。
+`GET /v2/sessions/{id}` 为 claim transport 在 `session_context.model_backends` 返回当前 workspace 的
+模型 ID 到 backend 映射，不包含上游 URL 或 Key。映射构建失败返回 500 `api_error`，
+公开文案为 `Could not resolve model API backends`；MCP 配置构建失败保留独立的 MCP 错误文案。
+子 Agent 继承与覆盖模型、运行时切换模型均按实际
+请求 model 查表。旧服务端没有该字段时沿用 Messages；显式映射中缺少模型或 backend 不支持时失败。
+
+```mermaid
+flowchart LR
+    Runtime[Brain 主 Agent / 子 Agent] --> Adapter["llm-ai-sdk 插件<br/>AiSdkAdapter"]
+    Adapter -- route / history / 回调 --> OMA["OMA 模型配置<br/>model.ts · model-provider.ts"]
+    OMA --> SDK["@ai-sdk/anthropic / @ai-sdk/openai-compatible"]
+    Adapter -- doStream --> SDK
+    SDK --> Transport[OMA fetch transport]
+    Transport --> Proxy[Go 模型代理]
+    Proxy --> Lifecycle[请求 span / 公开事件 / 用量]
+    Proxy --> Provider[Workspace Provider]
+```
+
+DSH 仍使用 provider `oma`，它表示平台模型适配器，不是用户配置的 Provider。路由映射在会话注册与
+恢复时读取，Go 每次代理请求重新解析 Provider 并检查 backend。运行期间修改 Provider backend
+可能使旧映射失效，此时明确报错并要求重新加载会话配置，不静默切换协议或自动重发。
+
+Brain 只依赖 Vercel AI SDK 的 provider 层：`@ai-sdk/anthropic` 处理 Messages，
+`@ai-sdk/openai-compatible` 处理 Chat Completions，二者都输出同一种 `LanguageModelV4`
+stream part，并精确锁定版本。Brain 不引入 `ai` 核心包，也不使用其 `streamText`、重试或
+工具执行循环；只调用 `doStream`，SSE 解析、协议字段编码和分片工具参数累积由 SDK 负责。
+两种 provider 都以字符串追加累积工具参数，大参数流保持线性耗时，
+`chat-completions.test.ts` 用 400 KB 参数守住该性质。
+
+### 通用 adapter 与 OMA 配置的边界
+
+协议转换位于 `oma-brain-dsh/src/llm-ai-sdk/`，按 DSH 插件形态组织（`name`、`inject: ["llm"]`、
+`apply`、`Config`），只依赖 `@ai-sdk/*` 与 `@deepseek-ai/*`，不导入任何 OMA 模块；
+`tests/llm-ai-sdk.test.ts` 守护该依赖方向。它目前只有 OMA 一个使用者，因此留在仓库内；
+出现第二个使用者时可原样发布为独立 DSH 插件包，并补充模型目录、上下文窗口和配置化路由。
+
+- `route.ts`：`AiSdkRoute` 描述一次调用使用的 `LanguageModelV4`、replay 格式名、是否需要签名
+  reasoning、默认输出上限和 provider options；`AiSdkAdapterOptions` 定义 `route`、`history`
+  与 `onCallStart`、`onRequestBody`、`onMessageID` 回调。
+- `prompt.ts`：把 DSH 历史转换为 AI SDK prompt。系统提示合并为首条 system 消息；
+  工具调用参数解析失败时保留 `__unparsedToolInput` 占位对象；工具结果只接受文本，
+  错误结果映射为 `error-text`。需要签名的路由只在同格式 replay 带有 `signature` 或
+  `redactedData` 时回传 thinking，否则降级为文本；其他路由以 reasoning 回传
+  （Chat 为 `reasoning_content`）。temperature 与 stop 原样传递，每次调用附带 DSH
+  `attributionHeaders()`。
+- `stream.ts`：把 stream part 映射为 DSH `StreamChunk`。内容块按 SDK part ID 首次出现顺序
+  编号：Messages 的文本与 thinking 对应原生 content block index，Chat 依次为 reasoning、
+  文本和各工具，与 Go observer 的编号一致（规则见 `messages-proxy.md`）。block-end 在终态统一发出；`tool-calls` 必须含工具，
+  `stop` 不能含工具，`length` 映射为 max-tokens，其余结束原因或缺少终态均视为
+  `TRANSPORT` 失败，无内容为 `EMPTY_RESPONSE`。
+- `adapter.ts`：`AiSdkAdapter` 串联上述步骤，处理取消并把错误转换为 `LlmError`。
+- `index.ts`：插件入口，按 `providers` 注册 adapter。
+
+OMA 侧只提供配置，由 `plugin.ts` 以 `providers: ["oma"]` 加载插件：
+
+- `model-provider.ts`：按会话取得 assignment 与实际模型的 backend，每次请求用当前 model token
+  创建 provider，Messages 使用 `authToken`（Bearer），Chat 使用 `apiKey`（Bearer）。自定义 fetch
+  只允许向对应 Go 代理路径发送 POST，删除 `x-api-key`，为子 Agent 设置
+  `X-Claude-Code-Agent-Id`，禁止重定向，总超时 300 秒。Messages 路由默认输出上限 8192，
+  关闭 SDK 默认的 `eager_input_streaming`；Chat 未显式指定时不发送上限，并把 `max_tokens`
+  改名为 `max_completion_tokens`。
+- `chat-reasoning.ts`：Chat 响应进入 AI SDK 前按与 Go 相同的规则规范化 reasoning 字段，
+  只保留 `reasoning_content`，弥补 SDK 只识别 `reasoning_content ?? reasoning` 的差异。
+  按完整 SSE 事件处理：多行 `data:` 先按规范拼接再解析，只有负载包含 `"reasoning` 的事件
+  才会改写为单行 `data:`，其余事件与 `id:`、`event:` 等字段原样通过；跨网络分片的行先缓冲，
+  保留 CRLF，并移除失效的 `content-length`。
+- `model.ts`：`omaModelOptions` 组合路由，并用回调维护 `modelResponses`、记录系统提示诊断；
+  `history` 把旧 `kind=pi-ai` replay 中的 `thinkingSignature` 转为 `oma-messages-v1` 签名。
+
+错误以 `LlmError` 抛出，由 DSH 运行时转换为终态 finish chunk。HTTP 错误优先读取响应体
+`error.message`，按上下文超限、额度耗尽、429、401/403、5xx 分类；流内错误同样分类。
+取消时 adapter 主动取消 SDK stream，从而关闭到 Go 代理的 HTTP 响应体。
+
+replay 继续使用 `oma-messages-v1` 与 `oma-chat-completions-v1`。response 保存模型消息 ID、
+Go Request-Id 与原始结束原因；blocks 保存每个内容块的公开事件索引，Messages 另存
+thinking 签名或 redacted 数据。CCRv2 实时预览、完成消息与历史恢复使用这些元数据生成
+同一组稳定事件 ID。旧 `kind=pi-ai` replay 中的 `thinkingSignature` 仍可回传。
+
+Worker 单测位于 `oma-brain-dsh/tests/chat-completions.test.ts` 与 `adapters.test.ts`，覆盖异常流、
+HTTP 与流内错误、取消、工具分片、大参数线性耗时、用量尾帧、历史编码、公开身份、
+主子模型 backend 选择和凭据轮换。
+
+`oma-brain-dsh/tests/chat-runtime.test.ts` 通过原生 Brain 与本地协议 fixture 执行工具审批、工具结果下一轮回传、关闭后历史恢复，确认恢复不会重复执行已完成的工具。该测试不连接真实模型或 Worker 沙箱。

@@ -42,3 +42,14 @@ flowchart LR
 - 模型 ID 仍是上游真实 ID，页面不映射、不改写。
 - 明文 Key 不进入前端存储；读取接口只展示 `api_key_last4`。
 - 不新增独立 Model 表；启用集合仍然是 Provider 上的 `model_ids`。
+
+## API backend
+
+Provider 表单使用共享 shadcn Select 选择 `messages` 或 `chat_completions`。已有配置默认为
+Messages，编辑时保留当前值；Responses 暂不展示也不接受保存。选择 Chat Completions 时显示仅支持
+Brain 模式，并显示服务端追加的 `/v1/chat/completions` 路径，Messages 显示 `/v1/messages`。
+Base URL 仍填写 API 根地址，允许路径前缀，不重复填写 `/v1`。
+
+创建、编辑和模型预览请求均携带 `api_backend`；模型同步由后端使用已保存的 backend。
+模型增删等局部操作的完整 Provider 更新也必须保留该字段，避免将 Chat Completions 配置重置为 Messages。
+组件测试覆盖选择 backend、模型发现、创建与编辑保留，并断言 Responses 选项不可用。

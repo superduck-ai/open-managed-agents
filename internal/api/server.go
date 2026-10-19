@@ -373,6 +373,7 @@ func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 		r.Mount("/mcp", s.tunnelIngress)
 	}
 	r.Post("/messages", s.messages.Create)
+	r.Post("/chat/completions", s.messages.ChatCompletions)
 	r.Mount("/messages/batches", s.batch)
 	r.Mount("/models", s.models)
 	r.Mount("/organizations", s.admin)

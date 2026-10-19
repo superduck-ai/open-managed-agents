@@ -24,6 +24,7 @@ import (
 // responseObservation forwards bytes unchanged and buffers public content until
 // message_stop, so the completed messages and their end can be published together.
 type responseObservation struct {
+	chat         *chatObservation
 	onComplete   func()
 	request      *codesessions.ModelRequest
 	result       codesessions.ModelRequestResult
@@ -76,6 +77,9 @@ func (h *Handler) beginModelRequest(r *http.Request, principal auth.Principal, m
 
 func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Request, request *codesessions.ModelRequest) {
 	observation := &responseObservation{request: request}
+	if r.URL.Path == "/v1/chat/completions" {
+		observation.chat = &chatObservation{}
+	}
 	if request != nil {
 		// Claude Code copies this header to assistant.request_id, including HTTP errors.
 		w.Header().Set("Request-Id", request.StartID)
@@ -94,6 +98,9 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 	defer response.Body.Close()
 	if request != nil {
 		observation.result.UpstreamRequestID = response.Header.Get("Request-Id")
+		if observation.result.UpstreamRequestID == "" {
+			observation.result.UpstreamRequestID = response.Header.Get("X-Request-Id")
+		}
 		if response.StatusCode == http.StatusUnauthorized {
 			observation.result.ErrorType = "http_error"
 			w.Header().Set("X-Should-Retry", "false")
@@ -190,6 +197,10 @@ func (o *responseObservation) Write(data []byte) (int, error) {
 }
 
 func (o *responseObservation) observeFrame(data []byte) {
+	if o.chat != nil {
+		o.chat.observe(o, data)
+		return
+	}
 	var event responseStreamEvent
 	if err := json.Unmarshal(data, &event); err != nil {
 		o.malformed = true
@@ -286,6 +297,9 @@ func (o *responseObservation) addEventID(index int, blockType string) {
 }
 
 func (o *responseObservation) finish() {
+	if o.chat != nil && !o.complete && !o.malformed && o.result.ErrorType == "" && o.chat.finishReason != "" {
+		o.chat.complete(o)
+	}
 	if !o.streaming && !o.complete && !o.malformed && (o.result.ErrorType == "" || o.result.ErrorType == "stream_error") {
 		var message responseMessage
 		if err := json.Unmarshal(o.buffer, &message); err != nil || message.ID == "" || message.Type != "message" {

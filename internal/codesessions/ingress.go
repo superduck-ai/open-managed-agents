@@ -668,6 +668,14 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 	if policies != nil {
 		sessionContext["runtime_tool_permissions"] = policies
 	}
+	if usesBrainClaimTransport(record) {
+		backends, err := h.service.modelBackends(r.Context(), record)
+		if err != nil {
+			h.errorAdapter.Write(w, r, sessionModelBackendsFailure(err))
+			return
+		}
+		sessionContext["model_backends"] = backends
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{
 		"session_context": sessionContext,

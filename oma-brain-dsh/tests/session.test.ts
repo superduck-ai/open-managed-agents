@@ -95,7 +95,8 @@ describe("original dsh loop over CCRv2", () => {
       input: { __unparsedToolInput: { raw, len: raw.length } } });
     const result = blocks.find((block: Payload) => block.type === "tool_result");
     expect(result).toMatchObject({ tool_use_id: "call_1", is_error: true });
-    expect(result.content[0].text.length).toBeGreaterThan(0);
+    expect(typeof result.content).toBe("string");
+    expect(result.content.length).toBeGreaterThan(0);
     const published = [...b.publicLog.values()].find((event) => event.type === "user");
     expect(published?.message.content[0]).toMatchObject({ tool_use_id: "call_1", is_error: true });
     expect(b.publicLog.get("malformed_result")?.is_error).toBe(false);
@@ -120,10 +121,10 @@ describe("original dsh loop over CCRv2", () => {
     await session.receive("stdout", { message: { content: "run" } });
     const result = b.requests[1]!.messages.flatMap((m: Payload) => m.content)
       .find((block: Payload) => block.type === "tool_result");
-    expect(result).toMatchObject({ tool_use_id: "call_1", is_error: false,
-      content: [{ type: "text", text: "exact stdout\n" }] });
+    expect(result).toEqual({ type: "tool_result", tool_use_id: "call_1", content: "exact stdout\n" });
     const published = [...b.publicLog.values()].find((event) => event.type === "user");
-    expect(published?.message.content[0]).toEqual(result);
+    expect(published?.message.content[0]).toMatchObject({ tool_use_id: "call_1", is_error: false,
+      content: [{ type: "text", text: result.content }] });
     expect(b.publicLog.get("stdout_result")?.is_error).toBe(false);
   });
 

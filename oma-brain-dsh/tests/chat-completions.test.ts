@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { BlockAssembler, MessageId, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { OmaApi } from "../src/api.ts";
-import { OmaModelAdapter } from "../src/model.ts";
+import { AiSdkAdapter } from "../src/llm-ai-sdk/index.ts";
+import { omaModelOptions } from "../src/model.ts";
 import { assistantMessages } from "../src/ccrv2/assistant.ts";
 import { assignment, textEvents } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
@@ -27,7 +28,7 @@ function setup(chunks: (Payload | string)[]) {
   }) as typeof fetch);
   const a = assignment(); a.launch.model_backends = { "chat-model": "chat_completions" };
   api.assignments.set(a.session_id, a);
-  return { api, a, requests, adapter: new OmaModelAdapter(api) };
+  return { api, a, requests, adapter: new AiSdkAdapter(omaModelOptions(api)) };
 }
 function textChunk(text = "answer", finish: string | null = "stop"): Payload {
   return { id: "chat_1", choices: [{ index: 0, delta: { content: text }, finish_reason: finish }] };
@@ -38,7 +39,7 @@ test("Chat adapter reports HTTP errors without retrying the OMA model request", 
     let requests = 0;
     const api = new OmaApi("http://model.test", (async (_input, _init) => { requests++; return Response.json({ error: { message: "denied" } }, { status }); }) as typeof fetch);
     const a = assignment(); a.launch.model_backends = { "chat-model": "chat_completions" }; api.assignments.set(a.session_id, a);
-    await expect(collect(new OmaModelAdapter(api).stream(options(a.session_id)))).rejects.toMatchObject({ code, message: "denied" });
+    await expect(collect(new AiSdkAdapter(omaModelOptions(api)).stream(options(a.session_id)))).rejects.toMatchObject({ code, message: "denied" });
     expect(requests).toBe(1);
   }
 });
@@ -64,7 +65,7 @@ test("Chat adapter cancellation cancels the OMA HTTP stream", async () => {
   }))) as typeof fetch);
   const a = assignment(); a.launch.model_backends = { "chat-model": "chat_completions" }; api.assignments.set(a.session_id, a);
   const controller = new AbortController();
-  const iterator = new OmaModelAdapter(api).stream({ ...options(a.session_id), signal: controller.signal })[Symbol.asyncIterator]();
+  const iterator = new AiSdkAdapter(omaModelOptions(api)).stream({ ...options(a.session_id), signal: controller.signal })[Symbol.asyncIterator]();
   expect((await iterator.next()).value).toMatchObject({ type: "block-start" });
   expect((await iterator.next()).value).toMatchObject({ type: "text-delta", text: "partial" });
   controller.abort();
@@ -152,7 +153,7 @@ test("OMA selects backend by actual model while isolating concurrent session cre
   const a = assignment(); a.launch.model_backends = { "anthropic-model": "messages", "chat-model": "chat_completions" }; a.model_token = "root-token";
   const b = assignment(); b.launch.model_backends = a.launch.model_backends; b.model_token = "other-token";
   api.assignments.set(a.session_id, a); api.assignments.set(b.session_id, b); api.modelSessions.set("child", a.session_id);
-  const adapter = new OmaModelAdapter(api);
+  const adapter = new AiSdkAdapter(omaModelOptions(api));
   await Promise.all([collect(adapter.stream(options(a.session_id, "anthropic-model"))), collect(adapter.stream(options("child"))), collect(adapter.stream(options(b.session_id)))]);
   expect(requests.map((request) => [new URL(request.url).pathname, request.headers.get("authorization"), request.headers.get("x-claude-code-agent-id")]).sort()).toEqual([
     ["/v1/messages", "Bearer root-token", null], ["/v1/chat/completions", "Bearer root-token", "child"], ["/v1/chat/completions", "Bearer other-token", null],

@@ -1,31 +1,42 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { LanguageModelV4 } from "@ai-sdk/provider";
-import { LlmError } from "@deepseek-ai/dsh-llm";
+import { LlmError, type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { OmaApi } from "./api.ts";
 import type { Assignment } from "./assignment.ts";
+import type { AiSdkRoute } from "./llm-ai-sdk/index.ts";
 
-export type ModelBackend = "messages" | "chat_completions";
+type ModelBackend = "messages" | "chat_completions";
 
 const MODEL_TIMEOUT_MS = 300_000;
+const MESSAGES_DEFAULT_MAX_TOKENS = 8192;
 
-export function modelBackend(assignment: Assignment, model: string): ModelBackend {
-  const backend = assignment.launch.model_backends ? assignment.launch.model_backends[model] : "messages";
-  if (backend !== "messages" && backend !== "chat_completions")
-    throw new LlmError("Model API backend is unavailable; reload the session configuration", "INVALID_ARGS");
-  return backend;
+export function modelSessionID(options: GenerateOptions): string {
+  if (!options.sessionId) throw new LlmError("Model request has no session identity", "INVALID_ARGS");
+  return String(options.sessionId);
 }
 
-export function languageModel(api: OmaApi, assignment: Assignment, backend: ModelBackend, sessionId: string, model: string): LanguageModelV4 {
+export function omaRoute(api: OmaApi, options: GenerateOptions): AiSdkRoute {
+  const sessionId = modelSessionID(options);
+  const assignment = api.assignment(api.modelSessions.get(sessionId) ?? sessionId);
+  const backend = modelBackend(assignment, options.model);
   const root = `${api.base.replace(/\/$/, "")}/v1`;
   const agentID = sessionId === assignment.session_id ? undefined : sessionId;
   if (backend === "messages") {
     const fetcher = proxyFetch(api, `${root}/messages`, agentID);
-    return createAnthropic({ baseURL: root, authToken: assignment.model_token, fetch: fetcher })(model);
+    return { model: createAnthropic({ baseURL: root, authToken: assignment.model_token, fetch: fetcher })(options.model),
+      replayFormat: "oma-messages-v1", signedReasoning: true, maxOutputTokens: MESSAGES_DEFAULT_MAX_TOKENS,
+      providerOptions: { anthropic: { toolStreaming: false } } };
   }
   const fetcher = proxyFetch(api, `${root}/chat/completions`, agentID);
-  return createOpenAICompatible({ name: "oma", baseURL: root, apiKey: assignment.model_token, includeUsage: true,
-    fetch: fetcher, transformRequestBody: chatRequestBody })(model);
+  return { model: createOpenAICompatible({ name: "oma", baseURL: root, apiKey: assignment.model_token, includeUsage: true,
+    fetch: fetcher, transformRequestBody: chatRequestBody })(options.model), replayFormat: "oma-chat-completions-v1" };
+}
+
+function modelBackend(assignment: Assignment, model: string): ModelBackend {
+  const backend = assignment.launch.model_backends ? assignment.launch.model_backends[model] : "messages";
+  if (backend !== "messages" && backend !== "chat_completions")
+    throw new LlmError("Model API backend is unavailable; reload the session configuration", "INVALID_ARGS");
+  return backend;
 }
 
 function chatRequestBody({ max_tokens: maxTokens, ...body }: Record<string, any>): Record<string, any> {

@@ -4,7 +4,6 @@ import {
   LlmError, ToolCallId, isContextWindowExceededError, isQuotaExceededError,
   type ContentBlock, type FinishReason, type StreamChunk, type TokenUsage,
 } from "@deepseek-ai/dsh-llm";
-import type { ModelBackend } from "./model-provider.ts";
 
 interface BlockState {
   index: number;
@@ -13,15 +12,13 @@ interface BlockState {
   redactedData?: string;
 }
 
-const REPLAY_FORMATS: Record<ModelBackend, string> = { messages: "oma-messages-v1", chat_completions: "oma-chat-completions-v1" };
-
-export class ModelStream {
+export class AiSdkStream {
   messageID?: string;
   private readonly blocks = new Map<string, BlockState>();
   private usage?: TokenUsage;
   private finishReason?: LanguageModelV4FinishReason;
 
-  constructor(private readonly backend: ModelBackend, private readonly requestID?: string) {}
+  constructor(private readonly replayFormat: string, private readonly requestID?: string) {}
 
   accept(part: LanguageModelV4StreamPart): StreamChunk[] {
     switch (part.type) {
@@ -50,7 +47,7 @@ export class ModelStream {
       ...states.map((state): StreamChunk => ({ type: "block-end", index: state.index, block: closed(state.block) })),
       ...(this.usage ? [{ type: "usage" as const, usage: this.usage }] : []),
       { type: "finish", reason, replayState: {
-        response: { format: REPLAY_FORMATS[this.backend], stopReason: this.finishReason?.raw,
+        response: { format: this.replayFormat, stopReason: this.finishReason?.raw,
           ...(this.messageID ? { messageID: this.messageID } : {}), ...(this.requestID ? { requestID: this.requestID } : {}) },
         blocks: states.map((state) => ({ index: state.index,
           ...(state.signature ? { signature: state.signature } : {}), ...(state.redactedData ? { redactedData: state.redactedData } : {}) })),

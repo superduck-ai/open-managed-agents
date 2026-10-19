@@ -4,7 +4,8 @@ import { createOmaCcrClient, logOmaHeartbeatHealth, stopOmaSessionOnLeaseLoss } 
 import type { CcrClient } from "./ccrv2";
 import * as CcrBridge from "./ccrv2/index.ts";
 import { mountKernel } from "./kernel.ts";
-import { OmaModelAdapter } from "./model.ts";
+import * as LlmAiSdk from "./llm-ai-sdk/index.ts";
+import { omaModelOptions } from "./model.ts";
 import { startWorkers } from "./worker.ts";
 import { BrainClaimClient } from "./claim.ts";
 import { required, readBrainClaimOptions, readCcrHeartbeatOptions } from "./config.ts";
@@ -27,12 +28,7 @@ export async function mountOma(
       onHealth: logOmaHeartbeatHealth,
     },
   });
-  await ctx.plugin({
-    inject: ["llm"],
-    apply: (scope: Context) => {
-      scope.llm.registerAdapter(["oma"], new OmaModelAdapter(api));
-    },
-  });
+  await ctx.plugin(LlmAiSdk, { providers: ["oma"], adapter: omaModelOptions(api) });
   return client;
 }
 

@@ -113,15 +113,14 @@ Provider 的 `api_backend` 决定 Brain 模型适配器，当前支持 `messages
 
 ```mermaid
 flowchart LR
-    Runtime[Brain 主 Agent / 子 Agent] --> OMA[OmaModelAdapter]
-    OMA --> Prompt[DSH 历史 → AI SDK V4 prompt]
-    Prompt --> SDK["@ai-sdk/anthropic / @ai-sdk/openai-compatible doStream"]
+    Runtime[Brain 主 Agent / 子 Agent] --> Adapter["llm-ai-sdk 插件<br/>AiSdkAdapter"]
+    Adapter -- route / history / 回调 --> OMA["OMA 模型配置<br/>model.ts · model-provider.ts"]
+    OMA --> SDK["@ai-sdk/anthropic / @ai-sdk/openai-compatible"]
+    Adapter -- doStream --> SDK
     SDK --> Transport[OMA fetch transport]
     Transport --> Proxy[Go 模型代理]
     Proxy --> Lifecycle[请求 span / 公开事件 / 用量]
     Proxy --> Provider[Workspace Provider]
-    SDK --> Stream[V4 stream part → DSH StreamChunk]
-    Stream --> Runtime
 ```
 
 DSH 仍使用 provider `oma`，它表示平台模型适配器，不是用户配置的 Provider。路由映射在会话注册与
@@ -135,24 +134,40 @@ stream part，并精确锁定版本。Brain 不引入 `ai` 核心包，也不使
 两种 provider 都以字符串追加累积工具参数，大参数流保持线性耗时，
 `chat-completions.test.ts` 用 400 KB 参数守住该性质。
 
-`OmaModelAdapter` 只负责三件事，分别位于三个文件：
+### 通用 adapter 与 OMA 配置的边界
 
-- `model-provider.ts`：按实际模型选择 backend，每次请求用当前 model token 创建 provider，
-  Messages 使用 `authToken`（Bearer），Chat 使用 `apiKey`（Bearer）。自定义 fetch 只允许向
-  对应 Go 代理路径发送 POST，删除 `x-api-key`，为子 Agent 设置 `X-Claude-Code-Agent-Id`，
-  禁止重定向，总超时 300 秒。Chat 请求体把 `max_tokens` 改名为 `max_completion_tokens`。
-- `model-prompt.ts`：把 DSH 历史转换为 AI SDK prompt。系统提示合并为首条 system 消息；
+协议转换位于 `oma-brain-dsh/src/llm-ai-sdk/`，按 DSH 插件形态组织（`name`、`inject: ["llm"]`、
+`apply`、`Config`），只依赖 `@ai-sdk/*` 与 `@deepseek-ai/*`，不导入任何 OMA 模块；
+`tests/llm-ai-sdk.test.ts` 守护该依赖方向。它目前只有 OMA 一个使用者，因此留在仓库内；
+出现第二个使用者时可原样发布为独立 DSH 插件包，并补充模型目录、上下文窗口和配置化路由。
+
+- `route.ts`：`AiSdkRoute` 描述一次调用使用的 `LanguageModelV4`、replay 格式名、是否需要签名
+  reasoning、默认输出上限和 provider options；`AiSdkAdapterOptions` 定义 `route`、`history`
+  与 `onCallStart`、`onRequestBody`、`onMessageID` 回调。
+- `prompt.ts`：把 DSH 历史转换为 AI SDK prompt。系统提示合并为首条 system 消息；
   工具调用参数解析失败时保留 `__unparsedToolInput` 占位对象；工具结果只接受文本，
-  错误结果映射为 `error-text`。Messages 的 reasoning 仅在 replay 中有 `signature` 或
-  `redactedData` 时作为 thinking 回传，否则降级为文本；Chat 的 reasoning 以
-  `reasoning_content` 回传。Messages 默认输出上限 8192，Chat 未显式指定时不发送上限；
-  temperature 与 stop 原样传递。Messages 关闭 SDK 默认的 `eager_input_streaming`，
-  避免向 Anthropic 兼容网关发送非必需字段。
-- `model-stream.ts`：把 stream part 映射为 DSH `StreamChunk`。内容块按 SDK part ID 首次
-  出现顺序编号：Messages 的文本与 thinking 使用原生 content block index，Chat 依次为文本、
-  reasoning 和各工具，与 Go observer 的编号一致。block-end 在终态统一发出；
-  `tool-calls` 必须含工具，`stop` 不能含工具，`length` 映射为 max-tokens，其余结束原因
-  或缺少终态均视为 `TRANSPORT` 失败，无内容为 `EMPTY_RESPONSE`。
+  错误结果映射为 `error-text`。需要签名的路由只在同格式 replay 带有 `signature` 或
+  `redactedData` 时回传 thinking，否则降级为文本；其他路由以 reasoning 回传
+  （Chat 为 `reasoning_content`）。temperature 与 stop 原样传递，每次调用附带 DSH
+  `attributionHeaders()`。
+- `stream.ts`：把 stream part 映射为 DSH `StreamChunk`。内容块按 SDK part ID 首次出现顺序
+  编号：Messages 的文本与 thinking 对应原生 content block index，Chat 依次为文本、reasoning
+  和各工具，与 Go observer 的编号一致。block-end 在终态统一发出；`tool-calls` 必须含工具，
+  `stop` 不能含工具，`length` 映射为 max-tokens，其余结束原因或缺少终态均视为
+  `TRANSPORT` 失败，无内容为 `EMPTY_RESPONSE`。
+- `adapter.ts`：`AiSdkAdapter` 串联上述步骤，处理取消并把错误转换为 `LlmError`。
+- `index.ts`：插件入口，按 `providers` 注册 adapter。
+
+OMA 侧只提供配置，由 `plugin.ts` 以 `providers: ["oma"]` 加载插件：
+
+- `model-provider.ts`：按会话取得 assignment 与实际模型的 backend，每次请求用当前 model token
+  创建 provider，Messages 使用 `authToken`（Bearer），Chat 使用 `apiKey`（Bearer）。自定义 fetch
+  只允许向对应 Go 代理路径发送 POST，删除 `x-api-key`，为子 Agent 设置
+  `X-Claude-Code-Agent-Id`，禁止重定向，总超时 300 秒。Messages 路由默认输出上限 8192，
+  关闭 SDK 默认的 `eager_input_streaming`；Chat 未显式指定时不发送上限，并把 `max_tokens`
+  改名为 `max_completion_tokens`。
+- `model.ts`：`omaModelOptions` 组合路由，并用回调维护 `modelResponses`、记录系统提示诊断；
+  `history` 把旧 `kind=pi-ai` replay 中的 `thinkingSignature` 转为 `oma-messages-v1` 签名。
 
 错误以 `LlmError` 抛出，由 DSH 运行时转换为终态 finish chunk。HTTP 错误优先读取响应体
 `error.message`，按上下文超限、额度耗尽、429、401/403、5xx 分类；流内错误同样分类。

@@ -207,6 +207,15 @@ func eventPayloadForResponse(payloadRaw json.RawMessage, processedAt time.Time, 
 	}
 	_, changed := payload["created_at"]
 	delete(payload, "created_at")
+	if payload["type"] == "agent.thinking" {
+		_, hasContent := payload["content"]
+		_, hasMessage := payload["message"]
+		if hasContent || hasMessage {
+			delete(payload, "content")
+			delete(payload, "message")
+			changed = true
+		}
+	}
 	if payload["type"] == "user.message" {
 		if processedAt.IsZero() {
 			payload["processed_at"] = nil

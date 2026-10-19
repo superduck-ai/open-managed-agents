@@ -265,6 +265,6 @@ nil 保持缺失，显式 0 保留。没有来源的计费金额、active_second
 
 ### Thinking 正文合同
 
-代理解析流式 `thinking_delta` 并累计到对应 content block，非流式响应读取 `thinking` 字段；按 CMA 契约，公开的 `agent.thinking` 只是进度信号：`eventpayload` 在写入公开事件前统一去掉 `content` 与 `message`，历史、SSE 与 webhook 都不含思考正文；Brain 也不再发送正文。thinking 与 text/input 共享现有 4 MiB 观察容量上限。Worker assistant 映射产生的正文同样在写入前去掉，签名字段从不公开。`redacted_thinking` 继续只产生无正文的 `agent.thinking`。改动前已持久化的带正文事件保持原样，不做回填或清理。
+代理解析流式 `thinking_delta` 并累计到对应 content block，非流式响应读取 `thinking` 字段；按 CMA 契约，公开的 `agent.thinking` 只是进度信号：`eventpayload` 在写入公开事件前统一去掉 `content` 与 `message`，历史、SSE 与 webhook 都不含思考正文；Brain 也不再发送正文。thinking 与 text/input 共享现有 4 MiB 观察容量上限。Worker assistant 映射产生的正文同样在写入前去掉，签名字段从不公开。`redacted_thinking` 继续只产生无正文的 `agent.thinking`。改动前已持久化的带正文事件不改写数据库，而是在读取时隐藏：历史、线程事件、发送响应与 SSE 共用的响应构造会去掉 `agent.thinking` 的 `content` 与 `message`。
 
 Worker 输入的 processing/processed 回执先在同一个 Yourbatis 事务中按 Session → Worker 的顺序持锁，校验 Worker 的租户、Session 归属、active 状态和 epoch，再提交尚未处理消息的处理时间，并沿用原路径清除 Worker 空闲计时。凭据轮换先完成时拒绝旧 epoch；处理事务先持锁时，轮换等待提交。事务提交后恢复大消息载荷并广播 SSE，随后在 epoch 锁内执行投递 ACK。ACK 阶段失败不会回滚已经提交的处理时间；回执重试沿用相同事件 ID，保持处理时间不变。此流程不承诺 PostgreSQL 与 JetStream ACK 跨系统原子提交。回归见 `tests/worker_delivery_retry_test.go` 和 `tests/worker_processing_epoch_test.go`。

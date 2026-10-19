@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"uuid"
 
@@ -80,6 +82,11 @@ func TestAdministrationHTTPPostgres(t *testing.T) {
 		wantStatus(request("GET", "/organizations/not-a-uuid", ordinary, nil, false), 403)
 		wantStatus(request("GET", "/organizations/"+uuid.NewV4().String(), ordinary, nil, false), 403)
 		wantStatus(request("POST", "/organizations", operator, input, false), 403)
+	})
+	t.Run("中文账号搜索按字符校验", func(t *testing.T) {
+		wantStatus(request("GET", "/accounts?query="+url.QueryEscape("张"), operator, nil, false), 400)
+		wantStatus(request("GET", "/accounts?query="+url.QueryEscape(strings.Repeat("张", 201)), operator, nil, false), 400)
+		wantStatus(request("GET", "/accounts?query="+url.QueryEscape(strings.Repeat("张", 200)), operator, nil, false), 200)
 	})
 	w := request("POST", "/organizations", operator, input, true)
 	wantStatus(w, 201)

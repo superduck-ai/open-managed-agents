@@ -8,7 +8,7 @@ afterEach(() => {
   setConsoleRequestContext({});
 });
 
-test('后台 403 保留会话，401 通知全局登出，即使响应不是 JSON', async () => {
+test('无法解析的403不误判授权，401通知全局登出', async () => {
   const globalFailures: number[] = [];
   const dispose = onApiAuthFailure((status) => globalFailures.push(status));
   try {
@@ -17,7 +17,8 @@ test('后台 403 保留会话，401 通知全局登出，即使响应不是 JSON
       const client = new PlatformAdminClient(denied);
       globalThis.fetch = mock(async () => new Response('denied', { status })) as unknown as typeof fetch;
       await expect(client.request('/bootstrap')).rejects.toMatchObject({ status });
-      expect(denied).toHaveBeenCalledWith(status);
+      if (status === 401) expect(denied).toHaveBeenCalledWith(status);
+      else expect(denied).not.toHaveBeenCalled();
     }
     expect(globalFailures).toEqual([401]);
   } finally {
@@ -59,3 +60,19 @@ test('切换账号后丢弃旧写入响应，不中断服务端写入', async ()
   await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
   expect(signal).toBeUndefined();
 });
+
+for (const code of ['platform_access_denied', 'verified_login_required', 'invalid_csrf', 'unknown']) {
+  test(`403 ${code} 仅在授权失效时清空后台`, async () => {
+    const denied = mock();
+    const client = new PlatformAdminClient(denied);
+    client.csrfToken = 'current-token';
+    globalThis.fetch = mock(async () => Response.json({ error: { code } }, { status: 403 })) as typeof fetch;
+    await expect(client.request('/organizations', { method: 'POST', body: {} })).rejects.toMatchObject({
+      status: 403,
+      code,
+    });
+    const accessDenied = ['platform_access_denied', 'verified_login_required'].includes(code);
+    expect(denied.mock.calls.length).toBe(accessDenied ? 1 : 0);
+    expect(client.csrfToken).toBe(accessDenied ? '' : 'current-token');
+  });
+}

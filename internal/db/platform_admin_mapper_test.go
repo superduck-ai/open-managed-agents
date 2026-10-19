@@ -19,7 +19,7 @@ func TestPlatformAdminMapperAuthorizationBindings(t *testing.T) {
 		kind      yourbatis.StatementKind
 		fragments []string
 	}{
-		{"FindAccount", func(m PlatformAdminMapper) error { _, err := m.FindAccount(t.Context(), grant.AccountUUID); return err }, account, []any{grant.AccountUUID}, yourbatis.StatementSelect, []string{"u.uuid = $1 AND u.registration_identity", "a.revoked_at IS NULL"}},
+		{"FindAccount", func(m PlatformAdminMapper) error { _, err := m.FindAccount(t.Context(), grant.AccountUUID); return err }, account, []any{grant.AccountUUID}, yourbatis.StatementSelect, []string{"u.uuid = $1 AND u.uuid = (SELECT identity.uuid", "a.revoked_at IS NULL"}},
 		{"ListAdmins", func(m PlatformAdminMapper) error { _, err := m.ListAdmins(t.Context()); return err }, account, []any{}, yourbatis.StatementSelect, []string{"JOIN platform_admins a ON a.account_uuid = u.uuid AND a.revoked_at IS NULL", "ORDER BY u.uuid"}},
 		{"LockGrant", func(m PlatformAdminMapper) error { _, err := m.LockGrant(t.Context(), grant.AccountUUID); return err }, mapperTestResponse{columns: []string{"granted"}, rows: [][]driver.Value{{true}}}, []any{grant.AccountUUID}, yourbatis.StatementSelect, []string{"revoked_at IS NULL AS granted", "account_uuid = $1 FOR UPDATE"}},
 		{"LockAdministration", func(m PlatformAdminMapper) error { _, err := m.LockAdministration(t.Context()); return err }, mapperTestResponse{columns: []string{"locked"}, rows: [][]driver.Value{{int64(1)}}}, []any{}, yourbatis.StatementSelect, []string{"pg_advisory_xact_lock(734001928)"}},
@@ -50,7 +50,7 @@ func TestPlatformAdminMapperAccountPagination(t *testing.T) {
 			t.Fatal(err)
 		}
 		args := []any{query.Query, query.Query}
-		fragments := []string{"WHERE u.registration_identity", "u.email ILIKE '%' || $1 || '%' OR u.name ILIKE '%' || $2 || '%'", "ORDER BY u.uuid LIMIT"}
+		fragments := []string{"ORDER BY identity.registration_identity DESC, identity.added_at ASC, identity.uuid ASC LIMIT 1", "u.email ILIKE '%' || $1 || '%' OR u.name ILIKE '%' || $2 || '%'", "ORDER BY u.uuid LIMIT"}
 		if cursor != "" {
 			args = append(args, cursor)
 			fragments = append(fragments, "u.uuid > $3")

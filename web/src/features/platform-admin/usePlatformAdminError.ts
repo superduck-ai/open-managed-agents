@@ -11,7 +11,7 @@ export function usePlatformAdminError() {
     ),
     version_conflict: msg(
       'platformAdmin.errors.versionConflict',
-      'Organization details changed. Refresh and try again.',
+      'Organization details changed. Close and reopen this form to load the latest data.',
     ),
     idempotency_conflict: msg(
       'platformAdmin.errors.idempotencyConflict',

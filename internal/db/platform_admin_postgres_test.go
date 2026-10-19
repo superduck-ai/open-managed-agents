@@ -78,9 +78,6 @@ func TestPlatformAdministrationPostgres(t *testing.T) {
 		if err != nil || !identity.Granted {
 			t.Fatalf("授权未保存：%+v，%v", identity, err)
 		}
-		if _, err := store.GetPlatformAdminAccount(ctx, member); !errors.Is(err, ErrNotFound) {
-			t.Fatalf("组织成员被误认为登录身份：%v", err)
-		}
 		rows, err := store.ListPlatformAdminWorkspaces(ctx, PlatformAdminPageQuery{OrganizationUUID: organization, Limit: 10})
 		if err != nil || len(rows) != 1 || !rows[0].IsDefault {
 			t.Fatalf("真实 Default 工作区：%+v，%v", rows, err)

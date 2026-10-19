@@ -34,7 +34,7 @@ function OrganizationDetail({ organizationUuid, view }: { organizationUuid: stri
         row.original.archived
           ? msg('platformAdmin.archived', 'Archived')
           : row.original.is_default
-            ? 'Default'
+            ? msg('platformAdmin.defaultWorkspace', 'Default')
             : msg('platformAdmin.active', 'Active'),
     },
   ];

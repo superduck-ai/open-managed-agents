@@ -14,7 +14,7 @@ import { PlatformAdminLayout } from './PlatformAdminLayout';
 import { OrganizationDetailPage } from './OrganizationDetailPage';
 import { organizationSection, type OrganizationSection } from './organizationNavigation';
 
-const { cleanup, screen, fireEvent } = await import('@testing-library/react');
+const { cleanup, screen, fireEvent, waitFor } = await import('@testing-library/react');
 const originalFetch = globalThis.fetch;
 afterEach(() => {
   cleanup();
@@ -59,7 +59,9 @@ function mount(entry = '/platform-admin', locale: 'en' | 'zh-CN' = 'zh-CN') {
 }
 
 test('后台拒绝授权时不渲染组织目录，也不跳转登录', async () => {
-  globalThis.fetch = mock(async () => Response.json({ error: { code: 'denied' } }, { status: 403 })) as typeof fetch;
+  globalThis.fetch = mock(async () =>
+    Response.json({ error: { code: 'platform_access_denied' } }, { status: 403 }),
+  ) as typeof fetch;
   const router = mount();
   expect((await screen.findByRole('alert')).textContent).toContain('当前账号无后台权限');
   expect(screen.queryByText('受保护组织目录')).toBeNull();
@@ -70,10 +72,10 @@ test('后台会话失效时跳转登录并保留后台返回地址', async () =>
   globalThis.fetch = mock(async () =>
     Response.json({ error: { code: 'unauthenticated' } }, { status: 401 }),
   ) as typeof fetch;
-  const router = mount();
+  const router = mount('/platform-admin/organizations/target?view=invitations');
   expect(await screen.findByText('登录页面')).toBeTruthy();
   expect(screen.queryByText('受保护组织目录')).toBeNull();
-  expect(router.state.location.search).toEqual({ returnTo: '/platform-admin' });
+  expect(router.state.location.search).toEqual({ returnTo: '/platform-admin/organizations/target?view=invitations' });
 });
 
 test('严格模式重挂载后可重试授权故障并显示无组织账号的后台', async () => {
@@ -169,5 +171,107 @@ for (const [locale, label] of [
     expect(await screen.findByRole('link', { name: label })).toBeTruthy();
     expect(screen.queryByRole('combobox', { name: /Language|语言/ })).toBeNull();
     expect(document.documentElement.lang).toBe(locale);
+  });
+}
+
+for (const [locale, label] of [
+  ['zh-CN', '默认'],
+  ['en', 'Default'],
+] as const) {
+  test(`${locale} 默认工作区状态本地化`, async () => {
+    globalThis.fetch = mock(async (url: RequestInfo | URL) => {
+      if (String(url).endsWith('/bootstrap'))
+        return Response.json({
+          account: { uuid: 'operator', email: 'admin@example.com', name: '' },
+          platform_access: { permissions: ['platform:access'], role: 'super_admin' },
+          csrf_token: 'csrf',
+        });
+      if (String(url).includes('/workspaces?'))
+        return Response.json({
+          data: [{ uuid: 'workspace', id: 'wrkspc_default', name: 'Workspace', is_default: true, archived: false }],
+          next_cursor: '',
+        });
+      return Response.json({
+        uuid: 'target',
+        name: 'Organization',
+        version: 1,
+        admin_count: 1,
+        member_count: 1,
+        workspace_count: 1,
+      });
+    }) as typeof fetch;
+    mount('/platform-admin/organizations/target?view=workspaces', locale);
+    expect(await screen.findByRole('cell', { name: label, exact: true })).toBeTruthy();
+  });
+}
+
+for (const view of ['members', 'invitations'] as const) {
+  test(`${view} 版本冲突刷新后重开使用新版本`, async () => {
+    let version = 1;
+    let detailReads = 0;
+    let directoryReads = 0;
+    const writes: number[] = [];
+    globalThis.fetch = mock(async (url: RequestInfo | URL, options?: RequestInit) => {
+      const path = String(url);
+      if (path.endsWith('/bootstrap'))
+        return Response.json({
+          account: { uuid: 'operator', email: 'admin@example.com', name: '' },
+          platform_access: { permissions: ['platform:access'], role: 'super_admin' },
+          csrf_token: 'csrf',
+        });
+      if (options?.method === 'POST') {
+        writes.push(JSON.parse(String(options.body)).expected_version);
+        if (writes.length === 1) {
+          version = 2;
+          return Response.json({ error: { code: 'version_conflict' } }, { status: 409 });
+        }
+        return Response.json({
+          uuid: 'target',
+          name: '组织',
+          version: 3,
+          admin_count: 2,
+          member_count: 2,
+          workspace_count: 1,
+        });
+      }
+      if (path.endsWith('/organizations/target')) {
+        detailReads++;
+        return Response.json({
+          uuid: 'target',
+          name: '组织',
+          version,
+          admin_count: 1,
+          member_count: 1,
+          workspace_count: 1,
+        });
+      }
+      if (path.includes('/accounts?'))
+        return Response.json({ data: [{ uuid: 'account', email: 'new@example.com', name: 'New' }], next_cursor: '' });
+      directoryReads++;
+      return Response.json({ data: [], next_cursor: '' });
+    }) as typeof fetch;
+    mount(`/platform-admin/organizations/target?view=${view}`);
+    const openLabel = view === 'members' ? '设置管理员' : '发送邀请';
+    const submitLabel = view === 'members' ? '确认变更' : '确认';
+    async function submit() {
+      fireEvent.click(await screen.findByRole('button', { name: openLabel, exact: true }));
+      if (view === 'members') {
+        fireEvent.change(screen.getByLabelText('搜索已注册账号'), { target: { value: 'new' } });
+        fireEvent.click(screen.getByRole('button', { name: '查找' }));
+        fireEvent.click(await screen.findByRole('checkbox'));
+      } else fireEvent.change(screen.getByLabelText('受邀邮箱'), { target: { value: 'invited@example.com' } });
+      fireEvent.click(screen.getByRole('button', { name: submitLabel, exact: true }));
+    }
+    await submit();
+    expect((await screen.findByRole('alert')).textContent).toContain('关闭并重新打开');
+    expect(detailReads).toBeGreaterThanOrEqual(2);
+    expect(directoryReads).toBeGreaterThanOrEqual(2);
+    if (view === 'invitations')
+      expect((screen.getByLabelText('受邀邮箱') as HTMLInputElement).value).toBe('invited@example.com');
+    fireEvent.click(screen.getByRole('button', { name: '取消', exact: true }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await submit();
+    await waitFor(() => expect(writes).toEqual([1, 2]));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 }

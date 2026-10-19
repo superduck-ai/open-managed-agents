@@ -1,7 +1,8 @@
 import { usePlatformAdminError } from './usePlatformAdminError';
 import { useI18n } from '../../shared/i18n';
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import type { ApiError } from '../../shared/api/client';
 import { Button } from '../../shared/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
 import { Input } from '../../shared/ui/input';
@@ -43,6 +44,7 @@ export function InvitationDialog({
     revoke: msg('platformAdmin.revokeMemberInvitation', 'Revoke member invitation'),
   };
   const { client } = usePlatformAdmin();
+  const queries = useQueryClient();
   const [snapshot] = useState(organization);
   const [email, setEmail] = useState(action.kind === 'create' ? '' : action.invitation.email);
   const [role, setRole] = useState<PlatformRole>(
@@ -60,6 +62,16 @@ export function InvitationDialog({
           });
     },
     onSuccess: onSaved,
+    onError: async (error) => {
+      if ((error as unknown as ApiError).code === 'version_conflict') {
+        await Promise.all([
+          queries.invalidateQueries({ queryKey: ['platform-admin', 'organization', snapshot.uuid] }),
+          queries.invalidateQueries({
+            queryKey: ['platform-admin', 'directory', `/organizations/${snapshot.uuid}/invitations`],
+          }),
+        ]);
+      }
+    },
   });
   return (
     <Dialog

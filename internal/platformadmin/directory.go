@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
@@ -32,7 +33,7 @@ type Workspace struct {
 func readPage(r *http.Request) (db.PlatformAdminPageQuery, error) {
 	v := r.URL.Query()
 	q := db.PlatformAdminPageQuery{Query: strings.TrimSpace(v.Get("query")), After: v.Get("cursor"), Limit: 20, OrganizationUUID: chi.URLParam(r, "organizationUuid")}
-	if len(q.Query) > 200 {
+	if utf8.RuneCountInString(q.Query) > 200 {
 		return q, invalid("搜索内容过长")
 	}
 	if q.After != "" {
@@ -69,7 +70,7 @@ func (h *Handler) accounts(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	if len(query.Query) < 2 {
+	if utf8.RuneCountInString(query.Query) < 2 {
 		h.fail(w, r, invalid("请输入至少两个字符搜索账号"))
 		return
 	}

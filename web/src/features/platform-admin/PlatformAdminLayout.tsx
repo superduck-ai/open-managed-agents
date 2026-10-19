@@ -1,6 +1,6 @@
 import { useI18n } from '../../shared/i18n';
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from '@tanstack/react-router';
+import { Link, useLocation, useNavigate } from '@tanstack/react-router';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { PlatformAdminClient } from '../../shared/api/platform-admin';
 import { useAuth } from '../../shared/auth/context';
@@ -39,6 +39,7 @@ function AdminGuard({ client, denied }: { client: PlatformAdminClient; denied: n
   const { msg } = useI18n();
 
   const navigate = useNavigate();
+  const location = useLocation();
   const query = useQuery({
     queryKey: ['platform-admin', 'bootstrap'],
     queryFn: async ({ signal }) => {
@@ -51,8 +52,9 @@ function AdminGuard({ client, denied }: { client: PlatformAdminClient; denied: n
     refetchOnWindowFocus: 'always',
   });
   useEffect(() => {
-    if (denied === 401) void navigate({ to: '/login', search: { returnTo: '/platform-admin' }, replace: true });
-  }, [denied, navigate]);
+    if (denied === 401 && location.pathname.startsWith('/platform-admin'))
+      void navigate({ to: '/login', search: { returnTo: location.href }, replace: true });
+  }, [denied, navigate, location.href, location.pathname]);
   let message = '';
   if (denied === 401)
     message = msg(

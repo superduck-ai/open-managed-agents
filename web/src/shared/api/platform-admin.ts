@@ -35,12 +35,16 @@ export class PlatformAdminClient {
     const body = await response.json().catch(() => null);
     scope.throwIfAborted();
     if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
+      const error = platformError(response.status, body);
+      if (
+        response.status === 401 ||
+        (response.status === 403 && ['platform_access_denied', 'verified_login_required'].includes(error.code))
+      ) {
         this.invalidate();
         this.denied(response.status);
         if (response.status === 401) reportApiAuthFailure(401, {});
       }
-      throw platformError(response.status, body);
+      throw error;
     }
     if (body === null)
       throw {

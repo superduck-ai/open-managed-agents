@@ -1,7 +1,8 @@
 import { usePlatformAdminError } from './usePlatformAdminError';
 import { useI18n } from '../../shared/i18n';
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import type { ApiError } from '../../shared/api/client';
 import { Button } from '../../shared/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
 import { Label } from '../../shared/ui/label';
@@ -35,6 +36,7 @@ export function AdministratorDialog({
   };
 
   const { client } = usePlatformAdmin();
+  const queries = useQueryClient();
   const [snapshot] = useState(organization);
   const [accounts, setAccounts] = useState<RegisteredAccount[]>([]);
   const [role, setRole] = useState<PlatformRole>(
@@ -60,6 +62,16 @@ export function AdministratorDialog({
       });
     },
     onSuccess: onSaved,
+    onError: async (error) => {
+      if ((error as unknown as ApiError).code === 'version_conflict') {
+        await Promise.all([
+          queries.invalidateQueries({ queryKey: ['platform-admin', 'organization', snapshot.uuid] }),
+          queries.invalidateQueries({
+            queryKey: ['platform-admin', 'directory', `/organizations/${snapshot.uuid}/members`],
+          }),
+        ]);
+      }
+    },
   });
   const valid = action.kind === 'change-role' ? role !== action.member.role && role !== 'admin' : accounts.length === 1;
   return (

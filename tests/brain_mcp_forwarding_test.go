@@ -331,7 +331,7 @@ func newBrainMCPProxyAppWithAgent(t *testing.T, endpoint string, agentJSON strin
 	t.Helper()
 	app := newPayloadIntegrationApp(t, newFakeStore("brain-mcp-proxy"))
 	worker, _ := newPayloadIntegrationSessionWithAgent(t, app, agentJSON)
-	service := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil).WithSandboxProvisioner(fixedSandboxProvisioner(endpoint))
+	service := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil).WithSandboxProvisioner(fixedSandboxProvisioner{endpoint: endpoint, db: app.db})
 	proxyHandler := codesessions.NewHandler(app.cfg, service, app.sandboxTimeouts, nil)
 	router := chi.NewRouter()
 	router.Route("/v2", proxyHandler.RegisterV2Routes)

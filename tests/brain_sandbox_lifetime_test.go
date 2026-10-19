@@ -50,7 +50,7 @@ func TestBrainSandboxMCPResumesBeforeDispatch(t *testing.T) {
 	if _, err := registerTaskTestWorker(t, app, worker); err != nil {
 		t.Fatal(err)
 	}
-	service := codesessions.NewServiceWithCredentials(app.db, app.credentials, slog.Default()).WithSandboxProvisioner(fixedSandboxProvisioner(sandbox.URL))
+	service := codesessions.NewServiceWithCredentials(app.db, app.credentials, slog.Default()).WithSandboxProvisioner(fixedSandboxProvisioner{endpoint: sandbox.URL, db: app.db})
 	handler := codesessions.NewHandler(app.cfg, service, app.sandboxTimeouts, slog.Default())
 	router := chi.NewRouter()
 	router.Route("/v2", handler.RegisterV2Routes)
@@ -95,8 +95,12 @@ func TestBrainSandboxMCPResumesBeforeDispatch(t *testing.T) {
 	}
 }
 
-type fixedSandboxProvisioner string
+type fixedSandboxProvisioner struct {
+	endpoint string
+	db       *db.DB
+}
 
-func (p fixedSandboxProvisioner) EnsureSessionSandbox(context.Context, db.CodeSession) (string, error) {
-	return string(p), nil
+func (p fixedSandboxProvisioner) EnsureSessionSandbox(ctx context.Context, code db.CodeSession) (string, db.EnvironmentSandbox, error) {
+	sandbox, err := p.db.GetResumableEnvironmentSandboxForCodeSession(ctx, code.ExternalID)
+	return p.endpoint, sandbox, err
 }

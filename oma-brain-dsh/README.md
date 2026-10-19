@@ -2,16 +2,16 @@
 
 Bun service embedding the published dsh agent-loop and Cordis plugins. Replaces the Rust Brain process without grok-build, a dsh CLI subprocess, or dsh kernel patches.
 
-The application entry creates a Cordis Context and loads the OMA host plugin. The host composes dsh's original runtime packages with a separate CCRv2 bridge plugin and the OMA Messages adapter. The bridge owns protocol mapping, approval messages, remote persistence, recovery and session heartbeats. The shared session runtime owns dsh lifecycle and tool execution orchestration. The host receives scoped registration credentials from NATS, registers workers through CCRv2 in one request and supplies the sandbox MCP implementation. oma-server schedules sessions and owns sandbox creation.
+The application entry creates a Cordis Context and loads the OMA host plugin. The host composes dsh's original runtime packages with a separate CCRv2 bridge plugin and the OMA Messages adapter. The bridge owns protocol mapping, approval messages, remote persistence, recovery and session heartbeats. The shared session runtime owns dsh lifecycle and tool execution orchestration. The host long-polls the backend for Code Session claims, registers workers through CCRv2 in one request and supplies the sandbox MCP implementation. oma-server schedules sessions and owns sandbox creation.
 
 ## Run
 
-Requires Bun 1.3 or newer and an OMA backend exposing the task and CCRv2 contracts below. The pinned dsh version is `0.2.1-alpha.2`, with Cordis `4.0.5-alpha.1`.
+Requires Bun 1.3 or newer and an OMA backend exposing the claim and CCRv2 contracts below. The pinned dsh version is `0.2.1-alpha.2`, with Cordis `4.0.5-alpha.1`.
 
 ```sh
 bun install --frozen-lockfile
 cp .env.example .env
-# Set the backend URL and NATS address in .env. Task claim credentials arrive through NATS.
+# Set the backend URL and OMA_BRAIN_CLAIM_TOKEN in .env. Session credentials arrive in claim responses.
 bun start
 ```
 
@@ -33,14 +33,13 @@ just build
 The executable includes Bun and its dependencies. Deploy `dist/oma-brain-dsh`
 without Bun or `node_modules`; on Windows the filename ends in `.exe`. It reads
 `.env` from the working directory at startup, or uses process environment variables.
-Build-time environment values are not embedded. It still needs the OMA backend
-and NATS. Build on the same OS and architecture as the deployment machine.
+Build-time environment values are not embedded. It still needs the OMA backend. Build on the same OS and architecture as the deployment machine.
 
-`just verify` builds the executable and runs the test suite with isolated NATS
-in Docker. Its process test copies the executable into a temporary directory,
-loads a test `.env`, and completes a CCRv2 turn with modified approval arguments
-without source files, `node_modules` or Bun on `PATH`. The backend, model and
-sandbox in this test are fixtures. NATS is real.
+`just verify` builds the bundled entry and the executable, then runs the test
+suite against them. Its process test copies the executable into a temporary
+directory, loads a test `.env`, claims a session and completes a CCRv2 turn with
+modified approval arguments without source files, `node_modules` or Bun on
+`PATH`. The backend, model and sandbox in this test are fixtures.
 
 Without just, use `bun install --frozen-lockfile` followed by
 `bun run build:executable` or `bun run verify:executable`. The build adapter makes
@@ -59,27 +58,30 @@ bun run restart
 
 The restart script sends SIGTERM to direct Bun entry processes whose working directory is this project, including `bun start` launches. It waits up to thirty seconds for shutdown and cancels the restart if a process remains. It then starts `dist/main.js` in the foreground with output in the current terminal. Press Ctrl+C to stop the service. Run the script as the same user that started the service. A concurrent restart is refused during build and shutdown. If the script is killed and leaves a stale lock, remove `.run/restart.lock` after confirming no restart is running.
 
-The Brain consumes worker registration envelopes from the `OMA_BRAIN_TASKS` JetStream stream, subject `oma.brain.tasks.v1`, durable consumer `oma_brain`. The server creates this stream. A task carries a session ID, a reserved worker epoch and a registration credential. Task admission registers the worker, receives execution credentials and launch configuration, and restores its journal before acknowledging the task. Failed admission leaves the task available for redelivery. The server retries dispatch after an unregistered or failed worker's lease expires.
+The Brain claims Code Sessions with `POST /v1/code/brain/claims?block_ms=25000`, sending the shared fleet token in `OMA_BRAIN_CLAIM_TOKEN` and its process UUID in `X-Worker-ID`. Each claim advances the worker epoch and returns fresh ingress and model credentials to exactly one process. Up to `OMA_BRAIN_CLAIM_CONCURRENCY` long polls run at once, and only while a session slot is free; a busy process stops claiming. Admission registers the worker, loads the session context and restores its journal. If admission fails, the host calls `POST /v1/code/brain/claims/{id}/release`. Transient failures use `reason: "admission_failed"`, so another process can retry after the backend's backoff (5, 10, 20, 40 and 80 seconds); five consecutive failures end the session with `session.error`. Failures that cannot succeed on retry, such as an invalid task envelope, session context or assignment, use `reason: "permanent"`, and the backend publishes `session.error` immediately. Admission is also abandoned with `reason: "shutdown"` when the process is stopping or every local slot is busy, which does not count as a failure. Concurrent admissions reserve a slot before evicting an idle session, so the process never holds more than `OMA_BRAIN_MAX_SESSIONS` sessions. On SIGTERM the host releases claims still being admitted and sessions with an active turn using `reason: "shutdown"`, so another process can take them without waiting for the lease. Idle sessions closed after sixty seconds, evicted for capacity or open at shutdown are released with `reason: "idle"`, which only clears the lease, so new input can be claimed immediately. A crashed process loses its claims when the 20-second lease and 10-second grace period expire.
 
-If startup reports `NATS stream OMA_BRAIN_TASKS is missing (10059)`, start the Brain-enabled OMA backend to initialize the stream and check that both services connect to the same NATS server/account. The Brain does not create the backend-owned stream. Startup errors appear directly in the terminal, and `bun run restart` returns the service's exit code.
+At startup the host makes a non-blocking claim before reporting ready. If the backend rejects the token, startup fails with `Brain claim rejected with HTTP 401` and the process exits. Other probe failures, such as a backend that is still starting, are retried after 1, 2, 5, 10 and then every 30 seconds. If the token is rejected after startup, the process keeps running its existing sessions, prints the same message once for each run of rejections and keeps retrying with that backoff. The token must match the backend `code_session.brain_claim_token_file`. Startup errors appear directly in the terminal, and `bun run restart` returns the service's exit code.
 
 Each session reads `/worker/events/stream` through the CCRv2 plugin. User turns run serially; control messages use a separate queue so approval and interruption remain responsive during a turn. The bridge acknowledges `envelope.event_id`, not the SSE sequence number. Reconnection keeps the registered epoch and relies on server redelivery without advancing a local cursor. It never registers a new worker or restarts the active turn just because the stream reconnects.
 
 History restoration pages through `GET /worker/internal-events`, omitting `cursor` on the first request and following `next_cursor` until it is absent, null or empty. Foreground events use the default scope. Child `dsh_log` writes include the thread id as the outer event's `agent_id`, and reads use `subagents=true` on every page. Child restoration also reads the foreground stream for logs written by older Brain versions, then merges the scoped suffix using the dsh header id and event sequence. Brain state remains in the foreground stream. These logs use `is_compaction: false`; Brain does not generate Superduck transcript compaction markers.
 
-Capacity defaults to eight sessions. Idle runtimes close after sixty seconds, or earlier when another task needs capacity. The server expires their leases and dispatches a fresh epoch when work is pending. Active turns and approval waits are not evicted. Each session's CCRv2 heartbeat defaults to a twenty-second interval with ±10% jitter and a five-second request deadline, matching the Superduck remote bridge. Temporary failures keep retrying on that cadence. Authentication failures stop the session at ten failed writes without an intervening successful write. Epoch conflicts, expired worker leases and authentication rejection with an expired token stop immediately. SIGINT and SIGTERM stop consumers, cancel work and in-flight heartbeats, drain state and close sessions. If cleanup takes longer than ten seconds, the process forces exit with code 1. Pressing Ctrl+C again during shutdown forces immediate exit with code 130.
+Capacity defaults to eight sessions. Idle runtimes close after sixty seconds, or earlier when another claim needs capacity. The backend makes a session claimable again when its lease expires and the public session is running. Active turns and approval waits are not evicted. Each session's CCRv2 heartbeat defaults to a six-second interval with ±10% jitter and a five-second request deadline, renewing the 20-second Brain worker lease. Temporary failures keep retrying on that cadence. Authentication failures stop the session at ten failed writes without an intervening successful write. Epoch conflicts, expired worker leases and authentication rejection with an expired token stop immediately. SIGINT and SIGTERM stop consumers, cancel work and in-flight heartbeats, drain state and close sessions. If cleanup takes longer than ten seconds, the process forces exit with code 1. Pressing Ctrl+C again during shutdown forces immediate exit with code 130.
 
-The application reads these optional deployment settings at startup. Unset values use the defaults below; invalid values fail startup before connecting to the backend or NATS. Set them in the process environment or `.env` and restart to apply them.
+The application reads these optional deployment settings at startup. Unset values use the defaults below; invalid values fail startup before connecting to the backend. Set them in the process environment or `.env` and restart to apply them.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `OMA_CCR_HEARTBEAT_INTERVAL_MS` | `20000` | Positive integer interval in milliseconds |
+| `OMA_BRAIN_CLAIM_TOKEN` | required | Shared fleet token matching the backend `code_session.brain_claim_token_file` |
+| `OMA_BRAIN_CLAIM_CONCURRENCY` | `4` | Concurrent claim long polls, from 1 through 32 |
+| `OMA_BRAIN_MAX_SESSIONS` | `8` | Positive session capacity |
+| `OMA_CCR_HEARTBEAT_INTERVAL_MS` | `6000` | Positive integer interval in milliseconds |
 | `OMA_CCR_HEARTBEAT_TIMEOUT_MS` | `5000` | Positive integer request deadline in milliseconds |
 | `OMA_CCR_HEARTBEAT_JITTER_FRACTION` | `0.1` | Random variation from 0 through 0.5; `0.1` gives ±10% per beat |
 | `OMA_CCR_HEARTBEAT_MAX_FAILURES` | `0` | Nonnegative integer limit on transient heartbeat failures; `0` keeps retrying |
 | `OMA_CCR_HEARTBEAT_MAX_AUTH_FAILURES` | `10` | Positive integer limit on 401/403 responses across heartbeat and other CCRv2 writes |
 
-Intervals including jitter and request deadlines must fit a 32-bit JavaScript timer. Existing environment overrides still apply. `409` and `410` stop immediately regardless of either failure limit. For `401`/`403`, an expired JWT also stops immediately; otherwise failures accumulate toward the authentication limit. Successful POST/PUT responses reset that counter, including heartbeats, state updates, publication, persistence and delivery confirmation. GETs and other failed requests do not reset it. Other heartbeat failures, including transport errors, 5xx, 408, 429 and other 4xx, keep scheduling unless a positive transient failure limit is configured.
+Intervals including jitter and request deadlines must fit a 32-bit JavaScript timer. The interval with jitter plus the request deadline must stay below the 20-second worker lease. Existing environment overrides still apply. `409` and `410` stop immediately regardless of either failure limit. For `401`/`403`, an expired JWT also stops immediately; otherwise failures accumulate toward the authentication limit. Successful POST/PUT responses reset that counter, including heartbeats, state updates, publication, persistence and delivery confirmation. GETs and other failed requests do not reset it. Other heartbeat failures, including transport errors, 5xx, 408, 429 and other 4xx, keep scheduling unless a positive transient failure limit is configured.
 
 Set `OMA_DEBUG_SYSTEM_PROMPT=1` to print the system prompt and tool names exactly as sent to the Messages API, as an `oma_system_prompt` JSON line on stdout. Each session and subagent thread prints once, and again only when its prompt or tool list changes. The output contains the configured agent instructions and memory catalog, so enable it only for local debugging. Read it with `jq -r 'select(.event == "oma_system_prompt") | .system'`.
 
@@ -109,7 +111,7 @@ await session.open();
 await session.receive(inputId, payload);
 ```
 
-The bridge uses dsh services through Cordis dependency injection and exposes `ctx.ccrv2`. It has no imports from the OMA API, assignment scheduler, NATS transport, model adapter or MCP implementation. `CcrBackend` supplies confirmed persistence, publication, delivery acknowledgement and worker status operations.
+The bridge uses dsh services through Cordis dependency injection and exposes `ctx.ccrv2`. It has no imports from the OMA API, assignment scheduler, claim transport, model adapter or MCP implementation. `CcrBackend` supplies confirmed persistence, publication, delivery acknowledgement and worker status operations.
 
 `SandboxExecutor` and `RemoteTool` live in the neutral `src/runtime/contracts.ts` module. `SessionRuntime` owns agent creation and restoration, system prompts, model-request barriers, turn execution and cancellation. It loads the `SandboxTools` plugin inside each agent scope. `ToolExecution` validates original and approved arguments, orders sandbox readiness and dispatch, converts results and defers model context. The runtime has no CCRv2 imports or wire envelopes. Its awaited `ToolExecutionBridge` contract supplies approval and durability operations; its session hooks let the bridge map native events and bracket each turn with confirmed input and terminal commits.
 
@@ -159,21 +161,21 @@ On lease loss, OMA writes one JSON warning with `event: "ccrv2_lease_lost"`, `se
 
 The optional `heartbeat.onHealth(id, health)` callback reports the first nonterminal heartbeat failure, repeats at most once per minute during the outage, and reports recovery after a successful heartbeat. OMA writes these as `ccrv2_heartbeat_failed` warnings and `ccrv2_heartbeat_recovered` informational logs, with the session, bound epoch, heartbeat failure count and elapsed outage milliseconds. Failed-heartbeat logs also include the HTTP status and classified reason. Successful ordinary writes reset the authentication counter but do not report heartbeat recovery. Cancellation and late responses produce no health event; a failing diagnostic callback does not change request scheduling or lease decisions.
 
-The local OMA backend reviewed for this integration grants a 60-second worker lease in `internal/db/brains.go` and `internal/codesessions/ingress.go`. Its `RecordCodeSessionWorkerHeartbeat` in `internal/db/code_sessions.go` disables the ordinary grace period for Brain mode, and Brain execution rejects expired leases. `internal/codesessions/session_credentials.go` issues ingress JWTs without an independent `exp`; `session_credential_service.go` checks their worker epoch against the active session, so a superseded credential may be rejected as `401`. The client now follows Superduck's authentication tolerance and continued retries, while retaining OMA's immediate stop on `410` as well as `409`. Retries do not extend the backend lease by themselves, and ten auth failures do not grant two hundred seconds of lease validity. This review does not verify the currently deployed backend revision. Like Superduck, heartbeat scheduling does not consume `Retry-After`.
+The OMA backend grants Brain claim sessions a 20-second worker lease with a 10-second heartbeat grace period (`internal/codesessions/brain_dispatch.go`); other workers keep 60 seconds. A session becomes claimable by another process only after both expire. `internal/codesessions/session_credentials.go` issues ingress JWTs without an independent `exp`; `session_credential_service.go` checks their worker epoch against the active session, so a superseded credential may be rejected as `401`. The client now follows Superduck's authentication tolerance and continued retries, while retaining OMA's immediate stop on `410` as well as `409`. Retries do not extend the backend lease by themselves, and ten auth failures do not grant two hundred seconds of lease validity. This review does not verify the currently deployed backend revision. Like Superduck, heartbeat scheduling does not consume `Retry-After`.
 
-The NATS transport admits opaque task JSON. The host validates the task envelope and claims its assignment before using CCRv2. Worker event envelopes, control classification, deduplication and SSE recovery belong to `src/ccrv2`. Task validation checks launch metadata and the named `mcpServers.sandbox` Streamable HTTP endpoint. The MCP client uses only that endpoint's headers, without adding host credentials or Brain ownership headers.
+The claim transport admits opaque task JSON. The host validates the task envelope and claims its assignment before using CCRv2. Worker event envelopes, control classification, deduplication and SSE recovery belong to `src/ccrv2`. Task validation checks launch metadata and the named `mcpServers.sandbox` Streamable HTTP endpoint. The MCP client uses only that endpoint's headers, without adding host credentials or Brain ownership headers.
 
-`session.stop()` stops its heartbeat timer and aborts in-flight heartbeat and active write requests, retry sleeps and runtime work. Late results from a stopped session are ignored. `session.close()` waits for the runtime and heartbeat to settle, disposes the dsh agent and drains queued bridge saves, status changes and publications before returning. Final persistence flushes retain bounded retries. The host calls `ctx.ccrv2.forget(session.id)` to drop bridge and persistence caches, and removes assignment credentials. A new session with the same id starts with its own failure counter. Unloading the bridge cancels and closes its remaining sessions; lease expiration and subsequent dispatch stay with oma-server. The durable `dsh_log` and `dsh_brain_state` formats and the execution order described below remain unchanged.
+`session.stop()` stops its heartbeat timer and aborts in-flight heartbeat and active write requests, retry sleeps and runtime work. Late results from a stopped session are ignored. `session.close()` waits for the runtime and heartbeat to settle, disposes the dsh agent and drains queued bridge saves, status changes and publications before returning. Final persistence flushes retain bounded retries. The host calls `ctx.ccrv2.forget(session.id)` to drop bridge and persistence caches, and removes assignment credentials. A new session with the same id starts with its own failure counter. Unloading the bridge cancels and closes its remaining sessions; lease expiration and subsequent claims stay with oma-server. The durable `dsh_log` and `dsh_brain_state` formats and the execution order described below remain unchanged.
 
 ## Backend contract
 
-oma-server dispatches this envelope on `oma.brain.tasks.v1`:
+`POST /v1/code/brain/claims` returns this envelope, or `204` when no session is claimable within `block_ms`:
 
 ```json
-{"session_id":"cse_example","worker_epoch":7,"ingress_token":"<session ingress token>","model_token":"<model credential>"}
+{"session_id":"cse_example","worker_epoch":7,"ingress_token":"<session ingress token>","model_token":"<model credential>","claim_expires_at":"2026-10-18T12:00:30Z"}
 ```
 
-Task claim returns the execution assignment:
+Admission builds the execution assignment:
 
 ```json
 {
@@ -201,12 +203,12 @@ Task claim returns the execution assignment:
 }
 ```
 
-NATS delivers the credential pair already issued by CCRv2 creation or recovery, with `session_id` and `worker_epoch`. The host calls standard `worker/register` using the ingress token and its process UUID in `X-Worker-ID`, checks the returned epoch, then fetches `GET /v2/sessions/{id}`. It builds the internal assignment above from that shared context. Same-process registration retries preserve the epoch and credentials; another process cannot bind the same epoch.
-
-NATS ACK follows session opening and recovery. The existing Environment Work claim handles expired external workers and invokes standard CCRv2 credential rotation. There is no separate registration token, task-claim endpoint, assignment response, or Brain metadata state machine. Deploy the backend and host together; old task envelopes are unsupported and expire after one minute.
+The claim rotates the credential pair and epoch in one transaction, so only the claiming process holds credentials for that epoch. The host calls standard `worker/register` with the ingress token, checks the returned epoch, then fetches `GET /v2/sessions/{id}`. It builds the internal assignment above from that shared context. Same-process registration retries preserve the epoch and credentials. A later claim by another process advances the epoch and fences this one. Deploy the backend and host together.
 
 | Interface | Purpose |
 | --- | --- |
+| `POST /v1/code/brain/claims?block_ms=N` | Claim a session with the fleet token; returns credentials or `204` |
+| `POST /v1/code/brain/claims/{id}/release` | Release a claim with `admission_failed`, `permanent`, `shutdown` or `idle` |
 | `POST /v1/code/sessions/{id}/worker/register` | Register the worker and return its epoch |
 | `GET /v1/code/sessions/{id}/worker/events/stream?worker_epoch=N` | Receive user and control events |
 | `/v1/code/sessions/{id}/worker/*` | Private events, public events, delivery confirmation, status and heartbeat |
@@ -379,9 +381,9 @@ bun test --timeout 15000
 bun run verify
 ```
 
-`verify` requires Docker. It builds the application, starts an isolated NATS container on a random loopback port, runs all tests including the real JetStream test against the bundled entry, then removes the container. `NATS_TEST_IMAGE` can override its image. Ordinary tests skip the NATS test unless `NATS_TEST_URL` is set. Never point that variable at a shared NATS server; the test requires an isolated server and creates and deletes its own `OMA_BRAIN_TASKS` stream.
+`verify` builds the application and runs all tests against the bundled entry. The process tests use a fixture backend that implements the claim and CCRv2 endpoints.
 
-The tests exercise the real published dsh loop and the OMA Messages adapter. Model responses, CCRv2 HTTP endpoints and sandbox MCP are controlled. The NATS test launches the application entry in a separate Bun process, delivers existing CCRv2 credentials, verifies exactly one registration request, drives input and approval through SSE, and verifies SIGTERM shutdown. Crash testing kills a separate Bun process with SIGKILL during a remote tool call, rotates the epochs, then restores its durable state in a fresh host and checks that the tool is not dispatched again. Other cases cover modified approval arguments, denial, invalid replacement parameters, duplicate input, completed history restoration, persistence rejection, stale worker epochs and terminal outbox recovery after failed publication.
+The tests exercise the real published dsh loop and the OMA Messages adapter. Model responses, CCRv2 HTTP endpoints and sandbox MCP are controlled. The claim process test launches the application entry in a separate Bun process, returns a claim, verifies exactly one registration request, drives input and approval through SSE, and verifies the idle release at SIGTERM and the handoff of a busy session. Crash testing kills a separate Bun process with SIGKILL during a remote tool call, rotates the epochs, then restores its durable state in a fresh host and checks that the tool is not dispatched again. Other cases cover modified approval arguments, denial, invalid replacement parameters, duplicate input, completed history restoration, persistence rejection, stale worker epochs and terminal outbox recovery after failed publication.
 
 Real-backend and real-model verification uses the existing OMA Go verifier.
 See [verification instructions and recorded results](verification/README.md) for
@@ -418,7 +420,8 @@ the scenario source, verifier-only patch, reports and public approval limitation
 | `src/model.ts`              | Messages adapter with signed thinking replay             |
 | `src/oma-sandbox/index.ts`   | Root-session sandbox executor provider plugin           |
 | `src/oma-sandbox/client.ts`  | Server-configured MCP initialization and execution               |
-| `src/transport.ts`          | NATS task assignment consumer                                |
+| `src/claim.ts`              | Claim long polling, startup probe and release classification |
+| `src/capacity.ts`           | Admission slot reservation and idle-session eviction         |
 
 ## Messages and sandbox result recovery
 

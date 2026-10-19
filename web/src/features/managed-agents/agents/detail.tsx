@@ -400,7 +400,7 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
             value="channels"
             className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-px"
           >
-            渠道
+            {msg('managedAgents.channels.title', 'Channels')}
           </TabsTrigger>
         </TabsList>
 

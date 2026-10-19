@@ -32,6 +32,7 @@ func (s scopedStore) GetAgent(_ context.Context, workspace, id string) (db.Agent
 func TestChannelScopeAndProxy(t *testing.T) {
 	for _, test := range []struct {
 		name, workspace, method string
+		suffix                  string
 		archived                bool
 		want                    int
 	}{
@@ -40,6 +41,10 @@ func TestChannelScopeAndProxy(t *testing.T) {
 		{name: "归档后禁止写入", workspace: "workspace-a", method: "POST", archived: true, want: 409},
 		{name: "工作区内读取", workspace: "workspace-a", method: "GET", want: 200},
 		{name: "凭据绑定转发", workspace: "workspace-a", method: "POST", want: 200},
+		{name: "生成二维码路径", workspace: "workspace-a", method: "POST", suffix: "/ch1/qr", want: 200},
+		{name: "读取二维码路径", workspace: "workspace-a", method: "GET", suffix: "/ch1/qr", want: 200},
+		{name: "读取配对路径", workspace: "workspace-a", method: "GET", suffix: "/ch1/pairings", want: 200},
+		{name: "批准配对路径", workspace: "workspace-a", method: "POST", suffix: "/ch1/pairings/pair-9", want: 200},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
@@ -51,8 +56,11 @@ func TestChannelScopeAndProxy(t *testing.T) {
 				if r.Header.Get("Cookie") != "" || r.URL.RawQuery != "" {
 					t.Error("不应向桥接服务传递浏览器凭据或查询参数")
 				}
-				if r.URL.Path != "/api/managed-channels" {
+				if r.URL.Path != "/api/managed-channels"+test.suffix {
 					t.Errorf("path = %s", r.URL.Path)
+				}
+				if r.Method != test.method {
+					t.Errorf("method = %s", r.Method)
 				}
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(`{"data":[]}`))
@@ -60,7 +68,7 @@ func TestChannelScopeAndProxy(t *testing.T) {
 			defer upstream.Close()
 			router := chi.NewRouter()
 			router.Mount("/agents/{agent_id}/channels", NewHandler(config.ChannelBridgeConfig{URL: upstream.URL, Token: "bridge-token"}, scopedStore{archived: test.archived}, slog.New(slog.NewTextHandler(io.Discard, nil))))
-			request := httptest.NewRequest(test.method, "/agents/agent-a/channels?workspace=evil", strings.NewReader(`{"name":"飞书"}`))
+			request := httptest.NewRequest(test.method, "/agents/agent-a/channels"+test.suffix+"?workspace=evil", strings.NewReader(`{"name":"飞书"}`))
 			request.Header.Set("Cookie", "session=private")
 			request.Header.Set("X-OMA-Workspace", "evil")
 			if test.workspace != "" {

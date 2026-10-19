@@ -1,3 +1,4 @@
+import { useI18n } from '../../../shared/i18n';
 import { useCallback, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { MessageCircle, Plus, RefreshCw } from 'lucide-react';
@@ -20,6 +21,7 @@ export function AgentChannels({
   workspaceId: string;
   canEdit: boolean;
 }) {
+  const { msg } = useI18n();
   const [editing, setEditing] = useState<Channel | null | undefined>(undefined);
   const [pairing, setPairing] = useState<Channel | null>(null);
   const [deleting, setDeleting] = useState<Channel | null>(null);
@@ -55,13 +57,13 @@ export function AgentChannels({
     }
   };
   return (
-    <section className="space-y-5 pb-8" aria-label="渠道管理">
+    <section className="space-y-5 pb-8" aria-label={msg('managedAgents.channels.management', '渠道管理')}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1.5">
           <p className="text-sm leading-6 text-muted-foreground">
-            仅显示当前模板下创建的渠道。配对管理中批准申请时绑定当前模板。
+            {msg('managedAgents.channels.scopeHint', '仅显示当前模板下创建的渠道。配对管理中批准申请时绑定当前模板。')}
           </p>
-          <h2 className="pt-3 text-base font-semibold">IM 连接管理</h2>
+          <h2 className="pt-3 text-base font-semibold">{msg('managedAgents.channels.connections', 'IM 连接管理')}</h2>
         </div>
       </div>
       {(error || query.error) && (
@@ -69,7 +71,7 @@ export function AgentChannels({
           <AlertDescription>
             {error || errorMessage(query.error)}
             <Button variant="outline" size="sm" onClick={refresh}>
-              重试
+              {msg('managedAgents.channels.retry', '重试')}
             </Button>
           </AlertDescription>
         </Alert>
@@ -81,12 +83,19 @@ export function AgentChannels({
               <img src={feishuLogo} alt="" className="size-8" width={32} height={32} />
             </div>
             <div>
-              <h3 className="text-sm font-semibold">飞书</h3>
-              <p className="mt-0.5 text-xs text-muted-foreground">通过机器人接收消息与发送回复</p>
+              <h3 className="text-sm font-semibold">{msg('managedAgents.channels.feishu', '飞书')}</h3>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {msg('managedAgents.channels.description', '通过机器人接收消息与发送回复')}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon-sm" aria-label="刷新渠道" onClick={refresh}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={msg('managedAgents.channels.refresh', '刷新渠道')}
+              onClick={refresh}
+            >
               <RefreshCw className={query.isFetching ? 'animate-spin' : ''} />
             </Button>
             <Button
@@ -95,12 +104,14 @@ export function AgentChannels({
               onClick={() => setEditing(null)}
             >
               <Plus />
-              创建机器人
+              {msg('managedAgents.channels.create', '创建机器人')}
             </Button>
           </div>
         </div>
         {query.isPending ? (
-          <p className="p-8 text-center text-sm text-muted-foreground">正在加载渠道…</p>
+          <p className="p-8 text-center text-sm text-muted-foreground">
+            {msg('managedAgents.channels.loading', '正在加载渠道…')}
+          </p>
         ) : channels.length ? (
           <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
             {channels.map((channel) => (
@@ -119,17 +130,20 @@ export function AgentChannels({
         ) : (
           <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
             <MessageCircle className="mb-2 size-6 text-muted-foreground" />
-            <p className="text-sm font-medium">还没有连接机器人</p>
+            <p className="text-sm font-medium">{msg('managedAgents.channels.empty', '还没有连接机器人')}</p>
             <p className="max-w-sm text-sm leading-6 text-muted-foreground">
-              创建飞书机器人并完成扫码，即可在飞书中与当前智能体对话。
+              {msg('managedAgents.channels.emptyHint', '创建飞书机器人并完成扫码，即可在飞书中与当前智能体对话。')}
             </p>
           </div>
         )}
         <div className="flex flex-wrap items-center justify-between gap-2 px-5 pb-4 text-xs text-muted-foreground">
-          <span>仅连接当前智能体</span>
+          <span>{msg('managedAgents.channels.currentAgent', '仅连接当前智能体')}</span>
           <span className="tabular-nums">
-            控制台 {consoleCount} / 5<span className="mx-3 text-border">·</span>API 创建{' '}
-            {channels.length - consoleCount}
+            {msg('managedAgents.channels.consoleCount', 'Console {count} / 5', { count: consoleCount })}
+            <span className="mx-3 text-border">·</span>
+            {msg('managedAgents.channels.apiCount', 'Created via API {count}', {
+              count: channels.length - consoleCount,
+            })}
           </span>
         </div>
       </div>
@@ -162,12 +176,18 @@ export function AgentChannels({
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>删除机器人</DialogTitle>
-            <DialogDescription>将停止“{deleting?.name}”的消息接入，已有 OMA 会话会保留。</DialogDescription>
+            <DialogTitle>{msg('managedAgents.channels.delete', '删除机器人')}</DialogTitle>
+            <DialogDescription>
+              {msg(
+                'managedAgents.channels.deleteHint',
+                'Stop receiving messages for {name}. Existing OMA sessions will be kept.',
+                { name: deleting?.name ?? '' },
+              )}
+            </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2">
             <Button variant="outline" disabled={busy} onClick={() => setDeleting(null)}>
-              取消
+              {msg('managedAgents.channels.cancel', '取消')}
             </Button>
             <Button
               variant="destructive"
@@ -176,7 +196,7 @@ export function AgentChannels({
                 if (deleting) void mutate(deleting, true);
               }}
             >
-              确认删除
+              {msg('managedAgents.channels.confirmDelete', '确认删除')}
             </Button>
           </div>
         </DialogContent>

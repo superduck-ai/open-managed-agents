@@ -42,8 +42,3 @@ export function channelApi<T>(agentId: string, workspaceId: string, suffix = '',
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 }
-export function channelStatus(channel: Channel) {
-  if (!channel.enabled) return '已停用';
-  if (channel.binding_status !== 'bound') return '待绑定';
-  return channel.connected ? '已连接' : '连接失败';
-}

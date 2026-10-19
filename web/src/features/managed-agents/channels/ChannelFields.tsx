@@ -1,3 +1,4 @@
+import { useI18n } from '../../../shared/i18n';
 import { Eye, EyeOff } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '../../../shared/ui/button';
@@ -8,13 +9,25 @@ import { Switch } from '../../../shared/ui/switch';
 import type { ChannelInput } from './api';
 
 export function ChannelOptions({ value, onChange }: { value: ChannelInput; onChange: (value: ChannelInput) => void }) {
+  const { msg } = useI18n();
   const options = [
-    ['include_thinking', '展示思考过程', '在回复中展示思考过程'],
-    ['include_tool_calls', '展示工具调用', '在回复中展示工具调用'],
+    [
+      'include_thinking',
+      msg('managedAgents.channels.thinking', '展示思考过程'),
+      msg('managedAgents.channels.thinkingHint', '在回复中展示思考过程'),
+    ],
+    [
+      'include_tool_calls',
+      msg('managedAgents.channels.tools', '展示工具调用'),
+      msg('managedAgents.channels.toolsHint', '在回复中展示工具调用'),
+    ],
     [
       'reply_in_thread',
-      '话题归属',
-      '开启后机器人在话题内回复，每个话题一个独立会话；关闭则直接发在群里，整个群共用一个会话。',
+      msg('managedAgents.channels.threads', '话题归属'),
+      msg(
+        'managedAgents.channels.threadsHint',
+        '开启后机器人在话题内回复，每个话题一个独立会话；关闭则直接发在群里，整个群共用一个会话。',
+      ),
     ],
   ] as const;
   return (
@@ -44,11 +57,12 @@ export function ChannelMode({
   disabled: boolean;
   onChange: (value: ChannelInput['mode']) => void;
 }) {
+  const { msg } = useI18n();
   return (
     <div className="space-y-3">
-      <Label>渠道模式</Label>
+      <Label>{msg('managedAgents.channels.mode', '渠道模式')}</Label>
       <RadioGroup
-        aria-label="渠道模式"
+        aria-label={msg('managedAgents.channels.mode', '渠道模式')}
         value={value}
         disabled={disabled}
         onValueChange={(next) => onChange(next as ChannelInput['mode'])}
@@ -56,16 +70,18 @@ export function ChannelMode({
       >
         <Label className="flex gap-2">
           <RadioGroupItem value="open" />
-          开放模式
+          {msg('managedAgents.channels.open', '开放模式')}
         </Label>
         <Label className="flex gap-2">
           <RadioGroupItem value="pairing" />
-          配对模式
+          {msg('managedAgents.channels.pairing', '配对模式')}
         </Label>
       </RadioGroup>
       <p className="text-xs leading-5 text-muted-foreground">
-        {value === 'open' ? '无需审批，用户可直接与机器人对话。' : '经管理员批准后，对应的单聊或群聊才可使用。'}
-        渠道创建后不可切换模式。
+        {value === 'open'
+          ? msg('managedAgents.channels.openHint', '无需审批，用户可直接与机器人对话。')
+          : msg('managedAgents.channels.pairingHint', '经管理员批准后，对应的单聊或群聊才可使用。')}
+        {msg('managedAgents.channels.immutableMode', 'The mode cannot be changed after creation.')}
       </p>
     </div>
   );
@@ -79,6 +95,7 @@ export function ChannelCredentials({
   onChange: (value: ChannelInput) => void;
   bound: boolean;
 }) {
+  const { msg } = useI18n();
   const [visible, setVisible] = useState(false);
   return (
     <div className="space-y-4">
@@ -88,7 +105,7 @@ export function ChannelCredentials({
         rel="noreferrer"
         className="block text-right text-xs text-primary underline"
       >
-        前往渠道管理后台 →
+        {msg('managedAgents.channels.consoleLink', '前往渠道管理后台 →')}
       </a>
       <div className="space-y-2">
         <Label htmlFor="channel-app-id">App ID</Label>
@@ -109,14 +126,18 @@ export function ChannelCredentials({
             autoComplete="new-password"
             value={value.app_secret ?? ''}
             onChange={(event) => onChange({ ...value, app_secret: event.target.value })}
-            placeholder={bound ? '留空保留现有密钥' : 'App Secret'}
+            placeholder={bound ? msg('managedAgents.channels.keepSecret', '留空保留现有密钥') : 'App Secret'}
             className="pr-10"
           />
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-label={visible ? '隐藏密钥' : '显示密钥'}
+            aria-label={
+              visible
+                ? msg('managedAgents.channels.hideSecret', '隐藏密钥')
+                : msg('managedAgents.channels.showSecret', '显示密钥')
+            }
             onClick={() => setVisible(!visible)}
             className="absolute right-1 top-1"
           >

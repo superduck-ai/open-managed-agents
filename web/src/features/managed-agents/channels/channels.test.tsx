@@ -2,6 +2,7 @@ import { afterEach, expect, test } from 'bun:test';
 import { resetTestDom } from '../../../test/setup';
 const { render, screen, fireEvent, waitFor, cleanup } = await import('@testing-library/react');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
+const { I18nProvider } = await import('../../../shared/i18n');
 const { AgentChannels } = await import('./AgentChannels');
 const { setConsoleRequestContext } = await import('../../../shared/api/client');
 const originalFetch = globalThis.fetch;
@@ -10,12 +11,14 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   setConsoleRequestContext({});
 });
-function mount() {
+function mount(locale: 'zh-CN' | 'en' = 'zh-CN') {
   resetTestDom('/');
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <AgentChannels agentId="agent-test" workspaceId="workspace-test" canEdit />
+      <I18nProvider initialLocale={locale}>
+        <AgentChannels agentId="agent-test" workspaceId="workspace-test" canEdit />
+      </I18nProvider>
     </QueryClientProvider>,
   );
 }
@@ -54,4 +57,17 @@ test('保存凭据、模式和话题策略并携带当前工作区及 CSRF', asy
   expect(posted?.mode).toBe('pairing');
   expect(posted?.app_secret).toBe('test-secret');
   expect(posted?.reply_in_thread).toBe(true);
+});
+
+test('英文界面翻译渠道列表、表单和校验提示', async () => {
+  globalThis.fetch = (async () => new Response(JSON.stringify({ data: [] }))) as typeof fetch;
+  mount('en');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Create bot' }).hasAttribute('disabled')).toBe(false));
+  expect(screen.getByRole('heading', { name: 'IM connections' })).toBeTruthy();
+  expect(screen.getByText('No bots connected')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Create bot' }));
+  expect(screen.getByRole('radio', { name: 'Pairing mode' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Generate QR code' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Enter a bot name'));
 });

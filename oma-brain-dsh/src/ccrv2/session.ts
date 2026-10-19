@@ -374,7 +374,6 @@ export class CcrSession {
     entry.approvedCalls[call.callId] = { name: call.name, original: call.original, effective: call.effective };
     if (threadId === this.id) this.state.approvedCalls[call.callId] = entry.approvedCalls[call.callId]!;
     this.syncCallPhase(entry);
-    await this.save();
     this.activity.start(threadId, "tool_exec", call.callId);
   }
 
@@ -599,16 +598,16 @@ export class CcrSession {
     await this.runtime.flushLog();
     await this.save();
     await this.previews;
-    await this.publish();
+    await this.publish(false);
   }
-  publish(): Promise<void> {
+  publish(persistCleared = true): Promise<void> {
     const next = this.publications.then(async () => {
       if (!this.state.outbox.length) return;
       const pending = this.state.outbox.slice();
       if (!pending.length) return;
       await this.backend.events(this.id, pending);
       this.state.outbox.splice(0, pending.length);
-      await this.save();
+      if (persistCleared) await this.save();
     });
     this.publications = next.catch(() => {});
     return next;

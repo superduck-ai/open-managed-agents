@@ -16,15 +16,18 @@ func (s *Service) WithSandboxProvisioner(provisioner SandboxProvisioner) *Servic
 	return s
 }
 
-func (h *Handler) ensureSessionSandbox(ctx context.Context, session db.CodeSession) (string, error) {
-	renewed := false
-	if sandbox, err := h.db.GetResumableEnvironmentSandboxForCodeSession(ctx, session.ExternalID); err == nil {
-		if err := h.renewSandboxTimeout(ctx, sandbox); err != nil {
+func (h *Handler) ensureSessionSandbox(ctx context.Context, session db.CodeSession, renew bool) (string, error) {
+	renewed := !renew
+	if renew {
+		sandbox, err := h.db.GetResumableEnvironmentSandboxForCodeSession(ctx, session.ExternalID)
+		if err == nil {
+			if err := h.renewStaleSandboxTimeout(ctx, sandbox); err != nil {
+				return "", err
+			}
+			renewed = true
+		} else if !errors.Is(err, db.ErrNotFound) {
 			return "", err
 		}
-		renewed = true
-	} else if !errors.Is(err, db.ErrNotFound) {
-		return "", err
 	}
 	if h.service.sandboxProvisioner == nil {
 		return "", errSandboxUnavailable
@@ -40,7 +43,7 @@ func (h *Handler) ensureSessionSandbox(ctx context.Context, session db.CodeSessi
 	if err != nil {
 		return "", err
 	}
-	if err := h.renewSandboxTimeout(ctx, sandbox); err != nil {
+	if err := h.renewStaleSandboxTimeout(ctx, sandbox); err != nil {
 		return "", err
 	}
 	return endpoint, nil

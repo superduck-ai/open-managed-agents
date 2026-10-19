@@ -42,7 +42,7 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 		h.errorAdapter.Write(w, r, sandboxInvalidRequest(nil))
 		return
 	}
-	endpoint, err := h.ensureSessionSandbox(r.Context(), session)
+	endpoint, err := h.ensureSessionSandbox(r.Context(), session, !strings.HasPrefix(call.Method, "notifications/"))
 	if err != nil {
 		h.errorAdapter.Write(w, r, sandboxOperationError(err))
 		return

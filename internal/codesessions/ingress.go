@@ -536,7 +536,15 @@ func (h *Handler) renewSandboxTimeout(ctx context.Context, sandbox db.Environmen
 	if err := h.sandboxTimeoutExtender.SetTimeout(ctx, *sandbox.ProviderSandboxID, h.cfg.E2B.SandboxTimeout); err != nil {
 		return fmt.Errorf("set provider sandbox timeout: %w", err)
 	}
+	h.sandboxRenewals.record(*sandbox.ProviderSandboxID, time.Now(), sandboxRenewalWindow(h.cfg.E2B.SandboxTimeout))
 	return nil
+}
+
+func (h *Handler) renewStaleSandboxTimeout(ctx context.Context, sandbox db.EnvironmentSandbox) error {
+	if sandbox.ProviderSandboxID != nil && h.sandboxRenewals.fresh(*sandbox.ProviderSandboxID, time.Now(), sandboxRenewalWindow(h.cfg.E2B.SandboxTimeout)) {
+		return nil
+	}
+	return h.renewSandboxTimeout(ctx, sandbox)
 }
 
 func (h *Handler) handleSessionIngressEvents(w http.ResponseWriter, r *http.Request) {

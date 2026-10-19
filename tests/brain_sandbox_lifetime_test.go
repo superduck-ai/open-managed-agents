@@ -79,9 +79,14 @@ func TestBrainSandboxMCPResumesBeforeDispatch(t *testing.T) {
 	if response.StatusCode != http.StatusOK || calls != 2 {
 		t.Fatalf("resumed dispatch status=%d calls=%d", response.StatusCode, calls)
 	}
+	response = request(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}`)
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || calls != 3 {
+		t.Fatalf("notification status=%d calls=%d", response.StatusCode, calls)
+	}
 	renewals := app.sandboxTimeouts.snapshotCalls()
-	if len(renewals) != 3 {
-		t.Fatalf("renewals=%d want 3", len(renewals))
+	if len(renewals) != 2 {
+		t.Fatalf("renewals=%d want failed attempt plus one renewal reused within its window", len(renewals))
 	}
 	for _, call := range renewals {
 		if call.sandboxID == "" || call.timeout != app.cfg.E2B.SandboxTimeout {

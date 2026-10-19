@@ -83,6 +83,8 @@ The application reads these optional deployment settings at startup. Unset value
 
 Intervals including jitter and request deadlines must fit a 32-bit JavaScript timer. The interval with jitter plus the request deadline must stay below the 20-second worker lease. Existing environment overrides still apply. `409` and `410` stop immediately regardless of either failure limit. For `401`/`403`, an expired JWT also stops immediately; otherwise failures accumulate toward the authentication limit. Successful POST/PUT responses reset that counter, including heartbeats, state updates, publication, persistence and delivery confirmation. GETs and other failed requests do not reset it. Other heartbeat failures, including transport errors, 5xx, 408, 429 and other 4xx, keep scheduling unless a positive transient failure limit is configured.
 
+Set `OMA_DEBUG_SYSTEM_PROMPT=1` to print the system prompt and tool names exactly as sent to the Messages API, as an `oma_system_prompt` JSON line on stdout. Each session and subagent thread prints once, and again only when its prompt or tool list changes. The output contains the configured agent instructions and memory catalog, so enable it only for local debugging. Read it with `jq -r 'select(.event == "oma_system_prompt") | .system'`.
+
 ## CCRv2 plugin
 
 The repository-local plugin entry is `src/ccrv2/index.ts`. Install it after the native runtime and supply a backend implementing `CcrBackend`:

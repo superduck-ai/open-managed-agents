@@ -104,6 +104,9 @@ func TestManagedAgentSubagentSkillsPreserveVersions(t *testing.T) {
 	if err := jsonv2.Unmarshal([]byte(encoded), &definitions); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.HasSuffix(definitions["review-a"].Prompt, "\n\n"+mustEnvironmentPrompt(t, nil)) {
+		t.Fatalf("subagent prompt lacks rendered environment prompt: %q", definitions["review-a"].Prompt)
+	}
 	for name, directory := range map[string]string{"review-a": "review-v1", "review-b": "review-v2", "review-c": "review-v2"} {
 		if !slices.Equal(definitions[name].Skills, []string{directory}) {
 			t.Errorf("%s skills=%v, want [%s]", name, definitions[name].Skills, directory)

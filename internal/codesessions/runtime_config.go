@@ -17,6 +17,7 @@ type managedAgentRuntimeConfigSchema struct {
 	MemoryCatalogPrompt string                 `json:"memory_catalog_prompt"`
 	RuntimeSkills       []runtimeSkillConfig   `json:"runtime_skills"`
 	Subagents           *RuntimeSubagentConfig `json:"subagents"`
+	RuntimeTools        []string               `json:"runtime_tools"`
 	fields              map[string]json.RawMessage
 }
 
@@ -46,5 +47,24 @@ func (c managedAgentRuntimeConfigSchema) encode() (json.RawMessage, error) {
 		}
 		c.fields["subagents"] = encoded
 	}
+	if c.RuntimeTools != nil {
+		encoded, err := json.Marshal(c.RuntimeTools)
+		if err != nil {
+			return nil, err
+		}
+		c.fields["runtime_tools"] = encoded
+	}
 	return json.Marshal(c.fields)
+}
+
+func runtimeRootTools(agentSnapshot json.RawMessage) ([]string, error) {
+	var snapshot struct {
+		Tools []toolPermissionToolset `json:"tools"`
+	}
+	if len(agentSnapshot) > 0 {
+		if err := json.Unmarshal(agentSnapshot, &snapshot); err != nil {
+			return nil, err
+		}
+	}
+	return enabledSandboxTools(snapshot.Tools), nil
 }

@@ -1,30 +1,16 @@
-# Narrows 模型的 OpenRouter 对账夹具
+# 多模型计费实测
 
-`narrows-openrouter.json` 于 2026-10-18 获取，模型清单来自
-https://narrows.seewo.com/pricing/api/rules ，价格来自
-https://openrouter.ai/api/v1/models 。Narrows 的人民币价格不参与计算。
-
-保留 61 个 Narrows 模型及 32 个可精确匹配的 OpenRouter 原始价格条目。
-其余 29 个模型的预期价格为空，不对供应商前缀、日期版本或模型家族做模糊替换。
-夹具是固定日期的回归基准，不能用于宣称当前实时价格或真实供应商账单正确。
-
-103 组用量是合成测试输入：基础组总输入 12345、输出 2345；有缓存读取单价时取读取 3456，
-有写入单价时取写入 4567，普通输入为总输入减去读取和写入。各模型分档阈值追加
-阈值减一、阈值本身和阈值加一三组，验证缓存计入分档总输入且不会重复计费。
-
-预期 `cents` 独立使用原始每 Token 美元价格的十进制运算生成：
-逐项 Token 数乘原始单价、求和、乘 100，最后以 ROUND_HALF_UP 舍入为整数美分。
-按总输入严格大于阈值选择覆盖价，不调用项目的价格解析器或费用计算器生成预期值。
-
-`TestNarrowsModelsOpenRouterReconciliation` 将原始价格经正式解析器写入隔离 PostgreSQL，
-使用正式数据库模型匹配与计量 Transport，验证 206 条流式/非流式路径的快照、用量、费用、
-未定价状态与每日汇总。HTTP 上游响应来自测试服务器，不代表真实供应商响应。
+价格快照、测试数据、报告和截图仅保存在本地 `tmp/`，不纳入 Git。
+离线回归 `TestModelPriceReconciliation` 使用合成价格和固定预期值，覆盖精确及短名匹配、
+未定价、缓存和分档阈值，贯通隔离 PostgreSQL、流式/非流式计量、账本及每日汇总。
+Narrows 解析单测使用合成规则覆盖汇率、分档上下界和无法区分的价格类别。
 
 `TestLiveNarrowsBilling` 默认跳过，只有显式设置下列环境变量才会调用真实上游并产生费用：
 
 - `LIVE_BILLING_BASE_URL`：已启动的测试服务。
 - `CONFIG_FILE`：该服务的数据库配置，仅用于读取验收账本；不会执行迁移或重置数据库。
-- `LIVE_BILLING_PRICES`：本轮下载的完整 OpenRouter 价格 JSON。
+- `LIVE_BILLING_PRICES`：本轮下载到本地的完整价格 JSON。
+- `LIVE_BILLING_SOURCE`：设为 `narrows` 时使用 Narrows 原规则 JSON，并默认实测其中全部模型；否则使用 OpenRouter 价格 JSON，必须用 `LIVE_BILLING_MODELS` 指定模型，避免意外调用整个目录。
 - `LIVE_BILLING_REPORT`：本地脱敏 JSON 报告输出路径，不纳入 Git。
 - `LIVE_BILLING_API_KEY`：可选，默认使用项目本地测试 API Key。
 

@@ -10,7 +10,6 @@ import (
 	"math/big"
 	"net/http"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -78,17 +77,23 @@ func TestLiveNarrowsBilling(t *testing.T) {
 			prices[id.Model] = rule
 		}
 	}
-	raw, err = os.ReadFile("testdata/billing/narrows-openrouter.json")
-	if err != nil {
-		t.Fatal(err)
+	selected := []string{}
+	if models := os.Getenv("LIVE_BILLING_MODELS"); models != "" {
+		for model := range strings.SplitSeq(models, ",") {
+			if model = strings.TrimSpace(model); model == "" {
+				t.Fatal("实测模型名称不能为空")
+			}
+			selected = append(selected, model)
+		}
+	} else if os.Getenv("LIVE_BILLING_SOURCE") == "narrows" {
+		for model := range prices {
+			selected = append(selected, model)
+		}
+	} else {
+		t.Fatal("使用 OpenRouter 价格时需通过 LIVE_BILLING_MODELS 指定实测模型")
 	}
-	var fixture struct {
-		Cases []struct {
-			Model string `json:"model"`
-		} `json:"cases"`
-	}
-	if err := json.Unmarshal(raw, &fixture); err != nil {
-		t.Fatal(err)
+	if len(selected) == 0 {
+		t.Fatal("没有可实测的模型")
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -111,21 +116,16 @@ func TestLiveNarrowsBilling(t *testing.T) {
 	if repeats < 0 || repeats > 30000 {
 		t.Fatal("测试输入重复次数需在 0–30000 之间")
 	}
-	selected := strings.Split(os.Getenv("LIVE_BILLING_MODELS"), ",")
 	results := []liveBillingResult{}
 	seen := map[string]bool{}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, 4)
-	for _, tc := range fixture.Cases {
-		if os.Getenv("LIVE_BILLING_MODELS") != "" && !slices.Contains(selected, tc.Model) {
+	for _, model := range selected {
+		if seen[model] {
 			continue
 		}
-		if seen[tc.Model] {
-			continue
-		}
-		seen[tc.Model] = true
-		model := tc.Model
+		seen[model] = true
 		wg.Go(func() {
 			slots <- struct{}{}
 			defer func() { <-slots }()

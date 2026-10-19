@@ -217,9 +217,9 @@ flowchart LR
 
 ### 多模型计费验收
 
-原 OpenRouter 对账夹具继续验证美元目录。Narrows 独立对账使用其价格 API 的全部模型，按固定 7.2 汇率计费。
-固定日期的 61 模型夹具覆盖精确匹配、未定价、缓存用量和分档阈值两侧，预期金额由原始每 Token
-单价独立计算。回归贯通价格解析、目录入库、工作区模型选择、流式/非流式响应计量、账本和每日汇总。
+离线回归使用少量合成规则与固定预期金额，覆盖精确匹配、未定价、缓存用量和分档阈值两侧，
+贯通价格解析、目录入库、工作区模型选择、流式/非流式响应计量、账本和每日汇总。
+历史价格快照、测试数据及运行产物不纳入 Git。Narrows 全模型实测从本地价格快照获取模型，按固定 7.2 汇率计费；OpenRouter 实测需显式指定模型列表。
 真实请求另以显式启用的 `TestLiveNarrowsBilling` 验证，结果区分费用匹配、未定价、调用受阻和对账不一致；
 不能用合成用量的回归结果代替真实供应商验证。输入来源、运行参数及限制见 `tests/testdata/billing/README.md`。
 
@@ -231,4 +231,4 @@ flowchart LR
 
 Narrows 分档支持严格下界、包含下界及包含上界，按原 API 顺序应用。当前用量协议无法区分思考模式输出、图像输出及隐式缓存：存在这些独立单价时，对应类别保持未定价，不能按普通输出或显式缓存价格猜测收费。嵌入模型虽可登记在 Provider 中，但不能以 Messages 成功测试代替 Embeddings 接口验收。
 
-回归夹具 `internal/pricing/testdata/narrows.json` 为 2026-10-19 原价格快照；`narrows-expected.json` 使用独立 Decimal 计算 302 组基础价格与分档边界预期。真实测试设置 `LIVE_BILLING_SOURCE=narrows`、`LIVE_BILLING_PRICES` 为原规则 JSON，并核对实际用量、价格来源、固定汇率与最终账本美分。
+Narrows 解析回归使用合成规则验证固定汇率、分档上下界及无法区分的输出和缓存价格。真实测试设置 `LIVE_BILLING_SOURCE=narrows`、`LIVE_BILLING_PRICES` 为本地原规则 JSON，并核对实际用量、价格来源、固定汇率与最终账本美分。

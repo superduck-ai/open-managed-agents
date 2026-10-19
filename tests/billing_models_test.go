@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -35,22 +34,18 @@ func (s *billingRecordedStore) InsertUsageRecord(ctx context.Context, record db.
 	return nil
 }
 
-func TestNarrowsModelsOpenRouterReconciliation(t *testing.T) {
-	raw, err := os.ReadFile("testdata/billing/narrows-openrouter.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture struct {
-		Cases []struct {
-			Model       string         `json:"model"`
-			SourceModel string         `json:"source_model"`
-			TotalInput  int64          `json:"total_input"`
-			Usage       jsontext.Value `json:"usage"`
-			Cents       *int64         `json:"cents"`
-		} `json:"cases"`
-	}
-	if err := json.Unmarshal(raw, &fixture); err != nil {
-		t.Fatal(err)
+func TestModelPriceReconciliation(t *testing.T) {
+	raw := []byte(`{"data":[{"id":"example/basic","pricing":{"prompt":"0.00001","completion":"0.00002","input_cache_read":"0.000001","input_cache_write":"0.00002","overrides":[{"min_prompt_tokens":10000,"prompt":"0.00002"}]}}]}`)
+	cases := []struct {
+		Model, SourceModel string
+		TotalInput         int64
+		Usage              jsontext.Value
+		Cents              *int64
+	}{
+		{"missing", "", 10000, jsontext.Value(`{"input_tokens":10000,"output_tokens":2345,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}`), nil},
+		{"basic", "example/basic", 9999, jsontext.Value(`{"input_tokens":9999,"output_tokens":2345,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}`), new(int64(15))},
+		{"example/basic", "example/basic", 10000, jsontext.Value(`{"input_tokens":7000,"output_tokens":2345,"cache_read_input_tokens":1000,"cache_creation_input_tokens":2000}`), new(int64(16))},
+		{"basic", "example/basic", 10001, jsontext.Value(`{"input_tokens":7001,"output_tokens":2345,"cache_read_input_tokens":1000,"cache_creation_input_tokens":2000}`), new(int64(23))},
 	}
 	prices, err := pricing.Parse(raw)
 	if err != nil {
@@ -60,20 +55,17 @@ func TestNarrowsModelsOpenRouterReconciliation(t *testing.T) {
 	defer app.close()
 	models := []string{}
 	seen := map[string]bool{}
-	for _, tc := range fixture.Cases {
+	for _, tc := range cases {
 		if !seen[tc.Model] {
 			models = append(models, tc.Model)
 			seen[tc.Model] = true
 		}
 	}
-	if len(models) != 61 || len(prices) != 32 {
-		t.Fatalf("模型覆盖变化：%d/%d", len(models), len(prices))
-	}
 	provider := seedTestLLMProviderForWorkspace(t, app, uuid.NewV4().String(), uuid.NewV4().String(), "多模型计费对账", "https://example.test", "fixture-key", models...)
 	if err := app.db.ReplaceModelPriceCatalog(t.Context(), "openrouter", prices); err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range fixture.Cases {
+	for _, tc := range cases {
 		t.Run(fmt.Sprintf("%s/%d", tc.Model, tc.TotalInput), func(t *testing.T) {
 			usageJSON, err := json.Marshal(tc.Usage)
 			if err != nil {

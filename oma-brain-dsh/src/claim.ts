@@ -5,7 +5,7 @@ import { failureDiagnostic, workerDiagnostic } from "./ccrv2/diagnostics.ts";
 export type TaskAdmissionStage = "validate_assignment" | "retire_session"
   | "register_worker" | "create_session" | "open_session" | "start_inbound";
 
-export type ReleaseReason = "admission_failed" | "shutdown" | "permanent";
+export type ReleaseReason = "admission_failed" | "shutdown" | "permanent" | "idle";
 
 export interface ClaimedTask {
   session_id: string;

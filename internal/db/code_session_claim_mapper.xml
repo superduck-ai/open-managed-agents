@@ -41,14 +41,17 @@
         RETURNING current_worker_epoch
     </update>
 
-    <update id="HoldExhausted" result="rows">
+    <update id="HoldExhausted" result="returning" resultType="int64">
         UPDATE code_sessions
-        SET worker_claim_requested_at = NULL,
+        SET current_worker_epoch = current_worker_epoch + CASE WHEN worker_claimed_by IS NULL THEN 0 ELSE 1 END,
+            worker_claimed_by = NULL,
+            worker_claim_requested_at = NULL,
             worker_lease_expires_at = NULL,
             connection_status = 'disconnected',
             worker_claim_expires_at = #{holdUntil},
             updated_at = NOW()
         WHERE uuid = #{uuid}
+        RETURNING current_worker_epoch
     </update>
 
     <update id="ResetExhausted" result="rows">
@@ -61,9 +64,11 @@
           AND worker_claim_requested_at IS NULL
     </update>
 
-    <update id="FailPermanently" result="returning" resultType="string">
+    <update id="FailPermanently" result="returning" resultType="failedCodeSessionClaimRow">
         UPDATE code_sessions
-        SET worker_claim_requested_at = NULL,
+        SET current_worker_epoch = current_worker_epoch + 1,
+            worker_claimed_by = NULL,
+            worker_claim_requested_at = NULL,
             worker_lease_expires_at = NULL,
             connection_status = 'disconnected',
             worker_claim_expires_at = #{params.HoldUntil},
@@ -74,21 +79,25 @@
           AND worker_claimed_by = #{params.WorkerID}
           AND status = 'active'
           AND deleted_at IS NULL
-        RETURNING uuid
+        RETURNING uuid, current_worker_epoch
     </update>
 
     <update id="Release" result="rows">
         UPDATE code_sessions
-        SET worker_claim_requested_at = COALESCE(worker_claim_requested_at, NOW()),
-            worker_lease_expires_at = NULL,
+        SET worker_lease_expires_at = NULL,
             connection_status = 'disconnected',
             <choose>
-                <when test="params.Failed">
+                <when test="params.Kind == 'retry'">
+                    worker_claim_requested_at = COALESCE(worker_claim_requested_at, NOW()),
                     worker_claim_expires_at = NOW() + LEAST(5 * POWER(2, GREATEST(worker_claim_attempts - 1, 0)), 300) * INTERVAL '1 second',
+                </when>
+                <when test="params.Kind == 'handoff'">
+                    worker_claim_requested_at = COALESCE(worker_claim_requested_at, NOW()),
+                    worker_claim_expires_at = NOW(),
+                    worker_claim_attempts = GREATEST(worker_claim_attempts - 1, 0),
                 </when>
                 <otherwise>
                     worker_claim_expires_at = NOW(),
-                    worker_claim_attempts = GREATEST(worker_claim_attempts - 1, 0),
                 </otherwise>
             </choose>
             updated_at = NOW()

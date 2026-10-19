@@ -32,13 +32,13 @@ func TestBrainClaimAuthenticatorRejectsInvalidTokens(t *testing.T) {
 	if err := os.WriteFile(shortFile, []byte("short"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadBrainClaimAuthenticator(shortFile); err == nil {
+	if _, err := LoadBrainClaimAuthenticator(shortFile); err == nil {
 		t.Fatal("short brain claim token accepted")
 	}
-	if _, err := loadBrainClaimAuthenticator(filepath.Join(directory, "missing")); err == nil {
+	if _, err := LoadBrainClaimAuthenticator(filepath.Join(directory, "missing")); err == nil {
 		t.Fatal("missing brain claim token file accepted")
 	}
-	disabled, err := loadBrainClaimAuthenticator("")
+	disabled, err := LoadBrainClaimAuthenticator("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,13 +47,13 @@ func TestBrainClaimAuthenticatorRejectsInvalidTokens(t *testing.T) {
 	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	enabled, err := loadBrainClaimAuthenticator(tokenFile)
+	enabled, err := LoadBrainClaimAuthenticator(tokenFile)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
 		name          string
-		authenticator brainClaimAuthenticator
+		authenticator BrainClaimAuthenticator
 		header        string
 		ok            bool
 	}{

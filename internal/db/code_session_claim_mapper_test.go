@@ -37,20 +37,29 @@ func TestCodeSessionClaimMapperBuilderContracts(t *testing.T) {
 		{"release after failure", mapperBuilderContract{
 			statement: codeSessionClaimMapperReleaseStatement,
 			bound: buildCodeSessionClaimMapperRelease(yourbatis.DialectPostgres, releaseCodeSessionClaimParams{
-				ExternalID: "cse_test", WorkerID: "worker", Epoch: 2, Failed: true,
+				ExternalID: "cse_test", WorkerID: "worker", Epoch: 2, Kind: CodeSessionClaimReleaseRetry,
 			}),
 			wantID: "CodeSessionClaimMapper.Release", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{"params.ExternalID", "params.Epoch", "params.WorkerID"},
-			wantSQLFragments:  []string{"LEAST(5 * POWER(2, GREATEST(worker_claim_attempts - 1, 0)), 300)", "worker_claimed_by = $3"},
+			wantSQLFragments:  []string{"worker_claim_requested_at = COALESCE(worker_claim_requested_at, NOW())", "LEAST(5 * POWER(2, GREATEST(worker_claim_attempts - 1, 0)), 300)", "worker_claimed_by = $3"},
 		}},
 		{"release on shutdown", mapperBuilderContract{
 			statement: codeSessionClaimMapperReleaseStatement,
 			bound: buildCodeSessionClaimMapperRelease(yourbatis.DialectPostgres, releaseCodeSessionClaimParams{
-				ExternalID: "cse_test", WorkerID: "worker", Epoch: 2,
+				ExternalID: "cse_test", WorkerID: "worker", Epoch: 2, Kind: CodeSessionClaimReleaseHandoff,
 			}),
 			wantID: "CodeSessionClaimMapper.Release", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{"params.ExternalID", "params.Epoch", "params.WorkerID"},
-			wantSQLFragments:  []string{"worker_claim_expires_at = NOW()", "worker_claim_attempts = GREATEST(worker_claim_attempts - 1, 0)"},
+			wantSQLFragments:  []string{"worker_claim_requested_at = COALESCE(worker_claim_requested_at, NOW())", "worker_claim_expires_at = NOW()", "worker_claim_attempts = GREATEST(worker_claim_attempts - 1, 0)"},
+		}},
+		{"release when idle", mapperBuilderContract{
+			statement: codeSessionClaimMapperReleaseStatement,
+			bound: buildCodeSessionClaimMapperRelease(yourbatis.DialectPostgres, releaseCodeSessionClaimParams{
+				ExternalID: "cse_test", WorkerID: "worker", Epoch: 2, Kind: CodeSessionClaimReleaseIdle,
+			}),
+			wantID: "CodeSessionClaimMapper.Release", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{"params.ExternalID", "params.Epoch", "params.WorkerID"},
+			wantSQLFragments:  []string{"worker_lease_expires_at = NULL", "worker_claim_expires_at = NOW()"},
 		}},
 		{"heartbeat lease lock reads transport", mapperBuilderContract{
 			statement: codeSessionMapperLockWorkerLeaseByExternalIDStatement,
@@ -71,7 +80,7 @@ func TestCodeSessionClaimMapperBuilderContracts(t *testing.T) {
 			bound:     buildCodeSessionClaimMapperHoldExhausted(yourbatis.DialectPostgres, "code-session-uuid", expiresAt),
 			wantID:    "CodeSessionClaimMapper.HoldExhausted", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{"holdUntil", "uuid"},
-			wantSQLFragments:  []string{"worker_lease_expires_at = NULL", "worker_claim_requested_at = NULL"},
+			wantSQLFragments:  []string{"current_worker_epoch = current_worker_epoch + CASE WHEN worker_claimed_by IS NULL THEN 0 ELSE 1 END", "worker_claimed_by = NULL", "RETURNING current_worker_epoch"},
 		}},
 		{"fail permanently", mapperBuilderContract{
 			statement: codeSessionClaimMapperFailPermanentlyStatement,
@@ -80,7 +89,7 @@ func TestCodeSessionClaimMapperBuilderContracts(t *testing.T) {
 			}),
 			wantID: "CodeSessionClaimMapper.FailPermanently", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{"params.HoldUntil", "params.MaxAttempts", "params.ExternalID", "params.Epoch", "params.WorkerID"},
-			wantSQLFragments:  []string{"GREATEST(worker_claim_attempts, $2)", "worker_claimed_by = $5", "RETURNING uuid"},
+			wantSQLFragments:  []string{"current_worker_epoch = current_worker_epoch + 1", "worker_claimed_by = NULL", "GREATEST(worker_claim_attempts, $2)", "worker_claimed_by = $5", "RETURNING uuid, current_worker_epoch"},
 		}},
 		{"request", mapperBuilderContract{
 			statement: codeSessionClaimMapperRequestStatement,

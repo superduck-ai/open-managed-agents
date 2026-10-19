@@ -180,7 +180,7 @@ RETURNING current_worker_epoch;
 ```
 
 - 提交后由 `codesessions.Service.ClaimBrainWorker` 读取签发上下文并签发带 epoch 的 ingress JWT。model token 在事务前生成，事务内只写 hash。
-- `worker_claim_attempts` 已达上限（5）时，事务改为 `HoldExhausted`：清空 requested 标记和已过期的租约（worker 注册后、事件流连接前崩溃时会残留非空的过期租约），把领取期限设为 1 分钟后，不返回凭据。事务提交后服务发布 `session.error`（`retry_status: exhausted`）与 `session.status_idle(retries_exhausted)`，事件 ID 由 Code Session ID 和当前 epoch 稳定派生，重试发布不会重复；发布成功后 `ResetExhausted` 以 `current_worker_epoch` 为守卫把 attempts 归零并清空期限，未更新任何行时返回错误并记录告警。发布失败时 1 分钟后再次进入同一路径。公共会话变为 idle 后不再满足可领取条件，直到新输入使其重新 running。一次长轮询最多连续处理 10 个耗尽的行，然后继续寻找可领取的行。
+- `worker_claim_attempts` 已达上限（5）时，事务改为 `HoldExhausted`：推进 epoch 并清空 `worker_claimed_by`，清空 requested 标记和已过期的租约（worker 注册后、事件流连接前崩溃时会残留非空的过期租约），把领取期限设为 1 分钟后，不返回凭据。推进 epoch 使仍卡在注册或打开会话中的旧领取者无法在失败公开后完成 register 或心跳，避免已宣告失败的会话被旧凭据重新挂上租约。`worker_claimed_by` 为空表示已经推进过，发布失败后再次进入 hold 时 epoch 不变，失败事件 ID 保持稳定。事务提交后服务发布 `session.error`（`retry_status: exhausted`）与 `session.status_idle(retries_exhausted)`，事件 ID 由 Code Session ID 和 hold 推进后的 epoch 稳定派生，重试发布不会重复；发布成功后 `ResetExhausted` 以 hold 推进后的 `current_worker_epoch` 为守卫把 attempts 归零并清空期限，未更新任何行时返回错误并记录告警。发布失败时 1 分钟后再次进入同一路径。公共会话变为 idle 后不再满足可领取条件，直到新输入使其重新 running。一次长轮询最多连续处理 10 个耗尽的行，然后继续寻找可领取的行。
 - 已知边界：新输入恰好落在 `HoldExhausted` 与失败事件发布之间（毫秒级窗口）时，`session.status_idle(retries_exhausted)` 可能晚于新输入写入。之后公共会话一旦回到 running 即重新满足领取条件，可以自愈；该窗口未额外加锁处理。
 - 领取事务提交后若签发凭据时发现会话已不存在（例如刚被删除），本次视为未领到并继续扫描下一行，不返回 500。
 - 领取期限为 30 秒，只需覆盖“领取 → 注册”的两次 HTTP 往返。注册后由租约保护归属。
@@ -194,11 +194,12 @@ RETURNING current_worker_epoch;
 
 `POST /v1/code/brain/claims/{code_session_id}/release`
 
-- 鉴权同领取；请求体 `{"worker_epoch": N, "reason": "admission_failed" | "shutdown" | "permanent"}`。
-- 仅当 Code Session active、`current_worker_epoch = N` 且 `worker_claimed_by = X-Worker-ID` 时生效。注册前后都可以调用：清空租约、置 `connection_status = 'disconnected'`，并把 `worker_claim_requested_at` 设为已有值或当前时间，使会话无论公共状态如何都能再被领取。
+- 鉴权同领取；请求体 `{"worker_epoch": N, "reason": "admission_failed" | "shutdown" | "idle" | "permanent"}`。
+- 仅当 Code Session active、`current_worker_epoch = N` 且 `worker_claimed_by = X-Worker-ID` 时生效。注册前后都可以调用：清空租约、置 `connection_status = 'disconnected'`。`admission_failed` 与 `shutdown` 还把 `worker_claim_requested_at` 设为已有值或当前时间，使会话无论公共状态如何都能再被领取。
 - `admission_failed` 把领取期限设为 `now() + min(5s × 2^(attempts-1), 5min)`；连续失败的退避依次为 5、10、20、40、80 秒，第 6 次领取进入耗尽分支，因此临时性故障约 155 秒（另加各次准入耗时）后才公开 `session.error`。
-- `permanent` 用于重试也不会成功的失败（任务信封、`session_context` 或 assignment 校验失败）：`FailPermanently` 在同一条 UPDATE 中清空租约与 requested 标记、把 attempts 提到上限并设置 1 分钟保持期，服务随即走与耗尽相同的发布与重置流程，用户几秒内即可看到 `session.error`。
+- `permanent` 用于重试也不会成功的失败（任务信封、`session_context` 或 assignment 校验失败）：`FailPermanently` 在同一条 UPDATE 中推进 epoch、清空 `worker_claimed_by`、租约与 requested 标记、把 attempts 提到上限并设置 1 分钟保持期，服务随即走与耗尽相同的发布与重置流程，用户几秒内即可看到 `session.error`。
 - `shutdown` 立即可领取，并把 attempts 减一，不计为失败，同时通过 Core NATS 唤醒其他长轮询。DSH 本地容量竞争导致的放弃也使用 `shutdown`。
+- `idle` 用于 DSH 关闭空闲会话（60 秒空闲退役、为新领取腾出容量、正常退出）：只清空租约并让领取期限立即过期，不设置 requested 标记、不改变 attempts。公共会话保持 idle 时不会被领取；之后的新输入让会话回到 running，任一进程即可立即领取，不必等待旧进程最后一次心跳的 20 秒租约与 10 秒宽限。
 - 不满足条件返回 `409`，DSH 只记录告警。
 
 ### 现有接口的变化
@@ -225,7 +226,7 @@ RETURNING current_worker_epoch;
 - 领取 SQL 用同一宽限期判断租约是否失效，保证“心跳仍被接受”和“可被重新领取”两个判定互斥。
 - DSH 心跳按固定节奏发送（下一拍在发出当前请求前就已排期，与请求耗时无关），间隔 6 秒、抖动 ±10%、请求超时 5 秒。上一次成功后若连续 2 拍失败，第 3 拍最晚在 19.8 秒内发出、24.8 秒内到达；即使已越过 20 秒租约，仍在 10 秒宽限内被接受并续约。会话只有在租约加宽限（30 秒）都过去后才能被其他进程接管。DSH 启动时校验 `间隔 × (1 + 抖动) + 超时 < 租约 TTL`，不满足则拒绝启动。
 - 代价：每条 Brain 会话每 6 秒一次心跳，每次心跳仍是原来的一个事务（行锁读取、租约更新、Work 续租），只是频率约为原来的 3.3 倍，没有额外的数据库往返；GC 停顿、网络抖动或后端变慢超过约 30 秒时，会话会被判定失效并被其他进程领取，旧进程的写入随即被 epoch fence 拒绝，正在执行的工具调用走现有 blocked 恢复流程。
-- 进程正常退出时 release 准入中的领取和仍有活跃 turn 的会话，不需要等待租约过期；空闲会话不 release，避免被无意义地重新领取。
+- 进程正常退出时以 `shutdown` release 准入中的领取和仍有活跃 turn 的会话，不需要等待租约过期；空闲会话以 `idle` release，只清除租约，不会被无意义地重新领取。
 
 ## 并发与幂等
 
@@ -269,19 +270,19 @@ RETURNING current_worker_epoch;
 - `brainClaimFailure(cause)`（500）
 - `mapBrainClaimReleaseError(err)`：`db.ErrPreconditionFailed` 映射为 409，其余为 500
 
-handler 只调用这些函数；DB 层返回 `ErrPreconditionFailed`、`ErrNotFound` 等现有可识别错误。`code_session.brain_claim_token_file` 少于 32 个字符或无法读取时，Handler 构造失败，服务启动即报错。
+handler 只调用这些函数；DB 层返回 `ErrPreconditionFailed`、`ErrNotFound` 等现有可识别错误。`code_session.brain_claim_token_file` 由 `main` 在组装阶段通过 `codesessions.LoadBrainClaimAuthenticator` 读取，经 `ServerDeps.BrainClaims` 注入 Handler；文件少于 32 个字符或无法读取时 `run` 返回错误，服务以可读的启动错误退出，资源包不 panic。
 
 ## 测试与验证
 
 已实现的自动化测试（失败场景在前）：
 
 - `internal/db/code_session_claim_mapper_test.go`：领取、释放、请求、耗尽保持、重置与永久失败语句的 SQL 片段与参数绑定，token hash 标记为 sensitive；心跳行锁查询带出 `worker_transport`。
-- `internal/db/code_session_claims_postgres_test.go`（`TEST_MIGRATION_DATABASE_URL`）：非 claim transport、idle 会话、跨组织请求和未持有领取的 release 被拒绝；8 个并发领取只成功 1 个；领取期限、release 退避与立即释放；旧 epoch 注册被拒；注册清除请求、连接重置 attempts；宽限期内不可领取且旧心跳仍成功，超过宽限期后接管并拒绝旧心跳；耗尽后的 hold、以 epoch 守卫的 reset 与新输入后恢复领取；注册后、连接前崩溃残留的过期租约在耗尽时被清空，reset 后可再次领取；`FailPermanently` 只允许当前领取者调用，并使会话在 reset 前保持耗尽。
+- `internal/db/code_session_claims_postgres_test.go`（`TEST_MIGRATION_DATABASE_URL`）：非 claim transport、idle 会话、跨组织请求和未持有领取的 release 被拒绝；8 个并发领取只成功 1 个；领取期限、release 退避与立即释放；旧 epoch 注册被拒；注册清除请求、连接重置 attempts；宽限期内不可领取且旧心跳仍成功，超过宽限期后接管并拒绝旧心跳；耗尽后的 hold、以 epoch 守卫的 reset 与新输入后恢复领取；注册后、连接前崩溃残留的过期租约在耗尽时被清空，reset 后可再次领取；`FailPermanently` 只允许当前领取者调用，并使会话在 reset 前保持耗尽；耗尽与永久失败都推进 epoch，旧 epoch 的注册被拒，发布失败后再次 hold 时 epoch 不变，以被围栏的旧 epoch reset 失败；`idle` release 只允许当前领取者调用，清空租约后 idle 会话不可领取、新输入后立即可领取。
 - `internal/workerevents/brain_test.go`：取消订阅后不再收到通知；Core NATS 与内存 broker 都能唤醒订阅者，且不再创建 `OMA_BRAIN_TASKS`。
 - `internal/codesessions/brain_dispatch_test.go`：fleet token 文件长度与读取校验、Bearer 比较、`block_ms` 边界、transport 判定与租约参数。
 - `internal/config`：brain 模式缺少 `code_session.brain_claim_token_file` 时拒绝启动。
-- `tests/brain_worker_claim_test.go`（真实 PostgreSQL 与 HTTP 服务）：鉴权与参数错误；长轮询在派发后被唤醒、第二个 worker 领不到、注册成功且心跳返回约 20 秒租约；宽限期边界接管与旧 worker fence；release 冲突、失败退避、5 次后发布 `session.error` 与 `retries_exhausted` 并保持 idle；`permanent` release 立即发布同样的事件，新输入后可重新领取；公共会话已删除时不会被领取（epoch 与 attempts 不变）。`tests/brain_sandbox_provisioning_test.go` 改为统计 `DispatchWorker` 调用。
-- DSH：`tests/capacity.test.ts` 复现评审中的并发准入场景（上限 2、空闲 A/B、并发准入 C/D 最终只保留 C/D）及预留释放；`tests/claim-loop.test.ts` 覆盖 401 启动失败、启动探测的临时错误重试、运行中 401 只报告一次并继续重试、准入失败按原因（`admission_failed`/`permanent`/`shutdown`）release 且不阻塞后续领取、容量为零时停止领取、准入中停机 release、临时错误退避恢复；`tests/claim-process.test.ts` 用独立进程覆盖错误或缺失 token 的启动失败、领取到 SSE 审批的完整回合，以及 SIGTERM 时忙碌会话以 `shutdown` 交还；`tests/oma-heartbeat.test.ts` 覆盖心跳与租约约束和领取配置。
+- `tests/brain_worker_claim_test.go`（真实 PostgreSQL 与 HTTP 服务）：鉴权与参数错误；长轮询在派发后被唤醒、第二个 worker 领不到、注册成功且心跳返回约 20 秒租约；宽限期边界接管与旧 worker fence；release 冲突、失败退避、5 次后发布 `session.error` 与 `retries_exhausted` 并保持 idle；耗尽与 `permanent` 后旧凭据注册被拒；`permanent` release 立即发布同样的事件，新输入后可重新领取；`idle` release 后无新输入不可领取，会话回到 running 后立即可领取；公共会话已删除时不会被领取（epoch 与 attempts 不变）。`tests/brain_sandbox_provisioning_test.go` 改为统计 `DispatchWorker` 调用。
+- DSH：`tests/capacity.test.ts` 复现评审中的并发准入场景（上限 2、空闲 A/B、并发准入 C/D 最终只保留 C/D）及预留释放；`tests/claim-loop.test.ts` 覆盖 401 启动失败、启动探测的临时错误重试、运行中 401 只报告一次并继续重试、准入失败按原因（`admission_failed`/`permanent`/`shutdown`）release 且不阻塞后续领取、容量为零时停止领取、准入中停机 release、临时错误退避恢复；`tests/claim-process.test.ts` 用独立进程覆盖错误或缺失 token 的启动失败、领取到 SSE 审批的完整回合，以及 SIGTERM 时忙碌会话以 `shutdown`、空闲会话以 `idle` 交还；`tests/oma-heartbeat.test.ts` 覆盖心跳与租约约束和领取配置。
 
 `verify-be` 生成的配置写入 `code_session.brain_claim_token_file`，清理阶段与其他密钥一起删除；`tests/liveworker` 启动 Brain 时传入 `OMA_BRAIN_CLAIM_TOKEN`。真实 Brain、模型与 Docker 沙箱的 chat 场景未在本次改动中运行，仅在用户明确要求时执行。
 

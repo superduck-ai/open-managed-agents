@@ -111,6 +111,10 @@ test("claimed sessions register the Bun host and SSE drives user input and appro
     const [code] = await exited;
     expect(code).toBe(0);
     expect(stderr).toBe("");
+    expect(backend.releases).toEqual([{
+      session_id: backend.a.session_id, worker_id: [...workerIds][0],
+      worker_epoch: backend.a.worker_epoch, reason: "idle",
+    }]);
     await eventually(() => backend.streams.size === 0);
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");

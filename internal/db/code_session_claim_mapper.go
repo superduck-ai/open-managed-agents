@@ -28,7 +28,12 @@ type releaseCodeSessionClaimParams struct {
 	ExternalID string
 	WorkerID   string
 	Epoch      int64
-	Failed     bool
+	Kind       CodeSessionClaimReleaseKind
+}
+
+type failedCodeSessionClaimRow struct {
+	UUID               string `db:"uuid"`
+	CurrentWorkerEpoch int64  `db:"current_worker_epoch"`
 }
 
 type failCodeSessionClaimParams struct {
@@ -44,7 +49,7 @@ type CodeSessionClaimMapper interface {
 	Claim(ctx context.Context, params claimCodeSessionParams) (int64, error)
 	HoldExhausted(ctx context.Context, uuid string, holdUntil time.Time) (int64, error)
 	ResetExhausted(ctx context.Context, uuid string, epoch int64) (int64, error)
-	FailPermanently(ctx context.Context, params failCodeSessionClaimParams) (string, error)
+	FailPermanently(ctx context.Context, params failCodeSessionClaimParams) (failedCodeSessionClaimRow, error)
 	Release(ctx context.Context, params releaseCodeSessionClaimParams) (int64, error)
 	FindWorkerTransport(ctx context.Context, externalID string) (string, error)
 	Request(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (int64, error)

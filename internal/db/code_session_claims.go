@@ -49,9 +49,8 @@ func (d *DB) ClaimNextCodeSession(ctx context.Context, input ClaimCodeSessionInp
 		}
 		if row.WorkerClaimAttempts >= input.MaxAttempts {
 			claim.Exhausted = true
-			claim.WorkerEpoch = row.CurrentWorkerEpoch
 			claim.ClaimExpiresAt = now.Add(input.ExhaustedHold)
-			_, err = mapper.HoldExhausted(ctx, row.UUID, claim.ClaimExpiresAt)
+			claim.WorkerEpoch, err = mapper.HoldExhausted(ctx, row.UUID, claim.ClaimExpiresAt)
 			return err
 		}
 		claim.ClaimExpiresAt = now.Add(input.ClaimTTL)
@@ -90,7 +89,7 @@ type FailCodeSessionClaimInput struct {
 
 func (d *DB) FailCodeSessionClaimPermanently(ctx context.Context, input FailCodeSessionClaimInput) (CodeSessionClaim, error) {
 	holdUntil := time.Now().UTC().Add(input.Hold)
-	codeSessionUUID, err := NewCodeSessionClaimMapper(d.mapperDB).FailPermanently(ctx, failCodeSessionClaimParams{
+	row, err := NewCodeSessionClaimMapper(d.mapperDB).FailPermanently(ctx, failCodeSessionClaimParams{
 		ExternalID:  input.CodeSessionExternalID,
 		WorkerID:    input.WorkerID,
 		Epoch:       input.WorkerEpoch,
@@ -104,20 +103,28 @@ func (d *DB) FailCodeSessionClaimPermanently(ctx context.Context, input FailCode
 		return CodeSessionClaim{}, err
 	}
 	return CodeSessionClaim{
-		CodeSessionUUID:       codeSessionUUID,
+		CodeSessionUUID:       row.UUID,
 		CodeSessionExternalID: input.CodeSessionExternalID,
-		WorkerEpoch:           input.WorkerEpoch,
+		WorkerEpoch:           row.CurrentWorkerEpoch,
 		ClaimExpiresAt:        holdUntil,
 		Exhausted:             true,
 	}, nil
 }
 
-func (d *DB) ReleaseCodeSessionClaim(ctx context.Context, codeSessionExternalID, workerID string, epoch int64, failed bool) error {
+type CodeSessionClaimReleaseKind string
+
+const (
+	CodeSessionClaimReleaseRetry   CodeSessionClaimReleaseKind = "retry"
+	CodeSessionClaimReleaseHandoff CodeSessionClaimReleaseKind = "handoff"
+	CodeSessionClaimReleaseIdle    CodeSessionClaimReleaseKind = "idle"
+)
+
+func (d *DB) ReleaseCodeSessionClaim(ctx context.Context, codeSessionExternalID, workerID string, epoch int64, kind CodeSessionClaimReleaseKind) error {
 	rows, err := NewCodeSessionClaimMapper(d.mapperDB).Release(ctx, releaseCodeSessionClaimParams{
 		ExternalID: codeSessionExternalID,
 		WorkerID:   workerID,
 		Epoch:      epoch,
-		Failed:     failed,
+		Kind:       kind,
 	})
 	if err != nil {
 		return err

@@ -191,13 +191,20 @@ func TestBrainClaimLongPollWakesOnDispatchAndUsesShortLease(t *testing.T) {
 		t.Fatal("idle undispatched session claimed")
 	}
 	type claimResult struct {
-		claim brainClaimTestResponse
-		found bool
+		response *http.Response
+		err      error
 	}
 	results := make(chan claimResult, 1)
 	go func() {
-		claim, found := claimBrainWorker(t, app, "worker-a", 10_000)
-		results <- claimResult{claim, found}
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, app.baseURL+"/v1/code/brain/claims?block_ms=10000", nil)
+		if err != nil {
+			results <- claimResult{err: err}
+			return
+		}
+		request.Header.Set("Authorization", "Bearer "+brainClaimTestToken)
+		request.Header.Set("X-Worker-ID", "worker-a")
+		response, err := app.client.Do(request)
+		results <- claimResult{response, err}
 	}()
 	time.Sleep(200 * time.Millisecond)
 	dispatchedAt := time.Now()
@@ -205,8 +212,19 @@ func TestBrainClaimLongPollWakesOnDispatchAndUsesShortLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := <-results
-	if !result.found || result.claim.SessionID != code.ExternalID || result.claim.WorkerEpoch != code.CurrentWorkerEpoch+1 || result.claim.ModelToken == "" {
-		t.Fatalf("long-poll claim = %+v found=%t", result.claim, result.found)
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	defer result.response.Body.Close()
+	if result.response.StatusCode != http.StatusOK {
+		t.Fatalf("long-poll status = %d: %s", result.response.StatusCode, readAll(t, result.response.Body))
+	}
+	var claim brainClaimTestResponse
+	if err := json.NewDecoder(result.response.Body).Decode(&claim); err != nil {
+		t.Fatal(err)
+	}
+	if claim.SessionID != code.ExternalID || claim.WorkerEpoch != code.CurrentWorkerEpoch+1 || claim.ModelToken == "" {
+		t.Fatalf("long-poll claim = %+v", claim)
 	}
 	if elapsed := time.Since(dispatchedAt); elapsed > 3*time.Second {
 		t.Fatalf("long poll returned %s after dispatch", elapsed)
@@ -214,10 +232,10 @@ func TestBrainClaimLongPollWakesOnDispatchAndUsesShortLease(t *testing.T) {
 	if _, found := claimBrainWorker(t, app, "worker-b", 0); found {
 		t.Fatal("claimed session handed to a second worker")
 	}
-	if status := registerBrainWorker(t, app, result.claim); status != http.StatusOK {
+	if status := registerBrainWorker(t, app, claim); status != http.StatusOK {
 		t.Fatalf("register status = %d", status)
 	}
-	response, body := heartbeatBrainWorker(t, app, result.claim)
+	response, body := heartbeatBrainWorker(t, app, claim)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("heartbeat status = %d: %s", response.StatusCode, body)
 	}
@@ -287,9 +305,10 @@ func TestBrainClaimExhaustionPublishesSessionError(t *testing.T) {
 	if _, found := claimBrainWorker(t, app, "worker-a", 0); found {
 		t.Fatal("session claimed during failure backoff")
 	}
+	last := first
 	for attempt := 2; attempt <= 5; attempt++ {
 		expireBrainClaim(t, app, code)
-		if _, found := claimBrainWorker(t, app, "worker-a", 0); !found {
+		if last, found = claimBrainWorker(t, app, "worker-a", 0); !found {
 			t.Fatalf("attempt %d not claimable", attempt)
 		}
 	}
@@ -298,6 +317,9 @@ func TestBrainClaimExhaustionPublishesSessionError(t *testing.T) {
 		t.Fatal("exhausted session handed out")
 	}
 	assertBrainClaimFailurePublished(t, app, code, public)
+	if status := registerBrainWorker(t, app, last); status == http.StatusOK {
+		t.Fatal("stale worker registered after exhaustion")
+	}
 	if _, found := claimBrainWorker(t, app, "worker-a", 0); found {
 		t.Fatal("failed idle session reclaimed")
 	}
@@ -340,6 +362,9 @@ func TestBrainClaimPermanentReleasePublishesSessionErrorImmediately(t *testing.T
 		t.Fatalf("permanent release = %d", status)
 	}
 	assertBrainClaimFailurePublished(t, app, code, public)
+	if status := registerBrainWorker(t, app, claim); status == http.StatusOK {
+		t.Fatal("stale worker registered after permanent failure")
+	}
 	if _, found := claimBrainWorker(t, app, "worker-a", 0); found {
 		t.Fatal("permanently failed session reclaimed")
 	}
@@ -347,7 +372,30 @@ func TestBrainClaimPermanentReleasePublishesSessionErrorImmediately(t *testing.T
 	if _, err := app.pool.Exec(t.Context(), `UPDATE code_sessions SET worker_claim_expires_at = NULL WHERE uuid = $1`, code.UUID); err != nil {
 		t.Fatal(err)
 	}
-	if retry, found := claimBrainWorker(t, app, "worker-a", 0); !found || retry.WorkerEpoch != claim.WorkerEpoch+1 {
+	if retry, found := claimBrainWorker(t, app, "worker-a", 0); !found || retry.WorkerEpoch != claim.WorkerEpoch+2 {
 		t.Fatalf("new input after permanent failure = %+v found=%t", retry, found)
+	}
+}
+
+func TestBrainClaimIdleReleaseAllowsImmediateReclaim(t *testing.T) {
+	app := newBrainClaimApp(t)
+	code, public := prepareBrainClaimSession(t, app)
+	if err := newCodeSessionService(app, nil, nil).DispatchWorker(t.Context(), public, code.ExternalID); err != nil {
+		t.Fatal(err)
+	}
+	claim, found := claimBrainWorker(t, app, "worker-a", 0)
+	if !found || registerBrainWorker(t, app, claim) != http.StatusOK {
+		t.Fatalf("claim = %+v found=%t", claim, found)
+	}
+	if status := releaseBrainClaim(t, app, claim, "worker-a", "idle"); status != http.StatusOK {
+		t.Fatalf("idle release = %d", status)
+	}
+	if _, found := claimBrainWorker(t, app, "worker-b", 0); found {
+		t.Fatal("idle released session claimed without new input")
+	}
+	setBrainClaimSessionStatus(t, app, code, "running")
+	next, found := claimBrainWorker(t, app, "worker-b", 0)
+	if !found || next.WorkerEpoch != claim.WorkerEpoch+1 {
+		t.Fatalf("claim after idle release = %+v found=%t", next, found)
 	}
 }

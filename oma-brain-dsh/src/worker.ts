@@ -30,6 +30,8 @@ export async function startWorkers(
     function done() {
       clearTimeout(timer);
       signal.removeEventListener("abort", done);
+      const index = slotWaiters.indexOf(done);
+      if (index >= 0) slotWaiters.splice(index, 1);
       resolve();
     }
     slotWaiters.push(done);
@@ -57,7 +59,16 @@ export async function startWorkers(
     retiring.set(session.id, result);
     return result;
   };
-  const capacity = new SessionCapacity(maxSessions, sessions, retiring, (idle) => watch(retire(idle)));
+  const claimedTask = (session: CcrSession) => {
+    const assignment = api.assignments.get(session.id);
+    return assignment && { session_id: session.id, worker_epoch: assignment.worker_epoch };
+  };
+  const retireIdle = async (session: CcrSession): Promise<void> => {
+    const task = sessions.get(session.id) === session && !retiring.has(session.id) ? claimedTask(session) : undefined;
+    await retire(session);
+    if (task) await releaseClaim(claims, task, "idle");
+  };
+  const capacity = new SessionCapacity(maxSessions, sessions, retiring, (idle) => watch(retireIdle(idle)));
   const admit = async (value: unknown, stage: (stage: TaskAdmissionStage) => void) => {
     abort.signal.throwIfAborted();
     stage("validate_assignment");
@@ -93,19 +104,22 @@ export async function startWorkers(
   };
   const timer = setInterval(() => {
     for (const session of sessions.values()) {
-      if (session.abort.signal.aborted || (!session.busy && Date.now() - session.lastIdle > 60_000))
-        watch(retire(session));
+      if (session.abort.signal.aborted) watch(retire(session));
+      else if (!session.busy && Date.now() - session.lastIdle > 60_000) watch(retireIdle(session));
     }
   }, 3000);
   ctx.effect(() => async () => {
     abort.abort();
     clearInterval(timer);
-    const handoff = [...sessions.values()].filter((session) => session.busy)
-      .map((session) => ({ session_id: session.id, worker_epoch: api.assignment(session.id).worker_epoch }));
+    const current = [...sessions.values()];
+    const handoff = current.filter((session) => session.busy).map(claimedTask).filter((task) => task !== undefined);
+    const idle = current.filter((session) => !session.busy && !session.abort.signal.aborted && !retiring.has(session.id))
+      .map(claimedTask).filter((task) => task !== undefined);
     for (const session of sessions.values()) session.stop();
     await Promise.allSettled(handoff.map((task) => releaseClaim(claims, task, "shutdown")));
     await Promise.allSettled([...running]);
     await Promise.allSettled([...sessions.values()].map(retire));
+    await Promise.allSettled(idle.map((task) => releaseClaim(claims, task, "idle")));
   });
   const ready = Promise.withResolvers<void>();
   const claiming = claimTasks(claims, abort.signal, {

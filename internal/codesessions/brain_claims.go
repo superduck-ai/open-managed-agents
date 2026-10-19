@@ -31,27 +31,27 @@ type brainClaimReleaseRequest struct {
 	Reason      string `json:"reason"`
 }
 
-type brainClaimAuthenticator struct {
+type BrainClaimAuthenticator struct {
 	tokenHash [sha256.Size]byte
 	enabled   bool
 }
 
-func loadBrainClaimAuthenticator(path string) (brainClaimAuthenticator, error) {
+func LoadBrainClaimAuthenticator(path string) (BrainClaimAuthenticator, error) {
 	if path == "" {
-		return brainClaimAuthenticator{}, nil
+		return BrainClaimAuthenticator{}, nil
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return brainClaimAuthenticator{}, fmt.Errorf("read brain claim token file: %w", err)
+		return BrainClaimAuthenticator{}, fmt.Errorf("read brain claim token file: %w", err)
 	}
 	token := strings.TrimSpace(string(content))
 	if len(token) < 32 {
-		return brainClaimAuthenticator{}, errors.New("brain claim token must contain at least 32 characters")
+		return BrainClaimAuthenticator{}, errors.New("brain claim token must contain at least 32 characters")
 	}
-	return brainClaimAuthenticator{tokenHash: sha256.Sum256([]byte(token)), enabled: true}, nil
+	return BrainClaimAuthenticator{tokenHash: sha256.Sum256([]byte(token)), enabled: true}, nil
 }
 
-func (a brainClaimAuthenticator) authorize(r *http.Request) error {
+func (a BrainClaimAuthenticator) authorize(r *http.Request) error {
 	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !a.enabled || !ok {
 		return brainClaimUnauthenticated()
@@ -61,6 +61,11 @@ func (a brainClaimAuthenticator) authorize(r *http.Request) error {
 		return brainClaimUnauthenticated()
 	}
 	return nil
+}
+
+func (h *Handler) WithBrainClaims(authenticator BrainClaimAuthenticator) *Handler {
+	h.brainClaims = authenticator
+	return h
 }
 
 func (h *Handler) registerBrainClaimRoutes(router chi.Router) {
@@ -137,8 +142,8 @@ func (h *Handler) handleBrainClaimRelease(w http.ResponseWriter, r *http.Request
 		return brainClaimInvalidRequest("Invalid JSON body", err)
 	}
 	reason := BrainClaimReleaseReason(request.Reason)
-	if request.WorkerEpoch <= 0 || (reason != BrainClaimAdmissionFailed && reason != BrainClaimShutdown && reason != BrainClaimPermanent) {
-		return brainClaimInvalidRequest("worker_epoch must be positive and reason must be admission_failed, shutdown or permanent", nil)
+	if request.WorkerEpoch <= 0 || !validBrainClaimReleaseReason(reason) {
+		return brainClaimInvalidRequest("worker_epoch must be positive and reason must be admission_failed, shutdown, idle or permanent", nil)
 	}
 	codeSessionID := chi.URLParam(r, "code_session_id")
 	if err := h.service.ReleaseBrainClaim(r.Context(), codeSessionID, workerID, request.WorkerEpoch, reason); err != nil {
@@ -146,4 +151,9 @@ func (h *Handler) handleBrainClaimRelease(w http.ResponseWriter, r *http.Request
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	return nil
+}
+
+func validBrainClaimReleaseReason(reason BrainClaimReleaseReason) bool {
+	_, ok := brainClaimReleaseKinds[reason]
+	return ok || reason == BrainClaimPermanent
 }

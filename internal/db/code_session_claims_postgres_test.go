@@ -92,7 +92,7 @@ func TestCodeSessionClaimsPostgresRejectsIneligibleSessions(t *testing.T) {
 	if err := store.RequestCodeSessionWorker(ctx, claimTestWorkspace, claimTestWorkspace, idle); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("foreign organization request: %v", err)
 	}
-	if err := store.ReleaseCodeSessionClaim(ctx, idle, "worker-a", 1, true); !errors.Is(err, ErrPreconditionFailed) {
+	if err := store.ReleaseCodeSessionClaim(ctx, idle, "worker-a", 1, CodeSessionClaimReleaseRetry); !errors.Is(err, ErrPreconditionFailed) {
 		t.Fatalf("release without claim: %v", err)
 	}
 }
@@ -142,17 +142,17 @@ func TestCodeSessionClaimsPostgresLifecycle(t *testing.T) {
 	if _, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-b")); err != nil || found {
 		t.Fatalf("claim within claim TTL: found=%t err=%v", found, err)
 	}
-	if err := store.ReleaseCodeSessionClaim(ctx, codeSessionID, "worker-b", claim.WorkerEpoch, true); !errors.Is(err, ErrPreconditionFailed) {
+	if err := store.ReleaseCodeSessionClaim(ctx, codeSessionID, "worker-b", claim.WorkerEpoch, CodeSessionClaimReleaseRetry); !errors.Is(err, ErrPreconditionFailed) {
 		t.Fatalf("release by another worker: %v", err)
 	}
-	if err := store.ReleaseCodeSessionClaim(ctx, codeSessionID, "worker-a", claim.WorkerEpoch, false); err != nil {
+	if err := store.ReleaseCodeSessionClaim(ctx, codeSessionID, "worker-a", claim.WorkerEpoch, CodeSessionClaimReleaseHandoff); err != nil {
 		t.Fatal(err)
 	}
 	second, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-b"))
 	if err != nil || !found || second.WorkerEpoch != 3 {
 		t.Fatalf("claim after shutdown release = %+v found=%t err=%v", second, found, err)
 	}
-	if err := store.ReleaseCodeSessionClaim(ctx, codeSessionID, "worker-b", second.WorkerEpoch, true); err != nil {
+	if err := store.ReleaseCodeSessionClaim(ctx, codeSessionID, "worker-b", second.WorkerEpoch, CodeSessionClaimReleaseRetry); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-c")); err != nil || found {
@@ -215,11 +215,16 @@ func TestCodeSessionClaimsPostgresExhaustion(t *testing.T) {
 		execClaimTest(t, ctx, database, expire, codeSessionID)
 	}
 	exhausted, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-a"))
-	if err != nil || !found || !exhausted.Exhausted || exhausted.WorkerEpoch != 4 {
+	if err != nil || !found || !exhausted.Exhausted || exhausted.WorkerEpoch != 5 {
 		t.Fatalf("exhausted claim = %+v found=%t err=%v", exhausted, found, err)
 	}
 	if _, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-a")); err != nil || found {
 		t.Fatalf("claim during exhausted hold: found=%t err=%v", found, err)
+	}
+	execClaimTest(t, ctx, database, expire, codeSessionID)
+	repeated, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-a"))
+	if err != nil || !found || !repeated.Exhausted || repeated.WorkerEpoch != exhausted.WorkerEpoch {
+		t.Fatalf("repeated hold after failed publication = %+v found=%t err=%v", repeated, found, err)
 	}
 	if err := store.ResetExhaustedCodeSessionClaim(ctx, exhausted.CodeSessionUUID, exhausted.WorkerEpoch-1); !errors.Is(err, ErrPreconditionFailed) {
 		t.Fatalf("reset with stale epoch: %v", err)
@@ -251,8 +256,11 @@ func TestCodeSessionClaimsPostgresExhaustionClearsCrashedRegistration(t *testing
 		set worker_lease_expires_at = now() - interval '11 seconds', worker_claim_attempts = 3
 		where external_id = $1`, codeSessionID)
 	exhausted, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-b"))
-	if err != nil || !found || !exhausted.Exhausted || exhausted.WorkerEpoch != claim.WorkerEpoch {
+	if err != nil || !found || !exhausted.Exhausted || exhausted.WorkerEpoch != claim.WorkerEpoch+1 {
 		t.Fatalf("exhausted claim = %+v found=%t err=%v", exhausted, found, err)
+	}
+	if _, _, err := store.RegisterCodeSessionWorkerAtEpoch(ctx, codeSessionID, claim.WorkerEpoch, CodeSessionWorkerBinding{}, 20*time.Second); !errors.Is(err, ErrWorkerEpochMismatch) {
+		t.Fatalf("stale register after exhaustion: %v", err)
 	}
 	var leaseCleared bool
 	if err := database.QueryRowContext(ctx, `select worker_lease_expires_at is null from code_sessions where external_id = $1`, codeSessionID).Scan(&leaseCleared); err != nil || !leaseCleared {
@@ -280,18 +288,52 @@ func TestCodeSessionClaimsPostgresPermanentFailure(t *testing.T) {
 	}
 	input.WorkerID = "worker-a"
 	failed, err := store.FailCodeSessionClaimPermanently(ctx, input)
-	if err != nil || !failed.Exhausted || failed.CodeSessionUUID == "" || failed.WorkerEpoch != claim.WorkerEpoch {
+	if err != nil || !failed.Exhausted || failed.CodeSessionUUID == "" || failed.WorkerEpoch != claim.WorkerEpoch+1 {
 		t.Fatalf("permanent failure = %+v err=%v", failed, err)
+	}
+	if _, _, err := store.RegisterCodeSessionWorkerAtEpoch(ctx, codeSessionID, claim.WorkerEpoch, CodeSessionWorkerBinding{}, 20*time.Second); !errors.Is(err, ErrWorkerEpochMismatch) {
+		t.Fatalf("stale register after permanent failure: %v", err)
 	}
 	if _, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-b")); err != nil || found {
 		t.Fatalf("permanently failed session claimed during hold: found=%t err=%v", found, err)
 	}
 	execClaimTest(t, ctx, database, `update code_sessions set worker_claim_expires_at = now() - interval '1 second' where external_id = $1`, codeSessionID)
-	if again, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-b")); err != nil || !found || !again.Exhausted {
+	again, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-b"))
+	if err != nil || !found || !again.Exhausted || again.WorkerEpoch != failed.WorkerEpoch {
 		t.Fatalf("unreset permanent failure must stay exhausted: %+v found=%t err=%v", again, found, err)
+	}
+	if err := store.ResetExhaustedCodeSessionClaim(ctx, failed.CodeSessionUUID, failed.WorkerEpoch-1); !errors.Is(err, ErrPreconditionFailed) {
+		t.Fatalf("reset with the fenced epoch: %v", err)
 	}
 	if err := store.ResetExhaustedCodeSessionClaim(ctx, failed.CodeSessionUUID, failed.WorkerEpoch); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCodeSessionClaimsPostgresIdleReleaseClearsLease(t *testing.T) {
+	ctx, database, store := newCodeSessionClaimTestStore(t)
+	codeSessionID := seedClaimCodeSession(t, ctx, database, 1, "claim", "running")
+	claim, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-a"))
+	if err != nil || !found {
+		t.Fatalf("claim = %+v found=%t err=%v", claim, found, err)
+	}
+	if _, _, err := store.RegisterCodeSessionWorkerAtEpoch(ctx, codeSessionID, claim.WorkerEpoch, CodeSessionWorkerBinding{}, 20*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	execClaimTest(t, ctx, database, `update sessions set status = 'idle' where external_id = 'sesn_claim_1'`)
+	if err := store.ReleaseCodeSessionClaim(ctx, codeSessionID, "worker-b", claim.WorkerEpoch, CodeSessionClaimReleaseIdle); !errors.Is(err, ErrPreconditionFailed) {
+		t.Fatalf("idle release by another worker: %v", err)
+	}
+	if err := store.ReleaseCodeSessionClaim(ctx, codeSessionID, "worker-a", claim.WorkerEpoch, CodeSessionClaimReleaseIdle); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-b")); err != nil || found {
+		t.Fatalf("idle released session claimed without input: found=%t err=%v", found, err)
+	}
+	execClaimTest(t, ctx, database, `update sessions set status = 'running' where external_id = 'sesn_claim_1'`)
+	next, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-b"))
+	if err != nil || !found || next.WorkerEpoch != claim.WorkerEpoch+1 {
+		t.Fatalf("claim after idle release = %+v found=%t err=%v", next, found, err)
 	}
 }
 

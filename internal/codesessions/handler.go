@@ -35,7 +35,7 @@ type Handler struct {
 	loadMCPPolicyContext      func(ctx context.Context, identity upstreamProxyIdentity) (mcpProxyPolicyContext, error)
 	otlpSink                  otlpSink
 	otlpAdmission             *otlpAdmission
-	brainClaims               brainClaimAuthenticator
+	brainClaims               BrainClaimAuthenticator
 }
 
 // TunnelInvoker is implemented by the Tunnel DataPlane. Named Runtime Gateway
@@ -84,11 +84,6 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 		otlpSink:               newOTLPSink(cfg.Observability),
 		otlpAdmission:          newOTLPAdmission(defaultOTLPGlobalConcurrency, defaultOTLPSessionConcurrency),
 	}
-	brainClaims, err := loadBrainClaimAuthenticator(cfg.CodeSession.BrainClaimTokenFile)
-	if err != nil {
-		panic("codesessions: " + err.Error())
-	}
-	handler.brainClaims = brainClaims
 	handler.loadUpstreamPolicyContext = handler.loadUpstreamProxyPolicyContext
 	handler.loadMCPPolicyContext = handler.loadMCPProxyPolicyContext
 	// 只有 MITM 开启时才在构造阶段读取稳定私钥并签发一年期根证书，使配置错误在启动期失败。

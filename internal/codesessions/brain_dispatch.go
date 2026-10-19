@@ -31,7 +31,14 @@ const (
 	BrainClaimAdmissionFailed BrainClaimReleaseReason = "admission_failed"
 	BrainClaimShutdown        BrainClaimReleaseReason = "shutdown"
 	BrainClaimPermanent       BrainClaimReleaseReason = "permanent"
+	BrainClaimIdle            BrainClaimReleaseReason = "idle"
 )
+
+var brainClaimReleaseKinds = map[BrainClaimReleaseReason]db.CodeSessionClaimReleaseKind{
+	BrainClaimAdmissionFailed: db.CodeSessionClaimReleaseRetry,
+	BrainClaimShutdown:        db.CodeSessionClaimReleaseHandoff,
+	BrainClaimIdle:            db.CodeSessionClaimReleaseIdle,
+}
 
 type BrainClaim struct {
 	CodeSessionID  string
@@ -213,7 +220,7 @@ func (s *Service) ReleaseBrainClaim(ctx context.Context, codeSessionID, workerID
 		s.failExhaustedBrainClaim(ctx, claim)
 		return nil
 	}
-	if err := s.db.ReleaseCodeSessionClaim(ctx, codeSessionID, workerID, epoch, reason == BrainClaimAdmissionFailed); err != nil {
+	if err := s.db.ReleaseCodeSessionClaim(ctx, codeSessionID, workerID, epoch, brainClaimReleaseKinds[reason]); err != nil {
 		return err
 	}
 	s.logger.InfoContext(ctx, "brain worker released code session", "code_session_id", codeSessionID, "worker_id", workerID, "worker_epoch", epoch, "reason", string(reason))

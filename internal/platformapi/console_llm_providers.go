@@ -21,13 +21,15 @@ import (
 const maxLLMProviderModels = 100
 
 type llmProviderRequest struct {
-	Name     string   `json:"name"`
-	BaseURL  string   `json:"base_url"`
-	APIKey   *string  `json:"api_key"`
-	ModelIDs []string `json:"model_ids"`
+	APIBackend *string  `json:"api_backend"`
+	Name       string   `json:"name"`
+	BaseURL    string   `json:"base_url"`
+	APIKey     *string  `json:"api_key"`
+	ModelIDs   []string `json:"model_ids"`
 }
 
 type llmProviderResponse struct {
+	APIBackend      string   `json:"api_backend"`
 	Type            string   `json:"type"`
 	ID              string   `json:"id"`
 	Name            string   `json:"name"`
@@ -101,6 +103,7 @@ func createConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 			ExternalID:       externalID,
 			OrganizationUUID: orgUUID,
 			WorkspaceUUID:    scope.UUID,
+			APIBackend:       llmProviderBackend(body.APIBackend, llmproviders.Messages),
 			Name:             name,
 			BaseURL:          baseURL,
 			APIKeyLast4:      lastFour(apiKey),
@@ -151,6 +154,7 @@ func updateConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 		if !ok {
 			return
 		}
+		current.APIBackend = llmProviderBackend(body.APIBackend, current.APIBackend)
 		current.Name = name
 		current.BaseURL = baseURL
 		current.ModelIDs = modelIDs
@@ -242,6 +246,10 @@ func decodeLLMProviderRequest(w http.ResponseWriter, r *http.Request) (llmProvid
 }
 
 func validateLLMProviderInput(w http.ResponseWriter, body llmProviderRequest) (string, string, []string, bool) {
+	if body.APIBackend != nil && !llmproviders.ValidBackend(*body.APIBackend) {
+		writeLLMProviderBackendError(w)
+		return "", "", nil, false
+	}
 	name := strings.TrimSpace(body.Name)
 	if name == "" || utf8.RuneCountInString(name) > 100 {
 		writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeNameInvalid, "name must contain 1 to 100 characters")
@@ -327,6 +335,7 @@ func sealLLMProviderAPIKey(w http.ResponseWriter, r *http.Request, secretService
 
 func formatLLMProvider(provider db.LLMProvider) llmProviderResponse {
 	return llmProviderResponse{
+		APIBackend:  provider.APIBackend,
 		Type:        "llm_provider",
 		ID:          provider.ExternalID,
 		Name:        provider.Name,
@@ -345,4 +354,11 @@ func lastFour(value string) string {
 		return string(runes)
 	}
 	return string(runes[len(runes)-4:])
+}
+
+func llmProviderBackend(value *string, fallback string) string {
+	if value != nil {
+		return *value
+	}
+	return fallback
 }

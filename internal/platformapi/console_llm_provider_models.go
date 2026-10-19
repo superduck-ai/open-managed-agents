@@ -16,8 +16,9 @@ import (
 )
 
 type previewLLMProviderModelsRequest struct {
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key"`
+	APIBackend *string `json:"api_backend"`
+	BaseURL    string  `json:"base_url"`
+	APIKey     string  `json:"api_key"`
 }
 
 type previewLLMProviderModelsResponse struct {
@@ -32,6 +33,10 @@ func previewConsoleLLMProviderModels(database *db.DB, client *http.Client) http.
 		body, err := readRequiredJSON[previewLLMProviderModelsRequest](r, true)
 		if err != nil {
 			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "request body must match LLM provider configuration")
+			return
+		}
+		if body.APIBackend != nil && !llmproviders.ValidBackend(*body.APIBackend) {
+			writeLLMProviderBackendError(w)
 			return
 		}
 		apiKey := strings.TrimSpace(body.APIKey)
@@ -49,8 +54,9 @@ func previewConsoleLLMProviderModels(database *db.DB, client *http.Client) http.
 			return
 		}
 		modelIDs, err := llmproviders.ListUpstreamModels(r.Context(), client, llmproviders.Upstream{
-			BaseURL: baseURL,
-			APIKey:  apiKey,
+			APIBackend: llmProviderBackend(body.APIBackend, llmproviders.Messages),
+			BaseURL:    baseURL,
+			APIKey:     apiKey,
 		})
 		if err != nil {
 			writeLLMProviderError(w, http.StatusBadGateway, llmProviderCodeUpstreamUnavailable, "failed to list models from provider")
@@ -93,8 +99,9 @@ func syncConsoleLLMProviderModels(database *db.DB, secretService *secrets.Servic
 		}
 		defer clear(plaintext)
 		liveIDs, err := llmproviders.ListUpstreamModels(r.Context(), client, llmproviders.Upstream{
-			BaseURL: provider.BaseURL,
-			APIKey:  string(plaintext),
+			APIBackend: provider.APIBackend,
+			BaseURL:    provider.BaseURL,
+			APIKey:     string(plaintext),
 		})
 		if err != nil {
 			writeLLMProviderError(w, http.StatusBadGateway, llmProviderCodeUpstreamUnavailable, "failed to list models from provider")

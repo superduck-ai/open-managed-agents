@@ -23,6 +23,7 @@
     <select id="ListAdmins" resultType="PlatformAdminAccount">
         SELECT <include refid="accountColumns"/> FROM users u
         JOIN platform_admins a ON a.account_uuid = u.uuid AND a.revoked_at IS NULL
+        WHERE <include refid="loginIdentity"/>
         ORDER BY u.uuid
     </select>
     <select id="LockGrant" result="scalar">
@@ -32,7 +33,9 @@
         SELECT 1::bigint AS locked FROM (SELECT pg_advisory_xact_lock(734001928)) AS lock
     </select>
     <select id="CountAdmins" result="scalar">
-        SELECT COUNT(*) AS count FROM platform_admins WHERE revoked_at IS NULL
+        SELECT COUNT(*) AS count FROM users u
+        JOIN platform_admins a ON a.account_uuid = u.uuid AND a.revoked_at IS NULL
+        WHERE <include refid="loginIdentity"/>
     </select>
     <insert id="Grant" result="exec">
         INSERT INTO platform_admins (account_uuid, granted_by) VALUES (#{params.AccountUUID}, #{params.Operator})

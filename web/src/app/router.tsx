@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter, Navigate } from '@tanstack/react-router';
 import { PlatformAdminLayout } from '../features/platform-admin/PlatformAdminLayout';
+import { SuperAdministratorsPage } from '../features/platform-admin/SuperAdministratorsPage';
 import { OrganizationsPage } from '../features/platform-admin/OrganizationsPage';
 import { OrganizationDetailPage } from '../features/platform-admin/OrganizationDetailPage';
 import { organizationSection, type OrganizationSection } from '../features/platform-admin/organizationNavigation';
@@ -45,6 +46,11 @@ const platformOrganizationsRoute = createRoute({
   getParentRoute: () => platformAdminRoute,
   path: '/',
   component: OrganizationsPage,
+});
+const platformAdministratorsRoute = createRoute({
+  getParentRoute: () => platformAdminRoute,
+  path: 'administrators',
+  component: SuperAdministratorsPage,
 });
 const platformOrganizationDetailRoute = createRoute({
   getParentRoute: () => platformAdminRoute,
@@ -554,7 +560,11 @@ const settingsFallbackRoute = createRoute({
 });
 
 const routeTree = rootRoute.addChildren([
-  platformAdminRoute.addChildren([platformOrganizationsRoute, platformOrganizationDetailRoute]),
+  platformAdminRoute.addChildren([
+    platformOrganizationsRoute,
+    platformOrganizationDetailRoute,
+    platformAdministratorsRoute,
+  ]),
   loginRoute,
   invitationsRoute,
   protectedRoute.addChildren([

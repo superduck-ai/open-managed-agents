@@ -48,6 +48,9 @@ func (h *Handler) Routes() http.Handler {
 	r.Use(h.authorize)
 	r.Get("/bootstrap", h.bootstrap)
 	r.Get("/accounts", h.accounts)
+	r.Get("/administrators", h.administrators)
+	r.Post("/administrators", h.addPlatformAdministrator)
+	r.Delete("/administrators/{accountUuid}", h.removePlatformAdministrator)
 	r.Get("/organizations", h.organizations)
 	r.Post("/organizations", h.createOrganization)
 	r.Route("/organizations/{organizationUuid}", func(r chi.Router) {

@@ -83,5 +83,19 @@ func TestPlatformAdminHistoricalIdentityPostgres(t *testing.T) {
 		if err != nil || login.UserExternalID != "registered_identity" {
 			t.Fatalf("登录选择不一致：%+v %v", login, err)
 		}
+		admins, err := store.ListPlatformAdmins(ctx)
+		if err != nil || len(admins) != 0 {
+			t.Fatalf("管理员列表包含无效旧授权：%+v %v", admins, err)
+		}
+		if err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
+			count, err := tx.CountAdmins(ctx)
+			if err == nil && count != 0 {
+				t.Fatalf("旧身份授权被计为有效管理员：%d", count)
+			}
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+
 	})
 }

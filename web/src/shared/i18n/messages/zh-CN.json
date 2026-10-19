@@ -2695,5 +2695,13 @@
   "platformAdmin.errors.requestFailed": "请求失败，请重试",
   "common.sidebar": "侧边栏",
   "common.mobileSidebar": "显示移动端侧边栏。",
-  "auth.login.emailDomainNotAllowed": "请使用允许登录的邮箱。"
+  "auth.login.emailDomainNotAllowed": "请使用允许登录的邮箱。",
+  "platformAdmin.superAdministrators": "超级管理员",
+  "platformAdmin.accountUUID": "账号 UUID",
+  "platformAdmin.superAdministratorsDescription": "超级管理员可以管理所有组织及平台授权，组织管理员角色独立管理。",
+  "platformAdmin.addSuperAdministrator": "添加超级管理员",
+  "platformAdmin.revokeSuperAdministrator": "撤销超级管理员",
+  "platformAdmin.addSuperAdministratorDescription": "选择已注册账号，授予所有组织及超级管理员的管理权限。",
+  "platformAdmin.revokeSuperAdministratorDescription": "撤销 {email} 的平台管理权限，保留其组织角色。必须保留至少一位有效超级管理员。",
+  "platformAdmin.revokingOwnPlatformAccess": "你正在撤销自己的平台管理权限，确认后将退出管理后台。"
 }

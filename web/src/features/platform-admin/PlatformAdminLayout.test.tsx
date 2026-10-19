@@ -10,11 +10,12 @@ import {
   RouterProvider,
 } from '@tanstack/react-router';
 import { AuthContext } from '../../shared/auth/context';
+import { SuperAdministratorsPage } from './SuperAdministratorsPage';
 import { PlatformAdminLayout } from './PlatformAdminLayout';
 import { OrganizationDetailPage } from './OrganizationDetailPage';
 import { organizationSection, type OrganizationSection } from './organizationNavigation';
 
-const { cleanup, screen, fireEvent, waitFor } = await import('@testing-library/react');
+const { act, cleanup, screen, fireEvent, waitFor } = await import('@testing-library/react');
 const originalFetch = globalThis.fetch;
 afterEach(() => {
   cleanup();
@@ -35,9 +36,14 @@ function mount(entry = '/platform-admin', locale: 'en' | 'zh-CN' = 'zh-CN') {
       view: organizationSection(search.view),
     }),
   });
+  const administrators = createRoute({
+    getParentRoute: () => admin,
+    path: 'administrators',
+    component: SuperAdministratorsPage,
+  });
   const login = createRoute({ getParentRoute: () => root, path: '/login', component: () => <h1>登录页面</h1> });
   const router = createRouter({
-    routeTree: root.addChildren([admin.addChildren([index, detail]), login]),
+    routeTree: root.addChildren([admin.addChildren([index, detail, administrators]), login]),
     history: createMemoryHistory({ initialEntries: [entry] }),
   });
   render(
@@ -275,3 +281,38 @@ for (const view of ['members', 'invitations'] as const) {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 }
+
+test('侧栏进入超级管理员目录，撤销自己后重新鉴权并退出后台', async () => {
+  let revoked = false;
+  globalThis.fetch = mock(async (input, options) => {
+    const path = String(input);
+    if (options?.method === 'DELETE') {
+      expect(path).toBe('/api/platform-admin/administrators/operator');
+      revoked = true;
+      return Response.json({ granted: false });
+    }
+    if (revoked) return Response.json({ error: { code: 'platform_access_denied' } }, { status: 403 });
+    if (path.endsWith('/bootstrap'))
+      return Response.json({
+        account: { uuid: 'operator', email: 'operator@example.com', name: '' },
+        platform_access: { role: 'super_admin', permissions: ['platform:access'] },
+        csrf_token: 'csrf',
+      });
+    return Response.json({
+      data: [{ uuid: 'operator', email: 'operator@example.com', name: '当前账号' }],
+      next_cursor: '',
+    });
+  }) as typeof fetch;
+  const router = mount();
+  fireEvent.click(await screen.findByRole('link', { name: '超级管理员', exact: true }));
+  expect(await screen.findByRole('heading', { name: '超级管理员' })).toBeTruthy();
+  expect(router.state.location.pathname).toBe('/platform-admin/administrators');
+  expect(screen.getByRole('link', { name: '组织管理' }).getAttribute('aria-current')).toBeNull();
+  fireEvent.click(await screen.findByRole('button', { name: '撤销超级管理员' }));
+  expect(screen.getByText('你正在撤销自己的平台管理权限，确认后将退出管理后台。')).toBeTruthy();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: '确认变更' }));
+  });
+  expect((await screen.findByRole('alert')).textContent).toContain('当前账号无后台权限');
+  expect(screen.queryByRole('heading', { name: '超级管理员' })).toBeNull();
+});

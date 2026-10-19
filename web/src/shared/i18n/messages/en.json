@@ -2695,5 +2695,13 @@
   "platformAdmin.errors.requestFailed": "The request failed. Please try again.",
   "common.sidebar": "Sidebar",
   "common.mobileSidebar": "Displays the mobile sidebar.",
-  "auth.login.emailDomainNotAllowed": "Use an approved email address to sign in."
+  "auth.login.emailDomainNotAllowed": "Use an approved email address to sign in.",
+  "platformAdmin.superAdministrators": "Super administrators",
+  "platformAdmin.accountUUID": "Account UUID",
+  "platformAdmin.superAdministratorsDescription": "Super administrators can manage all organizations and platform access. Organization administrator roles remain separate.",
+  "platformAdmin.addSuperAdministrator": "Add super administrator",
+  "platformAdmin.revokeSuperAdministrator": "Revoke super administrator",
+  "platformAdmin.addSuperAdministratorDescription": "Select a registered account to grant access to all organizations and super administrator management.",
+  "platformAdmin.revokeSuperAdministratorDescription": "Revoke platform access for {email}. Their organization roles remain unchanged. At least one effective super administrator must remain.",
+  "platformAdmin.revokingOwnPlatformAccess": "You are revoking your own platform access. You will leave administration after confirmation."
 }

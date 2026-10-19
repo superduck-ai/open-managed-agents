@@ -1,6 +1,6 @@
 import { useI18n } from '../../shared/i18n';
 import { ArrowLeft, Building2, ShieldCheck } from 'lucide-react';
-import { Link, Outlet, useParams, useSearch } from '@tanstack/react-router';
+import { Link, Outlet, useLocation, useParams, useSearch } from '@tanstack/react-router';
 import { organizationSection, organizationSections } from './organizationNavigation';
 import {
   Sidebar,
@@ -46,6 +46,7 @@ function AdminSidebar({ email }: { email: string }) {
   const { setOpenMobile } = useSidebar();
   const { organizationUuid } = useParams({ strict: false });
   const search = useSearch({ strict: false });
+  const administratorsActive = useLocation().pathname === '/platform-admin/administrators';
   const view = organizationSection(search.view);
   const closeMenu = () => setOpenMobile(false);
   return (
@@ -68,12 +69,13 @@ function AdminSidebar({ email }: { email: string }) {
               <SidebarMenu>
                 <SidebarMenuItem>
                   <SidebarMenuButton
-                    isActive={!organizationUuid}
+                    isActive={!organizationUuid && !administratorsActive}
                     render={
                       <Link
                         to="/platform-admin"
+                        activeOptions={{ exact: true }}
                         onClick={closeMenu}
-                        aria-current={!organizationUuid ? 'page' : undefined}
+                        aria-current={!organizationUuid && !administratorsActive ? 'page' : undefined}
                       />
                     }
                   >
@@ -83,6 +85,21 @@ function AdminSidebar({ email }: { email: string }) {
                         ? msg('platformAdmin.backToOrganizations', 'Back to organizations')
                         : msg('platformAdmin.organizations', 'Organizations')}
                     </span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={administratorsActive}
+                    render={
+                      <Link
+                        to="/platform-admin/administrators"
+                        onClick={closeMenu}
+                        aria-current={administratorsActive ? 'page' : undefined}
+                      />
+                    }
+                  >
+                    <ShieldCheck aria-hidden />
+                    <span>{msg('platformAdmin.superAdministrators', 'Super administrators')}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>

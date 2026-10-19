@@ -1,0 +1,102 @@
+package messages
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+)
+
+func TestChatRequestRejectsUnsupportedModes(t *testing.T) {
+	for _, body := range []string{`{}`, `{"stream":false}`, `{"stream":true,"n":2}`, `{"stream":true,"n":0}`, `{"stream":"true"}`} {
+		if validateChatRequest([]byte(body)) == nil {
+			t.Fatalf("accepted %s", body)
+		}
+	}
+	handler := &Handler{}
+	for _, principal := range []auth.Principal{{}, {WorkspaceUUID: "workspace"}} {
+		request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		request = request.WithContext(auth.WithPrincipal(request.Context(), principal))
+		response := httptest.NewRecorder()
+		handler.ChatCompletions(response, request)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("status=%d", response.Code)
+		}
+	}
+}
+
+func TestChatObservationRejectsInvalidStreams(t *testing.T) {
+	for _, test := range []struct{ name, body, want string }{
+		{"truncated", chatFrame(`{"id":"chat_1","choices":[{"index":0,"delta":{"content":"partial"}}]}`), "incomplete_response"},
+		{"no finish", chatFrame(`{"id":"chat_1","choices":[{"index":0,"delta":{"content":"partial"}}]}`) + chatFrame(`[DONE]`), "invalid_response"},
+		{"bad JSON", chatFrame(`{broken`), "invalid_response"},
+		{"bad JSON before done", chatFrame(`{broken`) + chatFrame(`[DONE]`), "invalid_response"},
+		{"choice", chatFrame(`{"id":"chat_1","choices":[{"index":1,"delta":{"content":"wrong"}}]}`), "invalid_response"},
+		{"identity", chatFrame(`{"id":"chat_1","choices":[]}`) + chatFrame(`{"id":"chat_2","choices":[]}`), "invalid_response"},
+		{"filtered", chatFrame(`{"id":"chat_1","choices":[{"index":0,"delta":{"content":"x"},"finish_reason":"content_filter"}]}`) + chatFrame(`[DONE]`), "invalid_response"},
+		{"tool index", chatFrame(`{"id":"chat_1","choices":[{"index":0,"delta":{"tool_calls":[{"index":-1}]}}]}`), "invalid_response"},
+		{"error", chatFrame(`{"error":{"message":"denied"}}`), "provider_error"},
+		{"cache", chatFrame(`{"usage":{"prompt_tokens":1,"prompt_tokens_details":{"cached_tokens":2}}}`), "invalid_response"},
+		{"reasoning", chatFrame(`{"id":"chat_1","choices":[{"index":0,"delta":{"reasoning_content":"hidden"}}]}`), "invalid_response"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			observation := observeChat(t, test.body, 1)
+			if observation.result.ErrorType != test.want || len(observation.result.Messages) > 0 {
+				t.Fatalf("result=%+v", observation.result)
+			}
+		})
+	}
+}
+
+func TestChatObservationFragmentedToolsAndUsage(t *testing.T) {
+	body := chatFrame(`{"id":"chat_1","choices":[{"index":0,"delta":{"content":"running","tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"Read","arguments":"{"}},{"index":0,"id":"call_a","function":{"name":"Bash","arguments":"{\"command\":"}}]}}]}`) +
+		chatFrame(`{"id":"chat_1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"pwd\"}"}},{"index":1,"function":{"arguments":"}"}}]},"finish_reason":"tool_calls"}]}`) +
+		chatFrame(`{"id":"chat_1","choices":[],"usage":{"prompt_tokens":20,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":12}}}`) + chatFrame(`[DONE]`)
+	for _, size := range []int{1, 17, len(body)} {
+		observation := observeChat(t, body, size)
+		result := observation.result
+		if result.ErrorType != "" || !observation.complete || len(result.ToolUses) != 2 || len(result.Messages) != 1 {
+			t.Fatalf("result=%+v", result)
+		}
+		if *result.Usage.InputTokens != 8 || *result.Usage.OutputTokens != 5 || *result.Usage.CacheReadInputTokens != 12 {
+			t.Fatalf("usage=%+v", result.Usage)
+		}
+		if result.Messages[0].ID != maevents.StableAssistantEventID("cse_chat", "chat_1", 0, "agent.message") {
+			t.Fatal("message identity differs")
+		}
+		if result.ToolUses[0].ID != "call_a" || string(result.ToolUses[0].Input) != `{"command":"pwd"}` || result.ToolUses[1].ID != "call_b" {
+			t.Fatalf("tools=%+v", result.ToolUses)
+		}
+	}
+}
+
+func TestChatObservationMissingUsageAndEmptyArguments(t *testing.T) {
+	body := chatFrame(`{"id":"chat_empty_args","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call","function":{"name":"Status"}}]},"finish_reason":"tool_calls"}]}`) + chatFrame(`[DONE]`)
+	observation := observeChat(t, body, len(body))
+	if observation.result.ErrorType != "" || observation.result.Usage.InputTokens != nil || string(observation.result.ToolUses[0].Input) != "{}" {
+		t.Fatalf("result=%+v", observation.result)
+	}
+	for _, body := range []string{`{"stream":true}`, `{"stream":true,"n":1}`} {
+		if err := validateChatRequest([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func observeChat(t *testing.T, body string, size int) *responseObservation {
+	t.Helper()
+	observation := &responseObservation{chat: &chatObservation{}, streaming: true, request: &codesessions.ModelRequest{CodeSessionID: "cse_chat"}}
+	for offset := 0; offset < len(body); offset += size {
+		_, _ = observation.Write([]byte(body[offset:min(offset+size, len(body))]))
+	}
+	observation.finish()
+	return observation
+}
+
+func chatFrame(data string) string {
+	return "data: " + strings.ReplaceAll(data, "\n", "\ndata: ") + "\r\n\r\n"
+}

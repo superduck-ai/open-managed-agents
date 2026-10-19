@@ -11,6 +11,7 @@ export interface Assignment {
   launch: {
     version: number;
     model: string;
+    model_backends?: Record<string, "messages" | "chat_completions">;
     work_dir: string;
     system: string;
     subagents?: SubagentConfig;
@@ -41,6 +42,9 @@ export function validateAssignment(a: Assignment): void {
     throw new Error("Unsupported launch version");
   if (!a.launch.model || !a.launch.work_dir.startsWith("/"))
     throw new Error("Invalid launch model or work directory");
+  if (a.launch.model_backends !== undefined && (!a.launch.model_backends || typeof a.launch.model_backends !== "object"
+    || Array.isArray(a.launch.model_backends) || Object.values(a.launch.model_backends).some((value) => value !== "messages" && value !== "chat_completions")))
+    throw new Error("Invalid model API backends");
   const tools = new Set(sandboxToolDefinitions().map((tool) => tool.name));
   if (a.launch.tools !== undefined && (!Array.isArray(a.launch.tools)
     || a.launch.tools.some((name) => !tools.has(name))))

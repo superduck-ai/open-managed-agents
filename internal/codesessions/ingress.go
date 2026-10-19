@@ -652,6 +652,14 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 		h.errorAdapter.Write(w, r, sessionMCPConfigFailure(err))
 		return
 	}
+	if usesBrainClaimTransport(record) {
+		backends, err := h.service.modelBackends(r.Context(), record)
+		if err != nil {
+			h.errorAdapter.Write(w, r, sessionModelBackendsFailure(err))
+			return
+		}
+		sessionContext["model_backends"] = backends
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{
 		"session_context": sessionContext,

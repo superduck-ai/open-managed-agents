@@ -101,3 +101,45 @@ DSH Brain 源码作为主仓库的 `oma-brain-dsh/` 普通目录维护，使用�
 不是独立的 Go package；当前后端验收继续使用 `tests/liveworker/` 中的场景。
 
 领取接口对缺少或错误的 fleet token 返回 401，对缺少 `X-Worker-ID` 或越界的 `block_ms` 返回 400；release 接受 `admission_failed`、`shutdown`、`idle` 与 `permanent` 四种原因，领取已不属于调用方时返回 409。响应设置 `Cache-Control: no-store`，运行日志只记录 `worker_id`、`code_session_id`、`worker_epoch` 等元数据，不记录凭据。
+
+## 模型 API backend
+
+Provider 的 `api_backend` 决定 Brain 模型适配器，当前支持 `messages` 和 `chat_completions`。
+`GET /v2/sessions/{id}` 为 claim transport 在 `session_context.model_backends` 返回当前 workspace 的
+模型 ID 到 backend 映射，不包含上游 URL 或 Key。映射构建失败返回 500 `api_error`，
+公开文案为 `Could not resolve model API backends`；MCP 配置构建失败保留独立的 MCP 错误文案。
+子 Agent 继承与覆盖模型、运行时切换模型均按实际
+请求 model 查表。旧服务端没有该字段时沿用 Messages；显式映射中缺少模型或 backend 不支持时失败。
+
+```mermaid
+flowchart LR
+    Runtime[Brain 主 Agent / 子 Agent] --> Router[OMA model adapter]
+    Router --> Messages[Messages adapter]
+    Router --> Chat[Chat Completions adapter]
+    Messages --> MessagesProxy[OMA /v1/messages]
+    Chat --> ChatProxy[OMA /v1/chat/completions]
+    MessagesProxy --> Lifecycle[请求 span / 公开事件 / 用量]
+    ChatProxy --> Lifecycle
+```
+
+DSH 仍使用 provider `oma`，它表示平台模型适配器，不是用户配置的 Provider。路由映射在会话注册与
+恢复时读取，Go 每次代理请求重新解析 Provider 并检查 backend。运行期间修改 Provider backend
+可能使旧映射失效，此时明确报错并要求重新加载会话配置，不静默切换协议或自动重发。
+
+Chat Completions 适配器原生编码 system/developer/user/assistant/tool 消息、function tools 与
+`tool_call_id`，通过标准 `stream_options.include_usage` 请求尾帧用量；显式 maxTokens 使用
+`max_completion_tokens`，没有配置时交由上游决定。temperature 和 stop 只在调用方提供时发送。
+兼容服务必须支持这些实际发送的字段，不做出错后删字段重试。
+
+首期支持文本、function tool calling、多个工具交错返回、工具结果下一轮回传、取消和历史恢复。
+不支持 Responses、图片/音频、厂商 reasoning 扩展或跨 backend 的 reasoning 历史转换；遇到不支持
+的内容显式失败，不将其丢弃或当作普通文本。工具审批、沙箱权限和执行逻辑沿用现有运行时。
+
+新的 `oma-chat-completions-v1` replay 保存 message ID、OMA request ID 及确定性内容索引。
+CCRv2 实时预览、完成消息和 Go observer 使用同一组信息生成稳定事件 ID，恢复时不会重建另一组身份。
+主子 Agent 各自保存响应 ID，子线程使用主会话 model token 和原有 agent-id header 绑定线程。
+
+Worker 单测位于 `oma-brain-dsh/tests/chat-completions.test.ts`，覆盖异常流、HTTP 错误、取消、
+工具分片、用量尾帧、历史编码、公开身份、主子模型 backend 选择和凭据轮换。
+
+`oma-brain-dsh/tests/chat-runtime.test.ts` 通过原生 Brain 与本地协议 fixture 执行工具审批、工具结果下一轮回传、关闭后历史恢复，确认恢复不会重复执行已完成的工具。该测试不连接真实模型或 Worker 沙箱。

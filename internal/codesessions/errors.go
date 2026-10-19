@@ -47,6 +47,10 @@ func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
 }
 
+func sessionModelBackendsFailure(cause error) error {
+	return internalError("Could not resolve model API backends", cause)
+}
+
 func sessionMCPConfigFailure(cause error) error {
 	return internalError("Could not build session MCP configuration", cause)
 }

@@ -124,7 +124,7 @@ function updateUsage(usage: TokenUsage, native?: Payload): void {
   if (typeof native.cache_creation_input_tokens === "number") usage.cacheWriteTokens = native.cache_creation_input_tokens;
 }
 
-function providerError(message: string, status?: number): LlmError {
+export function providerError(message: string, status?: number): LlmError {
   const code = isContextWindowExceededError(message) ? "CONTEXT_WINDOW_EXCEEDED"
     : isQuotaExceededError(message) ? "QUOTA" : status === 429 ? "RATE_LIMIT"
     : status === 401 || status === 403 ? "AUTH" : status && status >= 500 ? "SERVER" : "TRANSPORT";

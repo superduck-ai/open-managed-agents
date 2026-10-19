@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	urlpkg "net/url"
 	"strings"
 
@@ -144,4 +145,23 @@ func mcpServerHost(server mcpServerSchema) (string, error) {
 		return "", fmt.Errorf("%w: MCP server URL has an invalid host", ErrMalformedAgentSnapshot)
 	}
 	return host, nil
+}
+
+func canonicalMCPURLKey(rawURL string) (string, error) {
+	target, err := urlpkg.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("%w: invalid MCP URL", ErrMalformedAgentSnapshot)
+	}
+	host, err := MCPHostKey(target.Hostname())
+	if err != nil {
+		return "", fmt.Errorf("%w: invalid MCP host", ErrMalformedAgentSnapshot)
+	}
+	port := target.Port()
+	target.Host = host
+	if port != "" {
+		target.Host = net.JoinHostPort(host, port)
+	} else if strings.Contains(host, ":") {
+		target.Host = "[" + host + "]"
+	}
+	return target.String(), nil
 }

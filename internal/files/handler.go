@@ -64,9 +64,10 @@ func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, l
 	router.MethodNotAllowed(notFound)
 	router.Post("/", h.upload)
 	router.Get("/", h.list)
-	router.Get("/{file_id}", h.retrieveMetadataRoute)
-	router.Delete("/{file_id}", h.deleteRoute)
-	router.Get("/{file_id}/content", h.downloadRoute)
+	fileRoutes := router.With(validateFileIDPath)
+	fileRoutes.Get("/{file_id}", h.retrieveMetadataRoute)
+	fileRoutes.Delete("/{file_id}", h.deleteRoute)
+	fileRoutes.Get("/{file_id}/content", h.downloadRoute)
 	h.router = router
 	return h
 }

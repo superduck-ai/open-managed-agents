@@ -46,3 +46,21 @@ test("external MCP HTTP and SSE requests use current OMA credentials and retain 
   expect(new URL(calls[3]!.url).origin).toBe("https://oma.test");
   expect(new URL(calls[3]!.url).searchParams.get("mcp_url")).toContain("https://other.test/");
 });
+
+
+test("MCP thread scope is host-owned, retained for named gateways and isolated from root", async () => {
+  const calls: Request[] = [];
+  const api = new OmaApi("https://oma.test", (async (input, init) => {
+    calls.push(new Request(input, init));
+    return new Response(null, { status: 202 });
+  }) as typeof fetch);
+  const a = assignment();
+  api.assignments.set(a.session_id, a);
+  const send = externalMcpFetch(api, a.session_id, "sthr_child");
+  for (const endpoint of ["https://peer.test/mcp", `https://oma.test/v2/ccr-sessions/${a.session_id}/mcp/local`]) {
+    await send(endpoint, { headers: { "X-OMA-Session-Thread-ID": "sthr_forged" } });
+    expect(calls.at(-1)!.headers.get("X-OMA-Session-Thread-ID")).toBe("sthr_child");
+  }
+  await externalMcpFetch(api, a.session_id)("https://peer.test/mcp", { headers: { "X-OMA-Session-Thread-ID": "sthr_forged" } });
+  expect(calls.at(-1)!.headers.has("X-OMA-Session-Thread-ID")).toBe(false);
+});

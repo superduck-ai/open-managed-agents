@@ -33,13 +33,13 @@ export class ToolExecution {
       input: original,
     }, exec.signal);
     if (!decision.allowed)
-      throw new Error("Tool use denied by OMA");
+      throw new Error(decision.reason || "Tool use denied by OMA");
     const effective = decision.input === undefined ? original : object(decision.input);
     validate(effective);
     exec.signal.throwIfAborted();
     const call = { callId: exec.callId, name: tool.name, original, effective };
     await this.bridge.recordApproved(call);
-    await this.sandbox.provision(exec.signal);
+    if (!decision.externalResult) await this.sandbox.provision(exec.signal);
     exec.signal.throwIfAborted();
     await this.bridge.flushLog();
     await this.bridge.recordDispatch(exec.callId);
@@ -47,7 +47,7 @@ export class ToolExecution {
     let text: string;
     let remoteOutcome: "unknown" | undefined;
     try {
-      result = await this.sandbox.call(tool, effective, exec.signal);
+      result = decision.externalResult ?? await this.sandbox.call(tool, effective, exec.signal);
       text = toolText(result, tool.name);
     } catch {
       if (!exec.signal.aborted || exec.signal.reason?.kind !== "user") {

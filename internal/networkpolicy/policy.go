@@ -83,7 +83,11 @@ func ParseMCPProxyPolicy(configRaw, agentSnapshotRaw []byte) (MCPProxyPolicy, er
 	}
 	mcpURLSet := make(map[string]struct{}, len(targets.urls))
 	for _, rawURL := range targets.urls {
-		mcpURLSet[rawURL] = struct{}{}
+		key, err := canonicalMCPURLKey(rawURL)
+		if err != nil {
+			return MCPProxyPolicy{}, err
+		}
+		mcpURLSet[key] = struct{}{}
 	}
 	return MCPProxyPolicy{
 		policy:        compilePolicy(config, mcpHosts),
@@ -142,7 +146,7 @@ func (p Policy) AuthorizeHTTPURL(target *url.URL) Decision {
 	return p.authorizeEndpoint(host, "http", port)
 }
 
-// AuthorizeMCPURL 授权原始 MCP HTTP(S) URL。调用方不得改写 scheme、host 或 port。
+// AuthorizeMCPURL 授权实际 MCP HTTP(S) URL；URI 主机名表示可归一，实际目标与端口不得改写。
 func (p MCPProxyPolicy) AuthorizeMCPURL(rawURL string) Decision {
 	target, err := url.Parse(rawURL)
 	if err != nil || !target.IsAbs() || target.Host == "" || target.Hostname() == "" || target.User != nil || target.Fragment != "" {
@@ -156,7 +160,11 @@ func (p MCPProxyPolicy) AuthorizeMCPURL(rawURL string) Decision {
 	if err != nil {
 		return Decision{Reason: ReasonInvalidTarget}
 	}
-	if _, ok := p.mcpURLSet[rawURL]; !ok {
+	key, err := canonicalMCPURLKey(rawURL)
+	if err != nil {
+		return Decision{Reason: ReasonInvalidTarget, Host: host}
+	}
+	if _, ok := p.mcpURLSet[key]; !ok {
 		return Decision{Reason: ReasonHostNotAllowed, Host: host}
 	}
 	port := target.Port()

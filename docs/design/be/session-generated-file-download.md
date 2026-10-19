@@ -262,3 +262,16 @@ GET 与 DELETE 不对称是**有意保留**的：输出文件的生命周期属�
 - **单资源接口返回 Output Resource**（已随本 PR 修复）：`GET /v1/sessions/{id}/resources/{rid}` 曾因 `FindByExternalID` 的 `payload IS NOT NULL` 过滤查不到 Output Resource——本次已改为与 `List` 相同的 JOIN 与可见性条件，`file_id` 同批取出（原 sub-issue #266 已关闭）。`PATCH`/`DELETE` 的语义见「改动 3」
 - 不让输出文件计入写入侧的 `MaxFileResources` 配额（会让 agent 写满后 `/outputs/` 写入失败，失败语义需穿过 rclone FUSE，另行设计）；本期改为读取侧截断，见「改动 2」
 - 不给 `resources[]` 加分页（官方 session 对象里 `resources` 是裸数组，分页会偏离官方形状）
+
+
+## 自托管环境的资源边界（2026-10-18）
+
+Session 创建时使用目标 Environment 配置校验资源类型。`self_hosted` 仅接受
+`memory_store`，显式 `file` 或 `github_repository` 资源返回 400
+`invalid_request_error`，在创建 Session 和文件实例前结束。已有自托管 Session
+动态添加 File 也执行同一限制。Cloud 资源规则、Memory 校验和空 Session 创建保持原行为。
+
+依据本地 CMA `self-hosted-sandboxes.md` 的 Session resources 合同。普通回归覆盖
+Cloud 的三类资源、自托管 Memory/空资源允许、File/GitHub 拒绝；Files 真实 EXT001
+另验证创建挂载拒绝及空自托管 Session 上的动态 File 添加拒绝。文件应由调用者在
+自托管 worker 中自行暂存，不能借用 Cloud 文件挂载流程。

@@ -1,11 +1,12 @@
-import type { Context } from "@deepseek-ai/cordis";
+import type { Context, Fiber } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
-import { createUserMessage, type ContentBlock } from "@deepseek-ai/dsh-llm";
+import { createUserMessage, type ContentBlock, type ToolCallBlock } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
+import { ContextRecovery } from "./compaction.ts";
 import { ExternalMcp } from "../external-mcp/index.ts";
 import * as SandboxTools from "../sandbox-tools/index.ts";
 import { failureDiagnostic, workerDiagnostic } from "../ccrv2/diagnostics.ts";
-import { approveToolCall, releaseToolApproval, clearToolApprovals } from "./tool-approvals.ts";
+import { approveToolCall, releaseToolApproval, clearToolApprovals, prefetchMcpApprovals } from "./tool-approvals.ts";
 import { object } from "../json.ts";
 import type {
   SessionRuntimeConfig,
@@ -21,9 +22,13 @@ export class SessionRuntime {
   busy = false;
   lastIdle = Date.now();
   private turnCompleted = false;
+  private readonly contextRecovery = new ContextRecovery();
+  private toolCalls: ToolCallBlock[] = [];
+  appendedSystem = "";
   private finishing?: ReturnType<typeof Promise.withResolvers<void>>;
   private readonly sandboxScope: symbol;
   readonly externalMcp: ExternalMcp;
+  private sandboxTools?: Fiber;
 
   constructor(
     readonly ctx: Context,
@@ -32,7 +37,7 @@ export class SessionRuntime {
     readonly bridge: ToolExecutionBridge,
     readonly parent?: SessionRuntime,
   ) {
-    this.externalMcp = parent?.externalMcp ?? new ExternalMcp(config.externalMcpConfig, config.externalMcpFetch);
+    this.externalMcp = new ExternalMcp(config.externalMcpConfig, config.externalMcpFetch);
     this.sandboxScope = parent?.sandboxScope ?? Symbol("sandboxExecutor");
   }
 
@@ -46,8 +51,8 @@ export class SessionRuntime {
       // dsh creates agent scopes from the loop context. Explicitly join the
       // parent's service label; agent ownership alone does not inherit services.
       const scope = agentScope.isolate("sandboxExecutor", this.sandboxScope);
+      scope.effect(() => () => this.externalMcp.close());
       if (!this.parent) {
-        scope.effect(() => () => this.externalMcp.close());
         await this.config.setup?.(scope);
       }
       if (!scope.get("sandboxExecutor")) throw new Error("Session requires a SandboxExecutor provider");
@@ -56,14 +61,16 @@ export class SessionRuntime {
         order: 0,
         complete: true,
         interpolate: false,
-        text: this.config.systemPrompt,
+        text: () => [this.config.systemPrompt, this.appendedSystem].filter(Boolean).join("\n\n"),
       });
-      await scope.plugin(SandboxTools, {
+      this.sandboxTools = await scope.plugin(SandboxTools, {
         bridge: this.bridge,
         tools: this.config.tools,
       });
-      await this.externalMcp.register(scope, this.bridge, this.abort.signal, async (serverName) => {
-        await this.hooks.onExternalMcpAuthenticationFailure?.(serverName);
+      await this.externalMcp.register(scope, this.bridge, this.abort.signal, async (serverName, phase) => {
+        await this.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase);
+      }, scope.get("sandboxExecutor")!, async (serverName) => {
+        await this.hooks.onExternalMcpConnectionFailure?.(serverName);
       });
       this.hooks.setupTools?.(scope);
       scope.on("tools/pre-execute", async (exec, next) => {
@@ -74,13 +81,15 @@ export class SessionRuntime {
           callId: exec.callId, toolName: exec.name, input: object(exec.arguments),
           available: false,
         }, exec.signal);
-        return approval.allowed ? decision : { kind: "deny", reason: "Tool use denied by OMA" };
+        return approval.allowed ? decision : { kind: "deny", reason: approval.reason || "Tool use denied by OMA" };
       });
       scope.on("tools/execute", async (exec, next) => {
+        prefetchMcpApprovals(this.bridge, this.toolCalls, exec.callId,
+          name => name.startsWith("mcp__") && !!scope.tools.get(name, exec.agent), exec.signal);
         const approval = await approveToolCall(this.bridge, {
           callId: exec.callId, toolName: exec.name, input: object(exec.arguments), available: true,
         }, exec.signal);
-        if (!approval.allowed) throw new Error("Tool use denied by OMA");
+        if (!approval.allowed) throw new Error(approval.reason || "Tool use denied by OMA");
         return next();
       });
       scope.on("session/event", (session, event) => {
@@ -92,9 +101,12 @@ export class SessionRuntime {
             block_types: data.message?.content?.map(block => block.type), reason: data.reason?.kind,
           });
         }
+        if (event.type === "assistant/message")
+          this.toolCalls = event.data.message.content.filter((block): block is ToolCallBlock => block.type === "tool-call");
         this.hooks.onEvent(event);
         if (event.type === "tool/result") releaseToolApproval(this.bridge, event.data.message.toolCallId);
         if (event.type === "turn/end") {
+          this.toolCalls = [];
           clearToolApprovals(this.bridge);
           this.turnCompleted = event.data.reason?.kind === "completed";
         }
@@ -104,6 +116,16 @@ export class SessionRuntime {
         await this.hooks.beforeRequest();
         signal.throwIfAborted();
         return next();
+      });
+      scope.on("agent/request-error", async ({ agent, failure, turn, step, signal }, next) => {
+        signal.throwIfAborted();
+        const recovered = await this.contextRecovery.recover(agent.session, failure, turn, step,
+          () => this.ctx.sessions.flush(agent.session),
+          async tokens => {
+            signal.throwIfAborted();
+            await this.hooks.onContextCompacted?.(tokens);
+          });
+        return recovered ? { kind: "retry" } : next();
       });
       scope.on("agent/assistant-stream", ({ frame }) => this.hooks.onStream(frame));
     };
@@ -124,6 +146,21 @@ export class SessionRuntime {
           } : {}) },
           ...options,
         });
+  }
+
+  async refreshTools(): Promise<void> {
+    if (this.parent || !this.config.refreshTools) return;
+    this.abort.signal.throwIfAborted();
+    const next = await this.config.refreshTools(this.abort.signal);
+    this.abort.signal.throwIfAborted();
+    if (JSON.stringify(next.tools) !== JSON.stringify(this.config.tools)) {
+      if (!this.sandboxTools) throw new Error("Session tools are not initialized");
+      this.sandboxTools.update({ bridge: this.bridge, tools: next.tools });
+      await this.sandboxTools.await();
+      this.config.tools = next.tools;
+    }
+    await this.externalMcp.update(next.externalMcpConfig);
+    this.config.externalMcpConfig = next.externalMcpConfig;
   }
 
   async run(input: string | (() => Promise<ContentBlock[]>), hooks: TurnHooks): Promise<void> {
@@ -175,6 +212,6 @@ export class SessionRuntime {
     this.stop();
     await this.finishing?.promise;
     try { await this.handle?.dispose(); }
-    finally { if (!this.parent) await this.externalMcp.close(); }
+    finally { await this.externalMcp.close(); }
   }
 }

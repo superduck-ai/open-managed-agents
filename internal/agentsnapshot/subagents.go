@@ -43,6 +43,9 @@ func Resolve(ctx context.Context, database *db.DB, agent db.Agent) (json.RawMess
 			if err != nil {
 				return nil, err
 			}
+			if err := validateRosterGeography(agent.Model, entries); err != nil {
+				return nil, err
+			}
 			setting.PredefinedAgents = entries
 		}
 	} else {

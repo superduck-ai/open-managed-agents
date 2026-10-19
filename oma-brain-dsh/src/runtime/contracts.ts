@@ -41,6 +41,7 @@ export interface SubagentBridge {
   bindPersistence(threadId: string): void;
   emit(event: SubagentEvent): Promise<void>;
   beforeRequest(): Promise<void>;
+  onContextCompacted?(threadId: string, tokens?: number): Promise<void>;
   onEvent(threadId: string, event: SessionEvent): void;
   onStream(threadId: string, frame: AssistantStreamFrame): void;
   toolExecution(threadId: string): ToolExecutionBridge;
@@ -67,6 +68,8 @@ declare module "@deepseek-ai/cordis" {
 }
 
 export interface SessionRuntimeConfig {
+  refreshTools?(signal: AbortSignal): Promise<{ tools: string[]; externalMcpConfig: unknown }>;
+  threadMcpContext?(threadId: string): Promise<{ config: unknown; fetcher: typeof fetch }>;
   externalMcpConfig?: unknown;
   externalMcpFetch?: typeof fetch;
   id: string;
@@ -98,7 +101,9 @@ export interface ToolApproval {
 
 export interface ApprovalDecision {
   allowed: boolean;
+  externalResult?: { content: {type: "text"; text: string}[]; isError: boolean };
   input?: unknown;
+  reason?: string;
 }
 
 export interface ApprovedToolCall {
@@ -127,7 +132,9 @@ export interface ToolExecutionBridge {
 }
 
 export interface SessionRuntimeHooks {
-  onExternalMcpAuthenticationFailure?(serverName: string): Promise<void>;
+  onContextCompacted?(tokens?: number): Promise<void>;
+  onExternalMcpConnectionFailure?(serverName: string): Promise<void>;
+  onExternalMcpAuthenticationFailure?(serverName: string, phase?: "discovery" | "tool_call"): Promise<void>;
   setupTools?(scope: Context): void;
   beforeRequest(): Promise<void>;
   onEvent(event: SessionEvent): void;

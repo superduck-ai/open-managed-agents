@@ -14,10 +14,17 @@ import (
 )
 
 func TestQueuedUserMessagePublishesNullThenProcessedSSE(t *testing.T) {
+	assertQueuedInputPublishesNullThenProcessedSSE(t, "user.message")
+}
+func TestQueuedConfirmationPublishesNullThenProcessedSSE(t *testing.T) {
+	assertQueuedInputPublishesNullThenProcessedSSE(t, "user.tool_confirmation")
+}
+func assertQueuedInputPublishesNullThenProcessedSSE(t *testing.T, kind string) {
+	t.Helper()
 	bus := &recordingEventBus{}
 	h := &Handler{eventBus: bus, logger: slog.New(slog.NewTextHandler(io.Discard, nil)), streams: newStreamHub()}
 	thread := "thread"
-	pending := db.SessionEvent{ExternalID: "queued", WorkspaceUUID: "workspace", SessionExternalID: "session", ThreadExternalID: &thread, EventType: "user.message", Payload: json.RawMessage(`{"id":"queued","type":"user.message","content":[{"type":"text","text":"B"}],"processed_at":null}`)}
+	pending := db.SessionEvent{ExternalID: "queued", WorkspaceUUID: "workspace", SessionExternalID: "session", ThreadExternalID: &thread, EventType: kind, Payload: json.RawMessage(`{"id":"queued","type":"` + kind + `","tool_use_id":"actual-use","result":"allow","processed_at":null}`)}
 	h.publishSessionEvents(context.Background(), []db.SessionEvent{pending})
 	processed := pending
 	processed.ProcessedAt = time.Date(2026, 10, 17, 5, 10, 0, 123456000, time.UTC)
@@ -71,7 +78,7 @@ func TestQueuedUserMessagePublishesNullThenProcessedSSE(t *testing.T) {
 		t.Fatalf("processed version=%v", versions[1])
 	}
 	for _, v := range versions {
-		if v["id"] != "queued" || v["type"] != "user.message" || v["session_thread_id"] != thread {
+		if v["id"] != "queued" || v["type"] != kind || v["session_thread_id"] != thread {
 			t.Fatalf("identity/routing changed: %v", v)
 		}
 	}

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
 import { ToolCallId } from "@deepseek-ai/dsh-llm";
@@ -16,6 +17,8 @@ function peer(transport: "http" | "sse" = "http", serverName = "peer") {
   let authenticationStatus: number | undefined;
   let failCall = false;
   let errorResult = false;
+  let outputText: string | undefined;
+  let outputContent: Payload[] | undefined;
   let protocolErrorCode: number | undefined;
   let hangCall = false;
   const dispatched = Promise.withResolvers<void>();
@@ -102,10 +105,10 @@ function peer(transport: "http" | "sse" = "http", serverName = "peer") {
         if (protocolErrorCode !== undefined)
           return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: protocolErrorCode, message: 'unknown tool "microsoft_docs_fetch"' } });
         return reply({
-          content: [
+          content: outputContent ?? [
             {
               type: "text",
-              text: `Learn document: ${body.params.arguments.url}`,
+              text: outputText ?? `Learn document: ${body.params.arguments.url}`,
             },
           ],
           isError: errorResult,
@@ -116,6 +119,8 @@ function peer(transport: "http" | "sse" = "http", serverName = "peer") {
   });
   return {
     requests,
+    output: (text: string) => { outputText = text; },
+    content: (blocks: Payload[]) => { outputContent = blocks; },
     dispatched: dispatched.promise,
     disconnected: disconnected.promise,
     hangCall: () => {
@@ -132,9 +137,11 @@ function peer(transport: "http" | "sse" = "http", serverName = "peer") {
       },
     },
     failAuthentication: (status: number) => { authenticationStatus = status; },
+    recoverAuthentication: () => { authenticationStatus = undefined; },
     failDiscovery: () => {
       failDiscovery = true;
     },
+    recoverDiscovery: () => { failDiscovery = false; },
     failCall: () => {
       failCall = true;
     },
@@ -235,18 +242,33 @@ test("external configuration rejects unsupported transports, malformed headers a
     expect(() => externalServers(config)).toThrow();
 });
 
-test("external discovery failure stops initialization before any model request or sandbox allocation", async () => {
+test("external non-authentication discovery failure emits connection error, preserves chat and retries on the next active turn", async () => {
   const f = await fixture();
   try {
     f.p.failDiscovery();
-    await expect(f.session.open()).rejects.toThrow(
-      "External MCP discovery failed",
-    );
+    await f.session.open();
+    const errors = [...f.b.publicLog.values()].filter(event => event.type === "session.error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.error).toEqual({
+      type: "mcp_connection_failed_error", mcp_server_name: "peer",
+      message: "MCP server connection failed during tool discovery.",
+      retry_status: { type: "exhausted" },
+    });
+    expect(JSON.stringify(errors)).not.toContain("peer-secret");
     expect(f.b.requests).toHaveLength(0);
-    expect(f.b.sandboxCount).toBe(0);
-  } finally {
-    await f.close();
-  }
+    f.b.modelScript = [textEvents("still interactive")];
+    await f.session.receive("after_connection_failure", { content: "Say still interactive" });
+    expect(f.b.requests[0]!.tools.some((tool: Payload) => tool.name.startsWith("mcp__"))).toBe(false);
+    expect(f.session.busy).toBe(false);
+    expect(f.session.blocked()).toBe(false);
+    f.p.recoverDiscovery();
+    f.b.modelScript = [mcpEvents("recovered_call"), textEvents("Recovered")];
+    await f.session.receive("after_connection_recovery", { content: "Fetch documentation", oma_refresh_tools: true });
+    expect(f.p.requests.filter(request => request.method === "tools/list").length).toBeGreaterThanOrEqual(2);
+    expect(f.p.requests.filter(request => request.method === "tools/call")).toHaveLength(1);
+    expect(f.session.state.toolOutcomes?.recovered_call?.failed).toBe(false);
+    expect(f.session.blocked()).toBe(false);
+  } finally { await f.close(); }
 });
 
 test("denied external tools and invalid approved arguments never dispatch", async () => {
@@ -423,7 +445,7 @@ test("registration retains external config and discovers all pages before advert
   }
 });
 
-test("children reuse external discovery with their own approval and result ownership", async () => {
+test("children use independent external discovery with their own approval and result ownership", async () => {
   const f = await fixture();
   try {
     f.a.launch.subagents = { inlineAgents: true };
@@ -440,10 +462,10 @@ test("children reuse external discovery with their own approval and result owner
     expect(report.report).toBe("child fetched");
     expect(
       f.p.requests.filter((request) => request.method === "initialize"),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     expect(
       f.p.requests.filter((request) => request.method === "tools/list"),
-    ).toHaveLength(2);
+    ).toHaveLength(4);
     const events = [...f.b.publicLog.values()];
     expect(
       events.some(
@@ -642,3 +664,233 @@ test("authentication failure disables only its server and preserves healthy real
     expect([...f.b.publicLog.values()].filter(event => event.type === "session.error")).toHaveLength(1);
   } finally { await f.close(); healthy.close(); }
 });
+
+for (const status of [401, 403]) {
+  test(`external MCP ${status} after discovery is a known authentication rejection and chat stays usable`, async () => {
+    const f = await fixture();
+    try {
+      await f.session.open();
+      f.p.failAuthentication(status);
+      f.b.modelScript = [mcpEvents(), textEvents("unavailable")];
+      await f.session.receive("archived_credential", { content: "Fetch documentation" });
+      expect(f.session.blocked()).toBe(false);
+      expect(f.session.state.toolOutcomes?.mcp_call).toMatchObject({ failed: true });
+      expect(f.session.state.toolOutcomes?.mcp_call?.remoteOutcome).toBeUndefined();
+      const errors = [...f.b.publicLog.values()].filter(event => event.type === "session.error");
+      expect(errors).toHaveLength(1);
+      expect(errors[0]!.error).toMatchObject({ type: "mcp_authentication_failed_error", mcp_server_name: "peer", retry_status: { type: "exhausted" } });
+      expect(JSON.stringify(errors)).not.toContain("peer-secret");
+      expect(JSON.stringify(errors)).not.toContain(String(f.p.config.mcpServers.peer!.url));
+      f.b.modelScript = [textEvents("still interactive")];
+      await f.session.receive("after_archival", { content: "Say still interactive" });
+      expect(f.session.blocked()).toBe(false);
+      expect(f.session.busy).toBe(false);
+    } finally { await f.close(); }
+  });
+}
+
+
+test("large external MCP results persist once in the session sandbox before public and model preview", async () => {
+ const f = await fixture();
+ const text = "x".repeat(50000) + "hidden-middle-result" + "y".repeat(50000);
+ const files = new Map<string, string>();
+ f.p.output(text);
+ f.b.onTool = async params => {
+  expect(params.name).toBe("write");
+  expect(params.arguments.file_path).toMatch(/^\/tmp\/tool-outputs\/mcp_[a-f0-9-]+\.txt$/);
+  files.set(params.arguments.file_path, params.arguments.content);
+  return { content: [{type:"text",text:"File written"}] };
+ };
+ try {
+  await f.session.open();
+  f.b.modelScript = [mcpEvents(), textEvents("saved")];
+  await f.session.receive("large_mcp", {content:"Fetch documentation"});
+  expect(files.size).toBe(1);
+  expect([...files.values()]).toEqual([text]);
+  const path = [...files.keys()][0]!;
+  const blocks = [...f.b.publicLog.values()].flatMap(event => event.message?.content ?? []);
+  const result = blocks.find(block => block.type === "tool_result" && block.tool_use_id === "mcp_call")!;
+  const preview = JSON.stringify(result.content);
+  expect(preview).toContain(path);
+  expect(preview).not.toContain("hidden-middle-result");
+  expect(preview.length).toBeLessThan(4096);
+  expect(JSON.stringify(f.b.requests[1])).toContain(path);
+  expect(JSON.stringify(f.b.requests[1])).not.toContain("hidden-middle-result");
+  expect(f.p.requests.filter(request => request.method === "tools/call")).toHaveLength(1);
+  expect(Object.keys(f.session.state.toolOutcomes ?? {})).toEqual(["mcp_call"]);
+ } finally { await f.close(); }
+});
+
+test("completed external image result is a known capability error without blocking or replay", async () => {
+ const f=await fixture();
+ f.p.content([{type:"text",text:"source text"},{type:"image",mimeType:"image/png",data:"iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAG0lEQVR4nAAOAPH/Av8AAAD/AAQBAP//AAADAB0vBATh2sXgAAAAAElFTkSuQmCC"}]);
+ try {
+  await f.session.open();f.b.modelScript=[mcpEvents(),textEvents("unsupported picture")];
+  await f.session.receive("image_mcp",{content:"Read controlled result"});
+  expect(f.session.blocked()).toBe(false);
+  expect(f.session.state.toolOutcomes.mcp_call).toMatchObject({failed:true});
+  expect(f.session.state.toolOutcomes.mcp_call?.text).toContain("unsupported non-text content");
+  expect(f.session.state.toolOutcomes.mcp_call?.remoteOutcome).toBeUndefined();
+  expect(f.p.requests.filter(r=>r.method==="tools/call")).toHaveLength(1);
+  expect(f.b.requests).toHaveLength(2);
+  f.b.modelScript=[textEvents("still interactive")];await f.session.receive("after_image",{content:"Continue text"});
+  expect(f.session.blocked()).toBe(false);expect(f.session.busy).toBe(false);
+ } finally {await f.close();}
+});
+
+test("new primary input refreshes changed MCP URL without replaying earlier tool calls", async () => {
+ const f=await fixture();
+ const next=peer();
+ try {
+  await f.session.open();
+  f.b.modelScript=[mcpEvents("before_update"),textEvents("before"),mcpEvents("after_update"),textEvents("after"),mcpEvents("unchanged_call"),textEvents("unchanged")];
+  await f.session.receive("before_input",{content:"Fetch before update",oma_refresh_tools:true});
+  f.p.config.mcpServers.peer=next.config.mcpServers.peer;
+  await f.session.receive("after_input",{content:"Fetch after update",oma_refresh_tools:true});
+  expect(f.p.requests.filter(request=>request.method==="tools/call")).toHaveLength(1);
+  expect(next.requests.filter(request=>request.method==="tools/call")).toHaveLength(1);
+  expect(next.requests.filter(request=>request.method==="tools/list")).toHaveLength(2);
+  await f.session.receive("unchanged_input",{content:"Fetch unchanged",oma_refresh_tools:true});
+  expect(next.requests.filter(request=>request.method==="tools/call")).toHaveLength(2);
+  expect(next.requests.filter(request=>request.method==="tools/list")).toHaveLength(2);
+  const config=f.p.config as {mcpServers:Payload};config.mcpServers={};
+  f.b.onModel=async request=>{expect((request.tools??[]).map((tool:Payload)=>tool.name)).not.toContain("mcp__peer__microsoft_docs_fetch");return textEvents("tools removed");};
+  await f.session.receive("removed_input",{content:"No external tools",oma_refresh_tools:true});
+  expect(next.requests.filter(request=>request.method==="tools/call")).toHaveLength(2);
+  expect(f.b.processed).toEqual(["before_input","after_input","unchanged_input","removed_input"]);
+ } finally {await f.close();next.close();}
+});
+
+test("primary tool refresh replaces builtin advertisements without removing external tools",async()=>{
+ const f=await fixture();
+ const route=f.b.route.bind(f.b);
+ let tools=["Read"];
+ f.b.route=async request=>new URL(request.url).pathname===`/v2/sessions/${f.b.a.session_id}`
+ ? Response.json({session_context:{runtime_tools:tools,mcp_config:f.p.config}}):route(request);
+ try {
+  await f.session.open();
+  f.b.onModel=async request=>{
+   const names=(request.tools??[]).map((tool:Payload)=>tool.name);
+   expect(names.includes("Read")).toBe(tools.includes("Read"));
+   expect(names).toContain("mcp__peer__microsoft_docs_fetch");
+   expect(names).not.toContain("Bash");
+   return textEvents("current tools");
+  };
+  await f.session.receive("builtin_added",{content:"Inspect tool list",oma_refresh_tools:true});
+  tools=[];
+  await f.session.receive("builtin_removed",{content:"Inspect changed tool list",oma_refresh_tools:true});
+ } finally {await f.close();}
+});
+
+test("interrupt during a tool-context refresh prevents model and tool dispatch",async()=>{
+ const f=await fixture();
+ try {
+  await f.session.open();
+  const requested=Promise.withResolvers<void>();
+  const release=Promise.withResolvers<void>();
+  const route=f.b.route.bind(f.b);
+  f.b.route=async request=>{
+   if(new URL(request.url).pathname===`/v2/sessions/${f.b.a.session_id}`) {requested.resolve();await release.promise;}
+   return route(request);
+  };
+  const running=f.session.receive("refresh_interrupted",{content:"Do not dispatch after interrupt",oma_refresh_tools:true});
+  await requested.promise;
+  await f.session.control({type:"interrupt"});
+  release.resolve();
+  await running;
+  expect(f.b.requests).toHaveLength(0);
+  expect(f.p.requests.filter(request=>request.method==="tools/call")).toHaveLength(0);
+ } finally {await f.close();}
+});
+
+
+test("predefined MCP child owns its pinned endpoint while self and root retain theirs", async () => {
+  const f = await fixture();
+  const expert = peer();
+  const contexts: string[] = [];
+  const route = f.b.route.bind(f.b);
+  f.api.assignments.set(f.a.session_id, f.a);
+  f.a.launch.subagents = { inlineAgents: false, agents: [
+    { name: "expert", description: "fixed A", systemPrompt: "Read A", tools: [], agentSnapshot: { id: "agent_A", version: 1 } },
+    { name: "self", description: "self B", systemPrompt: "Read B", tools: [], agentSnapshot: { id: "agent_B", version: 1 } },
+  ] };
+  f.session.runtime.config.subagents = f.a.launch.subagents;
+  f.b.route = async (request) => {
+    if (new URL(request.url).pathname === `/v2/sessions/${f.a.session_id}`) {
+      const threadId = request.headers.get("X-OMA-Session-Thread-ID");
+      const thread = f.session.state.threads?.find(t => t.id === threadId);
+      contexts.push(thread?.name ?? "root");
+      return Response.json({ session_context: { runtime_tools: [], mcp_config: thread?.name === "expert" ? expert.config : f.p.config } });
+    }
+    return route(request);
+  };
+  const scopes: { endpoint: string; threadId: string | null }[] = [];
+  const originalFetcher = f.api.fetcher;
+  Object.defineProperty(f.api, "fetcher", { value: (async (input, init) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    if (url.pathname.endsWith("/mcp") && url.searchParams.has("mcp_url")) {
+      scopes.push({ endpoint: url.searchParams.get("mcp_url")!, threadId: request.headers.get("X-OMA-Session-Thread-ID") });
+    }
+    return originalFetcher(input, init);
+  }) as typeof fetch });
+  try {
+    await f.session.open();
+    f.b.modelScript = [mcpEvents("root_before_children"), textEvents("root report")];
+    await f.session.receive("root_before_children", { content: "Read documentation" });
+    for (const name of ["expert", "self"]) {
+      f.b.modelScript = [mcpEvents(`read_${name}`), textEvents(`${name} report`)];
+      await f.session.subagents.send({ agent_name: name, message: "Read documentation" }, new AbortController().signal);
+    }
+    expect(expert.requests.filter(r => r.method === "tools/call")).toHaveLength(1);
+    expect(f.p.requests.filter(r => r.method === "tools/call")).toHaveLength(2);
+    expect(contexts).toEqual(["expert", "self"]);
+    const expertThread = f.session.state.threads!.find(t => t.name === "expert")!;
+    const selfThread = f.session.state.threads!.find(t => t.name === "self")!;
+    expect(scopes.some(s => s.endpoint === expert.config.mcpServers.peer.url && s.threadId === expertThread.id)).toBe(true);
+    expect(scopes.some(s => s.endpoint === f.p.config.mcpServers.peer.url && s.threadId === selfThread.id)).toBe(true);
+    expect(scopes.some(s => s.endpoint === f.p.config.mcpServers.peer.url && s.threadId === null)).toBe(true);
+  } finally {
+    await f.close();
+    expert.close();
+  }
+});
+
+test("completed external NUL result emits safe durability stages without logging content",async()=>{
+ const f=await fixture();const marker="private-NUL-"+String.fromCharCode(0)+"-source";f.p.output(marker);
+ const records:Payload[]=[];const previous=console.info;
+ console.info=(line:unknown)=>{try {const value=JSON.parse(String(line));if(value.event==="ccrv2_tool_result_durability")records.push(value);}catch{}};
+ try {
+  await f.session.open();f.b.modelScript=[mcpEvents(),textEvents("finished")];
+  await f.session.receive("nul_durable",{content:"Read controlled result"});
+  expect(f.session.state.toolOutcomes.mcp_call?.text).toBe(marker);
+  expect(f.session.blocked()).toBe(false);expect(f.p.requests.filter(r=>r.method==="tools/call")).toHaveLength(1);
+  expect(records.map(r=>r.phase)).toEqual(["start","confirmed"]);
+  expect(records.every(r=>r.session_ref===createHash("sha256").update(f.a.session_id).digest("hex") && r.call_ref===createHash("sha256").update("mcp_call").digest("hex") && r.has_nul===true && r.text_utf16_units===marker.length)).toBe(true);
+  expect(JSON.stringify(records)).not.toContain(marker);expect(records.every(r=>!("text" in r) && !("input" in r) && !("session_id" in r) && !("call_id" in r))).toBe(true);
+ } finally {console.info=previous;await f.close();}
+});
+
+for (const status of [401, 403]) {
+ test(`unchanged MCP configuration recovers discovery after ${status}`,async()=>{
+  const f=await fixture();
+  try {
+   f.p.failAuthentication(status);
+   await f.session.open();
+   f.b.modelScript=[textEvents("still interactive")];
+   await f.session.receive("authentication_failure",{content:"Say still interactive",oma_refresh_tools:true});
+   expect(f.b.requests[0]!.tools.some((tool:Payload)=>tool.name.startsWith("mcp__"))).toBe(false);
+   const before=f.p.requests.length;
+   f.p.recoverAuthentication();
+   f.b.modelScript=[mcpEvents("after_credentials_rotated"),textEvents("recovered")];
+   await f.session.receive("authentication_recovered",{content:"Fetch documentation",oma_refresh_tools:true});
+   expect(f.b.requests[1]!.tools.map((tool:Payload)=>tool.name)).toContain("mcp__peer__microsoft_docs_fetch");
+   expect(f.p.requests.length).toBeGreaterThan(before);
+   expect(f.p.requests.filter(request=>request.method==="tools/call")).toHaveLength(1);
+   expect(f.b.processed).toEqual(["authentication_failure","authentication_recovered"]);
+   expect(f.session.blocked()).toBe(false);
+   expect(f.session.busy).toBe(false);
+   expect([...f.b.publicLog.values()].filter(event=>event.type==="session.error").every(event=>event.error.type==="mcp_authentication_failed_error")).toBe(true);
+  } finally {await f.close();}
+ });
+}

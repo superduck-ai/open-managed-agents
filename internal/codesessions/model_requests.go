@@ -119,6 +119,21 @@ func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID,
 
 func (s *Service) StartModelThinking(ctx context.Context, request *ModelRequest, messageID string, index int) error {
 	message := ModelRequestMessage{ID: maevents.StableAssistantEventID(request.CodeSessionID, messageID, index, "agent.thinking"), Type: "agent.thinking"}
+	// The proxy observes the real block start before forwarding it to Brain.
+	// Publish its nonsecret preview before the buffered progress signal retires
+	// this ID; Brain's queued copy otherwise always arrives too late.
+	preview := map[string]any{"type": "event_start", "event": map[string]string{"type": message.Type, "id": message.ID}}
+	if request.toolThreadID != "" {
+		preview["session_thread_id"] = request.toolThreadID
+	}
+	raw, err := jsonv2.Marshal(preview)
+	if err != nil {
+		return err
+	}
+	s.publishWorkerStreamPayload(ctx, CodeSessionStreamRoute{
+		CodeSessionID: request.CodeSessionID, WorkspaceUUID: request.codeSession.WorkspaceUUID,
+		SessionExternalID: request.codeSession.SessionExternalID,
+	}, request.codeSession.CurrentWorkerEpoch, raw)
 	payload, err := modelMessagePayload(request, message, time.Now().UTC().Truncate(time.Microsecond))
 	if err != nil {
 		return err

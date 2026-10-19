@@ -464,6 +464,9 @@ func (h *Handler) stateFromCreate(r *http.Request, principal auth.Principal, age
 	if state.Multiagent, err = h.normalizeMultiagent(r, principal, agentID, 1, body.Multiagent); err != nil {
 		return agentState{}, err
 	}
+	if err := h.validateCMARosterGeography(r, principal, state, agentID, 1); err != nil {
+		return agentState{}, err
+	}
 	return state, nil
 }
 
@@ -555,6 +558,9 @@ func (h *Handler) stateFromUpdate(r *http.Request, principal auth.Principal, cur
 			return agentState{}, err
 		}
 		state.Multiagent = multiagent
+	}
+	if err := h.validateCMARosterGeography(r, principal, state, current.ExternalID, current.CurrentVersion+1); err != nil {
+		return agentState{}, err
 	}
 	return state, nil
 }
@@ -732,13 +738,17 @@ func parseRequiredVersion(raw json.RawMessage) (int, error) {
 }
 
 type agentModelInput struct {
-	ID    *string `json:"id"`
-	Speed *string `json:"speed"`
+	ID           *string         `json:"id"`
+	Speed        *string         `json:"speed"`
+	InferenceGeo *string         `json:"inference_geo"`
+	Effort       json.RawMessage `json:"effort"`
 }
 
 type normalizedAgentModel struct {
-	ID    string `json:"id"`
-	Speed string `json:"speed"`
+	ID           string       `json:"id"`
+	Speed        string       `json:"speed"`
+	InferenceGeo string       `json:"inference_geo,omitempty"`
+	Effort       *modelEffort `json:"effort,omitempty"`
 }
 
 func normalizeModel(raw json.RawMessage) (normalizedAgentModel, error) {
@@ -775,6 +785,17 @@ func normalizeModel(raw json.RawMessage) (normalizedAgentModel, error) {
 			return normalizedAgentModel{}, errors.New("model.speed must be standard or fast")
 		}
 		normalized.Speed = *model.Speed
+	}
+	if model.InferenceGeo != nil {
+		if *model.InferenceGeo != "us" && *model.InferenceGeo != "global" {
+			return normalizedAgentModel{}, errInvalidInferenceGeo
+		}
+		normalized.InferenceGeo = *model.InferenceGeo
+	}
+	var err error
+	normalized.Effort, err = normalizeModelEffort(model.Effort)
+	if err != nil {
+		return normalizedAgentModel{}, err
 	}
 	return normalized, nil
 }
@@ -1108,8 +1129,8 @@ func normalizePermissionPolicy(value any, defaultPolicy string) (map[string]stri
 		return nil, errors.New("permission_policy must be an object")
 	}
 	policyType, _ := object["type"].(string)
-	if policyType != "always_allow" && policyType != "always_ask" {
-		return nil, errors.New("permission_policy.type must be always_allow or always_ask")
+	if policyType != "always_allow" && policyType != "always_ask" && policyType != "auto" {
+		return nil, errors.New("permission_policy.type must be always_allow, always_ask, or auto")
 	}
 	return map[string]string{"type": policyType}, nil
 }

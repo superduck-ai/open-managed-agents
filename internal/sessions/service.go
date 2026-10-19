@@ -10,6 +10,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -34,6 +35,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 
 	agent, snapshot, err := h.resolveAgent(r, principal, body.Agent)
 	if err != nil {
+		return invalidRequest(err)
+	}
+	if err := rejectUnpricedSessionBudget(body.Budget, agent.Model); err != nil {
 		return invalidRequest(err)
 	}
 	environmentID, err := parseRequiredRawString(body.EnvironmentID, "environment_id")
@@ -63,7 +67,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	}
 	vaultIDs, err := h.normalizeVaultIDs(r, principal, rawOrDefault(body.VaultIDs, `[]`))
 	if err != nil {
-		return invalidRequest(err)
+		return mapVaultBindingError(err)
 	}
 
 	sessionID, err := ids.New("sesn_")
@@ -82,6 +86,17 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	resources, err := h.resourcesFromCreate(r, principal, sessionID, body.Resources, now)
 	if err != nil {
 		return mapResourceBuildError(err)
+	}
+	if err := validateEnvironmentSessionResources(env, resources); err != nil {
+		return err
+	}
+	var workSecret *string
+	if selfHostedMemoryCredentialRequired(env, resources) {
+		secret, secretErr := auth.NewWorkSecret(auth.WorkTokenScope{WorkspaceUUID: principal.WorkspaceUUID, EnvironmentID: env.ExternalID, WorkID: workID})
+		if secretErr != nil {
+			return internalError("Could not create work credential", secretErr)
+		}
+		workSecret = &secret
 	}
 	resourceInputs, err := sessionResourceWriteInputs(resources)
 	if err != nil {
@@ -133,6 +148,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 			EnvironmentExternalID: env.ExternalID,
 			Metadata:              json.RawMessage(`{}`),
 			State:                 "queued",
+			Secret:                workSecret,
 			CreatedAt:             now,
 			UpdatedAt:             now,
 		},
@@ -283,6 +299,9 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 	body, err := httpapi.DecodeObjectBodyAs[sessionMutationRequest](w, r, maxSessionBodySize)
 	if err != nil {
 		return invalidRequest(err)
+	}
+	if len(body.Budget) > 0 && string(body.Budget) != "null" {
+		return invalidRequest(errors.New("a budget cannot be added to a session created without one"))
 	}
 	if len(body.VaultIDs) > 0 {
 		return invalidRequest(errors.New("vault_ids updates are not supported"))
@@ -450,11 +469,11 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	if err != nil {
 		return invalidRequest(err)
 	}
-	cursor, err := decodeEventCursor(r.URL.Query().Get("page"))
+	order, err := parseOrder(r, "asc")
 	if err != nil {
 		return invalidRequest(err)
 	}
-	order, err := parseOrder(r, "asc")
+	cursor, err := decodeEventCursor(r.URL.Query().Get("page"), order)
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -510,7 +529,7 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	}
 	var nextPage *string
 	if hasMore && len(records) > 0 {
-		value := encodeEventCursor(records[len(records)-1])
+		value := encodeEventCursor(records[len(records)-1], order)
 		nextPage = &value
 	}
 	httpapi.WriteJSON(w, http.StatusOK, pageResponse[json.RawMessage]{Data: data, NextPage: nextPage})
@@ -566,7 +585,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	h.publishSessionEvents(r.Context(), created)
 	h.enqueueWebhooksForSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, created)
 	if h.codeSessions != nil {
-		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created); err != nil {
+		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, changes.WorkerInputEvents()); err != nil {
 			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)
 			return queueCodeSessionEventsError(err)
 		}
@@ -600,6 +619,9 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error
 	if resourceType == sessionresource.GitRepositoryType {
 		return invalidRequest(errors.New("git repositories must be bound when creating the session"))
 	}
+	if resourceType == sessionresource.MemoryStoreType {
+		return invalidRequest(errors.New("memory stores must be bound when creating the session"))
+	}
 	existing, err := h.db.ListSessionResources(r.Context(), session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		return internalError("Could not list resources", fmt.Errorf("list session %q resources: %w", sessionID, err))
@@ -607,6 +629,15 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error
 	resource, err := h.resourceFromRequest(r, session, body, time.Now().UTC(), observeSessionMemoryResources(existing))
 	if err != nil {
 		return mapResourceBuildError(err)
+	}
+	if resourceType == sessionresource.FileType {
+		env, err := h.db.GetEnvironment(r.Context(), session.WorkspaceUUID, session.EnvironmentExternalID)
+		if err != nil {
+			return resourceEnvironmentLoadError(session.EnvironmentExternalID, err)
+		}
+		if err := validateEnvironmentSessionResources(env, []normalizedSessionResource{resource}); err != nil {
+			return err
+		}
 	}
 	resourceInput, err := sessionResourceWriteInput(resource)
 	if err != nil {
@@ -712,6 +743,9 @@ func (h *Handler) deleteResourceRoute(w http.ResponseWriter, r *http.Request) er
 	if resource.ResourceType == sessionresource.GitRepositoryType {
 		return invalidRequest(errors.New("git repositories cannot be removed from a session"))
 	}
+	if resource.ResourceType == sessionresource.MemoryStoreType {
+		return invalidRequest(errors.New("memory stores cannot be removed from a session"))
+	}
 	if err := h.db.DeleteSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID); err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			return mapSessionLoadError(err, sessionID)
@@ -732,23 +766,11 @@ func (h *Handler) listThreadsRoute(w http.ResponseWriter, r *http.Request) error
 	if _, err := h.ensurePrimarySessionThread(r.Context(), session); err != nil {
 		return internalError("Could not list threads", fmt.Errorf("ensure primary thread for session %q: %w", sessionID, err))
 	}
-	limit, err := httpapi.ParseLimit(r, 1000)
+	params, err := parseThreadListParams(r, session)
 	if err != nil {
 		return invalidRequest(err)
 	}
-	if strings.TrimSpace(r.URL.Query().Get("limit")) == "" {
-		limit = 500
-	}
-	cursor, err := decodeThreadCursor(r.URL.Query().Get("page"))
-	if err != nil {
-		return invalidRequest(err)
-	}
-	records, hasMore, err := h.db.ListSessionThreadsPage(r.Context(), db.ListSessionThreadsPageParams{
-		WorkspaceUUID:     session.WorkspaceUUID,
-		SessionExternalID: session.ExternalID,
-		Limit:             limit,
-		Cursor:            cursor,
-	})
+	records, hasMore, err := h.db.ListSessionThreadsPage(r.Context(), params)
 	if err != nil {
 		return internalError("Could not list threads", fmt.Errorf("list session %q threads: %w", sessionID, err))
 	}

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { Context } from "@deepseek-ai/cordis";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
@@ -22,6 +23,7 @@ import { failureDiagnostic, workerDiagnostic } from "./diagnostics.ts";
 import { CcrToolResults } from "./tool-results.ts";
 import { assistantMessages, CcrAssistantStream } from "./assistant.ts";
 import { userInputContent } from "./user-content.ts";
+import { appendedSystemContext } from "./system-context.ts";
 
 declare module "@deepseek-ai/dsh-llm" {
   interface MessageSourceMap {
@@ -68,17 +70,23 @@ export class CcrSession {
         return this.modelOverride ? { ...call, model: this.modelOverride } : call;
       });
     } }, {
-      onExternalMcpAuthenticationFailure: (serverName) => this.backend.events(this.id, [{
-        type: "session.error", uuid: `${this.id}_mcp_auth_${serverName}`,
+      onExternalMcpConnectionFailure: (serverName) => this.backend.events(this.id, [{
+        type: "session.error", uuid: crypto.randomUUID(), processed_at: new Date().toISOString(),
+        error: { type: "mcp_connection_failed_error", mcp_server_name: serverName,
+          message: "MCP server connection failed during tool discovery.", retry_status: { type: "exhausted" } },
+      }]),
+      onExternalMcpAuthenticationFailure: (serverName, phase) => this.backend.events(this.id, [{
+        type: "session.error", uuid: phase === "tool_call" ? crypto.randomUUID() : `${this.id}_mcp_auth_${serverName}`,
         processed_at: new Date().toISOString(),
         error: {
           type: "mcp_authentication_failed_error", mcp_server_name: serverName,
-          message: "MCP server authentication failed during tool discovery.",
+          message: phase === "tool_call" ? "MCP server authentication failed during tool execution." : "MCP server authentication failed during tool discovery.",
           retry_status: { type: "exhausted" },
         },
       }]),
       setupTools: (scope) => this.subagents.register(scope),
       beforeRequest: () => this.flushEvents(),
+      onContextCompacted: tokens => this.contextCompacted(tokens),
       onEvent: (event) => this.record(event),
       onStream: (frame) => this.stream(frame),
       stop: () => this.stop(),
@@ -258,7 +266,15 @@ export class CcrSession {
     return promise;
   }
 
+  async contextCompacted(tokens?: number, threadId?: string): Promise<void> {
+    this.state.outbox.push({ type: "agent.thread_context_compacted", uuid: crypto.randomUUID(),
+      ...(threadId ? { session_thread_id: threadId } : {}),
+      ...(tokens !== undefined ? { pre_compaction_tokens: tokens } : {}) });
+    await this.flushEvents();
+  }
+
   record(event: SessionEvent, threadId?: string) {
+    if (event.type === "tool/result" && event.surfaceOp !== "append") return;
     const toolName = this.toolResults.record(event, threadId ?? this.id);
     const data = event.data as Payload;
     if (event.type === "turn/end") {
@@ -362,7 +378,10 @@ export class CcrSession {
       this.approvals.delete(requestId);
       await this.updateStatus();
     }
-    return { allowed: decision.behavior === "allow", input: decision.updatedInput };
+    return { allowed: decision.behavior === "allow", input: decision.updatedInput,
+      ...(decision.externalResult !== undefined ? { externalResult: validatedExternalToolResult(decision.externalResult) } : {}),
+      reason: typeof decision.message === "string" ? decision.message :
+        typeof decision.denyMessage === "string" ? decision.denyMessage : undefined };
   }
 
   execution(threadId: string): ThreadExecutionState {
@@ -439,6 +458,10 @@ export class CcrSession {
       ...(outcome.remoteOutcome ? { remoteOutcome: outcome.remoteOutcome } : {}) };
     if (threadId === this.id) this.state.toolOutcomes[outcome.callId] = entry.toolOutcomes[outcome.callId]!;
     this.syncCallPhase(entry);
+    const diagnostic = {session_ref:createHash("sha256").update(this.id).digest("hex"),
+      session_thread_ref:createHash("sha256").update(threadId).digest("hex"),call_ref:createHash("sha256").update(outcome.callId).digest("hex"),
+      text_utf16_units:outcome.text.length, has_nul:outcome.text.includes(String.fromCharCode(0))};
+    workerDiagnostic("info","ccrv2_tool_result_durability",{...diagnostic,phase:"start"});
     const changed = !isDeepStrictEqual(outcome.original, outcome.effective);
     if (changed) this.state.outbox.push({
       type: "system.message", uuid: `${this.state.inputId}_${threadId}_approved_${outcome.callId}`,
@@ -446,6 +469,7 @@ export class CcrSession {
       content: [{ type: "text", text: `Approved ${outcome.name} arguments: ${JSON.stringify(outcome.effective)}` }],
     });
     await this.save();
+    workerDiagnostic("info","ccrv2_tool_result_durability",{...diagnostic,phase:"confirmed"});
   }
 
   /** Serialize writes and compute from current activity to avoid stale status overwrites. */
@@ -540,16 +564,29 @@ export class CcrSession {
     }
     if (this.state.completed.includes(inputId)) {
       await this.publish();
+      if (this.blocked()) await this.updateStatus();
       await this.backend.acknowledge(this.id, inputId, this.abort.signal);
       return;
     }
-    if (this.state.phase === "blocked")
+    if (this.state.phase === "blocked") {
+      await this.backend.reportDelivery(this.id, inputId, "processing", this.abort.signal);
+      this.addError("Session requires operator reconciliation; this new input was not executed.", "failed", inputId);
+      this.state.completed.push(inputId);
+      await this.save();
+      await this.publish();
+      await this.updateStatus();
+      await this.backend.acknowledge(this.id, inputId, this.abort.signal);
       throw new Error("Session requires operator reconciliation");
+    }
     if (this.busy || this.abort.signal.aborted)
       throw new Error("Session is busy or stopped");
     let stopProgress = () => {};
     try {
-      await this.runtime.run(() => userInputContent(payload, this.ctx.attachments), {
+      await this.runtime.run(() => {
+        const system = appendedSystemContext(payload);
+        if (system !== undefined) this.runtime.appendedSystem = system;
+        return userInputContent(payload, this.ctx.attachments);
+      }, {
         beforeRun: async () => {
           this.turnErrorMessage = undefined;
           this.interrupted = false;
@@ -566,6 +603,7 @@ export class CcrSession {
             this.abort.signal, () => this.stop(), undefined, false,
           );
           await this.updateStatus();
+          if (!this.interrupted && payload.oma_refresh_tools === true) await this.runtime.refreshTools();
           return !this.interrupted;
         },
         afterRun: async (completed) => {
@@ -601,8 +639,8 @@ export class CcrSession {
     } finally { stopProgress(); }
   }
 
-  addError(text: string, suffix = "failed") {
-    const id = `${this.state.inputId}_${suffix}`;
+  addError(text: string, suffix = "failed", inputId = this.state.inputId) {
+    const id = `${inputId}_${suffix}`;
     this.state.outbox.push(
       {
         type: "system.message",
@@ -655,4 +693,10 @@ export class CcrSession {
     const failed = results.find((result) => result.status === "rejected");
     if (failed?.status === "rejected") throw failed.reason;
   }
+}
+
+function validatedExternalToolResult(value: unknown): {content:{type:"text";text:string}[];isError:boolean} {
+ const result=object(value);
+ if (typeof result.isError!=="boolean" || !Array.isArray(result.content) || !result.content.length || result.content.some((block:Payload)=>!block || block.type!=="text" || typeof block.text!=="string")) throw new Error("Invalid external tool result");
+ return {content:result.content,isError:result.isError};
 }

@@ -14,11 +14,16 @@ import (
 
 func TestMCPTransportNoEndpointMatchIsAnonymousAndGenericPolicyIsUnchanged(t *testing.T) {
 	for _, test := range []struct {
-		name, credentialURL           string
-		mcp, missingSecret, wantError bool
-		wantStatus                    int
-		wantAuth                      string
+		name, credentialURL, targetURL string
+		mcp, missingSecret, wantError  bool
+		wantStatus                     int
+		wantAuth                       string
 	}{
+		{name: "MCP different query values stay anonymous", credentialURL: "https://mcp.example.com/mcp?tenant=A", targetURL: "https://mcp.example.com/mcp?tenant=B", mcp: true, wantStatus: 401},
+		{name: "MCP missing query is not same endpoint", credentialURL: "https://mcp.example.com/mcp?tenant=A", mcp: true, wantStatus: 401},
+		{name: "MCP extra query is not same endpoint", credentialURL: testInjectMCPURL, targetURL: "https://mcp.example.com/mcp?tenant=B", mcp: true, wantStatus: 401},
+		{name: "MCP exact query keeps host port and slash normalization", credentialURL: "https://MCP.EXAMPLE.COM:443/mcp/?tenant=A", targetURL: "https://mcp.example.com/mcp?tenant=A", mcp: true, wantStatus: 200, wantAuth: "Bearer local-token"},
+		{name: "generic query retains prefix behavior", credentialURL: "https://mcp.example.com/mcp?tenant=A", targetURL: "https://mcp.example.com/mcp?tenant=B", wantStatus: 200, wantAuth: "Bearer local-token"},
 		{name: "MCP sibling path", credentialURL: "https://mcp.example.com/other", mcp: true, wantStatus: 401},
 		{name: "MCP broader prefix", credentialURL: "https://mcp.example.com/", mcp: true, wantStatus: 401},
 		{name: "MCP narrower path", credentialURL: "https://mcp.example.com/mcp/other", mcp: true, wantStatus: 401},
@@ -46,7 +51,11 @@ func TestMCPTransportNoEndpointMatchIsAnonymousAndGenericPolicyIsUnchanged(t *te
 				}
 			}))
 			defer upstream.Close()
-			target, err := url.Parse(testInjectMCPURL)
+			targetURL := test.targetURL
+			if targetURL == "" {
+				targetURL = testInjectMCPURL
+			}
+			target, err := url.Parse(targetURL)
 			if err != nil {
 				t.Fatal(err)
 			}

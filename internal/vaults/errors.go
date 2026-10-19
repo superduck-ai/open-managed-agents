@@ -117,6 +117,10 @@ func mcpOAuthServerURLRequired() error {
 	return errors.New("mcp_oauth auth mcp_server_url is required")
 }
 
+func mcpServerURLUserinfoNotAllowed() error {
+	return errors.New("auth.mcp_server_url must not contain userinfo")
+}
+
 func credentialTypeNotInjectable(authType string) error {
 	return fmt.Errorf("credential type %q is not injectable", authType)
 }

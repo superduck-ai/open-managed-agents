@@ -132,13 +132,15 @@ func buildRcloneMultimountConfig(filesystemID, serviceURL, readWriteToken, reado
 		if readonly {
 			token = readonlyToken
 		}
-		mounts = append(mounts, mount(
+		memoryMount := mount(
 			memoryFilestoreSource(item.Slug),
 			item.MountPath,
 			memoryRcloneCacheSeconds,
 			readonly,
 			token,
-		))
+		)
+		memoryMount.VFSCacheMode = "writes"
+		mounts = append(mounts, memoryMount)
 	}
 	return rcloneMultimountConfig{
 		Mounts:     mounts,

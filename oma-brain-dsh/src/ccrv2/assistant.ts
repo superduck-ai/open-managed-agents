@@ -72,7 +72,7 @@ export class CcrAssistantStream {
       payloads.push({ type: "event_start", event: { type, id } });
     }
     payloads.push({ type: "event_delta", event_id: id, delta: {
-      type: "content_delta", content: { type: "text", text: chunk.text },
+      type: "content_delta", index: 0, content: { type: "text", text: chunk.text },
     } });
     return payloads;
   }

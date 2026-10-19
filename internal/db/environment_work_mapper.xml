@@ -188,8 +188,34 @@
                 SELECT uuid
                 FROM environment_work
                 WHERE deleted_at IS NULL
+                AND EXISTS (
+                    SELECT 1 FROM environments environment
+                    WHERE environment.uuid = environment_work.environment_uuid
+                        AND environment.organization_uuid = environment_work.organization_uuid
+                        AND environment.workspace_uuid = environment_work.workspace_uuid
+                        AND (environment.config -&gt;&gt; 'type' = 'cloud' OR (
+                            environment.config -&gt;&gt; 'type' = 'self_hosted'
+                            AND environment_work.acknowledged_at IS NOT NULL
+                            AND environment_work.state IN ('starting', 'active')
+                        ))
+                )
                 AND (state = 'queued' OR (
-                    state IN ('active', 'starting') AND updated_at &lt; NOW() - INTERVAL '60 seconds'
+                    state IN ('starting', 'active') AND EXISTS (
+                        SELECT 1 FROM environments environment
+                        WHERE environment.uuid = environment_work.environment_uuid
+                            AND environment.organization_uuid = environment_work.organization_uuid
+                            AND environment.workspace_uuid = environment_work.workspace_uuid
+                            AND environment.config -&gt;&gt; 'type' = 'self_hosted'
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM code_sessions cs
+                        WHERE cs.session_uuid = environment_work.session_uuid
+                            AND cs.organization_uuid = environment_work.organization_uuid
+                            AND cs.workspace_uuid = environment_work.workspace_uuid
+                            AND cs.environment_uuid = environment_work.environment_uuid
+                            AND cs.status = 'active' AND cs.deleted_at IS NULL
+                    )
+                ) OR (
+                    state IN ('active', 'starting')
                     AND EXISTS (
                         SELECT 1 FROM code_sessions cs JOIN sessions s ON s.uuid = cs.session_uuid
                             AND s.organization_uuid = cs.organization_uuid AND s.workspace_uuid = cs.workspace_uuid
@@ -201,6 +227,16 @@
                             AND cs.metadata #>> '{config,worker_transport}' = 'nats'
                             AND (cs.worker_lease_expires_at IS NULL OR cs.worker_lease_expires_at &lt; NOW())
                             AND s.status = 'running' AND s.deleted_at IS NULL
+                            AND (environment_work.updated_at &lt; NOW() - INTERVAL '60 seconds' OR (
+                                COALESCE(cs.worker_lease_expires_at, cs.created_at) &lt; NOW() - INTERVAL '60 seconds'
+                                AND EXISTS (
+                                    SELECT 1 FROM environments environment
+                                    WHERE environment.uuid = environment_work.environment_uuid
+                                        AND environment.organization_uuid = environment_work.organization_uuid
+                                        AND environment.workspace_uuid = environment_work.workspace_uuid
+                                        AND environment.config -&gt;&gt; 'type' = 'self_hosted'
+                                )
+                            ))
                     )
                 ))
                 AND (claim_expires_at IS NULL OR claim_expires_at &lt;= NOW())
@@ -387,6 +423,11 @@
         FROM code_sessions cs WHERE cs.uuid = #{codeSessionUUID} AND cs.organization_uuid = #{organizationUUID}
         AND cs.workspace_uuid = #{workspaceUUID} AND work.organization_uuid = cs.organization_uuid
         AND work.workspace_uuid = cs.workspace_uuid AND work.session_uuid = cs.session_uuid
+        AND EXISTS (SELECT 1 FROM environments environment
+            WHERE environment.uuid = work.environment_uuid
+                AND environment.organization_uuid = work.organization_uuid
+                AND environment.workspace_uuid = work.workspace_uuid
+                AND environment.config -&gt;&gt; 'type' = 'cloud')
         AND work.state = 'active' AND work.deleted_at IS NULL
     </update>
     <update id="StopWithoutSandbox" result="exec">

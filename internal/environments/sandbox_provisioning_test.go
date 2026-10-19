@@ -11,12 +11,13 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 func TestBrainSandboxManagerStartsEmbeddedMCP(t *testing.T) {
 	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://sandbox.example"}}
 	cfg.EnvironmentRunner.AgentMode = "brain"
-	launch, err := brainSandboxManagerCommand("cse_test", "/workspace/project", cfg, nil, "ingress-test")
+	launch, err := brainSandboxManagerCommand("cse_test", "/workspace/project", cfg, nil, "ingress-test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,5 +95,35 @@ func TestProbeSandboxMCPReadyAgainstRustServer(t *testing.T) {
 	}
 	if err := probeSandboxMCPReady(t.Context(), endpoint); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBrainSandboxManagerReceivesRepositorySources(t *testing.T) {
+	resource := db.SessionResource{ResourceType: "github_repository", Payload: json.RawMessage(`{"url":"https://github.com/octocat/Hello-World.git","mount_path":"/workspace/probe","checkout":{"type":"commit","sha":"7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"}}`), SecretPayload: json.RawMessage(`{"must_not_forward":"private-test-material"}`)}
+	resolved, err := resolveManagedAgentRuntimeResources([]db.SessionResource{resource})
+	if err != nil {
+		t.Fatal(err)
+	}
+	launch, err := brainSandboxManagerCommand("cse_owned", resolved.workDir, config.Config{}, nil, "ingress-test", resolved.sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Startup struct {
+			Sources []gitRepositoryRuntimeSource `json:"sources"`
+		} `json:"startup_context"`
+	}
+	if err := json.Unmarshal(launch.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Startup.Sources) != 1 {
+		t.Fatal("Brain sandbox startup omitted repository sources")
+	}
+	source := payload.Startup.Sources[0]
+	if source.Type != "git_repository" || source.MountPath != "/workspace/probe" || source.GitInfo.URL != "https://github.com/octocat/Hello-World.git" || source.GitInfo.Ref != "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d" {
+		t.Fatal("repository source identity changed")
+	}
+	if strings.Contains(string(launch.Payload), "private-test-material") {
+		t.Fatal("repository secret forwarded to sandbox")
 	}
 }

@@ -1,10 +1,11 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "./api.ts";
-import { consumeInbound, type CcrClient, type CcrSession } from "./ccrv2/index.ts";
+import { type CcrClient, type CcrSession } from "./ccrv2/index.ts";
 import { createOmaSession } from "./oma-session.ts";
 import { registerWorkerTask, validateBrainTask } from "./worker-registration.ts";
 import { connectNats, consumeTasks, type TaskAdmissionStage } from "./transport.ts";
 import { required } from "./config.ts";
+import { openWorkerSession } from "./worker-session.ts";
 
 export async function startWorkers(ctx: Context, api: OmaApi, client: CcrClient, maxSessions: number): Promise<void> {
   const nc = await connectNats(required("NATS_URL"));
@@ -60,11 +61,7 @@ export async function startWorkers(ctx: Context, api: OmaApi, client: CcrClient,
     const session = createOmaSession(ctx, api, assignment);
     sessions.set(session.id, session);
     try {
-      stage("open_session");
-      await session.open();
-      if (session.blocked()) { await retire(session); return; }
-      stage("start_inbound");
-      watch(consumeInbound(client, session).finally(() => retire(session)));
+      await openWorkerSession(session, client, watch, retire, stage);
     } catch (error) {
       await retire(session);
       throw error;

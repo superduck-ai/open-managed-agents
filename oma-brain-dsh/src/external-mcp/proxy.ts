@@ -1,6 +1,6 @@
 import type { OmaApi } from "../api.ts";
 
-export function externalMcpFetch(api: OmaApi, sessionId: string): typeof fetch {
+export function externalMcpFetch(api: OmaApi, sessionId: string, threadId?: string): typeof fetch {
   return ((input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input, init);
     const target = new URL(request.url);
@@ -10,6 +10,8 @@ export function externalMcpFetch(api: OmaApi, sessionId: string): typeof fetch {
     const gateway = namedGateway ? target : new URL(`${api.base.replace(/\/$/, "")}${path}`);
     if (!namedGateway) gateway.searchParams.set("mcp_url", target.href);
     const forwarded = new Request(gateway, request);
+    forwarded.headers.delete("X-OMA-Session-Thread-ID");
+    if (threadId) forwarded.headers.set("X-OMA-Session-Thread-ID", threadId);
     forwarded.headers.set("Authorization", `Bearer ${api.assignment(sessionId).ingress_token}`);
     return api.fetcher(forwarded, { redirect: "error" });
   }) as typeof fetch;

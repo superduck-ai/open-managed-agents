@@ -445,6 +445,7 @@ sequenceDiagram
 
 | 项 | 决定 |
 |---|---|
+| MCP URL 匹配 | scheme/host 不区分大小写、默认端口归一、去除 path 末尾斜杠；escaped path 与 raw query 精确比较。query 不同或只有一端有 query 时不注入，按无匹配匿名连接。此规则仅用于 MCP 专用 transport；通用 MITM 的 path prefix 与 host-covered fail-closed 规则保持。 MCP 主机名将 Unicode U-label 与对应 punycode A-label 归为同一 IDNA 名字；尾点仍单独匹配，不扩展到其他域名、子域名或同 IP 别名。代理授权 URL 仅规范化主机名表示，原始公开 URL、实际目标、端口、path 与 query 保留。 |
 | token endpoint 错误 | 非 2xx 只上报 HTTP status（`token endpoint status N`），不把 IdP `error` 原文带进 error/日志 |
 | `expires_at` | 缺失 → 直接注入；存在且 `now >= expires_at` → refresh → reseal → 注入（**无** near-expiry skew）。refresh 写回：`expires_in > 0` 才更新；否则仅当旧 `expires_at` 仍未过期时保留，否则置空 |
 | 401 | 上游 401 且为 `mcp_oauth` → refresh 一次再试上游；仍失败 → 跳过该凭证继续 walk。`excluded` / `forceRefresh` 按 **plan 凭证 ExternalID**（`planCredID`）记账，不依赖 refresh CAS 返回行是否带齐字段 |
@@ -586,3 +587,28 @@ Vault list cursors remain opaque created_at/UUID positions. ListPage now require
 This implements the user-approved VAULT-API-015 OMA contract: invalid/foreign cursor rejection or strict empty terminal result, without fallback or cross-workspace data. The SQL uses bound UUID/timestamp parameters through the existing Yourbatis VaultMapper; no schema or token-format change. Credential cursor semantics are outside this fix.
 
 Regression: TestVaultCursorCannotSelectAnotherWorkspacePosition uses real PostgreSQL and two authenticated workspaces, obtains actual cursors, checks foreign-cursor empty terminal pages in both directions and normal same-workspace continuation. It failed before the change. TestVaultMapperBuilders checks workspace/UUID/timestamp anchor bindings and the no-cursor/include-archived branch. Existing TestVaultsAPI retains normal pagination coverage. Fresh external015 must pass after the coordinated HTTP restart; local tests alone do not count as platform pass.
+
+
+## MCP URL 的 userinfo 边界
+
+MCP Credential 的 `mcp_server_url` 同时作为公开 `auth` 和匹配键，不能承载用户名/密码形式的 URL userinfo。`static_bearer` 与 `mcp_oauth` 创建在组装公开配置及秘密信封之前拒绝任何 userinfo，返回不包含输入 URL 的字段校验错误，避免 URL 密码被创建响应回显或写入非秘密配置。此检查只用于 MCP Server URL；普通 HTTP/HTTPS、端口、query、fragment 的既有校验保持。
+
+回归覆盖两类凭据的密码、仅用户名、仅密码和空密码 userinfo 拒绝，拒绝无公开/秘密状态且错误不回显输入；合法 HTTP/HTTPS/query/fragment/IPv6 URL保持匹配键原值和token只写。CRED015公开API复测另保留URL策略待确认结果，不将有限观察计兼容通过。
+
+
+### CRED018 refresh 创建校验
+
+管理 API 创建 OAuth refresh 配置时，必须显式提供 token_endpoint_auth 对象。缺失或 null 返回字段校验错误，不再自动补成 none；无客户端认证必须显式写 type=none。Basic/Post 分支的 client_secret 校验保持。此限制只在创建归一化入口执行，共享更新归一化及既有凭据的运行时刷新不变。依据官方 SDK 的 BetaManagedAgentsMCPOAuthRefreshParams 创建结构，回归见 credential_refresh_required_test.go。
+
+
+### CRED019 凭据名称 null 更新合同
+
+2026-10-18 用户确认：更新凭据的 display_name 为 null 时接受请求并保持原名称。patchDisplayName 将省略与显式 null 都映射为当前名称；非空字符串更新及空串/超长/非字符串拒绝保持。此规则只用于凭据名称更新，不改变创建或其他字段的 null 语义。回归覆盖非空旧名称，真实用例同时检查更新响应与后续 GET。
+
+### MCP 鉴权失败后恢复
+
+外部 MCP 首次发现被 401/403 拒绝时，仅影响该服务器；仍保留健康 MCP 与文本交互。发现失败状态必须包含鉴权失败，在下一次受管输入刷新工具上下文时，即使公开 MCP URL、server 名称和代理 header 未变，也重新发现。这允许 Vault 中的凭据轮换在原 Session 下一轮生效，不把空发现结果永久缓存。正常成功发现且配置未变时仍复用缓存，不增加无条件后台重试。实际请求使用当前代理凭据，秘密不进入模型工具配置。
+
+### OAuth access-only 鉴权错误分类
+
+OAuth access token 已过期，或远端401后需要刷新，而凭据没有 refresh token 时，不伪造 token endpoint 请求。注入器保留缺少刷新材料的原因，并标记需要重新授权；MCP 代理对该明确鉴权状态返回401，使 Brain 发布具名鉴权错误并保留交互。普通注入内部故障仍返回502，网络错误不归为鉴权错误。有效且未过期的 access-only 凭据继续直接使用，无刷新和持久化变更。

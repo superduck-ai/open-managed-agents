@@ -33,9 +33,21 @@ func TestSessionConfirmationInfersPendingOwnerWithoutLosingExplicitScope(t *test
 			if tc.wantOK && err != nil {
 				t.Fatal(err)
 			}
-			if !tc.wantOK && !errors.Is(err, ErrSessionInputConflict) {
+			expected := ErrSessionInputConflict
+			if tc.name == "unknown public ID" || tc.name == "completed request" {
+				expected = ErrSessionToolConfirmationInvalid
+			}
+			if !tc.wantOK && !errors.Is(err, expected) {
 				t.Fatalf("invalid confirmation accepted: %v", err)
 			}
 		})
+	}
+}
+
+func TestNonAskConfirmationIsInvalidInput(t *testing.T) {
+	toolID := "completed-read"
+	_, err := validateSessionInputBatch(SessionThread{ExternalID: "primary", Status: "idle"}, codeSessionInputStateRow{ExternalID: "code", Status: "active", WorkerStatus: "idle", WorkerExternalMetadata: []byte(`{}`)}, []SessionEvent{{EventType: "user.tool_confirmation", ToolUseID: &toolID}})
+	if !errors.Is(err, ErrSessionToolConfirmationInvalid) {
+		t.Fatalf("got %v, want invalid tool confirmation", err)
 	}
 }

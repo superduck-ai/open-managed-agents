@@ -94,6 +94,9 @@ func (s *Server) authenticateWorkspaceAPIKey(r *http.Request, apiKey string) (au
 }
 
 func (s *Server) authenticateScopedServiceCredential(r *http.Request, apiKey string) (auth.Principal, *httpapi.Error) {
+	if strings.HasPrefix(apiKey, "oma_work.") {
+		return s.authenticateWorkToken(r, apiKey)
+	}
 	if isEnvironmentCredentialPath(r.URL.Path) {
 		principal, found, apiErr := s.authenticateEnvironmentCredential(r, apiKey)
 		if found || apiErr != nil {

@@ -2,6 +2,8 @@
 
 `session_events` 和 `code_session_internal_events` 新写入的 payload 超过 32 KiB（32768 bytes）时上传到 S3。判断使用提交给存储层的原始 JSON `[]byte` 长度，等于阈值仍内联；不使用字符数、envelope 大小、压缩大小或 PostgreSQL JSONB 的物理大小。worker 入站传输使用同一阈值。
 
+合法 JSON 中的实际 U+0000 字符不能内联到 PostgreSQL JSONB，因此这类 payload 即使不超过 32 KiB，也沿用相同的外置与完整还原路径。判断按 JSON 解码后的字符串（包括嵌套值与键），字面量反斜杠 `\\u0000` 不会误判。S3 保存完整原始 JSON 字节与原始摘要；不删除、替换 NUL，也不把文本转换成工具错误。摘要可选名称及工具关联元数据若含 NUL 则不内联为数据库字符串，原始 payload 中这些字段仍完整保留。worker 入站传输大小阈值保持原值。
+
 数据库 `payload` 仅保留 `{type, name, blob_ref, size, preview}`。`size` 是完整原始 JSON 的字节数；`preview` 最多取前 512 字节，并回退到完整 UTF-8 字符边界。`blob_ref` 为 `{version: 1, id: "epb_..."}`，不暴露 bucket、object key 或签名 URL。name 没有顶层字符串值时为 null。
 
 ## 写入与一致性
@@ -47,3 +49,5 @@ migration 00061 添加 registry、引用列和工具关联列。既有 payload �
 [Transcript 归档](transcript-archive.md) 将满足保留条件的私有事件还原为完整 payload，再逐字写入压缩段。归档使用现有 bucket 的 `transcript-archive/` 前缀；该前缀同样不得配置固定 TTL。仅在回读校验、注册表 attached 后才软删除原事件，归档段独立保留全部 payload 与恢复所需元数据。
 
 软删除后旧 blob 不再有活跃事件引用，沿用既有 24 小时 registry 年龄与引用检查 GC，不引入新 blob 回收规则。这意味着旧 blob 可能早于 transcript 的 14 天物理删除观察期被清理。需要回滚时通过还原 CLI 从归档段重建 blob 并在事务中附着；仅设置 deleted_at=NULL 不能恢复已删除对象。公开事件 payload 的生命周期不变。
+
+Blob registry 允许任何正数大小，以承载不能写入 PostgreSQL JSONB 的含 NUL 小事件；普通事件仍按 32 KiB 阈值内联。私有与公开事件的重放预检使用相同外置条件，已持久化的小事件不依赖再次上传。回滚该约束迁移前必须恢复所有小 blob，否则迁移拒绝执行并保留数据。

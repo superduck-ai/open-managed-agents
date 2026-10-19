@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 )
 
 // listInjectableMatches returns vault_ids-ordered injectable credentials that
@@ -49,13 +50,17 @@ func listCredentialMatches(requestURL *url.URL, credentials []db.VaultCredential
 		if err != nil || serverURL.Host == "" {
 			continue
 		}
-		if !hostsEqual(serverURL, requestURL) {
+		matchingHost := hostsEqual(serverURL, requestURL)
+		if exactMCPPath {
+			matchingHost = mcpHostsEqual(serverURL, requestURL)
+		}
+		if !matchingHost {
 			continue
 		}
 		hostCovered = true
 		matchesPath := pathPrefixMatch(serverURL.Path, requestURL.Path)
 		if exactMCPPath {
-			matchesPath = strings.TrimRight(serverURL.EscapedPath(), "/") == strings.TrimRight(requestURL.EscapedPath(), "/")
+			matchesPath = strings.TrimRight(serverURL.EscapedPath(), "/") == strings.TrimRight(requestURL.EscapedPath(), "/") && serverURL.RawQuery == requestURL.RawQuery
 		}
 		if !matchesPath {
 			continue
@@ -108,4 +113,13 @@ func normalizeURLPath(path string) string {
 
 func isInjectableAuthType(typ credentialAuthType) bool {
 	return typ == credentialAuthTypeStaticBearer || typ == credentialAuthTypeMCPOAuth
+}
+
+func mcpHostsEqual(serverURL, requestURL *url.URL) bool {
+	serverHost, err := networkpolicy.MCPHostKey(serverURL.Hostname())
+	if err != nil {
+		return false
+	}
+	requestHost, err := networkpolicy.MCPHostKey(requestURL.Hostname())
+	return err == nil && serverHost == requestHost && strings.EqualFold(serverURL.Scheme, requestURL.Scheme) && effectivePort(serverURL) == effectivePort(requestURL)
 }

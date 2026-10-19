@@ -366,7 +366,7 @@ unknown-outcome recovery policy. Backend regression tests cover forwarding
 failures and concurrent requests; the full inflight crash recovery path still
 requires real-backend verification.
 
-Grok checkpoints are refused rather than silently converted. This version starts new dsh sessions and restores its own logs. Attachments, background jobs, compaction and legacy history migration are outside this implementation. Long histories need a future compaction/storage-retention policy.
+Grok checkpoints are refused rather than silently converted. This version starts new dsh sessions and restores its own logs. Background jobs and legacy history migration are outside this implementation. On a confirmed CONTEXT_WINDOW_EXCEEDED model error, the runtime summarizes older large, successful text Read results into first/last excerpts with an explicit omission notice; the latest two results, user inputs and assistant/tool-call identities remain unchanged. DSH surface replacements retain the original append-only log and replay the reduced model history. After durable persistence the owning root or child thread emits agent.thread_context_compacted and retries the failed step once. Replacement results do not publish duplicate public tool_result events. Other failures or histories without eligible Read output remain terminal; this is targeted recovery, not general semantic conversation summarization.
 
 ## Verify
 

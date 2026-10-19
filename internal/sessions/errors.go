@@ -11,6 +11,14 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
+var errSessionAgentUpdateObjectRequired = errors.New("agent update must be an object")
+var errSessionAgentUpdateUnsupportedFields = errors.New("only tools and mcp_servers can be updated in an existing session")
+var errStoredSessionAgentInvalid = errors.New("stored session agent is invalid")
+var errInvalidSessionAgentType = errors.New("agent.type must be agent or agent_with_overrides")
+var errInvalidSessionSystemOverride = errors.New("agent.system override must be a string of at most 100000 characters or null")
+var errSessionOverrideModelsUnavailable = errors.New("workspace model configuration is unavailable")
+var errSessionOverrideModelNotConfigured = errors.New("session override model is not configured for this workspace")
+
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)
 }
@@ -101,6 +109,9 @@ func mapSessionLoadError(err error, sessionID string) error {
 	if errors.Is(err, db.ErrInvalidState) {
 		return apperr.New(apperr.InvalidArgument, "session state does not allow this operation", err)
 	}
+	if errors.Is(err, db.ErrSessionToolConfirmationInvalid) {
+		return invalidRequest(err)
+	}
 	if errors.Is(err, db.ErrSessionInputPaused) {
 		return invalidRequest(err)
 	}
@@ -167,6 +178,33 @@ func invalidSessionCreateBody(err error) error {
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
 		return apperr.New(apperr.RequestTooLarge, "Request body exceeds maximum size", err)
+	}
+	return invalidRequest(err)
+}
+
+func unsupportedSelfHostedResource(environmentID, resourceType string) error {
+	return invalidRequest(fmt.Errorf("environment %s is self-hosted; %s resources are not supported", environmentID, resourceType))
+}
+
+func invalidResourceEnvironmentConfig(cause error) error {
+	return internalError("Could not validate session resources", fmt.Errorf("decode resource environment config: %w", cause))
+}
+
+func resourceEnvironmentLoadError(environmentID string, cause error) error {
+	if errors.Is(cause, db.ErrNotFound) {
+		return environmentNotFound(environmentID, cause)
+	}
+	return internalError("Could not validate session resources", fmt.Errorf("load resource environment %q: %w", environmentID, cause))
+}
+
+func vaultNotFound(vaultID string, cause error) error {
+	return apperr.New(apperr.NotFound, fmt.Sprintf("Vault '%s' was not found.", vaultID), cause)
+}
+
+func mapVaultBindingError(err error) error {
+	var applicationError *apperr.Error
+	if errors.As(err, &applicationError) {
+		return err
 	}
 	return invalidRequest(err)
 }

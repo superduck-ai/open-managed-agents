@@ -53,6 +53,10 @@ OMA 支持父智能体在同一会话中委派任务。
 - 被引用的其他智能体在该固定版本配置了非空 `multiagent`，包括已关闭所有开关的配置。带版本号和保存时解析最新版本的引用都在创建或更新写入前校验；失败返回 `400/invalid_request_error`，不改写父配置或版本。CMA 的 subagent/workflow 名单与旧 coordinator 名单共用该校验。
 
 系统只解析同一工作区内的智能体。
+Agent 的 model.inference_geo 在创建和更新的输入规范化时保留为 us 或 global；省略或 null 不生成显式 pin，其他值返回400。该字段随版本模型JSON持久化并返回，创建会话时继续进入固定配置快照。本项修复不声称验证上游请求的实际物理地域路由。
+
+保存普通 multiagent_20261001 Agent 的创建或更新时，按最终配置检查父模型与启用名单内每个固定版本模型的 inference_geo：全部省略，或全部相同。父有pin而子无pin、反向情况以及不同pin均返回400，拒绝发生在写入版本前。更新仅改父model且不重发名单也检查原固定版本；当前self采用待保存父模型，历史self读取原版本；旧coordinator配置不新增此CMA约束。Session创建入口接受agent_with_overrides的model覆盖：先校验并规范化工作区可用模型，以副本生成Session快照，不改Agent或版本。快照展开后再次校验CMA固定名单地域；模型覆盖同pin可创建Session，改变/移除父pin而与固定子模型不一致则在Session写入前拒绝。system覆盖同样只作用于Session副本，省略继承、null清除、字符串替换；固定版本专家不改，self由有效父副本展开。tools覆盖复用Agent工具规范化与MCP引用校验，整体替换到Session副本，不合并源工具；有效skills非空时必须保留内置read，省略工具继承、null/空数组清除。mcp_servers覆盖复用Agent的URL/名称/数量校验，先计算新服务器，再校验最终有效工具引用，允许同一请求同时替换或清除tools和mcp_servers；只改变Session副本。skills覆盖复用Agent技能引用校验，省略继承、null或空数组清除、非空数组整体替换；先应用有效技能再校验最终工具/MCP状态，允许同时清除技能与工具，新增技能但无内置read时拒绝。五个公开覆盖字段均只作用于Session副本，源Agent/版本和固定专家不变。普通Agent引用输入保持原语义。
+
 创建会话时，系统将引用展开为完整配置快照。
 创建部署时，系统使用同一个解析器。
 展开引用后，系统校验固定版本的子名称：名称必须非空，不能以 `-` 开头，且在名单内唯一。
@@ -103,6 +107,10 @@ OMA 支持父智能体在同一会话中委派任务。
 配置合同依据本地 `cma-docs/claude-managed-agents/multiagent-orchestration.md` 的默认值、更新规则和类型迁移说明。回归入口为 `TestCMAMultiagent*`、`TestAgentsCMAMultiagentConfiguration`、`TestCMASnapshotPreservesIndependentSettings` 和 `TestRuntimeCMASubagents`。
 官方委派语义见 [Claude 子智能体文档](https://platform.claude.com/docs/zh-CN/managed-agents/multiagent-orchestration#delegate-to-subagents)。
 
+## Session热更新边界
+
+现有Session仅允许热更新agent.tools和agent.mcp_servers。multiagent、model、system、skills、身份/版本及其他未知键即使显式null也返回400 invalid_request_error，不静默忽略。请求在持久化前完整校验，因此与title或metadata组合的非法agent patch不会部分写入其他字段。合法工具/服务器更新复用Agent规范化和有效skills需要Read、MCP双向引用等约束；省略字段继承，显式null或空数组清空，联合更新按最终状态校验。根快照其他字段和未知扩展原样保留，不推进源Agent版本或修改源资源。
+
 ## 启动与续聊
 
 ```mermaid
@@ -129,8 +137,7 @@ Claude Code 的 `--agents` 启动参数接收 JSON 格式的子配置。
 启动侧保留同样的名称检查。校验失败时停止启动，不自动添加名称、前缀或数字后缀，也不维护内置名称名单。
 Claude 按注册名称选择子定义。OMA 不按 `subagent_type` 回查配置，也不向子线程补写 Agent 配置快照。
 
-子定义包含自己的提示词、模型和技能目录。`mcpServers` 使用会话统一配置。
-启动侧只构建一次会话 MCP 文档，所有子定义复用同一份服务器配置。
+子定义包含自己的提示词、模型和技能目录。旧 Claude Code 启动路径的 `mcpServers` 使用会话统一配置；Brain 普通 subagent 使用下面的线程配置边界。
 技能解析一次读取父技能和直接子技能，按名单顺序合并后统一校验，不递归处理名单。
 技能字段保留大小写不敏感、分隔符敏感的匹配规则；`multiagent` 和 `agents` 字段保持精确匹配。
 解析拒绝重复 JSON 字段和非法 UTF-8。指向同一技能字段的多个大小写别名也被拒绝。
@@ -212,8 +219,8 @@ OMA 不补齐子线程配置；未知实例不能将模型请求发送到主线�
 
 ## MCP 与共享环境
 
-启动时通过现有 MCP 构造器生成一份会话配置，所有子定义复用该配置。
-网关验证会话入口凭据，并按会话配置检查服务器名称和具体 URL。
+Brain 父线程使用当前 Session 配置。每个子线程创建并持久化后，通过已认证运行时上下文接口读取该线程固定快照的 MCP 文档，分别创建客户端、发现工具和管理连接。self 快照继承有效父配置，固定版本专家使用自身配置。父工具刷新和子连接关闭互不改写其他线程客户端。
+子线程上下文及 MCP 代理携带内部 `X-OMA-Session-Thread-ID`。服务端按已验签 Code Session 的 organization/workspace 和关联 Session 查询线程，拒绝其他租户、其他会话、根线程、已终止或归档线程；不信任客户端给出的 URL 或 Agent 配置作为授权。线程的固定快照决定服务器名称和精确 URL，原 Environment 网络约束仍然适用。不带线程标识的请求保持父会话策略。该内部标识在转发到上游前移除，入口凭据仍由现有 Vault/Tunnel 路径处理。
 沙箱网络名单只使用会话 MCP 主机；子配置不会扩大该名单。
 网关、资源发现和 OAuth 元数据地址不传递配置名称或 ID。
 
@@ -239,3 +246,13 @@ OMA 不补齐子线程配置；未知实例不能将模型请求发送到主线�
 真实工作进程使用脚本提供的模型响应，不验证模型自主推理质量。
 完整隧道服务、云端分配、定向中断和子线程重启恢复仍未验收。
 组件回放不代表原控制台的完整端到端验收。
+
+## 专家 effort 快照
+
+Agent 的 `model.effort` 接受 `low`、`medium`、`high`、`xhigh`、`max`
+字符串或 `{ "type": "high" }` 对象，并统一以对象形式保存和返回。
+省略或 `null` 使用模型默认值，不写入显式 effort；非法值拒绝保存。
+创建、更新及 Session model override 使用同一规范化入口。
+固定版本的专家配置随 Session roster 及子线程快照保留，更新专家后不回写旧版本。
+此处验证配置保存和快照，不用输出长度判断上游实际推理预算；
+实际 provider 的 effort 支持范围和上游参数应用不在本次快照回归覆盖内。

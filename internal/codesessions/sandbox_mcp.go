@@ -34,10 +34,7 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 		h.errorAdapter.Write(w, r, sandboxInvalidRequest(err))
 		return
 	}
-	var call struct {
-		JSONRPC string `json:"jsonrpc"`
-		Method  string `json:"method"`
-	}
+	var call sandboxRPCRequest
 	if json.Unmarshal(body, &call) != nil || call.JSONRPC != "2.0" || call.Method == "" {
 		h.errorAdapter.Write(w, r, sandboxInvalidRequest(nil))
 		return
@@ -49,6 +46,9 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 	}
 	if err := h.db.ValidateCodeSessionIngressWorkerEpoch(r.Context(), session.OrganizationUUID, session.WorkspaceUUID, session.ExternalID, session.CurrentWorkerEpoch); err != nil {
 		h.errorAdapter.Write(w, r, sandboxOperationError(err))
+		return
+	}
+	if h.rejectMemoryToolMutation(w, r, session, call) {
 		return
 	}
 	request, err := http.NewRequestWithContext(r.Context(), r.Method, endpoint, bytes.NewReader(body))

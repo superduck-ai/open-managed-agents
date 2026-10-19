@@ -5,7 +5,7 @@ import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import * as CcrBridge from "../src/ccrv2/index.ts";
-import { Backend, eventually, toolEvents, textEvents } from "./backend.ts";
+import { Backend, eventually, toolEvents, textEvents, modelSystemText } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -870,4 +870,57 @@ describe("original dsh loop over CCRv2", () => {
     expect(history).toContain("second user");
     expect(second.session.state.completed).toEqual(["first", "second"]);
   });
+});
+
+
+test("native approval denial reason reaches every rejected tool and the next model without execution", async () => {
+  for (const name of ["Bash", "list_agents", "unknown_tool"]) {
+    const b = backend();
+    const reason = "Use the staging project instead: rejection-" + name;
+    b.a.launch.subagents = { inlineAgents: true, agents: [] };
+    b.modelScript = [toolEvents().map((event: Payload) =>
+      event.type === "content_block_start" ? { ...event, content_block: { ...event.content_block, name } } :
+      event.type === "content_block_delta" ? { ...event, delta: { type: "input_json_delta", partial_json: JSON.stringify(name === "Bash" ? { command: "pwd" } : {}) } } : event), textEvents("denied")];
+    const { session } = await open(b);
+    b.onApproval = async (p) => {
+      await session.control({ type: "control_response", response: {
+        subtype: "success", request_id: p.request_id,
+        response: { behavior: "deny", message: reason, denyMessage: reason },
+      } });
+    };
+    await session.receive("reason-denied", { content: "try this tool" });
+    expect(b.executions).toHaveLength(0);
+    expect(b.sandboxCount).toBe(0);
+    const results = [...b.publicLog.values()].filter(e => e.type === "user");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.message.content[0]).toMatchObject({ is_error: true });
+    expect(JSON.stringify(results[0]!.message.content[0])).toContain(reason);
+    expect(b.requests).toHaveLength(2);
+    expect(JSON.stringify(b.requests[1]!.messages)).toContain(reason);
+  }
+});
+
+
+test("primary appended system context reaches current and later model requests and survives runtime recovery", async () => {
+  const b = backend();
+  b.a.launch.system = "ORIGINAL_AGENT_BASE_RULE";
+  b.modelScript = [textEvents("first"), textEvents("second"), textEvents("recovered")];
+  const { session } = await open(b);
+  const first = { id: "system-one", text: "APPENDED_ID_RULE" };
+  const second = { id: "system-two", text: "APPENDED_OK_RULE" };
+  await session.receive("system-first", { content: "one", oma_system_context: [first] });
+  expect(modelSystemText(b.requests[0]!)).toContain("ORIGINAL_AGENT_BASE_RULE");
+  expect(modelSystemText(b.requests[0]!)).toContain(first.text);
+  await session.receive("system-second", { content: "two", oma_system_context: [first, second] });
+  const text = modelSystemText(b.requests[1]!);
+  expect(text).toContain("ORIGINAL_AGENT_BASE_RULE");
+  expect(text.indexOf(first.text)).toBeGreaterThan(-1);
+  expect(text.indexOf(second.text)).toBeGreaterThan(text.indexOf(first.text));
+  expect(JSON.stringify(b.requests[1]!.messages.filter((m: Payload) => m.role === "user"))).not.toContain(first.text);
+  await session.close();
+  const { session: recovered } = await open(b);
+  await recovered.receive("system-recovered", { content: "three", oma_system_context: [first, second] });
+  expect(modelSystemText(b.requests[2]!)).toContain(first.text);
+  expect(modelSystemText(b.requests[2]!)).toContain(second.text);
+  expect(b.a.launch.system).toBe("ORIGINAL_AGENT_BASE_RULE");
 });

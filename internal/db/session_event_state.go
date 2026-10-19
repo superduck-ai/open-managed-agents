@@ -175,7 +175,7 @@ func resolveIdleStopReasonTx(ctx context.Context, executor yourbatis.Executor, s
 		}
 		return reason, true, nil
 	}
-	pending, err := mapper.HasPendingInput(ctx, session.WorkspaceUUID, session.ExternalID, thread.ExternalID)
+	pending, err := mapper.HasInputBlockingIdle(ctx, session.WorkspaceUUID, session.ExternalID, thread.ExternalID, source.ProcessedAt)
 	if err != nil || pending {
 		return nil, false, err
 	}

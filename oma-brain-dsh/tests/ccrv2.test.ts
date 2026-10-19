@@ -1,4 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
+import { ContextRecovery } from "../src/runtime/compaction.ts";
+import { SessionId } from "@deepseek-ai/dsh-session";
 import { Context } from "@deepseek-ai/cordis";
 import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { mountKernel } from "../src/kernel.ts";
@@ -132,7 +134,7 @@ test("session previews enter one stream window and terminal publication still wa
     const previews = batches.flat().filter((event) => event.ephemeral);
     expect(previews.map((event) => event.payload.type)).toEqual(["event_start", "event_delta", "event_delta", "event_stop"]);
     expect(previews.filter((event) => event.payload.type === "event_delta").map((event) => event.payload.delta))
-      .toEqual(["A", "B"].map((text) => ({ type: "content_delta", content: { type: "text", text } })));
+      .toEqual(["A", "B"].map((text) => ({ type: "content_delta", index: 0, content: { type: "text", text } })));
     expect(session.state.outbox.length).toBeGreaterThan(0);
     expect(backend.acknowledged).toEqual([]);
     response.resolve(); await turn;
@@ -701,3 +703,95 @@ test("user interrupts settle the tool locally, finish successfully and survive r
     }
   }
 }, 15_000);
+
+test.each([false, true])("context overflow compacts and replays without duplicate results (child=%s)", async child => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  const model = new TextModel();
+  let requests = 0;
+  let replayWellFormed = true;
+  const sizes: number[] = [];
+  let parentRequests = 0;
+  model.stream = async function* (options: GenerateOptions): AsyncIterable<StreamChunk> {
+    if (options.model === "parent") {
+      parentRequests++;
+      if (parentRequests === 1) {
+        yield { type: "block-start", index: 0, blockType: "tool-call" };
+        yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId("delegate-read"),
+          name: "send_to_agent", arguments: JSON.stringify({ agent_name: "reader", message: "remember FACT-REAL" }) } };
+        yield { type: "finish", reason: { kind: "tool-calls" } };
+      } else {
+        yield { type: "block-start", index: 0, blockType: "text" };
+        yield { type: "block-end", index: 0, block: { type: "text", text: "done" } };
+        yield { type: "finish", reason: { kind: "stop" } };
+      }
+      return;
+    }
+    sizes.push(JSON.stringify(options.messages).length);
+    requests++;
+    if (requests <= 4) {
+      yield { type: "block-start", index: 0, blockType: "tool-call" };
+      yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId(`read-${requests}`),
+        name: "Read", arguments: JSON.stringify({ file_path: `/tmp/part-${requests}` }) } };
+      yield { type: "finish", reason: { kind: "tool-calls" } };
+    } else if (requests === 5) {
+      yield { type: "finish", reason: { kind: "error", failure: { code: "CONTEXT_WINDOW_EXCEEDED", status: 400,
+        message: "Maximum context length exceeded (90000 in the messages, 8192 in the completion)." } } };
+    } else {
+      expect(JSON.stringify(options.messages)).toContain("remember FACT-REAL");
+      expect(sizes.at(-1)!).toBeLessThan(sizes[4]! - 50000);
+      const tools = options.messages.filter(message => message.role === "tool");
+      expect(tools).toHaveLength(4);
+      replayWellFormed = tools.every(message => message.content.every(block => block.type !== "text" || block.text.isWellFormed()));
+      expect(new Set(tools.map(message => message.toolCallId)).size).toBe(4);
+      yield { type: "block-start", index: 0, blockType: "text" };
+      yield { type: "block-end", index: 0, block: { type: "text", text: "FACT-REAL" } };
+      yield { type: "finish", reason: { kind: "stop" } };
+    }
+  };
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], model);
+    const session = ctx.ccrv2.createSession({ id: "compaction", provider: "test", model: child ? "parent" : "text",
+      subagents: child ? { inlineAgents: false, agents: [{ name: "reader", description: "Reader", systemPrompt: "Read", model: "text", tools: ["Read"] }] } : undefined,
+      workDir: "/workspace", systemPrompt: "", tools: ["Read"], setup: async scope => {
+        await scope.plugin({ name: "read-sandbox", apply(scope: Context) { scope.provide("sandboxExecutor", {
+          async provision() {}, async call() { return { content: [{ type: "text", text: "original-file-data:" + "\u{100000}".repeat(30000) + ":tail" }] }; },
+        }); } });
+      } });
+    await session.open();
+    spyOn(session, "approve").mockResolvedValue({ allowed: true });
+    await session.receive("pressure", { content: "remember FACT-REAL" });
+    expect(requests).toBe(6);
+    expect(replayWellFormed).toBe(true);
+    const output = backend.output.get(session.id)!;
+    expect(output.filter(event => event.type === "agent.thread_context_compacted")).toEqual([
+      expect.objectContaining({ pre_compaction_tokens: 90000, ...(child ? { session_thread_id: session.state.threads![0]!.id } : {}) }),
+    ]);
+    const results = output.flatMap(event => event.message?.content ?? []).filter(block => block.type === "tool_result" && block.tool_use_id.startsWith("read-"));
+    expect(results).toHaveLength(4);
+    expect(results.every(block => JSON.stringify(block).includes("original-file-data"))).toBe(true);
+    const native = child ? ctx.sessions.get(SessionId(session.state.threads![0]!.id))! : session.runtime.agent.session;
+    if (child) expect(session.runtime.agent.session.snapshotEvents().some(event => event.type === "tool/result" && event.surfaceOp !== "append")).toBe(false);
+    const replacements = native.snapshotEvents().filter(event => event.type === "tool/result" && event.surfaceOp !== "append");
+    expect(replacements).toHaveLength(2);
+    const replay = ctx.sessions.create(undefined, { seed: native.snapshotEvents() });
+    expect(replay.deriveMessages()).toEqual(native.deriveMessages());
+    expect(native.snapshotEvents().filter(event => event.type === "tool/result" && event.surfaceOp === "append")).toHaveLength(4);
+    const failure = { code: "CONTEXT_WINDOW_EXCEEDED", message: "context too long" };
+    let published = false;
+    const original = ctx.sessions.create(undefined, { seed: native.snapshotEvents().slice(0, replacements[0]!.seq) });
+    const recovery = new ContextRecovery();
+    expect(await recovery.recover(original, { code: "HTTP_ERROR", message: "network" }, 1, 1,
+      async () => {}, async () => { published = true; })).toBe(false);
+    await expect(recovery.recover(original, failure, 1, 1,
+      async () => { throw new Error("Not durable"); }, async () => { published = true; })).rejects.toThrow("Not durable");
+    expect(published).toBe(false);
+    expect(await recovery.recover(original, failure, 1, 1,
+      async () => {}, async () => { published = true; })).toBe(false);
+    expect(await new ContextRecovery().recover(replay, failure, 1, 1,
+      async () => {}, async () => { published = true; })).toBe(false);
+    await session.close();
+  } finally { await ctx.fiber.dispose(); }
+});

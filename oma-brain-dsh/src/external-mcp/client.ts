@@ -61,7 +61,9 @@ export class ExternalMcpClient implements SandboxExecutor {
     tool: RemoteTool,
     args: Payload,
     signal: AbortSignal,
+    authenticationFailure?: (serverName: string, phase?: "discovery" | "tool_call") => Promise<void>,
   ): Promise<Payload> {
+    this.authenticationRejected = false;
     try {
       return object(
         await this.client.callTool(
@@ -70,6 +72,14 @@ export class ExternalMcpClient implements SandboxExecutor {
         ),
       );
     } catch (error) {
+      signal.throwIfAborted();
+      if (this.authenticationRejected) {
+        await authenticationFailure?.(this.server.name, "tool_call");
+        return {
+          isError: true,
+          content: [{ type: "text", text: "MCP server authentication failed during tool execution." }],
+        };
+      }
       if (!(error instanceof ProtocolError) || error.code !== ProtocolErrorCode.InvalidParams)
         throw error;
       return {

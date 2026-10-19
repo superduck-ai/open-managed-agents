@@ -119,7 +119,7 @@ func normalizeMCPOAuthForCreate(input mcpOAuthCredentialCreateInput) (credential
 	if err != nil {
 		return credentialAuthState{}, err
 	}
-	if err := validateHTTPURL(serverURL, "auth.mcp_server_url"); err != nil {
+	if err := validateMCPServerURL(serverURL); err != nil {
 		return credentialAuthState{}, err
 	}
 	accessToken, err := requireNonEmptyString(input.AccessToken, "auth.access_token")
@@ -158,6 +158,9 @@ func normalizeMCPOAuthForCreate(input mcpOAuthCredentialCreateInput) (credential
 }
 
 func normalizeMCPOAuthRefreshForCreate(input mcpOAuthRefreshCreateInput) (mcpOAuthRefresh, mcpOAuthRefreshSecret, error) {
+	if input.TokenEndpointAuth == nil {
+		return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, errors.New("auth.refresh.token_endpoint_auth is required")
+	}
 	tokenEndpoint, err := requireNonEmptyString(input.TokenEndpoint, "auth.refresh.token_endpoint")
 	if err != nil {
 		return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
@@ -234,7 +237,7 @@ func normalizeStaticBearerForCreate(input staticBearerCredentialCreateInput) (cr
 	if err != nil {
 		return credentialAuthState{}, err
 	}
-	if err := validateHTTPURL(serverURL, "auth.mcp_server_url"); err != nil {
+	if err := validateMCPServerURL(serverURL); err != nil {
 		return credentialAuthState{}, err
 	}
 	token, err := requireNonEmptyString(input.Token, "auth.token")
@@ -590,6 +593,14 @@ func credentialAuthStateFromValues(authType credentialAuthType, key string, publ
 		PublicAuth:    publicRaw,
 		SecretPayload: secretRaw,
 	}, nil
+}
+
+func validateMCPServerURL(value string) error {
+	parsed, err := url.Parse(value)
+	if err == nil && parsed.User != nil {
+		return mcpServerURLUserinfoNotAllowed()
+	}
+	return validateHTTPURL(value, "auth.mcp_server_url")
 }
 
 func validateHTTPURL(value, name string) error {

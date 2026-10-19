@@ -41,3 +41,27 @@ test("empty thinking starts once before answer and shares backend identity", () 
     expect(new Set([vector.eventID, final[0]!.id]).size).toBe(1);
   }
 });
+
+
+test("text preview explicitly indexes its public single-block message even for nonzero native blocks", () => {
+  for (const index of [0, 3]) {
+    const stream = new CcrAssistantStream("cse_preview", () => "msg_preview");
+    stream.record(start(), "input");
+    const first = stream.record(chunk({ type: "text-delta", index, text: "A" }), "input");
+    const next = stream.record(chunk({ type: "text-delta", index, text: "B" }), "input");
+    const id = first[0]!.event.id;
+    expect(first[1]).toEqual({ type: "event_delta", event_id: id, delta: {
+      type: "content_delta", index: 0, content: { type: "text", text: "A" },
+    } });
+    expect(Object.hasOwn(first[1]!.delta, "index")).toBe(true);
+    expect(next).toEqual([{ type: "event_delta", event_id: id, delta: {
+      type: "content_delta", index: 0, content: { type: "text", text: "B" },
+    } }]);
+    const message: AssistantMessage = { id: MessageId("buffered-preview"), role: "assistant", content: [{ type: "text", text: "AB" }], source: { kind: "model", provider: "oma", model: "test-model", replayState: {
+      response: { format: "oma-messages-v1", messageID: "msg_preview" }, blocks: [{ index }],
+    } } };
+    const final = assistantMessages("cse_preview", "fallback", message);
+    expect(final[0]!.id).toBe(id);
+    expect(final[0]!.content).toEqual([{ type: "text", text: "AB" }]);
+  }
+});

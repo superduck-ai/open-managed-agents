@@ -23,7 +23,7 @@ export class Subagents {
       thread.status = "idle";
       const unbind = this.parent.config.bindThread?.(thread.id);
       if (unbind) this.unbind.set(thread.id, unbind);
-      const child = this.createRuntime(thread);
+      const child = await this.createRuntime(thread);
       this.runtimes.set(thread.id, child);
       await child.open();
       await child.flushLog();
@@ -110,15 +110,15 @@ export class Subagents {
     if (!runtime) {
       const unbind = this.parent.config.bindThread?.(thread.id);
       if (unbind) this.unbind.set(thread.id, unbind);
-      runtime = this.createRuntime(thread);
-      this.runtimes.set(thread.id, runtime);
       try {
+        runtime = await this.createRuntime(thread);
+        this.runtimes.set(thread.id, runtime);
         await runtime.open();
       } catch (error) {
         this.runtimes.delete(thread.id);
         this.unbind.get(thread.id)?.();
         this.unbind.delete(thread.id);
-        await runtime.close();
+        await runtime?.close();
         thread.status = "idle";
         throw error;
       }
@@ -162,8 +162,9 @@ export class Subagents {
     }
   }
 
-  private createRuntime(thread: SubagentThread): SessionRuntime {
+  private async createRuntime(thread: SubagentThread): Promise<SessionRuntime> {
     const config = this.parent.config;
+    const mcp = await config.threadMcpContext?.(thread.id);
     let child: SessionRuntime;
     const execution = this.bridge.toolExecution(thread.id);
     const bridge: ToolExecutionBridge = {
@@ -178,10 +179,14 @@ export class Subagents {
     };
     child = new SessionRuntime(this.parent.ctx, {
       ...config, id: thread.id, model: thread.model, tools: thread.tools,
+      externalMcpConfig: mcp ? mcp.config : config.externalMcpConfig,
+      externalMcpFetch: mcp?.fetcher ?? config.externalMcpFetch,
       subagents: undefined, bindThread: undefined, setup: undefined,
       systemPrompt: `${config.subagentSystemPrompt ?? config.systemPrompt}\n\nYou are subagent ${thread.name}. Your conversation is isolated. Delegation tools are unavailable. Report your findings to the parent.\nSpecialist instructions:\n${thread.systemPrompt}`,
     }, {
+      onExternalMcpAuthenticationFailure: (serverName, phase) => this.parent.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase) ?? Promise.resolve(),
       beforeRequest: async () => { await child.flushLog(); await this.bridge.beforeRequest(); },
+      onContextCompacted: tokens => this.bridge.onContextCompacted?.(thread.id, tokens) ?? Promise.resolve(),
       onEvent: (event) => this.bridge.onEvent(thread.id, event),
       onStream: (frame) => this.bridge.onStream(thread.id, frame),
       stop: () => execution.stop(),

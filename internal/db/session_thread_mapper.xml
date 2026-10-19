@@ -71,6 +71,10 @@
             workspace_uuid = #{params.WorkspaceUUID}
             AND session_external_id = #{params.SessionExternalID}
             AND deleted_at IS NULL
+            <if test="len(params.Statuses) &gt; 0">
+                AND status IN
+                <foreach collection="params.Statuses" item="status" open="(" separator="," close=")">#{status}</foreach>
+            </if>
             <if test="params.Cursor != nil">
                 AND (created_at, uuid) &lt; (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
             </if>

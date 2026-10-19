@@ -446,3 +446,8 @@ flowchart LR
 ```
 
 配额重算排除所有输入实例行，输入实例退休不扣原文件容量。`tests/session_input_file_instances_test.go` 覆盖同源多次 attach、独立身份、配额重算、实例删除保护、实例转挂、解绑与 Session 删除的隔离，以及作为源的 Output 在引用期间的覆盖/删除保护和超出故障重试次数的正常等待、解绑后继续清理；隔离 schema 的 migration 测试覆盖跨租户拒绝、批量回填、历史引用、回滚和再次升级。
+
+
+### 2026-10-19 live Memory mount read caching
+
+Only attached Memory mounts use `vfs_cache_mode=writes`: read-only file opens fetch current remote bytes, while writable opens retain disk buffering and normal filesystem operations. This addresses the real PERM012 old mount retaining old bytes for more than60s after a successful administrator update. The five fixed mounts retain `full`; Memory RW/RO tokens, flags, one-second metadata cache and logical file identity/creation time remain unchanged. Rclone mode semantics are documented at https://rclone.org/commands/rclone_mount/#vfs-cache-mode-writes. No public refresh timing SLA is introduced.

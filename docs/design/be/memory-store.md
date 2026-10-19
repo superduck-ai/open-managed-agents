@@ -409,3 +409,21 @@ Agent 可以改运行中的 `MEMORY.md`。下一 Session 按快照重建，不�
 公开 Memory List API 的非空 `path_prefix` 必须以 `/` 结尾。空值表示不筛选，`/` 表示根范围。`/notes/` 限定该目录子树，不包含 `/notes-archive/`；`/notes` 等非目录边界在查询数据前返回 `400 invalid_request_error`，不自动归一或执行原始字符串模糊匹配。分页依照 `next_page`，不承诺 Qoder 风格 `has_more`。该限制放在 Memory HTTP 资源边界，Filestore 共用路径校验保持原语义。
 
 合同来源：[CMA List memories](https://platform.claude.com/docs/en/api/beta/memory_stores/memories/list)。回归覆盖无尾斜线拒绝、结构化错误及合法空值/根/目录/Unicode路径；实际目录子树和邻近目录隔离由 Memory 列表回归验证。
+
+## 版本时间过滤精度
+
+Memory Version的created_at在Get和列表中均使用UTC RFC3339Nano，保留数据库的小数秒精度。公开响应时间可原样用于created_at[gte]/created_at[lte]包含式查询，不因输出截断而排除该版本。仅调整版本created_at序列化，不改变数据库过滤边界或其他时间字段策略。internal/memory/version_time_precision_test.go覆盖basic/full投影、带小数秒、时区偏移和整秒时间到查询边界的往返。依据官方SDK v1.76.0版本列表参数的inclusive说明。
+
+### Runtime binding immutability
+
+Memory Stores bind only during Session creation. Runtime Session resource addition and removal reject `memory_store` with HTTP400 before persistence mutation. Creation-time Memory resolution and File resource mutation retain their existing paths. Memory comparison cases MOUNT005/006 exercise these boundaries.
+
+
+### 2026-10-19 CMA parent-directory correction
+
+The external CMA memory contract, memory.md line384, supersedes the writable-parent statements above. Cloud startup prepares a nonrecursive self bind mount at `/mnt/memory` before rclone child mounts, writes the session-local index after readiness, then remounts only the parent bind read-only. Attached child mounts retain their individual RW/RO authority. Preparation or protection failure prevents runtime publication and follows existing owned Sandbox cleanup. Unattached parent paths are not scratch space. The system catalog now advertises this enforced boundary. No extra Filestore parent mount or Store is introduced.
+
+
+### 2026-10-19 live file-tool Memory mutation authority
+
+The built-in sandbox MCP proxy checks current Session Memory mount authority before dispatching Write/Edit under `/mnt/memory`. A Store archived after sandbox creation is rejected with a real MCP tool error before a buffered local write can claim success. The check uses the authenticated public Session filesystem and current mount/Store state, fails closed on lookup errors or ambiguous/missing mounts, and preserves active RW mounts. Reads, Bash and unrelated namespaces retain their existing execution paths; this boundary does not claim to remount an existing sandbox or provide new Bash isolation. Filestore upload authorization remains an independent enforcement layer.

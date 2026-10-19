@@ -60,7 +60,7 @@ type sessionEventPageMapperParams struct {
 // SessionEventMapper contains queries whose primary table is session_events.
 type SessionEventMapper interface {
 	MarkInputProcessed(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string, processedAt time.Time) (sessionEventRow, bool, error)
-	HasPendingInput(ctx context.Context, workspaceUUID, sessionExternalID, threadID string) (bool, error)
+	HasInputBlockingIdle(ctx context.Context, workspaceUUID, sessionExternalID, threadID string, at time.Time) (bool, error)
 	CursorExists(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (bool, error)
 	FindLatestTurnStart(ctx context.Context, workspaceUUID, sessionExternalID, threadID string) (sessionEventRow, bool, error)
 	FindLatestStatus(ctx context.Context, workspaceUUID, sessionExternalID, threadID string) (sessionEventRow, bool, error)

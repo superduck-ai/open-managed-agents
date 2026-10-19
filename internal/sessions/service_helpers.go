@@ -27,17 +27,25 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 	}
 	var agentID string
 	var version int
+	var modelOverride json.RawMessage
+	var systemOverride json.RawMessage
+	var toolsOverride json.RawMessage
+	var mcpServersOverride json.RawMessage
+	var skillsOverride json.RawMessage
 	if json.Unmarshal(raw, &agentID) != nil {
-		var object struct {
-			Type    string `json:"type"`
-			ID      string `json:"id"`
-			Version *int   `json:"version"`
-		}
+		var object sessionAgentReference
 		if err := json.Unmarshal(raw, &object); err != nil {
 			return db.Agent{}, nil, errors.New("agent must be a string or object")
 		}
-		if object.Type != "" && object.Type != "agent" {
-			return db.Agent{}, nil, errors.New("agent.type must be agent")
+		if err := object.validateType(); err != nil {
+			return db.Agent{}, nil, err
+		}
+		if object.Type == "agent_with_overrides" {
+			modelOverride = object.Model
+			systemOverride = object.System
+			toolsOverride = object.Tools
+			mcpServersOverride = object.MCPServers
+			skillsOverride = object.Skills
 		}
 		agentID = object.ID
 		if object.Version != nil {
@@ -66,7 +74,19 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 	if agent.ArchivedAt != nil {
 		return db.Agent{}, nil, errors.New("agent must not be archived")
 	}
-	snapshot, err := agentsnapshot.Resolve(r.Context(), h.db, agent)
+	effective, err := h.applySessionModelOverride(r, principal, agent, modelOverride)
+	if err != nil {
+		return db.Agent{}, nil, err
+	}
+	effective, err = applySessionSystemOverride(effective, systemOverride)
+	if err != nil {
+		return db.Agent{}, nil, err
+	}
+	effective, err = applySessionConfigurationOverrides(effective, toolsOverride, mcpServersOverride, skillsOverride)
+	if err != nil {
+		return db.Agent{}, nil, err
+	}
+	snapshot, err := agentsnapshot.Resolve(r.Context(), h.db, effective)
 	if err != nil {
 		return db.Agent{}, nil, err
 	}
@@ -74,6 +94,26 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 }
 
 func (h *Handler) normalizeVaultIDs(r *http.Request, principal auth.Principal, raw json.RawMessage) ([]string, error) {
+	ids, err := parseSessionVaultIDs(raw)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		vault, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, id)
+		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				return nil, vaultNotFound(id, err)
+			}
+			return nil, internalError("Could not validate Vault binding", err)
+		}
+		if vault.ArchivedAt != nil {
+			return nil, fmt.Errorf("vault is archived: %s", id)
+		}
+	}
+	return ids, nil
+}
+
+func parseSessionVaultIDs(raw json.RawMessage) ([]string, error) {
 	if httpapi.IsJSONNull(raw) {
 		return []string{}, nil
 	}
@@ -81,20 +121,15 @@ func (h *Handler) normalizeVaultIDs(r *http.Request, principal auth.Principal, r
 	if err := json.Unmarshal(raw, &ids); err != nil {
 		return nil, errors.New("vault_ids must be an array of strings")
 	}
+	seen := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		if strings.TrimSpace(id) == "" {
 			return nil, errors.New("vault_ids must contain non-empty strings")
 		}
-		vault, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, id)
-		if err != nil {
-			if errors.Is(err, db.ErrNotFound) {
-				return nil, fmt.Errorf("vault not found: %s", id)
-			}
-			return nil, err
+		if seen[id] {
+			return nil, fmt.Errorf("Duplicate vault_id '%s'.", id)
 		}
-		if vault.ArchivedAt != nil {
-			return nil, fmt.Errorf("vault is archived: %s", id)
-		}
+		seen[id] = true
 	}
 	return ids, nil
 }
@@ -254,7 +289,7 @@ func normalizeInputEvent(
 	payload["id"] = eventID
 	payload["processed_at"] = formatEventTime(now)
 	processedAt := now
-	if eventType == "user.message" {
+	if eventType == "user.message" || eventType == "user.tool_confirmation" {
 		payload["processed_at"] = nil
 		processedAt = time.Time{}
 	}

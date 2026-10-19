@@ -176,3 +176,15 @@ test("user interruption cannot clear an earlier unknown outcome", async () => {
   expect(f.bridge.blocked()).toBe(true);
   expect(f.approvals).toBe(1);
 });
+
+test("runtime denial preserves the supplied reason without sandbox side effects", async () => {
+  for (const reason of ["Use staging instead", undefined]) {
+    const f = fixture();
+    f.bridge.approve = async () => ({ allowed: false, reason });
+    await expect(f.execution.execute(tool, { command: "original" }, f.exec))
+      .rejects.toThrow(reason ?? "Tool use denied by OMA");
+    expect(f.provisions).toBe(0);
+    expect(f.executions).toBe(0);
+    expect(f.stopped).toBe(false);
+  }
+});

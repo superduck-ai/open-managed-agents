@@ -195,6 +195,7 @@ export class Backend {
       return json({ worker_epoch: String(this.a.worker_epoch) });
     }
     if (path === `/v2/sessions/${this.a.session_id}`) return json({session_context: {
+      runtime_tools: this.a.launch.tools, mcp_config: this.a.external_mcp_config ?? {},
       cwd: this.a.launch.work_dir, model: this.a.launch.model, system_prompt: this.a.launch.system,
       append_system_prompt: this.a.launch.environment_prompt, runtime_skills: this.a.launch.skills, subagents: this.a.launch.subagents,
     }});

@@ -50,6 +50,7 @@ type pageResponse[T any] struct {
 }
 
 type sessionResponse struct {
+	Budget             json.RawMessage   `json:"budget"`
 	ID                 string            `json:"id"`
 	Agent              json.RawMessage   `json:"agent"`
 	ArchivedAt         *string           `json:"archived_at"`
@@ -97,6 +98,7 @@ type sessionCreateRequest struct {
 }
 
 type sessionMutationRequest struct {
+	Budget        json.RawMessage `json:"budget"`
 	Agent         json.RawMessage `json:"agent"`
 	EnvironmentID json.RawMessage `json:"environment_id"`
 	Metadata      json.RawMessage `json:"metadata"`

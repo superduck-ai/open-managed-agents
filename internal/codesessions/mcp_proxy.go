@@ -51,6 +51,7 @@ func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	identity := upstreamProxyIdentity{
 		codeSessionExternalID: claims.SessionID,
+		sessionThreadID:       strings.TrimSpace(r.Header.Get(runtimeThreadHeader)),
 		organizationUUID:      claims.OrganizationUUID,
 		workspaceUUID:         claims.WorkspaceUUID,
 	}
@@ -78,6 +79,7 @@ func (h *Handler) handleNamedMCPProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	identity := upstreamProxyIdentity{
 		codeSessionExternalID: claims.SessionID,
+		sessionThreadID:       strings.TrimSpace(r.Header.Get(runtimeThreadHeader)),
 		organizationUUID:      claims.OrganizationUUID,
 		workspaceUUID:         claims.WorkspaceUUID,
 	}
@@ -119,6 +121,7 @@ func (h *Handler) HandleMCPProtectedResource(w http.ResponseWriter, r *http.Requ
 	}
 	identity := upstreamProxyIdentity{
 		codeSessionExternalID: claims.SessionID,
+		sessionThreadID:       strings.TrimSpace(r.Header.Get(runtimeThreadHeader)),
 		organizationUUID:      claims.OrganizationUUID,
 		workspaceUUID:         claims.WorkspaceUUID,
 	}
@@ -245,7 +248,7 @@ func (h *Handler) namedTargetIsTunnel(target *url.URL) bool {
 
 func sanitizedMCPProxyHeaders(source http.Header) http.Header {
 	headers := source.Clone()
-	for _, name := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Proxy-Connection"} {
+	for _, name := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Proxy-Connection", runtimeThreadHeader} {
 		headers.Del(name)
 	}
 	return headers
@@ -431,7 +434,7 @@ func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *
 			request.Out.Host = target.Host
 		},
 		ErrorHandler: func(writer http.ResponseWriter, request *http.Request, err error) {
-			if errors.Is(err, vaults.ErrUpstreamAuthenticationRejected) {
+			if errors.Is(err, vaults.ErrUpstreamAuthenticationRejected) || errors.Is(err, vaults.ErrMCPOAuthReauthorizationRequired) {
 				h.logger.WarnContext(request.Context(), "MCP upstream authentication rejected", "code_session_id", codeSessionID, "host", target.Hostname())
 				writer.Header().Set("WWW-Authenticate", "Bearer")
 				httpapi.WriteError(writer, request, mcpUpstreamAuthenticationRejected())

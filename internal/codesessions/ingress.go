@@ -639,6 +639,11 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 		h.writeIngressLoadError(w, r, err)
 		return
 	}
+	record, err = h.runtimeSessionToolContext(r.Context(), record, strings.TrimSpace(r.Header.Get(runtimeThreadHeader)))
+	if err != nil {
+		h.writeIngressLoadError(w, r, err)
+		return
+	}
 	sessionContext, err := sessionContextFromCodeSession(record, MCPRuntimeIdentity{
 		CodeSessionID:       record.ExternalID,
 		SessionIngressToken: auth.ExtractAPIKey(r),

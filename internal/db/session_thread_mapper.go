@@ -47,6 +47,7 @@ type sessionThreadPageMapperParams struct {
 	SessionExternalID string
 	FetchLimit        int
 	Cursor            *SessionThreadPageCursor
+	Statuses          []string
 }
 
 // SessionThreadMapper contains queries whose primary table is session_threads.

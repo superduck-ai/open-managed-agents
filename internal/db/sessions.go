@@ -182,6 +182,7 @@ type ListSessionThreadsPageParams struct {
 	SessionExternalID string
 	Limit             int
 	Cursor            *SessionThreadPageCursor
+	Statuses          []string
 }
 
 type CreateSessionInput struct {
@@ -511,6 +512,7 @@ func (d *DB) ListSessionThreadsPage(ctx context.Context, params ListSessionThrea
 	rows, err := mapper.ListPage(ctx, sessionThreadPageMapperParams{
 		WorkspaceUUID:     params.WorkspaceUUID,
 		SessionExternalID: params.SessionExternalID,
+		Statuses:          params.Statuses,
 		FetchLimit:        params.Limit + 1,
 		Cursor:            params.Cursor,
 	})
@@ -694,6 +696,7 @@ func (d *DB) AppendSessionEvents(
 			return txErr
 		}
 		changes.Events = result.Events
+		changes.SettledInputEventIDs = result.SettledInputEventIDs
 		if result.SessionTerminated {
 			removal := SessionRemoval{Session: session}
 			if txErr := d.retireSessionWorkersTx(ctx, executor, &removal); txErr != nil {

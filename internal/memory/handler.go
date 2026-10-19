@@ -1094,7 +1094,7 @@ func responseFromMemoryRecord(record db.Memory, content *string) memoryResponse 
 func responseFromVersionRecord(record db.MemoryVersion, content *string) versionResponse {
 	return versionResponse{
 		ID:               record.ExternalID,
-		CreatedAt:        formatTime(record.CreatedAt),
+		CreatedAt:        record.CreatedAt.UTC().Format(time.RFC3339Nano),
 		MemoryID:         record.MemoryExternalID,
 		MemoryStoreID:    record.MemoryStoreExternalID,
 		Operation:        record.Operation,
@@ -1577,7 +1577,8 @@ func requireAPIKey(w http.ResponseWriter, r *http.Request) (auth.Principal, bool
 	}
 	if principal.CredentialType != "" &&
 		principal.CredentialType != auth.CredentialTypeAPIKey &&
-		principal.CredentialType != auth.CredentialTypePlatformSession {
+		principal.CredentialType != auth.CredentialTypePlatformSession &&
+		principal.CredentialType != auth.CredentialTypeWorkToken {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "API key authentication required"))
 		return auth.Principal{}, false
 	}

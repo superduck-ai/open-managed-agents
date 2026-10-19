@@ -16,6 +16,8 @@ func TestMapSessionLoadError(t *testing.T) {
 		kind    apperr.Kind
 		message string
 	}{
+		{name: "non-ask confirmation", cause: db.ErrSessionToolConfirmationInvalid, kind: apperr.InvalidArgument, message: "tool confirmation requires a pending ask event"},
+		{name: "input state conflict", cause: db.ErrSessionInputConflict, kind: apperr.Conflict, message: "Session cannot accept this input now"},
 		{name: "not found", cause: db.ErrNotFound, kind: apperr.NotFound, message: "Session not found: session_test"},
 		{name: "invalid state", cause: db.ErrInvalidState, kind: apperr.InvalidArgument, message: "session state does not allow this operation"},
 		{name: "file path conflict", cause: db.ErrFilestorePathExists, kind: apperr.Conflict, message: "File resource mount_path conflicts with the session filesystem"},

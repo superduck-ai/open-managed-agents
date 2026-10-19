@@ -12,6 +12,10 @@ func (s *Service) modelToolUsePayloads(ctx context.Context, request *ModelReques
 	if len(tools) == 0 {
 		return nil, nil
 	}
+	external, err := s.selfHostedCodeSession(ctx, request.CodeSessionID)
+	if err != nil {
+		return nil, err
+	}
 	var payloads []json.RawMessage
 	for _, tool := range tools {
 		if request.toolThreadID != "" && isDelegationTool(tool.Name) {
@@ -21,29 +25,33 @@ func (s *Service) modelToolUsePayloads(ctx context.Context, request *ModelReques
 		if err != nil {
 			return nil, err
 		}
-		if tool.InputRejected {
-			eventType, _ := toolPermissionPublicIdentity(tool.Name, identity)
-			if identity.Kind != "agent_toolset" || eventType != "agent.tool_use" {
-				continue
-			}
-			permission = resolvedToolPermissionDeny
-		} else if permission != resolvedToolPermissionAllow {
-			continue
-		}
-		var input map[string]any
-		if err := json.Unmarshal(tool.Input, &input); err != nil {
-			return nil, err
-		}
-		call := toolPermissionRequest{
-			ToolName: tool.Name, ToolUseID: tool.ID, Input: input, SessionThreadID: request.toolThreadID,
-		}
-		_, event, err := toolCallPublicPayload(request.CodeSessionID, call, identity, permission, at)
+		event, err := modelToolUsePayload(request, tool, identity, permission, external, at)
 		if err != nil {
 			return nil, err
 		}
-		payloads = append(payloads, event)
+		if len(event) > 0 {
+			payloads = append(payloads, event)
+		}
 	}
 	return payloads, nil
+}
+func modelToolUsePayload(request *ModelRequest, tool ModelRequestToolUse, identity toolIdentity, permission resolvedToolPermission, external bool, at time.Time) (json.RawMessage, error) {
+	if tool.InputRejected {
+		eventType, _ := toolPermissionPublicIdentity(tool.Name, identity)
+		if identity.Kind != "agent_toolset" || eventType != "agent.tool_use" {
+			return nil, nil
+		}
+		permission = resolvedToolPermissionDeny
+	} else if permission != resolvedToolPermissionAllow || (external && identity.Kind == "agent_toolset") {
+		return nil, nil
+	}
+	var input map[string]any
+	if err := json.Unmarshal(tool.Input, &input); err != nil {
+		return nil, err
+	}
+	call := toolPermissionRequest{ToolName: tool.Name, ToolUseID: tool.ID, Input: input, SessionThreadID: request.toolThreadID}
+	_, event, err := toolCallPublicPayload(request.CodeSessionID, call, identity, permission, at)
+	return event, err
 }
 
 func (s *Service) modelToolTurnPending(ctx context.Context, record db.CodeSession) (bool, error) {

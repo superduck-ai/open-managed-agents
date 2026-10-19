@@ -114,3 +114,7 @@ type workerPayloadError struct {
 func (e *workerPayloadError) Error() string { return e.message }
 
 func (e *workerPayloadError) Unwrap() error { return e.cause }
+
+func selfHostedResultRoutingError(stage string, err error) error {
+	return fmt.Errorf("self-hosted tool result %s: %w", stage, err)
+}

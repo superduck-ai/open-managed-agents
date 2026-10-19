@@ -335,7 +335,7 @@ export class CcrClient implements CcrBackend {
     } catch (error) {
       // Diagnose each actual attempt, excluding cancellation and local checks.
       if (method === "POST" && (path === "/internal-events" || path === "/events") && !signal?.aborted)
-        this.logBatchFailure(path, error, credentials.workerEpoch, Array.isArray(body?.events) ? body.events.length : 0);
+        this.logBatchFailure(id, path, error, credentials.workerEpoch, Array.isArray(body?.events) ? body.events.length : 0);
       throw error;
     }
     if (signal?.aborted) {
@@ -364,9 +364,9 @@ export class CcrClient implements CcrBackend {
       // Record the actual response before stopping the claim aborts its queues.
       // A late response to an already-cancelled request exits above instead.
       if (path === "/events/delivery")
-        this.logBatchFailure(path, error, credentials.workerEpoch, Array.isArray(body?.updates) ? body.updates.length : 0);
+        this.logBatchFailure(id, path, error, credentials.workerEpoch, Array.isArray(body?.updates) ? body.updates.length : 0);
       if (method === "POST" && (path === "/internal-events" || path === "/events"))
-        this.logBatchFailure(path, error, credentials.workerEpoch, Array.isArray(body?.events) ? body.events.length : 0);
+        this.logBatchFailure(id, path, error, credentials.workerEpoch, Array.isArray(body?.events) ? body.events.length : 0);
       if (leaseFailure(error, credentials.workerEpoch).status === "rejected")
         this.stopDelivery(id, auth, error);
       this.notifyWrites(id, observers, leaseFailure(error, credentials.workerEpoch), error);
@@ -683,12 +683,12 @@ export class CcrClient implements CcrBackend {
     await this.reportDelivery(id, inputId, "processed", signal);
   }
 
-  private logBatchFailure(path: "/events/delivery" | "/internal-events" | "/events", error: unknown, epoch: number, batchSize: number): void {
+  private logBatchFailure(id: string, path: "/events/delivery" | "/internal-events" | "/events", error: unknown, epoch: number, batchSize: number): void {
     const httpStatus = error instanceof CcrHttpError ? error.status : undefined;
     const code = error instanceof Error && "code" in error ? error.code : undefined;
     const failure = leaseFailure(error, epoch);
     workerDiagnostic("warn", httpStatus === undefined ? "cli_worker_request_error" : "cli_worker_request_failed", {
-      method: "post", path: `/worker${path}`, worker_epoch: epoch,
+      method: "post", path: `/worker${path}`, session_ref: createHash("sha256").update(id).digest("hex"), worker_epoch: epoch,
       batch_size: batchSize, status: httpStatus,
       failure_reason: failure.status === "confirmed" ? undefined : failure.reason,
       error_code: typeof code === "string" && ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN"].includes(code)
@@ -723,7 +723,7 @@ export class CcrClient implements CcrBackend {
         } catch (error) {
           // HTTP failures were logged before lease observers could cancel us.
           if (!requestSignal.aborted && !(error instanceof CcrHttpError) && !(error instanceof MissingWorkerCredentialsError))
-            this.logBatchFailure("/events/delivery", error, epoch, batch.length);
+            this.logBatchFailure(id, "/events/delivery", error, epoch, batch.length);
           throw error;
         }
       }, (error) => {

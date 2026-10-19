@@ -189,3 +189,30 @@ test("Chat adapter normalizes reasoning across split network chunks and CRLF fra
     { type: "reasoning", text: "thinking" }, { type: "text", text: "done" },
   ]);
 });
+
+test("Chat adapter normalizes reasoning in multi-line SSE events", async () => {
+  const body = `id: 1\r\ndata: {"id":"chat_1","choices":[{"index":0,\r\ndata: "delta":{"reasoning_text":"think"}}]}\r\n\r\n`
+    + `data: ${JSON.stringify({ id: "chat_1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\r\n\r\ndata: [DONE]\r\n\r\n`;
+  const bytes = new TextEncoder().encode(body);
+  const api = new OmaApi("http://model.test", (async (_input, _init) => new Response(new ReadableStream<Uint8Array>({
+    start(controller) { for (const byte of bytes) controller.enqueue(new Uint8Array([byte])); controller.close(); },
+  }), { headers: { "Content-Type": "text/event-stream" } })) as typeof fetch);
+  const a = assignment(); a.launch.model_backends = { "chat-model": "chat_completions" }; api.assignments.set(a.session_id, a);
+  const assembler = new BlockAssembler();
+  for (const chunk of await collect(new AiSdkAdapter(omaModelOptions(api)).stream(options(a.session_id)))) assembler.push(chunk);
+  expect(assembler.message({ provider: "oma", model: "chat-model" }).content).toEqual([{ type: "reasoning", text: "think" }]);
+});
+
+test("Chat adapter numbers a tool when its name arrives, matching the Go observer", async () => {
+  const { a, adapter } = setup([
+    { id: "chat_1", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call_1", type: "function", function: { arguments: '{"a":' } }] } }] },
+    { id: "chat_1", choices: [{ index: 0, delta: { content: "text" } }] },
+    { id: "chat_1", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { name: "Bash", arguments: "1}" } }] }, finish_reason: "tool_calls" }] },
+    "[DONE]",
+  ]);
+  const chunks = await collect(adapter.stream(options(a.session_id)));
+  expect(chunks.filter((chunk) => chunk.type === "block-start")).toEqual([
+    { type: "block-start", index: 0, blockType: "text" }, { type: "block-start", index: 1, blockType: "tool-call" },
+  ]);
+  expect(chunks).toContainEqual({ type: "block-end", index: 1, block: { type: "tool-call", id: ToolCallId("call_1"), name: "Bash", arguments: '{"a":1}' } });
+});

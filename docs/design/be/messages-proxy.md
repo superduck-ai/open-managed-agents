@@ -197,16 +197,18 @@ Base URL 保持 API 根地址合同。最终地址为 `{base_url}/v1/chat/comple
 不替代 Brain 模型适配器的协议转换。Brain 与 Go 各自解析同一份 Chat 响应，二者必须遵守
 同一组规则，事件 ID 才能在实时预览与持久化消息之间去重：
 
+- SSE 事件：按完整事件（以空行结束）解析，同一事件的多行 `data:` 按规范以换行拼接后再解析 JSON。
 - reasoning 字段：每个 delta 依次检查 `reasoning_content`、`reasoning`、`reasoning_text`，
   取第一个非空字符串，映射为 thinking；空字符串视为缺失。Go 由 `firstChatReasoning` 实现，
   Brain 在代理 fetch 中把响应规范化为只含 `reasoning_content` 的 delta 后交给 AI SDK。
 - 内容索引：thinking、文本和各工具按首次出现顺序分配；同一 delta 内依次处理 reasoning、
   正文、工具调用，与 AI SDK provider 的输出顺序及“先推理后正文”的模型语义一致。
   上游 tool index 范围仍为 0–1023，用于定位对应工具。
+- 工具索引：工具块在其 tool index 首次出现非空名称时才分配内容索引，与 AI SDK provider
+  取得工具名后才创建工具块的行为一致。名称到达前的工具 ID 与参数分片按 tool index 暂存，
+  分配后合并；结束时仍有未取得名称的工具视为无效响应。
 
-工具 ID、名称采用首次非空值，参数按分片累积。已知限制：Go 在某个 tool index 的首个分片即
-分配索引，AI SDK 在取得工具名后才创建工具块；若上游先发工具 ID、后发名称且其间插入新的
-正文或 reasoning，两端索引可能不同。已验证的上游都在首个工具分片同时给出 ID 和名称。
+工具 ID、名称采用首次非空值，参数按分片累积。
 
 正常结束要求有效 `finish_reason`，支持 `[DONE]` 或有效结束原因后的正常 EOF，usage 尾帧继续读取。
 只有 EOF 而没有 finish reason 的断流仍失败，Brain 侧同样要求有效结束原因。

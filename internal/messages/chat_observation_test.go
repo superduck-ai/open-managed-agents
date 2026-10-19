@@ -146,6 +146,26 @@ func TestChatObservationReasoningPrecedesContentInSameFrame(t *testing.T) {
 	}
 }
 
+func TestChatObservationNumbersToolsWhenTheirNameArrives(t *testing.T) {
+	body := chatFrame(`{"id":"chat_late","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"arguments":"{\"a\":"}}]}}]}`) +
+		chatFrame(`{"id":"chat_late","choices":[{"index":0,"delta":{"content":"text"}}]}`) +
+		chatFrame(`{"id":"chat_late","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"Bash","arguments":"1}"}}]},"finish_reason":"tool_calls"}]}`) + chatFrame(`[DONE]`)
+	result := observeChat(t, body, 1).result
+	if result.ErrorType != "" || len(result.Messages) != 1 || len(result.ToolUses) != 1 {
+		t.Fatalf("result=%+v", result)
+	}
+	if result.Messages[0].ID != maevents.StableAssistantEventID("cse_chat", "chat_late", 0, "agent.message") {
+		t.Fatalf("message=%+v", result.Messages[0])
+	}
+	if result.ToolUses[0].ID != "call_1" || string(result.ToolUses[0].Input) != `{"a":1}` {
+		t.Fatalf("tools=%+v", result.ToolUses)
+	}
+	unnamed := chatFrame(`{"id":"chat_unnamed","choices":[{"index":0,"delta":{"content":"text","tool_calls":[{"index":0,"id":"call_1","function":{"arguments":"{}"}}]},"finish_reason":"stop"}]}`) + chatFrame(`[DONE]`)
+	if result := observeChat(t, unnamed, len(unnamed)).result; result.ErrorType != "invalid_response" {
+		t.Fatalf("unnamed=%+v", result)
+	}
+}
+
 func TestChatObservationFinishAtEOF(t *testing.T) {
 	body := chatFrame(`{"id":"chat_eof","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"stop"}]}`)
 	observation := observeChat(t, body, 1)

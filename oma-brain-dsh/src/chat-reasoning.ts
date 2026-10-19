@@ -2,14 +2,15 @@ const REASONING_FIELDS = ["reasoning_content", "reasoning", "reasoning_text"] as
 
 export function normalizeChatReasoning(response: Response): Response {
   if (!response.ok || !response.body) return response;
-  const body = response.body.pipeThrough(new TextDecoderStream()).pipeThrough(reasoningLines()).pipeThrough(new TextEncoderStream());
+  const body = response.body.pipeThrough(new TextDecoderStream()).pipeThrough(reasoningEvents()).pipeThrough(new TextEncoderStream());
   const headers = new Headers(response.headers);
   headers.delete("content-length");
   return new Response(body, { status: response.status, statusText: response.statusText, headers });
 }
 
-function reasoningLines(): TransformStream<string, string> {
+function reasoningEvents(): TransformStream<string, string> {
   let pending = "";
+  let event: string[] = [];
   return new TransformStream({
     transform(chunk, controller) {
       if (!chunk.includes("\n")) {
@@ -18,30 +19,62 @@ function reasoningLines(): TransformStream<string, string> {
       }
       const lines = (pending + chunk).split("\n");
       pending = lines.pop() ?? "";
-      controller.enqueue(`${lines.map(normalizeLine).join("\n")}\n`);
+      let output = "";
+      for (const line of lines) {
+        event.push(line);
+        if (line !== "" && line !== "\r") continue;
+        output += normalizeEvent(event).map((value) => `${value}\n`).join("");
+        event = [];
+      }
+      if (output) controller.enqueue(output);
     },
     flush(controller) {
-      if (pending) controller.enqueue(normalizeLine(pending));
+      const rest = pending ? [...event, pending] : event;
+      if (rest.length) controller.enqueue(normalizeEvent(rest).join("\n"));
     },
   });
 }
 
-function normalizeLine(line: string): string {
-  if (!line.startsWith("data:") || !line.includes('"reasoning')) return line;
-  const lineEnd = line.endsWith("\r") ? "\r" : "";
+function normalizeEvent(lines: string[]): string[] {
+  const data = lines.filter(isData);
+  if (!data.length) return lines;
+  const payload = data.map(dataValue).join("\n");
+  if (!payload.includes('"reasoning')) return lines;
+  const normalized = normalizePayload(payload);
+  if (normalized === undefined) return lines;
+  const lineEnd = data[0]!.endsWith("\r") ? "\r" : "";
+  let placed = false;
+  return lines.flatMap((line) => {
+    if (!isData(line)) return [line];
+    if (placed) return [];
+    placed = true;
+    return [`data: ${normalized}${lineEnd}`];
+  });
+}
+
+function isData(line: string): boolean {
+  return line.startsWith("data:") || line === "data" || line === "data\r";
+}
+
+function dataValue(line: string): string {
+  const value = line.replace(/\r$/, "").slice(5);
+  return value.startsWith(" ") ? value.slice(1) : value;
+}
+
+function normalizePayload(payload: string): string | undefined {
   let chunk: unknown;
   try {
-    chunk = JSON.parse(line.slice(5, line.length - lineEnd.length));
+    chunk = JSON.parse(payload);
   } catch {
-    return line;
+    return undefined;
   }
   const choices = (chunk as { choices?: unknown } | null)?.choices;
-  if (!Array.isArray(choices)) return line;
+  if (!Array.isArray(choices)) return undefined;
   for (const choice of choices) {
     const delta = (choice as { delta?: unknown } | null)?.delta;
     if (delta && typeof delta === "object") normalizeDelta(delta as Record<string, unknown>);
   }
-  return `data: ${JSON.stringify(chunk)}${lineEnd}`;
+  return JSON.stringify(chunk);
 }
 
 function normalizeDelta(delta: Record<string, unknown>): void {

@@ -12,6 +12,7 @@ import (
 type chatObservation struct {
 	finishReason string
 	blockIndices map[string]int
+	pendingTools map[int]*responseContentBlock
 }
 
 type chatChunk struct {
@@ -135,7 +136,7 @@ func (c *chatObservation) observeDelta(o *responseObservation, delta chatDelta) 
 			o.malformed = true
 			return
 		}
-		block := c.block(o, fmt.Sprintf("tool_%d", tool.Index), "tool_use")
+		block := c.toolBlock(o, tool)
 		if block.ID == "" {
 			block.ID = tool.ID
 		}
@@ -152,14 +153,7 @@ func (c *chatObservation) observeDelta(o *responseObservation, delta chatDelta) 
 }
 
 func (c *chatObservation) block(o *responseObservation, key, kind string) *responseContentBlock {
-	if c.blockIndices == nil {
-		c.blockIndices = make(map[string]int)
-	}
-	index, found := c.blockIndices[key]
-	if !found {
-		index = len(c.blockIndices)
-		c.blockIndices[key] = index
-	}
+	index := c.index(key)
 	if o.blocks == nil {
 		o.blocks = make(map[int]*responseContentBlock)
 	}
@@ -169,8 +163,44 @@ func (c *chatObservation) block(o *responseObservation, key, kind string) *respo
 	return o.blocks[index]
 }
 
+func (c *chatObservation) toolBlock(o *responseObservation, tool chatToolDelta) *responseContentBlock {
+	key := fmt.Sprintf("tool_%d", tool.Index)
+	if index, found := c.blockIndices[key]; found {
+		return o.blocks[index]
+	}
+	if c.pendingTools == nil {
+		c.pendingTools = make(map[int]*responseContentBlock)
+	}
+	block := c.pendingTools[tool.Index]
+	if block == nil {
+		block = &responseContentBlock{Type: "tool_use"}
+		c.pendingTools[tool.Index] = block
+	}
+	if tool.Function.Name == "" {
+		return block
+	}
+	delete(c.pendingTools, tool.Index)
+	if o.blocks == nil {
+		o.blocks = make(map[int]*responseContentBlock)
+	}
+	o.blocks[c.index(key)] = block
+	return block
+}
+
+func (c *chatObservation) index(key string) int {
+	if c.blockIndices == nil {
+		c.blockIndices = make(map[string]int)
+	}
+	index, found := c.blockIndices[key]
+	if !found {
+		index = len(c.blockIndices)
+		c.blockIndices[key] = index
+	}
+	return index
+}
+
 func (c *chatObservation) complete(o *responseObservation) {
-	if o.messageID == "" || len(o.blocks) == 0 || !validChatFinish(c.finishReason, o.blocks) {
+	if o.messageID == "" || len(o.blocks) == 0 || len(c.pendingTools) > 0 || !validChatFinish(c.finishReason, o.blocks) {
 		o.malformed = true
 		return
 	}

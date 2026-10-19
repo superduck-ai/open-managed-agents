@@ -497,6 +497,7 @@ export class CcrSession {
       || inputId === this.state.inputId || this.state.completed.includes(inputId)
       || this.state.turnInputs?.includes(inputId)) return false;
     const text = userInputText(object(input));
+    if (text === undefined) return false;
     (this.state.turnInputs ??= []).push(inputId);
     this.inputReceipts = this.inputReceipts.then(async () => {
       await this.save();
@@ -528,6 +529,10 @@ export class CcrSession {
     if (this.busy || this.abort.signal.aborted)
       throw new Error("Session is busy or stopped");
     const text = userInputText(payload);
+    if (text === undefined) {
+      await this.rejectInput(inputId, "Only text user input is supported.");
+      return;
+    }
     let stopProgress = () => {};
     try {
       await this.runtime.run(text, {
@@ -576,6 +581,18 @@ export class CcrSession {
         },
       });
     } finally { stopProgress(); }
+  }
+
+  private async rejectInput(inputId: string, message: string): Promise<void> {
+    this.state.inputId = inputId;
+    this.state.turnInputs = [];
+    this.state.phase = "completed";
+    this.addError(message, "unsupported");
+    this.state.completed.push(inputId);
+    await this.save();
+    await this.publish();
+    await this.updateStatus();
+    await this.backend.acknowledge(this.id, inputId, this.abort.signal);
   }
 
   addError(text: string, suffix = "failed") {
@@ -634,7 +651,7 @@ export class CcrSession {
   }
 }
 
-function userInputText(payload: Payload): string {
+function userInputText(payload: Payload): string | undefined {
   const content = payload.message?.content ?? payload.content;
   const text =
     typeof content === "string"
@@ -643,7 +660,5 @@ function userInputText(payload: Payload): string {
       content.every((b: Payload) => b.type === "text")
       ? content.map((b: Payload) => b.text).join("\n")
       : undefined;
-  if (typeof text !== "string")
-    throw new Error("Only text user input is supported");
-  return text;
+  return typeof text === "string" ? text : undefined;
 }

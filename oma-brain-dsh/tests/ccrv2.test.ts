@@ -558,3 +558,41 @@ test("CCRv2 plugin runs isolated sessions and restores history without OMA or NA
     await restored.ctx.fiber.dispose();
   }
 });
+
+test("unsupported user input completes with an error result and keeps the session usable", async () => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  await mountKernel(ctx);
+  const model = new TextModel();
+  await ctx.plugin({
+    inject: ["llm"],
+    apply(scope: Context) { scope.llm.registerAdapter(["memory"], model); },
+  });
+  await ctx.plugin(CcrBridge, { backend });
+  try {
+    const session = ctx.ccrv2.createSession({
+      id: "a", provider: "memory", model: "text", workDir: "/workspace",
+      systemPrompt: "Standalone test instructions", setup,
+    });
+    await session.open();
+    const image = { type: "image", source: { type: "base64", media_type: "image/png", data: "AA==" } };
+    await session.receive("image_input", { content: [{ type: "text", text: "look" }, image] });
+    expect(model.requests).toHaveLength(0);
+    expect(backend.acknowledged).toEqual(["a:image_input"]);
+    expect(session.state.completed).toEqual(["image_input"]);
+    expect(session.state.phase).toBe("completed");
+    expect(session.state.outbox).toEqual([]);
+    expect(backend.output.get("a")).toEqual([
+      { type: "system.message", uuid: "image_input_unsupported_message",
+        content: [{ type: "text", text: "Only text user input is supported." }] },
+      { type: "result", uuid: "image_input_unsupported_result", subtype: "error_during_execution", is_error: true },
+    ]);
+    await session.receive("image_input", { content: [image] });
+    expect(backend.acknowledged).toEqual(["a:image_input", "a:image_input"]);
+    await session.receive("next_input", { content: "continue" });
+    expect(model.requests).toHaveLength(1);
+    expect(backend.acknowledged.at(-1)).toBe("a:next_input");
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});

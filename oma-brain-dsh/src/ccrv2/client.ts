@@ -41,6 +41,11 @@ export class CcrHttpError extends Error {
   }
 }
 
+function permanentRequestFailure(error: unknown): boolean {
+  return error instanceof CcrHttpError && error.status >= 400 && error.status < 500
+    && ![401, 403, 408, 429].includes(error.status);
+}
+
 function leaseFailure(error: unknown, workerEpoch?: number): CcrLeaseResult {
   const httpStatus = error instanceof CcrHttpError ? error.status : undefined;
   const expired = error instanceof CcrHttpError && error.tokenExpired;
@@ -454,7 +459,8 @@ export class CcrClient implements CcrBackend {
         }
         return response;
       } catch (error) {
-        if (signal.aborted || leaseFailure(error, workerEpoch).status === "rejected") throw error;
+        if (signal.aborted || leaseFailure(error, workerEpoch).status === "rejected" || permanentRequestFailure(error))
+          throw error;
         await abortable((this.config.sleep ?? sleep)(retryDelay(
           attempt, error instanceof CcrHttpError ? error.retryAfterMs : undefined,
           this.config.random ?? Math.random,
@@ -717,7 +723,7 @@ export class CcrClient implements CcrBackend {
         if (this.authStates.get(id) === claim)
           claim.deliveryFailure ??= error instanceof Error ? error : new Error("CCRv2 delivery stopped");
       }, {
-        allowed: (error) => leaseFailure(error, epoch).status !== "rejected",
+        allowed: (error) => leaseFailure(error, epoch).status !== "rejected" && !permanentRequestFailure(error),
         wait: (error, attempt, requestSignal) => abortable((this.config.sleep ?? sleep)(retryDelay(
           attempt, error instanceof CcrHttpError ? error.retryAfterMs : undefined,
           this.config.random ?? Math.random,

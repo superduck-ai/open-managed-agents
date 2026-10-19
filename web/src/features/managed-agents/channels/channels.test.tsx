@@ -38,9 +38,9 @@ test('保存凭据、模式和话题策略并携带当前工作区及 CSRF', asy
     if (init?.method === 'POST') {
       expect(headers.get('x-csrf-token')).toBe('csrf-test');
       posted = JSON.parse(String(init.body)) as Record<string, unknown>;
-      return new Response(JSON.stringify({ ...posted, id: 'channel-test', binding_status: 'bound', connected: false }));
+      return Response.json({ ...posted, id: 'channel-test', binding_status: 'bound', connected: false });
     }
-    return new Response(JSON.stringify({ data: [] }));
+    return Response.json({ data: [] });
   }) as typeof fetch;
   setConsoleRequestContext({ csrfToken: 'csrf-test' });
   mount();
@@ -60,13 +60,21 @@ test('保存凭据、模式和话题策略并携带当前工作区及 CSRF', asy
 });
 
 test('英文界面翻译渠道列表、表单和校验提示', async () => {
-  globalThis.fetch = (async () => new Response(JSON.stringify({ data: [] }))) as typeof fetch;
+  globalThis.fetch = (async () => Response.json({ data: [] })) as typeof fetch;
   mount('en');
   await waitFor(() => expect(screen.getByRole('button', { name: 'Create bot' }).hasAttribute('disabled')).toBe(false));
   expect(screen.getByRole('heading', { name: 'IM connections' })).toBeTruthy();
   expect(screen.getByText('No bots connected')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Create bot' }));
-  expect(screen.getByRole('radio', { name: 'Pairing mode' })).toBeTruthy();
+  expect(
+    screen.getByText('Users can chat with the bot without approval. The mode cannot be changed after creation.'),
+  ).toBeTruthy();
+  fireEvent.click(screen.getByRole('radio', { name: 'Pairing mode' }));
+  expect(
+    screen.getByText(
+      'Direct or group chats require administrator approval. The mode cannot be changed after creation.',
+    ),
+  ).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Generate QR code' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
   await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Enter a bot name'));

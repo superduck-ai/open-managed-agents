@@ -2604,7 +2604,7 @@
   "managedAgents.channels.pairing": "Pairing mode",
   "managedAgents.channels.openHint": "Users can chat with the bot without approval.",
   "managedAgents.channels.pairingHint": "Direct or group chats require administrator approval.",
-  "managedAgents.channels.immutableMode": "The mode cannot be changed after creation.",
+  "managedAgents.channels.immutableMode": " The mode cannot be changed after creation.",
   "managedAgents.channels.consoleLink": "Open channel console →",
   "managedAgents.channels.keepSecret": "Leave blank to keep the current secret",
   "managedAgents.channels.hideSecret": "Hide secret",

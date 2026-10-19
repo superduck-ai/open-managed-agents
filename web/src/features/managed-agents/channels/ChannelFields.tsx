@@ -81,7 +81,7 @@ export function ChannelMode({
         {value === 'open'
           ? msg('managedAgents.channels.openHint', '无需审批，用户可直接与机器人对话。')
           : msg('managedAgents.channels.pairingHint', '经管理员批准后，对应的单聊或群聊才可使用。')}
-        {msg('managedAgents.channels.immutableMode', 'The mode cannot be changed after creation.')}
+        {msg('managedAgents.channels.immutableMode', ' The mode cannot be changed after creation.')}
       </p>
     </div>
   );

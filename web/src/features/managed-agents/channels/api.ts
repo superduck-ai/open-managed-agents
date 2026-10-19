@@ -1,4 +1,4 @@
-import { consoleApi } from '../../../shared/api/client';
+import { anthropicBetaApi } from '../../../shared/api/anthropic';
 
 export interface Channel {
   id: string;
@@ -35,10 +35,4 @@ export interface ChannelQr {
   url: string;
   expires_at: string;
 }
-export function channelApi<T>(agentId: string, workspaceId: string, suffix = '', method = 'GET', body?: unknown) {
-  return consoleApi<T>(`/v1/agents/${encodeURIComponent(agentId)}/channels${suffix}?beta=true`, {
-    method,
-    headers: { 'x-workspace-id': workspaceId, 'anthropic-beta': 'managed-agents-2026-04-01' },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-}
+export const channelApi = anthropicBetaApi.agents.channels;

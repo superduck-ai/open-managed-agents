@@ -29,33 +29,34 @@ function setup(chunks: (Payload | string)[]) {
   api.assignments.set(a.session_id, a);
   return { api, a, requests, adapter: new OmaModelAdapter(api) };
 }
-function textChunk(text = "answer", finish = "stop"): Payload {
+function textChunk(text = "answer", finish: string | null = "stop"): Payload {
   return { id: "chat_1", choices: [{ index: 0, delta: { content: text }, finish_reason: finish }] };
 }
 
-test("official adapter reports HTTP errors without retrying the OMA model request", async () => {
+test("Chat adapter reports HTTP errors without retrying the OMA model request", async () => {
   for (const [status, code] of [[401, "AUTH"], [403, "AUTH"], [429, "RATE_LIMIT"], [503, "SERVER"]] as const) {
     let requests = 0;
     const api = new OmaApi("http://model.test", (async (_input, _init) => { requests++; return Response.json({ error: { message: "denied" } }, { status }); }) as typeof fetch);
     const a = assignment(); a.launch.model_backends = { "chat-model": "chat_completions" }; api.assignments.set(a.session_id, a);
-    const chunks = await collect(new OmaModelAdapter(api).stream(options(a.session_id)));
-    expect(chunks.at(-1)).toMatchObject({ type: "finish", reason: { kind: "error", failure: { code } } });
+    await expect(collect(new OmaModelAdapter(api).stream(options(a.session_id)))).rejects.toMatchObject({ code, message: "denied" });
     expect(requests).toBe(1);
   }
 });
 
-test("official adapter rejects incomplete streams and unsupported options before transport", async () => {
-  for (const chunks of [[{ id: "chat_1", choices: [{ index: 0, delta: { content: "partial" } }] }], ["{broken"]]) {
+test("Chat adapter rejects incomplete streams and honors stop sequences", async () => {
+  for (const chunks of [[{ id: "chat_1", choices: [{ index: 0, delta: { content: "partial" } }] }], ["{broken"],
+    [{ id: "chat_1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }, "[DONE]"]]) {
     const { a, adapter } = setup(chunks);
-    expect((await collect(adapter.stream(options(a.session_id)))).at(-1)).toMatchObject({ type: "finish", reason: { kind: "error" } });
+    await expect(collect(adapter.stream(options(a.session_id)))).rejects.toMatchObject({ code: expect.stringMatching(/^(TRANSPORT|EMPTY_RESPONSE)$/) });
   }
   const { a, adapter, requests } = setup([textChunk(), "[DONE]"]);
-  await expect(collect(adapter.stream({ ...options(a.session_id), stop: ["END"] }))).rejects.toMatchObject({ code: "UNSUPPORTED_OPTION" });
+  await collect(adapter.stream({ ...options(a.session_id), stop: ["END"] }));
+  expect((await requests[0]!.json()).stop).toEqual(["END"]);
   await expect(collect(adapter.stream({ ...options(a.session_id), signal: AbortSignal.abort() }))).rejects.toThrow();
-  expect(requests).toHaveLength(0);
+  expect(requests).toHaveLength(1);
 });
 
-test("official adapter cancellation cancels the OMA HTTP stream", async () => {
+test("Chat adapter cancellation cancels the OMA HTTP stream", async () => {
   let cancelled = false;
   const api = new OmaApi("http://model.test", (async (_input, _init) => new Response(new ReadableStream<Uint8Array>({
     start(controller) { controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ id: "chat_cancel", choices: [{ index: 0, delta: { content: "partial" } }] })}\n\n`)); },
@@ -67,13 +68,25 @@ test("official adapter cancellation cancels the OMA HTTP stream", async () => {
   expect((await iterator.next()).value).toMatchObject({ type: "block-start" });
   expect((await iterator.next()).value).toMatchObject({ type: "text-delta", text: "partial" });
   controller.abort();
-  const remaining: StreamChunk[] = [];
-  for (;;) { const next = await iterator.next(); if (next.done) break; remaining.push(next.value); }
-  expect(remaining.at(-1)).toMatchObject({ type: "finish", reason: { kind: "aborted" } });
+  await expect(iterator.next()).rejects.toThrow();
   expect(cancelled).toBe(true);
 });
 
-test("official Chat adapter assembles reasoning, fragmented parallel tools and usage", async () => {
+test("Chat adapter parses large streamed tool arguments in linear time", async () => {
+  const json = JSON.stringify({ content: "x".repeat(400_000) });
+  const deltas = Array.from({ length: Math.ceil(json.length / 100) }, (_, index) => json.slice(index * 100, (index + 1) * 100));
+  const { a, adapter } = setup([
+    { id: "chat_1", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "Write", arguments: "" } }] } }] },
+    ...deltas.map((delta) => ({ id: "chat_1", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: delta } }] } }] })),
+    { id: "chat_1", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }, "[DONE]",
+  ]);
+  const started = performance.now();
+  const chunks = await collect(adapter.stream(options(a.session_id)));
+  expect(performance.now() - started).toBeLessThan(2000);
+  expect(chunks).toContainEqual(expect.objectContaining({ type: "block-end", block: expect.objectContaining({ arguments: json }) }));
+});
+
+test("Chat adapter assembles reasoning, fragmented parallel tools and usage", async () => {
   const { a, api, adapter, requests } = setup([
     { id: "chat_1", choices: [{ index: 0, delta: { reasoning_content: "thinking" } }] },
     { id: "chat_1", choices: [{ index: 0, delta: { content: "running", tool_calls: [
@@ -92,9 +105,10 @@ test("official Chat adapter assembles reasoning, fragmented parallel tools and u
     { type: "tool-call", id: ToolCallId("call_b"), name: "Read", arguments: "{}" },
     { type: "tool-call", id: ToolCallId("call_a"), name: "Bash", arguments: '{"command":"pwd"}' },
   ]);
-  expect(result).toContainEqual({ type: "usage", usage: { inputTokens: 8, outputTokens: 5, cacheReadTokens: 12, totalTokens: 25 } });
+  expect(result).toContainEqual({ type: "usage", usage: { inputTokens: 8, outputTokens: 5, cacheReadTokens: 12 } });
   expect(result.at(-1)).toMatchObject({ type: "finish", reason: { kind: "tool-calls" }, replayState: {
-    response: { kind: "pi-ai", version: 2, api: "openai-completions", oma: { messageID: "chat_1", requestID: "span_chat" } },
+    response: { format: "oma-chat-completions-v1", messageID: "chat_1", requestID: "span_chat", stopReason: "tool_calls" },
+    blocks: [{ index: 0 }, { index: 1 }, { index: 2 }, { index: 3 }],
   } });
   expect(api.modelResponses.get(a.session_id)).toBe("chat_1");
   expect(requests[0]!.url).toBe("http://model.test/v1/chat/completions");
@@ -103,10 +117,11 @@ test("official Chat adapter assembles reasoning, fragmented parallel tools and u
   expect(requests[0]!.headers.has("anthropic-version")).toBe(false);
 });
 
-test("official adapter sends tool history and retains OMA event identity after replay", async () => {
+test("Chat adapter sends tool history and retains OMA event identity after replay", async () => {
   const { a, adapter, requests } = setup([
-    { id: "chat_1", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "Bash", arguments: "{}" } }] } }] },
-    textChunk("done"), "[DONE]",
+    textChunk("done", null),
+    { id: "chat_1", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "Bash", arguments: "{}" } }] }, finish_reason: "tool_calls" }] },
+    "[DONE]",
   ]);
   const request = options(a.session_id); request.maxTokens = 100; request.temperature = 0.5;
   request.tools = [{ name: "Bash", description: "Run", parameters: { type: "object" } }];
@@ -116,7 +131,7 @@ test("official adapter sends tool history and retains OMA event identity after r
   { id: MessageId("tool"), role: "tool", content: [{ type: "text", text: "stdout" }], source: { kind: "tool", callId: ToolCallId("old_call") }, toolCallId: ToolCallId("old_call") });
   const assembler = new BlockAssembler(); for (const chunk of await collect(adapter.stream(request))) assembler.push(chunk);
   const saved = assembler.message({ provider: "oma", model: "chat-model", replayState: assembler.replayState });
-  expect(saved.source.replayState).toMatchObject({ blocks: [{ omaIndex: 0 }, { omaIndex: 1 }] });
+  expect(saved.source.replayState).toMatchObject({ blocks: [{ index: 0 }, { index: 1 }] });
   const first = assistantMessages(a.session_id, "fallback", saved)[0]!;
   expect(first.model_request_start_id).toBe("span_chat");
   expect(assistantMessages(a.session_id, "other", saved)[0]!.id).toBe(first.id);
@@ -139,9 +154,9 @@ test("OMA selects backend by actual model while isolating concurrent session cre
   api.assignments.set(a.session_id, a); api.assignments.set(b.session_id, b); api.modelSessions.set("child", a.session_id);
   const adapter = new OmaModelAdapter(api);
   await Promise.all([collect(adapter.stream(options(a.session_id, "anthropic-model"))), collect(adapter.stream(options("child"))), collect(adapter.stream(options(b.session_id)))]);
-  expect(requests.map((request) => [new URL(request.url).pathname, request.headers.get("authorization"), request.headers.get("x-claude-code-agent-id")])).toEqual([
+  expect(requests.map((request) => [new URL(request.url).pathname, request.headers.get("authorization"), request.headers.get("x-claude-code-agent-id")]).sort()).toEqual([
     ["/v1/messages", "Bearer root-token", null], ["/v1/chat/completions", "Bearer root-token", "child"], ["/v1/chat/completions", "Bearer other-token", null],
-  ]);
+  ].sort());
   a.model_token = "rotated"; await collect(adapter.stream(options("child")));
   expect(requests.at(-1)!.headers.get("authorization")).toBe("Bearer rotated");
   await expect(collect(adapter.stream(options(a.session_id, "missing")))).rejects.toMatchObject({ code: "INVALID_ARGS" });

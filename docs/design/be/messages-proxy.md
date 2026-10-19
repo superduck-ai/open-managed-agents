@@ -194,13 +194,13 @@ Base URL 保持 API 根地址合同。最终地址为 `{base_url}/v1/chat/comple
 请求 start ID，上游 `Request-Id` 或 `X-Request-Id` 单独记录。
 
 共用请求生命周期和 model request end 持久化。Go observer 只承担代理侧公开事件和用量观察，
-不替代 Brain 官方 adapter 的协议转换。文本、thinking 和各工具按首次出现顺序分配内容索引，
-与 pi-ai 的内容块顺序一致；上游 tool index 范围仍为 0–1023，用于定位对应工具。
+不替代 Brain 模型适配器的协议转换。文本、thinking 和各工具按首次出现顺序分配内容索引，
+与 Brain 按 AI SDK part 首次出现顺序的编号一致；上游 tool index 范围仍为 0–1023，用于定位对应工具。
 工具 ID、名称采用首次非空值，参数按分片累积。reasoning 从 `reasoning_content`、`reasoning`、
 `reasoning_text` 中选取首个非空字段，映射为 thinking 事件。
 
 正常结束要求有效 `finish_reason`，支持 `[DONE]` 或有效结束原因后的正常 EOF，usage 尾帧继续读取。
-只有 EOF 而没有 finish reason 的断流仍失败，与官方 Chat adapter 的终态判断一致。
+只有 EOF 而没有 finish reason 的断流仍失败，Brain 侧同样要求有效结束原因。
 `stop`、`length` 只用于无工具响应，`tool_calls` 必须存在工具调用；过滤、拒绝、未知结束原因
 和异常断流不能记为成功。单帧及累计公开内容保留 4 MiB 观察上限。
 

@@ -113,50 +113,58 @@ Provider 的 `api_backend` 决定 Brain 模型适配器，当前支持 `messages
 
 ```mermaid
 flowchart LR
-    Runtime[Brain 主 Agent / 子 Agent] --> OMA[OMA 会话鉴权与事件关联]
-    OMA --> Adapter[DSH PiAiAdapter]
-    Adapter --> SDK[pi-ai Messages / Chat Completions]
+    Runtime[Brain 主 Agent / 子 Agent] --> OMA[OmaModelAdapter]
+    OMA --> Prompt[DSH 历史 → AI SDK V4 prompt]
+    Prompt --> SDK["@ai-sdk/anthropic / @ai-sdk/openai-compatible doStream"]
     SDK --> Transport[OMA fetch transport]
     Transport --> Proxy[Go 模型代理]
     Proxy --> Lifecycle[请求 span / 公开事件 / 用量]
     Proxy --> Provider[Workspace Provider]
+    SDK --> Stream[V4 stream part → DSH StreamChunk]
+    Stream --> Runtime
 ```
 
 DSH 仍使用 provider `oma`，它表示平台模型适配器，不是用户配置的 Provider。路由映射在会话注册与
 恢复时读取，Go 每次代理请求重新解析 Provider 并检查 backend。运行期间修改 Provider backend
 可能使旧映射失效，此时明确报错并要求重新加载会话配置，不静默切换协议或自动重发。
 
-Brain 使用与 DSH 核心同版本的官方 `@deepseek-ai/dsh-llm-pi-ai`，其 `PiAiAdapter` 负责
-DSH 消息、工具、历史、usage、reasoning、错误和取消的转换；底层固定版本的 pi-ai 分别处理
-`anthropic-messages` 与 `openai-completions`。Brain 不再自行编码协议请求或解析模型 SSE。
+Brain 只依赖 Vercel AI SDK 的 provider 层：`@ai-sdk/anthropic` 处理 Messages，
+`@ai-sdk/openai-compatible` 处理 Chat Completions，二者都输出同一种 `LanguageModelV4`
+stream part，并精确锁定版本。Brain 不引入 `ai` 核心包，也不使用其 `streamText`、重试或
+工具执行循环；只调用 `doStream`，SSE 解析、协议字段编码和分片工具参数累积由 SDK 负责。
+两种 provider 都以字符串追加累积工具参数，大参数流保持线性耗时，
+`chat-completions.test.ts` 用 400 KB 参数守住该性质。
 
-`OmaModelAdapter` 每次请求建立独立、不可共享凭据的 adapter/profile，按实际模型选择协议。
-官方 adapter 的 `resolveApiKey` 获取本次请求捕获的 model token，pi-ai 的 `fetch` 扩展接入
-`OmaApi.fetcher`。transport 只允许向指定 Go origin 和模型代理路径发送 POST，强制 Bearer
-会话凭据，删除 SDK 的 `x-api-key` 和 Cookie，为子 Agent 设置 `X-Claude-Code-Agent-Id`，
-禁止重定向。Worker 不读取环境中的 Provider Key、不启用官方登录或持久化凭据。
-官方 SDK 内部重试固定为零，超时为 300 秒，不增加重试插件。
+`OmaModelAdapter` 只负责三件事，分别位于三个文件：
 
-文本、function tools、多个工具交错返回、工具结果回传、取消和恢复由官方实现处理；
-`reasoning_content`、`reasoning`、`reasoning_text` 的解析也交给 pi-ai，不再因收到 reasoning
-就拒绝响应。当前 profile 仍只声明 text 输入，不开放图片、音频或 Responses。
-显式 maxTokens 和 temperature 交给官方转换；Messages 默认输出上限保留 8192，Chat
-采用声明的默认上限 32768。官方 `PiAiAdapter` 不支持 `GenerateOptions.stop`，传入时明确返回
-`UNSUPPORTED_OPTION`，不在 OMA 层补写协议字段。工具参数也采用官方部分 JSON 解析结果，
-不再生成旧的 `__unparsedToolInput` 占位对象；缺失必填字段仍由运行时参数校验拒绝，
-工具审批与执行权限保持原有边界。工具结果纯文本的 wire 表示由官方实现选择，公开工具结果合同不变。
+- `model-provider.ts`：按实际模型选择 backend，每次请求用当前 model token 创建 provider，
+  Messages 使用 `authToken`（Bearer），Chat 使用 `apiKey`（Bearer）。自定义 fetch 只允许向
+  对应 Go 代理路径发送 POST，删除 `x-api-key`，为子 Agent 设置 `X-Claude-Code-Agent-Id`，
+  禁止重定向，总超时 300 秒。Chat 请求体把 `max_tokens` 改名为 `max_completion_tokens`。
+- `model-prompt.ts`：把 DSH 历史转换为 AI SDK prompt。系统提示合并为首条 system 消息；
+  工具调用参数解析失败时保留 `__unparsedToolInput` 占位对象；工具结果只接受文本，
+  错误结果映射为 `error-text`。Messages 的 reasoning 仅在 replay 中有 `signature` 或
+  `redactedData` 时作为 thinking 回传，否则降级为文本；Chat 的 reasoning 以
+  `reasoning_content` 回传。Messages 默认输出上限 8192，Chat 未显式指定时不发送上限；
+  temperature 与 stop 原样传递。Messages 关闭 SDK 默认的 `eager_input_streaming`，
+  避免向 Anthropic 兼容网关发送非必需字段。
+- `model-stream.ts`：把 stream part 映射为 DSH `StreamChunk`。内容块按 SDK part ID 首次
+  出现顺序编号：Messages 的文本与 thinking 使用原生 content block index，Chat 依次为文本、
+  reasoning 和各工具，与 Go observer 的编号一致。block-end 在终态统一发出；
+  `tool-calls` 必须含工具，`stop` 不能含工具，`length` 映射为 max-tokens，其余结束原因
+  或缺少终态均视为 `TRANSPORT` 失败，无内容为 `EMPTY_RESPONSE`。
 
-新 replay 使用官方 `kind=pi-ai/version=2`，保留其签名和工具恢复数据。OMA 只在 response.oma
-补充模型消息 ID、Go Request-Id，并在 block.omaIndex 保存公开事件使用的内容索引。
-`onProviderStreamEvent` 在首个正文分片前记录模型消息身份，Messages 同时关联原生 block index；
-Chat 按内容块首次出现顺序编号，与 Go observer 保持一致。CCRv2 实时预览、完成消息与
-历史恢复使用这些元数据生成同一组稳定事件 ID。
+错误以 `LlmError` 抛出，由 DSH 运行时转换为终态 finish chunk。HTTP 错误优先读取响应体
+`error.message`，按上下文超限、额度耗尽、429、401/403、5xx 分类；流内错误同样分类。
+取消时 adapter 主动取消 SDK stream，从而关闭到 Go 代理的 HTTP 响应体。
 
-旧 `oma-messages-v1` 和 `oma-chat-completions-v1` 历史在请求边界转换为官方 replay schema，
-保持内容和持久日志不变，原有 Messages thinking signature 继续回传。旧公开事件仍按其旧
-replay 索引恢复，不重写已存储事件身份。已有官方 pi-ai replay 直接复用。
+replay 继续使用 `oma-messages-v1` 与 `oma-chat-completions-v1`。response 保存模型消息 ID、
+Go Request-Id 与原始结束原因；blocks 保存每个内容块的公开事件索引，Messages 另存
+thinking 签名或 redacted 数据。CCRv2 实时预览、完成消息与历史恢复使用这些元数据生成
+同一组稳定事件 ID。旧 `kind=pi-ai` replay 中的 `thinkingSignature` 仍可回传。
 
-Worker 单测位于 `oma-brain-dsh/tests/chat-completions.test.ts`，覆盖异常流、HTTP 错误、取消、
-工具分片、用量尾帧、历史编码、公开身份、主子模型 backend 选择和凭据轮换。
+Worker 单测位于 `oma-brain-dsh/tests/chat-completions.test.ts` 与 `adapters.test.ts`，覆盖异常流、
+HTTP 与流内错误、取消、工具分片、大参数线性耗时、用量尾帧、历史编码、公开身份、
+主子模型 backend 选择和凭据轮换。
 
 `oma-brain-dsh/tests/chat-runtime.test.ts` 通过原生 Brain 与本地协议 fixture 执行工具审批、工具结果下一轮回传、关闭后历史恢复，确认恢复不会重复执行已完成的工具。该测试不连接真实模型或 Worker 沙箱。

@@ -80,7 +80,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(b.publicLog.get("thinking_result")?.is_error).toBe(false);
   });
 
-  test("official tool JSON parsing retains a correlated validation failure", async () => {
+  test("malformed tool JSON retains a failed result and continues with correlated history", async () => {
     const b = backend();
     const raw = '{"x": 2, "y": \u0001}';
     const events = toolEvents();
@@ -92,7 +92,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(b.requests).toHaveLength(2);
     const blocks = b.requests[1]!.messages.flatMap((m: Payload) => m.content);
     expect(blocks).toContainEqual({ type: "tool_use", id: "call_1", name: "Bash",
-      input: { x: 2 } });
+      input: { __unparsedToolInput: { raw, len: raw.length } } });
     const result = blocks.find((block: Payload) => block.type === "tool_result");
     expect(result).toMatchObject({ tool_use_id: "call_1", is_error: true });
     expect(typeof result.content).toBe("string");
@@ -121,8 +121,7 @@ describe("original dsh loop over CCRv2", () => {
     await session.receive("stdout", { message: { content: "run" } });
     const result = b.requests[1]!.messages.flatMap((m: Payload) => m.content)
       .find((block: Payload) => block.type === "tool_result");
-    expect(result).toMatchObject({ tool_use_id: "call_1", is_error: false,
-      content: "exact stdout\n" });
+    expect(result).toEqual({ type: "tool_result", tool_use_id: "call_1", content: "exact stdout\n" });
     const published = [...b.publicLog.values()].find((event) => event.type === "user");
     expect(published?.message.content[0]).toMatchObject({ tool_use_id: "call_1", is_error: false,
       content: [{ type: "text", text: result.content }] });

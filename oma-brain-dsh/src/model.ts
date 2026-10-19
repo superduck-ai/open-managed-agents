@@ -1,8 +1,10 @@
+import type { LanguageModelV4StreamResult } from "@ai-sdk/provider";
 import { LlmAdapter, LlmError, type GenerateOptions, type StreamChunk, type LlmResolvedModelInfo } from "@deepseek-ai/dsh-llm";
 import { OmaApi } from "./api.ts";
-import { modelProvider, type ModelIdentity } from "./model-provider.ts";
-import { object } from "./json.ts";
-import { modelHistory } from "./model-history.ts";
+import { languageModel, modelBackend } from "./model-provider.ts";
+import { modelCall } from "./model-prompt.ts";
+import { ModelStream, modelError } from "./model-stream.ts";
+import { logSystemPrompt } from "./prompt/debug.ts";
 
 export class OmaModelAdapter extends LlmAdapter {
   constructor(readonly api: OmaApi) { super(); }
@@ -14,23 +16,32 @@ export class OmaModelAdapter extends LlmAdapter {
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     options.signal?.throwIfAborted();
     if (!options.sessionId) throw new LlmError("Model request has no session identity", "INVALID_ARGS");
-    const assignment = this.api.assignment(this.api.modelSessions.get(options.sessionId) ?? options.sessionId);
-    const backend = assignment.launch.model_backends ? assignment.launch.model_backends[options.model] : "messages";
-    if (backend !== "messages" && backend !== "chat_completions")
-      throw new LlmError("Model API backend is unavailable; reload the session configuration", "INVALID_ARGS");
-    this.api.modelResponses.delete(options.sessionId);
-    const identity: ModelIdentity = { indices: [] };
-    const adapter = modelProvider(this.api, options, assignment, backend, identity);
-    for await (const chunk of adapter.stream(modelHistory(options))) {
-      if (chunk.type !== "finish" || !chunk.replayState) {
-        yield "index" in chunk ? { ...chunk, index: identity.indices[chunk.index] ?? chunk.index } : chunk;
-        continue;
+    const sessionId = String(options.sessionId);
+    const assignment = this.api.assignment(this.api.modelSessions.get(sessionId) ?? sessionId);
+    const backend = modelBackend(assignment, options.model);
+    const call = modelCall(options, backend);
+    this.api.modelResponses.delete(sessionId);
+    let result: LanguageModelV4StreamResult;
+    try {
+      result = await languageModel(this.api, assignment, backend, sessionId, options.model).doStream(call);
+    } catch (error) { throw modelError(error, options.signal); }
+    if (result.request?.body && typeof result.request.body === "object") logSystemPrompt(sessionId, result.request.body);
+    const stream = new ModelStream(backend, result.response?.headers?.["request-id"]);
+    const reader = result.stream.getReader();
+    const cancel = () => { reader.cancel(options.signal?.reason).catch(() => undefined); };
+    options.signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      for (let next = await reader.read(); !next.done; next = await reader.read()) {
+        yield* stream.accept(next.value);
+        if (stream.messageID) this.api.modelResponses.set(sessionId, stream.messageID);
       }
-      const blocks = chunk.replayState.blocks?.map((block, index) => ({ ...object(block), omaIndex: identity.indices[index] ?? index }));
-      yield { ...chunk, replayState: { ...chunk.replayState, ...(blocks ? { blocks } : {}), response: { ...object(chunk.replayState.response),
-        oma: { ...(identity.messageID ? { messageID: identity.messageID } : {}),
-          ...(identity.requestID ? { requestID: identity.requestID } : {}) },
-      } } };
+      options.signal?.throwIfAborted();
+      yield* stream.finish();
+    } catch (error) {
+      throw modelError(error, options.signal);
+    } finally {
+      options.signal?.removeEventListener("abort", cancel);
+      cancel();
     }
   }
 }

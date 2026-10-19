@@ -70,8 +70,8 @@ test("OMA Messages adapter streams tools and preserves signed history", async ()
   expect(finish).toMatchObject({
     type: "finish", reason: { kind: "tool-calls" },
     replayState: {
-      response: { kind: "pi-ai", stopReason: "toolUse" },
-      blocks: [{ type: "tool-call" }],
+      response: { format: "oma-messages-v1", stopReason: "tool_use" },
+      blocks: [{ index: 0 }],
     },
   });
   const saved = request.messages[1]!;
@@ -94,7 +94,7 @@ test("OMA Messages adapter rejects incomplete streams and honors cancellation", 
   }) as typeof fetch);
   const a = assignment(); api.assignments.set(a.session_id, a);
   const adapter = new OmaModelAdapter(api);
-  expect((await collect(adapter.stream(options(a.session_id)))).at(-1)).toMatchObject({ type: "finish", reason: { kind: "error" } });
+  await expect(collect(adapter.stream(options(a.session_id)))).rejects.toMatchObject({ code: "TRANSPORT" });
   expect(requests).toBe(1);
   await expect(collect(adapter.stream({ ...options(a.session_id), signal: AbortSignal.abort() }))).rejects.toThrow();
   expect(requests).toBe(1);
@@ -126,11 +126,12 @@ test("OMA Messages adapter maps Anthropic controls, tools, results and cache usa
   expect(body).toMatchObject({ model: "test-model", stream: true, system: [{ type: "text", text: "instructions" }], max_tokens: 1234,
     temperature: 0.2, tools: [{ name: "Bash", input_schema: { type: "object" } }] });
   expect(body).not.toHaveProperty("thinking");
+  expect(body.tools[0]).not.toHaveProperty("eager_input_streaming");
   expect(body.messages[1].content).toEqual([{ type: "tool_use", id: "call", name: "Bash", input: { command: "pwd" } }]);
   expect(body.messages[2].content).toEqual([{ type: "tool_result", tool_use_id: "call", is_error: true,
     content: "permission denied" }]);
   expect(chunks).toContainEqual({ type: "usage", usage: {
-    inputTokens: 10, outputTokens: 5, cacheReadTokens: 12, cacheWriteTokens: 3, totalTokens: 30,
+    inputTokens: 10, outputTokens: 5, cacheReadTokens: 12, cacheWriteTokens: 3,
   } });
   expect(chunks.at(-1)).toMatchObject({ type: "finish", reason: { kind: "stop" } });
 });
@@ -139,12 +140,12 @@ test("OMA Messages adapter rejects HTTP, in-stream and empty response errors", a
   for (const [response, code] of [
     [Response.json({ error: { message: "Service unavailable" } }, { status: 503 }), "SERVER"],
     [Response.json({ error: { message: "Rate limited" } }, { status: 429 }), "RATE_LIMIT"],
-    [eventsResponse([{ type: "error", error: { message: "context window exceeded" } }]), "CONTEXT_WINDOW_EXCEEDED"],
+    [eventsResponse([{ type: "error", error: { type: "invalid_request_error", message: "context window exceeded" } }]), "CONTEXT_WINDOW_EXCEEDED"],
     [eventsResponse(textEvents("empty").filter((event) => !event.type.startsWith("content_block_"))), "EMPTY_RESPONSE"],
   ] as const) {
     const api = new OmaApi("http://model.test", (async (_input, _init) => response) as typeof fetch);
     const a = assignment(); api.assignments.set(a.session_id, a);
-    expect((await collect(new OmaModelAdapter(api).stream(options(a.session_id)))).at(-1)).toMatchObject({ type: "finish", reason: { kind: "error", failure: { code } } });
+    await expect(collect(new OmaModelAdapter(api).stream(options(a.session_id)))).rejects.toMatchObject({ code });
   }
 });
 

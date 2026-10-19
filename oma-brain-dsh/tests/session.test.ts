@@ -73,7 +73,7 @@ describe("original dsh loop over CCRv2", () => {
     for (const message of messages.slice(1)) {
       expect(message.id).toMatch(/^sevt_[a-f0-9]{32}$/);
       expect(b.timeline.filter((event) => event.type === "event_start" && event.event.id === message.id)).toHaveLength(1);
-      expect(b.timeline.filter((event) => event.type === "event_stop" && event.event_id === message.id)).toHaveLength(1);
+      expect(b.timeline.filter((event) => event.type === "event_stop")).toHaveLength(0);
     }
     const reasoning = b.timeline.find((event) => event.type === "event_delta" && event.event_id === messages[1]!.id);
     expect(reasoning?.delta.content).toEqual({ type: "thinking", thinking: "检查回复" });
@@ -344,9 +344,13 @@ describe("original dsh loop over CCRv2", () => {
     expect(approved).toBeLessThan(sandbox);
     expect(sandbox).toBeLessThan(dispatch);
     expect(dispatch).toBeLessThan(execution);
-    expect(b.timeline.slice(sandbox, dispatch).some(
-      (e) => e.type === "private.persist" && e.payload.subtype === "dsh_log",
+    expect(b.timeline.slice(0, dispatch).some(
+      (e) => e.type === "private.persist" && e.payload.subtype === "dsh_log" &&
+        JSON.stringify(e.payload.data.events).includes('"tool-call"'),
     )).toBe(true);
+    expect(b.timeline.filter(
+      (e) => e.type === "private.persist" && e.payload.subtype === "dsh_log" && !e.payload.data.events.length,
+    )).toHaveLength(1);
     const result = state((s) => s.phase === "result" && !!s.toolOutcomes.call_1);
     const nextModel = b.timeline.findIndex((e, i) => i > execution && e.type === "model.request");
     expect(nextModel).toBeGreaterThan(result);
@@ -463,11 +467,12 @@ describe("original dsh loop over CCRv2", () => {
     for (const message of messages) {
       const id = message.id;
       expect(starts.filter((event) => event.event.id === id)).toHaveLength(1);
-      const stopped = b.timeline.findIndex(
-        (event) => event.type === "event_stop" && event.event_id === id,
+      const started = b.timeline.findIndex(
+        (event) => event.type === "event_start" && event.event.id === id,
       );
-      expect(stopped).toBeGreaterThan(-1);
-      expect(stopped).toBeLessThan(b.timeline.indexOf(message));
+      expect(started).toBeGreaterThan(-1);
+      expect(started).toBeLessThan(b.timeline.indexOf(message));
+      expect(b.timeline.filter((event) => event.type === "event_stop")).toHaveLength(0);
     }
   });
 
@@ -492,10 +497,9 @@ describe("original dsh loop over CCRv2", () => {
       (event) => event.type === "agent.message",
     );
     expect(starts).toHaveLength(1);
-    expect(stops).toHaveLength(1);
+    expect(stops).toHaveLength(0);
     expect(messages).toHaveLength(1);
     expect(starts[0]!.event.id).toBe(messages[0]!.id);
-    expect(stops[0]!.event_id).toBe(messages[0]!.id);
   });
 
   test("terminal outbox survives failed publication and is republished without resampling", async () => {

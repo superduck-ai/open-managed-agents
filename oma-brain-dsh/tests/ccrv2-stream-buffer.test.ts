@@ -34,12 +34,12 @@ function fixture(send: (request: CcrHttpRequest) => Promise<Response> = async ()
   return { clock, client, requests, credentials };
 }
 
-test("a fixed 100ms window batches raw start/delta/stop events and still waits for HTTP confirmation", async () => {
+test("a fixed 100ms window batches raw start/delta events and still waits for HTTP confirmation", async () => {
   const response = Promise.withResolvers<void>();
   const { client, clock, requests, credentials } = fixture(async () => { await response.promise; return new Response(null, { status: 204 }); });
   const first = [{ type: "event_start", uuid: "start", event: { type: "agent.message", id: "message" } }, delta("A")];
   const child = { ...delta("B"), session_thread_id: "child" };
-  const end = { type: "event_stop", uuid: "stop", event_id: "message" };
+  const end = delta("Z", "last");
   const calls = [client.events("s", first)];
   clock.advance(40); calls.push(client.events("s", [child]));
   clock.advance(40); calls.push(client.events("s", [end]));

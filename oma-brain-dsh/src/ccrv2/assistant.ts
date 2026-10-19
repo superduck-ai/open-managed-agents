@@ -44,14 +44,13 @@ export class CcrAssistantStream {
     if (!stream) return [];
     if (frame.type === "end") {
       this.streams.delete(key);
-      return [...stream.blocks.values()].map((id) => ({ type: "event_stop", event_id: id }));
+      return [];
     }
     if (frame.type !== "chunk") return [];
     const chunk = frame.chunk;
     if (chunk.type === "block-end") {
-      const id = stream.blocks.get(chunk.index);
       stream.blocks.delete(chunk.index);
-      return id ? [{ type: "event_stop", event_id: id }] : [];
+      return [];
     }
     if ((chunk.type !== "text-delta" && chunk.type !== "reasoning-delta") || !chunk.text) return [];
     const type = chunk.type === "reasoning-delta" ? "agent.thinking" : "agent.message";
@@ -63,7 +62,7 @@ export class CcrAssistantStream {
       payloads.push({ type: "event_start", event: { type, id } });
     }
     payloads.push({ type: "event_delta", event_id: id, delta: {
-      type: "content_delta", content: chunk.type === "reasoning-delta"
+      type: "content_delta", index: 0, content: chunk.type === "reasoning-delta"
         ? { type: "thinking", thinking: chunk.text } : { type: "text", text: chunk.text },
     } });
     return payloads;

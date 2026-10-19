@@ -92,7 +92,7 @@ test("session previews enter one stream window and terminal publication still wa
   let previewCalls = 0;
   const events = backend.events.bind(backend);
   backend.events = async (id, payloads) => {
-    if (payloads.some((payload) => ["event_start", "event_delta", "event_stop"].includes(payload.type))) previewCalls++;
+    if (payloads.some((payload) => ["event_start", "event_delta"].includes(payload.type))) previewCalls++;
     await client.events(id, payloads);
     await events(id, payloads);
   };
@@ -121,7 +121,7 @@ test("session previews enter one stream window and terminal publication still wa
     await session.open();
     turn = session.receive("input", { content: "hello" });
     await completed.promise;
-    expect(previewCalls).toBe(3);
+    expect(previewCalls).toBe(2);
     expect(timers.size).toBe(1);
     expect(batches.flat().filter((event) => event.ephemeral)).toEqual([]);
     expect(session.state.outbox.length).toBeGreaterThan(0);
@@ -129,9 +129,9 @@ test("session previews enter one stream window and terminal publication still wa
     [...timers][0]!();
     await sending.promise;
     const previews = batches.flat().filter((event) => event.ephemeral);
-    expect(previews.map((event) => event.payload.type)).toEqual(["event_start", "event_delta", "event_delta", "event_stop"]);
+    expect(previews.map((event) => event.payload.type)).toEqual(["event_start", "event_delta", "event_delta"]);
     expect(previews.filter((event) => event.payload.type === "event_delta").map((event) => event.payload.delta))
-      .toEqual(["A", "B"].map((text) => ({ type: "content_delta", content: { type: "text", text } })));
+      .toEqual(["A", "B"].map((text) => ({ type: "content_delta", index: 0, content: { type: "text", text } })));
     expect(session.state.outbox.length).toBeGreaterThan(0);
     expect(backend.acknowledged).toEqual([]);
     response.resolve(); await turn;
@@ -158,6 +158,11 @@ test("failed final persistence releases the session writer and permits replaceme
         id: "replaced", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup,
       });
       await session.open();
+      backend.persist = async (id, subtype, data, agentId) => {
+        if (subtype === "dsh_log") throw new Error("Lease expired");
+        await persist(id, subtype, data, agentId);
+      };
+      await session.receive(`turn-${i}`, { content: "hello" }).catch(() => {});
       backend.persist = async () => { throw new Error("Lease expired"); };
       await expect(session.close()).rejects.toThrow();
       expect(() => ctx.ccrv2.forget(session.id)).not.toThrow();
@@ -627,5 +632,37 @@ test("image and document references reach the model and survive history restorat
     expect(history.at(-1)!.content).toEqual([{ type: "text", text: "And now?" }]);
   } finally {
     await restored.ctx.fiber.dispose();
+  }
+});
+
+test("flushes without new log events do not write empty dsh_log batches", async () => {
+  const backend = new MemoryBackend();
+  const { ctx, session } = await mountMediaKernel(backend);
+  try {
+    await session.receive("first", { content: "hello" });
+    await session.flushEvents();
+    await session.flushEvents();
+    const logs = (backend.logs.get("a") ?? []).filter((event) => event.subtype === "dsh_log");
+    const empty = logs.filter((event) => !event.data.events.length);
+    expect(empty).toHaveLength(1);
+    expect(logs.indexOf(empty[0]!)).toBe(0);
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});
+
+test("a redelivered control input is acknowledged without repeating its effect", async () => {
+  const backend = new MemoryBackend();
+  const { ctx, session } = await mountMediaKernel(backend);
+  try {
+    const request = { type: "control_request", request_id: "req-1", request: { subtype: "set_model", model: "other" } };
+    await session.receive("control-1", request);
+    await session.receive("control-1", request);
+    await Bun.sleep(0);
+    const responses = (backend.output.get("a") ?? []).filter((event) => event.type === "control_response");
+    expect(responses).toHaveLength(1);
+    expect(backend.acknowledged).toEqual(["a:control-1", "a:control-1"]);
+  } finally {
+    await ctx.fiber.dispose();
   }
 });

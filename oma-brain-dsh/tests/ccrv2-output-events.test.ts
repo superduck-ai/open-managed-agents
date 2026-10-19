@@ -34,7 +34,7 @@ test("all output sources share a FIFO queue with 100-event batches and HTTP comp
     } finally { active--; }
   });
   const payloads = Array.from({ length: 120 }, (_, index) => ({
-    type: ["event_start", "event_delta", "event_stop", "agent.message"][index % 4]!, uuid: `event-${index}`,
+    type: ["event_start", "event_delta", "event_delta", "agent.message"][index % 4]!, uuid: `event-${index}`,
     session_thread_id: "child", delta: { text: String(index) },
   }));
   const keepAlive = new AbortController();
@@ -156,7 +156,7 @@ test("output retries retain snapshots and UUIDs, refresh tokens, log safe fields
   });
   const detach = client.bindLease("private-session").subscribe!(() => {});
   client.config.sleep = async (ms) => { waits.push(ms); if (waits.length === 1) { waiting.resolve(); await resume.promise; } };
-  const payloads = [{ type: "agent.message", content: { text: "private-original" } }, { type: "event_stop", uuid: "private-fixed" }];
+  const payloads = [{ type: "agent.message", content: { text: "private-original" } }, { type: "agent.thinking", uuid: "private-fixed" }];
   let confirmed = false;
   const pending = client.events("private-session", payloads).then(() => { confirmed = true; });
   try {

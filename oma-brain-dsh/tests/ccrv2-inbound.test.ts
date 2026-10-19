@@ -28,7 +28,7 @@ test("registration validates epochs and never retries ambiguous claims", async (
 });
 
 test("SSE rejects cross-session input and permanent HTTP errors without reconnecting", async () => {
-  for (const response of [...[401, 403, 404].map((status) => new Response(null, { status })), new Response(
+  for (const response of [...[401, 403, 404, 409, 410].map((status) => new Response(null, { status })), new Response(
     `event: client_event\ndata: ${JSON.stringify({ session_id: "other", event_id: "id", payload: { type: "user" } })}\n\n`,
     { headers: { "Content-Type": "text/event-stream" } },
   )]) {
@@ -163,7 +163,7 @@ test("SSE skips unsupported and malformed events while retaining their frame cur
 test("SSE retries nonpermanent HTTP responses with Superduck backoff and a ten minute budget", async () => {
   let now = 0;
   const delays: number[] = [];
-  const statuses = [409, 410, 400, 408, 429, 500];
+  const statuses = [400, 408, 429, 500];
   const c = new CcrClient({
     credentials: () => ({ token: "ingress", workerEpoch: 7 }), sessionIds: () => ["session"],
     random: () => 0.5, now: () => now,

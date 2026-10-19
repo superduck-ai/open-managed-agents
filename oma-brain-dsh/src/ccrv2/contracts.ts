@@ -8,7 +8,7 @@ import type { DeliveryUpdate, RequiresActionDetails, SessionState, SessionExtern
  */
 export interface CcrBackend {
   getWorkerState(id: string, workerEpoch?: number, signal?: AbortSignal): Promise<WorkerStateReadResult>;
-  privateEvents(id: string, options?: { subagents?: boolean }): Promise<Payload[]>;
+  privateEvents(id: string, options?: { subagents?: boolean; signal?: AbortSignal }): Promise<Payload[]>;
   persist(id: string, subtype: string, data: unknown, agentId?: string): Promise<void>;
   /** Honour cancellation for activity keepalives; durable callers omit signal. */
   events(id: string, payloads: Payload[], signal?: AbortSignal): Promise<void>;

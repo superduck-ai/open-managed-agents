@@ -104,6 +104,7 @@ class RemoteHandle implements SessionHandle {
     return this.serialize(async () => {
       options?.signal?.throwIfAborted();
       const batch = this.buffered.slice();
+      if (!batch.length) return;
       assertContiguous(this.id, batch, this.record.events.length);
       await this.store.persist(this.id, {
         header: this.header,
@@ -219,6 +220,7 @@ export class CcrPersistence extends SessionPersistence {
     const handle = new RemoteHandle(this, header.id, "write", record);
     this.writers.set(header.id, handle);
     try {
+      await this.persist(header.id, { header: record.header, inherited: 0, events: [] });
       await handle.flush();
     } catch (error) {
       this.writers.delete(header.id);

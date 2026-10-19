@@ -13,7 +13,7 @@ const items: OrganizationPickerItem[] = [
   { uuid: 'other', name: '伙伴公司-星河-财务部', role: 'user' },
   ...Array.from({ length: 45 }, (_, index) => ({
     uuid: `shift-${index}`,
-    name: `集团-制造部-一号工厂-甲班-${index}`,
+    name: `集团-制造部-一号工厂-甲班${index}`,
     role: 'admin' as const,
   })),
 ];
@@ -24,6 +24,8 @@ test('组织名保留末级部门，路径包含五级及以下', () => {
     detail: '平台中心 / 研发平台 / 业务部 / 集团',
   });
   expect(organizationNameParts('综合管理部')).toEqual({ title: '综合管理部', detail: '' });
+  expect(organizationNameParts('集团-部门-7')).toEqual({ title: '部门-7', detail: '集团' });
+  expect(organizationNameParts('甲班-12')).toEqual({ title: '甲班-12', detail: '' });
 });
 
 test('未搜索时只保留当前组织', () => {

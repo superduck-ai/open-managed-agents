@@ -14,7 +14,18 @@ export type OrganizationPickerResult = {
 };
 
 export function organizationNameParts(name: string) {
-  const segments = name.split('-').filter((segment) => segment.length > 0);
+  const segments = name
+    .split('-')
+    .filter((segment) => segment.length > 0)
+    .reduce<string[]>((levels, segment) => {
+      const previous = levels.at(-1);
+      if (previous && /^\d+$/.test(segment)) {
+        levels[levels.length - 1] = `${previous}-${segment}`;
+        return levels;
+      }
+      levels.push(segment);
+      return levels;
+    }, []);
   if (segments.length <= 1) return { title: name, detail: '' };
   return { title: segments[segments.length - 1], detail: segments.slice(0, -1).reverse().join(' / ') };
 }

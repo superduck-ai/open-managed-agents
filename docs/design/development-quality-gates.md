@@ -45,7 +45,7 @@
 
 `integration` 标签将集成测试加入对应 package，因此集成命令也运行包内单测。省略标签时，即使环境配置了真实依赖，也不会编译或执行集成测试。`e2e` 和 `e2b_integration` 继续显式启用既有场景；`tests/` 的共享 fixture 同时供这些构建使用。verify-be 子测试显式传递 `-tags=integration`，保持原场景和完整 suite 的覆盖，不将默认单测结果冒充集成验收。
 
-常规 lint、死代码检查与 package 枚举启用 `integration` 标签，保留对集成源码的静态检查。复杂度与重复代码仍按既有生产代码范围分析。`scripts/tests/go-packages_test.sh` 同时守卫仅含集成测试的 package 不会从门禁枚举中消失。CI 的普通单测入口不配置真实依赖，也不启用集成标签。仓库历史验收记录中拆分之前的 `just test` 仍表示当时的全量入口，不改写历史结果。
+常规 lint、死代码检查与 package 枚举启用 `integration` 标签，保留对集成源码的静态检查。复杂度与重复代码仍按既有生产代码范围分析。`scripts/tests/go-packages_test.sh` 同时守卫仅含集成测试的 package 不会从门禁枚举中消失。CI 的测试分层脚本使用 runner 默认提供的 `grep` 检查 package 和文件列表，不依赖额外安装 ripgrep。CI 的普通单测入口不配置真实依赖，也不启用集成标签。仓库历史验收记录中拆分之前的 `just test` 仍表示当时的全量入口，不改写历史结果。
 
 修改 schema 或 handler 后默认运行普通单测，不再自动触发整个集成包。需要定向集成验证时显式选择最小范围，整域或全量回归按用户指定范围单独触发。缺少依赖、skip 或未执行不能报告为集成通过；`just test-integration` 与 verify-be 的授权要求分别遵循 `AGENTS.md`。
 

@@ -851,7 +851,11 @@ func (h *Handler) retrieveThreadRoute(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return mapThreadLoadError(err, threadID)
 	}
-	httpapi.WriteJSON(w, http.StatusOK, h.responseFromThreadWithUsage(r.Context(), session.WorkspaceUUID, session.ExternalID, thread))
+	response, err := h.responseFromThreadWithUsage(r.Context(), session.WorkspaceUUID, session.ExternalID, thread)
+	if err != nil {
+		return internalError("Could not retrieve thread", fmt.Errorf("load thread %q response: %w", threadID, err))
+	}
+	httpapi.WriteJSON(w, http.StatusOK, response)
 	return nil
 }
 

@@ -38,11 +38,11 @@ func CollectInfo(repoRoot string) (InfoReport, bool, error) {
 	if !found {
 		return report, false, nil
 	}
-	base, err := loadBaseConfig(repoRoot)
+	_, err = loadBaseConfig(repoRoot)
 	if err != nil {
 		return report, false, err
 	}
-	layout, err := NewLayout(binding, base, repoRoot)
+	layout, err := NewLayout(binding, repoRoot)
 	if err != nil {
 		return report, false, err
 	}

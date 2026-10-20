@@ -33,7 +33,7 @@ func setRuntimeLocked(ctx context.Context, repoRoot string, apiPort, webPort int
 	if err != nil {
 		return err
 	}
-	layout, err := NewLayout(binding, base, repoRoot)
+	layout, err := NewLayout(binding, repoRoot)
 	if err != nil {
 		return err
 	}
@@ -79,14 +79,14 @@ func setRuntimeLocked(ctx context.Context, repoRoot string, apiPort, webPort int
 	if err != nil {
 		return err
 	}
-	credentials, found, err := LoadCredentials(layout.CredentialsFile)
+	_, found, err = LoadCredentials(layout.CredentialsFile)
 	if err != nil {
 		return err
 	}
 	if !found {
 		return fmt.Errorf("credentials %s are missing; cannot regenerate the environment config", layout.CredentialsFile)
 	}
-	if err := GenerateConfig(baseConfigPath(repoRoot), layout, base, spec, state, credentials, runtime); err != nil {
+	if err := GenerateConfig(baseConfigPath(repoRoot), layout, base, spec, state, runtime); err != nil {
 		return err
 	}
 	state.Runtime = &runtime

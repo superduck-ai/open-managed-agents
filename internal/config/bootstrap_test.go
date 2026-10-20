@@ -2,36 +2,6 @@ package config
 
 import "testing"
 
-func TestLoadYAMLValidatesNATSNamespace(t *testing.T) {
-	invalid := []string{"S1", "s1.extra", "s*", "s" + repeatChar('a', 16), "-lead", "a.b", "s1 upper"}
-	for _, namespace := range invalid {
-		_, err := loadConfigTestYAML(t, "nats:\n  namespace: "+namespace+"\n")
-		if err == nil {
-			t.Errorf("Load() error = nil for nats.namespace %q, want failure", namespace)
-		}
-	}
-	for _, namespace := range []string{"s1", "slot-1_x", "trail-"} {
-		cfg, err := loadConfigTestYAML(t, "nats:\n  namespace: "+namespace+"\n")
-		if err != nil {
-			t.Fatalf("Load() error = %v for nats.namespace %q, want success", err, namespace)
-		}
-		if cfg.NATS.Namespace != namespace {
-			t.Fatalf("NATS.Namespace = %q, want %q", cfg.NATS.Namespace, namespace)
-		}
-	}
-	if cfg, err := loadConfigTestYAML(t, ""); err != nil || cfg.NATS.Namespace != "" {
-		t.Fatalf("Load() without namespace = %q, %v, want empty namespace", cfg.NATS.Namespace, err)
-	}
-}
-
-func repeatChar(char byte, count int) string {
-	value := make([]byte, count)
-	for i := range value {
-		value[i] = char
-	}
-	return string(value)
-}
-
 func TestLoadYAMLResolvesBootstrapIdentityFields(t *testing.T) {
 	cfg, err := loadConfigTestYAML(t, `
 bootstrap:

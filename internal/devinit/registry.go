@@ -16,17 +16,11 @@ import (
 const registryFileName = "oma-devinit-registry.json"
 
 // registryEntry records one bound environment. Worktree may point at a
-// deleted directory; entries with a missing path are orphans that teardown
-// can reclaim. Database, Bucket and Namespace let orphan teardown clean
-// resources without the original worktree.
+// deleted directory; entries with a missing path are orphans that teardown can reclaim.
 type registryEntry struct {
 	EnvID     string `json:"env_id"`
 	Worktree  string `json:"worktree"`
 	InitFile  string `json:"init_file"`
-	RedisPort int    `json:"redis_port"`
-	Database  string `json:"database"`
-	Bucket    string `json:"bucket"`
-	Namespace string `json:"namespace"`
 	UpdatedAt string `json:"updated_at"`
 }
 

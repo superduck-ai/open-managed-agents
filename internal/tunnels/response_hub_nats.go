@@ -59,14 +59,14 @@ type responseWaiter struct {
 	bytes         int
 }
 
-func newResponseHub(ctx context.Context, connection *nats.Conn, subjectPrefix string) (*responseHub, error) {
+func newResponseHub(ctx context.Context, connection *nats.Conn) (*responseHub, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	id, err := randomOpaqueToken(24)
 	if err != nil {
 		return nil, err
 	}
-	h := &responseHub{connection: connection, subject: subjectPrefix + brokerKey(id),
+	h := &responseHub{connection: connection, subject: "oma.tunnel.response.v1." + brokerKey(id),
 		waiters: make(map[string]*responseWaiter), receipts: make(map[string]responseReceipt)}
 	h.subscription, err = connection.Subscribe(h.subject, h.receive)
 	if err != nil {

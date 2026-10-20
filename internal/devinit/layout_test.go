@@ -1,6 +1,7 @@
 package devinit
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +31,7 @@ func testBinding() EnvBinding {
 }
 
 func TestNewLayoutDerivesRoutes(t *testing.T) {
-	layout, err := NewLayout(testBinding(), testBaseConfig(), "/repo")
+	layout, err := NewLayout(testBinding(), "/repo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,14 +48,7 @@ func TestNewLayoutDerivesRoutes(t *testing.T) {
 			t.Errorf("%s = %q, want %q", name, path, want)
 		}
 	}
-	derived, _, err := deriveDatabaseURL(testBaseConfig().Database.URL, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(derived, "/claude_api?") {
-		t.Errorf("deriveDatabaseURL() = %q", derived)
-	}
-	withPort, err := replaceURLPort(derived, 45480)
+	withPort, err := replaceURLPort(testBaseConfig().Database.URL, 45480)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,27 +71,26 @@ func TestNewLayoutRejectsInvalidInput(t *testing.T) {
 	}
 	for name, binding := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewLayout(binding, testBaseConfig(), "/repo"); err == nil {
+			if _, err := NewLayout(binding, "/repo"); err == nil {
 				t.Fatalf("NewLayout() error = nil for %s, want failure", name)
 			}
 		})
 	}
 }
 
-func TestProbeFreePort(t *testing.T) {
-	port, err := ProbeFreePort(47000)
+func TestProbeFreePortSkipsOccupiedPort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if port < 47000 {
-		t.Fatalf("ProbeFreePort() = %d, want >= 47000", port)
-	}
-	second, err := ProbeFreePort(port)
+	defer listener.Close()
+	occupied := listener.Addr().(*net.TCPAddr).Port
+	port, err := ProbeFreePort(occupied)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second < port {
-		t.Fatalf("ProbeFreePort(%d) = %d", port, second)
+	if port <= occupied {
+		t.Fatalf("ProbeFreePort returned %d instead of skipping occupied port %d", port, occupied)
 	}
 }
 

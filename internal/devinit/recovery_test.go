@@ -17,7 +17,7 @@ func TestReserveIdentityRejectsMissingCredential(t *testing.T) {
 	}
 }
 
-func TestReservedIdentitiesSurvivePartialCommit(t *testing.T) {
+func TestReservedIdentitiesSurviveStateReload(t *testing.T) {
 	dir := t.TempDir()
 	layout := Layout{StateFile: filepath.Join(dir, "state.json"), CredentialsFile: filepath.Join(dir, "credentials.json")}
 	spec := Spec{OrganizationName: "OMA", UserEmail: "test@oma.ai", Workspaces: []WorkspaceSpec{

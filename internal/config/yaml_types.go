@@ -104,7 +104,6 @@ type yamlNATSConfig struct {
 	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
 	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
 	URL               string                  `yaml:"url"`
-	Namespace         string                  `yaml:"namespace"`
 	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
 	DrainTimeout      time.Duration           `yaml:"drain_timeout"`
 }
@@ -149,7 +148,6 @@ func newYAMLConfig() yamlConfig {
 			WorkerEventStream: defaults.NATS.WorkerEventStream,
 			WebhookStream:     defaults.NATS.WebhookStream,
 			URL:               defaults.NATS.URL,
-			Namespace:         defaults.NATS.Namespace,
 			ConnectTimeout:    defaults.NATS.ConnectTimeout,
 			DrainTimeout:      defaults.NATS.DrainTimeout,
 		},
@@ -202,7 +200,6 @@ func (input yamlConfig) resolve() Config {
 			WorkerEventStream: input.NATS.WorkerEventStream,
 			WebhookStream:     input.NATS.WebhookStream,
 			URL:               input.NATS.URL,
-			Namespace:         input.NATS.Namespace,
 			ConnectTimeout:    input.NATS.ConnectTimeout,
 			DrainTimeout:      input.NATS.DrainTimeout,
 		},

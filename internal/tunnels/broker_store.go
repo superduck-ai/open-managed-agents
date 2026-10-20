@@ -7,18 +7,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/nats-io/nats.go/jetstream"
 )
 
 const (
-	commandStreamName            = "OMA_TUNNEL_COMMANDS_V1"
-	commandSubjectPrefix         = "oma.tunnel.command.v1."
-	defaultResponseSubjectPrefix = "oma.tunnel.response.v1."
-	maxBrokerValueBytes          = 2 << 20
-	maxCommandConsumers          = 131072 // Existing global Stream consumer limit.
-	maxRequestBindingBytes       = 4096
+	commandStreamName      = "OMA_TUNNEL_COMMANDS_V1"
+	commandSubjectPrefix   = "oma.tunnel.command.v1."
+	maxBrokerValueBytes    = 2 << 20
+	maxCommandConsumers    = 131072 // Existing global Stream consumer limit.
+	maxRequestBindingBytes = 4096
 )
 
 func encodeTunnelJSON(value any, limit int) ([]byte, error) {
@@ -49,22 +47,4 @@ func brokerCapacityError(err error) error {
 		return fmt.Errorf("%w: %v", errCommandStorageFull, err)
 	}
 	return err
-}
-
-type tunnelNaming struct {
-	streamName            string
-	commandSubjectPrefix  string
-	responseSubjectPrefix string
-}
-
-func newTunnelNaming(namespace string) tunnelNaming {
-	if namespace == "" {
-		return tunnelNaming{streamName: commandStreamName, commandSubjectPrefix: commandSubjectPrefix, responseSubjectPrefix: defaultResponseSubjectPrefix}
-	}
-	upper := strings.ToUpper(namespace)
-	return tunnelNaming{
-		streamName:            "OMA_" + upper + "_TUNNEL_COMMANDS_V1",
-		commandSubjectPrefix:  "oma." + namespace + ".tunnel.command.v1.",
-		responseSubjectPrefix: "oma." + namespace + ".tunnel.response.v1.",
-	}
 }

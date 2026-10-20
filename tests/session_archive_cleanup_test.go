@@ -272,7 +272,7 @@ func newSessionCleanupFixture(t *testing.T) *sessionCleanupFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(connection.Close)
-	broker, err := workerevents.NewJetStream(t.Context(), connection, config.WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, Replicas: 1, MaxBytes: 1 << 24, MaxMsgSize: 1 << 20}, "")
+	broker, err := workerevents.NewJetStream(t.Context(), connection, config.WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, Replicas: 1, MaxBytes: 1 << 24, MaxMsgSize: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}

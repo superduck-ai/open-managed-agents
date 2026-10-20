@@ -74,7 +74,7 @@ func validate(cfg Config) error {
 	if err := validateBrainRuntimeConfig(cfg.EnvironmentRunner, cfg.CodeSession); err != nil {
 		return err
 	}
-	if err := validateNATSConfig(cfg.NATS); err != nil {
+	if err := validateNATSStreams(cfg.NATS); err != nil {
 		return err
 	}
 	if err := validateBootstrapConfig(cfg.Bootstrap); err != nil {
@@ -137,28 +137,11 @@ func validate(cfg Config) error {
 	return validateCodeSessionUpstreamProxyMITMConfig(cfg.CodeSession)
 }
 
-func validateNATSConfig(cfg NATSConfig) error {
+func validateNATSStreams(cfg NATSConfig) error {
 	if err := validateWebhookStream(cfg.WebhookStream); err != nil {
 		return err
 	}
-	if err := validateWorkerEventStream(cfg.WorkerEventStream); err != nil {
-		return err
-	}
-	return ValidateNATSNamespace(cfg.Namespace)
-}
-
-var natsNamespacePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,15}$`)
-
-// ValidateNATSNamespace checks the optional message namespace at any boundary
-// that derives stream or subject names from it.
-func ValidateNATSNamespace(namespace string) error {
-	if namespace == "" {
-		return nil
-	}
-	if !natsNamespacePattern.MatchString(namespace) {
-		return errors.New("nats.namespace must be 1-16 characters of [a-z0-9_-] starting with a letter or digit")
-	}
-	return nil
+	return validateWorkerEventStream(cfg.WorkerEventStream)
 }
 
 func validateBootstrapConfig(cfg BootstrapConfig) error {
@@ -507,7 +490,6 @@ func validatePositiveValues(cfg Config) error {
 		{name: "tunnel.presence_ttl", valid: cfg.Tunnel.PresenceTTL > 0},
 		{name: "tunnel.tombstone_ttl", valid: cfg.Tunnel.TombstoneTTL > 0},
 		{name: "tunnel.command_stream.max_bytes", valid: cfg.Tunnel.CommandStream.MaxBytes > 0},
-		{name: "tunnel.command_stream.replicas", valid: cfg.Tunnel.CommandStream.Replicas >= 1},
 		{name: "tunnel.max_body_bytes", valid: cfg.Tunnel.MaxBodyBytes > 0},
 		{name: "tunnel.max_header_bytes", valid: cfg.Tunnel.MaxHeaderBytes > 0},
 		{name: "tunnel.max_header_value_bytes", valid: cfg.Tunnel.MaxHeaderValueBytes > 0},

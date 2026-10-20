@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
@@ -40,7 +41,14 @@ func TestAPIKeyRecoveryPostgreSQL(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		database.Close()
-		if err := db.DropDatabase(context.Background(), parsed.String()); err != nil {
+		maintenanceURL := *parsed
+		maintenanceURL.Path = "/postgres"
+		pool, err := pgxpool.New(context.Background(), maintenanceURL.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pool.Close()
+		if _, err := pool.Exec(context.Background(), `DROP DATABASE "`+strings.TrimPrefix(parsed.Path, "/")+`"`); err != nil {
 			t.Errorf("remove isolated database: %v", err)
 		}
 	})

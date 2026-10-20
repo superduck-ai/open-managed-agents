@@ -169,16 +169,6 @@ func (d *DB) ListenerPool() *pgxpool.Pool {
 }
 
 func EnsureDatabase(ctx context.Context, databaseURL string) error {
-	for _, candidate := range maintenanceCandidates(databaseURL) {
-		if err := ensureDatabaseWithMaintenanceConnection(ctx, databaseURL, candidate); err != nil {
-			continue
-		}
-		return nil
-	}
-	return fmt.Errorf("all database bootstrap connection attempts failed for %s", redactPassword(databaseURL))
-}
-
-func maintenanceCandidates(databaseURL string) []string {
 	var candidates []string
 	for _, maintenanceDB := range []string{"postgres", "template1"} {
 		if candidate, err := maintenanceURL(databaseURL, maintenanceDB); err == nil && !slices.Contains(candidates, candidate) {
@@ -190,48 +180,16 @@ func maintenanceCandidates(databaseURL string) []string {
 			candidates = append(candidates, candidate)
 		}
 	}
-	return candidates
-}
 
-// DropDatabase removes the target database when present. It is a startup
-// maintenance operation used by dev environment teardown only.
-func DropDatabase(ctx context.Context, databaseURL string) error {
-	target, err := url.Parse(databaseURL)
-	if err != nil {
-		return fmt.Errorf("parse database URL: %w", err)
-	}
-	dbName := strings.TrimPrefix(target.Path, "/")
-	if dbName == "" {
-		return errors.New("database URL must include a database name")
-	}
-	for _, candidate := range maintenanceCandidates(databaseURL) {
-		if err := dropDatabaseWithMaintenanceConnection(ctx, candidate, dbName); err != nil {
+	var errs []string
+	for _, candidate := range candidates {
+		if err := ensureDatabaseWithMaintenanceConnection(ctx, databaseURL, candidate); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", redactPassword(candidate), err))
 			continue
 		}
 		return nil
 	}
-	return fmt.Errorf("all database bootstrap connection attempts failed for %s", redactPassword(databaseURL))
-}
-
-func dropDatabaseWithMaintenanceConnection(ctx context.Context, maintenanceDatabaseURL, dbName string) error {
-	maintenancePool, err := openPool(ctx, maintenanceDatabaseURL)
-	if err != nil {
-		return fmt.Errorf("connect maintenance database: %w", err)
-	}
-	defer maintenancePool.Close()
-	maintenanceSQL := newStandardDB(maintenancePool)
-	defer maintenanceSQL.Close()
-	var dbExists bool
-	if err := maintenanceSQL.QueryRowContext(ctx, maintenanceDatabaseExistsQuery, dbName).Scan(&dbExists); err != nil {
-		return fmt.Errorf("check database: %w", err)
-	}
-	if !dbExists {
-		return nil
-	}
-	if _, err := maintenanceSQL.ExecContext(ctx, fmt.Sprintf("drop database %s", quoteIdent(dbName))); err != nil {
-		return fmt.Errorf("drop database %s: %w", dbName, err)
-	}
-	return nil
+	return fmt.Errorf("all database bootstrap connection attempts failed: %s", strings.Join(errs, "; "))
 }
 
 func ensureDatabaseWithMaintenanceConnection(ctx context.Context, databaseURL, maintenanceDatabaseURL string) error {
@@ -503,16 +461,12 @@ func (d *DB) Seed(ctx context.Context, bootstrap config.BootstrapConfig) error {
 			if strings.TrimSpace(key.ExternalID) == "" || key.Key == "" {
 				return errors.New("seed api keys must include external_id and key")
 			}
-			name := strings.TrimSpace(key.Name)
-			if name == "" {
-				name = key.ExternalID
-			}
 			if err := apiKeyMapper.SeedDefault(ctx, seedAdminAPIKeyParams{
 				ExternalID:        key.ExternalID,
 				WorkspaceUUID:     workspaceUUID,
 				KeyHash:           auth.HashAPIKey(key.Key),
 				CreatedByUserUUID: userUUID,
-				Name:              name,
+				Name:              key.ExternalID,
 				PartialKeyHint:    partialAPIKeyHint(key.Key),
 			}); err != nil {
 				return err

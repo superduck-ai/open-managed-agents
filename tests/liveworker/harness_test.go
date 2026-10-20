@@ -91,7 +91,7 @@ func newLiveEnv(t *testing.T) *liveEnv {
 	if info.Config.Retention != jetstream.WorkQueuePolicy || info.Config.Replicas != cfg.NATS.WorkerEventStream.Replicas || info.Config.MaxAge != cfg.NATS.WorkerEventStream.MaxAge || info.Config.Storage != jetstream.FileStorage || info.Config.MaxBytes != cfg.NATS.WorkerEventStream.MaxBytes || info.Config.MaxMsgSize != cfg.NATS.WorkerEventStream.MaxMsgSize || info.Config.Discard != jetstream.DiscardNew || info.Config.Duplicates != duplicates {
 		t.Fatal("live stream does not match required configuration; refusing to change it")
 	}
-	e.broker, err = workerevents.NewJetStream(ctx, connection, cfg.NATS.WorkerEventStream, cfg.NATS.Namespace)
+	e.broker, err = workerevents.NewJetStream(ctx, connection, cfg.NATS.WorkerEventStream)
 	requireOK(t, err)
 	redisOptions, err := redis.ParseURL(cfg.Redis.URL)
 	requireOK(t, err)

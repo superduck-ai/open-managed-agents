@@ -56,7 +56,7 @@ docker compose up -d
 
 ## 本地依赖
 
-使用独立 worktree 开发环境和 Brain 对话模式时，请按[本地开发环境使用指南](docs/development-guide.md)完成首次初始化，并在 Herdr 中运行 `just restart` 管理后端、Brain 和 Web。
+使用独立 worktree 开发环境和 Brain 对话模式时，执行 `just dev-init` 统一准备依赖、本地配置、密钥和开发数据。LLM provider 与凭证在 `~/.oma-dev/` 配置一次，各 worktree 引用共享文件；之后在 Herdr 中运行 `just restart` 管理后端、Brain 和 Web。首次填写 LLM 配置及日常操作见[本地开发环境使用指南](docs/development-guide.md)。
 
 需要先准备：
 

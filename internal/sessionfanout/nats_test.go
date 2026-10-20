@@ -19,7 +19,7 @@ import (
 )
 
 func TestNATSBusRejectsInvalidInput(t *testing.T) {
-	if _, err := NewNATS(t.Context(), nil, nil, ""); !errors.Is(err, nats.ErrDisconnected) {
+	if _, err := NewNATS(t.Context(), nil, nil); !errors.Is(err, nats.ErrDisconnected) {
 		t.Fatalf("NewNATS(nil) = %v", err)
 	}
 	srv := startFanoutNATS(t)
@@ -202,7 +202,7 @@ func TestNATSBusDiscardsMalformedMessagesWithoutPayloadLogging(t *testing.T) {
 	srv := startFanoutNATS(t)
 	connection := connectFanoutNATSConnection(t, srv.ClientURL())
 	var logs bytes.Buffer
-	b, err := NewNATS(t.Context(), connection, slog.New(slog.NewJSONHandler(&logs, nil)), "")
+	b, err := NewNATS(t.Context(), connection, slog.New(slog.NewJSONHandler(&logs, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +367,7 @@ func connectFanoutNATSConnection(t *testing.T, url string) *nats.Conn {
 func connectFanoutNATS(t *testing.T, url string) (*NATSBus, *nats.Conn) {
 	t.Helper()
 	connection := connectFanoutNATSConnection(t, url)
-	b, err := NewNATS(t.Context(), connection, slog.New(slog.NewTextHandler(io.Discard, nil)), "")
+	b, err := NewNATS(t.Context(), connection, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}

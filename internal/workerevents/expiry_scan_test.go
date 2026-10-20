@@ -14,7 +14,7 @@ import (
 func TestJetStreamExpiryScanRetriesFailedInvalidSubjectDeletion(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection, testStreamConfig, "")
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestJetStreamExpiryScanRetriesFailedInvalidSubjectDeletion(t *testing.T) {
 func TestJetStreamExpiryScanRemovesOnlyInvalidSubjects(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection, testStreamConfig, "")
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestJetStreamExpiryScanRemovesOnlyInvalidSubjects(t *testing.T) {
 	}
 	// 保留同名前缀的正常 Session consumer；非法 subject 不能触发 Session purge。
 	if _, err := broker.js.CreateOrUpdateConsumer(t.Context(), StreamName, jetstream.ConsumerConfig{
-		Durable: newNaming("").consumerName("csess_valid"), FilterSubject: newNaming("").subjectPrefix + "csess_valid", AckPolicy: jetstream.AckExplicitPolicy,
+		Durable: consumerName("csess_valid"), FilterSubject: subjectPrefix + "csess_valid", AckPolicy: jetstream.AckExplicitPolicy,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestStoredWorkerEventDoesNotTrustMalformedEnvelope(t *testing.T) {
 		`{"version":2,"code_session_id":"csess_test"}`,
 		`{"version":2,"code_session_id":"csess_test","expires_at":"sensitive-invalid-timestamp"}`,
 	} {
-		event := storedWorkerEvent(newNaming(""), &jetstream.RawStreamMsg{
+		event := storedWorkerEvent(&jetstream.RawStreamMsg{
 			Subject: subjectPrefix + "csess_test", Sequence: 7, Time: storedAt, Data: []byte(payload),
 		})
 		if event.DecodeError != errInvalidStoredEnvelope || event.Envelope.CodeSessionID != "csess_test" ||
@@ -136,7 +136,7 @@ func TestStoredWorkerEventDoesNotTrustMalformedEnvelope(t *testing.T) {
 func TestJetStreamExpiryScanSkipsHolesAndIsolatesMalformedMessages(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection, testStreamConfig, "")
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}

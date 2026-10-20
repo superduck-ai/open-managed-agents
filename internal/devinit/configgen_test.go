@@ -57,7 +57,7 @@ func TestGenerateConfigProducesLoadableEnvironmentConfig(t *testing.T) {
 		Name: "feature-x", EnvID: "7d5adf3a-9d08-4179-9cc4-8721d3e83964",
 		Worktree: repoRoot, InitFile: "/repo/dev-init.yaml",
 	}
-	layout, err := NewLayout(binding, base, repoRoot)
+	layout, err := NewLayout(binding, repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,24 +90,12 @@ func TestGenerateConfigProducesLoadableEnvironmentConfig(t *testing.T) {
 			},
 		},
 	}
-	credentials := Credentials{
-		EnvID: binding.EnvID, BrainClaimToken: "token",
-		APIKeys: []APICredential{
-			{WorkspaceRef: "default", Ref: "key-1", ExternalID: "apikey_default_1", Name: "default-key-1", Key: "sk-ant-api03-default1"},
-			{WorkspaceRef: "default", Ref: "key-2", ExternalID: "apikey_default_2", Name: "default-key-2", Key: "sk-ant-api03-default2"},
-			{WorkspaceRef: "secondary", Ref: "key-1", ExternalID: "apikey_secondary_1", Name: "secondary-key-1", Key: "sk-ant-api03-secondary1"},
-			{WorkspaceRef: "secondary", Ref: "key-2", ExternalID: "apikey_secondary_2", Name: "secondary-key-2", Key: "sk-ant-api03-secondary2"},
-		},
-	}
-	if err := GenerateConfig(baseConfigPath, layout, base, spec, state, credentials, runtime); err != nil {
+	if err := GenerateConfig(baseConfigPath, layout, base, spec, state, runtime); err != nil {
 		t.Fatal(err)
 	}
 	generated, err := os.ReadFile(layout.GeneratedConfig)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !strings.Contains(string(generated), `namespace: ""`) {
-		t.Fatalf("generated config must pin an empty namespace:\n%s", generated)
 	}
 
 	t.Setenv("CONFIG_FILE", layout.GeneratedConfig)
@@ -123,17 +111,11 @@ func TestGenerateConfigProducesLoadableEnvironmentConfig(t *testing.T) {
 	if cfg.Server.Addr != "127.0.0.1:40080" {
 		t.Errorf("Server.Addr = %q", cfg.Server.Addr)
 	}
-	if cfg.NATS.Namespace != "" {
-		t.Errorf("NATS.Namespace = %q", cfg.NATS.Namespace)
-	}
 	if !strings.Contains(cfg.NATS.URL, "nats://127.0.0.1:44280") || !strings.Contains(cfg.NATS.URL, "nats://127.0.0.1:44282") {
 		t.Errorf("NATS.URL = %q, want three seeds", cfg.NATS.URL)
 	}
 	if cfg.NATS.WebhookStream.Replicas != 3 || cfg.NATS.WorkerEventStream.Replicas != 3 {
 		t.Errorf("stream replicas = %d/%d, want 3/3 for the three-node cluster", cfg.NATS.WebhookStream.Replicas, cfg.NATS.WorkerEventStream.Replicas)
-	}
-	if cfg.Tunnel.CommandStream.Replicas != 3 {
-		t.Errorf("tunnel command stream replicas = %d, want 3", cfg.Tunnel.CommandStream.Replicas)
 	}
 	if !strings.Contains(cfg.Database.URL, "/claude_api?") {
 		t.Errorf("Database.URL = %q", cfg.Database.URL)
@@ -166,7 +148,7 @@ func TestGenerateConfigProducesLoadableEnvironmentConfig(t *testing.T) {
 		t.Errorf("BrainClaimTokenFile = %q", cfg.CodeSession.BrainClaimTokenFile)
 	}
 	state.Runtime = &runtime
-	result, err := finalizeRun(t.Context(), preparedRun{repoRoot: repoRoot, binding: binding, layout: layout, base: base, spec: spec, state: state, credentials: credentials})
+	result, err := finalizeRun(t.Context(), preparedRun{repoRoot: repoRoot, binding: binding, layout: layout, base: base, spec: spec, state: state})
 	if err != nil {
 		t.Fatal(err)
 	}

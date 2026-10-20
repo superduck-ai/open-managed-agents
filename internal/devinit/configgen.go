@@ -13,7 +13,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
-func GenerateConfig(baseConfigPath string, layout Layout, base config.Config, spec Spec, state State, credentials Credentials, runtime RuntimePorts) error {
+func GenerateConfig(baseConfigPath string, layout Layout, base config.Config, spec Spec, state State, runtime RuntimePorts) error {
 	if runtime.APIPort < 1 {
 		return fmt.Errorf("runtime api port is required")
 	}
@@ -32,11 +32,7 @@ func GenerateConfig(baseConfigPath string, layout Layout, base config.Config, sp
 
 	apiAddr := "127.0.0.1:" + strconv.Itoa(runtime.APIPort)
 	setMappingValue(root, "server", "addr", apiAddr)
-	databaseURL, _, err := deriveDatabaseURL(base.Database.URL, "")
-	if err != nil {
-		return err
-	}
-	parsedDB, err := replaceURLPort(databaseURL, runtime.PGPort)
+	parsedDB, err := replaceURLPort(base.Database.URL, runtime.PGPort)
 	if err != nil {
 		return err
 	}
@@ -48,7 +44,6 @@ func GenerateConfig(baseConfigPath string, layout Layout, base config.Config, sp
 	setMappingValue(root, "redis", "url", redisURL)
 	natsURL := fmt.Sprintf("nats://127.0.0.1:%d,nats://127.0.0.1:%d,nats://127.0.0.1:%d", runtime.NATSPort, runtime.NATSPort2, runtime.NATSPort3)
 	setMappingValue(root, "nats", "url", natsURL)
-	setMappingValue(root, "nats", "namespace", "")
 	setMappingValue(root, "storage", "s3", "bucket", base.Storage.S3.Bucket)
 	endpoint, err := replaceURLPort(base.Storage.S3.Endpoint, runtime.MinIOPort)
 	if err != nil {

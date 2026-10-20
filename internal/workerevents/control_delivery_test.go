@@ -36,7 +36,7 @@ func TestMemoryPurgeRejectsInvalidSessionWithoutRemovingReply(t *testing.T) {
 func TestReplyDecodeFailureClosesBothReadersWithoutAcknowledging(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection, testStreamConfig, "")
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestReplyDecodeFailureClosesBothReadersWithoutAcknowledging(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sub.Close() })
-	subject, _ := replyLane.subject(newNaming(""), sessionID)
+	subject, _ := replyLane.subject(sessionID)
 	ack, err := broker.js.Publish(t.Context(), subject, []byte(`{`))
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +74,7 @@ func TestReplyDecodeFailureClosesBothReadersWithoutAcknowledging(t *testing.T) {
 func TestWorkerSubscriptionCloseReleasesIdleAndBlockedReaders(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection, testStreamConfig, "")
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestWorkerSubscriptionCloseReleasesIdleAndBlockedReaders(t *testing.T) {
 				// Leave the merged channel unread so both readers block on handoff.
 				deadline := time.Now().Add(5 * time.Second)
 				for _, lane := range deliveryLanes {
-					consumer, err := broker.js.Consumer(t.Context(), broker.names.streamName, lane.consumerName(broker.names, sessionID))
+					consumer, err := broker.js.Consumer(t.Context(), StreamName, lane.consumerName(sessionID))
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -171,7 +171,7 @@ func assertNATSSubscriptionsReleased(t *testing.T, connection *nats.Conn, want i
 func TestReplyPurgeRetainsMessagesWhenConsumerDeletionFails(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection, testStreamConfig, "")
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestReplyPurgeRetainsMessagesWhenConsumerDeletionFails(t *testing.T) {
 func TestSessionPurgeRetriesAfterSecondLaneFailure(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection, testStreamConfig, "")
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestSessionPurgeRetriesAfterSecondLaneFailure(t *testing.T) {
 func TestControlDeliveryPreservesTaskOrdering(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	jsBroker, err := NewJetStream(t.Context(), connection, testStreamConfig, "")
+	jsBroker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +353,7 @@ func TestWorkerDeliveryLaneClassification(t *testing.T) {
 func TestReplySubjectExpiryAndSessionPurge(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection, testStreamConfig, "")
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,13 +388,13 @@ func TestReplySubjectExpiryAndSessionPurge(t *testing.T) {
 
 func TestSessionFromSubjectRejectsUnknownSuffix(t *testing.T) {
 	for _, subject := range []string{subjectPrefix + "cse_a.extra", subjectPrefix + "cse_a.reply.reply", "other.cse_a.reply"} {
-		if _, valid := newNaming("").sessionFromSubject(subject); valid {
+		if _, valid := sessionFromSubject(subject); valid {
 			t.Errorf("accepted %s", subject)
 		}
 	}
 	for _, lane := range deliveryLanes {
-		subject, _ := lane.subject(newNaming(""), "cse_a")
-		if id, valid := newNaming("").sessionFromSubject(subject); !valid || id != "cse_a" {
+		subject, _ := lane.subject("cse_a")
+		if id, valid := sessionFromSubject(subject); !valid || id != "cse_a" {
 			t.Errorf("rejected %s", subject)
 		}
 	}

@@ -7,18 +7,20 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+const brainWorkSubject = "oma.brain.work.available"
+
 type BrainWorkSignal interface {
 	NotifyBrainWork(ctx context.Context) error
 	SubscribeBrainWork(ctx context.Context) (<-chan struct{}, error)
 }
 
 func (b *JetStreamBroker) NotifyBrainWork(context.Context) error {
-	return b.connection.Publish(b.names.brainWorkSubject, nil)
+	return b.connection.Publish(brainWorkSubject, nil)
 }
 
 func (b *JetStreamBroker) SubscribeBrainWork(ctx context.Context) (<-chan struct{}, error) {
 	signals := make(chan struct{}, 1)
-	subscription, err := b.connection.Subscribe(b.names.brainWorkSubject, func(*nats.Msg) { signalBrainWork(signals) })
+	subscription, err := b.connection.Subscribe(brainWorkSubject, func(*nats.Msg) { signalBrainWork(signals) })
 	if err != nil {
 		return nil, err
 	}

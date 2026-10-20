@@ -200,7 +200,7 @@ func TestTunnelPayloadCrossInstanceAndDuplicate(t *testing.T) {
 	cfg := brokerTestConfig()
 	cfg.MaxBodyBytes = 16 << 20
 	origin := testNATSBroker(t, cfg)
-	peer, err := newBroker(t.Context(), connectTunnelNATS(t, origin.connection.ConnectedUrl()), cfg, 1, origin.requests, "")
+	peer, err := newBroker(t.Context(), connectTunnelNATS(t, origin.connection.ConnectedUrl()), cfg, 1, origin.requests)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +284,7 @@ func TestTunnelReducedStorageBudget(t *testing.T) {
 	servers := startTunnelNATSClusterWithStorage(t, 600<<20)
 	cfg := brokerTestConfig()
 	cfg.MaxBodyBytes = 16 << 20
-	b, err := NewBroker(t.Context(), connectTunnelNATS(t, servers[0].ClientURL()), cfg, nil, testRequestBindings(t), "")
+	b, err := NewBroker(t.Context(), connectTunnelNATS(t, servers[0].ClientURL()), cfg, nil, testRequestBindings(t))
 	if err != nil {
 		t.Fatal(err)
 	}

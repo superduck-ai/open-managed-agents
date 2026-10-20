@@ -44,27 +44,6 @@ flowchart LR
 HTTP server 不开始监听，也不回退到 Redis。连接关闭 reconnect publish buffer，避免断线期间积累的
 过期 preview 在重连后发送。可靠入站发布必须等待 JetStream PubAck。
 
-## 可选消息 namespace
-
-`nats.namespace` 为空时保持本文所有共享名称。配置非空 namespace
-（`^[a-z0-9][a-z0-9_-]{0,15}$`，配置加载期校验）时，全部 stream、subject 与
-consumer 名按统一规则派生，供多 worktree 本地环境隔离消息（见
-[多 worktree 开发环境](../development-worktree-environments.md)）：
-
-| 默认 | namespace `s1` |
-| --- | --- |
-| Stream `OMA_WORKER_INBOUND`，subject `oma.worker.inbound.v2.>` | `OMA_S1_WORKER_INBOUND`，`oma.s1.worker.inbound.v2.>` |
-| Stream `OMA_WEBHOOK_DELIVERY`，subject `oma.webhook.delivery.v1` | `OMA_S1_WEBHOOK_DELIVERY`，`oma.s1.webhook.delivery.v1` |
-| Stream `OMA_TUNNEL_COMMANDS_V1`，subject `oma.tunnel.command.v1.>` | `OMA_S1_TUNNEL_COMMANDS_V1`，`oma.s1.tunnel.command.v1.>` |
-| 响应 subject `oma.tunnel.response.v1.` | `oma.s1.tunnel.response.v1.` |
-| 唤醒 subject `oma.brain.work.available` | `oma.s1.brain.work.available` |
-| Session 广播 `oma.s.` | `oma.s1.s.` |
-| Consumer 前缀 `oma_worker_` / `oma_webhook_delivery` | `oma_s1_worker_` / `oma_s1_webhook_delivery` |
-
-namespace 在组装层从 `cfg.NATS.Namespace` 显式传入 `workerevents`、`webhooks`、
-`sessionfanout` 与 `tunnels` 组件；发布、订阅、过期扫描和清理使用同一份派生命名，
-不只改 stream 创建名称。namespace 只提供消息级隔离，不替代 NATS 账号或 ACL。
-
 ## 本地与生产拓扑
 
 Docker Compose 使用三个独立 NATS 节点组成 `oma-nats` JetStream 集群。节点分别持有 named volume，

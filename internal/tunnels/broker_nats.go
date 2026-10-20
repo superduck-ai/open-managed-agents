@@ -26,24 +26,20 @@ type Broker struct {
 	now         func() time.Time
 	responseHub *responseHub
 	payloads    *PayloadStore
-	naming      tunnelNaming
 	pollCursor  atomic.Uint64
 }
 
-func NewBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConfig, payloads *PayloadStore, requests *RequestBindings, namespace string) (*Broker, error) {
-	b, err := newBroker(ctx, connection, cfg, cfg.CommandStream.Replicas, requests, namespace)
+func NewBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConfig, payloads *PayloadStore, requests *RequestBindings) (*Broker, error) {
+	b, err := newBroker(ctx, connection, cfg, 3, requests)
 	if err == nil {
 		b.payloads = payloads
 	}
 	return b, err
 }
 
-func newBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConfig, replicas int, requests *RequestBindings, namespace string) (*Broker, error) {
+func newBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConfig, replicas int, requests *RequestBindings) (*Broker, error) {
 	if connection == nil || !connection.IsConnected() {
 		return nil, nats.ErrDisconnected
-	}
-	if err := config.ValidateNATSNamespace(namespace); err != nil {
-		return nil, fmt.Errorf("tunnel namespace: %w", err)
 	}
 	if connection.MaxPayload() < maxBrokerValueBytes {
 		return nil, fmt.Errorf("tunnel NATS max_payload must be at least %d bytes", maxBrokerValueBytes)
@@ -59,9 +55,8 @@ func newBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConf
 	if err != nil {
 		return nil, err
 	}
-	naming := newTunnelNaming(namespace)
 	commands, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
-		Name: naming.streamName, Subjects: []string{naming.commandSubjectPrefix + ">"},
+		Name: commandStreamName, Subjects: []string{commandSubjectPrefix + ">"},
 		Storage: jetstream.FileStorage, Replicas: replicas, Retention: jetstream.WorkQueuePolicy,
 		Discard: jetstream.DiscardNew, MaxAge: cfg.RequestTimeout, MaxMsgs: cfg.CommandStream.MaxMsgs,
 		MaxBytes:   cfg.CommandStream.MaxBytes,
@@ -71,11 +66,11 @@ func newBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConf
 	if err != nil {
 		return nil, fmt.Errorf("open tunnel command stream: %w", err)
 	}
-	hub, err := newResponseHub(ctx, connection, naming.responseSubjectPrefix)
+	hub, err := newResponseHub(ctx, connection)
 	if err != nil {
 		return nil, err
 	}
-	return &Broker{connection: connection, js: js, commands: commands, requests: requests, cfg: cfg, now: time.Now, responseHub: hub, naming: naming}, nil
+	return &Broker{connection: connection, js: js, commands: commands, requests: requests, cfg: cfg, now: time.Now, responseHub: hub}, nil
 }
 
 func (b *Broker) Close() { b.responseHub.close() }
@@ -120,16 +115,12 @@ func (b *Broker) Enqueue(ctx context.Context, tunnelUUID, tunnelID string, comma
 	if err != nil {
 		return err
 	}
-	_, err = b.js.PublishMsg(ctx, &nats.Msg{Subject: b.commandSubject(tunnelUUID, command.Channel), Header: commandHeaders(command.RequestID), Data: data})
+	_, err = b.js.PublishMsg(ctx, &nats.Msg{Subject: commandSubject(tunnelUUID, command.Channel), Header: commandHeaders(command.RequestID), Data: data})
 	return brokerCapacityError(err)
 }
 
 func commandSubject(tunnelUUID, channel string) string {
 	return commandSubjectPrefix + brokerKey(tunnelUUID) + "." + channel + ".shared"
-}
-
-func (b *Broker) commandSubject(tunnelUUID, channel string) string {
-	return b.naming.commandSubjectPrefix + brokerKey(tunnelUUID) + "." + channel + ".shared"
 }
 
 func (b *Broker) readRequestByID(ctx context.Context, requestID string) (requestRecord, error) {

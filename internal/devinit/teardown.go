@@ -9,17 +9,12 @@ import (
 )
 
 type TeardownOptions struct {
-	// Yes confirms the destructive removal of databases, buckets and markers.
 	Yes bool
 	// Orphans tears down every registered environment whose worktree path is
 	// missing, reusing the resources recorded in the registry.
 	Orphans bool
 }
 
-// Teardown removes one bound environment (or all orphans) and every resource
-// the registry recorded for it: portless aliases, the Redis marker, the
-// derived database and bucket, the registry entry and local state files.
-// Resources are never touched without Yes.
 func Teardown(ctx context.Context, repoRoot string, opts TeardownOptions) ([]string, error) {
 	repoRoot, err := filepathEvalSymlinks(repoRoot)
 	if err != nil {

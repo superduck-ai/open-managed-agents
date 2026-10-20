@@ -37,7 +37,7 @@ func queueConnection(t *testing.T, srv *server.Server) *nats.Conn {
 }
 func createTestQueue(t *testing.T, conn *nats.Conn, cfg config.WebhookStreamConfig, delivery config.WebhookConfig) *Queue {
 	t.Helper()
-	q, err := NewQueue(t.Context(), conn, cfg, delivery, "")
+	q, err := NewQueue(t.Context(), conn, cfg, delivery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func assertQueueMessages(t *testing.T, q *Queue, want uint64) {
 func TestWebhookQueueLimitsAndPublication(t *testing.T) {
 	conn := queueConnection(t, startQueueServer(t, t.TempDir()))
 	cfg := config.WebhookStreamConfig{MaxBytes: 256 << 20, MaxAge: 24 * time.Hour, Replicas: 3}
-	if _, err := NewQueue(t.Context(), conn, cfg, config.WebhookConfig{}, ""); err == nil {
+	if _, err := NewQueue(t.Context(), conn, cfg, config.WebhookConfig{}); err == nil {
 		t.Fatal("three replicas accepted on single node")
 	}
 	cfg.Replicas = 1

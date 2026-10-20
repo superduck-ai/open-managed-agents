@@ -13,14 +13,14 @@
 
 ## 命令与日常使用
 
-本地开发统一使用 `.run/`：人工配置与生成状态分层存放。`config/` 中的配置文件
+本环境配置统一使用 `.run/`，LLM provider 配置和凭证常驻本机 `~/.oma-dev/`，
+各 worktree 的初始化文件显式引用同一份 provider 定义。`config/` 中的配置文件
 仅作为模板，开发初始化与重启不再读取旧的 `config/config.yaml`。
 
 ```text
 .run/
   config.yaml
   dev-init.yaml
-  model-providers.yaml
   secrets/
   env.json
   generated/
@@ -32,16 +32,30 @@
     secrets/
 ```
 
-`just dev-init` 默认读取 `.run/dev-init.yaml`，也允许显式指定初始化文件。
+`just dev-init` 通过 `scripts/dev-init.sh` 统一准备 hook、依赖与 Go 生成文件，
+默认读取 `.run/dev-init.yaml`，也允许显式指定初始化文件。默认入口在输入缺失时
+自动生成本环境配置、JWT 和 CA 私钥与 Vault KEK；配置默认启用 Brain，
+新建初始化文件的 `model_providers_file` 指向 `~/.oma-dev/model-providers.yaml`
+的绝对路径。共享文件缺失时从模板创建，用户首次填写模型和凭证后重跑同一命令。
+已有配置、共享文件与密钥不覆盖；已绑定环境缺少输入时拒绝重新生成密钥。
+
+共享文件采用同目录临时文件与不可覆盖的硬链接发布，多个 worktree 同时准备时
+只保留第一个完整文件。本环境准备与初始化分别使用文件锁防止重复写入。
+配置准备只针对默认初始化文件，自定义初始化文件保留显式准备输入的行为。
+
 `fixed_secrets_dir` 和 `model_providers_file` 支持相对于初始化文件目录的路径；
-人工密钥放在 `.run/secrets/`，生成密钥副本和 Brain token 放在
+本环境固定密钥放在 `.run/secrets/`，生成密钥副本和 Brain token 放在
 `.run/generated/secrets/`。基础配置中的相对路径以 `.run/config.yaml` 的目录解析。
+共享 provider 凭证直接写在 `~/.oma-dev/model-providers.yaml` 的 `api_key` 字段中，
+该文件权限为 `0600`；准备入口不再创建共享 `secrets/` 目录。共享定义更新后，各环境需分别执行
+`just dev-init --update`，日常重启不会同步数据库中的 provider。
 
 ```mermaid
 flowchart LR
     Base[.run/config.yaml] --> Generate[生成运行配置]
     Init[.run/dev-init.yaml] --> Generate
-    Inputs[.run/secrets 与 model-providers.yaml] --> Init
+    Inputs[.run/secrets] --> Init
+    Shared[~/.oma-dev/model-providers.yaml 与凭证] --> Init
     State[.run/generated/state.json] --> Generate
     Generate --> Runtime[.run/generated/config.yaml]
     Runtime --> Services[后端 Brain Web]
@@ -64,16 +78,21 @@ just restart-brain
 ```
 
 在 Herdr 终端内执行 `just restart`，可在同一个终端窗口中重启三个服务。
-`scripts/restart-dev.sh` 首次创建一个 `OMA services` 标签页，后端位于左侧，
-Brain 和 Web 位于右侧上下分屏。重复执行时，在当前 Herdr workspace 中按服务名称
-和 worktree 工作目录查找并复用原分屏，只补建缺失的分屏；旧版本创建的同名分屏
-也可复用。多个匹配标签页存在时优先选择服务分屏最完整的一组，不自动关闭其他标签页。
+`scripts/restart-dev.sh` 每次在当前 Herdr workspace 中按服务名称和 worktree
+工作目录查找旧服务分屏，确认是本环境服务后发送 Ctrl+C，等待最多 30 秒返回
+shell，全部停止后关闭这些旧分屏。未知程序和其他 worktree 的分屏不会被中断
+或关闭。从服务分屏自身执行会被拒绝，应在独立控制分屏执行。
 
-重启前识别对应分屏中的服务进程，发送 Ctrl+C 并等待最多 30 秒返回 shell；
-分屏中存在其他程序时拒绝中断。从服务分屏自身执行会被拒绝，应在控制分屏执行。
-脚本先等待后端输出监听成功，再启动 Brain，等待 Brain ready 后启动 Web；
-每次启动使用唯一就绪标记，避免旧日志导致误判。各服务仍调用现有 `restart-*`
-入口，使用当前 worktree 的配置和进程归属检查。
+随后新建 `OMA services` 标签页：后端位于左侧，Brain 和 Web 位于右侧上下分屏。
+每个新分屏最多等待 30 秒进入空闲 shell；初始化期间出现临时前台进程只等待，
+不发送中断，也不提前写入启动命令。脚本先等待后端输出监听成功，再启动 Brain，
+等待 Brain ready 后启动 Web，每次使用唯一就绪标记。各服务仍调用现有
+`restart-*` 入口，使用当前 worktree 的配置和进程归属检查。
+
+启动全部成功后才切换到服务标签页；失败时控制分屏显示服务名、panel ID、
+失败阶段及该分屏最近 30 行输出，停止后续启动并保留新分屏。脚本回归入口为
+`bash scripts/tests/restart-dev_test.sh`，通过模拟 Herdr 验证等待、替换、拒绝误关及
+失败诊断，不操作开发者的真实分屏。
 
 三个服务就绪后，脚本汇总输出当前环境的 Web 与 API 完整 HTTP URL。
 交互终端使用 OSC 8 超链接，重定向输出或 `TERM=dumb` 时使用纯文本 URL。
@@ -121,7 +140,6 @@ Brain 和 Web 位于右侧上下分屏。重复执行时，在当前 Herdr works
 | Vite 代理目标与 DSH API 地址 | portless 发现的后端名字地址 |
 | PostgreSQL、Redis、NATS、MinIO | 本环境 Compose 栈中的独立实例与卷 |
 | 数据库和 bucket | 沿用基底配置名称，各栈内部独立 |
-| NATS namespace | 本地独立栈使用空值 |
 | Brain claim token、客户端 API key | 本环境独立随机生成 |
 
 运行端口由初始化和重启入口探测，不从编号计算。初始化重跑保留已有 API/web
@@ -222,7 +240,7 @@ workspaces:
       - ref: key-2
         name: secondary-key-2
 
-model_providers_file: ./model-providers.yaml
+model_providers_file: /home/you/.oma-dev/model-providers.yaml
 ```
 
 `ref` 是初始化配置内的稳定引用，与显示名称分开。API key 的引用在所属 workspace 内唯一。数据库资源继续使用 UUID 和现有 external ID 机制，引用与实际 ID 的映射保存在环境状态中。
@@ -244,20 +262,20 @@ providers:
   - name: primary
     api_backend: messages
     base_url: https://api.anthropic.com
-    api_key_env: ANTHROPIC_API_KEY
+    api_key: "填写服务商提供的 API key"
     model_ids:
       - your-model-id
 
   - name: compatible
     api_backend: chat_completions
     base_url: https://provider.example
-    api_key_file: ./secrets/compatible-api-key
+    api_key: "填写服务商提供的 API key"
     model_ids:
       - another-model-id
 ```
 
 - 支持现有 `messages` 和 `chat_completions` backend。
-- `api_key`、`api_key_env`、`api_key_file` 必须三选一。
+- 默认开发配置直接使用 `api_key`。解析器仍支持 `api_key_env` 和 `api_key_file`，三者必须三选一。
 - 两个 workspace 分别创建 provider 记录，使用同一组文件定义。
 - provider 密钥经现有 secrets 服务加密后写入当前环境数据库。
 - 模型列表以文件为准，初始化时不自动访问上游同步模型。
@@ -362,28 +380,9 @@ API key 创建必须同时维护 Console 展示记录和实际鉴权记录，复
 
 初始化失败保留已创建资源和恢复状态，不自动删除数据库或 bucket。重试从实际完成阶段继续；正式启动只接受初始化完成的环境。
 
-## NATS namespace
+## 消息隔离
 
-新增可选配置：
-
-```yaml
-nats:
-  namespace: s1
-```
-
-空值保持现有名称和行为，非空值使用统一规则派生消息名称，例如 `OMA_S1_WORKER_INBOUND` 和 `oma.s1.brain.work.available`。
-
-| 消息路径         | 必须隔离的对象                           |
-| ---------------- | ---------------------------------------- |
-| Worker 入站事件  | stream、subject、consumer 操作和清理目标 |
-| Webhook 投递     | stream、subject、consumer                |
-| Brain 唤醒       | subject                                  |
-| Session 事件广播 | subject                                  |
-| MCP Tunnel       | 命令 stream、命令和响应 subject          |
-
-namespace 在组装层显式传入各消息组件，不使用可变全局变量。发布、订阅、过期扫描和清理使用一致规则，不能只修改 stream 创建名称。
-
-namespace 采用受限格式并在配置边界校验，禁止通配符或会改变 subject 层级的字符。独立 namespace 提供消息隔离，不替代 NATS 账号或 ACL 的安全隔离。
+每个环境使用独立 NATS 集群和持久卷，消息名称保持现有固定值，不新增 namespace 配置或修改业务消息组件。
 
 ## 文档与交付范围
 
@@ -391,7 +390,6 @@ namespace 采用受限格式并在配置边界校验，禁止通配符或会改�
 
 - Go 初始化 CLI、状态查询和恢复逻辑。
 - 环境配置、初始化文件和 provider 文件的命名 schema。
-- NATS namespace 的完整传递与命名规则。
 - server、web、DSH 重启脚本及 `just` 入口。
 - 基础 seed 与开发初始化的兼容处理。
 - 私有文件忽略规则和权限处理。
@@ -413,7 +411,7 @@ namespace 采用受限格式并在配置边界校验，禁止通配符或会改�
 - 四个 key 在 Console 可见，并正确鉴权到各自 workspace。
 - 两个 workspace 都能使用文件配置的 providers。
 - 两套环境同时运行时，Runner、DSH、后台任务和 NATS 消息不会跨环境处理。
-- 使用相同 Session ID 验证 namespace 隔离，扫描和清理不影响另一环境。
+- 两套独立 NATS 集群中的扫描和清理互不影响。
 - 两边登录互不覆盖，重启 A 不停止 B 的服务。
 - 配置移动后所有相对路径仍正确，前端代理及远端可达地址符合各自配置。
 - 未启用开发环境初始化时保持现有行为兼容。
@@ -454,10 +452,9 @@ namespace 采用受限格式并在配置边界校验，禁止通配符或会改�
   e2b-local，以
   `docker compose -p oma-<name> --env-file .run/generated/stack.env up -d`
   启动。compose 项目名自带 volume/网络前缀隔离，栈内资源用固定名（库
-  `claude_api`、bucket `claude-files`、NATS 默认名、namespace 空）；NATS
+  `claude_api`、bucket `claude-files`、NATS 默认名）；NATS
   三个客户端端口按环境探测发布，监控端口只在 compose 网络内用于
-  健康检查；stream replicas 保持默认 3（`tunnel.command_stream.replicas`
-  为新增配置项，默认 3）。e2b-local 按环境参数化 `server.addr` 端口与
+  健康检查；stream replicas 保持默认 3。e2b-local 按环境参数化 `server.addr` 端口与
   `container_name_prefix`，使用 host 网络（要求 Linux Docker Engine 或
   OrbStack，与共享拓扑同一约束）。`set-runtime` 复用健康栈否则 `compose
 up -d` 协调重建；teardown 用 `compose down -v` 连数据卷删除；孤儿清理
@@ -494,12 +491,6 @@ providers → complete`，每阶段先落盘 `state.json` 再进入下一阶段�
   model_ids/密钥更新；组织重命名和用户 email/name 变更报错而不隐式修改。
 - 普通 workspace 成员角色实现为 `workspace_admin`；默认 workspace 沿用
   组织管理员继承规则，不额外写成员行。
-- NATS namespace 命名规则：`namespace: s1` 时 stream 为
-  `OMA_S1_WORKER_INBOUND`、`OMA_S1_WEBHOOK_DELIVERY`、
-  `OMA_S1_TUNNEL_COMMANDS_V1`；subject 统一加 `oma.s1.` 前缀
-  （worker inbound、brain 唤醒、session 广播、webhook、tunnel 命令与响应）；
-  consumer 名前缀 `oma_s1_`。namespace 在配置边界校验
-  （`^[a-z0-9][a-z0-9_-]{0,15}$`），组装层显式传入各消息组件。
 - `auth.console_url` 校验放宽为：生产环境必须 HTTPS，`env: dev` 允许
   HTTP，使 `http://sN.localhost:<port>` 可用于本地邀请链接。
 
@@ -518,11 +509,35 @@ providers → complete`，每阶段先落盘 `state.json` 再进入下一阶段�
   的定位能力。
 - 配置生成先解析基底文件路径，最后写入环境专属 claim token、JWT 和 CA
   路径，避免被基底配置重新覆盖。
-- Brain 唤醒发布与订阅均使用 broker 的 namespace subject，与其他 NATS
-  消息路径遵循相同的隔离规则。
 - 孤儿回收不依赖已删除 worktree 的 stack.env，也不使用调用方环境的端口
   配置；先校验目标 Docker 项目归属，再删除栈和卷，成功后移除对应路由及登记。
 
 回归测试覆盖失败重试、目录迁移、跨环境资源拒绝、运行端口保留、密钥路径、
-namespace 唤醒隔离，以及真实 PostgreSQL 上的身份事务回滚、部分 key 已提交
+以及真实 PostgreSQL 上的身份事务回滚、部分 key 已提交
 后的恢复和撤销状态在 seed 后的保持。真实服务的双环境验收仍须单独执行。
+
+
+初始化单测通过真实 loopback 监听验证端口避让；状态往返核对完整身份映射、运行端口及四把客户端 key，并验证缺失 claim token 文件能从已保存凭据恢复且不轮换密钥。`TestReservedIdentitiesSurviveStateReload` 只覆盖文件重载，数据库部分提交恢复由 `TestAPIKeyRecoveryPostgreSQL` 覆盖。
+
+## worktree 删除前的环境清理
+
+`just dev-recycle --yes [--worktree /absolute/path]` 调用 Go 开发工具的 `recycle` 子命令，默认清理当前 worktree 的开发环境，也允许从同一 clone 的其他 checkout 指定目标。启动包装器先补齐 Go 生成文件，再运行清理程序。worktree 目录及其 Git 登记由外部流程负责删除，本命令不执行 `git worktree remove`。该流程不依赖 Herdr 客户端。
+
+```mermaid
+flowchart TD
+    A[确认 --yes 与目标属于同一 Git 仓库] --> B[校验绑定、注册表路径和 Docker env_id 标签]
+    B --> C[核对服务命令、cwd 和已登记监听端口]
+    C --> D[SIGTERM 并等待三个服务退出]
+    D --> E[Compose down --volumes --remove-orphans]
+    E --> F[移除 portless alias、环境登记和生成状态]
+    F --> G[返回成功并保留 worktree]
+    G --> H[外部流程决定是否删除 worktree]
+```
+
+目标必须是同一 clone 登记的 checkout，允许主 checkout、锁定、有修改或未跟踪文件的 worktree。清理不读取或修改源码的 Git 状态。绑定文件和注册表必须同时指向目标路径且 env_id 一致，Docker 资源继续使用既有所有权标签校验。未绑定目标只有在注册表也没有该路径时才跳过 Compose 清理。
+
+服务识别结合已登记 API/Web 端口与 `ps` 命令，再用 `lsof` 核对 cwd，只接受目标根目录、`web/` 和 `oma-brain-dsh/`。命令匹配同时发现没有监听端口的 Brain、Go 启动器与 Vite。发送信号前再次核对命令与 cwd，避免停止其他 worktree 的进程。等待上限为 30 秒，不自动升级 SIGKILL；停止失败时不清理 Compose。不得并发运行初始化、重启与回收。
+
+服务退出后复用 `dev-teardown` 的资源清理逻辑。Compose 清理失败时保留绑定和注册表，允许重试；成功时删除绑定与 `.run/generated/`，保留 `.run/config.yaml`、`.run/dev-init.yaml`、`.run/secrets/`、源码和共享 LLM 配置。命令退出码为 0 后，外部流程再执行 worktree 删除。重复执行已经清理的目标会跳过 Compose。
+
+普通单测使用隔离的临时 Git clone/worktree 与模拟 Docker，覆盖确认参数、跨仓库拒绝、身份不符、Compose 失败保留状态、停止服务后删除数据卷、清理后保留目录与私钥、重复清理，以及主 checkout、脏文件和锁定 worktree 的保留；进程测试校验命令/cwd 归属。测试不清理开发者的实际环境。

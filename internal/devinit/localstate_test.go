@@ -4,6 +4,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -55,60 +57,71 @@ func TestCopyFixedSecretsRefusesContentConflict(t *testing.T) {
 	}
 }
 
-func TestNewRandomTokenAndAPIKey(t *testing.T) {
-	token, err := NewRandomToken(brainClaimTokenBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(token) < 32 {
-		t.Fatalf("token length = %d, want >= 32", len(token))
-	}
-	key, err := NewAPIKeyValue()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(key) <= len("sk-ant-api03-") {
-		t.Fatalf("api key %q too short", key)
-	}
-}
-
 func TestStateAndCredentialsRoundTrip(t *testing.T) {
-	layout := Layout{
-		RunDir:          t.TempDir(),
-		StateDir:        t.TempDir(),
-		SecretsDir:      t.TempDir(),
-		BindingFile:     filepath.Join(t.TempDir(), "env.json"),
-		StateFile:       filepath.Join(t.TempDir(), "state.json"),
-		CredentialsFile: filepath.Join(t.TempDir(), "credentials.json"),
-	}
 	binding := testBinding()
+	layout, err := NewLayout(binding, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := SaveBinding(layout, binding); err != nil {
 		t.Fatal(err)
 	}
-	loaded, found, err := LoadBinding(layout.BindingFile)
-	if err != nil || !found {
-		t.Fatalf("LoadBinding() = %+v, %v, %v", loaded, found, err)
+	loadedBinding, found, err := LoadBinding(layout.BindingFile)
+	if err != nil || !found || !reflect.DeepEqual(loadedBinding, binding) {
+		t.Fatal("binding did not survive persistence")
 	}
-	if loaded.EnvID != binding.EnvID || loaded.Name != binding.Name {
-		t.Fatalf("LoadBinding() = %+v, want %+v", loaded, binding)
+	spec, state, _ := pendingKeyFixture()
+	spec.FixedSecretsDir = t.TempDir()
+	for _, name := range fixedSecretFiles {
+		if err := os.WriteFile(filepath.Join(spec.FixedSecretsDir, name), []byte("fixed-key"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	state := State{EnvID: binding.EnvID, Name: binding.Name, Phase: phaseComplete}
+	state.EnvID, state.Name = binding.EnvID, binding.Name
+	credentials := Credentials{}
+	if err := copyFixedSecretsAndCredentials(layout, spec, &state, &credentials, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareResourceIdentities(layout, spec, &state, &credentials); err != nil {
+		t.Fatal(err)
+	}
+	state.Phase = phaseKeys
+	state.Runtime = &RuntimePorts{APIPort: 40080, WebPort: 61080}
 	if err := SaveState(layout, state); err != nil {
 		t.Fatal(err)
 	}
-	credentials := Credentials{EnvID: binding.EnvID, BrainClaimToken: "token"}
-	if err := SaveCredentials(layout, credentials); err != nil {
+	loadedState, found, err := LoadState(layout.StateFile)
+	if err != nil || !found || !reflect.DeepEqual(loadedState, state) {
+		t.Fatal("state lost identity, resource mappings or runtime ports")
+	}
+	loadedCredentials, found, err := LoadCredentials(layout.CredentialsFile)
+	if err != nil || !found || !reflect.DeepEqual(loadedCredentials, credentials) {
+		t.Fatal("persisted credentials differ from generated credentials")
+	}
+	if len(loadedCredentials.APIKeys) != 4 {
+		t.Fatal("expected four client keys")
+	}
+	seen := make(map[string]bool)
+	for _, key := range loadedCredentials.APIKeys {
+		if !strings.HasPrefix(key.Key, "sk-ant-api03-") || key.Key == "sk-ant-api03-" || seen[key.Key] {
+			t.Fatal("client keys must have the supported prefix and distinct nonempty values")
+		}
+		seen[key.Key] = true
+	}
+	tokenPath := filepath.Join(layout.SecretsDir, "brain-claim-token")
+	if err := os.Remove(tokenPath); err != nil {
 		t.Fatal(err)
 	}
-	if _, found, err := LoadCredentials(layout.CredentialsFile); err != nil || !found {
-		t.Fatalf("LoadCredentials() found = %v, err = %v", found, err)
+	if err := copyFixedSecretsAndCredentials(layout, spec, &loadedState, &loadedCredentials, true); err != nil {
+		t.Fatal(err)
+	}
+	token, err := os.ReadFile(tokenPath)
+	if err != nil || string(token) != credentials.BrainClaimToken || !reflect.DeepEqual(loadedCredentials, credentials) {
+		t.Fatal("credential recovery changed the claim token or client keys")
 	}
 	info, err := os.Stat(layout.CredentialsFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("credentials perm = %o, want 600", info.Mode().Perm())
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatal("credentials file must remain private")
 	}
 }
 
@@ -119,15 +132,6 @@ func TestLoadCredentialsRejectsIncompleteFile(t *testing.T) {
 	}
 	if _, found, err := LoadCredentials(path); err == nil || found {
 		t.Fatalf("LoadCredentials() = found %v, err %v, want failure", found, err)
-	}
-}
-
-func TestEqualStrings(t *testing.T) {
-	if !equalStrings([]string{"a", "b"}, []string{"a", "b"}) {
-		t.Fatal("equalStrings() = false, want true")
-	}
-	if equalStrings([]string{"a"}, []string{"a", "b"}) {
-		t.Fatal("equalStrings() = true, want false")
 	}
 }
 

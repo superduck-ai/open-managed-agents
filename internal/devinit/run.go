@@ -59,11 +59,7 @@ func Run(ctx context.Context, repoRoot, initFile string, opts Options) (Result, 
 	if err := ensureBucket(ctx, prepped.base, stackPorts.MinIOPort); err != nil {
 		return Result{}, err
 	}
-	databaseURL, _, err := deriveDatabaseURL(prepped.base.Database.URL, "")
-	if err != nil {
-		return Result{}, err
-	}
-	databaseURL, err = replaceURLPort(databaseURL, stackPorts.PGPort)
+	databaseURL, err := replaceURLPort(prepped.base.Database.URL, stackPorts.PGPort)
 	if err != nil {
 		return Result{}, err
 	}
@@ -179,7 +175,7 @@ func loadRunState(repoRoot, initFile string, base config.Config, spec Spec, prov
 			return preparedRun{}, err
 		}
 	}
-	layout, err := NewLayout(binding, base, repoRoot)
+	layout, err := NewLayout(binding, repoRoot)
 	if err != nil {
 		return preparedRun{}, err
 	}
@@ -221,7 +217,7 @@ func finalizeRun(ctx context.Context, prepared preparedRun) (Result, error) {
 	if err := ensureListenerPorts(&runtime); err != nil {
 		return Result{}, err
 	}
-	if err := GenerateConfig(baseConfigPath(prepared.repoRoot), prepared.layout, prepared.base, prepared.spec, prepared.state, prepared.credentials, runtime); err != nil {
+	if err := GenerateConfig(baseConfigPath(prepared.repoRoot), prepared.layout, prepared.base, prepared.spec, prepared.state, runtime); err != nil {
 		return Result{}, err
 	}
 	if err := SaveBinding(prepared.layout, prepared.binding); err != nil {

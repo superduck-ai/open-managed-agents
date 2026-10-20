@@ -81,17 +81,17 @@ func TestManagedAgentNATSTunnelE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = bindingRedis.Close() })
-	broker, err := tunnels.NewBroker(ctx, connection, cfg.Tunnel, nil, tunnels.NewRequestBindings(bindingRedis, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL), "")
+	broker, err := tunnels.NewBroker(ctx, connection, cfg.Tunnel, nil, tunnels.NewRequestBindings(bindingRedis, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(broker.Close)
-	workerBroker, err := workerevents.NewJetStream(ctx, connection, cfg.NATS.WorkerEventStream, cfg.NATS.Namespace)
+	workerBroker, err := workerevents.NewJetStream(ctx, connection, cfg.NATS.WorkerEventStream)
 	if err != nil {
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	eventBus, err := sessionfanout.NewNATS(ctx, connection, logger, cfg.NATS.Namespace)
+	eventBus, err := sessionfanout.NewNATS(ctx, connection, logger)
 	if err != nil {
 		t.Fatal(err)
 	}

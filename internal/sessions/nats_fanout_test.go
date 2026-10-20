@@ -114,7 +114,7 @@ func newNATSFanoutHandler(t *testing.T, serverURL string) *Handler {
 		t.Fatal(err)
 	}
 	t.Cleanup(connection.Close)
-	bus, err := sessionfanout.NewNATS(t.Context(), connection, slog.New(slog.NewTextHandler(io.Discard, nil)), "")
+	bus, err := sessionfanout.NewNATS(t.Context(), connection, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}

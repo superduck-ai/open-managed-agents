@@ -50,22 +50,17 @@ pane_id() {
   '
 }
 
-find_layout() {
+find_service_panes() {
   herdr pane list --workspace "$HERDR_WORKSPACE_ID" | bun -e '
     const { result } = JSON.parse(await Bun.stdin.text());
     const root = process.argv[1];
     const names = ["oma-server", "oma-brain", "web"];
-    const tabs = new Map();
     for (const pane of result.panes) {
       const cwd = pane.foreground_cwd ?? pane.cwd;
-      if (!names.includes(pane.label) || !cwd || (cwd !== root && !cwd.startsWith(root + "/"))) continue;
-      const panes = tabs.get(pane.tab_id) ?? new Map();
-      if (panes.has(pane.label)) throw new Error("Duplicate service panes in " + pane.tab_id);
-      panes.set(pane.label, pane.pane_id);
-      tabs.set(pane.tab_id, panes);
+      if (names.includes(pane.label) && cwd && (cwd === root || cwd.startsWith(root + "/"))) {
+        console.log(pane.pane_id + "|" + pane.label);
+      }
     }
-    const selected = [...tabs].sort((a, b) => a[1].size - b[1].size).at(-1);
-    console.log(selected ? [selected[0], ...names.map(name => selected[1].get(name) ?? "")].join("|") : "|||");
   ' "$REPO_ROOT"
 }
 
@@ -92,7 +87,10 @@ pane_process_state() {
       if (recipe === "restart-brain") return /bun (?:dist\/main\.js|src\/main\.ts)/.test(command);
       return /(?:^|\/)vite(?: |$)/.test(command);
     });
-    if (!known) process.exit(1);
+    if (!known) {
+      console.log("busy: " + processes.map(p => "pid=" + p.pid + " name=" + p.name).join(", "));
+      process.exit(0);
+    }
     console.log("service");
   ' "$REPO_ROOT" "$recipe"
 }
@@ -109,8 +107,12 @@ stop_service() {
       return 1
     fi
     [[ "$state" == shell ]] && return 0
+    if [[ "$state" == busy:* ]]; then
+      echo "Cannot identify the process in $pane ($state); refusing to interrupt it." >&2
+      return 1
+    fi
     if [[ "$state" == service && "$interrupted" -eq 0 ]]; then
-      herdr pane send-keys "$pane" ctrl+c >/dev/null
+      herdr pane send-keys "$pane" ctrl+c >/dev/null || return 1
       interrupted=1
     fi
     sleep 0.2
@@ -119,14 +121,42 @@ stop_service() {
   return 1
 }
 
+wait_new_shell() {
+  local pane="$1" recipe="$2" state=starting deadline=$((SECONDS + 30))
+  echo "Waiting for shell in new pane $pane..."
+  while ((SECONDS < deadline)); do
+    if ! state="$(pane_process_state "$pane" "$recipe")"; then
+      echo "Cannot read shell state in new pane $pane." >&2
+      return 1
+    fi
+    [[ "$state" == shell ]] && return 0
+    sleep 0.2
+  done
+  echo "New pane $pane did not reach an idle shell within 30 seconds (last state: $state)." >&2
+  return 1
+}
+
+service_failure() {
+  local pane="$1" name="$2" reason="$3"
+  echo "$name: $reason (pane $pane). Recent output:" >&2
+  herdr pane read "$pane" --source recent-unwrapped --lines 30 --raw >&2 || true
+}
+
 start_service() {
   local pane="$1" name="$2" recipe="$3" ready="$4" command marker
-  stop_service "$pane" "$recipe"
+  if ! wait_new_shell "$pane" "$recipe"; then
+    service_failure "$pane" "$name" "shell initialization failed"
+    return 1
+  fi
   marker="$(bun -e 'console.log(crypto.randomUUID())')"
   printf -v command 'bash %q --service %q %q %q' "$REPO_ROOT/scripts/restart-dev.sh" "$recipe" "$ready" "$marker"
-  herdr pane run "$pane" "$command" >/dev/null
+  echo "Starting $name in $pane..."
+  if ! herdr pane run "$pane" "$command" >/dev/null; then
+    service_failure "$pane" "$name" "could not send the startup command"
+    return 1
+  fi
   if ! herdr pane wait-output "$pane" --match "OMA_READY_$marker" --timeout "$START_TIMEOUT_MS" >/dev/null; then
-    echo "$name did not become ready. Inspect pane $pane; startup logs are preserved." >&2
+    service_failure "$pane" "$name" "startup failed or timed out after ${START_TIMEOUT_MS}ms"
     return 1
   fi
 }
@@ -153,22 +183,39 @@ print_access_urls() {
   print_url API "http://oma-${name}-api.localhost"
 }
 
-SERVICE_LAYOUT="$(find_layout)"
-IFS='|' read -r SERVICE_TAB SERVER_PANE BRAIN_PANE WEB_PANE <<< "$SERVICE_LAYOUT"
-if [[ -z "$SERVICE_TAB" ]]; then
-  SERVER_PANE="$(herdr tab create --workspace "$HERDR_WORKSPACE_ID" --cwd "$REPO_ROOT" --label "OMA services" --focus | pane_id)"
-else
-  herdr tab focus "$SERVICE_TAB" >/dev/null
-fi
-if [[ -z "$SERVER_PANE" ]]; then
-  SERVER_PANE="$(herdr pane split "${BRAIN_PANE:-$WEB_PANE}" --direction right --cwd "$REPO_ROOT" --no-focus | pane_id)"
-fi
-if [[ -z "$BRAIN_PANE" ]]; then
-  BRAIN_PANE="$(herdr pane split "$SERVER_PANE" --direction right --cwd "$REPO_ROOT" --no-focus | pane_id)"
-fi
-if [[ -z "$WEB_PANE" ]]; then
-  WEB_PANE="$(herdr pane split "$BRAIN_PANE" --direction down --cwd "$REPO_ROOT" --no-focus | pane_id)"
-fi
+OLD_PANES="$(find_service_panes)"
+while IFS='|' read -r OLD_PANE OLD_LABEL; do
+  [[ -n "$OLD_PANE" ]] || continue
+  if [[ "$OLD_PANE" == "${HERDR_PANE_ID:-}" ]]; then
+    echo "Run just restart from a control pane, outside the service panes." >&2
+    exit 1
+  fi
+done <<< "$OLD_PANES"
+while IFS='|' read -r OLD_PANE OLD_LABEL; do
+  [[ -n "$OLD_PANE" ]] || continue
+  case "$OLD_LABEL" in
+    oma-server) OLD_RECIPE=restart-server ;;
+    oma-brain) OLD_RECIPE=restart-brain ;;
+    web) OLD_RECIPE=restart-web ;;
+  esac
+  if ! stop_service "$OLD_PANE" "$OLD_RECIPE"; then
+    service_failure "$OLD_PANE" "$OLD_LABEL" "could not safely stop the previous service"
+    exit 1
+  fi
+done <<< "$OLD_PANES"
+while IFS='|' read -r OLD_PANE OLD_LABEL; do
+  [[ -n "$OLD_PANE" ]] || continue
+  herdr pane close "$OLD_PANE" >/dev/null
+done <<< "$OLD_PANES"
+
+SERVICE_LAYOUT="$(herdr tab create --workspace "$HERDR_WORKSPACE_ID" --cwd "$REPO_ROOT" --label "OMA services" --no-focus | bun -e '
+  const { result } = JSON.parse(await Bun.stdin.text());
+  if (!result.tab?.tab_id || !result.root_pane?.pane_id) process.exit(1);
+  console.log(result.tab.tab_id + "|" + result.root_pane.pane_id);
+')"
+IFS='|' read -r SERVICE_TAB SERVER_PANE <<< "$SERVICE_LAYOUT"
+BRAIN_PANE="$(herdr pane split "$SERVER_PANE" --direction right --cwd "$REPO_ROOT" --no-focus | pane_id)"
+WEB_PANE="$(herdr pane split "$BRAIN_PANE" --direction down --cwd "$REPO_ROOT" --no-focus | pane_id)"
 
 herdr pane rename "$SERVER_PANE" oma-server >/dev/null
 herdr pane rename "$BRAIN_PANE" oma-brain >/dev/null
@@ -177,6 +224,8 @@ herdr pane rename "$WEB_PANE" web >/dev/null
 start_service "$SERVER_PANE" oma-server restart-server "claude api server listening"
 start_service "$BRAIN_PANE" oma-brain restart-brain "oma-brain-dsh ready"
 start_service "$WEB_PANE" web restart-web "Local:"
+
+herdr tab focus "$SERVICE_TAB" >/dev/null
 
 echo "OMA services ready: server=$SERVER_PANE brain=$BRAIN_PANE web=$WEB_PANE"
 print_access_urls

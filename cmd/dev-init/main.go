@@ -63,6 +63,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runSetRuntime(args[1:])
 	case "teardown":
 		return runTeardown(args[1:], stdout)
+	case "recycle":
+		return runRecycle(args[1:], stdout)
 	default:
 		return runInit(args, stdout)
 	}
@@ -80,6 +82,11 @@ func runInit(args []string, stdout io.Writer) error {
 	repoRoot, err := os.Getwd()
 	if err != nil {
 		return err
+	}
+	if initFile == filepath.Join(repoRoot, ".run", "dev-init.yaml") {
+		if err := devinit.PrepareLocal(repoRoot); err != nil {
+			return err
+		}
 	}
 	result, err := devinit.Run(context.Background(), repoRoot, initFile, devinit.Options{Update: update})
 	if err != nil {
@@ -158,10 +165,28 @@ func printResult(result devinit.Result, stdout io.Writer) {
 	fmt.Fprintf(stdout, "generated_config: %s\n", layout.GeneratedConfig)
 }
 
+func runRecycle(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("recycle", flag.ContinueOnError)
+	yes := flags.Bool("yes", false, "stop services and delete the environment Compose volumes")
+	target := flags.String("worktree", "", "worktree environment to clean (default: current checkout)")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("usage: dev-init recycle --yes [--worktree /path/to/worktree]")
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	return devinit.Recycle(context.Background(), root, devinit.RecycleOptions{Yes: *yes, Worktree: *target}, stdout)
+}
+
 func usage(stderr io.Writer) {
 	fmt.Fprintf(stderr, "usage:\n")
 	fmt.Fprintf(stderr, "  dev-init [init-file] [--update] (default: .run/dev-init.yaml)\n")
 	fmt.Fprintf(stderr, "  dev-init slot-info [-json]\n")
 	fmt.Fprintf(stderr, "  dev-init set-runtime --api-port N [--web-port M]\n")
 	fmt.Fprintf(stderr, "  dev-init teardown [--yes] [--orphans]\n")
+	fmt.Fprintf(stderr, "  dev-init recycle --yes [--worktree /path/to/worktree]\n")
 }

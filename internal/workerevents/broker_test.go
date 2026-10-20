@@ -21,7 +21,7 @@ var testStreamConfig = config.WorkerEventStreamConfig{ConsumerInactiveThreshold:
 func TestJetStreamBrokerRejectsInsufficientReplicas(t *testing.T) {
 	srv := runNATSServer(t, server.Options{Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir()})
 	connection := connectNATS(t, srv.ClientURL())
-	if _, err := NewJetStream(t.Context(), connection, testStreamConfig, ""); err == nil {
+	if _, err := NewJetStream(t.Context(), connection, testStreamConfig); err == nil {
 		t.Fatal("NewJetStream() error = nil, want three-replica stream failure")
 	}
 }
@@ -30,7 +30,7 @@ func TestJetStreamBrokerAppliesConfiguredLimits(t *testing.T) {
 	srv := runNATSServer(t, server.Options{Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir()})
 	connection := connectNATS(t, srv.ClientURL())
 	for _, capacity := range []int64{2 << 20, 4 << 20} {
-		broker, err := NewJetStream(t.Context(), connection, config.WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, MaxBytes: capacity, MaxMsgSize: 1024, MaxAge: time.Hour, Replicas: 1}, "")
+		broker, err := NewJetStream(t.Context(), connection, config.WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, MaxBytes: capacity, MaxMsgSize: 1024, MaxAge: time.Hour, Replicas: 1})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -60,11 +60,11 @@ func TestJetStreamBrokerDeliversOrderedInputsBeforeAckAndKeepsDurableConsumer(t 
 	servers := runNATSCluster(t)
 	publisherConnection := connectNATS(t, servers[0].ClientURL())
 	subscriberConnection := connectNATS(t, servers[1].ClientURL())
-	publisher, err := NewJetStream(t.Context(), publisherConnection, testStreamConfig, "")
+	publisher, err := NewJetStream(t.Context(), publisherConnection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	subscriber, err := NewJetStream(t.Context(), subscriberConnection, testStreamConfig, "")
+	subscriber, err := NewJetStream(t.Context(), subscriberConnection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestJetStreamBrokerDeliversOrderedInputsBeforeAckAndKeepsDurableConsumer(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	consumer, err := js.Consumer(t.Context(), newNaming("").streamName, newNaming("").consumerName(sessionID))
+	consumer, err := js.Consumer(t.Context(), StreamName, consumerName(sessionID))
 	if err != nil {
 		t.Fatal(err)
 	}

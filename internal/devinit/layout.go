@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
 const (
@@ -44,7 +42,7 @@ type Layout struct {
 // NewLayout derives the environment from the binding and the worktree base
 // config. Listener ports are runtime state attached by the restart scripts
 // through RuntimePorts, not derived here.
-func NewLayout(binding EnvBinding, base config.Config, repoRoot string) (Layout, error) {
+func NewLayout(binding EnvBinding, repoRoot string) (Layout, error) {
 	if strings.TrimSpace(binding.Name) == "" || strings.TrimSpace(binding.EnvID) == "" {
 		return Layout{}, fmt.Errorf("binding name and env_id are required")
 	}
@@ -80,19 +78,6 @@ func ProbeFreePort(base int) (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("no free loopback port between %d and %d", base, base+portScanLimit)
-}
-
-func deriveDatabaseURL(rawURL, name string) (string, string, error) {
-	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Scheme == "" {
-		return "", "", fmt.Errorf("database.url must be a valid URL: %q", rawURL)
-	}
-	baseName := strings.TrimPrefix(parsed.Path, "/")
-	if baseName == "" {
-		return "", "", fmt.Errorf("database.url must include a database name: %q", rawURL)
-	}
-	parsed.Path = "/" + baseName
-	return parsed.String(), baseName, nil
 }
 
 // redisURLWithPort points the generated config at the per-environment Redis

@@ -31,11 +31,14 @@ restart:
 
 # Initialize the worktree development environment (name derived from the worktree).
 dev-init *args:
-  go run ./cmd/dev-init {{ args }}
+  ./scripts/dev-init.sh {{ args }}
 
 # Tear down the bound environment, or every orphaned one with --orphans; destructive, requires --yes.
 dev-teardown *args:
   go run ./cmd/dev-init teardown {{ args }}
+
+dev-recycle *args:
+  ./scripts/dev-recycle.sh {{ args }}
 
 # Show the current worktree environment binding, addresses and init state.
 slot-info:

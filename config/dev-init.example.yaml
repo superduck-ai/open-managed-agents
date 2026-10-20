@@ -29,4 +29,4 @@ workspaces:
       - ref: key-2
         name: secondary-key-2
 
-model_providers_file: ./model-providers.yaml
+model_providers_file: /absolute/path/to/.oma-dev/model-providers.yaml

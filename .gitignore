@@ -1,4 +1,5 @@
 # OS/editor noise
+.codex/
 .DS_Store
 Thumbs.db
 .idea/

@@ -10,11 +10,11 @@ import (
 	"fmt"
 	"math/big"
 	"net/mail"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 )
 
 const (
@@ -274,11 +274,8 @@ func (s *EmailProvider) normalizeLoginEmail(raw string) (string, error) {
 	if err != nil || parsed.Address != email {
 		return "", invalidEmail(errors.New("invalid email address"))
 	}
-	if s != nil && len(s.loginEmailDomains) > 0 {
-		_, domain, _ := strings.CutLast(email, "@")
-		if !slices.Contains(s.loginEmailDomains, domain) {
-			return "", emailLoginDomainDenied()
-		}
+	if s != nil && !auth.EmailDomainAllowed(email, s.loginEmailDomains) {
+		return "", emailLoginDomainDenied()
 	}
 	return email, nil
 }

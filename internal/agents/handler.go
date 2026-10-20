@@ -23,6 +23,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/mcpnames"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -33,7 +34,7 @@ const (
 
 var (
 	customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
-	mcpNamePattern        = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	mcpToolNamePattern    = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 )
 
 type Handler struct {
@@ -123,10 +124,6 @@ func NewHandler(database *db.DB, deploymentStore *deployments.Store, logger *slo
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("beta") != "true" {
-		h.errorAdapter.Write(w, r, agentsBetaRequired())
-		return
-	}
 	h.router.ServeHTTP(w, r)
 }
 
@@ -232,9 +229,6 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) search(w http.ResponseWriter, r *http.Request) error {
-	if r.URL.Query().Get("beta") != "true" {
-		return agentsBetaRequired()
-	}
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
 		return agentAuthenticationRequired()
@@ -307,57 +301,66 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 	if err != nil {
 		return invalidRequest(err)
 	}
-	if len(body.Version) == 0 {
-		return invalidRequest(errors.New("version is required"))
-	}
-	expectedVersion, err := parseRequiredVersion(body.Version)
-	if err != nil {
-		return invalidRequest(err)
-	}
-	current, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, agentID)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return agentNotFound(agentID, err)
+	expectedVersion := 0
+	if len(body.Version) > 0 {
+		expectedVersion, err = parseRequiredVersion(body.Version)
+		if err != nil {
+			return invalidRequest(err)
 		}
-		return internalError("Could not update agent", fmt.Errorf("retrieve agent %q for update: %w", agentID, err))
 	}
-	nextState, err := h.stateFromUpdate(r, principal, current, body)
-	if err != nil {
-		return agentMutationError(err)
-	}
-	versionID, err := ids.New("agentver_")
-	if err != nil {
-		return internalError("Could not generate agent version ID", fmt.Errorf("generate agent version ID: %w", err))
-	}
-	updated, err := h.db.UpdateAgent(r.Context(), principal.WorkspaceUUID, agentID, expectedVersion, db.Agent{
-		Name:        nextState.Name,
-		Description: nextState.Description,
-		System:      nextState.System,
-		Model:       nextState.Model,
-		MCPServers:  nextState.MCPServers,
-		Metadata:    nextState.Metadata,
-		Multiagent:  nextState.Multiagent,
-		Skills:      nextState.Skills,
-		Tools:       nextState.Tools,
-		UpdatedAt:   time.Now().UTC(),
-	}, versionID)
-	if err != nil {
-		if errors.Is(err, db.ErrInvalidState) {
-			return archivedAgentCannotBeUpdated(err)
+	for {
+		current, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, agentID)
+		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				return agentNotFound(agentID, err)
+			}
+			return internalError("Could not update agent", fmt.Errorf("retrieve agent %q for update: %w", agentID, err))
 		}
-		if errors.Is(err, db.ErrVersionConflict) {
-			return agentVersionConflict(err)
+		nextState, err := h.stateFromUpdate(r, principal, current, body)
+		if err != nil {
+			return agentMutationError(err)
 		}
-		if errors.Is(err, db.ErrNotFound) {
-			return agentNotFound(agentID, err)
+		updateVersion := expectedVersion
+		if updateVersion == 0 {
+			updateVersion = current.CurrentVersion
 		}
-		return internalError("Could not update agent", fmt.Errorf("update agent %q: %w", agentID, err))
+		versionID, err := ids.New("agentver_")
+		if err != nil {
+			return internalError("Could not generate agent version ID", fmt.Errorf("generate agent version ID: %w", err))
+		}
+		updated, err := h.db.UpdateAgent(r.Context(), principal.WorkspaceUUID, agentID, updateVersion, db.Agent{
+			Name:        nextState.Name,
+			Description: nextState.Description,
+			System:      nextState.System,
+			Model:       nextState.Model,
+			MCPServers:  nextState.MCPServers,
+			Metadata:    nextState.Metadata,
+			Multiagent:  nextState.Multiagent,
+			Skills:      nextState.Skills,
+			Tools:       nextState.Tools,
+			UpdatedAt:   time.Now().UTC(),
+		}, versionID)
+		if errors.Is(err, db.ErrVersionConflict) && expectedVersion == 0 {
+			continue
+		}
+		if err != nil {
+			if errors.Is(err, db.ErrInvalidState) {
+				return archivedAgentCannotBeUpdated(err)
+			}
+			if errors.Is(err, db.ErrVersionConflict) {
+				return agentVersionConflict(err)
+			}
+			if errors.Is(err, db.ErrNotFound) {
+				return agentNotFound(agentID, err)
+			}
+			return internalError("Could not update agent", fmt.Errorf("update agent %q: %w", agentID, err))
+		}
+		if updated.CurrentVersion > current.CurrentVersion {
+			h.enqueueWebhook(r.Context(), principal, "agent.updated", updated.ExternalID, updated.UpdatedAt)
+		}
+		httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(updated))
+		return nil
 	}
-	if updated.CurrentVersion > expectedVersion {
-		h.enqueueWebhook(r.Context(), principal, "agent.updated", updated.ExternalID, updated.UpdatedAt)
-	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(updated))
-	return nil
 }
 
 func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
@@ -461,6 +464,9 @@ func (h *Handler) stateFromCreate(r *http.Request, principal auth.Principal, age
 	if state.Multiagent, err = h.normalizeMultiagent(r, principal, agentID, 1, body.Multiagent); err != nil {
 		return agentState{}, err
 	}
+	if err := h.validateCMARosterGeography(r, principal, state, agentID, 1); err != nil {
+		return agentState{}, err
+	}
 	return state, nil
 }
 
@@ -543,11 +549,18 @@ func (h *Handler) stateFromUpdate(r *http.Request, principal auth.Principal, cur
 		state.Metadata = metadata
 	}
 	if len(body.Multiagent) > 0 {
-		multiagent, err := h.normalizeMultiagent(r, principal, current.ExternalID, current.CurrentVersion+1, body.Multiagent)
+		merged, err := mergeCMAMultiagent(current.Multiagent, body.Multiagent)
+		if err != nil {
+			return agentState{}, err
+		}
+		multiagent, err := h.normalizeMultiagent(r, principal, current.ExternalID, current.CurrentVersion+1, merged)
 		if err != nil {
 			return agentState{}, err
 		}
 		state.Multiagent = multiagent
+	}
+	if err := h.validateCMARosterGeography(r, principal, state, current.ExternalID, current.CurrentVersion+1); err != nil {
+		return agentState{}, err
 	}
 	return state, nil
 }
@@ -563,8 +576,11 @@ func (h *Handler) normalizeMultiagent(r *http.Request, principal auth.Principal,
 	if err := json.Unmarshal(raw, &body); err != nil {
 		return nil, errors.New("multiagent must be an object")
 	}
+	if body.Type == "multiagent_20261001" {
+		return h.normalizeCMAMultiagent(r, principal, selfID, selfVersion, raw)
+	}
 	if body.Type != "coordinator" {
-		return nil, errors.New("multiagent.type must be coordinator")
+		return nil, errors.New("multiagent.type must be coordinator or multiagent_20261001")
 	}
 	if len(body.Agents) < 1 || len(body.Agents) > 20 {
 		return nil, errors.New("multiagent.agents must contain between 1 and 20 entries")
@@ -630,10 +646,11 @@ func (h *Handler) resolveRosterEntry(r *http.Request, principal auth.Principal, 
 		return agentReference{ID: selfID, Type: "agent", Version: selfVersion}, false, nil
 	}
 	if version > 0 {
-		if _, err := h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, id, version); err != nil {
+		record, err := h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, id, version)
+		if err != nil {
 			return agentReference{}, false, errors.New("multiagent referenced agent version not found")
 		}
-		return agentReference{ID: id, Type: "agent", Version: version}, false, nil
+		return resolvedRosterReference(record, selfID)
 	}
 	record, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, id)
 	if err != nil {
@@ -642,7 +659,14 @@ func (h *Handler) resolveRosterEntry(r *http.Request, principal auth.Principal, 
 	if record.ArchivedAt != nil {
 		return agentReference{}, false, errors.New("multiagent referenced agent must not be archived")
 	}
-	return agentReference{ID: id, Type: "agent", Version: record.CurrentVersion}, false, nil
+	return resolvedRosterReference(record, selfID)
+}
+
+func resolvedRosterReference(record db.Agent, selfID string) (agentReference, bool, error) {
+	if record.ExternalID != selfID && len(record.Multiagent) > 0 && !httpapi.IsJSONNull(record.Multiagent) {
+		return agentReference{}, false, errNestedMultiagentReference
+	}
+	return agentReference{ID: record.ExternalID, Type: "agent", Version: record.CurrentVersion}, false, nil
 }
 
 func decodeSearchRequest(w http.ResponseWriter, r *http.Request) (*searchRequest, error) {
@@ -714,13 +738,17 @@ func parseRequiredVersion(raw json.RawMessage) (int, error) {
 }
 
 type agentModelInput struct {
-	ID    *string `json:"id"`
-	Speed *string `json:"speed"`
+	ID           *string         `json:"id"`
+	Speed        *string         `json:"speed"`
+	InferenceGeo *string         `json:"inference_geo"`
+	Effort       json.RawMessage `json:"effort"`
 }
 
 type normalizedAgentModel struct {
-	ID    string `json:"id"`
-	Speed string `json:"speed"`
+	ID           string       `json:"id"`
+	Speed        string       `json:"speed"`
+	InferenceGeo string       `json:"inference_geo,omitempty"`
+	Effort       *modelEffort `json:"effort,omitempty"`
 }
 
 func normalizeModel(raw json.RawMessage) (normalizedAgentModel, error) {
@@ -757,6 +785,17 @@ func normalizeModel(raw json.RawMessage) (normalizedAgentModel, error) {
 			return normalizedAgentModel{}, errors.New("model.speed must be standard or fast")
 		}
 		normalized.Speed = *model.Speed
+	}
+	if model.InferenceGeo != nil {
+		if *model.InferenceGeo != "us" && *model.InferenceGeo != "global" {
+			return normalizedAgentModel{}, errInvalidInferenceGeo
+		}
+		normalized.InferenceGeo = *model.InferenceGeo
+	}
+	var err error
+	normalized.Effort, err = normalizeModelEffort(model.Effort)
+	if err != nil {
+		return normalizedAgentModel{}, err
 	}
 	return normalized, nil
 }
@@ -800,11 +839,8 @@ func normalizeMCPServers(raw json.RawMessage) (json.RawMessage, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(name) > 255 {
-			return nil, errors.New("mcp_servers.name must be at most 255 characters")
-		}
-		if !mcpNamePattern.MatchString(name) || strings.Contains(name, "__") {
-			return nil, errors.New("mcp_servers.name must match ^[A-Za-z0-9_.-]+$ and not contain consecutive underscores")
+		if !mcpnames.Valid(name) {
+			return nil, errInvalidMCPServerName
 		}
 		if _, ok := seen[name]; ok {
 			return nil, errors.New("mcp_servers.name must be unique")
@@ -891,7 +927,7 @@ func normalizeSkills(raw json.RawMessage) (json.RawMessage, error) {
 
 func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMessage, error) {
 	if httpapi.IsJSONNull(raw) {
-		return json.RawMessage(`[]`), nil
+		raw = json.RawMessage(`[]`)
 	}
 	var tools []map[string]any
 	if err := json.Unmarshal(raw, &tools); err != nil {
@@ -930,8 +966,8 @@ func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMe
 			if name == "" {
 				return nil, errors.New("mcp_toolset.mcp_server_name is required")
 			}
-			if len(name) > 255 || !mcpNamePattern.MatchString(name) || strings.Contains(name, "__") {
-				return nil, errors.New("mcp_toolset.mcp_server_name must match ^[A-Za-z0-9_.-]+$ and not contain consecutive underscores")
+			if !mcpnames.Valid(name) {
+				return nil, errInvalidMCPToolsetServerName
 			}
 			if _, ok := serverNames[name]; !ok {
 				return nil, errors.New("mcp_toolset.mcp_server_name must reference an MCP server")
@@ -967,7 +1003,7 @@ func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMe
 			return nil, errors.New("tools.type must be agent_toolset_20260401, mcp_toolset, or custom")
 		}
 	}
-	if len(referencedMCPServers) > 0 && len(referencedMCPServers) != len(serverNames) {
+	if len(referencedMCPServers) != len(serverNames) {
 		return nil, errors.New("every mcp_servers entry must be referenced by an mcp_toolset")
 	}
 	if total > 128 {
@@ -1045,7 +1081,7 @@ func normalizeMCPToolConfigs(value any, defaultPolicy string) ([]map[string]any,
 	seen := map[string]struct{}{}
 	for _, config := range configs {
 		name, _ := config["name"].(string)
-		if !mcpNamePattern.MatchString(name) || len(name) > 128 {
+		if !mcpToolNamePattern.MatchString(name) || len(name) > 128 {
 			return nil, errors.New("mcp tool config name must match ^[A-Za-z0-9_.-]{1,128}$")
 		}
 		if _, exists := seen[name]; exists {
@@ -1093,8 +1129,8 @@ func normalizePermissionPolicy(value any, defaultPolicy string) (map[string]stri
 		return nil, errors.New("permission_policy must be an object")
 	}
 	policyType, _ := object["type"].(string)
-	if policyType != "always_allow" && policyType != "always_ask" {
-		return nil, errors.New("permission_policy.type must be always_allow or always_ask")
+	if policyType != "always_allow" && policyType != "always_ask" && policyType != "auto" {
+		return nil, errors.New("permission_policy.type must be always_allow, always_ask, or auto")
 	}
 	return map[string]string{"type": policyType}, nil
 }
@@ -1112,6 +1148,9 @@ func permissionPolicyType(config map[string]any, fallback string) string {
 
 func normalizeCustomTool(tool map[string]any) (map[string]any, error) {
 	name, _ := tool["name"].(string)
+	if strings.HasPrefix(name, "mcp__") {
+		return nil, errors.New("custom tool name must not start with mcp__ (reserved for MCP tools)")
+	}
 	if !customToolNamePattern.MatchString(name) {
 		return nil, errors.New("custom tool name must match ^[A-Za-z0-9_-]{1,128}$")
 	}

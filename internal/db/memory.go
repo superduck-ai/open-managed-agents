@@ -774,16 +774,10 @@ func applyMemoryUpdate(
 		targetKey = input.S3Key
 	}
 	if input.ExpectedContentSHA256 != nil && current.ContentSHA256 != *input.ExpectedContentSHA256 {
-		if current.Path == targetPath && current.ContentSHA256 == targetSHA {
-			return MemoryMutationResult{Memory: current}, nil
-		}
 		return MemoryMutationResult{}, ErrPreconditionFailed
 	}
 	if input.BaseVersionExternalID != "" && current.CurrentVersionExternalID != input.BaseVersionExternalID {
 		return MemoryMutationResult{}, ErrVersionConflict
-	}
-	if current.Path == targetPath && current.ContentSHA256 == targetSHA {
-		return MemoryMutationResult{Memory: current}, nil
 	}
 	if targetPath != current.Path {
 		if err := ensureMemoryPathAvailable(

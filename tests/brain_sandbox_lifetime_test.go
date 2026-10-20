@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -50,7 +52,7 @@ func TestBrainSandboxMCPResumesBeforeDispatch(t *testing.T) {
 	if _, err := registerTaskTestWorker(t, app, worker); err != nil {
 		t.Fatal(err)
 	}
-	service := codesessions.NewServiceWithCredentials(app.db, app.credentials, slog.Default()).WithSandboxProvisioner(fixedSandboxProvisioner(sandbox.URL))
+	service := codesessions.NewServiceWithCredentials(app.db, app.credentials, slog.Default()).WithSandboxProvisioner(fixedSandboxProvisioner{endpoint: sandbox.URL, db: app.db})
 	handler := codesessions.NewHandler(app.cfg, service, app.sandboxTimeouts, slog.Default())
 	router := chi.NewRouter()
 	router.Route("/v2", handler.RegisterV2Routes)
@@ -79,9 +81,14 @@ func TestBrainSandboxMCPResumesBeforeDispatch(t *testing.T) {
 	if response.StatusCode != http.StatusOK || calls != 2 {
 		t.Fatalf("resumed dispatch status=%d calls=%d", response.StatusCode, calls)
 	}
+	response = request(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}`)
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || calls != 3 {
+		t.Fatalf("notification status=%d calls=%d", response.StatusCode, calls)
+	}
 	renewals := app.sandboxTimeouts.snapshotCalls()
-	if len(renewals) != 3 {
-		t.Fatalf("renewals=%d want 3", len(renewals))
+	if len(renewals) != 2 {
+		t.Fatalf("renewals=%d want failed attempt plus one renewal reused within its window", len(renewals))
 	}
 	for _, call := range renewals {
 		if call.sandboxID == "" || call.timeout != app.cfg.E2B.SandboxTimeout {
@@ -90,8 +97,12 @@ func TestBrainSandboxMCPResumesBeforeDispatch(t *testing.T) {
 	}
 }
 
-type fixedSandboxProvisioner string
+type fixedSandboxProvisioner struct {
+	endpoint string
+	db       *db.DB
+}
 
-func (p fixedSandboxProvisioner) EnsureSessionSandbox(context.Context, db.CodeSession) (string, error) {
-	return string(p), nil
+func (p fixedSandboxProvisioner) EnsureSessionSandbox(ctx context.Context, code db.CodeSession) (string, db.EnvironmentSandbox, error) {
+	sandbox, err := p.db.GetResumableEnvironmentSandboxForCodeSession(ctx, code.ExternalID)
+	return p.endpoint, sandbox, err
 }

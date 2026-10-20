@@ -34,7 +34,7 @@ test("all output sources share a FIFO queue with 100-event batches and HTTP comp
     } finally { active--; }
   });
   const payloads = Array.from({ length: 120 }, (_, index) => ({
-    type: ["event_start", "event_delta", "event_stop", "agent.message"][index % 4]!, uuid: `event-${index}`,
+    type: ["event_start", "event_delta", "event_delta", "agent.message"][index % 4]!, uuid: `event-${index}`,
     session_thread_id: "child", delta: { text: String(index) },
   }));
   const keepAlive = new AbortController();
@@ -156,7 +156,7 @@ test("output retries retain snapshots and UUIDs, refresh tokens, log safe fields
   });
   const detach = client.bindLease("private-session").subscribe!(() => {});
   client.config.sleep = async (ms) => { waits.push(ms); if (waits.length === 1) { waiting.resolve(); await resume.promise; } };
-  const payloads = [{ type: "agent.message", content: { text: "private-original" } }, { type: "event_stop", uuid: "private-fixed" }];
+  const payloads = [{ type: "agent.message", content: { text: "private-original" } }, { type: "agent.thinking", uuid: "private-fixed" }];
   let confirmed = false;
   const pending = client.events("private-session", payloads).then(() => { confirmed = true; });
   try {
@@ -172,7 +172,7 @@ test("output retries retain snapshots and UUIDs, refresh tokens, log safe fields
     expect(requests.map((request) => request.token)).toEqual(["private-token", "private-token-1", "private-token-2", "private-token-3"]);
     expect(waits).toEqual([500, 1000, 2000]);
     expect(cleanups).toBe(1);
-    const fields = { method: "post", path: "/worker/events", worker_epoch: 7, batch_size: 2 };
+    const fields = { method: "post", path: "/worker/events", session_ref: "7ae99811b2c7c696275f6aca5adcedd71a90d8ab3ced71cd81d7e2c8020628fd", worker_epoch: 7, batch_size: 2 };
     expect(logs.map((log) => JSON.parse(log))).toEqual([
       { event: "cli_worker_request_failed", ...fields, status: 503, failure_reason: "server_error" },
       { event: "cli_worker_request_error", ...fields, failure_reason: "transport_error", error_code: "ECONNRESET" },

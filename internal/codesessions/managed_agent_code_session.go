@@ -185,7 +185,7 @@ func (s *Service) convertSessionEventToInbound(
 	codeSession db.CodeSession,
 	event db.SessionEvent,
 ) (preparedInboundEvent, error) {
-	payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event)
+	payload, err := s.publicWorkerPayload(ctx, codeSession, event)
 	if err != nil {
 		return preparedInboundEvent{}, err
 	}
@@ -247,9 +247,26 @@ func (s *Service) managedAgentRuntimeConfig(ctx context.Context, session db.Sess
 		return nil, err
 	}
 	config.Subagents = subagents
-	config.RuntimeTools, err = runtimeRootTools(session.AgentSnapshot)
+	tools, err := runtimeRootToolsets(session.AgentSnapshot)
 	if err != nil {
 		return nil, err
 	}
+	config.RuntimeTools = enabledSandboxTools(tools)
+	config.RuntimeToolPolicies = runtimeToolPolicies(tools)
 	return config.encode()
+}
+
+func (s *Service) SandboxIngressToken(ctx context.Context, session db.Session, codeSessionID string) (string, error) {
+	credentials, err := s.db.GetCodeSessionCredentialContextForIssue(ctx, session.OrganizationUUID, session.WorkspaceUUID, codeSessionID)
+	if err != nil {
+		return "", err
+	}
+	code, found, err := s.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", db.ErrNotFound
+	}
+	return s.issueSessionIngressToken(credentials, code.CurrentWorkerEpoch)
 }

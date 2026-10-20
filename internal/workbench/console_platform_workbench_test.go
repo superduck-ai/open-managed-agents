@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -74,6 +75,12 @@ func TestWorkbenchInferenceErrorDistinguishesConfigFromUpstreamFailure(t *testin
 		wantStatus  int
 		wantMessage string
 	}{
+		{
+			name:        "backend mismatch",
+			err:         fmt.Errorf("resolve workbench: %w", llmproviders.ErrBackendMismatch),
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: llmproviders.ErrBackendMismatch.Error(),
+		},
 		{
 			name:        "model not configured",
 			err:         llmproviders.ErrModelNotConfigured,

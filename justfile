@@ -28,6 +28,9 @@ server:
 restart-server:
   PORT="${PORT:-38080}" ./scripts/restart-server.sh
 
+restart-brain:
+  cd oma-brain-dsh && bun run restart
+
 # Restart frontend Vite dev server in foreground. Override with: PORT=4173 API_PORT=18080 just web
 # Only stops listeners from this checkout; uses the next port when another checkout/process owns the requested port.
 web:
@@ -40,8 +43,13 @@ restart-web:
 
 # Restart weather MCP server in foreground. Override with: PORT=39091 WEATHER_MCP_PATH=/custom just weather-mcp
 
-test: generate
-  go test ./... -count=1
+[positional-arguments]
+test target="./..." *args: generate
+  go test -count=1 "$@"
+
+[positional-arguments]
+test-integration target="./..." *args: generate
+  go test -tags=integration -count=1 "$@"
 
 verify-be *args:
   ./.agents/skills/verify-be/scripts/verify-be {{args}}

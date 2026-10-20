@@ -44,6 +44,53 @@ describe('LLM models page', () => {
     expect(api.requests).toHaveLength(0);
   });
 
+  test('creates and edits a Chat Completions provider and discovers using its backend', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
+    const api = mockProvidersApi(['chat-model']);
+    renderPage();
+    await screen.findByText('No providers yet');
+    fireEvent.click(screen.getByRole('button', { name: 'Add provider' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add provider' });
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'API backend' }));
+    const option = await screen.findByRole('option', { name: 'OpenAI Chat Completions' });
+    fireEvent.pointerDown(option);
+    fireEvent.mouseDown(option);
+    fireEvent.pointerUp(option);
+    fireEvent.mouseUp(option);
+    fireEvent.click(option);
+    expect(within(dialog).getByText('/v1/chat/completions')).toBeTruthy();
+    expect(within(dialog).getByText('Chat Completions is supported in brain mode only.')).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'Responses' })).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText('Provider name'), { target: { value: 'Chat Gateway' } });
+    fireEvent.change(within(dialog).getByLabelText('Base URL'), { target: { value: 'https://chat.example.com' } });
+    fireEvent.change(within(dialog).getByLabelText('API key'), { target: { value: 'chat-key' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Fetch model list' }));
+    await waitFor(() =>
+      expect((within(dialog).getByRole('textbox', { name: 'Model ID 1' }) as HTMLInputElement).value).toBe(
+        'chat-model',
+      ),
+    );
+    expect(api.requests.find((request) => request.url.endsWith('/preview_models'))?.body?.api_backend).toBe(
+      'chat_completions',
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await screen.findByRole('button', { name: 'Chat Gateway models' });
+    expect(
+      api.requests.find((request) => request.method === 'POST' && request.url.endsWith('/llm_providers'))?.body
+        ?.api_backend,
+    ).toBe('chat_completions');
+    fireEvent.click(screen.getByRole('button', { name: 'Chat Gateway' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    const editDialog = screen.getByRole('dialog', { name: 'Edit provider' });
+    expect(within(editDialog).getByRole('combobox', { name: 'API backend' }).textContent).toContain(
+      'OpenAI Chat Completions',
+    );
+    fireEvent.click(within(editDialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(api.requests.find((request) => request.method === 'PUT')?.body?.api_backend).toBe('chat_completions'),
+    );
+  });
+
   test('shows the workspace provider empty state', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
     mockProvidersApi();
@@ -578,6 +625,7 @@ function providerFromBody(id: string, body?: Record<string, unknown>, existingLa
     type: 'llm_provider',
     id,
     name: String(body?.name ?? ''),
+    api_backend: body?.api_backend === 'chat_completions' ? 'chat_completions' : 'messages',
     base_url: String(body?.base_url ?? ''),
     has_api_key: Boolean(apiKey || existingLast4),
     api_key_last4: apiKey ? apiKey.slice(-4) : existingLast4,

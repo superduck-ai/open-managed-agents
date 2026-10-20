@@ -64,6 +64,9 @@ func (c *HTTPUpstreamClient) Send(ctx context.Context, batch db.MessageBatch, re
 	if err != nil {
 		return erroredResult("api_error", "workspace LLM provider is unavailable"), nil
 	}
+	if err := upstream.RequireBackend(llmproviders.Messages); err != nil {
+		return erroredResult("invalid_request_error", err.Error()), nil
+	}
 	endpoint, err := llmproviders.Endpoint(upstream.BaseURL, "/v1/messages", "")
 	if err != nil {
 		return erroredResult("api_error", "invalid upstream base URL"), nil

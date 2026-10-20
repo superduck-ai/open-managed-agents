@@ -79,3 +79,7 @@ func writeConsoleWorkspaceMemberError(w http.ResponseWriter, err error) {
 func platformAccessUnavailable(w http.ResponseWriter) {
 	writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform_access_unavailable", "message": "Could not load platform access."})
 }
+
+func writeLLMProviderBackendError(w http.ResponseWriter) {
+	writeLLMProviderError(w, http.StatusBadRequest, "api_backend_invalid", "api_backend must be messages or chat_completions")
+}

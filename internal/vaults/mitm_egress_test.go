@@ -329,3 +329,25 @@ func TestMITMEgressPrepareGitSmartHTTPOverwritesAuthorizationAndKeepsSubstitutio
 func oauth2Basic(secret string) string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte("oauth2:"+secret))
 }
+
+func TestHTTPSubstitutionPreservesCredentialNetworkAndBodyPolicy(t *testing.T) {
+	svc := newTestSecretsService(t)
+	credential := sealedEnvCredentialWithLocation(t, svc, "TEST_VAR", "oma_ph_test", "receiver.example", "synthetic-A", false, true)
+	egress := newMITMEgressForTest(newEgressSubstitutor(&fakeCredentialStore{vaultIDs: []string{"vlt_a"}, credentials: []db.VaultCredential{credential}}, svc, nil), nil)
+	for _, host := range []string{"other.example", "receiver.example"} {
+		request, _ := http.NewRequest("POST", "http://"+host+":6788/probe", strings.NewReader("oma_ph_test"))
+		request.Header.Set("X-Test", "oma_ph_test")
+		err := egress.SubstituteHTTP(context.Background(), EgressSession{CodeSessionExternalID: "cse_test", OrganizationUUID: credential.OrganizationUUID, WorkspaceUUID: credential.WorkspaceUUID}, request, host, "6788")
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(request.Body)
+		want := "oma_ph_test"
+		if host == "receiver.example" {
+			want = "synthetic-A"
+		}
+		if string(body) != want || request.Header.Get("X-Test") != "oma_ph_test" {
+			t.Fatalf("host %s: unexpected substitution", host)
+		}
+	}
+}

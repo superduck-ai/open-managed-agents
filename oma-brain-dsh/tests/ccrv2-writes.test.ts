@@ -74,6 +74,23 @@ test("one claimed write exhausts the shared auth budget and terminal lease error
   }
 });
 
+test("claimed writes fail without retrying permanent request errors or losing the lease", async () => {
+  for (const status of [400, 404, 413, 422]) {
+    for (const operation of ["persist", "events", "status", "ack"] as const) {
+      const requests: CcrHttpRequest[] = [];
+      const { client, lost } = claimed({
+        request: async (request) => { requests.push(request); return new Response(null, { status }); },
+      });
+      const writing = operation === "persist" ? client.persist("a", "dsh_brain_state", { revision: 1 })
+        : operation === "events" ? client.events("a", [{ type: "agent.message", uuid: "fixed" }])
+        : operation === "status" ? client.setStatus("a", "running") : client.acknowledge("a", "input");
+      await expect(writing).rejects.toThrow(String(status));
+      expect(requests).toHaveLength(1);
+      expect(lost).toEqual([]);
+    }
+  }
+});
+
 test("a write cannot retry into a replacement epoch or leak its credentials", async () => {
   let epoch = 7;
   const requests: CcrHttpRequest[] = [];

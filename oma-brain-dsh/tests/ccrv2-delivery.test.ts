@@ -250,9 +250,9 @@ test("delivery reports sanitized HTTP and transport failures without changing re
     await client.reportDelivery("private-session", "private-event", "received");
     expect(attempts).toBe(3);
     expect(logs.map((value) => JSON.parse(value))).toEqual([
-      { event: "cli_worker_request_failed", method: "post", path: "/worker/events/delivery", worker_epoch: 7,
+      { event: "cli_worker_request_failed", method: "post", path: "/worker/events/delivery", session_ref: "7ae99811b2c7c696275f6aca5adcedd71a90d8ab3ced71cd81d7e2c8020628fd", worker_epoch: 7,
         batch_size: 1, status: 503, failure_reason: "server_error" },
-      { event: "cli_worker_request_error", method: "post", path: "/worker/events/delivery", worker_epoch: 7,
+      { event: "cli_worker_request_error", method: "post", path: "/worker/events/delivery", session_ref: "7ae99811b2c7c696275f6aca5adcedd71a90d8ab3ced71cd81d7e2c8020628fd", worker_epoch: 7,
         batch_size: 1, failure_reason: "transport_error", error_code: "ECONNRESET" },
     ]);
     for (const secret of ["secret-token", "private-session", "private-event"])

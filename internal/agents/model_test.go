@@ -79,3 +79,46 @@ func TestNormalizeModelPreservesRealID(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeModelPreservesInferenceGeoInStoredJSON(t *testing.T) {
+	for _, geo := range []string{"us", "global"} {
+		raw := json.RawMessage(`{"id":"deepseek-flash","inference_geo":"` + geo + `"}`)
+		model, err := normalizeModel(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(model)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stored map[string]any
+		if err := json.Unmarshal(encoded, &stored); err != nil {
+			t.Fatal(err)
+		}
+		if stored["inference_geo"] != geo || stored["id"] != "deepseek-flash" || stored["speed"] != "standard" {
+			t.Fatalf("model pin lost before storage: %s", encoded)
+		}
+	}
+	for _, raw := range []string{`"deepseek-flash"`, `{"id":"deepseek-flash"}`, `{"id":"deepseek-flash","inference_geo":null}`} {
+		model, err := normalizeModel(json.RawMessage(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(model)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stored map[string]any
+		if err := json.Unmarshal(encoded, &stored); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := stored["inference_geo"]; exists {
+			t.Fatalf("unset geography became a pin: %s", encoded)
+		}
+	}
+	for _, value := range []string{`"eu"`, `""`, `" us "`, `42`, `true`} {
+		if _, err := normalizeModel(json.RawMessage(`{"id":"deepseek-flash","inference_geo":` + value + `}`)); err == nil {
+			t.Fatalf("invalid pin accepted: %s", value)
+		}
+	}
+}

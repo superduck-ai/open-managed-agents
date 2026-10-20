@@ -6,9 +6,11 @@ import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
 import ToolRuntime from "@deepseek-ai/dsh-tools";
 import AgentRegistry from "@deepseek-ai/dsh-agent";
 import AgentLoop from "@deepseek-ai/dsh-agent-loop";
+import LocalAttachmentStore from "@deepseek-ai/dsh-attachment-local";
 
 /** Native dsh runtime only. Persistence and platform adapters are installed by the host. */
 export async function mountKernel(ctx: Context): Promise<void> {
+  await ctx.plugin(LocalAttachmentStore);
   await ctx.plugin(LlmRuntime);
   await ctx.plugin(SessionStore);
   await ctx.plugin(SessionProjectionRegistry);

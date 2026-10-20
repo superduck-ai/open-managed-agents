@@ -190,7 +190,7 @@ func TestRenderMemoryMarkdownMatchesDesignContract(t *testing.T) {
 		}
 	}
 	if !strings.Contains(got, instructions) {
-		t.Fatal("500-rune instructions were truncated")
+		t.Fatal("4096-rune instructions were truncated")
 	}
 	if utf8.RuneCountInString(instructions) != sessionresource.MaxMemoryInstructionsRunes {
 		t.Fatalf("fixture instructions = %d runes", utf8.RuneCountInString(instructions))

@@ -1,10 +1,11 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "./api.ts";
-import { consumeInbound, type CcrClient, type CcrSession } from "./ccrv2/index.ts";
+import { type CcrClient, type CcrSession } from "./ccrv2/index.ts";
 import { createOmaSession } from "./oma-session.ts";
 import { registerWorkerTask, validateBrainTask } from "./worker-registration.ts";
 import { claimTasks, releaseClaim, type ClaimClient, type TaskAdmissionStage } from "./claim.ts";
 import { SessionCapacity } from "./capacity.ts";
+import { openWorkerSession } from "./worker-session.ts";
 
 export interface WorkerOptions {
   maxSessions: number;
@@ -92,11 +93,7 @@ export async function startWorkers(
       releaseSlot();
     }
     try {
-      stage("open_session");
-      await session.open();
-      if (session.blocked()) { await retire(session); return; }
-      stage("start_inbound");
-      watch(consumeInbound(client, session).finally(() => retire(session)));
+      await openWorkerSession(session, client, watch, retire, stage);
     } catch (error) {
       await retire(session);
       throw error;

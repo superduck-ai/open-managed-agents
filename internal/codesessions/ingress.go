@@ -536,7 +536,15 @@ func (h *Handler) renewSandboxTimeout(ctx context.Context, sandbox db.Environmen
 	if err := h.sandboxTimeoutExtender.SetTimeout(ctx, *sandbox.ProviderSandboxID, h.cfg.E2B.SandboxTimeout); err != nil {
 		return fmt.Errorf("set provider sandbox timeout: %w", err)
 	}
+	h.sandboxRenewals.record(*sandbox.ProviderSandboxID, time.Now(), sandboxRenewalWindow(h.cfg.E2B.SandboxTimeout))
 	return nil
+}
+
+func (h *Handler) renewStaleSandboxTimeout(ctx context.Context, sandbox db.EnvironmentSandbox) error {
+	if sandbox.ProviderSandboxID != nil && h.sandboxRenewals.fresh(*sandbox.ProviderSandboxID, time.Now(), sandboxRenewalWindow(h.cfg.E2B.SandboxTimeout)) {
+		return nil
+	}
+	return h.renewSandboxTimeout(ctx, sandbox)
 }
 
 func (h *Handler) handleSessionIngressEvents(w http.ResponseWriter, r *http.Request) {
@@ -643,6 +651,11 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 		h.writeIngressLoadError(w, r, err)
 		return
 	}
+	record, err = h.runtimeSessionToolContext(r.Context(), record, strings.TrimSpace(r.Header.Get(runtimeThreadHeader)))
+	if err != nil {
+		h.writeIngressLoadError(w, r, err)
+		return
+	}
 	sessionContext, err := sessionContextFromCodeSession(record, MCPRuntimeIdentity{
 		CodeSessionID:       record.ExternalID,
 		SessionIngressToken: auth.ExtractAPIKey(r),
@@ -651,6 +664,22 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.errorAdapter.Write(w, r, sessionMCPConfigFailure(err))
 		return
+	}
+	external, err := h.service.selfHostedCodeSession(r.Context(), record.ExternalID)
+	if err != nil {
+		h.errorAdapter.Write(w, r, sessionMCPConfigFailure(err))
+		return
+	}
+	if external {
+		delete(sessionContext, "runtime_tool_permissions")
+	}
+	if usesBrainClaimTransport(record) {
+		backends, err := h.service.modelBackends(r.Context(), record)
+		if err != nil {
+			h.errorAdapter.Write(w, r, sessionModelBackendsFailure(err))
+			return
+		}
+		sessionContext["model_backends"] = backends
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{
@@ -674,19 +703,26 @@ func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIde
 	if len(mcpConfig) == 0 {
 		mcpConfig = json.RawMessage(`{}`)
 	}
+	var permissions toolPermissionSnapshot
+	if len(metadata.Config) > 0 {
+		if err := json.Unmarshal(metadata.Config, &permissions); err != nil {
+			return nil, err
+		}
+	}
 	config := codeSessionConfig(record.Metadata)
 	return map[string]any{
-		"cwd":                   record.WorkDir,
-		"system_prompt":         stringField(config, "system_prompt"),
-		"runtime_skills":        config["runtime_skills"],
-		"subagents":             config["subagents"],
-		"runtime_tools":         config["runtime_tools"],
-		"outcomes":              arrayConfigValue(config["outcomes"]),
-		"custom_system_prompt":  stringField(config, "custom_system_prompt"),
-		"append_system_prompt":  stringField(config, "append_system_prompt"),
-		"memory_catalog_prompt": stringField(config, "memory_catalog_prompt"),
-		"model":                 firstNonEmpty(record.Model, stringField(config, "model")),
-		"mcp_config":            mcpConfig,
+		"cwd":                      record.WorkDir,
+		"system_prompt":            stringField(config, "system_prompt"),
+		"runtime_skills":           config["runtime_skills"],
+		"runtime_tools":            runtimeBuiltinTools(permissions.Tools),
+		"runtime_tool_permissions": runtimeToolPolicies(permissions.Tools),
+		"subagents":                config["subagents"],
+		"outcomes":                 arrayConfigValue(config["outcomes"]),
+		"custom_system_prompt":     stringField(config, "custom_system_prompt"),
+		"append_system_prompt":     stringField(config, "append_system_prompt"),
+		"memory_catalog_prompt":    stringField(config, "memory_catalog_prompt"),
+		"model":                    firstNonEmpty(record.Model, stringField(config, "model")),
+		"mcp_config":               mcpConfig,
 	}, nil
 }
 
@@ -902,6 +938,10 @@ func (h *Handler) writeWorkerEpochDBError(w http.ResponseWriter, r *http.Request
 	}
 	if errors.Is(err, db.ErrWorkerEpochMismatch) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "conflict_error", "Worker epoch mismatch"))
+		return
+	}
+	if errors.Is(err, db.ErrInvalidState) {
+		h.writeIngressLoadError(w, r, codeSessionNotActive(err))
 		return
 	}
 	if errors.Is(err, db.ErrWorkerLeaseExpired) {

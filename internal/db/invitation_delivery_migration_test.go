@@ -1,3 +1,5 @@
+//go:build integration
+
 package db
 
 import (
@@ -14,7 +16,7 @@ func TestInvitationDeliveryMigration(t *testing.T) {
 		t.Skip("需要隔离 PostgreSQL，跳过不能视为验收通过")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := provider.UpTo(ctx, 85); err != nil {
+	if _, err := provider.UpTo(ctx, 91); err != nil {
 		t.Fatal(err)
 	}
 	invitation, org, old, latest := uuid.NewV4().String(), uuid.NewV4().String(), uuid.NewV4().String(), uuid.NewV4().String()
@@ -60,14 +62,14 @@ func TestInvitationDeliveryMigration(t *testing.T) {
 			t.Fatalf("改写了其他任务：%v %v", untouched, err)
 		}
 	}
-	if _, err := provider.UpTo(ctx, 86); err != nil {
+	if _, err := provider.UpTo(ctx, 92); err != nil {
 		t.Fatal(err)
 	}
 	verify()
 	if _, err := provider.Down(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 86); err != nil {
+	if _, err := provider.UpTo(ctx, 92); err != nil {
 		t.Fatal(err)
 	}
 	verify()

@@ -17,7 +17,7 @@ func TestMemoryCatalogRejectsInvalidSnapshots(t *testing.T) {
 		{Name: "test", MountPath: "/mnt/memory/a/b", Access: "read_only"},
 		{Name: "test", MountPath: "/mnt/memory/a\\b", Access: "read_only"},
 		{Name: "test", MountPath: "/mnt/memory/a", Access: "rw"},
-		{Name: "test", MountPath: "/mnt/memory/a", Access: "read_only", Instructions: strings.Repeat("中", 501)},
+		{Name: "test", MountPath: "/mnt/memory/a", Access: "read_only", Instructions: strings.Repeat("中", 4097)},
 	} {
 		if _, err := memoryCatalogPrompt([]memoryStoreDefinition{store}); !errors.Is(err, errMemorySnapshotInvalid) {
 			t.Fatalf("accepted invalid store: %+v", store)

@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -16,12 +18,7 @@ import (
 )
 
 func TestPlatformEmailLoginRoutes(t *testing.T) {
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	app := newTestAppWithStore(t, &cfg, newFakeStore("platform-email-login-bucket"))
-	defer app.close()
+	app := newPayloadIntegrationApp(t, newFakeStore("platform-email-login-bucket"))
 
 	methodsResp := app.platformRequest(t, http.MethodGet, "/api/auth/login_methods", nil, nil)
 	defer methodsResp.Body.Close()

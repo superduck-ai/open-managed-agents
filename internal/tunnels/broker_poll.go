@@ -121,7 +121,8 @@ func (b *Broker) pollRound(ctx context.Context, consumers []jetstream.Consumer, 
 		wait = min(wait, time.Until(deadline))
 	}
 	if wait <= 0 {
-		return pollResult{err: context.DeadlineExceeded}
+		<-ctx.Done()
+		return pollResult{err: ctx.Err()}
 	}
 	results := make(chan pollResult, count)
 	for i := range count {

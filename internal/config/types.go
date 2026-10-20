@@ -132,6 +132,7 @@ type NATSConfig struct {
 	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
 	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
 	URL               string                  `yaml:"url"`
+	Namespace         string                  `yaml:"namespace"`
 	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
 	DrainTimeout      time.Duration           `yaml:"drain_timeout"`
 }
@@ -164,6 +165,8 @@ type TunnelConfig struct {
 type TunnelCommandStreamConfig struct {
 	MaxBytes int64 `yaml:"max_bytes"`
 	MaxMsgs  int64 `yaml:"max_msgs"`
+	// Replicas defaults to 3; single-node local stacks set 1.
+	Replicas int `yaml:"replicas"`
 }
 
 type StorageConfig struct {
@@ -290,12 +293,16 @@ type BootstrapConfig struct {
 	OrganizationName    string       `yaml:"organization_name"`
 	WorkspaceExternalID string       `yaml:"workspace_external_id"`
 	UserExternalID      string       `yaml:"user_external_id"`
+	UserEmail           string       `yaml:"user_email"`
+	UserName            string       `yaml:"user_name"`
 	APIKeyExternalID    string       `yaml:"api_key_external_id"`
 }
 
 type SeedAPIKey struct {
 	ExternalID string `yaml:"external_id"`
 	Key        string `yaml:"key"`
+	// Name optionally overrides the display name kept on restart seeds.
+	Name string `yaml:"name"`
 }
 
 // SandboxLifecycleConfig controls long-idle managed sandbox reclamation.

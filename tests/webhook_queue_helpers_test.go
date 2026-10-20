@@ -30,7 +30,7 @@ func newWebhookTestQueue(t *testing.T, cfg config.WebhookConfig) (*webhooks.Queu
 		t.Fatal(err)
 	}
 	t.Cleanup(conn.Close)
-	queue, err := webhooks.NewQueue(t.Context(), conn, config.WebhookStreamConfig{MaxBytes: 64 << 20, MaxAge: 24 * time.Hour, Replicas: 1}, cfg)
+	queue, err := webhooks.NewQueue(t.Context(), conn, config.WebhookStreamConfig{MaxBytes: 64 << 20, MaxAge: 24 * time.Hour, Replicas: 1}, cfg, "")
 	if err != nil {
 		t.Fatal(err)
 	}

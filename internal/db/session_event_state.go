@@ -50,7 +50,7 @@ func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 		}
 		thread = row.thread()
 	}
-	if thread.Status == "terminated" {
+	if thread.Status == "terminated" && isThread {
 		return nil, nil
 	}
 	var payload sessionStatusPayload

@@ -166,7 +166,7 @@ func TestLocalCompletionReceiptExpiresAndDoesNotSurviveRestart(t *testing.T) {
 			waiter.Close()
 			if restart {
 				b.Close()
-				fresh, err := newBroker(t.Context(), b.connection, cfg, 1, b.requests)
+				fresh, err := newBroker(t.Context(), b.connection, cfg, 1, b.requests, "")
 				if err != nil {
 					t.Fatal(err)
 				}

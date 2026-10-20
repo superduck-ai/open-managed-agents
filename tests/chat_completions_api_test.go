@@ -86,10 +86,11 @@ func TestBrainChatCompletionsProxyLifecycle(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("X-Request-Id", "upstream-chat-request")
-		_, _ = fmt.Fprintf(w, "data: {\"id\":\"chat_%d\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\n", index)
 		if r.Header.Get("X-Chat-Test") == "incomplete_response" {
+			_, _ = fmt.Fprintf(w, "data: {\"id\":\"chat_%d\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"}}]}\n\n", index)
 			return
 		}
+		_, _ = fmt.Fprintf(w, "data: {\"id\":\"chat_%d\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\n", index)
 		_, _ = io.WriteString(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":5,\"prompt_tokens_details\":{\"cached_tokens\":12}}}\n\ndata: [DONE]\n\n")
 	}))
 	defer upstream.Close()

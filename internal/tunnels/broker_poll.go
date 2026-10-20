@@ -58,7 +58,7 @@ func (b *Broker) Poll(ctx context.Context, tunnelUUID string, tokenHash [sha256.
 func (b *Broker) pollConsumers(ctx context.Context, tunnelUUID string, channels []ChannelDeclaration) ([]jetstream.Consumer, error) {
 	consumers := make([]jetstream.Consumer, 0, len(channels))
 	for _, channel := range channels {
-		subject := commandSubject(tunnelUUID, channel.Name)
+		subject := b.commandSubject(tunnelUUID, channel.Name)
 		name := brokerKey(subject)
 		consumer, err := b.commands.Consumer(ctx, name)
 		if errors.Is(err, jetstream.ErrConsumerNotFound) {
@@ -182,7 +182,7 @@ func (b *Broker) bindPollMessage(ctx context.Context, tunnelUUID string, tokenHa
 		_ = message.Term()
 		return nil, fmt.Errorf("decode tunnel command: %w", err)
 	}
-	if message.Subject() != commandSubject(tunnelUUID, command.Channel) || command.Origin == "" || command.TunnelID == "" {
+	if message.Subject() != b.commandSubject(tunnelUUID, command.Channel) || command.Origin == "" || command.TunnelID == "" {
 		_ = message.Term()
 		return nil, ErrResponseMismatch
 	}

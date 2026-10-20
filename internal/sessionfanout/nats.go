@@ -9,24 +9,26 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 )
 
 const (
-	natsSessionPrefix = "oma.s."
-	natsFlushTimeout  = 5 * time.Second
+	defaultNATSSessionPrefix = "oma.s."
+	natsFlushTimeout         = 5 * time.Second
 )
 
 // NATSBus broadcasts through Core NATS. It shares one broker subscription
 // between all local SSE connections interested in the same session.
 type NATSBus struct {
-	connection *nats.Conn
-	flush      func(context.Context) error
-	logger     *slog.Logger
-	ctx        context.Context
-	cancel     context.CancelFunc
-	statuses   chan nats.Status
-	done       chan struct{}
+	connection    *nats.Conn
+	sessionPrefix string
+	flush         func(context.Context) error
+	logger        *slog.Logger
+	ctx           context.Context
+	cancel        context.CancelFunc
+	statuses      chan nats.Status
+	done          chan struct{}
 
 	mu            sync.Mutex
 	subscriptions map[string]*natsSubscriptionState
@@ -46,16 +48,24 @@ type natsSubscriptionState struct {
 	references   int
 }
 
-func NewNATS(ctx context.Context, connection *nats.Conn, logger *slog.Logger) (*NATSBus, error) {
+func NewNATS(ctx context.Context, connection *nats.Conn, logger *slog.Logger, namespace string) (*NATSBus, error) {
 	if connection == nil || !connection.IsConnected() {
 		return nil, nats.ErrDisconnected
+	}
+	if err := config.ValidateNATSNamespace(namespace); err != nil {
+		return nil, fmt.Errorf("session event namespace: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	sessionPrefix := defaultNATSSessionPrefix
+	if namespace != "" {
+		sessionPrefix = "oma." + namespace + ".s."
+	}
 	listenCtx, cancel := context.WithCancel(ctx)
 	b := &NATSBus{
 		connection:    connection,
+		sessionPrefix: sessionPrefix,
 		flush:         connection.FlushWithContext,
 		logger:        logging.LoggerOrDefault(logger),
 		ctx:           listenCtx,
@@ -69,7 +79,7 @@ func NewNATS(ctx context.Context, connection *nats.Conn, logger *slog.Logger) (*
 }
 
 func (b *NATSBus) Publish(ctx context.Context, sessionID string, envelope Envelope) error {
-	subject, err := sessionSubject(sessionID)
+	subject, err := b.sessionSubject(sessionID)
 	if err != nil {
 		return err
 	}
@@ -89,7 +99,7 @@ func (b *NATSBus) Publish(ctx context.Context, sessionID string, envelope Envelo
 // Subscribe acquires this session's shared broker subscription. Concurrent
 // callers wait for the same initial NATS flush before returning.
 func (b *NATSBus) Subscribe(ctx context.Context, sessionID string) error {
-	subject, err := sessionSubject(sessionID)
+	subject, err := b.sessionSubject(sessionID)
 	if err != nil {
 		return err
 	}
@@ -181,7 +191,7 @@ func (b *NATSBus) waitForSubscription(ctx context.Context, state *natsSubscripti
 // Unsubscribe releases one local SSE reference. The broker subscription is
 // removed when its last local consumer leaves.
 func (b *NATSBus) Unsubscribe(sessionID string) error {
-	subject, err := sessionSubject(sessionID)
+	subject, err := b.sessionSubject(sessionID)
 	if err != nil {
 		return err
 	}
@@ -260,9 +270,9 @@ func (b *NATSBus) availableLocked(ctx context.Context) error {
 	return nil
 }
 
-func sessionSubject(sessionID string) (string, error) {
+func (b *NATSBus) sessionSubject(sessionID string) (string, error) {
 	if err := validateSessionID(sessionID); err != nil {
 		return "", err
 	}
-	return natsSessionPrefix + sessionID, nil
+	return b.sessionPrefix + sessionID, nil
 }

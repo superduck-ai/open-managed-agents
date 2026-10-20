@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 	"uuid"
 
@@ -14,12 +15,29 @@ import (
 )
 
 const (
+	// StreamName is the shared webhook delivery stream without a namespace.
 	StreamName       = "OMA_WEBHOOK_DELIVERY"
-	deliverySubject  = "oma.webhook.delivery.v1"
-	deliveryConsumer = "oma_webhook_delivery"
 	maxMessageBytes  = 64 << 10
 	defaultBatchSize = 10
 )
+
+type queueNaming struct {
+	streamName       string
+	deliverySubject  string
+	deliveryConsumer string
+}
+
+func newQueueNaming(namespace string) queueNaming {
+	if namespace == "" {
+		return queueNaming{streamName: StreamName, deliverySubject: "oma.webhook.delivery.v1", deliveryConsumer: "oma_webhook_delivery"}
+	}
+	upper := strings.ToUpper(namespace)
+	return queueNaming{
+		streamName:       "OMA_" + upper + "_WEBHOOK_DELIVERY",
+		deliverySubject:  "oma." + namespace + ".webhook.delivery.v1",
+		deliveryConsumer: "oma_" + namespace + "_webhook_delivery",
+	}
+}
 
 // Envelope is the queue boundary. Event preserves the original signed payload.
 // Destination configuration is deliberately fetched only when consuming.
@@ -38,18 +56,23 @@ type Publisher interface {
 type Queue struct {
 	js       jetstream.JetStream
 	consumer jetstream.Consumer
+	naming   queueNaming
 }
 
-func NewQueue(ctx context.Context, conn *nats.Conn, cfg config.WebhookStreamConfig, delivery config.WebhookConfig) (*Queue, error) {
+func NewQueue(ctx context.Context, conn *nats.Conn, cfg config.WebhookStreamConfig, delivery config.WebhookConfig, namespace string) (*Queue, error) {
 	if conn == nil || !conn.IsConnected() {
 		return nil, nats.ErrDisconnected
 	}
+	if err := config.ValidateNATSNamespace(namespace); err != nil {
+		return nil, fmt.Errorf("webhook namespace: %w", err)
+	}
+	naming := newQueueNaming(namespace)
 	js, err := jetstream.New(conn)
 	if err != nil {
 		return nil, err
 	}
 	_, err = js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
-		Name: StreamName, Subjects: []string{deliverySubject}, Storage: jetstream.FileStorage,
+		Name: naming.streamName, Subjects: []string{naming.deliverySubject}, Storage: jetstream.FileStorage,
 		Retention: jetstream.WorkQueuePolicy, Discard: jetstream.DiscardNew,
 		MaxBytes: cfg.MaxBytes, MaxAge: cfg.MaxAge, Replicas: cfg.Replicas,
 		MaxMsgSize: maxMessageBytes, Duplicates: min(2*time.Minute, cfg.MaxAge),
@@ -57,8 +80,8 @@ func NewQueue(ctx context.Context, conn *nats.Conn, cfg config.WebhookStreamConf
 	if err != nil {
 		return nil, fmt.Errorf("ensure webhook stream: %w", err)
 	}
-	consumer, err := js.CreateOrUpdateConsumer(ctx, StreamName, jetstream.ConsumerConfig{
-		Name: deliveryConsumer, Durable: deliveryConsumer, FilterSubject: deliverySubject,
+	consumer, err := js.CreateOrUpdateConsumer(ctx, naming.streamName, jetstream.ConsumerConfig{
+		Name: naming.deliveryConsumer, Durable: naming.deliveryConsumer, FilterSubject: naming.deliverySubject,
 		DeliverPolicy: jetstream.DeliverAllPolicy, AckPolicy: jetstream.AckExplicitPolicy,
 		MaxDeliver: webhookMaxAttempts(delivery), AckWait: max(time.Minute, webhookTimeout(delivery)+30*time.Second),
 		MaxAckPending: 3000, MaxRequestBatch: defaultBatchSize,
@@ -66,7 +89,7 @@ func NewQueue(ctx context.Context, conn *nats.Conn, cfg config.WebhookStreamConf
 	if err != nil {
 		return nil, fmt.Errorf("ensure webhook consumer: %w", err)
 	}
-	return &Queue{js: js, consumer: consumer}, nil
+	return &Queue{js: js, consumer: consumer, naming: naming}, nil
 }
 
 func (q *Queue) Publish(ctx context.Context, envelope Envelope) error {
@@ -81,7 +104,7 @@ func (q *Queue) Publish(ctx context.Context, envelope Envelope) error {
 	if len(body) > maxMessageBytes {
 		return errors.New("webhook envelope exceeds 64 KiB")
 	}
-	_, err = q.js.Publish(ctx, deliverySubject, body, jetstream.WithMsgID(event.ID+":"+envelope.EndpointUUID), jetstream.WithRetryAttempts(0))
+	_, err = q.js.Publish(ctx, q.naming.deliverySubject, body, jetstream.WithMsgID(event.ID+":"+envelope.EndpointUUID), jetstream.WithRetryAttempts(0))
 	return err
 }
 

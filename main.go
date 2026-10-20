@@ -83,7 +83,7 @@ func run(logger *slog.Logger) error {
 	} else {
 		logger.Info("database auto migration disabled", "env", cfg.Env)
 	}
-	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
+	if err := database.Seed(ctx, cfg.Bootstrap); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
 	redisClient, err := redisclient.Open(ctx, cfg.Redis.URL)
@@ -103,12 +103,12 @@ func run(logger *slog.Logger) error {
 			natsConnection.Close()
 		}
 	}()
-	sessionEventBus, err := sessionfanout.NewNATS(ctx, natsConnection, logger.With("component", "session_event_bus"))
+	sessionEventBus, err := sessionfanout.NewNATS(ctx, natsConnection, logger.With("component", "session_event_bus"), cfg.NATS.Namespace)
 	if err != nil {
 		return fmt.Errorf("open session event fanout: %w", err)
 	}
 	defer sessionEventBus.Close()
-	workerEventBroker, err := workerevents.NewJetStream(ctx, natsConnection, cfg.NATS.WorkerEventStream)
+	workerEventBroker, err := workerevents.NewJetStream(ctx, natsConnection, cfg.NATS.WorkerEventStream, cfg.NATS.Namespace)
 	if err != nil {
 		return fmt.Errorf("open worker event broker: %w", err)
 	}
@@ -125,7 +125,7 @@ func run(logger *slog.Logger) error {
 	if err := objectStore.Ensure(ctx); err != nil {
 		return fmt.Errorf("ensure object store bucket: %w", err)
 	}
-	tunnelBroker, err := tunnels.NewBroker(ctx, natsConnection, cfg.Tunnel, tunnels.NewPayloadStore(database, objectStore), tunnels.NewRequestBindings(redisClient, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL))
+	tunnelBroker, err := tunnels.NewBroker(ctx, natsConnection, cfg.Tunnel, tunnels.NewPayloadStore(database, objectStore), tunnels.NewRequestBindings(redisClient, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL), cfg.NATS.Namespace)
 	if err != nil {
 		return fmt.Errorf("open tunnel broker: %w", err)
 	}
@@ -184,7 +184,7 @@ func run(logger *slog.Logger) error {
 	}
 	stopRunner := environmentRunner.Start(ctx)
 	defer stopRunner()
-	webhookQueue, err := webhooks.NewQueue(ctx, natsConnection, cfg.NATS.WebhookStream, cfg.Webhook)
+	webhookQueue, err := webhooks.NewQueue(ctx, natsConnection, cfg.NATS.WebhookStream, cfg.Webhook, cfg.NATS.Namespace)
 	if err != nil {
 		return fmt.Errorf("open webhook queue: %w", err)
 	}

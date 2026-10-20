@@ -1,7 +1,5 @@
 package workerevents
 
-import "strings"
-
 type deliveryLane string
 
 const (
@@ -25,28 +23,17 @@ func laneForEvent(envelope EnvelopeV1) deliveryLane {
 	return taskLane
 }
 
-func (lane deliveryLane) subject(codeSessionID string) (string, error) {
-	subject, err := Subject(codeSessionID)
+func (lane deliveryLane) subject(names naming, codeSessionID string) (string, error) {
+	subject, err := names.subject(codeSessionID)
 	if err != nil {
 		return "", err
 	}
 	return subject + string(lane), nil
 }
 
-func (lane deliveryLane) consumerName(codeSessionID string) string {
+func (lane deliveryLane) consumerName(names naming, codeSessionID string) string {
 	if lane == replyLane {
-		return consumerName(codeSessionID) + "_reply"
+		return names.consumerName(codeSessionID) + "_reply"
 	}
-	return consumerName(codeSessionID)
-}
-
-func sessionFromSubject(subject string) (string, bool) {
-	if !strings.HasPrefix(subject, subjectPrefix) {
-		return "", false
-	}
-	sessionID := strings.TrimSuffix(strings.TrimPrefix(subject, subjectPrefix), string(replyLane))
-	if _, err := Subject(sessionID); err != nil {
-		return "", false
-	}
-	return sessionID, true
+	return names.consumerName(codeSessionID)
 }

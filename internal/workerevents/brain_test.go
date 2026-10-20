@@ -32,7 +32,7 @@ func TestBrainWorkSignalStopsAfterSubscriberCancellation(t *testing.T) {
 	for name, newSignal := range map[string]func(t *testing.T) BrainWorkSignal{
 		"memory": func(*testing.T) BrainWorkSignal { return NewMemory() },
 		"nats": func(t *testing.T) BrainWorkSignal {
-			broker, err := NewJetStream(t.Context(), connectNATS(t, srv.ClientURL()), config.WorkerEventStreamConfig{ConsumerInactiveThreshold: time.Minute, Replicas: 1})
+			broker, err := NewJetStream(t.Context(), connectNATS(t, srv.ClientURL()), config.WorkerEventStreamConfig{ConsumerInactiveThreshold: time.Minute, Replicas: 1}, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -59,11 +59,11 @@ func TestBrainWorkSignalStopsAfterSubscriberCancellation(t *testing.T) {
 func TestBrainWorkSignalReachesEverySubscriber(t *testing.T) {
 	srv := runNATSServer(t, server.Options{Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir()})
 	connection := connectNATS(t, srv.ClientURL())
-	publisher, err := NewJetStream(t.Context(), connection, config.WorkerEventStreamConfig{ConsumerInactiveThreshold: time.Minute, Replicas: 1})
+	publisher, err := NewJetStream(t.Context(), connection, config.WorkerEventStreamConfig{ConsumerInactiveThreshold: time.Minute, Replicas: 1}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	subscriber, err := NewJetStream(t.Context(), connectNATS(t, srv.ClientURL()), config.WorkerEventStreamConfig{ConsumerInactiveThreshold: time.Minute, Replicas: 1})
+	subscriber, err := NewJetStream(t.Context(), connectNATS(t, srv.ClientURL()), config.WorkerEventStreamConfig{ConsumerInactiveThreshold: time.Minute, Replicas: 1}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,4 +96,36 @@ func TestBrainWorkSignalReachesEverySubscriber(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestBrainSignalsRespectNamespace(t *testing.T) {
+	srv := runNATSServer(t, server.Options{Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir()})
+	conn := connectNATS(t, srv.ClientURL())
+	cfg := config.WorkerEventStreamConfig{ConsumerInactiveThreshold: time.Minute, Replicas: 1}
+	a, err := NewJetStream(t.Context(), conn, cfg, "env-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := NewJetStream(t.Context(), conn, cfg, "env-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signals, err := b.SubscribeBrainWork(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.NotifyBrainWork(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	assertNoBrainWorkSignal(t, signals)
+	if err := b.NotifyBrainWork(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	assertBrainWorkSignal(t, signals)
 }

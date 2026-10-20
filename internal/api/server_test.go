@@ -106,7 +106,7 @@ func TestConsoleRoutesRequireCSRF(t *testing.T) {
 	if err := database.Migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Seed(t.Context(), nil); err != nil {
+	if err := database.Seed(t.Context(), cfg.Bootstrap); err != nil {
 		t.Fatal(err)
 	}
 	userID, organizationUUID, err := database.FindBootstrapUserContext(t.Context(), "")

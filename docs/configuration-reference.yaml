@@ -24,6 +24,10 @@ redis:
 nats:
   # One or more comma-separated seed URLs. Configure multiple nodes for startup failover.
   url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
+  # Optional message namespace isolating streams and subjects, e.g. "s1" derives
+  # OMA_S1_WORKER_INBOUND and oma.s1.brain.work.available. 1-16 chars of
+  # [a-z0-9_-]; empty keeps the shared default names.
+  namespace: ""
   connect_timeout: 5s
   drain_timeout: 10s
   # Dedicated webhook queue; independent from the endpoint failure window.
@@ -72,6 +76,9 @@ tunnel:
   command_stream:
     max_bytes: 537919488
     max_msgs: -1
+    # Stream replicas; 3 matches a clustered NATS deployment, 1 fits a
+    # single-node local stack.
+    replicas: 3
   # Immutable bindings use Redis SET NX PX, up to 4 KiB per record.
   # Bindings and local waiters have no separate request-count admission limit.
   # Only NATS envelopes exceeding 2 MiB offload their bodies; no 32 KiB threshold.
@@ -261,12 +268,16 @@ vault:
 
 bootstrap:
   seed_api_keys:
+    # Optional name overrides the display name kept across restart seeds.
     - external_id: api_key_default
       key: sk-ant-local-default
+      name: local-default
   workspace_name: default
   organization_name: default
   workspace_external_id: workspace_default
   user_external_id: user_default
+  user_email: admin@example.local
+  user_name: Local Admin
   api_key_external_id: api_key_default
 
 # Long-idle managed sandbox reclamation. Disable dry_run to delete sandbox local state.

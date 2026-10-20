@@ -104,6 +104,7 @@ type yamlNATSConfig struct {
 	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
 	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
 	URL               string                  `yaml:"url"`
+	Namespace         string                  `yaml:"namespace"`
 	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
 	DrainTimeout      time.Duration           `yaml:"drain_timeout"`
 }
@@ -132,6 +133,8 @@ type yamlBootstrapConfig struct {
 	OrganizationName    string                 `yaml:"organization_name"`
 	WorkspaceExternalID string                 `yaml:"workspace_external_id"`
 	UserExternalID      string                 `yaml:"user_external_id"`
+	UserEmail           string                 `yaml:"user_email"`
+	UserName            string                 `yaml:"user_name"`
 	APIKeyExternalID    string                 `yaml:"api_key_external_id"`
 }
 
@@ -146,6 +149,7 @@ func newYAMLConfig() yamlConfig {
 			WorkerEventStream: defaults.NATS.WorkerEventStream,
 			WebhookStream:     defaults.NATS.WebhookStream,
 			URL:               defaults.NATS.URL,
+			Namespace:         defaults.NATS.Namespace,
 			ConnectTimeout:    defaults.NATS.ConnectTimeout,
 			DrainTimeout:      defaults.NATS.DrainTimeout,
 		},
@@ -181,6 +185,8 @@ func newYAMLConfig() yamlConfig {
 			OrganizationName:    defaults.Bootstrap.OrganizationName,
 			WorkspaceExternalID: defaults.Bootstrap.WorkspaceExternalID,
 			UserExternalID:      defaults.Bootstrap.UserExternalID,
+			UserEmail:           defaults.Bootstrap.UserEmail,
+			UserName:            defaults.Bootstrap.UserName,
 			APIKeyExternalID:    defaults.Bootstrap.APIKeyExternalID,
 		},
 	}
@@ -196,6 +202,7 @@ func (input yamlConfig) resolve() Config {
 			WorkerEventStream: input.NATS.WorkerEventStream,
 			WebhookStream:     input.NATS.WebhookStream,
 			URL:               input.NATS.URL,
+			Namespace:         input.NATS.Namespace,
 			ConnectTimeout:    input.NATS.ConnectTimeout,
 			DrainTimeout:      input.NATS.DrainTimeout,
 		},
@@ -231,6 +238,8 @@ func (input yamlConfig) resolve() Config {
 			OrganizationName:    input.Bootstrap.OrganizationName,
 			WorkspaceExternalID: input.Bootstrap.WorkspaceExternalID,
 			UserExternalID:      input.Bootstrap.UserExternalID,
+			UserEmail:           input.Bootstrap.UserEmail,
+			UserName:            input.Bootstrap.UserName,
 			APIKeyExternalID:    input.Bootstrap.APIKeyExternalID,
 		},
 	}

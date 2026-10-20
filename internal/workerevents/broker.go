@@ -8,7 +8,6 @@ import (
 	"slices"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -20,12 +19,6 @@ import (
 )
 
 const (
-	// StreamName 是所有 Code Session 共用的 worker 入站事件 JetStream Stream 名称。
-	StreamName = "OMA_WORKER_INBOUND"
-	// subjectPrefix 后拼接 Code Session ID，组成当前 v2 协议的会话级 subject。
-	subjectPrefix = "oma.worker.inbound.v2."
-	// streamSubject 使用 > 通配符，让共享 Stream 收集所有会话的入站事件。
-	streamSubject = subjectPrefix + ">"
 	// LargePayloadThreshold counts actual payload bytes, excluding envelope overhead.
 	LargePayloadThreshold = storage.EventPayloadThreshold
 	// MaxOffloadedPayloadBytes 是允许外置到对象存储的单个 payload 大小上限。
@@ -117,25 +110,26 @@ func EventEnvelope(codeSessionID, eventID, payloadEventID string, eventType, eve
 	}
 }
 
+// Subject returns the default-namespace worker event subject for a Code
+// Session. Namespaced brokers derive subjects from their own naming.
 func Subject(codeSessionID string) (string, error) {
-	if codeSessionID == "" || strings.ContainsAny(codeSessionID, ".*> \t\r\n") {
-		return "", errors.New("invalid code session ID for worker event subject")
-	}
-	return subjectPrefix + codeSessionID, nil
+	return newNaming("").subject(codeSessionID)
 }
 
-func consumerName(codeSessionID string) string { return "oma_worker_" + codeSessionID }
-
 type JetStreamBroker struct {
+	names                     naming
 	consumerInactiveThreshold time.Duration
 	maxMessageBytes           int32
 	connection                *nats.Conn
 	js                        jetstream.JetStream
 }
 
-func NewJetStream(ctx context.Context, connection *nats.Conn, cfg config.WorkerEventStreamConfig) (*JetStreamBroker, error) {
+func NewJetStream(ctx context.Context, connection *nats.Conn, cfg config.WorkerEventStreamConfig, namespace string) (*JetStreamBroker, error) {
 	if cfg.ConsumerInactiveThreshold <= 0 {
 		return nil, errors.New("worker event consumer inactive threshold must be positive")
+	}
+	if err := config.ValidateNATSNamespace(namespace); err != nil {
+		return nil, fmt.Errorf("worker event namespace: %w", err)
 	}
 	if connection == nil || !connection.IsConnected() {
 		return nil, nats.ErrDisconnected
@@ -144,13 +138,14 @@ func NewJetStream(ctx context.Context, connection *nats.Conn, cfg config.WorkerE
 	if err != nil {
 		return nil, fmt.Errorf("create worker event JetStream client: %w", err)
 	}
+	names := newNaming(namespace)
 	duplicates := duplicateWindow
 	if cfg.MaxAge > 0 {
 		duplicates = min(duplicates, cfg.MaxAge)
 	}
 	_, err = js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
-		Name:       StreamName,
-		Subjects:   []string{streamSubject},
+		Name:       names.streamName,
+		Subjects:   []string{names.streamSubject()},
 		Retention:  jetstream.WorkQueuePolicy,
 		Discard:    jetstream.DiscardNew,
 		MaxAge:     cfg.MaxAge,
@@ -163,11 +158,11 @@ func NewJetStream(ctx context.Context, connection *nats.Conn, cfg config.WorkerE
 	if err != nil {
 		return nil, fmt.Errorf("ensure worker event stream: %w", err)
 	}
-	return &JetStreamBroker{connection: connection, js: js, maxMessageBytes: cfg.MaxMsgSize, consumerInactiveThreshold: cfg.ConsumerInactiveThreshold}, nil
+	return &JetStreamBroker{names: names, connection: connection, js: js, maxMessageBytes: cfg.MaxMsgSize, consumerInactiveThreshold: cfg.ConsumerInactiveThreshold}, nil
 }
 
 func (b *JetStreamBroker) Publish(ctx context.Context, messageID string, envelope EnvelopeV1) error {
-	subjectName, err := laneForEvent(envelope).subject(envelope.CodeSessionID)
+	subjectName, err := laneForEvent(envelope).subject(b.names, envelope.CodeSessionID)
 	if err != nil {
 		return err
 	}
@@ -211,12 +206,12 @@ func (b *JetStreamBroker) Subscribe(ctx context.Context, codeSessionID string) (
 }
 
 func (b *JetStreamBroker) laneConsumer(ctx context.Context, codeSessionID string, lane deliveryLane) (jetstream.Consumer, error) {
-	filter, err := lane.subject(codeSessionID)
+	filter, err := lane.subject(b.names, codeSessionID)
 	if err != nil {
 		return nil, err
 	}
-	name := lane.consumerName(codeSessionID)
-	consumer, err := b.js.CreateOrUpdateConsumer(ctx, StreamName, jetstream.ConsumerConfig{
+	name := lane.consumerName(b.names, codeSessionID)
+	consumer, err := b.js.CreateOrUpdateConsumer(ctx, b.names.streamName, jetstream.ConsumerConfig{
 		Name:              name,
 		Durable:           name,
 		DeliverPolicy:     jetstream.DeliverAllPolicy,
@@ -253,7 +248,7 @@ func (b *JetStreamBroker) DoubleAck(ctx context.Context, ackSubject string) erro
 // ScanExpired 扫描逻辑到期事件；唯一的删除副作用是移除无法归属 Session 的非法 subject。
 // 合法 subject 即使正文损坏也保留。返回错误时仍返回已处理事件，避免丢失删除告警。
 func (b *JetStreamBroker) ScanExpired(ctx context.Context, cursor uint64, limit int, now time.Time) ([]ExpiredEvent, uint64, error) {
-	stream, err := b.js.Stream(ctx, StreamName)
+	stream, err := b.js.Stream(ctx, b.names.streamName)
 	if err != nil {
 		return nil, cursor, err
 	}
@@ -270,7 +265,7 @@ func (b *JetStreamBroker) ScanExpired(ctx context.Context, cursor uint64, limit 
 	}
 	expired := make([]ExpiredEvent, 0)
 	for inspected := 0; inspected < limit && sequence <= info.State.LastSeq; inspected++ {
-		message, getErr := stream.GetMsg(ctx, sequence, jetstream.WithGetMsgSubject(streamSubject))
+		message, getErr := stream.GetMsg(ctx, sequence, jetstream.WithGetMsgSubject(b.names.streamSubject()))
 		if errors.Is(getErr, jetstream.ErrMsgNotFound) {
 			return expired, 0, nil
 		}
@@ -280,7 +275,7 @@ func (b *JetStreamBroker) ScanExpired(ctx context.Context, cursor uint64, limit 
 		if message.Sequence > info.State.LastSeq {
 			return expired, 0, nil
 		}
-		event := storedWorkerEvent(message)
+		event := storedWorkerEvent(b.names, message)
 		if event.InvalidSubject {
 			// 用 GetMsg 实际返回的序号删除，不能使用跳过空洞之前的扫描游标。
 			if err := stream.DeleteMsg(ctx, message.Sequence); err != nil {
@@ -298,9 +293,9 @@ func (b *JetStreamBroker) ScanExpired(ctx context.Context, cursor uint64, limit 
 	return expired, sequence, nil
 }
 
-func storedWorkerEvent(message *jetstream.RawStreamMsg) ExpiredEvent {
+func storedWorkerEvent(names naming, message *jetstream.RawStreamMsg) ExpiredEvent {
 	event := ExpiredEvent{StreamSequence: message.Sequence}
-	sessionID, valid := sessionFromSubject(message.Subject)
+	sessionID, valid := names.sessionFromSubject(message.Subject)
 	if !valid {
 		event.InvalidSubject = true
 		return event
@@ -318,7 +313,7 @@ func (b *JetStreamBroker) PurgeSession(ctx context.Context, codeSessionID string
 	if _, err := Subject(codeSessionID); err != nil {
 		return err
 	}
-	stream, err := b.js.Stream(ctx, StreamName)
+	stream, err := b.js.Stream(ctx, b.names.streamName)
 	if errors.Is(err, jetstream.ErrStreamNotFound) {
 		return nil
 	}
@@ -327,12 +322,12 @@ func (b *JetStreamBroker) PurgeSession(ctx context.Context, codeSessionID string
 	}
 	// 先删除 consumer；若删除失败，消息仍保留，可被 expiry 再次发现并重试。
 	for _, lane := range deliveryLanes {
-		if err := b.js.DeleteConsumer(ctx, StreamName, lane.consumerName(codeSessionID)); err != nil && !errors.Is(err, jetstream.ErrConsumerNotFound) {
+		if err := b.js.DeleteConsumer(ctx, b.names.streamName, lane.consumerName(b.names, codeSessionID)); err != nil && !errors.Is(err, jetstream.ErrConsumerNotFound) {
 			return err
 		}
 	}
 	for _, lane := range deliveryLanes {
-		filter, _ := lane.subject(codeSessionID)
+		filter, _ := lane.subject(b.names, codeSessionID)
 		if err := stream.Purge(ctx, jetstream.WithPurgeSubject(filter)); err != nil {
 			return err
 		}

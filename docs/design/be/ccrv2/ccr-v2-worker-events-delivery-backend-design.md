@@ -247,6 +247,8 @@ Session 归档、删除或整体 `terminated` 的事务按 Session → Worker �
 
 事件写入路径由状态应用返回“Session 本次进入 terminated”的结果，批次汇总该结果。整批事件及派生事件写完后，仅在批末状态仍为 terminated 时，事务编排显式终止关联 Worker。事务失败返回空结果，不能向上层泄漏未提交的清理 ID。直接设置状态也返回已退休 ID，重复终态不再次推进 epoch。部署创建入口在同一事务内新建 Session，此时尚无关联 Worker，因此不执行 Worker 退休查询。幂等重放和重复终态不再次推进 epoch；仅 Thread 终止不触发，除非派生出整个 Session 的终止转换。
 
+Session 级状态事件仍按批内顺序更新主 Thread。`terminated → running` 批次以 running 结束，保留 Worker 与 epoch；不能因主 Thread 在批次中途变为 terminated 而丢弃后续 Session 级事件。已终止 Thread 的 Thread 级状态事件仍被忽略，归档 Session 的事件写入仍被拒绝。`TestSessionTerminationBatchKeepsActiveWorkers` 同时检查 Session、主 Thread 与 Worker epoch。
+
 ```mermaid
 sequenceDiagram
     participant Client

@@ -16,7 +16,7 @@ func lifecycleBroker(t *testing.T, threshold time.Duration) *JetStreamBroker {
 	srv := runNATSServer(t, server.Options{Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir()})
 	broker, err := NewJetStream(t.Context(), connectNATS(t, srv.ClientURL()), config.WorkerEventStreamConfig{
 		MaxBytes: 1 << 24, MaxMsgSize: 1 << 20, Replicas: 1, ConsumerInactiveThreshold: threshold,
-	})
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

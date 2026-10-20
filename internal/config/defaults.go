@@ -32,7 +32,7 @@ func defaultConfig() Config {
 			RequestTimeout:      2 * time.Minute,
 			PresenceTTL:         60 * time.Second,
 			TombstoneTTL:        5 * time.Minute,
-			CommandStream:       TunnelCommandStreamConfig{MaxBytes: 513 << 20, MaxMsgs: -1},
+			CommandStream:       TunnelCommandStreamConfig{MaxBytes: 513 << 20, MaxMsgs: -1, Replicas: 3},
 			MaxBodyBytes:        16 * 1024 * 1024,
 			MaxHeaderBytes:      32 * 1024,
 			MaxHeaderValueBytes: 8 * 1024,
@@ -91,6 +91,8 @@ func defaultConfig() Config {
 			OrganizationName:    "default",
 			WorkspaceExternalID: "workspace_default",
 			UserExternalID:      "user_default",
+			UserEmail:           "admin@example.local",
+			UserName:            "Local Admin",
 			APIKeyExternalID:    "api_key_default",
 		},
 	}

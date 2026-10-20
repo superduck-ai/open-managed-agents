@@ -15,11 +15,11 @@ import (
 )
 
 func TestNATSBrokerRejectsMissingJetStreamAndSmallPayload(t *testing.T) {
-	if _, err := NewBroker(t.Context(), nil, brokerTestConfig(), nil, testRequestBindings(t)); err == nil {
+	if _, err := NewBroker(t.Context(), nil, brokerTestConfig(), nil, testRequestBindings(t), ""); err == nil {
 		t.Fatal("accepted nil connection")
 	}
 	srv := startTunnelNATS(t, server.Options{MaxPayload: 1 << 20})
-	if _, err := newBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), brokerTestConfig(), 1, testRequestBindings(t)); err == nil {
+	if _, err := newBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), brokerTestConfig(), 1, testRequestBindings(t), ""); err == nil {
 		t.Fatal("accepted insufficient max_payload")
 	}
 }
@@ -29,7 +29,7 @@ func TestNATSBrokerConcurrentConnectionsDispatchOnlyOnce(t *testing.T) {
 	bindings := testRequestBindings(t)
 	brokers := make([]*Broker, 2)
 	for i := range brokers {
-		broker, err := newBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), brokerTestConfig(), 1, bindings)
+		broker, err := newBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), brokerTestConfig(), 1, bindings, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -62,14 +62,14 @@ func TestNATSBrokerConcurrentConnectionsDispatchOnlyOnce(t *testing.T) {
 
 func brokerTestConfig() config.TunnelConfig {
 	return config.TunnelConfig{RequestTimeout: time.Minute, PollTimeout: time.Second, PresenceTTL: time.Minute, TombstoneTTL: time.Minute,
-		CommandStream: config.TunnelCommandStreamConfig{MaxBytes: 513 << 20, MaxMsgs: -1},
+		CommandStream: config.TunnelCommandStreamConfig{MaxBytes: 513 << 20, MaxMsgs: -1, Replicas: 3},
 		MaxBodyBytes:  1 << 20, MaxHeaderBytes: 32 << 10, MaxHeaderValueBytes: 8 << 10}
 }
 
 func testNATSBroker(t *testing.T, cfg config.TunnelConfig) *Broker {
 	t.Helper()
 	srv := startTunnelNATS(t, server.Options{})
-	broker, err := newBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), cfg, 1, testRequestBindingsWithTTL(t, brokerRequestRetention(cfg.RequestTimeout, cfg.TombstoneTTL)))
+	broker, err := newBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), cfg, 1, testRequestBindingsWithTTL(t, brokerRequestRetention(cfg.RequestTimeout, cfg.TombstoneTTL)), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestNATSBrokerUpdatesExistingCommandStream(t *testing.T) {
 	if _, err := js.Publish(t.Context(), commandSubject("tunnel", "main"), []byte("pending")); err != nil {
 		t.Fatal(err)
 	}
-	broker, err := newBroker(t.Context(), connection, cfg, 1, testRequestBindings(t))
+	broker, err := newBroker(t.Context(), connection, cfg, 1, testRequestBindings(t), "")
 	if err != nil {
 		t.Fatal(err)
 	}

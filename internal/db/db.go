@@ -169,6 +169,16 @@ func (d *DB) ListenerPool() *pgxpool.Pool {
 }
 
 func EnsureDatabase(ctx context.Context, databaseURL string) error {
+	for _, candidate := range maintenanceCandidates(databaseURL) {
+		if err := ensureDatabaseWithMaintenanceConnection(ctx, databaseURL, candidate); err != nil {
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("all database bootstrap connection attempts failed for %s", redactPassword(databaseURL))
+}
+
+func maintenanceCandidates(databaseURL string) []string {
 	var candidates []string
 	for _, maintenanceDB := range []string{"postgres", "template1"} {
 		if candidate, err := maintenanceURL(databaseURL, maintenanceDB); err == nil && !slices.Contains(candidates, candidate) {
@@ -180,16 +190,48 @@ func EnsureDatabase(ctx context.Context, databaseURL string) error {
 			candidates = append(candidates, candidate)
 		}
 	}
+	return candidates
+}
 
-	var errs []string
-	for _, candidate := range candidates {
-		if err := ensureDatabaseWithMaintenanceConnection(ctx, databaseURL, candidate); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", redactPassword(candidate), err))
+// DropDatabase removes the target database when present. It is a startup
+// maintenance operation used by dev environment teardown only.
+func DropDatabase(ctx context.Context, databaseURL string) error {
+	target, err := url.Parse(databaseURL)
+	if err != nil {
+		return fmt.Errorf("parse database URL: %w", err)
+	}
+	dbName := strings.TrimPrefix(target.Path, "/")
+	if dbName == "" {
+		return errors.New("database URL must include a database name")
+	}
+	for _, candidate := range maintenanceCandidates(databaseURL) {
+		if err := dropDatabaseWithMaintenanceConnection(ctx, candidate, dbName); err != nil {
 			continue
 		}
 		return nil
 	}
-	return fmt.Errorf("all database bootstrap connection attempts failed: %s", strings.Join(errs, "; "))
+	return fmt.Errorf("all database bootstrap connection attempts failed for %s", redactPassword(databaseURL))
+}
+
+func dropDatabaseWithMaintenanceConnection(ctx context.Context, maintenanceDatabaseURL, dbName string) error {
+	maintenancePool, err := openPool(ctx, maintenanceDatabaseURL)
+	if err != nil {
+		return fmt.Errorf("connect maintenance database: %w", err)
+	}
+	defer maintenancePool.Close()
+	maintenanceSQL := newStandardDB(maintenancePool)
+	defer maintenanceSQL.Close()
+	var dbExists bool
+	if err := maintenanceSQL.QueryRowContext(ctx, maintenanceDatabaseExistsQuery, dbName).Scan(&dbExists); err != nil {
+		return fmt.Errorf("check database: %w", err)
+	}
+	if !dbExists {
+		return nil
+	}
+	if _, err := maintenanceSQL.ExecContext(ctx, fmt.Sprintf("drop database %s", quoteIdent(dbName))); err != nil {
+		return fmt.Errorf("drop database %s: %w", dbName, err)
+	}
+	return nil
 }
 
 func ensureDatabaseWithMaintenanceConnection(ctx context.Context, databaseURL, maintenanceDatabaseURL string) error {
@@ -434,7 +476,7 @@ func dropForeignKeyConstraints(ctx context.Context, database *sql.DB) error {
 	return nil
 }
 
-func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
+func (d *DB) Seed(ctx context.Context, bootstrap config.BootstrapConfig) error {
 	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		organizationMapper := NewAdminOrganizationMapper(executor)
 		workspaceMapper := NewAdminWorkspaceMapper(executor)
@@ -444,29 +486,33 @@ func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
 		if _, err := organizationMapper.LockSeed(ctx); err != nil {
 			return err
 		}
-		organizationUUID, err := organizationMapper.SeedDefault(ctx, "workspace_default", "default")
+		organizationUUID, err := organizationMapper.SeedDefault(ctx, bootstrap.WorkspaceExternalID, bootstrap.OrganizationName)
 		if err != nil {
 			return err
 		}
-		workspaceUUID, err := workspaceMapper.SeedDefault(ctx, "workspace_default", organizationUUID, "default")
+		workspaceUUID, err := workspaceMapper.SeedDefault(ctx, bootstrap.WorkspaceExternalID, organizationUUID, bootstrap.WorkspaceName)
 		if err != nil {
 			return err
 		}
-		userUUID, err := userMapper.SeedDefault(ctx, "user_default", organizationUUID, "admin@example.local", "Local Admin")
+		userUUID, err := userMapper.SeedDefault(ctx, bootstrap.UserExternalID, organizationUUID, bootstrap.UserEmail, bootstrap.UserName)
 		if err != nil {
 			return err
 		}
 
-		for _, key := range seedAPIKeys {
+		for _, key := range bootstrap.SeedAPIKeys {
 			if strings.TrimSpace(key.ExternalID) == "" || key.Key == "" {
 				return errors.New("seed api keys must include external_id and key")
+			}
+			name := strings.TrimSpace(key.Name)
+			if name == "" {
+				name = key.ExternalID
 			}
 			if err := apiKeyMapper.SeedDefault(ctx, seedAdminAPIKeyParams{
 				ExternalID:        key.ExternalID,
 				WorkspaceUUID:     workspaceUUID,
 				KeyHash:           auth.HashAPIKey(key.Key),
 				CreatedByUserUUID: userUUID,
-				Name:              key.ExternalID,
+				Name:              name,
 				PartialKeyHint:    partialAPIKeyHint(key.Key),
 			}); err != nil {
 				return err

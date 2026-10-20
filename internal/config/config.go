@@ -74,13 +74,13 @@ func validate(cfg Config) error {
 	if err := validateBrainRuntimeConfig(cfg.EnvironmentRunner, cfg.CodeSession); err != nil {
 		return err
 	}
-	if err := validateWebhookStream(cfg.NATS.WebhookStream); err != nil {
+	if err := validateNATSConfig(cfg.NATS); err != nil {
 		return err
 	}
-	if err := validateWorkerEventStream(cfg.NATS.WorkerEventStream); err != nil {
+	if err := validateBootstrapConfig(cfg.Bootstrap); err != nil {
 		return err
 	}
-	if err := validateAuthConfig(cfg.Auth); err != nil {
+	if err := validateAuthConfig(cfg.Env, cfg.Auth); err != nil {
 		return err
 	}
 	if err := validateEnvironmentPrebuildConfig(cfg.EnvironmentPrebuilds, cfg.E2B); err != nil {
@@ -137,7 +137,56 @@ func validate(cfg Config) error {
 	return validateCodeSessionUpstreamProxyMITMConfig(cfg.CodeSession)
 }
 
-func validateAuthConfig(cfg AuthConfig) error {
+func validateNATSConfig(cfg NATSConfig) error {
+	if err := validateWebhookStream(cfg.WebhookStream); err != nil {
+		return err
+	}
+	if err := validateWorkerEventStream(cfg.WorkerEventStream); err != nil {
+		return err
+	}
+	return ValidateNATSNamespace(cfg.Namespace)
+}
+
+var natsNamespacePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,15}$`)
+
+// ValidateNATSNamespace checks the optional message namespace at any boundary
+// that derives stream or subject names from it.
+func ValidateNATSNamespace(namespace string) error {
+	if namespace == "" {
+		return nil
+	}
+	if !natsNamespacePattern.MatchString(namespace) {
+		return errors.New("nats.namespace must be 1-16 characters of [a-z0-9_-] starting with a letter or digit")
+	}
+	return nil
+}
+
+func validateBootstrapConfig(cfg BootstrapConfig) error {
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "bootstrap.workspace_name", value: cfg.WorkspaceName},
+		{name: "bootstrap.organization_name", value: cfg.OrganizationName},
+		{name: "bootstrap.workspace_external_id", value: cfg.WorkspaceExternalID},
+		{name: "bootstrap.user_external_id", value: cfg.UserExternalID},
+		{name: "bootstrap.user_email", value: cfg.UserEmail},
+		{name: "bootstrap.user_name", value: cfg.UserName},
+		{name: "bootstrap.api_key_external_id", value: cfg.APIKeyExternalID},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("%s is required", field.name)
+		}
+	}
+	address, err := mail.ParseAddress(cfg.UserEmail)
+	if err != nil || address.Address != cfg.UserEmail {
+		return errors.New("bootstrap.user_email must be a valid email address")
+	}
+	return nil
+}
+
+func validateAuthConfig(environment string, cfg AuthConfig) error {
 	for _, domain := range cfg.AllowedEmailDomains {
 		valid, _ := regexp.MatchString(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`, domain)
 		if !valid || len(domain) > 253 {
@@ -147,8 +196,17 @@ func validateAuthConfig(cfg AuthConfig) error {
 
 	if cfg.ConsoleURL != "" {
 		u, err := url.Parse(cfg.ConsoleURL)
-		if err != nil || u.Hostname() == "" || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-			return errors.New("auth.console_url must be an HTTPS origin without userinfo, path, query or fragment")
+		if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+			return errors.New("auth.console_url must be an HTTP(S) origin without userinfo, path, query or fragment")
+		}
+		switch u.Scheme {
+		case "https":
+		case "http":
+			if environment != EnvironmentDev {
+				return errors.New("auth.console_url must use HTTPS outside env dev")
+			}
+		default:
+			return errors.New("auth.console_url must be an HTTP(S) origin without userinfo, path, query or fragment")
 		}
 	}
 	if cfg.SMTP.Addr == "" && cfg.SMTP.Username == "" && cfg.SMTP.Password == "" {
@@ -449,6 +507,7 @@ func validatePositiveValues(cfg Config) error {
 		{name: "tunnel.presence_ttl", valid: cfg.Tunnel.PresenceTTL > 0},
 		{name: "tunnel.tombstone_ttl", valid: cfg.Tunnel.TombstoneTTL > 0},
 		{name: "tunnel.command_stream.max_bytes", valid: cfg.Tunnel.CommandStream.MaxBytes > 0},
+		{name: "tunnel.command_stream.replicas", valid: cfg.Tunnel.CommandStream.Replicas >= 1},
 		{name: "tunnel.max_body_bytes", valid: cfg.Tunnel.MaxBodyBytes > 0},
 		{name: "tunnel.max_header_bytes", valid: cfg.Tunnel.MaxHeaderBytes > 0},
 		{name: "tunnel.max_header_value_bytes", valid: cfg.Tunnel.MaxHeaderValueBytes > 0},

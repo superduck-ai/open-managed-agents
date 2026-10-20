@@ -162,7 +162,7 @@ func TestNATSBrokerCrossInstanceResponsesUseImmutableBinding(t *testing.T) {
 	a := testNATSBroker(t, brokerTestConfig())
 	peers := make([]*Broker, 2)
 	for i := range peers {
-		peer, err := newBroker(t.Context(), connectTunnelNATS(t, a.connection.ConnectedUrl()), brokerTestConfig(), 1, a.requests)
+		peer, err := newBroker(t.Context(), connectTunnelNATS(t, a.connection.ConnectedUrl()), brokerTestConfig(), 1, a.requests, "")
 		if err != nil {
 			t.Fatal(err)
 		}

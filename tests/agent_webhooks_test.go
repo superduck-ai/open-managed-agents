@@ -246,7 +246,9 @@ func TestWebhookAgentFilteringAndFormerSDKIdentity(t *testing.T) {
 		}
 		response.Body.Close()
 	}
-	if err := app.db.Seed(t.Context(), []config.SeedAPIKey{{ExternalID: "api_key_official_sdk_resource_tests", Key: formerSDKKey}}); err != nil {
+	bootstrap := app.cfg.Bootstrap
+	bootstrap.SeedAPIKeys = []config.SeedAPIKey{{ExternalID: "api_key_official_sdk_resource_tests", Key: formerSDKKey}}
+	if err := app.db.Seed(t.Context(), bootstrap); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"", "/archive"} {

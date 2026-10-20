@@ -56,6 +56,8 @@ docker compose up -d
 
 ## 本地依赖
 
+使用独立 worktree 开发环境和 Brain 对话模式时，请按[本地开发环境使用指南](docs/development-guide.md)完成首次初始化，并在 Herdr 中运行 `just restart` 管理后端、Brain 和 Web。
+
 需要先准备：
 
 - Go，与 `go.mod` 中声明的版本保持一致。

@@ -39,21 +39,21 @@ func TestTunnelDefaultsAndOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Tunnel.MaxBodyBytes != 8388608 || cfg.Tunnel.CommandStream != (TunnelCommandStreamConfig{MaxBytes: 8 << 30, MaxMsgs: 256}) {
+	if cfg.Tunnel.MaxBodyBytes != 8388608 || cfg.Tunnel.CommandStream != (TunnelCommandStreamConfig{MaxBytes: 8 << 30, MaxMsgs: 256, Replicas: 3}) {
 		t.Fatal("explicit configuration overwritten")
 	}
 	cfg, err = loadConfigTestYAML(t, "tunnel:\n  command_stream:\n    max_bytes: 8589934592\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Tunnel.CommandStream != (TunnelCommandStreamConfig{MaxBytes: 8 << 30, MaxMsgs: -1}) {
+	if cfg.Tunnel.CommandStream != (TunnelCommandStreamConfig{MaxBytes: 8 << 30, MaxMsgs: -1, Replicas: 3}) {
 		t.Fatal("partial override lost command stream default")
 	}
 	cfg, err = loadConfigTestYAML(t, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Tunnel.MaxBodyBytes != 16<<20 || cfg.Tunnel.CommandStream != (TunnelCommandStreamConfig{MaxBytes: 513 << 20, MaxMsgs: -1}) {
+	if cfg.Tunnel.MaxBodyBytes != 16<<20 || cfg.Tunnel.CommandStream != (TunnelCommandStreamConfig{MaxBytes: 513 << 20, MaxMsgs: -1, Replicas: 3}) {
 		t.Fatal("unexpected tunnel defaults")
 	}
 }

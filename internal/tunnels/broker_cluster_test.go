@@ -15,7 +15,7 @@ import (
 
 func TestNATSBrokerRejectsInsufficientReplicas(t *testing.T) {
 	srv := startTunnelNATS(t, server.Options{})
-	if _, err := NewBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), brokerTestConfig(), nil, testRequestBindings(t)); err == nil {
+	if _, err := NewBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), brokerTestConfig(), nil, testRequestBindings(t), ""); err == nil {
 		t.Fatal("production broker accepted one node")
 	}
 }
@@ -30,7 +30,7 @@ func TestNATSBrokerClusterKeepsAcceptedResponseAfterLeaderLoss(t *testing.T) {
 	brokers := make([]*Broker, 2)
 	for i := range brokers {
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		broker, err := NewBroker(ctx, connectTunnelNATS(t, strings.Join(urls, ",")), brokerTestConfig(), nil, bindings)
+		broker, err := NewBroker(ctx, connectTunnelNATS(t, strings.Join(urls, ",")), brokerTestConfig(), nil, bindings, "")
 		cancel()
 		if err != nil {
 			t.Fatal(err)

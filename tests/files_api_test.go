@@ -1141,7 +1141,7 @@ func newTestAppWithSecrets(t *testing.T, override *config.Config, store storage.
 		database.Close()
 		t.Fatalf("migrate River: %v", err)
 	}
-	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
+	if err := database.Seed(ctx, cfg.Bootstrap); err != nil {
 		database.Close()
 		t.Fatalf("seed database: %v", err)
 	}

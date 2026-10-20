@@ -191,7 +191,9 @@ func TestWebhookEnvironmentWorkAndSandboxDoNotNotify(t *testing.T) {
 
 func TestWebhookFormerSDKEnvironmentMissingOperationsDoNotNotify(t *testing.T) {
 	app, _, _ := newEventSubscription(t, environmentWebhookEvents)
-	if err := app.db.Seed(t.Context(), []config.SeedAPIKey{{ExternalID: "api_key_official_sdk_resource_tests", Key: formerSDKKey}}); err != nil {
+	bootstrap := app.cfg.Bootstrap
+	bootstrap.SeedAPIKeys = []config.SeedAPIKey{{ExternalID: "api_key_official_sdk_resource_tests", Key: formerSDKKey}}
+	if err := app.db.Seed(t.Context(), bootstrap); err != nil {
 		t.Fatal(err)
 	}
 	// The former SDK identity now follows ordinary resource lookup and notification rules.

@@ -31,7 +31,7 @@ func TestTunnelProbePaginationThroughNATS(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = bindingRedis.Close() })
-	broker, err := tunnels.NewBroker(t.Context(), managedTunnelNATS(t), cfg.Tunnel, nil, tunnels.NewRequestBindings(bindingRedis, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL))
+	broker, err := tunnels.NewBroker(t.Context(), managedTunnelNATS(t), cfg.Tunnel, nil, tunnels.NewRequestBindings(bindingRedis, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL), "")
 	if err != nil {
 		t.Fatal(err)
 	}

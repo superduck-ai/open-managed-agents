@@ -20,7 +20,9 @@ const formerSDKKey = "my-anthropic-api-key"
 func newFormerSDKIdentityApp(t *testing.T) *testApp {
 	t.Helper()
 	app := newPayloadIntegrationApp(t, newFakeStore("sdk-real-resources"))
-	if err := app.db.Seed(t.Context(), []config.SeedAPIKey{{ExternalID: "api_key_official_sdk_resource_tests", Key: formerSDKKey}}); err != nil {
+	bootstrap := app.cfg.Bootstrap
+	bootstrap.SeedAPIKeys = []config.SeedAPIKey{{ExternalID: "api_key_official_sdk_resource_tests", Key: formerSDKKey}}
+	if err := app.db.Seed(t.Context(), bootstrap); err != nil {
 		t.Fatal(err)
 	}
 	return app

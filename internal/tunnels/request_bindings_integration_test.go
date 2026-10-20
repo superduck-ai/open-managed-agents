@@ -122,7 +122,7 @@ func TestRequestBindingsRedis8CrossInstanceResponse(t *testing.T) {
 	origin.requests = originBindings
 	peers := make([]*Broker, 2)
 	for i := range peers {
-		peer, err := newBroker(t.Context(), connectTunnelNATS(t, origin.connection.ConnectedUrl()), brokerTestConfig(), 1, realRequestBindings(t, 2*time.Minute))
+		peer, err := newBroker(t.Context(), connectTunnelNATS(t, origin.connection.ConnectedUrl()), brokerTestConfig(), 1, realRequestBindings(t, 2*time.Minute), "")
 		if err != nil {
 			t.Fatal(err)
 		}

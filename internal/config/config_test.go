@@ -445,11 +445,11 @@ e2b:
 }
 
 func TestValidateAuthConfigAllowsOmittedSMTP(t *testing.T) {
-	if err := validateAuthConfig(AuthConfig{}); err != nil {
+	if err := validateAuthConfig(EnvironmentDev, AuthConfig{}); err != nil {
 		t.Fatalf("validateAuthConfig() error = %v, want omitted SMTP accepted", err)
 	}
 	partial := AuthConfig{SMTP: EmailSMTPConfig{Addr: "smtp.example.com:587"}}
-	if err := validateAuthConfig(partial); err == nil {
+	if err := validateAuthConfig(EnvironmentDev, partial); err == nil {
 		t.Fatal("validateAuthConfig() error = nil, want partial SMTP rejected")
 	}
 }
@@ -1176,7 +1176,7 @@ func unsetEnv(t *testing.T, key string) {
 func TestAllowedEmailDomains(t *testing.T) {
 	for _, domain := range []string{"", "@example.org", "*.example.org", "example.org/evil", "example..org", "-example.org", "example.org.", "user@example.org"} {
 		t.Run(domain, func(t *testing.T) {
-			if err := validateAuthConfig(AuthConfig{AllowedEmailDomains: []string{domain}}); err == nil {
+			if err := validateAuthConfig(EnvironmentDev, AuthConfig{AllowedEmailDomains: []string{domain}}); err == nil {
 				t.Fatal("invalid domain accepted")
 			}
 		})

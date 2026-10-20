@@ -272,7 +272,7 @@ func newSessionCleanupFixture(t *testing.T) *sessionCleanupFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(connection.Close)
-	broker, err := workerevents.NewJetStream(t.Context(), connection, config.WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, Replicas: 1, MaxBytes: 1 << 24, MaxMsgSize: 1 << 20})
+	broker, err := workerevents.NewJetStream(t.Context(), connection, config.WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, Replicas: 1, MaxBytes: 1 << 24, MaxMsgSize: 1 << 20}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,6 +391,10 @@ func TestSessionTerminationBatchKeepsActiveWorkers(t *testing.T) {
 			session, found, err := f.app.db.GetSession(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)
 			if err != nil || !found || session.Status != "running" {
 				t.Fatalf("final batch status: %+v %v", session, err)
+			}
+			primary, found, err := f.app.db.GetPrimarySessionThread(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)
+			if err != nil || !found || primary.Status != "running" {
+				t.Fatalf("final primary thread status: %+v %v", primary, err)
 			}
 			oldEpoch, err := strconv.ParseInt(epoch, 10, 64)
 			if err != nil {

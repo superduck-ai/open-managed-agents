@@ -2,7 +2,7 @@ import type { APIBackend } from './api';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from '@tanstack/react-router';
-import { AlertCircle, Bot, Plus, ShieldAlert } from 'lucide-react';
+import { AlertCircle, Bot, Plus } from 'lucide-react';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
 import { canManageLLMProviders } from '../../shared/permissions/llm-providers';
@@ -11,7 +11,7 @@ import { workspaceIdFromPath } from '../../shared/workspaces/presentation';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '../../shared/ui/empty';
+import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from '../../shared/ui/empty';
 import { Skeleton } from '../../shared/ui/skeleton';
 import { toast } from '../../shared/ui/sonner';
 import {
@@ -37,41 +37,13 @@ import { ProviderDeleteDialog } from './ProviderDeleteDialog';
 import { ProviderFormDialog } from './ProviderFormDialog';
 
 export function LLMModelsPage() {
-  const { account } = useAuth();
-  const { orgUuid } = useWorkspace();
-
-  if (!canManageLLMProviders(account, orgUuid)) {
-    return <LLMModelsAccessDenied />;
-  }
-
-  return <LLMModelsAdminPage />;
-}
-
-function LLMModelsAccessDenied() {
-  const { msg } = useI18n();
-
-  return (
-    <Empty data-testid="llm-models-access-denied" className="min-h-[320px] border border-dashed border-border bg-card">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <ShieldAlert aria-hidden />
-        </EmptyMedia>
-        <EmptyTitle>{msg('llmModels.accessDeniedTitle', 'Administrator access required')}</EmptyTitle>
-        <EmptyDescription>
-          {msg('llmModels.accessDeniedDescription', 'Only organization administrators can manage model configuration.')}
-        </EmptyDescription>
-      </EmptyHeader>
-    </Empty>
-  );
-}
-
-function LLMModelsAdminPage() {
   const location = useLocation();
   const routeWorkspaceId = workspaceIdFromPath(location.pathname);
-  const { csrfToken } = useAuth();
+  const { account, csrfToken } = useAuth();
   const { msg } = useI18n();
   const queryClient = useQueryClient();
   const { orgUuid, activeWorkspaceId, selectWorkspace } = useWorkspace();
+  const canManage = canManageLLMProviders(account, orgUuid);
   const workspaceId = routeWorkspaceId ?? activeWorkspaceId;
   const [editing, setEditing] = useState<LLMProvider | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -249,7 +221,7 @@ function LLMModelsAdminPage() {
             {msg('llmModels.description', 'Manage providers and models for this workspace.')}
           </p>
         </div>
-        {providers.length > 0 ? (
+        {canManage && providers.length > 0 ? (
           <Button type="button" size="lg" onClick={openCreate}>
             <Plus className="size-4" aria-hidden />
             {msg('llmModels.addProvider', 'Add provider')}
@@ -258,6 +230,7 @@ function LLMModelsAdminPage() {
       </div>
 
       <CatalogBody
+        canManage={canManage}
         providers={providers}
         catalog={catalog}
         selectedProviderId={activeProviderId}
@@ -268,7 +241,7 @@ function LLMModelsAdminPage() {
         isAddingModel={updateModelsMutation.isPending}
         onOpenCreate={openCreate}
         onQueryChange={setQuery}
-        onRefresh={() => void refreshCatalog()}
+        onRefresh={() => void (canManage ? refreshCatalog() : invalidateCatalog())}
         onSelectProvider={setSelectedProviderId}
         onEditProvider={(provider) => {
           setEditing(provider);
@@ -304,6 +277,7 @@ function LLMModelsAdminPage() {
 }
 
 function CatalogBody({
+  canManage,
   providers,
   catalog,
   selectedProviderId,
@@ -320,6 +294,7 @@ function CatalogBody({
   onDeleteProvider,
   onAddModel,
 }: {
+  canManage: boolean;
   providers: LLMProvider[];
   catalog: CatalogModel[];
   selectedProviderId: string;
@@ -357,16 +332,19 @@ function CatalogBody({
           </EmptyMedia>
           <EmptyTitle>{msg('llmModels.catalogEmptyTitle', 'No providers yet')}</EmptyTitle>
         </EmptyHeader>
-        <EmptyContent>
-          <Button type="button" onClick={onOpenCreate}>
-            {msg('llmModels.addProvider', 'Add provider')}
-          </Button>
-        </EmptyContent>
+        {canManage ? (
+          <EmptyContent>
+            <Button type="button" onClick={onOpenCreate}>
+              {msg('llmModels.addProvider', 'Add provider')}
+            </Button>
+          </EmptyContent>
+        ) : null}
       </Empty>
     );
   }
   return (
     <ModelCatalog
+      canManage={canManage}
       providers={providers}
       models={catalog}
       selectedProviderId={selectedProviderId}

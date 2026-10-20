@@ -72,7 +72,6 @@ import {
 } from '@/shared/ui/dropdown-menu';
 import { useAuth } from '../../shared/auth/context';
 import type { AuthAccount } from '../../shared/auth/api';
-import { canManageLLMProviders } from '../../shared/permissions/llm-providers';
 import { useWorkspace } from '../../shared/workspaces/context';
 import type { Workspace } from '../../shared/workspaces/api';
 import { CreateWorkspaceDialog } from '../../shared/workspaces/CreateWorkspaceDialog';
@@ -245,16 +244,13 @@ export function SettingsShell({
 
 function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Omit<ConsoleShellProps, 'children'>) {
   const { msg } = useI18n();
-  const { activeWorkspaceId, orgUuid, selectWorkspace, workspaces } = useWorkspace();
+  const { activeWorkspaceId, selectWorkspace, workspaces } = useWorkspace();
   const { setOpen, state } = useSidebar();
   const collapsed = state === 'collapsed';
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() => initialSidebarGroupExpansion(currentPath));
   const expandedForPath = useRef(currentPath);
   const routeWorkspaceId = workspaceIdFromPath(currentPath);
-  const navigationSource = visibleConsoleNavigation();
-  const navigationItems = canManageLLMProviders(account, orgUuid)
-    ? navigationSource
-    : navigationSource.filter((item) => item.type !== 'link' || item.href !== '/llm-models');
+  const navigationItems = visibleConsoleNavigation();
 
   useEffect(() => {
     if (!routeWorkspaceId || routeWorkspaceId === activeWorkspaceId) {

@@ -201,7 +201,7 @@ describe('ConsoleShell', () => {
     expect(screen.queryByRole('link', { name: 'Batches' })).toBeNull();
   });
 
-  test('hides LLM model configuration from non-administrators', () => {
+  test('用户可见 LLM 模型导航', () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     renderWithWorkspaces(
       <ConsoleShell currentPath="/dashboard" account={testAccount('user')} onLogout={() => undefined}>
@@ -209,7 +209,7 @@ describe('ConsoleShell', () => {
       </ConsoleShell>,
     );
 
-    expect(screen.queryByRole('link', { name: 'LLM models' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'LLM models' })).toBeTruthy();
   });
 
   test('keeps the workspace selector outside the sidebar scroll area', () => {

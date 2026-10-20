@@ -91,7 +91,7 @@ func TestConsoleWorkspaceMemberTargetAuthorization(t *testing.T) {
 		method, path, body string
 		status             int
 	}{
-		{http.MethodGet, prefix + "/members", "", http.StatusForbidden},
+		{http.MethodGet, prefix + "/members", "", http.StatusOK},
 		{http.MethodGet, prefix + "/workspaces/" + other.ID + "/members", "", http.StatusForbidden},
 		{http.MethodPost, prefix + "/workspaces/" + other.ID + "/members", `{"user_id":"` + target + `","workspace_role":"workspace_user"}`, http.StatusForbidden},
 		{http.MethodGet, path + "/members", "", http.StatusOK},
@@ -113,15 +113,18 @@ func TestConsoleWorkspaceMemberTargetAuthorization(t *testing.T) {
 	if _, err := workspaceaccess.ChangeMember(ctx, app.db, session.Principal(), workspace.ID, actor, "workspace_user", "update"); err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct{ method, suffix, body string }{
-		{http.MethodGet, "/members", ""},
-		{http.MethodGet, "/member-candidates", ""},
+	for _, tc := range []struct {
+		method, suffix, body string
+		status               int
+	}{
+		{http.MethodGet, "/members", "", http.StatusOK},
+		{http.MethodGet, "/member-candidates", "", http.StatusForbidden},
 	} {
 		response := app.platformRequest(t, tc.method, path+tc.suffix, strings.NewReader(tc.body), cookies)
 		body := readAll(t, response.Body)
 		response.Body.Close()
-		if response.StatusCode != http.StatusForbidden {
-			t.Fatalf("降级后仍可管理成员: %d %s", response.StatusCode, body)
+		if response.StatusCode != tc.status {
+			t.Fatalf("降级后成员权限不符合预期: %d %s", response.StatusCode, body)
 		}
 	}
 	for _, member := range []struct{ name, reference string }{

@@ -21,6 +21,7 @@ import {
 } from './catalog';
 
 type ModelCatalogProps = {
+  canManage: boolean;
   providers: LLMProvider[];
   models: CatalogModel[];
   selectedProviderId: string;
@@ -36,6 +37,7 @@ type ModelCatalogProps = {
 };
 
 export function ModelCatalog({
+  canManage,
   providers,
   models,
   selectedProviderId,
@@ -89,6 +91,7 @@ export function ModelCatalog({
 
         {selected ? (
           <ProviderSection
+            canManage={canManage}
             provider={selected}
             models={visibleModels}
             emptyMessage={
@@ -107,15 +110,17 @@ export function ModelCatalog({
           />
         )}
 
-        <AddModelHint
-          candidateId={candidateId}
-          query={query}
-          provider={selected}
-          isAdding={isAddingModel}
-          onAdd={() => {
-            if (selected && candidateId) onAddModel(selected, candidateId);
-          }}
-        />
+        {canManage ? (
+          <AddModelHint
+            candidateId={candidateId}
+            query={query}
+            provider={selected}
+            isAdding={isAddingModel}
+            onAdd={() => {
+              if (selected && candidateId) onAddModel(selected, candidateId);
+            }}
+          />
+        ) : null}
       </Card>
     </div>
   );
@@ -196,6 +201,7 @@ function ProviderRailButton({
 }
 
 function ProviderSection({
+  canManage,
   provider,
   models,
   emptyMessage,
@@ -205,6 +211,7 @@ function ProviderSection({
   provider: LLMProvider;
   models: CatalogModel[];
   emptyMessage: string;
+  canManage: boolean;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -213,20 +220,28 @@ function ProviderSection({
     <section data-testid={`llm-provider-group-${provider.id}`}>
       <div className="flex items-center gap-3 bg-muted/40 px-4 py-3">
         <ProviderIdentity provider={provider} modelCount={models.length} />
-        <div className="flex shrink-0 items-center gap-1">
-          <Button type="button" variant="ghost" size="icon-sm" aria-label={msg('common.edit', 'Edit')} onClick={onEdit}>
-            <Pencil aria-hidden />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={msg('common.delete', 'Delete')}
-            onClick={onDelete}
-          >
-            <Trash2 aria-hidden />
-          </Button>
-        </div>
+        {canManage ? (
+          <div className="flex shrink-0 items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={msg('common.edit', 'Edit')}
+              onClick={onEdit}
+            >
+              <Pencil aria-hidden />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={msg('common.delete', 'Delete')}
+              onClick={onDelete}
+            >
+              <Trash2 aria-hidden />
+            </Button>
+          </div>
+        ) : null}
       </div>
       <ModelRows models={models} emptyMessage={emptyMessage} />
     </section>

@@ -113,6 +113,24 @@ describe('Organization members settings', () => {
     expect(api.inviteListRequests).toBe(1);
   });
 
+  test('用户只读组织成员且不请求邀请目录', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    const api = mockMembersApi();
+    render(
+      <OrganizationMembersHarness permissions={['members:view']}>
+        <I18nProvider initialLocale="en">
+          <OrganizationMembersPage />
+        </I18nProvider>
+      </OrganizationMembersHarness>,
+    );
+    await screen.findByRole('table');
+    await waitFor(() => expect(api.memberListRequests).toBe(1));
+    expect(api.inviteListRequests).toBe(0);
+    expect(screen.queryByRole('button', { name: 'Invite' })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: /Role for/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /More actions/ })).toBeNull();
+  });
+
   test('shows permission guidance without requesting members for an invited user', async () => {
     resetTestDom('https://oma.duck.ai/settings/members');
     const api = mockMembersApi();

@@ -209,7 +209,9 @@ test('无管理权限时隐藏添加入口与行操作', async () => {
       ),
     );
   }) as unknown as typeof fetch;
-  renderMembers({ ...defaultWorkspace, id: 'wrkspc_other', external_id: 'wrkspc_other', is_default: false });
+  renderMembers({ ...defaultWorkspace, id: 'wrkspc_other', external_id: 'wrkspc_other', is_default: false }, [
+    'workspace:members:view',
+  ]);
   await screen.findByText('member@example.com');
   expect(screen.queryByRole('button', { name: 'Add to Workspace' })).toBeNull();
   expect(screen.queryByRole('combobox', { name: 'Role for Member' })).toBeNull();
@@ -222,7 +224,9 @@ test('按姓名和邮箱搜索成员', async () => {
     if (path.includes('member-candidates')) return new Response(JSON.stringify([]));
     return new Response(JSON.stringify(directoryResponse()));
   }) as unknown as typeof fetch;
-  renderMembers({ ...defaultWorkspace, id: 'wrkspc_other', external_id: 'wrkspc_other', is_default: false });
+  renderMembers({ ...defaultWorkspace, id: 'wrkspc_other', external_id: 'wrkspc_other', is_default: false }, [
+    'workspace:members:view',
+  ]);
   await screen.findByText('member@example.com');
   fireEvent.change(screen.getByRole('textbox', { name: 'Search members' }), { target: { value: 'admin@' } });
   const table = screen.getByRole('table');

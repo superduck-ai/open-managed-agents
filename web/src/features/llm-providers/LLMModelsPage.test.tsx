@@ -32,16 +32,47 @@ afterEach(() => {
 });
 
 describe('LLM models page', () => {
-  test('blocks direct access for non-administrators without requesting provider data', async () => {
+  test('用户可以读取模型目录但不能新增供应商', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
     const api = mockProvidersApi();
-    renderPage('en', 'developer');
-
-    const accessDenied = await screen.findByTestId('llm-models-access-denied');
-    expect(accessDenied.textContent).toContain('Administrator access required');
-    expect(accessDenied.textContent).toContain('Only organization administrators can manage model configuration.');
+    renderPage('en', 'user');
+    await screen.findByText('No providers yet');
     expect(screen.queryByRole('button', { name: 'Add provider' })).toBeNull();
-    expect(api.requests).toHaveLength(0);
+    expect(api.requests.length).toBeGreaterThan(0);
+    expect(api.requests.every((request) => request.method === 'GET')).toBe(true);
+  });
+
+  test('用户可筛选全部模型且刷新不会触发同步', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
+    const api = mockProvidersApi([], {
+      initialProviders: [
+        {
+          api_backend: 'messages',
+          type: 'llm_provider',
+          id: 'provider_readonly',
+          name: 'Read gateway',
+          base_url: 'https://llm.example.com',
+          has_api_key: true,
+          api_key_last4: '1234',
+          model_ids: ['model-one', 'model-two'],
+          created_at: '',
+          updated_at: '',
+        },
+      ],
+    });
+    renderPage('en', 'user');
+    await screen.findByText('model-one');
+    expect(screen.getByText('model-two')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Read gateway' }));
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add provider' })).toBeNull();
+    fireEvent.change(screen.getByLabelText('Add or search model'), { target: { value: 'new-model' } });
+    expect(screen.queryByRole('button', { name: /Add new-model/ })).toBeNull();
+    const reads = api.requests.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh model list' }));
+    await waitFor(() => expect(api.requests.length).toBeGreaterThan(reads));
+    expect(api.requests.every((request) => request.method === 'GET')).toBe(true);
   });
 
   test('creates and edits a Chat Completions provider and discovers using its backend', async () => {
@@ -538,6 +569,7 @@ type RecordedRequest = { url: string; method: string; body?: Record<string, unkn
 function mockProvidersApi(
   liveModelIds: string[] = [],
   options: {
+    initialProviders?: LLMProvider[];
     previewStatus?: number;
     previewCode?: string;
     previewMessage?: string;
@@ -553,7 +585,7 @@ function mockProvidersApi(
     syncSkippedModelIds?: string[];
   } = {},
 ) {
-  let providers: LLMProvider[] = [];
+  let providers: LLMProvider[] = options.initialProviders ?? [];
   let nextID = 1;
   const requests: RecordedRequest[] = [];
   globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {

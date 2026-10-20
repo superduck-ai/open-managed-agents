@@ -212,7 +212,7 @@ func llmProviderScope(w http.ResponseWriter, r *http.Request, database *db.DB) (
 		return "", WorkspaceScope{}, false
 	}
 	scope, ok := consoleWorkspaceScopeFromRequest(w, r, database, orgUUID)
-	if !ok || !requireLLMProviderAdministrator(w, r, database, orgUUID) {
+	if !ok || (r.Method != http.MethodGet && !requireLLMProviderAdministrator(w, r, database, orgUUID)) {
 		return "", WorkspaceScope{}, false
 	}
 	return orgUUID, scope, true

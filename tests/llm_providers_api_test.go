@@ -275,7 +275,12 @@ func TestWorkspaceLLMProvidersRequireAdministrator(t *testing.T) {
 	}
 	path := "/api/console/organizations/" + orgUUID + "/workspaces/default/llm_providers"
 
-	response := app.platformRequest(t, http.MethodGet, path, nil, cookies)
+	listed := app.platformRequest(t, http.MethodGet, path, nil, cookies)
+	listed.Body.Close()
+	if listed.StatusCode != http.StatusOK {
+		t.Fatalf("用户读取模型状态 = %d", listed.StatusCode)
+	}
+	response := app.platformRequest(t, http.MethodPost, path, strings.NewReader(`{}`), cookies)
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403: %s", response.StatusCode, readAll(t, response.Body))

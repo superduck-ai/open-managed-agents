@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Info, Plus, UsersRound } from 'lucide-react';
 import { useState } from 'react';
 import type { ApiError } from '../../shared/api/client';
-import { canManageWorkspaceMembers } from '../../shared/permissions/members';
+import { canViewWorkspaceMembers } from '../../shared/permissions/members';
 import { MembersAccessDenied } from './MembersAccessDenied';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
@@ -28,7 +28,7 @@ export function WorkspaceMembersPage() {
   const { msg } = useI18n();
   const { account } = useAuth();
   const { activeWorkspace, orgUuid, isLoading } = useWorkspace();
-  if (!isLoading && activeWorkspace.is_default !== true && canManageWorkspaceMembers(account)) {
+  if (!isLoading && activeWorkspace.is_default !== true && canViewWorkspaceMembers(account)) {
     return <WorkspaceMembersAdminPage key={`${orgUuid}:${activeWorkspace.id}`} />;
   }
   return (

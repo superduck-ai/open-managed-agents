@@ -35,7 +35,7 @@ import { toast } from '../../shared/ui/sonner';
 import { useAuth } from '../../shared/auth/context';
 import { notifyInvitationDelivery } from './invitationDelivery';
 import { MembersAccessDenied } from './MembersAccessDenied';
-import { canManageMembers } from '../../shared/permissions/members';
+import { canManageMembers, canViewMembers } from '../../shared/permissions/members';
 import {
   platformRoleDescription,
   platformRoleLabel,
@@ -80,16 +80,22 @@ export function OrganizationMembersPage() {
     );
   }
 
-  if (!canManageMembers(account, activeOrgUuid)) {
+  if (!canViewMembers(account, activeOrgUuid)) {
     return <OrganizationMembersAccessDenied />;
   }
 
-  return <OrganizationMembersAdminPage key={activeOrgUuid} activeOrgUuid={activeOrgUuid} />;
+  return (
+    <OrganizationMembersAdminPage
+      key={`${activeOrgUuid}:${canManageMembers(account, activeOrgUuid)}`}
+      activeOrgUuid={activeOrgUuid}
+    />
+  );
 }
 
 function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string }) {
   const { msg } = useI18n();
   const { account, csrfToken } = useAuth();
+  const canManage = canManageMembers(account, activeOrgUuid);
   const { activeWorkspace } = useWorkspace();
   const queryClient = useQueryClient();
   const bootstrapOrganization = account?.memberships?.find((membership) => membership.organization?.uuid)?.organization;
@@ -115,7 +121,7 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
   const invitesQuery = useQuery({
     queryKey: invitesQueryKey,
     queryFn: () => listOrganizationInvites(activeOrgUuid ?? '', 'pending'),
-    enabled: Boolean(activeOrgUuid),
+    enabled: canManage,
     retry: false,
   });
 
@@ -170,8 +176,8 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
   });
 
   const tableRows = useMemo<OrganizationMemberRow[]>(
-    () => [...(invitesQuery.data ?? []), ...(membersQuery.data ?? [])],
-    [invitesQuery.data, membersQuery.data],
+    () => [...(canManage ? (invitesQuery.data ?? []) : []), ...(membersQuery.data ?? [])],
+    [canManage, invitesQuery.data, membersQuery.data],
   );
   const filteredRows = useMemo(
     () =>
@@ -186,11 +192,12 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
       }),
     [tableRows, roleFilter, memberSearch],
   );
-  const isInitialLoading = membersQuery.isPending || invitesQuery.isPending;
-  const hasTableError = membersQuery.isError || invitesQuery.isError;
+  const isInitialLoading = membersQuery.isPending || (canManage && invitesQuery.isPending);
+  const inviteError = canManage ? invitesQuery.error : null;
+  const hasTableError = membersQuery.isError || Boolean(inviteError);
   const handleRetry = () => {
     membersQuery.refetch();
-    invitesQuery.refetch();
+    if (canManage) invitesQuery.refetch();
   };
 
   const columns = useMemo(
@@ -240,7 +247,7 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
           const role = normalizePlatformRole(member.role);
           const isSelf = isCurrentAccountMember(account, member);
 
-          if (isSelf) {
+          if (!canManage || isSelf) {
             return <span className="text-foreground">{platformRoleLabel(role, msg)}</span>;
           }
 
@@ -264,7 +271,7 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
         id: 'actions',
         header: '',
         cell: ({ row }) =>
-          isInviteRow(row.original) ? (
+          !canManage ? null : isInviteRow(row.original) ? (
             <InviteActionsMenu
               invite={row.original}
               disabled={resendInviteMutation.isPending || deleteInviteMutation.isPending}
@@ -292,6 +299,7 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
     ],
     [
       account,
+      canManage,
       activeOrgUuid,
       activeOrganization,
       csrfToken,
@@ -311,7 +319,7 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
     getCoreRowModel: getCoreRowModel(),
   });
 
-  if ([membersQuery.error, invitesQuery.error].some(isPermissionDenied)) {
+  if ([membersQuery.error, inviteError].some(isPermissionDenied)) {
     return <OrganizationMembersAccessDenied />;
   }
 
@@ -329,16 +337,18 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
           ) : null
         }
         actions={
-          <Button
-            size="lg"
-            onClick={() => {
-              setInviteActionError(null);
-              setInviteOpen(true);
-            }}
-          >
-            <Plus className="size-4" aria-hidden />
-            {msg('members.invite', 'Invite')}
-          </Button>
+          canManage ? (
+            <Button
+              size="lg"
+              onClick={() => {
+                setInviteActionError(null);
+                setInviteOpen(true);
+              }}
+            >
+              <Plus className="size-4" aria-hidden />
+              {msg('members.invite', 'Invite')}
+            </Button>
+          ) : null
         }
       />
 

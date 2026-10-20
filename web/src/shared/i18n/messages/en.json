@@ -26,7 +26,7 @@
   "managedAgents.sessions.outputs.loadError": "Output files could not be refreshed.",
   "managedAgents.sessions.detail.attachFiles": "Attach files",
   "managedAgents.sessions.detail.removeAttachment": "Remove {filename}",
-  "invitations.delivery.unconfirmed": "Invitations saved, but delivery of {count, plural, one {# email} other {# emails}} is unconfirmed. Check your email configuration and resend.",
+  "invitations.delivery.unconfirmed": "The server did not return the delivery status of {count, plural, one {# invitation email} other {# invitation emails}}. Recipients can sign in to view their invitations.",
   "invitations.delivery.sent": "Invitation emails submitted for sending. Remind recipients to check their inbox.",
   "account.apiPlan": "API plan",
   "account.logout": "Log out",
@@ -2703,5 +2703,8 @@
   "platformAdmin.revokeSuperAdministrator": "Revoke super administrator",
   "platformAdmin.addSuperAdministratorDescription": "Select a registered account to grant access to all organizations and super administrator management.",
   "platformAdmin.revokeSuperAdministratorDescription": "Revoke platform access for {email}. Their organization roles remain unchanged. At least one effective super administrator must remain.",
-  "platformAdmin.revokingOwnPlatformAccess": "You are revoking your own platform access. You will leave administration after confirmation."
+  "platformAdmin.revokingOwnPlatformAccess": "You are revoking your own platform access. You will leave administration after confirmation.",
+  "invitations.delivery.created": "Invitation created successfully.",
+  "invitations.delivery.failed": "{count, plural, one {# invitation email} other {# invitation emails}} could not be sent. You can resend from the invitation menu.",
+  "invitations.delivery.notConfigured": "Email delivery is not configured. Recipients can sign in with the invited email address to view and accept their invitations."
 }

@@ -18,6 +18,13 @@ func prepareResourceIdentities(layout Layout, spec Spec, state *State, credentia
 	}
 	for index := range state.Workspaces {
 		workspace := &state.Workspaces[index]
+		if workspace.Environment == nil {
+			externalID, err := ids.New("env_")
+			if err != nil {
+				return err
+			}
+			workspace.Environment = &EnvironmentState{UUID: uuid.NewV4().String(), ExternalID: externalID, Pending: true}
+		}
 		if err := reserveAPIKeyIdentities(workspace, spec, credentials); err != nil {
 			return err
 		}

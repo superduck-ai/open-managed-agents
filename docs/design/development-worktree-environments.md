@@ -181,6 +181,8 @@ flowchart TD
 
 ## 初始化后的开发数据
 
+每个 workspace 初始化一个名为 `default` 的云端执行环境，使用当前 E2B 模板、空软件包列表与 `networking.type: unrestricted`，允许不受限的外网访问。环境 UUID 和 external ID 在创建前写入恢复状态；失败重试复用相同身份。已有 worktree 再运行 `just dev-init` 也会补齐该环境。重复初始化不覆盖页面修改，已登记环境被删除或归档时报错，不静默恢复。
+
 ```text
 组织：OMA Local
 └── 用户：test@oma.ai，组织管理员

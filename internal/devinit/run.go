@@ -88,6 +88,9 @@ func Run(ctx context.Context, repoRoot, initFile string, opts Options) (Result, 
 		return Result{}, err
 	}
 	prepped.state.Phase = phaseKeys
+	if err := reconcileEnvironments(ctx, database, prepped.base.E2B.Template, &prepped.state); err != nil {
+		return Result{}, err
+	}
 	if err := SaveState(prepped.layout, prepped.state); err != nil {
 		return Result{}, err
 	}
@@ -429,6 +432,7 @@ func reconcileWorkspaces(ctx context.Context, database *db.DB, spec Spec, organi
 		result = append(result, WorkspaceState{
 			Ref: workspaceSpec.Ref, UUID: existing.UUID, ExternalID: existing.ExternalID,
 			Name: existing.Name, IsDefault: workspaceSpec.IsDefault, APIKeys: registered.APIKeys,
+			Environment: registered.Environment,
 		})
 	}
 	return result, nil

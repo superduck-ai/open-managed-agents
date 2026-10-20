@@ -231,3 +231,5 @@ just dev-recycle --yes --worktree /absolute/path/to/worktree
 | Go 构建提示缺少 Mapper | 执行 `./scripts/generate-go.sh`，完成后再重启；不要手改或提交生成文件 |
 
 完整环境设计与恢复约定见[多 worktree 开发环境与初始化方案](design/development-worktree-environments.md)。
+
+初始化会为每个 workspace 创建一个 `default` 云端执行环境，网络策略为 `unrestricted`。已初始化的 worktree 再运行 `just dev-init` 即可补齐；重复运行保留页面修改，已登记环境被删除或归档时会报错。

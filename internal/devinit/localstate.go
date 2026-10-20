@@ -61,12 +61,19 @@ type UserState struct {
 }
 
 type WorkspaceState struct {
-	Ref        string        `json:"ref"`
-	UUID       string        `json:"uuid"`
-	ExternalID string        `json:"external_id"`
-	Name       string        `json:"name"`
-	IsDefault  bool          `json:"is_default"`
-	APIKeys    []APIKeyState `json:"api_keys,omitempty"`
+	Ref         string            `json:"ref"`
+	UUID        string            `json:"uuid"`
+	ExternalID  string            `json:"external_id"`
+	Name        string            `json:"name"`
+	IsDefault   bool              `json:"is_default"`
+	APIKeys     []APIKeyState     `json:"api_keys,omitempty"`
+	Environment *EnvironmentState `json:"environment,omitempty"`
+}
+
+type EnvironmentState struct {
+	UUID       string `json:"uuid"`
+	ExternalID string `json:"external_id"`
+	Pending    bool   `json:"pending,omitempty"`
 }
 
 type APIKeyState struct {

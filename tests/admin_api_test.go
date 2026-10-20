@@ -219,7 +219,7 @@ func TestWorkspaceOrganizationReferenceUsesUUID(t *testing.T) {
 	`).Scan(&originalOrganizationUUID, &organizationCount); err != nil {
 		t.Fatalf("load organization state before repeated seed: %v", err)
 	}
-	if err := app.db.Seed(context.Background(), app.cfg.Bootstrap.SeedAPIKeys); err != nil {
+	if err := app.db.Seed(context.Background(), app.cfg.Bootstrap); err != nil {
 		t.Fatalf("repeat default seed: %v", err)
 	}
 	var seededOrganizationUUID string

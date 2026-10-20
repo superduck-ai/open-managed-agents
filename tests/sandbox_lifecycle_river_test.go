@@ -3,6 +3,7 @@
 package tests
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -28,8 +29,16 @@ func TestSandboxLifecycleDurableScheduleDispatchesReclaim(t *testing.T) {
 
 func testSandboxLifecycleSchedule(t *testing.T, archived bool) {
 	f := newSandboxLifecycleFixture(t)
-	if archived {
-		archiveSession(t, f.app, f.session.ExternalID)
+	fixtures := []sandboxLifecycleFixture{f}
+	for range 2 {
+		fixtures = append(fixtures, newSandboxLifecycleFixtureWithApp(t, f.app))
+	}
+	pending := make(map[string]bool, len(fixtures))
+	for _, fixture := range fixtures {
+		pending[fixture.target.ProviderSandboxID] = true
+		if archived {
+			archiveSession(t, f.app, fixture.session.ExternalID)
+		}
 	}
 	ctx := context.Background()
 	if err := riverjobs.Migrate(ctx, f.app.db, nil); err != nil {
@@ -46,8 +55,15 @@ func testSandboxLifecycleSchedule(t *testing.T, archived bool) {
 	lifecycle := environments.NewSandboxLifecycle(f.app.db, killer, config.SandboxLifecycleConfig{Enabled: !archived, DryRun: archived, IdleTimeout: 24 * time.Hour}, nil)
 	workers := river.NewWorkers()
 	lifecycle.Register(workers)
+	var diagnostics bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&diagnostics, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	defer func() {
+		if t.Failed() {
+			t.Log(diagnostics.String())
+		}
+	}()
 	const sweepQueue = "sandbox_lifecycle_test_sweep"
-	client, err := riverjobs.NewClient(f.app.db, nil, workers, map[string]river.QueueConfig{
+	client, err := riverjobs.NewClient(f.app.db, logger, workers, map[string]river.QueueConfig{
 		sweepQueue:                         {MaxWorkers: 1, FetchPollInterval: time.Hour},
 		environments.SandboxLifecycleQueue: {MaxWorkers: 4, FetchPollInterval: time.Hour},
 	})
@@ -67,6 +83,9 @@ func testSandboxLifecycleSchedule(t *testing.T, archived bool) {
 	after, err := client.DurablePeriodicJobGet(ctx, "sandbox_lifecycle_sweep")
 	if err != nil || !before.NextRunAt.Equal(after.NextRunAt) {
 		t.Fatalf("startup changed existing schedule: before=%+v after=%+v err=%v", before, after, err)
+	}
+	if _, err := client.DurablePeriodicJobDelete(ctx, "sandbox_lifecycle_sweep"); err != nil {
+		t.Fatal(err)
 	}
 	scheduleID := "lifecycle-test-" + uuid.NewV4().String()
 	runCtx, cancel := context.WithCancel(ctx)
@@ -96,11 +115,16 @@ func testSandboxLifecycleSchedule(t *testing.T, archived bool) {
 	for {
 		select {
 		case id := <-calls:
-			if id == f.target.ProviderSandboxID {
+			delete(pending, id)
+			if len(pending) == 0 {
 				return
 			}
 		case <-timeout.C:
-			logSandboxLifecycleState(t, f)
+			for _, fixture := range fixtures {
+				if pending[fixture.target.ProviderSandboxID] {
+					logSandboxLifecycleState(t, fixture)
+				}
+			}
 			t.Fatal("durable sweep did not dispatch idle sandbox reclamation")
 		}
 	}

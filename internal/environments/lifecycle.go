@@ -117,8 +117,12 @@ func (l *SandboxLifecycle) enqueueRemovalRetry(ctx context.Context, target db.Sa
 }
 
 func enqueueSandboxReclaim(ctx context.Context, client *river.Client[*sql.Tx], target db.SandboxReclaimTarget) error {
-	_, err := client.Insert(ctx, sandboxReclaimArgs{OrganizationUUID: target.OrganizationUUID, WorkspaceUUID: target.WorkspaceUUID, SandboxUUID: target.SandboxUUID}, nil)
+	_, err := client.Insert(ctx, sandboxReclaimArgsForTarget(target), nil)
 	return err
+}
+
+func sandboxReclaimArgsForTarget(target db.SandboxReclaimTarget) sandboxReclaimArgs {
+	return sandboxReclaimArgs{OrganizationUUID: target.OrganizationUUID, WorkspaceUUID: target.WorkspaceUUID, SandboxUUID: target.SandboxUUID}
 }
 
 func (l *SandboxLifecycle) allowsNewClaims() bool {
@@ -173,6 +177,7 @@ func (l *SandboxLifecycle) enqueueReclaims(ctx context.Context, client *river.Cl
 		if err != nil {
 			return err
 		}
+		jobs := make([]river.InsertManyParams, 0, len(targets))
 		for _, target := range targets {
 			if !l.allowsNewClaims() && !target.Reclaiming {
 				if l.cfg.Enabled && l.cfg.DryRun {
@@ -181,7 +186,10 @@ func (l *SandboxLifecycle) enqueueReclaims(ctx context.Context, client *river.Cl
 				}
 				continue
 			}
-			if err := enqueueSandboxReclaim(ctx, client, target); err != nil {
+			jobs = append(jobs, river.InsertManyParams{Args: sandboxReclaimArgsForTarget(target)})
+		}
+		if len(jobs) > 0 {
+			if _, err := client.InsertMany(ctx, jobs); err != nil {
 				return err
 			}
 		}

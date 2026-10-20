@@ -83,7 +83,7 @@ func run(logger *slog.Logger) error {
 	} else {
 		logger.Info("database auto migration disabled", "env", cfg.Env)
 	}
-	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
+	if err := database.Seed(ctx, cfg.Bootstrap); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
 	redisClient, err := redisclient.Open(ctx, cfg.Redis.URL)

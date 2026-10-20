@@ -264,6 +264,7 @@ Base URL 保持 API 根地址合同。最终地址为 `{base_url}/v1/chat/comple
 
 正常结束要求有效 `finish_reason`，支持 `[DONE]` 或有效结束原因后的正常 EOF，usage 尾帧继续读取。
 只有 EOF 而没有 finish reason 的断流仍失败，Brain 侧同样要求有效结束原因。
+`TestBrainChatCompletionsProxyLifecycle` 的截断 fixture 不发送 finish reason；有效结束原因后的正常 EOF 由 `TestChatObservationFinishAtEOF` 覆盖。
 `stop`、`length` 只用于无工具响应，`tool_calls` 必须存在工具调用；过滤、拒绝、未知结束原因
 和异常断流不能记为成功。单帧及累计公开内容保留 4 MiB 观察上限。
 

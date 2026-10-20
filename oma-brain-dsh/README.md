@@ -56,6 +56,16 @@ To rebuild and restart the service in the foreground:
 bun run restart
 ```
 
+## Worktree development environments
+
+When the repository worktree is bound to a dev environment (`.run/env.json`
+created by `just dev-init`), `scripts/restart.sh` and the repository-level
+`just restart-brain` read the environment's API address and Brain claim token
+from `.run/generated/` and export `OMA_API_URL` and `OMA_BRAIN_CLAIM_TOKEN`
+explicitly, so a checked-in `.env` default cannot point the Brain at another
+environment. Explicitly set conflicting values are rejected. Without a bound
+environment the script keeps the behavior described above.
+
 The restart script sends SIGTERM to direct Bun entry processes whose working directory is this project, including `bun start` launches. It waits up to thirty seconds for shutdown and cancels the restart if a process remains. It then starts `dist/main.js` in the foreground with output in the current terminal. Press Ctrl+C to stop the service. Run the script as the same user that started the service. A concurrent restart is refused during build and shutdown. If the script is killed and leaves a stale lock, remove `.run/restart.lock` after confirming no restart is running.
 
 The Brain claims Code Sessions with `POST /v1/code/brain/claims?block_ms=25000`, sending the shared fleet token in `OMA_BRAIN_CLAIM_TOKEN` and its process UUID in `X-Worker-ID`. Each claim advances the worker epoch and returns fresh ingress and model credentials to exactly one process. Up to `OMA_BRAIN_CLAIM_CONCURRENCY` long polls run at once, and only while a session slot is free; a busy process stops claiming. Admission registers the worker, loads the session context and restores its journal. If admission fails, the host calls `POST /v1/code/brain/claims/{id}/release`. Transient failures use `reason: "admission_failed"`, so another process can retry after the backend's backoff (5, 10, 20, 40 and 80 seconds); five consecutive failures end the session with `session.error`. Failures that cannot succeed on retry, such as an invalid task envelope, session context or assignment, use `reason: "permanent"`, and the backend publishes `session.error` immediately. Admission is also abandoned with `reason: "shutdown"` when the process is stopping or every local slot is busy, which does not count as a failure. Concurrent admissions reserve a slot before evicting an idle session, so the process never holds more than `OMA_BRAIN_MAX_SESSIONS` sessions. On SIGTERM the host releases claims still being admitted and sessions with an active turn using `reason: "shutdown"`, so another process can take them without waiting for the lease. Idle sessions closed after sixty seconds, evicted for capacity or open at shutdown are released with `reason: "idle"`, which only clears the lease, so new input can be claimed immediately. A crashed process loses its claims when the 20-second lease and 10-second grace period expire.

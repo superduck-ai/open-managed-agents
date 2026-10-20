@@ -290,6 +290,8 @@ type BootstrapConfig struct {
 	OrganizationName    string       `yaml:"organization_name"`
 	WorkspaceExternalID string       `yaml:"workspace_external_id"`
 	UserExternalID      string       `yaml:"user_external_id"`
+	UserEmail           string       `yaml:"user_email"`
+	UserName            string       `yaml:"user_name"`
 	APIKeyExternalID    string       `yaml:"api_key_external_id"`
 }
 

@@ -20,8 +20,7 @@ const maxFetchBytes = 5_000_000
 
 type fetchPage struct {
 	FetchResponse
-	FullContent      string `json:"full_content,omitempty"`
-	MaxContentTokens int    `json:"max_content_tokens"`
+	FullContent string `json:"full_content,omitempty"`
 }
 
 func (c *Client) Fetch(ctx context.Context, input FetchRequest, policy Policy) (fetchPage, error) {
@@ -108,7 +107,7 @@ func (c *Client) Fetch(ctx context.Context, input FetchRequest, policy Policy) (
 			budget = *config.MaxContentTokens
 		}
 	}
-	page = fetchPage{URL: response.Request.URL.String(), StatusCode: response.StatusCode, Title: title, Content: content, MaxContentTokens: budget}
+	page = fetchPage{URL: response.Request.URL.String(), StatusCode: response.StatusCode, Title: title, Content: content}
 	if len(content) > budget {
 		page.FullContent = content
 		end := budget

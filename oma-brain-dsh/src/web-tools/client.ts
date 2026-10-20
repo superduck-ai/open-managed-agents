@@ -1,4 +1,4 @@
-import { persistToolOutput } from "../external-mcp/output.ts";
+import { persistToolOutput, saveToolOutput } from "../external-mcp/output.ts";
 import type { OmaApi } from "../api.ts";
 import type { Payload } from "../json.ts";
 import type { RemoteTool, SandboxExecutor } from "../runtime/contracts.ts";
@@ -16,10 +16,15 @@ export class WebClient {
       const body = await response.json();
       if (response.ok) {
         if (typeof body.full_content === "string") {
-          if (!this.sandbox) throw new Error("Web output storage unavailable");
-          const { full_content, max_content_tokens, ...page } = body;
-          const full = { content: [{ type: "text", text: JSON.stringify({ ...page, content: full_content, truncated: false }) }] };
-          return await persistToolOutput(full, this.sandbox, signal, Math.max(0, Math.floor(max_content_tokens / 4)));
+          const { full_content, ...page } = body;
+          try {
+            if (!this.sandbox) throw new Error("Web output storage unavailable");
+            page.output_file = await saveToolOutput(JSON.stringify({ ...page, content: full_content, truncated: false }), this.sandbox, signal);
+          } catch {
+            signal.throwIfAborted();
+            page.storage_error = "Full content could not be saved; only the preview is available.";
+          }
+          return { content: [{ type: "text", text: JSON.stringify(page) }] };
         }
         const result = { content: [{ type: "text", text: JSON.stringify(body) }] };
         return this.sandbox ? await persistToolOutput(result, this.sandbox, signal) : result;

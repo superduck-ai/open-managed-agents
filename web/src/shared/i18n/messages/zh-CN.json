@@ -1579,6 +1579,7 @@
   "managedAgents.agents.createDialog.builtInTool.taskStop": "停止后台任务",
   "managedAgents.agents.createDialog.builtInTool.todoWrite": "管理任务列表",
   "managedAgents.agents.createDialog.builtInTool.webFetch": "获取 URL 内容",
+  "managedAgents.agents.createDialog.builtInTool.webSearch": "搜索网页并返回来源",
   "managedAgents.agents.createDialog.builtInTool.write": "写入文件",
   "managedAgents.agents.createDialog.editorMode": "编辑模式",
   "managedAgents.agents.detail.copySkillId": "复制技能 ID",

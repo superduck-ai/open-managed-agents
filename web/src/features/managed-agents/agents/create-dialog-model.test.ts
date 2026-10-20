@@ -592,3 +592,38 @@ describe('create agent draft model', () => {
     ).toBe(true);
   });
 });
+
+test('Web policy fields survive Raw parsing and individual or toolset permission edits', () => {
+  const draft: CreateAgentInput = {
+    ...baseDraft,
+    tools: [
+      {
+        type: 'agent_toolset_20260401',
+        configs: [{ name: 'web_fetch', allowed_domains: ['example.com'], max_content_tokens: 1000 }],
+      },
+    ],
+  };
+  expect(createAgentDraftSchema.safeParse(draft).success).toBe(true);
+  for (const updated of [
+    setToolPermission(draft, () => true, 'web_fetch', 'always_allow', 'always_allow'),
+    setToolPermission(draft, () => true, 'web_fetch', 'always_ask', 'always_allow'),
+    setToolsetPermission(draft, () => true, 'always_ask'),
+    setToolsetPermission(draft, () => true, 'always_deny'),
+  ]) {
+    expect(createAgentDraftSchema.safeParse(updated).success).toBe(true);
+    expect(updated.tools[0].configs).toContainEqual(
+      expect.objectContaining({ name: 'web_fetch', allowed_domains: ['example.com'], max_content_tokens: 1000 }),
+    );
+  }
+  for (const config of [
+    { name: 'bash', allowed_domains: ['example.com'] },
+    { name: 'web_search', max_content_tokens: 10 },
+    { name: 'web_fetch', allowed_domains: [] },
+    { name: 'web_search', allowed_domains: ['example.com'], blocked_domains: ['iana.org'] },
+  ]) {
+    expect(
+      createAgentDraftSchema.safeParse({ ...draft, tools: [{ type: 'agent_toolset_20260401', configs: [config] }] })
+        .success,
+    ).toBe(false);
+  }
+});

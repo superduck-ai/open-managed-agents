@@ -114,7 +114,7 @@ test("web fetch retains full long content in readable storage and forwards the t
   const api = new OmaApi(backend.url, Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     expect(request.headers.get("X-OMA-Session-Thread-ID")).toBe("child-thread");
-    return Response.json({ url: "https://example.com", status_code: 200, title: "Source", content: "preview", full_content: source, truncated: true, max_content_tokens: 1000 });
+    return Response.json({ url: "https://example.com", status_code: 200, title: "Source", content: "preview", full_content: source, truncated: true });
   }, { preconnect: fetch.preconnect }));
   api.assignments.set(backend.a.session_id, backend.a);
   const sandbox = {
@@ -132,6 +132,72 @@ test("web fetch retains full long content in readable storage and forwards the t
     expect(files.size).toBe(1);
     expect(JSON.parse([...files.values()][0]!).content).toBe(source);
     expect(output.content[0].text).toContain([...files.keys()][0]!);
-    expect(output.content[0].text.length).toBeLessThan(1000);
+    expect(JSON.parse(output.content[0].text).content).toBe("preview");
+    expect(JSON.parse(output.content[0].text).full_content).toBeUndefined();
+  } finally { await backend.stop(); }
+});
+
+test("always-allow web tools skip approval and refresh registrations with the live tool list", async () => {
+  const backend = new Backend();
+  await backend.ready;
+  backend.a.launch.tools = [];
+  backend.a.launch.tool_permissions = { web_search: "allow", web_fetch: "allow" };
+  let approvals = 0;
+  let calls = 0;
+  const api = new OmaApi(backend.url, Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    if (request.url.includes("/web/")) {
+      calls++;
+      return Response.json({ sources: [] });
+    }
+    return fetch(input, init);
+  }, { preconnect: fetch.preconnect }));
+  const ctx = new Context();
+  try {
+    await mountOma(ctx, api);
+    const session = createOmaSession(ctx, api, structuredClone(backend.a));
+    await session.open();
+    backend.onApproval = async (payload) => {
+      approvals++;
+      await session.control({ type: "control_response", response: { subtype: "success", request_id: payload.request_id, response: { behavior: "deny" } } });
+    };
+    backend.a.launch.tools = ["web_search", "web_fetch"];
+    backend.modelScript = [callEvents("web_search", { query: "test" }, "allow-search"), callEvents("web_fetch", { url: "https://example.com" }, "allow-fetch"), textEvents("done")];
+    await session.receive("web-enabled", { content: "Search", oma_refresh_tools: true });
+    expect(calls).toBe(2);
+    expect(approvals).toBe(0);
+    expect(backend.requests[0].tools.map((tool: Payload) => tool.name)).toContain("web_search");
+    backend.a.launch.tool_permissions.web_search = "ask";
+    backend.modelScript = [callEvents("web_search", { query: "ask" }, "ask-search"), textEvents("denied")];
+    await session.receive("web-ask", { content: "Ask permission" });
+    expect(approvals).toBe(1);
+    expect(calls).toBe(2);
+    backend.a.launch.tools = [];
+    backend.modelScript = [textEvents("removed")];
+    await session.receive("web-disabled", { content: "Inspect tools", oma_refresh_tools: true });
+    expect(backend.requests.at(-1)!.tools.map((tool: Payload) => tool.name)).not.toContain("web_search");
+    expect(backend.requests.at(-1)!.tools.map((tool: Payload) => tool.name)).not.toContain("web_fetch");
+    session.stop();
+    await session.close();
+  } finally { await ctx.fiber.dispose(); await backend.stop(); }
+});
+
+test("long fetch preserves the server preview when output storage is unavailable or denied", async () => {
+  const backend = new Backend();
+  await backend.ready;
+  const api = new OmaApi(backend.url, Object.assign(async () => Response.json({ url: "https://example.com", content: "服务端预览", full_content: "full body", truncated: true }), { preconnect: fetch.preconnect }));
+  api.assignments.set(backend.a.session_id, backend.a);
+  try {
+    const denied = { call: async () => ({ isError: true, content: [{ type: "text", text: "Write denied" }] }) };
+    for (const sandbox of [undefined, denied]) {
+      const result = await new WebClient(api, backend.a.session_id, sandbox).call(webToolDefinitions()[1]!, { url: "https://example.com" }, new AbortController().signal);
+      expect(result.isError).not.toBe(true);
+      const page = JSON.parse(result.content[0].text);
+      expect(page.content).toBe("服务端预览");
+      expect(page.truncated).toBe(true);
+      expect(page.storage_error).toContain("only the preview");
+      expect(page.output_file).toBeUndefined();
+      expect(page.full_content).toBeUndefined();
+    }
   } finally { await backend.stop(); }
 });

@@ -31,7 +31,7 @@ export class ToolExecution {
         throw new Error(`Invalid ${tool.name} arguments: ${errors.join("; ")}`);
     };
     validate(original);
-    const decision: ApprovalDecision = this.permissions?.[tool.remoteName] === "allow"
+    const decision: ApprovalDecision = this.permissions?.[tool.permissionName ?? tool.remoteName] === "allow"
       ? { allowed: true }
       : await approveToolCall(this.bridge, { callId: exec.callId, toolName: tool.name, input: original }, exec.signal);
     if (!decision.allowed)

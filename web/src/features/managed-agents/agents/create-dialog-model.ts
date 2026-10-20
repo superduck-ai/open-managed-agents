@@ -142,7 +142,31 @@ const builtInToolNameSchema = z.enum([
   'write',
 ]);
 
-const builtInToolConfigSchema = permissionConfigSchema.extend({ name: builtInToolNameSchema }).strict();
+const builtInToolConfigSchema = permissionConfigSchema
+  .extend({
+    name: builtInToolNameSchema,
+    allowed_domains: z.array(z.string()).min(1).max(64).nullable().optional(),
+    blocked_domains: z.array(z.string()).min(1).max(64).nullable().optional(),
+    max_content_tokens: z.number().int().positive().optional(),
+  })
+  .strict()
+  .superRefine((config, ctx) => {
+    for (const field of ['allowed_domains', 'blocked_domains', 'max_content_tokens'] as const) {
+      if (config[field] !== undefined && !['web_search', 'web_fetch'].includes(config.name)) {
+        ctx.addIssue({ code: 'custom', path: [field], message: 'Only Web tools support this setting.' });
+      }
+    }
+    if (config.allowed_domains != null && config.blocked_domains != null) {
+      ctx.addIssue({ code: 'custom', path: ['allowed_domains'], message: 'Only one domain list may be set.' });
+    }
+    if (config.max_content_tokens !== undefined && config.name !== 'web_fetch') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['max_content_tokens'],
+        message: 'Only web_fetch supports a content budget.',
+      });
+    }
+  });
 
 const mcpToolConfigSchema = permissionConfigSchema
   .extend({
@@ -433,8 +457,20 @@ export function setToolsetPermission(
       if (!predicate(tool)) {
         return tool;
       }
+      const webConfigs = (Array.isArray(tool.configs) ? tool.configs : [])
+        .map(toRecord)
+        .filter((config): config is Record<string, unknown> =>
+          Boolean(
+            config &&
+            ['web_search', 'web_fetch'].includes(String(config.name)) &&
+            ['allowed_domains', 'blocked_domains', 'max_content_tokens'].some((field) => field in config),
+          ),
+        )
+        .map(({ enabled, permission_policy, ...settings }) => ({ ...settings, ...permissionConfig(permission) }));
       const configs =
-        tool.type === 'agent_toolset_20260401' ? [{ name: 'ask_user_question', ...permissionConfig(permission) }] : [];
+        tool.type === 'agent_toolset_20260401'
+          ? [...webConfigs, { name: 'ask_user_question', ...permissionConfig(permission) }]
+          : [];
       return { ...tool, default_config: permissionConfig(permission), configs };
     }),
   };
@@ -458,14 +494,24 @@ export function setToolPermission(
         ? tool.configs.map(toRecord).filter((config): config is Record<string, unknown> => Boolean(config))
         : [];
       const others = existing.filter((config) => config.name !== name);
-      const requiresExplicitPermission = tool.type === 'agent_toolset_20260401' && name === 'ask_user_question';
+      const requiresExplicitPermission =
+        tool.type === 'agent_toolset_20260401' &&
+        (name === 'ask_user_question' ||
+          existing.some(
+            (config) =>
+              config.name === name &&
+              ['allowed_domains', 'blocked_domains', 'max_content_tokens'].some((field) => field in config),
+          ));
       return {
         ...tool,
         default_config: toRecord(tool.default_config) ?? permissionConfig(defaultPermission),
         configs:
           permission === defaultPermission && !requiresExplicitPermission
             ? others
-            : [...others, { name, ...permissionConfig(permission) }],
+            : [
+                ...others,
+                { ...existing.find((config) => config.name === name), name, ...permissionConfig(permission) },
+              ],
       };
     }),
   };

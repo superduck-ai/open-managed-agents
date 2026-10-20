@@ -482,3 +482,11 @@ function agentFixture(overrides: Partial<AgentApiResponse>): AgentApiResponse {
     ...overrides,
   };
 }
+
+test('web search description uses its translation key', () => {
+  expect(
+    builtInAgentToolDescription({ name: 'web_search', description: 'Search' }, (id, fallback) =>
+      id === 'managedAgents.agents.createDialog.builtInTool.webSearch' ? '搜索网页并返回来源' : fallback,
+    ),
+  ).toBe('搜索网页并返回来源');
+});

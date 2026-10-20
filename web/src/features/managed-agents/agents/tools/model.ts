@@ -109,6 +109,7 @@ const BUILT_IN_TOOL_DESCRIPTION_KEYS: Record<string, string> = {
   task_stop: 'managedAgents.agents.createDialog.builtInTool.taskStop',
   todo_write: 'managedAgents.agents.createDialog.builtInTool.todoWrite',
   web_fetch: 'managedAgents.agents.createDialog.builtInTool.webFetch',
+  web_search: 'managedAgents.agents.createDialog.builtInTool.webSearch',
   write: 'managedAgents.agents.createDialog.builtInTool.write',
 };
 

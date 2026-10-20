@@ -330,7 +330,10 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 		env, err := h.db.GetEnvironment(r.Context(), current.WorkspaceUUID, current.EnvironmentExternalID)
 		if err != nil {
-			return invalidRequest(err)
+			if errors.Is(err, db.ErrNotFound) {
+				return environmentNotFound(current.EnvironmentExternalID, err)
+			}
+			return internalError("Could not update session", fmt.Errorf("get environment: %w", err))
 		}
 		if err := webtools.ValidateSession(env.Config, next.AgentSnapshot); err != nil {
 			return invalidRequest(err)

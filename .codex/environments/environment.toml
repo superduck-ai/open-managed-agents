@@ -1,0 +1,8 @@
+version = 1
+name = "open-managed-agents"
+
+[setup]
+script = "just dev-init"
+
+[cleanup]
+script = "just dev-recycle --yes"

@@ -1,5 +1,8 @@
 # OS/editor noise
-.codex/
+/.codex/*
+!/.codex/environments/
+/.codex/environments/*
+!/.codex/environments/environment.toml
 .DS_Store
 Thumbs.db
 .idea/

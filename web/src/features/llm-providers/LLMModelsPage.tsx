@@ -3,11 +3,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from '@tanstack/react-router';
 import { AlertCircle, Bot, Plus } from 'lucide-react';
+import type { ApiError } from '../../shared/api/client';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
 import { canManageLLMProviders } from '../../shared/permissions/llm-providers';
 import { useWorkspace } from '../../shared/workspaces/context';
 import { workspaceIdFromPath } from '../../shared/workspaces/presentation';
+import { AccessDenied } from '../../shared/ui/access-denied';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
@@ -70,6 +72,7 @@ export function LLMModelsPage() {
     retry: false,
   });
   const providers = providersQuery.data ?? [];
+  const catalogAccessDenied = isCatalogAccessDenied(providersQuery.error);
   const activeProviderId = resolvedProviderSelection(providers, selectedProviderId);
   const catalog = catalogModels(providers);
 
@@ -215,13 +218,13 @@ export function LLMModelsPage() {
             <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
               {msg('llmModels.title', 'LLM models')}
             </h1>
-            {catalog.length > 0 ? <Badge variant="secondary">{catalog.length}</Badge> : null}
+            {catalog.length > 0 && !catalogAccessDenied ? <Badge variant="secondary">{catalog.length}</Badge> : null}
           </div>
           <p className="mt-2 max-w-[760px] text-sm leading-5 text-muted-foreground">
             {msg('llmModels.description', 'Manage providers and models for this workspace.')}
           </p>
         </div>
-        {canManage && providers.length > 0 ? (
+        {canManage && providers.length > 0 && !catalogAccessDenied ? (
           <Button type="button" size="lg" onClick={openCreate}>
             <Plus className="size-4" aria-hidden />
             {msg('llmModels.addProvider', 'Add provider')}
@@ -312,6 +315,17 @@ function CatalogBody({
   onAddModel: (provider: LLMProvider, modelId: string) => void;
 }) {
   const { msg } = useI18n();
+  if (isCatalogAccessDenied(providersError)) {
+    return (
+      <AccessDenied
+        title={msg('llmModels.accessDeniedTitle', 'Access denied')}
+        description={msg(
+          'llmModels.accessDeniedDescription',
+          'You do not have permission to view models in this workspace. Workspace members can view the catalog read-only, and only organization administrators can manage providers.',
+        )}
+      />
+    );
+  }
   if (providersError) {
     return (
       <Alert variant="destructive">
@@ -359,6 +373,10 @@ function CatalogBody({
       onAddModel={onAddModel}
     />
   );
+}
+
+function isCatalogAccessDenied(error: unknown) {
+  return Boolean(error && typeof error === 'object' && (error as Partial<ApiError>).status === 403);
 }
 
 function CatalogSkeleton() {

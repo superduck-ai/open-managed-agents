@@ -458,7 +458,7 @@ function OrganizationMembersAccessDenied() {
       <MembersAccessDenied
         description={msg(
           'members.accessDeniedDescription',
-          'Only organization administrators can view and manage organization members. Contact your organization administrator.',
+          'Organization members can view this directory. Only organization administrators can manage organization members. Contact your organization administrator.',
         )}
       />
     </section>

@@ -144,7 +144,9 @@ describe('Organization members settings', () => {
     );
 
     expect(await screen.findByText('无权限访问')).toBeTruthy();
-    expect(screen.getByText('只有组织管理员可以查看和管理组织成员。请联系组织管理员。')).toBeTruthy();
+    expect(
+      screen.getByText('组织成员可以查看成员目录。只有组织管理员可以管理组织成员。请联系组织管理员。'),
+    ).toBeTruthy();
     expect(screen.queryByRole('table')).toBeNull();
     expect(screen.queryByRole('button', { name: '邀请' })).toBeNull();
     expect(screen.queryByRole('button', { name: '重试' })).toBeNull();
@@ -165,6 +167,11 @@ describe('Organization members settings', () => {
       );
 
       expect(await screen.findByText('Access denied')).toBeTruthy();
+      expect(
+        screen.getByText(
+          'Organization members can view this directory. Only organization administrators can manage organization members. Contact your organization administrator.',
+        ),
+      ).toBeTruthy();
       expect(screen.queryByText('Members could not be loaded.')).toBeNull();
       expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Invite' })).toBeNull();

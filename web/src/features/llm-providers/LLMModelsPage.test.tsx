@@ -32,6 +32,63 @@ afterEach(() => {
 });
 
 describe('LLM models page', () => {
+  test('目录读取被拒绝时显示无权限而不是通用失败', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
+    globalThis.fetch = mock(
+      async () =>
+        new Response(JSON.stringify({ error: 'workspace not allowed' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    ) as unknown as typeof fetch;
+    renderPage('zh-CN', 'user');
+
+    expect(await screen.findByText('无权限访问')).toBeTruthy();
+    expect(
+      screen.getByText('你没有权限查看此工作区的模型。工作区成员可以只读查看目录，只有组织管理员可以管理供应商。'),
+    ).toBeTruthy();
+    expect(screen.queryByText('请求失败，请重试。')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('button', { name: '添加 Provider' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'LLM 模型' })).toBeTruthy();
+  });
+
+  test('shows the English access denied state when the catalog read is forbidden', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
+    globalThis.fetch = mock(
+      async () =>
+        new Response(JSON.stringify({ error: 'workspace not allowed' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    ) as unknown as typeof fetch;
+    renderPage();
+
+    expect(await screen.findByText('Access denied')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'You do not have permission to view models in this workspace. Workspace members can view the catalog read-only, and only organization administrators can manage providers.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText('Request failed. Please try again.')).toBeNull();
+  });
+
+  test('目录读取的其他失败仍显示通用错误', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
+    globalThis.fetch = mock(
+      async () =>
+        new Response(JSON.stringify({ error: 'unavailable' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    ) as unknown as typeof fetch;
+    renderPage();
+
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.getByText('Request failed. Please try again.')).toBeTruthy();
+    expect(screen.queryByText('Access denied')).toBeNull();
+  });
+
   test('用户可以读取模型目录但不能新增供应商', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
     const api = mockProvidersApi();

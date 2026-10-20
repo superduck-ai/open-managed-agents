@@ -60,7 +60,7 @@ function WorkspaceMembersAccessDenied() {
     <MembersAccessDenied
       description={msg(
         'members.workspaceAccessDeniedDescription',
-        'Only workspace or organization administrators can view and manage workspace members. Contact your administrator.',
+        'Workspace members can view this directory. Only workspace or organization administrators can manage workspace members. Contact your administrator.',
       )}
     />
   );

@@ -140,6 +140,10 @@ test('组织很多时菜单只保留当前组织，搜索后再切换', async ()
   fireEvent.change(screen.getByPlaceholderText('搜索组织'), { target: { value: '星河' } });
   fireEvent.click(await screen.findByRole('option', { name: /星河/ }));
   expect(switchOrganization).toHaveBeenCalledWith('other');
+  fireEvent.click(screen.getByRole('menuitem', { name: '切换组织' }));
+  expect(screen.getByPlaceholderText('搜索组织')).toHaveProperty('value', '');
+  expect(await screen.findByText(/还有 9 个组织/)).toBeTruthy();
+  expect(screen.queryByRole('option', { name: /星河/ })).toBeNull();
 });
 
 test.each([

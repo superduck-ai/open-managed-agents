@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Building2, Check } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from '../../shared/ui/command';
@@ -26,14 +26,13 @@ export function OrganizationSwitcher({
   onSelect: (orgUuid: string) => void;
 }) {
   const [query, setQuery] = useState('');
+  useEffect(() => {
+    if (!open) setQuery('');
+  }, [open]);
   const result = filterOrganizations(items, query, currentOrgUuid);
   const remainder = organizationPickerRemainder(result);
-  const changeOpen = (next: boolean) => {
-    if (!next) setQuery('');
-    onOpenChange(next);
-  };
   return (
-    <Dialog open={open} onOpenChange={changeOpen}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-md">
         <DialogHeader className="px-4 pt-4 pb-2">
           <DialogTitle>切换组织</DialogTitle>
@@ -53,7 +52,7 @@ export function OrganizationSwitcher({
                   disabled={switching}
                   onSelect={() => {
                     if (current) {
-                      changeOpen(false);
+                      onOpenChange(false);
                       return;
                     }
                     onSelect(item.uuid);

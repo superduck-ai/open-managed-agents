@@ -132,6 +132,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 		}
 		path = "/v1/chat/completions"
 	}
+	body, err = llmproviders.ReplaceRequestModel(body, upstream.ModelID)
+	if err != nil {
+		httpapi.WriteError(w, r, invalidRequestError(err))
+		return
+	}
 	target, err := llmproviders.Endpoint(upstream.BaseURL, path, r.URL.RawQuery)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "build messages upstream endpoint", "error", err)
@@ -152,7 +157,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	} else {
 		llmproviders.ApplyAPIKey(upstreamRequest.Header, upstream.APIKey)
 	}
-	request, err := h.beginModelRequest(r, principal, modelID)
+	request, err := h.beginModelRequest(r, principal, upstream.QualifiedModelID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "start model request", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())

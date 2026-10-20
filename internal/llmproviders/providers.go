@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,9 +25,96 @@ var (
 const secretScope = "llm_provider"
 
 type Upstream struct {
-	APIBackend string
-	BaseURL    string
-	APIKey     string
+	APIBackend       string
+	BaseURL          string
+	APIKey           string
+	ModelID          string
+	QualifiedModelID string
+}
+
+type AmbiguousModelError struct {
+	ModelID    string
+	Candidates []string
+}
+
+func (e *AmbiguousModelError) Error() string {
+	return fmt.Sprintf(
+		"model %q is configured by more than one provider; use one of: %s",
+		e.ModelID,
+		strings.Join(e.Candidates, ", "),
+	)
+}
+
+func (e *AmbiguousModelError) Is(target error) bool {
+	return target == ErrAmbiguousModel
+}
+
+type Catalog struct {
+	providers []db.LLMProvider
+}
+
+type CatalogModel struct {
+	Provider        db.LLMProvider
+	UpstreamModelID string
+}
+
+func (m CatalogModel) QualifiedModelID() string {
+	return QualifiedModelID(m.Provider.Slug, m.UpstreamModelID)
+}
+
+func NewCatalog(providers []db.LLMProvider) Catalog {
+	return Catalog{providers: providers}
+}
+
+func LoadCatalog(ctx context.Context, database *db.DB, organizationUUID, workspaceUUID string) (Catalog, error) {
+	if database == nil {
+		return Catalog{}, ErrNotConfigured
+	}
+	providers, err := database.ListLLMProviders(ctx, organizationUUID, workspaceUUID)
+	if err != nil {
+		return Catalog{}, err
+	}
+	if len(providers) == 0 {
+		return Catalog{}, ErrNotConfigured
+	}
+	return NewCatalog(providers), nil
+}
+
+func (c Catalog) ModelIDs() []string {
+	models := make([]string, 0)
+	for _, provider := range c.providers {
+		for _, modelID := range provider.ModelIDs {
+			models = append(models, QualifiedModelID(provider.Slug, modelID))
+		}
+	}
+	return models
+}
+
+func (c Catalog) Lookup(modelID string) (CatalogModel, error) {
+	if slug, upstreamModelID, ok := ParseModelRef(modelID); ok {
+		for _, provider := range c.providers {
+			if provider.Slug == slug && slices.Contains(provider.ModelIDs, upstreamModelID) {
+				return CatalogModel{Provider: provider, UpstreamModelID: upstreamModelID}, nil
+			}
+		}
+	}
+	matches := make([]CatalogModel, 0, 1)
+	for _, provider := range c.providers {
+		if slices.Contains(provider.ModelIDs, modelID) {
+			matches = append(matches, CatalogModel{Provider: provider, UpstreamModelID: modelID})
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return CatalogModel{}, ErrModelNotConfigured
+	case 1:
+		return matches[0], nil
+	}
+	candidates := make([]string, 0, len(matches))
+	for _, match := range matches {
+		candidates = append(candidates, match.QualifiedModelID())
+	}
+	return CatalogModel{}, &AmbiguousModelError{ModelID: modelID, Candidates: candidates}
 }
 
 func Resolve(
@@ -35,63 +123,53 @@ func Resolve(
 	secretService *secrets.Service,
 	organizationUUID, workspaceUUID, modelID string,
 ) (Upstream, error) {
-	if database == nil || secretService == nil {
+	if secretService == nil {
 		return Upstream{}, ErrNotConfigured
 	}
-	providers, err := database.ListLLMProviders(ctx, organizationUUID, workspaceUUID)
+	catalog, err := LoadCatalog(ctx, database, organizationUUID, workspaceUUID)
 	if err != nil {
 		return Upstream{}, err
 	}
-	if len(providers) == 0 {
-		return Upstream{}, ErrNotConfigured
+	selected, err := catalog.Lookup(modelID)
+	if err != nil {
+		return Upstream{}, err
 	}
-	var selected *db.LLMProvider
-	for index := range providers {
-		if !containsModel(providers[index].ModelIDs, modelID) {
-			continue
-		}
-		if selected != nil {
-			return Upstream{}, ErrAmbiguousModel
-		}
-		selected = &providers[index]
-	}
-	if selected == nil {
-		return Upstream{}, ErrModelNotConfigured
-	}
-	if selected.SecretEnvelope == nil {
+	provider := selected.Provider
+	if provider.SecretEnvelope == nil {
 		return Upstream{}, fmt.Errorf("open LLM provider API key: %w", db.ErrIncompleteLLMProviderSecret)
 	}
-	plaintext, err := secretService.Open(ctx, SecretBinding(*selected), *selected.SecretEnvelope)
+	plaintext, err := secretService.Open(ctx, SecretBinding(provider), *provider.SecretEnvelope)
 	if err != nil {
 		return Upstream{}, fmt.Errorf("open LLM provider API key: %w", err)
 	}
 	defer clear(plaintext)
-	return Upstream{APIBackend: selected.APIBackend, BaseURL: selected.BaseURL, APIKey: string(plaintext)}, nil
+	return Upstream{
+		APIBackend:       provider.APIBackend,
+		BaseURL:          provider.BaseURL,
+		APIKey:           string(plaintext),
+		ModelID:          selected.UpstreamModelID,
+		QualifiedModelID: selected.QualifiedModelID(),
+	}, nil
 }
 
 func ListModelIDs(ctx context.Context, database *db.DB, organizationUUID, workspaceUUID string) ([]string, error) {
-	if database == nil {
-		return nil, ErrNotConfigured
-	}
-	providers, err := database.ListLLMProviders(ctx, organizationUUID, workspaceUUID)
+	catalog, err := LoadCatalog(ctx, database, organizationUUID, workspaceUUID)
 	if err != nil {
 		return nil, err
 	}
-	if len(providers) == 0 {
-		return nil, ErrNotConfigured
+	return catalog.ModelIDs(), nil
+}
+
+func CanonicalModelID(ctx context.Context, database *db.DB, organizationUUID, workspaceUUID, modelID string) (string, error) {
+	catalog, err := LoadCatalog(ctx, database, organizationUUID, workspaceUUID)
+	if err != nil {
+		return "", err
 	}
-	models := make([]string, 0)
-	seen := make(map[string]struct{})
-	for _, provider := range providers {
-		for _, modelID := range provider.ModelIDs {
-			if _, exists := seen[modelID]; exists {
-				return nil, ErrAmbiguousModel
-			}
-			seen[modelID] = struct{}{}
-			models = append(models, modelID)
-		}
+	selected, err := catalog.Lookup(modelID)
+	if err != nil {
+		return "", err
 	}
-	return models, nil
+	return selected.QualifiedModelID(), nil
 }
 
 func SecretBinding(provider db.LLMProvider) secrets.Binding {
@@ -140,13 +218,4 @@ func NewHTTPClient(timeout time.Duration) *http.Client {
 			return http.ErrUseLastResponse
 		},
 	}
-}
-
-func containsModel(modelIDs []string, modelID string) bool {
-	for _, configured := range modelIDs {
-		if configured == modelID {
-			return true
-		}
-	}
-	return false
 }

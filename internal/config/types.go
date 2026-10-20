@@ -10,6 +10,7 @@ const (
 )
 
 type Config struct {
+	WebTools             WebToolsConfig            `yaml:"web_tools"`
 	EnvironmentPackages  EnvironmentPackageConfig  `yaml:"environment_packages"`
 	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
 	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
@@ -30,6 +31,10 @@ type Config struct {
 	Webhook              WebhookConfig             `yaml:"webhook"`
 	Vault                VaultConfig               `yaml:"vault"`
 	Bootstrap            BootstrapConfig           `yaml:"bootstrap"`
+}
+
+type WebToolsConfig struct {
+	DeepSeekAPIKeyFile string `yaml:"deepseek_api_key_file"`
 }
 
 // VaultConfig configures at-rest encryption for vault credential secrets and

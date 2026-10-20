@@ -167,8 +167,8 @@ func TestParseClaudeToolIdentity(t *testing.T) {
 	}
 
 	identity = parseClaudeToolIdentity("WebSearch")
-	if identity.Kind != "unknown" || identity.ToolName != "WebSearch" {
-		t.Fatalf("identity = %+v, want unknown so retired WebSearch stays deny-safe", identity)
+	if identity.Kind != "agent_toolset" || identity.ToolName != "web_search" {
+		t.Fatalf("identity = %+v", identity)
 	}
 
 	for claudeName, configName := range map[string]string{

@@ -442,3 +442,23 @@ text block must parse to the same structured result. Empty stdout may use the
 sandbox's `(no output)` placeholder. Model feedback and public CCRv2 tool results
 share this conversion and omit duplicate execution metadata. Failures,
 inconsistent metadata and other tools retain their diagnostic text.
+
+## Built-in WebSearch and WebFetch
+
+The Brain registers native tools with the DeepSeek API request schemas:
+`WebSearch({query, count?, ori_question?, localization?, need_content?})` and
+`WebFetch({url})`. Their responses preserve DeepSeek's documented `results`
+fields and `{title, content}` Markdown response, respectively.
+
+Execution is on oma-server via session-authenticated
+`POST /v2/ccr-sessions/{id}/web/search` and `/web/fetch`. Configure server
+`web_tools.deepseek_api_key_file` and restart. The Brain never receives that
+key, contacts DeepSeek directly, or allocates a sandbox for these tools.
+Both tools use existing approval, persistence, cancellation and child tool
+restrictions. Descriptions instruct the model to treat web content as untrusted
+and cite source URLs. There is no extra extraction prompt, model call or cache.
+
+Server tenant/epoch, Agent permissions and Environment networking are enforced.
+Limited-network Search filters results by allowed hosts. Limited-network Fetch
+fails closed because DeepSeek does not expose final redirect targets.
+See [the design](../docs/design/be/brain-web-tools.md) for boundaries and tests.

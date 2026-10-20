@@ -12,7 +12,7 @@ import {
 } from './model';
 
 describe('agent tool display model', () => {
-  test('exposes pinned Claude Code built-in tools while continuing to omit web search', () => {
+  test('exposes built-in tools including web search and fetch', () => {
     expect(BUILT_IN_AGENT_TOOLSETS.agent_toolset_20260401.map((tool) => tool.name)).toEqual([
       'bash',
       'read',
@@ -21,6 +21,7 @@ describe('agent tool display model', () => {
       'glob',
       'grep',
       'web_fetch',
+      'web_search',
       'task',
       'ask_user_question',
       'cron_create',

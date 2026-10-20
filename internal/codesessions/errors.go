@@ -16,6 +16,18 @@ var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
 
 const maxSandboxMCPRequestBytes = 1 << 20
 
+func invalidWebToolRequest() error {
+	return apperr.New(apperr.InvalidArgument, "Invalid web tool request", nil)
+}
+
+func webToolDenied() error {
+	return apperr.New(apperr.PermissionDenied, "Web tool is disabled by the Agent permission policy", nil)
+}
+
+func webToolContextFailure(cause error) error {
+	return apperr.New(apperr.PermissionDenied, "Could not authorize web tool session or network policy", cause)
+}
+
 func sandboxInvalidRequest(cause error) error {
 	return apperr.New(apperr.InvalidArgument, "Invalid sandbox MCP request", cause)
 }

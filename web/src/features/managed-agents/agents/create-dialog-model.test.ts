@@ -510,6 +510,7 @@ describe('create agent draft model', () => {
       'task_stop',
       'todo_write',
       'web_fetch',
+      'web_search',
       'write',
     ].map((name) => ({ name, enabled: true, permission_policy: { type: 'always_allow' as const } }));
 
@@ -525,7 +526,7 @@ describe('create agent draft model', () => {
         tools: [
           {
             type: 'agent_toolset_20260401',
-            configs: [{ name: 'web_search', enabled: true, permission_policy: { type: 'always_allow' } }],
+            configs: [{ name: 'unsupported_tool', enabled: true, permission_policy: { type: 'always_allow' } }],
           },
         ],
       }).success,

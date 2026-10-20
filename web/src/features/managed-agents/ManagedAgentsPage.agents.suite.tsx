@@ -1148,14 +1148,14 @@ export function registerManagedAgentsAgentsTests() {
     expect(api.requests.some((request) => request.url === '/v1/skills/triage?beta=true')).toBe(true);
     expect(api.requests.some((request) => request.url === '/v1/skills/reporting?beta=true')).toBe(true);
     expect(screen.queryByText('No skills configured.')).toBeNull();
-    const permissionsButton = screen.getByRole('button', { name: /Tool permissions\s+22/ });
+    const permissionsButton = screen.getByRole('button', { name: /Tool permissions\s+23/ });
     expect(permissionsButton).toBeTruthy();
     expect(permissionsButton.querySelector('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
     fireEvent.click(permissionsButton);
     expect(screen.getByText('bash')).toBeTruthy();
     expect(screen.getByText('web_fetch')).toBeTruthy();
     expect(screen.getByText('Fetch URL content')).toBeTruthy();
-    expect(screen.queryByText('web_search')).toBeNull();
+    expect(screen.getByText('web_search')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(false);
     const versionButton = screen.getByRole('button', { name: 'Version: v2' });
     expect(versionButton.className.includes('bg-secondary')).toBe(false);

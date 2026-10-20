@@ -128,7 +128,7 @@ func runtimeSubagentDefinition(snapshot runtimeAgentSnapshot) (RuntimeSubagentDe
 	return definition, nil
 }
 
-var sandboxToolNames = []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob"}
+var sandboxToolNames = []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob", "WebSearch", "WebFetch"}
 
 func enabledSandboxTools(tools []toolPermissionToolset) []string {
 	enabled := make([]string, 0, len(sandboxToolNames))

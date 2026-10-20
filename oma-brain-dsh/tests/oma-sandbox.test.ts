@@ -52,13 +52,13 @@ test("OMA providers isolate roots, initialize lazily and retain separate MCP ses
     const tool = sandboxToolDefinitions().find((tool) => tool.name === "Bash")!;
     const signal = new AbortController().signal;
     for (const executor of [executorA, executorB, executorA]) {
-      await executor.provision(signal);
+      await executor.provision!(signal);
       await executor.call(tool, { command: "pwd" }, signal);
     }
     await providerA.dispose();
     expect(scopeA.get("sandboxExecutor")).toBeUndefined();
     expect(scopeB.get("sandboxExecutor")).toBe(executorB);
-    await executorB.provision(signal);
+    await executorB.provision!(signal);
     await executorB.call(tool, { command: "still available" }, signal);
     for (const value of [a, b]) {
       const calls = requests.filter((entry) => entry.id === value.session_id);

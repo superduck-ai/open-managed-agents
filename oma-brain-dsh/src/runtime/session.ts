@@ -57,6 +57,7 @@ export class SessionRuntime {
         tools: this.config.tools,
         permissions: toolPermissions,
       });
+      await this.config.setupTools?.(scope, this.bridge, this.config.tools);
       this.hooks.setupTools?.(scope);
       scope.on("session/event", (session, event) => {
         if (session.id !== this.config.id) return;

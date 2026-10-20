@@ -69,6 +69,6 @@ test("assignment rejects invalid launch tool permissions", () => {
 
 test("assignment rejects unknown launch tools", () => {
  const a = assignment();
- a.launch.tools = ["Read", "WebFetch"];
+ a.launch.tools = ["Read", "UnknownTool"];
  expect(() => validateAssignment(a)).toThrow("Invalid launch tools");
 });

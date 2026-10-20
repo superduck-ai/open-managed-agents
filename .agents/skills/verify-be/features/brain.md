@@ -18,7 +18,7 @@ Doctor 检查 Brain binary 的可执行性并记录 SHA-256；沙箱镜像必须
 `span.model_request_start → agent.thinking → agent.message → span.model_request_end`，且对应事件 ID 一致。
 `brain_mcp_loop` 让真实原生循环请求 sandbox MCP Write，核对沙箱文件字节及下一次模型请求中的
 工具结果。上游模型请求必须携带 `anthropic-version: 2023-06-01`，并且工具列表严格为
-`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob` 以及 dsh 内置的 `archive_agent`、`list_agents`、`send_to_agent`。
+`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`WebSearch`、`WebFetch` 以及 dsh 内置的 `archive_agent`、`list_agents`、`send_to_agent`。
 每次模型响应使用独立 message ID，避免不同回合被当作重复事件。任务通过 NATS 分发；输出、审批、状态和心跳复用 CCRv2 worker 接口，输入与回复通过 Worker SSE 接收，
 processed 回执通过 CCRv2 delivery 接口确认。
 `brain_takeover` 杀掉节点，先投递待恢复输入，再等待真实租约过期，重新派发任务并启动新节点，检查 epoch 增长、旧节点

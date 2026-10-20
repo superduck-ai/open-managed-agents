@@ -41,7 +41,7 @@ export class ToolExecution {
     const readOnly = !!tool.readOnly;
     const call = { callId: exec.callId, name: tool.name, original, effective, readOnly };
     await this.bridge.recordApproved(call);
-    await this.sandbox.provision(exec.signal);
+    await this.sandbox.provision?.(exec.signal);
     exec.signal.throwIfAborted();
     if (!readOnly) {
       await this.bridge.flushLog();

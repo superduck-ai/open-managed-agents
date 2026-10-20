@@ -17,7 +17,7 @@ func TestOrganizationCreationMigration(t *testing.T) {
 	for _, scenario := range []string{"缺失组织", "重复组织绑定", "现存与过期记录"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
-			if _, err := provider.UpTo(ctx, 92); err != nil {
+			if _, err := provider.UpTo(ctx, 94); err != nil {
 				t.Fatal(err)
 			}
 			account := uuid.NewV4().String()
@@ -39,7 +39,7 @@ func TestOrganizationCreationMigration(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, err := provider.UpTo(ctx, 93)
+			_, err := provider.UpTo(ctx, 95)
 			if scenario != "现存与过期记录" {
 				if err == nil {
 					t.Fatal("无效绑定应阻止迁移")
@@ -87,7 +87,7 @@ func TestOrganizationCreationMigration(t *testing.T) {
 			if err := json.Unmarshal(response, &restored); err != nil || restored.UUID != orgs[1] || restored.Name != "当前名称" || restored.Version != 1 || !permanent {
 				t.Fatalf("回滚未恢复当前资料和长期键：%+v %v %v", restored, permanent, err)
 			}
-			if _, err := provider.UpTo(ctx, 93); err != nil {
+			if _, err := provider.UpTo(ctx, 95); err != nil {
 				t.Fatal(err)
 			}
 			verify()

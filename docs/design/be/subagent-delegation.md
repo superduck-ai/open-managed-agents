@@ -256,3 +256,15 @@ Agent 的 `model.effort` 接受 `low`、`medium`、`high`、`xhigh`、`max`
 固定版本的专家配置随 Session roster 及子线程快照保留，更新专家后不回写旧版本。
 此处验证配置保存和快照，不用输出长度判断上游实际推理预算；
 实际 provider 的 effort 支持范围和上游参数应用不在本次快照回归覆盖内。
+
+
+### 公共归档后的容量同步
+
+HTTP归档idle child后，持久状态已terminated，运行中的Brain缓存可能仍idle。新建委派遇到25个保留线程时，通过CCRv2已有的worker/subagent-threads只读端点核对idle候选的权威状态。只有明确archived/terminated才关闭对应缓存runtime、解除绑定并释放本地名额，不重复产生公开terminated事件。错误、未知身份或关闭失败不得当作空槽。刷新期间的新建委派共用一次刷新，刷新完成后同步重计数并占位；已转running的线程不被关闭。普通follow-up仍执行既有权威归档校验。
+
+当前Brain通过HTTP claim和CCRv2处理任务。就绪验证应使用实际claim/模型/工具进展及HTTP连接，旧OMA_BRAIN_TASKS NATS消费者不是当前Brain进程的直接订阅要求。
+
+
+### Agent名称的公共边界
+
+创建及显式更新Agent.name时，按公共CreateAgent schema限制为1至256个Unicode字符。保留原有非空校验和有效值原文，不用UTF-8字节数代替字符数。超过256字符返回invalid_request_error；创建时在模型解析之前拒绝，更新时在持久化之前拒绝。未更新name的旧Agent保留原值。该限制不推导roster数量、全局配额或未公开errorcode。

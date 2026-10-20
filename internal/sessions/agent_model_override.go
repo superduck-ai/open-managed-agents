@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/agents"
@@ -34,25 +35,27 @@ func (h *Handler) applySessionModelOverride(r *http.Request, principal auth.Prin
 	if len(raw) == 0 {
 		return agent, nil
 	}
-	model, err := agents.NormalizeSessionModelOverride(raw)
-	if err != nil {
-		return db.Agent{}, err
-	}
-	var input struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(model, &input); err != nil {
-		return db.Agent{}, err
-	}
-	ids, err := llmproviders.ListModelIDs(r.Context(), h.db, principal.OrganizationUUID, principal.WorkspaceUUID)
-	if err != nil {
-		return db.Agent{}, errSessionOverrideModelsUnavailable
-	}
-	for _, id := range ids {
-		if id == input.ID {
-			agent.Model = model
-			return agent, nil
+	model, err := agents.NormalizeSessionModelOverride(raw, func(modelID string) (string, error) {
+		canonicalID, err := llmproviders.CanonicalModelID(
+			r.Context(),
+			h.db,
+			principal.OrganizationUUID,
+			principal.WorkspaceUUID,
+			modelID,
+		)
+		switch {
+		case errors.Is(err, llmproviders.ErrModelNotConfigured):
+			return "", errSessionOverrideModelNotConfigured
+		case errors.Is(err, llmproviders.ErrAmbiguousModel):
+			return "", err
+		case err != nil:
+			return "", errSessionOverrideModelsUnavailable
 		}
+		return canonicalID, nil
+	})
+	if err != nil {
+		return db.Agent{}, err
 	}
-	return db.Agent{}, errSessionOverrideModelNotConfigured
+	agent.Model = model
+	return agent, nil
 }

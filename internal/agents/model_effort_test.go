@@ -39,7 +39,7 @@ func TestNormalizeModelPreservesNativeEffortJSON(t *testing.T) {
 			if stored.Effort.Type != level || stored.ID != "deepseek-flash" || stored.Speed != "standard" || stored.Geo != "us" {
 				t.Fatalf("model field lost: %s", encoded)
 			}
-			override, err := NormalizeSessionModelOverride(raw)
+			override, err := NormalizeSessionModelOverride(raw, identityModelID)
 			if err != nil || string(override) != string(encoded) {
 				t.Fatalf("override normalization differs: %s %v", override, err)
 			}

@@ -16,14 +16,14 @@ func TestGlobalLoginIdentityIndexPostgres(t *testing.T) {
 		t.Skip("需要隔离 PostgreSQL，跳过不代表验收通过")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := provider.UpTo(ctx, 89); err != nil {
+	if _, err := provider.UpTo(ctx, 91); err != nil {
 		t.Fatal(err)
 	}
 	var mainlineReady, platformAbsent bool
 	if err := database.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='code_sessions' AND column_name='worker_claimed_by'), to_regclass('platform_admins') IS NULL`).Scan(&mainlineReady, &platformAbsent); err != nil || !mainlineReady || !platformAbsent {
-		t.Fatalf("主线迁移 89 与平台迁移边界不一致：claims=%t platformAbsent=%t %v", mainlineReady, platformAbsent, err)
+		t.Fatalf("主线迁移 91 与平台迁移边界不一致：claims=%t platformAbsent=%t %v", mainlineReady, platformAbsent, err)
 	}
-	if _, err := provider.UpTo(ctx, 93); err != nil {
+	if _, err := provider.UpTo(ctx, 95); err != nil {
 		t.Fatal(err)
 	}
 	store := yourbatis.NewDB(database, yourbatis.DialectPostgres)
@@ -37,7 +37,7 @@ func TestGlobalLoginIdentityIndexPostgres(t *testing.T) {
 	execMapperFixtureSQL(t, ctx, store, `CREATE INDEX users_login_identity_idx ON users (uuid)`)
 	for _, stage := range []string{"首次升级并替换残留索引", "回滚后重新升级"} {
 		t.Run(stage, func(t *testing.T) {
-			if _, err := provider.UpTo(ctx, 94); err != nil {
+			if _, err := provider.UpTo(ctx, 96); err != nil {
 				t.Fatal(err)
 			}
 			var definition string

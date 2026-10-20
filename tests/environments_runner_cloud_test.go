@@ -185,7 +185,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if codeSession.PermissionMode != "bypassPermissions" {
 		t.Fatalf("local code session permission mode = %q", codeSession.PermissionMode)
 	}
-	if codeSession.Model != "claude-opus-4-8" {
+	if codeSession.Model != "default/claude-opus-4-8" {
 		t.Fatalf("local code session model = %q, want agent model unchanged", codeSession.Model)
 	}
 	queued, err := listQueuedCodeSessionInboundEvents(app, codeSession.ExternalID)
@@ -256,7 +256,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 		"ANTHROPIC_DEFAULT_SONNET_MODEL",
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
 	} {
-		if startupEnvironment[key] != "claude-opus-4-8" {
+		if startupEnvironment[key] != "default/claude-opus-4-8" {
 			t.Fatalf("%s = %q, want agent model unchanged", key, startupEnvironment[key])
 		}
 	}

@@ -40,20 +40,20 @@ type agentPageResponse struct {
 	NextPage *string            `json:"next_page"`
 }
 
-func TestAgentsPersistConfiguredModelIDsUnchanged(t *testing.T) {
+func TestAgentsPersistProviderQualifiedModelIDs(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("agents-real-model-ids-bucket"))
 	defer app.close()
 
 	created := createAgent(t, app, `{"model":"kimi-k2.5","name":"real-model-agent"}`)
 	defer cleanupAgentRows(t, app.pool, created.ID)
-	assertRawContains(t, created.Model, `"id":"kimi-k2.5"`)
+	assertRawContains(t, created.Model, `"id":"default/kimi-k2.5"`)
 
-	updated := updateAgent(t, app, created.ID, `{"version":1,"model":{"id":"qwen-max","speed":"fast"}}`, http.StatusOK)
-	assertRawContains(t, updated.Model, `"id":"qwen-max"`)
+	updated := updateAgent(t, app, created.ID, `{"version":1,"model":{"id":"default/qwen-max","speed":"fast"}}`, http.StatusOK)
+	assertRawContains(t, updated.Model, `"id":"default/qwen-max"`)
 	assertRawContains(t, updated.Model, `"speed":"fast"`)
 
 	versionOne := retrieveAgent(t, app, created.ID, "version=1")
-	assertRawContains(t, versionOne.Model, `"id":"kimi-k2.5"`)
+	assertRawContains(t, versionOne.Model, `"id":"default/kimi-k2.5"`)
 }
 
 func TestAgentCanReplaceModelAfterPreviousProviderModelIsRemoved(t *testing.T) {
@@ -69,7 +69,7 @@ func TestAgentCanReplaceModelAfterPreviousProviderModelIsRemoved(t *testing.T) {
 	seedTestLLMProvider(t, app, "New provider", "https://new.example.com", "new-provider-key", "new-model")
 
 	updated := updateAgent(t, app, created.ID, `{"version":1,"model":"new-model"}`, http.StatusOK)
-	assertRawContains(t, updated.Model, `"id":"new-model"`)
+	assertRawContains(t, updated.Model, `"id":"default/new-model"`)
 }
 
 func TestAgentCanUpdateNonModelFieldsAfterPreviousProviderModelIsRemoved(t *testing.T) {
@@ -86,7 +86,7 @@ func TestAgentCanUpdateNonModelFieldsAfterPreviousProviderModelIsRemoved(t *test
 	if updated.Name != "renamed-agent" {
 		t.Fatalf("updated name = %q", updated.Name)
 	}
-	assertRawContains(t, updated.Model, `"id":"old-model"`)
+	assertRawContains(t, updated.Model, `"id":"default/old-model"`)
 }
 
 func TestAgentsAPI(t *testing.T) {
@@ -329,7 +329,7 @@ func TestAgentsAPI(t *testing.T) {
 		if updated.Version != 2 || updated.Name != "agents-test-parent-v2" || updated.Description != nil || updated.System != nil {
 			t.Fatalf("unexpected updated parent: %+v", updated)
 		}
-		assertRawContains(t, updated.Model, `"id":"claude-sonnet-4-6"`)
+		assertRawContains(t, updated.Model, `"id":"default/claude-sonnet-4-6"`)
 		assertRawContains(t, updated.Metadata, `"c":"d"`)
 		assertRawNotContains(t, updated.Metadata, `"a"`)
 		if string(updated.Multiagent) != "null" {
@@ -753,7 +753,7 @@ func TestSessionSubagentSnapshotsAreExpandedOnCreation(t *testing.T) {
 			ID string `json:"id"`
 		}
 		decodeRawJSON(t, got.Model, &model)
-		if got.ID != want.id || got.Version != 1 || got.System == nil || *got.System != want.system || model.ID != "claude-opus-4-6" || string(got.Multiagent) != "null" {
+		if got.ID != want.id || got.Version != 1 || got.System == nil || *got.System != want.system || model.ID != "default/claude-opus-4-6" || string(got.Multiagent) != "null" {
 			t.Fatalf("creation lost pinned child or self configuration: %+v", got)
 		}
 	}

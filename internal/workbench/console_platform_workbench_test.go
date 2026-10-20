@@ -95,9 +95,9 @@ func TestWorkbenchInferenceErrorDistinguishesConfigFromUpstreamFailure(t *testin
 		},
 		{
 			name:        "ambiguous model",
-			err:         llmproviders.ErrAmbiguousModel,
-			wantStatus:  http.StatusInternalServerError,
-			wantMessage: "Workspace model configuration is unavailable",
+			err:         &llmproviders.AmbiguousModelError{ModelID: "kimi-k2.5", Candidates: []string{"oma/kimi-k2.5", "default/kimi-k2.5"}},
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "model \"kimi-k2.5\" is configured by more than one provider; use one of: oma/kimi-k2.5, default/kimi-k2.5",
 		},
 		{
 			name:        "incomplete secret envelope",

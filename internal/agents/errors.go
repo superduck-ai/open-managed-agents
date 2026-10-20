@@ -10,6 +10,8 @@ import (
 var errRosterInferenceGeoMismatch = errors.New("multiagent referenced agents must have the same inference_geo as the parent")
 var errRosterAgentVersionNotFound = errors.New("multiagent referenced agent version not found")
 
+var errInvalidAgentNameLength = errors.New("name must contain 1 to 256 characters")
+
 var errInvalidInferenceGeo = errors.New("model.inference_geo must be us or global")
 
 var errInvalidModelEffort = errors.New("model.effort must be low, medium, high, xhigh or max, as a string or an object with type")

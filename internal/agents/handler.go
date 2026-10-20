@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -422,7 +423,7 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request, agentID strin
 
 func (h *Handler) stateFromCreate(r *http.Request, principal auth.Principal, agentID string, body *agentMutationRequest) (agentState, error) {
 	var state agentState
-	name, err := parseRequiredRawString(body.Name, "name")
+	name, err := parseAgentName(body.Name)
 	if err != nil {
 		return agentState{}, err
 	}
@@ -496,7 +497,7 @@ func (h *Handler) stateFromUpdate(r *http.Request, principal auth.Principal, cur
 		Tools:       current.Tools,
 	}
 	if len(body.Name) > 0 {
-		name, err := parseRequiredRawString(body.Name, "name")
+		name, err := parseAgentName(body.Name)
 		if err != nil {
 			return agentState{}, err
 		}
@@ -701,6 +702,17 @@ func derefString(value *string) string {
 	return *value
 }
 
+func parseAgentName(raw json.RawMessage) (string, error) {
+	value, err := parseRequiredRawString(raw, "name")
+	if err != nil {
+		return "", err
+	}
+	if utf8.RuneCountInString(value) > 256 {
+		return "", errInvalidAgentNameLength
+	}
+	return value, nil
+}
+
 func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if len(raw) == 0 {
 		return "", fmt.Errorf("%s is required", name)
@@ -809,16 +821,18 @@ func (h *Handler) normalizeConfiguredModel(
 	if err != nil {
 		return normalizedAgentModel{}, err
 	}
-	modelIDs, err := llmproviders.ListModelIDs(ctx, h.db, organizationUUID, workspaceUUID)
+	canonicalID, err := llmproviders.CanonicalModelID(ctx, h.db, organizationUUID, workspaceUUID, model.ID)
+	if errors.Is(err, llmproviders.ErrModelNotConfigured) {
+		return normalizedAgentModel{}, fmt.Errorf("model %q is not configured for this workspace", model.ID)
+	}
+	if errors.Is(err, llmproviders.ErrAmbiguousModel) {
+		return normalizedAgentModel{}, err
+	}
 	if err != nil {
 		return normalizedAgentModel{}, configuredModelError(err)
 	}
-	for _, modelID := range modelIDs {
-		if modelID == model.ID {
-			return model, nil
-		}
-	}
-	return normalizedAgentModel{}, fmt.Errorf("model %q is not configured for this workspace", model.ID)
+	model.ID = canonicalID
+	return model, nil
 }
 
 func normalizeMCPServers(raw json.RawMessage) (json.RawMessage, error) {

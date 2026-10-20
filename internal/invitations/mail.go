@@ -24,17 +24,18 @@ type mailStore interface {
 }
 
 type Mailer struct {
-	db         mailStore
-	logger     *slog.Logger
-	from       string
-	consoleURL string
-	sender     interface {
+	allowedEmailDomains []string
+	db                  mailStore
+	logger              *slog.Logger
+	from                string
+	consoleURL          string
+	sender              interface {
 		SendMessage(context.Context, string, []byte) error
 	}
 }
 
 func NewMailer(cfg config.AuthConfig, database mailStore, logger *slog.Logger) *Mailer {
-	m := &Mailer{db: database, logger: logging.LoggerOrDefault(logger), from: cfg.SMTP.Username, consoleURL: cfg.ConsoleURL}
+	m := &Mailer{allowedEmailDomains: cfg.AllowedEmailDomains, db: database, logger: logging.LoggerOrDefault(logger), from: cfg.SMTP.Username, consoleURL: cfg.ConsoleURL}
 	if cfg.SMTP.Addr != "" && cfg.ConsoleURL != "" {
 		m.sender = platformauth.NewMailSender(cfg.SMTP)
 	}
@@ -44,6 +45,9 @@ func NewMailer(cfg config.AuthConfig, database mailStore, logger *slog.Logger) *
 func (m *Mailer) Notify(ctx context.Context, principal auth.Principal, recipient string, expiresAt time.Time) string {
 	if m == nil || m.sender == nil {
 		return "not_configured"
+	}
+	if !auth.EmailDomainAllowed(recipient, m.allowedEmailDomains) {
+		return "failed"
 	}
 	inviter := "Organization administrator"
 	if principal.UserExternalID != "" {
@@ -63,6 +67,9 @@ func (m *Mailer) NotifyPlatform(ctx context.Context, organizationUUID, recipient
 func (m *Mailer) notify(ctx context.Context, organizationUUID, recipient, inviter string, expiresAt time.Time) string {
 	if m == nil || m.sender == nil {
 		return "not_configured"
+	}
+	if !auth.EmailDomainAllowed(recipient, m.allowedEmailDomains) {
+		return "failed"
 	}
 	org, err := m.db.GetPlatformOrganization(ctx, organizationUUID)
 	if err != nil || org == nil {

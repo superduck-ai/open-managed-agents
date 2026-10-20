@@ -144,6 +144,35 @@ func TestCalculatorModelRequestCents(t *testing.T) {
 	}
 }
 
+func TestBudgetRequestCentsMissingCacheRate(t *testing.T) {
+	calculator := NewCalculator(map[string]ModelPrice{
+		"priced": {Rates: &Rates{Input: new("3"), Output: new("15")}},
+	})
+	if !calculator.HasModel("priced") {
+		t.Fatal("HasModel(priced) = false")
+	}
+	usage := TokenUsage{CacheReadInputTokens: 1_000_000}
+	if _, ok := calculator.ModelRequestCents("priced", usage); ok {
+		t.Fatal("ModelRequestCents priced a missing cache read rate")
+	}
+	cents, ok := calculator.BudgetRequestCents("priced", usage)
+	if !ok || cents != 300 {
+		t.Fatalf("BudgetRequestCents(cache read) = (%d, %v), want (300, true)", cents, ok)
+	}
+
+	anthropic := NewCalculator(map[string]ModelPrice{
+		"priced": {Rates: &Rates{Input: new("3"), Output: new("15"), CacheRead: new("0.3"), CacheWrite5m: new("3.75"), CacheWrite1h: new("6")}},
+	})
+	unsplit := TokenUsage{CacheCreationInputTokens: 1_000_000}
+	if _, ok := anthropic.ModelRequestCents("priced", unsplit); ok {
+		t.Fatal("ModelRequestCents priced unsplit cache creation without CacheWrite")
+	}
+	cents, ok = anthropic.BudgetRequestCents("priced", unsplit)
+	if !ok || cents != 375 {
+		t.Fatalf("BudgetRequestCents(cache write) = (%d, %v), want (375, true)", cents, ok)
+	}
+}
+
 func TestMeteringCents(t *testing.T) {
 	if got := MeteringCents(10, 0); got != 10*WebSearchCentsPerRequest {
 		t.Fatalf("MeteringCents(10 searches) = %d", got)

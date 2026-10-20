@@ -596,12 +596,14 @@ func responseFromThread(thread db.SessionThread) threadResponse {
 	}
 }
 
-func (h *Handler) responseFromThreadWithUsage(ctx context.Context, workspaceUUID, sessionExternalID string, thread db.SessionThread) threadResponse {
+func (h *Handler) responseFromThreadWithUsage(ctx context.Context, workspaceUUID, sessionExternalID string, thread db.SessionThread) (threadResponse, error) {
 	response := responseFromThread(thread)
-	if totals, err := h.db.SumSessionThreadUsageTotals(ctx, workspaceUUID, sessionExternalID, thread.ExternalID); err == nil {
-		response.Usage = sessionUsageJSON(totals, nil)
+	totals, err := h.db.SumSessionThreadUsageTotals(ctx, workspaceUUID, sessionExternalID, thread.ExternalID)
+	if err != nil {
+		return threadResponse{}, fmt.Errorf("sum session thread usage: %w", err)
 	}
-	return response
+	response.Usage = sessionUsageJSON(totals, nil)
+	return response, nil
 }
 
 func resourcesToResponses(resources []db.SessionResource) []json.RawMessage {

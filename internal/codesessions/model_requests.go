@@ -298,7 +298,7 @@ func modelRequestBilling(calculator *billing.Calculator, model string, usage Mod
 			counters.CacheCreationInputTokens = counters.CacheWrite5mTokens + counters.CacheWrite1hTokens
 		}
 	}
-	cents, priced := calculator.ModelRequestCents(model, counters)
+	cents, priced := calculator.BudgetRequestCents(model, counters)
 	if !priced {
 		return nil
 	}

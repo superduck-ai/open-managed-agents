@@ -64,4 +64,27 @@ func TestUsageRecordsPostgres(t *testing.T) {
 	if err != nil || len(rows) != 1 || rows[0].Unpriced != 1 || rows[0].Incomplete != 1 {
 		t.Fatalf("未知费用未被区分：%+v %v", rows, err)
 	}
+	inflight := record
+	inflight.AttemptID = "inflight"
+	inflight.Finalized = false
+	inflight.Model = "model-inflight"
+	inflight.InputTokens = 999
+	inflight.ModelCents = nil
+	inflight.Complete = false
+	if err := store.InsertUsageRecord(t.Context(), inflight); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = store.AggregateUsage(t.Context(), query)
+	if err != nil || len(rows) != 1 || rows[0].Requests != 2 || rows[0].Unpriced != 1 || rows[0].Incomplete != 1 || rows[0].InputTokens != 200 {
+		t.Fatalf("进行中的请求被计入聚合：%+v %v", rows, err)
+	}
+	dimensions, err := store.UsageDimensions(t.Context(), query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dimension := range dimensions {
+		if dimension.Model == inflight.Model {
+			t.Fatalf("进行中的请求进入筛选项：%+v", dimensions)
+		}
+	}
 }

@@ -26,6 +26,7 @@
  AND workspace_uuid IN <foreach collection="query.WorkspaceUUIDs" item="workspace" open="(" separator="," close=")">#{workspace}</foreach>
  AND ended_at >= #{query.Start} AND ended_at &lt; #{query.End}
  AND recorded_at &lt;= #{query.AsOf}
+ AND finalized
  <if test="query.Model != ''">AND model = #{query.Model}</if>
  <if test="query.Source != ''">AND source = #{query.Source}</if>
  <if test="query.SessionID != ''">AND session_external_id = #{query.SessionID}</if>
@@ -49,6 +50,7 @@
  FROM usage_records
  WHERE organization_uuid = #{query.OrganizationUUID}
  AND workspace_uuid IN <foreach collection="query.WorkspaceUUIDs" item="workspace" open="(" separator="," close=")">#{workspace}</foreach>
+ AND finalized
  GROUP BY model, api_key_uuid ORDER BY model, api_key_uuid
  </select>
 </mapper>

@@ -16,3 +16,16 @@ func TestModelRequestBillingUsesProxyUsage(t *testing.T) {
 		t.Fatalf("代理请求费用错误：%v", got)
 	}
 }
+
+func TestModelRequestBillingCountsMissingCacheRead(t *testing.T) {
+	calculator := billing.NewCalculator(map[string]billing.ModelPrice{
+		"priced": {Rates: &billing.Rates{Input: new("3"), Output: new("15")}},
+	})
+	if !calculator.HasModel("priced") {
+		t.Fatal("HasModel(priced) = false")
+	}
+	got := modelRequestBilling(calculator, "priced", ModelRequestUsage{CacheReadInputTokens: new(int64(1_000_000))})
+	if got["list_cost"] != "300" || got["currency"] != "USD" {
+		t.Fatalf("缺失缓存读取单价被记成 %v，期望 300 USD", got)
+	}
+}

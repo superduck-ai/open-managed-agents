@@ -1048,7 +1048,7 @@ flowchart LR
 | 输入形态 | `POST /v1/sessions/{id}/events` span 加 `oma.input.event_types`、`oma.input.block_types`、`oma.input.bytes`、`oma.input.events`（类型按枚举模式归一，正文不进入遥测） | `internal/sessions/telemetry.go` |
 | 拒绝原因 | 409 中"工具调用不在待确认状态"拆出 `tool_use_not_pending`（未知与重复确认无法区分，合并为一类）；拒绝原因同时写入请求 span 的 `oma.reason`；`oma.session.events.accepted` 只计客户端输入 | `internal/db/db.go`、`session_events.go`，`internal/codesessions/tool_permissions.go`，`internal/sessions/telemetry.go` |
 | 沙箱唤醒 | 没有可恢复沙箱且未调度恢复时记 `no_sandbox`，不再记 `recovery_requested` | `internal/codesessions/service.go` |
-| 模型代理 | `chat` span 写 `gen_ai.usage.*`、`gen_ai.response.finish_reasons`（白名单）、`oma.model.time_to_first_token_s`、`oma.model.time_to_first_byte_s`、`oma.model.upstream_request_id`；遥测 error.type=canceled 不设 Error | `internal/messages/telemetry.go` |
+| 模型代理 | `chat` span 写 `gen_ai.usage.*`、`gen_ai.response.finish_reasons`（白名单；Chat Completions backend 的 `stop`/`tool_calls`/`length` 映射为 `end_turn`/`tool_use`/`max_tokens`）、`oma.model.time_to_first_token_s`、`oma.model.time_to_first_byte_s`、`oma.model.upstream_request_id`；遥测 error.type=canceled 不设 Error | `internal/messages/telemetry.go` |
 | 降噪 | worker events/internal-events 回调 span 加 `oma.worker_event.count`、`oma.worker_event.types`；OTLP 日志 handler 把自定义类型的 slog 值转为标量，消除 `unhandled:` 前缀 | `internal/codesessions/telemetry.go`、`internal/telemetry/log_values.go` |
 | 运行无进展 | `CountStaleRunningSessions` 增加"该会话在 `staleBefore` 之后没有新事件"，`stale_running_after` 默认 30m → 10m | `internal/db/operational_metrics_mapper.xml`、`internal/config/defaults.go` |
 

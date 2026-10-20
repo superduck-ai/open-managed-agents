@@ -223,9 +223,12 @@ func (c *chatObservation) complete(o *responseObservation) {
 			o.result.ToolUseIDs = append(o.result.ToolUseIDs, block.ID)
 		}
 	}
+	o.stopReason = chatStopReasons[c.finishReason]
 	o.complete = true
 	o.result.EndedAt = time.Now().UTC().Truncate(time.Microsecond)
 }
+
+var chatStopReasons = map[string]string{"stop": "end_turn", "tool_calls": "tool_use", "length": "max_tokens"}
 
 func validChatFinish(reason string, blocks map[int]*responseContentBlock) bool {
 	hasTools := false

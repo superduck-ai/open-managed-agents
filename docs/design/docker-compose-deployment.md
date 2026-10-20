@@ -281,12 +281,17 @@ e2b:
   api_url: http://127.0.0.1:3099
   sandbox_url: http://127.0.0.1:3099
   template: ghcr.io/superduck-ai/managed-agent-sandbox:latest
+  local_port_lookup: true
 
 code_session:
   sandbox_api_base_url: http://host.docker.internal:38080
 ```
 
 `sandbox_api_base_url` 是动态 Sandbox 回调宿主机 OMA 的地址，不能写成 `127.0.0.1`；该地址在 Sandbox 内会指向 Sandbox 自身。
+
+Docker runtime 的 `e2b.template` 必须使用 e2b-local 列出的模板 ID，或本机已存在且带 tag/digest 的完整镜像引用。例如本机镜像为 `oma/managed-agent-sandbox:latest` 时，应使用该引用；默认的 `managed-agent-sandbox` 名称不能自动映射到这个镜像。Environment 创建时会固化 `resolved_template`，修改配置后需要新建 Environment，已有 Environment 不会自动切换模板。
+
+宿主机直连 Docker runtime 时设置 `local_port_lookup: true`，使 Sandbox MCP 通过 e2b-local 的端口映射接口解析实际宿主机端口。否则会按云端域名规则生成地址，无法访问本地动态端口。模板配置错误可能直到首次工具调用触发沙箱创建时才暴露，并由 OMA 返回 503；应检查对应 `environment_sandboxes.last_error`，不能仅凭 Worker 的版本协商错误判断 MCP 协议不兼容。
 
 在 OMA 仓库以前台方式启动：
 

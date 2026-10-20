@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -204,10 +206,11 @@ type metadataResponse struct {
 }
 
 type pageResponse struct {
-	Data    []metadataResponse `json:"data"`
-	HasMore bool               `json:"has_more"`
-	FirstID *string            `json:"first_id"`
-	LastID  *string            `json:"last_id"`
+	Data     []metadataResponse `json:"data"`
+	HasMore  bool               `json:"has_more"`
+	FirstID  *string            `json:"first_id"`
+	LastID   *string            `json:"last_id"`
+	NextPage *string            `json:"next_page"`
 }
 
 type platformUploadResponse struct {

@@ -651,6 +651,11 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 		h.writeIngressLoadError(w, r, err)
 		return
 	}
+	record, err = h.runtimeSessionToolContext(r.Context(), record, strings.TrimSpace(r.Header.Get(runtimeThreadHeader)))
+	if err != nil {
+		h.writeIngressLoadError(w, r, err)
+		return
+	}
 	sessionContext, err := sessionContextFromCodeSession(record, MCPRuntimeIdentity{
 		CodeSessionID:       record.ExternalID,
 		SessionIngressToken: auth.ExtractAPIKey(r),
@@ -660,13 +665,13 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 		h.errorAdapter.Write(w, r, sessionMCPConfigFailure(err))
 		return
 	}
-	policies, err := h.service.currentRuntimeToolPolicies(r.Context(), record)
+	external, err := h.service.selfHostedCodeSession(r.Context(), record.ExternalID)
 	if err != nil {
 		h.errorAdapter.Write(w, r, sessionMCPConfigFailure(err))
 		return
 	}
-	if policies != nil {
-		sessionContext["runtime_tool_permissions"] = policies
+	if external {
+		delete(sessionContext, "runtime_tool_permissions")
 	}
 	if usesBrainClaimTransport(record) {
 		backends, err := h.service.modelBackends(r.Context(), record)
@@ -698,14 +703,20 @@ func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIde
 	if len(mcpConfig) == 0 {
 		mcpConfig = json.RawMessage(`{}`)
 	}
+	var permissions toolPermissionSnapshot
+	if len(metadata.Config) > 0 {
+		if err := json.Unmarshal(metadata.Config, &permissions); err != nil {
+			return nil, err
+		}
+	}
 	config := codeSessionConfig(record.Metadata)
 	return map[string]any{
 		"cwd":                      record.WorkDir,
 		"system_prompt":            stringField(config, "system_prompt"),
 		"runtime_skills":           config["runtime_skills"],
+		"runtime_tools":            runtimeBuiltinTools(permissions.Tools),
+		"runtime_tool_permissions": runtimeToolPolicies(permissions.Tools),
 		"subagents":                config["subagents"],
-		"runtime_tools":            config["runtime_tools"],
-		"runtime_tool_permissions": config["runtime_tool_permissions"],
 		"outcomes":                 arrayConfigValue(config["outcomes"]),
 		"custom_system_prompt":     stringField(config, "custom_system_prompt"),
 		"append_system_prompt":     stringField(config, "append_system_prompt"),

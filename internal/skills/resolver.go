@@ -39,9 +39,10 @@ type runtimeSkillRef struct {
 type runtimeSkillSnapshot struct {
 	Skills     []runtimeSkillRef `json:"skills"`
 	Multiagent *struct {
-		Agents []struct {
-			Skills []runtimeSkillRef `json:"skills"`
-		} `json:"agents,case:strict"`
+		Type      string                  `json:"type"`
+		Agents    []runtimeSkillAgent     `json:"agents,case:strict"`
+		Subagents *runtimeSkillDelegation `json:"subagents,case:strict"`
+		Workflows *runtimeSkillDelegation `json:"workflows,case:strict"`
 	} `json:"multiagent,case:strict"`
 }
 
@@ -107,7 +108,16 @@ func runtimeSkillRefs(snapshot json.RawMessage) ([]runtimeSkillRef, error) {
 	}
 	refs := roster.Skills
 	if roster.Multiagent != nil {
-		for _, child := range roster.Multiagent.Agents {
+		children := roster.Multiagent.Agents
+		if roster.Multiagent.Type == "multiagent_20261001" {
+			children = nil
+			for _, setting := range []*runtimeSkillDelegation{roster.Multiagent.Subagents, roster.Multiagent.Workflows} {
+				if setting != nil && setting.Type == "enabled" {
+					children = append(children, setting.PredefinedAgents...)
+				}
+			}
+		}
+		for _, child := range children {
 			refs = append(refs, child.Skills...)
 		}
 	}
@@ -197,4 +207,13 @@ func (r *RuntimeResolver) resolveCustom(ctx context.Context, workspaceUUID strin
 		SHA256:           record.SHA256,
 		SizeBytes:        record.SizeBytes,
 	}, nil
+}
+
+type runtimeSkillAgent struct {
+	Skills []runtimeSkillRef `json:"skills"`
+}
+
+type runtimeSkillDelegation struct {
+	Type             string              `json:"type"`
+	PredefinedAgents []runtimeSkillAgent `json:"predefined_agents,case:strict"`
 }

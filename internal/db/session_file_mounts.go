@@ -129,15 +129,21 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 			return SessionResource{}, err
 		}
 	}
+	instanceUUID, instanceID, err := newFileIdentity()
+	if err != nil {
+		return SessionResource{}, err
+	}
 	resourceMapper := NewSessionResourceMapper(executor)
 	row, err := resourceMapper.BindSessionFileResource(ctx, sessionFileResourceBindingParams{
-		EntryPath:     mount.Path,
-		ParentPath:    filestoreParentPath(mount.Path),
-		FileUUID:      file.UUID,
-		UpdatedAt:     filestoreNow(resource.CreatedAt),
-		ResourceUUID:  resource.UUID,
-		WorkspaceUUID: session.WorkspaceUUID,
-		SessionUUID:   session.UUID,
+		EntryPath:      mount.Path,
+		ParentPath:     filestoreParentPath(mount.Path),
+		FileUUID:       instanceUUID,
+		FileExternalID: instanceID,
+		SourceFileUUID: file.UUID,
+		UpdatedAt:      filestoreNow(resource.CreatedAt),
+		ResourceUUID:   resource.UUID,
+		WorkspaceUUID:  session.WorkspaceUUID,
+		SessionUUID:    session.UUID,
 	})
 	if isUniqueViolation(err) {
 		return SessionResource{}, ErrFilestorePathExists

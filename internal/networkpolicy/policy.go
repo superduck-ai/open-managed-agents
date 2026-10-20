@@ -83,7 +83,11 @@ func ParseMCPProxyPolicy(configRaw, agentSnapshotRaw []byte) (MCPProxyPolicy, er
 	}
 	mcpURLSet := make(map[string]struct{}, len(targets.urls))
 	for _, rawURL := range targets.urls {
-		mcpURLSet[rawURL] = struct{}{}
+		key, err := canonicalMCPURLKey(rawURL)
+		if err != nil {
+			return MCPProxyPolicy{}, err
+		}
+		mcpURLSet[key] = struct{}{}
 	}
 	return MCPProxyPolicy{
 		policy:        compilePolicy(config, mcpHosts),
@@ -124,7 +128,25 @@ func (p Policy) AuthorizeHTTPS(target string) Decision {
 	return p.authorizeEndpoint(normalized, "https", port)
 }
 
-// AuthorizeMCPURL 授权原始 MCP HTTP(S) URL。调用方不得改写 scheme、host 或 port。
+func (p Policy) AuthorizeHTTPURL(target *url.URL) Decision {
+	if target == nil || target.Scheme != "http" || target.Hostname() == "" || target.User != nil || target.Fragment != "" || target.Opaque != "" {
+		return Decision{Reason: ReasonInvalidTarget}
+	}
+	host, err := NormalizeHost(target.Hostname())
+	if err != nil {
+		return Decision{Reason: ReasonInvalidTarget}
+	}
+	port := target.Port()
+	if port == "" {
+		port = "80"
+	}
+	if !validAllowedPort(port) {
+		return Decision{Reason: ReasonInvalidTarget}
+	}
+	return p.authorizeEndpoint(host, "http", port)
+}
+
+// AuthorizeMCPURL 授权实际 MCP HTTP(S) URL；URI 主机名表示可归一，实际目标与端口不得改写。
 func (p MCPProxyPolicy) AuthorizeMCPURL(rawURL string) Decision {
 	target, err := url.Parse(rawURL)
 	if err != nil || !target.IsAbs() || target.Host == "" || target.Hostname() == "" || target.User != nil || target.Fragment != "" {
@@ -138,7 +160,11 @@ func (p MCPProxyPolicy) AuthorizeMCPURL(rawURL string) Decision {
 	if err != nil {
 		return Decision{Reason: ReasonInvalidTarget}
 	}
-	if _, ok := p.mcpURLSet[rawURL]; !ok {
+	key, err := canonicalMCPURLKey(rawURL)
+	if err != nil {
+		return Decision{Reason: ReasonInvalidTarget, Host: host}
+	}
+	if !p.matchesMCPTransportURL(key, target) {
 		return Decision{Reason: ReasonHostNotAllowed, Host: host}
 	}
 	port := target.Port()
@@ -173,4 +199,35 @@ func (p Policy) authorizeEndpoint(normalized string, scheme string, port string)
 		return Decision{Allow: true, Reason: ReasonPackageManagerHost, Host: normalized}
 	}
 	return Decision{Reason: ReasonHostNotAllowed, Host: normalized}
+}
+
+func (p MCPProxyPolicy) matchesMCPTransportURL(key string, target *url.URL) bool {
+	if _, ok := p.mcpURLSet[key]; ok {
+		return true
+	}
+	query, err := url.ParseQuery(target.RawQuery)
+	if err != nil || len(query["sessionid"]) != 1 || query.Get("sessionid") == "" {
+		return false
+	}
+	parts := strings.Split(target.RawQuery, "&")
+	kept := make([]string, 0, len(parts))
+	removed := 0
+	for _, part := range parts {
+		if strings.HasPrefix(part, "sessionid=") {
+			removed++
+			continue
+		}
+		kept = append(kept, part)
+	}
+	if removed != 1 {
+		return false
+	}
+	base := *target
+	base.RawQuery = strings.Join(kept, "&")
+	baseKey, err := canonicalMCPURLKey(base.String())
+	if err != nil {
+		return false
+	}
+	_, ok := p.mcpURLSet[baseKey]
+	return ok
 }

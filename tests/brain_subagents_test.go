@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -84,6 +86,36 @@ func TestBrainSubagentAssignmentPinsDatabaseVersion(t *testing.T) {
 	expected := codesessions.RuntimeSubagentConfig{InlineAgents: false, Agents: []codesessions.RuntimeSubagentDefinition{
 		{Name: "reader", Description: description, SystemPrompt: prompt, Model: "child-model", Tools: []string{"Read"}},
 	}}
+	var public struct {
+		Type       string          `json:"type"`
+		ID         string          `json:"id"`
+		Version    int             `json:"version"`
+		Name       string          `json:"name"`
+		System     string          `json:"system"`
+		Tools      json.RawMessage `json:"tools"`
+		Multiagent json.RawMessage `json:"multiagent"`
+	}
+	if len(launch.Subagents.Agents) != 1 {
+		t.Fatalf("missing pinned agent: %+v", launch.Subagents)
+	}
+	if err := json.Unmarshal(launch.Subagents.Agents[0].AgentSnapshot, &public); err != nil {
+		t.Fatal(err)
+	}
+	if public.Type != "agent" || public.ID != "agent_brain_child" || public.Version != 1 || public.Name != "reader" || public.System != prompt || len(public.Multiagent) != 0 {
+		t.Fatalf("public snapshot not pinned: %s", launch.Subagents.Agents[0].AgentSnapshot)
+	}
+	var actualTools, expectedTools any
+	if err := json.Unmarshal(public.Tools, &actualTools); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(`[{"type":"agent_toolset_20260401","default_config":{"enabled":false},"configs":[{"name":"read","enabled":true,"permission_policy":{"type":"always_ask"}}]}]`), &expectedTools); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(actualTools, expectedTools) {
+		t.Fatalf("permission policy lost: %s", public.Tools)
+	}
+
+	expected.Agents[0].AgentSnapshot = launch.Subagents.Agents[0].AgentSnapshot
 	if !reflect.DeepEqual(launch.Subagents, expected) || launch.System != "parent" || launch.Future.N.String() != "9007199254740993" || len(launch.Skills) != 1 || launch.Skills[0].Name != "skill" {
 		t.Fatalf("pinned launch changed: %+v", launch)
 	}

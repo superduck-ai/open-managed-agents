@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -113,7 +115,7 @@ func TestSessionInputRunningIsAtomic(t *testing.T) {
 
 func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("public-status-order"))
-	codeSession, epoch := newPayloadIntegrationSession(t, app)
+	codeSession, epoch := newPayloadIntegrationSessionWithAgent(t, app, bashAskAgentBody)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, app.baseURL+"/v1/sessions/"+codeSession.SessionExternalID+"/events/stream?beta=true", nil)
@@ -251,7 +253,7 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 	if len(running.Data) != 2 {
 		t.Fatalf("expected one running event per turn: %s", running.Data)
 	}
-	postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, internalPayloadRequest(epoch, `{"type":"control_request","uuid":"approval","request_id":"approval-request","request":{"subtype":"can_use_tool","tool_name":"MysteryTool","tool_use_id":"tool-approval","input":{}}}`))
+	postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, internalPayloadRequest(epoch, `{"type":"control_request","uuid":"approval","request_id":"approval-request","request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"tool-approval","input":{}}}`))
 	toolEvents := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=agent.tool_use", defaultTestKey)
 	if len(toolEvents.Data) != 1 {
 		t.Fatalf("approval tool: %s", toolEvents.Data)
@@ -463,10 +465,10 @@ func sessionInputProcessedAt(t *testing.T, raw []byte) string {
 
 func TestSessionToolConfirmationACKLeavesOriginalInputUnchanged(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("confirmation-ack"))
-	codeSession, epoch := newPayloadIntegrationSession(t, app)
+	codeSession, epoch := newPayloadIntegrationSessionWithAgent(t, app, bashAskAgentBody)
 	// The large request also exercises offloaded control responses.
 	postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, internalPayloadRequest(epoch,
-		`{"type":"control_request","uuid":"approval","request_id":"approval-request","request":{"subtype":"can_use_tool","tool_name":"MysteryTool","tool_use_id":"tool-approval","input":{"text":`+quoteJSON(strings.Repeat("x", 40000))+`}}}`))
+		`{"type":"control_request","uuid":"approval","request_id":"approval-request","request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"tool-approval","input":{"command":`+quoteJSON(strings.Repeat("x", 40000))+`}}}`))
 	toolEvents := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=agent.tool_use", defaultTestKey)
 	if len(toolEvents.Data) != 1 {
 		t.Fatalf("expected a pending tool request, got %d", len(toolEvents.Data))

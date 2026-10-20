@@ -14,7 +14,7 @@ export class AiSdkAdapter extends LlmAdapter {
   async *stream(request: GenerateOptions): AsyncIterable<StreamChunk> {
     request.signal?.throwIfAborted();
     const route = this.options.route(request);
-    const call = callOptions(this.options.history?.(request) ?? request, route);
+    const call = await callOptions(this.options.history?.(request) ?? request, route, this.options.attachments);
     this.options.onCallStart?.(request);
     let result: LanguageModelV4StreamResult;
     try {

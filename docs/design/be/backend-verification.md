@@ -145,7 +145,7 @@ Every run rejects skips, missing proof stages, package/test failure, source muta
 
 `chat.subagents` uses public configuration and Session APIs with the real Runner and Claude Code 2.1.251. Its seven proof stages cover pinned child dispatch, uploaded skill preload, child SSE, child approval/rejection, child-only HTTP MCP execution, thread history and same-thread continuation through native `SendMessage`. Additional regressions cover event ordering, concurrent instances of the same child configuration, reply deduplication and both tool event IDs. See the [Subagent feature map](../../../.agents/skills/verify-be/features/subagents.md) and [runtime design](subagent-delegation.md). The model response is scripted; directed interruption and child recovery after Worker restart remain separate acceptance work.
 
-`just verify-be test` runs the complete default-build Go suite against disposable dependencies, including local MinIO. It reuses the Go dependency/config/cleanup implementation, creates no standalone backend, and enables `TEST_MIGRATION_DATABASE_URL`, `TEST_EVENT_PAYLOAD_S3`, `REDIS_URL`, `TEST_TUNNEL_REDIS_ADDR` and the S3 integration environment. Inherited test targets and opt-in flags are removed. This avoids the default `just test` configuration pointing at a reused development database. It does not reset or migrate that shared database.
+`just verify-be test` runs the complete Go suite with `-tags=integration` against disposable dependencies, including local MinIO. It reuses the Go dependency/config/cleanup implementation, creates no standalone backend, and enables `TEST_MIGRATION_DATABASE_URL`, `TEST_EVENT_PAYLOAD_S3`, `REDIS_URL`, `TEST_TUNNEL_REDIS_ADDR` and the S3 integration environment. Inherited test targets and opt-in flags are removed. Ordinary `just test` now runs unit tests only; `just test-integration` explicitly enables integration tests against the supplied isolated configuration. Direct integration commands require an isolated test configuration; verify-be does not reset or migrate the shared development database.
 
 The JSON/Markdown report retains package/test outcomes and lists every skipped test as unverified. Missing or skipped required migration/S3/Redis integration tests fail the run. A successful Go command with optional skips uses `passed_with_skips`, not a full verification pass; exit 0 permits ordinary suite automation while preserving the incomplete coverage in its report. Live scenarios, cloud suites, additional build tags and external SDK language suites remain separate. Cleanup and source-identity checks apply to the suite as well.
 
@@ -154,3 +154,17 @@ Historical migration fixtures use their own schema, including the Session resour
 The cleanup-job lifecycle fixture schedules its retry in the past before checking immediate re-leasing. The notification-driven sandbox lifecycle fixture waits for the River PostgreSQL listener before creating its due schedule; its one-hour fallback poll interval and 15-second dispatch deadline remain unchanged.
 
 Run CLI/config/report unit tests, repository Go quality gates, all nine local Files functional scenarios, a Files performance baseline/gate and chat regression scenarios after changing shared orchestration. Reports include source/binary hashes, tools/image IDs, coverage boundaries and final cleanup status. CI runs eight Files functional scenarios independently of Worker image preparation and gates Files performance against the PR base; `generated` runs in the Worker job. Cloud checks require manual workflow input and protected environment configuration. Cloud reports and recovery IDs contain no credentials; raw configuration/logs/profiles are not uploaded.
+
+Files 性能基线的对象检查只读取已有 File 行，通过带 workspace 范围的 Mapper 定位 UUID 后加载对象引用，不依赖候选分支新增的 Catalog schema，也不向基线数据库应用候选迁移。API 元数据、列表、字节完整性和最终清理断言保持不变。
+
+Chat 性能基线的测试夹具仍使用当前 workload，但通过 Go `-overlay` 将测试进程内的 Session、Session Thread 和 Session Resource File 三个生成 Mapper 替换为基线构建生成的 SQL 实现。它们只用于准备、激活和清理夹具，避免候选分支的统计函数或列进入旧数据库。基线后端二进制在 overlay 之前按原提交独立构建，所有计时请求仍经过真实后端 HTTP；候选运行与其他场景不使用 overlay。缺少基线 Mapper 或接口不兼容会直接失败，不能回退到候选 SQL。overlay 实现计入 Chat workload 摘要，旧摘要的 baseline 不可用于新负载。
+
+```mermaid
+flowchart LR
+    Ref[基线源码] --> Binary[基线后端二进制]
+    Ref --> SQL[基线生成 Mapper]
+    SQL --> Fixture[测试进程的夹具 SQL overlay]
+    Current[当前 workload] --> Fixture
+    Fixture --> HTTP[相同的计时 HTTP 请求]
+    HTTP --> Binary
+```

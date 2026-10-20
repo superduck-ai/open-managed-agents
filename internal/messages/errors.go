@@ -52,6 +52,25 @@ func providerResolveError(err error) *httpapi.Error {
 	}
 }
 
+func fileReferenceNotFoundError() *httpapi.Error {
+	return httpapi.NewError(http.StatusNotFound, "not_found_error", "Referenced file was not found")
+}
+func fileReferenceUnavailableError() *httpapi.Error {
+	return httpapi.NewError(http.StatusServiceUnavailable, "api_error", "Referenced file storage is unavailable")
+}
+func fileReferenceTooLargeError() *httpapi.Error {
+	return httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Referenced file exceeds the model request size limit")
+}
+func fileReferenceInvalidTypeError() *httpapi.Error {
+	return httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Referenced file type does not match its content block")
+}
+func fileReferenceInvalidTextError() *httpapi.Error {
+	return httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Referenced text file must contain valid UTF-8")
+}
+func fileReferenceInvalidRequestError() *httpapi.Error {
+	return httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Invalid file reference content")
+}
+
 func backendMismatchError() *httpapi.Error {
 	return invalidRequestError(llmproviders.ErrBackendMismatch)
 }

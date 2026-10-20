@@ -82,10 +82,10 @@ func TestResolveToolPermissionFromAgentSnapshot(t *testing.T) {
 			want:     resolvedToolPermissionAsk,
 		},
 		{
-			name:     "unknown tool defaults to ask",
+			name:     "unknown tool is denied without asking",
 			snapshot: `{"tools":[]}`,
 			toolName: "MysteryTool",
-			want:     resolvedToolPermissionAsk,
+			want:     resolvedToolPermissionDeny,
 		},
 		{
 			name:     "ask user question without config defaults to deny",

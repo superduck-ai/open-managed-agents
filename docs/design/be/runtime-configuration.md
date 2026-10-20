@@ -231,7 +231,7 @@ OMA_S3_INTEGRATION_BUCKET=claude-files \
 OMA_S3_INTEGRATION_REGION=us-east-1 \
 OMA_S3_INTEGRATION_ACCESS_KEY_ID=minioadmin \
 OMA_S3_INTEGRATION_SECRET_ACCESS_KEY=minioadmin \
-  go test ./internal/storage -run '^TestS3CompatibleIntegration$' -count=1 -v
+  go test -tags=integration ./internal/storage -run '^TestS3CompatibleIntegration$' -count=1 -v
 ```
 
 发布前应使用实际部署的 S3-compatible 产品版本或镜像运行同一组测试；测试对象会清理，但测试创建的 bucket 默认保留。需要验证真实建桶并自动清理时，应使用以 `oma-storage-test-` 开头的唯一临时 bucket，并设置 `OMA_S3_INTEGRATION_DELETE_BUCKET=1`；测试会在对象删除后删除该 bucket，并拒绝删除不符合临时命名约束的 bucket。

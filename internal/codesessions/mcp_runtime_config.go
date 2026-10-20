@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/mcpnames"
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 )
 
@@ -83,12 +84,18 @@ func BuildMCPRuntimeConfig(source json.RawMessage, identity MCPRuntimeIdentity, 
 		return input.MCPConfig, nil
 	}
 	document.Servers = make(map[string]json.RawMessage, len(servers))
+	prefixes := make(map[string]bool, len(servers))
 	for name, server := range servers {
+		prefix := mcpnames.ToolPrefix(name)
+		if prefixes[prefix] {
+			return nil, ErrMCPDeclarationInvalid
+		}
+		prefixes[prefix] = true
 		encoded, err := server.build(identity)
 		if err != nil {
 			return nil, err
 		}
-		document.Servers[name] = encoded
+		document.Servers[mcpnames.ServerKey(name)] = encoded
 	}
 	fields := make(map[string]json.RawMessage)
 	if len(input.MCPConfig) > 0 {
@@ -225,7 +232,9 @@ func (s tunnelMCPServer) build(identity MCPRuntimeIdentity) (json.RawMessage, er
 	return json.Marshal(fields)
 }
 
-func remoteMCPTransportType(serverType, rawURL string) string {
+// URL path suffixes do not identify the MCP transport. The HTTP client
+// negotiates Streamable HTTP first and performs the legacy SSE fallback.
+func remoteMCPTransportType(serverType string, _ string) string {
 	switch strings.ToLower(serverType) {
 	case "sse":
 		return "sse"
@@ -233,10 +242,6 @@ func remoteMCPTransportType(serverType, rawURL string) string {
 		return strings.ToLower(serverType)
 	case "websocket":
 		return "ws"
-	}
-	parsed, err := url.Parse(rawURL)
-	if err == nil && strings.HasSuffix(strings.TrimRight(strings.ToLower(parsed.Path), "/"), "/sse") {
-		return "sse"
 	}
 	return "http"
 }

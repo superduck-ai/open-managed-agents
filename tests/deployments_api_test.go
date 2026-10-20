@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -135,7 +137,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			{name: "outcome rubric is not an object", body: deploymentBodyWithInitialEvents(agent.ID, env.ID, `[{"type":"user.define_outcome","description":"ship it","rubric":"be correct"}]`)},
 			{name: "github token has invalid type", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"github_repository","url":"https://github.com/example/repo","authorization_token":42}]`)},
 			{name: "memory instructions are not a string", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"memory_store","memory_store_id":`+quoteJSON(store.ID)+`,"instructions":42}]`)},
-			{name: "memory instructions are too long", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"memory_store","memory_store_id":`+quoteJSON(store.ID)+`,"instructions":`+quoteJSON(strings.Repeat("i", 501))+`}]`)},
+			{name: "memory instructions are too long", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"memory_store","memory_store_id":`+quoteJSON(store.ID)+`,"instructions":`+quoteJSON(strings.Repeat("i", 4097))+`}]`)},
 			{name: "memory mount_path is client-assigned", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"memory_store","memory_store_id":`+quoteJSON(store.ID)+`,"mount_path":"/mnt/memory/custom"}]`)},
 		}
 
@@ -306,7 +308,7 @@ func TestDeploymentsAPI(t *testing.T) {
 
 		roundTripped := updateDeployment(t, app, created.ID, `{"resources":`+string(created.Resources)+`}`)
 		assertRawContains(t, roundTripped.Resources, `"file_id":"`+file.ID+`"`)
-		assertRawContains(t, roundTripped.Resources, `"mount_path":"/uploads/`+file.Filename+`"`)
+		assertRawContains(t, roundTripped.Resources, `"mount_path":"/uploads/`+file.ID+`"`)
 		run := runDeployment(t, app, created.ID)
 		if run.SessionID == nil {
 			t.Fatalf("deployment run Session ID = nil: %+v", run)
@@ -316,7 +318,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		if err != nil || len(resources) != 1 {
 			t.Fatalf("deployment run Session resources = %d, error = %v", len(resources), err)
 		}
-		assertSessionFileReference(t, app, *run.SessionID, resources[0].Payload, file.ID, "/uploads/"+file.Filename)
+		assertSessionFileReference(t, app, *run.SessionID, resources[0].Payload, file.ID, "/uploads/"+file.ID)
 
 		preserved := updateDeployment(t, app, created.ID, `{"name":"updated name only"}`)
 		if preserved.Description != "preserve me" {
@@ -962,7 +964,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		assertRawContains(t, created.Schedule, `"upcoming_runs_at"`)
 		assertRawContains(t, created.Resources, `"github_repository"`)
 		assertRawNotContains(t, created.Resources, `"source"`)
-		assertRawContains(t, created.Resources, `"mount_path":"/uploads/`+file.Filename+`"`)
+		assertRawContains(t, created.Resources, `"mount_path":"/uploads/`+file.ID+`"`)
 		assertRawNotContains(t, created.Resources, "secret-token")
 
 		listed := listDeployments(t, app, "agent_id="+url.QueryEscape(agent.ID))

@@ -23,7 +23,7 @@ export class Subagents {
       thread.status = "idle";
       const unbind = this.parent.config.bindThread?.(thread.id);
       if (unbind) this.unbind.set(thread.id, unbind);
-      const child = this.createRuntime(thread);
+      const child = await this.createRuntime(thread);
       this.runtimes.set(thread.id, child);
       await child.open();
       await child.flushLog();
@@ -95,7 +95,8 @@ export class Subagents {
         throw new Error("Predefined agents cannot override name or system prompt");
       if (!definition && (config.inlineAgents === false || !args.name || typeof args.system_prompt !== "string"))
         throw new Error("Inline agents require name and system_prompt and must be enabled");
-      thread = { id: `sthr_${crypto.randomUUID()}`, name: definition?.name ?? args.name,
+      thread = { id: `sthr_${crypto.randomUUID()}`, inline: !definition, agentSnapshot: definition?.agentSnapshot ? structuredClone(definition.agentSnapshot) : undefined,
+        name: definition?.name ?? args.name,
         systemPrompt: definition?.systemPrompt ?? args.system_prompt,
         model: definition?.model ?? this.parent.config.model,
         tools: inheritedTools(definition?.tools, this.parent.config.tools), status: "idle" };
@@ -103,21 +104,22 @@ export class Subagents {
       this.bridge.bindPersistence(thread.id);
       await this.bridge.emit({ kind: "created", thread });
     }
+    if (args.thread_id && thread.status === "idle") await this.bridge.validateThread?.(thread.id, signal);
     if (thread.status !== "idle") throw new Error("Subagent thread is running or archived");
     thread.status = "running";
     let runtime = this.runtimes.get(thread.id);
     if (!runtime) {
       const unbind = this.parent.config.bindThread?.(thread.id);
       if (unbind) this.unbind.set(thread.id, unbind);
-      runtime = this.createRuntime(thread);
-      this.runtimes.set(thread.id, runtime);
       try {
+        runtime = await this.createRuntime(thread);
+        this.runtimes.set(thread.id, runtime);
         await runtime.open();
       } catch (error) {
         this.runtimes.delete(thread.id);
         this.unbind.get(thread.id)?.();
         this.unbind.delete(thread.id);
-        await runtime.close();
+        await runtime?.close();
         thread.status = "idle";
         throw error;
       }
@@ -161,8 +163,9 @@ export class Subagents {
     }
   }
 
-  private createRuntime(thread: SubagentThread): SessionRuntime {
+  private async createRuntime(thread: SubagentThread): Promise<SessionRuntime> {
     const config = this.parent.config;
+    const mcp = await config.threadMcpContext?.(thread.id);
     let child: SessionRuntime;
     const execution = this.bridge.toolExecution(thread.id);
     const bridge: ToolExecutionBridge = {
@@ -177,11 +180,18 @@ export class Subagents {
     };
     child = new SessionRuntime(this.parent.ctx, {
       ...config, id: thread.id, model: thread.model, tools: thread.tools,
+      toolPermissions: { ...config.toolPermissions },
+      refreshToolPermissions: config.refreshToolPermissions
+        ? (signal) => config.refreshToolPermissions!(signal, thread.id) : undefined,
+      externalMcpConfig: mcp ? mcp.config : config.externalMcpConfig,
+      externalMcpFetch: mcp?.fetcher ?? config.externalMcpFetch,
       subagents: undefined, bindThread: undefined, setup: undefined,
       systemPrompt: config.subagentSystemPrompt?.(thread)
         ?? `${config.systemPrompt}\n\nYou are subagent ${thread.name}. Your conversation is isolated. Delegation tools are unavailable. Report your findings to the parent.\nSpecialist instructions:\n${thread.systemPrompt}`,
     }, {
+      onExternalMcpAuthenticationFailure: (serverName, phase) => this.parent.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase) ?? Promise.resolve(),
       beforeRequest: async () => { await child.flushLog(); await this.bridge.beforeRequest(); },
+      onContextCompacted: tokens => this.bridge.onContextCompacted?.(thread.id, tokens) ?? Promise.resolve(),
       onEvent: (event) => this.bridge.onEvent(thread.id, event),
       onStream: (frame) => this.bridge.onStream(thread.id, frame),
       stop: () => execution.stop(),

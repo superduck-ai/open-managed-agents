@@ -20,6 +20,12 @@ async function fixture(b = new Backend()) {
   const api = new OmaApi(b.url);
   await mountOma(ctx, api);
   const session = createOmaSession(ctx, api, b.a);
+  b.onApproval = async (payload) => {
+    if (!["list_agents", "send_to_agent", "archive_agent"].includes(payload.request.tool_name)) return;
+    await session.control({ type: "control_response", response: {
+      subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
+    } });
+  };
   await session.open();
   const close = async () => { await session.close(); await ctx.fiber.dispose(); };
   cleanups.push(close);
@@ -89,13 +95,16 @@ test("delegates with isolated history, no nested delegation, shared approvals, a
     toolEvents("pwd", "child_bash"), textEvents("child report"), textEvents("parent synthesis"),
   ];
   f.b.onApproval = async (payload) => {
-    expect(payload.session_thread_id).toStartWith("sthr_");
+    if (payload.request.tool_name === "Bash") expect(payload.session_thread_id).toStartWith("sthr_");
     await f.session.control({ type: "control_response", response: {
       subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
     } });
   };
   await f.session.receive("first", { content: "Delegate this work" });
   expect(f.b.requests).toHaveLength(4);
+  const created = [...f.b.publicLog.values()].find((event) => event.type === "session.thread_created");
+  expect(created?.agent).toEqual({ type: "inline", name: "researcher", system: "Inspect files" });
+  expect(f.session.state.threads?.[0]?.inline).toBe(true);
   const parentTools = f.b.requests[0]!.tools.map((tool: Payload) => tool.name);
   expect(parentTools).toContain("send_to_agent");
   const childTools = f.b.requests[1]!.tools.map((tool: Payload) => tool.name);
@@ -125,14 +134,26 @@ test("delegates with isolated history, no nested delegation, shared approvals, a
 test("predefined specialist uses its own prompt, model and restricted tools", async () => {
   const b = new Backend();
   cleanups.push(async () => b.stop());
+  const agentSnapshot = {
+    type: "agent", id: "agent_reviewer", version: 3, name: "reviewer", system: "Review only", model: "review-model",
+    tools: [{ type: "agent_toolset_20260401", default_config: { enabled: false }, configs: [
+      { name: "read", enabled: true, permission_policy: { type: "always_ask" } },
+      { name: "grep", enabled: true, permission_policy: { type: "always_allow" } },
+    ] }], mcp_servers: [], skills: [],
+  };
   b.a.launch.subagents = { inlineAgents: false, agents: [{
     name: "reviewer", description: "Read-only reviewer", systemPrompt: "Review only", model: "review-model", tools: ["Read", "Grep"],
+    agentSnapshot,
   }] };
   const f = await fixture(b);
   b.modelScript = [call("send_to_agent", { agent_name: "reviewer", message: "Review the code" }, "delegate"), textEvents("review report"), textEvents("done")];
   await f.session.receive("specialist", { content: "Review" });
   const child = b.requests[1]!;
   expect(child.model).toBe("review-model");
+  const created = [...b.publicLog.values()].find((event) => event.type === "session.thread_created");
+  expect(created?.agent).toEqual(agentSnapshot);
+  expect(f.session.state.threads?.[0]?.inline).toBe(false);
+  expect(f.session.state.threads?.[0]?.agentSnapshot?.id).toBe("agent_reviewer");
   expect(modelSystemText(child)).toContain("Review only");
   expect(child.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read"]);
   await expect(f.session.subagents.send({ name: "inline", system_prompt: "test", message: "test" }, new AbortController().signal)).rejects.toThrow("Inline agents");
@@ -153,12 +174,12 @@ test("25 retained threads count toward capacity, archival frees capacity and ref
   expect(f.session.state.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
 });
 
-test("interrupting the whole session cancels child approval before sandbox dispatch", async () => {
+test.each(["user.interrupt", "control_request"])("%s interrupting the whole session cancels child approval before sandbox dispatch", async (type) => {
   const f = await fixture();
   f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate"), toolEvents("pwd", "child_tool")];
   const turn = f.session.receive("interrupt", { content: "Delegate" }).catch(() => {});
   await eventually(() => f.session.approvals.size === 1);
-  await f.session.control({ type: "user.interrupt" });
+  await f.session.control({ type, ...(type === "control_request" ? { request_id: "global", request: { subtype: "interrupt" } } : {}) });
   await turn;
   expect(f.session.approvals.size).toBe(0);
   expect(f.b.executions).toHaveLength(0);
@@ -191,21 +212,24 @@ test("lost child tool outcome blocks parent recovery and never replays the comma
   expect(f.b.executions).toHaveLength(1);
 });
 
-test("targeted child interruption lets the parent recover while primary interruption stops the turn", async () => {
+test.each(["user.interrupt", "control_request"])("%s targeted child interruption leaves parent quiet until user input while primary interruption stops the turn", async (type) => {
   const f = await fixture();
-  f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate"), toolEvents("pwd", "child_tool"), textEvents("Child was interrupted")];
+  f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate"), toolEvents("pwd", "child_tool"), textEvents("RESUMED")];
   const turn = f.session.receive("target", { content: "Delegate" });
   await eventually(() => f.session.approvals.size === 1);
   const thread = f.session.state.threads![0]!;
-  await f.session.control({ type: "user.interrupt", session_thread_id: thread.id });
+  await f.session.control({ type, session_thread_id: thread.id, ...(type === "control_request" ? { request_id: "child", request: { subtype: "interrupt" } } : {}) });
   await turn;
   expect(f.b.executions).toHaveLength(0);
+  expect(f.b.requests).toHaveLength(2);
+  expect([...f.b.publicLog.values()].some((event) => event.type === "agent.message" && !event.session_thread_id)).toBe(false);
+  await f.session.receive("resume-after-child-interrupt", {content:"Reply RESUMED, do not restart cancelled work."});
   expect(f.b.requests).toHaveLength(3);
-  expect([...f.b.publicLog.values()].some((event) => event.type === "agent.message" && !event.session_thread_id && event.content[0].text === "Child was interrupted")).toBe(true);
+  expect([...f.b.publicLog.values()].some((event) => event.type === "agent.message" && !event.session_thread_id && event.content[0].text === "RESUMED")).toBe(true);
   f.b.modelScript = [toolEvents("pwd", "primary_tool")];
   const primaryTurn = f.session.receive("primary", { content: "Run" });
   await eventually(() => f.session.approvals.size === 1);
-  await f.session.control({ type: "user.interrupt", session_thread_id: f.session.id });
+  await f.session.control({ type, session_thread_id: f.session.id, ...(type === "control_request" ? { request_id: "primary", request: { subtype: "interrupt" } } : {}) });
   await primaryTurn;
   expect(f.b.executions).toHaveLength(0);
 });
@@ -242,6 +266,35 @@ test("backend launch roster is listed and delegated by agent_name without inline
   expect(f.session.state.threads!.map((thread) => thread.name)).toEqual(["fast_probe"]);
   await expect(f.session.subagents.send({ agent_name: "missing", message: "Run" }, new AbortController().signal))
     .rejects.toThrow("Unknown predefined agent");
+});
+
+test("a retained followup checks authoritative archive before creating child work", async () => {
+  const f = await fixture();
+  f.b.modelScript = [call("send_to_agent", {name:"external_archive",system_prompt:"Reply READY",message:"Reply READY"}, "create_before_archive"),textEvents("READY"),textEvents("done")];
+  await f.session.receive("before_external_archive",{content:"Delegate once"});
+  const child = f.session.state.threads![0]!;
+  expect(child.status).toBe("idle");
+  const before = f.b.requests.length;
+  const baseRoute = f.b.route.bind(f.b);
+  let checks = 0;
+  f.b.route = async (request) => {
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname.endsWith(`/worker/subagent-threads/${child.id}`)) {
+      checks++;
+      expect(url.searchParams.get("worker_epoch")).toBe(String(f.b.a.worker_epoch));
+      return Response.json({id:child.id,status:"terminated",archived:true});
+    }
+    return baseRoute(request);
+  };
+  f.b.modelScript = [call("send_to_agent",{thread_id:child.id,message:"Reply READY"},"followup_after_external_archive"),textEvents("rejected")];
+  await f.session.receive("after_external_archive",{content:"Attempt the same existing child once and report real error, do not create another."});
+  expect(checks).toBe(1);
+  expect(f.b.requests.length).toBe(before+2);
+  expect(f.session.state.threads).toHaveLength(1);
+  expect(child.status).toBe("terminated");
+  const error = [...f.b.publicLog.values()].filter((event) => event.type === "user").flatMap((event) => event.message.content).find((block:Payload) => block.type === "tool_result" && block.tool_use_id === "followup_after_external_archive");
+  expect(error?.is_error).toBe(true);
+  expect(JSON.stringify(error?.content)).toContain("archived");
 });
 
 test("root registers only enabled sandbox tools and inline agents inherit them", async () => {

@@ -22,6 +22,7 @@ type FileMapper interface {
 	ListSessionFilesPage(ctx context.Context, params fileMapperListParams) ([]fileRecordRow, error)
 	GetFileForDelete(ctx context.Context, workspaceUUID, fileUUID string) (fileRecordRow, error)
 	GetFileForShare(ctx context.Context, workspaceUUID, fileExternalID string) (fileRecordRow, error)
+	HasMountedSourceReference(ctx context.Context, workspaceUUID, resourceUUID string) (bool, error)
 	HasActiveReference(ctx context.Context, workspaceUUID, fileUUID string) (bool, error)
 	SoftDeleteFile(ctx context.Context, workspaceUUID, fileUUID string) error
 	UpdateOwnedFile(ctx context.Context, params sessionResourceFileWriteParams) error

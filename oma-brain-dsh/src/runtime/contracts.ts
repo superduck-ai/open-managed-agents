@@ -7,6 +7,7 @@ import type { Context } from "@deepseek-ai/cordis";
 export const MAX_LIVE_SUBAGENT_THREADS = 25;
 
 export interface SubagentDefinition {
+  agentSnapshot?: Payload;
   name: string;
   description: string;
   systemPrompt: string;
@@ -20,7 +21,9 @@ export interface SubagentConfig {
 }
 
 export interface SubagentThread {
+  agentSnapshot?: Payload;
   id: string;
+  inline?: boolean;
   name: string;
   systemPrompt: string;
   model: string;
@@ -36,10 +39,12 @@ export type SubagentEvent =
 
 /** Awaited storage, policy and event adapters for child orchestration. */
 export interface SubagentBridge {
+  validateThread?(threadId: string, signal: AbortSignal): Promise<void>;
   threads(): SubagentThread[];
   bindPersistence(threadId: string): void;
   emit(event: SubagentEvent): Promise<void>;
   beforeRequest(): Promise<void>;
+  onContextCompacted?(threadId: string, tokens?: number): Promise<void>;
   onEvent(threadId: string, event: SessionEvent): void;
   onStream(threadId: string, frame: AssistantStreamFrame): void;
   toolExecution(threadId: string): ToolExecutionBridge;
@@ -72,6 +77,10 @@ declare module "@deepseek-ai/cordis" {
 }
 
 export interface SessionRuntimeConfig {
+  refreshTools?(signal: AbortSignal): Promise<{ tools: string[]; externalMcpConfig: unknown }>;
+  threadMcpContext?(threadId: string): Promise<{ config: unknown; fetcher: typeof fetch }>;
+  externalMcpConfig?: unknown;
+  externalMcpFetch?: typeof fetch;
   id: string;
   provider: string;
   model: string;
@@ -82,7 +91,7 @@ export interface SessionRuntimeConfig {
   subagentSystemPrompt?(thread: SubagentThread): string;
   tools?: string[];
   toolPermissions?: ToolPermissions;
-  refreshToolPermissions?(signal: AbortSignal): Promise<ToolPermissions | undefined>;
+  refreshToolPermissions?(signal: AbortSignal, threadId?: string): Promise<ToolPermissions | undefined>;
   subagents?: SubagentConfig;
   /** Host binds a child model identity to the parent's credentials. */
   bindThread?(id: string): () => void;
@@ -98,11 +107,14 @@ export interface ToolApproval {
   callId: string;
   toolName: string;
   input: Payload;
+  available?: boolean;
 }
 
 export interface ApprovalDecision {
   allowed: boolean;
+  externalResult?: { content: {type: "text"; text: string}[]; isError: boolean };
   input?: unknown;
+  reason?: string;
 }
 
 export interface ApprovedToolCall {
@@ -114,6 +126,7 @@ export interface ApprovedToolCall {
 }
 
 export interface ToolOutcome extends ApprovedToolCall {
+  remoteOutcome?: "unknown";
   text: string;
   failed: boolean;
 }
@@ -131,6 +144,9 @@ export interface ToolExecutionBridge {
 }
 
 export interface SessionRuntimeHooks {
+  onContextCompacted?(tokens?: number): Promise<void>;
+  onExternalMcpConnectionFailure?(serverName: string): Promise<void>;
+  onExternalMcpAuthenticationFailure?(serverName: string, phase?: "discovery" | "tool_call"): Promise<void>;
   setupTools?(scope: Context): void;
   beforeRequest(): Promise<void>;
   onEvent(event: SessionEvent): void;

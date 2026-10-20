@@ -61,6 +61,11 @@ POST /v1/messages
 
 handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发前将这段有界请求体读入内存。完整扫描顶层对象可以确认 `model` 恰好出现一次，避免不同 JSON 解析器对重复键取值不同而绕过 Provider 白名单；校验后仍按原始字节转发，不改写模型 ID 或其他字段。响应 body 继续逐块流式转发，不做整包缓冲。
 
+托管会话绑定的 Code Session 模型凭据存在一个文件引用边界：在访问上游前，OMA 解析 `messages[].content` 及嵌套 `tool_result.content` 中 document/image 的 `source.type=file`。文件按凭据所属 workspace 查询；同 workspace 的文件可在明确引用时复用，scope 元数据不引入额外的会话授权限制。已删除、缺失或跨 workspace 引用返回相同的404，不向模型发送不透明的本地 file_id。普通 API key / 平台调用保持原始请求字节透传，允许其使用 Provider 自己的文件引用。
+
+读取仅限于配置的文件对象存储，核验长度和SHA256，不通过外部URL下载。text/plain 文档在未启用引用时采用与 Brain 内联文档相同的带 title/context 边界的文本表示；开启 citations 时保留原生 document/source.text。PDF和图片转换为对应 MIME 的原生 base64 source；不匹配的类型、非UTF-8文本及超过有界模型请求尺寸的文件在推理前明确拒绝，不截断文件内容。原始公开会话事件、file_id及历史不改写，文件读取结果仅用于当前模型请求。
+
+
 顶层 `model` 必须是没有首尾空白的非空字符串；服务端不会通过 trim 把另一个输入静默归一化为已配置模型。
 
 同时执行以下边界处理：

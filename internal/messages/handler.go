@@ -15,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
 // requestHeadersToRemove 包含 hop-by-hop header、调用方凭证和不可由 sandbox 伪造的租户 header。
@@ -51,6 +52,7 @@ var responseHeadersToRemove = map[string]struct{}{
 
 // Handler 校验顶层 model 后按原样转发请求体。
 type Handler struct {
+	fileObjects  storage.ObjectStore
 	codeSessions *codesessions.Service
 	database     *db.DB
 	secrets      *secrets.Service
@@ -113,6 +115,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	if err := upstream.RequireBackend(backend); err != nil {
 		httpapi.WriteError(w, r, backendMismatchError())
 		return
+	}
+	if backend == llmproviders.Messages {
+		resolvedBody, fileErr := h.managedFileReferences(r.Context(), principal, body)
+		if fileErr != nil {
+			httpapi.WriteError(w, r, fileErr)
+			return
+		}
+		body = resolvedBody
 	}
 	path := "/v1/messages"
 	if backend == llmproviders.ChatCompletions {

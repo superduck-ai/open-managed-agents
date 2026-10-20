@@ -19,7 +19,6 @@ func TestMCPRuntimeConfigRejectsInvalidDeclarations(t *testing.T) {
 		`{"mcp_servers":[{"name":"bad","type":"url","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef?x=1"}]}`,
 		`{"mcp_servers":[{"name":"bad","url":"https://oma.example/v1/mcp/%zz"}]}`,
 		`{"mcp_servers":[{"url":"https://docs.example/mcp"}]}`,
-		`{"mcp_servers":[{"name":" bad ","url":"https://docs.example/mcp"}]}`,
 		`{"mcp_servers":[{"name":"bad"}]}`,
 		`{"mcp_servers":[{"name":"same","url":"https://docs.example/one"},{"name":"same","url":"https://docs.example/two"}]}`,
 		`{"mcp_config":{"mcpServers":{"bad":null}}}`,
@@ -65,7 +64,7 @@ func TestMCPRuntimeConfigSeparatesTunnelAndRemoteTransports(t *testing.T) {
 				t.Fatalf("Tunnel config=%+v", tunnel)
 			}
 			remote := servers["remote"]
-			if remote.Type != "sse" || remote.URL != "https://docs.example/sse" || len(remote.Headers) != 0 {
+			if remote.Type != "http" || remote.URL != "https://docs.example/sse" || len(remote.Headers) != 0 {
 				t.Fatalf("remote config=%+v", remote)
 			}
 			if !bytes.Equal(source, original) || bytes.Contains(source, []byte("current-token")) {
@@ -153,6 +152,20 @@ func TestMCPRuntimeConfigAbsentDocument(t *testing.T) {
 		document, err := BuildMCPRuntimeConfig(json.RawMessage(source), MCPRuntimeIdentity{}, config.TunnelConfig{})
 		if err != nil || len(document) != 0 {
 			t.Fatalf("absent MCP configuration produced %s: %v", document, err)
+		}
+	}
+}
+
+func TestRemoteMCPURLUsesStreamableBeforeLegacyFallback(t *testing.T) {
+	for _, test := range []struct{ kind, url, want string }{
+		{"url", "https://owned.example/mcp/response-modes/run/sse", "http"},
+		{"url", "https://owned.example/SSE/", "http"},
+		{"", "https://owned.example/sse?opaque=1", "http"},
+		{"http", "https://owned.example/sse", "http"},
+		{"sse", "https://owned.example/opaque", "sse"},
+	} {
+		if got := remoteMCPTransportType(test.kind, test.url); got != test.want {
+			t.Errorf("type=%q url=%q got=%q want=%q", test.kind, test.url, got, test.want)
 		}
 	}
 }

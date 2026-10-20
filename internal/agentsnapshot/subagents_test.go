@@ -52,3 +52,30 @@ func TestResolveCurrentSelfUsesAgentCopy(t *testing.T) {
 		t.Fatalf("self changed parent or lost configuration: %s", resolved)
 	}
 }
+
+func TestCMASnapshotPreservesIndependentSettings(t *testing.T) {
+	agent := db.Agent{ExternalID: "parent", CurrentVersion: 1, Name: "reader", Multiagent: json.RawMessage(`{"type":"multiagent_20261001","subagents":{"type":"enabled","inline_agents":{"type":"disabled"},"predefined_agents":[{"type":"agent","id":"parent","version":1}]},"workflows":{"type":"enabled","inline_agents":{"type":"enabled"},"predefined_agents":[]},"advisor":{"type":"enabled","model":"advisor"}}`)}
+	raw, err := Resolve(t.Context(), nil, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot struct {
+		Multiagent subagentRoster `json:"multiagent"`
+	}
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Multiagent.Subagents == nil || len(snapshot.Multiagent.Subagents.PredefinedAgents) != 1 || snapshot.Multiagent.Workflows == nil || !SameRawJSON(snapshot.Multiagent.Advisor, json.RawMessage(`{"type":"enabled","model":"advisor"}`)) {
+		t.Fatalf("settings lost: %s", raw)
+	}
+	var child struct {
+		Name       string          `json:"name"`
+		Multiagent json.RawMessage `json:"multiagent"`
+	}
+	if err := json.Unmarshal(snapshot.Multiagent.Subagents.PredefinedAgents[0], &child); err != nil {
+		t.Fatal(err)
+	}
+	if child.Name != "reader" || string(child.Multiagent) != "null" {
+		t.Fatalf("child = %+v", child)
+	}
+}

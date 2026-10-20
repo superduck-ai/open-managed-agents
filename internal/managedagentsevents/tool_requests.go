@@ -105,3 +105,25 @@ func ClearPendingToolRequests(raw []byte, primaryID, threadID string) ([]byte, e
 	}
 	return jsonv2.Marshal(metadata)
 }
+
+func SettlePendingToolRequest(raw []byte, codeSessionID, primaryID, threadID, eventID string) ([]byte, error) {
+	resolved, err := ResolvePendingToolEventID(raw, codeSessionID, primaryID, threadID, eventID)
+	if err != nil || resolved == "" {
+		return raw, err
+	}
+	var metadata map[string]json.RawMessage
+	if err := jsonv2.Unmarshal(raw, &metadata); err != nil {
+		return nil, err
+	}
+	delete(metadata, ToolPermissionRequestMetadataKey+":"+resolved)
+	if value, ok := metadata[ToolPermissionRequestMetadataKey]; ok {
+		var request toolPermissionRequestMetadata
+		if err := jsonv2.Unmarshal(value, &request); err != nil {
+			return nil, err
+		}
+		if request.PublicEventID == resolved {
+			delete(metadata, ToolPermissionRequestMetadataKey)
+		}
+	}
+	return jsonv2.Marshal(metadata)
+}

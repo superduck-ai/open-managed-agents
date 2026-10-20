@@ -158,7 +158,7 @@ Tunnel 构建器生成，非连接选项继续保留。已知字段使用命名 
 `Cache-Control: no-store`。启动、恢复和上下文读取都从源配置构建，不复用上一次运行的 Token。
 配置解析或编码错误向上返回，由 Runner 统一处理启动失败：新建的 Code Session 执行终止清理，恢复中的已有 Session 保留。
 
-Snapshot policy 的 server name 索引使用原始精确值并拒绝首尾空白；重复或非规范名称、畸形 MCP URL 都会
+Snapshot policy 的 server name 索引使用原始精确值，非空名称按 1–255 个 Unicode 码点校验；重复名称、超长名称、畸形 MCP URL 都会
 使策略编译 fail-closed。运行时构建同样拒绝无效声明，不把坏配置当作普通 MCP 留给 sandbox。
 
 MCP Gateway 路径中的 Code Session ID 与凭据中的 Session ID 精确比较，不修剪路径 ID；带首尾空白
@@ -359,6 +359,12 @@ channel 名称 JSON 列表。鉴权及格式校验成功的 Poll 用 Redis 8 [`H
 
 `TestPollCancellationAndConnectionLossAreBounded` 同时关闭 NATS 连接并取消 Poll。按执行顺序，返回错误可以是 `context.Canceled`、`nats.ErrDisconnected` 或 `nats.ErrConnectionClosed`；测试逐项识别这些错误，不接受 nil 或其他错误，并保留两秒内结束的断言。该检查验证收尾有界，不要求取消与连接关闭的竞争产生唯一错误类型。
 
+`TestRequestBindingRespectsCallerTimeout` 使用真实 TCP 连接和不响应的端点，验证 40ms caller deadline 能终止 Redis 握手 I/O，且操作在一秒内返回超时错误。测试必须在兜底清理之前观察到端点读取 EOF，确认 Redis 主动释放超时连接；测试 Dialer 注册原始连接清理，仅用于失败后的资源回收。端点退出等待上限为一秒，包含清理的测试总耗时上限为两秒。
+
+应用将 go-redis 从 v9.20.1 升级至 v9.23.0，采用上游 [#3985](https://github.com/redis/go-redis/pull/3985) 对初始化失败后连接已标为 CLOSED、却未释放 socket 的修复。旧路径依赖 GC finalizer 关闭连接，导致测试接近 Go 两分钟强制 GC 周期才结束。`internal/redisclient` 回归覆盖生产 `Open` 在握手超时、认证失败时释放连接，以及正常连接读写；这些测试不调用 GC 或在断开断言前手动关闭原始连接。
+
+升级同时采用上游默认连接配置：未在 Redis URL 显式配置时，读写 timeout 从 3s 改为 5s，重试退避从 8ms/512ms 改为 10ms/1s，TCP keep-alive 改为 idle 30s、interval 5s、3 probes，并为 Pipeline 启用按需建立的独立连接池，默认最多额外 10 条连接。URL 显式配置继续生效；Tunnel binding 的每次操作 2s 和 Presence 的 500ms context deadline 保持原合同，不启用自动 Pipeline 或客户端缓存。
+
 - channel 匹配 `[a-z0-9_-]{1,64}`，每个 Tunnel 最多 32 个；
 - channel 在 Connector 声明、Broker claim/enqueue、Ingress 和 probe 每个可信边界校验，拒绝重复名称与路径逃逸；
 - Connector 在 poll 中声明 channel allowlist；默认 channel 取 server-info，缺失时为 `main`；
@@ -469,3 +475,15 @@ Probe 在同一个初始化会话及总超时内按 `nextCursor` 完整读取 `t
 `TestTunnelPayloadRealStorageAndClient` 可以复用本地 PostgreSQL/MinIO 服务，通过显式测试数据库 URL 或 search_path 将迁移和清理领取限制在测试数据范围。S3 凭据来自本地 `CONFIG_FILE`，endpoint 由测试参数指定；每次创建唯一的临时 bucket，保持默认未版本化，实际读取确认清理对象返回 NotFound，并删除空测试 bucket。bucket 创建成功后立即注册删除回调，版本状态检查失败时仍清理空桶；后注册的对象清理先执行。此入口不改变现有业务桶的版本控制设置，不验收历史 S3 版本和 delete marker；Token 查询仍是 fixture。
 
 真实 Claude HTTP 客户端验收同时记录私有 MCP 收到的工具发现/调用计数及方法错误。TypeScript 证据补充模型可见工具、实际工具事件、Assistant 错误、stop reason、权限拒绝数和回合数；仅在失败时记录已移除配置凭据、endpoint、随机标记的至多 512 字符测试回答。MCP 连接成功与 SDK 回合结束均不能替代工具调用及随机标记验证。历史证据缺少上述字段时，复测通过不能证明首次失败的根因。
+
+### MCP 凭据被上游拒绝时的错误传播
+
+HTTP MCP 代理区分上游认证拒绝与本地凭据解析故障。只有本轮匹配候选全部实际收到上游401、完成已有候选回退/刷新规则后，注入层才附带 `ErrUpstreamAuthenticationRejected`。MCP代理将该标记映射为401 `authentication_error`，使用固定公开消息，不回显上游正文、认证头或私有原因。Brain已有401/403发现错误处理负责发布具名 `mcp_authentication_failed_error`，并允许会话在没有该服务工具时继续交互。
+
+没有URL匹配、密钥解封/存储故障以及仅部分候选被上游拒绝不产生该标记，继续使用既有注入失败502。通用出站代理的fail-closed分类及候选优先级保持原有规则；不能把基础设施故障伪装成无效token。回归覆盖全部候选拒绝、空候选、缺失secret、混合拒绝/解封故障、MCP401安全响应、原502与成功候选回退。
+
+### 声明式 MCP 端点的凭据匹配
+
+Session 声明的 HTTP MCP 端点使用专用 `WrapMCPTransport`。匹配保留现有 scheme/host 大小写、默认端口和尾斜线归一化，但路径须一致，不把根路径凭据注入其他 MCP 子路径。无匹配凭据时实际匿名连接，并移除客户端 Authorization；由上游的401/403触发现有具名鉴权错误与可继续聊天路径。匹配凭据存在但本地 secret 解封或存储失败时仍拒绝，不匿名回退。已匹配凭据的401候选回退/刷新规则保持。
+
+通用 MITM 出站继续使用 `WrapTransport`，保留路径前缀匹配及 host-covered 无匹配时拒绝策略。两种策略在 codesessions MCP 组装入口区分，不能通过改变通用策略修复声明式 MCP。回归覆盖不同路径匿名401、标准化相同端点认证200、不尝试宽路径候选、本地secret失败、通用出站拒绝与前缀匹配。

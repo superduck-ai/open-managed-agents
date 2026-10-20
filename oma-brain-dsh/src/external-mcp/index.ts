@@ -4,7 +4,7 @@ import { ToolExecution } from "../runtime/execution.ts";
 import type { RemoteTool, ToolExecutionBridge, SandboxExecutor } from "../runtime/contracts.ts";
 import { externalServers } from "./config.ts";
 import { ExternalMcpClient } from "./client.ts";
-import { persistExternalMcpOutput } from "./output.ts";
+import { persistToolOutput } from "./output.ts";
 
 interface McpRegistration {
   ctx: Context;
@@ -95,7 +95,7 @@ export class ExternalMcp {
     for (const { client, tool } of bindings) {
       const execution = new ToolExecution({
         provision: (signal) => client.provision(signal),
-        call: async (remote, args, signal) => persistExternalMcpOutput(
+        call: async (remote, args, signal) => persistToolOutput(
           await client.call(remote, args, signal, authenticationFailure), sandbox, signal,
         ),
       }, bridge);

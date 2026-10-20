@@ -69,6 +69,7 @@ export class SessionRuntime {
         tools: this.config.tools,
         permissions: toolPermissions,
       });
+      await this.config.setupTools?.(scope, this.bridge, this.config.tools, this.parent ? this.config.id : undefined);
       await this.externalMcp.register(scope, this.bridge, this.abort.signal, async (serverName, phase) => {
         await this.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase);
       }, scope.get("sandboxExecutor")!, async (serverName) => {

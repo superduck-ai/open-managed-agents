@@ -66,7 +66,7 @@ export class ToolNotForwardedError extends Error {}
 
 /** Host-provided sandbox readiness and execution. Resource creation belongs to the provider service. */
 export interface SandboxExecutor {
-  provision(signal: AbortSignal): Promise<void>;
+  provision?(signal: AbortSignal): Promise<void>;
   call(tool: RemoteTool, args: Payload, signal: AbortSignal): Promise<Payload>;
 }
 
@@ -89,6 +89,7 @@ export interface SessionRuntimeConfig {
   systemPrompt: string;
   /** Mount root-session services before tool registration. Children share these services. */
   setup?(scope: Context): Promise<void>;
+  setupTools?(scope: Context, bridge: ToolExecutionBridge, tools?: string[], threadId?: string): Promise<void>;
   subagentSystemPrompt?(thread: SubagentThread): string;
   tools?: string[];
   toolPermissions?: ToolPermissions;

@@ -138,6 +138,7 @@ const builtInToolNameSchema = z.enum([
   'task_stop',
   'todo_write',
   'web_fetch',
+  'web_search',
   'write',
 ]);
 

@@ -290,6 +290,9 @@ func insertSessionEventIfAbsentTx(ctx context.Context, executor yourbatis.Execut
 }
 
 func prepareSessionEventTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent) (SessionEvent, bool, error) {
+	if event.EventType == "span.model_request_start" && session.BudgetReachedAt != nil {
+		return SessionEvent{}, false, ErrSessionBudgetReached
+	}
 	write, err := shouldWriteSessionStatus(ctx, executor, *session, primary, event)
 	if err != nil || !write {
 		return SessionEvent{}, false, err

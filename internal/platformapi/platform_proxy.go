@@ -81,7 +81,7 @@ func handleProxyMessages(database *db.DB, secretService *secrets.Service, client
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "proxy_error", "message": "LLM provider is unavailable"})
 			return
 		}
-		upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, targetURL, bytes.NewReader(body))
+		upstreamReq, err := http.NewRequestWithContext(metering.WithModel(r.Context(), upstream.QualifiedModelID), http.MethodPost, targetURL, bytes.NewReader(body))
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "proxy_error", "message": "failed to build upstream request"})
 			return

@@ -71,13 +71,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
+	sessionBudgetRaw := json.RawMessage(nil)
 	if budget != nil {
 		if err := h.codeSessions.Billing().ValidateSnapshot(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, snapshot); err != nil {
 			return invalidRequest(err)
 		}
-	}
-	sessionBudgetRaw := json.RawMessage(nil)
-	if budget != nil {
 		encoded, err := httpapi.MarshalRaw(budget)
 		if err != nil {
 			return invalidRequest(err)

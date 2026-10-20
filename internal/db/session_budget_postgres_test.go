@@ -42,6 +42,11 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 	usage := event("sevt_budget_usage", "session.usage", `{"type":"session.usage"}`, now)
 	idle := event("sevt_budget_idle", "session.status_idle", `{"type":"session.status_idle","stop_reason":{"type":"budget_reached"}}`, now.Add(time.Microsecond))
 	transition := SessionBudgetTransition{Budget: session.Budget, ReachedAt: now}
+	previousStart := event("sevt_before_cap_start", "span.model_request_start", `{"model":"priced"}`, now)
+	if _, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{previousStart}); err != nil {
+		t.Fatal(err)
+	}
+
 	broken := idle
 	broken.Payload = json.RawMessage(`{`)
 	if _, err := store.AppendSessionBudgetReachedEvents(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{usage, broken}, transition); err == nil {
@@ -66,6 +71,18 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 	if err != nil || len(changes.Events) != 0 {
 		t.Fatalf("重复执行产生事件：%+v，%v", changes, err)
 	}
+	start := event("sevt_after_cap_start", "span.model_request_start", `{"model":"priced"}`, now)
+	if _, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{start}); !errors.Is(err, ErrSessionBudgetReached) {
+		t.Fatalf("预算触顶后新模型请求应返回预算错误：%v", err)
+	}
+	if replay, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{previousStart}); err != nil || len(replay.Events) != 0 {
+		t.Fatalf("已持久化开始事件重投失败：%v", err)
+	}
+	lateEnd := event("sevt_late_end", "span.model_request_end", `{"model_usage":{"input_tokens":0,"output_tokens":0}}`, now)
+	if _, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{lateEnd}); err != nil {
+		t.Fatalf("已开始的请求不能结算：%v", err)
+	}
+
 	session.BudgetReachedAt = nil
 	session.Budget = json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"100","currency":"USD"}}`)
 	if _, _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session); err != nil {
@@ -79,6 +96,27 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 	if err != nil || session.BudgetReachedAt != nil {
 		t.Fatalf("新预算被旧触顶标记污染：%v", err)
 	}
+	primary, err := NewSessionThreadMapper(store.mapperDB).FindPrimary(t.Context(), scope.WorkspaceUUID, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := event("sevt_resume_message", "user.message", `{"type":"user.message","content":"continue"}`, now)
+	if err := rejectPausedSessionInput(t.Context(), store.mapperDB, session, primary.thread(), []SessionEvent{message}); err != nil {
+		t.Fatalf("提高预算后消息仍被暂停：%v", err)
+	}
+	if _, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{start}); err != nil {
+		t.Fatalf("提高预算后模型调用仍被阻止：%v", err)
+	}
+	session.Budget = nil
+	session.BudgetRemovedAt = new(now)
+	session, _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendSessionEvents(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{message}, nil); err != nil {
+		t.Fatalf("移除预算后消息仍被暂停：%v", err)
+	}
+
 	metered := event("sevt_search_end", "span.model_request_end", `{"model_usage":{"server_tool_use":{"web_search_requests":3}},"billing":{"list_cost":"2","currency":"USD"}}`, now)
 	if _, err := store.AppendSessionEvents(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{metered}, nil); err != nil {
 		t.Fatal(err)

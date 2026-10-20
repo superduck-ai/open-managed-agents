@@ -232,3 +232,9 @@ flowchart LR
 Narrows 分档支持严格下界、包含下界及包含上界，按原 API 顺序应用。当前用量协议无法区分思考模式输出、图像输出及隐式缓存：存在这些独立单价时，对应类别保持未定价，不能按普通输出或显式缓存价格猜测收费。嵌入模型虽可登记在 Provider 中，但不能以 Messages 成功测试代替 Embeddings 接口验收。
 
 Narrows 解析回归使用合成规则验证固定汇率、分档上下界及无法区分的输出和缓存价格。真实测试设置 `LIVE_BILLING_SOURCE=narrows`、`LIVE_BILLING_PRICES` 为本地原规则 JSON，并核对实际用量、价格来源、固定汇率与最终账本美分。
+
+### 供应商模型身份
+
+计费使用已解析的 `provider-slug/upstream-model` 身份，目录匹配仍使用供应商原始模型 ID。普通 API、控制台代理和 Workbench 将已选模型身份放入请求 context，发送上游的 JSON 保留上游模型 ID；同名模型不会覆盖其他供应商的价格。旧的未限定模型名仅在工作区中唯一时保留兼容匹配，限定模型名优先。
+
+Chat Completions 当前仅允许 Brain 模型凭据及流式调用，由现有 `chatObservation` 将普通输入、缓存输入和输出转成会话模型请求用量，随后通过会话结束事件入账。通用计量 Transport 跳过这类请求，避免重复计费；没有新增普通凭据的 Chat Completions 能力。

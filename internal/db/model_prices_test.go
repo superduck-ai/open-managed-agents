@@ -13,7 +13,7 @@ import (
 func TestModelPricesPostgres(t *testing.T) {
 	d, _ := newTranscriptArchiveTestDB(t)
 	org, ws := uuid.NewV4().String(), uuid.NewV4().String()
-	_, err := d.CreateLLMProvider(t.Context(), LLMProvider{UUID: uuid.NewV4().String(), ExternalID: "provider_price", OrganizationUUID: org, WorkspaceUUID: ws, Name: "价格测试", SecretEnvelope: &secrets.Envelope{Ciphertext: []byte("test"), Nonce: []byte("test"), WrappedDEK: []byte("test"), FormatVersion: 1, KeyProvider: "test", KeyVersion: 1}, BaseURL: "http://localhost", ModelIDs: []string{"priced", "other", "ambiguous", "test/priced"}, CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	_, err := d.CreateLLMProvider(t.Context(), LLMProvider{UUID: uuid.NewV4().String(), ExternalID: "provider_price", OrganizationUUID: org, WorkspaceUUID: ws, Name: "价格测试", Slug: "oma", SecretEnvelope: &secrets.Envelope{Ciphertext: []byte("test"), Nonce: []byte("test"), WrappedDEK: []byte("test"), FormatVersion: 1, KeyProvider: "test", KeyVersion: 1}, BaseURL: "http://localhost", ModelIDs: []string{"priced", "other", "ambiguous", "test/priced"}, CreatedAt: time.Now(), UpdatedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,6 +27,14 @@ func TestModelPricesPostgres(t *testing.T) {
 	scoped, err := d.BillingCalculator().Scope(t.Context(), org, ws)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	qualified, err := d.BillingCalculator().Scope(t.Context(), org, ws, "oma/priced")
+	if err != nil || !qualified.HasModel("oma/priced") {
+		t.Fatalf("供应商限定模型缺价：%v", err)
+	}
+	if err := d.BillingCalculator().ValidateSnapshot(t.Context(), org, ws, []byte(`{"model":{"id":"oma/priced"}}`)); err != nil {
+		t.Fatalf("供应商限定模型预算被拒绝：%v", err)
 	}
 
 	mapper := NewModelPriceCatalogMapper(d.mapperDB)
@@ -147,5 +155,38 @@ func TestNarrowsPriceSourcePostgres(t *testing.T) {
 	}
 	if cents, ok := scoped.ModelRequestCents("priced", billing.TokenUsage{InputTokens: 1000000}); !ok || cents != 100 {
 		t.Fatalf("人民币换美元错误: %d/%v", cents, ok)
+	}
+}
+
+func TestQualifiedModelPricesKeepProviderIdentityPostgres(t *testing.T) {
+	d, _ := newTranscriptArchiveTestDB(t)
+	org, ws := uuid.NewV4().String(), uuid.NewV4().String()
+	for _, slug := range []string{"first", "second"} {
+		baseURL, source, input := "https://example.test", "openrouter", "3"
+		if slug == "second" {
+			baseURL, source, input = "https://narrows-gateway.test.seewo.com", "narrows", "6"
+		}
+		_, err := d.CreateLLMProvider(t.Context(), LLMProvider{UUID: uuid.NewV4().String(), ExternalID: "provider_" + slug, OrganizationUUID: org, WorkspaceUUID: ws, Name: slug, Slug: slug, BaseURL: baseURL, ModelIDs: []string{"priced"}, SecretEnvelope: &secrets.Envelope{Ciphertext: []byte("test"), Nonce: []byte("test"), WrappedDEK: []byte("test"), FormatVersion: 1, KeyProvider: "test", KeyVersion: 1}, CreatedAt: time.Now(), UpdatedAt: time.Now()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := d.ReplaceModelPriceCatalog(t.Context(), source, []CatalogPrice{{Model: "priced", Original: []byte(`{}`), Price: billing.ModelPrice{Rates: &billing.Rates{Input: new(input), Output: new("15")}}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, requested := range [][]string{nil, {"priced"}, {"first/priced", "second/priced"}} {
+		calculator, err := d.BillingCalculator().Scope(t.Context(), org, ws, requested...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if calculator.HasModel("priced") {
+			t.Fatal("同名模型不应任意选择供应商价格")
+		}
+		for model, want := range map[string]int64{"first/priced": 300, "second/priced": 600} {
+			got, ok := calculator.ModelRequestCents(model, billing.TokenUsage{InputTokens: 1000000})
+			if !ok || got != want {
+				t.Fatalf("%s=%d/%t，期望%d", model, got, ok, want)
+			}
+		}
 	}
 }

@@ -100,3 +100,38 @@ func meteredTestRequest(t *testing.T) *http.Request {
 	}
 	return request
 }
+
+func TestRequestRecordKeepsResolvedModel(t *testing.T) {
+	request := meteredTestRequest(t)
+	request = request.WithContext(WithModel(request.Context(), "provider/model"))
+	record, err := requestRecord(request, auth.Principal{}, "api")
+	if err != nil || record.Model != "provider/model" {
+		t.Fatalf("模型身份丢失：%+v %v", record, err)
+	}
+	body, err := io.ReadAll(request.Body)
+	if err != nil || string(body) != `{"model":"model"}` {
+		t.Fatalf("上游请求被改变：%s %v", body, err)
+	}
+}
+
+func TestTransportLeavesBrainMeteringToModelRequestEvents(t *testing.T) {
+	store := &recordStore{}
+	transport := &Transport{Store: store, Base: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("data: [DONE]\n\n"))}, nil
+	})}
+	request := meteredTestRequest(t)
+	request = request.WithContext(auth.WithPrincipal(request.Context(), auth.Principal{CodeSessionExternalID: "cse_brain"}))
+	response, err := transport.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(response.Body); err != nil {
+		t.Fatal(err)
+	}
+	if err := response.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.records) != 0 {
+		t.Fatal("Brain 请求被通用 Transport 重复计量")
+	}
+}

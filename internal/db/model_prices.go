@@ -58,11 +58,22 @@ func (d *DB) BillingCalculator() *billing.Calculator {
 			return nil, err
 		}
 		models := make(map[string]billing.ModelPrice)
+		aliases := make(map[string]string)
+		for _, provider := range providers {
+			for _, model := range provider.ModelIDs {
+				qualified := provider.Slug + "/" + model
+				if _, exists := aliases[model]; exists {
+					aliases[model] = ""
+				} else {
+					aliases[model] = qualified
+				}
+			}
+		}
 		now := time.Now().UTC()
 		for _, provider := range providers {
 			modelIDs := []string{}
 			for _, model := range provider.ModelIDs {
-				if len(requested) == 0 || slices.Contains(requested, model) {
+				if len(requested) == 0 || slices.Contains(requested, provider.Slug+"/"+model) || slices.Contains(requested, model) {
 					modelIDs = append(modelIDs, model)
 				}
 			}
@@ -96,7 +107,14 @@ func (d *DB) BillingCalculator() *billing.Calculator {
 				if p, ok := catalog[model]; ok {
 					p.ProviderUUID = provider.UUID
 					p.PricedAt = now
-					models[model] = p
+					models[provider.Slug+"/"+model] = p
+				}
+			}
+		}
+		for model, qualified := range aliases {
+			if price, found := models[qualified]; found {
+				if _, exact := models[model]; !exact {
+					models[model] = price
 				}
 			}
 		}

@@ -1017,8 +1017,7 @@ function sessionConversationState(
   const disabled = archived || status === 'deleted' || status === 'terminated';
   return {
     acceptingMessages:
-      !archived &&
-      (status === 'queued' || (status === 'idle' && idleState !== 'budget_reached' && idleState !== 'awaiting_action')),
+      !archived && !budgetReached && (status === 'queued' || (status === 'idle' && idleState !== 'awaiting_action')),
     disabled,
     composerDisabled: disabled || budgetReached,
     live: !archived && sessionStatusIsLive(status),

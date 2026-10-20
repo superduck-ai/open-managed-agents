@@ -28,6 +28,12 @@ type Transport struct {
 	Logger     *slog.Logger
 }
 
+type modelKey struct{}
+
+func WithModel(ctx context.Context, model string) context.Context {
+	return context.WithValue(ctx, modelKey{}, model)
+}
+
 func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
 	principal, ok := auth.PrincipalFromContext(request.Context())
 	if !ok || principal.CodeSessionExternalID != "" {
@@ -86,7 +92,10 @@ func requestRecord(request *http.Request, principal auth.Principal, source strin
 	if err := json.UnmarshalRead(body, &input); err != nil {
 		return record, err
 	}
-	record.Model = input.Model
+	record.Model, _ = request.Context().Value(modelKey{}).(string)
+	if record.Model == "" {
+		record.Model = input.Model
+	}
 	return record, nil
 }
 

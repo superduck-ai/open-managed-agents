@@ -150,7 +150,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return
 	}
-	upstreamRequest, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, bytes.NewReader(body))
+	upstreamRequest, err := http.NewRequestWithContext(metering.WithModel(r.Context(), upstream.QualifiedModelID), http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "build messages upstream request", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
@@ -166,8 +166,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	}
 	request, err := h.beginModelRequest(r, principal, upstream.QualifiedModelID)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "start model request", "error", err)
-		httpapi.WriteError(w, r, upstreamUnavailableError())
+		if errors.Is(err, db.ErrSessionBudgetReached) {
+			w.Header().Set("X-Should-Retry", "false")
+		} else {
+			h.logger.ErrorContext(r.Context(), "start model request", "error", err)
+		}
+		httpapi.WriteError(w, r, modelRequestStartError(err))
 		return
 	}
 	h.proxyModelRequest(w, r, upstreamRequest, request)

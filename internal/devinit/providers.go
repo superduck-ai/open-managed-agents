@@ -42,6 +42,13 @@ func reconcileProvider(ctx context.Context, database *db.DB, vaultSecrets *secre
 		}
 	}
 	if existing == nil {
+		if spec.Slug == "" {
+			slugs := make([]string, 0, len(existingList))
+			for _, provider := range existingList {
+				slugs = append(slugs, provider.Slug)
+			}
+			spec.Slug = llmproviders.NextDefaultSlug(slugs)
+		}
 		provider, err := createProvider(ctx, database, vaultSecrets, organizationUUID, workspace, spec)
 		if err != nil {
 			return ProviderState{}, err
@@ -62,6 +69,7 @@ func createProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.
 		OrganizationUUID: organizationUUID,
 		WorkspaceUUID:    workspace.UUID,
 		Name:             spec.Name,
+		Slug:             spec.Slug,
 		APIBackend:       spec.APIBackend,
 		BaseURL:          spec.BaseURL,
 		ModelIDs:         spec.ModelIDs,
@@ -72,13 +80,16 @@ func createProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.
 	}
 	provider.SecretEnvelope = &envelope
 	created, err := database.CreateLLMProvider(ctx, provider)
-	if errors.Is(err, db.ErrDuplicate) || isModelConflict(err) {
-		return db.LLMProvider{}, fmt.Errorf("model ids are already owned by another provider in this workspace: %w", err)
+	if errors.Is(err, db.ErrLLMProviderSlugConflict) {
+		return db.LLMProvider{}, fmt.Errorf("provider slug %q is already used in this workspace: %w", spec.Slug, err)
 	}
 	return created, err
 }
 
 func updateProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.Service, existing db.LLMProvider, workspaceRef string, spec ProviderSpec, opts Options) (ProviderState, error) {
+	if spec.Slug != "" && spec.Slug != existing.Slug {
+		return ProviderState{}, fmt.Errorf("provider slug %q differs from registered slug %q; slug is immutable", spec.Slug, existing.Slug)
+	}
 	changed := existing.BaseURL != spec.BaseURL || existing.APIBackend != spec.APIBackend || !equalStrings(existing.ModelIDs, spec.ModelIDs)
 	keyChanged, err := providerKeyChanged(ctx, vaultSecrets, existing, spec.APIKey)
 	if err != nil {
@@ -102,9 +113,6 @@ func updateProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.
 		existing.SecretEnvelope = &envelope
 	}
 	updated, err := database.UpdateLLMProvider(ctx, existing)
-	if isModelConflict(err) {
-		return ProviderState{}, fmt.Errorf("model ids are already owned by another provider in this workspace: %w", err)
-	}
 	if err != nil {
 		return ProviderState{}, err
 	}
@@ -132,9 +140,4 @@ func equalStrings(first, second []string) bool {
 		}
 	}
 	return true
-}
-
-func isModelConflict(err error) bool {
-	var conflict *db.LLMProviderModelConflictError
-	return errors.As(err, &conflict)
 }

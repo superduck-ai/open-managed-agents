@@ -24,6 +24,8 @@ func TestRuntimeSkillRefsConfigurationBoundaries(t *testing.T) {
 		{name: "skill ID delimiter differs", snapshot: `{"skills":[{"type":"custom","skillid":"review"}]}`, wantErr: true},
 		{name: "invalid child type", snapshot: `{"multiagent":{"agents":[{"skills":[{"type":"unknown","skill_id":"review"}]}]}}`, wantErr: true},
 		{name: "missing child skill ID", snapshot: `{"multiagent":{"agents":[{"skills":[{"type":"custom"}]}]}}`, wantErr: true},
+		{name: "invalid CMA child skills", snapshot: `{"multiagent":{"type":"multiagent_20261001","subagents":{"type":"enabled","predefined_agents":[{"skills":[{"type":"unknown"}]}]}}}`, wantErr: true},
+		{name: "CMA independent lists", snapshot: `{"multiagent":{"type":"multiagent_20261001","subagents":{"type":"enabled","predefined_agents":[{"skills":[{"type":"custom","skill_id":"review","version":"1"}]}]},"workflows":{"type":"enabled","predefined_agents":[{"skills":[{"type":"anthropic","skill_id":"workflow"}]}]}}}`, want: []runtimeSkillRef{child, {Type: "anthropic", SkillID: "workflow"}}},
 		{name: "missing skills", snapshot: `{}`},
 		{name: "null skills", snapshot: `{"skills":null}`},
 		{name: "null snapshot", snapshot: `null`},

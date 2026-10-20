@@ -1,11 +1,15 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -40,10 +44,11 @@ func (p *provisioningTestProvider) ServiceEndpoint(context.Context, string, int,
 
 func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 	for _, scenario := range []struct {
-		name          string
-		prewarm, fail bool
+		name                 string
+		prewarm, fail, vault bool
 	}{
-		{"failed prewarm does not dispatch", true, true}, {"lazy", false, false}, {"prewarm", true, false},
+		{"failed prewarm does not dispatch", true, true, false}, {"lazy", false, false, false}, {"prewarm", true, false, false},
+		{"lazy vault placeholders", false, false, true}, {"prewarm vault placeholders", true, false, true},
 	} {
 		prewarm := scenario.prewarm
 		t.Run(scenario.name, func(t *testing.T) {
@@ -51,11 +56,24 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			cfg := app.cfg
 			cfg.EnvironmentRunner.AgentMode = "brain"
 			cfg.EnvironmentRunner.BrainSandboxPrewarm = prewarm
-			cfg.CodeSession.UpstreamProxyMITMEnabled = false
+			cfg.CodeSession.UpstreamProxyMITMEnabled = scenario.vault
 			cfg.CodeSession.SandboxAPIBaseURL = "http://sandbox.example.test"
 			agent := createAgent(t, app, `{"name":"lazy","model":"claude-opus-4-6"}`)
 			env := createEnvironment(t, app, `{"name":"lazy","config":{"type":"cloud","networking":{"type":"unrestricted"}}}`)
-			session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+			vaultBinding, expectedPlaceholder := "", ""
+			if scenario.vault {
+				vault := createVault(t, app, `{"display_name":"brain env mount"}`)
+				credential := createVaultCredential(t, app, vault.ID, `{"auth":{"type":"environment_variable","secret_name":"VAULT_TEST","secret_value":"synthetic-mount-canary","networking":{"type":"unrestricted"}}}`)
+				var auth struct {
+					Placeholder string `json:"placeholder"`
+				}
+				if err := json.Unmarshal(credential.Auth, &auth); err != nil {
+					t.Fatal(err)
+				}
+				expectedPlaceholder = auth.Placeholder
+				vaultBinding = `,"vault_ids":[` + quoteJSON(vault.ID) + `]`
+			}
+			session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+vaultBinding+`}`)
 			sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"hello"}]}]}`, defaultTestKey)
 			var discoveries atomic.Int32
 			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +143,7 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			failures := make([]error, 2)
 			var calls sync.WaitGroup
 			for i := range 2 {
-				calls.Go(func() { urls[i], failures[i] = runners[i].EnsureSessionSandbox(ctx, code) })
+				calls.Go(func() { urls[i], _, failures[i] = runners[i].EnsureSessionSandbox(ctx, code) })
 			}
 			calls.Wait()
 			if failures[0] != nil || failures[1] != nil || urls[0] != endpoint.URL || urls[1] != endpoint.URL || creates.Load() != 1 {
@@ -134,7 +152,27 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			if len(providers[0].launches)+len(providers[1].launches) != 1 {
 				t.Fatal("MCP started more than once")
 			}
-			_, err = runners[1].EnsureSessionSandbox(ctx, code)
+			if scenario.vault {
+				for _, provider := range providers {
+					for _, launch := range provider.launches {
+						var payload struct {
+							Startup struct {
+								Environment map[string]string `json:"environment_variables"`
+							} `json:"startup_context"`
+						}
+						if err := json.Unmarshal(launch.stdin, &payload); err != nil {
+							t.Fatal(err)
+						}
+						if expectedPlaceholder == "" || payload.Startup.Environment["VAULT_TEST"] != expectedPlaceholder {
+							t.Fatal("Vault placeholder missing from Brain sandbox startup")
+						}
+						if strings.Contains(string(launch.stdin), "synthetic-mount-canary") {
+							t.Fatal("Vault secret entered sandbox startup")
+						}
+					}
+				}
+			}
+			_, _, err = runners[1].EnsureSessionSandbox(ctx, code)
 			if err != nil || creates.Load() != 1 {
 				t.Fatalf("warm reuse: %v creates=%d", err, creates.Load())
 			}
@@ -146,7 +184,7 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			if response.StatusCode != http.StatusOK {
 				t.Fatalf("delete session: %d", response.StatusCode)
 			}
-			if _, err := runners[0].EnsureSessionSandbox(ctx, code); err == nil {
+			if _, _, err := runners[0].EnsureSessionSandbox(ctx, code); err == nil {
 				t.Fatal("deleted session provisioned sandbox")
 			}
 		})

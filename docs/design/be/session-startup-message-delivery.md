@@ -36,6 +36,24 @@ sequenceDiagram
     Send->>JS: active realtime 直接发布并等待 PubAck
 ```
 
+## 创建时的初始事件
+
+`POST /v1/sessions` 接受可选 `initial_events` 数组，CMA 契约来源为
+https://platform.claude.com/docs/en/managed-agents/sessions#seed-the-session-with-initial-events 。
+省略或空数组创建 idle Session，不启动模型工作。非空数组最多 50 条，只接受 `user.message` 和
+`user.define_outcome`，后者最多一条且必须包含 rubric。内容校验复用 Send Events；整个列表最多
+100 个来源为 file 的 document 块。创建请求上限为 32 MiB，超限返回 413，其他 Session 端点仍保留原预算。
+
+先完成整批校验和大 payload 准备，再用同一个 Yourbatis 事务创建 Session、主 Thread、Filestore、
+资源、Environment Work，写入 running 状态事实和全部初始事件。按数组顺序分配并持久化事件 ID，
+outcome evaluations 随 Session 一起保存。事件写入失败会回滚整个创建；预上传对象沿用 payload GC。
+创建响应从事务内最终状态构造，非空列表直接返回 running，不向外暴露中间 idle 状态。
+
+提交后发布公开事件和 Webhook。Runner 的 activation 从已提交历史中读取初始事件，沿用下面的
+启动交接和稳定 ID 机制，不在创建后另发一次 Send Events 请求，避免半完成 Session 和重复投递。
+初始事件不在创建响应中回显，调用方通过事件历史读取。Scheduled Deployment 的 initial_events
+独立保留其允许 system.message 的契约。
+
 ## Activation 事务
 
 activation 先用短 Yourbatis 事务锁定 Session 与 `initializing` Code Session，读取完整

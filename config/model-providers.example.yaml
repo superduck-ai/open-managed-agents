@@ -2,6 +2,7 @@ version: 1
 
 providers:
   - name: primary
+    slug: primary
     api_backend: messages
     base_url: https://api.anthropic.com
     api_key: ""

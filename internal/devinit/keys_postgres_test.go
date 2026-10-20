@@ -1,3 +1,5 @@
+//go:build integration
+
 package devinit
 
 import (
@@ -13,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
+	"github.com/superduck-ai/open-managed-agents/internal/secretservice"
 	"uuid"
 )
 
@@ -84,6 +87,38 @@ func TestAPIKeyRecoveryPostgreSQL(t *testing.T) {
 	if err := reconcileAPIKeys(t.Context(), database, spec, &state, &credentials, Options{}); err != nil {
 		t.Fatal(err)
 	}
+	t.Run("provider slugs support shared model ids and retries", func(t *testing.T) {
+		vault, err := secretservice.New(cfg.Vault.MasterKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		providers := ModelProvidersSpec{Providers: []ProviderSpec{
+			{Name: "first", APIBackend: "messages", BaseURL: "https://api.anthropic.com", APIKey: "first-key", ModelIDs: []string{"shared-model"}},
+			{Name: "second", Slug: "compatible", APIBackend: "chat_completions", BaseURL: "https://provider.example", APIKey: "second-key", ModelIDs: []string{"shared-model"}},
+		}}
+		for range 2 {
+			if err := reconcileProviders(t.Context(), database, vault, providers, &state, Options{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, workspace := range state.Workspaces {
+			items, err := database.ListLLMProviders(t.Context(), state.Organization.UUID, workspace.UUID)
+			if err != nil || len(items) != 2 {
+				t.Fatalf("providers: %+v, %v", items, err)
+			}
+			byName := map[string]string{}
+			for _, item := range items {
+				byName[item.Name] = item.Slug
+			}
+			if byName["first"] != "default" || byName["second"] != "compatible" {
+				t.Fatalf("provider slugs: %v", byName)
+			}
+		}
+		providers.Providers[1].Slug = "renamed"
+		if err := reconcileProviders(t.Context(), database, vault, providers, &state, Options{Update: true}); err == nil {
+			t.Fatal("immutable slug change was accepted")
+		}
+	})
 	t.Run("default environments recover committed creation", func(t *testing.T) {
 		if err := SaveState(layout, state); err != nil {
 			t.Fatal(err)
@@ -129,18 +164,4 @@ func TestAPIKeyRecoveryPostgreSQL(t *testing.T) {
 	if err != nil || len(keys) != 4 {
 		t.Fatalf("expected exactly four keys, got %d: %v", len(keys), err)
 	}
-}
-
-func pendingKeyFixture() (Spec, State, Credentials) {
-	spec := Spec{OrganizationName: "OMA", UserEmail: "test@oma.ai", UserName: "Test", UserRole: "admin"}
-	credentials := Credentials{EnvID: "test", BrainClaimToken: "token"}
-	for index, ref := range []string{"default", "secondary"} {
-		spec.Workspaces = append(spec.Workspaces, WorkspaceSpec{
-			Ref: ref, Name: ref, IsDefault: index == 0, APIKeys: []APIKeySpec{{Ref: "key-1", Name: ref + "-1"}, {Ref: "key-2", Name: ref + "-2"}},
-		})
-		for _, key := range spec.Workspaces[index].APIKeys {
-			credentials.APIKeys = append(credentials.APIKeys, APICredential{WorkspaceRef: ref, Ref: key.Ref, Key: ref + key.Ref})
-		}
-	}
-	return spec, State{EnvID: "test"}, credentials
 }

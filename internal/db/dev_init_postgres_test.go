@@ -1,3 +1,5 @@
+//go:build integration
+
 package db
 
 import (
@@ -96,14 +98,4 @@ func devIdentityFixture() DevIdentity {
 		})
 	}
 	return input
-}
-
-func TestDevOrganizationInsertBinding(t *testing.T) {
-	assertMapperBuilderContract(t, mapperBuilderContract{
-		statement: adminOrganizationMapperInsertStatement,
-		bound:     buildAdminOrganizationMapperInsert(yourbatis.DialectPostgres, "org-uuid", "OMA"),
-		wantID:    "AdminOrganizationMapper.Insert", wantKind: yourbatis.StatementInsert,
-		wantArgumentNames: []string{"organizationUUID", "name"},
-		wantSQLFragments:  []string{"INSERT INTO organizations (uuid, name)", "VALUES ($1, $2)"},
-	})
 }

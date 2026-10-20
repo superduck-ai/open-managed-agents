@@ -32,3 +32,16 @@ func TestValidatePrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateRejectsUnicodeLineParagraphSeparators(t *testing.T) {
+	for _, path := range []string{"/sentinel.md\u2028line", "/sentinel.md\u2029paragraph"} {
+		if err := Validate(path); err == nil {
+			t.Fatalf("accepted SDK-forbidden separator in %q", path)
+		}
+	}
+	for _, path := range []string{"/sentinel.md line", "/sentinel.md\u00a0space", "/中文/笔记.md"} {
+		if err := Validate(path); err != nil {
+			t.Fatalf("rejected valid ordinary path %q: %v", path, err)
+		}
+	}
+}

@@ -53,6 +53,7 @@ type ModelProvidersSpec struct {
 }
 
 type ProviderSpec struct {
+	Slug       string
 	Name       string
 	APIBackend string
 	BaseURL    string
@@ -315,6 +316,7 @@ func (s Spec) validate() error {
 }
 
 type rawProvider struct {
+	Slug       string   `yaml:"slug"`
 	Name       string   `yaml:"name"`
 	APIBackend string   `yaml:"api_backend"`
 	BaseURL    string   `yaml:"base_url"`
@@ -347,6 +349,7 @@ func LoadModelProviders(path string) (ModelProvidersSpec, error) {
 	}
 	spec := ModelProvidersSpec{Version: raw.Version}
 	seen := map[string]bool{}
+	slugs := map[string]bool{}
 	for _, provider := range raw.Providers {
 		resolved, err := resolveProvider(path, provider)
 		if err != nil {
@@ -355,6 +358,10 @@ func LoadModelProviders(path string) (ModelProvidersSpec, error) {
 		if seen[resolved.Name] {
 			return ModelProvidersSpec{}, fmt.Errorf("%s: provider name %q is duplicated", path, resolved.Name)
 		}
+		if resolved.Slug != "" && slugs[resolved.Slug] {
+			return ModelProvidersSpec{}, fmt.Errorf("%s: provider slug %q is duplicated", path, resolved.Slug)
+		}
+		slugs[resolved.Slug] = true
 		seen[resolved.Name] = true
 		spec.Providers = append(spec.Providers, resolved)
 	}
@@ -362,6 +369,12 @@ func LoadModelProviders(path string) (ModelProvidersSpec, error) {
 }
 
 func resolveProvider(path string, provider rawProvider) (ProviderSpec, error) {
+	slug := strings.TrimSpace(provider.Slug)
+	if slug != "" {
+		if err := llmproviders.ValidateSlug(slug); err != nil {
+			return ProviderSpec{}, err
+		}
+	}
 	if strings.TrimSpace(provider.Name) == "" || len(provider.Name) > 100 {
 		return ProviderSpec{}, errors.New("name must be 1-100 characters")
 	}
@@ -428,6 +441,7 @@ func resolveProvider(path string, provider rawProvider) (ProviderSpec, error) {
 		return ProviderSpec{}, fmt.Errorf("model_ids must contain 1-%d entries", maxModelIDsPerProvider)
 	}
 	return ProviderSpec{
+		Slug:       slug,
 		Name:       provider.Name,
 		APIBackend: backend,
 		BaseURL:    baseURL,

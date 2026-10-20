@@ -33,6 +33,7 @@ type Handler struct {
 	secretSvc    *secrets.Service
 	webhooks     webhookEnqueuer
 	logger       *slog.Logger
+	validator    *Injector
 	errorAdapter *httpapi.ErrorAdapter
 	router       chi.Router
 }
@@ -42,8 +43,8 @@ type webhookEnqueuer interface {
 }
 
 type createVaultRequest struct {
-	DisplayName string            `json:"display_name"`
-	Metadata    map[string]string `json:"metadata"`
+	DisplayName string          `json:"display_name"`
+	Metadata    json.RawMessage `json:"metadata"`
 }
 
 type updateVaultRequest struct {
@@ -141,6 +142,7 @@ func NewHandler(cfg config.Config, database *db.DB, secretSvc *secrets.Service, 
 		secretSvc:    secretSvc,
 		webhooks:     webhookEvents,
 		logger:       logger,
+		validator:    NewInjector(database, secretSvc, logger).WithPlatformOAuthClients(cfg.Vault.PlatformOAuthClients).WithWebhooks(webhookEvents),
 		errorAdapter: httpapi.NewErrorAdapter(logger),
 	}
 	router := chi.NewRouter()
@@ -196,7 +198,7 @@ func (h *Handler) createVault(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	metadata, err := normalizeMetadata(request.Metadata)
+	metadata, err := normalizeVaultCreateMetadata(request.Metadata)
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -305,7 +307,7 @@ func (h *Handler) updateVaultRoute(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return invalidRequest(err)
 	}
-	next.Metadata, err = patchMetadata(next.Metadata, request.Metadata)
+	next.Metadata, err = patchVaultMetadata(next.Metadata, request.Metadata)
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -400,11 +402,8 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return invalidRequest(err)
 	}
-	displayName, err := requireNonEmptyString(request.DisplayName, "display_name")
-	if err == nil {
-		err = validateDisplayName(displayName)
-	}
-	if err != nil {
+	displayName := strings.TrimSpace(request.DisplayName)
+	if err := validateDisplayName(displayName); err != nil {
 		return invalidRequest(err)
 	}
 	metadata, err := normalizeMetadata(request.Metadata)
@@ -636,35 +635,14 @@ func (h *Handler) validateCredentialRoute(w http.ResponseWriter, r *http.Request
 	if credential.AuthType != "mcp_oauth" {
 		return credentialRequiresMCPOAuth()
 	}
-	// Decrypt transiently to inspect whether a refresh token is present. The
-	// plaintext is not persisted or logged.
-	plaintext, err := openCredentialSecret(r.Context(), h.secretSvc, credential)
+	result, err := h.validator.validateMCPOAuth(r.Context(), credential)
+	if errors.Is(err, errArchivedDiagnostic) {
+		return credentialArchived()
+	}
 	if err != nil {
 		return credentialSecretError(err, "Could not validate credential")
 	}
-	defer clear(plaintext)
-	secret, err := decodeMCPOAuthCredentialSecret(plaintext)
-	if err != nil {
-		return credentialSecretError(err, "Could not validate credential")
-	}
-	hasRefreshToken := secret.Refresh != nil && secret.Refresh.RefreshToken != ""
-	refreshStatus := "no_refresh_token"
-	if hasRefreshToken {
-		refreshStatus = "connect_error"
-	}
-	httpapi.WriteJSON(w, http.StatusOK, validationResponse{
-		CredentialID:    credential.ExternalID,
-		HasRefreshToken: hasRefreshToken,
-		MCPProbe:        nil,
-		Refresh: validationRefresh{
-			HTTPResponse: nil,
-			Status:       refreshStatus,
-		},
-		Status:      "unknown",
-		Type:        "vault_credential_validation",
-		ValidatedAt: formatTime(time.Now().UTC()),
-		VaultID:     credential.VaultExternalID,
-	})
+	httpapi.WriteJSON(w, http.StatusOK, result)
 	return nil
 }
 
@@ -760,11 +738,8 @@ func normalizeMetadata(metadata map[string]string) (json.RawMessage, error) {
 }
 
 func patchDisplayName(current string, raw json.RawMessage) (string, error) {
-	if len(raw) == 0 {
+	if len(raw) == 0 || isJSONNull(raw) {
 		return current, nil
-	}
-	if isJSONNull(raw) {
-		return "", errors.New("display_name cannot be null")
 	}
 	var value string
 	if err := json.Unmarshal(raw, &value); err != nil {

@@ -43,6 +43,7 @@
 
 - `registerVersionedAPIRoutes` 统一挂载 `/v1`、`/v2`；`/v1` 通用资源只注册一次，并由凭据感知中间件选择 service API key 或 platform session 鉴权链。
 - `/v1/sessions` 及其子路由直接进入 Session 资源处理；`?beta=true` 可继续使用，但不是访问前提。API key 和平台会话仍经过上述鉴权链。
+- `/v1/agents`、Agent 子路由及 `/v1/agents:search` 不校验 `beta` 查询参数；省略参数、`beta=true` 和 `beta=false` 均直接进入对应资源处理。鉴权、请求体校验和版本冲突规则继续适用。Agent API 普通回归覆盖无查询参数的创建、更新、读取、归档、列表、版本和搜索，以及旧参数兼容。
 - `/v1` platform privacy consent 路由从 `platformapi` 注册；code-session worker、ingress 与 upstream proxy 路由由 `codesessions.Handler` 注册，并在 handler 内执行专用鉴权。
 - `/v1/messages` 进入通用凭据感知中间件；code-session Messages token 只在 service auth 的这个 `POST` 路径被接受。
 - `registerPlatformConsoleRoutes` 将 `/api`、`/auth`、`/oauth`、`/web-api` 的平台 console 路由直接注册到根 chi router，不再通过成对的精确路径和 wildcard handler 转发到第二个 router。

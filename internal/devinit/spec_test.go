@@ -122,6 +122,8 @@ func TestLoadModelProvidersRejectsMalformedInputs(t *testing.T) {
 	base := strings.Replace(validProviders, "./compatible-api-key", keyFile, 1)
 	cases := map[string]string{
 		"unknown field":       strings.Replace(base, "providers:", "mystery: 1\nproviders:", 1),
+		"invalid slug":        strings.Replace(base, "name: primary", "name: primary\n    slug: Invalid/slug", 1),
+		"duplicate slug":      strings.Replace(strings.Replace(base, "name: primary", "name: primary\n    slug: shared", 1), "name: compatible", "name: compatible\n    slug: shared", 1),
 		"bad backend":         strings.Replace(base, "chat_completions", "grpc", 1),
 		"url with userinfo":   strings.Replace(base, "https://provider.example", "https://user:pass@provider.example", 1),
 		"two key sources":     strings.Replace(base, "api_key_file: ", "api_key: inline\n    api_key_file: ", 1),
@@ -150,12 +152,16 @@ func TestLoadModelProvidersResolvesKeys(t *testing.T) {
 	t.Setenv("OMA_TEST_ENV_KEY", "env-key")
 	content := strings.Replace(validProviders, "./compatible-api-key", keyFile, 1)
 	content = strings.Replace(content, "api_key: sk-test-key", "api_key_env: OMA_TEST_ENV_KEY", 1)
+	content = strings.Replace(content, "name: primary", "name: primary\n    slug: primary", 1)
 	spec, err := LoadModelProviders(writeProvidersFile(t, content))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(spec.Providers) != 2 {
 		t.Fatalf("len(Providers) = %d, want 2", len(spec.Providers))
+	}
+	if spec.Providers[0].Slug != "primary" || spec.Providers[1].Slug != "" {
+		t.Fatalf("unexpected provider slugs: %q, %q", spec.Providers[0].Slug, spec.Providers[1].Slug)
 	}
 	if spec.Providers[0].APIKey != "env-key" {
 		t.Fatalf("Providers[0].APIKey = %q, want env-key", spec.Providers[0].APIKey)

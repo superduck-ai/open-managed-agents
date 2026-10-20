@@ -33,7 +33,7 @@ func nativeStreamPreview(batch codeSessionStreamFanout) (sessionStreamEvent, boo
 		}
 		id = payload.Event.ID
 	case previewEventDelta:
-		if payload.Delta.Type != "content_delta" || payload.Delta.Index != 0 || payload.Delta.Content.Type != "text" && payload.Delta.Content.Type != "thinking" {
+		if payload.Delta.Type != "content_delta" || payload.Delta.Index != 0 || payload.Delta.Content.Type != "text" {
 			return sessionStreamEvent{}, false
 		}
 	default:

@@ -8,6 +8,27 @@ import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 /** Protocol mapping and durable per-thread execution adapters. */
 export class CcrSubagentBridge implements SubagentBridge {
   constructor(readonly session: CcrSession) {}
+  async validateThread(threadId: string, signal: AbortSignal): Promise<void> {
+    if (!this.session.backend.getSubagentThread) throw new Error("Authoritative subagent thread state is unavailable");
+    const state = await this.session.backend.getSubagentThread(this.session.id, threadId, signal);
+    if (state.id !== threadId) throw new Error("Invalid authoritative subagent thread identity");
+    if (state.archived || state.status === "terminated") {
+      const thread = this.threads().find((entry) => entry.id === threadId);
+      if (thread) thread.status = "terminated";
+      throw new Error("Subagent thread is archived");
+    }
+    if (state.status !== "idle") throw new Error("Subagent thread is running or archived");
+  }
+  async archivedThreads(threadIds: string[], signal: AbortSignal): Promise<string[]> {
+    if (!this.session.backend.getSubagentThread) throw new Error("Authoritative subagent thread state is unavailable");
+    const archived: string[] = [];
+    for (const id of threadIds) {
+      const state = await this.session.backend.getSubagentThread(this.session.id, id, signal);
+      if (state.id !== id) throw new Error("Invalid authoritative subagent thread identity");
+      if (state.archived || state.status === "terminated") archived.push(id);
+    }
+    return archived;
+  }
   threads(): SubagentThread[] { return this.session.state.threads ??= []; }
   bindPersistence(threadId: string): void {
     (this.session.ctx.sessionPersistence as CcrPersistence).bindThread(threadId, this.session.id);
@@ -16,24 +37,32 @@ export class CcrSubagentBridge implements SubagentBridge {
     const { thread } = event;
     let fields: Payload;
     switch (event.kind) {
-      case "created": fields = { type: "session.thread_created", parent_thread_id: this.session.id }; break;
+      case "created":
+        fields = { type: "session.thread_created", parent_thread_id: this.session.id };
+        if (thread.inline) fields.agent = { type: "inline", name: thread.name, system: thread.systemPrompt };
+        else if (thread.agentSnapshot) fields.agent = thread.agentSnapshot;
+        break;
       case "running":
         this.session.beginThread(thread.id);
         fields = { type: "session.thread_status_running" }; break;
       case "terminated": fields = { type: "session.thread_status_terminated" }; break;
       case "idle":
         this.session.endThread(thread.id, event.completed);
-        fields = { type: "session.thread_status_idle", stop_reason: { type: event.completed ? "end_turn" : "interrupted" } }; break;
+        fields = { type: "session.thread_status_idle", stop_reason: { type: this.session.consumeInterruptedApproval(thread.id) || event.completed ? "end_turn" : "interrupted" } }; break;
       case "message-sent":
         fields = { type: "agent.thread_message_sent", to_session_thread_id: thread.id,
           to_agent_name: thread.name, content: [{ type: "text", text: event.text }] }; break;
       case "report-received":
+        this.session.wakeParentFromChildReport();
         fields = { type: "agent.thread_message_received", from_session_thread_id: thread.id,
           from_agent_name: thread.name, content: [{ type: "text", text: event.text }] }; break;
     }
     this.session.state.outbox.push({ ...fields, uuid: crypto.randomUUID(), session_thread_id: thread.id, agent_name: thread.name });
     await this.session.flushEvents();
     await this.session.updateStatus();
+  }
+  onContextCompacted(threadId: string, tokens?: number): Promise<void> {
+    return this.session.contextCompacted(tokens, threadId);
   }
   beforeRequest(): Promise<void> { return this.session.flushEvents(); }
   onEvent(threadId: string, event: SessionEvent): void { this.session.record(event, threadId); }

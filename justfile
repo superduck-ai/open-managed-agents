@@ -60,8 +60,13 @@ restart-web:
 
 # Restart weather MCP server in foreground. Override with: PORT=39091 WEATHER_MCP_PATH=/custom just weather-mcp
 
-test: generate
-  go test ./... -count=1
+[positional-arguments]
+test target="./..." *args: generate
+  go test -count=1 "$@"
+
+[positional-arguments]
+test-integration target="./..." *args: generate
+  go test -tags=integration -count=1 "$@"
 
 verify-be *args:
   ./.agents/skills/verify-be/scripts/verify-be {{args}}

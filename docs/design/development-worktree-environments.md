@@ -262,6 +262,7 @@ version: 1
 
 providers:
   - name: primary
+    slug: primary
     api_backend: messages
     base_url: https://api.anthropic.com
     api_key: "填写服务商提供的 API key"
@@ -269,6 +270,7 @@ providers:
       - your-model-id
 
   - name: compatible
+    slug: compatible
     api_backend: chat_completions
     base_url: https://provider.example
     api_key: "填写服务商提供的 API key"
@@ -281,7 +283,8 @@ providers:
 - 两个 workspace 分别创建 provider 记录，使用同一组文件定义。
 - provider 密钥经现有 secrets 服务加密后写入当前环境数据库。
 - 模型列表以文件为准，初始化时不自动访问上游同步模型。
-- 保留现有 URL 校验、模型数量限制和模型归属约束。
+- 保留现有 URL 校验和模型数量限制；不同 provider 可使用相同上游模型 ID，通过 `<slug>/<model_id>` 区分。
+- `slug` 可选，显式值遵守现有 slug 格式校验且在文件内唯一；省略时，新建记录按当前 workspace 的空闲值分配 `default`、`default-2` 等，重跑保留现有值。slug 创建后不可修改，`--update` 也会拒绝变更。
 - 同一 workspace 内的同名 provider 用于匹配，修改名称视为新增，旧记录不自动删除。
 - 密钥是否一致不能通过 last4 判断，应通过现有 secrets 服务解密后在内存比较。
 
@@ -289,12 +292,7 @@ providers:
 
 ## 固定 JWT 与上游代理 CA 密钥
 
-以下两个文件使用固定来源，不为每个环境重新生成：
-
-| 文件                  | 来源                                                                                           |
-| --------------------- | ---------------------------------------------------------------------------------------------- |
-| 上游代理 CA 私钥      | `/Users/arthur/GolandProjects/open-managed-agents/config/secrets/upstream-proxy-ca-key.pem`    |
-| Code Session JWT 私钥 | `/Users/arthur/GolandProjects/open-managed-agents/config/secrets/code-session-jwt-ed25519.pem` |
+默认 `just dev-init` 在首次缺少输入时准备 `.run/secrets/` 中的 JWT 与 CA 私钥；已有文件不覆盖。需要复用固定私钥时，首次初始化前将原有 `upstream-proxy-ca-key.pem` 和 `code-session-jwt-ed25519.pem` 放到该目录，或通过自定义初始化文件的 `fixed_secrets_dir` 指定来源。已绑定环境缺少输入时要求恢复原文件，不生成替代密钥。
 
 初始化时按 `fixed_secrets_dir` 读取并复制到当前 worktree：
 
@@ -305,7 +303,7 @@ providers:
 
 处理规则：
 
-- 来源必须存在且为有效的对应私钥文件，不输出文件内容。
+- 复制阶段要求来源为常规文件，不输出文件内容；默认准备入口生成对应格式的私钥。
 - 目标不存在时原子复制，目录权限 `0700`，文件权限 `0600`。
 - 来源与目标内容相同则跳过；不同则报告冲突，不覆盖。
 - 来源缺失时报错，不自动生成替代密钥。
@@ -362,17 +360,18 @@ providers:
 flowchart TD
     Input[读取并校验全部初始化文件] --> Lock[锁定环境并检查绑定与归属]
     Lock --> Prepare[校验并复制固定密钥 保存待提交随机密钥]
-    Prepare --> Infra[确保数据库 Redis DB 和 bucket 可用]
+    Prepare --> Infra[确保独立 Compose 栈与 bucket 可用]
     Infra --> Migration[执行迁移并初始化 secrets 服务]
     Migration --> Identity[创建组织 用户 workspace 和成员关系]
     Identity --> Keys[创建四个客户端 API key]
-    Keys --> Providers[按 workspace 初始化 model providers]
+    Keys --> Environments[按 workspace 初始化无限制网络的 default 环境]
+    Environments --> Providers[按 workspace 初始化 model providers]
     Providers --> Complete[保存映射与完成状态 输出地址和凭据路径]
 ```
 
 使用小型 Go CLI 负责配置解析、初始化和状态查询，Shell 脚本只作为入口及进程管理层。不额外要求安装 `yq`、`psql` 或 `mc`。
 
-组织、用户、workspace、成员关系和 API key 的关联数据库写入保持事务一致。provider 按 workspace 批量写入并沿用模型归属锁。整个初始化跨数据库、文件和对象存储，采用可恢复阶段，不宣称全局事务。
+组织、用户、workspace、成员关系和 API key 的关联数据库写入保持事务一致。provider 按 workspace 逐个写入，沿用现有 slug 唯一约束。整个初始化跨数据库、文件和对象存储，采用可恢复阶段，不宣称全局事务。
 
 API key 创建必须同时维护 Console 展示记录和实际鉴权记录，复用现有业务语义。不能只插入鉴权表导致页面不可见，或只插入展示表导致 key 无法使用。
 
@@ -403,9 +402,9 @@ API key 创建必须同时维护 Console 展示记录和实际鉴权记录，复
 
 先覆盖失败场景，再覆盖成功场景：
 
-- 配置非法、密钥缺失、资源归属冲突、端口冲突及 Redis DB 不可用时明确失败。
+- 配置非法、密钥缺失、资源归属冲突、端口冲突及依赖服务不可用时明确失败。
 - 固定私钥内容不一致时不覆盖；来源与目标相同时可重复执行。
-- 模型被其他 provider 占用时失败，同一 workspace 批量写入回滚。
+- 不同 provider 的同名模型可同时初始化；重复 slug 或修改已创建的 slug 时明确失败。
 - 中断和并发初始化不产生重复用户、workspace 或 API key。
 - 凭据或资源映射丢失时不静默换 key、不误接管其他资源。
 - 新环境创建 `test@oma.ai`、一个组织、两个 workspace，每个 workspace 两个 key。
@@ -543,3 +542,5 @@ flowchart TD
 服务退出后复用 `dev-teardown` 的资源清理逻辑。Compose 清理失败时保留绑定和注册表，允许重试；成功时删除绑定与 `.run/generated/`，保留 `.run/config.yaml`、`.run/dev-init.yaml`、`.run/secrets/`、源码和共享 LLM 配置。命令退出码为 0 后，外部流程再执行 worktree 删除。重复执行已经清理的目标会跳过 Compose。
 
 普通单测使用隔离的临时 Git clone/worktree 与模拟 Docker，覆盖确认参数、跨仓库拒绝、身份不符、Compose 失败保留状态、停止服务后删除数据卷、清理后保留目录与私钥、重复清理，以及主 checkout、脏文件和锁定 worktree 的保留；进程测试校验命令/cwd 归属。测试不清理开发者的实际环境。
+
+真实 PostgreSQL 初始化恢复测试按仓库集成测试约定运行：`TEST_MIGRATION_DATABASE_URL=... go test -tags=integration ./internal/db ./internal/devinit -run 'TestDevIdentityPostgreSQL|TestAPIKeyRecoveryPostgreSQL' -count=1`。默认 `just test` 不依赖真实数据库。

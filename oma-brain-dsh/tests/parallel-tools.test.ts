@@ -11,9 +11,10 @@ import type { Payload } from "../src/json.ts";
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
-async function fixture() {
+async function fixture(prepare?: (b: Backend) => void) {
   const b = new Backend();
   await b.ready;
+  prepare?.(b);
   const ctx = new Context();
   const api = new OmaApi(b.url);
   await mountOma(ctx, api);
@@ -38,9 +39,74 @@ function batch(calls: { name: string; input: Payload }[]): Payload[] {
 }
 
 const read = { name: "Read", input: { file_path: "/tmp/read.txt" } };
-const approved = (callId: string) => ({ callId, name: "Read", original: read.input, effective: read.input });
+const approved = (callId: string, readOnly = false) => ({ callId, name: "Read", original: read.input, effective: read.input, readOnly });
 const outcome = (callId: string) => ({ ...approved(callId), text: callId, failed: false });
 const result = (text: string) => ({ content: [{ type: "text", text }] });
+
+test("a failed permission refresh cannot reuse a previous allow", async () => {
+  const { session, b } = await fixture((backend) => {
+    backend.a.launch.tool_permissions = { bash: "allow" };
+  });
+  b.modelScript = [toolEvents("echo first", "first"), textEvents("first done")];
+  await session.receive("first-turn", { content: "Run first" });
+  const route = b.route.bind(b);
+  b.route = async (request) => new URL(request.url).pathname === `/v2/sessions/${b.a.session_id}`
+    ? new Response("unavailable", { status: 503 }) : route(request);
+  b.modelScript = [toolEvents("echo second", "second"), textEvents("second done")];
+  await session.receive("second-turn", { content: "Run second" });
+  expect(b.requests).toHaveLength(2);
+  expect(b.executions).toHaveLength(1);
+});
+
+test("a missing refreshed permission table clears a previous allow", async () => {
+  const { session, b } = await fixture((backend) => {
+    backend.a.launch.tool_permissions = { bash: "allow" };
+  });
+  b.modelScript = [toolEvents("echo first", "first"), textEvents("first done")];
+  await session.receive("first-turn", { content: "Run first" });
+  delete b.a.launch.tool_permissions;
+  b.onApproval = async (request) => {
+    await session.control({ type: "control_response", response: {
+      subtype: "success", request_id: request.request_id, response: { behavior: "deny" },
+    } });
+  };
+  b.modelScript = [toolEvents("echo second", "second"), textEvents("second done")];
+  await session.receive("second-turn", { content: "Run second" });
+  expect(b.timeline.filter((event) => event.type === "control_request")).toHaveLength(1);
+  expect(b.executions).toHaveLength(1);
+  expect(session.blocked()).toBe(false);
+});
+
+for (const policy of ["ask", "deny"] as const) {
+  test(`changing allow to ${policy} takes effect in the same session`, async () => {
+    const { session, b } = await fixture((backend) => {
+      backend.a.launch.tool_permissions = { bash: "allow" };
+    });
+    b.modelScript = [toolEvents("echo first", "first"), textEvents("first done")];
+    await session.receive("first-turn", { content: "Run first" });
+    expect(b.executions).toHaveLength(1);
+    expect(b.timeline.filter((event) => event.type === "control_request")).toHaveLength(0);
+    b.a.launch.tool_permissions = { bash: policy };
+    const approvals: Payload[] = [];
+    b.onApproval = async (request) => { approvals.push(request); };
+    b.modelScript = [toolEvents("echo second", "second"), textEvents("second done")];
+    const turn = session.receive("second-turn", { content: "Run second" });
+    const settled = turn.catch(() => {});
+    try {
+      await eventually(() => approvals.length === 1 || b.executions.length > 1);
+      expect(approvals).toHaveLength(1);
+      expect(b.executions).toHaveLength(1);
+      expect(approvals[0]!.request.tool_name).toBe("Bash");
+      await session.control({ type: "control_response", response: {
+        subtype: "success", request_id: approvals[0]!.request_id,
+        response: { behavior: policy === "ask" ? "allow" : "deny" },
+      } });
+      await turn;
+      expect(b.executions).toHaveLength(policy === "ask" ? 2 : 1);
+      expect(session.blocked()).toBe(false);
+    } finally { session.stop(); await settled; }
+  });
+}
 
 test("unapproved, duplicate and already finished calls cannot dispatch or overwrite results", async () => {
   const { session } = await fixture();
@@ -56,6 +122,17 @@ test("unapproved, duplicate and already finished calls cannot dispatch or overwr
   expect(session.execution(session.id).toolOutcomes.first!.text).toBe("first");
 });
 
+test("read-only calls record one result without entering dispatch", async () => {
+  const { session } = await fixture();
+  await expect(session.recordResult({ ...outcome("missing"), readOnly: true })).rejects.toThrow("Tool result does not match dispatch");
+  await session.recordApproved(approved("read", true));
+  expect(session.execution(session.id).callPhases ?? {}).toEqual({});
+  await session.recordResult({ ...outcome("read"), readOnly: true });
+  await expect(session.recordResult({ ...outcome("read"), readOnly: true, text: "overwrite" })).rejects.toThrow("Tool result does not match dispatch");
+  expect(session.execution(session.id).toolOutcomes.read!.text).toBe("read");
+  expect(session.blocked()).toBe(false);
+});
+
 test("a confirmed sibling cannot clear an unknown call or allow further dispatch", async () => {
   const { session } = await fixture();
   await session.recordApproved(approved("unknown"));
@@ -68,6 +145,55 @@ test("a confirmed sibling cannot clear an unknown call or allow further dispatch
   expect(session.blocked()).toBe(true);
   expect(session.execution(session.id).callPhases).toEqual({ unknown: "blocked", confirmed: "result", waiting: "approved" });
   await expect(session.recordDispatch("waiting")).rejects.toThrow("Invalid or blocked tool dispatch");
+});
+
+test("a new input rejected by reconciliation is processed durably without clearing the unknown call", async () => {
+  const { session, b } = await fixture();
+  session.state.inputId = "uncertain-original";
+  await session.recordApproved(approved("uncertain-call"));
+  await session.recordDispatch("uncertain-call");
+  await session.recordUnknown("uncertain-call");
+  const original = structuredClone(session.state.executions);
+  await expect(session.receive("rejected-followup", { content: "read another server" })).rejects.toThrow("reconciliation");
+  expect(b.processed).toContain("rejected-followup");
+  expect(session.state.completed).toContain("rejected-followup");
+  expect(session.state.inputId).toBe("uncertain-original");
+  expect(session.state.executions).toEqual(original);
+  expect(session.blocked()).toBe(true);
+  expect(b.requests).toHaveLength(0);
+  expect(b.executions).toHaveLength(0);
+  expect(b.publicLog.get("rejected-followup_failed_result")?.is_error).toBe(true);
+  const processing = b.timeline.findIndex((e) => e.type === "input.delivery" && e.inputId === "rejected-followup" && e.status === "processing");
+  const checkpoint = b.timeline.findIndex((e) => e.type === "private.persist" && e.payload.subtype === "dsh_brain_state" && e.payload.data.completed.includes("rejected-followup"));
+  const published = b.timeline.findIndex((e) => e.uuid === "rejected-followup_failed_result");
+  const ack = b.timeline.findIndex((e) => e.type === "input.ack" && e.inputId === "rejected-followup");
+  expect(processing).toBeGreaterThan(-1);
+  expect(checkpoint).toBeGreaterThan(processing);
+  expect(published).toBeGreaterThan(checkpoint);
+  expect(ack).toBeGreaterThan(published);
+  await session.receive("rejected-followup", { content: "duplicate" });
+  expect(b.requests).toHaveLength(0);
+  expect(b.executions).toHaveLength(0);
+  expect(session.state.executions).toEqual(original);
+  expect(b.timeline.filter((e) => e.uuid === "rejected-followup_failed_result")).toHaveLength(1);
+});
+
+test("an unconfirmed reconciliation rejection is never acknowledged", async () => {
+  const { session, b } = await fixture();
+  session.state.inputId = "uncertain-original";
+  await session.recordApproved(approved("uncertain-call"));
+  await session.recordDispatch("uncertain-call");
+  await session.recordUnknown("uncertain-call");
+  b.failWrites = true;
+  const rejected = session.receive("unconfirmed-rejection", { content: "another task" });
+  rejected.catch(() => {});
+  await eventually(() => b.failedCcrWrites > 0);
+  session.stop();
+  await expect(rejected).rejects.toThrow();
+  expect(b.processed).toEqual([]);
+  expect(b.requests).toEqual([]);
+  expect(b.executions).toEqual([]);
+  b.failWrites = false;
 });
 
 test("restoration blocks each unfinished dispatch and preserves confirmed siblings without replay", async () => {
@@ -93,7 +219,7 @@ test("restoration blocks each unfinished dispatch and preserves confirmed siblin
   } finally { await resumed.close(); await ctx.fiber.dispose(); }
 });
 
-test("SIGKILL during parallel reads preserves completed results and blocks unfinished calls without replay", async () => {
+test("SIGKILL during parallel reads interrupts the turn without blocking or replay", async () => {
   const b = new Backend();
   await b.ready;
   b.modelScript = [batch([read, { ...read, input: { file_path: "/tmp/finished" } }])];
@@ -110,21 +236,19 @@ test("SIGKILL during parallel reads preserves completed results and blocks unfin
   const ctx = new Context();
   let resumed: ReturnType<typeof createOmaSession> | undefined;
   try {
-    await eventually(() => {
-      const state = [...b.privateLog.values()].filter((p) => p.subtype === "dsh_brain_state").at(-1)?.data;
-      return b.executions.length === 2 && state?.executions[b.a.session_id]?.callPhases.call_1 === "result";
-    });
+    await eventually(() => b.executions.length === 2);
     child.kill("SIGKILL"); await exited;
     b.a.worker_epoch++;
     const api = new OmaApi(b.url);
     await mountOma(ctx, api);
     resumed = createOmaSession(ctx, api, b.a);
     await resumed.open();
-    expect(resumed.execution(resumed.id).callPhases).toEqual({ call_0: "blocked", call_1: "result" });
-    expect(resumed.execution(resumed.id).toolOutcomes.call_1!.text).toBe("confirmed before crash");
-    expect(resumed.blocked()).toBe(true);
-    await expect(resumed.receive("new-turn", { content: "retry" })).rejects.toThrow("reconciliation");
-    expect(b.requests).toHaveLength(1);
+    expect(resumed.execution(resumed.id).callPhases ?? {}).toEqual({});
+    expect(resumed.blocked()).toBe(false);
+    b.modelScript = [textEvents("continued")];
+    await resumed.receive("new-turn", { content: "retry" });
+    expect(resumed.state.phase).toBe("completed");
+    expect(b.requests).toHaveLength(2);
     expect(b.executions).toHaveLength(2);
   } finally {
     child.kill("SIGKILL"); await exited;
@@ -147,7 +271,8 @@ test("denying one parallel read leaves its sibling executable", async () => {
     } });
     await turn;
     expect(b.executions).toHaveLength(1);
-    expect(session.execution(session.id).callPhases).toEqual({ call_1: "result" });
+    expect(session.execution(session.id).callPhases ?? {}).toEqual({});
+    expect(session.execution(session.id).toolOutcomes.call_1).toBeDefined();
     expect(session.blocked()).toBe(false);
     expect(session.state.phase).toBe("completed");
   } finally { session.stop(); await settled; }
@@ -162,13 +287,12 @@ test("Read, Glob and Grep overlap in the native loop and accept results in rever
   const settled = turn.catch(() => {});
   try {
     await eventually(() => b.executions.length === 3);
-    expect(session.execution(session.id).callPhases).toEqual({ call_0: "dispatch", call_1: "dispatch", call_2: "dispatch" });
+    expect(session.execution(session.id).callPhases ?? {}).toEqual({});
     for (const index of [2, 1, 0]) {
       gates[index]!.resolve(result(`output_${index}`));
       await eventually(() => !!session.execution(session.id).toolOutcomes[`call_${index}`]);
       if (index > 0) {
-        expect(session.execution(session.id).phase).toBe("dispatch");
-        expect(session.state.phase).toBe("dispatch");
+        expect(session.blocked()).toBe(false);
         expect(b.requests).toHaveLength(1);
       }
     }
@@ -198,13 +322,13 @@ for (const exclusive of [
     const settled = turn.catch(() => {});
     try {
       await eventually(() => b.executions.length === 1);
-      expect(session.execution(session.id).callPhases).toEqual({ call_0: "dispatch" });
+      expect(session.execution(session.id).callPhases ?? {}).toEqual({});
       gates[0]!.resolve(result("read"));
       await eventually(() => b.executions.length === 2);
-      expect(session.execution(session.id).callPhases).toEqual({ call_0: "result", call_1: "dispatch" });
+      expect(session.execution(session.id).callPhases).toEqual({ call_1: "dispatch" });
       gates[1]!.resolve(result("written"));
       await eventually(() => b.executions.length === 3);
-      expect(session.execution(session.id).callPhases).toEqual({ call_0: "result", call_1: "result", call_2: "dispatch" });
+      expect(session.execution(session.id).callPhases).toEqual({ call_1: "result" });
       gates[2]!.resolve(result("read after write"));
       await turn;
       expect(session.state.phase).toBe("completed");
@@ -214,3 +338,75 @@ for (const exclusive of [
     }
   });
 }
+
+test("always_allow tools skip approval while immediately approved ask tools keep running", async () => {
+  const { session, b } = await fixture((backend) => {
+    backend.a.launch.tool_permissions = { read: "allow", bash: "ask" };
+  });
+  b.modelScript = [batch([read]), toolEvents("echo ok", "call_bash"), textEvents("done")];
+  await session.receive("allow-read", { content: "Read then run" });
+  expect(b.executions.map((call) => call.name)).toEqual(["read", "bash"]);
+  expect(b.timeline.filter((e) => e.type === "control_request").map((e) => e.request.tool_name)).toEqual(["Bash"]);
+  expect(b.statuses.filter((status) => status === "requires_action")).toHaveLength(0);
+  expect(session.state.phase).toBe("completed");
+});
+
+test("a failed read-only call is retried once without blocking", async () => {
+  const { session, b } = await fixture();
+  let attempts = 0;
+  b.onTool = async () => {
+    if (++attempts === 1) throw new Error("transient sandbox failure");
+    return result("read after retry");
+  };
+  b.modelScript = [batch([read]), textEvents("done")];
+  await session.receive("retry-read", { content: "Read it" });
+  expect(attempts).toBe(2);
+  expect(session.blocked()).toBe(false);
+  expect(session.execution(session.id).toolOutcomes.call_0).toEqual({ text: "read after retry", failed: false });
+  expect(JSON.stringify(b.requests.at(-1)!.messages)).toContain("read after retry");
+});
+
+test("a read-only call that fails twice returns an error result to the model without blocking", async () => {
+  const { session, b } = await fixture();
+  b.onTool = async () => { throw new Error("sandbox unavailable"); };
+  b.modelScript = [batch([read]), textEvents("recovered")];
+  await session.receive("failed-read", { content: "Read it" });
+  expect(b.executions).toHaveLength(2);
+  expect(session.blocked()).toBe(false);
+  expect(session.state.phase).toBe("completed");
+  expect(session.execution(session.id).toolOutcomes.call_0).toEqual({ text: "Read-only tool outcome is unknown", failed: true });
+  const toolResult = JSON.stringify(b.requests.at(-1)!.messages);
+  expect(toolResult).toContain('"is_error":true');
+  expect(toolResult).toContain("Read-only tool outcome is unknown");
+});
+
+test("a gateway rejection before forwarding becomes a failed result instead of an unknown outcome", async () => {
+  const { session, b } = await fixture();
+  b.rejectTool = (params) => params.name === "bash";
+  b.modelScript = [toolEvents("too large", "call_bash"), textEvents("recovered")];
+  await session.receive("rejected-bash", { content: "Run it" });
+  expect(b.executions).toHaveLength(0);
+  expect(session.blocked()).toBe(false);
+  expect(session.state.phase).toBe("completed");
+  expect(session.execution(session.id).callPhases).toEqual({ call_bash: "result" });
+  expect(session.execution(session.id).toolOutcomes.call_bash).toEqual({
+    text: "Sandbox tool call was not executed: Sandbox MCP request exceeds 1 MiB", failed: true,
+  });
+  const messages = JSON.stringify(b.requests.at(-1)!.messages);
+  expect(messages).toContain('"is_error":true');
+  expect(messages).toContain("exceeds 1 MiB");
+});
+
+test("an executed call with unsupported content becomes a failed result instead of an unknown outcome", async () => {
+  const { session, b } = await fixture();
+  b.onTool = async () => ({ content: [{ type: "image", data: "AA==", mimeType: "image/png" }] });
+  b.modelScript = [toolEvents("render", "call_bash"), textEvents("recovered")];
+  await session.receive("image-bash", { content: "Run it" });
+  expect(b.executions).toHaveLength(1);
+  expect(session.blocked()).toBe(false);
+  expect(session.state.phase).toBe("completed");
+  expect(session.execution(session.id).toolOutcomes.call_bash).toEqual({
+    text: "Sandbox tool returned an unsupported result: Only text MCP results are supported", failed: true,
+  });
+  expect(JSON.stringify(b.requests.at(-1)!.messages)).toContain('"is_error":true');
+});

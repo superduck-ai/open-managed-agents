@@ -25,6 +25,8 @@ func writeWorkbenchInferenceError(w http.ResponseWriter, err error) {
 		writeProxyMessagesAnthropicError(w, http.StatusBadRequest, "invalid_request_error", llmproviders.ErrBackendMismatch.Error())
 	case errors.Is(err, llmproviders.ErrModelNotConfigured), strings.Contains(message, "model is required"):
 		writeProxyMessagesAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "Model is not configured for this workspace")
+	case errors.Is(err, llmproviders.ErrAmbiguousModel):
+		writeProxyMessagesAnthropicError(w, http.StatusBadRequest, "invalid_request_error", message)
 	case errors.Is(err, llmproviders.ErrNotConfigured):
 		writeProxyMessagesAnthropicError(w, http.StatusServiceUnavailable, "api_error", "This workspace has no LLM provider configured")
 	case errors.Is(err, llmproviders.ErrInvalidBaseURL),

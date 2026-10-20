@@ -119,9 +119,14 @@ func memoryMarkdownAccess(access sessionresource.MemoryAccess) string {
 }
 
 func memoryRootMkdirCommand() string {
-	return "mkdir -p " + shellQuote(sessionresource.MemoryMountRoot)
+	root := shellQuote(sessionresource.MemoryMountRoot)
+	return "mkdir -p " + root + " && mount --bind " + root + " " + root
 }
 
 func memoryFilestoreSource(slug string) string {
 	return memoryFilestoreNamespace + "/" + slug
+}
+
+func memoryRootReadonlyCommand() string {
+	return "mount -o remount,bind,ro " + shellQuote(sessionresource.MemoryMountRoot)
 }

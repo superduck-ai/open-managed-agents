@@ -74,8 +74,9 @@ test("OMA providers isolate roots, initialize lazily and retain separate MCP ses
   }
 });
 
-async function fixture() {
+async function fixture(tools?: string[]) {
   const b = new Backend();
+  if (tools) b.a.launch.tools = tools;
   await b.ready;
   const ctx = new Context();
   const api = new OmaApi(b.url);
@@ -226,4 +227,21 @@ test.each(["user.interrupt", "control_request"])("confirmed %s ends as end_turn 
     expect([...f.b.publicLog.values()].filter((event) => event.type === "result").at(-1)!.is_error).toBe(false);
     expect(f.b.executions).toHaveLength(1);
   } finally { cancelled.resolve({ isError: true, content: [{ type: "text", text: "cancelled" }] }); await f.close(); }
+});
+
+
+test("root model requests expose only the session's enabled sandbox tools", async () => {
+  for (const tools of [[], ["Read"]]) {
+    const f = await fixture(tools);
+    try {
+      await f.session.open();
+      f.b.modelScript = [textEvents("done")];
+      await f.session.receive("allowlist_input", { content: "Inspect available tools" });
+      expect(f.b.requests).toHaveLength(1);
+      expect((f.b.requests[0]!.tools ?? []).map((tool: { name: string }) => tool.name))
+        .toEqual([...tools, "archive_agent", "list_agents", "send_to_agent"].sort());
+      expect(f.b.sandboxCount).toBe(0);
+      expect(f.b.mcpMethods).toEqual([]);
+    } finally { await f.close(); }
+  }
 });

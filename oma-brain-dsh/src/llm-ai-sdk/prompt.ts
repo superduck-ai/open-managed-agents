@@ -1,3 +1,4 @@
+import type { AttachmentStore } from "@deepseek-ai/dsh-attachment";
 import type { JSONSchema7, LanguageModelV4CallOptions, LanguageModelV4Message, LanguageModelV4Prompt } from "@ai-sdk/provider";
 import {
   LlmError, attributionHeaders, type AssistantMessage, type ContentBlock, type GenerateOptions, type ToolResultMessage,
@@ -16,10 +17,10 @@ interface SignedReasoning {
   redactedData?: string;
 }
 
-export function callOptions(options: GenerateOptions, route: AiSdkRoute): LanguageModelV4CallOptions {
+export async function callOptions(options: GenerateOptions, route: AiSdkRoute, attachments?: AttachmentStore): Promise<LanguageModelV4CallOptions> {
   const maxOutputTokens = options.maxTokens ?? route.maxOutputTokens;
   return {
-    prompt: prompt(options, route),
+    prompt: await prompt(options, route, attachments),
     headers: attributionHeaders(),
     ...(options.tools?.length ? { tools: options.tools.map((tool) => ({ type: "function" as const, name: tool.name,
       description: tool.description, inputSchema: tool.parameters as JSONSchema7 })) } : {}),
@@ -31,7 +32,7 @@ export function callOptions(options: GenerateOptions, route: AiSdkRoute): Langua
   };
 }
 
-function prompt(options: GenerateOptions, route: AiSdkRoute): LanguageModelV4Prompt {
+async function prompt(options: GenerateOptions, route: AiSdkRoute, attachments?: AttachmentStore): Promise<LanguageModelV4Prompt> {
   const system = options.system ? [options.system] : [];
   const toolNames = new Map<string, string>();
   const messages: LanguageModelV4Prompt = [];
@@ -39,10 +40,38 @@ function prompt(options: GenerateOptions, route: AiSdkRoute): LanguageModelV4Pro
     if (message.role === "system") system.push(...message.content.map(textOf));
     else if (message.role === "assistant") messages.push({ role: "assistant", content: assistantParts(message, route, toolNames) });
     else if (message.role === "tool") messages.push({ role: "tool", content: [toolResult(message, toolNames)] });
-    else if (message.role === "user") messages.push({ role: "user", content: message.content.map((block) => ({ type: "text", text: textOf(block) })) });
+    else if (message.role === "user") messages.push({ role: "user", content: await Promise.all(message.content.map(block => userPart(block, attachments, options.signal))) });
     else throw new LlmError(`Unsupported model input role: ${message.role}`, "INVALID_ARGS");
   }
   return system.length ? [{ role: "system", content: system.join("\n\n") }, ...messages] : messages;
+}
+
+type UserPart = Extract<LanguageModelV4Message, { role: "user" }>["content"][number];
+
+async function userPart(block: ContentBlock, attachments?: AttachmentStore, signal?: AbortSignal): Promise<UserPart> {
+  if (block.type === "text") return { type: "text", text: block.text };
+  if (block.type === "image") {
+    if (!attachments) throw new LlmError("Image attachment storage is unavailable", "INVALID_ARGS");
+    const image = await attachments.readImage(block.attachment, signal);
+    return { type: "file", mediaType: image.ref.mediaType, data: { type: "data", data: image.data } };
+  }
+  if (block.type === "oma-image") {
+    const { source } = block;
+    return { type: "file", mediaType: "image/*", data: source.type === "url"
+      ? { type: "url", url: new URL(source.url) } : { type: "reference", reference: { anthropic: source.file_id } } };
+  }
+  if (block.type === "oma-document") {
+    const { source, title, context, citations } = block.document;
+    if (source.type === "text" && !citations?.enabled)
+      return { type: "text", text: JSON.stringify({ type: "document", title, context, content: source.data }) };
+    const data = source.type === "text" ? { type: "text" as const, text: source.data }
+      : source.type === "base64" ? { type: "data" as const, data: source.data }
+      : source.type === "url" ? { type: "url" as const, url: new URL(source.url) }
+      : { type: "reference" as const, reference: { anthropic: source.file_id } };
+    return { type: "file", mediaType: source.type === "text" ? "text/plain" : "application/pdf", data,
+      providerOptions: { anthropic: { ...(title ? { title } : {}), ...(context ? { context } : {}), ...(citations ? { citations } : {}) } } };
+  }
+  throw new LlmError(`Unsupported model input block: ${block.type}`, "INVALID_ARGS");
 }
 
 function assistantParts(message: AssistantMessage, route: AiSdkRoute, toolNames: Map<string, string>): AssistantPart[] {

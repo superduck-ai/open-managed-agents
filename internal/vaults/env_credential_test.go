@@ -77,7 +77,7 @@ func TestNormalizeEnvironmentVariableForCreate(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	value := auth.value.(*environmentVariableCredentialAuth)
-	if !value.InjectionLocation.Header || value.InjectionLocation.Body {
+	if !value.InjectionLocation.Header || !value.InjectionLocation.Body {
 		t.Fatalf("injection_location = %+v", value.InjectionLocation)
 	}
 	if !strings.HasPrefix(value.Placeholder, opaquePlaceholderPrefix) {

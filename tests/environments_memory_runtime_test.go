@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -56,6 +58,7 @@ func TestEnvironmentRunnerMountsMemoryStoresAndWritesMarkdown(t *testing.T) {
 
 	if got, want := provider.operations, []string{
 		"memory-root-mkdir",
+		"outputs-alias",
 		"rclone-config-write",
 		"rclone-config-chmod",
 		"rclone-start",
@@ -107,7 +110,7 @@ func TestEnvironmentRunnerMountsMemoryStoresAndWritesMarkdown(t *testing.T) {
 		t.Fatalf("MEMORY.md missing store marker:\n%s", markdown)
 	}
 	if !strings.Contains(markdown, instructions) {
-		t.Fatal("MEMORY.md truncated 500-rune instructions")
+		t.Fatal("MEMORY.md truncated 4096-rune instructions")
 	}
 	if utf8.RuneCountInString(instructions) != sessionresource.MaxMemoryInstructionsRunes {
 		t.Fatalf("instructions = %d runes", utf8.RuneCountInString(instructions))

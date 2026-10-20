@@ -57,7 +57,7 @@ func newCLI(options *cliOptions) *cobra.Command {
 	root.AddCommand(doctorCommand(options, ""))
 	root.AddCommand(&cobra.Command{
 		Use: "test", Short: "在临时 PostgreSQL、Redis、NATS 和 MinIO 中运行全仓 Go 测试",
-		Long: "运行 go test ./... -json -count=1，启用本地 S3 和迁移集成测试。\n默认期限 15m；报告逐项列出失败与跳过。云端与独立 live 场景不算通过。",
+		Long: "运行 go test -tags=integration ./... -json -count=1，启用本地 S3 和迁移集成测试。\n默认期限 15m；报告逐项列出失败与跳过。云端与独立 live 场景不算通过。",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			options.Command, options.Scenario = "run", "test"

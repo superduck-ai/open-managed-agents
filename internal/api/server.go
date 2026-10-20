@@ -146,6 +146,7 @@ func NewServer(deps ServerDeps) *Server {
 	if filestoreService == nil {
 		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.DB, deps.ObjectStore)
 	}
+	codeSessionService.WithSessionAttachments(filestoreService)
 	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService, componentLogger("filestore"))
 	var oauthRefreshLease vaultsapi.OAuthRefreshLease
 	if deps.Redis != nil {
@@ -174,11 +175,11 @@ func NewServer(deps ServerDeps) *Server {
 		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
 		filestore:            filestoreHandler,
 		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
-		messages:             messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")),
+		messages:             messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithFileStore(deps.ObjectStore),
 		models:               modelsapi.NewHandler(deps.DB),
 		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")),
 		skills:               skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")),
-		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")),
+		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")).WithRefreshLease(oauthRefreshLease),
 		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 		tunnelBroker:         deps.TunnelBroker,
 	}

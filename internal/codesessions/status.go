@@ -14,8 +14,10 @@ func (s *Service) syncPublicSessionFromWorker(ctx context.Context, record db.Cod
 	if record.SessionExternalID == "" || workerStatus == "idle" {
 		return nil
 	}
+	var requests []string
 	if workerStatus == "requires_action" {
-		requests, err := maevents.PendingToolEventIDs(record.WorkerExternalMetadata, "", "")
+		var err error
+		requests, err = maevents.PendingToolEventIDs(record.WorkerExternalMetadata, "", "")
 		if err != nil {
 			return err
 		}
@@ -34,19 +36,28 @@ func (s *Service) syncPublicSessionFromWorker(ctx context.Context, record db.Cod
 		return err
 	}
 	now := time.Now().UTC()
-	payload := map[string]any{
-		"id":   eventID,
-		"type": eventType, "created_at": formatTime(now), "processed_at": formatTime(now),
-	}
-	if workerStatus == "requires_action" {
-		payload["stop_reason"] = map[string]any{"type": "requires_action"}
-	}
-	normalizePublicIdleStopReason(payload)
+	payload := workerStatusPublicPayload(eventType, eventID, now, requests)
 	raw, err := marshalRaw(payload)
 	if err != nil {
 		return err
 	}
 	return s.publishWorkerPublicPayloads(ctx, record.ExternalID, []json.RawMessage{raw})
+}
+
+func workerStatusPublicPayload(eventType, eventID string, now time.Time, pending []string) map[string]any {
+	payload := map[string]any{
+		"id":   eventID,
+		"type": eventType, "created_at": formatTime(now), "processed_at": formatTime(now),
+	}
+	if eventType == "session.status_idle" {
+		reason := map[string]any{"type": "requires_action"}
+		if len(pending) > 0 {
+			reason["event_ids"] = pending
+		}
+		payload["stop_reason"] = reason
+	}
+	normalizePublicIdleStopReason(payload)
+	return payload
 }
 
 func publicEventTypeFromWorkerStatus(status string) (string, bool) {

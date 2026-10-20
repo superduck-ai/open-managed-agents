@@ -194,10 +194,14 @@
 - `*.gen.go` 不纳入版本控制；干净 checkout 在直接运行 Go 编译、测试或静态分析前先执行 `./scripts/generate-go.sh`（先清空 `internal/db/**/*.sqlmap.gen.go`，再 `go generate ./internal/db`，避免已删除 Mapper 的残留生成文件参与编译）。测试、静态检查、CI 和 Docker 构建继续使用无参数的全量生成入口。`just server`、`just restart-server` 和直接调用重启脚本使用 `./scripts/generate-go.sh --cached`；只有输入与生成产物的路径和内容摘要均一致时才跳过生成。缓存位于当前 worktree 的 `tmp/go-generation/`，两个模式共用文件锁；生成失败或中断后不得保留有效缓存。生成检查在停止旧服务前执行。
 - 修改 `web/` 下的文件后，运行 `just web-format-check`，确保 Prettier 格式门禁通过。
 - 修改 Go 代码后，运行 `just lint`；该命令使用仓库根目录的 `.golangci.yml` 执行与 CI 相同的静态分析和格式检查。
-- 修改 schema 或 handler 后，运行 `just test`（等价于先生成 Go 源码，再运行 `go test ./... -count=1`）。
+- 默认运行 `just test`：先生成 Go 源码，再运行不带集成标签的 `go test ./... -count=1`，只执行普通单测。普通单测可以使用进程内 fake、miniredis、嵌入式 NATS 和临时本地 HTTP/TCP 端点，不得连接配置中的数据库、对象存储、Redis 或其他外部服务。
+- `tests/` 下的 API/数据库/生命周期测试，以及 `internal/` 中依赖真实 PostgreSQL、Redis、S3 或外部 SDK/CLI 的测试必须显式使用 `integration` build tag；同文件混有单测时先拆分，保留单测在默认构建中。测试辅助代码应放在实际使用它的构建范围内。
+- 集成回归使用独立命令 `just test-integration`，等价于生成源码后运行 `go test -tags=integration ./... -count=1`；它包含普通单测及显式启用的集成测试。定向运行示例为 `just test-integration ./tests -run '^TestFilesAPI$'`。使用隔离测试配置与依赖，不得因为本地依赖恰好可用就让默认单测执行集成测试。
+- 修改 schema 或 handler 后默认运行 `just test` 并补充或更新相关回归，不再自动执行整个集成包或全仓集成。需要定向集成验证时，用 `just test-integration` 显式选择最小范围；整域或全量回归按用户指定范围执行。未执行时明确说明集成覆盖未验证，不把单测通过称为全量通过。此命令不构成运行 `verify-be` 的授权。
+- Go lint 和死代码检查启用 `integration` 标签，只编译与分析集成测试源码，不执行测试；不得因测试分层降低静态检查覆盖。现有 `e2e`、`e2b_integration` 与 verify-be 场景仍通过各自显式入口触发。
 - 做真实 E2E 时，先将测试配置的 `server.addr` 设为 `127.0.0.1:18080` 并用 `CONFIG_FILE=/path/to/test-config.yaml go run .` 启动本地服务，再以 `TEST_API_BASE_URL=http://127.0.0.1:18080` 和 `sk-ant-local-default` 运行 SDK 测试。
 - 自定义 SDK E2E 覆盖：
-  - Go：`go test ./tests -run TestGoSDKFilesE2E -count=1 -v`
+  - Go：`just test-integration ./tests -run TestGoSDKFilesE2E -v`
   - Python：在官方 Python SDK virtualenv 中运行 `tests/e2e/python/files_e2e.py`。
 - 官方 SDK files resource 测试：
   - Go SDK：`go test -run 'TestBetaFile' -count=1 -v`

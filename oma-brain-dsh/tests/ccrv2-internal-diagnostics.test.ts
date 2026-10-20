@@ -41,7 +41,7 @@ test("internal-events logs each failed batch attempt with safe fields and preser
     expect(requests).toHaveLength(5);
     expect(requests.slice(2).map((request) => request.body)).toEqual(Array(3).fill(requests[1]!.body));
     expect(waits).toEqual([500, 1000, 2000]);
-    const fields = { method: "post", path: "/worker/internal-events", worker_epoch: 7, batch_size: 2 };
+    const fields = { method: "post", path: "/worker/internal-events", session_ref: "7ae99811b2c7c696275f6aca5adcedd71a90d8ab3ced71cd81d7e2c8020628fd", worker_epoch: 7, batch_size: 2 };
     expect(logs.map((log) => JSON.parse(log))).toEqual([
       { event: "cli_worker_request_failed", ...fields, status: 503, failure_reason: "server_error" },
       { event: "cli_worker_request_error", ...fields, failure_reason: "transport_error", error_code: "ECONNRESET" },
@@ -138,7 +138,7 @@ test("internal-events network diagnostics classify timeouts and omit untrusted e
   try {
     await client.persist("s", "dsh_log", {});
     const fields = { event: "cli_worker_request_error", method: "post", path: "/worker/internal-events",
-      worker_epoch: 7, batch_size: 1 };
+      session_ref: "043a718774c572bd8a25adbeb1bfcd5c0256ae11cecf9f9c3f925d0e52beaf89", worker_epoch: 7, batch_size: 1 };
     expect(logs.map((log) => JSON.parse(log))).toEqual([
       { ...fields, failure_reason: "timeout", error_code: "ETIMEDOUT" },
       { ...fields, failure_reason: "transport_error" },

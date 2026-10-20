@@ -44,6 +44,7 @@ just dev-init
 version: 1
 providers:
   - name: primary
+    slug: primary
     api_backend: messages
     base_url: https://coding.dashscope.aliyuncs.com/apps/anthropic
     api_key: "填写服务商提供的 API key"
@@ -59,7 +60,7 @@ chmod 600 "$HOME/.oma-dev/model-providers.yaml"
 
 模板的 `api_key` 默认为空，必须填写服务商提供的真实 key。共享目录只需保留 `model-providers.yaml`，不再需要共享的 `dev-init.yaml` 或 `secrets/`。真实 key 只保存在仓库外的私有配置中，不要写入仓库或文档。
 
-Anthropic 协议使用 `api_backend: messages`，OpenAI 兼容协议使用 `api_backend: chat_completions`。根据上游修改地址和模型列表。同一个 workspace 内，一个模型 ID 只能归属一个 provider；不要把 `kimi-k2.5` 同时配置到两个协议下。初始化不会向上游自动发现模型，必须显式填写 `model_ids`。
+Anthropic 协议使用 `api_backend: messages`，OpenAI 兼容协议使用 `api_backend: chat_completions`。根据上游修改地址和模型列表。同一个 workspace 内不同 provider 可以配置相同上游模型 ID，通过 `<slug>/<model_id>` 选择，例如 `primary/kimi-k2.5`。`slug` 可选，新建 provider 时省略则依次分配 `default`、`default-2` 等可用值；重跑时保留现有 slug。slug 创建后不可修改，包括 `--update`。初始化不会向上游自动发现模型，必须显式填写 `model_ids`。
 
 所有新 worktree 的 `.run/dev-init.yaml` 都会包含类似下面的引用：
 

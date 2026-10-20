@@ -18,6 +18,7 @@ const (
 	CredentialTypeAPIKey           = "api_key"
 	CredentialTypeCodeSessionOAuth = "code_session_oauth"
 	CredentialTypeEnvironmentKey   = "environment_key"
+	CredentialTypeWorkToken        = "work_token"
 	CredentialTypePlatformSession  = "platform_session"
 )
 

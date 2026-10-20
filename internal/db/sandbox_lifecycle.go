@@ -20,8 +20,8 @@ func (t SandboxReclaimTarget) scope() sandboxLifecycleScope {
 	return sandboxLifecycleScope{OrganizationUUID: t.OrganizationUUID, WorkspaceUUID: t.WorkspaceUUID, SandboxUUID: t.SandboxUUID}
 }
 
-func (d *DB) ListArchivedSessionSandboxes(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) ([]SandboxReclaimTarget, error) {
-	rows, err := NewSandboxLifecycleMapper(d.mapperDB).ListArchivedForSession(ctx, organizationUUID, workspaceUUID, sessionUUID)
+func (d *DB) ListRemovedSessionSandboxes(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) ([]SandboxReclaimTarget, error) {
+	rows, err := NewSandboxLifecycleMapper(d.mapperDB).ListRemovedForSession(ctx, organizationUUID, workspaceUUID, sessionUUID)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +114,7 @@ func (d *DB) CompleteSandboxReclamation(ctx context.Context, target SandboxRecla
 		if !found {
 			return nil
 		}
-		if current.StopReason == nil || *current.StopReason != "session_archived" {
+		if current.StopReason == nil || (*current.StopReason != "session_archived" && *current.StopReason != "session_deleted") {
 			if _, _, err := NewSessionMapper(executor).LockSessionForEvents(ctx, current.WorkspaceUUID, current.SessionExternalID); err != nil {
 				return err
 			}
@@ -140,7 +140,7 @@ func (d *DB) CompleteSandboxReclamation(ctx context.Context, target SandboxRecla
 			return nil
 		}
 		completed = true
-		if current.StopReason != nil && *current.StopReason == "session_archived" {
+		if current.StopReason != nil && (*current.StopReason == "session_archived" || *current.StopReason == "session_deleted") {
 			return nil
 		}
 		// Input accepted during deletion uses the existing missing-sandbox recovery path.
@@ -158,5 +158,5 @@ func (d *DB) CompleteSandboxReclamation(ctx context.Context, target SandboxRecla
 func (r sandboxLifecycleRow) reclaimTarget() SandboxReclaimTarget {
 	return SandboxReclaimTarget{OrganizationUUID: r.OrganizationUUID, WorkspaceUUID: r.WorkspaceUUID,
 		SandboxUUID: r.SandboxUUID, ProviderSandboxID: r.ProviderSandboxID,
-		Reclaiming: r.State == "stopping" && r.StopReason != nil && (*r.StopReason == "idle_timeout" || *r.StopReason == "session_archived")}
+		Reclaiming: r.State == "stopping" && r.StopReason != nil && (*r.StopReason == "idle_timeout" || *r.StopReason == "session_archived" || *r.StopReason == "session_deleted")}
 }

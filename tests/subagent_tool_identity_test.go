@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -17,7 +19,7 @@ import (
 func subagentApprovalFixture(t *testing.T) (*testApp, string, string, string) {
 	t.Helper()
 	app := newPayloadIntegrationApp(t, newFakeStore("subagent-identities"))
-	child := createAgent(t, app, `{"model":"claude-opus-4-6","name":"reviewer"}`)
+	child := createAgent(t, app, `{"model":"claude-opus-4-6","name":"reviewer","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"write","permission_policy":{"type":"always_ask"}}]}]}`)
 	parent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"parent","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"write","permission_policy":{"type":"always_ask"}}]}],"multiagent":{"type":"coordinator","agents":[{"type":"agent","id":`+quoteJSON(child.ID)+`}]}}`)
 	env := createEnvironment(t, app, `{"name":"subagent-identities"}`)
 	session := createSession(t, app, `{"agent":`+quoteJSON(parent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
@@ -28,9 +30,34 @@ func subagentApprovalFixture(t *testing.T) (*testApp, string, string, string) {
 
 func requestSubagentWrite(t *testing.T, app *testApp, codeID, epoch, label, providerID string) {
 	t.Helper()
+	code, found, err := app.db.GetCodeSession(t.Context(), codeID)
+	if err != nil || !found {
+		t.Fatalf("load code session: %v", err)
+	}
+	session, found, err := app.db.GetSession(t.Context(), code.WorkspaceUUID, code.SessionExternalID)
+	if err != nil || !found {
+		t.Fatalf("load session: %v", err)
+	}
+	var parent struct {
+		Multiagent struct {
+			Agents []struct {
+				ID      string `json:"id"`
+				Version int    `json:"version"`
+			} `json:"agents"`
+		} `json:"multiagent"`
+	}
+	if err := json.Unmarshal(session.AgentSnapshot, &parent); err != nil || len(parent.Multiagent.Agents) != 1 {
+		t.Fatalf("load pinned child reference: %s %v", session.AgentSnapshot, err)
+	}
+	ref := parent.Multiagent.Agents[0]
+	child := retrieveAgent(t, app, ref.ID, fmt.Sprintf("version=%d", ref.Version))
+	snapshot, err := json.Marshal(child)
+	if err != nil {
+		t.Fatal(err)
+	}
 	postCodeSessionWorkerEvents(t, app, codeID, internalPayloadRequest(epoch,
 		`{"type":"control_request","uuid":"dispatch-`+label+`","request_id":"dispatch-request-`+label+`","request":{"subtype":"can_use_tool","tool_name":"Agent","tool_use_id":"dispatch-tool-`+label+`","input":{"subagent_type":"reviewer"}}}`,
-		`{"type":"session.thread_created","uuid":"child-created-`+label+`","session_thread_id":"sthr_`+label+`","agent_name":"reviewer","task_id":"runtime-`+label+`","tool_use_id":"dispatch-tool-`+label+`"}`,
+		`{"type":"session.thread_created","uuid":"child-created-`+label+`","session_thread_id":"sthr_`+label+`","agent_name":"reviewer","agent":`+string(snapshot)+`,"task_id":"runtime-`+label+`","tool_use_id":"dispatch-tool-`+label+`"}`,
 		`{"type":"control_request","uuid":"write-`+label+`","session_thread_id":"sthr_`+label+`","request_id":"write-request-`+label+`","request":{"subtype":"can_use_tool","tool_name":"Write","tool_use_id":`+quoteJSON(providerID)+`,"input":{"file_path":"/tmp/`+label+`"}}}`))
 }
 

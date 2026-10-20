@@ -26,6 +26,17 @@ import {
 } from "@deepseek-ai/dsh-session";
 import type { CcrBackend } from "./contracts.ts";
 
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (!value || typeof value !== "object") return value;
+  const entries = Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return Object.fromEntries(entries.map(([key, item]) => [key, canonicalJson(item)]));
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(canonicalJson(left)) === JSON.stringify(canonicalJson(right));
+}
+
 interface Stored {
   header: SessionHeader;
   events: SessionEvent[];
@@ -104,6 +115,7 @@ class RemoteHandle implements SessionHandle {
     return this.serialize(async () => {
       options?.signal?.throwIfAborted();
       const batch = this.buffered.slice();
+      if (!batch.length) return;
       assertContiguous(this.id, batch, this.record.events.length);
       await this.store.persist(this.id, {
         header: this.header,
@@ -176,7 +188,7 @@ export class CcrPersistence extends SessionPersistence {
         inherited: data.inherited,
         events: [],
       };
-      if (JSON.stringify(record.header) !== JSON.stringify(data.header))
+      if (!sameJson(record.header, data.header))
         throw new Error("Log header changed");
       if (!Array.isArray(data.events)) throw new Error("Invalid dsh log batch");
       const batch = validateStoredEvents(
@@ -185,9 +197,7 @@ export class CcrPersistence extends SessionPersistence {
       );
       for (const event of batch) {
         if (event.seq < record.events.length) {
-          if (
-            JSON.stringify(record.events[event.seq]) !== JSON.stringify(event)
-          )
+          if (!sameJson(record.events[event.seq], event))
             throw new Error("Conflicting dsh log event");
         } else {
           assertContiguous(id, [event], record.events.length);
@@ -219,6 +229,7 @@ export class CcrPersistence extends SessionPersistence {
     const handle = new RemoteHandle(this, header.id, "write", record);
     this.writers.set(header.id, handle);
     try {
+      await this.persist(header.id, { header: record.header, inherited: 0, events: [] });
       await handle.flush();
     } catch (error) {
       this.writers.delete(header.id);

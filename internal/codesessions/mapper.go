@@ -26,7 +26,11 @@ func workerPayloadForPublicEvent(codeSessionID string, event db.SessionEvent) (j
 	receivedAt := event.CreatedAt.UTC()
 	switch schema.Type {
 	case "user.interrupt":
-		return marshalRaw(map[string]any{"id": schema.ID, "uuid": firstNonEmpty(schema.UUID, schema.ID, event.UUID), "type": "control_request", "request_id": schema.ID, "request": map[string]string{"subtype": "interrupt"}})
+		payload := map[string]any{"id": schema.ID, "uuid": firstNonEmpty(schema.UUID, schema.ID, event.UUID), "type": "control_request", "request_id": schema.ID, "request": map[string]string{"subtype": "interrupt"}}
+		if schema.SessionThreadID != "" {
+			payload["session_thread_id"] = schema.SessionThreadID
+		}
+		return marshalRaw(payload)
 	case "user.message":
 		eventUUID := firstNonEmpty(schema.UUID, schema.ID, event.UUID, uuid.NewV4().String())
 		payload := map[string]any{
@@ -317,6 +321,11 @@ func normalizePublicWorkerPayload(codeSessionID string, event db.CodeSessionEven
 			}
 		}
 	}
+	if stringField(payload, "type") == "agent.thinking" {
+		for _, field := range []string{"content", "message", "thinking", "signature"} {
+			delete(payload, field)
+		}
+	}
 	normalizePublicIdleStopReason(payload)
 	return marshalRaw(payload)
 }
@@ -433,15 +442,7 @@ func assistantPublicPayloadCandidates(codeSessionID string, object map[string]an
 		case "thinking", "redacted_thinking":
 			eventType = "agent.thinking"
 		}
-		if blockType == "thinking" {
-			thinking, _ := block["thinking"].(string)
-			block = map[string]any{"type": "thinking", "thinking": thinking}
-		}
 		payload := publicPayloadWithSingleContentBlock(object, eventType, block)
-		if blockType == "redacted_thinking" {
-			delete(payload, "content")
-			delete(payload, "message")
-		}
 		if schema.Message.ID != "" {
 			if blockType == "text" || blockType == "redacted" || eventType == "agent.thinking" {
 				payload["id"] = maevents.StableAssistantEventID(codeSessionID, schema.Message.ID, contentBlockIndex, eventType)
@@ -492,16 +493,15 @@ func userPublicPayloadCandidates(codeSessionID string, object map[string]any, sc
 		}
 		threadID := firstNonEmpty(stringField(object, "_owner_session_thread_id"), stringField(object, "session_thread_id"), maevents.ClaudeTaskThreadID(codeSessionID, stringField(object, "parent_tool_use_id")))
 		toolUseID := maevents.ToolUseEventID(codeSessionID, providerToolUseID, threadID)
-		eventType := "agent.tool_result"
-		if claudeToolResultIsAgentThreadMessage(block) {
-			eventType = "agent.thread_message_received"
-		}
+		eventType, referenceField := toolResultPublicIdentity(block)
 		payload := publicPayloadWithType(object, eventType)
 		if eventType == "agent.thread_message_received" {
 			payload["from_session_thread_id"] = claudeTaskThreadIDFromKey(codeSessionID, providerToolUseID)
 		}
-		payload["tool_use_id"] = toolUseID
-		payload["content"] = claudeToolResultContent(block)
+		delete(payload, "tool_use_id")
+		delete(payload, "mcp_tool_use_id")
+		payload[referenceField] = toolUseID
+		payload["content"] = publicToolResultContent(eventType, block)
 		if isError, ok := block["is_error"]; ok {
 			payload["is_error"] = isError
 		}
@@ -513,6 +513,23 @@ func userPublicPayloadCandidates(codeSessionID string, object map[string]any, sc
 		})
 	}
 	return candidates
+}
+
+func toolResultPublicIdentity(block map[string]any) (string, string) {
+	if parseClaudeToolIdentity(stringField(block, "tool_name")).Kind == "mcp" {
+		return "agent.mcp_tool_result", "mcp_tool_use_id"
+	}
+	if claudeToolResultIsAgentThreadMessage(block) {
+		return "agent.thread_message_received", "tool_use_id"
+	}
+	return "agent.tool_result", "tool_use_id"
+}
+
+func publicToolResultContent(eventType string, block map[string]any) any {
+	if eventType == "agent.mcp_tool_result" {
+		return publicContentBlocks(block["content"])
+	}
+	return claudeToolResultContent(block)
 }
 
 func internalSubagentUserPayloadCandidates(codeSessionID string, object map[string]any, schema workerUserOutputPayload) []publicPayloadCandidate {

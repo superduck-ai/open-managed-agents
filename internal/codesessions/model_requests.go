@@ -10,6 +10,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 // ModelRequest owns one proxy attempt. Each worker retry gets a new span.
@@ -62,11 +63,9 @@ type ModelRequestMessage struct {
 	Content []ModelRequestContent `json:"content,omitempty"`
 }
 
-// ModelRequestContent is a public agent.message content block; Text is absent for redacted blocks.
 type ModelRequestContent struct {
-	Type     string  `json:"type"`
-	Text     *string `json:"text,omitempty"`
-	Thinking *string `json:"thinking,omitempty"`
+	Type string  `json:"type"`
+	Text *string `json:"text,omitempty"`
 }
 
 type modelRequestEvent struct {
@@ -118,6 +117,42 @@ func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID,
 	return request, nil
 }
 
+func (s *Service) StartModelThinking(ctx context.Context, request *ModelRequest, messageID string, index int) error {
+	message := ModelRequestMessage{ID: maevents.StableAssistantEventID(request.CodeSessionID, messageID, index, "agent.thinking"), Type: "agent.thinking"}
+	// The proxy observes the real block start before forwarding it to Brain.
+	// Publish its nonsecret preview before the buffered progress signal retires
+	// this ID; Brain's queued copy otherwise always arrives too late.
+	preview := map[string]any{"type": "event_start", "event": map[string]string{"type": message.Type, "id": message.ID}}
+	if request.toolThreadID != "" {
+		preview["session_thread_id"] = request.toolThreadID
+	}
+	raw, err := jsonv2.Marshal(preview)
+	if err != nil {
+		return err
+	}
+	s.publishWorkerStreamPayload(ctx, CodeSessionStreamRoute{
+		CodeSessionID: request.CodeSessionID, WorkspaceUUID: request.codeSession.WorkspaceUUID,
+		SessionExternalID: request.codeSession.SessionExternalID,
+	}, request.codeSession.CurrentWorkerEpoch, raw)
+	payload, err := modelMessagePayload(request, message, time.Now().UTC().Truncate(time.Microsecond))
+	if err != nil {
+		return err
+	}
+	return s.sink.PublishCodeSessionEvents(ctx, request.codeSession, []json.RawMessage{payload})
+}
+
+func modelMessagePayload(request *ModelRequest, message ModelRequestMessage, processedAt time.Time) (json.RawMessage, error) {
+	if message.Type == "agent.thinking" {
+		message.Content = nil
+	}
+	return jsonv2.Marshal(struct {
+		ModelRequestMessage
+		OwnerThreadID string    `json:"_owner_session_thread_id"`
+		StartID       string    `json:"model_request_start_id"`
+		ProcessedAt   time.Time `json:"processed_at"`
+	}{ModelRequestMessage: message, OwnerThreadID: request.ThreadID, StartID: request.StartID, ProcessedAt: processedAt})
+}
+
 func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, result ModelRequestResult) error {
 	event := modelRequestEvent{ID: request.StartID + "_end", Type: "span.model_request_end", StartID: request.StartID,
 		CreatedAt: result.EndedAt, ProcessedAt: result.EndedAt, IsError: new(result.ErrorType != "" && result.ErrorType != "observation_limit"), Usage: &result.Usage, EventIDs: result.EventIDs, ToolUseIDs: result.ToolUseIDs, UpstreamRequestID: result.UpstreamRequestID}
@@ -131,12 +166,7 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 	payloads := make([]json.RawMessage, 0, len(result.Messages)+len(tools)+1)
 	if result.ErrorType == "" {
 		for _, message := range result.Messages {
-			payload, err := jsonv2.Marshal(struct {
-				ModelRequestMessage
-				OwnerThreadID string    `json:"_owner_session_thread_id"`
-				StartID       string    `json:"model_request_start_id"`
-				ProcessedAt   time.Time `json:"processed_at"`
-			}{ModelRequestMessage: message, OwnerThreadID: request.ThreadID, StartID: request.StartID, ProcessedAt: result.EndedAt})
+			payload, err := modelMessagePayload(request, message, result.EndedAt)
 			if err != nil {
 				return err
 			}

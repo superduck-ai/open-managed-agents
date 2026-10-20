@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -72,9 +74,12 @@ func seedSessionResourceVisibility(t *testing.T) sessionResourceVisibilityFixtur
 				`{"type":"github_repository","url":"https://github.com/example/repo","mount_path":"/workspace/repo"}`),
 		},
 	}
-	created, _, _, _, err := app.db.CreateSession(ctx, input)
+	created, _, createdResources, _, err := app.db.CreateSession(ctx, input)
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
+	}
+	if len(createdResources) != 2 || createdResources[0].FileExternalID == "" || createdResources[0].FileExternalID == inputFileID {
+		t.Fatalf("created resources did not expose a new input instance: %+v", createdResources)
 	}
 	cleanupFilestoreSession(t, app, workspaceUUID, created.ExternalID)
 
@@ -83,7 +88,7 @@ func seedSessionResourceVisibility(t *testing.T) sessionResourceVisibilityFixtur
 		workspaceUUID:     workspaceUUID,
 		sessionExternalID: created.ExternalID,
 		inputResourceID:   inputResourceID,
-		inputFileID:       inputFileID,
+		inputFileID:       createdResources[0].FileExternalID,
 		repositoryID:      repositoryID,
 	}
 }

@@ -74,8 +74,8 @@ type mcpOAuthRefreshUpdateInput struct {
 }
 
 type staticBearerCredentialUpdateInput struct {
-	MCPServerURL *string `json:"mcp_server_url"`
-	Token        *string `json:"token"`
+	MCPServerURL json.RawMessage `json:"mcp_server_url"`
+	Token        *string         `json:"token"`
 }
 
 type environmentVariableCredentialUpdateInput struct {
@@ -119,7 +119,7 @@ func normalizeMCPOAuthForCreate(input mcpOAuthCredentialCreateInput) (credential
 	if err != nil {
 		return credentialAuthState{}, err
 	}
-	if err := validateHTTPURL(serverURL, "auth.mcp_server_url"); err != nil {
+	if err := validateMCPServerURL(serverURL); err != nil {
 		return credentialAuthState{}, err
 	}
 	accessToken, err := requireNonEmptyString(input.AccessToken, "auth.access_token")
@@ -158,6 +158,9 @@ func normalizeMCPOAuthForCreate(input mcpOAuthCredentialCreateInput) (credential
 }
 
 func normalizeMCPOAuthRefreshForCreate(input mcpOAuthRefreshCreateInput) (mcpOAuthRefresh, mcpOAuthRefreshSecret, error) {
+	if input.TokenEndpointAuth == nil {
+		return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, errors.New("auth.refresh.token_endpoint_auth is required")
+	}
 	tokenEndpoint, err := requireNonEmptyString(input.TokenEndpoint, "auth.refresh.token_endpoint")
 	if err != nil {
 		return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
@@ -234,7 +237,7 @@ func normalizeStaticBearerForCreate(input staticBearerCredentialCreateInput) (cr
 	if err != nil {
 		return credentialAuthState{}, err
 	}
-	if err := validateHTTPURL(serverURL, "auth.mcp_server_url"); err != nil {
+	if err := validateMCPServerURL(serverURL); err != nil {
 		return credentialAuthState{}, err
 	}
 	token, err := requireNonEmptyString(input.Token, "auth.token")
@@ -262,7 +265,11 @@ func normalizeEnvironmentVariableForCreate(input environmentVariableCredentialCr
 	if err != nil {
 		return credentialAuthState{}, err
 	}
-	injectionLocation, err := applyInjectionLocation(credentialInjectionLocation{Header: true, Body: false}, input.InjectionLocation)
+	locationDefaults := credentialInjectionLocation{}
+	if len(input.InjectionLocation) == 0 {
+		locationDefaults = credentialInjectionLocation{Header: true, Body: true}
+	}
+	injectionLocation, err := applyInjectionLocation(locationDefaults, input.InjectionLocation)
 	if err != nil {
 		return credentialAuthState{}, err
 	}
@@ -398,17 +405,8 @@ func normalizeStaticBearerForUpdate(current db.VaultCredential, currentSecret []
 			return credentialAuthState{}, err
 		}
 	}
-	key := current.CredentialKey
-	if input.MCPServerURL != nil {
-		serverURL, err := requireNonEmptyString(*input.MCPServerURL, "auth.mcp_server_url")
-		if err != nil {
-			return credentialAuthState{}, err
-		}
-		if err := validateHTTPURL(serverURL, "auth.mcp_server_url"); err != nil {
-			return credentialAuthState{}, err
-		}
-		publicAuth.MCPServerURL = serverURL
-		key = serverURL
+	if len(input.MCPServerURL) != 0 {
+		return credentialAuthState{}, immutableCredentialServerURL()
 	}
 	if input.Token != nil {
 		token, err := requireNonEmptyString(*input.Token, "auth.token")
@@ -420,7 +418,7 @@ func normalizeStaticBearerForUpdate(current db.VaultCredential, currentSecret []
 	if secretPayload.Token == "" {
 		return credentialAuthState{}, ErrMissingSecretEnvelope
 	}
-	return credentialAuthStateFromValues(credentialAuthTypeStaticBearer, key, publicAuth, secretPayload)
+	return credentialAuthStateFromValues(credentialAuthTypeStaticBearer, current.CredentialKey, publicAuth, secretPayload)
 }
 
 func normalizeEnvironmentVariableForUpdate(current db.VaultCredential, currentSecret []byte, input environmentVariableCredentialUpdateInput, publicAuth *environmentVariableCredentialAuth) (credentialAuthState, error) {
@@ -595,6 +593,14 @@ func credentialAuthStateFromValues(authType credentialAuthType, key string, publ
 		PublicAuth:    publicRaw,
 		SecretPayload: secretRaw,
 	}, nil
+}
+
+func validateMCPServerURL(value string) error {
+	parsed, err := url.Parse(value)
+	if err == nil && parsed.User != nil {
+		return mcpServerURLUserinfoNotAllowed()
+	}
+	return validateHTTPURL(value, "auth.mcp_server_url")
 }
 
 func validateHTTPURL(value, name string) error {

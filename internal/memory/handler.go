@@ -527,8 +527,8 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 		writeBadRequest(w, r, err)
 		return
 	}
-	pathPrefix := strings.TrimSpace(r.URL.Query().Get("path_prefix"))
-	if err := memorypath.ValidatePrefix(pathPrefix); err != nil {
+	pathPrefix, err := parseMemoryListPrefix(r)
+	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
@@ -726,33 +726,11 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 			h.writeMemoryLoadError(w, r, err, storeID, memoryID)
 			return
 		}
-		targetPath := record.Path
-		if pathPresent {
-			targetPath = path
-		}
 		targetContent := ""
 		targetContentKnown := false
 		if contentPresent {
 			targetContent = content
 			targetContentKnown = true
-		}
-		targetSHA := record.ContentSHA256
-		if contentPresent {
-			targetSHA = sha256Hex([]byte(content))
-		}
-		if expectedHash != nil && record.ContentSHA256 != *expectedHash && record.Path == targetPath && record.ContentSHA256 == targetSHA {
-			httpapi.WriteJSON(w, http.StatusOK, h.responseFromMemoryWithKnownContent(record, view, content))
-			return
-		}
-		if record.Path == targetPath && record.ContentSHA256 == targetSHA {
-			resp, err := h.responseFromMemory(r.Context(), record, view)
-			if err != nil {
-				h.logger.ErrorContext(r.Context(), "read memory no-op content", "memory_id", memoryID, "key", record.S3Key, "error", err)
-				writeAPIError(w, r, "Could not read memory content")
-				return
-			}
-			httpapi.WriteJSON(w, http.StatusOK, resp)
-			return
 		}
 
 		if !contentPresent {
@@ -1088,7 +1066,7 @@ func responseFromStore(record db.MemoryStore) storeResponse {
 	}
 	return storeResponse{
 		ID:          record.ExternalID,
-		CreatedAt:   formatTime(record.CreatedAt),
+		CreatedAt:   record.CreatedAt.UTC().Format(time.RFC3339Nano),
 		Name:        record.Name,
 		Type:        "memory_store",
 		UpdatedAt:   formatTime(record.UpdatedAt),
@@ -1116,7 +1094,7 @@ func responseFromMemoryRecord(record db.Memory, content *string) memoryResponse 
 func responseFromVersionRecord(record db.MemoryVersion, content *string) versionResponse {
 	return versionResponse{
 		ID:               record.ExternalID,
-		CreatedAt:        formatTime(record.CreatedAt),
+		CreatedAt:        record.CreatedAt.UTC().Format(time.RFC3339Nano),
 		MemoryID:         record.MemoryExternalID,
 		MemoryStoreID:    record.MemoryStoreExternalID,
 		Operation:        record.Operation,
@@ -1433,8 +1411,11 @@ func parseOptionalDepth(r *http.Request) (*int, error) {
 		return nil, nil
 	}
 	value, err := strconv.Atoi(raw)
-	if err != nil || value < 1 {
-		return nil, errors.New("depth must be at least 1")
+	if err != nil || value < 0 || value > 1 {
+		return nil, errInvalidMemoryDepth
+	}
+	if value == 0 {
+		return nil, nil
 	}
 	return &value, nil
 }
@@ -1596,7 +1577,8 @@ func requireAPIKey(w http.ResponseWriter, r *http.Request) (auth.Principal, bool
 	}
 	if principal.CredentialType != "" &&
 		principal.CredentialType != auth.CredentialTypeAPIKey &&
-		principal.CredentialType != auth.CredentialTypePlatformSession {
+		principal.CredentialType != auth.CredentialTypePlatformSession &&
+		principal.CredentialType != auth.CredentialTypeWorkToken {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "API key authentication required"))
 		return auth.Principal{}, false
 	}

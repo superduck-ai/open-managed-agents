@@ -211,8 +211,8 @@ func TestSessionResourceMapperBuilderContracts(t *testing.T) {
 				bound:             buildSessionResourceMapperBindSessionFileResource(yourbatis.DialectPostgres, bindingParams),
 				wantID:            "SessionResourceMapper.BindSessionFileResource",
 				wantKind:          yourbatis.StatementUpdate,
-				wantArgumentNames: []string{"params.EntryPath", "params.ParentPath", "params.FileUUID", "params.UpdatedAt", "params.ResourceUUID", "params.WorkspaceUUID", "params.SessionUUID"},
-				wantSQLFragments:  []string{"UPDATE session_resources", "file_uuid = $3", "RETURNING", "uuid, external_id"},
+				wantArgumentNames: []string{"params.FileUUID", "params.FileExternalID", "params.UpdatedAt", "params.SessionUUID", "params.WorkspaceUUID", "params.SourceFileUUID", "params.WorkspaceUUID", "params.EntryPath", "params.ParentPath", "params.WorkspaceUUID", "params.SourceFileUUID", "params.SourceFileUUID", "params.UpdatedAt", "params.ResourceUUID", "params.WorkspaceUUID", "params.SessionUUID"},
+				wantSQLFragments:  []string{"INSERT INTO files", "UPDATE session_resources resource", "file_uuid = instance.uuid", "source_file_uuid = COALESCE", "jsonb_set", "instance.external_id AS file_external_id"},
 			},
 		},
 		{

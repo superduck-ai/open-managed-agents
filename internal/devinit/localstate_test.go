@@ -192,3 +192,17 @@ func TestMovedWorktreeRefreshesBinding(t *testing.T) {
 		t.Fatalf("stale binding: %+v", saved)
 	}
 }
+
+func pendingKeyFixture() (Spec, State, Credentials) {
+	spec := Spec{OrganizationName: "OMA", UserEmail: "test@oma.ai", UserName: "Test", UserRole: "admin"}
+	credentials := Credentials{EnvID: "test", BrainClaimToken: "token"}
+	for index, ref := range []string{"default", "secondary"} {
+		spec.Workspaces = append(spec.Workspaces, WorkspaceSpec{
+			Ref: ref, Name: ref, IsDefault: index == 0, APIKeys: []APIKeySpec{{Ref: "key-1", Name: ref + "-1"}, {Ref: "key-2", Name: ref + "-2"}},
+		})
+		for _, key := range spec.Workspaces[index].APIKeys {
+			credentials.APIKeys = append(credentials.APIKeys, APICredential{WorkspaceRef: ref, Ref: key.Ref, Key: ref + key.Ref})
+		}
+	}
+	return spec, State{EnvID: "test"}, credentials
+}

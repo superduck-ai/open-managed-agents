@@ -7,11 +7,11 @@ export type LLMProvider = {
   type: 'llm_provider';
   id: string;
   name: string;
+  slug: string;
   base_url: string;
   has_api_key: boolean;
   api_key_last4: string;
   model_ids: string[];
-  skipped_model_ids?: string[];
   created_at: string;
   updated_at: string;
 };
@@ -19,6 +19,7 @@ export type LLMProvider = {
 export type LLMProviderInput = {
   api_backend: APIBackend;
   name: string;
+  slug?: string;
   base_url: string;
   api_key?: string;
   model_ids: string[];

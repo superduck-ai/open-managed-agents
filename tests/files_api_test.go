@@ -1279,6 +1279,14 @@ func seedTestLLMProviderForWorkspace(
 	if err != nil {
 		t.Fatalf("generate test LLM provider ID: %v", err)
 	}
+	existing, err := app.db.ListLLMProviders(context.Background(), organizationUUID, workspaceUUID)
+	if err != nil {
+		t.Fatalf("list test LLM providers: %v", err)
+	}
+	slugs := make([]string, 0, len(existing))
+	for _, provider := range existing {
+		slugs = append(slugs, provider.Slug)
+	}
 	now := time.Now().UTC()
 	provider := db.LLMProvider{
 		UUID:             uuid.NewV4().String(),
@@ -1286,6 +1294,7 @@ func seedTestLLMProviderForWorkspace(
 		OrganizationUUID: organizationUUID,
 		WorkspaceUUID:    workspaceUUID,
 		Name:             name,
+		Slug:             llmproviders.NextDefaultSlug(slugs),
 		BaseURL:          baseURL,
 		APIKeyLast4:      apiKey[len(apiKey)-4:],
 		ModelIDs:         append([]string(nil), modelIDs...),

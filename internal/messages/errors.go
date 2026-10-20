@@ -45,6 +45,8 @@ func providerResolveError(err error) *httpapi.Error {
 	switch {
 	case errors.Is(err, llmproviders.ErrModelNotConfigured):
 		return modelNotConfiguredError()
+	case errors.Is(err, llmproviders.ErrAmbiguousModel):
+		return invalidRequestError(err)
 	case errors.Is(err, llmproviders.ErrNotConfigured):
 		return providerNotConfiguredError()
 	default:

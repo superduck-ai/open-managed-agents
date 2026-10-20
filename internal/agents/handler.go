@@ -809,16 +809,18 @@ func (h *Handler) normalizeConfiguredModel(
 	if err != nil {
 		return normalizedAgentModel{}, err
 	}
-	modelIDs, err := llmproviders.ListModelIDs(ctx, h.db, organizationUUID, workspaceUUID)
+	canonicalID, err := llmproviders.CanonicalModelID(ctx, h.db, organizationUUID, workspaceUUID, model.ID)
+	if errors.Is(err, llmproviders.ErrModelNotConfigured) {
+		return normalizedAgentModel{}, fmt.Errorf("model %q is not configured for this workspace", model.ID)
+	}
+	if errors.Is(err, llmproviders.ErrAmbiguousModel) {
+		return normalizedAgentModel{}, err
+	}
 	if err != nil {
 		return normalizedAgentModel{}, configuredModelError(err)
 	}
-	for _, modelID := range modelIDs {
-		if modelID == model.ID {
-			return model, nil
-		}
-	}
-	return normalizedAgentModel{}, fmt.Errorf("model %q is not configured for this workspace", model.ID)
+	model.ID = canonicalID
+	return model, nil
 }
 
 func normalizeMCPServers(raw json.RawMessage) (json.RawMessage, error) {

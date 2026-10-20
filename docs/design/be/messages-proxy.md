@@ -4,13 +4,54 @@
 
 LLM 上游不是进程级 YAML。每个 workspace 可以配置多个 Provider；每个 Provider 保存：
 
-- `name`
+- `name`：可修改的展示名称，同一 workspace 内唯一；
+- `slug`：模型命名空间，同一 workspace 内唯一，创建后不可修改；
 - `base_url`
 - `api_backend`：`messages` 或 `chat_completions`；已有 Provider 通过迁移 86 回填为 `messages`。创建省略时默认 `messages`，更新省略时保留当前值，其他值包括 `responses` 返回 `api_backend_invalid`。
 - Vault 信封加密的 `api_key`
 - 零个或多个真实 `model_ids`
 
-同一 workspace 内，模型 ID 只能属于一个 Provider。模型 ID 是上游真实 ID，OMA 不映射、不改写，也不提供 `claude-*` 别名或默认 Anthropic 回退。
+`model_ids` 保存上游真实 ID。同一 workspace 内不同 Provider 可以配置同名模型；对外暴露的模型 ID 是带 Provider 前缀的 `{slug}/{upstream_model_id}`，详见下文「模型命名与解析」。OMA 不提供 `claude-*` 别名或默认 Anthropic 回退。
+
+## 模型命名与解析
+
+`slug` 必须匹配 `^[a-z0-9][a-z0-9._-]{0,31}$`，因此不含 `/`。完整模型 ID 只在**第一个** `/` 处拆分：前半段是 slug，剩余部分原样作为上游模型 ID，上游 ID 自身可以继续包含 `/`。
+
+| 完整模型 ID | slug | 上游模型 ID |
+| --- | --- | --- |
+| `oma/kimi-k2.5` | `oma` | `kimi-k2.5` |
+| `oma/deepseek-ai/deepseek-v4.1-flash` | `oma` | `deepseek-ai/deepseek-v4.1-flash` |
+
+创建 Provider 时可传入 `slug`；省略或为空时服务端选择当前 workspace 中第一个未占用的 `default`、`default-2`、`default-3`……。更新请求可以省略 `slug` 或回传相同值，传入不同值返回 `400 llm_provider_slug_immutable`，避免已保存的 Agent 引用失效。格式非法返回 `400 llm_provider_slug_invalid`，重复返回 `409 llm_provider_slug_conflict`。
+
+`llmproviders.Catalog.Lookup` 是唯一解析入口，Messages、Chat Completions、Batches、Workbench、管理后台代理、Agent 与 Session 模型覆盖、Brain `model_backends` 都通过它解析：
+
+```mermaid
+flowchart TD
+  In[请求 model] --> Split{能在第一个 / 拆出 slug?}
+  Split -- 是 --> Q{slug 存在且该 Provider 配置了剩余 ID?}
+  Q -- 是 --> Hit[命中该 Provider]
+  Split -- 否 --> Legacy
+  Q -- 否 --> Legacy[按整串作为历史裸 ID 在全部 Provider 中查找]
+  Legacy --> Count{命中数}
+  Count -- 1 --> Hit
+  Count -- 0 --> NotConfigured[ErrModelNotConfigured]
+  Count -- 多个 --> Ambiguous[AmbiguousModelError 列出可选完整 ID]
+```
+
+- 带前缀的匹配优先。即使某个 slug 恰好等于历史裸 ID 的第一段，例如 slug `deepseek-ai` 与 `deepseek-ai/xxx`，也按「slug + 上游 ID」解析。
+- 历史裸 ID 长期兼容：外部 SDK、脚本和存量 Batch 参数仍可使用 `kimi-k2.5`，只要它在 workspace 内只属于一个 Provider。被多个 Provider 配置时返回 `400 invalid_request_error`，消息列出可用的完整 ID，引导调用方迁移。
+- `GET /v1/models`、Workbench 模型列表和控制台目录只展示完整 ID。
+- Agent 创建/更新与 Session 模型覆盖在写入时把能唯一解析的裸 ID 规范化为完整 ID 后保存，新数据不再出现裸 ID。
+- Brain `model_backends` 以完整 ID 为键；为兼容旧运行时配置，能唯一解析到同一上游 ID 的裸 ID 也作为键保留。
+
+迁移 `00090_llm_provider_slug.sql` 在同一事务内完成存量兼容：
+
+1. 每个 workspace 内按 `created_at, uuid` 排序为已有 Provider 回填 `default`、`default-2`……，再加上非空、格式检查与 `(organization_uuid, workspace_uuid, slug)` 唯一约束。
+2. 迁移前模型 ID 在 workspace 内唯一，因此可以确定性地把引用改写为完整 ID：`agents.model`、`agent_versions.model`、`sessions.agent_snapshot.model` 与 `code_sessions.model`，对象形态改写 `id`，字符串形态整体替换。改写只改变表示，不增加 Agent 版本。
+3. 指向已删除 Provider 或已移除模型的引用保持原样，行为与迁移前一致，运行时返回「模型未配置」。
+
+迁移与新代码需要一起发布：旧版本服务无法解析带前缀的 ID。Down 迁移只删除 `slug` 列与约束，不回滚已改写的模型引用。
 
 进程 YAML 不再包含 `anthropic_upstream`。上游地址和 Key 只来自 workspace Provider。
 
@@ -36,16 +77,15 @@ POST   /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_provide
 
 `messages` backend 的 `preview_models` 用请求里的 `base_url` 和 `api_key` 调用上游 `{base_url}/v1/models`，只返回 `model_ids`。请求同时带 `X-Api-Key`、`Authorization: Bearer` 和 `anthropic-version`，兼容 Anthropic 与智谱等只认 Bearer 的网关。`data: []` 是合法空列表；缺少 `data`、`success:false` 或带 `error` 的信封视为失败。
 
-`models/sync` 解密已保存的 Key，并按以下顺序更新：始终保留该 Provider 已保存的模型；仅从上游新发现的 ID 中过滤已被其他 Provider 占用的项；过滤后再去重、合并并应用 100 个模型的上限。响应通过 `skipped_model_ids` 返回因冲突跳过的 ID。上游失败返回 `502`，不改写现有配置。
+`models/sync` 解密已保存的 Key，始终保留该 Provider 已保存的模型，再把上游新发现的 ID 去重、合并并应用 100 个模型的上限。其他 Provider 是否配置同名模型不影响同步结果。上游失败返回 `502`，不改写现有配置。
 
-Provider 控制台错误响应包含稳定的 `code`，前端不得依赖英文 `message` 判断错误。模型冲突还返回结构化的 `model_id`。例如：
+Provider 控制台错误响应包含稳定的 `code`，前端不得依赖英文 `message` 判断错误。例如：
 
 ```json
 {
   "error": "invalid_request",
-  "code": "model_conflict",
-  "message": "model_id is already configured by another provider: glm-4.7",
-  "model_id": "glm-4.7"
+  "code": "llm_provider_slug_conflict",
+  "message": "provider slug already exists"
 }
 ```
 
@@ -59,7 +99,7 @@ Anthropic Messages 规范入口为：
 POST /v1/messages
 ```
 
-handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发前将这段有界请求体读入内存。完整扫描顶层对象可以确认 `model` 恰好出现一次，避免不同 JSON 解析器对重复键取值不同而绕过 Provider 白名单；校验后仍按原始字节转发，不改写模型 ID 或其他字段。唯一例外是下文的托管会话文件引用边界。响应 body 继续逐块流式转发，不做整包缓冲。
+handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发前将这段有界请求体读入内存。完整扫描顶层对象可以确认 `model` 恰好出现一次，避免不同 JSON 解析器对重复键取值不同而绕过 Provider 白名单。解析出 Provider 后，只把顶层 `model` 的值字节替换为上游模型 ID（例如 `oma/kimi-k2.5` → `kimi-k2.5`），其余字节保持原样；请求已使用上游 ID 时不复制 body。另一处改写是下文的托管会话文件引用边界。上游响应中的 `model` 不回写为带前缀的 ID。响应 body 继续逐块流式转发，不做整包缓冲。
 
 托管会话绑定的 Code Session 模型凭据存在一个文件引用边界：在访问上游前，OMA 解析 `messages[].content` 及嵌套 `tool_result.content` 中 document/image 的 `source.type=file`。文件按凭据所属 workspace 查询；同 workspace 的文件可在明确引用时复用，scope 元数据不引入额外的会话授权限制。Files 中找不到时回退到凭据所属 public Session 的 `user.message` 私有附件（见 [message-media-attachments](message-media-attachments.md)），其他 Session 的附件视为不存在。已删除、缺失或跨 workspace 引用返回相同的404，不向模型发送不透明的本地 file_id。普通 API key / 平台调用保持原始请求字节透传，允许其使用 Provider 自己的文件引用。
 
@@ -72,14 +112,15 @@ handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发
 
 - 删除调用方的 `Authorization`、`X-Api-Key`、`Cookie`、组织/workspace 内部 header 和 hop-by-hop header；
 - 解密该模型所属 Provider 的 Key，同时注入为上游 `X-Api-Key` 和 `Authorization: Bearer`；
+- 把顶层 `model` 替换为该 Provider 的上游模型 ID；
 - 将请求发往 `{provider.base_url}/v1/messages`；
 - 透传上游状态码、响应 body、SSE 数据和限流等响应 header；Code Session 上游 401 按下述失败语义转换；
 - SSE 响应逐块 flush，并关闭代理缓冲；
 - 请求 body 上限为 32 MiB。
 
-管理后台继续使用原平台路径 `POST /api/organizations/{orgUuid}/proxy/v1/messages`。该路由及其独立代理实现不作为 `/v1/messages` 的兼容别名，也不承载 Claude Code 的 session-scoped token。它与公共 Messages 入口走同一条 Provider 解析、唯一顶层 `model` 校验和 32 MiB 请求上限，也不改写请求体。
+管理后台继续使用原平台路径 `POST /api/organizations/{orgUuid}/proxy/v1/messages`。该路由及其独立代理实现不作为 `/v1/messages` 的兼容别名，也不承载 Claude Code 的 session-scoped token。它与公共 Messages 入口走同一条 Provider 解析、唯一顶层 `model` 校验、顶层 `model` 替换和 32 MiB 请求上限。Batches 在逐条发送时、Workbench 在构造上游请求时执行相同替换。
 
-`GET /v1/models` 保留 Anthropic 列表信封的 `data`、`has_more`、`first_id` 与 `last_id`。列表内容来自当前 workspace 配置的真实模型 ID；由于 Provider 配置不维护能力目录，`display_name` 使用模型 ID，`created_at` 使用 Unix epoch，token 上限与 `capabilities` 显式返回 `null`。已有 Provider 但尚无模型时返回 `200`、`data: []` 和空游标；未配置 Provider 时返回 `503` 与英文消息 `This workspace has no LLM provider configured`；配置读取失败时返回 `500` 与英文消息 `Workspace model configuration is unavailable`。不额外返回机器可读 `error.code`。
+`GET /v1/models` 保留 Anthropic 列表信封的 `data`、`has_more`、`first_id` 与 `last_id`。列表内容是当前 workspace 配置的完整模型 ID `{slug}/{upstream_model_id}`；由于 Provider 配置不维护能力目录，`display_name` 使用模型 ID，`created_at` 使用 Unix epoch，token 上限与 `capabilities` 显式返回 `null`。已有 Provider 但尚无模型时返回 `200`、`data: []` 和空游标；未配置 Provider 时返回 `503` 与英文消息 `This workspace has no LLM provider configured`；配置读取失败时返回 `500` 与英文消息 `Workspace model configuration is unavailable`。不额外返回机器可读 `error.code`。
 
 服务端不提供 `/v1/code/sessions/{code_session_id}/bridge`。managed-agent 在创建 code session 时直接获得 OAuth FD、WebSocket FD 和初始 worker epoch；后续 worker 所有权切换统一使用 `/worker/register`。
 
@@ -102,7 +143,7 @@ environment-manager 在启动 Claude Code 前调用 `/worker/register`，建立�
 
 code-session 请求来自受信任的沙箱调用方。公共 Messages 入口完整扫描有界请求体的顶层对象，只读取唯一的 `model` 以选择 Provider；其余字段仍由上游按 Anthropic Messages 合同校验。本服务负责入口鉴权、请求大小限制、header 清洗、Provider 解析和响应流式代理。
 
-Claude Code 所需的 `ANTHROPIC_MODEL` 等变量名保留，但值为 Agent 保存的真实模型 ID；Provider Key 不进入 sandbox。
+Claude Code 所需的 `ANTHROPIC_MODEL` 等变量名保留，值为 Agent 保存的完整模型 ID（`{slug}/{upstream_model_id}`）；Worker 用该值调用 OMA，由 OMA 在转发前替换为上游 ID。Provider Key 不进入 sandbox。
 Runner 在 Worker 启动环境中固定设置 `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`。在支持的 Claude Code 2.1.251 中，这会跳过 Agent SDK/headless 模式的后台标题生成请求，避免其 JSON 响应被 Messages 代理记录为公开 `agent.message`；显式创建或更新 Session 的 `title` API 不受影响。该变量独立于 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`，因此启用 OTLP 时仍生效。
 
 Agent PATCH 只有在请求显式携带 `model` 时才校验新模型；只修改名称、描述等字段时原样保留旧模型，即使管理员已经从 Provider 删除了该模型。这样旧 Agent 仍可通过后续 PATCH 切换到有效模型；实际运行仍按当前 Provider 配置失败关闭。
@@ -148,7 +189,8 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 
 - workspace 没有 Provider：`503 api_error`，英文消息 `This workspace has no LLM provider configured`；
 - 请求模型未配置：`400 invalid_request_error`；
-- 重复模型、Key 解密失败、Provider 数据损坏或配置读取失败：`500 api_error`，英文消息 `Workspace model configuration is unavailable`；失败关闭，不回退；
+- 历史裸 ID 被多个 Provider 配置：`400 invalid_request_error`，消息列出可选完整 ID；
+- Key 解密失败、Provider 数据损坏或配置读取失败：`500 api_error`，英文消息 `Workspace model configuration is unavailable`；失败关闭，不回退；
 - 上游地址或网络不可用：`502 api_error`；
 - 请求超过 32 MiB：`413 request_too_large`；
 - token 无效、session 终止、worker lease 过期或用在其他资源：`401 authentication_error`；
@@ -159,7 +201,7 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 
 ## 最小实现边界
 
-- 不建独立 Model 表；`model_ids` 直接存 Provider JSON 数组。创建和更新 Provider 时通过 workspace 级 PostgreSQL transaction advisory lock 串行化“检查模型归属 + 写入”，保证同一模型不会被并发分配给多个 Provider。
+- 不建独立 Model 表；`model_ids` 直接存 Provider JSON 数组，只保存上游 ID，不带前缀。同名模型可分属不同 Provider，因此写入不再需要跨 Provider 的归属检查或 advisory lock；slug 唯一性由数据库唯一约束保证，并发冲突返回 `409 llm_provider_slug_conflict`。
 - Provider 的所有读写都同时绑定 `organization_uuid` 和 `workspace_uuid`。
 - 不加缓存；删除或修改 Provider 立即生效。
 - 不建立只有单实现的 Resolver 接口；调用方直接使用 `internal/llmproviders`。
@@ -168,11 +210,13 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 
 - `tests/messages_api_test.go`：缺少 Provider、未配置模型、跨资源使用、未 register、lease 过期、public session 终止、长时间运行、普通 API key、平台 cookie、header 清洗与响应 header 透传；
 - `internal/messages/handler_test.go`：有界缓冲后保留原始请求体，并拒绝重复顶层 `model`；
+- `internal/llmproviders/model_ref_test.go`：slug 校验、首个 `/` 拆分、`default-N` 选择、完整/历史 ID 解析与歧义、顶层 `model` 字节级替换；
+- `internal/db/llm_provider_slug_migration_postgres_test.go`：真实 PostgreSQL 上的 slug 回填、引用改写、歧义与孤儿引用保留、唯一与格式约束；
 - `tests/messages_upstream_auth_test.go`：三种上游 401 body 的 Worker 错误转换、不可重试 header、模型 span，以及普通 API key 调用的原始响应；
 - `tests/liveworker/chat_upstream_errors_test.go`：公开 Runner 通过 environment-manager 的真实 OAuth FD 启动 Worker，两种持续上游 401 在 90 秒内产生 `session.error`、以 `retries_exhausted` 自然 idle 并清空队列，不生成助手回复；
 - `tests/session_worker_error_status_test.go`：失败结果不提前结束 Session、API 错误消息不公开、失败 idle 原因和重复报告幂等，以及下一轮成功恢复 `end_turn`；
-- `tests/llm_providers_api_test.go`：workspace Provider CRUD、空模型转换、Key 加密、模型发现、冲突与解析；
-- `tests/models_api_test.go`：`GET /v1/models` 返回已配置的真实模型 ID，并区分空 Provider 列表与空模型列表；
+- `tests/llm_providers_api_test.go`：workspace Provider CRUD、slug 默认值/冲突/不可变、并发 slug 唯一、同名模型按 slug 解析、空模型转换、Key 加密、模型发现与同步；
+- `tests/models_api_test.go`：`GET /v1/models` 返回完整模型 ID，并区分空 Provider 列表与空模型列表；
 - `tests/platform_proxy_directory_api_test.go`：管理后台原有独立路径的 JSON 与 SSE 转发；
 - `internal/environments/environment_manager_test.go`：沙箱 payload 不含上游 key 或 Claude 凭证环境变量，api base URL 和 lifecycle-bound token auth 正确，启动 payload 会被删除；
 - `tests/environments_runner_cloud_test.go`：真实 runner 组装出的 runtime payload 使用 session-scoped token，并在 initialize 事件中携带 Agent system prompt 与 OMA append system prompt；

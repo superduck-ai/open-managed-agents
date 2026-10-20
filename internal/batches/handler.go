@@ -206,16 +206,16 @@ func (h *Handler) validateConfiguredModels(
 	body *createRequest,
 	requestModels []string,
 ) error {
-	modelIDs, err := llmproviders.ListModelIDs(ctx, h.db, organizationUUID, workspaceUUID)
+	catalog, err := llmproviders.LoadCatalog(ctx, h.db, organizationUUID, workspaceUUID)
 	if err != nil {
 		return configuredModelError(err)
 	}
-	configured := make(map[string]struct{}, len(modelIDs))
-	for _, modelID := range modelIDs {
-		configured[modelID] = struct{}{}
-	}
 	for index, modelID := range requestModels {
-		if _, ok := configured[modelID]; !ok {
+		_, err := catalog.Lookup(modelID)
+		if errors.Is(err, llmproviders.ErrAmbiguousModel) {
+			return invalidRequest(fmt.Errorf("params for custom_id %s: %w", body.Requests[index].CustomID, err))
+		}
+		if err != nil {
 			return invalidRequest(fmt.Errorf(
 				"params for custom_id %s: model %q is not configured for this workspace",
 				body.Requests[index].CustomID,

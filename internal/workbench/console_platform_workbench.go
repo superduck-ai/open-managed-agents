@@ -708,6 +708,7 @@ func newWorkbenchAnthropicRequest(
 	upstreamBody map[string]any,
 	accept string,
 ) (*http.Request, error) {
+	upstreamBody["model"] = upstream.ModelID
 	encoded, err := json.Marshal(upstreamBody)
 	if err != nil {
 		return nil, err

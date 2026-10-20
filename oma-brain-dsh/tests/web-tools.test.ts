@@ -111,10 +111,11 @@ test("web fetch retains full long content in readable storage and forwards the t
   await backend.ready;
   const files = new Map<string, string>();
   const source = "头部\n" + "content ".repeat(20000) + "\n尾部";
+  let truncated = true;
   const api = new OmaApi(backend.url, Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     expect(request.headers.get("X-OMA-Session-Thread-ID")).toBe("child-thread");
-    return Response.json({ url: "https://example.com", status_code: 200, title: "Source", content: "preview", full_content: source, truncated: true });
+    return Response.json({ url: "https://example.com", status_code: 200, title: "Source", content: truncated ? "preview" : source, full_content: truncated ? source : undefined, truncated });
   }, { preconnect: fetch.preconnect }));
   api.assignments.set(backend.a.session_id, backend.a);
   const sandbox = {
@@ -134,6 +135,11 @@ test("web fetch retains full long content in readable storage and forwards the t
     expect(output.content[0].text).toContain([...files.keys()][0]!);
     expect(JSON.parse(output.content[0].text).content).toBe("preview");
     expect(JSON.parse(output.content[0].text).full_content).toBeUndefined();
+    truncated = false;
+    const complete = await client.call(webToolDefinitions()[1]!, { url: "https://example.com" }, new AbortController().signal);
+    expect(JSON.parse(complete.content[0].text).content).toBe(source);
+    expect(JSON.parse(complete.content[0].text).truncated).toBe(false);
+    expect(files.size).toBe(1);
   } finally { await backend.stop(); }
 });
 

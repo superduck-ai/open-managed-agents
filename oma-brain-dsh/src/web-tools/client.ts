@@ -27,7 +27,7 @@ export class WebClient {
           return { content: [{ type: "text", text: JSON.stringify(page) }] };
         }
         const result = { content: [{ type: "text", text: JSON.stringify(body) }] };
-        return this.sandbox ? await persistToolOutput(result, this.sandbox, signal) : result;
+        return this.sandbox && tool.remoteName !== "fetch" ? await persistToolOutput(result, this.sandbox, signal) : result;
       }
       const message = typeof body?.error?.message === "string" ? body.error.message : "Web tool request failed";
       return { isError: true, content: [{ type: "text", text: `OMA web tool HTTP ${response.status}: ${message}` }] };

@@ -10,9 +10,8 @@ import (
 )
 
 const (
-	sandboxMCPBodyLimit     = 1 << 20
 	sandboxMCPResponseLimit = 8 << 20
-	sandboxMCPInspectLimit  = sandboxMCPBodyLimit
+	sandboxMCPInspectLimit  = maxSandboxMCPRequestBytes
 )
 
 var sandboxMCPToolNames = telemetry.NewEnum("bash", "read", "write", "edit", "grep", "glob")

@@ -21,7 +21,10 @@ import (
 
 var sandboxMCPMethods = telemetry.NewEnum("server/discover", "initialize", "notifications/initialized", "ping", "tools/list", "tools/call", "notifications/cancelled")
 
+const sandboxNotForwardedHeader = "X-Oma-Sandbox-Not-Forwarded"
+
 func (h *Handler) handleSandboxMCP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set(sandboxNotForwardedHeader, "true")
 	id := chi.URLParam(r, "code_session_id")
 	claims, ok := h.authorizeSessionIngressClaims(w, r, id)
 	if !ok {
@@ -68,9 +71,9 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 
 func (h *Handler) proxySandboxMCP(w http.ResponseWriter, r *http.Request, session db.CodeSession, span trace.Span) sandboxMCPCall {
 	call := sandboxMCPCall{method: telemetry.OtherValue, outcome: "invalid_request"}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, sandboxMCPBodyLimit))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxSandboxMCPRequestBytes))
 	if err != nil {
-		h.errorAdapter.Write(w, r, sandboxInvalidRequest(err))
+		h.errorAdapter.Write(w, r, sandboxRequestReadError(err))
 		return call
 	}
 	var request sandboxMCPRequest
@@ -82,7 +85,19 @@ func (h *Handler) proxySandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 	if call.tool != "" {
 		span.SetAttributes(telemetry.AttrToolName.String(call.tool), telemetry.AttrMCPRequestID.String(sandboxMCPRequestID(request)))
 	}
-	endpoint, err := h.ensureSessionSandbox(r.Context(), session)
+	if request.Method == "tools/call" {
+		policies, err := h.service.currentRuntimeToolPolicies(r.Context(), session)
+		if err != nil {
+			h.errorAdapter.Write(w, r, sandboxOperationError(err))
+			return call.with("policy_error")
+		}
+		policy, known := policies[request.Params.Name]
+		if policies != nil && (!known || policy == string(resolvedToolPermissionDeny)) {
+			h.errorAdapter.Write(w, r, sandboxToolDenied())
+			return call.with("tool_denied")
+		}
+	}
+	endpoint, err := h.ensureSessionSandbox(r.Context(), session, !strings.HasPrefix(request.Method, "notifications/"))
 	if err != nil {
 		h.errorAdapter.Write(w, r, sandboxOperationError(err))
 		return call.with("sandbox_unavailable")
@@ -99,6 +114,7 @@ func (h *Handler) proxySandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 	copySandboxMCPRequestHeaders(upstream.Header, r.Header)
 	telemetry.InjectTraceParent(r.Context(), upstream.Header.Set)
 	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	w.Header().Del(sandboxNotForwardedHeader)
 	response, err := client.Do(upstream)
 	if err != nil {
 		h.errorAdapter.Write(w, r, sandboxOperationError(err))

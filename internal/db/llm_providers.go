@@ -28,6 +28,7 @@ type LLMProvider struct {
 	OrganizationUUID string
 	WorkspaceUUID    string
 	Name             string
+	APIBackend       string
 	BaseURL          string
 	APIKeyLast4      string
 	ModelIDs         []string
@@ -186,6 +187,9 @@ func validateLLMProviderModelOwnership(
 }
 
 func llmProviderParams(provider LLMProvider) (llmProviderWriteParams, error) {
+	if provider.APIBackend == "" {
+		provider.APIBackend = "messages"
+	}
 	if err := requireLLMProviderEnvelope(provider.SecretEnvelope); err != nil {
 		return llmProviderWriteParams{}, err
 	}
@@ -204,6 +208,7 @@ func llmProviderParams(provider LLMProvider) (llmProviderWriteParams, error) {
 		OrganizationUUID: provider.OrganizationUUID,
 		WorkspaceUUID:    provider.WorkspaceUUID,
 		Name:             provider.Name,
+		APIBackend:       provider.APIBackend,
 		BaseURL:          provider.BaseURL,
 		APIKeyLast4:      provider.APIKeyLast4,
 		ModelIDs:         modelIDs,
@@ -229,6 +234,7 @@ func (r llmProviderRow) provider() (LLMProvider, error) {
 		OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID:    r.WorkspaceUUID,
 		Name:             r.Name,
+		APIBackend:       r.APIBackend,
 		BaseURL:          r.BaseURL,
 		APIKeyLast4:      r.APIKeyLast4,
 		ModelIDs:         modelIDs,

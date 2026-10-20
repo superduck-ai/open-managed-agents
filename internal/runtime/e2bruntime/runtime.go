@@ -57,6 +57,7 @@ type Provider interface {
 type E2BProvider struct {
 	cfg          config.E2BConfig
 	packageHosts []string
+	serviceHosts serviceHostCache
 }
 
 const defaultSandboxTimeout = 30 * time.Second

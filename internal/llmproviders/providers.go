@@ -24,8 +24,9 @@ var (
 const secretScope = "llm_provider"
 
 type Upstream struct {
-	BaseURL string
-	APIKey  string
+	APIBackend string
+	BaseURL    string
+	APIKey     string
 }
 
 func Resolve(
@@ -65,7 +66,7 @@ func Resolve(
 		return Upstream{}, fmt.Errorf("open LLM provider API key: %w", err)
 	}
 	defer clear(plaintext)
-	return Upstream{BaseURL: selected.BaseURL, APIKey: string(plaintext)}, nil
+	return Upstream{APIBackend: selected.APIBackend, BaseURL: selected.BaseURL, APIKey: string(plaintext)}, nil
 }
 
 func ListModelIDs(ctx context.Context, database *db.DB, organizationUUID, workspaceUUID string) ([]string, error) {

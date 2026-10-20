@@ -25,6 +25,7 @@ type Handler struct {
 	logger                 *slog.Logger
 	errorAdapter           *httpapi.ErrorAdapter
 	sandboxTimeoutExtender SandboxTimeoutExtender
+	sandboxRenewals        sandboxRenewals
 	upstreamProxy          upstreamProxyRuntime
 	mcpProxyTransport      http.RoundTripper
 	wrapMCPVaultTransport  mcpProxyTransportWrapper

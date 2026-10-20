@@ -40,18 +40,18 @@ func (r *Runner) startExternalWorker(ctx context.Context, run *runnerRun, env db
 		if !found {
 			return db.ErrNotFound
 		}
-		if _, err := r.ensureSessionSandbox(ctx, code, runnerTriggerPrewarm); err != nil {
+		if _, _, err := r.ensureSessionSandbox(ctx, code, runnerTriggerPrewarm); err != nil {
 			return err
 		}
 	}
 	return r.finishManagedAgentRuntime(ctx, run, preparation.Session, *work, launch)
 }
 
-func (r *Runner) EnsureSessionSandbox(ctx context.Context, code db.CodeSession) (string, error) {
+func (r *Runner) EnsureSessionSandbox(ctx context.Context, code db.CodeSession) (string, db.EnvironmentSandbox, error) {
 	return r.ensureSessionSandbox(ctx, code, runnerTriggerLazyMCP)
 }
 
-func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, trigger string) (endpoint string, err error) {
+func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, trigger string) (endpoint string, _ db.EnvironmentSandbox, err error) {
 	startedAt := time.Now()
 	ensureOutcome := "reused"
 	defer func() {
@@ -64,30 +64,30 @@ func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, 
 	defer cancel()
 	work, err := r.db.GetLatestEnvironmentWorkForSession(ctx, code.WorkspaceUUID, code.EnvironmentExternalID, code.SessionUUID)
 	if err != nil {
-		return "", err
+		return "", db.EnvironmentSandbox{}, err
 	}
 	if work.OrganizationUUID != code.OrganizationUUID || work.State != "active" {
-		return "", db.ErrInvalidState
+		return "", db.EnvironmentSandbox{}, db.ErrInvalidState
 	}
 	if sandbox, err := r.db.GetResumableEnvironmentSandboxForCodeSession(ctx, code.ExternalID); err == nil && sandbox.ProviderSandboxID != nil {
-		return r.sandboxMCPEndpoint(ctx, *sandbox.ProviderSandboxID)
+		return r.sessionSandboxEndpoint(ctx, sandbox)
 	} else if err != nil && !errors.Is(err, db.ErrNotFound) {
-		return "", err
+		return "", db.EnvironmentSandbox{}, err
 	}
 	env, err := r.db.GetEnvironmentByUUID(ctx, work.WorkspaceUUID, work.EnvironmentUUID)
 	if err != nil {
-		return "", err
+		return "", db.EnvironmentSandbox{}, err
 	}
 	manager, err := brainSandboxManagerCommand(code.ExternalID, code.WorkDir, r.cfg)
 	if err != nil {
-		return "", err
+		return "", db.EnvironmentSandbox{}, err
 	}
 	launch := managedAgentRuntimeLaunch{CodeSessionID: code.ExternalID, Recovered: true, Manager: manager}
 	runCtx, run := startSandboxRun(ctx, work, trigger)
 	created, err := r.createEnvironmentSandbox(runCtx, run, env, &work, &launch)
 	run.end(runCtx, err)
 	if err != nil {
-		return "", err
+		return "", db.EnvironmentSandbox{}, err
 	}
 	ensureOutcome = "joined"
 	if created {
@@ -98,23 +98,31 @@ func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, 
 	for {
 		sandbox, found, err := r.db.GetPendingEnvironmentSandboxForWork(ctx, work)
 		if err != nil {
-			return "", err
+			return "", db.EnvironmentSandbox{}, err
 		}
 		if !found || sandbox.State == "stopping" {
-			return "", db.ErrInvalidState
+			return "", db.EnvironmentSandbox{}, db.ErrInvalidState
 		}
 		if sandbox.State == "running" && sandbox.ProviderSandboxID != nil {
-			return r.sandboxMCPEndpoint(ctx, *sandbox.ProviderSandboxID)
+			return r.sessionSandboxEndpoint(ctx, sandbox)
 		}
 		if sandbox.CreatedAt.Add(3 * time.Minute).Before(time.Now()) {
-			return "", db.ErrInvalidState
+			return "", db.EnvironmentSandbox{}, db.ErrInvalidState
 		}
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return "", db.EnvironmentSandbox{}, ctx.Err()
 		case <-ticker.C:
 		}
 	}
+}
+
+func (r *Runner) sessionSandboxEndpoint(ctx context.Context, sandbox db.EnvironmentSandbox) (string, db.EnvironmentSandbox, error) {
+	endpoint, err := r.sandboxMCPEndpoint(ctx, *sandbox.ProviderSandboxID)
+	if err != nil {
+		return "", db.EnvironmentSandbox{}, err
+	}
+	return endpoint, sandbox, nil
 }
 
 type brainSandboxManagerPayload struct {

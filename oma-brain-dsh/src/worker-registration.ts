@@ -39,12 +39,13 @@ export async function registerWorkerTask(api: OmaApi, claimed: BrainTask, signal
     ...task,
     ...(traceParent ? { trace_parent: traceParent } : {}),
     launch: {
-      version: 2, model: context.model, work_dir: context.cwd,
+      version: 2, model: context.model, model_backends: context.model_backends, work_dir: context.cwd,
       system: context.system_prompt || context.custom_system_prompt || "",
       environment_prompt: context.append_system_prompt ?? "",
       memory_catalog_prompt: context.memory_catalog_prompt ?? "",
       skills: context.runtime_skills ?? [], subagents: context.subagents ?? undefined,
       tools: context.runtime_tools ?? undefined,
+      tool_permissions: context.runtime_tool_permissions ?? undefined,
     },
     mcp_config: { mcpServers: { sandbox: {
       type: "http", url: `${api.base.replace(/\/$/, "")}/v2/ccr-sessions/${id}/sandbox/mcp`,

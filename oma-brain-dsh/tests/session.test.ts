@@ -874,6 +874,36 @@ describe("original dsh loop over CCRv2", () => {
     expect(history).toContain("second user");
     expect(second.session.state.completed).toEqual(["first", "second"]);
   });
+
+  test("a new plugin host resumes logs whose stored key order differs between batches", async () => {
+    const jsonbOrder = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(jsonbOrder);
+      if (!value || typeof value !== "object") return value;
+      const keys = Object.keys(value).sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));
+      return Object.fromEntries(keys.map((key) => [key, jsonbOrder((value as Payload)[key])]));
+    };
+    const b = backend();
+    const first = await open(b);
+    await first.session.receive("first", {
+      message: { content: "first user " + "x".repeat(40_000) },
+    });
+    await first.session.close();
+    const logs = [...b.privateLog.entries()].filter(([, payload]) => payload.subtype === "dsh_log");
+    expect(logs.some(([, payload]) => JSON.stringify(payload).length > 32_768)).toBe(true);
+    for (const [uuid, payload] of logs)
+      if (JSON.stringify(payload).length <= 32_768) b.privateLog.set(uuid, jsonbOrder(payload) as Payload);
+    const [, last] = logs.at(-1)!;
+    b.privateLog.set("duplicate-dsh-log", { ...(jsonbOrder(last) as Payload), uuid: "duplicate-dsh-log" });
+    b.modelScript = [textEvents("second answer")];
+    const second = await open(b);
+    await second.session.receive("second", {
+      message: { content: "second user" },
+    });
+    const history = JSON.stringify(b.requests[1]!.messages);
+    expect(history).toContain("first user");
+    expect(history).toContain("second user");
+    expect(second.session.state.completed).toEqual(["first", "second"]);
+  });
 });
 
 

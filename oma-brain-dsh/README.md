@@ -349,7 +349,7 @@ been verified against a production gateway's thread-event validation.
 
 ## Persistence and recovery
 
-`CcrPersistence` implements dsh's SessionPersistence interface. Current-format headers and contiguous log batches are stored as CCRv2 private `system` events with subtype `dsh_log`. Input state, completed input IDs, approved arguments, confirmed tool outputs and the public-event outbox use subtype `dsh_brain_state`. The envelopes have schema version 1. Repeated writes retain the same content-derived UUID, allowing the backend to deduplicate a request whose HTTP confirmation was lost.
+`CcrPersistence` implements dsh's SessionPersistence interface. Current-format headers and contiguous log batches are stored as CCRv2 private `system` events with subtype `dsh_log`. Input state, completed input IDs, approved arguments, confirmed tool outputs and the public-event outbox use subtype `dsh_brain_state`. The envelopes have schema version 1. Repeated writes retain the same content-derived UUID, allowing the backend to deduplicate a request whose HTTP confirmation was lost. Restoration compares each batch's header and any repeated event sequence by JSON value, ignoring object key order: the backend returns small payloads from PostgreSQL `jsonb`, which reorders keys, and payloads above 32 KiB byte-for-byte from object storage, so batches of one log can come back with different key orders.
 
 Execution order is:
 

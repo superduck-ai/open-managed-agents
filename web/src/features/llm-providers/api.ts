@@ -1,6 +1,9 @@
 import { consoleApi } from '../../shared/api/client';
 
+export type APIBackend = 'messages' | 'chat_completions';
+
 export type LLMProvider = {
+  api_backend: APIBackend;
   type: 'llm_provider';
   id: string;
   name: string;
@@ -14,6 +17,7 @@ export type LLMProvider = {
 };
 
 export type LLMProviderInput = {
+  api_backend: APIBackend;
   name: string;
   base_url: string;
   api_key?: string;
@@ -60,7 +64,7 @@ export function deleteLLMProvider(orgUuid: string, workspaceId: string, provider
 export function previewProviderModels(
   orgUuid: string,
   workspaceId: string,
-  input: { base_url: string; api_key: string },
+  input: { base_url: string; api_key: string; api_backend: APIBackend },
   csrfToken?: string,
 ) {
   return consoleApi<{ model_ids: string[] }>(`${providersPath(orgUuid, workspaceId)}/preview_models`, {

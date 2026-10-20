@@ -2,7 +2,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { OmaApi } from "../api.ts";
 import { object, type Payload } from "../json.ts";
 import { sandboxEndpoint } from "./config.ts";
-import type { SandboxExecutor, RemoteTool } from "../runtime/contracts.ts";
+import { ToolNotForwardedError, type SandboxExecutor, type RemoteTool } from "../runtime/contracts.ts";
 import { workerDiagnostic } from "../ccrv2/diagnostics.ts";
 
 /** Use the same MCP SDK as DSH, with initialization gated by the approval checkpoint. */
@@ -10,7 +10,7 @@ export class SandboxMcp implements SandboxExecutor {
   private readonly client = new Client({ name: "oma-brain-dsh", version: "0.1.0" }, { versionNegotiation: { mode: "auto" } });
   private readonly transport: StreamableHTTPClientTransport;
   private initialization?: Promise<void>;
-  private readonly calls = new Map<string, { signal: AbortSignal; cleanup?: () => void }>();
+  private readonly calls = new Map<string, { signal: AbortSignal; cleanup?: () => void; rejection?: string }>();
 
   constructor(readonly api: OmaApi, readonly sessionId: string) {
     const endpoint = sandboxEndpoint(api.assignment(sessionId).mcp_config, api.base);
@@ -32,7 +32,10 @@ export class SandboxMcp implements SandboxExecutor {
             }
             delete body.params._meta.progressToken;
             if (!Object.keys(body.params._meta).length) delete body.params._meta;
-            return api.fetcher(new Request(request, { body: JSON.stringify(body) }));
+            const response = await api.fetcher(new Request(request, { body: JSON.stringify(body) }));
+            if (response.headers.get("X-Oma-Sandbox-Not-Forwarded") === "true")
+              call.rejection = await rejectionMessage(response.clone());
+            return response;
           }
         }
         return api.fetcher(request);
@@ -55,12 +58,15 @@ export class SandboxMcp implements SandboxExecutor {
     await this.provision(signal);
     const start = Date.now();
     const token = crypto.randomUUID();
-    const call = { signal, cleanup: undefined as (() => void) | undefined };
+    const call = { signal, cleanup: undefined as (() => void) | undefined, rejection: undefined as string | undefined };
     this.calls.set(token, call);
     let result: Payload;
     try {
       result = object(await this.client.callTool({ name: tool.remoteName, arguments: args, _meta: { progressToken: token } },
         { timeout: 185_000, ...(this.transport.protocolVersion === "2026-07-28" ? { signal } : {}) }));
+    } catch (error) {
+      if (call.rejection !== undefined) throw new ToolNotForwardedError(call.rejection);
+      throw error;
     } finally {
       call.cleanup?.();
       this.calls.delete(token);
@@ -72,4 +78,13 @@ export class SandboxMcp implements SandboxExecutor {
   }
 
   async close(): Promise<void> { await this.client.close(); }
+}
+
+async function rejectionMessage(response: Response): Promise<string> {
+  let detail = `HTTP ${response.status}`;
+  try {
+    const message = (await response.json())?.error?.message;
+    if (typeof message === "string" && message) detail = message.slice(0, 500);
+  } catch { /* Non-JSON gateway rejection. */ }
+  return `Sandbox tool call was not executed: ${detail}`;
 }

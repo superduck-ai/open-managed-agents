@@ -48,7 +48,8 @@ DSH 开始模型执行前等待首个 `processing` 回执确认；后端通过�
 - `runtime_skills`：Skill 名称、描述、固定版本及沙箱内 `SKILL.md` 路径。
 - `subagents`：由会话 Agent 快照中的固定版本引用解析出的子 Agent 定义及工具权限。
 - `runtime_tools`：主 Agent 启用的沙箱工具名，按与权限执行相同的规则从会话 Agent 快照计算；缺失时注册全部沙箱工具。
-- 原有 `outcomes` 和 `mcp_config`。
+- `runtime_tool_permissions`：以沙箱 MCP 工具名（`bash`、`read`、`write`、`edit`、`grep`、`glob`）为键的策略表，值为 `allow`、`ask` 或 `deny`，由 Go 用与 `can_use_tool` 审批相同的 `resolveAgentToolPermission` 从当前 Session 的主 Agent 快照计算。创建时写入 Code Session 的表仅用于启动；`session_context` 每次读取最新 Session 快照重新计算权限，包括创建时未带权限表的旧会话。DSH 在每次模型请求前读取该上下文，并原地替换主 Agent 与子 Agent 共用的权限表。读取或校验失败时不发送模型请求，不沿用旧的放行结果；响应缺失该字段时清空本地表，所有工具走审批请求。会话只允许在 idle 时更新工具策略，因此下一轮模型执行前即可应用 `allow` 改为 `ask` 或 `deny` 的变化。
+- 原有 `outcomes` 和 `mcp_config`。DSH 目前不使用这两个字段：执行端只连接 Go 构造的沙箱 MCP（`/v2/ccr-sessions/{id}/sandbox/mcp`），不连接 `mcp_config` 中的用户 MCP 服务器，因此 Agent 上配置的 `mcp_toolset` 在 brain 模式下不可用，也不执行 outcomes。这是当前的范围限制，扩展时可复用沙箱工具的 `RemoteTool` 与网关转发模型。
 
 创建 Code Session 时，Go 对 prompt、Skill 和子 Agent 字段按 schema 解析，拒绝类型错误；子 Agent 定义从固定版本快照解析后写入配置。MCP 声明、outcomes 与未识别扩展字段在 JSON 边界原样透传，避免改写第三方字段或高精度数字。
 
@@ -62,11 +63,11 @@ DSH 内嵌 Bash、Read、Write、Edit、Grep、Glob 的模型工具定义，启�
 
 网关使用普通 CCRv2 身份、租户、epoch 和租约检查，调用共用 Environment 沙箱准备与续期能力，并转发 MCP 协议。Go 不再内嵌另一份工具目录或模拟 initialize/tools/list。沙箱创建复用 `environment_work`、`environment_sandboxes`：创建记录时短暂锁定 Work，多个请求等待同一份创建结果；远端创建和工具执行不持有数据库锁。
 
-DSH 对沙箱 MCP 先尝试 `server/discover` 协商 2026-07-28，旧版服务回退到 initialize。Go 在沙箱创建时用 `server/discover` 检查嵌入式 MCP，成功后才把沙箱标为 `running`；后续工具调用不重复探测。网关透传新版 MCP 请求头及请求范围内的 SSE 响应流，流式响应固定设置 `X-Accel-Buffering: no`，不依赖沙箱 server 或前置代理声明；新版中断关闭原工具请求，由沙箱 server 按协议停止处理，旧版中断仍发送 `notifications/cancelled` 并等待工具结果。沙箱 MCP 的未知执行结果继续由 DSH 私有日志处理。
+DSH 对沙箱 MCP 先尝试 `server/discover` 协商 2026-07-28，旧版服务回退到 initialize。Go 在沙箱创建时用 `server/discover` 检查嵌入式 MCP，成功后才把沙箱标为 `running`；后续工具调用不重复探测。网关透传新版 MCP 请求头及请求范围内的 SSE 响应流，流式响应固定设置 `X-Accel-Buffering: no`，不依赖沙箱 server 或前置代理声明；新版中断关闭原工具请求，由沙箱 server 按协议停止处理，旧版中断仍发送 `notifications/cancelled` 并等待工具结果。沙箱 MCP 的未知执行结果继续由 DSH 私有日志处理。网关在请求进入处理函数时设置 `X-Oma-Sandbox-Not-Forwarded: true`，仅在向沙箱发出请求前移除，因此鉴权、epoch、请求体超过 1 MiB、工具策略拒绝、沙箱准备或续期失败等转发前错误都带此标记，已转发后的上游错误、连接中断和超大响应不带。DSH 只信任 `tools/call` 响应上的该标记：收到时记为失败工具结果（文案包含网关错误信息，上限 500 字符）并以 `is_error` 返回模型，不记为未知结果、不 block 会话；工具已执行但返回非 text 内容时同样记为失败结果。
 
-每次调用前使用 provider `SetTimeout` 唤醒并续期沙箱，随后解析 MCP endpoint。Brain 沙箱启动 `environment-manager task-run`，设置 `ENVRUNNER_SKIP_CLAUDE_CODE=true`；Manager 初始化工作目录并在同一进程中启动 `/mcp`，不运行独立的 `mcp-server` CLI。启动命令清空 `MCP_ALLOWED_HOSTS`，使 E2B 动态服务域名可以通过 Go 网关访问，Rust 仍拒绝未经允许的浏览器 Origin。沙箱网关仅转发新版协议需要的 MCP 请求头和可选参数头，不发送旧版 MCP 会话头及 OMA 自定义 client ID、scope。未知执行结果留在 DSH 私有日志中处理，不写后端 Brain blocked 状态。
+非 `notifications/*` 请求在转发前使用 provider `SetTimeout` 唤醒并续期沙箱，随后解析 MCP endpoint。续期按 provider 沙箱 ID 在进程内节流：同一沙箱在 `e2b.sandbox_timeout` 的 1/3 内已成功续期（包括 worker 心跳路径）时跳过，失败的续期不计入；因此转发时沙箱剩余寿命至少为 2/3 TTL，长时间工具调用仍由心跳续期。多实例各自节流，最坏情况每实例一次续期。E2B 非本地端口模式下，服务 host 由沙箱 ID 和端口确定，provider 按沙箱 ID 与端口缓存 5 分钟，避免每次请求都调用 `Connect`；本地端口查询模式不缓存。Brain 沙箱启动 `environment-manager task-run`，设置 `ENVRUNNER_SKIP_CLAUDE_CODE=true`；Manager 初始化工作目录并在同一进程中启动 `/mcp`，不运行独立的 `mcp-server` CLI。启动命令清空 `MCP_ALLOWED_HOSTS`，使 E2B 动态服务域名可以通过 Go 网关访问，Rust 仍拒绝未经允许的浏览器 Origin。沙箱网关仅转发新版协议需要的 MCP 请求头和可选参数头，不发送旧版 MCP 会话头及 OMA 自定义 client ID、scope。未知执行结果留在 DSH 私有日志中处理，不写后端 Brain blocked 状态。
 
-本地协议联调可启动 Rust Manager，将其嵌入式 `/mcp` 地址设为 `OMA_RUST_MCP_URL`，运行 `TestProbeSandboxMCPReadyAgainstRustServer` 和 `TestBrainMCPRustServerInterop`；两项分别覆盖 Go 创建阶段的探测和 Go 网关到真实 Rust 工具的转发。
+本地协议联调可启动 Rust Manager，将其嵌入式 `/mcp` 地址设为 `OMA_RUST_MCP_URL`，运行 `TestProbeSandboxMCPReadyAgainstRustServer` 和 `TestBrainMCPRustServerInterop`；两项分别覆盖 Go 创建阶段的探测和 Go 网关到真实 Rust 工具的转发。同一地址也用于 DSH 的 `tests/sandbox-contract.test.ts`：它通过 `tools/list` 读取真实 server 的工具 schema，按类型、枚举、必填项和 `additionalProperties` 与 DSH 内置定义逐项比对，防止两份工具契约漂移；未设置 `OMA_RUST_MCP_URL` 时跳过。
 
 `environment_runner.brain_sandbox_prewarm` 默认关闭。开启后，Runner 先完成沙箱准备，再发布任务；预热失败不会派发 Worker，避免已执行任务依赖失败的 Work。纯文本也可能预热沙箱。空闲回收和归档清理继续由共用 SandboxLifecycle 负责。
 
@@ -80,7 +81,11 @@ result 复用既有事件 ID 去重、epoch 校验和队列过滤；普通成功
 
 公开 `user.interrupt` 经后端转换为 CCRv2 `control_request/interrupt`；执行端的两种中断入口都记录取消意图。工具结果已确认时保留内部取消处理，公开 `session.status_idle.stop_reason.type` 按 CMA 契约使用 `end_turn`，允许同会话继续；保留 `user.interrupt`，不生成 `Turn cancelled` 消息。结果未知时仍保持 blocked，不把未知执行当作成功取消。
 
-工具审批仍使用现有 CCRv2 控制请求。模型中的标准工具名在 MCP 边界转换为对应 server 名称。原始参数和审批后的参数分别保留；执行前再次校验有效参数。只读工具的并行策略与按 callId 记录的执行状态由 DSH 管理，Go 不为每次工具执行维护独立状态机。
+工具审批：策略为 `allow` 的工具由 DSH 本地放行，不发送 `can_use_tool`，也不上报 `requires_action`；公开 `agent.tool_use`（`evaluated_permission: allow`）仍由模型代理在 `span.model_request_end` 时按稳定事件 ID 发布。`ask`、`deny` 和策略缺失的工具继续使用现有 CCRv2 控制请求，由 Go 判定并发布对应公开事件。`/sandbox/mcp` 网关是最终执行点：关联公开 Session 时，每次 `tools/call` 都从该 Session 的最新 Agent 快照重新计算权限，工具名不在表中或为 `deny` 即返回 403，且不创建、续期或转发沙箱；`ask` 工具的人工审批仍由 DSH 执行。模型中的标准工具名在 MCP 边界转换为对应 server 名称。原始参数和审批后的参数分别保留；执行前再次校验有效参数。只读工具的并行策略与按 callId 记录的执行状态由 DSH 管理，Go 不为每次工具执行维护独立状态机。
+
+权限更新回归由 `tests/brain_tool_permission_updates_test.go` 覆盖同一会话的更新 API、最新上下文和网关拒绝，DSH 的 `tests/parallel-tools.test.ts` 覆盖 `allow` 改为 `ask` 后等待审批、改为 `deny` 后不再执行、刷新失败时停止模型请求，以及缺失权限表时回退审批；`tests/parallel-subagents.test.ts` 对保留的子 Agent 线程验证相同的策略更新。每次模型请求增加一次上下文读取，工具调用仍跳过 `allow` 的审批与状态写入。
+
+DSH 的工具执行持久化屏障如下：审批前先刷新 dsh 日志、保存含 outbox 的 Brain 状态并发布 outbox；发布后清空 outbox 的状态不单独保存，由下一次状态保存（dispatch 或 turn 结束）带上，崩溃后重发的 outbox 事件按稳定 UUID 幂等去重。turn 结束与恢复路径仍在 ACK 前保存清空后的 outbox。有副作用的工具（Bash、Write、Edit）审批通过只更新内存中的 `approved` 阶段，与 `dispatch` 合并为一次保存，并在沙箱准备之后、工具转发之前写入；崩溃恢复语义不变：未写入 `dispatch` 的调用按 interrupted 处理，已写入的按 blocked 处理。只读工具（Read、Glob、Grep）不进入 `callPhases`，不做 dispatch 预写和执行前日志 flush，结果只更新内存状态（审批改写参数时仍立即保存），由下一次模型请求前的 flush 一并持久化。只读调用失败时在未中断的前提下重试一次，仍失败则记为失败结果并以 `is_error` 返回模型，不调用 `recordUnknown`、不停止会话；中断时直接记为失败结果。进程在只读调用期间崩溃时，恢复按普通未完成 turn 处理为 interrupted，不进入 blocked，也不重放。dsh 日志 flush 在缓冲为空且 header 已持久化时跳过，新建会话仍通过一次空 batch 持久化 header。
 
 ## 迁移与部署
 
@@ -101,3 +106,90 @@ DSH Brain 源码作为主仓库的 `oma-brain-dsh/` 普通目录维护，使用�
 不是独立的 Go package；当前后端验收继续使用 `tests/liveworker/` 中的场景。
 
 领取接口对缺少或错误的 fleet token 返回 401，对缺少 `X-Worker-ID` 或越界的 `block_ms` 返回 400；release 接受 `admission_failed`、`shutdown`、`idle` 与 `permanent` 四种原因，领取已不属于调用方时返回 409。响应设置 `Cache-Control: no-store`，运行日志只记录 `worker_id`、`code_session_id`、`worker_epoch` 等元数据，不记录凭据。
+
+## 模型 API backend
+
+Provider 的 `api_backend` 决定 Brain 模型适配器，当前支持 `messages` 和 `chat_completions`。
+`GET /v2/sessions/{id}` 为 claim transport 在 `session_context.model_backends` 返回当前 workspace 的
+模型 ID 到 backend 映射，不包含上游 URL 或 Key。映射构建失败返回 500 `api_error`，
+公开文案为 `Could not resolve model API backends`；MCP 配置构建失败保留独立的 MCP 错误文案。
+子 Agent 继承与覆盖模型、运行时切换模型均按实际
+请求 model 查表。旧服务端没有该字段时沿用 Messages；显式映射中缺少模型或 backend 不支持时失败。
+
+```mermaid
+flowchart LR
+    Runtime[Brain 主 Agent / 子 Agent] --> Adapter["llm-ai-sdk 插件<br/>AiSdkAdapter"]
+    Adapter -- route / history / 回调 --> OMA["OMA 模型配置<br/>model.ts · model-provider.ts"]
+    OMA --> SDK["@ai-sdk/anthropic / @ai-sdk/openai-compatible"]
+    Adapter -- doStream --> SDK
+    SDK --> Transport[OMA fetch transport]
+    Transport --> Proxy[Go 模型代理]
+    Proxy --> Lifecycle[请求 span / 公开事件 / 用量]
+    Proxy --> Provider[Workspace Provider]
+```
+
+DSH 仍使用 provider `oma`，它表示平台模型适配器，不是用户配置的 Provider。路由映射在会话注册与
+恢复时读取，Go 每次代理请求重新解析 Provider 并检查 backend。运行期间修改 Provider backend
+可能使旧映射失效，此时明确报错并要求重新加载会话配置，不静默切换协议或自动重发。
+
+Brain 只依赖 Vercel AI SDK 的 provider 层：`@ai-sdk/anthropic` 处理 Messages，
+`@ai-sdk/openai-compatible` 处理 Chat Completions，二者都输出同一种 `LanguageModelV4`
+stream part，并精确锁定版本。Brain 不引入 `ai` 核心包，也不使用其 `streamText`、重试或
+工具执行循环；只调用 `doStream`，SSE 解析、协议字段编码和分片工具参数累积由 SDK 负责。
+两种 provider 都以字符串追加累积工具参数，大参数流保持线性耗时，
+`chat-completions.test.ts` 用 400 KB 参数守住该性质。
+
+### 通用 adapter 与 OMA 配置的边界
+
+协议转换位于 `oma-brain-dsh/src/llm-ai-sdk/`，按 DSH 插件形态组织（`name`、`inject: ["llm"]`、
+`apply`、`Config`），只依赖 `@ai-sdk/*` 与 `@deepseek-ai/*`，不导入任何 OMA 模块；
+`tests/llm-ai-sdk.test.ts` 守护该依赖方向。它目前只有 OMA 一个使用者，因此留在仓库内；
+出现第二个使用者时可原样发布为独立 DSH 插件包，并补充模型目录、上下文窗口和配置化路由。
+
+- `route.ts`：`AiSdkRoute` 描述一次调用使用的 `LanguageModelV4`、replay 格式名、是否需要签名
+  reasoning、默认输出上限和 provider options；`AiSdkAdapterOptions` 定义 `route`、`history`
+  与 `onCallStart`、`onRequestBody`、`onMessageID` 回调。
+- `prompt.ts`：把 DSH 历史转换为 AI SDK prompt。系统提示合并为首条 system 消息；
+  工具调用参数解析失败时保留 `__unparsedToolInput` 占位对象；工具结果只接受文本，
+  错误结果映射为 `error-text`。需要签名的路由只在同格式 replay 带有 `signature` 或
+  `redactedData` 时回传 thinking，否则降级为文本；其他路由以 reasoning 回传
+  （Chat 为 `reasoning_content`）。temperature 与 stop 原样传递，每次调用附带 DSH
+  `attributionHeaders()`。
+- `stream.ts`：把 stream part 映射为 DSH `StreamChunk`。内容块按 SDK part ID 首次出现顺序
+  编号：Messages 的文本与 thinking 对应原生 content block index，Chat 依次为 reasoning、
+  文本和各工具，与 Go observer 的编号一致（规则见 `messages-proxy.md`）。block-end 在终态统一发出；`tool-calls` 必须含工具，
+  `stop` 不能含工具，`length` 映射为 max-tokens，其余结束原因或缺少终态均视为
+  `TRANSPORT` 失败，无内容为 `EMPTY_RESPONSE`。
+- `adapter.ts`：`AiSdkAdapter` 串联上述步骤，处理取消并把错误转换为 `LlmError`。
+- `index.ts`：插件入口，按 `providers` 注册 adapter。
+
+OMA 侧只提供配置，由 `plugin.ts` 以 `providers: ["oma"]` 加载插件：
+
+- `model-provider.ts`：按会话取得 assignment 与实际模型的 backend，每次请求用当前 model token
+  创建 provider，Messages 使用 `authToken`（Bearer），Chat 使用 `apiKey`（Bearer）。自定义 fetch
+  只允许向对应 Go 代理路径发送 POST，删除 `x-api-key`，为子 Agent 设置
+  `X-Claude-Code-Agent-Id`，禁止重定向，总超时 300 秒。Messages 路由默认输出上限 8192，
+  关闭 SDK 默认的 `eager_input_streaming`；Chat 未显式指定时不发送上限，并把 `max_tokens`
+  改名为 `max_completion_tokens`。
+- `chat-reasoning.ts`：Chat 响应进入 AI SDK 前按与 Go 相同的规则规范化 reasoning 字段，
+  只保留 `reasoning_content`，弥补 SDK 只识别 `reasoning_content ?? reasoning` 的差异。
+  按完整 SSE 事件处理：多行 `data:` 先按规范拼接再解析，只有负载包含 `"reasoning` 的事件
+  才会改写为单行 `data:`，其余事件与 `id:`、`event:` 等字段原样通过；跨网络分片的行先缓冲，
+  保留 CRLF，并移除失效的 `content-length`。
+- `model.ts`：`omaModelOptions` 组合路由，并用回调维护 `modelResponses`、记录系统提示诊断；
+  `history` 把旧 `kind=pi-ai` replay 中的 `thinkingSignature` 转为 `oma-messages-v1` 签名。
+
+错误以 `LlmError` 抛出，由 DSH 运行时转换为终态 finish chunk。HTTP 错误优先读取响应体
+`error.message`，按上下文超限、额度耗尽、429、401/403、5xx 分类；流内错误同样分类。
+取消时 adapter 主动取消 SDK stream，从而关闭到 Go 代理的 HTTP 响应体。
+
+replay 继续使用 `oma-messages-v1` 与 `oma-chat-completions-v1`。response 保存模型消息 ID、
+Go Request-Id 与原始结束原因；blocks 保存每个内容块的公开事件索引，Messages 另存
+thinking 签名或 redacted 数据。CCRv2 实时预览、完成消息与历史恢复使用这些元数据生成
+同一组稳定事件 ID。旧 `kind=pi-ai` replay 中的 `thinkingSignature` 仍可回传。
+
+Worker 单测位于 `oma-brain-dsh/tests/chat-completions.test.ts` 与 `adapters.test.ts`，覆盖异常流、
+HTTP 与流内错误、取消、工具分片、大参数线性耗时、用量尾帧、历史编码、公开身份、
+主子模型 backend 选择和凭据轮换。
+
+`oma-brain-dsh/tests/chat-runtime.test.ts` 通过原生 Brain 与本地协议 fixture 执行工具审批、工具结果下一轮回传、关闭后历史恢复，确认恢复不会重复执行已完成的工具。该测试不连接真实模型或 Worker 沙箱。

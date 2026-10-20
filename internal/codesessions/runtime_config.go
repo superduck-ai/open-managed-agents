@@ -1,6 +1,11 @@
 package codesessions
 
-import "encoding/json"
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/superduck-ai/open-managed-agents/internal/db"
+)
 
 type runtimeSkillConfig struct {
 	Name        string `json:"name"`
@@ -18,6 +23,7 @@ type managedAgentRuntimeConfigSchema struct {
 	RuntimeSkills       []runtimeSkillConfig   `json:"runtime_skills"`
 	Subagents           *RuntimeSubagentConfig `json:"subagents"`
 	RuntimeTools        []string               `json:"runtime_tools"`
+	RuntimeToolPolicies map[string]string      `json:"runtime_tool_permissions"`
 	fields              map[string]json.RawMessage
 }
 
@@ -54,10 +60,17 @@ func (c managedAgentRuntimeConfigSchema) encode() (json.RawMessage, error) {
 		}
 		c.fields["runtime_tools"] = encoded
 	}
+	if c.RuntimeToolPolicies != nil {
+		encoded, err := json.Marshal(c.RuntimeToolPolicies)
+		if err != nil {
+			return nil, err
+		}
+		c.fields["runtime_tool_permissions"] = encoded
+	}
 	return json.Marshal(c.fields)
 }
 
-func runtimeRootTools(agentSnapshot json.RawMessage) ([]string, error) {
+func runtimeRootToolsets(agentSnapshot json.RawMessage) ([]toolPermissionToolset, error) {
 	var snapshot struct {
 		Tools []toolPermissionToolset `json:"tools"`
 	}
@@ -66,5 +79,32 @@ func runtimeRootTools(agentSnapshot json.RawMessage) ([]string, error) {
 			return nil, err
 		}
 	}
-	return enabledSandboxTools(snapshot.Tools), nil
+	return snapshot.Tools, nil
+}
+
+func runtimeToolPolicies(tools []toolPermissionToolset) map[string]string {
+	policies := make(map[string]string, len(sandboxToolNames))
+	for _, name := range sandboxToolNames {
+		remoteName := managedAgentToolName(name)
+		policies[remoteName] = string(resolveAgentToolPermission(tools, remoteName))
+	}
+	return policies
+}
+
+func (s *Service) currentRuntimeToolPolicies(ctx context.Context, record db.CodeSession) (map[string]string, error) {
+	if record.SessionExternalID == "" {
+		return nil, nil
+	}
+	session, found, err := s.db.GetSession(ctx, record.WorkspaceUUID, record.SessionExternalID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, db.ErrNotFound
+	}
+	tools, err := runtimeRootToolsets(session.AgentSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	return runtimeToolPolicies(tools), nil
 }

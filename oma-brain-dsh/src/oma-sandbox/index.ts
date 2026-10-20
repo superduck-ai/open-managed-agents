@@ -11,7 +11,7 @@ export interface Config {
 
 /** The host mounts one provider in each root session's isolated service scope. */
 export function apply(ctx: Context, config: Config): void {
-  // Construction is local. MCP initialization follows the durable approval checkpoint.
+  // Construction is local. MCP initialization follows tool approval.
   const executor = new SandboxMcp(config.api, config.sessionId);
   ctx.provide("sandboxExecutor", executor);
   ctx.effect(() => () => executor.close());

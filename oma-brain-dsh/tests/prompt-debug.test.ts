@@ -42,3 +42,13 @@ test("system prompt is logged once per session until it changes", () => {
   ]);
   expect(records.every((record) => record.event === "oma_system_prompt" && /^[0-9a-f]{64}$/.test(String(record.sha256)))).toBe(true);
 });
+
+
+test("official model payloads keep system prompt diagnostics for both protocols", () => {
+  process.env.OMA_DEBUG_SYSTEM_PROMPT = "1";
+  const records = capture(() => {
+    logSystemPrompt("official-messages", { system: [{ type: "text", text: "instructions" }], tools: [{ name: "Read" }] });
+    logSystemPrompt("official-chat", { messages: [{ role: "system", content: "instructions" }, { role: "user", content: "private input" }], tools: [{ type: "function", function: { name: "Read" } }] });
+  });
+  expect(records.map((record) => [record.system, record.tools])).toEqual([["instructions", ["Read"]], ["instructions", ["Read"]]]);
+});

@@ -67,6 +67,10 @@ func handleProxyMessages(database *db.DB, secretService *secrets.Service, client
 			writeProxyProviderError(w, err)
 			return
 		}
+		if err := upstream.RequireBackend(llmproviders.Messages); err != nil {
+			writeProxyProviderError(w, err)
+			return
+		}
 		targetURL, err := llmproviders.Endpoint(upstream.BaseURL, "/v1/messages", "")
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "proxy_error", "message": "LLM provider is unavailable"})
@@ -139,6 +143,8 @@ func proxyMessagesModel(body []byte) (string, error) {
 
 func writeProxyProviderError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, llmproviders.ErrBackendMismatch):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request_error", "message": err.Error()})
 	case errors.Is(err, llmproviders.ErrModelNotConfigured):
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error":   "invalid_request_error",

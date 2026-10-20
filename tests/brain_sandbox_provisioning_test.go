@@ -125,7 +125,7 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			failures := make([]error, 2)
 			var calls sync.WaitGroup
 			for i := range 2 {
-				calls.Go(func() { urls[i], failures[i] = runners[i].EnsureSessionSandbox(ctx, code) })
+				calls.Go(func() { urls[i], _, failures[i] = runners[i].EnsureSessionSandbox(ctx, code) })
 			}
 			calls.Wait()
 			if failures[0] != nil || failures[1] != nil || urls[0] != endpoint.URL || urls[1] != endpoint.URL || creates.Load() != 1 {
@@ -134,7 +134,7 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			if len(providers[0].launches)+len(providers[1].launches) != 1 {
 				t.Fatal("MCP started more than once")
 			}
-			_, err = runners[1].EnsureSessionSandbox(ctx, code)
+			_, _, err = runners[1].EnsureSessionSandbox(ctx, code)
 			if err != nil || creates.Load() != 1 {
 				t.Fatalf("warm reuse: %v creates=%d", err, creates.Load())
 			}
@@ -146,7 +146,7 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			if response.StatusCode != http.StatusOK {
 				t.Fatalf("delete session: %d", response.StatusCode)
 			}
-			if _, err := runners[0].EnsureSessionSandbox(ctx, code); err == nil {
+			if _, _, err := runners[0].EnsureSessionSandbox(ctx, code); err == nil {
 				t.Fatal("deleted session provisioned sandbox")
 			}
 		})

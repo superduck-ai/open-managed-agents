@@ -84,6 +84,7 @@ describe('LLM model catalog helpers', () => {
     expect(providerHost('not-a-url')).toBe('not-a-url');
     expect(providerInput(dashScope, ['kimi-k2.5'])).toEqual({
       name: 'DashScope',
+      api_backend: dashScope.api_backend,
       base_url: dashScope.base_url,
       model_ids: ['kimi-k2.5'],
     });
@@ -110,6 +111,7 @@ function provider(id: string, name: string, modelIds: string[]): LLMProvider {
     type: 'llm_provider',
     id,
     name,
+    api_backend: 'messages',
     base_url: `https://${name.toLowerCase()}.example.com/anthropic`,
     has_api_key: true,
     api_key_last4: '1111',

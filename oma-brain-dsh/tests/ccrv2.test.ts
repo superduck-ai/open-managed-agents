@@ -158,6 +158,11 @@ test("failed final persistence releases the session writer and permits replaceme
         id: "replaced", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup,
       });
       await session.open();
+      const writers = (ctx.sessionPersistence as unknown as {
+        writers: Map<string, { enqueue(event: unknown): void; record: { events: unknown[] } }>;
+      }).writers;
+      const writer = writers.get(session.id)!;
+      writer.enqueue({ seq: writer.record.events.length, type: "test/pending", data: {} });
       backend.persist = async () => { throw new Error("Lease expired"); };
       await expect(session.close()).rejects.toThrow();
       expect(() => ctx.ccrv2.forget(session.id)).not.toThrow();

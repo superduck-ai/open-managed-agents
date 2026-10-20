@@ -536,7 +536,15 @@ func (h *Handler) renewSandboxTimeout(ctx context.Context, sandbox db.Environmen
 	if err := h.sandboxTimeoutExtender.SetTimeout(ctx, *sandbox.ProviderSandboxID, h.cfg.E2B.SandboxTimeout); err != nil {
 		return fmt.Errorf("set provider sandbox timeout: %w", err)
 	}
+	h.sandboxRenewals.record(*sandbox.ProviderSandboxID, time.Now(), sandboxRenewalWindow(h.cfg.E2B.SandboxTimeout))
 	return nil
+}
+
+func (h *Handler) renewStaleSandboxTimeout(ctx context.Context, sandbox db.EnvironmentSandbox) error {
+	if sandbox.ProviderSandboxID != nil && h.sandboxRenewals.fresh(*sandbox.ProviderSandboxID, time.Now(), sandboxRenewalWindow(h.cfg.E2B.SandboxTimeout)) {
+		return nil
+	}
+	return h.renewSandboxTimeout(ctx, sandbox)
 }
 
 func (h *Handler) handleSessionIngressEvents(w http.ResponseWriter, r *http.Request) {
@@ -652,6 +660,22 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 		h.errorAdapter.Write(w, r, sessionMCPConfigFailure(err))
 		return
 	}
+	policies, err := h.service.currentRuntimeToolPolicies(r.Context(), record)
+	if err != nil {
+		h.errorAdapter.Write(w, r, sessionMCPConfigFailure(err))
+		return
+	}
+	if policies != nil {
+		sessionContext["runtime_tool_permissions"] = policies
+	}
+	if usesBrainClaimTransport(record) {
+		backends, err := h.service.modelBackends(r.Context(), record)
+		if err != nil {
+			h.errorAdapter.Write(w, r, sessionModelBackendsFailure(err))
+			return
+		}
+		sessionContext["model_backends"] = backends
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{
 		"session_context": sessionContext,
@@ -676,17 +700,18 @@ func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIde
 	}
 	config := codeSessionConfig(record.Metadata)
 	return map[string]any{
-		"cwd":                   record.WorkDir,
-		"system_prompt":         stringField(config, "system_prompt"),
-		"runtime_skills":        config["runtime_skills"],
-		"subagents":             config["subagents"],
-		"runtime_tools":         config["runtime_tools"],
-		"outcomes":              arrayConfigValue(config["outcomes"]),
-		"custom_system_prompt":  stringField(config, "custom_system_prompt"),
-		"append_system_prompt":  stringField(config, "append_system_prompt"),
-		"memory_catalog_prompt": stringField(config, "memory_catalog_prompt"),
-		"model":                 firstNonEmpty(record.Model, stringField(config, "model")),
-		"mcp_config":            mcpConfig,
+		"cwd":                      record.WorkDir,
+		"system_prompt":            stringField(config, "system_prompt"),
+		"runtime_skills":           config["runtime_skills"],
+		"subagents":                config["subagents"],
+		"runtime_tools":            config["runtime_tools"],
+		"runtime_tool_permissions": config["runtime_tool_permissions"],
+		"outcomes":                 arrayConfigValue(config["outcomes"]),
+		"custom_system_prompt":     stringField(config, "custom_system_prompt"),
+		"append_system_prompt":     stringField(config, "append_system_prompt"),
+		"memory_catalog_prompt":    stringField(config, "memory_catalog_prompt"),
+		"model":                    firstNonEmpty(record.Model, stringField(config, "model")),
+		"mcp_config":               mcpConfig,
 	}, nil
 }
 

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,15 +26,57 @@ func (p *E2BProvider) ServiceEndpoint(ctx context.Context, sandboxID string, por
 	if p.cfg.LocalPortLookup {
 		return p.publishedServiceEndpoint(ctx, sandboxID, port, path)
 	}
-	sandbox, err := p.connect(ctx, sandboxID)
-	if err != nil {
-		return "", err
+	key := sandboxID + ":" + strconv.Itoa(port)
+	host, ok := p.serviceHosts.get(key, time.Now())
+	if !ok {
+		sandbox, err := p.connect(ctx, sandboxID)
+		if err != nil {
+			return "", err
+		}
+		host = sandbox.GetHost(port)
+		p.serviceHosts.put(key, host, time.Now())
 	}
 	scheme := "https://"
 	if p.cfg.Debug {
 		scheme = "http://"
 	}
-	return scheme + sandbox.GetHost(port) + path, nil
+	return scheme + host + path, nil
+}
+
+const serviceHostCacheTTL = 5 * time.Minute
+
+type cachedServiceHost struct {
+	host     string
+	cachedAt time.Time
+}
+
+type serviceHostCache struct {
+	mu    sync.Mutex
+	hosts map[string]cachedServiceHost
+}
+
+func (c *serviceHostCache) get(key string, now time.Time) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.hosts[key]
+	if !ok || now.Sub(entry.cachedAt) >= serviceHostCacheTTL {
+		return "", false
+	}
+	return entry.host, true
+}
+
+func (c *serviceHostCache) put(key, host string, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.hosts == nil {
+		c.hosts = make(map[string]cachedServiceHost)
+	}
+	for cachedKey, entry := range c.hosts {
+		if now.Sub(entry.cachedAt) >= serviceHostCacheTTL {
+			delete(c.hosts, cachedKey)
+		}
+	}
+	c.hosts[key] = cachedServiceHost{host: host, cachedAt: now}
 }
 
 func (p *E2BProvider) publishedServiceEndpoint(ctx context.Context, sandboxID string, port int, path string) (string, error) {

@@ -296,3 +296,29 @@ test("a retained followup checks authoritative archive before creating child wor
   expect(error?.is_error).toBe(true);
   expect(JSON.stringify(error?.content)).toContain("archived");
 });
+
+test("root registers only enabled sandbox tools and inline agents inherit them", async () => {
+  const b = new Backend();
+  cleanups.push(async () => b.stop());
+  b.a.launch.tools = ["Read", "Grep"];
+  b.a.launch.subagents = {};
+  const f = await fixture(b);
+  b.modelScript = [call("send_to_agent", { name: "inline", system_prompt: "Inspect only", message: "Inspect" }, "delegate"), textEvents("inline report"), textEvents("done")];
+  await f.session.receive("restricted", { content: "Inspect" });
+  const root = b.requests[0]!;
+  expect(root.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read", "archive_agent", "list_agents", "send_to_agent"]);
+  expect(b.requests[1]!.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read"]);
+});
+
+test("predefined specialist tools are limited to the tools enabled for the parent", async () => {
+  const b = new Backend();
+  cleanups.push(async () => b.stop());
+  b.a.launch.tools = ["Read", "Grep", "Glob"];
+  b.a.launch.subagents = { inlineAgents: false, agents: [{
+    name: "writer", description: "Writes files", systemPrompt: "Write things", tools: ["Read", "Write", "Edit", "Grep"],
+  }] };
+  const f = await fixture(b);
+  b.modelScript = [call("send_to_agent", { agent_name: "writer", message: "Write" }, "delegate"), textEvents("writer report"), textEvents("done")];
+  await f.session.receive("intersect", { content: "Write" });
+  expect(b.requests[1]!.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read"]);
+});

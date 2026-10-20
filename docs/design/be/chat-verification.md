@@ -132,14 +132,14 @@ Go 变更仍运行 `just lint`、`just dead-code`、`just duplicates` 和 `just 
 完整请求 span 或清理失败均不能通过。用例边界和执行入口维护在 Skill 的功能地图中。
 
 同一场景增加持续 500 的退避中断回归。SSE 在提交输入前连接，mock 快速返回至少六次
-`500/api_error`；已观察请求的 span 全部结束且会话仍 running 时发送公开中断。验收 SSE
-与历史具有相同 ID 的 `idle/end_turn`、没有 `session.error`、下一条输入前没有新增模型请求且队列清空。
-随后放行正常文本响应，验证同一会话的新消息完成。状态证据保存于
-`upstream-backoff-observations.json`，对应必需阶段 `backoff_500_interrupted_and_recovered`。
-六次请求是为了进入较长退避窗口，不是生产重试上限；该场景不验收持续 500 的自然耗尽期限。
-本地沙箱控制 API 配置使用符合 E2B SDK 格式的虚拟 key，API 与 sandbox 地址均为 loopback。
-后续公开输入触发的 connect/timeout 必须经过生产 Provider 到达此控制 API；测试覆盖配置生成与
-Provider 续期调用，不因虚拟 key 格式错误而绕开真实投递链路。
+500；在已观察到的 model span 全部结束且 Session 仍 running 时发送公开 user.interrupt。
+真实 Worker 返回失败 result 时，要求 SSE 与历史具有相同 ID 的 idle/retries_exhausted、
+恰好一条 exhausted session.error、失败轮没有 agent.message、队列清空，且下一条用户消息前不再请求上游。
+随后 mock 恢复成功，同一 Session 的下一条消息必须产生正常回复及 end_turn，不增加错误。
+公开中断不覆盖 Worker 的 is_error=true，和 TestSessionWorkerInterruptedResult 保持一致。
+失败与成功运行均保存只含状态/计数及校验阶段的 upstream-backoff-observations.json，
+对应必需阶段 backoff_500_failed_turn_and_recovered。六次请求用于进入较长退避窗口，
+不定义生产重试上限；此场景不验证持续 500 自然耗尽期限。
 
 活跃输入契约为接受并排队：第二条输入应立即落库，`processed_at` 为 null，前一条完成后才开始处理。
 `chat.reliability` 的旧场景仍断言忙时 409，需要按此契约适配后才能用于本次验收；不能以旧断言判定队列实现。

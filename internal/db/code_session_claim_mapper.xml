@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="CodeSessionClaimMapper">
+    <select id="LockNextClaimable" result="optional" resultType="codeSessionClaimCandidateRow">
+        SELECT cs.uuid, cs.external_id, cs.organization_uuid, cs.workspace_uuid, cs.session_external_id,
+               cs.current_worker_epoch, cs.worker_claim_attempts
+        FROM code_sessions cs
+        LEFT JOIN sessions s
+          ON s.uuid = cs.session_uuid
+         AND s.organization_uuid = cs.organization_uuid
+         AND s.workspace_uuid = cs.workspace_uuid
+         AND s.deleted_at IS NULL
+        WHERE cs.deleted_at IS NULL
+          AND cs.status = 'active'
+          AND cs.metadata #>> '{config,worker_transport}' = 'claim'
+          AND s.uuid IS NOT NULL
+          AND (cs.worker_claim_expires_at IS NULL OR cs.worker_claim_expires_at &lt;= NOW())
+          AND (cs.worker_lease_expires_at IS NULL
+               OR cs.worker_lease_expires_at + #{leaseGraceMicros} * INTERVAL '1 microsecond' &lt; NOW())
+          AND (cs.worker_claim_requested_at IS NOT NULL OR s.status IN ('running', 'rescheduling'))
+        ORDER BY COALESCE(cs.worker_claim_requested_at, cs.worker_lease_expires_at, cs.updated_at) ASC, cs.uuid ASC
+        LIMIT 1
+        FOR UPDATE OF cs SKIP LOCKED
+    </select>
+
+    <update id="Claim" result="returning" resultType="int64">
+        UPDATE code_sessions
+        SET current_worker_epoch = current_worker_epoch + 1,
+            oauth_access_token_hash = #{params.OAuthAccessTokenHash,sensitive=true},
+            worker_lease_expires_at = NULL,
+            connection_status = 'disconnected',
+            idle_since = NULL,
+            worker_claimed_by = #{params.WorkerID},
+            worker_claim_expires_at = #{params.ClaimExpiresAt},
+            worker_claim_attempts = worker_claim_attempts + 1,
+            updated_at = NOW()
+        WHERE uuid = #{params.UUID}
+        RETURNING current_worker_epoch
+    </update>
+
+    <update id="HoldExhausted" result="returning" resultType="int64">
+        UPDATE code_sessions
+        SET current_worker_epoch = current_worker_epoch + CASE WHEN worker_claimed_by IS NULL THEN 0 ELSE 1 END,
+            worker_claimed_by = NULL,
+            worker_claim_requested_at = NULL,
+            worker_lease_expires_at = NULL,
+            connection_status = 'disconnected',
+            worker_claim_expires_at = #{holdUntil},
+            updated_at = NOW()
+        WHERE uuid = #{uuid}
+        RETURNING current_worker_epoch
+    </update>
+
+    <update id="ResetExhausted" result="rows">
+        UPDATE code_sessions
+        SET worker_claim_attempts = 0,
+            worker_claim_expires_at = NULL,
+            updated_at = NOW()
+        WHERE uuid = #{uuid}
+          AND current_worker_epoch = #{epoch}
+          AND worker_claim_requested_at IS NULL
+    </update>
+
+    <update id="FailPermanently" result="returning" resultType="failedCodeSessionClaimRow">
+        UPDATE code_sessions
+        SET current_worker_epoch = current_worker_epoch + 1,
+            worker_claimed_by = NULL,
+            worker_claim_requested_at = NULL,
+            worker_lease_expires_at = NULL,
+            connection_status = 'disconnected',
+            worker_claim_expires_at = #{params.HoldUntil},
+            worker_claim_attempts = GREATEST(worker_claim_attempts, #{params.MaxAttempts}),
+            updated_at = NOW()
+        WHERE external_id = #{params.ExternalID}
+          AND current_worker_epoch = #{params.Epoch}
+          AND worker_claimed_by = #{params.WorkerID}
+          AND status = 'active'
+          AND deleted_at IS NULL
+        RETURNING uuid, current_worker_epoch
+    </update>
+
+    <update id="Release" result="rows">
+        UPDATE code_sessions
+        SET worker_lease_expires_at = NULL,
+            connection_status = 'disconnected',
+            <choose>
+                <when test="params.Kind == 'retry'">
+                    worker_claim_requested_at = COALESCE(worker_claim_requested_at, NOW()),
+                    worker_claim_expires_at = NOW() + LEAST(5 * POWER(2, GREATEST(worker_claim_attempts - 1, 0)), 300) * INTERVAL '1 second',
+                </when>
+                <when test="params.Kind == 'handoff'">
+                    worker_claim_requested_at = COALESCE(worker_claim_requested_at, NOW()),
+                    worker_claim_expires_at = NOW(),
+                    worker_claim_attempts = GREATEST(worker_claim_attempts - 1, 0),
+                </when>
+                <otherwise>
+                    worker_claim_expires_at = NOW(),
+                </otherwise>
+            </choose>
+            updated_at = NOW()
+        WHERE external_id = #{params.ExternalID}
+          AND current_worker_epoch = #{params.Epoch}
+          AND worker_claimed_by = #{params.WorkerID}
+          AND status = 'active'
+          AND deleted_at IS NULL
+    </update>
+
+    <select id="FindWorkerTransport" result="scalar" resultType="string">
+        SELECT COALESCE(metadata #>> '{config,worker_transport}', '') AS worker_transport
+        FROM code_sessions
+        WHERE external_id = #{externalID}
+          AND deleted_at IS NULL
+    </select>
+
+    <update id="Request" result="rows">
+        UPDATE code_sessions
+        SET worker_claim_requested_at = COALESCE(worker_claim_requested_at, NOW()),
+            updated_at = NOW()
+        WHERE organization_uuid = #{organizationUUID}
+          AND workspace_uuid = #{workspaceUUID}
+          AND external_id = #{externalID}
+          AND status = 'active'
+          AND deleted_at IS NULL
+    </update>
+</mapper>

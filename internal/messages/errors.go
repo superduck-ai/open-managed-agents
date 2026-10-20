@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 )
@@ -68,4 +69,21 @@ func fileReferenceInvalidTextError() *httpapi.Error {
 }
 func fileReferenceInvalidRequestError() *httpapi.Error {
 	return httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Invalid file reference content")
+}
+
+func backendMismatchError() *httpapi.Error {
+	return invalidRequestError(llmproviders.ErrBackendMismatch)
+}
+
+func brainRequiredError() *httpapi.Error {
+	return httpapi.NewError(http.StatusForbidden, "permission_error", "Chat Completions is only available to brain model credentials")
+}
+
+var errChatStreamRequired = errors.New("brain Chat Completions requires stream=true and n=1")
+
+func chatSessionLookupError(cause error) *httpapi.Error {
+	if errors.Is(cause, db.ErrNotFound) {
+		return httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid API key")
+	}
+	return providerConfigurationUnavailableError()
 }

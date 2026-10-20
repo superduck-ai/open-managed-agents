@@ -433,6 +433,12 @@ func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *
 			request.Out.URL = &upstreamURL
 			request.Out.Host = target.Host
 		},
+		ModifyResponse: func(response *http.Response) error {
+			if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
+				response.Header.Set("X-Accel-Buffering", "no")
+			}
+			return nil
+		},
 		ErrorHandler: func(writer http.ResponseWriter, request *http.Request, err error) {
 			if errors.Is(err, vaults.ErrUpstreamAuthenticationRejected) || errors.Is(err, vaults.ErrMCPOAuthReauthorizationRequired) {
 				h.logger.WarnContext(request.Context(), "MCP upstream authentication rejected", "code_session_id", codeSessionID, "host", target.Hostname())

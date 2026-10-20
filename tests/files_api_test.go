@@ -1200,6 +1200,10 @@ func newTestAppWithSecrets(t *testing.T, override *config.Config, store storage.
 	pool := openTestPool(t, cfg)
 	sandboxTimeouts := &recordingSandboxTimeoutExtender{}
 	workerEvents := workerevents.NewMemory()
+	brainClaims, err := codesessions.LoadBrainClaimAuthenticator(cfg.CodeSession.BrainClaimTokenFile)
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(api.NewServer(api.ServerDeps{
 		Config:                 cfg,
 		DB:                     database,
@@ -1210,6 +1214,7 @@ func newTestAppWithSecrets(t *testing.T, override *config.Config, store storage.
 		PlatformStore:          platformSessions,
 		PlatformAuth:           platformAuth,
 		CodeSessionCredentials: credentials,
+		BrainClaims:            brainClaims,
 		SandboxTimeoutExtender: sandboxTimeouts,
 		WorkerEventBroker:      workerEvents,
 		FilestoreCredentials:   filestoreCredentials,

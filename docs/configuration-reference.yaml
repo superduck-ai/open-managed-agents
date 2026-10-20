@@ -41,6 +41,7 @@ nats:
 # Optional. Omit the entire auth.smtp block to accept any non-empty verification
 # code without sending email. Configure every SMTP field together for real email.
 auth:
+  allowed_email_domains: []
   # 邀请邮件按钮使用的控制台 HTTPS origin；未配置时只创建站内邀请。
   console_url: ""
   smtp:
@@ -145,6 +146,10 @@ code_session:
   upstream_proxy_ca_key_file: ""
   # Dangerous local fake-IP/TUN diagnostic switch; keep false in production.
   upstream_proxy_disable_ssrf_protection: false
+  # Required when environment_runner.agent_mode is brain. The file holds the
+  # shared fleet token (at least 32 characters) that oma-brain-dsh sends to
+  # POST /v1/code/brain/claims; mount it like the JWT signing key.
+  brain_claim_token_file: ""
 
 observability:
   enabled: false

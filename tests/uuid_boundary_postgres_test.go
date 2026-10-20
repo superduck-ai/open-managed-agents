@@ -788,8 +788,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		ctx,
 		codeSession.ExternalID,
 		epoch,
-		time.Minute,
-		time.Second,
+		fixedWorkerLease(time.Minute, time.Second),
 	); err != nil {
 		t.Fatalf("record Code Session heartbeat through typed UUID transaction: %v", err)
 	}

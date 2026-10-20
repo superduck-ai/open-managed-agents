@@ -158,7 +158,8 @@ describe("original dsh loop over CCRv2", () => {
       input: { __unparsedToolInput: { raw, len: raw.length } } });
     const result = blocks.find((block: Payload) => block.type === "tool_result");
     expect(result).toMatchObject({ tool_use_id: "call_1", is_error: true });
-    expect(result.content[0].text.length).toBeGreaterThan(0);
+    expect(typeof result.content).toBe("string");
+    expect(result.content.length).toBeGreaterThan(0);
     const published = [...b.publicLog.values()].find((event) => event.type === "user");
     expect(published?.message.content[0]).toMatchObject({ tool_use_id: "call_1", is_error: true });
     expect(b.publicLog.get("malformed_result")?.is_error).toBe(false);
@@ -183,10 +184,9 @@ describe("original dsh loop over CCRv2", () => {
     await session.receive("stdout", { message: { content: "run" } });
     const result = b.requests[1]!.messages.flatMap((m: Payload) => m.content)
       .find((block: Payload) => block.type === "tool_result");
-    expect(result).toMatchObject({ tool_use_id: "call_1", is_error: false,
-      content: [{ type: "text", text: "exact stdout\n" }] });
+    expect(result).toEqual({ type: "tool_result", tool_use_id: "call_1", content: "exact stdout\n" });
     const published = [...b.publicLog.values()].find((event) => event.type === "user");
-    expect(published?.message.content[0]).toEqual({ ...result, tool_name: "Bash" });
+    expect(published?.message.content[0]).toEqual({ type: "tool_result", tool_use_id: "call_1", tool_name: "Bash", content: [{ type: "text", text: "exact stdout\n" }], is_error: false });
     expect(result).not.toHaveProperty("tool_name");
     expect(b.publicLog.get("stdout_result")?.is_error).toBe(false);
   });
@@ -404,13 +404,17 @@ describe("original dsh loop over CCRv2", () => {
     const sandbox = first((e) => e.type === "sandbox.prepare");
     const dispatch = state((s) => s.phase === "dispatch");
     const execution = first((e) => e.type === "tool.dispatch");
-    expect(approval).toBeLessThan(approved);
-    expect(approved).toBeLessThan(sandbox);
+    expect(approval).toBeLessThan(sandbox);
     expect(sandbox).toBeLessThan(dispatch);
+    expect(approved).toBe(dispatch);
     expect(dispatch).toBeLessThan(execution);
-    expect(b.timeline.slice(sandbox, dispatch).some(
-      (e) => e.type === "private.persist" && e.payload.subtype === "dsh_log",
-    )).toBe(true);
+    const stateSaves = (from: number, to: number) => b.timeline.slice(from, to).filter(
+      (e) => e.type === "private.persist" && e.payload.subtype === "dsh_brain_state",
+    ).length;
+    expect(stateSaves(model, approval)).toBe(1);
+    expect(stateSaves(approval, execution)).toBe(1);
+    expect(b.timeline.filter((e) => e.type === "private.persist" && e.payload.subtype === "dsh_log"
+      && e.payload.data.events.length === 0)).toHaveLength(1);
     const result = state((s) => s.phase === "result" && !!s.toolOutcomes.call_1);
     const nextModel = b.timeline.findIndex((e, i) => i > execution && e.type === "model.request");
     expect(nextModel).toBeGreaterThan(result);
@@ -600,7 +604,7 @@ describe("original dsh loop over CCRv2", () => {
     b.failWrites = false;
   });
 
-  test("an epoch rejection after approval prevents sandbox creation and dispatch", async () => {
+  test("an epoch rejection at the dispatch checkpoint prevents tool execution", async () => {
     const b = backend();
     b.modelScript = [toolEvents()];
     const { session } = await open(b);
@@ -618,7 +622,7 @@ describe("original dsh loop over CCRv2", () => {
     await expect(
       session.receive("lost_lease", { message: { content: "run" } }),
     ).rejects.toThrow("409");
-    expect(b.sandboxCount).toBe(0);
+    expect(b.sandboxCount).toBe(1);
     expect(b.executions).toEqual([]);
     expect(b.requests).toHaveLength(1);
     b.a.worker_epoch--;

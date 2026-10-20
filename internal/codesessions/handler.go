@@ -25,6 +25,7 @@ type Handler struct {
 	logger                 *slog.Logger
 	errorAdapter           *httpapi.ErrorAdapter
 	sandboxTimeoutExtender SandboxTimeoutExtender
+	sandboxRenewals        sandboxRenewals
 	upstreamProxy          upstreamProxyRuntime
 	mcpProxyTransport      http.RoundTripper
 	wrapMCPVaultTransport  mcpProxyTransportWrapper
@@ -37,6 +38,7 @@ type Handler struct {
 	loadMemoryToolVersion     func(context.Context, db.CodeSession, string, string) (memoryToolVersion, error)
 	otlpSink                  otlpSink
 	otlpAdmission             *otlpAdmission
+	brainClaims               BrainClaimAuthenticator
 }
 
 // TunnelInvoker is implemented by the Tunnel DataPlane. Named Runtime Gateway

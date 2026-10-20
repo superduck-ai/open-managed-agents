@@ -556,6 +556,9 @@ func systemPublicPayloadCandidates(codeSessionID string, object map[string]any, 
 		}
 		return []publicPayloadCandidate{{payload: payload}}
 	case "task_started":
+		if !isSubagentTaskType(schema.TaskType) {
+			return nil
+		}
 		threadID := claudeTaskThreadIDFromFields(codeSessionID, schema.ToolUseID, schema.TaskID)
 		if threadID == "" {
 			return nil
@@ -586,8 +589,7 @@ func systemPublicPayloadCandidates(codeSessionID string, object map[string]any, 
 			{payload: sent, seedSuffix: "task_started:message_sent:" + threadID},
 		}
 	case "task_notification":
-		threadID := claudeTaskThreadIDFromFields(codeSessionID, schema.ToolUseID, schema.TaskID)
-		if threadID == "" {
+		if schema.TaskID == "" && schema.ToolUseID == "" {
 			return nil
 		}
 		statusEventType := "session.thread_status_idle"
@@ -595,14 +597,13 @@ func systemPublicPayloadCandidates(codeSessionID string, object map[string]any, 
 			statusEventType = "session.thread_status_terminated"
 		}
 		status := publicPayloadWithType(object, statusEventType)
-		status["session_thread_id"] = threadID
 		status["task_id"] = schema.TaskID
 		status["tool_use_id"] = schema.ToolUseID
 		status["stop_reason"] = map[string]any{"type": "end_turn"}
 		if statusEventType == "session.thread_status_terminated" {
 			delete(status, "stop_reason")
 		}
-		return []publicPayloadCandidate{{payload: status, seedSuffix: "task_notification:thread_status:" + threadID}}
+		return []publicPayloadCandidate{{payload: status, seedSuffix: "task_notification:thread_status:" + claudeTaskThreadIDFromFields(codeSessionID, schema.ToolUseID, schema.TaskID)}}
 	default:
 		return nil
 	}

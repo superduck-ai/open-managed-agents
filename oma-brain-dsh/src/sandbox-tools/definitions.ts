@@ -5,7 +5,7 @@ const definitions: RemoteTool[] = [
   {
     "name": "Bash",
     "remoteName": "bash",
-    "description": "Execute a Bash command in the remote sandbox. Timeout is in seconds, defaults to 120 and is capped at 600. Use work_dir to select the working directory.",
+    "description": "Execute a Bash command in the remote sandbox. Do not rely on cd or exported variables from earlier calls; pass work_dir and env instead. timeout is in seconds (default 120, max 600). With on_timeout=background a command that outlives its timeout keeps running and the result gives output_file and pid; read output_file later to check on it. Background processes are lost if the sandbox is replaced. Long output is truncated. Prefer Read, Grep and Glob for reading and searching files.",
     "inputSchema": {
       "properties": {
         "command": {
@@ -45,7 +45,8 @@ const definitions: RemoteTool[] = [
   {
     "name": "Read",
     "remoteName": "read",
-    "description": "Read a file in the remote sandbox. file_path must be absolute. Optional start_line is zero-based and end_line is exclusive.",
+    "readOnly": true,
+    "description": "Read a text file in the remote sandbox. file_path must be absolute. start_line is 0-based and end_line is exclusive, so start_line=0 with end_line=50 returns the first 50 lines; omit both to read the whole file. Binary files and images are not supported.",
     "inputSchema": {
       "properties": {
         "end_line": {
@@ -70,7 +71,7 @@ const definitions: RemoteTool[] = [
   {
     "name": "Write",
     "remoteName": "write",
-    "description": "Write content to an absolute file_path in the remote sandbox, replacing existing contents.",
+    "description": "Write content to an absolute file_path in the remote sandbox, replacing any existing contents. Prefer Edit for changing part of an existing file.",
     "inputSchema": {
       "properties": {
         "content": {
@@ -92,7 +93,7 @@ const definitions: RemoteTool[] = [
   {
     "name": "Edit",
     "remoteName": "edit",
-    "description": "Replace old_string with new_string in a remote sandbox file. file_path must be absolute.",
+    "description": "Replace old_string with new_string in a remote sandbox file. file_path must be absolute. Read the file first and copy old_string exactly, including indentation, with enough surrounding lines that it matches only one place.",
     "inputSchema": {
       "properties": {
         "file_path": {
@@ -119,6 +120,7 @@ const definitions: RemoteTool[] = [
   {
     "name": "Grep",
     "remoteName": "grep",
+    "readOnly": true,
     "description": "Search remote sandbox files with ripgrep. Choose content, files_with_matches or count using output_mode; include and type filter files.",
     "inputSchema": {
       "properties": {
@@ -172,7 +174,7 @@ const definitions: RemoteTool[] = [
           "type": "string"
         },
         "path": {
-          "description": "File or directory to search in (rg PATH). Defaults to current working directory",
+          "description": "File or directory to search in (rg PATH). Defaults to the working directory. Uploaded files are under /mnt/session/uploads, outside the working directory.",
           "type": "string"
         },
         "pattern": {
@@ -193,11 +195,12 @@ const definitions: RemoteTool[] = [
   {
     "name": "Glob",
     "remoteName": "glob",
+    "readOnly": true,
     "description": "Find remote sandbox files by glob pattern. Optional path selects the directory; results are sorted by modification time, oldest first.",
     "inputSchema": {
       "properties": {
         "path": {
-          "description": "The directory to search in. Defaults to the current working directory.",
+          "description": "The directory to search in. Defaults to the working directory. Uploaded files are under /mnt/session/uploads, outside the working directory.",
           "type": "string"
         },
         "pattern": {

@@ -146,7 +146,8 @@ filesystem 的数据库 namespace 在 Session/resource 写事务完成时已经�
 
 五个固定挂载统一使用 `vfs_cache_mode=full`、`vfs_cache_max_size=1G`、`uid=999`、`gid=1000`、目录权限 `0755` 和文件权限 `0644`。`/outputs` 使用读写 Token，其余四个固定 source 共享只读 Token 并设置 `readonly=true`。有 memory store 时，rclone 按 Session 快照追加 N 条 `/memory/{slug}` → `/mnt/memory/{slug}`：`read_write` 使用读写 Token，`read_only` 使用只读 Token 且 `readonly=true`；cache 为 `1s`。父目录 `/mnt/memory` 由 Runner `mkdir -p` 创建在本地盘上，不是 Filestore mount，也不是第 N+1 条 rclone。两类 Token 都绑定当前 public Session 唯一 filesystem 的 external ID，`service_url` 直接取 `code_session.sandbox_api_base_url`。ready marker 表示配置中的全部 mount（5+N）已可用；随后 Runner 才把 `MEMORY.md` 写到本地 `/mnt/memory/MEMORY.md`。
 
-OMA 在 Managed Agent 的 `appendSystemPrompt` 中同步声明这组公开路径与 sandbox 路径的映射：上传输入使用 `/mnt/session/uploads/<relative-path>`，用户可下载的输出使用 `/mnt/session/outputs/<relative-path>`，旧路径 `/mnt/user-data/outputs` 继续可用。提示词为用户提到的文件名或相对路径规定固定查找顺序：先尝试 `/mnt/session/uploads/<relative-path>`，必要时调用显式设置 `path=/mnt/session/uploads` 的 Glob 递归查找，只有 uploads 未命中后才搜索工作目录；两处都检查前不得报告文件不存在。Claude 只能使用实际命中的上传路径，不截断、改名或从 `file_id` 推断文件名；写入输出挂载的文件会投影为 `/outputs/<relative-path>` 并进入该 Session 的 Files API Catalog。普通仓库编辑仍留在工作目录，只有用户交付物写入 outputs。
+
+OMA 在 Managed Agent 的 `appendSystemPrompt` 中同步声明这组公开路径与 sandbox 路径的映射：上传输入使用 `/mnt/session/uploads/<relative-path>`，用户可下载的输出使用 `/mnt/session/outputs/<relative-path>`，兼容别名 `/mnt/user-data/outputs`。提示词按引用方式决定查找位置：`/uploads/...` 路径或用户声明的附件只查 uploads；带目录部分且在工作目录中存在的路径直接使用工作目录文件，读取和修改一致；其他文件名或路径（包括裸文件名）先尝试 `/mnt/session/uploads/<relative-path>`，必要时调用显式设置 `path=/mnt/session/uploads` 的 Glob 递归查找，再搜索工作目录，两处都检查前不得报告文件不存在。Claude 只能使用实际命中的路径，不截断、改名或从 `file_id` 推断文件名，多个候选会影响结果时向任务发起方确认；修改附件时把副本写入 outputs；完整规则见 [agent-system-prompt](agent-system-prompt.md)。写入输出挂载的文件会投影为 `/outputs/<relative-path>` 并进入该 Session 的 Files API Catalog。普通仓库编辑仍留在工作目录，只有用户交付物写入 outputs。
 
 Runner 在启动 rclone 前创建 `/mnt/session/outputs` → `/mnt/user-data/outputs` 软链，使标准输出路径与既有挂载共享同一 namespace 和缓存。已有相同软链可复用，空目录可替换；普通文件、非空目录或其他目标软链会使启动失败并触发既有 Sandbox 清理，不覆盖数据。Runner 不为五个固定盘单独准备挂载目录；`rclone-filestore multimount` 在内部对每个 destination 执行 `MkdirAll`。有 memory store 时 Runner 会先 `mkdir -p /mnt/memory`，再启动 rclone。镜像和 Environment Manager 不得创建 skill 软链，也不会复制或解压 archive；destination 无法创建时，由 multimount 启动或 ready 阶段失败并进入统一 Sandbox 清理。
 
@@ -431,7 +432,7 @@ Memory upload 的正文 key 对每个 version 唯一。metadata 写入失败或�
 
 ## Session 输入实例升级
 
-2026-10-16 对齐 [CMA Files](https://platform.claude.com/docs/en/managed-agents/files) 的独立实例身份与副本不计存储限额要求。migration `00083_session_input_file_instances.sql` 为活动 Input Resource 回填独立 File 行，并把公开 payload 的 file_id 替换为实例 ID，保留 Resource ID、路径及源对象；已退休历史引用不回填，也不能影响源 File 的可见性。跨 workspace 或源已丢失的活动引用使迁移失败，不静默跳过。回滚只删除实例元数据、恢复源引用，不触碰 S3。升级应先停止旧版本的 attach 写入，完成迁移后使用新版本服务；不支持旧代码继续向新 schema 写入原始源引用。
+2026-10-16 对齐 [CMA Files](https://platform.claude.com/docs/en/managed-agents/files) 的独立实例身份与副本不计存储限额要求。migration `00089_session_input_file_instances.sql` 为活动 Input Resource 回填独立 File 行，并把公开 payload 的 file_id 替换为实例 ID，保留 Resource ID、路径及源对象；已退休历史引用不回填，也不能影响源 File 的可见性。跨 workspace 或源已丢失的活动引用使迁移失败，不静默跳过。回滚只删除实例元数据、恢复源引用，不触碰 S3。升级应先停止旧版本的 attach 写入，完成迁移后使用新版本服务；不支持旧代码继续向新 schema 写入原始源引用。
 
 ```mermaid
 flowchart LR

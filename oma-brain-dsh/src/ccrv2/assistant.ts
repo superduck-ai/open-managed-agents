@@ -16,7 +16,7 @@ function assistantEventID(codeSessionID: string, messageID: string | undefined, 
 
 export function assistantMessages(codeSessionID: string, fallback: string, message: AssistantMessage, threadId?: string): Payload[] {
   const replay = message.source.replayState as MessageReplay | undefined;
-  const identity = replay?.response?.format === "oma-messages-v1" ? replay : undefined;
+  const identity = ["oma-messages-v1", "oma-chat-completions-v1"].includes(replay?.response?.format ?? "") ? replay : undefined;
   return message.content.flatMap((block, index): Payload[] => {
     if (block.type !== "text" && block.type !== "reasoning") return [];
     const type = block.type === "reasoning" ? "agent.thinking" : "agent.message";

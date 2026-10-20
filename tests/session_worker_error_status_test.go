@@ -77,7 +77,7 @@ func TestSessionWorkerFailedTurnIgnoresChildReply(t *testing.T) {
 	worker, epoch := newPayloadIntegrationSession(t, app)
 	putCodeSessionWorkerState(t, app, worker.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
 	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch,
-		`{"type":"system","uuid":"child-started","subtype":"task_started","task_id":"child-task","tool_use_id":"child-tool","description":"Child"}`,
+		`{"type":"system","uuid":"child-started","subtype":"task_started","task_type":"local_agent","task_id":"child-task","tool_use_id":"child-tool","description":"Child"}`,
 		`{"type":"result","uuid":"primary-failed","is_error":true}`,
 		`{"type":"assistant","uuid":"child-answer","parent_tool_use_id":"child-tool","message":{"id":"child-reply","content":[{"type":"text","text":"Child completed"}]}}`,
 		`{"type":"system","uuid":"child-completed","subtype":"task_notification","task_id":"child-task","tool_use_id":"child-tool","status":"completed"}`,

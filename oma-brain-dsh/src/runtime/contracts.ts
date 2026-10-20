@@ -4,6 +4,8 @@ import type { ToolDefinition } from "@deepseek-ai/dsh-tools";
 import type { Payload } from "../json.ts";
 import type { Context } from "@deepseek-ai/cordis";
 
+export const MAX_LIVE_SUBAGENT_THREADS = 25;
+
 export interface SubagentDefinition {
   agentSnapshot?: Payload;
   name: string;
@@ -53,7 +55,13 @@ export interface RemoteTool {
   remoteName: string;
   description: string;
   inputSchema: Payload;
+  readOnly?: boolean;
 }
+
+export type ToolPermission = "allow" | "ask" | "deny";
+export type ToolPermissions = Record<string, ToolPermission>;
+
+export class ToolNotForwardedError extends Error {}
 
 /** Host-provided sandbox readiness and execution. Resource creation belongs to the provider service. */
 export interface SandboxExecutor {
@@ -80,8 +88,10 @@ export interface SessionRuntimeConfig {
   systemPrompt: string;
   /** Mount root-session services before tool registration. Children share these services. */
   setup?(scope: Context): Promise<void>;
-  subagentSystemPrompt?: string;
+  subagentSystemPrompt?(thread: SubagentThread): string;
   tools?: string[];
+  toolPermissions?: ToolPermissions;
+  refreshToolPermissions?(signal: AbortSignal, threadId?: string): Promise<ToolPermissions | undefined>;
   subagents?: SubagentConfig;
   /** Host binds a child model identity to the parent's credentials. */
   bindThread?(id: string): () => void;
@@ -112,6 +122,7 @@ export interface ApprovedToolCall {
   name: string;
   original: Payload;
   effective: Payload;
+  readOnly: boolean;
 }
 
 export interface ToolOutcome extends ApprovedToolCall {

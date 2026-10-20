@@ -174,7 +174,7 @@ func TestSandboxReclamationRetriesDeletionAndWakesAfterConcurrentInput(t *testin
 	if revoked.CurrentWorkerEpoch <= f.code.CurrentWorkerEpoch || revoked.WorkerLeaseExpiresAt != nil {
 		t.Fatal("old worker not fenced")
 	}
-	if _, err := f.app.db.RecordCodeSessionWorkerHeartbeat(ctx, f.code.ExternalID, f.code.CurrentWorkerEpoch, time.Minute, 10*time.Second); !errors.Is(err, db.ErrWorkerNotRegistered) {
+	if _, err := f.app.db.RecordCodeSessionWorkerHeartbeat(ctx, f.code.ExternalID, f.code.CurrentWorkerEpoch, fixedWorkerLease(time.Minute, 10*time.Second)); !errors.Is(err, db.ErrWorkerNotRegistered) {
 		t.Fatalf("old heartbeat = %v", err)
 	}
 	// Disabling the policy stops new claims but must finish a deletion that was

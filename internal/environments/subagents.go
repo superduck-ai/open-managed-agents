@@ -41,8 +41,9 @@ func buildManagedAgentSubagents(source, document json.RawMessage) (json.RawMessa
 				PredefinedAgents []json.RawMessage `json:"predefined_agents"`
 			} `json:"subagents"`
 		} `json:"multiagent"`
-		SkillDirectories map[string]string          `json:"skill_directories"`
-		ClaudeCodeArgs   map[string]json.RawMessage `json:"claude_code_args"`
+		SkillDirectories   map[string]string          `json:"skill_directories"`
+		AppendSystemPrompt string                     `json:"append_system_prompt"`
+		ClaudeCodeArgs     map[string]json.RawMessage `json:"claude_code_args"`
 	}
 	if err := jsonv2.Unmarshal(source, &input); err != nil {
 		return nil, err
@@ -83,7 +84,7 @@ func buildManagedAgentSubagents(source, document json.RawMessage) (json.RawMessa
 		if _, exists := agents[snapshot.Name]; exists {
 			return nil, fmt.Errorf("duplicate subagent name: %s", snapshot.Name)
 		}
-		definition := claudeAgentDefinition{Description: snapshot.Description, Prompt: snapshot.System + "\n\n" + managedAgentEnvironmentPrompt, Model: snapshot.Model.ID, MCPServers: servers}
+		definition := claudeAgentDefinition{Description: snapshot.Description, Prompt: snapshot.System + "\n\n" + input.AppendSystemPrompt, Model: snapshot.Model.ID, MCPServers: servers}
 		if definition.Description == "" {
 			definition.Description = snapshot.Name
 		}

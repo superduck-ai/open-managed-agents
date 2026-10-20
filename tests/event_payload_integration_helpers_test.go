@@ -22,9 +22,17 @@ import (
 // Each fixture owns a schema so GC and fault injection cannot touch other tests' jobs.
 func newPayloadIntegrationApp(t *testing.T, objects storage.ObjectStore) *testApp {
 	t.Helper()
+	return newPayloadIntegrationAppWithConfig(t, objects, nil)
+}
+
+func newPayloadIntegrationAppWithConfig(t *testing.T, objects storage.ObjectStore, configure func(*config.Config)) *testApp {
+	t.Helper()
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if configure != nil {
+		configure(&cfg)
 	}
 	admin, err := pgxpool.New(context.Background(), cfg.Database.URL)
 	if err != nil {
@@ -59,9 +67,9 @@ func newPayloadIntegrationSession(t *testing.T, app *testApp) (db.CodeSession, s
 	return newPayloadIntegrationSessionWithAgent(t, app, `{"model":"claude-opus-4-6","name":"payload-integration"}`)
 }
 
-func newPayloadIntegrationSessionWithAgent(t *testing.T, app *testApp, body string) (db.CodeSession, string) {
+func newPayloadIntegrationSessionWithAgent(t *testing.T, app *testApp, agentJSON string) (db.CodeSession, string) {
 	t.Helper()
-	agent := createAgent(t, app, body)
+	agent := createAgent(t, app, agentJSON)
 	env := createEnvironment(t, app, `{"name":"payload-integration"}`)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeID := launchLocalCodeSession(t, app, session.ID)

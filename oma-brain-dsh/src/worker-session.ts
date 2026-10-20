@@ -1,5 +1,5 @@
 import { consumeInbound, type CcrClient, type CcrSession } from "./ccrv2/index.ts";
-import type { TaskAdmissionStage } from "./transport.ts";
+import type { TaskAdmissionStage } from "./claim.ts";
 
 export async function openWorkerSession(
   session: CcrSession,

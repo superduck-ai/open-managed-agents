@@ -123,10 +123,12 @@ Session 与 Thread SSE 对持久化事件写入 `id: <event.id>`，使用公开�
 start 写入失败时不转发上游请求；生命周期事件的写入错误必须返回调用方，不能静默跳过。
 普通 `system`（init、hook 等）和成功 `result` 不生成公开消息；显式 `system.message` 仍保留。
 Worker `assistant.error` 非空或 `is_api_error_message: true` 时，该消息属于 API 错误诊断，不映射为公开 `agent.message` 或 `agent.thinking`；失败仍由 `result(is_error=true)` 的安全错误与结束事件表达。正常 assistant 消息不按文本内容过滤。
-`system/compact_boundary` 映射为官方类型 `agent.thread_context_compacted`。`system/task_notification` 的线程 idle 使用官方 stop_reason `end_turn`，失败、终止或用户停止（`stopped`）时写 `session.thread_status_terminated` 且不带 stop_reason；Worker 的 `completed` 等状态值不再写入 stop_reason.type。
-失败 `result` 生成 `session.error`，使用官方 `unknown_error` / exhausted 表达无法进一步归因的执行失败，只公开已知失败类别的安全文案，不透传原始错误、结果和凭据字段。`exhausted` 已明确本轮失败，因此紧随错误生成 `session.status_idle`，其 `stop_reason.type` 为 `retries_exhausted`；错误和结束事件在同一公开事件事务中写入。结束事件使用由原 result UUID 和固定 suffix 派生的稳定 ID，重投不会再次结束下一轮。成功 `result` 仍只作为诊断汇总，不驱动状态。
+`system/task_started` 仅在 `task_type` 为 `local_agent`、`remote_agent` 或 `in_process_teammate` 时生成子线程创建、运行与委派消息事件。`local_bash`、工作流、监控、其他类型以及缺失类型均不创建子线程，Bash 结果继续归属原工具调用。`task_notification` 通过已登记的 task/tool-use ID 查找线程，未找到则不发布线程状态，不能推导 ID 补建线程。关联复用持久化的 `session.thread_created`，排除历史中非智能体或缺失类型的 `task_started`；不带任务类型的原生线程创建事件仍保持兼容。同批事件按顺序登记与结束，重放使用稳定事件 ID。此变更不删除已有误分类线程。
 
-通用失败 result（无 subtype 或 `error_during_execution`）在发布前检查同线程、本轮且不晚于 result 源时间的公开历史。最后一次模型请求在开始后收到 `user.interrupt` 并以 `cancelled` 结束，或者请求已以 `http_error` / `cancelled` 结束、随后在没有新模型请求的等待期间收到 `user.interrupt`，且本轮没有已记录的 `session.error`，该 result 视为用户取消，不生成错误和失败结束事件。正常 Worker idle 仍以 `end_turn` 收敛；模型 span、已生成的部分消息和实际 usage 保留。仅抑制 result 不会提前生成 idle，Worker 尚未上报 idle 时 Session 仍 running。检查止于本轮 running/rescheduled，不继承上一轮中断；无中断的连接取消、中断后发生的新 HTTP 错误、预算或回合限制失败继续使用原失败契约。查询只发生于上述通用失败 result，正常输出与成功 result 不增加查询。当前修复不覆盖模型请求以外的工具等待中断，也不声称能识别 Worker 缺少回合标识和源时间时的跨轮乱序。历史识别属于兼容策略，普通失败 result 与用户中断并发时，严格区分自然耗尽和取消仍需 Worker 提供本轮终止原因及关联标识。
+`system/compact_boundary` 映射为官方类型 `agent.thread_context_compacted`。`system/task_notification` 的线程 idle 使用官方 stop_reason `end_turn`，失败、终止或用户停止（`stopped`）时写 `session.thread_status_terminated` 且不带 stop_reason；Worker 的 `completed` 等状态值不再写入 stop_reason.type。
+失败 `result` 生成 `session.error`，使用官方 `unknown_error` / exhausted 表达无法进一步归因的执行失败，只公开已知失败类别的安全文案，不透传原始错误、结果和凭据字段。`exhausted` 已明确本轮失败，因此紧随错误生成 `session.status_idle`，其 `stop_reason.type` 为 `retries_exhausted`；错误和结束事件在同一公开事件事务中写入。结束事件使用由原 result UUID 和固定 suffix 派生的稳定 ID，重投不会再次结束下一轮。成功 `result` 生成稳定 ID 的 `idle/end_turn`。
+
+Worker result 的 `is_error` 是回合完成结果的权威字段。`is_error=true` 即使出现在 `user.interrupt` 之后，也保留 `session.error` 与 `idle/retries_exhausted`；不根据历史中的 cancelled/http_error 或中断时序把失败改写为成功。`is_error=false` 生成稳定 ID 的 `idle/end_turn`，保留模型 span、部分消息及实际 usage。相同 result 的重放不得重复记录错误或结束下一轮。`TestSessionWorkerInterruptedResult` 覆盖中断、退避、预算失败、跨轮及 idle/result 顺序，真实 `chat.upstream-errors` 验证退避中断后的失败结束及下一条消息恢复。
 
 ```mermaid
 sequenceDiagram

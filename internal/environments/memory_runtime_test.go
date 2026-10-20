@@ -363,7 +363,7 @@ func assertSessionConfigPromptExcludesMemory(t *testing.T, raw json.RawMessage, 
 		t.Fatalf("decode session config: %v", err)
 	}
 	prompt, _ := body["append_system_prompt"].(string)
-	if prompt != managedAgentEnvironmentPrompt {
+	if prompt != mustEnvironmentPrompt(t, nil) {
 		t.Fatalf("append_system_prompt = %q", prompt)
 	}
 	if strings.Contains(prompt, sessionresource.MemoryMountRoot) ||

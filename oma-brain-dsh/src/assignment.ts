@@ -1,4 +1,4 @@
-import type { SubagentConfig } from "./runtime/contracts.ts";
+import type { SubagentConfig, ToolPermissions } from "./runtime/contracts.ts";
 import { sandboxToolDefinitions } from "./sandbox-tools/definitions.ts";
 import { sandboxEndpoint } from "./oma-sandbox/config.ts";
 
@@ -12,11 +12,14 @@ export interface Assignment {
   launch: {
     version: number;
     model: string;
+    model_backends?: Record<string, "messages" | "chat_completions">;
     work_dir: string;
     system: string;
     tools: string[];
     subagents?: SubagentConfig;
+    tool_permissions?: ToolPermissions;
     environment_prompt?: string;
+    memory_catalog_prompt?: string;
     skills?: {
       name: string;
       description: string;
@@ -41,9 +44,14 @@ export function validateAssignment(a: Assignment): void {
     throw new Error("Unsupported launch version");
   if (!a.launch.model || !a.launch.work_dir.startsWith("/"))
     throw new Error("Invalid launch model or work directory");
-  const builtinTools = new Set(sandboxToolDefinitions().map((tool) => tool.name));
-  if (!Array.isArray(a.launch.tools) || a.launch.tools.some((name) => !builtinTools.has(name)))
+  if (a.launch.model_backends !== undefined && (!a.launch.model_backends || typeof a.launch.model_backends !== "object"
+    || Array.isArray(a.launch.model_backends) || Object.values(a.launch.model_backends).some((value) => value !== "messages" && value !== "chat_completions")))
+    throw new Error("Invalid model API backends");
+  const tools = new Set(sandboxToolDefinitions().map((tool) => tool.name));
+  if (!Array.isArray(a.launch.tools)
+    || a.launch.tools.some((name) => !tools.has(name)))
     throw new Error("Invalid launch tools");
+  validateToolPermissions(a.launch.tool_permissions);
   const config = a.launch.subagents;
   if (config) {
     if (config.inlineAgents !== undefined && typeof config.inlineAgents !== "boolean")
@@ -51,7 +59,6 @@ export function validateAssignment(a: Assignment): void {
     if (config.agents !== undefined && !Array.isArray(config.agents))
       throw new Error("Invalid subagent definitions");
     const names = new Set<string>();
-    const tools = new Set(sandboxToolDefinitions().map((tool) => tool.name));
     for (const agent of config.agents ?? []) {
       if (!agent || typeof agent.name !== "string" || !agent.name || names.has(agent.name)
         || typeof agent.description !== "string" || typeof agent.systemPrompt !== "string"
@@ -64,4 +71,10 @@ export function validateAssignment(a: Assignment): void {
     if (names.size > 20 || (config.inlineAgents === false && !names.size))
       throw new Error("Subagents require 1–20 predefined agents when inline agents are disabled");
   }
+}
+
+export function validateToolPermissions(permissions: unknown): asserts permissions is ToolPermissions | undefined {
+  if (permissions !== undefined && (!permissions || typeof permissions !== "object" || Array.isArray(permissions)
+    || Object.values(permissions).some((policy) => !["allow", "ask", "deny"].includes(policy))))
+    throw new Error("Invalid launch tool permissions");
 }

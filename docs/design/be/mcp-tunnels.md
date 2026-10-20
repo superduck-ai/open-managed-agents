@@ -390,7 +390,8 @@ POST 请求可在同一个响应内以 SSE 传递 Connector 的非终态 notific
 Connector wire 把上游 MCP 的 JSON 值规范化为 `resp_json`，因此 terminal response 即使来自
 `text/event-stream` 上游也不会保留原始 SSE framing。Ingress 根据最终响应的 `Content-Type` 恢复传输语义：
 JSON 响应直接写入 body，SSE 响应把每个 notification 和 terminal JSON 值重新编码为标准
-`event: message` / `data: ...` frame，并设置 `Cache-Control: no-cache`。不得出现“声明为
+`event: message` / `data: ...` frame，并设置 `Cache-Control: no-cache` 与 `X-Accel-Buffering: no`，
+由服务端自身声明关闭反向代理缓冲，不依赖前置代理补写响应头。不得出现“声明为
 `text/event-stream`、实际返回裸 JSON”的响应，否则 Claude Code 等 Streamable HTTP 客户端会一直等待
 完整事件并在初始化阶段超时。
 

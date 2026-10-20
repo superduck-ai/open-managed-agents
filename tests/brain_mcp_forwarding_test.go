@@ -21,6 +21,46 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+func TestBrainMCPGatewayRejectsDeniedSandboxTool(t *testing.T) {
+	var forwarded []string
+	sandbox := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var call struct {
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&call)
+		forwarded = append(forwarded, call.Params.Name)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}]}}`)
+	}))
+	t.Cleanup(sandbox.Close)
+	app, worker, _, token := newBrainMCPProxyAppWithAgent(t, sandbox.URL,
+		`{"model":"claude-opus-4-6","name":"denied-bash","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"bash","enabled":false}]}]}`)
+	send := func(body string) *http.Response {
+		response := doSessionRequest(t, app, http.MethodPost, "/v2/ccr-sessions/"+worker.ExternalID+"/sandbox/mcp", strings.NewReader(body), token, false)
+		response.Body.Close()
+		return response
+	}
+	for _, name := range []string{"bash", "unknown"} {
+		response := send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + name + `","arguments":{}}}`)
+		if response.StatusCode != http.StatusForbidden || response.Header.Get("X-Oma-Sandbox-Not-Forwarded") != "true" {
+			t.Fatalf("%s status=%d marker=%q", name, response.StatusCode, response.Header.Get("X-Oma-Sandbox-Not-Forwarded"))
+		}
+	}
+	oversized := send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read","arguments":{"file_path":"` + strings.Repeat("x", 1<<20) + `"}}}`)
+	if oversized.StatusCode != http.StatusBadRequest || oversized.Header.Get("X-Oma-Sandbox-Not-Forwarded") != "true" {
+		t.Fatalf("oversized status=%d marker=%q", oversized.StatusCode, oversized.Header.Get("X-Oma-Sandbox-Not-Forwarded"))
+	}
+	if len(forwarded) != 0 || len(app.sandboxTimeouts.snapshotCalls()) != 0 {
+		t.Fatalf("denied tool reached sandbox: forwarded=%v renewals=%d", forwarded, len(app.sandboxTimeouts.snapshotCalls()))
+	}
+	allowed := send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read","arguments":{}}}`)
+	if allowed.StatusCode != http.StatusOK || len(forwarded) != 1 || forwarded[0] != "read" || allowed.Header.Get("X-Oma-Sandbox-Not-Forwarded") != "" {
+		t.Fatalf("allowed tool status=%d forwarded=%v", allowed.StatusCode, forwarded)
+	}
+}
+
 func TestBrainMCPFailureDoesNotBlockCCRv2(t *testing.T) {
 	for _, mode := range []string{"upstream error", "lost response", "oversized response"} {
 		t.Run(mode, func(t *testing.T) {
@@ -45,7 +85,10 @@ func TestBrainMCPFailureDoesNotBlockCCRv2(t *testing.T) {
 			if response.StatusCode < 500 {
 				t.Fatalf("failed upstream status=%d", response.StatusCode)
 			}
-			if _, err := app.db.RecordCodeSessionWorkerHeartbeat(t.Context(), worker.ExternalID, epoch, time.Minute, 0); err != nil {
+			if response.Header.Get("X-Oma-Sandbox-Not-Forwarded") != "" {
+				t.Fatal("forwarded failure was marked as not forwarded")
+			}
+			if _, err := app.db.RecordCodeSessionWorkerHeartbeat(t.Context(), worker.ExternalID, epoch, fixedWorkerLease(time.Minute, 0)); err != nil {
 				t.Fatalf("MCP failure blocked heartbeat: %v", err)
 			}
 			_, err := app.db.AppendCodeSessionInternalEvents(t.Context(), worker.ExternalID, epoch, []db.AppendCodeSessionInternalEventInput{{
@@ -134,7 +177,7 @@ func TestBrainMCPForwardingDoesNotHoldSessionLock(t *testing.T) {
 	waitStarted()
 	heartbeatCtx, heartbeatCancel := context.WithTimeout(ctx, 3*time.Second)
 	defer heartbeatCancel()
-	if _, err := app.db.RecordCodeSessionWorkerHeartbeat(heartbeatCtx, worker.ExternalID, epoch, time.Minute, 0); err != nil {
+	if _, err := app.db.RecordCodeSessionWorkerHeartbeat(heartbeatCtx, worker.ExternalID, epoch, fixedWorkerLease(time.Minute, 0)); err != nil {
 		t.Fatalf("MCP forwarding held the session lock: %v", err)
 	}
 	go forward()
@@ -199,7 +242,6 @@ func TestBrainMCPStreamsSSEWithoutWaitingForCompletion(t *testing.T) {
 	defer close(release)
 	app, worker, _, token := newBrainMCPProxyApp(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("X-Accel-Buffering", "no")
 		_, _ = io.WriteString(w, "data: first\n\n")
 		w.(http.Flusher).Flush()
 		select {
@@ -284,9 +326,14 @@ func newBrainMCPProxyApp(t *testing.T, handler http.Handler) (*testApp, db.CodeS
 
 func newBrainMCPProxyAppWithEndpoint(t *testing.T, endpoint string) (*testApp, db.CodeSession, int64, string) {
 	t.Helper()
+	return newBrainMCPProxyAppWithAgent(t, endpoint, `{"model":"claude-opus-4-6","name":"payload-integration"}`)
+}
+
+func newBrainMCPProxyAppWithAgent(t *testing.T, endpoint string, agentJSON string) (*testApp, db.CodeSession, int64, string) {
+	t.Helper()
 	app := newPayloadIntegrationApp(t, newFakeStore("brain-mcp-proxy"))
-	worker, _ := newPayloadIntegrationSession(t, app)
-	service := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil).WithSandboxProvisioner(fixedSandboxProvisioner(endpoint))
+	worker, _ := newPayloadIntegrationSessionWithAgent(t, app, agentJSON)
+	service := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil).WithSandboxProvisioner(fixedSandboxProvisioner{endpoint: endpoint, db: app.db})
 	proxyHandler := codesessions.NewHandler(app.cfg, service, app.sandboxTimeouts, nil)
 	router := chi.NewRouter()
 	router.Route("/v2", proxyHandler.RegisterV2Routes)
@@ -305,4 +352,8 @@ func registerTaskTestWorker(t *testing.T, app *testApp, worker db.CodeSession) (
 	_, _, err := app.db.RegisterCodeSessionWorkerAtEpoch(t.Context(), worker.ExternalID, worker.CurrentWorkerEpoch,
 		db.CodeSessionWorkerBinding{TokenSessionID: worker.ExternalID}, time.Minute)
 	return worker, err
+}
+
+func fixedWorkerLease(ttl, grace time.Duration) db.WorkerLeasePolicy {
+	return func(string) db.WorkerLeaseTimings { return db.WorkerLeaseTimings{TTL: ttl, Grace: grace} }
 }

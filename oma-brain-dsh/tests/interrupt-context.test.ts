@@ -4,7 +4,8 @@ import { mountKernel } from "../src/kernel.ts";
 import type { CcrBackend } from "../src/ccrv2/index.ts";
 import type { Payload } from "../src/ccrv2/protocol.ts";
 import * as CcrBridge from "../src/ccrv2/index.ts";
-import { MessagesAdapter } from "../src/model.ts";
+import { omaModelOptions } from "../src/model.ts";
+import { AiSdkAdapter } from "../src/llm-ai-sdk/index.ts";
 import { OmaApi } from "../src/api.ts";
 
 test.each(["event", "control"])("%s interruption context survives recovery in native requests without fabricated public messages", async (entry) => {
@@ -40,7 +41,7 @@ test.each(["event", "control"])("%s interruption context survives recovery in na
   const createSession = async (ctx: Context) => {
     await mountKernel(ctx);
     await ctx.plugin(CcrBridge, { backend });
-    ctx.llm.registerAdapter(["oma"], new MessagesAdapter(api, ctx.attachments));
+    ctx.llm.registerAdapter(["oma"], new AiSdkAdapter(omaModelOptions(api)));
     return ctx.ccrv2.createSession({
       id, provider: "oma", model: "deepseek-flash", workDir: "/workspace", systemPrompt: "你是一个简洁的中文助手。", tools: ["Bash"],
       setup: async (scope: Context) => {

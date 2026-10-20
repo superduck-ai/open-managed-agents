@@ -29,8 +29,9 @@ Use this workflow when implementing or fixing Deployment/River, Memory/Filestore
 | Transcript archive/export/restore/delete, compaction boundary, pending cleanup or object integrity | All five `transcript` scenarios below |
 | Files API, file metadata, workspace authorization, storage or cleanup | `files.lifecycle`, `files.isolation`, `files.invalid`, `files.storage`, `files.attachments`, `files.platform`, `files.recovery`, `files.exhaustion`, `files.generated`, `files.performance` |
 | Tool permissions or confirmation | `chat.tools` |
-| Busy-input rejection and retry, ACK, Worker reconnection or replacement, history recovery | `chat.reliability` |
+| Active-input queuing and ordered execution, ACK, Worker reconnection or replacement, history recovery | `chat.reliability` |
 | NATS fanout or delivery across backend instances | `chat.instances` |
+| Backend signal handling, HTTP drain or long-lived SSE shutdown | `chat.shutdown` without a model Worker |
 | Session creation, Runner, mounts or Worker startup | `chat.public` |
 | Bound Skill discovery, permission, body/reference loading or readonly mounts | `chat.skills-loading`; read [Skill loading](features/skills-loading.md) |
 | Configured subagents, child skills/MCP, child tool policy or thread continuation | `chat.subagents`; read [Subagents](features/subagents.md) |
@@ -52,7 +53,7 @@ entry point still needs Go to build the CLI. Cobra handles commands and shared o
 `--timeout` is shared. `--worker-image` belongs to `chat`, `files generated` and `memory mounts`; baseline/backend-ref/diagnostics belong to both `chat performance` and `files performance`. Cloud commands and their doctor accept `--cloud-config`. Long options use two dashes,
 such as `--worker-image`; `-h` is the short form of `--help`.
 
-Prerequisites: macOS or Linux, repository Go toolchain, Bash, git, tar, Docker Engine with Compose and enough disk space for three JetStream replicas. The CLI generates its ephemeral signing key with Go's standard library. The common images must already exist locally: `postgres:17`, `redis:8`, `nats:2.14.6-alpine`, `pgsty/minio:latest`. Chat additionally needs the Worker image containing `/opt/claude-code/bin/claude`. `files generated` and `memory mounts` need a Worker image and FUSE; other Files and Memory scenarios ignore Worker configuration. The CLI does not pull images. Record image IDs in each report; never compare performance across different images.
+Prerequisites: macOS or Linux, repository Go toolchain, Bash, git, tar, Docker Engine with Compose and enough disk space for three JetStream replicas. The CLI generates its ephemeral signing key with Go's standard library. The common images must already exist locally: `postgres:17`, `redis:8`, `nats:2.14.6-alpine`, `pgsty/minio:latest`. Chat additionally needs the Worker image containing `/opt/claude-code/bin/claude`, except `chat shutdown`, which tests backend processes without a model Worker. `files generated` and `memory mounts` need a Worker image and FUSE; other Files and Memory scenarios ignore Worker configuration. The CLI does not pull images. Record image IDs in each report; never compare performance across different images.
 
 ```sh
 .agents/skills/verify-be/scripts/verify-be chat doctor
@@ -62,6 +63,7 @@ Prerequisites: macOS or Linux, repository Go toolchain, Bash, git, tar, Docker E
 .agents/skills/verify-be/scripts/verify-be chat tools
 .agents/skills/verify-be/scripts/verify-be chat reliability
 .agents/skills/verify-be/scripts/verify-be chat instances
+.agents/skills/verify-be/scripts/verify-be chat shutdown
 .agents/skills/verify-be/scripts/verify-be chat public
 .agents/skills/verify-be/scripts/verify-be chat performance
 ```
@@ -117,7 +119,7 @@ Most scenarios prepare Session/CodeSession activation through existing service/D
 
 `chat tools` executes `TestChatTools`. It first rejects a malformed streamed Bash call, checks no file side effect, and compares the rejected call and error result IDs/order in public SSE and history. The next model request must contain the unparsed input and error result, and the turn must finish idle/end_turn. Then the existing official `anthropic-sdk-go` dependency sends `user.message`, reads pending tool events and submits `user.tool_confirmation` to the local backend. The scripted upstream requests a Write; the real Worker executes it only after approval. The test runs deny before allow, checks that the file is absent before confirmation, checks the resulting file, and verifies tool-use/result/confirmation/final-message history and drained delivery queues. The SDK does not execute tools itself. See [tool coverage](features/tools.md).
 
-`chat reliability` verifies busy-input rejection without persistence, successful retry after idle, Worker SSE reconnection, mid-stream client interruption and history recovery, then Worker replacement with rotated credentials and rejection of the old credential. `chat instances` routes input/Worker traffic and SSE/history to different backend processes. See [reliability](features/recovery.md).
+`chat reliability` verifies active-input acceptance with unprocessed queued history, ordered execution without concurrent or duplicate model calls, Worker SSE reconnection, mid-stream client interruption and history recovery, then Worker replacement with rotated credentials and rejection of the old credential. `chat instances` routes input/Worker traffic and SSE/history to different backend processes. See [reliability](features/recovery.md).
 
 `chat performance` measures a fixed serial workload. Use `--backend-ref REF` to measure a base commit with the current harness, then `--baseline /absolute/path/report.json` to gate the candidate. `--diagnostics` captures backend profiles in a separate run and cannot be used for a baseline comparison. Read [the performance contract](features/performance.md) before comparing results.
 

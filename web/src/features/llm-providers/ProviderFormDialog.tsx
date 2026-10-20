@@ -13,10 +13,12 @@ import {
 import { Field, FieldDescription, FieldError, FieldLabel } from '../../shared/ui/field';
 import { Input } from '../../shared/ui/input';
 import { toast } from '../../shared/ui/sonner';
-import type { LLMProvider, LLMProviderInput } from './api';
+import type { APIBackend, LLMProvider, LLMProviderInput } from './api';
+import { ProviderBackendField } from './ProviderBackendField';
 import { readableError } from './catalog';
 
 type ProviderForm = {
+  apiBackend: APIBackend;
   name: string;
   baseUrl: string;
   apiKey: string;
@@ -26,12 +28,13 @@ type ProviderForm = {
 function providerForm(provider: LLMProvider | null): ProviderForm {
   return provider
     ? {
+        apiBackend: provider.api_backend,
         name: provider.name,
         baseUrl: provider.base_url,
         apiKey: '',
         modelIds: provider.model_ids.length > 0 ? [...provider.model_ids] : [''],
       }
-    : { name: '', baseUrl: '', apiKey: '', modelIds: [''] };
+    : { apiBackend: 'messages', name: '', baseUrl: '', apiKey: '', modelIds: [''] };
 }
 
 export function ProviderFormDialog({
@@ -47,7 +50,7 @@ export function ProviderFormDialog({
   isPending: boolean;
   onClose: () => void;
   onSubmit: (input: LLMProviderInput) => Promise<void>;
-  onDiscoverModels: (baseUrl: string, apiKey: string) => Promise<string[]>;
+  onDiscoverModels: (baseUrl: string, apiKey: string, apiBackend: APIBackend) => Promise<string[]>;
 }) {
   const { msg } = useI18n();
   const [form, setForm] = useState<ProviderForm>(() => providerForm(provider));
@@ -64,7 +67,7 @@ export function ProviderFormDialog({
     setFormError('');
     setDiscovering(true);
     try {
-      const modelIds = await onDiscoverModels(baseUrl, apiKey);
+      const modelIds = await onDiscoverModels(baseUrl, apiKey, form.apiBackend);
       if (modelIds.length === 0) {
         toast.info(msg('llmModels.discoverEmpty', 'The provider returned no models. You can add model IDs later.'), {
           id: 'llm-models-discover',
@@ -87,6 +90,7 @@ export function ProviderFormDialog({
       return;
     }
     const input: LLMProviderInput = {
+      api_backend: form.apiBackend,
       name: form.name.trim(),
       base_url: form.baseUrl.trim(),
       model_ids: modelIds,
@@ -115,10 +119,7 @@ export function ProviderFormDialog({
               {provider ? msg('llmModels.editProvider', 'Edit provider') : msg('llmModels.addProvider', 'Add provider')}
             </DialogTitle>
             <DialogDescription>
-              {msg(
-                'llmModels.formDescription',
-                'Use an Anthropic Messages-compatible HTTPS endpoint and its exact model IDs.',
-              )}
+              {msg('llmModels.formDescription', 'Configure a model API endpoint and its exact model IDs.')}
             </DialogDescription>
           </DialogHeader>
           <Field>
@@ -131,6 +132,10 @@ export function ProviderFormDialog({
               autoComplete="off"
             />
           </Field>
+          <ProviderBackendField
+            value={form.apiBackend}
+            onChange={(apiBackend) => setForm((value) => ({ ...value, apiBackend }))}
+          />
           <Field>
             <FieldLabel htmlFor="llm-provider-url">{msg('llmModels.baseUrl', 'Base URL')}</FieldLabel>
             <Input
@@ -142,7 +147,11 @@ export function ProviderFormDialog({
               autoComplete="url"
             />
             <FieldDescription>
-              {msg('llmModels.baseUrlHint', 'The server appends /v1/messages to this URL.')}
+              {msg('llmModels.baseUrlHint', 'The server appends the API path to this URL.')}{' '}
+              <code className="break-all">
+                {form.baseUrl.replace(/\/+$/, '')}
+                {form.apiBackend === 'messages' ? '/v1/messages' : '/v1/chat/completions'}
+              </code>
             </FieldDescription>
           </Field>
           <Field>

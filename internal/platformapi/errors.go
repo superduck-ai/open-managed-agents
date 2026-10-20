@@ -75,3 +75,7 @@ func writeConsoleWorkspaceMemberError(w http.ResponseWriter, err error) {
 		Message string `json:"message"`
 	}{Error: code, Message: message})
 }
+
+func writeLLMProviderBackendError(w http.ResponseWriter) {
+	writeLLMProviderError(w, http.StatusBadRequest, "api_backend_invalid", "api_backend must be messages or chat_completions")
+}

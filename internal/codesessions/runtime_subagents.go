@@ -169,3 +169,15 @@ type runtimeDelegation struct {
 	} `json:"inline_agents"`
 	PredefinedAgents []runtimeAgentReference `json:"predefined_agents"`
 }
+
+var sandboxToolNames = []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob"}
+
+func enabledSandboxTools(tools []toolPermissionToolset) []string {
+	enabled := make([]string, 0, len(sandboxToolNames))
+	for _, name := range sandboxToolNames {
+		if resolveAgentToolPermission(tools, managedAgentToolName(name)) != resolvedToolPermissionDeny {
+			enabled = append(enabled, name)
+		}
+	}
+	return enabled
+}

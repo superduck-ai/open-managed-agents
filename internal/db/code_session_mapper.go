@@ -143,6 +143,7 @@ type codeSessionWorkerLeaseRow struct {
 	UUID                 string       `db:"uuid"`
 	CurrentWorkerEpoch   int64        `db:"current_worker_epoch"`
 	WorkerLeaseExpiresAt sql.NullTime `db:"worker_lease_expires_at"`
+	WorkerTransport      string       `db:"worker_transport"`
 }
 
 type codeSessionWorkerExpiryRow struct {

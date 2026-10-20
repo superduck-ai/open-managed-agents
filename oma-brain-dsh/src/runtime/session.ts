@@ -63,9 +63,11 @@ export class SessionRuntime {
         interpolate: false,
         text: () => [this.config.systemPrompt, this.appendedSystem].filter(Boolean).join("\n\n"),
       });
+      const toolPermissions = this.config.toolPermissions ??= {};
       this.sandboxTools = await scope.plugin(SandboxTools, {
         bridge: this.bridge,
         tools: this.config.tools,
+        permissions: toolPermissions,
       });
       await this.externalMcp.register(scope, this.bridge, this.abort.signal, async (serverName, phase) => {
         await this.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase);
@@ -84,6 +86,7 @@ export class SessionRuntime {
         return approval.allowed ? decision : { kind: "deny", reason: approval.reason || "Tool use denied by OMA" };
       });
       scope.on("tools/execute", async (exec, next) => {
+        if (!exec.name.startsWith("mcp__") && toolPermissions[exec.name.toLowerCase()] === "allow") return next();
         prefetchMcpApprovals(this.bridge, this.toolCalls, exec.callId,
           name => name.startsWith("mcp__") && !!scope.tools.get(name, exec.agent), exec.signal);
         const approval = await approveToolCall(this.bridge, {
@@ -113,6 +116,11 @@ export class SessionRuntime {
       });
       scope.on("agent/request", async ({ signal }, next) => {
         signal.throwIfAborted();
+        if (this.config.refreshToolPermissions) {
+          const permissions = await this.config.refreshToolPermissions(signal);
+          for (const name of Object.keys(toolPermissions)) delete toolPermissions[name];
+          Object.assign(toolPermissions, permissions);
+        }
         await this.hooks.beforeRequest();
         signal.throwIfAborted();
         return next();
@@ -155,7 +163,7 @@ export class SessionRuntime {
     this.abort.signal.throwIfAborted();
     if (JSON.stringify(next.tools) !== JSON.stringify(this.config.tools)) {
       if (!this.sandboxTools) throw new Error("Session tools are not initialized");
-      this.sandboxTools.update({ bridge: this.bridge, tools: next.tools });
+      this.sandboxTools.update({ bridge: this.bridge, tools: next.tools, permissions: this.config.toolPermissions });
       await this.sandboxTools.await();
       this.config.tools = next.tools;
     }

@@ -15,7 +15,7 @@ test("production admission consumes and acknowledges a new input on a restored b
   const original = createOmaSession(first, firstApi, b.a);
   await original.open();
   original.state.inputId = "original-uncertain";
-  const call = { callId: "uncertain", name: "Read", original: { file_path: "/tmp/owned" }, effective: { file_path: "/tmp/owned" } };
+  const call = { callId: "uncertain", readOnly: false, name: "Read", original: { file_path: "/tmp/owned" }, effective: { file_path: "/tmp/owned" } };
   await original.recordApproved(call);
   await original.recordDispatch(call.callId);
   await original.recordUnknown(call.callId);

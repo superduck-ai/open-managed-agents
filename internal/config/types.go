@@ -137,8 +137,9 @@ type NATSConfig struct {
 }
 
 type AuthConfig struct {
-	SMTP       EmailSMTPConfig `yaml:"smtp"`
-	ConsoleURL string          `yaml:"console_url"`
+	AllowedEmailDomains []string        `yaml:"allowed_email_domains"`
+	SMTP                EmailSMTPConfig `yaml:"smtp"`
+	ConsoleURL          string          `yaml:"console_url"`
 }
 
 type EmailSMTPConfig struct {
@@ -233,7 +234,8 @@ type CodeSessionConfig struct {
 	// MITM 开启后，服务启动时读取私钥并在内存中签发根证书；私钥绝不能进入 sandbox。
 	UpstreamProxyCAKeyFile string `yaml:"upstream_proxy_ca_key_file"`
 	// UpstreamProxyDisableSSRFProtection 是仅供本地 fake-IP/TUN 排障使用的危险开关；生产环境必须保持 false。
-	UpstreamProxyDisableSSRFProtection bool `yaml:"upstream_proxy_disable_ssrf_protection"`
+	UpstreamProxyDisableSSRFProtection bool   `yaml:"upstream_proxy_disable_ssrf_protection"`
+	BrainClaimTokenFile                string `yaml:"brain_claim_token_file"`
 }
 
 type ObservabilityConfig struct {

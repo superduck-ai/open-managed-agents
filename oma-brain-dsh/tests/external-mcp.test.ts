@@ -851,7 +851,7 @@ test("predefined MCP child owns its pinned endpoint while self and root retain t
     }
     expect(expert.requests.filter(r => r.method === "tools/call")).toHaveLength(1);
     expect(f.p.requests.filter(r => r.method === "tools/call")).toHaveLength(2);
-    expect(contexts).toEqual(["expert", "self"]);
+    expect(contexts.filter(name => name !== "root")).toEqual(["expert", "expert", "expert", "self", "self", "self"]);
     const expertThread = f.session.state.threads!.find(t => t.name === "expert")!;
     const selfThread = f.session.state.threads!.find(t => t.name === "self")!;
     expect(scopes.some(s => s.endpoint === expert.config.mcpServers.peer.url && s.threadId === expertThread.id)).toBe(true);

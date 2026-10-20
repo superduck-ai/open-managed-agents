@@ -167,6 +167,11 @@ test("failed final persistence releases the session writer and permits replaceme
         id: "replaced", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup,
       });
       await session.open();
+      const writers = (ctx.sessionPersistence as unknown as {
+        writers: Map<string, { enqueue(event: unknown): void; record: { events: unknown[] } }>;
+      }).writers;
+      const writer = writers.get(session.id)!;
+      writer.enqueue({ seq: writer.record.events.length, type: "test/pending", data: {} });
       backend.persist = async () => { throw new Error("Lease expired"); };
       await expect(session.close()).rejects.toThrow();
       expect(() => ctx.ccrv2.forget(session.id)).not.toThrow();
@@ -509,7 +514,7 @@ test("child history resumes across scoped and legacy foreground logs", async () 
   }
 });
 
-test("CCRv2 plugin runs isolated sessions and restores history without OMA or NATS", async () => {
+test("CCRv2 plugin runs isolated sessions and restores history without OMA", async () => {
   const backend = new MemoryBackend();
   const config = (id: string) => ({
     id, provider: "memory", model: "text", workDir: "/workspace",
@@ -685,7 +690,7 @@ test("user interrupts settle the tool locally, finish successfully and survive r
         .filter((block: Payload) => block.type === "tool_result");
       expect(results).toHaveLength(1);
       expect(results[0]).toMatchObject({ tool_use_id: "cancelled-call", is_error: true });
-      await expect(session.recordApproved({ callId: "cancelled-call", name: "Bash", original: {}, effective: {} }))
+      await expect(session.recordApproved({ callId: "cancelled-call", name: "Bash", original: {}, effective: {}, readOnly: false }))
         .rejects.toThrow("duplicate");
       await ctx.fiber.dispose();
       ctx = new Context();

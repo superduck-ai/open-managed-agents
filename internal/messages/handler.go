@@ -74,6 +74,10 @@ func NewHandler(database *db.DB, secretService *secrets.Service, codeSessionServ
 
 // Create 处理 canonical POST /v1/messages，并以有界内存完成请求校验和响应流式转发。
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
+	h.create(w, r, llmproviders.Messages)
+}
+
+func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string) {
 	// 鉴权已由 API middleware 完成；这里只确认 Principal 存在，避免 handler 被错误地裸挂载。
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
@@ -108,12 +112,27 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		h.writeProviderError(w, r, err)
 		return
 	}
-	body, fileErr := h.managedFileReferences(r.Context(), principal, body)
-	if fileErr != nil {
-		httpapi.WriteError(w, r, fileErr)
+	if err := upstream.RequireBackend(backend); err != nil {
+		httpapi.WriteError(w, r, backendMismatchError())
 		return
 	}
-	target, err := llmproviders.Endpoint(upstream.BaseURL, "/v1/messages", r.URL.RawQuery)
+	if backend == llmproviders.Messages {
+		resolvedBody, fileErr := h.managedFileReferences(r.Context(), principal, body)
+		if fileErr != nil {
+			httpapi.WriteError(w, r, fileErr)
+			return
+		}
+		body = resolvedBody
+	}
+	path := "/v1/messages"
+	if backend == llmproviders.ChatCompletions {
+		if err := validateChatRequest(body); err != nil {
+			httpapi.WriteError(w, r, invalidRequestError(err))
+			return
+		}
+		path = "/v1/chat/completions"
+	}
+	target, err := llmproviders.Endpoint(upstream.BaseURL, path, r.URL.RawQuery)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "build messages upstream endpoint", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
@@ -128,7 +147,11 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	upstreamRequest.ContentLength = int64(len(body))
 	// 先清除客户端鉴权和租户 header，再注入只存在于 OMA 服务端的真实上游 key。
 	upstreamRequest.Header = sanitizedRequestHeaders(r.Header)
-	llmproviders.ApplyAPIKey(upstreamRequest.Header, upstream.APIKey)
+	if backend == llmproviders.ChatCompletions {
+		upstream.ApplyHeaders(upstreamRequest.Header)
+	} else {
+		llmproviders.ApplyAPIKey(upstreamRequest.Header, upstream.APIKey)
+	}
 	request, err := h.beginModelRequest(r, principal, modelID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "start model request", "error", err)

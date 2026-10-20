@@ -52,6 +52,37 @@ function scriptedChildren(b: Backend, alpha?: Promise<void>, beta?: Promise<void
   };
 }
 
+for (const policy of ["ask", "deny"] as const) {
+  test(`a retained child applies an allow to ${policy} update on its next turn`, async () => {
+    const backend = new Backend();
+    backend.a.launch.tool_permissions = { bash: "allow" };
+    const f = await fixture(backend);
+    f.b.modelScript = [parallelDelegations(["alpha"]), toolEvents("echo first"), textEvents("child done"), textEvents("parent done")];
+    await f.session.receive("first-turn", { content: "Delegate first" });
+    expect(f.b.executions).toHaveLength(1);
+    const threadId = f.session.state.threads![0]!.id;
+    f.b.a.launch.tool_permissions = { bash: policy };
+    const followup = parallelDelegations(["alpha"]);
+    const delta = followup.find((event) => event.type === "content_block_delta")!;
+    delta.delta.partial_json = JSON.stringify({ thread_id: threadId, message: "Run second" });
+    f.b.modelScript = [followup, toolEvents("echo second"), textEvents("child done"), textEvents("parent done")];
+    const approvals: Payload[] = [];
+    f.b.onApproval = async (request) => { approvals.push(request); };
+    const turn = f.session.receive("second-turn", { content: "Follow up" });
+    const settled = turn.catch(() => {});
+    try {
+      await eventually(() => approvals.length === 1 || f.b.executions.length > 1);
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0]!.session_thread_id).toBe(threadId);
+      expect(f.b.executions).toHaveLength(1);
+      await decide(f.session, approvals[0]!, policy === "ask");
+      await turn;
+      expect(f.b.executions).toHaveLength(policy === "ask" ? 2 : 1);
+      expect(f.session.blocked()).toBe(false);
+    } finally { f.session.stop(); await settled; }
+  });
+}
+
 test("native tool batch starts two children concurrently, isolates identical call IDs, and aggregates approvals", async () => {
   const f = await fixture();
   const betaResult = Promise.withResolvers<Payload>();

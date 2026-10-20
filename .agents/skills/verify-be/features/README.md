@@ -10,8 +10,9 @@
 | Upstream authentication failure or interruption during retry backoff ends incorrectly | [Upstream errors](upstream-errors.md) | `chat upstream-errors` |
 | A reply disappears after reopening | [History](history.md) | Successful-turn history in `chat.roundtrip`; mid-stream interruption in `chat.reliability` |
 | Tool approval or rejection behaves incorrectly | [Tools](tools.md) | `chat tools` through the official Go SDK |
-| Busy rejection, idle retry or replacement Worker behaves incorrectly | [Recovery](recovery.md) | `chat reliability` |
+| Active-input queuing, ordered execution or replacement Worker behaves incorrectly | [Recovery](recovery.md) | `chat reliability` |
 | Another API instance cannot stream the reply | [Recovery](recovery.md) | `chat instances` |
+| Backend waits for SSE during shutdown or ignores a second Ctrl-C | [Recovery](recovery.md) | `chat shutdown` |
 | Public Session startup fails | [Public startup](public-start.md) | `chat public` with real Runner and local Docker sandbox |
 | Configured child Agent is unavailable, uses parent permissions or loses its thread | [Subagent delegation](subagents.md) | `chat subagents` with real Runner, skills, MCP and same-thread continuation |
 | Chat latency regresses | [Performance](performance.md) | `chat performance --baseline REPORT` |

@@ -12,6 +12,7 @@ import (
 func (h *Handler) RegisterV1Routes(router chi.Router) {
 	h.registerRuntimeRoutes(router)
 	h.registerCodeSessionRoutes(router)
+	h.registerBrainClaimRoutes(router)
 	// HTTP session_ingress 校验签名 token 与请求路径；CCR v2 的 worker epoch/lease
 	// 约束由对应 /worker/* handler 的状态机执行。
 	h.registerSessionIngressRoutes(router)

@@ -425,11 +425,12 @@ export class CcrSession {
     const phases = entry.callPhases ??= {};
     if (this.blocked() || phases[call.callId] || entry.approvedCalls[call.callId] || entry.toolOutcomes[call.callId])
       throw new Error("Invalid or duplicate tool approval");
-    phases[call.callId] = "approved";
     entry.approvedCalls[call.callId] = { name: call.name, original: call.original, effective: call.effective };
     if (threadId === this.id) this.state.approvedCalls[call.callId] = entry.approvedCalls[call.callId]!;
-    this.syncCallPhase(entry);
-    await this.save();
+    if (!call.readOnly) {
+      phases[call.callId] = "approved";
+      this.syncCallPhase(entry);
+    }
     this.activity.start(threadId, "tool_exec", call.callId);
   }
 
@@ -453,13 +454,15 @@ export class CcrSession {
 
   async recordResult(outcome: ToolOutcome, threadId = this.id): Promise<void> {
     const entry = this.execution(threadId);
-    if (entry.callPhases?.[outcome.callId] !== "dispatch") throw new Error("Tool result does not match dispatch");
+    if (outcome.readOnly ? !entry.approvedCalls[outcome.callId] || entry.callPhases?.[outcome.callId] || entry.toolOutcomes[outcome.callId]
+      : entry.callPhases?.[outcome.callId] !== "dispatch") throw new Error("Tool result does not match dispatch");
     this.activity.end(threadId, "tool_exec", outcome.callId);
-    entry.callPhases[outcome.callId] = "result";
-    entry.toolOutcomes[outcome.callId] = { text: outcome.text, failed: outcome.failed,
-      ...(outcome.remoteOutcome ? { remoteOutcome: outcome.remoteOutcome } : {}) };
+    entry.toolOutcomes[outcome.callId] = { text: outcome.text, failed: outcome.failed, ...(outcome.remoteOutcome ? { remoteOutcome: outcome.remoteOutcome } : {}) };
     if (threadId === this.id) this.state.toolOutcomes[outcome.callId] = entry.toolOutcomes[outcome.callId]!;
-    this.syncCallPhase(entry);
+    if (!outcome.readOnly) {
+      entry.callPhases![outcome.callId] = "result";
+      this.syncCallPhase(entry);
+    }
     const diagnostic = {session_ref:createHash("sha256").update(this.id).digest("hex"),
       session_thread_ref:createHash("sha256").update(threadId).digest("hex"),call_ref:createHash("sha256").update(outcome.callId).digest("hex"),
       text_utf16_units:outcome.text.length, has_nul:outcome.text.includes(String.fromCharCode(0))};
@@ -470,7 +473,7 @@ export class CcrSession {
       ...(threadId === this.id ? {} : { session_thread_id: threadId }),
       content: [{ type: "text", text: `Approved ${outcome.name} arguments: ${JSON.stringify(outcome.effective)}` }],
     });
-    await this.save();
+    if (!outcome.readOnly || changed || outcome.remoteOutcome) await this.save();
     workerDiagnostic("info","ccrv2_tool_result_durability",{...diagnostic,phase:"confirmed"});
   }
 
@@ -682,16 +685,16 @@ export class CcrSession {
     await this.runtime.flushLog();
     await this.save();
     await this.previews;
-    await this.publish();
+    await this.publish(false);
   }
-  publish(): Promise<void> {
+  publish(persistCleared = true): Promise<void> {
     const next = this.publications.then(async () => {
       if (!this.state.outbox.length) return;
       const pending = this.state.outbox.slice();
       if (!pending.length) return;
       await this.backend.events(this.id, pending);
       this.state.outbox.splice(0, pending.length);
-      await this.save();
+      if (persistCleared) await this.save();
     });
     this.publications = next.catch(() => {});
     return next;

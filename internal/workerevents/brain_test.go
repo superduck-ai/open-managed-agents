@@ -1,47 +1,99 @@
 package workerevents
 
 import (
-	"encoding/json"
+	"context"
 	"testing"
 	"time"
 
 	server "github.com/nats-io/nats-server/v2/server"
-	"github.com/nats-io/nats.go/jetstream"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
-func TestBrainTasksSurviveSubscriberStartupAndDeduplicate(t *testing.T) {
+func assertNoBrainWorkSignal(t *testing.T, signals <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-signals:
+		t.Fatal("unexpected brain work signal")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func assertBrainWorkSignal(t *testing.T, signals <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-signals:
+	case <-time.After(2 * time.Second):
+		t.Fatal("brain work signal not delivered")
+	}
+}
+
+func TestBrainWorkSignalStopsAfterSubscriberCancellation(t *testing.T) {
 	srv := runNATSServer(t, server.Options{Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir()})
-	broker, err := NewJetStream(t.Context(), connectNATS(t, srv.ClientURL()), config.WorkerEventStreamConfig{ConsumerInactiveThreshold: time.Minute, Replicas: 1})
+	for name, newSignal := range map[string]func(t *testing.T) BrainWorkSignal{
+		"memory": func(*testing.T) BrainWorkSignal { return NewMemory() },
+		"nats": func(t *testing.T) BrainWorkSignal {
+			broker, err := NewJetStream(t.Context(), connectNATS(t, srv.ClientURL()), config.WorkerEventStreamConfig{ConsumerInactiveThreshold: time.Minute, Replicas: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return broker
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			signal := newSignal(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			signals, err := signal.SubscribeBrainWork(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cancel()
+			time.Sleep(50 * time.Millisecond)
+			if err := signal.NotifyBrainWork(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			assertNoBrainWorkSignal(t, signals)
+		})
+	}
+}
+
+func TestBrainWorkSignalReachesEverySubscriber(t *testing.T) {
+	srv := runNATSServer(t, server.Options{Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir()})
+	connection := connectNATS(t, srv.ClientURL())
+	publisher, err := NewJetStream(t.Context(), connection, config.WorkerEventStreamConfig{ConsumerInactiveThreshold: time.Minute, Replicas: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := BrainTask{SessionID: "cse_task", WorkerEpoch: 7, IngressToken: "fixture", ModelToken: "model"}
-	for range 2 {
-		if err := broker.PublishBrainTask(t.Context(), task); err != nil {
-			t.Fatal(err)
+	subscriber, err := NewJetStream(t.Context(), connectNATS(t, srv.ClientURL()), config.WorkerEventStreamConfig{ConsumerInactiveThreshold: time.Minute, Replicas: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	memory := NewMemory()
+	remote, err := subscriber.SubscribeBrainWork(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := memory.SubscribeBrainWork(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := subscriber.connection.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := publisher.NotifyBrainWork(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.NotifyBrainWork(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	assertBrainWorkSignal(t, remote)
+	assertBrainWorkSignal(t, local)
+	if streams := publisher.js.StreamNames(t.Context()); streams.Err() != nil {
+		t.Fatal(streams.Err())
+	} else {
+		for name := range streams.Name() {
+			if name == "OMA_BRAIN_TASKS" {
+				t.Fatal("brain task stream must not be created")
+			}
 		}
-	}
-	consumer, err := broker.js.CreateOrUpdateConsumer(t.Context(), "OMA_BRAIN_TASKS", jetstream.ConsumerConfig{Durable: "oma_brain", FilterSubject: "oma.brain.tasks.v1", AckPolicy: jetstream.AckExplicitPolicy})
-	if err != nil {
-		t.Fatal(err)
-	}
-	message, err := consumer.Next(jetstream.FetchMaxWait(time.Second))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var received BrainTask
-	if err := json.Unmarshal(message.Data(), &received); err != nil {
-		t.Fatal(err)
-	}
-	if received != task || message.Headers().Get("Nats-Msg-Id") != "cse_task:7" {
-		t.Fatal("task changed in transit")
-	}
-	if err := message.DoubleAck(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	info, err := consumer.Info(t.Context())
-	if err != nil || info.NumPending != 0 || info.NumAckPending != 0 {
-		t.Fatalf("task not drained: %v %v", info, err)
 	}
 }

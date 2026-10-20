@@ -247,6 +247,12 @@ func (s *Service) managedAgentRuntimeConfig(ctx context.Context, session db.Sess
 		return nil, err
 	}
 	config.Subagents = subagents
+	tools, err := runtimeRootToolsets(session.AgentSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	config.RuntimeTools = enabledSandboxTools(tools)
+	config.RuntimeToolPolicies = runtimeToolPolicies(tools)
 	return config.encode()
 }
 

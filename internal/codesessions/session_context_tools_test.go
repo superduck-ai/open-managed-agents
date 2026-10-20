@@ -72,3 +72,19 @@ func TestWorkerToolRefreshCannotBeSuppressedByClient(t *testing.T) {
 		}
 	}
 }
+
+func TestCurrentToolSnapshotScopesLocalPermissionCache(t *testing.T) {
+	record := db.CodeSession{Metadata: json.RawMessage(`{"config":{"tools":[{"type":"agent_toolset_20260401","default_config":{"permission_policy":{"type":"always_allow"}}}]}}`)}
+	scoped, err := codeSessionWithToolSnapshot(record, json.RawMessage(`{"tools":[{"type":"agent_toolset_20260401","default_config":{"enabled":false},"configs":[{"name":"read","enabled":true,"permission_policy":{"type":"always_ask"}}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := sessionContextFromCodeSession(scoped, MCPRuntimeIdentity{}, config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := result["runtime_tool_permissions"].(map[string]string)
+	if policies["read"] != "ask" || policies["bash"] != "deny" {
+		t.Fatalf("scoped policies = %v", policies)
+	}
+}

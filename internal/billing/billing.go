@@ -167,17 +167,45 @@ type TokenUsage struct {
 }
 
 func (c *Calculator) ModelRequestCents(model string, usage TokenUsage) (cents int64, ok bool) {
+	return c.modelRequestCents(model, usage, false)
+}
+
+func (c *Calculator) BudgetRequestCents(model string, usage TokenUsage) (cents int64, ok bool) {
+	return c.modelRequestCents(model, usage, true)
+}
+
+func (c *Calculator) modelRequestCents(model string, usage TokenUsage, fillMissingCache bool) (cents int64, ok bool) {
 	if c == nil {
 		return 0, false
 	}
 	price, priced := c.Models[normalizeModelName(model)]
-	if !priced {
+	if !priced || price.Rates == nil {
 		return 0, false
 	}
-	if price.Rates == nil {
-		return 0, false
+	rates := price.effectiveRates(usage)
+	if fillMissingCache {
+		rates = rates.fillMissingCacheRates()
 	}
-	return price.effectiveRates(usage).cost(usage, price.ExchangeRate)
+	return rates.cost(usage, price.ExchangeRate)
+}
+
+func (r Rates) fillMissingCacheRates() Rates {
+	if r.CacheRead == nil {
+		r.CacheRead = r.Input
+	}
+	if r.CacheWrite == nil {
+		r.CacheWrite = r.CacheWrite5m
+		if r.CacheWrite == nil {
+			r.CacheWrite = r.Input
+		}
+	}
+	if r.CacheWrite5m == nil {
+		r.CacheWrite5m = r.CacheWrite
+	}
+	if r.CacheWrite1h == nil {
+		r.CacheWrite1h = r.CacheWrite
+	}
+	return r
 }
 
 // MeteringCents converts web-search request counts and active seconds into

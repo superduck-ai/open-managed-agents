@@ -97,6 +97,53 @@ func TestPutSessionAttachmentTreatsExistingPathAsAlreadyStored(t *testing.T) {
 	}
 }
 
+func TestPutSessionAttachmentRejectsOversizedBody(t *testing.T) {
+	t.Parallel()
+
+	filesystem := serviceTestFilesystem()
+	recorded := false
+	database, _ := sessionAttachmentTestDatabase(filesystem, func(db.PutFilestoreFileInput) error {
+		recorded = true
+		return nil
+	})
+	database.completeCleanupFn = func(context.Context, string) error { return nil }
+	var uploaded []byte
+	store := uploadingBlobStore(&uploaded)
+	discarded := false
+	store.deleteFn = func(context.Context, string, storage.DeleteOptions) error {
+		discarded = true
+		return nil
+	}
+	service := newServiceUnderTest(filestoreTestConfig(4, 0, "filestore-test"), database, store)
+
+	err := service.PutSessionAttachment(context.Background(), sessionAttachmentTarget(filesystem), "image/png", strings.NewReader("png-bytes"))
+	if !errors.Is(err, ErrSessionAttachmentRejected) || recorded || !discarded {
+		t.Fatalf("PutSessionAttachment() error = %v, recorded = %t, discarded = %t", err, recorded, discarded)
+	}
+}
+
+func TestCopyFileToSessionAttachmentRejectsMismatchedContent(t *testing.T) {
+	t.Parallel()
+
+	filesystem := serviceTestFilesystem()
+	recorded := false
+	database, _ := sessionAttachmentTestDatabase(filesystem, func(db.PutFilestoreFileInput) error {
+		recorded = true
+		return nil
+	})
+	var uploaded []byte
+	store := uploadingBlobStore(&uploaded)
+	store.openFn = func(context.Context, string, *storage.ByteRange) (storage.Object, error) {
+		return storage.Object{Body: io.NopCloser(strings.NewReader("plain text, not a pdf"))}, nil
+	}
+	service := newServiceUnderTest(filestoreTestConfig(1024, 0, "filestore-test"), database, store)
+
+	err := service.CopyFileToSessionAttachment(context.Background(), sessionAttachmentTarget(filesystem), db.FileRecord{S3Key: "source", MimeType: "application/pdf"})
+	if !errors.Is(err, ErrSessionAttachmentRejected) || recorded || uploaded != nil {
+		t.Fatalf("CopyFileToSessionAttachment() error = %v, recorded = %t, uploaded = %q", err, recorded, uploaded)
+	}
+}
+
 func TestPutSessionAttachmentStoresHiddenOwnedFile(t *testing.T) {
 	t.Parallel()
 
@@ -139,7 +186,7 @@ func TestCopyFileToSessionAttachmentStreamsSourceObject(t *testing.T) {
 		if key != "workspaces/source/report.pdf" {
 			return storage.Object{}, errors.New("unexpected key")
 		}
-		return storage.Object{Body: io.NopCloser(strings.NewReader("%PDF"))}, nil
+		return storage.Object{Body: io.NopCloser(strings.NewReader("%PDF-1.4"))}, nil
 	}
 	service := newServiceUnderTest(filestoreTestConfig(1024, 0, "filestore-test"), database, store)
 
@@ -149,7 +196,7 @@ func TestCopyFileToSessionAttachmentStreamsSourceObject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CopyFileToSessionAttachment() error = %v", err)
 	}
-	if string(uploaded) != "%PDF" || putInput.Blob.MediaType != "application/pdf" {
+	if string(uploaded) != "%PDF-1.4" || putInput.Blob.MediaType != "application/pdf" {
 		t.Fatalf("copied body = %q, put input = %+v", uploaded, putInput)
 	}
 }

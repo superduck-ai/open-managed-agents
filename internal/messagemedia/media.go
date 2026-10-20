@@ -5,7 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"net/http"
+	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"unicode/utf8"
 
@@ -103,7 +107,13 @@ func (b Block) InlineContent() ([]byte, error) {
 
 func ValidateInline(b Block) error {
 	switch b.Source.Type {
-	case SourceURL, SourceFile:
+	case SourceURL:
+		parsed, err := url.Parse(b.Source.URL)
+		if err != nil || !parsed.IsAbs() || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return errors.New("source url must be an absolute http or https URL")
+		}
+		return nil
+	case SourceFile:
 		return nil
 	case SourceText:
 		if b.Type != BlockDocument {
@@ -119,8 +129,28 @@ func ValidateInline(b Block) error {
 	if b.Type == BlockDocument && b.Source.Type == SourceBase64 && b.Source.MediaType != MediaTypePDF {
 		return fmt.Errorf("base64 document media_type must be %q", MediaTypePDF)
 	}
-	_, err := b.InlineContent()
-	return err
+	data, err := b.InlineContent()
+	if err != nil {
+		return err
+	}
+	if !ContentMatches(b.InlineMediaType(), data) {
+		return fmt.Errorf("source data does not match media_type %q", b.InlineMediaType())
+	}
+	return nil
+}
+
+func ContentMatches(mediaType string, head []byte) bool {
+	if mediaType == MediaTypeText {
+		return true
+	}
+	return http.DetectContentType(head) == mediaType
+}
+
+func CandidateMediaTypes(blockType string) []string {
+	if blockType == BlockDocument {
+		return slices.Sorted(maps.Keys(documentExtensions))
+	}
+	return slices.Sorted(maps.Keys(imageExtensions))
 }
 
 func SupportedMediaType(blockType, mediaType string) bool {

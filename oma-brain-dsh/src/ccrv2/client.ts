@@ -573,7 +573,7 @@ export class CcrClient implements CcrBackend {
       if (subagents) query.set("subagents", "true");
       if (cursor) query.set("cursor", cursor);
       const path = `/internal-events${query.size ? `?${query}` : ""}`;
-      let json: Record<string, unknown> | undefined;
+      let json!: Record<string, unknown>;
       // Retry each page independently. Exhaustion discards all partial history.
       for (let attempt = 1; attempt <= 10; attempt++) {
         signal?.throwIfAborted();
@@ -601,7 +601,6 @@ export class CcrClient implements CcrBackend {
         break;
       }
       signal?.throwIfAborted();
-      if (!json) return null;
       if (json.data !== undefined && !Array.isArray(json.data)) throw new Error("Invalid private event page");
       const nextCursor = json.next_cursor;
       if (nextCursor !== undefined && nextCursor !== null && typeof nextCursor !== "string")

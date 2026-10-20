@@ -237,8 +237,9 @@ signals without content. Approval argument notices are
 published only when the argument values changed; object key order does not count
 as a change and does not add model context. The private journal records every
 approved call. dsh log flushes with no new events write nothing; only session
-creation writes a header-only batch. A redelivered control input that was
-already handled is acknowledged without repeating its effect.
+creation writes a header-only batch. Within one Brain process, a redelivered
+control input that was already handled is acknowledged without repeating its
+effect; handled control IDs are not persisted across restarts.
 
 ## Subagents
 

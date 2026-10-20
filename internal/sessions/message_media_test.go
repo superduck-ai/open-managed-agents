@@ -38,10 +38,10 @@ func TestValidatePublicInputEventRejectsInvalidMessageMedia(t *testing.T) {
 func TestValidatePublicInputEventAcceptsMessageMediaContract(t *testing.T) {
 	content := `[
 		{"type":"text","text":"Compare these"},
-		{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA=="}},
+		{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}},
 		{"type":"image","source":{"type":"url","url":"https://example.com/a.png"}},
 		{"type":"image","source":{"type":"file","file_id":"file_1"}},
-		{"type":"document","title":"Spec","context":"v2","source":{"type":"base64","media_type":"application/pdf","data":"JVBERg=="}},
+		{"type":"document","title":"Spec","context":"v2","source":{"type":"base64","media_type":"application/pdf","data":"JVBERi0xLjQK"}},
 		{"type":"document","source":{"type":"text","media_type":"text/plain","data":"notes"}},
 		{"type":"document","source":{"type":"url","url":"https://example.com/a.pdf"}},
 		{"type":"document","source":{"type":"file","file_id":"file_2"}}

@@ -32,8 +32,9 @@ export async function userInputContent(payload: Payload, attachments: Attachment
   const blocks: ContentBlock[] = [];
   for (const value of content) {
     const block = object(value);
+    const reference = block.type === "image" ? referencedImage(block) : undefined;
     if (block.type === "text" && typeof block.text === "string") blocks.push({ type: "text", text: block.text });
-    else if (block.type === "image" && referencedImage(block)) blocks.push({ type: "oma-image", source: referencedImage(block)! });
+    else if (reference) blocks.push({ type: "oma-image", source: reference });
     else if (block.type === "image") {
       const source = object(block.source);
       if (source.type !== "base64" || typeof source.data !== "string" ||

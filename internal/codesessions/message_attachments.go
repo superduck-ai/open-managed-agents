@@ -77,6 +77,10 @@ func (s *Service) attachmentReference(ctx context.Context, event db.SessionEvent
 	var data []byte
 	mediaType := block.InlineMediaType()
 	if block.Source.Type == messagemedia.SourceFile {
+		stored, found, err := s.storedAttachment(ctx, event, index, block)
+		if err != nil || found {
+			return stored, err
+		}
 		file, err := s.db.GetFile(ctx, event.WorkspaceUUID, block.Source.FileID)
 		if errors.Is(err, db.ErrNotFound) {
 			return unavailableAttachment(block, "the referenced file was not found")
@@ -111,6 +115,9 @@ func (s *Service) attachmentReference(ctx context.Context, event db.SessionEvent
 		} else {
 			err = s.attachments.PutSessionAttachment(ctx, target, mediaType, bytes.NewReader(data))
 		}
+		if errors.Is(err, filestore.ErrSessionAttachmentRejected) {
+			return unavailableAttachment(block, "the attachment content was rejected")
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -120,6 +127,22 @@ func (s *Service) attachmentReference(ctx context.Context, event db.SessionEvent
 		return nil, err
 	}
 	return json.Marshal(block.WithFileReference(stored.ExternalID))
+}
+
+func (s *Service) storedAttachment(ctx context.Context, event db.SessionEvent, index int, block messagemedia.Block) (json.RawMessage, bool, error) {
+	for _, mediaType := range messagemedia.CandidateMediaTypes(block.Type) {
+		path := messagemedia.AttachmentPath(event.ExternalID, index, block.Type, mediaType)
+		stored, err := s.db.GetSessionAttachmentFileByPath(ctx, event.WorkspaceUUID, event.SessionUUID, path)
+		if errors.Is(err, db.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		reference, err := json.Marshal(block.WithFileReference(stored.ExternalID))
+		return reference, true, err
+	}
+	return nil, false, nil
 }
 
 func unavailableAttachment(block messagemedia.Block, reason string) (json.RawMessage, error) {

@@ -83,6 +83,9 @@ func TestSessionMessageMediaRejectsInvalidInput(t *testing.T) {
 	}{
 		{name: "invalid base64", content: `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"%%%"}}`, want: "valid base64"},
 		{name: "unsupported media type", content: `{"type":"image","source":{"type":"base64","media_type":"image/bmp","data":"AA=="}}`, want: "not supported"},
+		{name: "relative url", content: `{"type":"image","source":{"type":"url","url":"not a url"}}`, want: "absolute http or https URL"},
+		{name: "non http url", content: `{"type":"document","source":{"type":"url","url":"file:///etc/passwd"}}`, want: "absolute http or https URL"},
+		{name: "mismatched image bytes", content: `{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"` + testPNGBase64 + `"}}`, want: "does not match media_type"},
 		{name: "unknown file", content: `{"type":"document","source":{"type":"file","file_id":"file_missing"}}`, want: "was not found"},
 	}
 	for _, test := range tests {
@@ -250,7 +253,8 @@ func TestMessagesProxyExpandsOnlyOwnSessionAttachments(t *testing.T) {
 
 func TestSessionMessageMediaMaterializesOffloadedPayloads(t *testing.T) {
 	fixture := newMessageMediaFixture(t, "message-media-offload")
-	large := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x89, 0x50, 0x4e, 0x47}, 16*1024))
+	signature, _ := base64.StdEncoding.DecodeString(testPNGBase64)
+	large := base64.StdEncoding.EncodeToString(append(signature, bytes.Repeat([]byte{0}, 64*1024-len(signature))...))
 	sendSessionEvents(t, fixture.app, fixture.sessionID, `{"events":[{"type":"user.message","content":[
 		{"type":"image","source":{"type":"base64","media_type":"image/png","data":"`+large+`"}}
 	]}]}`, defaultTestKey)
@@ -269,5 +273,40 @@ func TestSessionMessageMediaMaterializesOffloadedPayloads(t *testing.T) {
 	file, err := fixture.app.db.GetSessionAttachmentFile(ctx, ids.WorkspaceUUID, session.UUID, source["file_id"].(string))
 	if err != nil || file.SizeBytes != 64*1024 {
 		t.Fatalf("attachment = %+v, %v; want 65536 bytes", file, err)
+	}
+}
+
+func TestSessionMessageMediaReplayReusesStoredAttachmentAfterSourceDeletion(t *testing.T) {
+	fixture := newMessageMediaFixture(t, "message-media-replay")
+	app := fixture.app
+	uploaded := uploadFile(t, app, "spec.pdf", "application/pdf", []byte("%PDF-1.4\nreplay"))
+	sent := sendSessionEvents(t, app, fixture.sessionID, `{"events":[{"type":"user.message","content":[
+		{"type":"document","title":"Spec","source":{"type":"file","file_id":`+quoteJSON(uploaded.ID)+`}}
+	]}]}`, defaultTestKey)
+	var message struct {
+		ID string `json:"id"`
+	}
+	if len(sent.Data) == 0 || json.Unmarshal(sent.Data[len(sent.Data)-1], &message) != nil || message.ID == "" {
+		t.Fatalf("send response = %s", sent.Data)
+	}
+	first := fixture.queuedUserContent(t)[0]["source"].(map[string]any)["file_id"]
+	deleteFile(t, app, uploaded.ID)
+
+	ctx := context.Background()
+	ids := getDefaultDBIDs(t, app.pool)
+	session, found, err := app.db.GetSession(ctx, ids.WorkspaceUUID, fixture.sessionID)
+	if err != nil || !found {
+		t.Fatalf("load session = (%t, %v)", found, err)
+	}
+	event, err := app.db.GetSessionEvent(ctx, ids.WorkspaceUUID, fixture.sessionID, message.ID)
+	if err != nil {
+		t.Fatalf("load event: %v", err)
+	}
+	if err := newCodeSessionService(app, nil, nil).QueuePublicSessionEvents(ctx, session, []db.SessionEvent{event}); err != nil {
+		t.Fatalf("replay event: %v", err)
+	}
+	replayed := fixture.queuedUserContent(t)[0]
+	if source := replayed["source"].(map[string]any); source["type"] != "file" || source["file_id"] != first || replayed["title"] != "Spec" {
+		t.Fatalf("replayed block = %v, want stored attachment %v", replayed, first)
 	}
 }

@@ -55,7 +55,7 @@ func TestUserMessagePreservesNonblankText(t *testing.T) {
 			t.Fatalf("tool output affected: %v", err)
 		}
 	}
-	payload := map[string]any{"content": []any{map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": "eA=="}}}}
+	payload := map[string]any{"content": []any{map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}}}}
 	if err := validatePublicInputEvent("user.message", payload); err != nil {
 		t.Fatal(err)
 	}

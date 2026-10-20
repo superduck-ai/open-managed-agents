@@ -1,6 +1,7 @@
 package filestore
 
 import (
+	"bufio"
 	"context"
 	"crypto/md5"
 	"crypto/sha256"
@@ -11,8 +12,11 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/filestorepath"
+	"github.com/superduck-ai/open-managed-agents/internal/messagemedia"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
+
+const sniffBytes = 512
 
 type SessionAttachmentTarget struct {
 	WorkspaceUUID     string
@@ -47,6 +51,9 @@ func (s *Service) PutSessionAttachment(ctx context.Context, target SessionAttach
 		result := objectWriteResult{ETag: upload.ETag, VersionID: upload.VersionID}
 		if uploadErr != nil {
 			return result, mapBlobstoreError("upload attachment", uploadErr)
+		}
+		if s.cfg.Storage.MaxFileBytes > 0 && upload.Size > s.cfg.Storage.MaxFileBytes {
+			return result, fileTooLargeError(ErrSessionAttachmentRejected)
 		}
 		return result, nil
 	})
@@ -86,5 +93,13 @@ func (s *Service) CopyFileToSessionAttachment(ctx context.Context, target Sessio
 		return fmt.Errorf("open attachment source file: %w", err)
 	}
 	defer object.Body.Close()
-	return s.PutSessionAttachment(ctx, target, file.MimeType, object.Body)
+	body := bufio.NewReaderSize(object.Body, sniffBytes)
+	head, err := body.Peek(sniffBytes)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read attachment source file: %w", err)
+	}
+	if !messagemedia.ContentMatches(file.MimeType, head) {
+		return sessionAttachmentContentMismatchError(file.MimeType)
+	}
+	return s.PutSessionAttachment(ctx, target, file.MimeType, body)
 }

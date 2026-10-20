@@ -30,7 +30,6 @@ interface Stored {
   header: SessionHeader;
   events: SessionEvent[];
   inherited: number;
-  durable: boolean;
 }
 
 class RemoteHandle implements SessionHandle {
@@ -97,7 +96,6 @@ class RemoteHandle implements SessionHandle {
         inherited: this.record.inherited,
         events: batch,
       });
-      this.record.durable = true;
       this.record.events.push(...structuredClone(batch));
     });
   }
@@ -108,13 +106,11 @@ class RemoteHandle implements SessionHandle {
       const batch = this.buffered.slice();
       if (!batch.length) return;
       assertContiguous(this.id, batch, this.record.events.length);
-      if (!batch.length && this.record.durable) return;
       await this.store.persist(this.id, {
         header: this.header,
         inherited: this.record.inherited,
         events: batch,
       });
-      this.record.durable = true;
       this.record.events.push(...structuredClone(batch));
       this.buffered.splice(0, batch.length);
     });
@@ -180,7 +176,6 @@ export class CcrPersistence extends SessionPersistence {
         header: materializeCreateHeader(data.header),
         inherited: data.inherited,
         events: [],
-        durable: true,
       };
       if (JSON.stringify(record.header) !== JSON.stringify(data.header))
         throw new Error("Log header changed");
@@ -220,7 +215,6 @@ export class CcrPersistence extends SessionPersistence {
       header: materializeCreateHeader(header),
       inherited: 0,
       events: [],
-      durable: false,
     };
     this.records.set(header.id, record);
     const handle = new RemoteHandle(this, header.id, "write", record);

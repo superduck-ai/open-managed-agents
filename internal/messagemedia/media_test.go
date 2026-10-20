@@ -16,6 +16,11 @@ func TestValidateInlineRejectsUnsupportedSources(t *testing.T) {
 		{name: "base64 text document", block: Block{Type: BlockDocument, Source: Source{Type: SourceBase64, MediaType: MediaTypeText, Data: "AA=="}}},
 		{name: "text image", block: Block{Type: BlockImage, Source: Source{Type: SourceText, MediaType: MediaTypeText, Data: "x"}}},
 		{name: "unknown source", block: Block{Type: BlockImage, Source: Source{Type: "ftp"}}},
+		{name: "relative url", block: Block{Type: BlockImage, Source: Source{Type: SourceURL, URL: "not a url"}}},
+		{name: "non http url", block: Block{Type: BlockDocument, Source: Source{Type: SourceURL, URL: "ftp://example.com/a.pdf"}}},
+		{name: "host-less url", block: Block{Type: BlockImage, Source: Source{Type: SourceURL, URL: "https:///a.png"}}},
+		{name: "mismatched image bytes", block: Block{Type: BlockImage, Source: Source{Type: SourceBase64, MediaType: "image/jpeg", Data: "iVBORw0KGgo="}}},
+		{name: "mismatched pdf bytes", block: Block{Type: BlockDocument, Source: Source{Type: SourceBase64, MediaType: MediaTypePDF, Data: "AA=="}}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -28,10 +33,13 @@ func TestValidateInlineRejectsUnsupportedSources(t *testing.T) {
 
 func TestValidateInlineAcceptsContractSources(t *testing.T) {
 	blocks := []Block{
-		{Type: BlockImage, Source: Source{Type: SourceBase64, MediaType: "image/webp", Data: "AA=="}},
+		{Type: BlockImage, Source: Source{Type: SourceBase64, MediaType: "image/webp", Data: "UklGRgAAAABXRUJQVlA4IA=="}},
+		{Type: BlockImage, Source: Source{Type: SourceBase64, MediaType: "image/png", Data: "iVBORw0KGgo="}},
+		{Type: BlockImage, Source: Source{Type: SourceBase64, MediaType: "image/jpeg", Data: "/9j/4A=="}},
+		{Type: BlockImage, Source: Source{Type: SourceBase64, MediaType: "image/gif", Data: "R0lGODlh"}},
 		{Type: BlockImage, Source: Source{Type: SourceURL, URL: "https://example.com/a.png"}},
 		{Type: BlockImage, Source: Source{Type: SourceFile, FileID: "file_1"}},
-		{Type: BlockDocument, Source: Source{Type: SourceBase64, MediaType: MediaTypePDF, Data: "JVBERg=="}},
+		{Type: BlockDocument, Source: Source{Type: SourceBase64, MediaType: MediaTypePDF, Data: "JVBERi0xLjQK"}},
 		{Type: BlockDocument, Source: Source{Type: SourceText, MediaType: MediaTypeText, Data: "notes"}},
 	}
 	for _, block := range blocks {
@@ -58,7 +66,7 @@ func TestAttachmentPathAndReferencesPreserveDocumentFields(t *testing.T) {
 		t.Fatalf("AttachmentPath(text) = %q", got)
 	}
 	title := "Report"
-	block := Block{Type: BlockDocument, Title: &title, Source: Source{Type: SourceBase64, MediaType: MediaTypePDF, Data: "JVBERg=="}}
+	block := Block{Type: BlockDocument, Title: &title, Source: Source{Type: SourceBase64, MediaType: MediaTypePDF, Data: "JVBERi0xLjQK"}}
 	raw, err := json.Marshal(block.WithFileReference("file_9"))
 	if err != nil {
 		t.Fatal(err)
@@ -88,5 +96,14 @@ func TestWithContentRestoresProviderSources(t *testing.T) {
 	}
 	if _, err := (Block{Type: BlockDocument}).WithContent(MediaTypeText, []byte{0xff}); err == nil {
 		t.Fatal("WithContent(invalid utf8) error = nil")
+	}
+}
+
+func TestCandidateMediaTypesCoverAttachmentExtensions(t *testing.T) {
+	if got := CandidateMediaTypes(BlockDocument); len(got) != 2 || got[0] != MediaTypePDF || got[1] != MediaTypeText {
+		t.Fatalf("CandidateMediaTypes(document) = %v", got)
+	}
+	if got := CandidateMediaTypes(BlockImage); len(got) != 4 || got[0] != "image/gif" || got[3] != "image/webp" {
+		t.Fatalf("CandidateMediaTypes(image) = %v", got)
 	}
 }

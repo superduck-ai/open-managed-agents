@@ -216,7 +216,7 @@ func (s *Service) CreateFile(ctx context.Context, principal Principal, params cr
 			return result, mapBlobstoreError("upload file", err)
 		}
 		if s.cfg.Storage.MaxFileBytes > 0 && upload.Size > s.cfg.Storage.MaxFileBytes {
-			return result, &apiError{Status: http.StatusRequestEntityTooLarge, Code: "resource_exhausted", Message: "File exceeds maximum size"}
+			return result, fileTooLargeError(nil)
 		}
 		return result, nil
 	})

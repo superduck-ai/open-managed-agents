@@ -168,7 +168,8 @@ func run(logger *slog.Logger) error {
 	// 过期策略只存在一份实现。
 	runnerCodeSessions := codesessions.NewServiceWithCredentials(database, codeSessionCredentials, environmentLogger).
 		WithWorkerEventBroker(workerEventBroker).
-		WithWorkerEventState(workerEventAcks, objectStore)
+		WithWorkerEventState(workerEventAcks, objectStore).
+		WithSessionAttachments(filestoreService)
 	codesessions.NewWorkerEventExpiryWorker(runnerCodeSessions, logger.With("component", "worker_event_expiry")).Start(ctx)
 	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
 		DB:              database,

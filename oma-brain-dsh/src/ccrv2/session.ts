@@ -17,7 +17,7 @@ import type {
 import type { CcrBackend } from "./contracts.ts";
 import { CcrHeartbeat, type CcrHeartbeatConfig } from "./heartbeat.ts";
 import { CcrActivity, type CcrActivityOptions } from "./activity.ts";
-import { emptyState, object, type BrainState, type ThreadExecutionState, type Payload } from "./protocol.ts";
+import { emptyState, isControlInput, object, type BrainState, type ThreadExecutionState, type Payload } from "./protocol.ts";
 import { startDeliveryProgress } from "./delivery-progress.ts";
 import { failureDiagnostic, workerDiagnostic } from "./diagnostics.ts";
 import { CcrToolResults } from "./tool-results.ts";
@@ -38,6 +38,7 @@ export class CcrSession {
   private publications: Promise<unknown> = Promise.resolve();
   private previews: Promise<unknown> = Promise.resolve();
   private readonly controlReceipts = new Set<Promise<void>>();
+  private readonly handledControls = new Set<string>();
   private readonly assistantStream: CcrAssistantStream;
   private readonly toolResults = new CcrToolResults();
   private turnErrorMessage?: string;
@@ -165,7 +166,7 @@ export class CcrSession {
 
   private async openState(setStage: (stage: string) => void): Promise<void> {
     setStage("private_events");
-    for (const payload of await this.backend.privateEvents(this.id)) {
+    for (const payload of await this.backend.privateEvents(this.id, { signal: this.abort.signal })) {
       if (payload.subtype === "dsh_brain_state") {
         if (payload.schema_version !== 1 || payload.data?.version !== 1)
           throw new Error("Unsupported Brain state");
@@ -577,7 +578,9 @@ export class CcrSession {
 
   async receive(inputId: string, input: unknown): Promise<void> {
     const payload = object(input);
-    if (await this.control(payload)) {
+    const repeatedControl = isControlInput(payload.type) && this.handledControls.has(inputId);
+    if (repeatedControl || await this.control(payload)) {
+      this.rememberControl(inputId);
       // Control effects/publication finish first, but delivery retries must not
       // hold the control queue and prevent a later approval or interrupt.
       const receipt = this.backend.acknowledge(this.id, inputId, this.abort.signal)
@@ -662,6 +665,12 @@ export class CcrSession {
         },
       });
     } finally { stopProgress(); }
+  }
+
+  private rememberControl(inputId: string): void {
+    this.handledControls.delete(inputId);
+    this.handledControls.add(inputId);
+    if (this.handledControls.size > 256) this.handledControls.delete(this.handledControls.values().next().value!);
   }
 
   addError(text: string, suffix = "failed", inputId = this.state.inputId) {

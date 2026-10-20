@@ -314,6 +314,22 @@ func TestFileMapperFileAndSkillBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{"workspaceUUID", "fileExternalID"},
 			wantSQLFragments:  []string{"workspace_uuid = $1", "external_id = $2", "owner.payload IS NULL"},
 		}},
+		{name: "get session attachment by path", contract: mapperBuilderContract{
+			statement:         fileMapperGetSessionAttachmentFileByPathStatement,
+			bound:             buildFileMapperGetSessionAttachmentFileByPath(yourbatis.DialectPostgres, "workspace-uuid", "session-uuid", "/uploads/message_attachments/sevt_1/0.png"),
+			wantID:            "FileMapper.GetSessionAttachmentFileByPath",
+			wantKind:          yourbatis.StatementSelect,
+			wantArgumentNames: []string{"workspaceUUID", "sessionUUID", "entryPath"},
+			wantSQLFragments:  []string{"file.workspace_uuid = $1", "resource.session_uuid = $2", "resource.payload IS NULL", "'/uploads/message_attachments/'", "resource.path = $3"},
+		}},
+		{name: "get session attachment by id", contract: mapperBuilderContract{
+			statement:         fileMapperGetSessionAttachmentFileStatement,
+			bound:             buildFileMapperGetSessionAttachmentFile(yourbatis.DialectPostgres, "workspace-uuid", "session-uuid", "file_1"),
+			wantID:            "FileMapper.GetSessionAttachmentFile",
+			wantKind:          yourbatis.StatementSelect,
+			wantArgumentNames: []string{"workspaceUUID", "fileExternalID", "sessionUUID"},
+			wantSQLFragments:  []string{"file.workspace_uuid = $1", "file.external_id = $2", "resource.session_uuid = $3", "resource.resource_type = 'file'", "'/uploads/message_attachments/'"},
+		}},
 		{name: "list files", contract: mapperBuilderContract{
 			statement:         fileMapperListFilesStatement,
 			bound:             buildFileMapperListFiles(yourbatis.DialectPostgres, listParams),
@@ -407,6 +423,14 @@ func TestFileMapperOwnedMethodsPropagateExecutionErrors(t *testing.T) {
 		}}},
 		{name: "get for delete", contract: mapperExecutionErrorContract{statementID: "FileMapper.GetFileForDelete", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
 			_, err := NewFileMapper(executor).GetFileForDelete(ctx, "", "")
+			return err
+		}}},
+		{name: "get session attachment by path", contract: mapperExecutionErrorContract{statementID: "FileMapper.GetSessionAttachmentFileByPath", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
+			_, err := NewFileMapper(executor).GetSessionAttachmentFileByPath(ctx, "", "", "")
+			return err
+		}}},
+		{name: "get session attachment", contract: mapperExecutionErrorContract{statementID: "FileMapper.GetSessionAttachmentFile", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
+			_, err := NewFileMapper(executor).GetSessionAttachmentFile(ctx, "", "", "")
 			return err
 		}}},
 		{name: "get for share", contract: mapperExecutionErrorContract{statementID: "FileMapper.GetFileForShare", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {

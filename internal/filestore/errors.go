@@ -12,6 +12,8 @@ import (
 var (
 	errNotFound           = errors.New("filestore resource not found")
 	errFailedPrecondition = errors.New("filestore precondition failed")
+
+	ErrSessionAttachmentRejected = errors.New("session attachment rejected")
 )
 
 type apiError struct {
@@ -40,6 +42,14 @@ func (e *apiError) Unwrap() error {
 
 func invalidArgument(message string) *apiError {
 	return &apiError{Status: http.StatusBadRequest, Code: "invalid_argument", Message: message}
+}
+
+func fileTooLargeError(cause error) *apiError {
+	return &apiError{Status: http.StatusRequestEntityTooLarge, Code: "resource_exhausted", Message: "File exceeds maximum size", Cause: cause}
+}
+
+func sessionAttachmentContentMismatchError(mediaType string) error {
+	return fmt.Errorf("%w: content does not match media type %q", ErrSessionAttachmentRejected, mediaType)
 }
 
 func permissionDenied(message string) *apiError {

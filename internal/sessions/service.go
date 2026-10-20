@@ -574,6 +574,9 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 		}
 		events = append(events, event)
 	}
+	if err := h.validateMessageFileSources(r.Context(), session, events); err != nil {
+		return err
+	}
 	var outcomeEvaluations json.RawMessage
 	if outcomesChanged {
 		outcomeEvaluations = normalizedSession.OutcomeEvaluations

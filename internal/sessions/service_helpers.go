@@ -352,6 +352,9 @@ func validatePublicInputEvent(eventType string, payload map[string]any) error {
 	switch eventType {
 	case "user.message":
 		err = validateUserMessageContent(payload)
+		if err == nil {
+			err = validateMessageMedia(payload)
+		}
 	case "system.message":
 		err = validateContentBlocks(payload, "content", true)
 	case "user.interrupt":

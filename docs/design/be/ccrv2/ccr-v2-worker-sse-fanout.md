@@ -265,7 +265,7 @@ nil 保持缺失，显式 0 保留。没有来源的计费金额、active_second
 
 ### Thinking 状态合同
 
-公开 `agent.thinking` 只表示块开始，不携带正文、签名或脱敏数据。代理在块起始帧即时发布，DSH Worker 在 reasoning block-start 创建预览；两者及最终回传都使用原始 message ID 与 block index 生成同一个稳定事件 ID。thinking delta 不再公开发送，完整 Worker 回传也会清除 thinking 内容。代理只对 thinking 输入保留容量计数，与 text/input 共用现有 4 MiB 上限，不再累计正文。模型内部签名推理和原始上游响应保持原协议；历史事件不重写。起始发布失败时，请求结束以同一 ID 回补无正文状态。详细时序与回归入口见 [Brain 运行时](../brain-runtime.md#thinking-状态事件)。
+公开 `agent.thinking` 只表示块开始，不携带正文、签名或脱敏数据。代理在块起始帧即时发布，DSH Worker 在 reasoning block-start 创建预览；两者及最终回传都使用原始 message ID 与 block index 生成同一个稳定事件 ID。thinking delta 不再公开发送，完整 Worker 回传也会清除 thinking 内容。代理只对 thinking 输入保留容量计数，与 text/input 共用现有 4 MiB 上限，不再累计正文。模型内部签名推理和原始上游响应保持原协议；历史事件不重写。起始发布失败时，请求结束以同一 ID 回补无正文状态。详细时序与回归入口见 [Brain 运行时](../brain-runtime.md#thinking-状态事件)。 改动前已持久化的带正文事件不改写数据库，而是在读取时隐藏：历史、线程事件、发送响应与 SSE 共用的响应构造会去掉 `agent.thinking` 的 `content` 与 `message`。
 
 Worker 输入的 processing/processed 回执先在同一个 Yourbatis 事务中按 Session → Worker 的顺序持锁，校验 Worker 的租户、Session 归属、active 状态和 epoch，再提交尚未处理消息的处理时间，并沿用原路径清除 Worker 空闲计时。凭据轮换先完成时拒绝旧 epoch；处理事务先持锁时，轮换等待提交。事务提交后恢复大消息载荷并广播 SSE，随后在 epoch 锁内执行投递 ACK。ACK 阶段失败不会回滚已经提交的处理时间；回执重试沿用相同事件 ID，保持处理时间不变。此流程不承诺 PostgreSQL 与 JetStream ACK 跨系统原子提交。回归见 `tests/worker_delivery_retry_test.go` 和 `tests/worker_processing_epoch_test.go`。
 

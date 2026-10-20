@@ -13,9 +13,12 @@ export interface OmaDocument {
     | { type: "file"; file_id: string };
 }
 
+export type OmaImageSource = { type: "file"; file_id: string } | { type: "url"; url: string };
+
 declare module "@deepseek-ai/dsh-llm" {
   interface ContentBlockMap {
     "oma-document": { type: "oma-document"; document: OmaDocument };
+    "oma-image": { type: "oma-image"; source: OmaImageSource };
   }
 }
 
@@ -29,7 +32,9 @@ export async function userInputContent(payload: Payload, attachments: Attachment
   const blocks: ContentBlock[] = [];
   for (const value of content) {
     const block = object(value);
+    const reference = block.type === "image" ? referencedImage(block) : undefined;
     if (block.type === "text" && typeof block.text === "string") blocks.push({ type: "text", text: block.text });
+    else if (reference) blocks.push({ type: "oma-image", source: reference });
     else if (block.type === "image") {
       const source = object(block.source);
       if (source.type !== "base64" || typeof source.data !== "string" ||
@@ -42,9 +47,16 @@ export async function userInputContent(payload: Payload, attachments: Attachment
   const references = await admitEncodedImages(attachments, images);
   let imageIndex = 0;
   let blockIndex = 0;
-  return content.map((block) => block.type === "image"
+  return content.map((block) => block.type === "image" && !referencedImage(block)
     ? { type: "image", attachment: references[imageIndex++]! }
     : blocks[blockIndex++]!);
+}
+
+function referencedImage(block: Payload): OmaImageSource | undefined {
+  const source = object(block.source);
+  if (source.type === "file" && typeof source.file_id === "string" && source.file_id) return { type: "file", file_id: source.file_id };
+  if (source.type === "url" && typeof source.url === "string" && source.url) return { type: "url", url: source.url };
+  return undefined;
 }
 
 function documentContent(block: Payload): OmaDocument {

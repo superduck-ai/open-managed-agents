@@ -200,12 +200,12 @@ test("publication preserves ephemeral flags and delivery ACK accepts ignored upd
     requests.push(request);
     return Response.json({ ok: true, applied, ignored: 1 - applied });
   });
-  const payloads = ["event_start", "event_delta", "event_stop", "agent.message", "control_request", "user"]
+  const payloads = ["event_start", "event_delta", "agent.message", "control_request", "user"]
     .map((type) => ({ type, uuid: `event-${type}` }));
   await client.events("session/a", payloads);
   expect(requests[0]!.path).toEndWith("/worker/events");
   expect(requests[0]!.body).toEqual({
-    events: payloads.map((payload, i) => ({ payload, ephemeral: i < 3 })),
+    events: payloads.map((payload, i) => ({ payload, ephemeral: i < 2 })),
     session_id: "session/a", worker_epoch: 7,
   });
   await client.acknowledge("session/a", "input");
@@ -246,7 +246,7 @@ test("lease checking distinguishes protocol rejection from transient failure wit
   for (const [status, outcome] of [
     [200, "confirmed"], [204, "confirmed"],
     [401, "unavailable"], [403, "unavailable"], [409, "rejected"], [410, "rejected"],
-    [400, "unavailable"], [404, "unavailable"],
+    [400, "unavailable"], [404, "rejected"],
     [408, "unavailable"], [429, "unavailable"], [503, "unavailable"],
   ] as const) {
     let requests = 0;
@@ -328,14 +328,14 @@ test("bound heartbeat cancellation reaches the transport without becoming a leas
 test("heartbeat diagnostics retain the bound epoch and classify HTTP and transport failures", async () => {
   for (const [status, reason] of [
     [400, "request_rejected"], [401, "authentication_rejected"], [403, "authentication_rejected"],
-    [404, "request_rejected"], [408, "timeout"], [409, "epoch_mismatch"], [410, "lease_expired"],
+    [404, "worker_not_registered"], [408, "timeout"], [409, "epoch_mismatch"], [410, "lease_expired"],
     [429, "rate_limited"], [500, "server_error"], [503, "server_error"],
   ] as const) {
     let calls = 0;
     const client = clientWith(async () => { calls++; return new Response(null, { status }); });
     const result = await client.bindLease("session/a")(new AbortController().signal, 5000);
     expect(result).toEqual({
-      status: status === 409 || status === 410 ? "rejected" : "unavailable",
+      status: status === 404 || status === 409 || status === 410 ? "rejected" : "unavailable",
       reason, httpStatus: status, workerEpoch: 7,
     });
     expect(calls).toBe(1);

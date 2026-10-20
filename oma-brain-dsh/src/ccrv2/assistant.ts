@@ -44,7 +44,7 @@ export class CcrAssistantStream {
     if (!stream) return [];
     if (frame.type === "end") {
       this.streams.delete(key);
-      return [...stream.blocks.values()].map((id) => ({ type: "event_stop", event_id: id }));
+      return [];
     }
     if (frame.type !== "chunk") return [];
     const chunk = frame.chunk;
@@ -56,9 +56,8 @@ export class CcrAssistantStream {
       return [{ type: "event_start", event: { type: "agent.thinking", id } }];
     }
     if (chunk.type === "block-end") {
-      const id = stream.blocks.get(chunk.index);
       stream.blocks.delete(chunk.index);
-      return id ? [{ type: "event_stop", event_id: id }] : [];
+      return [];
     }
     if (chunk.type !== "text-delta" || !chunk.text) return [];
     const type = "agent.message";

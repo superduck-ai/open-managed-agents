@@ -94,6 +94,21 @@ describe("original dsh loop over CCRv2", () => {
     expect(b.publicLog.get("image_input_result")?.is_error).toBe(false);
   });
 
+  test("image file and url references reach the Messages request without inline bytes", async () => {
+    const b = backend();
+    b.modelScript = [textEvents("seen")];
+    const { session } = await open(b);
+    const content = [
+      { type: "image", source: { type: "file", file_id: "file_attachment" } },
+      { type: "image", source: { type: "url", url: "https://example.com/cat.png" } },
+    ];
+    await session.receive("image_refs", { content });
+    const requestContent = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
+    expect(requestContent.map((block: Payload) => ({ type: block.type, source: block.source }))).toEqual(content);
+    expect(JSON.stringify([...b.privateLog.values()])).not.toContain("base64");
+    expect(b.publicLog.get("image_refs_result")?.is_error).toBe(false);
+  });
+
   test("plain text documents reach text model routes with their boundary and title", async () => {
     const b = backend();
     b.modelScript = [textEvents("DOC-42")];
@@ -136,7 +151,7 @@ describe("original dsh loop over CCRv2", () => {
     for (const message of messages.slice(1)) {
       expect(message.id).toMatch(/^sevt_[a-f0-9]{32}$/);
       expect(b.timeline.filter((event) => event.type === "event_start" && event.event.id === message.id)).toHaveLength(1);
-      expect(b.timeline.filter((event) => event.type === "event_stop" && event.event_id === message.id)).toHaveLength(1);
+      expect(b.timeline.filter((event) => event.type === "event_stop")).toHaveLength(0);
     }
     const reasoning = b.timeline.find((event) => event.type === "event_delta" && event.event_id === messages[1]!.id);
     expect(reasoning).toBeUndefined();
@@ -531,11 +546,12 @@ describe("original dsh loop over CCRv2", () => {
     for (const message of messages) {
       const id = message.id;
       expect(starts.filter((event) => event.event.id === id)).toHaveLength(1);
-      const stopped = b.timeline.findIndex(
-        (event) => event.type === "event_stop" && event.event_id === id,
+      const started = b.timeline.findIndex(
+        (event) => event.type === "event_start" && event.event.id === id,
       );
-      expect(stopped).toBeGreaterThan(-1);
-      expect(stopped).toBeLessThan(b.timeline.indexOf(message));
+      expect(started).toBeGreaterThan(-1);
+      expect(started).toBeLessThan(b.timeline.indexOf(message));
+      expect(b.timeline.filter((event) => event.type === "event_stop")).toHaveLength(0);
     }
   });
 
@@ -560,10 +576,9 @@ describe("original dsh loop over CCRv2", () => {
       (event) => event.type === "agent.message",
     );
     expect(starts).toHaveLength(1);
-    expect(stops).toHaveLength(1);
+    expect(stops).toHaveLength(0);
     expect(messages).toHaveLength(1);
     expect(starts[0]!.event.id).toBe(messages[0]!.id);
-    expect(stops[0]!.event_id).toBe(messages[0]!.id);
   });
 
   test("terminal outbox survives failed publication and is republished without resampling", async () => {
@@ -836,6 +851,7 @@ describe("original dsh loop over CCRv2", () => {
       undefined,
     ]);
     expect(JSON.stringify([...b.publicLog.values()])).not.toContain("opaque-signature");
+    expect(JSON.stringify([...b.publicLog.values()])).not.toContain("test reasoning");
   });
 
   test("a follow-up retains the completed assistant reply before the next user message", async () => {

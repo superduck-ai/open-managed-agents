@@ -55,6 +55,11 @@ async function userPart(block: ContentBlock, attachments?: AttachmentStore, sign
     const image = await attachments.readImage(block.attachment, signal);
     return { type: "file", mediaType: image.ref.mediaType, data: { type: "data", data: image.data } };
   }
+  if (block.type === "oma-image") {
+    const { source } = block;
+    return { type: "file", mediaType: "image/*", data: source.type === "url"
+      ? { type: "url", url: new URL(source.url) } : { type: "reference", reference: { anthropic: source.file_id } } };
+  }
   if (block.type === "oma-document") {
     const { source, title, context, citations } = block.document;
     if (source.type === "text" && !citations?.enabled)

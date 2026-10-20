@@ -78,6 +78,10 @@ func workerPayloadWithSystemContext(payload json.RawMessage, contexts []sessionS
 }
 
 func (s *Service) publicWorkerPayload(ctx context.Context, codeSession db.CodeSession, event db.SessionEvent) (json.RawMessage, error) {
+	event, err := s.materializeMessageAttachments(ctx, event)
+	if err != nil {
+		return nil, err
+	}
 	payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event)
 	if err == nil && event.EventType == "user.interrupt" {
 		return s.publicWorkerInterruptPayload(ctx, codeSession, payload)

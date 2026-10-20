@@ -18,7 +18,8 @@ const (
 	// SandboxUploadsMount 是 FileSource 在 Sandbox 中的挂载点。
 	SandboxUploadsMount = "/mnt/session/uploads"
 	// OutputsRoot 是 session 输出文件的 Filestore 命名空间。
-	OutputsRoot = "/outputs"
+	OutputsRoot            = "/outputs"
+	MessageAttachmentsRoot = FileSource + "/message_attachments"
 )
 
 // NormalizeFileSource 为省略的 source 补默认值，并拒绝 null 或其他 namespace。

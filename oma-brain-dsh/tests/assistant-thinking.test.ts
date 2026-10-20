@@ -27,9 +27,7 @@ test("empty thinking starts once before answer and shares backend identity", () 
     ]);
     expect(stream.record(blockStart, "input")).toEqual([]);
     expect(stream.record(chunk({ type: "reasoning-delta", index: vector.index, text: "private reasoning" }), "input")).toEqual([]);
-    expect(stream.record(chunk({ type: "block-end", index: vector.index, block: { type: "reasoning", text: "private reasoning" } }), "input")).toEqual([
-      { type: "event_stop", event_id: vector.eventID },
-    ]);
+    expect(stream.record(chunk({ type: "block-end", index: vector.index, block: { type: "reasoning", text: "private reasoning" } }), "input")).toEqual([]);
     expect(stream.record(blockStart, "input")).toEqual([]);
     const answer = stream.record(chunk({ type: "text-delta", index: vector.index + 1, text: "answer" }), "input");
     expect(answer[0]?.event.type).toBe("agent.message");

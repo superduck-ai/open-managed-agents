@@ -50,6 +50,9 @@ func (h *Handler) readMessageFile(ctx context.Context, principal auth.Principal,
 		return messageFileContent{}, fileReferenceUnavailableError()
 	}
 	record, err := h.database.GetFile(ctx, principal.WorkspaceUUID, id)
+	if errors.Is(err, db.ErrNotFound) && principal.PublicSessionUUID != "" {
+		record, err = h.database.GetSessionAttachmentFile(ctx, principal.WorkspaceUUID, principal.PublicSessionUUID, id)
+	}
 	if errors.Is(err, db.ErrNotFound) {
 		return messageFileContent{}, fileReferenceNotFoundError()
 	}

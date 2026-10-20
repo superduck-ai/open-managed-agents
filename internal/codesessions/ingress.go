@@ -940,6 +940,10 @@ func (h *Handler) writeWorkerEpochDBError(w http.ResponseWriter, r *http.Request
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "conflict_error", "Worker epoch mismatch"))
 		return
 	}
+	if errors.Is(err, db.ErrInvalidState) {
+		h.writeIngressLoadError(w, r, codeSessionNotActive(err))
+		return
+	}
 	if errors.Is(err, db.ErrWorkerLeaseExpired) {
 		// 410 表示当前 epoch 已不可恢复，worker 必须重新 register 获取新 epoch。
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusGone, "session_expired", "Code session worker lease expired"))

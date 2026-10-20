@@ -83,6 +83,44 @@
             <include refid="visibleFilePredicate"/>
     </select>
 
+    <sql id="sessionAttachmentResource">
+        SELECT 1
+        FROM session_resources resource
+        WHERE resource.file_uuid = file.uuid
+            AND resource.workspace_uuid = file.workspace_uuid
+            AND resource.session_uuid = #{sessionUUID}
+            AND resource.resource_type = 'file'
+            AND resource.payload IS NULL
+            AND resource.deleted_at IS NULL
+            AND left(resource.path, char_length('/uploads/message_attachments/')) = '/uploads/message_attachments/'
+    </sql>
+
+    <select id="GetSessionAttachmentFileByPath" resultType="fileRecordRow">
+        SELECT file.uuid, file.external_id, file.workspace_uuid, file.filename, file.mime_type,
+            file.size_bytes, file.sha256, file.s3_bucket, file.s3_key, file.downloadable,
+            file.scope_type, file.scope_id, file.created_by_api_key_uuid, file.created_at
+        FROM files file
+        WHERE file.workspace_uuid = #{workspaceUUID}
+            AND file.deleted_at IS NULL
+            AND EXISTS (
+                <include refid="sessionAttachmentResource"/>
+                AND resource.path = #{entryPath}
+            )
+    </select>
+
+    <select id="GetSessionAttachmentFile" resultType="fileRecordRow">
+        SELECT file.uuid, file.external_id, file.workspace_uuid, file.filename, file.mime_type,
+            file.size_bytes, file.sha256, file.s3_bucket, file.s3_key, file.downloadable,
+            file.scope_type, file.scope_id, file.created_by_api_key_uuid, file.created_at
+        FROM files file
+        WHERE file.workspace_uuid = #{workspaceUUID}
+            AND file.external_id = #{fileExternalID}
+            AND file.deleted_at IS NULL
+            AND EXISTS (
+                <include refid="sessionAttachmentResource"/>
+            )
+    </select>
+
     <select id="GetFileForShare" resultType="fileRecordRow">
         SELECT <include refid="fileColumns"/>
         FROM files

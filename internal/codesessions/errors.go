@@ -57,6 +57,10 @@ func codeSessionNotFound(cause error) error {
 	return apperr.New(apperr.NotFound, "Code session not found", cause)
 }
 
+func codeSessionNotActive(cause error) error {
+	return apperr.New(apperr.Conflict, "Code session is not active", cause)
+}
+
 func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
 }

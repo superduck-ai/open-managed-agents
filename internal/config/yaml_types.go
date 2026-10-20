@@ -35,6 +35,7 @@ func (o optional[T]) valueOr(fallback T) T {
 }
 
 type yamlConfig struct {
+	ChannelBridge        ChannelBridgeConfig       `yaml:"channel_bridge"`
 	EnvironmentPackages  EnvironmentPackageConfig  `yaml:"environment_packages"`
 	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
 	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
@@ -140,10 +141,11 @@ type yamlBootstrapConfig struct {
 func newYAMLConfig() yamlConfig {
 	defaults := defaultConfig()
 	return yamlConfig{
-		Env:      defaults.Env,
-		Server:   defaults.Server,
-		Database: yamlDatabaseConfig{URL: defaults.Database.URL},
-		Redis:    defaults.Redis,
+		ChannelBridge: defaults.ChannelBridge,
+		Env:           defaults.Env,
+		Server:        defaults.Server,
+		Database:      yamlDatabaseConfig{URL: defaults.Database.URL},
+		Redis:         defaults.Redis,
 		NATS: yamlNATSConfig{
 			WorkerEventStream: defaults.NATS.WorkerEventStream,
 			WebhookStream:     defaults.NATS.WebhookStream,
@@ -192,10 +194,11 @@ func newYAMLConfig() yamlConfig {
 
 func (input yamlConfig) resolve() Config {
 	cfg := Config{
-		Env:      input.Env,
-		Server:   input.Server,
-		Database: DatabaseConfig{URL: input.Database.URL},
-		Redis:    input.Redis,
+		ChannelBridge: input.ChannelBridge,
+		Env:           input.Env,
+		Server:        input.Server,
+		Database:      DatabaseConfig{URL: input.Database.URL},
+		Redis:         input.Redis,
 		NATS: NATSConfig{
 			WorkerEventStream: input.NATS.WorkerEventStream,
 			WebhookStream:     input.NATS.WebhookStream,

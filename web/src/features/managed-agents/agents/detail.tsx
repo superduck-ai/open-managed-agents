@@ -1,3 +1,4 @@
+import { AgentChannels } from '../channels/AgentChannels';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { useQuery } from '@tanstack/react-query';
 import { Alert, AlertDescription, AlertTitle } from '../../../shared/ui/alert';
@@ -395,8 +396,22 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
           >
             {msg('managedAgents.observability.title', 'Observability')}
           </TabsTrigger>
+          <TabsTrigger
+            value="channels"
+            className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-px"
+          >
+            {msg('managedAgents.channels.title', 'Channels')}
+          </TabsTrigger>
         </TabsList>
 
+        <TabsContent value="channels" className="mt-0">
+          <AgentChannels
+            key={`${workspaceId}:${agent.id}`}
+            agentId={agent.id}
+            workspaceId={workspaceId}
+            canEdit={canEdit}
+          />
+        </TabsContent>
         <TabsContent value="config" className="mt-0">
           {detailTab === 'config' ? (
             configLoadError ? (

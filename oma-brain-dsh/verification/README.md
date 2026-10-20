@@ -49,9 +49,8 @@ processes. Its stages check:
 
 Parameter replacement is verified at the Brain's CCRv2 input boundary. A public
 approval editor still requires backend support. The Brain gateway is inherited
-from the Rust service. CCRv2 SSE can replace Brain NATS consumption and the private
-`delivery` route. Initial assignment and lazy sandbox creation need separate
-scheduling/resource APIs.
+from the Rust service. These recorded runs predate HTTP worker claims; Brain
+processes now receive sessions from `POST /v1/code/brain/claims` instead of NATS.
 
 Read the final `report.json`, `report.md` and `dsh-live-evidence.json` after cleanup.
 Raw logs and private configurations are not copied into this project.
@@ -78,7 +77,8 @@ adapter addition. Its inherited report text says Rust; `OMA_BRAIN_BINARY` actual
 pointed to this project's Bun launcher. The live run used the current runtime
 recorded in [runtime-fingerprints.json](runtime-fingerprints.json). The verifier
 hashes the launcher; this additional manifest also hashes the bundled module,
-source and dependency lockfile.
+source and dependency lockfile. It is a snapshot of that run and intentionally
+does not track later source changes; for example, it still lists `src/transport.ts`.
 
 The real model passed public allow approval and exact file writes, completed-turn
 history restoration after SIGKILL and natural lease expiry, epoch fencing, and

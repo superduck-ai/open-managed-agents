@@ -48,22 +48,22 @@ sequenceDiagram
 
 ## Messages 代理展开
 
-`code_session_oauth` 凭证调用 `POST /v1/messages` 时，代理在转发前扫描 `messages[].content` 及其中 `tool_result.content` 的 `image`/`document` 块，把 `source.type=file` 的块展开：
+Session 凭证调用 `POST /v1/messages` 时，代理复用通用的文件引用解析（见 [messages-proxy](messages-proxy.md)），在转发前把 `source.type=file` 的 `image`/`document` 块展开为内联内容：
 
-- 只解析同一 workspace 中、由该凭证所属 public Session 拥有的 `/uploads/message_attachments/` 私有文件；其他 `file_id`（包括其他 Session 的附件）视为不存在。
+- 先按同一 workspace 的可见 Files 记录查找；不存在时再回退到该凭证所属 public Session 拥有的 `/uploads/message_attachments/` 私有文件。其他 Session 的附件视为不存在。
 - 图片和 PDF 展开为 `base64`，`text/plain` 文档展开为 `text` 来源；`cache_control` 等块字段保持不变。
-- 找不到的文件替换为说明文字块；展开后请求体超过 32 MiB Messages 上限时返回 413；数据库或对象存储错误返回 500 `api_error`。
-- 请求不含 `file_id` 时请求体按原字节转发。API key 等其他凭证不做展开。
+- 找不到的文件返回 404，超限返回 413，对象缺失以外的存储或校验失败按通用文件引用错误返回。
+- 请求不含 `file_id` 时请求体按原字节转发。
 
 ## Brain 表示
 
-Brain 把 `image`、`document` 块包装为 dsh 内容块 `{"type":"message-media","block":<原始 Anthropic 块>}`，与文本块按原顺序进入用户消息，steer 与新轮次一致。`MessagesAdapter` 只在 user 角色中原样输出 `block`，assistant 角色出现该块视为 `INVALID_ARGS`。dsh 原生 `image`/`file` 附件块依赖附件服务读取字节，而 Brain 的模型凭证只能调用 Messages 接口，因此不使用。其他未知块类型仍以错误结果结束本轮并 ACK。
+Brain 收到的 `image` 块若带 `file` 或 `url` 来源，映射为 dsh 内容块 `{"type":"oma-image","source":...}`，AI SDK 适配器以 `{"type":"reference","reference":{"anthropic":"file_..."}}` 或 URL 文件部件发出，Anthropic provider 序列化为 `image` 的 `file`/`url` 来源，再由代理展开。`document` 块映射为 `oma-document`，同样保留 `file` 引用。仍携带 base64 的图片沿用本地 dsh attachment 路径。无效块使本轮以错误结束，不停止会话。
 
 ## 验收覆盖
 
 - `internal/messagemedia`：来源校验、路径与引用、展开结果。
 - `internal/db`：两个附件查询的 SQL 与参数绑定契约。
 - `internal/filestore`：附件写入、幂等、失败传播与源文件复制。
-- `internal/messages`：展开、`tool_result` 嵌套、缺失文件、超限与无文件请求原样转发。
+- `internal/messages`：文件引用展开、缺失文件、超限与无文件请求原样转发。
 - `tests/session_message_media_test.go`：真实 PostgreSQL 与对象存储上的入站拒绝、引用改写、Files API 隐藏、历史回显，以及代理只展开本会话附件。
-- `oma-brain-dsh`：适配器透传、会话轮次与历史恢复、不支持块的错误结果。
+- `oma-brain-dsh`：`oma-image` 的引用映射与 AI SDK 文件部件转换。

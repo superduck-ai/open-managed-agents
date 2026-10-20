@@ -587,15 +587,16 @@ func (d *DB) HeartbeatCodeSessionWorker(ctx context.Context, codeSessionExternal
 	return time.Time{}, ErrWorkerEpochMismatch
 }
 
-func (d *DB) RecordCodeSessionWorkerHeartbeat(ctx context.Context, codeSessionExternalID string, epoch int64, leaseTTL time.Duration, grace time.Duration) (time.Time, error) {
+type WorkerLeaseTimings struct {
+	TTL   time.Duration
+	Grace time.Duration
+}
+
+type WorkerLeasePolicy func(workerTransport string) WorkerLeaseTimings
+
+func (d *DB) RecordCodeSessionWorkerHeartbeat(ctx context.Context, codeSessionExternalID string, epoch int64, leasePolicy WorkerLeasePolicy) (time.Time, error) {
 	if epoch <= 0 {
 		return time.Time{}, ErrWorkerEpochMismatch
-	}
-	if leaseTTL <= 0 {
-		leaseTTL = time.Minute
-	}
-	if grace < 0 {
-		grace = 0
 	}
 	var expiresAt time.Time
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
@@ -608,6 +609,11 @@ func (d *DB) RecordCodeSessionWorkerHeartbeat(ctx context.Context, codeSessionEx
 			return err
 		}
 
+		timings := leasePolicy(leaseRow.WorkerTransport)
+		leaseTTL, grace := timings.TTL, max(timings.Grace, 0)
+		if leaseTTL <= 0 {
+			leaseTTL = time.Minute
+		}
 		currentEpoch := leaseRow.CurrentWorkerEpoch
 		var leaseExpiresAt *time.Time
 		if leaseRow.WorkerLeaseExpiresAt.Valid {

@@ -94,13 +94,16 @@ func (s *Server) authenticateWorkspaceAPIKey(r *http.Request, apiKey string) (au
 }
 
 func (s *Server) authenticateScopedServiceCredential(r *http.Request, apiKey string) (auth.Principal, *httpapi.Error) {
+	if strings.HasPrefix(apiKey, "oma_work.") {
+		return s.authenticateWorkToken(r, apiKey)
+	}
 	if isEnvironmentCredentialPath(r.URL.Path) {
 		principal, found, apiErr := s.authenticateEnvironmentCredential(r, apiKey)
 		if found || apiErr != nil {
 			return principal, apiErr
 		}
 	}
-	if r.Method == http.MethodPost && isMessagesPath(r.URL.Path) {
+	if r.Method == http.MethodPost && (isMessagesPath(r.URL.Path) || r.URL.Path == "/v1/chat/completions") {
 		return s.authenticateCodeSessionMessagesCredential(r, apiKey)
 	}
 	return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid API key")

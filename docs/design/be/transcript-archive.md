@@ -136,4 +136,4 @@ migration Down 在存在 attached 段时拒绝执行。恢复数据并不自动�
 
 上线从默认关闭切到 dry-run，记录模式 B 的候选数量和字节；确认实际收益后先开放终态软删除，经过观察期与还原演练再开启物理删除，模式 A 最后单独放量。T0 的生产统计门禁已按用户要求跳过，本轮没有生产规模、收益占比或压缩比结论。上线第一周需用实际段日志的 raw_bytes/size_bytes 汇总测得压缩比后回填；不得把规划估算写成实测。
 
-本地验收先生成 Yourbatis 代码，再运行 `just lint`、`just dead-code`、`just duplicates`、`just complexity` 和 `just test`。真实 PG 测试使用独立数据库/schema，可控 ObjectStore 注入上传中断和损坏；不修改生产数据。测试覆盖终态条件、idle 回收后唤醒、epoch 变更与新 compaction 并发写入、前台及 subagent HTTP 响应字节不变、每页 500 行的分页与序号空洞、对象故障拒删、pending 清理回滚、旧 blob GC 后还原和 50 万行会话中每批独立事务。Mapper 测试验证 SQL 分支、绑定顺序、返回语义、租户隔离及 PostgreSQL 事务回滚。
+本地验收先生成 Yourbatis 代码，再运行 `just lint`、`just dead-code`、`just duplicates`、`just complexity` 和 `just test-integration ./tests -run '^TestTranscript'`。真实 PG 测试使用独立数据库/schema，可控 ObjectStore 注入上传中断和损坏；不修改生产数据。测试覆盖终态条件、idle 回收后唤醒、epoch 变更与新 compaction 并发写入、前台及 subagent HTTP 响应字节不变、每页 500 行的分页与序号空洞、对象故障拒删、pending 清理回滚、旧 blob GC 后还原和 50 万行会话中每批独立事务。Mapper 测试验证 SQL 分支、绑定顺序、返回语义、租户隔离及 PostgreSQL 事务回滚。

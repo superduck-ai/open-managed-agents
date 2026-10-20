@@ -3,9 +3,11 @@ package codesessions
 import (
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 var errRuntimeSubagentConfig = errors.New("invalid runtime subagent configuration")
@@ -13,8 +15,20 @@ var errSandboxUnavailable = errors.New("sandbox is unavailable")
 
 var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
 
+const maxSandboxMCPRequestBytes = 1 << 20
+
 func sandboxInvalidRequest(cause error) error {
 	return apperr.New(apperr.InvalidArgument, "Invalid sandbox MCP request", cause)
+}
+func sandboxRequestReadError(cause error) error {
+	var tooLarge *http.MaxBytesError
+	if errors.As(cause, &tooLarge) {
+		return apperr.New(apperr.InvalidArgument, "Sandbox MCP request exceeds 1 MiB; split large file writes into smaller edits", cause)
+	}
+	return sandboxInvalidRequest(cause)
+}
+func sandboxToolDenied() error {
+	return apperr.New(apperr.PermissionDenied, "Sandbox tool is not permitted for this session", nil)
 }
 func sandboxOperationError(cause error) error {
 	if errors.Is(cause, errSandboxUnavailable) {
@@ -30,7 +44,6 @@ func sandboxOperationError(cause error) error {
 }
 
 var (
-	errWorkerDispatchUnavailable      = errors.New("worker task publisher is unavailable")
 	ErrMCPDeclarationInvalid          = errors.New("MCP server declarations must have unique canonical names and valid targets")
 	ErrMCPGatewayMissing              = errors.New("code_session.sandbox_api_base_url is required for managed-agent MCP tunnels")
 	ErrMCPRuntimeIdentityMissing      = errors.New("managed-agent MCP Tunnel runtime identity is incomplete")
@@ -52,8 +65,16 @@ func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
 }
 
+func sessionModelBackendsFailure(cause error) error {
+	return internalError("Could not resolve model API backends", cause)
+}
+
 func sessionMCPConfigFailure(cause error) error {
 	return internalError("Could not build session MCP configuration", cause)
+}
+
+func mcpUpstreamAuthenticationRejected() *httpapi.Error {
+	return httpapi.NewError(http.StatusUnauthorized, "authentication_error", "MCP upstream authentication failed")
 }
 
 func codeSessionRouteNotFound() error {
@@ -112,3 +133,26 @@ type workerPayloadError struct {
 func (e *workerPayloadError) Error() string { return e.message }
 
 func (e *workerPayloadError) Unwrap() error { return e.cause }
+
+func selfHostedResultRoutingError(stage string, err error) error {
+	return fmt.Errorf("self-hosted tool result %s: %w", stage, err)
+}
+
+func brainClaimUnauthenticated() error {
+	return apperr.New(apperr.Unauthenticated, "Invalid brain claim token", nil)
+}
+
+func brainClaimInvalidRequest(message string, cause error) error {
+	return apperr.New(apperr.InvalidArgument, message, cause)
+}
+
+func brainClaimFailure(cause error) error {
+	return internalError("Could not claim code session", cause)
+}
+
+func mapBrainClaimReleaseError(err error) error {
+	if errors.Is(err, db.ErrPreconditionFailed) {
+		return apperr.New(apperr.Conflict, "Brain claim is no longer held", err)
+	}
+	return internalError("Could not release code session claim", err)
+}

@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -23,13 +25,16 @@ func TestVerifyMemoryLifecycle(t *testing.T) {
 		t.Fatalf("wrong version content/actor: %+v", version)
 	}
 	memoryVerifyWrite(t, f.fx, f.path("/notes/preferences.md"), "session A\n中文\n")
-	if len(listMemoryVersions(t, f.app, f.fx.store.ID, "memory_id="+seed.ID+"&limit=20").Data) != 2 {
-		t.Fatal("identical flush created a version")
+	versions = listMemoryVersions(t, f.app, f.fx.store.ID, "memory_id="+seed.ID+"&limit=20")
+	if len(versions.Data) != 3 {
+		t.Fatal("identical flush did not retain an audited version")
 	}
-	for _, key := range f.objects.keys {
-		if key != headObjectKey(t, f, seed.ID) && key != versionObjectKey(t, f, seed.MemoryVersionID) {
-			f.assertObjectAbsent(t, key)
+	for _, saved := range versions.Data {
+		expected := "session A\n中文\n"
+		if saved.ID == seed.MemoryVersionID {
+			expected = "seed\n中文\n"
 		}
+		f.assertObject(t, versionObjectKey(t, f, saved.ID), expected)
 	}
 	f.proof(t, "memory_versions_match")
 	deleteSession(t, f.app, f.fx.session.ID)
@@ -48,7 +53,7 @@ func TestVerifyMemoryLifecycle(t *testing.T) {
 		t.Fatal("deleted memory still listed")
 	}
 	history := listMemoryVersions(t, f.app, f.fx.store.ID, "memory_id="+seed.ID+"&limit=20")
-	if len(history.Data) != 4 {
+	if len(history.Data) != 5 {
 		data, _ := json.Marshal(history)
 		t.Fatalf("delete history=%s", data)
 	}

@@ -153,7 +153,7 @@ func TestWorkerPreviewConverterFiltersNonPreviewStreamVariantsBeforeDedup(t *tes
 		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"signature"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"signature-delta"}`),
 	})
 	if len(firstEvents) != 1 {
-		t.Fatalf("first preview event count = %d, want only the thinking start: %#v", len(firstEvents), firstEvents)
+		t.Fatalf("first preview event count = %d, want one thinking start: %#v", len(firstEvents), firstEvents)
 	}
 
 	second := previewTestBatch()
@@ -201,7 +201,7 @@ func TestWorkerPreviewConverterFiltersNonPreviewStreamVariantsBeforeDedup(t *tes
 	}
 }
 
-func TestWorkerPreviewConverterEmitsStartOnlyThinkingPreview(t *testing.T) {
+func TestWorkerPreviewConverterEmitsThinkingStatusOnly(t *testing.T) {
 	converter := newWorkerPreviewConverter()
 	batch := previewTestBatch()
 	events := convertPreviewTestPayloads(converter, batch, []json.RawMessage{
@@ -212,10 +212,11 @@ func TestWorkerPreviewConverterEmitsStartOnlyThinkingPreview(t *testing.T) {
 	})
 
 	if len(events) != 1 {
-		t.Fatalf("preview event count = %d, want only the thinking start: %#v", len(events), events)
+		t.Fatalf("thinking previews = %d, want one status", len(events))
 	}
 	wantID := managedagentsevents.StableAssistantEventID(batch.CodeSessionID, "msg_test", 0, "agent.thinking")
 	assertPreviewStart(t, events[0].Payload, "agent.thinking", wantID)
+
 	if events[0].ExternalID != wantID {
 		t.Fatalf("thinking preview frame id = %q, want %q", events[0].ExternalID, wantID)
 	}

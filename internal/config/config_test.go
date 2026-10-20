@@ -512,6 +512,7 @@ func TestLoadYAMLRequiresDeploymentFields(t *testing.T) {
 		{name: "database URL", overrides: "database:\n  url: \"\"", wantError: "database.url is required"},
 		{name: "Redis URL", overrides: "redis:\n  url: \"\"", wantError: "redis.url is required"},
 		{name: "NATS URL", overrides: "nats:\n  url: \"\"", wantError: "nats.url is required"},
+		{name: "brain claim token file", overrides: "environment_runner:\n  agent_mode: brain", wantError: "code_session.brain_claim_token_file is required"},
 		{name: "email SMTP address", overrides: "auth:\n  smtp:\n    addr: smtp.example.com", wantError: "auth.smtp.addr must include a host and port"},
 		{name: "email SMTP host", overrides: "auth:\n  smtp:\n    addr: :465", wantError: "auth.smtp.addr must include a host and port"},
 		{name: "email SMTP port", overrides: "auth:\n  smtp:\n    addr: 'smtp.example.com:'", wantError: "auth.smtp.addr must include a host and port"},

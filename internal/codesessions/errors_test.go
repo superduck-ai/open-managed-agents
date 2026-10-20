@@ -2,10 +2,14 @@ package codesessions
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 func TestMapCodeSessionLoadError(t *testing.T) {
@@ -32,5 +36,22 @@ func TestMapCodeSessionLoadError(t *testing.T) {
 				t.Fatalf("errors.Is(%v, cause) = false", mapped)
 			}
 		})
+	}
+}
+
+func TestSessionModelBackendsFailure(t *testing.T) {
+	cause := errors.New("private provider failure")
+	mapped := sessionModelBackendsFailure(cause)
+	if !errors.Is(mapped, cause) {
+		t.Fatal("model backend error lost its cause")
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v2/sessions/cse_test", nil)
+	httpapi.NewErrorAdapter(nil).Write(response, request, mapped)
+	if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), "Could not resolve model API backends") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "MCP") || strings.Contains(response.Body.String(), cause.Error()) {
+		t.Fatalf("unexpected error detail: %s", response.Body.String())
 	}
 }

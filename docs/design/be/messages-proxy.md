@@ -6,6 +6,7 @@ LLM 上游不是进程级 YAML。每个 workspace 可以配置多个 Provider；
 
 - `name`
 - `base_url`
+- `api_backend`：`messages` 或 `chat_completions`；已有 Provider 通过迁移 86 回填为 `messages`。创建省略时默认 `messages`，更新省略时保留当前值，其他值包括 `responses` 返回 `api_backend_invalid`。
 - Vault 信封加密的 `api_key`
 - 零个或多个真实 `model_ids`
 
@@ -31,7 +32,9 @@ POST   /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_provide
 POST   /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers/{providerId}/models/sync
 ```
 
-`preview_models` 用请求里的 `base_url` 和 `api_key` 调用上游 `{base_url}/v1/models`，只返回 `model_ids`。请求同时带 `X-Api-Key`、`Authorization: Bearer` 和 `anthropic-version`，兼容 Anthropic 与智谱等只认 Bearer 的网关。`data: []` 是合法空列表；缺少 `data`、`success:false` 或带 `error` 的信封视为失败。
+`preview_models` 接受可选的 `api_backend`，省略时按 `messages` 处理。`models/sync` 使用已存储的 backend。Chat Completions 的模型发现只发送 Bearer，不发送 Anthropic 头。
+
+`messages` backend 的 `preview_models` 用请求里的 `base_url` 和 `api_key` 调用上游 `{base_url}/v1/models`，只返回 `model_ids`。请求同时带 `X-Api-Key`、`Authorization: Bearer` 和 `anthropic-version`，兼容 Anthropic 与智谱等只认 Bearer 的网关。`data: []` 是合法空列表；缺少 `data`、`success:false` 或带 `error` 的信封视为失败。
 
 `models/sync` 解密已保存的 Key，并按以下顺序更新：始终保留该 Provider 已保存的模型；仅从上游新发现的 ID 中过滤已被其他 Provider 占用的项；过滤后再去重、合并并应用 100 个模型的上限。响应通过 `skipped_model_ids` 返回因冲突跳过的 ID。上游失败返回 `502`，不改写现有配置。
 
@@ -50,13 +53,18 @@ Provider 控制台错误响应包含稳定的 `code`，前端不得依赖英文 
 
 ## HTTP 契约
 
-规范入口为：
+Anthropic Messages 规范入口为：
 
 ```text
 POST /v1/messages
 ```
 
-handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发前将这段有界请求体读入内存。完整扫描顶层对象可以确认 `model` 恰好出现一次，避免不同 JSON 解析器对重复键取值不同而绕过 Provider 白名单；校验后仍按原始字节转发，不改写模型 ID 或其他字段。唯一例外是 `code_session_oauth` 凭证请求中引用本会话消息附件的 `source.type=file` 图片和文档块：代理在转发前把它们展开为 `base64` 或 `text` 来源，规则见 [message-media-attachments](message-media-attachments.md)；不含 `file_id` 的请求仍按原字节转发。响应 body 继续逐块流式转发，不做整包缓冲。
+handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发前将这段有界请求体读入内存。完整扫描顶层对象可以确认 `model` 恰好出现一次，避免不同 JSON 解析器对重复键取值不同而绕过 Provider 白名单；校验后仍按原始字节转发，不改写模型 ID 或其他字段。唯一例外是下文的托管会话文件引用边界。响应 body 继续逐块流式转发，不做整包缓冲。
+
+托管会话绑定的 Code Session 模型凭据存在一个文件引用边界：在访问上游前，OMA 解析 `messages[].content` 及嵌套 `tool_result.content` 中 document/image 的 `source.type=file`。文件按凭据所属 workspace 查询；同 workspace 的文件可在明确引用时复用，scope 元数据不引入额外的会话授权限制。Files 中找不到时回退到凭据所属 public Session 的 `user.message` 私有附件（见 [message-media-attachments](message-media-attachments.md)），其他 Session 的附件视为不存在。已删除、缺失或跨 workspace 引用返回相同的404，不向模型发送不透明的本地 file_id。普通 API key / 平台调用保持原始请求字节透传，允许其使用 Provider 自己的文件引用。
+
+读取仅限于配置的文件对象存储，核验长度和SHA256，不通过外部URL下载。text/plain 文档在未启用引用时采用与 Brain 内联文档相同的带 title/context 边界的文本表示；开启 citations 时保留原生 document/source.text。PDF和图片转换为对应 MIME 的原生 base64 source；不匹配的类型、非UTF-8文本及超过有界模型请求尺寸的文件在推理前明确拒绝，不截断文件内容。原始公开会话事件、file_id及历史不改写，文件读取结果仅用于当前模型请求。
+
 
 顶层 `model` 必须是没有首尾空白的非空字符串；服务端不会通过 trim 把另一个输入静默归一化为已配置模型。
 
@@ -170,3 +178,54 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 - `tests/environments_runner_cloud_test.go`：真实 runner 组装出的 runtime payload 使用 session-scoped token，并在 initialize 事件中携带 Agent system prompt 与 OMA append system prompt；
 - `tests/environments_full_e2b_bridge_integration_test.go`：真实 E2B 中验证 Files API 上传、只读 uploads 挂载、Agent 生成 outputs、session 文件 Catalog 和 Files API 下载闭环。
 - `tests/environments_memory_sandbox_e2e_test.go`：真实 E2B 中验证 initialize `appendSystemPrompt` 不含记忆策略，记忆说明只出现在沙箱 `/mnt/memory/MEMORY.md`。
+
+## Brain Chat Completions
+
+`POST /v1/chat/completions` 只接受有效的 code-session model token，且对应会话的
+`metadata.config.worker_transport` 必须为 `claim`。workspace API key、平台会话、Sandbox 模式
+code session 和过期 worker lease 均不能使用该入口。复用现有 token hash、租户与 active session
+校验，不向 Worker 下发 Provider Key。鉴权通过后若会话已删除，transport 查询返回 not found 时仍返回
+401 `authentication_error` / `Invalid API key`；其他 transport 查询故障保持 500。Responses 暂不支持，也不注册对应路由。
+
+入口只支持 Brain 所需的 `stream=true` 和 `n=1`，省略 `n` 等价于 1。它不是完整的公共 OpenAI API。
+请求仍执行唯一顶层 model 校验与 32 MiB 上限，并按模型所属 Provider 的 `api_backend` 校验路由。
+`messages` 模型不能调用 Chat Completions；Chat Completions 模型也不能调用 Messages、Batches、
+Workbench 或管理后台 Messages 代理。未支持入口显式拒绝，不进行协议转换或自动回退。
+Workbench 的 backend mismatch 返回 400 `invalid_request_error`，公开文案说明入口协议限制与重新加载会话要求。
+
+Base URL 保持 API 根地址合同。最终地址为 `{base_url}/v1/chat/completions`，保留已有路径前缀；
+调用方不要在 Base URL 中再添加 `/v1`。上游只使用服务端 Bearer Key，删除 Anthropic 专属请求头。
+响应原始 SSE 字节流透传，保持取消、flush、无代理缓冲和禁止重定向。OMA `Request-Id` 仍等于模型
+请求 start ID，上游 `Request-Id` 或 `X-Request-Id` 单独记录。
+
+共用请求生命周期和 model request end 持久化。Go observer 只承担代理侧公开事件和用量观察，
+不替代 Brain 模型适配器的协议转换。Brain 与 Go 各自解析同一份 Chat 响应，二者必须遵守
+同一组规则，事件 ID 才能在实时预览与持久化消息之间去重：
+
+- SSE 事件：按完整事件（以空行结束）解析，同一事件的多行 `data:` 按规范以换行拼接后再解析 JSON。
+- reasoning 字段：每个 delta 依次检查 `reasoning_content`、`reasoning`、`reasoning_text`，
+  取第一个非空字符串，映射为 thinking；空字符串视为缺失。Go 由 `firstChatReasoning` 实现，
+  Brain 在代理 fetch 中把响应规范化为只含 `reasoning_content` 的 delta 后交给 AI SDK。
+- 内容索引：thinking、文本和各工具按首次出现顺序分配；同一 delta 内依次处理 reasoning、
+  正文、工具调用，与 AI SDK provider 的输出顺序及“先推理后正文”的模型语义一致。
+  上游 tool index 范围仍为 0–1023，用于定位对应工具。
+- 工具索引：工具块在其 tool index 首次出现非空名称时才分配内容索引，与 AI SDK provider
+  取得工具名后才创建工具块的行为一致。名称到达前的工具 ID 与参数分片按 tool index 暂存，
+  分配后合并；结束时仍有未取得名称的工具视为无效响应。
+
+工具 ID、名称采用首次非空值，参数按分片累积。
+
+正常结束要求有效 `finish_reason`，支持 `[DONE]` 或有效结束原因后的正常 EOF，usage 尾帧继续读取。
+只有 EOF 而没有 finish reason 的断流仍失败，Brain 侧同样要求有效结束原因。
+`stop`、`length` 只用于无工具响应，`tool_calls` 必须存在工具调用；过滤、拒绝、未知结束原因
+和异常断流不能记为成功。单帧及累计公开内容保留 4 MiB 观察上限。
+
+用量仅来自实际上游 usage，缺失时不补零。`completion_tokens` 映射为输出 token；
+`prompt_tokens_details.cached_tokens` 映射为缓存读取，非缓存输入为 prompt tokens 减去缓存读取，
+与现有 Anthropic 分项统计保持一致。缓存数超过输入数或负数属于畸形响应。
+
+普通单测与 PostgreSQL/httptest 合同测试入口：
+`internal/messages/chat_observation_test.go`、`internal/llmproviders/backends_test.go`、
+`tests/chat_completions_api_test.go`。覆盖 backend 的存取、默认与更新保留、模型发现请求头、
+Brain 凭据限制、协议拒绝、错误与断流收尾、稳定消息 ID、缓存用量和 lease 失效。
+真实 Worker/上游集成需另行明确授权后按 verify-be 工作流执行，普通测试不代表该验收通过。

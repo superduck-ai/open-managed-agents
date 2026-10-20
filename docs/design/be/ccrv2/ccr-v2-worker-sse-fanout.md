@@ -52,7 +52,7 @@ sequenceDiagram
 - Preview 的 `message_start.message.id` 与最终 assistant payload 的 `message.id` 都在各自 Worker JSON 解码边界修剪首尾空白，再参与确定性 ID 计算。
 - `content_block_start` 根据 block type 发送一次 `event_start`。
 - `text_delta.text` 原样映射成 `event_delta.delta.content.text`，公开 `delta.index` 固定为 `0`。
-- 按 CMA 契约，thinking 预览只有 `event_start`：`thinking_delta` 与签名都不产生公开 `event_delta`。Brain 原生发布的 thinking `event_delta` 同样被丢弃。
+- thinking 和 redacted thinking 只在 `content_block_start` 生成一次无正文状态预览；thinking delta 和签名不生成公开内容 delta，原生 `event_delta` 中的 thinking 内容也被丢弃。
 - 缺少 message start、block start 或消息总线重连后丢失上下文时，后续 delta 直接舍弃。
 - `parent_tool_use_id` 为空时归属主线程；非空时使用既有确定性 child thread ID。
 - Preview JSON envelope 没有自己的 `id`、`created_at` 或 `processed_at`；关联 ID 位于 `event_start.event.id` / `event_delta.event_id`，同时写入对应 SSE 帧的 `id:`。内部接收时间只用于转换与清理，不进入公开 preview envelope。
@@ -223,7 +223,7 @@ Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_starte
   最终子消息继续通过 `parent_tool_use_id` 指向同一个确定性 thread ID。
 
 代理逐帧观察响应，不修改 SSE body。code-session 上游请求不转发客户端的 `Accept-Encoding`，由 Go Transport 协商并透明解压，观测器因此读到明文帧，客户端收到的是解压后的响应。`message_start.usage` 与 `message_delta.usage` 按字段合并，
-其中输出 token 数是本次请求累计值。正常 `message_stop` 将带正文的 `agent.thinking` / `agent.message`、允许公开的 `agent.tool_use`、model request end 按此顺序放入同一写入批次；provider error 只发布 end；
+其中输出 token 数是本次请求累计值。代理在 thinking 块开始时立即发布一次无正文 `agent.thinking`，在向 Worker 转发起始帧前完成持久化。正常 `message_stop` 将尚未发布的消息、允许公开的工具调用和 model request end 放入同一批次，已发布的 thinking 不重复加入；provider error 不补发完整消息，仍发布 end；
 非流式响应完成、HTTP 错误、网络错误、缺失 stop 的 EOF 和客户端取消也会收尾。非流式响应已完整读取但向客户端写入失败时，end 保留已知用量并标记 `stream_error`。
 取消后的落库使用独立 5 秒 context；end 持久化失败在该期限内每 250 毫秒重试，成功即停止，期限耗尽时记录 start ID 和错误，不记录原始响应。
 单帧、累计文本和非流式 JSON 的观察缓冲上限为 4 MiB，超过上限仍原样转发，但 end 标记
@@ -263,8 +263,28 @@ nil 保持缺失，显式 0 保留。没有来源的计费金额、active_second
 避免同批 end/idle 或并发线程读到旧值；Session 已为 idle 的重复上报不再生成 usage。重复 end 不重复累计，重复事件 ID 不重新推动状态。
 线程状态和事件同一事务提交。仍有 running/rescheduling 线程时，仅发布线程 idle，不发布 Session usage/idle。
 
-### Thinking 正文合同
+### Thinking 状态合同
 
-代理解析流式 `thinking_delta` 并累计到对应 content block，非流式响应读取 `thinking` 字段；按 CMA 契约，公开的 `agent.thinking` 只是进度信号：`eventpayload` 在写入公开事件前统一去掉 `content` 与 `message`，历史、SSE 与 webhook 都不含思考正文；Brain 也不再发送正文。thinking 与 text/input 共享现有 4 MiB 观察容量上限。Worker assistant 映射产生的正文同样在写入前去掉，签名字段从不公开。`redacted_thinking` 继续只产生无正文的 `agent.thinking`。改动前已持久化的带正文事件不改写数据库，而是在读取时隐藏：历史、线程事件、发送响应与 SSE 共用的响应构造会去掉 `agent.thinking` 的 `content` 与 `message`。
+公开 `agent.thinking` 只表示块开始，不携带正文、签名或脱敏数据。代理在块起始帧即时发布，DSH Worker 在 reasoning block-start 创建预览；两者及最终回传都使用原始 message ID 与 block index 生成同一个稳定事件 ID。thinking delta 不再公开发送，完整 Worker 回传也会清除 thinking 内容。代理只对 thinking 输入保留容量计数，与 text/input 共用现有 4 MiB 上限，不再累计正文。模型内部签名推理和原始上游响应保持原协议；历史事件不重写。起始发布失败时，请求结束以同一 ID 回补无正文状态。详细时序与回归入口见 [Brain 运行时](../brain-runtime.md#thinking-状态事件)。 改动前已持久化的带正文事件不改写数据库，而是在读取时隐藏：历史、线程事件、发送响应与 SSE 共用的响应构造会去掉 `agent.thinking` 的 `content` 与 `message`。
 
 Worker 输入的 processing/processed 回执先在同一个 Yourbatis 事务中按 Session → Worker 的顺序持锁，校验 Worker 的租户、Session 归属、active 状态和 epoch，再提交尚未处理消息的处理时间，并沿用原路径清除 Worker 空闲计时。凭据轮换先完成时拒绝旧 epoch；处理事务先持锁时，轮换等待提交。事务提交后恢复大消息载荷并广播 SSE，随后在 epoch 锁内执行投递 ACK。ACK 阶段失败不会回滚已经提交的处理时间；回执重试沿用相同事件 ID，保持处理时间不变。此流程不承诺 PostgreSQL 与 JetStream ACK 跨系统原子提交。回归见 `tests/worker_delivery_retry_test.go` 和 `tests/worker_processing_epoch_test.go`。
+
+
+## 排队用户事件的实时 SSE 生命周期
+
+2026-10-17 CMA 合同修正。当前发送接口允许已运行会话中的用户消息进入队列；本节覆盖上文旧的“忙碌一律409”和“接收即processed_at”描述。Qoder的忙碌409属于另一平台合同，不作为OMA的排队合同。
+
+`normalizeInputEvent` 将 `user.message` 的初始 `processed_at` 设为 null。事务提交后，`publishSessionEvents` 必须广播该未处理版本，不能因 `ProcessedAt` 为零值而跳过。该发布发生在 `QueuePublicSessionEvents` 投递之前。后续处理确认仍通过既有路径广播同一 ID 的时间戳版本；实时 SSE 保留两次投递，客户端按 ID 升级确认状态，不能按 ID 丢弃第二版或重复计为两条消息。原始内容和线程归属保持不变，最终history仍是一条消息的最新状态。
+
+排队版本与处理版本共用现有session fanout、workspace/session路由及连接线程过滤，不新增数据库行、消息ID、跨租户广播或模型调用。此修正针对已连接的实时SSE，不合成历史null帧，也不改变cursor重放和历史分页策略。
+
+普通回归 `TestQueuedUserMessagePublishesNullThenProcessedSSE` 覆盖fanout、Hub、连接接受和SSE序列化的两版同ID事件。外部 `CHAT-ACK-005` 在Bash运行时发送第二条消息，校验同ID原始null先于时间戳、最终history归并一致、任务完成及清理；send响应null不替代原始SSE证据。
+
+
+### 工具确认后迟到的 requires_action 报告
+
+Worker 状态转换为公开工具暂停报告时，必须携带当时待确认工具的公开 `event_ids`。公开状态事务随后根据当前待确认请求校验报告。工具确认已投递并清除请求后，迟到的带工具ID报告没有待确认请求支撑，必须丢弃，不得降级为 `idle/end_turn`。线程级工具暂停须有本线程待确认请求，会话级工具暂停须有当前待确认请求。
+
+保留没有工具ID的 Worker `requires_action` 分支。这包括 CMA 自托管环境无法完成工作项而暂停、没有客户端工具确认可回答的故障。工具暂停和这类故障暂停不能混用，不能仅因为当前没有待确认工具就把所有暂停报告丢弃。
+
+回归覆盖公开状态转换保留一个或多个工具ID、确认后迟到报告、其他线程仍待确认、有效线程/会话暂停、正常结束及自托管无工具暂停。外部 CHAT-STATE-002 必须观察 `requires_action`、公开确认、工具结果、最终回复，然后才出现自然 `idle/end_turn`。

@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
-import { ConfigurationError, readCcrHeartbeatOptions } from "../src/config.ts";
+import { ConfigurationError, readBrainClaimOptions, readCcrHeartbeatOptions } from "../src/config.ts";
 import { mountOma } from "../src/plugin.ts";
 import { OmaApi } from "../src/api.ts";
 import { createOmaSession } from "../src/oma-session.ts";
@@ -35,7 +35,7 @@ test("invalid heartbeat deployment configuration fails startup before connecting
     env: {
       ...process.env,
       OMA_API_URL: "http://127.0.0.1:1",
-      NATS_URL: "nats://127.0.0.1:1", OMA_CCR_HEARTBEAT_INTERVAL_MS: "private-invalid-config",
+      OMA_BRAIN_CLAIM_TOKEN: "test-claim-token", OMA_CCR_HEARTBEAT_INTERVAL_MS: "private-invalid-config",
     },
     stdout: "pipe", stderr: "pipe",
   });
@@ -48,9 +48,26 @@ test("invalid heartbeat deployment configuration fails startup before connecting
   expect(stderr).not.toContain("private-");
 });
 
+test("heartbeat configuration must renew the worker lease before it expires", () => {
+  expect(() => readCcrHeartbeatOptions({ OMA_CCR_HEARTBEAT_INTERVAL_MS: "20000" })).toThrow("below the 20000 ms worker lease");
+  expect(() => readCcrHeartbeatOptions({
+    OMA_CCR_HEARTBEAT_INTERVAL_MS: "14000", OMA_CCR_HEARTBEAT_TIMEOUT_MS: "5000",
+  })).toThrow(ConfigurationError);
+  expect(readCcrHeartbeatOptions({ OMA_CCR_HEARTBEAT_INTERVAL_MS: "10000", OMA_CCR_HEARTBEAT_TIMEOUT_MS: "4000" }).intervalMs).toBe(10000);
+});
+
+test("brain claim configuration requires a token and bounds concurrency", () => {
+  expect(() => readBrainClaimOptions({})).toThrow("OMA_BRAIN_CLAIM_TOKEN is required");
+  expect(() => readBrainClaimOptions({ OMA_BRAIN_CLAIM_TOKEN: "  " })).toThrow(ConfigurationError);
+  for (const value of ["0", "33", "1.5", " ", "many"])
+    expect(() => readBrainClaimOptions({ OMA_BRAIN_CLAIM_TOKEN: "token", OMA_BRAIN_CLAIM_CONCURRENCY: value })).toThrow(ConfigurationError);
+  expect(readBrainClaimOptions({ OMA_BRAIN_CLAIM_TOKEN: " token " })).toEqual({ token: "token", concurrency: 4 });
+  expect(readBrainClaimOptions({ OMA_BRAIN_CLAIM_TOKEN: "token", OMA_BRAIN_CLAIM_CONCURRENCY: "8" })).toEqual({ token: "token", concurrency: 8 });
+});
+
 test("deployment heartbeat configuration matches the reference cadence and accepts explicit overrides", () => {
   expect(readCcrHeartbeatOptions({})).toEqual({
-    intervalMs: 20000, timeoutMs: 5000, jitterFraction: 0.1, maxFailures: 0, maxAuthFailures: 10,
+    intervalMs: 6000, timeoutMs: 5000, jitterFraction: 0.1, maxFailures: 0, maxAuthFailures: 10,
   });
   expect(readCcrHeartbeatOptions({
     OMA_CCR_HEARTBEAT_INTERVAL_MS: " 10000 ", OMA_CCR_HEARTBEAT_TIMEOUT_MS: "4000",

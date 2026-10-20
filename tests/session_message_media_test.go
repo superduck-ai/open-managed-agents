@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -226,12 +228,13 @@ func TestMessagesProxyExpandsOnlyOwnSessionAttachments(t *testing.T) {
 	otherToken := grantMessagesToken(t, app, launchLocalCodeSession(t, app, other.ID))
 	response := doMessagesRequest(t, app, otherToken, request)
 	response.Body.Close()
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode != http.StatusNotFound {
 		t.Fatalf("other session Messages status = %d", response.StatusCode)
 	}
-	leaked := <-upstreamBodies
-	if bytes.Contains(leaked, []byte(testPNGBase64)) || bytes.Contains(leaked, []byte("proxy notes")) || !bytes.Contains(leaked, []byte("no longer available")) {
-		t.Fatalf("another session resolved foreign attachments: %s", leaked)
+	select {
+	case leaked := <-upstreamBodies:
+		t.Fatalf("another session reached upstream with foreign attachments: %s", leaked)
+	default:
 	}
 
 	response = doMessagesRequest(t, app, grantMessagesToken(t, app, fixture.codeSessionID), request)
@@ -240,7 +243,7 @@ func TestMessagesProxyExpandsOnlyOwnSessionAttachments(t *testing.T) {
 		t.Fatalf("own session Messages status = %d", response.StatusCode)
 	}
 	expanded := <-upstreamBodies
-	if !bytes.Contains(expanded, []byte(`"data":"`+testPNGBase64+`"`)) || !bytes.Contains(expanded, []byte(`"data":"proxy notes"`)) || bytes.Contains(expanded, []byte("file_id")) {
+	if !bytes.Contains(expanded, []byte(`"data":"`+testPNGBase64+`"`)) || !bytes.Contains(expanded, []byte(`proxy notes`)) || bytes.Contains(expanded, []byte("file_id")) {
 		t.Fatalf("upstream body was not expanded: %s", expanded)
 	}
 }

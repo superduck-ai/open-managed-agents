@@ -190,12 +190,10 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 	if got, want := len(objects), 2; got != want {
 		t.Fatalf("payload count = %d, want %d: %#v", got, want, objects)
 	}
-	if blocks, ok := objects[0]["content"].([]any); !ok || len(blocks) != 1 || blocks[0].(map[string]any)["thinking"] != "plan" {
-		t.Fatalf("thinking content missing: %#v", objects[0])
+	if strings.Contains(string(payloads[0]), "plan") || strings.Contains(string(payloads[0]), "signature-secret") || objects[0]["content"] != nil || objects[0]["message"] != nil {
+		t.Fatalf("thinking status exposed content: %s", payloads[0])
 	}
-	if strings.Contains(string(payloads[0]), "signature-secret") {
-		t.Fatal("thinking payload exposed signature")
-	}
+
 	wantTypes := []string{"agent.thinking", "agent.message"}
 	for index, wantType := range wantTypes {
 		if objects[index]["type"] != wantType {

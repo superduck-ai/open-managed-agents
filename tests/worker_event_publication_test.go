@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -167,10 +169,10 @@ func TestExpiredJetStreamEventTerminatesCodeSessionAndPurgesSubject(t *testing.T
 
 func TestToolResponsePublicationClearsPendingOnlyAfterSuccess(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("tool-response-publication"))
-	worker, epoch := newPayloadIntegrationSession(t, app)
+	worker, epoch := newPayloadIntegrationSessionWithAgent(t, app, bashAskAgentBody)
 	putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"running"}`)
 	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch,
-		`{"type":"control_request","uuid":"approval","request_id":"approval-request","request":{"subtype":"can_use_tool","tool_name":"MysteryTool","tool_use_id":"tool-approval","input":{}}}`))
+		`{"type":"control_request","uuid":"approval","request_id":"approval-request","request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"tool-approval","input":{}}}`))
 	tool := listSessionEvents(t, app, worker.SessionExternalID, "types[]=agent.tool_use", defaultTestKey)
 	toolID := sessionEventStringField(t, tool.Data[0], "id")
 	session, found, err := app.db.GetSession(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)
@@ -268,9 +270,9 @@ func TestToolResponsePublicationClearsPendingOnlyAfterSuccess(t *testing.T) {
 func TestToolResponseRejectsWorkerRotationDuringUpload(t *testing.T) {
 	objects := &payloadFaultStore{fakeStore: newFakeStore("tool-response-epoch")}
 	app := newPayloadIntegrationApp(t, objects)
-	worker, epoch := newPayloadIntegrationSession(t, app)
+	worker, epoch := newPayloadIntegrationSessionWithAgent(t, app, bashAskAgentBody)
 	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch,
-		`{"type":"control_request","uuid":"approval","request_id":"approval-request","request":{"subtype":"can_use_tool","tool_name":"MysteryTool","tool_use_id":"tool-approval","input":{"text":`+quoteJSON(strings.Repeat("x", 40000))+`}}}`))
+		`{"type":"control_request","uuid":"approval","request_id":"approval-request","request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"tool-approval","input":{"command":`+quoteJSON(strings.Repeat("x", 40000))+`}}}`))
 	tool := listSessionEvents(t, app, worker.SessionExternalID, "types[]=agent.tool_use", defaultTestKey)
 	toolID := sessionEventStringField(t, tool.Data[0], "id")
 	session, found, err := app.db.GetSession(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)

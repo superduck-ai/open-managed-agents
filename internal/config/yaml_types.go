@@ -114,6 +114,7 @@ type yamlCodeSessionConfig struct {
 	UpstreamProxyMITMEnabled           bool   `yaml:"upstream_proxy_mitm_enabled"`
 	UpstreamProxyCAKeyFile             string `yaml:"upstream_proxy_ca_key_file"`
 	UpstreamProxyDisableSSRFProtection bool   `yaml:"upstream_proxy_disable_ssrf_protection"`
+	BrainClaimTokenFile                string `yaml:"brain_claim_token_file"`
 }
 
 type yamlWebhookConfig struct {
@@ -164,6 +165,7 @@ func newYAMLConfig() yamlConfig {
 			UpstreamProxyMITMEnabled:           defaults.CodeSession.UpstreamProxyMITMEnabled,
 			UpstreamProxyCAKeyFile:             defaults.CodeSession.UpstreamProxyCAKeyFile,
 			UpstreamProxyDisableSSRFProtection: defaults.CodeSession.UpstreamProxyDisableSSRFProtection,
+			BrainClaimTokenFile:                defaults.CodeSession.BrainClaimTokenFile,
 		},
 		Observability: defaults.Observability,
 		Webhook: yamlWebhookConfig{
@@ -213,6 +215,7 @@ func (input yamlConfig) resolve() Config {
 			UpstreamProxyMITMEnabled:           input.CodeSession.UpstreamProxyMITMEnabled,
 			UpstreamProxyCAKeyFile:             input.CodeSession.UpstreamProxyCAKeyFile,
 			UpstreamProxyDisableSSRFProtection: input.CodeSession.UpstreamProxyDisableSSRFProtection,
+			BrainClaimTokenFile:                input.CodeSession.BrainClaimTokenFile,
 		},
 		Observability: input.Observability,
 		Webhook: WebhookConfig{

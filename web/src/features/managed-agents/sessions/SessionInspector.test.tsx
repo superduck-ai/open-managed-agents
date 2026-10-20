@@ -198,6 +198,25 @@ describe('SessionInspector', () => {
     expect(onSelectEntry).toHaveBeenCalledWith(null);
   });
 
+  test('shows one durable message without listing its local preview as queued', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
+    const answer = sessionEvent();
+    renderInspector({
+      activeTab: 'events',
+      events: [
+        { ...answer, id: 'local-preview', processed_at: null, is_streaming: true },
+        { id: 'queued-input', type: 'user.message', processed_at: null, content: 'Next question' },
+        answer,
+      ],
+    });
+    await act(async () => Promise.resolve());
+
+    const rows = screen.getAllByRole('option');
+    expect(rows.map((row) => row.getAttribute('data-event-id'))).toEqual(['queued-input', answer.id]);
+    expect(rows[0]?.textContent).toContain('queued');
+    expect(rows[1]?.textContent).not.toContain('queued');
+  });
+
   test('renders the Claude events filter without changing backend event order or selected detail', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
     const agentEvent = sessionEvent();

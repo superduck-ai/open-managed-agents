@@ -25,7 +25,7 @@ export interface BrainState {
     string,
     { name: string; original: Payload; effective: Payload }
   >;
-  toolOutcomes: Record<string, { text: string; failed: boolean }>;
+  toolOutcomes: Record<string, { text: string; failed: boolean; remoteOutcome?: "unknown" }>;
   threads?: SubagentThread[];
   /** Optional for compatibility with existing schema-version-1 journals. */
   executions?: Record<string, ThreadExecutionState>;

@@ -152,7 +152,7 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 			SessionUUID:       session.UUID,
 			SessionExternalID: session.ExternalID,
 			ThreadExternalID:  spec.OwnerThreadID,
-			EventType:         eventType,
+			EventType:         sessionPayloadString(spec.Payload, "type"),
 			Payload:           payloadRaw,
 			ProcessedAt:       processedAt,
 			CreatedAt:         createdAt,
@@ -317,6 +317,9 @@ func (h *Handler) sessionEventCopySpecs(ctx context.Context, session db.Session,
 		}
 		return h.dualSessionEventCopySpecs(codeSessionID, eventType, eventID, payload, threadID, true), nil
 	}
+	if eventType == "agent.thread_message_sent" || eventType == "agent.thread_message_received" {
+		return h.threadMessageCopySpecs(ctx, session, codeSessionID, eventType, eventID, payload)
+	}
 	if maevents.IsPrimaryCoordinationEvent(eventType) {
 		return []sessionEventCopySpec{newSessionEventCopySpec(eventID, payload, nil, false)}, nil
 	}
@@ -464,7 +467,7 @@ func (h *Handler) ensureSessionThread(ctx context.Context, session db.Session, t
 	} else if err != nil && !errors.Is(err, db.ErrNotFound) {
 		return err
 	}
-	agentSnapshot, err := sessionThreadAgentSnapshot(payload)
+	agentSnapshot, err := sessionThreadAgentSnapshot(payload, session.AgentSnapshot)
 	if err != nil {
 		return err
 	}
@@ -490,8 +493,11 @@ func (h *Handler) ensureSessionThread(ctx context.Context, session db.Session, t
 	return err
 }
 
-func sessionThreadAgentSnapshot(payload map[string]any) (json.RawMessage, error) {
+func sessionThreadAgentSnapshot(payload map[string]any, parent json.RawMessage) (json.RawMessage, error) {
 	if agent, ok := payload["agent"].(map[string]any); ok && agent != nil {
+		if agent["type"] == "inline" {
+			return inlineSessionThreadAgentSnapshot(agent, parent)
+		}
 		return httpapi.MarshalRaw(agent)
 	}
 	agentName := sessionPayloadString(payload, "agent_name")

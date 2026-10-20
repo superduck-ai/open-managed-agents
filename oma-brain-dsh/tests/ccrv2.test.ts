@@ -1,6 +1,8 @@
 import { expect, spyOn, test } from "bun:test";
+import { ContextRecovery } from "../src/runtime/compaction.ts";
+import { SessionId } from "@deepseek-ai/dsh-session";
 import { Context } from "@deepseek-ai/cordis";
-import { LlmAdapter, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { mountKernel } from "../src/kernel.ts";
 import * as CcrBridge from "../src/ccrv2/index.ts";
 import type { CcrBackend } from "../src/ccrv2/index.ts";
@@ -16,6 +18,13 @@ class MemoryBackend implements CcrBackend {
   readonly acknowledged: string[] = [];
   readonly metadata = new Map<string, Record<string, unknown>>();
   async getWorkerState(id: string) { return { metadata: structuredClone(this.metadata.get(id) ?? null), durationMs: 0 }; }
+  async getSubagentThread(id: string, threadId: string) {
+    const events = (this.output.get(id) ?? []).filter((event) => event.session_thread_id === threadId);
+    if (!events.some((event) => event.type === "session.thread_created")) throw new Error("Unknown subagent thread");
+    const archived = events.some((event) => event.type === "session.thread_status_terminated");
+    return {id: threadId, status: archived ? "terminated" : "idle", archived};
+  }
+  async isToolConfirmationPending(_id: string, _requestId: string, _signal?: AbortSignal) { return false; }
   async privateEvents(id: string, options?: { subagents?: boolean }) {
     return structuredClone((this.logs.get(id) ?? []).filter((event) =>
       options?.subagents ? !!event.agent_id : !event.agent_id));
@@ -158,11 +167,11 @@ test("failed final persistence releases the session writer and permits replaceme
         id: "replaced", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup,
       });
       await session.open();
-      backend.persist = async (id, subtype, data, agentId) => {
-        if (subtype === "dsh_log") throw new Error("Lease expired");
-        await persist(id, subtype, data, agentId);
-      };
-      await session.receive(`turn-${i}`, { content: "hello" }).catch(() => {});
+      const writers = (ctx.sessionPersistence as unknown as {
+        writers: Map<string, { enqueue(event: unknown): void; record: { events: unknown[] } }>;
+      }).writers;
+      const writer = writers.get(session.id)!;
+      writer.enqueue({ seq: writer.record.events.length, type: "test/pending", data: {} });
       backend.persist = async () => { throw new Error("Lease expired"); };
       await expect(session.close()).rejects.toThrow();
       expect(() => ctx.ccrv2.forget(session.id)).not.toThrow();
@@ -418,7 +427,7 @@ test("the plugin reports lease loss for the claimed session without stopping oth
   }
 });
 
-test("approval bridge reports requires_action before requesting approval and resumes after a decision", async () => {
+test("automatic approval stays running while the backend evaluates permission", async () => {
   const backend = new MemoryBackend();
   const states: { status: SessionState; details?: RequiresActionDetails }[] = [];
   backend.setStatus = async (_id, status, details) => { states.push({ status, details }); };
@@ -435,8 +444,8 @@ test("approval bridge reports requires_action before requesting approval and res
       const request = events.find((event) => event.type === "control_request");
       if (!request) return;
       if (typeof request.request_id !== "string") throw new Error("Missing approval identity");
-      expect(states.at(-1)!.status).toBe("requires_action");
-      expect(states.at(-1)!.details?.request_id).toBe(request.request_id);
+      expect(states.at(-1)!.status).toBe("running");
+      expect(states.at(-1)!.details).toBeUndefined();
       await session.control({
         type: "control_response",
         response: {
@@ -449,8 +458,7 @@ test("approval bridge reports requires_action before requesting approval and res
       callId: "call", toolName: "Bash", input: { command: "original" },
     }, new AbortController().signal);
     expect(decision).toEqual({ allowed: true, input: { command: "approved" } });
-    expect(states.map((state) => state.status)).toEqual(["idle", "requires_action", "running"]);
-    expect(states[1]!.details?.input).toEqual({ command: "original" });
+    expect(states.map((state) => state.status)).toEqual(["idle", "running", "running"]);
     expect(session.approvals.size).toBe(0);
   } finally {
     await ctx.fiber.dispose();
@@ -506,7 +514,7 @@ test("child history resumes across scoped and legacy foreground logs", async () 
   }
 });
 
-test("CCRv2 plugin runs isolated sessions and restores history without OMA or NATS", async () => {
+test("CCRv2 plugin runs isolated sessions and restores history without OMA", async () => {
   const backend = new MemoryBackend();
   const config = (id: string) => ({
     id, provider: "memory", model: "text", workDir: "/workspace",
@@ -581,60 +589,6 @@ async function mountMediaKernel(backend: MemoryBackend) {
   return { ctx, model, session };
 }
 
-test("unsupported user content blocks complete with an error result and keep the session usable", async () => {
-  const backend = new MemoryBackend();
-  const { ctx, model, session } = await mountMediaKernel(backend);
-  try {
-    const audio = { type: "audio", source: { type: "base64", media_type: "audio/wav", data: "AA==" } };
-    await session.receive("audio_input", { content: [{ type: "text", text: "listen" }, audio] });
-    expect(model.requests).toHaveLength(0);
-    expect(backend.acknowledged).toEqual(["a:audio_input"]);
-    expect(session.state.completed).toEqual(["audio_input"]);
-    expect(session.state.phase).toBe("completed");
-    expect(backend.output.get("a")).toEqual([
-      { type: "system.message", uuid: "audio_input_unsupported_message",
-        content: [{ type: "text", text: "Only text, image and document user input is supported." }] },
-      { type: "result", uuid: "audio_input_unsupported_result", subtype: "error_during_execution", is_error: true },
-    ]);
-    await session.receive("empty_input", { content: [] });
-    expect(backend.acknowledged).toEqual(["a:audio_input", "a:empty_input"]);
-    await session.receive("next_input", { content: "continue" });
-    expect(model.requests).toHaveLength(1);
-    expect(backend.acknowledged.at(-1)).toBe("a:next_input");
-  } finally {
-    await ctx.fiber.dispose();
-  }
-});
-
-test("image and document references reach the model and survive history restoration", async () => {
-  const backend = new MemoryBackend();
-  const image = { type: "image", source: { type: "file", file_id: "file_image" } };
-  const document = { type: "document", title: "Spec", source: { type: "url", url: "https://example.com/spec.pdf" } };
-  const first = await mountMediaKernel(backend);
-  try {
-    await first.session.receive("media_input", { message: { role: "user", content: [{ type: "text", text: "Compare" }, image, document] } });
-    expect(backend.acknowledged).toEqual(["a:media_input"]);
-    const user = first.model.requests[0]!.messages.find((message) => message.role === "user")!;
-    expect(user.content).toEqual([
-      { type: "text", text: "Compare" },
-      { type: "message-media", block: image },
-      { type: "message-media", block: document },
-    ]);
-    expect(JSON.stringify(backend.logs.get("a"))).not.toContain("base64");
-  } finally {
-    await first.ctx.fiber.dispose();
-  }
-  const restored = await mountMediaKernel(backend);
-  try {
-    await restored.session.receive("follow_up", { content: "And now?" });
-    const history = restored.model.requests[0]!.messages.filter((message) => message.role === "user");
-    expect(history[0]!.content).toContainEqual({ type: "message-media", block: image });
-    expect(history.at(-1)!.content).toEqual([{ type: "text", text: "And now?" }]);
-  } finally {
-    await restored.ctx.fiber.dispose();
-  }
-});
-
 test("flushes without new log events do not write empty dsh_log batches", async () => {
   const backend = new MemoryBackend();
   const { ctx, session } = await mountMediaKernel(backend);
@@ -665,4 +619,239 @@ test("a redelivered control input is acknowledged without repeating its effect",
   } finally {
     await ctx.fiber.dispose();
   }
+});
+
+test("only backend-confirmed user approvals pause the worker and late lookups cannot pause resolved calls", async () => {
+  for (const mode of ["automatic", "confirmation", "late"] as const) {
+    const backend = new MemoryBackend();
+    const states: SessionState[] = [];
+    const requested = Promise.withResolvers<string>();
+    const lookingUp = Promise.withResolvers<void>();
+    const lookup = Promise.withResolvers<boolean>();
+    const paused = Promise.withResolvers<void>();
+    let lookupSignal: AbortSignal | undefined;
+    backend.isToolConfirmationPending = async (_id, _requestId, signal?: AbortSignal) => {
+      lookupSignal = signal;
+      lookingUp.resolve();
+      return lookup.promise;
+    };
+    backend.events = async (_id, events) => {
+      const request = events.find((event) => event.type === "control_request");
+      if (request) requested.resolve(request.request_id);
+    };
+    backend.setStatus = async (_id, status) => {
+      states.push(status);
+      if (status === "requires_action") paused.resolve();
+    };
+    const ctx = new Context();
+    try {
+      await mountKernel(ctx);
+      await ctx.plugin(CcrBridge, { backend });
+      const session = ctx.ccrv2.createSession({
+        id: mode, provider: "memory", model: "text", workDir: "/workspace", systemPrompt: "Test", setup,
+      });
+      await session.open();
+      const decision = session.approve({ callId: "call", toolName: "Bash", input: {} }, new AbortController().signal);
+      const requestId = await requested.promise;
+      await lookingUp.promise;
+      expect(states.at(-1)).toBe("running");
+      expect(states).not.toContain("requires_action");
+      if (mode !== "late") {
+        lookup.resolve(mode === "confirmation");
+        if (mode === "confirmation") await paused.promise;
+      }
+      await session.control({ type: "control_response", response: {
+        subtype: "success", request_id: requestId, response: { behavior: mode === "automatic" ? "deny" : "allow" },
+      } });
+      expect(await decision).toEqual({ allowed: mode !== "automatic", input: undefined });
+      lookup.resolve(true);
+      await session.updateStatus();
+      expect(states.includes("requires_action")).toBe(mode === "confirmation");
+      expect(states.at(-1)).toBe("running");
+      expect(lookupSignal?.aborted).toBe(true);
+      expect(session.approvals.size).toBe(0);
+    } finally { await ctx.fiber.dispose(); }
+  }
+});
+
+
+test("user interrupts settle the tool locally, finish successfully and survive recovery without replay", async () => {
+  for (const control of [{ type: "user.interrupt" }, { type: "control_request", request_id: "interrupt", request: { subtype: "interrupt" } }]) {
+    const backend = new MemoryBackend();
+    const started = Promise.withResolvers<void>();
+    let executions = 0;
+    const executor: SandboxExecutor = {
+      provision: async () => {},
+      call: async (_tool, _args, signal) => {
+        executions++;
+        started.resolve();
+        return new Promise((_, reject) => {
+          if (signal.aborted) reject(signal.reason);
+          else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+    };
+    const config = {
+      id: "interrupt-session", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "",
+      setup: async (scope: Context) => {
+        await scope.plugin({ name: "interrupt-sandbox", apply(ctx: Context) { ctx.provide("sandboxExecutor", executor); } });
+      },
+    };
+    const model = new TextModel();
+    const stream = model.stream.bind(model);
+    model.stream = async function* (options: GenerateOptions): AsyncIterable<StreamChunk> {
+      if (this.requests.length) { yield* stream(options); return; }
+      this.requests.push(options);
+      yield { type: "block-start", index: 0, blockType: "tool-call" };
+      yield { type: "block-end", index: 0, block: {
+        type: "tool-call", id: ToolCallId("cancelled-call"), name: "Bash", arguments: JSON.stringify({ command: "sleep 120" }),
+      } };
+      yield { type: "finish", reason: { kind: "tool-calls" } };
+    };
+    let ctx = new Context();
+    let turn: Promise<void> | undefined;
+    try {
+      await mountKernel(ctx);
+      await ctx.plugin(CcrBridge, { backend });
+      ctx.llm.registerAdapter(["test"], model);
+      let session = ctx.ccrv2.createSession(config);
+      const events = backend.events.bind(backend);
+      backend.events = async (id, payloads) => {
+        await events(id, payloads);
+        for (const payload of payloads) if (payload.type === "control_request" && payload.request.subtype === "can_use_tool")
+          await session.control({ type: "control_response", response: {
+            subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
+          } });
+      };
+      await session.open();
+      turn = session.receive("first", { content: "Run Bash" });
+      await started.promise;
+      await session.receive("interrupt", control);
+      await turn;
+      expect(session.blocked()).toBe(false);
+      expect(session.abort.signal.aborted).toBe(false);
+      expect(session.state.phase).toBe("completed");
+      expect(session.state.toolOutcomes["cancelled-call"]).toMatchObject({ failed: true, remoteOutcome: "unknown" });
+      expect(backend.output.get(config.id)!.filter((event) => event.type === "result"))
+        .toEqual([{ type: "result", uuid: "first_result", subtype: "success", is_error: false }]);
+      expect(JSON.stringify(backend.output.get(config.id))).not.toContain("Remote tool outcome is unknown");
+      const results = backend.output.get(config.id)!.flatMap((event) => event.message?.content ?? [])
+        .filter((block: Payload) => block.type === "tool_result");
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({ tool_use_id: "cancelled-call", is_error: true });
+      await expect(session.recordApproved({ callId: "cancelled-call", name: "Bash", original: {}, effective: {}, readOnly: false }))
+        .rejects.toThrow("duplicate");
+      await ctx.fiber.dispose();
+      ctx = new Context();
+      await mountKernel(ctx);
+      await ctx.plugin(CcrBridge, { backend });
+      const resumed = new TextModel();
+      ctx.llm.registerAdapter(["test"], resumed);
+      session = ctx.ccrv2.createSession(config);
+      await session.open();
+      expect(session.blocked()).toBe(false);
+      expect(session.state.toolOutcomes["cancelled-call"]?.remoteOutcome).toBe("unknown");
+      await session.receive("first", { content: "Duplicate delivery" });
+      expect(resumed.requests).toHaveLength(0);
+      await session.receive("next", { content: "Continue" });
+      expect(resumed.requests).toHaveLength(1);
+      expect(executions).toBe(1);
+      expect(backend.output.get(config.id)!.filter((event) => event.type === "result").every((event) => !event.is_error)).toBe(true);
+    } finally {
+      await ctx.fiber.dispose();
+      await turn?.catch(() => {});
+    }
+  }
+}, 15_000);
+
+test.each([false, true])("context overflow compacts and replays without duplicate results (child=%s)", async child => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  const model = new TextModel();
+  let requests = 0;
+  let replayWellFormed = false;
+  const sizes: number[] = [];
+  let parentRequests = 0;
+  model.stream = async function* (options: GenerateOptions): AsyncIterable<StreamChunk> {
+    if (options.model === "parent") {
+      parentRequests++;
+      if (parentRequests === 1) {
+        yield { type: "block-start", index: 0, blockType: "tool-call" };
+        yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId("delegate-read"),
+          name: "send_to_agent", arguments: JSON.stringify({ agent_name: "reader", message: "remember FACT-REAL" }) } };
+        yield { type: "finish", reason: { kind: "tool-calls" } };
+      } else {
+        yield { type: "block-start", index: 0, blockType: "text" };
+        yield { type: "block-end", index: 0, block: { type: "text", text: "done" } };
+        yield { type: "finish", reason: { kind: "stop" } };
+      }
+      return;
+    }
+    sizes.push(JSON.stringify(options.messages).length);
+    requests++;
+    if (requests <= 4) {
+      yield { type: "block-start", index: 0, blockType: "tool-call" };
+      yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId(`read-${requests}`),
+        name: "Read", arguments: JSON.stringify({ file_path: `/tmp/part-${requests}` }) } };
+      yield { type: "finish", reason: { kind: "tool-calls" } };
+    } else if (requests === 5) {
+      yield { type: "finish", reason: { kind: "error", failure: { code: "CONTEXT_WINDOW_EXCEEDED", status: 400,
+        message: "Maximum context length exceeded (90000 in the messages, 8192 in the completion)." } } };
+    } else {
+      expect(JSON.stringify(options.messages)).toContain("remember FACT-REAL");
+      expect(sizes.at(-1)!).toBeLessThan(sizes[4]! - 50000);
+      const tools = options.messages.filter(message => message.role === "tool");
+      expect(tools).toHaveLength(4);
+      replayWellFormed = tools.every(message => message.content.every(block => block.type !== "text" || block.text.isWellFormed()));
+      expect(new Set(tools.map(message => message.toolCallId)).size).toBe(4);
+      yield { type: "block-start", index: 0, blockType: "text" };
+      yield { type: "block-end", index: 0, block: { type: "text", text: "FACT-REAL" } };
+      yield { type: "finish", reason: { kind: "stop" } };
+    }
+  };
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], model);
+    const session = ctx.ccrv2.createSession({ id: "compaction", provider: "test", model: child ? "parent" : "text",
+      subagents: child ? { inlineAgents: false, agents: [{ name: "reader", description: "Reader", systemPrompt: "Read", model: "text", tools: ["Read"] }] } : undefined,
+      workDir: "/workspace", systemPrompt: "", tools: ["Read"], setup: async scope => {
+        await scope.plugin({ name: "read-sandbox", apply(scope: Context) { scope.provide("sandboxExecutor", {
+          async provision() {}, async call() { return { content: [{ type: "text", text: "original-file-data:" + "\u{100000}".repeat(30000) + ":tail" }] }; },
+        }); } });
+      } });
+    await session.open();
+    spyOn(session, "approve").mockResolvedValue({ allowed: true });
+    await session.receive("pressure", { content: "remember FACT-REAL" });
+    expect(requests).toBe(6);
+    expect(replayWellFormed).toBe(true);
+    const output = backend.output.get(session.id)!;
+    expect(output.filter(event => event.type === "agent.thread_context_compacted")).toEqual([
+      expect.objectContaining({ pre_compaction_tokens: 90000, ...(child ? { session_thread_id: session.state.threads![0]!.id } : {}) }),
+    ]);
+    const results = output.flatMap(event => event.message?.content ?? []).filter(block => block.type === "tool_result" && block.tool_use_id.startsWith("read-"));
+    expect(results).toHaveLength(4);
+    expect(results.every(block => JSON.stringify(block).includes("original-file-data"))).toBe(true);
+    const native = child ? ctx.sessions.get(SessionId(session.state.threads![0]!.id))! : session.runtime.agent.session;
+    if (child) expect(session.runtime.agent.session.snapshotEvents().some(event => event.type === "tool/result" && event.surfaceOp !== "append")).toBe(false);
+    const replacements = native.snapshotEvents().filter(event => event.type === "tool/result" && event.surfaceOp !== "append");
+    expect(replacements).toHaveLength(2);
+    const replay = ctx.sessions.create(undefined, { seed: native.snapshotEvents() });
+    expect(replay.deriveMessages()).toEqual(native.deriveMessages());
+    expect(native.snapshotEvents().filter(event => event.type === "tool/result" && event.surfaceOp === "append")).toHaveLength(4);
+    const failure = { code: "CONTEXT_WINDOW_EXCEEDED", message: "context too long" };
+    let published = false;
+    const original = ctx.sessions.create(undefined, { seed: native.snapshotEvents().slice(0, replacements[0]!.seq) });
+    const recovery = new ContextRecovery();
+    expect(await recovery.recover(original, { code: "HTTP_ERROR", message: "network" }, 1, 1,
+      async () => {}, async () => { published = true; })).toBe(false);
+    await expect(recovery.recover(original, failure, 1, 1,
+      async () => { throw new Error("Not durable"); }, async () => { published = true; })).rejects.toThrow("Not durable");
+    expect(published).toBe(false);
+    expect(await recovery.recover(original, failure, 1, 1,
+      async () => {}, async () => { published = true; })).toBe(false);
+    expect(await new ContextRecovery().recover(replay, failure, 1, 1,
+      async () => {}, async () => { published = true; })).toBe(false);
+    await session.close();
+  } finally { await ctx.fiber.dispose(); }
 });

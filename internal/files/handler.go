@@ -49,10 +49,11 @@ type fileMetadata struct {
 }
 
 type pageResponse struct {
-	Data    []fileMetadata `json:"data"`
-	HasMore bool           `json:"has_more"`
-	FirstID *string        `json:"first_id"`
-	LastID  *string        `json:"last_id"`
+	Data     []fileMetadata `json:"data"`
+	HasMore  bool           `json:"has_more"`
+	FirstID  *string        `json:"first_id"`
+	LastID   *string        `json:"last_id"`
+	NextPage *string        `json:"next_page"`
 }
 
 func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, logger *slog.Logger) *Handler {
@@ -63,9 +64,10 @@ func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, l
 	router.MethodNotAllowed(notFound)
 	router.Post("/", h.upload)
 	router.Get("/", h.list)
-	router.Get("/{file_id}", h.retrieveMetadataRoute)
-	router.Delete("/{file_id}", h.deleteRoute)
-	router.Get("/{file_id}/content", h.downloadRoute)
+	fileRoutes := router.With(validateFileIDPath)
+	fileRoutes.Get("/{file_id}", h.retrieveMetadataRoute)
+	fileRoutes.Delete("/{file_id}", h.deleteRoute)
+	fileRoutes.Get("/{file_id}/content", h.downloadRoute)
 	h.router = router
 	return h
 }
@@ -174,8 +176,11 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
-	afterID := r.URL.Query().Get("after_id")
-	beforeID := r.URL.Query().Get("before_id")
+	afterID, beforeID, pageErr := parseFilePage(r)
+	if pageErr != nil {
+		httpapi.WriteError(w, r, pageErr)
+		return
+	}
 	scopeID := r.URL.Query().Get("scope_id")
 
 	records, hasMore, err := h.db.ListFilesPage(r.Context(), db.ListFilesPageParams{
@@ -200,7 +205,17 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		firstID = &data[0].ID
 		lastID = &data[len(data)-1].ID
 	}
-	httpapi.WriteJSON(w, http.StatusOK, pageResponse{Data: data, HasMore: hasMore, FirstID: firstID, LastID: lastID})
+	var nextPage *string
+	if hasMore && len(data) > 0 {
+		cursor := filePageCursor{FileID: *lastID, ScopeID: scopeID}
+		if beforeID != "" && afterID == "" {
+			cursor.FileID = *firstID
+			cursor.Before = true
+		}
+		value := encodeFilePage(cursor)
+		nextPage = &value
+	}
+	httpapi.WriteJSON(w, http.StatusOK, pageResponse{Data: data, HasMore: hasMore, FirstID: firstID, LastID: lastID, NextPage: nextPage})
 }
 
 func (h *Handler) retrieveMetadataRoute(w http.ResponseWriter, r *http.Request) {
@@ -329,7 +344,7 @@ func validateFilename(filename string) error {
 		return errors.New("Invalid file name")
 	}
 	for _, r := range filename {
-		if r < 32 || strings.ContainsRune(`<>:"|?*\/`, r) {
+		if r < 32 || strings.ContainsRune(`<>:|?*\/`, r) {
 			return errors.New("Invalid file name")
 		}
 	}

@@ -258,7 +258,8 @@ func (c *workerPreviewConverter) appendPreviewBlockDelta(batch codeSessionStream
 	block.updatedAt = now
 	state.blocks[index] = block
 	state.updatedAt = now
-	payloadJSON := eventDeltaPayload(block.eventID, previewDeltaContent{Type: "text", Text: payload.Event.Delta.Text})
+	content := previewDeltaContent{Type: "text", Text: payload.Event.Delta.Text}
+	payloadJSON := eventDeltaPayload(block.eventID, content)
 	return previewSessionEvent(batch, payload, now, block.eventID, previewEventDelta, payloadJSON), true
 }
 
@@ -337,7 +338,7 @@ func eventDeltaPayload(eventID string, content previewDeltaContent) json.RawMess
 
 func publicPreviewEventType(blockType string) string {
 	switch blockType {
-	case workerStreamContentBlockThinking:
+	case workerStreamContentBlockThinking, "redacted_thinking":
 		return "agent.thinking"
 	case workerStreamContentBlockText:
 		return "agent.message"

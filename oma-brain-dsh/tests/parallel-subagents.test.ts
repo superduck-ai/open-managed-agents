@@ -15,6 +15,11 @@ async function fixture(b = new Backend()) {
   const api = new OmaApi(b.url);
   await mountOma(ctx, api);
   const session = createOmaSession(ctx, api, b.a);
+  b.onDelegationApproval = async (payload) => {
+    await session.control({ type: "control_response", response: {
+      subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
+    } });
+  };
   let closed = false;
   const close = async () => { if (closed) return; closed = true; await session.close(); await ctx.fiber.dispose(); };
   cleanups.push(async () => { await close(); b.stop(); });
@@ -45,6 +50,37 @@ function scriptedChildren(b: Backend, alpha?: Promise<void>, beta?: Promise<void
     await (name === "alpha" ? alpha : beta);
     return textEvents(`${name} report`);
   };
+}
+
+for (const policy of ["ask", "deny"] as const) {
+  test(`a retained child applies an allow to ${policy} update on its next turn`, async () => {
+    const backend = new Backend();
+    backend.a.launch.tool_permissions = { bash: "allow" };
+    const f = await fixture(backend);
+    f.b.modelScript = [parallelDelegations(["alpha"]), toolEvents("echo first"), textEvents("child done"), textEvents("parent done")];
+    await f.session.receive("first-turn", { content: "Delegate first" });
+    expect(f.b.executions).toHaveLength(1);
+    const threadId = f.session.state.threads![0]!.id;
+    f.b.a.launch.tool_permissions = { bash: policy };
+    const followup = parallelDelegations(["alpha"]);
+    const delta = followup.find((event) => event.type === "content_block_delta")!;
+    delta.delta.partial_json = JSON.stringify({ thread_id: threadId, message: "Run second" });
+    f.b.modelScript = [followup, toolEvents("echo second"), textEvents("child done"), textEvents("parent done")];
+    const approvals: Payload[] = [];
+    f.b.onApproval = async (request) => { approvals.push(request); };
+    const turn = f.session.receive("second-turn", { content: "Follow up" });
+    const settled = turn.catch(() => {});
+    try {
+      await eventually(() => approvals.length === 1 || f.b.executions.length > 1);
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0]!.session_thread_id).toBe(threadId);
+      expect(f.b.executions).toHaveLength(1);
+      await decide(f.session, approvals[0]!, policy === "ask");
+      await turn;
+      expect(f.b.executions).toHaveLength(policy === "ask" ? 2 : 1);
+      expect(f.session.blocked()).toBe(false);
+    } finally { f.session.stop(); await settled; }
+  });
 }
 
 test("native tool batch starts two children concurrently, isolates identical call IDs, and aggregates approvals", async () => {
@@ -101,7 +137,7 @@ test("native tool batch starts two children concurrently, isolates identical cal
   }
 });
 
-test("targeted interruption cancels only one concurrent approval and denial does not stop a sibling", async () => {
+test.each(["user.interrupt", "control_request"])("%s targeted interruption cancels only one concurrent approval and denial does not stop a sibling", async (type) => {
   const f = await fixture();
   scriptedChildren(f.b);
   const requests: Payload[] = [];
@@ -111,10 +147,14 @@ test("targeted interruption cancels only one concurrent approval and denial does
   try {
     await eventually(() => requests.length === 2);
     const alpha = f.session.state.threads!.find((thread) => thread.name === "alpha")!;
-    await f.session.control({ type: "user.interrupt", session_thread_id: alpha.id });
+    await f.session.control({ type, session_thread_id: alpha.id, ...(type === "control_request" ? { request_id: "targeted", request: { subtype: "interrupt" } } : {}) });
     await eventually(() => f.session.approvals.size === 1 && alpha.status === "idle"
       && f.b.statuses.at(-1) === "requires_action");
     expect(f.b.statuses.at(-1)).toBe("requires_action");
+    const alphaIdle = [...f.b.publicLog.values()].filter((event) => event.type === "session.thread_status_idle" && event.session_thread_id === alpha.id).at(-1);
+    expect(alphaIdle?.stop_reason?.type).toBe("end_turn");
+    const alphaError = [...f.b.publicLog.values()].find((event) => event.type === "user" && event.session_thread_id === alpha.id && event.message?.content?.some((block: Payload) => block.type === "tool_result" && block.is_error));
+    expect(JSON.stringify(alphaError?.message?.content)).toContain("Tool execution was interrupted before completion. Please retry.");
     const betaRequest = requests.find((request) => request.session_thread_id !== alpha.id)!;
     await decide(f.session, betaRequest, false);
     await turn;

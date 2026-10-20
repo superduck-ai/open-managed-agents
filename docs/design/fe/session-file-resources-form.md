@@ -93,7 +93,7 @@ Mount path 输入组固定展示 Sandbox 前缀 `/mnt/session/uploads/`，用户
 }
 ```
 
-Mount path 经 `trim()` 后为空时，前端不发送 `mount_path`；服务端按既有合同默认使用 `/uploads/<filename>`，Sandbox 中对应 `/mnt/session/uploads/<filename>`。输入框错误状态、创建按钮校验和提交转换共用这一判断。
+Mount path 经 `trim()` 后为空时，前端不发送 `mount_path`；服务端默认使用 `/uploads/<file_id>`，Sandbox 中对应 `/mnt/session/uploads/<file_id>`，其中 `file_id` 为请求引用的上传文件 ID。输入框错误状态、创建按钮校验和提交转换共用这一判断。
 
 `source` 不由前端发送，后端默认为 `/uploads`。
 

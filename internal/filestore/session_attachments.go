@@ -88,11 +88,3 @@ func (s *Service) CopyFileToSessionAttachment(ctx context.Context, target Sessio
 	defer object.Body.Close()
 	return s.PutSessionAttachment(ctx, target, file.MimeType, object.Body)
 }
-
-func (s *Service) OpenSessionAttachment(ctx context.Context, file db.FileRecord) (io.ReadCloser, error) {
-	object, err := s.store.Open(ctx, file.S3Key, nil)
-	if err != nil {
-		return nil, fmt.Errorf("open attachment: %w", err)
-	}
-	return object.Body, nil
-}

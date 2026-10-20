@@ -172,7 +172,7 @@ test("output retries retain snapshots and UUIDs, refresh tokens, log safe fields
     expect(requests.map((request) => request.token)).toEqual(["private-token", "private-token-1", "private-token-2", "private-token-3"]);
     expect(waits).toEqual([500, 1000, 2000]);
     expect(cleanups).toBe(1);
-    const fields = { method: "post", path: "/worker/events", worker_epoch: 7, batch_size: 2 };
+    const fields = { method: "post", path: "/worker/events", session_ref: "7ae99811b2c7c696275f6aca5adcedd71a90d8ab3ced71cd81d7e2c8020628fd", worker_epoch: 7, batch_size: 2 };
     expect(logs.map((log) => JSON.parse(log))).toEqual([
       { event: "cli_worker_request_failed", ...fields, status: 503, failure_reason: "server_error" },
       { event: "cli_worker_request_error", ...fields, failure_reason: "transport_error", error_code: "ECONNRESET" },

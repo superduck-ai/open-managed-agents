@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -636,6 +638,8 @@ func TestSessionCanonicalMultiAgentEventsFromCodeSessionIngress(t *testing.T) {
 		`mcp__agent_inferred`,
 		`"type":"agent.message"`,
 		"child stream answer",
+		`"type":"agent.thread_message_sent"`,
+		"deliver to coordinator",
 		`"type":"span.model_request_start"`,
 		`"session_thread_id":"` + childThreadID + `"`,
 	} {
@@ -644,7 +648,7 @@ func TestSessionCanonicalMultiAgentEventsFromCodeSessionIngress(t *testing.T) {
 		}
 	}
 	for _, leaked := range []string{
-		"deliver to coordinator",
+		`"type":"agent.thread_message_received"`,
 		"stream preview only",
 		`"type":"session.thread_status_running"`,
 		`"type":"session.thread_status_idle"`,
@@ -2705,7 +2709,7 @@ func TestCodeSessionWorkerEpochZeroRejectedAtDBLayer(t *testing.T) {
 	if err := app.db.ValidateCodeSessionWorkerEpoch(ctx, codeSessionID, 0); !errors.Is(err, db.ErrWorkerEpochMismatch) {
 		t.Fatalf("validate epoch 0 error = %v, want worker epoch mismatch", err)
 	}
-	if _, err := app.db.RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, 0, time.Minute, 10*time.Second); !errors.Is(err, db.ErrWorkerEpochMismatch) {
+	if _, err := app.db.RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, 0, fixedWorkerLease(time.Minute, 10*time.Second)); !errors.Is(err, db.ErrWorkerEpochMismatch) {
 		t.Fatalf("record heartbeat epoch 0 error = %v, want worker epoch mismatch", err)
 	}
 	if _, err := app.db.HeartbeatCodeSessionWorker(ctx, codeSessionID, 0, time.Minute); !errors.Is(err, db.ErrWorkerEpochMismatch) {

@@ -18,7 +18,7 @@ import (
 
 func selectScenario(name string) scenario {
 	if name == "test" {
-		return scenario{Package: "./...", Timeout: 15 * time.Minute, Description: "全仓默认构建 Go 测试，隔离依赖并启用本地 MinIO 与迁移集成；逐项列出未验证测试"}
+		return scenario{Package: "./...", Timeout: 15 * time.Minute, Description: "全仓 integration 构建 Go 测试，隔离依赖并启用本地 MinIO 与迁移集成；逐项列出未验证测试"}
 	}
 	return scenarios[name]
 }

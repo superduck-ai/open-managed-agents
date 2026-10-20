@@ -25,14 +25,6 @@ func (s *Service) WithSessionAttachments(store SessionAttachmentStore) *Service 
 	return s
 }
 
-func (s *Service) workerPayloadForEvent(ctx context.Context, codeSessionID string, event db.SessionEvent) (json.RawMessage, error) {
-	event, err := s.materializeMessageAttachments(ctx, event)
-	if err != nil {
-		return nil, err
-	}
-	return workerPayloadForPublicEvent(codeSessionID, event)
-}
-
 func (s *Service) materializeMessageAttachments(ctx context.Context, event db.SessionEvent) (db.SessionEvent, error) {
 	if event.EventType != "user.message" {
 		return event, nil

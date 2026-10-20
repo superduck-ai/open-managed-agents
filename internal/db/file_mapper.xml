@@ -13,17 +13,24 @@
                 FROM session_resources owner
                 WHERE owner.file_uuid = files.uuid
                     AND owner.workspace_uuid = files.workspace_uuid
-                    AND owner.payload IS NULL
+                    AND (owner.payload IS NULL OR owner.source_file_uuid IS NOT NULL)
             )
             OR EXISTS (
                 SELECT 1
                 FROM session_resources owner
+                JOIN sessions session ON session.uuid = owner.session_uuid
+                    AND session.workspace_uuid = owner.workspace_uuid
+                    AND session.deleted_at IS NULL
                 WHERE owner.file_uuid = files.uuid
                     AND owner.workspace_uuid = files.workspace_uuid
-                    AND owner.payload IS NULL
                     AND owner.deleted_at IS NULL
                     AND (owner.expires_at IS NULL OR owner.expires_at &gt; now())
-                    AND left(owner.path, char_length('/outputs/')) = '/outputs/'
+                    AND (
+                        (owner.source_file_uuid IS NOT NULL AND owner.payload IS NOT NULL
+                            AND left(owner.path, char_length('/uploads/')) = '/uploads/')
+                        OR (owner.payload IS NULL
+                            AND left(owner.path, char_length('/outputs/')) = '/outputs/')
+                    )
             )
         )
     </sql>
@@ -34,13 +41,16 @@
                 resource.file_uuid, resource.workspace_uuid, resource.session_external_id,
                 resource.created_at, resource.uuid
             FROM session_resources resource
+            JOIN sessions session ON session.uuid = resource.session_uuid
+                AND session.workspace_uuid = resource.workspace_uuid
+                AND session.deleted_at IS NULL
             WHERE resource.workspace_uuid = #{params.WorkspaceUUID}
                 AND resource.session_external_id = #{params.ScopeID}
                 AND resource.resource_type = 'file'
                 AND resource.deleted_at IS NULL
                 AND (resource.expires_at IS NULL OR resource.expires_at &gt; now())
                 AND (
-                    (resource.payload IS NOT NULL
+                    (resource.source_file_uuid IS NOT NULL AND resource.payload IS NOT NULL
                         AND left(resource.path, char_length('/uploads/')) = '/uploads/')
                     OR (resource.payload IS NULL
                         AND left(resource.path, char_length('/outputs/')) = '/outputs/')
@@ -277,8 +287,18 @@
             SELECT 1
             FROM session_resources resource
             WHERE resource.workspace_uuid = #{workspaceUUID}
-                AND resource.file_uuid = #{fileUUID}
+                AND (resource.file_uuid = #{fileUUID} OR resource.source_file_uuid = #{fileUUID})
                 AND resource.deleted_at IS NULL
+        ) AS referenced
+    </select>
+
+    <select id="HasMountedSourceReference" result="scalar">
+        SELECT EXISTS (
+            SELECT 1 FROM session_resources input
+            JOIN session_resources source ON source.file_uuid = input.source_file_uuid
+                AND source.workspace_uuid = input.workspace_uuid
+            WHERE input.workspace_uuid = #{workspaceUUID}
+                AND source.uuid = #{resourceUUID} AND input.deleted_at IS NULL
         ) AS referenced
     </select>
 

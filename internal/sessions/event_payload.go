@@ -17,40 +17,6 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
-func patchSessionAgent(current json.RawMessage, raw json.RawMessage) (json.RawMessage, error) {
-	var snapshot map[string]any
-	if err := json.Unmarshal(current, &snapshot); err != nil || snapshot == nil {
-		return nil, errors.New("stored session agent is invalid")
-	}
-	var patch map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &patch); err != nil {
-		return nil, errors.New("agent must be an object")
-	}
-	if rawServers, ok := patch["mcp_servers"]; ok {
-		if httpapi.IsJSONNull(rawServers) {
-			snapshot["mcp_servers"] = []any{}
-		} else {
-			var servers any
-			if err := json.Unmarshal(rawServers, &servers); err != nil {
-				return nil, errors.New("agent.mcp_servers must be an array")
-			}
-			snapshot["mcp_servers"] = servers
-		}
-	}
-	if rawTools, ok := patch["tools"]; ok {
-		if httpapi.IsJSONNull(rawTools) {
-			snapshot["tools"] = []any{}
-		} else {
-			var tools any
-			if err := json.Unmarshal(rawTools, &tools); err != nil {
-				return nil, errors.New("agent.tools must be an array")
-			}
-			snapshot["tools"] = tools
-		}
-	}
-	return httpapi.MarshalRaw(snapshot)
-}
-
 func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return "", fmt.Errorf("%s is required", name)
@@ -133,6 +99,9 @@ func primaryToolProjectionHidden(event db.SessionEvent, hiddenToolUseIDs map[str
 }
 
 func primaryOrphanToolProjectionUseID(event db.SessionEvent) string {
+	if event.EventType == "user.tool_confirmation" {
+		return ""
+	}
 	var payload map[string]any
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return ""
@@ -216,7 +185,7 @@ func eventPayloadForResponse(payloadRaw json.RawMessage, processedAt time.Time, 
 			changed = true
 		}
 	}
-	if payload["type"] == "user.message" {
+	if payload["type"] == "user.message" || payload["type"] == "user.tool_confirmation" {
 		if processedAt.IsZero() {
 			payload["processed_at"] = nil
 		} else {
@@ -337,10 +306,11 @@ func encodeSessionCursor(session db.Session) string {
 // The server resolves the event's processing position from its ID.
 type eventCursor struct {
 	ExternalID string `json:"external_id"`
+	Order      string `json:"order"`
 }
 
-func encodeEventCursor(event db.SessionEvent) string {
-	data, _ := json.Marshal(eventCursor{event.ExternalID})
+func encodeEventCursor(event db.SessionEvent, order string) string {
+	data, _ := json.Marshal(eventCursor{ExternalID: event.ExternalID, Order: order})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
@@ -361,7 +331,7 @@ func decodeSessionCursor(raw string) (*db.SessionPageCursor, error) {
 	return &db.SessionPageCursor{CreatedAt: *createdAt, UUID: resourceUUID}, nil
 }
 
-func decodeEventCursor(raw string) (*db.SessionEventPageCursor, error) {
+func decodeEventCursor(raw, order string) (*db.SessionEventPageCursor, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
 	}
@@ -372,6 +342,13 @@ func decodeEventCursor(raw string) (*db.SessionEventPageCursor, error) {
 	var payload eventCursor
 	if err := json.Unmarshal(data, &payload); err != nil || payload.ExternalID == "" {
 		return nil, errors.New("page cursor is invalid")
+	}
+	// Cursors issued before order binding used the default ascending order.
+	if payload.Order == "" {
+		payload.Order = "asc"
+	}
+	if (payload.Order != "asc" && payload.Order != "desc") || payload.Order != order {
+		return nil, errors.New("page cursor order does not match request order")
 	}
 	return &db.SessionEventPageCursor{ExternalID: payload.ExternalID}, nil
 }

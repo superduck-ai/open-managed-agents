@@ -21,5 +21,5 @@ const (
 
 	// MaxMemoryInstructionsRunes is the Unicode code-point limit for attach
 	// instructions. Over-limit requests are rejected; values are not truncated.
-	MaxMemoryInstructionsRunes = 500
+	MaxMemoryInstructionsRunes = 4096
 )

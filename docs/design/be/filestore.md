@@ -146,9 +146,10 @@ filesystem 的数据库 namespace 在 Session/resource 写事务完成时已经�
 
 五个固定挂载统一使用 `vfs_cache_mode=full`、`vfs_cache_max_size=1G`、`uid=999`、`gid=1000`、目录权限 `0755` 和文件权限 `0644`。`/outputs` 使用读写 Token，其余四个固定 source 共享只读 Token 并设置 `readonly=true`。有 memory store 时，rclone 按 Session 快照追加 N 条 `/memory/{slug}` → `/mnt/memory/{slug}`：`read_write` 使用读写 Token，`read_only` 使用只读 Token 且 `readonly=true`；cache 为 `1s`。父目录 `/mnt/memory` 由 Runner `mkdir -p` 创建在本地盘上，不是 Filestore mount，也不是第 N+1 条 rclone。两类 Token 都绑定当前 public Session 唯一 filesystem 的 external ID，`service_url` 直接取 `code_session.sandbox_api_base_url`。ready marker 表示配置中的全部 mount（5+N）已可用；随后 Runner 才把 `MEMORY.md` 写到本地 `/mnt/memory/MEMORY.md`。
 
-OMA 在 Managed Agent 的 `appendSystemPrompt` 中同步声明这组公开路径与 sandbox 路径的映射：上传输入使用 `/mnt/session/uploads/<relative-path>`，用户可下载的输出使用 `/mnt/user-data/outputs/<relative-path>`。提示词按引用方式决定查找位置：`/uploads/...` 路径或用户声明的附件只查 uploads；带目录部分且在工作目录中存在的路径直接使用工作目录文件，读取和修改一致；其他文件名或路径（包括裸文件名）先尝试 `/mnt/session/uploads/<relative-path>`，必要时调用显式设置 `path=/mnt/session/uploads` 的 Glob 递归查找，再搜索工作目录，两处都检查前不得报告文件不存在。Claude 只能使用实际命中的路径，不截断、改名或从 `file_id` 推断文件名，多个候选会影响结果时向任务发起方确认；修改附件时把副本写入 outputs；完整规则见 [agent-system-prompt](agent-system-prompt.md)。写入输出挂载的文件会投影为 `/outputs/<relative-path>` 并进入该 Session 的 Files API Catalog。普通仓库编辑仍留在工作目录，只有用户交付物写入 outputs。
 
-Runner 不为五个固定盘单独准备挂载目录；`rclone-filestore multimount` 在内部对每个 destination 执行 `MkdirAll`。有 memory store 时 Runner 会先 `mkdir -p /mnt/memory`，再启动 rclone。镜像和 Environment Manager 不得创建 skill 软链，也不会复制或解压 archive；destination 无法创建时，由 multimount 启动或 ready 阶段失败并进入统一 Sandbox 清理。
+OMA 在 Managed Agent 的 `appendSystemPrompt` 中同步声明这组公开路径与 sandbox 路径的映射：上传输入使用 `/mnt/session/uploads/<relative-path>`，用户可下载的输出使用 `/mnt/session/outputs/<relative-path>`，兼容别名 `/mnt/user-data/outputs`。提示词按引用方式决定查找位置：`/uploads/...` 路径或用户声明的附件只查 uploads；带目录部分且在工作目录中存在的路径直接使用工作目录文件，读取和修改一致；其他文件名或路径（包括裸文件名）先尝试 `/mnt/session/uploads/<relative-path>`，必要时调用显式设置 `path=/mnt/session/uploads` 的 Glob 递归查找，再搜索工作目录，两处都检查前不得报告文件不存在。Claude 只能使用实际命中的路径，不截断、改名或从 `file_id` 推断文件名，多个候选会影响结果时向任务发起方确认；修改附件时把副本写入 outputs；完整规则见 [agent-system-prompt](agent-system-prompt.md)。写入输出挂载的文件会投影为 `/outputs/<relative-path>` 并进入该 Session 的 Files API Catalog。普通仓库编辑仍留在工作目录，只有用户交付物写入 outputs。
+
+Runner 在启动 rclone 前创建 `/mnt/session/outputs` → `/mnt/user-data/outputs` 软链，使标准输出路径与既有挂载共享同一 namespace 和缓存。已有相同软链可复用，空目录可替换；普通文件、非空目录或其他目标软链会使启动失败并触发既有 Sandbox 清理，不覆盖数据。Runner 不为五个固定盘单独准备挂载目录；`rclone-filestore multimount` 在内部对每个 destination 执行 `MkdirAll`。有 memory store 时 Runner 会先 `mkdir -p /mnt/memory`，再启动 rclone。镜像和 Environment Manager 不得创建 skill 软链，也不会复制或解压 archive；destination 无法创建时，由 multimount 启动或 ready 阶段失败并进入统一 Sandbox 清理。
 
 Runner 先通过 E2B Files API 完整写入强类型 JSON，再将 `/tmp/rclone-mount-config.json` 权限设置为 `0600`。文件写入完成后才直接执行固定镜像命令，不使用 stdin bootstrap、临时文件或 shell trap：
 
@@ -166,7 +167,7 @@ sequenceDiagram
     participant E as E2B Sandbox
     participant M as Environment Manager
     A->>D: Create filesystem and five fixed roots
-    A->>D: Write Input Resource referencing Source File
+    A->>D: Create Session File instance and Input Resource
     R->>D: Resolve concrete skill contents
     R->>D: Atomically snapshot /skills archive Resources
     R->>E: Create Sandbox
@@ -195,7 +196,9 @@ Session 与 Deployment File resource 的公开合同固定为：
 }
 ```
 
-公开响应不返回内部 Filestore `source` 字段，并统一将 `mount_path` 规范化为 `/uploads` 前缀。为兼容既有请求，边界仍接受省略的 `source` 并在持久化 payload 中补为 `/uploads`，显式传入 `null` 或其他值均拒绝。显式传入 `/workspace/data.csv` 时，公开响应返回 `/uploads/workspace/data.csv`，对应同名 Filestore 路径和 Sandbox 访问路径 `/mnt/session/uploads/workspace/data.csv`；已有数据库记录即使仍保存旧式 `/workspace/data.csv`，序列化时也会补齐前缀。未传 `mount_path` 时，服务端读取 Files API 记录中的原始文件名，公开响应按 Anthropic 示例返回 `/uploads/<filename>`；仅当旧数据缺少文件名时才回退到 `/uploads/<file_id>`。
+公开响应不返回内部 Filestore `source` 字段，并统一将 `mount_path` 规范化为 `/uploads` 前缀。为兼容既有请求，边界仍接受省略的 `source` 并在持久化 payload 中补为 `/uploads`，显式传入 `null` 或其他值均拒绝。显式传入 `/workspace/data.csv` 时，公开响应返回 `/uploads/workspace/data.csv`，对应同名 Filestore 路径和 Sandbox 访问路径 `/mnt/session/uploads/workspace/data.csv`；已有数据库记录即使仍保存旧式 `/workspace/data.csv`，序列化时也会补齐前缀。未传 `mount_path` 时，使用请求中的 `file_id` 生成 `/uploads/<file_id>`，Sandbox 访问路径为 `/mnt/session/uploads/<file_id>`，不再按原始文件名生成默认路径。该规则对齐 CMA `files.md` 的 File paths 契约，Session 创建、运行中添加资源和 Deployment 模板使用同一默认值。已有资源中持久化的路径及显式指定的路径保持不变；本次不新增独立 Session 输入文件实例 ID。
+
+普通测试覆盖省略路径时的资源响应、Filestore 绑定、运行中添加与 Deployment 执行，以及显式路径回归。真实沙箱中的可读性、长度和 SHA256 需单独复测 FILE-MNT-002，普通测试不替代该验收。
 
 GitHub Repository 未传 `mount_path` 时使用 `/workspace/<repo-name>`；仓库名从 URL 最后一个路径段派生并去掉 `.git` 后缀，无法解析时回退到 `/workspace/repository`。Session 与 Deployment 共用同一默认值函数。
 
@@ -207,15 +210,15 @@ Session 创建、后续添加 Resource 和 Deployment 创建/更新共用同一�
 
 ### File resource 数据库引用
 
-File resource 写入时，服务锁定 Session、filesystem 和当前 workspace 中的活动 Source File，然后只更新已经创建的 `session_resources` 行：
+File resource 写入时，服务锁定 Session、filesystem 和当前 workspace 中的活动 Source File，随后创建独立 Session File 并绑定已经创建的 `session_resources` 行：
 
 - `path` 与 `parent_path` 表示 `/uploads` namespace 位置；
-- `file_uuid` 指向 Source File；
+- `file_uuid` 指向本次 attach 独立创建的 Session File，`source_file_uuid` 指向原 Source File；
 - `payload` 保留资源合同与内部 `source` 映射；Session API 在序列化 File Resource 时过滤内部 `source`，因此 `payload is not null` 同时表达该行是公开 Resource。
 
-Input attach 不创建新的 `files` 行，不复制 File 元数据或 S3 对象，也不修改存储账本。请求与响应的 `file_id` 都是 Source File ID。同一 Source File 可以多次 attach，每次保留独立 `sesrsc_` 和 path；Attach 实例的身份由 Resource ID 表达，而不是再生成一个 `file_`。
+Input attach 在同一 Yourbatis 事务内创建新的 `files` 行，复制源 File 的元数据、对象引用及下载策略，scope 指向当前 Session，不复制 S3 对象，也不增加存储账本。请求使用源 ID，公开 Resource、Get Session 和 Session Files 返回同一个新实例 `file_id`。同一源多次 attach、跨 Session attach 均分配独立的 File UUID、`file_`、`sesrsc_` 和 path。以实例再次 attach 时，`source_file_uuid` 直接指向最初源 File，避免解绑中间实例破坏后续挂载。
 
-通用 Filestore move、overwrite、copy、file remove 和包含 Input 的目录 mutation 均拒绝；`sessions.resources.delete(sesrsc_...)` 删除一次 Attach，Source File 保持不变。只要有活动 Resource 引用 Source File，`files.delete(file_...)` 就返回冲突。Source File 删除与 attach 使用同一工作区锁和 Source File 行锁，避免并发留下悬空引用。
+通用 Filestore move、overwrite、copy、file remove 和包含 Input 的目录 mutation 均拒绝；`sessions.resources.delete(sesrsc_...)` 在同一 SQL 语句中退休一次 Attach 及其 Session File 元数据，Source File 和其他实例保持不变，不投递共享对象删除任务。只要有活动 Resource 引用 Source File，`files.delete(file_...)` 就返回冲突；活动实例的 File 也受引用保护。Session 删除同步退休输入实例元数据，Archive 保留实例。作为挂载源的 Output 暂不允许覆盖或删除；父 Session 的对象清理跳过仍被其他 Session 引用的源条目，任务保持 pending，不增加错误重试次数；其他可清理条目继续处理，最后一个实例退休后在后续批次回收源对象。Source File 删除与 attach 使用同一工作区锁和 Source File 行锁，避免并发留下悬空引用。
 
 Environment Manager 不再接收 `type=file` resource。它只在 rclone ready 后看到已经完成的 `/uploads` 文件系统视图；File 的下载、路径投影或内容刷新均不属于 Environment Manager 职责。
 
@@ -231,7 +234,7 @@ Provider Sandbox 创建前的普通启动失败会停止 Environment Work，且�
 - `filestore_filesystems` 继续只负责将 Filestore external ID 解析到唯一 public Session，不把 filesystem UUID 复制到 Resource。
 - `session_resources` 只使用 `path`、`parent_path`、`file_uuid` 与 `expires_at` 表达 File、Directory 和 Skill Archive 节点；Skill ZIP 的大小、SHA-256、bucket 与 key 与普通文件一样保存在 `files` 行中。
 - `files` 新增 detected MIME、metadata、authorization metadata、tags、MD5、ETag 与 Version ID，保存所有真实文件元数据和对象事实。
-- 不新增 `attached`、`cataloged`、`namespace_role`、`filesystem_uuid`、`files.source_file_uuid` 或 ownership 列。公开 Resource 由 `payload is not null` 判断，Catalog 角色由固定根路径判断。
+- 不新增 `attached`、`cataloged`、`namespace_role`、`filesystem_uuid`、`files.source_file_uuid` 或 ownership 列。公开 Resource 由 `payload is not null` 判断，Catalog 角色由固定根路径及输入实例的 `source_file_uuid` 判断。
 - Resource + File 通用投影直接读取 Resource 的 `organization_uuid/workspace_uuid/session_uuid`，不关联 `filestore_filesystems`。普通读写入口先解析一次活动 filesystem，再用其 `(workspace_uuid, session_uuid)` 查询 namespace。
 - schema 不创建 PostgreSQL 外键；workspace/session/file 的引用完整性和 Skill 快照的来源真实性由带租户范围的同事务写入、删除守卫与真实 PostgreSQL 测试维护。
 
@@ -351,13 +354,13 @@ cursor 是版本化的 Base64URL JSON，包含 filesystem ID、查询目录、`r
 
 `files.list(scope_id=<session>)` 不读取额外的兼容 File 行，而是从活动 Resource 直接组成 Catalog：
 
-- `/uploads` 收录 `payload is not null` 的 Input Resource；响应 ID、元数据与内容都来自 Source File。
+- `/uploads` 收录带 `source_file_uuid` 的 Input Resource，只返回该次 attach 的 Session File 实例 ID；账户级 Source File 不进入 Session scope，仍可从账户列表和原 ID 元数据接口访问。
 - `/outputs` 只收录关联 Owned File 的内部 Resource；响应 ID、元数据与内容来自 Owned File。
 - `/transcripts`、`/tool_results` 与 `/skills` 不进入 Files Catalog。
 
-同一 Source File 多次 attach 时，Catalog 按 `file_uuid` 去重，只返回一个真实 File；排序位置取该 File 最新的活动 Catalog Resource，再按 Resource 的 `(created_at, id)` 分页。Resource 列表仍保留每次 Attach，因此调用方必须用各自的 `sesrsc_` 删除指定挂载。Output move 只修改 Resource path，File UUID 与 `file_` 保持稳定；移出 `/outputs` 后立即退出 Catalog，移回后恢复同一 File ID。Worker 状态上报不承担刷新职责，成功提交的 Output 在 Session 处于任意运行状态时都可立即列出。
+Catalog 按 `file_uuid` 去重；排序位置取该 File 最新的活动 Catalog Resource，再按 Resource 的 `(created_at, uuid)` 分页。未分页列表、分页列表及游标定位共用同一输入实例/输出可见性条件；账户级上传 ID 不能作为 Session 页游标，沿用不可见锚点的空页响应。Resource 列表仍保留每次 Attach，因此调用方必须用各自的 `sesrsc_` 删除指定挂载。Output move 只修改 Resource path，File UUID 与 `file_` 保持稳定；移出 `/outputs` 后立即退出 Catalog，移回后恢复同一 File ID。Worker 状态上报不承担刷新职责，成功提交的 Output 在 Session 处于任意运行状态时都可立即列出。
 
-Files metadata/download 只解析真实 File ID。Input 因而沿用 Source File 的元数据、内容与下载策略。Files delete 在删除真实 File 前检查活动 Resource 引用；删除 Attach 只能使用 Sessions Resource API。
+Files metadata/download 只解析真实 File ID。Input 的 Resource 响应返回实例 ID；metadata/download 解析独立 File 行并沿用源的元数据、对象与下载策略。Files delete 在删除真实 File 前检查活动 Resource 引用；删除 Attach 只能使用 Sessions Resource API。
 
 ## 写入、配额与清理
 
@@ -391,7 +394,7 @@ sequenceDiagram
 
 Owned File 的覆盖、删除和递归删除在同一个数据库事务中软删除/替换 Resource 与 File、更新用量账本，并写入 `filestore_object_cleanup` job。Input Resource 禁止通用 mutation；删除它只退休 Resource，不进入对象清理或容量释放。独立 worker 按 job 中的 bucket、key 和 VersionID 幂等删除 Owned File 对象；provider not-found 视为成功，失败使用有界重试与租约保护。
 
-删除 Session 时，短事务立即退休公开 Resources 与 filesystem，并投递一个 `filestore_filesystem_cleanup` 父任务，不遍历全部 Owned File，也不调用 S3。worker 每次最多退休 100 个 Owned File Resource：生成精确版本 cleanup 子任务并扣减容量；全部 Owned File 退休后再软删除内部目录、Skill Archive Resources 及其 File 快照。Skill File 只借用 catalog 对象，不生成对象清理；Input Resource 已在 Session 删除事务中退休，也不生成对象清理。
+删除 Session 时，短事务立即退休公开 Resources 与 filesystem，并投递一个 `filestore_filesystem_cleanup` 父任务，不遍历全部 Owned File，也不调用 S3。worker 每次最多退休 100 个 Owned File Resource：生成精确版本 cleanup 子任务并扣减容量；全部 Owned File 退休后再软删除内部目录、Skill Archive Resources 及其 File 快照。Skill File 只借用 catalog 对象，不生成对象清理；Input Resource 及其独立 File 元数据已在 Session 删除事务中退休，也不生成对象清理。
 
 两类 Filestore cleanup job 的持久化 payload 都只保存 `workspace_uuid` 与 `filesystem_uuid`，不保存 `workspace_id`、`filesystem_id` 或冗余的 filesystem external ID。`jobs.workspace_uuid` 也是稳定的 workspace 路由引用；worker 取得租约后直接按 payload UUID 关联并锁定 filesystem，不再把 workspace identity 当作缓存写回。整 filesystem 清理进入事务后会再次按 UUID 校验当前记录。迁移会先验证每条历史 bigint 引用都能解析且归属一致，再改写引用与 payload；发现孤立或错配引用时直接中止，避免恢复或合库后把任务指向另一条恰好复用了相同 identity 的记录。
 
@@ -414,7 +417,7 @@ namespace 写入按 filesystem advisory lock 串行化；所有可能改变字�
 
 ## 验收
 
-自动化覆盖协议编解码、路由与 JWT 隔离、Session 自动建档、Input Resource 原子 attach/删除、同一 Source 多次 attach 与 Catalog 去重、Source ID metadata/download、Source protection、Input 通用 mutation 拒绝、Output create/overwrite/copy/move/delete、Catalog 分页、配额、递归删除、TTL、Session cleanup、Skill Archive 动态成员、`/memory/{slug}` 写回 Memory 三表，以及 migration 后旧表、旧 Input projection 与 `fse_` identity 消失。真实验收继续覆盖官方 SDK、rclone/FUSE multimount 与 E2B `/uploads`、`/outputs` 生命周期。Memory Filestore API 合同由 `tests/filestore_memory_namespace_test.go` 覆盖；`just verify-be memory mounts` 通过实际 Runner、Docker sandbox 与 FUSE 验证跨 Session 的 Memory 持久化、只读挂载、本地根重建及启动失败清理。该场景直接执行沙箱文件 I/O，不调用模型；沙箱销毁由测试显式执行，不代表云端故障检测。
+自动化覆盖协议编解码、路由与 JWT 隔离、Session 自动建档、Input Resource 原子 attach/删除、同一 Source 多次 attach、账户上传不进入 Session Catalog 与输出 Catalog 去重、Source ID metadata/download、Source protection、Input 通用 mutation 拒绝、Output create/overwrite/copy/move/delete、Catalog 分页、配额、递归删除、TTL、Session cleanup、Skill Archive 动态成员、`/memory/{slug}` 写回 Memory 三表，以及 migration 后旧表、旧 Input projection 与 `fse_` identity 消失。真实验收继续覆盖官方 SDK、rclone/FUSE multimount 与 E2B `/uploads`、`/outputs` 生命周期。Memory Filestore API 合同由 `tests/filestore_memory_namespace_test.go` 覆盖；`just verify-be memory mounts` 通过实际 Runner、Docker sandbox 与 FUSE 验证跨 Session 的 Memory 持久化、只读挂载、本地根重建及启动失败清理。该场景直接执行沙箱文件 I/O，不调用模型；沙箱销毁由测试显式执行，不代表云端故障检测。
 
 Memory 文档路径由 `internal/memorypath` 与 REST API 共享校验：只接受 NFC 规范形式，拒绝控制字符及 Unicode 格式字符，不自动归一化。M2-05 分别验证普通 `/memory` 父目录缺失时写入返回 409，以及目录存在时普通 Filestore 写入成功；两者均不得写入 Memory 三表。
 
@@ -428,3 +431,26 @@ Memory 文档路径由 `internal/memorypath` 与 REST API 共享校验：只接�
 [Memory 功能地图](../../../.agents/skills/verify-be/features/memory.md) 维护六个 Go CLI 场景。`memory filestore` 检查普通 Owned File 覆盖、复制、移动、删除字节一致，Session 删除后分批清理超过 100 个对象及用量归零，同时验证同一个 Memory store 在新会话仍可读。测试显式推进被拒绝覆盖操作的 orphan guard 到期时间，不宣称覆盖其后台等待时序。`memory cleanup` 使用真实非版本化 MinIO 验证写入失败与相同正文 flush 的冗余对象删除，要求读取已删除对象返回 NotFound。Memory 业务历史版本使用独立对象 key，不需要开启桶版本控制。
 
 Memory upload 的正文 key 对每个 version 唯一。metadata 写入失败或相同正文没有生成 version 时，补偿删除使用全版本删除；删除失败登记 `memory_version` 的通用对象清理任务，后台 Worker 也执行全版本删除。删除和入队均失败时返回错误。此策略不会改变普通 Filestore Owned File 的精确 VersionID 清理合同，也不覆盖 upload 与 metadata 提交之间的进程崩溃窗口。
+
+## Session 输入实例升级
+
+2026-10-16 对齐 [CMA Files](https://platform.claude.com/docs/en/managed-agents/files) 的独立实例身份与副本不计存储限额要求。migration `00089_session_input_file_instances.sql` 为活动 Input Resource 回填独立 File 行，并把公开 payload 的 file_id 替换为实例 ID，保留 Resource ID、路径及源对象；已退休历史引用不回填，也不能影响源 File 的可见性。跨 workspace 或源已丢失的活动引用使迁移失败，不静默跳过。回滚只删除实例元数据、恢复源引用，不触碰 S3。升级应先停止旧版本的 attach 写入，完成迁移后使用新版本服务；不支持旧代码继续向新 schema 写入原始源引用。
+
+```mermaid
+flowchart LR
+    Request[Attach 请求 source file_id] --> Tx[Session 与 workspace 锁内事务]
+    Tx --> Instance[新 Session File 元数据与 file_id]
+    Tx --> Resource[Input Resource]
+    Resource -->|file_uuid| Instance
+    Resource -->|source_file_uuid| Source[原 Source File]
+    Instance --> Blob[同一 S3 对象]
+    Source --> Blob
+    Instance --> API[Resource 响应与 Session Files]
+```
+
+配额重算排除所有输入实例行，输入实例退休不扣原文件容量。`tests/session_input_file_instances_test.go` 覆盖同源多次 attach、独立身份、配额重算、实例删除保护、实例转挂、解绑与 Session 删除的隔离，以及作为源的 Output 在引用期间的覆盖/删除保护和超出故障重试次数的正常等待、解绑后继续清理；隔离 schema 的 migration 测试覆盖跨租户拒绝、批量回填、历史引用、回滚和再次升级。
+
+
+### 2026-10-19 live Memory mount read caching
+
+Only attached Memory mounts use `vfs_cache_mode=writes`: read-only file opens fetch current remote bytes, while writable opens retain disk buffering and normal filesystem operations. This addresses the real PERM012 old mount retaining old bytes for more than60s after a successful administrator update. The five fixed mounts retain `full`; Memory RW/RO tokens, flags, one-second metadata cache and logical file identity/creation time remain unchanged. Rclone mode semantics are documented at https://rclone.org/commands/rclone_mount/#vfs-cache-mode-writes. No public refresh timing SLA is introduced.

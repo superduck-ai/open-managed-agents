@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { MessageId, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { OmaApi } from "../src/api.ts";
-import { MessagesAdapter } from "../src/model.ts";
+import { AiSdkAdapter } from "../src/llm-ai-sdk/index.ts";
+import { omaModelOptions } from "../src/model.ts";
 import { SandboxMcp } from "../src/oma-sandbox/client.ts";
 import { assignment, textEvents, toolEvents } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
@@ -34,11 +35,12 @@ test("OMA Messages adapter binds concurrent root/child requests to their OMA tok
   a.model_token = "root-a"; b.model_token = "root-b";
   api.assignments.set(a.session_id, a); api.assignments.set(b.session_id, b);
   api.modelSessions.set("child-a", a.session_id);
-  const adapter = new MessagesAdapter(api);
+  const adapter = new AiSdkAdapter(omaModelOptions(api));
   const streams = await Promise.all([collect(adapter.stream(options(a.session_id))), collect(adapter.stream(options(b.session_id))),
     collect(adapter.stream(options("child-a")))]);
   expect(requests.map((request) => request.headers.get("Authorization")).sort()).toEqual(["Bearer root-a", "Bearer root-a", "Bearer root-b"]);
   expect(requests.map((request) => request.headers.get("X-Claude-Code-Agent-Id"))).toEqual([null, null, "child-a"]);
+  expect(requests.every((request) => request.headers.get("user-agent")?.startsWith("deepseek-harness/"))).toBe(true);
   for (const [index, chunks] of streams.entries()) {
     expect(chunks).toContainEqual({ type: "text-delta", index: 0, text: index === 1 ? "Bearer root-b" : "Bearer root-a" });
     expect(chunks.at(-1)?.type).toBe("finish");
@@ -63,7 +65,7 @@ test("OMA Messages adapter streams tools and preserves signed history", async ()
       response: { format: "oma-messages-v1" }, blocks: [{ signature: "opaque-signature" }, { signature: "" }],
     } },
   }, { role: "user", content: [{ type: "text", text: "continue" }] }];
-  const chunks = await collect(new MessagesAdapter(api).stream(request));
+  const chunks = await collect(new AiSdkAdapter(omaModelOptions(api)).stream(request));
   expect(body.messages.flatMap((message: Payload) => message.content)).toContainEqual({ type: "thinking", thinking: "saved thinking", signature: "opaque-signature" });
   expect(chunks.some((chunk) => chunk.type === "block-end" && chunk.block.type === "tool-call" && chunk.block.arguments === '{"command":"pwd"}')).toBe(true);
   const finish = chunks.find((chunk) => chunk.type === "finish");
@@ -71,7 +73,7 @@ test("OMA Messages adapter streams tools and preserves signed history", async ()
     type: "finish", reason: { kind: "tool-calls" },
     replayState: {
       response: { format: "oma-messages-v1", stopReason: "tool_use" },
-      blocks: [{ signature: "" }],
+      blocks: [{ index: 0 }],
     },
   });
   const saved = request.messages[1]!;
@@ -81,7 +83,7 @@ test("OMA Messages adapter streams tools and preserves signed history", async ()
     response: { kind: "pi-ai", version: 2, api: "anthropic-messages", provider: "oma", model: "test-model", stopReason: "stop" },
     blocks: [{ type: "reasoning", thinkingSignature: "pi-signature" }, { type: "text" }],
   };
-  await collect(new MessagesAdapter(api).stream(request));
+  await collect(new AiSdkAdapter(omaModelOptions(api)).stream(request));
   expect(body.messages.flatMap((message: Payload) => message.content)).toContainEqual({ type: "thinking", thinking: "saved thinking", signature: "pi-signature" });
 });
 
@@ -93,8 +95,8 @@ test("OMA Messages adapter rejects incomplete streams and honors cancellation", 
     return eventsResponse(textEvents("partial").slice(0, -1));
   }) as typeof fetch);
   const a = assignment(); api.assignments.set(a.session_id, a);
-  const adapter = new MessagesAdapter(api);
-  await expect(collect(adapter.stream(options(a.session_id)))).rejects.toThrow("terminal marker");
+  const adapter = new AiSdkAdapter(omaModelOptions(api));
+  await expect(collect(adapter.stream(options(a.session_id)))).rejects.toMatchObject({ code: "TRANSPORT" });
   expect(requests).toBe(1);
   await expect(collect(adapter.stream({ ...options(a.session_id), signal: AbortSignal.abort() }))).rejects.toThrow();
   expect(requests).toBe(1);
@@ -112,7 +114,7 @@ test("OMA Messages adapter maps Anthropic controls, tools, results and cache usa
   const a = assignment(); api.assignments.set(a.session_id, a);
   const request = options(a.session_id);
   request.system = "instructions";
-  request.maxTokens = 1234; request.temperature = 0.2; request.stop = ["END"];
+  request.maxTokens = 1234; request.temperature = 0.2;
   request.tools = [{ name: "Bash", description: "Run a command", parameters: { type: "object" } }];
   request.messages.push({
     id: MessageId("tool-call"), role: "assistant", source: { kind: "model", provider: "oma", model: "test-model" },
@@ -122,13 +124,14 @@ test("OMA Messages adapter maps Anthropic controls, tools, results and cache usa
     toolCallId: ToolCallId("call"),
     content: [{ type: "text", text: "permission denied" }], isError: true,
   });
-  const chunks = await collect(new MessagesAdapter(api).stream(request));
-  expect(body).toMatchObject({ model: "test-model", stream: true, system: "instructions", max_tokens: 1234,
-    temperature: 0.2, stop_sequences: ["END"], tools: [{ name: "Bash", input_schema: { type: "object" } }] });
+  const chunks = await collect(new AiSdkAdapter(omaModelOptions(api)).stream(request));
+  expect(body).toMatchObject({ model: "test-model", stream: true, system: [{ type: "text", text: "instructions" }], max_tokens: 1234,
+    temperature: 0.2, tools: [{ name: "Bash", input_schema: { type: "object" } }] });
   expect(body).not.toHaveProperty("thinking");
+  expect(body.tools[0]).not.toHaveProperty("eager_input_streaming");
   expect(body.messages[1].content).toEqual([{ type: "tool_use", id: "call", name: "Bash", input: { command: "pwd" } }]);
   expect(body.messages[2].content).toEqual([{ type: "tool_result", tool_use_id: "call", is_error: true,
-    content: [{ type: "text", text: "permission denied" }] }]);
+    content: "permission denied" }]);
   expect(chunks).toContainEqual({ type: "usage", usage: {
     inputTokens: 10, outputTokens: 5, cacheReadTokens: 12, cacheWriteTokens: 3,
   } });
@@ -139,12 +142,12 @@ test("OMA Messages adapter rejects HTTP, in-stream and empty response errors", a
   for (const [response, code] of [
     [Response.json({ error: { message: "Service unavailable" } }, { status: 503 }), "SERVER"],
     [Response.json({ error: { message: "Rate limited" } }, { status: 429 }), "RATE_LIMIT"],
-    [eventsResponse([{ type: "error", error: { message: "context window exceeded" } }]), "CONTEXT_WINDOW_EXCEEDED"],
+    [eventsResponse([{ type: "error", error: { type: "invalid_request_error", message: "context window exceeded" } }]), "CONTEXT_WINDOW_EXCEEDED"],
     [eventsResponse(textEvents("empty").filter((event) => !event.type.startsWith("content_block_"))), "EMPTY_RESPONSE"],
   ] as const) {
     const api = new OmaApi("http://model.test", (async (_input, _init) => response) as typeof fetch);
     const a = assignment(); api.assignments.set(a.session_id, a);
-    await expect(collect(new MessagesAdapter(api).stream(options(a.session_id)))).rejects.toMatchObject({ code });
+    await expect(collect(new AiSdkAdapter(omaModelOptions(api)).stream(options(a.session_id)))).rejects.toMatchObject({ code });
   }
 });
 
@@ -270,30 +273,4 @@ test("modern MCP tool interruption closes the original request", async () => {
     expect(await outcome).toBeInstanceOf(Error);
     expect(cancellationNotifications).toBe(0);
   } finally { await executor.close(); }
-});
-
-test("OMA Messages adapter forwards user media references verbatim and rejects assistant media", async () => {
-  let body: Payload = {};
-  const api = new OmaApi("http://model.test", (async (_input, init) => {
-    body = JSON.parse(init!.body as string);
-    return eventsResponse(textEvents("seen"));
-  }) as typeof fetch);
-  const a = assignment(); api.assignments.set(a.session_id, a);
-  const image = { type: "image", source: { type: "file", file_id: "file_image" }, cache_control: { type: "ephemeral" } };
-  const document = { type: "document", title: "Spec", context: "v2", source: { type: "url", url: "https://example.com/spec.pdf" } };
-  const request = options(a.session_id);
-  request.messages = [{ role: "user", content: [
-    { type: "text", text: "Compare" },
-    { type: "message-media", block: image },
-    { type: "message-media", block: document },
-  ] }];
-  await collect(new MessagesAdapter(api).stream(request));
-  expect(body.messages).toEqual([{ role: "user", content: [{ type: "text", text: "Compare" }, image, document] }]);
-
-  const assistant = options(a.session_id);
-  assistant.messages.push({
-    id: MessageId("assistant-media"), role: "assistant", source: { kind: "model", provider: "oma", model: "test-model" },
-    content: [{ type: "message-media", block: image }],
-  });
-  await expect(collect(new MessagesAdapter(api).stream(assistant))).rejects.toMatchObject({ code: "INVALID_ARGS" });
 });

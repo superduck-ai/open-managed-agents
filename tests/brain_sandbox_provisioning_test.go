@@ -1,11 +1,15 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,6 +17,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
@@ -23,9 +28,9 @@ type provisioningCodeSessions struct {
 	dispatches atomic.Int32
 }
 
-func (s *provisioningCodeSessions) DispatchWorker(ctx context.Context, credentials codesessions.ManagedAgentCreateResult) error {
+func (s *provisioningCodeSessions) DispatchWorker(ctx context.Context, session db.Session, codeSessionID string) error {
 	s.dispatches.Add(1)
-	return s.Service.DispatchWorker(ctx, credentials)
+	return s.Service.DispatchWorker(ctx, session, codeSessionID)
 }
 
 type provisioningTestProvider struct {
@@ -39,10 +44,11 @@ func (p *provisioningTestProvider) ServiceEndpoint(context.Context, string, int,
 
 func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 	for _, scenario := range []struct {
-		name          string
-		prewarm, fail bool
+		name                 string
+		prewarm, fail, vault bool
 	}{
-		{"failed prewarm does not dispatch", true, true}, {"lazy", false, false}, {"prewarm", true, false},
+		{"failed prewarm does not dispatch", true, true, false}, {"lazy", false, false, false}, {"prewarm", true, false, false},
+		{"lazy vault placeholders", false, false, true}, {"prewarm vault placeholders", true, false, true},
 	} {
 		prewarm := scenario.prewarm
 		t.Run(scenario.name, func(t *testing.T) {
@@ -50,11 +56,24 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			cfg := app.cfg
 			cfg.EnvironmentRunner.AgentMode = "brain"
 			cfg.EnvironmentRunner.BrainSandboxPrewarm = prewarm
-			cfg.CodeSession.UpstreamProxyMITMEnabled = false
+			cfg.CodeSession.UpstreamProxyMITMEnabled = scenario.vault
 			cfg.CodeSession.SandboxAPIBaseURL = "http://sandbox.example.test"
 			agent := createAgent(t, app, `{"name":"lazy","model":"claude-opus-4-6"}`)
 			env := createEnvironment(t, app, `{"name":"lazy","config":{"type":"cloud","networking":{"type":"unrestricted"}}}`)
-			session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+			vaultBinding, expectedPlaceholder := "", ""
+			if scenario.vault {
+				vault := createVault(t, app, `{"display_name":"brain env mount"}`)
+				credential := createVaultCredential(t, app, vault.ID, `{"auth":{"type":"environment_variable","secret_name":"VAULT_TEST","secret_value":"synthetic-mount-canary","networking":{"type":"unrestricted"}}}`)
+				var auth struct {
+					Placeholder string `json:"placeholder"`
+				}
+				if err := json.Unmarshal(credential.Auth, &auth); err != nil {
+					t.Fatal(err)
+				}
+				expectedPlaceholder = auth.Placeholder
+				vaultBinding = `,"vault_ids":[` + quoteJSON(vault.ID) + `]`
+			}
+			session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+vaultBinding+`}`)
 			sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"hello"}]}]}`, defaultTestKey)
 			var discoveries atomic.Int32
 			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -66,19 +85,18 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 				_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"resultType\":\"complete\",\"supportedVersions\":[\"2026-07-28\"],\"capabilities\":{\"tools\":{}}}}\n\n"))
 			}))
 			defer endpoint.Close()
-			broker := &brainTaskRecorder{MemoryBroker: workerevents.NewMemory()}
-			service := &provisioningCodeSessions{Service: codesessions.NewServiceWithCredentials(app.db, app.credentials, slog.Default()).WithWorkerEventBroker(broker)}
+			service := &provisioningCodeSessions{Service: codesessions.NewServiceWithCredentials(app.db, app.credentials, slog.Default()).WithWorkerEventBroker(workerevents.NewMemory())}
 			var creates atomic.Int32
 			providers := make([]*provisioningTestProvider, 2)
 			runners := make([]*environments.Runner, 2)
 			for i := range 2 {
 				providers[i] = &provisioningTestProvider{recordingRunnerProvider: &recordingRunnerProvider{sandboxID: "sandbox-provisioning", beforeCreate: func() {
 					creates.Add(1)
-					wantTasks := 1
+					wantDispatches := int32(1)
 					if prewarm {
-						wantTasks = 0
+						wantDispatches = 0
 					}
-					if len(broker.tasks) != wantTasks {
+					if service.dispatches.Load() != wantDispatches {
 						t.Error("unexpected worker dispatch order")
 					}
 				}}, endpoint: endpoint.URL}
@@ -95,8 +113,8 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			defer cancel()
 			processed, err := runners[0].RunOnce(ctx, "deferred")
 			if scenario.fail {
-				if err == nil || !processed || len(broker.tasks) != 0 || service.dispatches.Load() != 0 {
-					t.Fatalf("failed prewarm dispatched worker: processed=%t err=%v tasks=%d", processed, err, len(broker.tasks))
+				if err == nil || !processed || service.dispatches.Load() != 0 {
+					t.Fatalf("failed prewarm dispatched worker: processed=%t err=%v dispatches=%d", processed, err, service.dispatches.Load())
 				}
 				return
 			}
@@ -125,7 +143,7 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			failures := make([]error, 2)
 			var calls sync.WaitGroup
 			for i := range 2 {
-				calls.Go(func() { urls[i], failures[i] = runners[i].EnsureSessionSandbox(ctx, code) })
+				calls.Go(func() { urls[i], _, failures[i] = runners[i].EnsureSessionSandbox(ctx, code) })
 			}
 			calls.Wait()
 			if failures[0] != nil || failures[1] != nil || urls[0] != endpoint.URL || urls[1] != endpoint.URL || creates.Load() != 1 {
@@ -134,7 +152,27 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			if len(providers[0].launches)+len(providers[1].launches) != 1 {
 				t.Fatal("MCP started more than once")
 			}
-			_, err = runners[1].EnsureSessionSandbox(ctx, code)
+			if scenario.vault {
+				for _, provider := range providers {
+					for _, launch := range provider.launches {
+						var payload struct {
+							Startup struct {
+								Environment map[string]string `json:"environment_variables"`
+							} `json:"startup_context"`
+						}
+						if err := json.Unmarshal(launch.stdin, &payload); err != nil {
+							t.Fatal(err)
+						}
+						if expectedPlaceholder == "" || payload.Startup.Environment["VAULT_TEST"] != expectedPlaceholder {
+							t.Fatal("Vault placeholder missing from Brain sandbox startup")
+						}
+						if strings.Contains(string(launch.stdin), "synthetic-mount-canary") {
+							t.Fatal("Vault secret entered sandbox startup")
+						}
+					}
+				}
+			}
+			_, _, err = runners[1].EnsureSessionSandbox(ctx, code)
 			if err != nil || creates.Load() != 1 {
 				t.Fatalf("warm reuse: %v creates=%d", err, creates.Load())
 			}
@@ -146,7 +184,7 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			if response.StatusCode != http.StatusOK {
 				t.Fatalf("delete session: %d", response.StatusCode)
 			}
-			if _, err := runners[0].EnsureSessionSandbox(ctx, code); err == nil {
+			if _, _, err := runners[0].EnsureSessionSandbox(ctx, code); err == nil {
 				t.Fatal("deleted session provisioned sandbox")
 			}
 		})

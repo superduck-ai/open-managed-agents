@@ -60,8 +60,8 @@ func TestMCPAllowedHostsRejectsMalformedRemoteServerContracts(t *testing.T) {
 	}
 }
 
-func TestParseMCPServerTargetsRejectsNonCanonicalServerNames(t *testing.T) {
-	for _, name := range []string{" local_tunnel", "local_tunnel ", "   "} {
+func TestParseMCPServerTargetsRejectsOverlongServerNames(t *testing.T) {
+	for _, name := range []string{strings.Repeat("测", 256), strings.Repeat("😀", 256)} {
 		snapshot := json.RawMessage(`{"mcp_servers":[{"name":` + strconv.Quote(name) + `,"type":"url","url":"https://mcp.example.test/mcp"}]}`)
 		if _, err := parseMCPServerTargets(snapshot); !errors.Is(err, ErrMalformedAgentSnapshot) {
 			t.Fatalf("name %q: expected ErrMalformedAgentSnapshot, got %v", name, err)

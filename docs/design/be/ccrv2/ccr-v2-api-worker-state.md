@@ -336,7 +336,7 @@ GET 不返回 `ok`、`session_id`、`status`、`worker_epoch`、`worker_status`�
 推荐验证命令：
 
 ```bash
-go test ./tests -run TestCodeSessionWorker -count=1
+go test -tags=integration ./tests -run TestCodeSessionWorker -count=1
 go test ./internal/codesessions ./internal/db -count=1
 ```
 

@@ -21,6 +21,13 @@ sequenceDiagram
   Model->>Bridge: Normal continuation and end_turn
 ```
 
+A sandbox gateway response marked `X-Oma-Sandbox-Not-Forwarded: true` proves
+the call never reached the sandbox. DSH records it as a failed tool result with
+the gateway's error message instead of an unknown outcome. A completed call
+whose content cannot be converted to text is also a failed result, not an
+unknown outcome. Only calls whose sandbox outcome is genuinely unknown block
+the session.
+
 MCP text conversion belongs to the neutral tool execution boundary. For Bash,
 a structured completed execution with zero exit code, empty stderr, false timeout,
 cancellation and truncation flags and no collection errors can expose exact

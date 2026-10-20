@@ -41,7 +41,7 @@ Viewer 包含两个区域：
 ## 转录与对齐
 
 - Session 与每条可见子 Thread 都先建立 SSE 订阅，再从第一页扫完事件历史；扫描期间继续接收实时帧。SSE 正常结束、报错、建连超时或流空闲超时后清理未完成预览，退避重连并重新扫全量历史。流已结束时取消尚未完成的本次历史请求，下一次订阅重新扫描；中断的扫描不能留下可用于跳页的游标或“历史已完整”标记。手动刷新实时 Session 也重新订阅并扫描历史。永久停流的子 Thread 结束加载状态。历史与 SSE 按 JSON 事件 ID 合并，重复事件只展示一次；持久事件与对应的 `event_start`、`event_delta` 帧都展示同一个 `id:`，但 `id:` 不用作 `Last-Event-ID` 回放游标。Thinking 与文本是两组独立的事件 ID。
-- 同 ID 的最终 `agent.message` / `agent.thinking` 通过 SSE 或历史同步到达时，清除对应的临时 delta 帧，由最终事件的完整内容接管展示；已完成的事件不再接受迟到的预览开始。`span.model_request_end.event_ids` 仅清理所列 ID 的未完成预览。不同 ID 的 Worker echo 属于 #393，前端不猜测它与预览的对应关系。
+- 同 ID 的最终 `agent.message` / `agent.thinking` 通过 SSE 或历史同步到达时，清除对应的临时 delta 帧；`agent.message` 由最终正文接管展示，`agent.thinking` 只保留状态摘要。已完成的事件不再接受迟到的预览开始。`span.model_request_end.event_ids` 仅清理所列 ID 的未完成预览。不同 ID 的 Worker echo 属于 #393，前端不猜测它与预览的对应关系。
 - Transcript 内容列、待处理 Action Card 和消息输入框共享最大 `720px` 的居中内容轨道。
 - 三者在窄容器中使用相同的 `16px` 水平留白；滚动条采用覆盖式自动隐藏样式，不允许通过 Composer 或 Action Card 的伪滚动容器预留 gutter。左右边界必须逐像素一致。
 - 转录先按未过滤的事件流建立 speaker turn，再按 model request bracket 建立 iteration，最后应用搜索；搜索不得把原本由 User、idle、outcome、status 或 speaker 变化分开的 turn 重新合并。
@@ -50,12 +50,12 @@ Viewer 包含两个区域：
 - User 使用 `session-speaker-user/10` 角色色背景和 `0.5px session-border` 的轻量 panel bubble，圆角 `10px`、水平内边距 `11px`、垂直内边距 `6px`；Bubble 高度由正文自然决定，不设置会在单行正文下方制造额外空白的固定最小高度。Agent 名称和时间在连续 turn 中只展示一次；每个 Agent iteration 使用 `10px` 圆角、`0.5px` 语义边框、`10px 4px` 内边距和 `5px` 间距，Agent text、Thinking 和 Tool Call 在 panel 内保持 `6px 2px` 行内节奏。idle、outcome 和 status 等系统边界保持全宽，不伪装成对话气泡。
 - Agent 标签使用 `session-speaker-agent` 主题变量，User 标签使用 `session-speaker-user`；两个变量必须同时定义浅色和深色值，不使用 chart token 或硬编码颜色冒充领域语义。
 - Agent 消息在流式增量到达时和完成后共用 `react-markdown` 与 `remark-gfm` 渲染 CommonMark/GFM；每次增量更新当前 Markdown，结束时由最终事件内容接管，不从纯文本切换渲染方式。支持标题、有序/无序/嵌套列表、引用、任务列表、删除线、表格、代码、链接和 Markdown 图片。原始 HTML 不解析；URL 只允许 HTTP(S)、邮件、页内锚点与站内根路径；代码块复用现有 Highlight.js 渲染。单条正文按生产 JS 的 UTF-16 `length/slice` 语义最多渲染前 `50,000` 个字符，超限时显示原始总字符数；普通 Markdown 与 fenced code 在流式和完成态均使用同一上限。
-- Agent 正文与 Thinking 摘要都复用 shadcn `Bubble/BubbleContent`；iteration 内使用无额外卡片层级的 `ghost` variant，正文保持 Markdown 语义，Thinking 使用紧凑的 ghost Button。Thinking 保留单行斜体摘要 `Thought for {duration}` 或 `Thinking…`，后端按 CMA 契约只为 thinking 发送 `event_start`、不发送增量，最终 `agent.thinking` 也不含正文（改动前存储的旧事件在读取时同样隐藏正文），因此思考只显示摘要，历史思考默认折叠，点击摘要可展开或收起。思考正文在明暗主题下均使用灰色 muted-foreground，包括 Markdown 子元素。无正文或 redacted thinking 仅显示摘要，不展示签名或加密数据。
+- Agent 正文与 Thinking 摘要都复用 shadcn `Bubble/BubbleContent`；iteration 内使用无额外卡片层级的 `ghost` variant，正文保持 Markdown 语义，Thinking 使用紧凑的 ghost Button。Thinking 保留单行斜体摘要 `Thought for {duration}` 或 `Thinking…`。新 thinking 块在开始时发布无正文状态，不传 thinking 内容 delta，结束由原 model request bracket 收敛；相同 ID 的 Worker 预览、回传与重试保持同一条记录。改动前存储的带正文 thinking 在读取时由后端隐藏正文，前端仍保留折叠和 Markdown 展示能力，正文在明暗主题下均使用灰色 muted-foreground，包括 Markdown 子元素。无正文或 redacted thinking 仅显示摘要，不展示签名或加密数据。
 - Agent turn 挂载时只要仍是 open 状态，就播放一次 `180ms ease-out` 入场；首次加载和切换 Lane 后重新挂载的 open turn 也会播放，已经闭合的 turn 直接显示最终状态。`prefers-reduced-motion: reduce` 下不播放位移或缩放。
 - 工具调用保持 `24–28px` 的单行结构，展示工具名、截断输入摘要、执行状态和耗时；点击后在 Inspector 的 Events 页签查看原始事件。
 - Transcript 耗时统一优先使用对应语义的明确上报值（包括 `0`），仅在缺失时使用时间差计算。Thinking 优先使用事件上报耗时，缺失时使用请求开始至 Thinking 事件的时间差，与 `Thought for {duration}` 摘要共用取值；Agent 正文优先使用上报的模型请求耗时，其次使用事件上报耗时，均缺失时使用模型请求总时间差。没有模型请求记录的独立 Agent 消息仍在标题行展示已知耗时。事件执行耗时在解析时拒绝负数及非有限值，保留有效的零值。工具优先使用有效的结果事件上报耗时，其次使用有效的调用事件上报耗时，均缺失或无效时根据确认（若有）或调用事件至结果事件的 `processed_at` 时间差计算，不含确认前的等待时间。Inspector 工具调用表格与详情也区分明确的零值和未知值。并行工具分组展示已知执行耗时的最大值。缺失耗时保留为未知并隐藏标签，明确上报的 `0` 仍显示为零；进行中的模型内容不显示伪造的零耗时。耗时悬浮提示与可见数字使用同一数值。
 - Markdown 的交互链接不能嵌套在事件选择按钮中；正文链接保持自身语义，事件选择使用独立可访问控件。
-- 原始事件审计统一位于 Inspector Events，固定使用 `Event / Preview / Time` 三列，并对事件 namespace 做轻量着色。
+- 原始事件审计统一位于 Inspector Events，固定使用 `Event / Preview / Time` 三列，并对事件 namespace 做轻量着色。前端由 `event_start` 生成的未完成流式占位（`is_streaming: true` 且无 `processed_at`）只参与 Transcript 实时渲染，不列为独立审计事件；正式消息到达后按服务端事件展示，避免占位与正式消息同时出现为两条 `agent.message`。实际未处理的输入事件仍显示 `queued`。
 
 ## 滚动与高度
 

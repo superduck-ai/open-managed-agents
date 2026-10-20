@@ -101,6 +101,7 @@ type ServerDeps struct {
 	PlatformStore          platformsession.Store
 	PlatformAuth           *platformauth.EmailProvider
 	CodeSessionCredentials *codesessions.SessionCredentials
+	BrainClaims            codesessions.BrainClaimAuthenticator
 	SandboxTimeoutExtender codesessions.SandboxTimeoutExtender
 	FilestoreCredentials   *filestoreapi.TokenCredentials
 	FilestoreService       *filestoreapi.Service
@@ -167,18 +168,18 @@ func NewServer(deps ServerDeps) *Server {
 		admin:                adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")),
 		agents:               agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer),
 		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
-		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer),
+		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims),
 		deployments:          deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, componentLogger("deployments")),
 		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
 		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer).WithPrebuilds(deps.Prebuilds),
 		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
 		filestore:            filestoreHandler,
 		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
-		messages:             messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithAttachments(filestoreService),
+		messages:             messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithFileStore(deps.ObjectStore),
 		models:               modelsapi.NewHandler(deps.DB),
 		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")),
 		skills:               skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")),
-		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")),
+		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")).WithRefreshLease(oauthRefreshLease),
 		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 		tunnelBroker:         deps.TunnelBroker,
 	}
@@ -373,6 +374,7 @@ func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 		r.Mount("/mcp", s.tunnelIngress)
 	}
 	r.Post("/messages", s.messages.Create)
+	r.Post("/chat/completions", s.messages.ChatCompletions)
 	r.Mount("/messages/batches", s.batch)
 	r.Mount("/models", s.models)
 	r.Mount("/organizations", s.admin)

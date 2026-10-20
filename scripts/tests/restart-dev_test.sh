@@ -6,6 +6,9 @@ fixture_dir="$(mktemp -d)"
 fixture_dir="$(cd "$fixture_dir" && pwd -P)"
 trap 'rm -rf "$fixture_dir"' EXIT
 mkdir -p "$fixture_dir/repo/scripts" "$fixture_dir/bin"
+git init -q "$fixture_dir/repo"
+mkdir -p "$fixture_dir/repo/.worktrees/other"
+git init -q "$fixture_dir/repo/.worktrees/other"
 cp "$repo_root/scripts/restart-dev.sh" "$fixture_dir/repo/scripts/restart-dev.sh"
 cat > "$fixture_dir/bin/herdr" <<'MOCK'
 #!/usr/bin/env bun
@@ -19,7 +22,7 @@ await Bun.write(log, previous + JSON.stringify(args) + "\n");
 const reply = result => console.log(JSON.stringify({ result }));
 const old = ["oma-server", "oma-brain", "web"].map((label, i) => ({ pane_id: `old-${i}`, tab_id: "old-tab", label, cwd: root }));
 if (args[0] === "pane" && args[1] === "list") {
-  reply({ panes: [...(["replace", "busy", "self"].includes(mode) ? old : []), { pane_id: "foreign", label: "web", cwd: "/another-worktree" }] });
+  reply({ panes: [...(["replace", "busy", "self"].includes(mode) ? old : []), { pane_id: "foreign", label: "web", cwd: root + "/.worktrees/other" }] });
 } else if (args[0] === "tab" && args[1] === "create") {
   reply({ tab: { tab_id: "new-tab" }, root_pane: { pane_id: "new-server" } });
 } else if (args[1] === "split") {

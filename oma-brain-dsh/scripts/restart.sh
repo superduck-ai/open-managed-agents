@@ -32,8 +32,13 @@ if [[ -f "$ENV_FILE" ]]; then
     echo "Bound environments route through portless; install it with: npm install -g portless" >&2
     exit 1
   fi
-  export OMA_API_URL="$(portless get "$API_ROUTE" --no-worktree 2>/dev/null || echo "http://${API_ROUTE}.localhost")"
-  export OMA_BRAIN_CLAIM_TOKEN="$(cat "$REPO_ROOT/.run/generated/secrets/brain-claim-token")"
+  OMA_API_URL="$(portless get "$API_ROUTE" --no-worktree 2>/dev/null || echo "http://${API_ROUTE}.localhost")"
+  OMA_BRAIN_CLAIM_TOKEN="$(cat "$REPO_ROOT/.run/generated/secrets/brain-claim-token")"
+  if [[ -z "${OMA_BRAIN_CLAIM_TOKEN//[[:space:]]/}" ]]; then
+    echo "Bound environment Brain claim token is empty; restore the generated token before restarting" >&2
+    exit 1
+  fi
+  export OMA_API_URL OMA_BRAIN_CLAIM_TOKEN
 fi
 
 STATE_DIR="$PROJECT_DIR/.run"

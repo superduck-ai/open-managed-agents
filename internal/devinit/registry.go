@@ -154,7 +154,7 @@ func uniqueName(base string, live map[string]registryEntry) string {
 
 func pathExists(path string) bool {
 	_, err := os.Stat(path)
-	return err == nil
+	return !errors.Is(err, os.ErrNotExist)
 }
 
 func (r Registry) read() (envRegistry, error) {

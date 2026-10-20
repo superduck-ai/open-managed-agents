@@ -58,7 +58,7 @@ bun run restart
 
 ## Worktree development environments
 
-When the repository worktree is bound to a dev environment (`.run/slot.json`
+When the repository worktree is bound to a dev environment (`.run/env.json`
 created by `just dev-init`), `scripts/restart.sh` and the repository-level
 `just restart-brain` read the environment's API address and Brain claim token
 from `.run/generated/` and export `OMA_API_URL` and `OMA_BRAIN_CLAIM_TOKEN`

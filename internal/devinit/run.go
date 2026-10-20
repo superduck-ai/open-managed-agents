@@ -202,7 +202,7 @@ func loadRunState(repoRoot, initFile string, base config.Config, spec Spec, prov
 	if credentialsFound && credentials.EnvID != binding.EnvID {
 		return preparedRun{}, fmt.Errorf("credentials file belongs to a different environment identity")
 	}
-	if !credentialsFound && state.Phase != phasePendingSecrets && state.Phase != phaseInfra && state.Phase != phaseMigrated {
+	if !credentialsFound && !canCreateCredentials(state) {
 		return preparedRun{}, fmt.Errorf("credentials file %s is missing after keys were created; plaintext keys cannot be recovered from the database hash, rotate them explicitly", layout.CredentialsFile)
 	}
 	return preparedRun{
@@ -445,4 +445,11 @@ func renameWorkspace(ctx context.Context, database *db.DB, existing db.AdminWork
 		return db.AdminWorkspace{}, fmt.Errorf("workspace %s disappeared during update", existing.ExternalID)
 	}
 	return updated, err
+}
+
+func canCreateCredentials(state State) bool {
+	if state.Organization != nil || state.User != nil || len(state.Workspaces) > 0 {
+		return false
+	}
+	return state.Phase == phasePendingSecrets || state.Phase == phaseInfra || state.Phase == phaseMigrated
 }

@@ -32,7 +32,7 @@ just dev-init
 4. 在本机共享目录缺少 provider 文件时，创建 `~/.oma-dev/model-providers.yaml` 模板。新 worktree 的初始化文件会引用它的绝对路径。
 5. 启动当前环境独立的 PostgreSQL、Redis、三节点 NATS、MinIO 和 e2b-local，应用数据库迁移，创建开发账号、两个 workspace、四个客户端 API key，并分别写入共享 provider 定义。
 
-已有配置、共享 provider 文件和密钥不会被覆盖或轮换。环境已绑定但人工输入配置丢失时会报错，要求恢复原文件，避免误生成新 Vault 主密钥导致旧数据无法解密。
+默认入口只在首次缺少输入时为当前 worktree 准备密钥；若已提供 `fixed_secrets_dir` 中的 JWT 和代理 CA 私钥，则复用并复制到 `.run/generated/secrets/`。已有配置、共享 provider 文件和密钥不会被覆盖或隐式轮换。环境已绑定但人工输入配置丢失时会报错，要求恢复原文件，避免误生成新 Vault 主密钥导致旧数据无法解密。
 
 首次使用这台机器时，还没有可用的 LLM 凭证。命令会先创建配置文件，然后在 provider 校验处提示缺少 key。按下一节填写共享文件，再执行同一条 `just dev-init` 即可继续，不会重复生成密钥。
 

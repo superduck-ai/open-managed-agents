@@ -77,6 +77,9 @@ func teardownTargets(repoRoot string, registry Registry, opts TeardownOptions) (
 	if !found {
 		return nil, fmt.Errorf("environment %s is not registered", binding.Name)
 	}
+	if entry.Worktree != repoRoot || binding.Worktree != repoRoot {
+		return nil, fmt.Errorf("environment %s does not belong to the current worktree; refusing to tear it down", binding.Name)
+	}
 	if entry.EnvID != binding.EnvID {
 		return nil, fmt.Errorf("registered environment %s belongs to a different identity; refusing to tear it down", binding.Name)
 	}

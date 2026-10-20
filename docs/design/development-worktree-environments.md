@@ -137,7 +137,8 @@ shell，全部停止后关闭这些旧分屏。未知程序和其他 worktree �
 | 前端监听地址 | loopback 动态端口，记录在 state.json runtime |
 | 后端稳定地址 | `http://oma-feature-x-api.localhost` |
 | 前端稳定地址 | `http://oma-feature-x-web.localhost` |
-| Vite 代理目标与 DSH API 地址 | portless 发现的后端名字地址 |
+| Vite `VITE_API_PROXY_TARGET` | runtime API 端口存在时直连 `http://127.0.0.1:<api_port>`，避免 portless 二次代理回环 |
+| DSH `OMA_API_URL` | portless 发现的后端名字地址 |
 | PostgreSQL、Redis、NATS、MinIO | 本环境 Compose 栈中的独立实例与卷 |
 | 数据库和 bucket | 沿用基底配置名称，各栈内部独立 |
 | Brain claim token、客户端 API key | 本环境独立随机生成 |
@@ -466,8 +467,7 @@ up -d` 协调重建；teardown 用 `compose down -v` 连数据卷删除；孤儿
   与服务间统一使用 `http://oma-<name>-{api,web}.localhost`（80 端口；未迁移
   到 80 前由 `portless get` 发现实际地址）。未安装 portless 时绑定环境拒绝
   启动；sandbox 面（tunnel.public_base_url）与直接访问仍用裸端口。重启脚本
-  自动启动 proxy（80 端口首次需要 sudo）、注册 alias，跨服务引用（Vite 代理
-  目标、DSH `OMA_API_URL`）一律走名字。
+  自动启动 proxy（80 端口首次需要 sudo）、注册 alias；DSH `OMA_API_URL` 使用名字。Vite 在有 runtime API 端口时直连后端 loopback，缺少该端口时才回退到名字。
 - 归属登记：同一 Git clone 的名字与 env_id 登记在 Git common dir 的
   `oma-devinit-registry.json`，使用 flock 互斥。创建后立即保存 `.run/env.json`，
   在固定密钥复制和任何基础设施操作前确定环境身份。同一路径的未完成登记在
@@ -544,3 +544,7 @@ flowchart TD
 普通单测使用隔离的临时 Git clone/worktree 与模拟 Docker，覆盖确认参数、跨仓库拒绝、身份不符、Compose 失败保留状态、停止服务后删除数据卷、清理后保留目录与私钥、重复清理，以及主 checkout、脏文件和锁定 worktree 的保留；进程测试校验命令/cwd 归属。测试不清理开发者的实际环境。
 
 真实 PostgreSQL 初始化恢复测试按仓库集成测试约定运行：`TEST_MIGRATION_DATABASE_URL=... go test -tags=integration ./internal/db ./internal/devinit -run 'TestDevIdentityPostgreSQL|TestAPIKeyRecoveryPostgreSQL' -count=1`。默认 `just test` 不依赖真实数据库。
+
+审查补充的恢复与重启约束：凭证文件丢失时，只要组织或客户端 key 身份已预留，即使 phase 因重跑回退到 infra/migrated，也必须拒绝生成新明文 key。回收前同时验证 registry 和 binding 的 worktree 路径；Stat 权限或 I/O 错误不作为孤儿依据。初始化 YAML 只接受一个文档。Compose up 失败与健康检查失败均进入有上限的重新探测重试。
+
+后端绑定环境在停止旧实例前完成二进制构建；`start-locked` 使用机器本地 flock，从端口探测、配置写入、alias 注册一直保护到 lsof 确认该后端 PID 实际监听。通过继承的 FD 3 通知锁持有者释放锁，随后继续等待前台服务退出。不同 worktree 可以并行编译，但端口分配与开始监听串行执行。Herdr panel 与后台监听进程的归属均以 Git worktree 顶层目录精确匹配，嵌套 linked worktree 不作为当前仓库处理。Brain token 读取失败或为空时在启动前报错。

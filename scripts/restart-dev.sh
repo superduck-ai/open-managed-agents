@@ -29,7 +29,7 @@ if [[ "${HERDR_ENV:-}" != 1 || -z "${HERDR_WORKSPACE_ID:-}" ]]; then
   exit 1
 fi
 
-for tool in herdr just bun; do
+for tool in herdr just bun git; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "Missing command: $tool" >&2
     exit 1
@@ -54,10 +54,11 @@ find_service_panes() {
   herdr pane list --workspace "$HERDR_WORKSPACE_ID" | bun -e '
     const { result } = JSON.parse(await Bun.stdin.text());
     const root = process.argv[1];
+    const owns = cwd => Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--show-toplevel"]).stdout.toString().trim() === root;
     const names = ["oma-server", "oma-brain", "web"];
     for (const pane of result.panes) {
       const cwd = pane.foreground_cwd ?? pane.cwd;
-      if (names.includes(pane.label) && cwd && (cwd === root || cwd.startsWith(root + "/"))) {
+      if (names.includes(pane.label) && cwd && owns(cwd)) {
         console.log(pane.pane_id + "|" + pane.label);
       }
     }
@@ -80,7 +81,7 @@ pane_process_state() {
     }
     const [root, recipe] = process.argv.slice(1);
     const known = processes.some(p => {
-      if (!p.cwd || (p.cwd !== root && !p.cwd.startsWith(root + "/"))) return false;
+      if (!p.cwd || Bun.spawnSync(["git", "-C", p.cwd, "rev-parse", "--show-toplevel"]).stdout.toString().trim() !== root) return false;
       const command = p.cmdline ?? p.argv?.join(" ") ?? "";
       if (command.includes(recipe)) return true;
       if (recipe === "restart-server") return /go run \.|\/exe\/open-managed-agents/.test(command);

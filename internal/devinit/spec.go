@@ -1,8 +1,10 @@
 package devinit
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -70,13 +72,20 @@ func loadStrictYAML(path string, target any) error {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
 	var document yaml.Node
-	if err := yaml.Unmarshal(data, &document); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&document); errors.Is(err, io.EOF) {
+		return fmt.Errorf("%s must be a YAML mapping", path)
+	} else if err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
 	if len(document.Content) == 0 {
 		return fmt.Errorf("%s must be a YAML mapping", path)
 	}
-	if document.Kind == yaml.DocumentNode && len(document.Content) > 1 {
+	var extra yaml.Node
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
 		return fmt.Errorf("%s: multiple YAML documents are not supported", path)
 	}
 	root := document.Content[0]

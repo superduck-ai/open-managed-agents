@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 CONFIG_PATH="$REPO_ROOT/.run/config.yaml"
 ENV_FILE="$REPO_ROOT/.run/env.json"
 STATE_FILE="$REPO_ROOT/.run/generated/state.json"
@@ -23,7 +23,7 @@ process_cwd() {
 pid_is_from_current_repo() {
   local pid="$1" cwd
   cwd="$(process_cwd "$pid")"
-  [[ -n "$cwd" && ( "$cwd" == "$REPO_ROOT" || "$cwd" == "$REPO_ROOT"/* ) ]]
+  [[ -n "$cwd" ]] && [[ "$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" == "$REPO_ROOT" ]]
 }
 
 json_field() {
@@ -112,6 +112,17 @@ export CONFIG_FILE="$CONFIG_PATH"
 "$REPO_ROOT/scripts/generate-go.sh" --cached
 
 if [[ "$BOUND" -eq 1 ]]; then
+  SERVER_BINARY="$REPO_ROOT/tmp/dev-server/exe/open-managed-agents"
+  if [[ "${1:-}" != --start-locked ]]; then
+    mkdir -p "$(dirname "$SERVER_BINARY")"
+    (cd "$REPO_ROOT" && go build -o "$SERVER_BINARY" .)
+    cd "$REPO_ROOT"
+    exec go run ./cmd/dev-init start-locked bash "$SCRIPT_DIR/restart-server.sh" --start-locked
+  fi
+  if [[ "${OMA_START_LOCK_FD:-}" != 3 ]]; then
+    echo "Missing backend startup lock" >&2
+    exit 1
+  fi
   PREVIOUS_PORT="$(previous_runtime_port api_port)"
   stop_previous_listener "$PREVIOUS_PORT"
   PORT="$(probe_free_port 40000)"
@@ -143,4 +154,24 @@ fi
 echo "Starting claude-api-server with $CONFIG_FILE in foreground"
 echo "Press Ctrl+C to stop"
 cd "$REPO_ROOT"
-exec go run .
+if [[ "$BOUND" -eq 0 ]]; then
+  exec go run .
+fi
+"$SERVER_BINARY" 3>&- &
+SERVER_PID=$!
+trap 'kill -TERM "$SERVER_PID" 2>/dev/null || true' EXIT INT TERM
+READY_DEADLINE=$((SECONDS + 180))
+while [[ -z "$(lsof -nP -a -p "$SERVER_PID" -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null || true)" ]]; do
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    wait "$SERVER_PID"
+    exit 1
+  fi
+  if ((SECONDS >= READY_DEADLINE)); then
+    echo "Backend did not bind :$PORT within 180 seconds" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+printf . >&3
+exec 3>&-
+wait "$SERVER_PID"

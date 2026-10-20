@@ -41,18 +41,6 @@ const (
 
 var stackServices = []string{"postgres", "redis", "nats", "nats-2", "nats-3", "minio"}
 
-// EnsureStack brings the per-environment compose stack up: an already healthy
-// stack is reused untouched; otherwise compose reconciles it and every
-// service healthcheck is awaited. Health is judged from this project's own
-// container states — never from bare port probes, which another environment
-// can answer and cause a false reuse. When reconciliation fails (for example
-// a host-network port squatted by another stack), every port is re-probed
-// and the stack is recreated, up to stackReconcileAttempts times.
-// EnsureStack brings the per-environment compose stack up. Port truth, in
-// order: (1) ports actually published by this project's running containers,
-// (2) a fully healthy stack on the recorded ports, (3) a reconcile with the
-// recorded or probed ports. The container adoption step makes concurrent
-// writers converge: whatever stack is actually running wins.
 func EnsureStack(ctx context.Context, repoRoot string, binding EnvBinding, previous *StackPorts) (StackPorts, error) {
 	unlock, err := lockStack(binding)
 	if err != nil {
@@ -95,9 +83,8 @@ func reconcileStack(ctx context.Context, repoRoot string, binding EnvBinding, pr
 		command := composeCommand(ctx, repoRoot, binding, "up", "--detach")
 		output, err := command.CombinedOutput()
 		if err != nil {
-			return StackPorts{}, fmt.Errorf("compose up for %s: %s: %w", binding.Name, strings.TrimSpace(string(output)), err)
-		}
-		if err := awaitStack(ctx, repoRoot, binding, ports); err == nil {
+			lastErr = fmt.Errorf("compose up for %s: %s: %w", binding.Name, strings.TrimSpace(string(output)), err)
+		} else if err := awaitStack(ctx, repoRoot, binding, ports); err == nil {
 			return ports, nil
 		} else {
 			lastErr = err

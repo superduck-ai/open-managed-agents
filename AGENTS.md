@@ -3,7 +3,7 @@
 ## 本地重启脚本
 
 - 在仓库根目录使用 `just restart-server` 重启本地后端服务，地址为 `127.0.0.1:38080`。
-- `just restart-server` 会调用 `./scripts/restart-server.sh`；未绑定环境时按 `PORT`（默认 `38080`）停止旧监听进程，并使用 `.run/config.yaml`。绑定环境使用下节的归属检查、动态端口和生成配置规则，最后以前台方式执行 `go run .`。
+- `just restart-server` 会调用 `./scripts/restart-server.sh`；未绑定环境时按 `PORT`（默认 `38080`）停止旧监听进程，并使用 `.run/config.yaml`。绑定环境使用下节的归属检查、动态端口和生成配置规则，最后以前台方式运行服务；绑定环境先构建二进制，再在机器级锁内完成端口分配和开始监听，未绑定环境继续执行 `go run .`。
 - 仅在 `server.addr` 已改为其他端口时，才使用 `PORT=... just restart-server` 指定需要释放的对应端口。
 - 如果修改了 `web/` 下的前端代码，在使用浏览器或 SuperDuck 验证前，也要从仓库根目录执行 `just restart-web` 重启前端开发服务器。该命令会调用 `./scripts/restart-web.sh`，只停止当前仓库路径启动的 Vite 监听进程；如果目标端口被其他路径的进程占用，则保留该进程并自动选择后续可用端口以前台方式启动前端。
 

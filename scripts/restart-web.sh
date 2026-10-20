@@ -33,7 +33,7 @@ process_cwd() {
 pid_is_from_current_repo() {
   local pid="$1" cwd
   cwd="$(process_cwd "$pid")"
-  [[ -n "$cwd" && ( "$cwd" == "$REPO_ROOT" || "$cwd" == "$REPO_ROOT"/* ) ]]
+  [[ -n "$cwd" ]] && [[ "$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" == "$REPO_ROOT" ]]
 }
 
 json_field() {

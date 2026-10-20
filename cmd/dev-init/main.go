@@ -59,6 +59,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 		return devinit.WriteInfo(report, found, stdout)
+	case "start-locked":
+		return devinit.StartLocked(context.Background(), args[1:], stdout, stderr)
 	case "set-runtime":
 		return runSetRuntime(args[1:])
 	case "teardown":

@@ -35,14 +35,16 @@ dev-init *args:
 
 # Tear down the bound environment, or every orphaned one with --orphans; destructive, requires --yes.
 dev-teardown *args:
+  ./scripts/generate-go.sh --cached
   go run ./cmd/dev-init teardown {{ args }}
 
 dev-recycle *args:
   ./scripts/dev-recycle.sh {{ args }}
 
 # Show the current worktree environment binding, addresses and init state.
-slot-info:
-  go run ./cmd/dev-init slot-info
+slot-info *args:
+  ./scripts/generate-go.sh --cached
+  go run ./cmd/dev-init slot-info {{ args }}
 
 # Restart the Brain (oma-brain-dsh) in foreground using the bound environment when present.
 restart-brain:

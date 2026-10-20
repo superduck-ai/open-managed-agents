@@ -48,6 +48,7 @@ func writeSpecFile(t *testing.T, content string) string {
 func TestLoadSpecRejectsMalformedInputs(t *testing.T) {
 	cases := map[string]string{
 		"unknown field":        strings.Replace(validSpec, "organization:", "mystery: 1\norganization:", 1),
+		"multiple documents":   validSpec + "\n---\nversion: 1\n",
 		"null value":           strings.Replace(validSpec, "name: OMA Local", "name:", 1),
 		"wrong version":        strings.Replace(validSpec, "version: 1", "version: 2", 1),
 		"invalid email":        strings.Replace(validSpec, "test@oma.ai", "not-an-email", 1),
@@ -121,6 +122,7 @@ func TestLoadModelProvidersRejectsMalformedInputs(t *testing.T) {
 	}
 	base := strings.Replace(validProviders, "./compatible-api-key", keyFile, 1)
 	cases := map[string]string{
+		"multiple documents":  base + "\n---\nversion: 1\n",
 		"unknown field":       strings.Replace(base, "providers:", "mystery: 1\nproviders:", 1),
 		"invalid slug":        strings.Replace(base, "name: primary", "name: primary\n    slug: Invalid/slug", 1),
 		"duplicate slug":      strings.Replace(strings.Replace(base, "name: primary", "name: primary\n    slug: shared", 1), "name: compatible", "name: compatible\n    slug: shared", 1),

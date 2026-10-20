@@ -19,6 +19,16 @@ export class CcrSubagentBridge implements SubagentBridge {
     }
     if (state.status !== "idle") throw new Error("Subagent thread is running or archived");
   }
+  async archivedThreads(threadIds: string[], signal: AbortSignal): Promise<string[]> {
+    if (!this.session.backend.getSubagentThread) throw new Error("Authoritative subagent thread state is unavailable");
+    const archived: string[] = [];
+    for (const id of threadIds) {
+      const state = await this.session.backend.getSubagentThread(this.session.id, id, signal);
+      if (state.id !== id) throw new Error("Invalid authoritative subagent thread identity");
+      if (state.archived || state.status === "terminated") archived.push(id);
+    }
+    return archived;
+  }
   threads(): SubagentThread[] { return this.session.state.threads ??= []; }
   bindPersistence(threadId: string): void {
     (this.session.ctx.sessionPersistence as CcrPersistence).bindThread(threadId, this.session.id);

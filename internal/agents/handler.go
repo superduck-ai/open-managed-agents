@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -422,7 +423,7 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request, agentID strin
 
 func (h *Handler) stateFromCreate(r *http.Request, principal auth.Principal, agentID string, body *agentMutationRequest) (agentState, error) {
 	var state agentState
-	name, err := parseRequiredRawString(body.Name, "name")
+	name, err := parseAgentName(body.Name)
 	if err != nil {
 		return agentState{}, err
 	}
@@ -496,7 +497,7 @@ func (h *Handler) stateFromUpdate(r *http.Request, principal auth.Principal, cur
 		Tools:       current.Tools,
 	}
 	if len(body.Name) > 0 {
-		name, err := parseRequiredRawString(body.Name, "name")
+		name, err := parseAgentName(body.Name)
 		if err != nil {
 			return agentState{}, err
 		}
@@ -699,6 +700,17 @@ func derefString(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func parseAgentName(raw json.RawMessage) (string, error) {
+	value, err := parseRequiredRawString(raw, "name")
+	if err != nil {
+		return "", err
+	}
+	if utf8.RuneCountInString(value) > 256 {
+		return "", errInvalidAgentNameLength
+	}
+	return value, nil
 }
 
 func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {

@@ -40,6 +40,7 @@ export type SubagentEvent =
 /** Awaited storage, policy and event adapters for child orchestration. */
 export interface SubagentBridge {
   validateThread?(threadId: string, signal: AbortSignal): Promise<void>;
+  archivedThreads?(threadIds: string[], signal: AbortSignal): Promise<string[]>;
   threads(): SubagentThread[];
   bindPersistence(threadId: string): void;
   emit(event: SubagentEvent): Promise<void>;

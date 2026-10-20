@@ -13,6 +13,12 @@
 
 ## 命令与日常使用
 
+仓库跟踪 `.codex/environments/environment.toml`，将 Codex 本地环境的 setup
+配置为 `just dev-init`，cleanup 配置为 `just dev-recycle --yes`。使用该本地环境
+创建新 worktree 时自动初始化，归档并清理 worktree 时先回收开发环境。
+回收失败时保留 worktree 和环境登记，修复后重试；手动通过 Git 创建或删除
+worktree 时仍需显式执行对应命令。`.codex/` 下的其他本地文件继续忽略。
+
 本环境配置统一使用 `.run/`，LLM provider 配置和凭证常驻本机 `~/.oma-dev/`，
 各 worktree 的初始化文件显式引用同一份 provider 定义。`config/` 中的配置文件
 仅作为模板，开发初始化与重启不再读取旧的 `config/config.yaml`。

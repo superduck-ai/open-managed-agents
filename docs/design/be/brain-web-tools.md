@@ -46,7 +46,7 @@ Fetch 使用 Go HTTP 和已有 HTML parser，参考官方 DSH 行为；不是直
 CMA 式 `agent_toolset_20260401.configs` 保留现有 enabled、permission_policy，并新增保存和校验：
 
 - 两工具独立的 allowed_domains / blocked_domains，互斥；省略/null 不增加工具限制，空列表拒绝。
-- 每列表 1–64 项，ASCII 可注册主机及子域名；不接受 IP、协议、端口、通配符或重复。
+- 每列表 1–64 项，ASCII 可注册主机及子域名；允许下划线；不接受 IP、协议、端口、通配符或重复。拒绝 .localdomain 等本地主机后缀。域名错误标注列表名称与从零开始的索引，空列表标注具体字段。
 - 工具域名匹配自身及子域名；Fetch 禁止路径，Search 支持区分大小写的路径前缀。
 - Fetch max_content_tokens 为正整数；Search user_location 使用 CMA 的位置对象，但 DeepSeek 独立 Search API 不支持此定位合同，因此显式拒绝而不静默忽略。
 - 最新 CMA SDK 的 url_sources 暂不支持，传入会被拒绝。也不接受 max_uses、citations、cache_control。
@@ -63,6 +63,7 @@ Server 使用既有 Yourbatis 会话策略查询、ingress 鉴权及 Worker epoc
 Search 每次最多接收 128 个 Unicode query 字符，固定请求 10 个来源；返回 sources 的 title/url/snippet/date。
 OMA 过滤每条来源及其附属内容，不转发 provider 综合总结或原始评分等字段。
 不依赖 site: 作为访问控制，也不承诺供应商内部只检索白名单。
+各级工具允许列表不存在共同域名/路径范围时，在调用 Provider 前返回 url_not_allowed；这与合法检索经过来源过滤后得到空 sources 不同。
 
 Fetch 只访问公开 HTTP(S) 主机和标准端口；禁凭据及本地目标。
 DNS 解析一次、检查全部地址、只拨号已验证的 IP，保留原始 Host/TLS 身份；禁止环境代理绕过此路径。

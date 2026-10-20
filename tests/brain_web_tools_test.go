@@ -153,3 +153,76 @@ func TestBrainWebFetchLimitedAllowsApprovedHost(t *testing.T) {
 		t.Fatal("invalid thread reached network")
 	}
 }
+
+func TestBrainWebDomainConfigurationContracts(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("web-domain-contracts"))
+	env := createEnvironment(t, app, `{"name":"web-contracts","config":{"type":"cloud"}}`)
+	for _, name := range []string{"web_search", "web_fetch"} {
+		for _, tc := range []struct {
+			value   string
+			status  int
+			message string
+		}{
+			{`["a.localdomain"]`, 400, "allowed_domains.0:"},
+			{`["127.0.0.1"]`, 400, "allowed_domains.0:"},
+			{`[]`, 400, "allowed_domains: Empty list"},
+			{`["a_b.example.com/"]`, 200, ""},
+		} {
+			t.Run(name+tc.value, func(t *testing.T) {
+				base := createAgent(t, app, `{"name":"base","model":"claude-opus-4-6"}`)
+				session := createSession(t, app, `{"agent":`+quoteJSON(base.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+				tools := `[{"type":"agent_toolset_20260401","configs":[{"name":"` + name + `","allowed_domains":` + tc.value + `}]}]`
+				for _, request := range []struct{ path, body string }{
+					{"/v1/agents", `{"name":"contract","model":"claude-opus-4-6","tools":` + tools + `}`},
+					{"/v1/agents/" + base.ID, `{"version":1,"tools":` + tools + `}`},
+					{"/v1/sessions", `{"environment_id":` + quoteJSON(env.ID) + `,"agent":{"type":"agent_with_overrides","id":` + quoteJSON(base.ID) + `,"tools":` + tools + `}}`},
+					{"/v1/sessions/" + session.ID, `{"agent":{"tools":` + tools + `}}`},
+				} {
+					response := doSessionRequest(t, app, http.MethodPost, request.path, strings.NewReader(request.body), defaultTestKey, true)
+					body := readAll(t, response.Body)
+					response.Body.Close()
+					if response.StatusCode != tc.status || !strings.Contains(string(body), tc.message) {
+						t.Fatalf("%s: status=%d body=%s", request.path, response.StatusCode, body)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestBrainWebDisjointChildPoliciesRejectBeforeProvider(t *testing.T) {
+	app, worker, token, calls := newWebToolsApp(t, `[{"type":"agent_toolset_20260401","configs":[{"name":"web_search","allowed_domains":["example.com"]},{"name":"web_fetch","allowed_domains":["example.com"]}]}]`, `{"type":"cloud"}`)
+	primary, found, err := app.db.GetPrimarySessionThread(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)
+	if err != nil || !found {
+		t.Fatalf("primary thread: %v", err)
+	}
+	child := primary
+	child.UUID = uuid.NewV4().String()
+	child.ExternalID = "sthr_web_disjoint"
+	child.ParentThreadUUID = &primary.UUID
+	child.ParentThreadExternalID = &primary.ExternalID
+	child.AgentSnapshot = []byte(`{"tools":[{"type":"agent_toolset_20260401","configs":[{"name":"web_search","allowed_domains":["iana.org"]},{"name":"web_fetch","allowed_domains":["iana.org"]}]}]}`)
+	if _, err := app.db.CreateSessionThreadIfAbsent(t.Context(), child); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []struct{ method, body string }{{"search", `{"query":"test"}`}, {"fetch", `{"url":"https://example.com"}`}} {
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, app.baseURL+"/v2/ccr-sessions/"+worker.ExternalID+"/web/"+input.method, strings.NewReader(input.body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
+		request.Header.Set("X-OMA-Session-Thread-ID", child.ExternalID)
+		response, err := app.client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := readAll(t, response.Body)
+		response.Body.Close()
+		if response.StatusCode != 403 || !strings.Contains(string(body), "url_not_allowed") {
+			t.Fatalf("%s: %d %s", input.method, response.StatusCode, body)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("denied child called provider %d times", calls.Load())
+	}
+}

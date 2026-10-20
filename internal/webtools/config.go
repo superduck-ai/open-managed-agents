@@ -3,7 +3,9 @@ package webtools
 import (
 	jsonv1 "encoding/json"
 	"encoding/json/v2"
+	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -162,30 +164,101 @@ func ValidateSession(environment, snapshot []byte) error {
 }
 
 func validateDomains(c ToolConfig) error {
-	for _, domains := range [][]string{c.AllowedDomains, c.BlockedDomains} {
-		if domains == nil {
+	for _, list := range []struct {
+		name    string
+		domains []string
+	}{{"allowed_domains", c.AllowedDomains}, {"blocked_domains", c.BlockedDomains}} {
+		if list.domains == nil {
 			continue
 		}
-		if len(domains) == 0 || len(domains) > 64 {
-			return invalidConfig("Domain lists must contain 1–64 entries")
+		if len(list.domains) == 0 {
+			return invalidField(list.name, "Empty list of domains is ambiguous. Provide at least one domain or null.")
+		}
+		if len(list.domains) > 64 {
+			return invalidField(list.name, "Provide at most 64 domains.")
 		}
 		seen := map[string]bool{}
-		for _, domain := range domains {
+		for index, domain := range list.domains {
 			host, path, _ := strings.Cut(domain, "/")
 			host = strings.ToLower(host)
+			if _, err := netip.ParseAddr(host); err == nil {
+				return invalidDomain(list.name, index, "IP addresses are not supported; provide a plain hostname like example.com")
+			}
 			if len(domain) > 255 || strings.ContainsAny(domain, " \t\r\n:@*?#$ ,|^!") || strings.ContainsFunc(domain, func(r rune) bool { return r > unicode.MaxASCII }) || (c.Name == "web_fetch" && path != "") {
-				return invalidConfig("Invalid web tool domain")
+				return invalidDomain(list.name, index, "Invalid domain format")
 			}
-			normalized, err := networkpolicy.NormalizeHost(host)
 			_, suffixErr := publicsuffix.EffectiveTLDPlusOne(host)
-			if err != nil || normalized != host || suffixErr != nil || seen[strings.ToLower(domain)] {
-				return invalidConfig("Invalid or duplicate web tool domain")
+			if !validDomainHost(host) || suffixErr != nil {
+				return invalidDomain(list.name, index, "Provide a registrable domain or subdomain")
 			}
-			if _, err = publicURL("https://" + host); err != nil {
-				return invalidConfig("Invalid web tool domain")
+			if _, err := publicURL("https://" + host); err != nil {
+				return invalidDomain(list.name, index, "Provide a plain public hostname")
 			}
-			seen[strings.ToLower(domain)] = true
+			key := host + "/" + path
+			if seen[key] {
+				return invalidDomain(list.name, index, "Duplicate domain")
+			}
+			seen[key] = true
 		}
 	}
 	return nil
+}
+
+func validDomainHost(host string) bool {
+	for label := range strings.SplitSeq(host, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (p Policy) hasDomainIntersection() bool {
+	var domains []string
+	for _, tool := range p.Tools {
+		if tool.AllowedDomains == nil {
+			continue
+		}
+		if domains == nil {
+			domains = slices.Clone(tool.AllowedDomains)
+			continue
+		}
+		next := []string{}
+		for _, a := range domains {
+			for _, b := range tool.AllowedDomains {
+				if domain, ok := intersectDomains(a, b); ok && !slices.Contains(next, domain) {
+					next = append(next, domain)
+				}
+			}
+		}
+		domains = next
+	}
+	return domains == nil || len(domains) > 0
+}
+
+func intersectDomains(a, b string) (string, bool) {
+	ah, ap, _ := strings.Cut(a, "/")
+	bh, bp, _ := strings.Cut(b, "/")
+	ah, bh = strings.ToLower(ah), strings.ToLower(bh)
+	host := ah
+	if matchesDomain(bh, ah) {
+		host = bh
+	} else if !matchesDomain(ah, bh) {
+		return "", false
+	}
+	path := ap
+	if strings.HasPrefix(bp, ap) {
+		path = bp
+	} else if !strings.HasPrefix(ap, bp) {
+		return "", false
+	}
+	if path != "" {
+		host += "/" + path
+	}
+	return host, true
 }

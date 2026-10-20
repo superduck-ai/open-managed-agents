@@ -13,6 +13,9 @@ func (c *Client) Search(ctx context.Context, input SearchRequest, policy Policy)
 	if input.Query == "" || utf8.RuneCountInString(input.Query) > 128 {
 		return response, invalidRequest("query must contain 1–128 Unicode characters")
 	}
+	if !policy.hasDomainIntersection() {
+		return response, denied("url_not_allowed")
+	}
 	if c == nil || c.search == nil {
 		return response, unavailable()
 	}

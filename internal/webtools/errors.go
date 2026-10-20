@@ -2,6 +2,7 @@ package webtools
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
@@ -58,3 +59,9 @@ func fetchFailure(err error) error {
 }
 
 func invalidConfig(message string) error { return errors.New(message) }
+
+func invalidField(field, message string) error { return invalidConfig(field + ": " + message) }
+
+func invalidDomain(field string, index int, message string) error {
+	return invalidField(fmt.Sprintf("%s.%d", field, index), message)
+}

@@ -20,7 +20,7 @@ func publicURL(value string) (*url.URL, error) {
 		(target.Port() != "" && target.Port() != "80" && target.Port() != "443") {
 		return nil, invalidRequest("Only public hostnames on standard HTTP(S) ports are supported")
 	}
-	for _, suffix := range []string{"localhost", "local", "internal", "test", "invalid"} {
+	for _, suffix := range []string{"localhost", "local", "internal", "localdomain", "test", "invalid"} {
 		if matchesDomain(host, suffix) {
 			return nil, invalidRequest("Private web targets are not supported")
 		}

@@ -240,3 +240,49 @@ func TestReplacementSearchProviderPreservesPolicyAndCancellation(t *testing.T) {
 		t.Fatalf("provider cancellation lost: %v", err)
 	}
 }
+
+func TestSearchDisjointDomainPoliciesFailBeforeProvider(t *testing.T) {
+	for _, lists := range [][][]string{
+		{{"example.com"}, {"iana.org"}},
+		{{"example.com/blog"}, {"docs.example.com/other"}},
+		{{"example.com", "iana.org"}, {"docs.example.com", "other.net"}, {"iana.org"}},
+	} {
+		client := NewClient(searchProviderFunc(func(context.Context, SearchRequest) (SearchResponse, error) {
+			t.Error("disjoint policy reached provider")
+			return SearchResponse{Sources: []Source{}}, nil
+		}), nil)
+		policy := network(t, `{}`)
+		for _, domains := range lists {
+			policy.Tools = append(policy.Tools, ToolConfig{AllowedDomains: domains})
+		}
+		_, err := client.Search(t.Context(), SearchRequest{Query: "test"}, policy)
+		app, ok := errors.AsType[*apperr.Error](err)
+		if !ok || app.PublicMessage != "url_not_allowed" {
+			t.Fatalf("disjoint search: %v", err)
+		}
+	}
+}
+
+func TestSearchOverlappingDomainsCanHaveNoResults(t *testing.T) {
+	for _, lists := range [][][]string{
+		{{"example.com"}, {"docs.example.com"}},
+		{{"example.com/blog"}, {"docs.example.com/blog/post"}},
+		{{"example.com/blog/post"}, {"docs.example.com/blog"}},
+		{{"example.com", "iana.org"}, {"iana.org"}},
+		{},
+	} {
+		calls := 0
+		client := NewClient(searchProviderFunc(func(context.Context, SearchRequest) (SearchResponse, error) {
+			calls++
+			return SearchResponse{Sources: []Source{{URL: "https://filtered.example.net"}}}, nil
+		}), nil)
+		policy := network(t, `{}`)
+		for _, domains := range lists {
+			policy.Tools = append(policy.Tools, ToolConfig{AllowedDomains: domains})
+		}
+		_, err := client.Search(t.Context(), SearchRequest{Query: "test"}, policy)
+		if err != nil || calls != 1 {
+			t.Fatalf("overlapping policy rejected: %v calls=%d", err, calls)
+		}
+	}
+}

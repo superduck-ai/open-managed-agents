@@ -61,3 +61,23 @@ func TestTranslatedPrivateAddressAndHTML(t *testing.T) {
 		t.Fatalf("%s %s", title, content)
 	}
 }
+
+func TestWebDomainContract(t *testing.T) {
+	for _, name := range []string{"web_search", "web_fetch"} {
+		for _, field := range []string{"allowed_domains", "blocked_domains"} {
+			for _, domain := range []string{"a.localdomain", "nested.a.localdomain", "127.0.0.1", "-bad.example.com", "bad-.example.com"} {
+				_, err := ParseToolConfig([]byte(`{"name":"` + name + `","` + field + `":["` + domain + `"]}`))
+				if err == nil || !strings.Contains(err.Error(), field+".0:") {
+					t.Errorf("%s %s %s: %v", name, field, domain, err)
+				}
+			}
+			_, err := ParseToolConfig([]byte(`{"name":"` + name + `","` + field + `":[]}`))
+			if err == nil || !strings.Contains(err.Error(), field+": Empty list of domains is ambiguous.") {
+				t.Errorf("empty %s: %v", field, err)
+			}
+			if _, err := ParseToolConfig([]byte(`{"name":"` + name + `","` + field + `":["a_b.example.com/"]}`)); err != nil {
+				t.Errorf("underscore %s %s: %v", name, field, err)
+			}
+		}
+	}
+}

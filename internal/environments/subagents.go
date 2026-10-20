@@ -34,7 +34,12 @@ type claudeAgentDefinition struct {
 func buildManagedAgentSubagents(source, document json.RawMessage) (json.RawMessage, error) {
 	var input struct {
 		Multiagent *struct {
-			Agents []json.RawMessage `json:"agents"`
+			Type      string            `json:"type"`
+			Agents    []json.RawMessage `json:"agents"`
+			Subagents *struct {
+				Type             string            `json:"type"`
+				PredefinedAgents []json.RawMessage `json:"predefined_agents"`
+			} `json:"subagents"`
 		} `json:"multiagent"`
 		SkillDirectories   map[string]string          `json:"skill_directories"`
 		AppendSystemPrompt string                     `json:"append_system_prompt"`
@@ -45,6 +50,12 @@ func buildManagedAgentSubagents(source, document json.RawMessage) (json.RawMessa
 	}
 	if input.Multiagent == nil {
 		return source, nil
+	}
+	if input.Multiagent.Type == "multiagent_20261001" {
+		input.Multiagent.Agents = nil
+		if input.Multiagent.Subagents != nil && input.Multiagent.Subagents.Type == "enabled" {
+			input.Multiagent.Agents = input.Multiagent.Subagents.PredefinedAgents
+		}
 	}
 	var mcp struct {
 		Servers map[string]json.RawMessage `json:"mcpServers"`

@@ -18,7 +18,8 @@ const (
 	// SandboxUploadsMount 是 FileSource 在 Sandbox 中的挂载点。
 	SandboxUploadsMount = "/mnt/session/uploads"
 	// OutputsRoot 是 session 输出文件的 Filestore 命名空间。
-	OutputsRoot = "/outputs"
+	OutputsRoot            = "/outputs"
+	MessageAttachmentsRoot = FileSource + "/message_attachments"
 )
 
 // NormalizeFileSource 为省略的 source 补默认值，并拒绝 null 或其他 namespace。
@@ -37,11 +38,8 @@ func NormalizeFileSource(raw json.RawMessage) (string, error) {
 }
 
 // DefaultFileMountPath 返回 File resource 在 uploads namespace 中的默认路径。
-func DefaultFileMountPath(fileID, filename string) string {
-	if filename == "" {
-		filename = fileID
-	}
-	return FileSource + "/" + filename
+func DefaultFileMountPath(fileID string) string {
+	return FileSource + "/" + fileID
 }
 
 // ValidateFileMountPath 校验 File resource 在固定 uploads 根目录下的相对命名空间路径。
@@ -55,6 +53,11 @@ func ValidateFileMountPath(mountPath string) error {
 func FileBackingPath(mountPath string) (string, error) {
 	if err := filestorepath.Validate(mountPath, false); err != nil {
 		return "", fmt.Errorf("mount_path %w", err)
+	}
+	for _, segment := range strings.Split(mountPath, "/") {
+		if len(segment) > 255 {
+			return "", errors.New("mount_path components must not exceed 255 UTF-8 bytes")
+		}
 	}
 	for _, value := range mountPath {
 		if unicode.IsControl(value) {

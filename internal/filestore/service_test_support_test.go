@@ -167,6 +167,7 @@ func assertServiceAPIError(t *testing.T, apiErr *apiError, status int, code stri
 
 type fakeServiceDatabase struct {
 	getFilesystemFn           func(context.Context, string, string) (db.FilestoreFilesystem, error)
+	getSessionFilesystemFn    func(context.Context, string, string) (db.FilestoreFilesystem, error)
 	getEntryFn                func(context.Context, string, string, string) (db.SessionResourceFile, error)
 	listEntriesFn             func(context.Context, db.ListSessionResourceFilesPageParams) (db.SessionResourceFilePage, error)
 	listSkillArchiveEntriesFn func(context.Context, string, string) ([]db.SessionResourceFile, error)
@@ -194,6 +195,13 @@ func (f *fakeServiceDatabase) GetFilestoreFilesystem(ctx context.Context, worksp
 		panic("unexpected GetFilestoreFilesystem call")
 	}
 	return f.getFilesystemFn(ctx, workspaceUUID, externalID)
+}
+
+func (f *fakeServiceDatabase) GetFilestoreFilesystemBySession(ctx context.Context, workspaceUUID string, sessionExternalID string) (db.FilestoreFilesystem, error) {
+	if f.getSessionFilesystemFn == nil {
+		panic("unexpected GetFilestoreFilesystemBySession call")
+	}
+	return f.getSessionFilesystemFn(ctx, workspaceUUID, sessionExternalID)
 }
 
 func (f *fakeServiceDatabase) GetSessionResourceFile(ctx context.Context, workspaceUUID, filesystemUUID string, entryPath string) (db.SessionResourceFile, error) {

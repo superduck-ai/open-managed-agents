@@ -110,7 +110,7 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 				"params.SessionUUID", "params.SessionExternalID", "params.ParentThreadUUID",
 				"params.ParentThreadExternalID", "params.AgentSnapshot", "params.Status",
-				"params.Usage", "params.Stats", "params.CreatedAt", "params.CreatedAt",
+				"params.Usage", "params.Stats", "params.StatsInitialized", "params.Status", "params.WorkspaceUUID", "params.SessionUUID", "params.ExternalID", "params.ParentThreadUUID", "params.UsageInitialized", "params.WorkspaceUUID", "params.SessionUUID", "params.ExternalID", "params.ParentThreadUUID", "params.CreatedAt", "params.CreatedAt",
 			},
 			wantSensitiveArgumentNames: []string{"params.AgentSnapshot", "params.Usage", "params.Stats"},
 			wantSQLFragments:           []string{"WITH inserted AS", "ON CONFLICT", "FROM inserted"},
@@ -329,18 +329,18 @@ func TestSessionEventQueueMapperContracts(t *testing.T) {
 	now := time.Now().UTC()
 	for _, contract := range []mapperBuilderContract{
 		{
-			statement: sessionEventMapperHasPendingInputStatement,
-			bound:     buildSessionEventMapperHasPendingInput(yourbatis.DialectPostgres, "workspace", "session", "thread"),
-			wantID:    "SessionEventMapper.HasPendingInput", wantKind: yourbatis.StatementSelect,
-			wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "threadID"},
-			wantSQLFragments:  []string{"workspace_uuid = $1", "session_external_id = $2", "thread_external_id = $3", "processed_at IS NULL", "deleted_at IS NULL"},
+			statement: sessionEventMapperHasInputBlockingIdleStatement,
+			bound:     buildSessionEventMapperHasInputBlockingIdle(yourbatis.DialectPostgres, "workspace", "session", "thread", now),
+			wantID:    "SessionEventMapper.HasInputBlockingIdle", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "threadID", "workspaceUUID", "sessionExternalID", "threadID", "at", "workspaceUUID", "sessionExternalID", "threadID"},
+			wantSQLFragments:  []string{"workspace_uuid = $1", "session_external_id = $2", "thread_external_id = $3", "processed_at IS NULL", "deleted_at IS NULL", "interrupted.event_type = 'user.interrupt'", "interrupted.processed_at <= $7", "started.payload->>'session_thread_id' = $10", "ORDER BY started.id DESC LIMIT 1", "AS blocks_idle"},
 		},
 		{
 			statement: sessionEventMapperMarkInputProcessedStatement,
 			bound:     buildSessionEventMapperMarkInputProcessed(yourbatis.DialectPostgres, "workspace", "session", "event", now),
 			wantID:    "SessionEventMapper.MarkInputProcessed", wantKind: yourbatis.StatementSelect,
 			wantArgumentNames: []string{"processedAt", "workspaceUUID", "sessionExternalID", "eventExternalID"},
-			wantSQLFragments:  []string{"UPDATE session_events SET processed_at = $1", "workspace_uuid = $2", "session_external_id = $3", "external_id = $4", "processed_at IS NULL", "RETURNING"},
+			wantSQLFragments:  []string{"UPDATE session_events SET processed_at = $1", "workspace_uuid = $2", "session_external_id = $3", "external_id = $4", "event_type IN ('user.message', 'user.tool_confirmation')", "processed_at IS NULL", "RETURNING"},
 		},
 	} {
 		assertMapperBuilderContract(t, contract)

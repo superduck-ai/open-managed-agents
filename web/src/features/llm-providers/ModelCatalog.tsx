@@ -52,7 +52,7 @@ export function ModelCatalog({
   const { msg } = useI18n();
   const selected = providers.find((provider) => provider.id === selectedProviderId);
   const visibleModels = modelsForProvider(filterCatalogModels(models, query), selectedProviderId);
-  const candidateId = addableModelId(query, models);
+  const candidateId = addableModelId(query, modelsForProvider(models, selectedProviderId));
 
   return (
     <div className="grid items-start gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
@@ -237,7 +237,12 @@ function ProviderIdentity({ provider, modelCount }: { provider: LLMProvider; mod
   return (
     <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
       <div className="min-w-0">
-        <p className="break-words text-sm font-semibold text-foreground">{provider.name}</p>
+        <p className="flex flex-wrap items-center gap-2 break-words text-sm font-semibold text-foreground">
+          {provider.name}
+          <Badge variant="outline" className="font-mono font-normal">
+            {provider.slug}
+          </Badge>
+        </p>
         <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-normal text-muted-foreground">
           <span className="min-w-0 break-all">{provider.base_url}</span>
           <span className="flex shrink-0 items-center gap-1.5">
@@ -332,7 +337,7 @@ function ModelRow({ model }: { model: CatalogModel }) {
   const label = copied ? msg('common.copied', 'Copied') : msg('common.copyId', 'Copy ID');
 
   const copyId = async () => {
-    await copyText(model.id);
+    await copyText(model.qualifiedId);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1400);
   };
@@ -342,7 +347,7 @@ function ModelRow({ model }: { model: CatalogModel }) {
       className="flex min-h-11 items-center justify-between gap-3 px-4 py-2 hover:bg-muted/40 sm:px-6"
       data-testid="llm-model-row"
     >
-      <p className="min-w-0 flex-1 break-all font-mono text-sm text-foreground">{model.id}</p>
+      <p className="min-w-0 flex-1 break-all font-mono text-sm text-foreground">{model.qualifiedId}</p>
       <Button
         type="button"
         variant="ghost"

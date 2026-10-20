@@ -37,3 +37,19 @@ func TestSessionEventResponsePreservesThreadIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestEventResponseHidesStoredThinkingContent(t *testing.T) {
+	processedAt := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
+	stored := json.RawMessage(`{"type":"agent.thinking","id":"sevt_old","content":[{"type":"thinking","thinking":"legacy private"}],"message":{"content":[]}}`)
+	var thinking map[string]any
+	if err := json.Unmarshal(eventPayloadForResponse(stored, processedAt, ""), &thinking); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := thinking["content"]; ok || thinking["message"] != nil || thinking["id"] != "sevt_old" || thinking["processed_at"] == nil {
+		t.Fatalf("thinking response = %v", thinking)
+	}
+	message := json.RawMessage(`{"type":"agent.message","id":"sevt_text","content":[{"type":"text","text":"kept"}],"processed_at":"2026-10-19T00:00:00Z"}`)
+	if got := eventPayloadForResponse(message, processedAt, ""); string(got) != string(message) {
+		t.Fatalf("agent.message response changed: %s", got)
+	}
+}

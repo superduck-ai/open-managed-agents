@@ -92,13 +92,15 @@ type sessionResourcePathParams struct {
 }
 
 type sessionFileResourceBindingParams struct {
-	EntryPath     string
-	ParentPath    string
-	FileUUID      string
-	UpdatedAt     time.Time
-	ResourceUUID  string
-	WorkspaceUUID string
-	SessionUUID   string
+	SourceFileUUID string
+	FileExternalID string
+	EntryPath      string
+	ParentPath     string
+	FileUUID       string
+	UpdatedAt      time.Time
+	ResourceUUID   string
+	WorkspaceUUID  string
+	SessionUUID    string
 }
 
 type sessionResourceDirectoryInsertParams struct {

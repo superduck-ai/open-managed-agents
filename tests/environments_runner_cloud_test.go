@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -183,7 +185,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if codeSession.PermissionMode != "bypassPermissions" {
 		t.Fatalf("local code session permission mode = %q", codeSession.PermissionMode)
 	}
-	if codeSession.Model != "claude-opus-4-8" {
+	if codeSession.Model != "default/claude-opus-4-8" {
 		t.Fatalf("local code session model = %q, want agent model unchanged", codeSession.Model)
 	}
 	queued, err := listQueuedCodeSessionInboundEvents(app, codeSession.ExternalID)
@@ -254,7 +256,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 		"ANTHROPIC_DEFAULT_SONNET_MODEL",
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
 	} {
-		if startupEnvironment[key] != "claude-opus-4-8" {
+		if startupEnvironment[key] != "default/claude-opus-4-8" {
 			t.Fatalf("%s = %q, want agent model unchanged", key, startupEnvironment[key])
 		}
 	}
@@ -275,7 +277,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if len(provider.rcloneLaunches) != 1 {
 		t.Fatalf("rclone launches = %d, want 1", len(provider.rcloneLaunches))
 	}
-	if got, want := provider.operations, []string{"rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup", "environment-manager"}; !slices.Equal(got, want) {
+	if got, want := provider.operations, []string{"outputs-alias", "rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup", "environment-manager"}; !slices.Equal(got, want) {
 		t.Fatalf("sandbox operation order = %#v, want %#v", got, want)
 	}
 	if len(provider.writes) != 1 || provider.writes[0].path != "/tmp/rclone-mount-config.json" {
@@ -719,7 +721,7 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 	if !processed {
 		t.Fatal("runner did not process queued session work")
 	}
-	if got, want := provider.operations, []string{"rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup"}; !slices.Equal(got, want) {
+	if got, want := provider.operations, []string{"outputs-alias", "rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup"}; !slices.Equal(got, want) {
 		t.Fatalf("sandbox operation order = %#v, want %#v", got, want)
 	}
 	if len(provider.launches) != 0 {
@@ -1047,7 +1049,8 @@ func TestEnvironmentRunnerResolvesLimitedNetworkWithManagedAgentMCPHosts(t *test
 	agent := createAgent(t, app, `{
 		"model":"claude-opus-4-8",
 		"name":"Runner MCP Network Agent",
-		"mcp_servers":[{"type":"url","name":"notion","url":"https://mcp.notion.com/mcp"}]
+		"mcp_servers":[{"type":"url","name":"notion","url":"https://mcp.notion.com/mcp"}],
+		"tools":[{"type":"mcp_toolset","mcp_server_name":"notion"}]
 	}`)
 	defer archiveAgent(t, app, agent.ID)
 	environment := createEnvironment(t, app, `{
@@ -1428,6 +1431,8 @@ func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string
 		operation = "command:provision"
 	case strings.HasPrefix(request.Command, "mkdir -p ") && strings.Contains(request.Command, "/mnt/memory"):
 		operation = "memory-root-mkdir"
+	case strings.HasPrefix(request.Command, "mkdir -p ") && strings.Contains(request.Command, "/mnt/session/outputs"):
+		operation = "outputs-alias"
 	case strings.HasPrefix(request.Command, "chmod 0600 "):
 		operation = "rclone-config-chmod"
 	case strings.HasPrefix(request.Command, "rm -f ") && strings.Contains(request.Command, "rclone-mount-config.json"):

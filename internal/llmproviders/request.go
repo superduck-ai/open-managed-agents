@@ -26,56 +26,99 @@ func ApplyAPIKey(headers http.Header, apiKey string) {
 
 // MessageRequestModel returns the single top-level model without rewriting the request body.
 func MessageRequestModel(body []byte) (string, error) {
+	model, err := locateRequestModel(body)
+	return model.id, err
+}
+
+func ReplaceRequestModel(body []byte, modelID string) ([]byte, error) {
+	model, err := locateRequestModel(body)
+	if err != nil {
+		return nil, err
+	}
+	if model.id == modelID {
+		return body, nil
+	}
+	encoded, err := json.Marshal(modelID)
+	if err != nil {
+		return nil, err
+	}
+	replaced := make([]byte, 0, len(body)-(model.end-model.start)+len(encoded))
+	replaced = append(replaced, body[:model.start]...)
+	replaced = append(replaced, encoded...)
+	return append(replaced, body[model.end:]...), nil
+}
+
+type requestModel struct {
+	id    string
+	start int
+	end   int
+}
+
+func locateRequestModel(body []byte) (requestModel, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	token, err := decoder.Token()
 	if err != nil {
-		return "", ErrRequestBodyNotObject
+		return requestModel{}, ErrRequestBodyNotObject
 	}
 	delim, ok := token.(json.Delim)
 	if !ok || delim != '{' {
-		return "", ErrRequestBodyNotObject
+		return requestModel{}, ErrRequestBodyNotObject
 	}
 
-	modelID := ""
+	var model requestModel
 	foundModel := false
 	for decoder.More() {
 		keyToken, err := decoder.Token()
 		if err != nil {
-			return "", ErrRequestBodyNotObject
+			return requestModel{}, ErrRequestBodyNotObject
 		}
 		key, ok := keyToken.(string)
 		if !ok {
-			return "", ErrRequestBodyNotObject
+			return requestModel{}, ErrRequestBodyNotObject
 		}
 		if key != "model" {
 			var skipped json.RawMessage
 			if err := decoder.Decode(&skipped); err != nil {
-				return "", ErrRequestBodyNotObject
+				return requestModel{}, ErrRequestBodyNotObject
 			}
 			continue
 		}
 		if foundModel {
-			return "", ErrDuplicateRequestModel
+			return requestModel{}, ErrDuplicateRequestModel
 		}
 		foundModel = true
-		if err := decoder.Decode(&modelID); err != nil {
-			return "", ErrRequestModelRequired
+		model.start = valueStart(body, int(decoder.InputOffset()))
+		if err := decoder.Decode(&model.id); err != nil {
+			return requestModel{}, ErrRequestModelRequired
 		}
-		if modelID == "" {
-			return "", ErrRequestModelRequired
+		model.end = int(decoder.InputOffset())
+		if model.id == "" {
+			return requestModel{}, ErrRequestModelRequired
 		}
-		if strings.TrimSpace(modelID) != modelID {
-			return "", ErrRequestModelWhitespace
+		if strings.TrimSpace(model.id) != model.id {
+			return requestModel{}, ErrRequestModelWhitespace
 		}
 	}
 	if _, err := decoder.Token(); err != nil {
-		return "", ErrRequestBodyNotObject
+		return requestModel{}, ErrRequestBodyNotObject
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return "", ErrRequestBodyNotObject
+		return requestModel{}, ErrRequestBodyNotObject
 	}
 	if !foundModel {
-		return "", ErrRequestModelRequired
+		return requestModel{}, ErrRequestModelRequired
 	}
-	return modelID, nil
+	return model, nil
+}
+
+func valueStart(body []byte, offset int) int {
+	for offset < len(body) {
+		switch body[offset] {
+		case ' ', '\t', '\r', '\n', ':':
+			offset++
+		default:
+			return offset
+		}
+	}
+	return offset
 }

@@ -10,11 +10,14 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 
@@ -26,9 +29,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	body, err := httpapi.DecodeObjectBodyAs[sessionMutationRequest](w, r, maxSessionBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[sessionCreateRequest](w, r, maxSessionCreateBodySize)
 	if err != nil {
-		return invalidRequest(err)
+		return invalidSessionCreateBody(err)
 	}
 
 	agent, snapshot, err := h.resolveAgent(r, principal, body.Agent)
@@ -49,6 +52,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if env.ArchivedAt != nil {
 		return invalidRequest(errors.New("environment must not be archived"))
 	}
+	if err := networkpolicy.ValidateSessionMCPHosts(env.Config, snapshot); err != nil {
+		return invalidRequest(err)
+	}
 	metadata, err := httpapi.NormalizeMetadata(rawOrDefault(body.Metadata, `{}`), validateMetadataEntries)
 	if err != nil {
 		return invalidRequest(err)
@@ -59,7 +65,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	}
 	vaultIDs, err := h.normalizeVaultIDs(r, principal, rawOrDefault(body.VaultIDs, `[]`))
 	if err != nil {
-		return invalidRequest(err)
+		return mapVaultBindingError(err)
 	}
 	budget, _, err := ParseBudgetInput(body.Budget)
 	if err != nil {
@@ -96,11 +102,22 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
+	if err := validateEnvironmentSessionResources(env, resources); err != nil {
+		return err
+	}
+	var workSecret *string
+	if selfHostedMemoryCredentialRequired(env, resources) {
+		secret, secretErr := auth.NewWorkSecret(auth.WorkTokenScope{WorkspaceUUID: principal.WorkspaceUUID, EnvironmentID: env.ExternalID, WorkID: workID})
+		if secretErr != nil {
+			return internalError("Could not create work credential", secretErr)
+		}
+		workSecret = &secret
+	}
 	resourceInputs, err := sessionResourceWriteInputs(resources)
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
-	created, _, _, _, err := h.db.CreateSession(r.Context(), db.CreateSessionInput{
+	input := db.CreateSessionInput{
 		Session: db.Session{
 			UUID:                  uuid.NewV4().String(),
 			ExternalID:            sessionID,
@@ -147,17 +164,33 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 			EnvironmentExternalID: env.ExternalID,
 			Metadata:              json.RawMessage(`{}`),
 			State:                 "queued",
+			Secret:                workSecret,
 			CreatedAt:             now,
 			UpdatedAt:             now,
 		},
-	})
+	}
+	events, err := normalizeSessionInitialEvents(&input.Session, body.InitialEvents, now)
+	if err != nil {
+		return invalidRequest(err)
+	}
+	prepared, err := h.eventPayloads.PreparePublic(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, events)
+	if err != nil {
+		return internalError("Could not prepare initial events", err)
+	}
+	created, _, _, _, persisted, err := h.db.CreateSessionWithEvents(r.Context(), input, prepared)
 	if err != nil {
 		if mapped, ok := mapFileResourcePersistenceError(err); ok {
 			return mapped
 		}
 		return internalError("Could not create session", fmt.Errorf("create session %q: %w", sessionID, err))
 	}
-	h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_idled", created.ExternalID, nil, created.CreatedAt)
+	if len(events) == 0 {
+		h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_idled", created.ExternalID, nil, created.CreatedAt)
+	} else {
+		persisted = eventpayload.RestoreCreatedPublic(persisted, events)
+		h.publishSessionEvents(r.Context(), persisted)
+		h.enqueueWebhooksForSessionEvents(r.Context(), created.WorkspaceUUID, created.ExternalID, persisted)
+	}
 	response, err := h.responseFromSession(r, created, true)
 	if err != nil {
 		return internalError("Could not create session", fmt.Errorf("load session %q response: %w", sessionID, err))
@@ -410,11 +443,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 	if changed && len(removal.StatusEvents) == 0 {
 		h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_terminated", archived.ExternalID, nil, *archived.ArchivedAt)
 	}
-	if h.sandboxReclaims != nil {
-		if err := h.sandboxReclaims.EnqueueArchivedSession(r.Context(), archived); err != nil {
-			h.logger.ErrorContext(r.Context(), "schedule archived session sandbox reclamation", "session_id", sessionID, "error", err)
-		}
-	}
+	h.enqueueSessionSandboxReclaims(r.Context(), archived)
 	response, err := h.responseFromSession(r, archived, true)
 	if err != nil {
 		return internalError("Could not archive session", fmt.Errorf("load archived session %q response: %w", sessionID, err))
@@ -443,6 +472,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 	occurredAt := time.Now().UTC()
 	h.finishSessionRemoval(r.Context(), removal)
 	deleted := removal.Session
+	h.enqueueSessionSandboxReclaims(r.Context(), deleted)
 	deletedEvent, err := h.simpleSessionEvent("session.deleted", sessionID, &primary.ExternalID)
 	if err == nil {
 		deletedEvent.WorkspaceUUID = deleted.WorkspaceUUID
@@ -452,6 +482,14 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.deleted", deleted.ExternalID, nil, occurredAt)
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: sessionID, Type: "session_deleted"})
 	return nil
+}
+
+func (h *Handler) enqueueSessionSandboxReclaims(ctx context.Context, session db.Session) {
+	if h.sandboxReclaims != nil {
+		if err := h.sandboxReclaims.EnqueueRemovedSession(ctx, session); err != nil {
+			h.logger.ErrorContext(ctx, "schedule removed session sandbox reclamation", "session_id", session.ExternalID, "error", err)
+		}
+	}
 }
 
 func (h *Handler) finishSessionRemoval(ctx context.Context, removal db.SessionRemoval) {
@@ -513,11 +551,11 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	if err != nil {
 		return invalidRequest(err)
 	}
-	cursor, err := decodeEventCursor(r.URL.Query().Get("page"))
+	order, err := parseOrder(r, "asc")
 	if err != nil {
 		return invalidRequest(err)
 	}
-	order, err := parseOrder(r, "asc")
+	cursor, err := decodeEventCursor(r.URL.Query().Get("page"), order)
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -573,7 +611,7 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	}
 	var nextPage *string
 	if hasMore && len(records) > 0 {
-		value := encodeEventCursor(records[len(records)-1])
+		value := encodeEventCursor(records[len(records)-1], order)
 		nextPage = &value
 	}
 	httpapi.WriteJSON(w, http.StatusOK, pageResponse[json.RawMessage]{Data: data, NextPage: nextPage})
@@ -623,6 +661,9 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 		}
 		events = append(events, event)
 	}
+	if err := h.validateMessageFileSources(r.Context(), session, events); err != nil {
+		return err
+	}
 	var outcomeEvaluations json.RawMessage
 	if outcomesChanged {
 		outcomeEvaluations = normalizedSession.OutcomeEvaluations
@@ -639,7 +680,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	h.publishSessionEvents(r.Context(), created)
 	h.enqueueWebhooksForSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, created)
 	if h.codeSessions != nil {
-		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created); err != nil {
+		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, changes.WorkerInputEvents()); err != nil {
 			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)
 			return queueCodeSessionEventsError(err)
 		}
@@ -673,6 +714,9 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error
 	if resourceType == sessionresource.GitRepositoryType {
 		return invalidRequest(errors.New("git repositories must be bound when creating the session"))
 	}
+	if resourceType == sessionresource.MemoryStoreType {
+		return invalidRequest(errors.New("memory stores must be bound when creating the session"))
+	}
 	existing, err := h.db.ListSessionResources(r.Context(), session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		return internalError("Could not list resources", fmt.Errorf("list session %q resources: %w", sessionID, err))
@@ -680,6 +724,15 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error
 	resource, err := h.resourceFromRequest(r, session, body, time.Now().UTC(), observeSessionMemoryResources(existing))
 	if err != nil {
 		return mapResourceBuildError(err)
+	}
+	if resourceType == sessionresource.FileType {
+		env, err := h.db.GetEnvironment(r.Context(), session.WorkspaceUUID, session.EnvironmentExternalID)
+		if err != nil {
+			return resourceEnvironmentLoadError(session.EnvironmentExternalID, err)
+		}
+		if err := validateEnvironmentSessionResources(env, []normalizedSessionResource{resource}); err != nil {
+			return err
+		}
 	}
 	resourceInput, err := sessionResourceWriteInput(resource)
 	if err != nil {
@@ -785,6 +838,9 @@ func (h *Handler) deleteResourceRoute(w http.ResponseWriter, r *http.Request) er
 	if resource.ResourceType == sessionresource.GitRepositoryType {
 		return invalidRequest(errors.New("git repositories cannot be removed from a session"))
 	}
+	if resource.ResourceType == sessionresource.MemoryStoreType {
+		return invalidRequest(errors.New("memory stores cannot be removed from a session"))
+	}
 	if err := h.db.DeleteSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID); err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			return mapSessionLoadError(err, sessionID)
@@ -805,23 +861,11 @@ func (h *Handler) listThreadsRoute(w http.ResponseWriter, r *http.Request) error
 	if _, err := h.ensurePrimarySessionThread(r.Context(), session); err != nil {
 		return internalError("Could not list threads", fmt.Errorf("ensure primary thread for session %q: %w", sessionID, err))
 	}
-	limit, err := httpapi.ParseLimit(r, 1000)
+	params, err := parseThreadListParams(r, session)
 	if err != nil {
 		return invalidRequest(err)
 	}
-	if strings.TrimSpace(r.URL.Query().Get("limit")) == "" {
-		limit = 500
-	}
-	cursor, err := decodeThreadCursor(r.URL.Query().Get("page"))
-	if err != nil {
-		return invalidRequest(err)
-	}
-	records, hasMore, err := h.db.ListSessionThreadsPage(r.Context(), db.ListSessionThreadsPageParams{
-		WorkspaceUUID:     session.WorkspaceUUID,
-		SessionExternalID: session.ExternalID,
-		Limit:             limit,
-		Cursor:            cursor,
-	})
+	records, hasMore, err := h.db.ListSessionThreadsPage(r.Context(), params)
 	if err != nil {
 		return internalError("Could not list threads", fmt.Errorf("list session %q threads: %w", sessionID, err))
 	}

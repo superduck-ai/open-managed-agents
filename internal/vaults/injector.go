@@ -122,6 +122,18 @@ type injectionPlan struct {
 	hostCovered bool
 }
 
+// WrapMCPTransport applies the endpoint credential policy for declared MCP servers.
+func (i *Injector) WrapMCPTransport(
+	ctx context.Context,
+	codeSessionExternalID string,
+	organizationUUID string,
+	workspaceUUID string,
+	requestURL *url.URL,
+	base http.RoundTripper,
+) http.RoundTripper {
+	return i.wrapTransport(ctx, codeSessionExternalID, organizationUUID, workspaceUUID, requestURL, base, true)
+}
+
 func (i *Injector) WrapTransport(
 	ctx context.Context,
 	codeSessionExternalID string,
@@ -129,6 +141,18 @@ func (i *Injector) WrapTransport(
 	workspaceUUID string,
 	requestURL *url.URL,
 	base http.RoundTripper,
+) http.RoundTripper {
+	return i.wrapTransport(ctx, codeSessionExternalID, organizationUUID, workspaceUUID, requestURL, base, false)
+}
+
+func (i *Injector) wrapTransport(
+	ctx context.Context,
+	codeSessionExternalID string,
+	organizationUUID string,
+	workspaceUUID string,
+	requestURL *url.URL,
+	base http.RoundTripper,
+	mcpEndpoint bool,
 ) http.RoundTripper {
 	if base == nil {
 		base = http.DefaultTransport
@@ -141,6 +165,7 @@ func (i *Injector) WrapTransport(
 		organizationUUID:      organizationUUID,
 		workspaceUUID:         workspaceUUID,
 		requestURL:            requestURL,
+		mcpEndpoint:           mcpEndpoint,
 	}
 }
 
@@ -152,6 +177,7 @@ type injectingRoundTripper struct {
 	organizationUUID      string
 	workspaceUUID         string
 	requestURL            *url.URL
+	mcpEndpoint           bool
 }
 
 func (t *injectingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -167,6 +193,7 @@ func (t *injectingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		t.organizationUUID,
 		t.workspaceUUID,
 		t.requestURL,
+		t.mcpEndpoint,
 	)
 	if err != nil {
 		closeRequestBody(req)
@@ -176,9 +203,13 @@ func (t *injectingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	// only when inject/401-replay may run — otherwise every MITM outbound would
 	// buffer up to 32 MiB and reject larger uploads even with empty vaults.
 	if len(plan.matches) == 0 {
-		if plan.hostCovered {
+		if plan.hostCovered && !t.mcpEndpoint {
 			closeRequestBody(req)
 			return nil, injectionRejected(nil)
+		}
+		if t.mcpEndpoint {
+			req = req.Clone(req.Context())
+			req.Header.Del("Authorization")
 		}
 		return t.base.RoundTrip(req)
 	}
@@ -230,6 +261,7 @@ func (i *Injector) loadInjectionPlan(
 	organizationUUID string,
 	workspaceUUID string,
 	requestURL *url.URL,
+	mcpEndpoint bool,
 ) (injectionPlan, error) {
 	vaultIDs, err := i.store.GetCodeSessionVaultIDs(ctx, codeSessionExternalID, organizationUUID, workspaceUUID)
 	if err != nil {
@@ -242,7 +274,11 @@ func (i *Injector) loadInjectionPlan(
 	if err != nil {
 		return injectionPlan{}, injectionRejected(fmt.Errorf("load credentials: %w", err))
 	}
-	matches, hostCovered, err := listInjectableMatches(requestURL, credentials)
+	match := listInjectableMatches
+	if mcpEndpoint {
+		match = listMCPInjectableMatches
+	}
+	matches, hostCovered, err := match(requestURL, credentials)
 	if err != nil {
 		return injectionPlan{}, injectionRejected(fmt.Errorf("match credentials: %w", err))
 	}
@@ -272,6 +308,9 @@ func (i *Injector) resolveFromPlan(
 		return result, nil
 	}
 	if plan.hostCovered {
+		if len(plan.matches) > 0 && len(excluded) == len(plan.matches) {
+			return nil, injectionRejected(ErrUpstreamAuthenticationRejected)
+		}
 		return nil, injectionRejected(failure)
 	}
 	return nil, nil
@@ -327,6 +366,9 @@ func (i *Injector) resolveMCPOAuthToken(ctx context.Context, credential *db.Vaul
 		}
 	}
 	token, _, err := i.refreshMCPOAuthCredential(ctx, &current, now, forceRefresh)
+	if permanentOAuthRefreshFailure(err) {
+		return nil, errors.Join(ErrMCPOAuthReauthorizationRequired, err)
+	}
 	if err != nil {
 		return nil, err
 	}

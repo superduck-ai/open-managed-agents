@@ -5,7 +5,7 @@ import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import * as CcrBridge from "../src/ccrv2/index.ts";
-import { Backend, eventually, toolEvents, textEvents } from "./backend.ts";
+import { Backend, eventually, toolEvents, textEvents, modelSystemText } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -18,8 +18,14 @@ async function open(backend: Backend) {
   const ctx = new Context();
   const api = new OmaApi(backend.url);
   const client = await mountOma(ctx, api);
-  const session = createOmaSession(ctx, api, structuredClone(backend.a));
-  await session.open();
+  let session!: ReturnType<typeof createOmaSession>;
+  await ctx.plugin({
+    inject: ["ccrv2"],
+    apply: async (scope: Context) => {
+      session = createOmaSession(scope, api, structuredClone(backend.a));
+      await session.open();
+    },
+  });
   cleanups.push(async () => {
     if (!session.abort.signal.aborted) session.stop();
     await session.handle?.dispose();
@@ -47,6 +53,78 @@ function toolsWithText(text: string, ...calls: string[]): Payload[] {
 }
 
 describe("original dsh loop over CCRv2", () => {
+  test("invalid mixed input publishes a failed terminal result without model work and allows the next turn", async () => {
+    for (const invalid of [
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "not an image" } },
+      { type: "document", source: { type: "text", media_type: "text/plain", data: 42 } },
+    ]) {
+      const b = backend();
+      b.modelScript = [textEvents("recovered")];
+      const { session } = await open(b);
+      await session.receive("invalid_input", { content: [{ type: "text", text: "read it" }, invalid] });
+      expect(b.requests).toHaveLength(0);
+      expect(b.publicLog.get("invalid_input_failed_result")?.is_error).toBe(true);
+      expect(b.statuses.at(-1)).toBe("idle");
+      expect(session.state.completed).toContain("invalid_input");
+      await session.receive("valid_followup", { content: "continue" });
+      expect(b.requests).toHaveLength(1);
+      expect(b.publicLog.get("valid_followup_result")?.is_error).toBe(false);
+    }
+  });
+
+  test("mixed image input reaches the model in order and survives a second turn", async () => {
+    const b = backend();
+    b.modelScript = [textEvents("image read"), textEvents("remembered")];
+    const { session } = await open(b);
+    const content = [
+      { type: "text", text: "read image" },
+      { type: "image", source: { type: "base64", media_type: "image/png",
+        data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC" } },
+      { type: "text", text: "then answer" },
+    ];
+    await session.receive("image_input", { content });
+    const first = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
+    expect(first.map((block: Payload) => block.type)).toEqual(["text", "image", "text"]);
+    expect(first[0]).toEqual(content[0]);
+    expect(first[2]).toEqual(content[2]);
+    expect(first[1].source.type).toBe("base64");
+    expect(first[1].source.data.length).toBeGreaterThan(0);
+    await session.receive("image_followup", { content: "remember it" });
+    expect(b.requests[1]!.messages.some((m: Payload) => m.content.some((block: Payload) => block.type === "image"))).toBe(true);
+    expect(b.publicLog.get("image_input_result")?.is_error).toBe(false);
+  });
+
+  test("image file and url references reach the Messages request without inline bytes", async () => {
+    const b = backend();
+    b.modelScript = [textEvents("seen")];
+    const { session } = await open(b);
+    const content = [
+      { type: "image", source: { type: "file", file_id: "file_attachment" } },
+      { type: "image", source: { type: "url", url: "https://example.com/cat.png" } },
+    ];
+    await session.receive("image_refs", { content });
+    const requestContent = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
+    expect(requestContent.map((block: Payload) => ({ type: block.type, source: block.source }))).toEqual(content);
+    expect(JSON.stringify([...b.privateLog.values()])).not.toContain("base64");
+    expect(b.publicLog.get("image_refs_result")?.is_error).toBe(false);
+  });
+
+  test("plain text documents reach text model routes with their boundary and title", async () => {
+    const b = backend();
+    b.modelScript = [textEvents("DOC-42")];
+    const { session } = await open(b);
+    const content = [
+      { type: "text", text: "read document" },
+      { type: "document", title: "source", source: { type: "text", media_type: "text/plain", data: "number=DOC-42" } },
+    ];
+    await session.receive("document_input", { message: { content } });
+    const requestContent = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
+    expect(requestContent[0]).toEqual(content[0]);
+    expect(requestContent[1].type).toBe("text");
+    expect(JSON.parse(requestContent[1].text)).toEqual({ type: "document", title: "source", content: "number=DOC-42" });
+    expect(b.publicLog.get("document_input_result")?.is_error).toBe(false);
+  });
+
   test("thinking and text preserve native block identities across previews and durable messages", async () => {
     const b = backend();
     const events = textEvents("你好");
@@ -65,7 +143,7 @@ describe("original dsh loop over CCRv2", () => {
     const messages = [...b.publicLog.values()].filter((event) => ["agent.thinking", "agent.message"].includes(event.type));
     expect(messages.map((event) => event.type)).toEqual(["agent.message", "agent.thinking", "agent.message"]);
     expect(messages.map((event) => event.content)).toEqual([
-      [{ type: "text", text: "" }], [{ type: "thinking", thinking: "检查回复" }], [{ type: "text", text: "你好" }],
+      [{ type: "text", text: "" }], undefined, [{ type: "text", text: "你好" }],
     ]);
     const replay = session.state.outbox;
     expect(replay).toEqual([]);
@@ -73,10 +151,10 @@ describe("original dsh loop over CCRv2", () => {
     for (const message of messages.slice(1)) {
       expect(message.id).toMatch(/^sevt_[a-f0-9]{32}$/);
       expect(b.timeline.filter((event) => event.type === "event_start" && event.event.id === message.id)).toHaveLength(1);
-      expect(b.timeline.filter((event) => event.type === "event_stop" && event.event_id === message.id)).toHaveLength(1);
+      expect(b.timeline.filter((event) => event.type === "event_stop")).toHaveLength(0);
     }
     const reasoning = b.timeline.find((event) => event.type === "event_delta" && event.event_id === messages[1]!.id);
-    expect(reasoning?.delta.content).toEqual({ type: "thinking", thinking: "检查回复" });
+    expect(reasoning).toBeUndefined();
     expect(b.publicLog.get("thinking_result")?.is_error).toBe(false);
   });
 
@@ -123,8 +201,8 @@ describe("original dsh loop over CCRv2", () => {
       .find((block: Payload) => block.type === "tool_result");
     expect(result).toEqual({ type: "tool_result", tool_use_id: "call_1", content: "exact stdout\n" });
     const published = [...b.publicLog.values()].find((event) => event.type === "user");
-    expect(published?.message.content[0]).toMatchObject({ tool_use_id: "call_1", is_error: false,
-      content: [{ type: "text", text: result.content }] });
+    expect(published?.message.content[0]).toEqual({ type: "tool_result", tool_use_id: "call_1", tool_name: "Bash", content: [{ type: "text", text: "exact stdout\n" }], is_error: false });
+    expect(result).not.toHaveProperty("tool_name");
     expect(b.publicLog.get("stdout_result")?.is_error).toBe(false);
   });
 
@@ -468,11 +546,12 @@ describe("original dsh loop over CCRv2", () => {
     for (const message of messages) {
       const id = message.id;
       expect(starts.filter((event) => event.event.id === id)).toHaveLength(1);
-      const stopped = b.timeline.findIndex(
-        (event) => event.type === "event_stop" && event.event_id === id,
+      const started = b.timeline.findIndex(
+        (event) => event.type === "event_start" && event.event.id === id,
       );
-      expect(stopped).toBeGreaterThan(-1);
-      expect(stopped).toBeLessThan(b.timeline.indexOf(message));
+      expect(started).toBeGreaterThan(-1);
+      expect(started).toBeLessThan(b.timeline.indexOf(message));
+      expect(b.timeline.filter((event) => event.type === "event_stop")).toHaveLength(0);
     }
   });
 
@@ -497,10 +576,9 @@ describe("original dsh loop over CCRv2", () => {
       (event) => event.type === "agent.message",
     );
     expect(starts).toHaveLength(1);
-    expect(stops).toHaveLength(1);
+    expect(stops).toHaveLength(0);
     expect(messages).toHaveLength(1);
     expect(starts[0]!.event.id).toBe(messages[0]!.id);
-    expect(stops[0]!.event_id).toBe(messages[0]!.id);
   });
 
   test("terminal outbox survives failed publication and is republished without resampling", async () => {
@@ -541,7 +619,7 @@ describe("original dsh loop over CCRv2", () => {
     b.failWrites = false;
   });
 
-  test("an epoch rejection after approval prevents sandbox creation and dispatch", async () => {
+  test("an epoch rejection at the dispatch checkpoint prevents tool execution", async () => {
     const b = backend();
     b.modelScript = [toolEvents()];
     const { session } = await open(b);
@@ -559,7 +637,7 @@ describe("original dsh loop over CCRv2", () => {
     await expect(
       session.receive("lost_lease", { message: { content: "run" } }),
     ).rejects.toThrow("409");
-    expect(b.sandboxCount).toBe(0);
+    expect(b.sandboxCount).toBe(1);
     expect(b.executions).toEqual([]);
     expect(b.requests).toHaveLength(1);
     b.a.worker_epoch--;
@@ -770,9 +848,10 @@ describe("original dsh loop over CCRv2", () => {
     }
     expect(b.executions).toHaveLength(1);
     expect([...b.publicLog.values()].filter((p) => p.type === "agent.thinking").map((p) => p.content)).toEqual([
-      [{ type: "thinking", thinking: "test reasoning" }],
+      undefined,
     ]);
     expect(JSON.stringify([...b.publicLog.values()])).not.toContain("opaque-signature");
+    expect(JSON.stringify([...b.publicLog.values()])).not.toContain("test reasoning");
   });
 
   test("a follow-up retains the completed assistant reply before the next user message", async () => {
@@ -811,4 +890,87 @@ describe("original dsh loop over CCRv2", () => {
     expect(history).toContain("second user");
     expect(second.session.state.completed).toEqual(["first", "second"]);
   });
+
+  test("a new plugin host resumes logs whose stored key order differs between batches", async () => {
+    const jsonbOrder = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(jsonbOrder);
+      if (!value || typeof value !== "object") return value;
+      const keys = Object.keys(value).sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));
+      return Object.fromEntries(keys.map((key) => [key, jsonbOrder((value as Payload)[key])]));
+    };
+    const b = backend();
+    const first = await open(b);
+    await first.session.receive("first", {
+      message: { content: "first user " + "x".repeat(40_000) },
+    });
+    await first.session.close();
+    const logs = [...b.privateLog.entries()].filter(([, payload]) => payload.subtype === "dsh_log");
+    expect(logs.some(([, payload]) => JSON.stringify(payload).length > 32_768)).toBe(true);
+    for (const [uuid, payload] of logs)
+      if (JSON.stringify(payload).length <= 32_768) b.privateLog.set(uuid, jsonbOrder(payload) as Payload);
+    const [, last] = logs.at(-1)!;
+    b.privateLog.set("duplicate-dsh-log", { ...(jsonbOrder(last) as Payload), uuid: "duplicate-dsh-log" });
+    b.modelScript = [textEvents("second answer")];
+    const second = await open(b);
+    await second.session.receive("second", {
+      message: { content: "second user" },
+    });
+    const history = JSON.stringify(b.requests[1]!.messages);
+    expect(history).toContain("first user");
+    expect(history).toContain("second user");
+    expect(second.session.state.completed).toEqual(["first", "second"]);
+  });
+});
+
+
+test("native approval denial reason reaches every rejected tool and the next model without execution", async () => {
+  for (const name of ["Bash", "list_agents", "unknown_tool"]) {
+    const b = backend();
+    const reason = "Use the staging project instead: rejection-" + name;
+    b.a.launch.subagents = { inlineAgents: true, agents: [] };
+    b.modelScript = [toolEvents().map((event: Payload) =>
+      event.type === "content_block_start" ? { ...event, content_block: { ...event.content_block, name } } :
+      event.type === "content_block_delta" ? { ...event, delta: { type: "input_json_delta", partial_json: JSON.stringify(name === "Bash" ? { command: "pwd" } : {}) } } : event), textEvents("denied")];
+    const { session } = await open(b);
+    b.onApproval = async (p) => {
+      await session.control({ type: "control_response", response: {
+        subtype: "success", request_id: p.request_id,
+        response: { behavior: "deny", message: reason, denyMessage: reason },
+      } });
+    };
+    await session.receive("reason-denied", { content: "try this tool" });
+    expect(b.executions).toHaveLength(0);
+    expect(b.sandboxCount).toBe(0);
+    const results = [...b.publicLog.values()].filter(e => e.type === "user");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.message.content[0]).toMatchObject({ is_error: true });
+    expect(JSON.stringify(results[0]!.message.content[0])).toContain(reason);
+    expect(b.requests).toHaveLength(2);
+    expect(JSON.stringify(b.requests[1]!.messages)).toContain(reason);
+  }
+});
+
+
+test("primary appended system context reaches current and later model requests and survives runtime recovery", async () => {
+  const b = backend();
+  b.a.launch.system = "ORIGINAL_AGENT_BASE_RULE";
+  b.modelScript = [textEvents("first"), textEvents("second"), textEvents("recovered")];
+  const { session } = await open(b);
+  const first = { id: "system-one", text: "APPENDED_ID_RULE" };
+  const second = { id: "system-two", text: "APPENDED_OK_RULE" };
+  await session.receive("system-first", { content: "one", oma_system_context: [first] });
+  expect(modelSystemText(b.requests[0]!)).toContain("ORIGINAL_AGENT_BASE_RULE");
+  expect(modelSystemText(b.requests[0]!)).toContain(first.text);
+  await session.receive("system-second", { content: "two", oma_system_context: [first, second] });
+  const text = modelSystemText(b.requests[1]!);
+  expect(text).toContain("ORIGINAL_AGENT_BASE_RULE");
+  expect(text.indexOf(first.text)).toBeGreaterThan(-1);
+  expect(text.indexOf(second.text)).toBeGreaterThan(text.indexOf(first.text));
+  expect(JSON.stringify(b.requests[1]!.messages.filter((m: Payload) => m.role === "user"))).not.toContain(first.text);
+  await session.close();
+  const { session: recovered } = await open(b);
+  await recovered.receive("system-recovered", { content: "three", oma_system_context: [first, second] });
+  expect(modelSystemText(b.requests[2]!)).toContain(first.text);
+  expect(modelSystemText(b.requests[2]!)).toContain(second.text);
+  expect(b.a.launch.system).toBe("ORIGINAL_AGENT_BASE_RULE");
 });

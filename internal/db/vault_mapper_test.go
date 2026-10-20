@@ -1,6 +1,7 @@
 package db
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -36,7 +37,21 @@ func TestVaultMapperBuilders(t *testing.T) {
 		}),
 		wantID:            "VaultMapper.ListPage",
 		wantKind:          yourbatis.StatementSelect,
-		wantArgumentNames: []string{"params.WorkspaceUUID", "params.Cursor.CreatedAt", "params.Cursor.UUID", "params.Limit"},
-		wantSQLFragments:  []string{"archived_at IS NULL", "(created_at, uuid) < ($2, $3)", "LIMIT $4"},
+		wantArgumentNames: []string{"params.WorkspaceUUID", "params.Cursor.CreatedAt", "params.Cursor.UUID", "params.WorkspaceUUID", "params.Cursor.UUID", "params.Cursor.CreatedAt", "params.Limit"},
+		wantSQLFragments:  []string{"archived_at IS NULL", "(created_at, uuid) < ($2, $3)", "EXISTS ( SELECT 1 FROM vaults AS cursor_vault", "cursor_vault.workspace_uuid = $4", "cursor_vault.uuid = $5", "cursor_vault.created_at = $6", "LIMIT $7"},
 	})
+	withoutCursor := buildVaultMapperListPage(yourbatis.DialectPostgres, listVaultsMapperParams{
+		WorkspaceUUID: "workspace", Limit: 21, IncludeArchived: true,
+	})
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement:         vaultMapperListPageStatement,
+		bound:             withoutCursor,
+		wantID:            "VaultMapper.ListPage",
+		wantKind:          yourbatis.StatementSelect,
+		wantArgumentNames: []string{"params.WorkspaceUUID", "params.Limit"},
+		wantSQLFragments:  []string{"workspace_uuid = $1", "deleted_at IS NULL", "LIMIT $2"},
+	})
+	if strings.Contains(withoutCursor.SQL, "EXISTS") || strings.Contains(withoutCursor.SQL, "archived_at IS NULL") {
+		t.Fatal("first include-archived page retained a cursor or archive predicate")
+	}
 }

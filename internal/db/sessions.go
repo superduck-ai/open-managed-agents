@@ -59,6 +59,8 @@ type SessionThread struct {
 	ParentThreadExternalID *string
 	AgentSnapshot          json.RawMessage
 	Status                 string
+	StatsInitialized       bool
+	UsageInitialized       bool
 	Usage                  json.RawMessage
 	Stats                  json.RawMessage
 	CreatedAt              time.Time
@@ -107,23 +109,24 @@ type SessionResource struct {
 }
 
 type SessionEvent struct {
-	StatusThreadID    string
-	UsageIncrement    *SessionUsageIncrement
-	PayloadBlobUUID   *string
-	ToolUseID         *string
-	UUID              string
-	ExternalID        string
-	OrganizationUUID  string
-	WorkspaceUUID     string
-	SessionUUID       string
-	SessionExternalID string
-	ThreadUUID        *string
-	ThreadExternalID  *string
-	EventType         string
-	Payload           json.RawMessage
-	ProcessedAt       time.Time
-	CreatedAt         time.Time
-	DeletedAt         *time.Time
+	threadStatusMirror bool
+	StatusThreadID     string
+	UsageIncrement     *SessionUsageIncrement
+	PayloadBlobUUID    *string
+	ToolUseID          *string
+	UUID               string
+	ExternalID         string
+	OrganizationUUID   string
+	WorkspaceUUID      string
+	SessionUUID        string
+	SessionExternalID  string
+	ThreadUUID         *string
+	ThreadExternalID   *string
+	EventType          string
+	Payload            json.RawMessage
+	ProcessedAt        time.Time
+	CreatedAt          time.Time
+	DeletedAt          *time.Time
 }
 
 // SessionUsageIncrement contains measured counters; nil means unavailable.
@@ -186,6 +189,7 @@ type ListSessionThreadsPageParams struct {
 	SessionExternalID string
 	Limit             int
 	Cursor            *SessionThreadPageCursor
+	Statuses          []string
 }
 
 type CreateSessionInput struct {
@@ -256,16 +260,43 @@ func (e *SessionFileMountConflictError) Error() string {
 }
 
 func (d *DB) CreateSession(ctx context.Context, input CreateSessionInput) (Session, SessionThread, []SessionResource, EnvironmentWork, error) {
+	session, thread, resources, work, _, err := d.CreateSessionWithEvents(ctx, input, nil)
+	return session, thread, resources, work, err
+}
+
+func (d *DB) CreateSessionWithEvents(ctx context.Context, input CreateSessionInput, events []SessionEvent) (Session, SessionThread, []SessionResource, EnvironmentWork, []SessionEvent, error) {
 	var session Session
 	var thread SessionThread
 	var resources []SessionResource
 	var work EnvironmentWork
+	var created []SessionEvent
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		var txErr error
 		session, thread, resources, work, txErr = insertSessionTx(ctx, executor, input)
-		return txErr
+		if txErr != nil || len(events) == 0 {
+			return txErr
+		}
+		batch, txErr := insertSessionHistoryTx(ctx, executor, session, events)
+		if txErr != nil {
+			return txErr
+		}
+		created = batch.Events
+		row, found, txErr := NewSessionMapper(executor).FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID)
+		if txErr == nil && !found {
+			return ErrNotFound
+		}
+		if txErr != nil {
+			return txErr
+		}
+		session = row.session()
+		threadRow, txErr := NewSessionThreadMapper(executor).FindPrimary(ctx, session.WorkspaceUUID, session.ExternalID)
+		if txErr != nil {
+			return txErr
+		}
+		thread = threadRow.thread()
+		return nil
 	})
-	return session, thread, resources, work, err
+	return session, thread, resources, work, created, err
 }
 
 func (d *DB) GetSession(ctx context.Context, workspaceUUID string, externalID string) (Session, bool, error) {
@@ -402,7 +433,7 @@ func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalI
 			removal.Session = row.session()
 			changed = true
 		}
-		if err := NewSandboxLifecycleMapper(executor).BeginArchiveStop(ctx, removal.Session.OrganizationUUID, workspaceUUID, removal.Session.UUID); err != nil {
+		if err := NewSandboxLifecycleMapper(executor).BeginRemovalStop(ctx, removal.Session.OrganizationUUID, workspaceUUID, removal.Session.UUID); err != nil {
 			return err
 		}
 		return d.retireSessionWorkersTx(ctx, executor, &removal)
@@ -439,6 +470,9 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 			return txErr
 		}
 		if _, txErr = eventMapper.SoftDeleteBySession(ctx, workspaceUUID, externalID); txErr != nil {
+			return txErr
+		}
+		if txErr = NewSandboxLifecycleMapper(executor).BeginRemovalStop(ctx, session.OrganizationUUID, workspaceUUID, session.UUID); txErr != nil {
 			return txErr
 		}
 		if _, txErr = workMapper.StopForDeletedSession(ctx, workspaceUUID, session.EnvironmentExternalID, session.UUID); txErr != nil {
@@ -496,6 +530,7 @@ func (d *DB) ListSessionThreadsPage(ctx context.Context, params ListSessionThrea
 	rows, err := mapper.ListPage(ctx, sessionThreadPageMapperParams{
 		WorkspaceUUID:     params.WorkspaceUUID,
 		SessionExternalID: params.SessionExternalID,
+		Statuses:          params.Statuses,
 		FetchLimit:        params.Limit + 1,
 		Cursor:            params.Cursor,
 	})
@@ -552,7 +587,10 @@ func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceUUID string, ses
 			if err != nil {
 				return err
 			}
-			removal.StatusEvents = result.Events
+			removal.StatusEvents, err = appendArchivedThreadPrimaryEventsTx(ctx, executor, session, result.Events)
+			if err != nil {
+				return err
+			}
 			if result.SessionTerminated {
 				if err := d.retireSessionWorkersTx(ctx, executor, &removal); err != nil {
 					return err
@@ -605,7 +643,7 @@ func (d *DB) CreateSessionResource(
 		if txErr != nil {
 			return txErr
 		}
-		_, txErr = bindSessionFileResourceWithLockedFilesystemTx(ctx, executor, session, filesystem, created, input.FileMount)
+		created, txErr = bindSessionFileResourceWithLockedFilesystemTx(ctx, executor, session, filesystem, created, input.FileMount)
 		return txErr
 	})
 	return created, err
@@ -700,6 +738,7 @@ func (d *DB) appendSessionEvents(ctx context.Context, workspaceUUID, sessionExte
 			return txErr
 		}
 		changes.Events = result.Events
+		changes.SettledInputEventIDs = result.SettledInputEventIDs
 		if result.SessionTerminated {
 			removal := SessionRemoval{Session: session}
 			if txErr := d.retireSessionWorkersTx(ctx, executor, &removal); txErr != nil {

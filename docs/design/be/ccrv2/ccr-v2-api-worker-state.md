@@ -299,6 +299,7 @@ GET 不返回 `ok`、`session_id`、`status`、`worker_epoch`、`worker_status`�
 | body 超过 `maxIngressBodySize` | `413 invalid_request_error` |
 | body 非 JSON object、缺 `worker_epoch`、字段类型非法 | `400 invalid_request_error` |
 | `worker_epoch` 过期或不匹配 | `409 conflict_error`，message 为 `Worker epoch mismatch` |
+| code session 已不是 `active`（如已终止） | `409 conflict_error`，message 为 `Code session is not active`；`/worker/register` 同样适用 |
 | DB 更新或 public status 同步异常 | `500 api_error` |
 
 ## 7. 与其它 Worker Endpoint 的边界
@@ -335,7 +336,7 @@ GET 不返回 `ok`、`session_id`、`status`、`worker_epoch`、`worker_status`�
 推荐验证命令：
 
 ```bash
-go test ./tests -run TestCodeSessionWorker -count=1
+go test -tags=integration ./tests -run TestCodeSessionWorker -count=1
 go test ./internal/codesessions ./internal/db -count=1
 ```
 

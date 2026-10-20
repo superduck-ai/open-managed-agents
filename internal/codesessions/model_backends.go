@@ -12,16 +12,29 @@ func (s *Service) modelBackends(ctx context.Context, session db.CodeSession) (ma
 	if err != nil {
 		return nil, err
 	}
+	return modelBackendsForProviders(providers)
+}
+
+func modelBackendsForProviders(providers []db.LLMProvider) (map[string]string, error) {
+	catalog := llmproviders.NewCatalog(providers)
 	backends := make(map[string]string)
 	for _, provider := range providers {
 		if !llmproviders.ValidBackend(provider.APIBackend) {
 			return nil, llmproviders.ErrBackendMismatch
 		}
-		for _, model := range provider.ModelIDs {
-			if _, exists := backends[model]; exists {
-				return nil, llmproviders.ErrAmbiguousModel
+		for _, modelID := range provider.ModelIDs {
+			backends[llmproviders.QualifiedModelID(provider.Slug, modelID)] = provider.APIBackend
+		}
+	}
+	for _, provider := range providers {
+		for _, modelID := range provider.ModelIDs {
+			if _, exists := backends[modelID]; exists {
+				continue
 			}
-			backends[model] = provider.APIBackend
+			selected, err := catalog.Lookup(modelID)
+			if err == nil && selected.UpstreamModelID == modelID {
+				backends[modelID] = selected.Provider.APIBackend
+			}
 		}
 	}
 	return backends, nil

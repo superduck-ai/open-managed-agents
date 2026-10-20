@@ -57,6 +57,7 @@ RETURNING <include refid="columns"/>
         budget_removed_at,
         usage,
         stats,
+        oma_session_activity_projection(workspace_uuid,uuid,NULL,NOW(),usage,stats) AS activity,
         outcome_evaluations,
         created_at,
         updated_at,

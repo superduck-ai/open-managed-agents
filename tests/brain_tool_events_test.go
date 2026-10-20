@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -36,7 +38,7 @@ func TestBrainModelToolEventPrecedesEndAndDeduplicatesApproval(t *testing.T) {
 			}
 			result := codesessions.ModelRequestResult{EndedAt: time.Now(), ErrorType: test.errorType,
 				Messages: []codesessions.ModelRequestMessage{{ID: "sevt_thinking", Type: "agent.thinking",
-					Content: []codesessions.ModelRequestContent{{Type: "thinking", Thinking: new("run the command")}}},
+					Content: []codesessions.ModelRequestContent{{Type: "thinking", Text: new("private reasoning")}}},
 					{ID: "sevt_message", Type: "agent.message", Content: []codesessions.ModelRequestContent{{Type: "text", Text: new("Executing command")}}}},
 				ToolUses: []codesessions.ModelRequestToolUse{{ID: "call_bash", Name: test.tool, Input: json.RawMessage(`{"command":"printf hello"}`)}},
 			}

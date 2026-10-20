@@ -36,6 +36,7 @@ type Service struct {
 	workerEventAcks        workerevents.AckStore
 	workerEventObjects     storage.ObjectStore
 	billing                *billing.Calculator
+	attachments            SessionAttachmentStore
 }
 
 func (s *Service) PurgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {
@@ -164,6 +165,8 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 			handled, controlErr = s.queueControlResponseForToolConfirmation(ctx, codeSession, event)
 		case "user.custom_tool_result":
 			handled, controlErr = s.queueControlResponseForCustomToolResult(ctx, codeSession, event)
+		case "user.tool_result":
+			handled, controlErr = s.queueControlResponseForSelfHostedToolResult(ctx, codeSession, event)
 		}
 		if controlErr != nil {
 			return controlErr
@@ -172,7 +175,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 			queued = true
 			continue
 		}
-		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event)
+		payload, err := s.publicWorkerPayload(ctx, codeSession, event)
 		if err != nil {
 			return fmt.Errorf("convert public session event %s: %w", event.ExternalID, err)
 		}
@@ -193,6 +196,15 @@ func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession d
 	if s.sandboxTimeoutExtender == nil || usesBrainClaimTransport(codeSession) {
 		return nil
 	}
+
+	external, err := s.selfHostedCodeSession(ctx, codeSession.ExternalID)
+	if err != nil {
+		return err
+	}
+	if external {
+		return nil
+	}
+
 	sandbox, err := s.db.GetResumableEnvironmentSandboxForCodeSession(ctx, codeSession.ExternalID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {

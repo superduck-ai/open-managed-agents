@@ -1,3 +1,5 @@
+//go:build integration
+
 package db
 
 import (
@@ -41,8 +43,8 @@ func TestBudgetMigrationsUpgradeFromMainPostgres(t *testing.T) {
 		t.Fatalf("初始化 main 数据库：%v", err)
 	}
 	var version, historyCount int64
-	if err := database.QueryRowContext(ctx, `SELECT max(version_id), count(*) FROM goose_db_version WHERE is_applied`).Scan(&version, &historyCount); err != nil || version != 86 {
-		t.Fatalf("main 迁移版本=%d，预期 86：%v", version, err)
+	if err := database.QueryRowContext(ctx, `SELECT max(version_id), count(*) FROM goose_db_version WHERE is_applied`).Scan(&version, &historyCount); err != nil || version != 91 {
+		t.Fatalf("main 迁移版本=%d，预期 91：%v", version, err)
 	}
 	var budgetColumns int
 	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='sessions' AND column_name='budget'`).Scan(&budgetColumns); err != nil || budgetColumns != 0 {
@@ -55,8 +57,8 @@ func TestBudgetMigrationsUpgradeFromMainPostgres(t *testing.T) {
 		}
 	}
 	var finalVersion, finalCount int64
-	if err := database.QueryRowContext(ctx, `SELECT max(version_id), count(*) FROM goose_db_version WHERE is_applied`).Scan(&finalVersion, &finalCount); err != nil || finalVersion != 90 || finalCount != historyCount+4 {
-		t.Fatalf("升级历史=%d/%d，预期 90/%d：%v", finalVersion, finalCount, historyCount+4, err)
+	if err := database.QueryRowContext(ctx, `SELECT max(version_id), count(*) FROM goose_db_version WHERE is_applied`).Scan(&finalVersion, &finalCount); err != nil || finalVersion != 95 || finalCount != historyCount+4 {
+		t.Fatalf("升级历史=%d/%d，预期 95/%d：%v", finalVersion, finalCount, historyCount+4, err)
 	}
 	for _, column := range []string{"budget", "budget_reached_at", "budget_removed_at"} {
 		assertMigrationColumnNullable(t, ctx, database, "sessions", column, "YES")
@@ -64,6 +66,7 @@ func TestBudgetMigrationsUpgradeFromMainPostgres(t *testing.T) {
 	assertMigrationColumnNullable(t, ctx, database, "deployments", "budget", "YES")
 	assertMigrationColumnNullable(t, ctx, database, "code_sessions", "worker_claim_requested_at", "YES")
 	assertMigrationColumnNullable(t, ctx, database, "llm_providers", "api_backend", "NO")
+	assertMigrationColumnNullable(t, ctx, database, "llm_providers", "slug", "NO")
 	for _, table := range []string{"usage_records", "llm_model_prices", "model_price_catalog"} {
 		var exists bool
 		if err := database.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil || !exists {

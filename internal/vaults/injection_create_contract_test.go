@@ -13,6 +13,8 @@ func TestEnvironmentCredentialCreateInjectionDefaults(t *testing.T) {
 		body   bool
 		fail   bool
 	}{
+		{name: "header null", input: `,"injection_location":{"header":null,"body":true}`, fail: true},
+		{name: "body null", input: `,"injection_location":{"header":true,"body":null}`, fail: true},
 		{name: "omitted", header: true, body: true},
 		{name: "header only", input: `,"injection_location":{"header":true}`, header: true},
 		{name: "body only", input: `,"injection_location":{"body":true}`, body: true},
@@ -42,5 +44,15 @@ func TestEnvironmentCredentialCreateInjectionDefaults(t *testing.T) {
 				t.Fatalf("location=%+v, want header=%v body=%v", got, tc.header, tc.body)
 			}
 		})
+	}
+}
+
+func TestInjectionLocationExplicitNullIsRejectedDuringPatch(t *testing.T) {
+	for _, base := range []credentialInjectionLocation{{Header: true}, {Body: true}, {Header: true, Body: true}} {
+		for _, raw := range []string{`{"header":null,"body":true}`, `{"header":true,"body":null}`, `{"header":null}`, `{"body":null}`} {
+			if _, err := applyInjectionLocation(base, json.RawMessage(raw)); err == nil {
+				t.Fatalf("explicit null accepted for base %+v", base)
+			}
+		}
 	}
 }

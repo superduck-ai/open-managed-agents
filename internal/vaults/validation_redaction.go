@@ -1,10 +1,12 @@
 package vaults
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"html"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -41,10 +43,17 @@ func validationSafeResponse(resp *http.Response, body []byte, values []string) *
 		result.Body, result.BodyTruncated = "[response body omitted]", true
 		return result
 	}
-	var wire oauthTokenEndpointWire
-	if json.Unmarshal(body, &wire) == nil {
-		values = append(append([]string(nil), values...), wire.AccessToken, wire.RefreshToken)
+	issued, valid := issuedOAuthResponseSecrets(body)
+	if !valid {
+		trimmed := bytes.TrimSpace(body)
+		if bytes.HasPrefix(trimmed, []byte("{")) || bytes.HasPrefix(trimmed, []byte("[")) || strings.HasPrefix(result.ContentType, "application/json") {
+			if len(body) != 0 {
+				result.Body, result.BodyTruncated = "[response body omitted]", true
+				return result
+			}
+		}
 	}
+	values = append(append([]string(nil), values...), issued...)
 	variants := make([]string, 0, len(values)*8)
 	for _, value := range values {
 		if value == "" {
@@ -67,4 +76,37 @@ func validationSafeResponse(resp *http.Response, body []byte, values []string) *
 	}
 	result.Body = cleaned
 	return result
+}
+
+func issuedOAuthResponseSecrets(body []byte) ([]string, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil, false
+	}
+	var values []string
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return nil, false
+		}
+		var raw json.RawMessage
+		if decoder.Decode(&raw) != nil {
+			return nil, false
+		}
+		if key == "access_token" || key == "refresh_token" {
+			var value string
+			if json.Unmarshal(raw, &value) == nil {
+				values = append(values, value)
+			}
+		}
+	}
+	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
+		return nil, false
+	}
+	var extra json.RawMessage
+	if decoder.Decode(&extra) != io.EOF {
+		return nil, false
+	}
+	return values, true
 }

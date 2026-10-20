@@ -636,6 +636,9 @@ func (h *Handler) validateCredentialRoute(w http.ResponseWriter, r *http.Request
 		return credentialRequiresMCPOAuth()
 	}
 	result, err := h.validator.validateMCPOAuth(r.Context(), credential)
+	if errors.Is(err, errArchivedDiagnostic) {
+		return credentialArchived()
+	}
 	if err != nil {
 		return credentialSecretError(err, "Could not validate credential")
 	}

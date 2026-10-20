@@ -7,12 +7,14 @@ import { createOmaSession } from "../src/oma-session.ts";
 import { mountOma } from "../src/plugin.ts";
 import { mcpServerPrefix } from "../src/external-mcp/server-name.ts";
 import { externalServers } from "../src/external-mcp/config.ts";
+import { ExternalMcpClient } from "../src/external-mcp/client.ts";
 import { registerWorkerTask } from "../src/worker-registration.ts";
 import { Backend, textEvents, toolEvents } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
 
-function peer(transport: "http" | "sse" = "http", serverName = "peer") {
+function peer(transport: "http" | "sse" | "fallback" = "http", serverName = "peer") {
   const requests: Payload[] = [];
+  const httpRequests: { method: string; path: string }[] = [];
   let failDiscovery = false;
   let authenticationStatus: number | undefined;
   let failCall = false;
@@ -28,9 +30,13 @@ function peer(transport: "http" | "sse" = "http", serverName = "peer") {
     port: 0,
     hostname: "127.0.0.1",
     async fetch(request) {
+      const path = new URL(request.url).pathname;
+      httpRequests.push({ method: request.method, path });
+      if (transport === "fallback" && path === "/legacy" && request.method === "POST")
+        return new Response(null, { status: authenticationStatus ?? 400 });
       if (
         request.method === "GET" &&
-        new URL(request.url).pathname === "/sse"
+        (path === "/sse" || (transport === "fallback" && path === "/legacy"))
       ) {
         expect(request.headers.get("Authorization")).toBe("Bearer peer-secret");
         return new Response(
@@ -119,6 +125,7 @@ function peer(transport: "http" | "sse" = "http", serverName = "peer") {
   });
   return {
     requests,
+    httpRequests,
     output: (text: string) => { outputText = text; },
     content: (blocks: Payload[]) => { outputContent = blocks; },
     dispatched: dispatched.promise,
@@ -129,8 +136,8 @@ function peer(transport: "http" | "sse" = "http", serverName = "peer") {
     config: {
       mcpServers: {
         [serverName]: {
-          type: transport,
-          url: new URL(transport === "sse" ? "/sse" : "/", server.url).href,
+          type: transport === "fallback" ? "http" : transport,
+          url: new URL(transport === "sse" ? "/sse" : transport === "fallback" ? "/legacy" : "/", server.url).href,
           headers: { Authorization: "Bearer peer-secret" },
           tools: [{ name: "disabled", enabled: false }],
         },
@@ -154,7 +161,7 @@ function peer(transport: "http" | "sse" = "http", serverName = "peer") {
 }
 
 async function fixture(
-  transport: "http" | "sse" = "http",
+  transport: "http" | "sse" | "fallback" = "http",
   serverName = "peer",
   extraServers: Payload = {},
 ) {
@@ -893,4 +900,34 @@ for (const status of [401, 403]) {
    expect([...f.b.publicLog.values()].filter(event=>event.type==="session.error").every(event=>event.error.type==="mcp_authentication_failed_error")).toBe(true);
   } finally {await f.close();}
  });
+}
+
+
+test("URL MCP automatically falls back after rejected Streamable HTTP and executes through real SSE", async () => {
+  const f = await fixture("fallback");
+  try {
+    await f.session.open();
+    f.b.modelScript = [mcpEvents(), textEvents("fetched through automatic SSE fallback")];
+    await f.session.receive("fallback_input", { content: "Fetch documentation" });
+    expect(f.p.requests.filter(request => request.method === "tools/call")).toHaveLength(1);
+    const firstPost = f.p.httpRequests.findIndex(request => request.method === "POST" && request.path === "/legacy");
+    const firstGet = f.p.httpRequests.findIndex(request => request.method === "GET" && request.path === "/legacy");
+    expect(firstPost).toBeGreaterThanOrEqual(0);
+    expect(firstGet).toBeGreaterThan(firstPost);
+    await f.session.close();
+    await f.p.disconnected;
+  } finally { await f.close(); }
+});
+
+for (const status of [401, 403]) {
+  test(`URL MCP authentication ${status} never falls back to legacy SSE`, async () => {
+    const p = peer("fallback");
+    const client = new ExternalMcpClient(externalServers(p.config)[0]);
+    try {
+      p.failAuthentication(status);
+      await expect(client.discover(new AbortController().signal)).rejects.toThrow();
+      expect(client.authenticationFailed).toBe(true);
+      expect(p.httpRequests.some(request => request.method === "GET")).toBe(false);
+    } finally { await client.close(); p.close(); }
+  });
 }

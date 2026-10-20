@@ -174,12 +174,12 @@ test("25 retained threads count toward capacity, archival frees capacity and ref
   expect(f.session.state.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
 });
 
-test("interrupting the whole session cancels child approval before sandbox dispatch", async () => {
+test.each(["user.interrupt", "control_request"])("%s interrupting the whole session cancels child approval before sandbox dispatch", async (type) => {
   const f = await fixture();
   f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate"), toolEvents("pwd", "child_tool")];
   const turn = f.session.receive("interrupt", { content: "Delegate" }).catch(() => {});
   await eventually(() => f.session.approvals.size === 1);
-  await f.session.control({ type: "user.interrupt" });
+  await f.session.control({ type, ...(type === "control_request" ? { request_id: "global", request: { subtype: "interrupt" } } : {}) });
   await turn;
   expect(f.session.approvals.size).toBe(0);
   expect(f.b.executions).toHaveLength(0);
@@ -212,21 +212,24 @@ test("lost child tool outcome blocks parent recovery and never replays the comma
   expect(f.b.executions).toHaveLength(1);
 });
 
-test("targeted child interruption lets the parent recover while primary interruption stops the turn", async () => {
+test.each(["user.interrupt", "control_request"])("%s targeted child interruption leaves parent quiet until user input while primary interruption stops the turn", async (type) => {
   const f = await fixture();
-  f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate"), toolEvents("pwd", "child_tool"), textEvents("Child was interrupted")];
+  f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate"), toolEvents("pwd", "child_tool"), textEvents("RESUMED")];
   const turn = f.session.receive("target", { content: "Delegate" });
   await eventually(() => f.session.approvals.size === 1);
   const thread = f.session.state.threads![0]!;
-  await f.session.control({ type: "user.interrupt", session_thread_id: thread.id });
+  await f.session.control({ type, session_thread_id: thread.id, ...(type === "control_request" ? { request_id: "child", request: { subtype: "interrupt" } } : {}) });
   await turn;
   expect(f.b.executions).toHaveLength(0);
+  expect(f.b.requests).toHaveLength(2);
+  expect([...f.b.publicLog.values()].some((event) => event.type === "agent.message" && !event.session_thread_id)).toBe(false);
+  await f.session.receive("resume-after-child-interrupt", {content:"Reply RESUMED, do not restart cancelled work."});
   expect(f.b.requests).toHaveLength(3);
-  expect([...f.b.publicLog.values()].some((event) => event.type === "agent.message" && !event.session_thread_id && event.content[0].text === "Child was interrupted")).toBe(true);
+  expect([...f.b.publicLog.values()].some((event) => event.type === "agent.message" && !event.session_thread_id && event.content[0].text === "RESUMED")).toBe(true);
   f.b.modelScript = [toolEvents("pwd", "primary_tool")];
   const primaryTurn = f.session.receive("primary", { content: "Run" });
   await eventually(() => f.session.approvals.size === 1);
-  await f.session.control({ type: "user.interrupt", session_thread_id: f.session.id });
+  await f.session.control({ type, session_thread_id: f.session.id, ...(type === "control_request" ? { request_id: "primary", request: { subtype: "interrupt" } } : {}) });
   await primaryTurn;
   expect(f.b.executions).toHaveLength(0);
 });
@@ -263,4 +266,33 @@ test("backend launch roster is listed and delegated by agent_name without inline
   expect(f.session.state.threads!.map((thread) => thread.name)).toEqual(["fast_probe"]);
   await expect(f.session.subagents.send({ agent_name: "missing", message: "Run" }, new AbortController().signal))
     .rejects.toThrow("Unknown predefined agent");
+});
+
+test("a retained followup checks authoritative archive before creating child work", async () => {
+  const f = await fixture();
+  f.b.modelScript = [call("send_to_agent", {name:"external_archive",system_prompt:"Reply READY",message:"Reply READY"}, "create_before_archive"),textEvents("READY"),textEvents("done")];
+  await f.session.receive("before_external_archive",{content:"Delegate once"});
+  const child = f.session.state.threads![0]!;
+  expect(child.status).toBe("idle");
+  const before = f.b.requests.length;
+  const baseRoute = f.b.route.bind(f.b);
+  let checks = 0;
+  f.b.route = async (request) => {
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname.endsWith(`/worker/subagent-threads/${child.id}`)) {
+      checks++;
+      expect(url.searchParams.get("worker_epoch")).toBe(String(f.b.a.worker_epoch));
+      return Response.json({id:child.id,status:"terminated",archived:true});
+    }
+    return baseRoute(request);
+  };
+  f.b.modelScript = [call("send_to_agent",{thread_id:child.id,message:"Reply READY"},"followup_after_external_archive"),textEvents("rejected")];
+  await f.session.receive("after_external_archive",{content:"Attempt the same existing child once and report real error, do not create another."});
+  expect(checks).toBe(1);
+  expect(f.b.requests.length).toBe(before+2);
+  expect(f.session.state.threads).toHaveLength(1);
+  expect(child.status).toBe("terminated");
+  const error = [...f.b.publicLog.values()].filter((event) => event.type === "user").flatMap((event) => event.message.content).find((block:Payload) => block.type === "tool_result" && block.tool_use_id === "followup_after_external_archive");
+  expect(error?.is_error).toBe(true);
+  expect(JSON.stringify(error?.content)).toContain("archived");
 });

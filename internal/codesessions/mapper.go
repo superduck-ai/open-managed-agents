@@ -26,7 +26,11 @@ func workerPayloadForPublicEvent(codeSessionID string, event db.SessionEvent) (j
 	receivedAt := event.CreatedAt.UTC()
 	switch schema.Type {
 	case "user.interrupt":
-		return marshalRaw(map[string]any{"id": schema.ID, "uuid": firstNonEmpty(schema.UUID, schema.ID, event.UUID), "type": "control_request", "request_id": schema.ID, "request": map[string]string{"subtype": "interrupt"}})
+		payload := map[string]any{"id": schema.ID, "uuid": firstNonEmpty(schema.UUID, schema.ID, event.UUID), "type": "control_request", "request_id": schema.ID, "request": map[string]string{"subtype": "interrupt"}}
+		if schema.SessionThreadID != "" {
+			payload["session_thread_id"] = schema.SessionThreadID
+		}
+		return marshalRaw(payload)
 	case "user.message":
 		eventUUID := firstNonEmpty(schema.UUID, schema.ID, event.UUID, uuid.NewV4().String())
 		payload := map[string]any{

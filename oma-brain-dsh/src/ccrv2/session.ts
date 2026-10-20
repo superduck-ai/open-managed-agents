@@ -42,6 +42,8 @@ export class CcrSession {
   private readonly toolResults = new CcrToolResults();
   private turnErrorMessage?: string;
   private interrupted = false;
+  private waitingOnInterruptedChild = false;
+  private readonly interruptedApprovals = new Set<string>();
   readonly approvals = new Map<
     string,
     { phase: "policy" | "confirmation" | "resolved"; resolve: (decision: Payload) => void; reject: (error: Error) => void; threadId: string; details: import("./wire.ts").RequiresActionDetails }
@@ -85,7 +87,7 @@ export class CcrSession {
         },
       }]),
       setupTools: (scope) => this.subagents.register(scope),
-      beforeRequest: () => this.flushEvents(),
+      beforeRequest: () => this.beforePrimaryRequest(),
       onContextCompacted: tokens => this.contextCompacted(tokens),
       onEvent: (event) => this.record(event),
       onStream: (frame) => this.stream(frame),
@@ -330,7 +332,7 @@ export class CcrSession {
     });
     decisionPromise.catch(() => {});
     const cancel = () =>
-      this.approvals.get(requestId)?.reject(new Error("Approval cancelled"));
+      this.approvals.get(requestId)?.reject(new Error(this.interruptedApprovals.has(ownerId) ? "Tool execution was interrupted before completion. Please retry." : "Approval cancelled"));
     signal.addEventListener("abort", cancel, { once: true });
     let decision: Payload;
     try {
@@ -493,6 +495,34 @@ export class CcrSession {
     return next;
   }
 
+  private async beforePrimaryRequest(): Promise<void> {
+    if (this.waitingOnInterruptedChild) {
+      this.interrupted = true;
+      this.agent.cancel({ kind: "user" });
+    }
+    await this.flushEvents();
+  }
+
+  wakeParentFromChildReport(): void {
+    this.waitingOnInterruptedChild = false;
+  }
+
+  consumeInterruptedApproval(threadId: string): boolean {
+    return this.interruptedApprovals.delete(threadId);
+  }
+
+  private interrupt(threadId?: string): void {
+    if (threadId && threadId !== this.id && this.subagents.threads.some((thread) => thread.id === threadId && thread.status === "running")) this.waitingOnInterruptedChild = true;
+    for (const approval of this.approvals.values()) {
+      if (approval.phase === "confirmation" && (!threadId || approval.threadId === threadId)) this.interruptedApprovals.add(approval.threadId);
+    }
+    if (threadId !== this.id) this.subagents.interrupt(threadId);
+    if (!threadId || threadId === this.id) {
+      this.interrupted = true;
+      this.agent.cancel({ kind: "user" });
+    }
+  }
+
   async control(payload: Payload): Promise<boolean> {
     if (payload.type === "control_response") {
       const response = object(payload.response);
@@ -505,12 +535,7 @@ export class CcrSession {
       return true;
     }
     if (["interrupt", "user.interrupt"].includes(payload.type)) {
-      if (payload.session_thread_id !== this.id)
-        this.subagents.interrupt(payload.session_thread_id);
-      if (!payload.session_thread_id || payload.session_thread_id === this.id) {
-        this.interrupted = true;
-        this.agent.cancel({ kind: "user" });
-      }
+      this.interrupt(payload.session_thread_id);
       return true;
     }
     if (payload.type === "control_request") {
@@ -526,11 +551,7 @@ export class CcrSession {
           this.applyModel(model);
         }
       }
-      if (subtype === "interrupt") {
-        this.interrupted = true;
-        this.subagents.interrupt();
-        this.agent.cancel({ kind: "user" });
-      }
+      if (subtype === "interrupt") this.interrupt(payload.session_thread_id);
       const supported = !controlError && ["initialize", "interrupt", "set_model"].includes(subtype);
       await this.backend.events(this.id, [
         {
@@ -590,6 +611,7 @@ export class CcrSession {
         beforeRun: async () => {
           this.turnErrorMessage = undefined;
           this.interrupted = false;
+          this.waitingOnInterruptedChild = false;
           this.state.inputId = inputId;
           this.state.phase = "accepted";
           this.state.approvedCalls = {};

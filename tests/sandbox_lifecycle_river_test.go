@@ -310,7 +310,7 @@ func TestSessionArchiveConcurrentSandboxReclamation(t *testing.T) {
 	})
 	lifecycle := environments.NewSandboxLifecycle(f.app.db, provider, config.SandboxLifecycleConfig{}, logger)
 	results := make(chan error, 2)
-	go func() { results <- lifecycle.EnqueueArchivedSession(context.Background(), f.session) }()
+	go func() { results <- lifecycle.EnqueueRemovedSession(context.Background(), f.session) }()
 	go func() { results <- lifecycle.Reclaim(context.Background(), f.target) }()
 	for range 2 {
 		select {

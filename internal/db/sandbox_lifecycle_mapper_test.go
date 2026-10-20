@@ -35,7 +35,7 @@ func TestSandboxLifecycleMapperDeletionTargetsImmutableTenantSandbox(t *testing.
 		bound:     buildSandboxLifecycleMapperFinishStop(yourbatis.DialectPostgres, scope),
 		wantID:    "SandboxLifecycleMapper.FinishStop", wantKind: yourbatis.StatementUpdate,
 		wantArgumentNames: []string{"scope.OrganizationUUID", "scope.WorkspaceUUID", "scope.SandboxUUID"},
-		wantSQLFragments:  []string{"organization_uuid = $1", "workspace_uuid = $2", "uuid = $3", "state = 'stopping'", "stop_reason IN ('idle_timeout', 'session_archived')"},
+		wantSQLFragments:  []string{"organization_uuid = $1", "workspace_uuid = $2", "uuid = $3", "state = 'stopping'", "stop_reason IN ('idle_timeout', 'session_archived', 'session_deleted')"},
 	})
 }
 
@@ -81,12 +81,12 @@ func TestCodeSessionMapperPublicInputResetsIdleClockWithinTenant(t *testing.T) {
 
 func TestSandboxLifecycleMapperArchiveStopBindsTenantAndSession(t *testing.T) {
 	assertMapperBuilderContract(t, mapperBuilderContract{
-		statement: sandboxLifecycleMapperBeginArchiveStopStatement,
-		bound:     buildSandboxLifecycleMapperBeginArchiveStop(yourbatis.DialectPostgres, "org", "workspace", "session"),
-		wantID:    "SandboxLifecycleMapper.BeginArchiveStop", wantKind: yourbatis.StatementUpdate,
+		statement: sandboxLifecycleMapperBeginRemovalStopStatement,
+		bound:     buildSandboxLifecycleMapperBeginRemovalStop(yourbatis.DialectPostgres, "org", "workspace", "session"),
+		wantID:    "SandboxLifecycleMapper.BeginRemovalStop", wantKind: yourbatis.StatementUpdate,
 		wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "sessionUUID", "organizationUUID", "workspaceUUID"},
 		wantSQLFragments: []string{"work.organization_uuid = $1", "work.workspace_uuid = $2", "work.session_uuid = $3",
-			"s.archived_at IS NOT NULL", "env.config->>'type' = 'cloud'", "state = 'stopped'", "stop_reason = 'session_archived'",
+			"s.archived_at IS NOT NULL", "env.config->>'type' = 'cloud'", "state = 'stopped'", "stop_reason = CASE WHEN stopping_work.deleted_at IS NOT NULL THEN 'session_deleted' ELSE 'session_archived' END",
 			"provider_sandbox_id IS NOT NULL", "state <> 'stopped'"},
 	})
 }
@@ -103,10 +103,10 @@ func TestEnvironmentSandboxMapperLocksOwnerBeforeStateUpdates(t *testing.T) {
 
 func TestSandboxLifecycleMapperArchivedSessionCandidatesAreScoped(t *testing.T) {
 	assertMapperBuilderContract(t, mapperBuilderContract{
-		statement: sandboxLifecycleMapperListArchivedForSessionStatement,
-		bound:     buildSandboxLifecycleMapperListArchivedForSession(yourbatis.DialectPostgres, "org", "workspace", "session"),
-		wantID:    "SandboxLifecycleMapper.ListArchivedForSession", wantKind: yourbatis.StatementSelect,
+		statement: sandboxLifecycleMapperListRemovedForSessionStatement,
+		bound:     buildSandboxLifecycleMapperListRemovedForSession(yourbatis.DialectPostgres, "org", "workspace", "session"),
+		wantID:    "SandboxLifecycleMapper.ListRemovedForSession", wantKind: yourbatis.StatementSelect,
 		wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "sessionUUID"},
-		wantSQLFragments:  []string{"work.organization_uuid = $1", "work.workspace_uuid = $2", "work.session_uuid = $3", "s.archived_at IS NOT NULL", "sandbox.state = 'stopping'", "sandbox.stop_reason = 'session_archived'", "ORDER BY sandbox.uuid"},
+		wantSQLFragments:  []string{"work.organization_uuid = $1", "work.workspace_uuid = $2", "work.session_uuid = $3", "s.archived_at IS NOT NULL", "sandbox.state = 'stopping'", "sandbox.stop_reason IN ('session_archived', 'session_deleted')", "ORDER BY sandbox.uuid"},
 	})
 }

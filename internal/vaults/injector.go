@@ -366,7 +366,7 @@ func (i *Injector) resolveMCPOAuthToken(ctx context.Context, credential *db.Vaul
 		}
 	}
 	token, _, err := i.refreshMCPOAuthCredential(ctx, &current, now, forceRefresh)
-	if errors.Is(err, errMCPOAuthRefreshTokenMissing) {
+	if permanentOAuthRefreshFailure(err) {
 		return nil, errors.Join(ErrMCPOAuthReauthorizationRequired, err)
 	}
 	if err != nil {

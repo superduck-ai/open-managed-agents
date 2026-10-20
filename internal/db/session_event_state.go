@@ -88,6 +88,10 @@ func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 		return nil, err
 	}
 	threadEvent.ThreadExternalID = source.ThreadExternalID
+	threadEvents, err := sessionThreadStatusCopies(threadEvent, primary, thread)
+	if err != nil {
+		return nil, err
+	}
 	sessionStatus, err := sessionStatusAfterSourceTx(ctx, executor, session, thread, source.EventType, status)
 	if err != nil {
 		return nil, err
@@ -107,16 +111,16 @@ func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 		return nil, err
 	}
 	if sessionStatus == "running" || sessionStatus == "rescheduling" {
-		return []SessionEvent{sessionEvent, threadEvent}, nil
+		return append([]SessionEvent{sessionEvent}, threadEvents...), nil
 	}
 	if sessionStatus == "idle" {
 		usage := SessionEvent{
 			UUID: uuid.NewV4().String(), ExternalID: derivedStatusEventID(source.ExternalID, "session.usage"),
 			EventType: "session.usage", CreatedAt: source.CreatedAt, ProcessedAt: source.ProcessedAt,
 		}
-		return []SessionEvent{threadEvent, usage, sessionEvent}, nil
+		return append(threadEvents, usage, sessionEvent), nil
 	}
-	return []SessionEvent{threadEvent, sessionEvent}, nil
+	return append(threadEvents, sessionEvent), nil
 }
 
 // The usage snapshot is cumulative, so it is rendered from the usage read under the Session lock.
@@ -292,6 +296,9 @@ func newSessionStatusEvent(source SessionEvent, eventType string, thread Session
 }
 
 func shouldWriteSessionStatus(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, event SessionEvent) (bool, error) {
+	if event.threadStatusMirror {
+		return true, nil
+	}
 	if event.EventType == "session.deleted" {
 		return true, nil
 	}
@@ -367,13 +374,16 @@ func shouldWriteSessionStatus(ctx context.Context, executor yourbatis.Executor, 
 
 // applySessionEventState runs only for newly inserted facts under the session lock.
 func applySessionEventState(ctx context.Context, executor yourbatis.Executor, session *Session, primaryID string, event SessionEvent) (bool, error) {
+	if event.threadStatusMirror {
+		return false, nil
+	}
 	mapper := NewSessionMapper(executor)
 	if event.UsageIncrement != nil {
 		row, err := mapper.AddUsage(ctx, session.WorkspaceUUID, session.UUID, *event.ThreadUUID, *event.UsageIncrement)
 		if err != nil {
 			return false, err
 		}
-		session.Usage = row.Usage
+		session.Usage = row.session().Usage
 	}
 	if status, ok := maevents.ThreadStatus(event.EventType); ok {
 		threadID := event.StatusThreadID

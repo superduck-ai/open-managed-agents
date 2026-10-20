@@ -232,7 +232,9 @@ func (s tunnelMCPServer) build(identity MCPRuntimeIdentity) (json.RawMessage, er
 	return json.Marshal(fields)
 }
 
-func remoteMCPTransportType(serverType, rawURL string) string {
+// URL path suffixes do not identify the MCP transport. The HTTP client
+// negotiates Streamable HTTP first and performs the legacy SSE fallback.
+func remoteMCPTransportType(serverType string, _ string) string {
 	switch strings.ToLower(serverType) {
 	case "sse":
 		return "sse"
@@ -240,10 +242,6 @@ func remoteMCPTransportType(serverType, rawURL string) string {
 		return strings.ToLower(serverType)
 	case "websocket":
 		return "ws"
-	}
-	parsed, err := url.Parse(rawURL)
-	if err == nil && strings.HasSuffix(strings.TrimRight(strings.ToLower(parsed.Path), "/"), "/sse") {
-		return "sse"
 	}
 	return "http"
 }

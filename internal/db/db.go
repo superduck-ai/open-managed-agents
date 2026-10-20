@@ -26,6 +26,7 @@ var (
 	ErrNotFound                       = platform.ErrNotFound
 	ErrInvalidState                   = errors.New("invalid state")
 	ErrSessionInputPaused             = errors.New("session input is paused; resolve pending tools or budget first")
+	ErrSessionInterruptTargetInvalid  = errors.New("interrupt target is terminated or invalid")
 	ErrSessionInputConflict           = errors.New("session cannot accept input")
 	ErrSessionToolConfirmationInvalid = errors.New("tool confirmation requires a pending ask event")
 	ErrInvalidCursor                  = errors.New("invalid page cursor")

@@ -164,7 +164,7 @@ func (p MCPProxyPolicy) AuthorizeMCPURL(rawURL string) Decision {
 	if err != nil {
 		return Decision{Reason: ReasonInvalidTarget, Host: host}
 	}
-	if _, ok := p.mcpURLSet[key]; !ok {
+	if !p.matchesMCPTransportURL(key, target) {
 		return Decision{Reason: ReasonHostNotAllowed, Host: host}
 	}
 	port := target.Port()
@@ -199,4 +199,35 @@ func (p Policy) authorizeEndpoint(normalized string, scheme string, port string)
 		return Decision{Allow: true, Reason: ReasonPackageManagerHost, Host: normalized}
 	}
 	return Decision{Reason: ReasonHostNotAllowed, Host: normalized}
+}
+
+func (p MCPProxyPolicy) matchesMCPTransportURL(key string, target *url.URL) bool {
+	if _, ok := p.mcpURLSet[key]; ok {
+		return true
+	}
+	query, err := url.ParseQuery(target.RawQuery)
+	if err != nil || len(query["sessionid"]) != 1 || query.Get("sessionid") == "" {
+		return false
+	}
+	parts := strings.Split(target.RawQuery, "&")
+	kept := make([]string, 0, len(parts))
+	removed := 0
+	for _, part := range parts {
+		if strings.HasPrefix(part, "sessionid=") {
+			removed++
+			continue
+		}
+		kept = append(kept, part)
+	}
+	if removed != 1 {
+		return false
+	}
+	base := *target
+	base.RawQuery = strings.Join(kept, "&")
+	baseKey, err := canonicalMCPURLKey(base.String())
+	if err != nil {
+		return false
+	}
+	_, ok := p.mcpURLSet[baseKey]
+	return ok
 }

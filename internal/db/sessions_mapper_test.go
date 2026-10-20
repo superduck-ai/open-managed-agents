@@ -110,7 +110,7 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 				"params.SessionUUID", "params.SessionExternalID", "params.ParentThreadUUID",
 				"params.ParentThreadExternalID", "params.AgentSnapshot", "params.Status",
-				"params.Usage", "params.Stats", "params.CreatedAt", "params.CreatedAt",
+				"params.Usage", "params.Stats", "params.StatsInitialized", "params.Status", "params.WorkspaceUUID", "params.SessionUUID", "params.ExternalID", "params.ParentThreadUUID", "params.UsageInitialized", "params.WorkspaceUUID", "params.SessionUUID", "params.ExternalID", "params.ParentThreadUUID", "params.CreatedAt", "params.CreatedAt",
 			},
 			wantSensitiveArgumentNames: []string{"params.AgentSnapshot", "params.Usage", "params.Stats"},
 			wantSQLFragments:           []string{"WITH inserted AS", "ON CONFLICT", "FROM inserted"},

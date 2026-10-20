@@ -276,6 +276,13 @@ export class Backend {
       if (request.method !== "GET") {
         if (body.worker_epoch !== this.a.worker_epoch) return json({}, 409);
       }
+      if (request.method === "GET" && path.includes("/worker/subagent-threads/")) {
+        const id = decodeURIComponent(path.split("/worker/subagent-threads/")[1]!);
+        const events = [...this.publicLog.values()].filter((event) => event.session_thread_id === id);
+        if (!events.some((event) => event.type === "session.thread_created")) return json({}, 404);
+        const archived = events.some((event) => event.type === "session.thread_status_terminated");
+        return json({id, status: archived ? "terminated" : "idle", archived});
+      }
       if (path.endsWith("/internal-events")) {
         if (request.method === "GET")
           return json({

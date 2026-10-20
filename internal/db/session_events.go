@@ -32,13 +32,18 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 	if err := rejectPausedSessionInput(ctx, executor, session, primary, events); err != nil {
 		return sessionEventBatchResult{}, err
 	}
-	acceptedID, err := validateSessionInputBatch(primary, worker, events)
+	settledInterrupts, err := settledThreadInterruptsTx(ctx, executor, session, primary, worker, events)
+	if err != nil {
+		return sessionEventBatchResult{}, err
+	}
+	activeInputs := slices.DeleteFunc(slices.Clone(events), func(event SessionEvent) bool { return settledInterrupts[event.ExternalID] })
+	acceptedID, err := validateSessionInputBatch(primary, worker, activeInputs)
 	if err != nil {
 		return sessionEventBatchResult{}, err
 	}
 	result := sessionEventBatchResult{Events: make([]SessionEvent, 0, len(events)+2)}
 	for _, event := range events {
-		settled := idleSessionInterrupt(primary, worker, event)
+		settled := settledInterrupts[event.ExternalID] || idleSessionInterrupt(primary, worker, event)
 		var batch []SessionEvent
 		if event.ExternalID == acceptedID {
 			running := event
@@ -300,6 +305,14 @@ func prepareSessionEventTx(ctx context.Context, executor yourbatis.Executor, ses
 	}
 	event.ThreadUUID = &thread.UUID
 	if event.EventType == "session.usage" {
+		row, found, readErr := NewSessionMapper(executor).FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID)
+		if readErr != nil {
+			return SessionEvent{}, false, readErr
+		}
+		if !found {
+			return SessionEvent{}, false, ErrNotFound
+		}
+		session.Usage = row.session().Usage
 		if event.Payload, err = sessionUsagePayload(event, session.Usage); err != nil {
 			return SessionEvent{}, false, err
 		}

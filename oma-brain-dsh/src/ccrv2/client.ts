@@ -463,6 +463,14 @@ export class CcrClient implements CcrBackend {
     }
   }
 
+  async getSubagentThread(id: string, threadId: string, signal?: AbortSignal): Promise<{id: string; status: string; archived: boolean}> {
+    const epoch = this.config.credentials(id).workerEpoch;
+    const response = await this.worker(id, `/subagent-threads/${encodeURIComponent(threadId)}?worker_epoch=${epoch}`, "GET", undefined, signal, 10_000, epoch);
+    const value = await response.json() as Record<string, unknown>;
+    if (value.id !== threadId || typeof value.archived !== "boolean" || !["idle", "running", "rescheduling", "terminated"].includes(String(value.status))) throw new Error("Invalid authoritative subagent thread state");
+    return {id: threadId, status: value.status as string, archived: value.archived};
+  }
+
   /** Read external metadata; ordinary GET failures return null after ten attempts. */
   async getWorkerState(id: string, workerEpoch?: number, signal?: AbortSignal): Promise<{
     metadata: Record<string, unknown> | null;

@@ -569,11 +569,11 @@ func responseFromThread(thread db.SessionThread) threadResponse {
 		CreatedAt:      httpapi.FormatTime(thread.CreatedAt),
 		ParentThreadID: thread.ParentThreadExternalID,
 		SessionID:      thread.SessionExternalID,
-		Stats:          httpapi.RawOr(thread.Stats, `{}`),
+		Stats:          threadMetricResponse(thread.Stats, thread.StatsInitialized),
 		Status:         thread.Status,
 		Type:           "session_thread",
 		UpdatedAt:      httpapi.FormatTime(thread.UpdatedAt),
-		Usage:          httpapi.RawOr(thread.Usage, `{}`),
+		Usage:          threadMetricResponse(thread.Usage, thread.UsageInitialized),
 	}
 }
 
@@ -615,4 +615,11 @@ func responseFromResource(resource db.SessionResource) json.RawMessage {
 
 func isOutputResource(resource db.SessionResource) bool {
 	return strings.HasPrefix(resource.Path, sandboxmount.OutputsRoot+"/")
+}
+
+func threadMetricResponse(raw json.RawMessage, initialized bool) json.RawMessage {
+	if !initialized {
+		return json.RawMessage(`null`)
+	}
+	return httpapi.RawOr(raw, `{}`)
 }

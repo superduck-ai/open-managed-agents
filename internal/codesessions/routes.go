@@ -46,6 +46,7 @@ func (h *Handler) registerCodeSessionRoutes(router chi.Router) {
 		sessionRouter.Post("/sign-commit", h.errorAdapter.Wrap(h.handleSignCommit))
 		sessionRouter.Route("/worker", func(workerRouter chi.Router) {
 			workerRouter.Get("/", h.handleGetCodeSessionWorker)
+			workerRouter.Get("/subagent-threads/{thread_id}", h.handleGetCodeSessionSubagentThread)
 			workerRouter.Put("/", h.handlePutCodeSessionWorker)
 			workerRouter.HandleFunc("/internal-events", h.handleCodeSessionWorkerInternalEvents)
 			workerRouter.Get("/events/stream", h.handleCodeSessionWorkerEventsStream)

@@ -21,7 +21,8 @@ type sandboxRPCRequest struct {
 			ProtocolVersion string `json:"io.modelcontextprotocol/protocolVersion"`
 		} `json:"_meta"`
 		Arguments struct {
-			FilePath string `json:"file_path"`
+			FilePath string  `json:"file_path"`
+			Content  *string `json:"content"`
 		} `json:"arguments"`
 	} `json:"params"`
 }

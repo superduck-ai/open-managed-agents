@@ -37,7 +37,7 @@ type Handler struct {
 }
 
 type sandboxReclaimer interface {
-	EnqueueArchivedSession(context.Context, db.Session) error
+	EnqueueRemovedSession(context.Context, db.Session) error
 }
 
 type webhookEnqueuer interface {
@@ -81,6 +81,7 @@ type threadResponse struct {
 	Type           string          `json:"type"`
 	UpdatedAt      string          `json:"updated_at"`
 	Usage          json.RawMessage `json:"usage"`
+	WorkflowRunID  *string         `json:"workflow_run_id"`
 }
 
 type deleteResponse struct {

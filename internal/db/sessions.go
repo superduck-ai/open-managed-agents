@@ -55,6 +55,8 @@ type SessionThread struct {
 	ParentThreadExternalID *string
 	AgentSnapshot          json.RawMessage
 	Status                 string
+	StatsInitialized       bool
+	UsageInitialized       bool
 	Usage                  json.RawMessage
 	Stats                  json.RawMessage
 	CreatedAt              time.Time
@@ -103,23 +105,24 @@ type SessionResource struct {
 }
 
 type SessionEvent struct {
-	StatusThreadID    string
-	UsageIncrement    *SessionUsageIncrement
-	PayloadBlobUUID   *string
-	ToolUseID         *string
-	UUID              string
-	ExternalID        string
-	OrganizationUUID  string
-	WorkspaceUUID     string
-	SessionUUID       string
-	SessionExternalID string
-	ThreadUUID        *string
-	ThreadExternalID  *string
-	EventType         string
-	Payload           json.RawMessage
-	ProcessedAt       time.Time
-	CreatedAt         time.Time
-	DeletedAt         *time.Time
+	threadStatusMirror bool
+	StatusThreadID     string
+	UsageIncrement     *SessionUsageIncrement
+	PayloadBlobUUID    *string
+	ToolUseID          *string
+	UUID               string
+	ExternalID         string
+	OrganizationUUID   string
+	WorkspaceUUID      string
+	SessionUUID        string
+	SessionExternalID  string
+	ThreadUUID         *string
+	ThreadExternalID   *string
+	EventType          string
+	Payload            json.RawMessage
+	ProcessedAt        time.Time
+	CreatedAt          time.Time
+	DeletedAt          *time.Time
 }
 
 // SessionUsageIncrement contains measured counters; nil means unavailable.
@@ -418,7 +421,7 @@ func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalI
 			removal.Session = row.session()
 			changed = true
 		}
-		if err := NewSandboxLifecycleMapper(executor).BeginArchiveStop(ctx, removal.Session.OrganizationUUID, workspaceUUID, removal.Session.UUID); err != nil {
+		if err := NewSandboxLifecycleMapper(executor).BeginRemovalStop(ctx, removal.Session.OrganizationUUID, workspaceUUID, removal.Session.UUID); err != nil {
 			return err
 		}
 		return d.retireSessionWorkersTx(ctx, executor, &removal)
@@ -455,6 +458,9 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 			return txErr
 		}
 		if _, txErr = eventMapper.SoftDeleteBySession(ctx, workspaceUUID, externalID); txErr != nil {
+			return txErr
+		}
+		if txErr = NewSandboxLifecycleMapper(executor).BeginRemovalStop(ctx, session.OrganizationUUID, workspaceUUID, session.UUID); txErr != nil {
 			return txErr
 		}
 		if _, txErr = workMapper.StopForDeletedSession(ctx, workspaceUUID, session.EnvironmentExternalID, session.UUID); txErr != nil {
@@ -569,7 +575,10 @@ func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceUUID string, ses
 			if err != nil {
 				return err
 			}
-			removal.StatusEvents = result.Events
+			removal.StatusEvents, err = appendArchivedThreadPrimaryEventsTx(ctx, executor, session, result.Events)
+			if err != nil {
+				return err
+			}
 			if result.SessionTerminated {
 				if err := d.retireSessionWorkersTx(ctx, executor, &removal); err != nil {
 					return err

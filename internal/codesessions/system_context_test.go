@@ -100,3 +100,53 @@ func TestSystemContextIsServerOwnedAndNotUserContent(t *testing.T) {
 		t.Fatalf("wrong worker context placement: err=%v", err)
 	}
 }
+
+func TestWorkerInterruptRetainsTargetAndNormalizesOnlyPublicPrimary(t *testing.T) {
+	for _, target := range []string{"", "child", "public-primary"} {
+		t.Run("target="+target, func(t *testing.T) {
+			input := map[string]any{"id": "interrupt", "type": "user.interrupt"}
+			if target != "" {
+				input["session_thread_id"] = target
+			}
+			body, _ := json.Marshal(input)
+			event := db.SessionEvent{ExternalID: "interrupt", EventType: "user.interrupt", CreatedAt: time.Now().UTC(), Payload: body}
+			payload, err := workerPayloadForPublicEvent("code", event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire map[string]any
+			if err = json.Unmarshal(payload, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if wire["type"] != "control_request" || wire["request_id"] != "interrupt" || wire["uuid"] != "interrupt" || wire["request"].(map[string]any)["subtype"] != "interrupt" {
+				t.Fatalf("control envelope changed: %s", payload)
+			}
+			if target == "" {
+				if _, ok := wire["session_thread_id"]; ok {
+					t.Fatal("global acquired target")
+				}
+			} else if wire["session_thread_id"] != target {
+				t.Fatalf("target lost before bridge normalization: %s", payload)
+			}
+			payload, err = workerInterruptTargetPayload(payload, "public-primary", "code")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = json.Unmarshal(payload, &wire); err != nil {
+				t.Fatal(err)
+			}
+			want := target
+			if target == "public-primary" {
+				want = "code"
+			}
+			if target != "" && wire["session_thread_id"] != want {
+				t.Fatalf("wrong owner mapping: %s", payload)
+			}
+			if target == "" {
+				if _, ok := wire["session_thread_id"]; ok {
+					t.Fatal("global acquired target")
+				}
+			}
+		})
+	}
+}

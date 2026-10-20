@@ -104,6 +104,7 @@ export class Subagents {
       this.bridge.bindPersistence(thread.id);
       await this.bridge.emit({ kind: "created", thread });
     }
+    if (args.thread_id && thread.status === "idle") await this.bridge.validateThread?.(thread.id, signal);
     if (thread.status !== "idle") throw new Error("Subagent thread is running or archived");
     thread.status = "running";
     let runtime = this.runtimes.get(thread.id);

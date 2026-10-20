@@ -64,7 +64,7 @@ integrity、isolation、cleanup、lifecycle、filestore 和 mounts。
 - 写进已挂的 `rw` store → 进 Filestore，下一次 Session attach 同一 store 仍在。
 - 写到 `/mnt/memory/` 根上、工作区或其他未挂载路径 → 只在本沙箱有效，重启后消失。
 
-父目录保持可写，但是沙箱本地盘，不是 Filestore。`instructions` 上限 **500** 字。不把策略追加进 `appendSystemPrompt`，不把各 store 文件清单灌进模型上下文。
+父目录保持可写，但是沙箱本地盘，不是 Filestore。`instructions` 上限 **4096** 字。不把策略追加进 `appendSystemPrompt`，不把各 store 文件清单灌进模型上下文。
 
 ---
 
@@ -140,13 +140,13 @@ Claude 启动前，runner 写入 `/mnt/memory/MEMORY.md`。模型会加载该文
 | 怎么写 | runner 写本地文件，不走 Memory Store API |
 | 内容 | `<!-- oma-stores -->` + 一行一个 store；不写固定引导；每次启动整文件替换 |
 | 一行 | `[name](mount_path) access — description。instructions`；`description`/`instructions` 为空时省掉对应分隔符，不留悬空的 `— 。`；`name` 里的 `[` `]` `\` 转义，防止链接被名字截断 |
-| `instructions` | ≤ **500** 字（Unicode 码点）。超限 **400**，不截断 |
+| `instructions` | ≤ **4096** 字（Unicode 码点）。超限 **400**，不截断 |
 | `description` | store 本体仍 ≤ 1024；挂载时快照进这一行 |
 | 不写什么 | 各 store 文件清单、记忆正文。正文靠 Agent Read `/mnt/memory/{slug}/...` |
 
 无 store 时：不写 `MEMORY.md`，不设 §2.5 后两个环境变量，不创建记忆根。此时没有自动记忆目录，本 session 草稿也只能落在工作区等普通沙箱路径，同样随重启丢掉。
 
-加载该文件有 200 行 / 约 25,000 字上限。500 字 × 8 个 store 远低于此；入口拒绝超限，生成时不再截断策略。运行中 Agent 若把 `MEMORY.md` 撑过上限，超出部分本 session 后续加载可能被截断；下次启动仍按快照重写。
+加载该文件仍有 200 行 / 约 25,000 字上限。单个 store 的 instructions 接受至 4096 个 Unicode 码点且持久化、生成时不截断；多个 store 的总指导可能超过加载预算，单字段接收上限不保证整份文件始终进入模型上下文。运行中 Agent 若把 `MEMORY.md` 撑过上限，超出部分本 session 后续加载可能被截断；下次启动仍按快照重写。
 
 用户说「记住」或模型打算自动记下时：Agent 对照上表自行选择。有匹配的 `rw` store 就写入该 store；没有合适的 store 就写在根上或其他本地路径。平台不指定默认 store。选错 store（把个人口味写进项目 store）是策略写得含糊或模型判断失误，用 description / instructions 收紧，不用资源顺序兜底。
 
@@ -295,12 +295,12 @@ flowchart TB
 
 | 包 | 职责 |
 | --- | --- |
-| `internal/sessions` | 校验（≤8、不重复、access、instructions ≤500、禁止客户端 mount_path/name/description）；slug；快照。Deployment run 共用 `insertSessionTx` |
+| `internal/sessions` | 校验（≤8、不重复、access、instructions ≤4096、禁止客户端 mount_path/name/description）；slug；快照。Deployment run 共用 `insertSessionTx` |
 | `internal/environments` | 创建可写的 `/mnt/memory`；multimount 5→5+N；写 `MEMORY.md`（不锁父目录）；ready 含 store mount 与该文件；删透传；有 store 时设 §2.5 环境变量；写允许覆盖记忆根，`ro` store 除外 |
 | runner / `internal/codesessions` | `appendSystemPrompt` 仅 uploads/outputs |
 | `internal/filestore` | 可写虚拟 namespace `/memory/{slug}`；每请求回查授权。不认领父目录 |
 | `internal/db` | filesystem UUID → 本 Session 的 slug / store / access / 归档。不缓存、不进 JWT |
-| 控制台 | Create session / deployment：选 store、Access、Instructions（500 字）。列表/详情/Add memory 已有 |
+| 控制台 | Create session / deployment：选 store、Access、Instructions（4096 字）。列表/详情/Add memory 已有 |
 
 filestore 通过 `internal/db` 访问记忆数据，并复用 `internal/sessionresource` 的挂载路径解析；不依赖 `internal/memory` handler。`sessions` / `environments` 不碰 memory 三表。
 
@@ -312,7 +312,7 @@ filestore 通过 `internal/db` 访问记忆数据，并复用 `internal/sessionr
 
 - 最多 8 个 store，不得重复。Create Session 请求体与 `POST /resources` 都强制这两条；`CreateSessionResource` 在锁定 Session 行后的同一事务里再次检查，并发附加不会写出重复 `memory_store_id` 或第 9 个 store。冲突返回 `invalid_request_error`。
 - `access` 缺省 `read_write`；仅 `read_write` / `read_only`。这是本次挂载权限，不是 store 属性。
-- `instructions` ≤ 500 字，允许空。Session 与 Deployment 共用该上限。
+- `instructions` ≤ 4096 字，允许空。Session 与 Deployment 共用该上限。
 - 请求携带 `mount_path` / `name` / `description` → 400。
 - 不存在 → 404；已归档 → 400。
 - slug 使用 `gosimple/slug` 转写名称，支持中文及重音字符，保留下划线；空则回退 external id；同 Session 冲突追加 `-2`。Filestore 接受同一 slug 字符集合。
@@ -382,13 +382,13 @@ Agent 可以改运行中的 `MEMORY.md`。下一 Session 按快照重建，不�
 8. 无 store：不设 §2.5 后两个环境变量；不写 `MEMORY.md`；不创建记忆根。
 9. 控制台能选 store、Access、Instructions；提交体不含 mount_path / name / description。
 10. 控制台 Add memory 的文件，Session 内 Agent 能 Read 到；Agent 写入匹配的 `rw` store 后详情页能看到。父目录和各 store 详情都没有平台 `MEMORY.md`。
-11. `instructions` 501 字 → 400；500 字通过。
+11. `instructions` 4097 字 → 400；4096 字通过。
 12. 有 store 但无匹配职责时，用户要求「记住」可以在根上留下文件；该文件不出现在任何 store；下一 Session 不存在。未挂任何 store 时不产生 store 文件。
 13. Session A 写根文件并改 `MEMORY.md` 索引 → 销毁 → Session B attach 同一批 store：B 只有按快照重建的 `MEMORY.md`，没有 A 的根文件。
 
 测试先失败再成功。sessions / filestore（真 PostgreSQL）/ runner / 控制台 / E2E（A 写指定 store → B 读；A 写根 → B 看不到；`ro` store 写失败）各盖上表。
 
-合入时已同步：[e2b-sandbox-image-contract.md](./e2b-sandbox-image-contract.md)、[filestore.md](./filestore.md)、[messages-proxy.md](./messages-proxy.md)、[deployments-api-contract.md](./deployments-api-contract.md)（instructions 4096→500）。
+合入时已同步：[e2b-sandbox-image-contract.md](./e2b-sandbox-image-contract.md)、[filestore.md](./filestore.md)、[messages-proxy.md](./messages-proxy.md)、[deployments-api-contract.md](./deployments-api-contract.md)。上述 500 字历史实现已在2026-10-19按公开 Memory 文档及固定 SDK v1.76.0 校正为4096个 Unicode 码点，Session、Deployment、Runner与控制台共同遵守。
 
 文件树约束回归：`tests/memory_path_tree_test.go` 使用真实 PostgreSQL 覆盖两个入口的父子冲突、失败不改版本、目录仍可列举、路径段边界、已删除路径复用及并发创建父子路径时仅一个请求成功。
 
@@ -427,3 +427,12 @@ The external CMA memory contract, memory.md line384, supersedes the writable-par
 ### 2026-10-19 live file-tool Memory mutation authority
 
 The built-in sandbox MCP proxy checks current Session Memory mount authority before dispatching Write/Edit under `/mnt/memory`. A Store archived after sandbox creation is rejected with a real MCP tool error before a buffered local write can claim success. The check uses the authenticated public Session filesystem and current mount/Store state, fails closed on lookup errors or ambiguous/missing mounts, and preserves active RW mounts. Reads, Bash and unrelated namespaces retain their existing execution paths; this boundary does not claim to remount an existing sandbox or provide new Bash isolation. Filestore upload authorization remains an independent enforcement layer.
+
+公开依据：Claude Managed Agents memory.md Attach a memory store to a session 声明 instructions4096characters；anthropic-sdk-go v1.76.0 betasession.go927与betasessionresource.go346同样声明Max4096chars。固定4095/4096/4097 ASCII及中文/emoji/组合字符回归验证不按UTF8字节或UTF16单元截断。
+
+
+## Built-in Memory mutation completion
+
+Successful sandbox MCP Write/Edit results for attached Memory paths are held until the authoritative head has a new immutable version attributed to the authenticated public Session. Write additionally requires the SHA-256 of the exact requested content. The checkpoint is scoped by the live Session mount, Workspace and Store; existing permission checks still execute before the tool. A bounded 30-second wait obeys request cancellation. Upload/storage failure or expiry produces an explicit MCP tool error describing uncertain commit, rather than a successful acknowledgment. This prevents sequential Write then Edit from coalescing into one delayed VFS upload before the first mutation has a historical snapshot.
+
+Only successful matching JSON-RPC completion results are delayed. Progress notifications, failed tool results, unrelated IDs, other tools and non-Memory paths preserve their behavior. JSON and SSE completion paths share the barrier; successful payloads and SSE event bytes are preserved. Memory uses the existing writes cache so filesystem seek/append buffering and uncached reads remain unchanged. This boundary does not serialize concurrent independent filesystem writers or promise a Bash mutation barrier.

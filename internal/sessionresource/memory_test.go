@@ -88,23 +88,23 @@ func TestParseMemoryInstructions(t *testing.T) {
 	limit := strings.Repeat("i", MaxMemoryInstructionsRunes)
 	got, err = ParseMemoryInstructions(json.RawMessage(`"` + limit + `"`))
 	if err != nil || got != limit {
-		t.Fatalf("500 runes = (%d, %v)", utf8.RuneCountInString(got), err)
+		t.Fatalf("4096 runes = (%d, %v)", utf8.RuneCountInString(got), err)
 	}
 
 	emoji := strings.Repeat("😀", MaxMemoryInstructionsRunes)
 	got, err = ParseMemoryInstructions(mustJSONString(t, emoji))
 	if err != nil || got != emoji {
-		t.Fatalf("500 emoji = (%d, %v)", utf8.RuneCountInString(got), err)
+		t.Fatalf("4096 emoji = (%d, %v)", utf8.RuneCountInString(got), err)
 	}
 
 	_, err = ParseMemoryInstructions(json.RawMessage(`"` + strings.Repeat("i", MaxMemoryInstructionsRunes+1) + `"`))
 	if !errors.Is(err, ErrMemoryStoreInstructionsTooLong) {
-		t.Fatalf("501 runes error = %v, want ErrMemoryStoreInstructionsTooLong", err)
+		t.Fatalf("4097 runes error = %v, want ErrMemoryStoreInstructionsTooLong", err)
 	}
 
 	_, err = ParseMemoryInstructions(mustJSONString(t, strings.Repeat("😀", MaxMemoryInstructionsRunes+1)))
 	if !errors.Is(err, ErrMemoryStoreInstructionsTooLong) {
-		t.Fatalf("501 emoji error = %v, want ErrMemoryStoreInstructionsTooLong", err)
+		t.Fatalf("4097 emoji error = %v, want ErrMemoryStoreInstructionsTooLong", err)
 	}
 
 	_, err = ParseMemoryInstructions(json.RawMessage(`42`))

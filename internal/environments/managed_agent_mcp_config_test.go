@@ -65,7 +65,7 @@ func TestManagedAgentMCPLaunchUsesRuntimeConfigWithoutPersistingCredentials(t *t
 			var transport, remoteTransport string
 			_ = json.Unmarshal(mcpConfigField(t, launch.Manager.Payload, "startup_context", "mcp_config", "mcpServers", "local", "type"), &transport)
 			_ = json.Unmarshal(mcpConfigField(t, launch.Manager.Payload, "startup_context", "mcp_config", "mcpServers", "remote", "type"), &remoteTransport)
-			if transport != "http" || remoteTransport != "sse" {
+			if transport != "http" || remoteTransport != "http" {
 				t.Fatalf("Tunnel transport=%s, remote transport=%s", transport, remoteTransport)
 			}
 			if url != "http://gateway.test/v2/ccr-sessions/cse_test/mcp/local" || auth != "Bearer current-ingress-token" {

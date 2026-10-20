@@ -95,7 +95,7 @@ func TestSessionsMemoryAttachContract(t *testing.T) {
 		created := createSession(t, app, sessionBodyWithMemoryResource(agent.ID, env.ID, store.ID, `"instructions":`+quoteJSON(limit)))
 		defer deleteSession(t, app, created.ID)
 		if got := decodeMemoryResource(t, created.Resources[0]).Instructions; got != limit {
-			t.Fatalf("500-rune instructions = %d runes", utf8.RuneCountInString(got))
+			t.Fatalf("4096-rune instructions = %d runes", utf8.RuneCountInString(got))
 		}
 
 		emoji := strings.Repeat("😀", sessionresource.MaxMemoryInstructionsRunes)
@@ -106,16 +106,16 @@ func TestSessionsMemoryAttachContract(t *testing.T) {
 		emojiSession := createSession(t, app, sessionBodyWithMemoryResource(agent.ID, env.ID, store.ID, `"instructions":`+string(emojiJSON)))
 		defer deleteSession(t, app, emojiSession.ID)
 		if got := decodeMemoryResource(t, emojiSession.Resources[0]).Instructions; got != emoji {
-			t.Fatalf("500-emoji instructions = %d runes", utf8.RuneCountInString(got))
+			t.Fatalf("4096-emoji instructions = %d runes", utf8.RuneCountInString(got))
 		}
 
 		before := len(listSessions(t, app, "agent_id="+url.QueryEscape(agent.ID)).Data)
 		resp := doSessionRequest(
 			t, app, http.MethodPost, "/v1/sessions?beta=true",
-			strings.NewReader(sessionBodyWithMemoryResource(agent.ID, env.ID, store.ID, `"instructions":`+quoteJSON(strings.Repeat("i", 501)))),
+			strings.NewReader(sessionBodyWithMemoryResource(agent.ID, env.ID, store.ID, `"instructions":`+quoteJSON(strings.Repeat("i", 4097)))),
 			defaultTestKey, true,
 		)
-		assertMemoryAttachError(t, resp, http.StatusBadRequest, "invalid_request_error", "at most 500 characters")
+		assertMemoryAttachError(t, resp, http.StatusBadRequest, "invalid_request_error", "at most 4096 characters")
 		listed := listSessions(t, app, "agent_id="+url.QueryEscape(agent.ID))
 		if len(listed.Data) != before {
 			t.Fatalf("501-rune request created a session: %+v", listed.Data)

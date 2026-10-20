@@ -7,6 +7,7 @@ import type { DeliveryUpdate, RequiresActionDetails, SessionState, SessionExtern
  * write deduplication and delivery ACK ownership.
  */
 export interface CcrBackend {
+  getSubagentThread?(id: string, threadId: string, signal?: AbortSignal): Promise<{id: string; status: string; archived: boolean}>;
   getWorkerState(id: string, workerEpoch?: number, signal?: AbortSignal): Promise<WorkerStateReadResult>;
   isToolConfirmationPending(id: string, requestId: string, signal?: AbortSignal): Promise<boolean>;
   privateEvents(id: string, options?: { subagents?: boolean }): Promise<Payload[]>;

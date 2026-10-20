@@ -18,6 +18,12 @@ class MemoryBackend implements CcrBackend {
   readonly acknowledged: string[] = [];
   readonly metadata = new Map<string, Record<string, unknown>>();
   async getWorkerState(id: string) { return { metadata: structuredClone(this.metadata.get(id) ?? null), durationMs: 0 }; }
+  async getSubagentThread(id: string, threadId: string) {
+    const events = (this.output.get(id) ?? []).filter((event) => event.session_thread_id === threadId);
+    if (!events.some((event) => event.type === "session.thread_created")) throw new Error("Unknown subagent thread");
+    const archived = events.some((event) => event.type === "session.thread_status_terminated");
+    return {id: threadId, status: archived ? "terminated" : "idle", archived};
+  }
   async isToolConfirmationPending(_id: string, _requestId: string, _signal?: AbortSignal) { return false; }
   async privateEvents(id: string, options?: { subagents?: boolean }) {
     return structuredClone((this.logs.get(id) ?? []).filter((event) =>
@@ -709,7 +715,7 @@ test.each([false, true])("context overflow compacts and replays without duplicat
   const ctx = new Context();
   const model = new TextModel();
   let requests = 0;
-  let replayWellFormed = true;
+  let replayWellFormed = false;
   const sizes: number[] = [];
   let parentRequests = 0;
   model.stream = async function* (options: GenerateOptions): AsyncIterable<StreamChunk> {

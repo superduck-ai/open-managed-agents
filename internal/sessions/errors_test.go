@@ -16,6 +16,7 @@ func TestMapSessionLoadError(t *testing.T) {
 		kind    apperr.Kind
 		message string
 	}{
+		{name: "terminated interrupt target", cause: db.ErrSessionInterruptTargetInvalid, kind: apperr.InvalidArgument, message: "interrupt target is terminated or invalid"},
 		{name: "non-ask confirmation", cause: db.ErrSessionToolConfirmationInvalid, kind: apperr.InvalidArgument, message: "tool confirmation requires a pending ask event"},
 		{name: "input state conflict", cause: db.ErrSessionInputConflict, kind: apperr.Conflict, message: "Session cannot accept this input now"},
 		{name: "not found", cause: db.ErrNotFound, kind: apperr.NotFound, message: "Session not found: session_test"},

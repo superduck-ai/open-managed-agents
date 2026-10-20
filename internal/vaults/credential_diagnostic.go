@@ -3,6 +3,7 @@ package vaults
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"sync"
@@ -12,12 +13,17 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+var errArchivedDiagnostic = errors.New("archived credential diagnostic")
+
 func (h *Handler) WithRefreshLease(lease OAuthRefreshLease) *Handler {
 	h.validator.WithRefreshLease(lease)
 	return h
 }
 
 func (i *Injector) validateMCPOAuth(ctx context.Context, credential db.VaultCredential) (validationResponse, error) {
+	if credential.ArchivedAt != nil {
+		return validationResponse{}, errArchivedDiagnostic
+	}
 	auth, secret, err := i.openMCPOAuthMaterial(ctx, credential)
 	if err != nil {
 		return validationResponse{}, err
@@ -104,6 +110,10 @@ func (v *validationCapture) RoundTrip(req *http.Request) (*http.Response, error)
 	if req.Method == http.MethodPost {
 		v.mu.Lock()
 		v.response = validationSafeResponse(resp, body, v.values)
+		if v.bearer == "" && resp.StatusCode >= http.StatusBadRequest {
+			v.response.Body = "[REDACTED]"
+			v.response.BodyTruncated = true
+		}
 		v.mu.Unlock()
 	}
 	return resp, nil

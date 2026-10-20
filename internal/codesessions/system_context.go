@@ -79,6 +79,9 @@ func workerPayloadWithSystemContext(payload json.RawMessage, contexts []sessionS
 
 func (s *Service) publicWorkerPayload(ctx context.Context, codeSession db.CodeSession, event db.SessionEvent) (json.RawMessage, error) {
 	payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event)
+	if err == nil && event.EventType == "user.interrupt" {
+		return s.publicWorkerInterruptPayload(ctx, codeSession, payload)
+	}
 	if err != nil || event.EventType != "user.message" || codeSession.SessionExternalID == "" {
 		return payload, err
 	}
@@ -102,4 +105,39 @@ func (s *Service) publicWorkerPayload(ctx context.Context, codeSession db.CodeSe
 		return nil, err
 	}
 	return workerPayloadWithSystemContext(payload, contexts)
+}
+
+func (s *Service) publicWorkerInterruptPayload(ctx context.Context, codeSession db.CodeSession, payload json.RawMessage) (json.RawMessage, error) {
+	var input workerOutputCommonPayload
+	if err := json.Unmarshal(payload, &input); err != nil {
+		return nil, err
+	}
+	if input.SessionThreadID == "" || codeSession.SessionExternalID == "" {
+		return payload, nil
+	}
+	primary, found, err := s.db.GetPrimarySessionThreadExternalID(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, db.ErrNotFound
+	}
+	return workerInterruptTargetPayload(payload, primary, codeSession.ExternalID)
+}
+
+func workerInterruptTargetPayload(payload json.RawMessage, primaryThreadID, codeSessionID string) (json.RawMessage, error) {
+	fields, err := decodeRawJSONObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	var target string
+	if value, ok := fields["session_thread_id"]; ok {
+		if err := json.Unmarshal(value, &target); err != nil {
+			return nil, err
+		}
+	}
+	if target != "" && target == primaryThreadID {
+		setRawJSONField(fields, "session_thread_id", codeSessionID)
+	}
+	return marshalRaw(fields)
 }

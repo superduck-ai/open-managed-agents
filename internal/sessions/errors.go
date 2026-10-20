@@ -109,6 +109,9 @@ func mapSessionLoadError(err error, sessionID string) error {
 	if errors.Is(err, db.ErrInvalidState) {
 		return apperr.New(apperr.InvalidArgument, "session state does not allow this operation", err)
 	}
+	if errors.Is(err, db.ErrSessionInterruptTargetInvalid) {
+		return invalidRequest(err)
+	}
 	if errors.Is(err, db.ErrSessionToolConfirmationInvalid) {
 		return invalidRequest(err)
 	}

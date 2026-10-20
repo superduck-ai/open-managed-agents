@@ -366,11 +366,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 	if changed && len(removal.StatusEvents) == 0 {
 		h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_terminated", archived.ExternalID, nil, *archived.ArchivedAt)
 	}
-	if h.sandboxReclaims != nil {
-		if err := h.sandboxReclaims.EnqueueArchivedSession(r.Context(), archived); err != nil {
-			h.logger.ErrorContext(r.Context(), "schedule archived session sandbox reclamation", "session_id", sessionID, "error", err)
-		}
-	}
+	h.enqueueSessionSandboxReclaims(r.Context(), archived)
 	response, err := h.responseFromSession(r, archived)
 	if err != nil {
 		return internalError("Could not archive session", fmt.Errorf("load archived session %q response: %w", sessionID, err))
@@ -399,6 +395,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 	occurredAt := time.Now().UTC()
 	h.finishSessionRemoval(r.Context(), removal)
 	deleted := removal.Session
+	h.enqueueSessionSandboxReclaims(r.Context(), deleted)
 	deletedEvent, err := h.simpleSessionEvent("session.deleted", sessionID, &primary.ExternalID)
 	if err == nil {
 		deletedEvent.WorkspaceUUID = deleted.WorkspaceUUID
@@ -408,6 +405,14 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.deleted", deleted.ExternalID, nil, occurredAt)
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: sessionID, Type: "session_deleted"})
 	return nil
+}
+
+func (h *Handler) enqueueSessionSandboxReclaims(ctx context.Context, session db.Session) {
+	if h.sandboxReclaims != nil {
+		if err := h.sandboxReclaims.EnqueueRemovedSession(ctx, session); err != nil {
+			h.logger.ErrorContext(ctx, "schedule removed session sandbox reclamation", "session_id", session.ExternalID, "error", err)
+		}
+	}
 }
 
 func (h *Handler) finishSessionRemoval(ctx context.Context, removal db.SessionRemoval) {

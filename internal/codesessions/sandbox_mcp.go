@@ -51,6 +51,11 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 	if h.rejectMemoryToolMutation(w, r, session, call) {
 		return
 	}
+	commit, err := h.prepareMemoryToolCommit(r.Context(), session, call)
+	if err != nil {
+		h.errorAdapter.Write(w, r, sandboxOperationError(err))
+		return
+	}
 	request, err := http.NewRequestWithContext(r.Context(), r.Method, endpoint, bytes.NewReader(body))
 	if err != nil {
 		h.errorAdapter.Write(w, r, sandboxOperationError(err))
@@ -67,7 +72,11 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 	if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
 		copySandboxMCPResponseHeaders(w.Header(), response.Header)
 		w.WriteHeader(response.StatusCode)
-		streamSandboxMCPResponse(w, response.Body)
+		if commit == nil || response.StatusCode < 200 || response.StatusCode >= 300 {
+			streamSandboxMCPResponse(w, response.Body)
+		} else if err := streamMemoryToolResponse(r.Context(), w, response.Body, call, commit); err != nil {
+			h.logger.WarnContext(r.Context(), "Memory tool version confirmation failed", "session_id", session.SessionExternalID, "error", err)
+		}
 		return
 	}
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
@@ -77,6 +86,12 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 	if err != nil {
 		h.errorAdapter.Write(w, r, sandboxOperationError(err))
 		return
+	}
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		responseBody, err = commit.confirm(r.Context(), call, responseBody)
+		if err != nil {
+			h.logger.WarnContext(r.Context(), "Memory tool version confirmation failed", "session_id", session.SessionExternalID, "error", err)
+		}
 	}
 	copySandboxMCPResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)

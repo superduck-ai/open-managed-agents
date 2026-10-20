@@ -612,3 +612,13 @@ MCP Credential 的 `mcp_server_url` 同时作为公开 `auth` 和匹配键，不
 ### OAuth access-only 鉴权错误分类
 
 OAuth access token 已过期，或远端401后需要刷新，而凭据没有 refresh token 时，不伪造 token endpoint 请求。注入器保留缺少刷新材料的原因，并标记需要重新授权；MCP 代理对该明确鉴权状态返回401，使 Brain 发布具名鉴权错误并保留交互。普通注入内部故障仍返回502，网络错误不归为鉴权错误。有效且未过期的 access-only 凭据继续直接使用，无刷新和持久化变更。
+
+运行时刷新遇到 token endpoint 永久 4xx 拒绝时归类为需要重新鉴权，通过 MCP 代理返回鉴权错误；408、429 与 5xx 仍按临时或上游故障处理。此分类不伪造远端 MCP 请求或响应，也不修改拒绝后的凭据。
+
+OAuth token endpoint 对成功响应先完整解析 JSON。显式 token_type 仅接受不区分大小写的 Bearer，不支持类型或错误 JSON 类型均拒绝，不能写入凭据或继续注入。字段省略保留现有 Bearer 缺省兼容行为，并与显式 null/空字符串区分。本规则用于共享授权码与刷新解析边界，非成功 HTTP 状态仍按原状态分类，不输出上游 token 或原始错误正文。
+
+expires_in 在 token endpoint 解析边界检查可表示的正秒数范围，超过 time.Duration 最大整秒数或整数字符串溢出时拒绝整次刷新，不能截断、回绕或写入凭据。正常正值保持精确秒数运算；零、负值、非数字字符串沿用现有缺省兼容处理。拒绝不带回上游 token 或原始正文。
+
+失败诊断的脱敏不依赖完整业务 schema。独立流式读取 token 响应的 access_token/refresh_token 字符串，包含重复字段的各次值，再按已有编码变体脱敏。JSON 结构损坏或后接额外 JSON 值时省略正文，不回显部分解析内容；HTTP 状态、内容类型及正文省略标记保留。此处理不将非法响应改成成功。
+
+Archived MCP OAuth credentials are rejected by diagnostics before opening the secret envelope or making downstream requests. The API returns the existing invalid-argument credential-archived error, including after archival purges the envelope.

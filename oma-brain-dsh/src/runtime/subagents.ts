@@ -7,6 +7,7 @@ import { MAX_LIVE_SUBAGENT_THREADS, type SubagentBridge, type SubagentThread, ty
 export class Subagents {
   private readonly runtimes = new Map<string, SessionRuntime>();
   private lastActivity = Date.now();
+  private reconciling?: Promise<void>;
   get busy(): boolean { return this.threads.some((thread) => thread.status === "running"); }
   get lastIdle(): number { return Math.max(this.parent.lastIdle, this.lastActivity); }
   private readonly unbind = new Map<string, () => void>();
@@ -76,6 +77,33 @@ export class Subagents {
     return thread;
   }
 
+  private async reconcileCapacity(signal: AbortSignal): Promise<void> {
+    if (!this.reconciling && this.threads.filter((thread) => thread.status !== "terminated").length >= MAX_LIVE_SUBAGENT_THREADS && this.bridge.archivedThreads) {
+      this.reconciling = this.retireArchived(signal).finally(() => { this.reconciling = undefined; });
+    }
+    await this.reconciling;
+    signal.throwIfAborted();
+  }
+
+  private async retireArchived(signal: AbortSignal): Promise<void> {
+    const candidates = this.threads.filter((thread) => thread.status === "idle").map((thread) => thread.id);
+    const archived = await this.bridge.archivedThreads!(candidates, signal);
+    for (const id of archived) {
+      const thread = this.thread(id);
+      if (thread.status !== "idle") continue;
+      thread.status = "terminated";
+      try {
+        await this.runtimes.get(id)?.close();
+      } catch (error) {
+        thread.status = "idle";
+        throw error;
+      }
+      this.runtimes.delete(id);
+      this.unbind.get(id)?.();
+      this.unbind.delete(id);
+    }
+  }
+
   async send(args: Payload, signal: AbortSignal): Promise<string> {
     signal.throwIfAborted();
     const config = this.parent.config.subagents;
@@ -86,6 +114,7 @@ export class Subagents {
         throw new Error("Follow-up accepts only thread_id and message");
       thread = this.thread(args.thread_id);
     } else {
+      await this.reconcileCapacity(signal);
       if (this.threads.filter((entry) => entry.status !== "terminated").length >= MAX_LIVE_SUBAGENT_THREADS)
         throw new Error(`A session can have at most ${MAX_LIVE_SUBAGENT_THREADS} live subagent threads; archive an idle thread first`);
       const definition = args.agent_name

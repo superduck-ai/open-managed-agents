@@ -164,6 +164,7 @@ test("25 retained threads count toward capacity, archival frees capacity and ref
   f.session.state.threads = Array.from({ length: 25 }, (_, index) => ({
     id: `sthr_test_${index}`, name: "test", systemPrompt: "test", model: "test-model", status: "idle" as const,
   }));
+  for (const thread of f.session.state.threads) f.b.publicLog.set(thread.id, { type: "session.thread_created", session_thread_id: thread.id });
   await expect(f.session.subagents.send({ name: "new", system_prompt: "test", message: "test" }, new AbortController().signal)).rejects.toThrow("25");
   f.b.modelScript = [call("archive_agent", { thread_id: "sthr_test_0" }, "archive"), textEvents("archived")];
   await f.session.receive("archive", { content: "Archive a thread" });
@@ -321,4 +322,66 @@ test("predefined specialist tools are limited to the tools enabled for the paren
   b.modelScript = [call("send_to_agent", { agent_name: "writer", message: "Write" }, "delegate"), textEvents("writer report"), textEvents("done")];
   await f.session.receive("intersect", { content: "Write" });
   expect(b.requests[1]!.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read"]);
+});
+
+
+test("public API archive releases exactly one retained capacity slot before new delegation", async () => {
+  const f = await fixture();
+  f.session.state.threads = Array.from({ length: 25 }, (_, index) => ({
+    id: `sthr_external_${index}`, name: "test", systemPrompt: "test", model: "test-model", status: "idle" as const,
+  }));
+  const originalRoute = f.b.route.bind(f.b);
+  const checked: string[] = [];
+  f.b.route = async (request) => {
+    const path = new URL(request.url).pathname;
+    if (request.method === "GET" && path.includes("/worker/subagent-threads/")) {
+      const id = path.split("/worker/subagent-threads/")[1]!;
+      checked.push(id);
+      return Response.json({ id, status: id === "sthr_external_0" ? "terminated" : "idle", archived: id === "sthr_external_0" });
+    }
+    return originalRoute(request);
+  };
+  f.b.modelScript = [textEvents("replacement report")];
+  const result = JSON.parse(await f.session.subagents.send({ name: "replacement", system_prompt: "test", message: "report" }, new AbortController().signal));
+  expect(result.report).toBe("replacement report");
+  expect(checked).toHaveLength(25);
+  expect(f.session.state.threads).toHaveLength(26);
+  expect(f.session.state.threads[0]!.status).toBe("terminated");
+  expect(f.session.state.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
+  expect([...f.b.publicLog.values()].filter((event) => event.type === "session.thread_status_terminated")).toHaveLength(0);
+});
+
+
+test("capacity refresh rejects unknown authority without freeing an idle slot", async () => {
+  const f = await fixture();
+  f.session.state.threads = Array.from({ length: 25 }, (_, index) => ({
+    id: `sthr_unknown_${index}`, name: "test", systemPrompt: "test", model: "test-model", status: "idle" as const,
+  }));
+  const before = f.b.requests.length;
+  await expect(f.session.subagents.send({ name: "new", system_prompt: "test", message: "test" }, new AbortController().signal)).rejects.toThrow();
+  expect(f.b.requests.length).toBe(before);
+  expect(f.session.state.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
+});
+
+test("capacity refresh shares admission and never creates two replacements for one archived slot", async () => {
+  const f = await fixture();
+  f.session.state.threads = Array.from({ length: 25 }, (_, index) => ({
+    id: `sthr_race_${index}`, name: "test", systemPrompt: "test", model: "test-model", status: "idle" as const,
+  }));
+  const originalRoute = f.b.route.bind(f.b);
+  f.b.route = async (request) => {
+    const path = new URL(request.url).pathname;
+    if (request.method === "GET" && path.includes("/worker/subagent-threads/")) {
+      const id = path.split("/worker/subagent-threads/")[1]!;
+      await Bun.sleep(1);
+      return Response.json({ id, status: id === "sthr_race_0" ? "terminated" : "idle", archived: id === "sthr_race_0" });
+    }
+    return originalRoute(request);
+  };
+  f.b.modelScript = [textEvents("one replacement")];
+  const results = await Promise.allSettled(["a", "b"].map((name) => f.session.subagents.send({name, system_prompt:"test", message:"report"}, new AbortController().signal)));
+  expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+  expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+  expect(f.session.state.threads).toHaveLength(26);
+  expect(f.session.state.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
 });

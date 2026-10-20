@@ -40,7 +40,7 @@ flowchart TD
 ```
 
 - 带前缀的匹配优先。即使某个 slug 恰好等于历史裸 ID 的第一段，例如 slug `deepseek-ai` 与 `deepseek-ai/xxx`，也按「slug + 上游 ID」解析。
-- 历史裸 ID 长期兼容：外部 SDK、脚本和存量 Batch 参数仍可使用 `kimi-k2.5`，只要它在 workspace 内只属于一个 Provider。被多个 Provider 配置时返回 `400 invalid_request_error`，消息列出可用的完整 ID，引导调用方迁移。
+- 历史裸 ID 长期兼容：外部 SDK 和脚本仍可使用 `kimi-k2.5`，只要它在 workspace 内只属于一个 Provider。被多个 Provider 配置时返回 `400 invalid_request_error`，消息列出可用的完整 ID，引导调用方迁移。Batch 在提交校验时把顶层 `params.model` 规范化为完整 ID 后入队，后续新增同名模型不会改变已接受请求的 Provider 归属；其他参数保留原始 JSON 字节。
 - `GET /v1/models`、Workbench 模型列表和控制台目录只展示完整 ID。
 - Agent 创建/更新与 Session 模型覆盖在写入时把能唯一解析的裸 ID 规范化为完整 ID 后保存，新数据不再出现裸 ID。
 - Brain `model_backends` 以完整 ID 为键；为兼容旧运行时配置，能唯一解析到同一上游 ID 的裸 ID 也作为键保留。
@@ -50,6 +50,8 @@ flowchart TD
 1. 每个 workspace 内按 `created_at, uuid` 排序为已有 Provider 回填 `default`、`default-2`……，再加上非空、格式检查与 `(organization_uuid, workspace_uuid, slug)` 唯一约束。
 2. 迁移前模型 ID 在 workspace 内唯一，因此可以确定性地把引用改写为完整 ID：`agents.model`、`agent_versions.model`、`sessions.agent_snapshot.model` 与 `code_sessions.model`，对象形态改写 `id`，字符串形态整体替换。改写只改变表示，不增加 Agent 版本。
 3. 指向已删除 Provider 或已移除模型的引用保持原样，行为与迁移前一致，运行时返回「模型未配置」。
+
+后续数据迁移 `00091_pin_resume_and_batch_models.sql` 补齐 `code_sessions.worker_external_metadata.model` 与状态为 `queued` / `in_flight` 的 Batch 参数。Brain 会从恢复元数据读取模型并覆盖启动配置，因此恢复元数据必须使用完整 ID。迁移按 organization/workspace 唯一匹配裸 ID，保留歧义、孤儿、空值及已可解析的完整 ID，同时保留其他元数据和请求参数；已完成的 Batch 结果不改写。迁移重复执行不会再次添加前缀，Down 不还原已规范化的引用。Provider 配置已产生歧义的历史裸 ID 需要显式修正，迁移不猜测其原始归属。
 
 迁移与新代码需要一起发布：旧版本服务无法解析带前缀的 ID。Down 迁移只删除 `slug` 列与约束，不回滚已改写的模型引用。
 
@@ -212,6 +214,7 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 - `internal/messages/handler_test.go`：有界缓冲后保留原始请求体，并拒绝重复顶层 `model`；
 - `internal/llmproviders/model_ref_test.go`：slug 校验、首个 `/` 拆分、`default-N` 选择、完整/历史 ID 解析与歧义、顶层 `model` 字节级替换；
 - `internal/db/llm_provider_slug_migration_postgres_test.go`：真实 PostgreSQL 上的 slug 回填、引用改写、歧义与孤儿引用保留、唯一与格式约束；
+- `internal/db/resume_batch_models_migration_postgres_test.go`：真实 PostgreSQL 上的 Brain 恢复模型、待执行 Batch 模型、租户隔离、未知与完整引用保留，以及重复迁移；`internal/batches/model_normalization_test.go` 验证入队规范化、非模型参数保留，以及新增同名模型后原 Provider 归属不变；
 - `tests/messages_upstream_auth_test.go`：三种上游 401 body 的 Worker 错误转换、不可重试 header、模型 span，以及普通 API key 调用的原始响应；
 - `tests/liveworker/chat_upstream_errors_test.go`：公开 Runner 通过 environment-manager 的真实 OAuth FD 启动 Worker，两种持续上游 401 在 90 秒内产生 `session.error`、以 `retries_exhausted` 自然 idle 并清空队列，不生成助手回复；
 - `tests/session_worker_error_status_test.go`：失败结果不提前结束 Session、API 错误消息不公开、失败 idle 原因和重复报告幂等，以及下一轮成功恢复 `end_turn`；

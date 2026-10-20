@@ -147,7 +147,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	if err != nil {
 		return invalidRequest(err)
 	}
-	if err := h.validateConfiguredModels(
+	if err := h.normalizeConfiguredModels(
 		r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, body, requestModels,
 	); err != nil {
 		return err
@@ -200,7 +200,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	return nil
 }
 
-func (h *Handler) validateConfiguredModels(
+func (h *Handler) normalizeConfiguredModels(
 	ctx context.Context,
 	organizationUUID, workspaceUUID string,
 	body *createRequest,
@@ -210,8 +210,12 @@ func (h *Handler) validateConfiguredModels(
 	if err != nil {
 		return configuredModelError(err)
 	}
+	return normalizeBatchModels(catalog, body, requestModels)
+}
+
+func normalizeBatchModels(catalog llmproviders.Catalog, body *createRequest, requestModels []string) error {
 	for index, modelID := range requestModels {
-		_, err := catalog.Lookup(modelID)
+		selected, err := catalog.Lookup(modelID)
 		if errors.Is(err, llmproviders.ErrAmbiguousModel) {
 			return invalidRequest(fmt.Errorf("params for custom_id %s: %w", body.Requests[index].CustomID, err))
 		}
@@ -222,6 +226,11 @@ func (h *Handler) validateConfiguredModels(
 				modelID,
 			))
 		}
+		params, err := llmproviders.ReplaceRequestModel(body.Requests[index].Params, selected.QualifiedModelID())
+		if err != nil {
+			return invalidRequest(fmt.Errorf("params for custom_id %s: %w", body.Requests[index].CustomID, err))
+		}
+		body.Requests[index].Params = params
 	}
 	return nil
 }

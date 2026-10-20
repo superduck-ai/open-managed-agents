@@ -156,3 +156,15 @@ The cleanup-job lifecycle fixture schedules its retry in the past before checkin
 Run CLI/config/report unit tests, repository Go quality gates, all nine local Files functional scenarios, a Files performance baseline/gate and chat regression scenarios after changing shared orchestration. Reports include source/binary hashes, tools/image IDs, coverage boundaries and final cleanup status. CI runs eight Files functional scenarios independently of Worker image preparation and gates Files performance against the PR base; `generated` runs in the Worker job. Cloud checks require manual workflow input and protected environment configuration. Cloud reports and recovery IDs contain no credentials; raw configuration/logs/profiles are not uploaded.
 
 Files 性能基线的对象检查只读取已有 File 行，通过带 workspace 范围的 Mapper 定位 UUID 后加载对象引用，不依赖候选分支新增的 Catalog schema，也不向基线数据库应用候选迁移。API 元数据、列表、字节完整性和最终清理断言保持不变。
+
+Chat 性能基线的测试夹具仍使用当前 workload，但通过 Go `-overlay` 将测试进程内的 Session、Session Thread 和 Session Resource File 三个生成 Mapper 替换为基线构建生成的 SQL 实现。它们只用于准备、激活和清理夹具，避免候选分支的统计函数或列进入旧数据库。基线后端二进制在 overlay 之前按原提交独立构建，所有计时请求仍经过真实后端 HTTP；候选运行与其他场景不使用 overlay。缺少基线 Mapper 或接口不兼容会直接失败，不能回退到候选 SQL。overlay 实现计入 Chat workload 摘要，旧摘要的 baseline 不可用于新负载。
+
+```mermaid
+flowchart LR
+    Ref[基线源码] --> Binary[基线后端二进制]
+    Ref --> SQL[基线生成 Mapper]
+    SQL --> Fixture[测试进程的夹具 SQL overlay]
+    Current[当前 workload] --> Fixture
+    Fixture --> HTTP[相同的计时 HTTP 请求]
+    HTTP --> Binary
+```

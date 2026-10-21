@@ -46,6 +46,7 @@ func TestSendSandboxMCPRequestKeepsPartiallyWrittenRequestUnknown(t *testing.T) 
 			if err != nil {
 				return
 			}
+			_, _ = io.ReadFull(connection, make([]byte, 1<<10))
 			_ = connection.(*net.TCPConn).SetLinger(0)
 			_ = connection.Close()
 		}

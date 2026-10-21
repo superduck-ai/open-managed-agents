@@ -217,7 +217,7 @@ test.each(["user.interrupt", "control_request"])("%s targeted child interruption
   const f = await fixture();
   f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate"), toolEvents("pwd", "child_tool"), textEvents("RESUMED")];
   const turn = f.session.receive("target", { content: "Delegate" });
-  await eventually(() => f.session.approvals.size === 1);
+  await eventually(() => f.session.state.threads?.length === 1 && f.session.approvals.size === 1);
   const thread = f.session.state.threads![0]!;
   await f.session.control({ type, session_thread_id: thread.id, ...(type === "control_request" ? { request_id: "child", request: { subtype: "interrupt" } } : {}) });
   await turn;

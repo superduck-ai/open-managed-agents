@@ -151,7 +151,7 @@ func TestManagedAgentMCPConfigRejectsInvalidRuntimeInput(t *testing.T) {
 }
 
 func TestManagedAgentSessionConfigReturnsEncodingFailure(t *testing.T) {
-	_, err := managedAgentSessionConfig(db.Session{}, managedAgentRuntimeResources{sources: []json.RawMessage{json.RawMessage(`{`)}}, nil)
+	_, err := managedAgentSessionConfig(db.Session{}, managedAgentRuntimeResources{sources: []json.RawMessage{json.RawMessage(`{`)}}, nil, "")
 	if err == nil {
 		t.Fatal("invalid runtime resource JSON was silently discarded")
 	}

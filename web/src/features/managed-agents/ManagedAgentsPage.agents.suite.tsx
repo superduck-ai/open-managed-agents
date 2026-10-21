@@ -2151,13 +2151,13 @@ export function registerManagedAgentsAgentsTests() {
     expect(await screen.findByRole('heading', { name: 'Updated agent' })).toBeTruthy();
   });
 
-  test('shows friendly edit save errors for conflict and invalid configuration responses', async () => {
+  test('shows conflict guidance and preserves invalid configuration field errors', async () => {
     for (const [status, message] of [
       [
         409,
         'This agent was updated elsewhere while you were editing. Close and reopen the editor to start from the latest version.',
       ],
-      [400, 'Invalid agent configuration. Check your editor for errors.'],
+      [400, /allowed_domains\.0: Invalid domain format/],
     ] as const) {
       resetTestDom(`https://oma.duck.ai/workspaces/default/agents/agent_edit_error${status}`);
       mockAgentsApi(

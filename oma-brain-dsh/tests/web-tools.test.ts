@@ -5,8 +5,9 @@ import { WebClient } from "../src/web-tools/client.ts";
 import { webToolDefinitions } from "../src/web-tools/definitions.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
-import { Backend, toolEvents, textEvents } from "./backend.ts";
+import { assignment, Backend, toolEvents, textEvents } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
+import { SandboxMcp } from "../src/oma-sandbox/client.ts";
 
 function callEvents(name: string, args: Payload, id: string): Payload[] {
   const events = toolEvents("unused", id);
@@ -206,4 +207,47 @@ test("long fetch preserves the server preview when output storage is unavailable
       expect(page.full_content).toBeUndefined();
     }
   } finally { await backend.stop(); }
+});
+
+test("oversized search returns a bounded preview when Write is denied or storage unavailable", async () => {
+ const a = assignment();
+ const api = new OmaApi("http://oma.test", Object.assign(async () => Response.json({ sources: [{ url: "https://example.com", snippet: "🦆".repeat(100001) }] }), { preconnect: fetch.preconnect }));
+ api.assignments.set(a.session_id, a);
+ for (const sandbox of [undefined, { call: async () => ({ isError: true, content: [{ type: "text", text: "denied" }] }) }]) {
+  const result = await new WebClient(api, a.session_id, sandbox).call(webToolDefinitions()[0]!, { query: "test" }, new AbortController().signal);
+  expect(result.isError).not.toBe(true);
+  expect(result.content[0].text).toContain("only the preview");
+  expect(result.content[0].text).not.toContain("/tmp/tool-outputs/");
+  expect(Array.from(result.content[0].text).length).toBeLessThan(2500);
+ }
+});
+
+test("parallel root and child Fetch persistence uses each caller's Write policy", async () => {
+ const a = assignment();
+ const writes: (string | null)[] = [];
+ const api = new OmaApi("http://oma.test", Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
+  const request = new Request(input, init);
+  if (request.url.includes("/web/fetch")) return Response.json({ url: "https://example.com", content: "preview", full_content: "full", truncated: true });
+  if (request.method === "DELETE") return new Response(null, { status: 200 });
+  const rpc = await request.json();
+  if (rpc.method.startsWith("notifications/")) return new Response(null, { status: 202 });
+  if (rpc.method === "tools/call") {
+   const thread = request.headers.get("X-OMA-Session-Thread-ID");
+   writes.push(thread);
+   if (thread === "child-denied") return Response.json({ error: { message: "Write denied" } }, { status: 403, headers: { "X-Oma-Sandbox-Not-Forwarded": "true" } });
+  }
+  return Response.json({ jsonrpc: "2.0", id: rpc.id, result: rpc.method === "initialize" ? { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "test", version: "1" } } : { content: [{ type: "text", text: "saved" }] } });
+ }, { preconnect: fetch.preconnect }));
+ api.assignments.set(a.session_id, a);
+ const sandbox = new SandboxMcp(api, a.session_id);
+ try {
+  const [child, root] = await Promise.all(["child-denied", undefined].map(thread => new WebClient(api, a.session_id, sandbox, thread).call(webToolDefinitions()[1]!, { url: "https://example.com" }, new AbortController().signal)));
+  const childPage = JSON.parse(child!.content[0].text);
+  expect(child!.isError).not.toBe(true);
+  expect(childPage.storage_error).toContain("only the preview");
+  expect(childPage.output_file).toBeUndefined();
+  expect(JSON.parse(root!.content[0].text).output_file).toStartWith("/tmp/tool-outputs/");
+  expect(writes).toContain("child-denied");
+  expect(writes).toContain(null);
+ } finally { await sandbox.close(); }
 });

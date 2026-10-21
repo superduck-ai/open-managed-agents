@@ -75,7 +75,7 @@ export class SessionRuntime {
         await this.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase);
       }, scope.get("sandboxExecutor")!, async (serverName) => {
         await this.hooks.onExternalMcpConnectionFailure?.(serverName);
-      });
+      }, this.parent ? this.config.id : undefined);
       this.hooks.setupTools?.(scope);
       scope.on("tools/pre-execute", async (exec, next) => {
         const decision = await next();

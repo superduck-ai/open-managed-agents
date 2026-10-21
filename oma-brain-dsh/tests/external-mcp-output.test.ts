@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { persistToolOutput } from "../src/external-mcp/output.ts";
+import { persistToolOutput, saveToolOutput } from "../src/external-mcp/output.ts";
 import type { Payload } from "../src/json.ts";
 import type { SandboxExecutor } from "../src/runtime/contracts.ts";
 
@@ -53,4 +53,15 @@ for (const type of ["image","audio","resource","resource_link"]) {
 test("malformed text is not mislabeled as a completed unsupported-content outcome",async()=>{
  const {executor}=storage();
  await expect(persistToolOutput({content:[{type:"text",text:7}]},executor,new AbortController().signal)).rejects.toThrow("Only text");
+});
+
+test("output persistence forwards the calling thread to Write", async () => {
+ const threads: (string | undefined)[] = [];
+ const sandbox: SandboxExecutor = { call: async (_tool, _args, _signal, threadId) => {
+  threads.push(threadId);
+  return { content: [{ type: "text", text: "saved" }] };
+ } };
+ await saveToolOutput("fetch", sandbox, new AbortController().signal, "fetch-child");
+ await persistToolOutput({ content: [{ type: "text", text: "x".repeat(100001) }] }, sandbox, new AbortController().signal, { threadId: "mcp-child" });
+ expect(threads).toEqual(["fetch-child", "mcp-child"]);
 });

@@ -68,7 +68,7 @@ export class ToolNotForwardedError extends Error {}
 /** Host-provided sandbox readiness and execution. Resource creation belongs to the provider service. */
 export interface SandboxExecutor {
   provision?(signal: AbortSignal): Promise<void>;
-  call(tool: RemoteTool, args: Payload, signal: AbortSignal): Promise<Payload>;
+  call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string): Promise<Payload>;
 }
 
 declare module "@deepseek-ai/cordis" {

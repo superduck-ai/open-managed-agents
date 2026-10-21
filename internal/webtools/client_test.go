@@ -330,3 +330,19 @@ func TestSearchIgnoresAdvisoryUserLocation(t *testing.T) {
 		t.Fatalf("search failed: %v", err)
 	}
 }
+
+func TestFetchBoundsTitleIndependentlyOfContent(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, "<title>"+strings.Repeat("🦆", 50000)+"</title><p>ok</p>")
+	})
+	policy := network(t, `{}`)
+	policy.Tools = []ToolConfig{{MaxContentTokens: new(16)}}
+	page, err := client.Fetch(t.Context(), FetchRequest{URL: "https://example.com"}, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Title != strings.Repeat("🦆", 256) || len(page.Content) > 16 {
+		t.Fatalf("title bytes=%d content bytes=%d", len(page.Title), len(page.Content))
+	}
+}

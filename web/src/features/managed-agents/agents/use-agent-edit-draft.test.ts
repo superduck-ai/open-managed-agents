@@ -49,3 +49,15 @@ describe('agent edit rendered compatibility', () => {
     }
   });
 });
+
+test('null Fetch budget remains editable in Rendered mode', () => {
+  const result = renderedAgentEditDraft({
+    ...editConfig,
+    tools: [{ type: 'agent_toolset_20260401', configs: [{ name: 'web_fetch', max_content_tokens: null }] }],
+  });
+  expect(result.ok).toBe(true);
+  if (result.ok)
+    expect(result.draft.tools[0].configs).toContainEqual(
+      expect.objectContaining({ name: 'web_fetch', max_content_tokens: null }),
+    );
+});

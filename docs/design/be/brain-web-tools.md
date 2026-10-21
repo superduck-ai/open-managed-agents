@@ -47,7 +47,7 @@ CMA 式 `agent_toolset_20260401.configs` 保留现有 enabled、permission_polic
 - 两工具独立的 allowed_domains / blocked_domains，互斥；省略/null 不增加工具限制，空列表拒绝。
 - 每列表 1–64 项，ASCII 可注册主机及子域名；允许下划线；不接受 IP、协议、端口、通配符或重复。拒绝 .localdomain 等本地主机后缀。域名错误标注列表名称与从零开始的索引，空列表标注具体字段。
 - 工具域名匹配自身及子域名；Fetch 禁止路径，Search 支持区分大小写的路径前缀。
-- Fetch max_content_tokens 为正整数；Search user_location 接受并保存 CMA 的位置对象（type 为 approximate，city/region/country/timezone 为可选字符串）；当前 DeepSeek Provider 不使用这一搜索偏好，不影响创建、更新或搜索执行。仅校验字段结构与 type，不按 Provider 能力拒绝，也不把位置提示转换成 IP。域名、权限等安全策略仍须实际执行。
+- Fetch max_content_tokens 为正整数或 null（使用默认预算）；Search user_location 接受并保存 CMA 的位置对象（type 为 approximate，city/region/country/timezone 为可选字符串）；当前 DeepSeek Provider 不使用这一搜索偏好，不影响创建、更新或搜索执行。仅校验字段结构与 type，不按 Provider 能力拒绝，也不把位置提示转换成 IP。域名、权限等安全策略仍须实际执行。
 - 最新 CMA SDK 的 url_sources 暂不支持，传入会被拒绝。也不接受 max_uses、citations、cache_control。
 
 创建 Agent 和 Session 工具更新复用同一校验；创建/更新 Session 时检查工具允许域名不超出 limited 环境。
@@ -68,7 +68,7 @@ Fetch 只访问公开 HTTP(S) 主机和标准端口；禁凭据及本地目标�
 DNS 解析一次、检查全部地址、只拨号已验证的 IP，保留原始 Host/TLS 身份；禁止环境代理绕过此路径。
 每次重定向重新执行环境与各级工具规则，最多跟随 5 次。白名单内正常抓取；越界返回 url_not_allowed。
 30 秒 deadline 覆盖连接、响应体读取和跳转，取消向 HTTP 传播。下载/解码最多 5,000,000 字节；二进制和超限明确报错。
-HTML 使用已有 golang.org/x/net/html 流式转换为基本 Markdown/文本，不执行 JS，不宣称浏览器渲染或智能正文提取。
+网页标题最多返回 256 个 Unicode 字符，独立于正文预算。HTML 使用已有 golang.org/x/net/html 流式转换为基本 Markdown/文本，不执行 JS，不宣称浏览器渲染或智能正文提取。
 
 Search 的 408/429/5xx 最多重试一次；取消不重试。Provider 的错误正文和凭据不透传。
 两工具都是只读，沿用现有执行和恢复流程。正常短结果不创建沙箱。
@@ -81,7 +81,10 @@ max_content_tokens 默认为 20000。为兼容不同模型且不引入远端计�
 工具包装和文件定位提示不属于页面内容预算。网页超过预算时，Server 返回有界预览和完整的有界正文；预算与预览仅在 Server 决定。Brain 原样保留预览，使用现有工具结果保存机制写入完整正文，并附加 output_file。
 这只在大结果时按需分配沙箱，不通过沙箱抓网页。保存失败（包括 Write 被禁用）仍返回成功的有界预览，并用 storage_error 明确全文未保存；不返回虚假文件路径，也不重复抓取。全文保存遵守既有 Write 权限，不提升工具权限；Read 续读仍要求 Agent 具有 Read 权限。
 受现有 sandbox MCP 1 MiB 请求上限约束，特别大的完整结果可能无法写入，此时仍返回预览并注明保存失败；本版不新增分块写入协议。
+Search 超过 100000 个字符时复用通用输出保存与首尾预览；保存不可用或 Write 被拒绝时，仍返回成功的有界预览并注明全文未保存。取消仍作为取消处理。
+Fetch 和外部 MCP 结果保存携带调用子线程的标识，由 Server 按对应线程的 Write 权限校验；根会话与子线程并行调用时各自保留请求上下文。
 文件在沙箱被替换后不可恢复，延续现有工具输出文件生命周期。
+前端接受 null 内容预算；域名规则由服务端统一校验，编辑保存展示具体字段错误。服务端会话或网络策略读取故障返回内部错误，权限拒绝或线程不存在返回 403。
 
 ## 验收
 

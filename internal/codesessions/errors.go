@@ -26,7 +26,13 @@ func webToolDenied() error {
 }
 
 func webToolContextFailure(cause error) error {
-	return apperr.New(apperr.PermissionDenied, "Could not authorize web tool session or network policy", cause)
+	if errors.Is(cause, db.ErrNotFound) {
+		return apperr.New(apperr.PermissionDenied, "Could not authorize web tool session or network policy", cause)
+	}
+	if app, ok := errors.AsType[*apperr.Error](cause); ok && app.Kind == apperr.PermissionDenied {
+		return app
+	}
+	return apperr.New(apperr.Internal, "Could not load web tool session or network policy", cause)
 }
 
 func sandboxInvalidRequest(cause error) error {

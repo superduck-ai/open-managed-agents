@@ -487,7 +487,7 @@ describe('create agent draft model', () => {
     expect(normalizeCreateAgentDraft(allowed)).toEqual(allowed);
   });
 
-  test('accepts the full pinned built-in tool permission surface while rejecting web search', () => {
+  test('accepts the built-in tool permission surface and rejects unknown tools', () => {
     const configs = [
       'task',
       'ask_user_question',

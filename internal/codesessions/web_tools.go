@@ -38,7 +38,9 @@ func (h *Handler) webToolPolicy(w http.ResponseWriter, r *http.Request, name str
 	threadID := r.Header.Get(runtimeThreadHeader)
 	if err == nil && threadID != "" {
 		codeSession, found, loadErr := h.db.GetCodeSession(r.Context(), id)
-		if loadErr != nil || !found {
+		if loadErr != nil {
+			err = loadErr
+		} else if !found {
 			err = db.ErrNotFound
 		} else {
 			seen := map[string]bool{}

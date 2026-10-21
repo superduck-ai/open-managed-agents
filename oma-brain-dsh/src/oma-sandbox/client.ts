@@ -10,7 +10,7 @@ export class SandboxMcp implements SandboxExecutor {
   private readonly client = new Client({ name: "oma-brain-dsh", version: "0.1.0" }, { versionNegotiation: { mode: "auto" } });
   private readonly transport: StreamableHTTPClientTransport;
   private initialization?: Promise<void>;
-  private readonly calls = new Map<string, { signal: AbortSignal; cleanup?: () => void; rejection?: string }>();
+  private readonly calls = new Map<string, { signal: AbortSignal; threadId?: string; cleanup?: () => void; rejection?: string }>();
 
   constructor(readonly api: OmaApi, readonly sessionId: string) {
     const endpoint = sandboxEndpoint(api.assignment(sessionId).mcp_config, api.base);
@@ -23,6 +23,7 @@ export class SandboxMcp implements SandboxExecutor {
           const call = body.method === "tools/call" ? this.calls.get(body.params?._meta?.progressToken) : undefined;
           if (call) {
             call.signal.throwIfAborted();
+            if (call.threadId) request.headers.set("X-OMA-Session-Thread-ID", call.threadId);
             if (this.transport.protocolVersion !== "2026-07-28") {
               const cancel = () => {
                 void this.client.notification({ method: "notifications/cancelled", params: { requestId: body.id, reason: "User interrupted" } }).catch(() => {});
@@ -54,11 +55,11 @@ export class SandboxMcp implements SandboxExecutor {
     });
   }
 
-  async call(tool: RemoteTool, args: Payload, signal: AbortSignal): Promise<Payload> {
+  async call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string): Promise<Payload> {
     await this.provision(signal);
     const start = Date.now();
     const token = crypto.randomUUID();
-    const call = { signal, cleanup: undefined as (() => void) | undefined, rejection: undefined as string | undefined };
+    const call = { signal, threadId, cleanup: undefined as (() => void) | undefined, rejection: undefined as string | undefined };
     this.calls.set(token, call);
     let result: Payload;
     try {

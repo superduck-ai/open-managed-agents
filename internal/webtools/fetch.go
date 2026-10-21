@@ -215,5 +215,6 @@ func renderHTML(source string) (string, string) {
 			body.WriteString(text)
 		}
 	}
-	return strings.TrimSpace(title.String()), strings.TrimSpace(body.String())
+	titleText := []rune(strings.TrimSpace(title.String()))
+	return string(titleText[:min(len(titleText), 256)]), strings.TrimSpace(body.String())
 }

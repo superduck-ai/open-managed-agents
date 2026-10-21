@@ -147,7 +147,7 @@ const builtInToolConfigSchema = permissionConfigSchema
     name: builtInToolNameSchema,
     allowed_domains: z.array(z.string()).min(1).max(64).nullable().optional(),
     blocked_domains: z.array(z.string()).min(1).max(64).nullable().optional(),
-    max_content_tokens: z.number().int().positive().optional(),
+    max_content_tokens: z.number().int().positive().nullable().optional(),
     user_location: z
       .object({
         type: z.literal('approximate'),
@@ -173,7 +173,7 @@ const builtInToolConfigSchema = permissionConfigSchema
     if (config.allowed_domains != null && config.blocked_domains != null) {
       ctx.addIssue({ code: 'custom', path: ['allowed_domains'], message: 'Only one domain list may be set.' });
     }
-    if (config.max_content_tokens !== undefined && config.name !== 'web_fetch') {
+    if (config.max_content_tokens != null && config.name !== 'web_fetch') {
       ctx.addIssue({
         code: 'custom',
         path: ['max_content_tokens'],

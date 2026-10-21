@@ -19,7 +19,7 @@ export class WebClient {
           const { full_content, ...page } = body;
           try {
             if (!this.sandbox) throw new Error("Web output storage unavailable");
-            page.output_file = await saveToolOutput(JSON.stringify({ ...page, content: full_content, truncated: false }), this.sandbox, signal);
+            page.output_file = await saveToolOutput(JSON.stringify({ ...page, content: full_content, truncated: false }), this.sandbox, signal, this.threadId);
           } catch {
             signal.throwIfAborted();
             page.storage_error = "Full content could not be saved; only the preview is available.";
@@ -27,7 +27,7 @@ export class WebClient {
           return { content: [{ type: "text", text: JSON.stringify(page) }] };
         }
         const result = { content: [{ type: "text", text: JSON.stringify(body) }] };
-        return this.sandbox && tool.remoteName !== "fetch" ? await persistToolOutput(result, this.sandbox, signal) : result;
+        return tool.remoteName === "fetch" ? result : await persistToolOutput(result, this.sandbox, signal, { threadId: this.threadId, previewOnStorageFailure: true });
       }
       const message = typeof body?.error?.message === "string" ? body.error.message : "Web tool request failed";
       return { isError: true, content: [{ type: "text", text: `OMA web tool HTTP ${response.status}: ${message}` }] };

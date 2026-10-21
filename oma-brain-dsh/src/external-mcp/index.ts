@@ -13,6 +13,7 @@ interface McpRegistration {
   connectionFailure: (serverName: string) => Promise<void>;
   authenticationFailure: (serverName: string, phase?: "discovery" | "tool_call") => Promise<void>;
   sandbox: SandboxExecutor;
+  threadId?: string;
   disposers: (() => void)[];
 }
 
@@ -78,8 +79,9 @@ export class ExternalMcp {
     authenticationFailure: (serverName: string, phase?: "discovery" | "tool_call") => Promise<void>,
     sandbox: SandboxExecutor,
     connectionFailure: (serverName: string) => Promise<void>,
+    threadId?: string,
   ): Promise<void> {
-    const registration: McpRegistration = { ctx, bridge, signal, authenticationFailure, connectionFailure, sandbox, disposers: [] };
+    const registration: McpRegistration = { ctx, bridge, signal, authenticationFailure, connectionFailure, sandbox, threadId, disposers: [] };
     this.registrations.add(registration);
     ctx.effect(() => () => {
       this.registrations.delete(registration);
@@ -89,14 +91,14 @@ export class ExternalMcp {
   }
 
   private async install(registration: McpRegistration): Promise<void> {
-    const { ctx, bridge, signal, authenticationFailure, connectionFailure, sandbox } = registration;
+    const { ctx, bridge, signal, authenticationFailure, connectionFailure, sandbox, threadId } = registration;
     const bindings = await (this.discovery ??= this.discover(signal, authenticationFailure, connectionFailure));
     signal.throwIfAborted();
     for (const { client, tool } of bindings) {
       const execution = new ToolExecution({
         provision: (signal) => client.provision(signal),
         call: async (remote, args, signal) => persistToolOutput(
-          await client.call(remote, args, signal, authenticationFailure), sandbox, signal,
+          await client.call(remote, args, signal, authenticationFailure), sandbox, signal, { threadId },
         ),
       }, bridge);
       registration.disposers.push(ctx.tools.register({

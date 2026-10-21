@@ -128,14 +128,18 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 
 func sendSandboxMCPRequest(request *http.Request) (*http.Response, bool, error) {
 	var sent atomic.Bool
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(traceRequestWritten(request, &sent))
+	return response, sent.Load(), err
+}
+
+func traceRequestWritten(request *http.Request, sent *atomic.Bool) *http.Request {
 	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
 		if info.Err == nil {
 			sent.Store(true)
 		}
 	}}
-	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(request.WithContext(httptrace.WithClientTrace(request.Context(), trace)))
-	return response, sent.Load(), err
+	return request.WithContext(httptrace.WithClientTrace(request.Context(), trace))
 }
 
 func copySandboxMCPRequestHeaders(target, source http.Header) {

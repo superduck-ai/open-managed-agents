@@ -43,6 +43,8 @@ export class CcrSession {
   private readonly toolResults = new CcrToolResults();
   private turnErrorMessage?: string;
   private interrupted = false;
+  private draining = false;
+  private readonly dispatchWaiters = new Set<() => void>();
   private waitingOnInterruptedChild = false;
   private readonly interruptedApprovals = new Set<string>();
   readonly approvals = new Map<
@@ -436,6 +438,10 @@ export class CcrSession {
   }
 
   async recordDispatch(callId: string, threadId = this.id): Promise<void> {
+    if (this.draining) {
+      this.activity.end(threadId, "tool_exec", callId);
+      throw new Error("Brain worker is shutting down; the tool was not executed.");
+    }
     const entry = this.execution(threadId);
     if (this.blocked() || entry.callPhases?.[callId] !== "approved" || !entry.approvedCalls[callId])
       throw new Error("Invalid or blocked tool dispatch");
@@ -450,6 +456,7 @@ export class CcrSession {
     this.activity.end(threadId, "tool_exec", callId);
     entry.callPhases[callId] = "blocked";
     this.syncCallPhase(entry);
+    this.settleDispatch();
     await this.save();
   }
 
@@ -463,6 +470,7 @@ export class CcrSession {
     if (!outcome.readOnly) {
       entry.callPhases![outcome.callId] = "result";
       this.syncCallPhase(entry);
+      this.settleDispatch();
     }
     const diagnostic = {session_ref:createHash("sha256").update(this.id).digest("hex"),
       session_thread_ref:createHash("sha256").update(threadId).digest("hex"),call_ref:createHash("sha256").update(outcome.callId).digest("hex"),
@@ -708,6 +716,46 @@ export class CcrSession {
     this.publications = next.catch(() => {});
     return next;
   }
+  dispatching(): boolean {
+    return Object.values(this.state.executions ?? {})
+      .some((entry) => Object.values(entry.callPhases ?? {}).includes("dispatch"));
+  }
+
+  async drain(timeoutMs: number): Promise<boolean> {
+    this.draining = true;
+    const deadline = Date.now() + timeoutMs;
+    while (this.dispatching() && !this.abort.signal.aborted) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return false;
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          this.dispatchWaiters.delete(done);
+          this.abort.signal.removeEventListener("abort", done);
+          resolve();
+        };
+        const timer = setTimeout(done, remaining);
+        this.dispatchWaiters.add(done);
+        this.abort.signal.addEventListener("abort", done, { once: true });
+      });
+    }
+    return !this.dispatching();
+  }
+
+  async interruptForShutdown(settleMs: number): Promise<void> {
+    if (!this.busy) return;
+    this.turnErrorMessage = "The Brain worker shut down during this turn. Unfinished tool calls were interrupted and their outcomes are unknown.";
+    this.subagents.cancelForShutdown();
+    this.runtime.cancelForShutdown();
+    const deadline = Date.now() + settleMs;
+    while (this.busy && !this.abort.signal.aborted && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  private settleDispatch(): void {
+    for (const done of [...this.dispatchWaiters]) done();
+  }
+
   stop() {
     this.subagents.stop();
     this.runtime.stop();

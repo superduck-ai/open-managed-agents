@@ -2,7 +2,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { OmaApi } from "../api.ts";
 import { object, type Payload } from "../json.ts";
 import { sandboxEndpoint } from "./config.ts";
-import { ToolNotForwardedError, type SandboxExecutor, type RemoteTool } from "../runtime/contracts.ts";
+import { ToolNotForwardedError, isConnectFailure, notForwardedDetail, type SandboxExecutor, type RemoteTool } from "../runtime/contracts.ts";
 import { workerDiagnostic } from "../ccrv2/diagnostics.ts";
 
 /** Use the same MCP SDK as DSH, with initialization gated by the approval checkpoint. */
@@ -33,9 +33,15 @@ export class SandboxMcp implements SandboxExecutor {
             }
             delete body.params._meta.progressToken;
             if (!Object.keys(body.params._meta).length) delete body.params._meta;
-            const response = await api.fetcher(new Request(request, { body: JSON.stringify(body) }));
+            let response: Response;
+            try {
+              response = await api.fetcher(new Request(request, { body: JSON.stringify(body) }));
+            } catch (error) {
+              if (isConnectFailure(error)) call.rejection = "Sandbox tool call was not executed: OMA sandbox gateway is unreachable";
+              throw error;
+            }
             if (response.headers.get("X-Oma-Sandbox-Not-Forwarded") === "true")
-              call.rejection = await rejectionMessage(response.clone());
+              call.rejection = `Sandbox tool call was not executed: ${await notForwardedDetail(response.clone())}`;
             return response;
           }
         }
@@ -91,13 +97,4 @@ export function sandboxCallTimeoutMs(tool: RemoteTool, args: Payload): number {
   const requested = Number.isFinite(args.timeout) && args.timeout > 0 ? args.timeout : BASH_DEFAULT_TIMEOUT_SECONDS;
   const seconds = Math.min(requested, BASH_MAX_TIMEOUT_SECONDS);
   return Math.max(SANDBOX_CALL_TIMEOUT_MS, seconds * 1000 + BASH_RESPONSE_MARGIN_MS);
-}
-
-async function rejectionMessage(response: Response): Promise<string> {
-  let detail = `HTTP ${response.status}`;
-  try {
-    const message = (await response.json())?.error?.message;
-    if (typeof message === "string" && message) detail = message.slice(0, 500);
-  } catch { /* Non-JSON gateway rejection. */ }
-  return `Sandbox tool call was not executed: ${detail}`;
 }

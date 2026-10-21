@@ -237,6 +237,7 @@ export class Subagents {
     for (const [threadId, child] of this.runtimes)
       if (!id || threadId === id) child.handle?.agent.cancel({ kind: "user" });
   }
+  cancelForShutdown(): void { for (const child of this.runtimes.values()) child.cancelForShutdown(); }
   stop(): void { for (const child of this.runtimes.values()) child.stop(); }
   async close(): Promise<void> {
     await Promise.all([...this.runtimes.values()].map((child) => child.close()));

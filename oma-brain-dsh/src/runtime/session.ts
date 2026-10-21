@@ -9,6 +9,7 @@ import * as SandboxTools from "../sandbox-tools/index.ts";
 import { failureDiagnostic, workerDiagnostic } from "../ccrv2/diagnostics.ts";
 import { approveToolCall, releaseToolApproval, clearToolApprovals, prefetchMcpApprovals } from "./tool-approvals.ts";
 import * as UserQuestions from "../user-questions/index.ts";
+import { SHUTDOWN_CANCEL } from "./contracts.ts";
 import { object } from "../json.ts";
 import type {
   SessionRuntimeConfig,
@@ -232,6 +233,10 @@ export class SessionRuntime {
 
   async flushLog(): Promise<void> {
     await this.ctx.sessions.flush(this.agent.session);
+  }
+
+  cancelForShutdown(): void {
+    this.handle?.agent.cancel(SHUTDOWN_CANCEL);
   }
 
   stop(): void {

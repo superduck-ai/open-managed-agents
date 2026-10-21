@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { ToolCallId } from "@deepseek-ai/dsh-llm";
 import { ToolExecution } from "../src/runtime/execution.ts";
+import { SHUTDOWN_CANCEL } from "../src/runtime/contracts.ts";
 import type {
   RemoteTool, SandboxExecutor, ToolExecutionBridge, ToolExecutionContext,
 } from "../src/runtime/contracts.ts";
@@ -119,7 +120,7 @@ test("unknown sandbox outcome is journaled before stopping and cannot be replaye
 });
 
 test("non-user cancellation still blocks unconfirmed remote outcomes", async () => {
-  for (const reason of [{ kind: "disposed" }, new Error("timeout"), undefined]) {
+  for (const reason of [{ kind: "disposed" }, { kind: "hook", reason: "other" }, new Error("timeout"), undefined]) {
     const f = fixture();
     const abort = new AbortController();
     f.sandbox.call = async () => { abort.abort(reason); throw new Error("response lost"); };
@@ -140,6 +141,20 @@ test("user interruption journals a local error without claiming a remote termina
   await expect(f.execution.execute(tool, { command: "original" }, { ...f.exec, signal: abort.signal }))
     .rejects.toThrow("Tool call interrupted.");
   expect(outcome).toMatchObject({ failed: true, text: "Tool call interrupted.", remoteOutcome: "unknown" });
+  expect(f.bridge.blocked()).toBe(false);
+  expect(f.stopped).toBe(false);
+});
+
+test("worker shutdown cancellation journals an interrupted unknown outcome without blocking", async () => {
+  const f = fixture();
+  const abort = new AbortController();
+  let outcome: Parameters<ToolExecutionBridge["recordResult"]>[0] | undefined;
+  const recordResult = f.bridge.recordResult;
+  f.bridge.recordResult = async (result) => { outcome = result; await recordResult(result); };
+  f.sandbox.call = async () => { abort.abort(SHUTDOWN_CANCEL); throw new Error("request aborted"); };
+  await expect(f.execution.execute(tool, { command: "original" }, { ...f.exec, signal: abort.signal }))
+    .rejects.toThrow("Brain worker shut down");
+  expect(outcome).toMatchObject({ failed: true, remoteOutcome: "unknown" });
   expect(f.bridge.blocked()).toBe(false);
   expect(f.stopped).toBe(false);
 });

@@ -42,6 +42,11 @@ export class CcrHttpError extends Error {
   }
 }
 
+function permanentRequestFailure(error: unknown): boolean {
+  return error instanceof CcrHttpError && error.status >= 400 && error.status < 500
+    && ![401, 403, 408, 429].includes(error.status);
+}
+
 function leaseFailure(error: unknown, workerEpoch?: number): CcrLeaseResult {
   const httpStatus = error instanceof CcrHttpError ? error.status : undefined;
   const expired = error instanceof CcrHttpError && error.tokenExpired;
@@ -281,7 +286,7 @@ export class CcrClient implements CcrBackend {
       } catch (error) {
         if (signal.aborted) return;
         if (error instanceof InboundProtocolError || this.config.credentials(id).workerEpoch !== epoch
-          || (error instanceof CcrHttpError && [401, 403, 404].includes(error.status))) throw error;
+          || (error instanceof CcrHttpError && [401, 403, 404, 409, 410].includes(error.status))) throw error;
       } finally {
         clearTimeout(watchdog!);
         connection.abort();
@@ -340,7 +345,7 @@ export class CcrClient implements CcrBackend {
     } catch (error) {
       // Diagnose each actual attempt, excluding cancellation and local checks.
       if (method === "POST" && (path === "/internal-events" || path === "/events") && !signal?.aborted)
-        this.logBatchFailure(path, error, credentials.workerEpoch, Array.isArray(body?.events) ? body.events.length : 0);
+        this.logBatchFailure(id, path, error, credentials.workerEpoch, Array.isArray(body?.events) ? body.events.length : 0);
       throw error;
     }
     if (signal?.aborted) {
@@ -369,9 +374,9 @@ export class CcrClient implements CcrBackend {
       // Record the actual response before stopping the claim aborts its queues.
       // A late response to an already-cancelled request exits above instead.
       if (path === "/events/delivery")
-        this.logBatchFailure(path, error, credentials.workerEpoch, Array.isArray(body?.updates) ? body.updates.length : 0);
+        this.logBatchFailure(id, path, error, credentials.workerEpoch, Array.isArray(body?.updates) ? body.updates.length : 0);
       if (method === "POST" && (path === "/internal-events" || path === "/events"))
-        this.logBatchFailure(path, error, credentials.workerEpoch, Array.isArray(body?.events) ? body.events.length : 0);
+        this.logBatchFailure(id, path, error, credentials.workerEpoch, Array.isArray(body?.events) ? body.events.length : 0);
       if (leaseFailure(error, credentials.workerEpoch).status === "rejected")
         this.stopDelivery(id, auth, error);
       this.notifyWrites(id, observers, leaseFailure(error, credentials.workerEpoch), error);
@@ -459,13 +464,22 @@ export class CcrClient implements CcrBackend {
         }
         return response;
       } catch (error) {
-        if (signal.aborted || leaseFailure(error, workerEpoch).status === "rejected") throw error;
+        if (signal.aborted || leaseFailure(error, workerEpoch).status === "rejected" || permanentRequestFailure(error))
+          throw error;
         await abortable((this.config.sleep ?? sleep)(retryDelay(
           attempt, error instanceof CcrHttpError ? error.retryAfterMs : undefined,
           this.config.random ?? Math.random,
         ), signal), signal);
       }
     }
+  }
+
+  async getSubagentThread(id: string, threadId: string, signal?: AbortSignal): Promise<{id: string; status: string; archived: boolean}> {
+    const epoch = this.config.credentials(id).workerEpoch;
+    const response = await this.worker(id, `/subagent-threads/${encodeURIComponent(threadId)}?worker_epoch=${epoch}`, "GET", undefined, signal, 10_000, epoch);
+    const value = await response.json() as Record<string, unknown>;
+    if (value.id !== threadId || typeof value.archived !== "boolean" || !["idle", "running", "rescheduling", "terminated"].includes(String(value.status))) throw new Error("Invalid authoritative subagent thread state");
+    return {id: threadId, status: value.status as string, archived: value.archived};
   }
 
   /** Read external metadata; ordinary GET failures return null after ten attempts. */
@@ -516,7 +530,7 @@ export class CcrClient implements CcrBackend {
           this.notifyWrites(id, observers, failure);
           throw error;
         }
-        if (error instanceof SyntaxError) throw error;
+        if (error instanceof SyntaxError || (error instanceof CcrHttpError && error.status === 404)) throw error;
         if (attempt < 10) {
           const waiting = (this.config.sleep ?? sleep)(retryDelay(
             attempt, error instanceof CcrHttpError ? error.retryAfterMs : undefined,
@@ -564,13 +578,14 @@ export class CcrClient implements CcrBackend {
       if (subagents) query.set("subagents", "true");
       if (cursor) query.set("cursor", cursor);
       const path = `/internal-events${query.size ? `?${query}` : ""}`;
-      let response: Response | undefined;
+      let json!: Record<string, unknown>;
       // Retry each page independently. Exhaustion discards all partial history.
       for (let attempt = 1; attempt <= 10; attempt++) {
         signal?.throwIfAborted();
+        let body: unknown;
         try {
-          response = await this.worker(id, path, "GET", undefined, signal, 30_000, epoch);
-          break;
+          const response = await this.worker(id, path, "GET", undefined, signal, 30_000, epoch);
+          body = await response.json();
         } catch (error) {
           signal?.throwIfAborted();
           const failure = leaseFailure(error, epoch);
@@ -578,15 +593,18 @@ export class CcrClient implements CcrBackend {
             this.notifyWrites(id, observers, failure);
             throw error;
           }
+          if (error instanceof SyntaxError || (error instanceof CcrHttpError && error.status === 404)) throw error;
           if (attempt === 10) return null;
           const waiting = (this.config.sleep ?? sleep)(retryDelay(
             attempt, error instanceof CcrHttpError ? error.retryAfterMs : undefined,
             this.config.random ?? Math.random,
           ), signal);
           await (signal ? abortable(waiting, signal) : waiting);
+          continue;
         }
+        json = record(body);
+        break;
       }
-      const json = record(await response!.json());
       signal?.throwIfAborted();
       if (json.data !== undefined && !Array.isArray(json.data)) throw new Error("Invalid private event page");
       const nextCursor = json.next_cursor;
@@ -604,8 +622,23 @@ export class CcrClient implements CcrBackend {
     }
   }
 
-  async privateEvents(id: string, options?: { subagents?: boolean }): Promise<Record<string, unknown>[]> {
-    const events = await this.readHistory(id, options?.subagents ?? false);
+  async isToolConfirmationPending(id: string, requestId: string, signal?: AbortSignal): Promise<boolean> {
+    const { metadata } = await this.getWorkerState(id, undefined, signal);
+    const prefix = "managed_agent_tool_permission_request";
+    for (const [key, value] of Object.entries(metadata ?? {})) {
+      if (key !== prefix && !key.startsWith(`${prefix}:`)) continue;
+      if (value == null) continue;
+      const request = record(value);
+      if (request.request_id === requestId && typeof request.public_event_id === "string"
+        && request.public_event_id && typeof request.provider_tool_use_id === "string"
+        && request.provider_tool_use_id && (key === prefix || key === `${prefix}:${request.public_event_id}`))
+        return true;
+    }
+    return false;
+  }
+
+  async privateEvents(id: string, options?: { subagents?: boolean; signal?: AbortSignal }): Promise<Record<string, unknown>[]> {
+    const events = await this.readHistory(id, options?.subagents ?? false, options?.signal);
     if (events === null) throw new Error("Private event history unavailable");
     return events.map((event) => event.payload);
   }
@@ -654,7 +687,7 @@ export class CcrClient implements CcrBackend {
     const events: ClientEvent[] = payloads.map((payload) => {
       if (typeof payload.type !== "string") throw new Error("Missing client event type");
       return {
-        ephemeral: ["event_start", "event_delta", "event_stop"].includes(payload.type),
+        ephemeral: ["event_start", "event_delta"].includes(payload.type),
         payload: {
           ...payload,
           type: payload.type,
@@ -673,14 +706,14 @@ export class CcrClient implements CcrBackend {
     await this.reportDelivery(id, inputId, "processed", signal);
   }
 
-  private logBatchFailure(path: "/events/delivery" | "/internal-events" | "/events", error: unknown, epoch: number, batchSize: number): void {
+  private logBatchFailure(id: string, path: "/events/delivery" | "/internal-events" | "/events", error: unknown, epoch: number, batchSize: number): void {
     const httpStatus = error instanceof CcrHttpError ? error.status : undefined;
     const code = error instanceof Error && "code" in error ? error.code : undefined;
     const failure = leaseFailure(error, epoch);
     const failureReason = failure.status === "confirmed" ? undefined : failure.reason;
     brainMetrics().workerRequestFailures.add(1, { path: `/worker${path}`, failure_reason: failureReason ?? "unknown" });
     workerDiagnostic("warn", httpStatus === undefined ? "cli_worker_request_error" : "cli_worker_request_failed", {
-      method: "post", path: `/worker${path}`, worker_epoch: epoch,
+      method: "post", path: `/worker${path}`, session_ref: createHash("sha256").update(id).digest("hex"), worker_epoch: epoch,
       batch_size: batchSize, status: httpStatus,
       failure_reason: failureReason,
       error_code: typeof code === "string" && ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN"].includes(code)
@@ -715,7 +748,7 @@ export class CcrClient implements CcrBackend {
         } catch (error) {
           // HTTP failures were logged before lease observers could cancel us.
           if (!requestSignal.aborted && !(error instanceof CcrHttpError) && !(error instanceof MissingWorkerCredentialsError))
-            this.logBatchFailure("/events/delivery", error, epoch, batch.length);
+            this.logBatchFailure(id, "/events/delivery", error, epoch, batch.length);
           throw error;
         }
       }, (error) => {
@@ -724,7 +757,7 @@ export class CcrClient implements CcrBackend {
         if (this.authStates.get(id) === claim)
           claim.deliveryFailure ??= error instanceof Error ? error : new Error("CCRv2 delivery stopped");
       }, {
-        allowed: (error) => leaseFailure(error, epoch).status !== "rejected",
+        allowed: (error) => leaseFailure(error, epoch).status !== "rejected" && !permanentRequestFailure(error),
         wait: (error, attempt, requestSignal) => abortable((this.config.sleep ?? sleep)(retryDelay(
           attempt, error instanceof CcrHttpError ? error.retryAfterMs : undefined,
           this.config.random ?? Math.random,
@@ -820,6 +853,8 @@ export class CcrClient implements CcrBackend {
       return { status: "confirmed" };
     } catch (error) {
       signal?.throwIfAborted();
+      if (error instanceof CcrHttpError && error.status === 404)
+        return { status: "rejected", httpStatus: 404, reason: "worker_not_registered", workerEpoch };
       return leaseFailure(error, workerEpoch);
     }
   }

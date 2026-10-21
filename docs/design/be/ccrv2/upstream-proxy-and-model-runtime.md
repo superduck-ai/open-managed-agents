@@ -301,3 +301,26 @@ Go 官方 module proxy 对较大的 module zip（例如 `github.com/aws/aws-sdk-
 - `internal/codesessions` 与 DB-backed proxy 集成测试覆盖策略上下文边界：JWT org/workspace 作用域、Code Session 与 Environment/Session 绑定、不能借用另一 Environment allowlist、Environment/Session 缺失与持久化配置畸形时 fail-closed。
 - proxy 集成测试证明：limited 下授权目标能进入拨号路径、未授权目标在 DNS/拨号前收到 framed `403`、unrestricted 行为与现状兼容、Environment 更新对存活 Code Session 的下一次 CONNECT 即时生效。
 - linux/amd64 镜像验收通过真实 Claude CLI 和 Bash tool call 确认：relay 从 `/run/ccr/session_token` 读取 token 并启动，Claude 主进程与子进程同时具有指向同一 `127.0.0.1` relay 的 `HTTPS_PROXY`、`https_proxy`，以及 `NODE_EXTRA_CA_CERTS`、`SSL_CERT_FILE`。
+
+## Brain 与普通 HTTP 出站
+
+Brain 的 sandbox 启动请求携带当前 Code Session 的 session_ingress token、use_code_sessions、会话 ID 和 relay 开关。懒启动或重建 sandbox 时签发当前 epoch 的 token，不旋转已有 Brain owner 的凭据。认证只经 Manager stdin 传递，不进入命令行或文件。
+
+Manager 的嵌入 MCP/Bash 与 source 初始化、Claude executor 共享已准备的会话 relay。relay 网络变量覆盖 StartupContext 中的旧代理值，保持会话局部，不更改全局进程环境。
+
+本地 relay 同时设置 HTTP_PROXY/http_proxy 与 HTTPS_PROXY/https_proxy。HTTPS 继续使用原 CONNECT 协议和 443 限制。HTTP 使用 absolute-form 请求头与 body，经同一 WebSocket chunk 协议转发；后台首包根据请求行选择 HTTP 处理，普通 HTTP 不返回 CONNECT 建连响应。
+
+HTTP 每个请求验证 Proxy-Authorization 与 WebSocket 已认证 session/token 一致，重新加载带租户范围的 Environment 策略，再校验 http scheme、合法端口及公网地址。DNS 解析后固定目标 IP，拨号不再次解析；关闭上游环境代理，不自动跟随重定向。HTTP 支持 Environment 策略允许的合法端口，包括独立测试接收端的 6788；这不放宽 HTTPS CONNECT 的 443 限制。
+
+启用 Vault 出站处理时，HTTP 在发送前按凭据 allowed_hosts 和 injection_location 替换占位符；加载、解密或替换失败拒绝转发。HTTP 路径不注入 HTTPS MCP Bearer 或 Git 资源认证。代理认证头不传给接收端。普通 HTTP 自身不提供 TLS 保密性，适用本轮用户明确授权的合成 canary 测试。
+
+```mermaid
+flowchart LR
+    Bash[Bash HTTP 请求] --> Relay[会话 relay]
+    Relay --> WS[已认证 WebSocket]
+    WS --> Policy[会话/租户/Environment/SSRF 检查]
+    Policy --> Vault[host 与位置约束的 Vault 替换]
+    Vault --> HTTP[固定 IP 的 HTTP 转发]
+```
+
+回归覆盖 Rust absolute-form/head/body 传输、认证覆盖、真实嵌入 MCP/Bash 环境、Go 拒绝路径/转发/认证头隔离及 HTTP Vault host/body 边界。端到端使用新 ARM64 镜像和真实 Brain/HTTP 接收端复测 VAULT-CRED-008；局部单测不代表该用例通过。

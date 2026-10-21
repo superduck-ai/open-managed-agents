@@ -8,19 +8,14 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
-
-	"github.com/superduck-ai/yourbatis"
 )
 
-var ErrIncompleteLLMProviderSecret = errors.New("incomplete LLM provider secret envelope")
+var (
+	ErrIncompleteLLMProviderSecret = errors.New("incomplete LLM provider secret envelope")
+	ErrLLMProviderSlugConflict     = errors.New("LLM provider slug already exists")
+)
 
-type LLMProviderModelConflictError struct {
-	ModelID string
-}
-
-func (e *LLMProviderModelConflictError) Error() string {
-	return "LLM provider model is already configured: " + e.ModelID
-}
+const llmProviderSlugConstraint = "llm_providers_organization_workspace_slug_key"
 
 type LLMProvider struct {
 	UUID             string
@@ -28,6 +23,7 @@ type LLMProvider struct {
 	OrganizationUUID string
 	WorkspaceUUID    string
 	Name             string
+	Slug             string
 	APIBackend       string
 	BaseURL          string
 	APIKeyLast4      string
@@ -42,26 +38,17 @@ func (d *DB) CreateLLMProvider(ctx context.Context, provider LLMProvider) (LLMPr
 	if err != nil {
 		return LLMProvider{}, err
 	}
-	var created LLMProvider
-	err = d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		mapper := NewLLMProviderMapper(executor)
-		if err := mapper.LockWorkspace(ctx, provider.OrganizationUUID, provider.WorkspaceUUID); err != nil {
-			return err
-		}
-		if err := validateLLMProviderModelOwnership(ctx, mapper, provider, ""); err != nil {
-			return err
-		}
-		row, err := mapper.Insert(ctx, params)
-		if isUniqueViolation(err) {
-			return ErrDuplicate
-		}
-		if err != nil {
-			return err
-		}
-		created, err = row.provider()
-		return err
-	})
-	return created, err
+	row, err := NewLLMProviderMapper(d.mapperDB).Insert(ctx, params)
+	if isUniqueViolationOnConstraint(err, llmProviderSlugConstraint) {
+		return LLMProvider{}, ErrLLMProviderSlugConflict
+	}
+	if isUniqueViolation(err) {
+		return LLMProvider{}, ErrDuplicate
+	}
+	if err != nil {
+		return LLMProvider{}, err
+	}
+	return row.provider()
 }
 
 func (d *DB) ListLLMProviders(ctx context.Context, organizationUUID, workspaceUUID string) ([]LLMProvider, error) {
@@ -93,55 +80,14 @@ func (d *DB) UpdateLLMProvider(ctx context.Context, provider LLMProvider) (LLMPr
 	if err != nil {
 		return LLMProvider{}, err
 	}
-	var updated LLMProvider
-	err = d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		mapper := NewLLMProviderMapper(executor)
-		if err := mapper.LockWorkspace(ctx, provider.OrganizationUUID, provider.WorkspaceUUID); err != nil {
-			return err
-		}
-		currentRow, err := mapper.FindByExternalID(
-			ctx,
-			provider.OrganizationUUID,
-			provider.WorkspaceUUID,
-			provider.ExternalID,
-		)
-		if err != nil {
-			return mapNoRows(err)
-		}
-		current, err := currentRow.provider()
-		if err != nil {
-			return err
-		}
-		candidate := provider
-		candidate.ModelIDs = addedLLMProviderModelIDs(provider.ModelIDs, current.ModelIDs)
-		if err := validateLLMProviderModelOwnership(ctx, mapper, candidate, provider.ExternalID); err != nil {
-			return err
-		}
-		row, err := mapper.UpdateByExternalID(ctx, params)
-		if isUniqueViolation(err) {
-			return ErrDuplicate
-		}
-		if err != nil {
-			return mapNoRows(err)
-		}
-		updated, err = row.provider()
-		return err
-	})
-	return updated, err
-}
-
-func addedLLMProviderModelIDs(next, current []string) []string {
-	existing := make(map[string]struct{}, len(current))
-	for _, modelID := range current {
-		existing[modelID] = struct{}{}
+	row, err := NewLLMProviderMapper(d.mapperDB).UpdateByExternalID(ctx, params)
+	if isUniqueViolation(err) {
+		return LLMProvider{}, ErrDuplicate
 	}
-	added := make([]string, 0, len(next))
-	for _, modelID := range next {
-		if _, ok := existing[modelID]; !ok {
-			added = append(added, modelID)
-		}
+	if err != nil {
+		return LLMProvider{}, mapNoRows(err)
 	}
-	return added
+	return row.provider()
 }
 
 func (d *DB) DeleteLLMProvider(ctx context.Context, organizationUUID, workspaceUUID, externalID string) error {
@@ -151,37 +97,6 @@ func (d *DB) DeleteLLMProvider(ctx context.Context, organizationUUID, workspaceU
 	}
 	if rows == 0 {
 		return ErrNotFound
-	}
-	return nil
-}
-
-func validateLLMProviderModelOwnership(
-	ctx context.Context,
-	mapper LLMProviderMapper,
-	provider LLMProvider,
-	excludedProviderID string,
-) error {
-	rows, err := mapper.ListByWorkspace(ctx, provider.OrganizationUUID, provider.WorkspaceUUID)
-	if err != nil {
-		return err
-	}
-	candidates := make(map[string]struct{}, len(provider.ModelIDs))
-	for _, modelID := range provider.ModelIDs {
-		candidates[modelID] = struct{}{}
-	}
-	for _, row := range rows {
-		existing, err := row.provider()
-		if err != nil {
-			return err
-		}
-		if existing.ExternalID == excludedProviderID {
-			continue
-		}
-		for _, modelID := range existing.ModelIDs {
-			if _, taken := candidates[modelID]; taken {
-				return &LLMProviderModelConflictError{ModelID: modelID}
-			}
-		}
 	}
 	return nil
 }
@@ -208,6 +123,7 @@ func llmProviderParams(provider LLMProvider) (llmProviderWriteParams, error) {
 		OrganizationUUID: provider.OrganizationUUID,
 		WorkspaceUUID:    provider.WorkspaceUUID,
 		Name:             provider.Name,
+		Slug:             provider.Slug,
 		APIBackend:       provider.APIBackend,
 		BaseURL:          provider.BaseURL,
 		APIKeyLast4:      provider.APIKeyLast4,
@@ -234,6 +150,7 @@ func (r llmProviderRow) provider() (LLMProvider, error) {
 		OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID:    r.WorkspaceUUID,
 		Name:             r.Name,
+		Slug:             r.Slug,
 		APIBackend:       r.APIBackend,
 		BaseURL:          r.BaseURL,
 		APIKeyLast4:      r.APIKeyLast4,

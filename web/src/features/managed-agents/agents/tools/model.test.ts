@@ -12,7 +12,7 @@ import {
 } from './model';
 
 describe('agent tool display model', () => {
-  test('exposes pinned Claude Code built-in tools while continuing to omit web search', () => {
+  test('exposes built-in tools including web search and fetch', () => {
     expect(BUILT_IN_AGENT_TOOLSETS.agent_toolset_20260401.map((tool) => tool.name)).toEqual([
       'bash',
       'read',
@@ -21,6 +21,7 @@ describe('agent tool display model', () => {
       'glob',
       'grep',
       'web_fetch',
+      'web_search',
       'task',
       'ask_user_question',
       'cron_create',
@@ -481,3 +482,11 @@ function agentFixture(overrides: Partial<AgentApiResponse>): AgentApiResponse {
     ...overrides,
   };
 }
+
+test('web search description uses its translation key', () => {
+  expect(
+    builtInAgentToolDescription({ name: 'web_search', description: 'Search' }, (id, fallback) =>
+      id === 'managedAgents.agents.createDialog.builtInTool.webSearch' ? '搜索网页并返回来源' : fallback,
+    ),
+  ).toBe('搜索网页并返回来源');
+});

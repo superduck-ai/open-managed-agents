@@ -211,7 +211,7 @@ func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID strin
 func (s *Store) skipPersistedLargeEvents(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent) ([]db.SessionEvent, error) {
 	missing := make([]db.SessionEvent, 0, len(events))
 	for _, event := range events {
-		if !ExceedsThreshold(len(event.Payload)) {
+		if !needsBlobStorage(event.Payload) {
 			missing = append(missing, event)
 			continue
 		}
@@ -300,7 +300,7 @@ func (s *Store) skipPersistedInternalEvents(ctx context.Context, workspaceUUID s
 				continue
 			}
 			seen[event.IdempotencyKey] = true
-			if ExceedsThreshold(len(event.Payload)) {
+			if needsBlobStorage(event.Payload) {
 				exists, err := s.database.HasCodeSessionInternalEvent(ctx, workspaceUUID, event.IdempotencyKey)
 				if err != nil {
 					return nil, err

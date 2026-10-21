@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package livefiles
 
 import (
@@ -26,6 +28,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/yourbatis"
 )
 
 type filesEnv struct {
@@ -176,7 +179,10 @@ func (e *filesEnv) upload(t *testing.T, name string, content []byte, status int)
 
 func (e *filesEnv) record(t *testing.T, id string) db.FileRecord {
 	t.Helper()
-	record, err := e.database.GetFile(e.ctx, e.key.WorkspaceUUID.String(), id)
+	mapper := db.NewFileMapper(yourbatis.NewDB(e.database.SQLDB(), yourbatis.DialectPostgres))
+	row, err := mapper.GetFileForShare(e.ctx, e.key.WorkspaceUUID.String(), id)
+	requireOK(t, err)
+	record, err := e.database.GetFileByUUID(e.ctx, e.key.WorkspaceUUID.String(), row.UUID)
 	requireOK(t, err)
 	return record
 }

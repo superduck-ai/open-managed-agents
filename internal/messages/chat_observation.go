@@ -128,8 +128,13 @@ func (c *chatObservation) observeDelta(o *responseObservation, delta chatDelta) 
 		}
 	}()
 	if reasoning := firstChatReasoning(delta); reasoning != "" {
-		block := c.block(o, "thinking", "thinking")
-		block.thinkingBuffer.WriteString(reasoning)
+		c.block(o, "thinking", "thinking")
+		if o.thinkingPublished == nil {
+			o.thinkingPublished = make(map[int]bool)
+		}
+		if o.publishThinking != nil && !o.thinkingPublished[c.blockIndices["thinking"]] {
+			o.thinkingPublished[c.blockIndices["thinking"]] = o.publishThinking(o.messageID, c.blockIndices["thinking"])
+		}
 		o.contentBytes += len(reasoning)
 	}
 	if delta.Content != "" {
@@ -213,7 +218,6 @@ func (c *chatObservation) complete(o *responseObservation) {
 	for _, index := range slices.Sorted(maps.Keys(o.blocks)) {
 		block := o.blocks[index]
 		block.Text = block.textBuffer.String()
-		block.Thinking = block.thinkingBuffer.String()
 		if block.Type == "tool_use" && block.inputBuffer.Len() == 0 {
 			block.Input = json.RawMessage(`{}`)
 		}

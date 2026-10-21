@@ -120,7 +120,7 @@ func buildRcloneMultimountConfig(filesystemID, serviceURL, readWriteToken, reado
 		}
 	}
 	mounts := []rcloneMountConfig{
-		mount("/outputs", "/mnt/user-data/outputs", 3600, false, readWriteToken),
+		mount("/outputs", rcloneOutputsDestination, 3600, false, readWriteToken),
 		mount("/uploads", rcloneUploadsDestination, 1, true, readonlyToken),
 		mount("/transcripts", "/mnt/transcripts", 10, true, readonlyToken),
 		mount("/tool_results", "/mnt/user-data/tool_results", 3, true, readonlyToken),
@@ -132,13 +132,15 @@ func buildRcloneMultimountConfig(filesystemID, serviceURL, readWriteToken, reado
 		if readonly {
 			token = readonlyToken
 		}
-		mounts = append(mounts, mount(
+		memoryMount := mount(
 			memoryFilestoreSource(item.Slug),
 			item.MountPath,
 			memoryRcloneCacheSeconds,
 			readonly,
 			token,
-		))
+		)
+		memoryMount.VFSCacheMode = "writes"
+		mounts = append(mounts, memoryMount)
 	}
 	return rcloneMultimountConfig{
 		Mounts:     mounts,

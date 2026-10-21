@@ -33,7 +33,7 @@ just verify-be transcript lifecycle
 ```sh
 ./scripts/generate-go.sh
 TEST_MIGRATION_DATABASE_URL='postgresql://USER:PASSWORD@localhost:5432/TEST_DATABASE?sslmode=disable' \
-  go test ./internal/db -run '^TestTranscriptArchive' -count=1
+  go test -tags=integration ./internal/db -run '^TestTranscriptArchive' -count=1
 ```
 
 测试有效性可用临时故障验证：分别将软删、硬删实现替换为零行成功，将候选会话、候选事件查询替换为空集，新测试必须因行为断言失败。验证结束立即恢复实现，不提交故障代码。这四种故障均已在本次补测时被测试捕获。
@@ -46,7 +46,7 @@ DB 区间覆盖检查并不代替对象内容校验。上层必须传入经过�
 
 ## Pending 恢复与对象读取
 
-`TestTranscriptArchiveMissingObjectRecovery` 覆盖上传前失败、对象缺失时重试不删行、近期 pending 不回收、超龄 pending 经真实 cleanup worker 入队并清理、使用新 UUID/key 重建，以及 attached 段不被清理。`TestTranscriptArchiveReadsObjectsOncePerAttempt` 验证新段只读取一次外置 payload 和一次上传后的归档对象。已有上传后失败重试测试继续覆盖重新读取与校验路径。使用配置中的 PostgreSQL，执行 `go test ./tests -run TestTranscriptArchive -count=1`；每个 fixture 使用独立 schema。
+`TestTranscriptArchiveMissingObjectRecovery` 覆盖上传前失败、对象缺失时重试不删行、近期 pending 不回收、超龄 pending 经真实 cleanup worker 入队并清理、使用新 UUID/key 重建，以及 attached 段不被清理。`TestTranscriptArchiveReadsObjectsOncePerAttempt` 验证新段只读取一次外置 payload 和一次上传后的归档对象。已有上传后失败重试测试继续覆盖重新读取与校验路径。使用配置中的 PostgreSQL，执行 `go test -tags=integration ./tests -run TestTranscriptArchive -count=1`；每个 fixture 使用独立 schema。
 
 ## 删除索引、冷却与预算
 
@@ -58,4 +58,4 @@ DB 区间覆盖检查并不代替对象内容校验。上层必须传入经过�
 
 `TestTranscriptArchiveTerminalSafety/terminated_to_running` 先设置过期 archived_at、idle worker 和过期租约，确认查询返回三个可归档事件，再切换 session 与 worker 到 running（租约仍过期，以隔离 worker 状态守卫），断言无归档、无删除。
 
-运行 `go test ./tests -run '^TestTranscript' -count=1`；构造期非法策略与有效边界、worker 超时覆盖、周期调度不匹配/暂停修复分别由 `internal/transcriptretention` 和 `internal/riverjobs` 单测验证。真实 S3 下的 5 万行吞吐与重试次数仍需 staging 验证，本地 fake store 测试不构成性能承诺。
+运行 `go test -tags=integration ./tests -run '^TestTranscript' -count=1`；构造期非法策略与有效边界、worker 超时覆盖、周期调度不匹配/暂停修复分别由 `internal/transcriptretention` 和 `internal/riverjobs` 单测验证。真实 S3 下的 5 万行吞吐与重试次数仍需 staging 验证，本地 fake store 测试不构成性能承诺。

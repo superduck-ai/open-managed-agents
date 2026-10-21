@@ -1,3 +1,5 @@
+//go:build integration
+
 package tests
 
 import (
@@ -6,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"uuid"
 )
 
 func TestBrainToolPermissionsFollowSessionUpdates(t *testing.T) {
@@ -68,5 +71,52 @@ func TestBrainToolPermissionsFollowSessionUpdates(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBrainOutputWriteRespectsChildPolicy(t *testing.T) {
+	var forwarded atomic.Int32
+	app, worker, _, token := newBrainMCPProxyApp(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		forwarded.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"saved"}]}}`)
+	}))
+	primary, found, err := app.db.GetPrimarySessionThread(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)
+	if err != nil || !found {
+		t.Fatalf("primary: %v", err)
+	}
+	child := primary
+	child.UUID = uuid.NewV4().String()
+	child.ExternalID = "sthr_output_denied"
+	child.ParentThreadUUID = &primary.UUID
+	child.ParentThreadExternalID = &primary.ExternalID
+	child.AgentSnapshot = []byte(`{"tools":[{"type":"agent_toolset_20260401","configs":[{"name":"write","enabled":false}]}]}`)
+	if _, err := app.db.CreateSessionThreadIfAbsent(t.Context(), child); err != nil {
+		t.Fatal(err)
+	}
+	for _, thread := range []string{child.ExternalID, ""} {
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, app.baseURL+"/v2/ccr-sessions/"+worker.ExternalID+"/sandbox/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write","arguments":{"file_path":"/tmp/tool-outputs/test.txt","content":"web output"}}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
+		if thread != "" {
+			request.Header.Set("X-OMA-Session-Thread-ID", thread)
+		}
+		response, err := app.client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		want := http.StatusOK
+		if thread != "" {
+			want = http.StatusForbidden
+		}
+		if response.StatusCode != want {
+			t.Fatalf("thread=%q status=%d want=%d", thread, response.StatusCode, want)
+		}
+	}
+	if forwarded.Load() != 1 {
+		t.Fatalf("forwarded=%d", forwarded.Load())
 	}
 }

@@ -1,9 +1,13 @@
-import type { Context } from "@deepseek-ai/cordis";
+import type { Context, Fiber } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
-import { createUserMessage } from "@deepseek-ai/dsh-llm";
+import { createUserMessage, type ContentBlock, type ToolCallBlock } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
+import { ContextRecovery } from "./compaction.ts";
+import { ExternalMcp } from "../external-mcp/index.ts";
 import * as SandboxTools from "../sandbox-tools/index.ts";
-import { workerDiagnostic } from "../ccrv2/diagnostics.ts";
+import { failureDiagnostic, workerDiagnostic } from "../ccrv2/diagnostics.ts";
+import { approveToolCall, releaseToolApproval, clearToolApprovals, prefetchMcpApprovals } from "./tool-approvals.ts";
+import { object } from "../json.ts";
 import type {
   SessionRuntimeConfig,
   SessionRuntimeHooks,
@@ -18,9 +22,14 @@ export class SessionRuntime {
   busy = false;
   lastIdle = Date.now();
   private turnCompleted = false;
-  acceptingInput = false;
+  private readonly contextRecovery = new ContextRecovery();
+  private toolCalls: ToolCallBlock[] = [];
+  appendedSystem = "";
   private finishing?: ReturnType<typeof Promise.withResolvers<void>>;
   private readonly sandboxScope: symbol;
+  readonly externalMcp: ExternalMcp;
+  private sandboxTools?: Fiber;
+  private hostTools?: Fiber | void;
 
   constructor(
     readonly ctx: Context,
@@ -29,6 +38,7 @@ export class SessionRuntime {
     readonly bridge: ToolExecutionBridge,
     readonly parent?: SessionRuntime,
   ) {
+    this.externalMcp = new ExternalMcp(config.externalMcpConfig, config.externalMcpFetch);
     this.sandboxScope = parent?.sandboxScope ?? Symbol("sandboxExecutor");
   }
 
@@ -42,22 +52,51 @@ export class SessionRuntime {
       // dsh creates agent scopes from the loop context. Explicitly join the
       // parent's service label; agent ownership alone does not inherit services.
       const scope = agentScope.isolate("sandboxExecutor", this.sandboxScope);
-      if (!this.parent) await this.config.setup?.(scope);
+      scope.effect(() => () => this.externalMcp.close());
+      if (!this.parent) {
+        await this.config.setup?.(scope);
+      }
       if (!scope.get("sandboxExecutor")) throw new Error("Session requires a SandboxExecutor provider");
       scope.systemPrompt.section({
         name: "oma",
         order: 0,
         complete: true,
         interpolate: false,
-        text: this.config.systemPrompt,
+        text: () => [this.config.systemPrompt, this.appendedSystem].filter(Boolean).join("\n\n"),
       });
       const toolPermissions = this.config.toolPermissions ??= {};
-      await scope.plugin(SandboxTools, {
+      this.sandboxTools = await scope.plugin(SandboxTools, {
         bridge: this.bridge,
         tools: this.config.tools,
         permissions: toolPermissions,
       });
+      this.hostTools = await this.config.setupTools?.(scope, this.bridge, this.config.tools, this.parent ? this.config.id : undefined, toolPermissions);
+      await this.externalMcp.register(scope, this.bridge, this.abort.signal, async (serverName, phase) => {
+        await this.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase);
+      }, scope.get("sandboxExecutor")!, async (serverName) => {
+        await this.hooks.onExternalMcpConnectionFailure?.(serverName);
+      }, this.parent ? this.config.id : undefined);
       this.hooks.setupTools?.(scope);
+      scope.on("tools/pre-execute", async (exec, next) => {
+        const decision = await next();
+        if (decision.kind !== "allow") return decision;
+        if (scope.tools.get(exec.name, exec.agent)) return decision;
+        const approval = await approveToolCall(this.bridge, {
+          callId: exec.callId, toolName: exec.name, input: object(exec.arguments),
+          available: false,
+        }, exec.signal);
+        return approval.allowed ? decision : { kind: "deny", reason: approval.reason || "Tool use denied by OMA" };
+      });
+      scope.on("tools/execute", async (exec, next) => {
+        if (!exec.name.startsWith("mcp__") && toolPermissions[exec.name.toLowerCase()] === "allow") return next();
+        prefetchMcpApprovals(this.bridge, this.toolCalls, exec.callId,
+          name => name.startsWith("mcp__") && !!scope.tools.get(name, exec.agent), exec.signal);
+        const approval = await approveToolCall(this.bridge, {
+          callId: exec.callId, toolName: exec.name, input: object(exec.arguments), available: true,
+        }, exec.signal);
+        if (!approval.allowed) throw new Error(approval.reason || "Tool use denied by OMA");
+        return next();
+      });
       scope.on("session/event", (session, event) => {
         if (session.id !== this.config.id) return;
         if (process.env.OMA_DEBUG_TIMING === "1" && ["assistant/message", "tool/result", "turn/end"].includes(event.type)) {
@@ -67,9 +106,13 @@ export class SessionRuntime {
             block_types: data.message?.content?.map(block => block.type), reason: data.reason?.kind,
           });
         }
+        if (event.type === "assistant/message")
+          this.toolCalls = event.data.message.content.filter((block): block is ToolCallBlock => block.type === "tool-call");
         this.hooks.onEvent(event);
+        if (event.type === "tool/result") releaseToolApproval(this.bridge, event.data.message.toolCallId);
         if (event.type === "turn/end") {
-          this.acceptingInput = false;
+          this.toolCalls = [];
+          clearToolApprovals(this.bridge);
           this.turnCompleted = event.data.reason?.kind === "completed";
         }
       });
@@ -83,6 +126,16 @@ export class SessionRuntime {
         await this.hooks.beforeRequest();
         signal.throwIfAborted();
         return next();
+      });
+      scope.on("agent/request-error", async ({ agent, failure, turn, step, signal }, next) => {
+        signal.throwIfAborted();
+        const recovered = await this.contextRecovery.recover(agent.session, failure, turn, step,
+          () => this.ctx.sessions.flush(agent.session),
+          async tokens => {
+            signal.throwIfAborted();
+            await this.hooks.onContextCompacted?.(tokens);
+          });
+        return recovered ? { kind: "retry" } : next();
       });
       scope.on("agent/assistant-stream", ({ frame }) => this.hooks.onStream(frame));
     };
@@ -105,7 +158,26 @@ export class SessionRuntime {
         });
   }
 
-  async run(text: string, hooks: TurnHooks): Promise<void> {
+  async refreshTools(): Promise<void> {
+    if (this.parent || !this.config.refreshTools) return;
+    this.abort.signal.throwIfAborted();
+    const next = await this.config.refreshTools(this.abort.signal);
+    this.abort.signal.throwIfAborted();
+    if (JSON.stringify(next.tools) !== JSON.stringify(this.config.tools)) {
+      if (!this.sandboxTools) throw new Error("Session tools are not initialized");
+      this.sandboxTools.update({ bridge: this.bridge, tools: next.tools, permissions: this.config.toolPermissions });
+      await this.sandboxTools.await();
+      if (this.hostTools) {
+        this.hostTools.update({ ...this.hostTools.config, tools: next.tools, permissions: this.config.toolPermissions });
+        await this.hostTools.await();
+      }
+      this.config.tools = next.tools;
+    }
+    await this.externalMcp.update(next.externalMcpConfig);
+    this.config.externalMcpConfig = next.externalMcpConfig;
+  }
+
+  async run(input: string | (() => Promise<ContentBlock[]>), hooks: TurnHooks): Promise<void> {
     if (this.busy || this.abort.signal.aborted)
       throw new Error("Session is busy or stopped");
     this.busy = true;
@@ -116,10 +188,17 @@ export class SessionRuntime {
         await hooks.afterRun(false);
         return;
       }
-      this.acceptingInput = true;
+      let content: ContentBlock[];
+      try {
+        content = typeof input === "string" ? [{ type: "text", text: input }] : await input();
+      } catch (error) {
+        workerDiagnostic("error", "oma_runtime_input_failed", { session_id: this.config.id, ...failureDiagnostic(error) });
+        await hooks.afterRun(false);
+        return;
+      }
       this.agent.followup(createUserMessage({
         source: { kind: "user" },
-        content: [{ type: "text", text }],
+        content,
       }));
       await this.agent.whenIdle();
       await this.flushLog();
@@ -128,17 +207,10 @@ export class SessionRuntime {
       this.hooks.stop();
       throw error;
     } finally {
-      this.acceptingInput = false;
       this.busy = false;
       this.lastIdle = Date.now();
       this.finishing.resolve();
     }
-  }
-
-  steer(text: string): void {
-    this.agent.steer(createUserMessage({
-      source: { kind: "user" }, content: [{ type: "text", text }],
-    }));
   }
 
   async flushLog(): Promise<void> {
@@ -153,6 +225,7 @@ export class SessionRuntime {
   async close(): Promise<void> {
     this.stop();
     await this.finishing?.promise;
-    await this.handle?.dispose();
+    try { await this.handle?.dispose(); }
+    finally { await this.externalMcp.close(); }
   }
 }

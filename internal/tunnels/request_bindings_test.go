@@ -223,20 +223,30 @@ func TestResponseWaitDoesNotReadBindings(t *testing.T) {
 }
 
 func TestRequestBindingRespectsCallerTimeout(t *testing.T) {
-	// A TCP endpoint that never answers proves deadlines apply to socket I/O.
+	start := time.Now()
+	t.Cleanup(func() {
+		if elapsed := time.Since(start); elapsed > 2*time.Second {
+			t.Errorf("caller timeout and socket cleanup took %s", elapsed)
+		}
+	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
 	done := make(chan struct{})
-	connections := make(chan net.Conn, 1)
+	t.Cleanup(func() {
+		_ = listener.Close()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("silent endpoint did not stop")
+		}
+	})
 	go func() {
 		defer close(done)
 		conn, err := listener.Accept()
 		if err == nil {
 			defer conn.Close()
-			connections <- conn
 			buffer := make([]byte, 1024)
 			for {
 				if _, err := conn.Read(buffer); err != nil {
@@ -245,26 +255,33 @@ func TestRequestBindingRespectsCallerTimeout(t *testing.T) {
 			}
 		}
 	}()
-	client := redis.NewClient(&redis.Options{Addr: listener.Addr().String(), ContextTimeoutEnabled: true, MaxRetries: -1})
-	t.Cleanup(func() {
-		_ = client.Close()
-		_ = listener.Close()
-		select {
-		case conn := <-connections:
-			_ = conn.Close()
-		case <-done:
-		}
-		<-done
+	client := redis.NewClient(&redis.Options{
+		Addr: listener.Addr().String(), ContextTimeoutEnabled: true, MaxRetries: -1,
+		Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+			if err == nil {
+				t.Cleanup(func() { _ = conn.Close() })
+			}
+			return conn, err
+		},
 	})
+	t.Cleanup(func() { _ = client.Close() })
 	store := NewRequestBindings(client, time.Minute)
 	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Millisecond)
 	defer cancel()
-	start := time.Now()
-	if err := store.create(ctx, "timeout", bindingTestRecord()); err == nil {
-		t.Fatal("unanswered write succeeded")
+	callStart := time.Now()
+	err = store.create(ctx, "timeout", bindingTestRecord())
+	var timeout net.Error
+	if !errors.Is(err, context.DeadlineExceeded) && !(errors.As(err, &timeout) && timeout.Timeout()) {
+		t.Fatalf("expected caller timeout, got %v", err)
 	}
-	if time.Since(start) > time.Second {
+	if time.Since(callStart) > time.Second {
 		t.Fatal("caller deadline ignored")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed-out Redis handshake retained its socket")
 	}
 }
 

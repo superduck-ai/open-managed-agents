@@ -206,3 +206,24 @@ func TestDecodeWorkerPayloadHeader(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkerEpochDBErrorMapsInactiveSessionToConflict(t *testing.T) {
+	handler := NewHandler(config.Config{}, newTestService(t, nil), nil, nil)
+	request := httptest.NewRequest(http.MethodPut, "/v1/code/sessions/cse_test/worker", nil)
+	response := httptest.NewRecorder()
+
+	handler.writeWorkerEpochDBError(response, request, "cse_test", db.ErrInvalidState, "Could not update code session worker")
+
+	var body struct {
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if response.Code != http.StatusConflict || body.Error.Type != "conflict_error" || body.Error.Message != "Code session is not active" {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}

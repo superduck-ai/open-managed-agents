@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package liveworker
 
 import (
@@ -21,12 +23,17 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
+	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
 func (p *chatDockerProvider) ServiceEndpoint(ctx context.Context, sandbox string, port int, path string) (string, error) {
 	output, err := exec.CommandContext(ctx, "docker", "port", sandbox, strconv.Itoa(port)+"/tcp").Output()
 	if err != nil {
+		inspection, inspectErr := exec.CommandContext(ctx, "docker", "inspect", sandbox).CombinedOutput()
+		if inspectErr != nil && strings.Contains(string(inspection), "No such") {
+			return "", sandboxruntime.ErrSandboxNotFound
+		}
 		return "", err
 	}
 	return "http://" + strings.TrimSpace(string(output)) + path, nil
@@ -122,6 +129,20 @@ func verifyLazyBrain(t *testing.T, started time.Time) {
 	waitChatIdle(t, f, 3)
 	if provider.created.Load() != 1 {
 		t.Fatal("warm tool created a second sandbox")
+	}
+	requireOK(t, provider.Kill(ctx, fmt.Sprintf("%s-1", provider.name)))
+	toolModel = brainToolModel(t)
+	configureChatModel(t, e, toolModel.URL)
+	submitChat(t, f, "Write the proof after sandbox expiry and reply done.")
+	waitRealWorker(t, "missing sandbox replaced", func() bool { return toolModelCalls.Load() == 2 })
+	waitChatIdle(t, f, 4)
+	if provider.created.Load() != 2 {
+		t.Fatalf("sandbox allocations after expiry=%d, want two", provider.created.Load())
+	}
+	output, err = exec.CommandContext(ctx, "docker", "exec", fmt.Sprintf("%s-2", provider.name), "cat", "/tmp/oma-brain-proof.txt").Output()
+	requireOK(t, err)
+	if string(output) != "native grok loop" {
+		t.Fatal("replacement sandbox tool side effect missing")
 	}
 	registerPublicSandboxCleanup(t, e, f)
 	chatProof(t, started, "brain_lazy_tool")

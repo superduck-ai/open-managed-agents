@@ -27,6 +27,7 @@ declare module "@deepseek-ai/cordis" {
 /** Owns protocol bridges and heartbeats; the host claims and releases leases. */
 export class CcrBridge extends Service {
   static inject = [
+    "attachments",
     "llm",
     "sessions",
     "sessionPersistence",

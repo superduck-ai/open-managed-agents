@@ -129,7 +129,7 @@ func TestChatObservationBlockIdentity(t *testing.T) {
 					t.Fatalf("message=%+v", result.Messages[index])
 				}
 			}
-			if result.Messages[0].Content[0].Thinking == nil || *result.Messages[0].Content[0].Thinking != "thinking" {
+			if len(result.Messages[0].Content) != 0 {
 				t.Fatalf("thinking=%+v", result.Messages[0])
 			}
 		})

@@ -267,6 +267,8 @@ bootstrap:
   organization_name: default
   workspace_external_id: workspace_default
   user_external_id: user_default
+  user_email: admin@example.local
+  user_name: Local Admin
   api_key_external_id: api_key_default
 
 # Long-idle managed sandbox reclamation. Disable dry_run to delete sandbox local state.
@@ -360,3 +362,7 @@ telemetry:
     interval: 60s
     stale_running_after: 10m
     stuck_starting_after: 10m
+
+web_tools:
+  search_provider: ""
+  providers: {}

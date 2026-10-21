@@ -106,12 +106,22 @@
     </update>
 
     <update id="SoftDeleteBySession" result="rows">
-        UPDATE session_resources
-        SET deleted_at = COALESCE(deleted_at, NOW()), updated_at = NOW()
-        WHERE workspace_uuid = #{workspaceUUID}
-        AND session_external_id = #{sessionExternalID}
-        AND payload IS NOT NULL
-        AND deleted_at IS NULL
+        WITH target AS (
+            SELECT uuid, file_uuid, source_file_uuid, workspace_uuid
+            FROM session_resources
+            WHERE workspace_uuid = #{workspaceUUID}
+                AND session_external_id = #{sessionExternalID}
+                AND payload IS NOT NULL AND deleted_at IS NULL
+        ), retired_files AS (
+            UPDATE files file SET deleted_at = now()
+            FROM target
+            WHERE file.uuid = target.file_uuid AND file.workspace_uuid = target.workspace_uuid
+                AND target.source_file_uuid IS NOT NULL AND file.deleted_at IS NULL
+        )
+        UPDATE session_resources resource
+        SET deleted_at = now(), updated_at = now()
+        FROM target
+        WHERE resource.uuid = target.uuid AND resource.workspace_uuid = target.workspace_uuid
     </update>
     <select id="CountSessionFileResources" result="scalar">
         SELECT count(*) AS resource_count
@@ -151,15 +161,44 @@
     </select>
 
     <update id="BindSessionFileResource" result="returning" resultType="sessionResourceRow">
-        UPDATE session_resources
+        WITH instance AS (
+            INSERT INTO files (
+                uuid, external_id, workspace_uuid, filename, mime_type, size_bytes, sha256,
+                s3_bucket, s3_key, downloadable, scope_type, scope_id, created_by_api_key_uuid,
+                created_at, detected_mime_type, metadata, authorization_metadata, tags,
+                md5, s3_etag, s3_version_id
+            )
+            SELECT #{params.FileUUID}, #{params.FileExternalID}, source.workspace_uuid,
+                source.filename, source.mime_type, source.size_bytes, source.sha256,
+                source.s3_bucket, source.s3_key, source.downloadable, 'session', session.external_id,
+                session.created_by_api_key_uuid, #{params.UpdatedAt}, source.detected_mime_type,
+                source.metadata, source.authorization_metadata, source.tags, source.md5,
+                source.s3_etag, source.s3_version_id
+            FROM files source
+            JOIN sessions session ON session.uuid = #{params.SessionUUID}
+                AND session.workspace_uuid = #{params.WorkspaceUUID}
+                AND session.deleted_at IS NULL AND session.archived_at IS NULL
+            WHERE source.uuid = #{params.SourceFileUUID}
+                AND source.workspace_uuid = #{params.WorkspaceUUID} AND source.deleted_at IS NULL
+            RETURNING uuid, external_id
+        )
+        UPDATE session_resources resource
         SET path = #{params.EntryPath}, parent_path = #{params.ParentPath},
-        file_uuid = #{params.FileUUID}, updated_at = #{params.UpdatedAt}
-        WHERE uuid = #{params.ResourceUUID}
-        AND workspace_uuid = #{params.WorkspaceUUID}
-        AND session_uuid = #{params.SessionUUID}
-        AND deleted_at IS NULL
-        RETURNING
-        <include refid="sessionResourceColumns"/>
+            file_uuid = instance.uuid,
+            source_file_uuid = COALESCE((
+                SELECT parent.source_file_uuid FROM session_resources parent
+                WHERE parent.workspace_uuid = #{params.WorkspaceUUID}
+                    AND parent.file_uuid = #{params.SourceFileUUID}
+                    AND parent.source_file_uuid IS NOT NULL AND parent.deleted_at IS NULL
+            ), #{params.SourceFileUUID}),
+            payload = jsonb_set(resource.payload, '{file_id}', to_jsonb(instance.external_id)),
+            updated_at = #{params.UpdatedAt}
+        FROM instance
+        WHERE resource.uuid = #{params.ResourceUUID}
+            AND resource.workspace_uuid = #{params.WorkspaceUUID}
+            AND resource.session_uuid = #{params.SessionUUID}
+            AND resource.deleted_at IS NULL
+        RETURNING <include refid="sessionResourceCoreColumns"/>, instance.external_id AS file_external_id
     </update>
 
     <select id="GetSessionResourceForMutation" resultType="sessionResourceRow">
@@ -175,12 +214,23 @@
     </select>
 
     <update id="SoftDeleteSessionResource" result="rows">
-        UPDATE session_resources
+        WITH target AS (
+            SELECT uuid, file_uuid, source_file_uuid, workspace_uuid
+            FROM session_resources
+            WHERE workspace_uuid = #{workspaceUUID}
+                AND session_external_id = #{sessionExternalID}
+                AND external_id = #{resourceExternalID}
+                AND payload IS NOT NULL AND deleted_at IS NULL
+        ), retired_files AS (
+            UPDATE files file SET deleted_at = now()
+            FROM target
+            WHERE file.uuid = target.file_uuid AND file.workspace_uuid = target.workspace_uuid
+                AND target.source_file_uuid IS NOT NULL AND file.deleted_at IS NULL
+        )
+        UPDATE session_resources resource
         SET deleted_at = now(), updated_at = now()
-        WHERE workspace_uuid = #{workspaceUUID}
-        AND session_external_id = #{sessionExternalID}
-        AND external_id = #{resourceExternalID}
-        AND deleted_at IS NULL
+        FROM target
+        WHERE resource.uuid = target.uuid AND resource.workspace_uuid = target.workspace_uuid
     </update>
 
     <insert id="InsertDirectory" result="returning" resultType="int64">

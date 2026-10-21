@@ -32,8 +32,8 @@ var claudeRuntimeModelEnvironmentKeys = []string{
 }
 
 type credentialInjectionLocationInput struct {
-	Header *bool `json:"header"`
-	Body   *bool `json:"body"`
+	Header json.RawMessage `json:"header"`
+	Body   json.RawMessage `json:"body"`
 }
 
 // decodeEnvironmentCredentialAuth decodes one environment_variable public auth
@@ -150,17 +150,33 @@ func applyInjectionLocation(base credentialInjectionLocation, raw json.RawMessag
 	if err := json.Unmarshal(raw, &input); err != nil {
 		return credentialInjectionLocation{}, errors.New("auth.injection_location must be an object")
 	}
-	next := base
-	if input.Header != nil {
-		next.Header = *input.Header
+	header, err := injectionLocationField(input.Header, base.Header, "header")
+	if err != nil {
+		return credentialInjectionLocation{}, err
 	}
-	if input.Body != nil {
-		next.Body = *input.Body
+	body, err := injectionLocationField(input.Body, base.Body, "body")
+	if err != nil {
+		return credentialInjectionLocation{}, err
 	}
+	next := credentialInjectionLocation{Header: header, Body: body}
 	if !next.Header && !next.Body {
 		return credentialInjectionLocation{}, errors.New("auth.injection_location must enable header or body")
 	}
 	return next, nil
+}
+
+func injectionLocationField(raw json.RawMessage, fallback bool, name string) (bool, error) {
+	if len(raw) == 0 {
+		return fallback, nil
+	}
+	if isJSONNull(raw) {
+		return false, fmt.Errorf("auth.injection_location.%s must be omitted instead of null", name)
+	}
+	var value bool
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return false, fmt.Errorf("auth.injection_location.%s must be a boolean", name)
+	}
+	return value, nil
 }
 
 // PlatformReservedSecretName reports whether secretName is owned by the

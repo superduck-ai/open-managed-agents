@@ -79,3 +79,25 @@ func mustURL(t *testing.T, raw string) *url.URL {
 	}
 	return u
 }
+
+func TestMCPQueryMatchForStaticAndOAuthKeepsCredentialScope(t *testing.T) {
+	for _, authType := range []string{"static_bearer", "mcp_oauth"} {
+		t.Run(authType, func(t *testing.T) {
+			cred := credential(authType, "https://MCP.EXAMPLE.COM:443/mcp/?tenant=A", "vlt_a")
+			for _, tc := range []struct {
+				target string
+				want   int
+			}{
+				{"https://mcp.example.com/mcp?tenant=B", 0},
+				{"https://mcp.example.com/mcp?tenant=a", 0},
+				{"https://mcp.example.com/mcp", 0},
+				{"https://mcp.example.com/mcp?tenant=A", 1},
+			} {
+				matches, covered, err := listMCPInjectableMatches(mustURL(t, tc.target), []db.VaultCredential{cred})
+				if err != nil || !covered || len(matches) != tc.want {
+					t.Fatalf("target=%s matches=%d covered=%v err=%v", tc.target, len(matches), covered, err)
+				}
+			}
+		})
+	}
+}

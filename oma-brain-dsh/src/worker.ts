@@ -1,14 +1,15 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "./api.ts";
-import { consumeInbound, type CcrClient, type CcrSession } from "./ccrv2/index.ts";
+import { type CcrClient, type CcrSession } from "./ccrv2/index.ts";
 import { createOmaSession } from "./oma-session.ts";
 import { registerWorkerTask, validateBrainTask } from "./worker-registration.ts";
 import { claimTasks, releaseClaim, type ClaimClient, type TaskAdmissionStage } from "./claim.ts";
 import { SessionCapacity } from "./capacity.ts";
 import { failureDiagnostic, workerDiagnostic } from "./ccrv2/diagnostics.ts";
 import { brainMetrics } from "./telemetry.ts";
+import { openWorkerSession } from "./worker-session.ts";
 
-type RetireReason = "superseded" | "capacity" | "blocked" | "inbound_ended" | "admission_failed" | "aborted" | "idle" | "shutdown";
+type RetireReason = "superseded" | "capacity" | "inbound_ended" | "admission_failed" | "aborted" | "idle" | "shutdown";
 
 export interface WorkerOptions {
   maxSessions: number;
@@ -105,11 +106,7 @@ export async function startWorkers(
       releaseSlot();
     }
     try {
-      stage("open_session");
-      await session.open();
-      if (session.blocked()) { await retire(session, "blocked"); return; }
-      stage("start_inbound");
-      watch(consumeInbound(client, session).finally(() => retire(session, "inbound_ended")), session.id);
+      await openWorkerSession(session, client, (task) => watch(task, session.id), (opened) => retire(opened, "inbound_ended"), stage);
     } catch (error) {
       await retire(session, "admission_failed");
       throw error;

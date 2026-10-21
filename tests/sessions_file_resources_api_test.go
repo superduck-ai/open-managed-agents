@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -278,6 +280,29 @@ func TestSessionFileResourceContract(t *testing.T) {
 		}
 	})
 
+	t.Run("success add resource defaults to file ID", func(t *testing.T) {
+		created := createSession(t, app, `{`+base+`}`)
+		defer deleteSession(t, app, created.ID)
+
+		resp := doSessionRequest(
+			t,
+			app,
+			http.MethodPost,
+			"/v1/sessions/"+created.ID+"/resources?beta=true",
+			strings.NewReader(`{"type":"file","file_id":`+quoteJSON(file.ID)+`}`),
+			defaultTestKey,
+			true,
+		)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("add file resource status = %d: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		var added json.RawMessage
+		decodeJSON(t, resp.Body, &added)
+		assertFileResourcePayload(t, added, file.ID, "/uploads/"+file.ID)
+		assertSessionFileReference(t, app, created.ID, added, file.ID, "/uploads/"+file.ID)
+	})
+
 	t.Run("success defaults and add resource use uploads", func(t *testing.T) {
 		expectedBytes := defaultWorkspaceStorageBytes(t, app)
 		created := createSession(t, app, `{`+base+`,"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`}]}`)
@@ -285,41 +310,23 @@ func TestSessionFileResourceContract(t *testing.T) {
 		if len(created.Resources) != 1 {
 			t.Fatalf("created resources = %d, want 1", len(created.Resources))
 		}
-		assertFileResourcePayload(t, created.Resources[0], file.ID, "/uploads/"+file.Filename)
+		assertFileResourcePayload(t, created.Resources[0], file.ID, "/uploads/"+file.ID)
 		createdResourceID := assertSessionFileReference(
 			t,
 			app,
 			created.ID,
 			created.Resources[0],
 			file.ID,
-			"/uploads/"+file.Filename,
+			"/uploads/"+file.ID,
 		)
 		scopedFiles := listFiles(t, app, "scope_id="+created.ID)
-		if len(scopedFiles.Data) != 1 {
-			t.Fatalf("scoped files after create = %+v, want one input catalog", scopedFiles.Data)
-		}
-		if scopedFiles.Data[0].ID != file.ID || scopedFiles.Data[0].Filename != file.Filename {
-			t.Fatalf(
-				"input catalog = %+v, want Source File ID %q with filename %q",
-				scopedFiles.Data[0],
-				file.ID,
-				file.Filename,
-			)
-		}
-		if scopedFiles.Data[0].CreatedAt != file.CreatedAt {
-			t.Fatalf(
-				"input catalog created_at = %q, want Source File created_at %q",
-				scopedFiles.Data[0].CreatedAt,
-				file.CreatedAt,
-			)
-		}
-		if scopedFiles.Data[0].Downloadable {
-			t.Fatalf("input catalog = %+v, want source download policy preserved", scopedFiles.Data[0])
+		if containsFile(scopedFiles.Data, file.ID) {
+			t.Fatalf("scoped files after create = %+v, want no account uploads", scopedFiles.Data)
 		}
 		inputDownload := app.do(
 			t,
 			http.MethodGet,
-			"/v1/files/"+scopedFiles.Data[0].ID+"/content?beta=true",
+			"/v1/files/"+file.ID+"/content?beta=true",
 			nil,
 			defaultTestKey,
 			true,
@@ -361,15 +368,8 @@ func TestSessionFileResourceContract(t *testing.T) {
 			)
 		}
 		scopedFiles = listFiles(t, app, "scope_id="+created.ID)
-		if len(scopedFiles.Data) != 1 || scopedFiles.Data[0].ID != file.ID {
-			t.Fatalf("scoped files after repeated attach = %+v, want one deduplicated Source File %q", scopedFiles.Data, file.ID)
-		}
-		if scopedFiles.Data[0].CreatedAt != file.CreatedAt {
-			t.Fatalf(
-				"repeated attach changed Source File created_at to %q, want %q",
-				scopedFiles.Data[0].CreatedAt,
-				file.CreatedAt,
-			)
+		if containsFile(scopedFiles.Data, file.ID) {
+			t.Fatalf("scoped files after repeated attach = %+v, want no account uploads", scopedFiles.Data)
 		}
 		sessionRecord := mustSessionRecord(t, app, created.ID)
 		if _, err := app.pool.Exec(context.Background(), `
@@ -451,8 +451,8 @@ func TestSessionFileResourceContract(t *testing.T) {
 			t.Fatalf("source File was changed by resource delete: %v", err)
 		}
 		scopedFiles = listFiles(t, app, "scope_id="+created.ID)
-		if len(scopedFiles.Data) != 1 {
-			t.Fatalf("scoped files after resource delete = %+v, want one remaining input", scopedFiles.Data)
+		if containsFile(scopedFiles.Data, file.ID) {
+			t.Fatalf("scoped files after resource delete = %+v, want no account uploads", scopedFiles.Data)
 		}
 	})
 
@@ -497,8 +497,8 @@ func TestSessionFileResourceContract(t *testing.T) {
 			}
 		})
 		scoped := listFiles(t, app, "scope_id="+created.ID)
-		if len(scoped.Data) != 1 {
-			t.Fatalf("scoped files before Session delete = %+v, want one input", scoped.Data)
+		if len(scoped.Data) != 1 || containsFile(scoped.Data, file.ID) {
+			t.Fatalf("scoped files before Session delete = %+v, want no account uploads", scoped.Data)
 		}
 		deleteSession(t, app, created.ID)
 		deleted = true
@@ -536,8 +536,23 @@ func TestSessionInputResourcePreservesSourcePolicy(t *testing.T) {
 	)
 	defer deleteSession(t, app, session.ID)
 	scopedFiles := listFiles(t, app, "scope_id="+session.ID)
+	if containsFile(scopedFiles.Data, file.ID) {
+		t.Fatalf("scoped files = %+v, want no account uploads", scopedFiles.Data)
+	}
 	if len(scopedFiles.Data) != 1 || scopedFiles.Data[0].Downloadable {
-		t.Fatalf("input catalog = %+v, want one non-downloadable file", scopedFiles.Data)
+		t.Fatalf("instance policy=%+v", scopedFiles.Data)
+	}
+	instanceDownload := app.do(t, http.MethodGet, "/v1/files/"+scopedFiles.Data[0].ID+"/content", nil, defaultTestKey, false, "")
+	assertError(t, instanceDownload, http.StatusBadRequest, "invalid_request_error")
+	metadata := app.do(t, http.MethodGet, "/v1/files/"+file.ID, nil, defaultTestKey, false, "")
+	defer metadata.Body.Close()
+	if metadata.StatusCode != http.StatusOK {
+		t.Fatalf("source metadata status = %d: %s", metadata.StatusCode, readAll(t, metadata.Body))
+	}
+	var source metadataResponse
+	decodeJSON(t, metadata.Body, &source)
+	if source.ID != file.ID || source.Downloadable {
+		t.Fatalf("source metadata = %+v, want non-downloadable source %q", source, file.ID)
 	}
 }
 
@@ -584,13 +599,13 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 		"/uploads/workspace/protected.txt",
 	)
 	scopedFiles := listFiles(t, app, "scope_id="+session.ID)
-	if len(scopedFiles.Data) != 1 {
-		t.Fatalf("scoped files = %+v, want one input catalog", scopedFiles.Data)
+	if containsFile(scopedFiles.Data, file.ID) {
+		t.Fatalf("scoped files = %+v, want no account uploads", scopedFiles.Data)
 	}
 	rejectedSourceDelete := app.do(
 		t,
 		http.MethodDelete,
-		"/v1/files/"+scopedFiles.Data[0].ID+"?beta=true",
+		"/v1/files/"+file.ID+"?beta=true",
 		nil,
 		defaultTestKey,
 		true,
@@ -751,8 +766,8 @@ func TestSessionFileCatalogWorkspaceIsolation(t *testing.T) {
 	defer deleteSession(t, app, session.ID)
 
 	ownerPage := listFiles(t, app, "scope_id="+session.ID)
-	if len(ownerPage.Data) != 1 {
-		t.Fatalf("owner scoped files = %+v, want one input catalog", ownerPage.Data)
+	if len(ownerPage.Data) != 1 || containsFile(ownerPage.Data, source.ID) {
+		t.Fatalf("owner scoped files = %+v, want no account uploads", ownerPage.Data)
 	}
 
 	otherPageResponse := app.do(
@@ -1613,8 +1628,8 @@ func assertFileResourcePayload(t *testing.T, raw json.RawMessage, sourceFileID, 
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatalf("decode file resource: %v", err)
 	}
-	if payload.FileID != sourceFileID || payload.MountPath != mountPath {
-		t.Fatalf("file resource = %+v, want Source File %q, mount_path=%q", payload, sourceFileID, mountPath)
+	if payload.FileID == "" || payload.FileID == sourceFileID || !strings.HasPrefix(payload.FileID, "file_") || payload.MountPath != mountPath {
+		t.Fatalf("file resource = %+v, want new instance of Source File %q, mount_path=%q", payload, sourceFileID, mountPath)
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
@@ -1663,6 +1678,11 @@ func assertSessionFileReference(
 	if err != nil {
 		t.Fatalf("load source File: %v", err)
 	}
+	instance, err := app.db.GetFile(context.Background(), session.WorkspaceUUID, payload.FileID)
+	if err != nil || instance.UUID == file.UUID || instance.ScopeID == nil || *instance.ScopeID != sessionExternalID ||
+		instance.Filename != file.Filename || instance.S3Key != file.S3Key || instance.Downloadable != file.Downloadable {
+		t.Fatalf("invalid session File instance = %+v, source = %+v, error = %v", instance, file, err)
+	}
 	resource, err := app.db.GetSessionResource(
 		context.Background(),
 		session.WorkspaceUUID,
@@ -1674,7 +1694,7 @@ func assertSessionFileReference(
 	}
 	if entry.Kind != db.SessionResourceFileKindFile ||
 		entry.UUID != resource.UUID ||
-		payload.FileID != fileExternalID ||
+		payload.FileID == "" || payload.FileID == fileExternalID ||
 		entry.SourceFileUUID == nil ||
 		*entry.SourceFileUUID != file.UUID ||
 		entry.MD5 != nil ||

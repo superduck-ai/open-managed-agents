@@ -16,15 +16,6 @@ const (
 
 var sandboxMCPToolNames = telemetry.NewEnum("bash", "read", "write", "edit", "grep", "glob")
 
-type sandboxMCPRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Method  string          `json:"method"`
-	ID      json.RawMessage `json:"id"`
-	Params  struct {
-		Name string `json:"name"`
-	} `json:"params"`
-}
-
 type sandboxMCPReply struct {
 	Method string `json:"method"`
 	Result *struct {
@@ -33,14 +24,14 @@ type sandboxMCPReply struct {
 	Error *json.RawMessage `json:"error"`
 }
 
-func sandboxMCPToolName(call sandboxMCPRequest) string {
+func sandboxMCPToolName(call sandboxRPCRequest) string {
 	if call.Method != "tools/call" {
 		return ""
 	}
 	return sandboxMCPToolNames.Normalize(call.Params.Name)
 }
 
-func sandboxMCPRequestID(call sandboxMCPRequest) string {
+func sandboxMCPRequestID(call sandboxRPCRequest) string {
 	id := string(call.ID)
 	if len(id) > 64 {
 		return id[:64]

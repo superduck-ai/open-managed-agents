@@ -46,6 +46,9 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 		isModelRequest := eventType == "span.model_request_start" || eventType == "span.model_request_end"
 		hasModelRequest = hasModelRequest || isModelRequest
 		if maevents.IsStreamDelta(eventType) {
+			if maevents.IsThinkingDelta(raw) {
+				continue
+			}
 			event, err := h.streamDeltaEventFromCodeSessionPayload(ctx, session, codeSession.ExternalID, raw, now)
 			if err != nil {
 				h.logger.WarnContext(ctx, "skip code session stream delta", "session_id", session.ExternalID, "code_session_id", codeSession.ExternalID, "error", err)

@@ -803,9 +803,6 @@ export function agentEditSaveErrorMessage(error: unknown) {
     if (status === 409) {
       return 'This agent was updated elsewhere while you were editing. Close and reopen the editor to start from the latest version.';
     }
-    if (status === 400) {
-      return 'Invalid agent configuration. Check your editor for errors.';
-    }
   }
   if (error && typeof error === 'object' && 'message' in error) {
     const message = (error as Error | ApiError).message;

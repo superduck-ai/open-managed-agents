@@ -214,8 +214,8 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 
 - `CONFIG_FILE` 只选择 YAML 文件；业务环境变量不参与配置合并。
 - LLM Provider 是数据库中的 workspace 业务数据，不属于 `config.Config`。进程 YAML 不再包含 `anthropic_upstream`。
-- Provider 可以有多个，每个包含 base URL、Vault 信封加密 Key 和真实模型 ID 列表；模型 ID 原样使用，不做别名、映射或默认回退。
-- Environment Runner 直接使用 Agent Snapshot 保存的真实模型 ID。`environment-manager` v0 仍把该值投射为 Claude Code 所需的 `ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL` 和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`；Provider Key 不进入 sandbox。
+- Provider 可以有多个，每个包含不可变 slug、base URL、Vault 信封加密 Key 和上游模型 ID 列表；对外模型 ID 为 `{slug}/{upstream_model_id}`，转发前替换回上游 ID，不做别名或默认回退（见 [messages-proxy](messages-proxy.md)）。
+- Environment Runner 直接使用 Agent Snapshot 保存的完整模型 ID。`environment-manager` v0 仍把该值投射为 Claude Code 所需的 `ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL` 和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`；Provider Key 不进入 sandbox。
 - 数据库配置不接受独立的管理员 URL 或管理员凭证；启动回退只能使用 `database.url` 派生的 maintenance DB 连接和当前系统用户候选。
 - Provider API Key 只以数据库密文存在，Webhook signing key 等进程秘密只存在于服务端配置边界；二者都不得进入 sandbox payload 或日志。
 - JWT 和 CCR MITM 私钥继续通过只读文件路径配置；路径校验仍在相应的 code-session 启动边界执行。
@@ -232,7 +232,7 @@ OMA_S3_INTEGRATION_BUCKET=claude-files \
 OMA_S3_INTEGRATION_REGION=us-east-1 \
 OMA_S3_INTEGRATION_ACCESS_KEY_ID=minioadmin \
 OMA_S3_INTEGRATION_SECRET_ACCESS_KEY=minioadmin \
-  go test ./internal/storage -run '^TestS3CompatibleIntegration$' -count=1 -v
+  go test -tags=integration ./internal/storage -run '^TestS3CompatibleIntegration$' -count=1 -v
 ```
 
 发布前应使用实际部署的 S3-compatible 产品版本或镜像运行同一组测试；测试对象会清理，但测试创建的 bucket 默认保留。需要验证真实建桶并自动清理时，应使用以 `oma-storage-test-` 开头的唯一临时 bucket，并设置 `OMA_S3_INTEGRATION_DELETE_BUCKET=1`；测试会在对象删除后删除该 bucket，并拒绝删除不符合临时命名约束的 bucket。

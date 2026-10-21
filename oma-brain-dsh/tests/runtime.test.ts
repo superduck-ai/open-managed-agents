@@ -118,12 +118,73 @@ test("unknown sandbox outcome is journaled before stopping and cannot be replaye
   expect(f.approvals).toBe(1);
 });
 
-test("user interruption cannot clear an unconfirmed remote outcome", async () => {
+test("non-user cancellation still blocks unconfirmed remote outcomes", async () => {
+  for (const reason of [{ kind: "disposed" }, new Error("timeout"), undefined]) {
+    const f = fixture();
+    const abort = new AbortController();
+    f.sandbox.call = async () => { abort.abort(reason); throw new Error("response lost"); };
+    await expect(f.execution.execute(tool, { command: "original" }, { ...f.exec, signal: abort.signal }))
+      .rejects.toThrow("outcome is unknown");
+    expect(f.bridge.blocked()).toBe(true);
+    expect(f.stopped).toBe(true);
+  }
+});
+
+test("user interruption journals a local error without claiming a remote terminal result", async () => {
   const f = fixture();
   const abort = new AbortController();
-  const exec = { ...f.exec, signal: abort.signal };
-  f.sandbox.call = async () => { abort.abort(); throw new Error("remote cancellation response lost"); };
-  await expect(f.execution.execute(tool, { command: "original" }, exec)).rejects.toThrow("outcome is unknown");
+  let outcome: Parameters<ToolExecutionBridge["recordResult"]>[0] | undefined;
+  const recordResult = f.bridge.recordResult;
+  f.bridge.recordResult = async (result) => { outcome = result; await recordResult(result); };
+  f.sandbox.call = async () => { abort.abort({ kind: "user" }); throw new Error("request aborted"); };
+  await expect(f.execution.execute(tool, { command: "original" }, { ...f.exec, signal: abort.signal }))
+    .rejects.toThrow("Tool call interrupted.");
+  expect(outcome).toMatchObject({ failed: true, text: "Tool call interrupted.", remoteOutcome: "unknown" });
+  expect(f.bridge.blocked()).toBe(false);
+  expect(f.stopped).toBe(false);
+});
+
+test("a completed remote result wins a user cancellation race", async () => {
+  const f = fixture();
+  const abort = new AbortController();
+  f.sandbox.call = async () => { abort.abort({ kind: "user" }); return { content: [{ type: "text", text: "completed" }] }; };
+  let outcome: Parameters<ToolExecutionBridge["recordResult"]>[0] | undefined;
+  const recordResult = f.bridge.recordResult;
+  f.bridge.recordResult = async (result) => { outcome = result; await recordResult(result); };
+  expect(await f.execution.execute(tool, { command: "original" }, { ...f.exec, signal: abort.signal })).toBe("completed");
+  expect(outcome?.remoteOutcome).toBeUndefined();
+  expect(f.bridge.blocked()).toBe(false);
+});
+
+test("failed interruption persistence remains fatal", async () => {
+  const f = fixture();
+  const abort = new AbortController();
+  f.sandbox.call = async () => { abort.abort({ kind: "user" }); throw new Error("request aborted"); };
+  f.bridge.recordResult = async () => { throw new Error("Write not confirmed"); };
+  await expect(f.execution.execute(tool, { command: "original" }, { ...f.exec, signal: abort.signal }))
+    .rejects.toThrow("Write not confirmed");
+});
+
+test("user interruption cannot clear an earlier unknown outcome", async () => {
+  const f = fixture();
+  f.sandbox.call = async () => { throw new Error("response lost"); };
+  await expect(f.execution.execute(tool, { command: "original" }, f.exec)).rejects.toThrow("outcome is unknown");
+  const abort = new AbortController();
+  abort.abort({ kind: "user" });
+  await expect(f.execution.execute(tool, { command: "original" }, { ...f.exec, signal: abort.signal }))
+    .rejects.toThrow("reconciliation");
   expect(f.bridge.blocked()).toBe(true);
-  await expect(f.execution.execute(tool, { command: "original" }, exec)).rejects.toThrow("reconciliation");
+  expect(f.approvals).toBe(1);
+});
+
+test("runtime denial preserves the supplied reason without sandbox side effects", async () => {
+  for (const reason of ["Use staging instead", undefined]) {
+    const f = fixture();
+    f.bridge.approve = async () => ({ allowed: false, reason });
+    await expect(f.execution.execute(tool, { command: "original" }, f.exec))
+      .rejects.toThrow(reason ?? "Tool use denied by OMA");
+    expect(f.provisions).toBe(0);
+    expect(f.executions).toBe(0);
+    expect(f.stopped).toBe(false);
+  }
 });

@@ -304,7 +304,7 @@ func TestRestartGenerationFailureKeepsService(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFixture(t, root, "scripts/restart-server.sh", string(data))
-	writeFixture(t, root, "config/config.yaml", "")
+	writeFixture(t, root, ".run/config.yaml", "")
 	writeFixture(t, root, "scripts/generate-go.sh", "#!/bin/sh\nprintf '%s' \"$1\" > \"$(dirname \"$0\")/../arguments\"\nexit 1\n")
 	writeFixture(t, root, "tools/lsof", "#!/bin/sh\ntouch \"$CONFIG_FILE.listeners\"\n")
 	command := exec.Command("bash", filepath.Join(root, "scripts/restart-server.sh"))
@@ -315,7 +315,7 @@ func TestRestartGenerationFailureKeepsService(t *testing.T) {
 	if err != nil || string(arguments) != "--cached" {
 		t.Fatalf("expected one cached generation call: %s, %v", arguments, err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "config/config.yaml.listeners")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(root, ".run/config.yaml.listeners")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("restart inspected listeners after generation failure: %v", err)
 	}
 }
@@ -392,7 +392,7 @@ func TestRestartSuccessfulGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFixture(t, root, "scripts/restart-server.sh", string(data))
-	writeFixture(t, root, "config/config.yaml", "")
+	writeFixture(t, root, ".run/config.yaml", "")
 	writeFixture(t, root, "scripts/generate-go.sh", "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$(dirname \"$0\")/../arguments\"\n")
 	writeFixture(t, root, "tools/lsof", "#!/bin/sh\nexit 0\n")
 	command := exec.Command("bash", filepath.Join(root, "scripts/restart-server.sh"))

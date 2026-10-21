@@ -16,6 +16,7 @@ export function assignment(): Assignment {
       model: "test-model",
       work_dir: "/workspace",
       system: "You are a test agent.",
+      tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
     },
   };
 }
@@ -108,6 +109,7 @@ export class Backend {
   onCancel?: (params: Payload) => Promise<void>;
   onTool?: (params: Payload) => Promise<Payload>;
   onApproval?: (payload: Payload) => Promise<void>;
+  onDelegationApproval?: (payload: Payload) => Promise<void>;
   hangTool = false;
   rejectTool?: (params: Payload) => boolean;
   failWrites = false;
@@ -204,8 +206,9 @@ export class Backend {
       return json({ worker_epoch: String(this.a.worker_epoch) });
     }
     if (path === `/v2/sessions/${this.a.session_id}`) return json({session_context: {
+      runtime_tools: this.a.launch.tools, mcp_config: this.a.external_mcp_config ?? {},
       cwd: this.a.launch.work_dir, model: this.a.launch.model, system_prompt: this.a.launch.system,
-      append_system_prompt: this.a.launch.environment_prompt, memory_catalog_prompt: this.a.launch.memory_catalog_prompt, runtime_skills: this.a.launch.skills, subagents: this.a.launch.subagents, runtime_tools: this.a.launch.tools,
+      append_system_prompt: this.a.launch.environment_prompt, memory_catalog_prompt: this.a.launch.memory_catalog_prompt, runtime_skills: this.a.launch.skills, subagents: this.a.launch.subagents,
       runtime_tool_permissions: this.a.launch.tool_permissions,
     }});
     if (path === "/v1/messages") {
@@ -291,6 +294,13 @@ export class Backend {
       if (request.method !== "GET") {
         if (body.worker_epoch !== this.a.worker_epoch) return json({}, 409);
       }
+      if (request.method === "GET" && path.includes("/worker/subagent-threads/")) {
+        const id = decodeURIComponent(path.split("/worker/subagent-threads/")[1]!);
+        const events = [...this.publicLog.values()].filter((event) => event.session_thread_id === id);
+        if (!events.some((event) => event.type === "session.thread_created")) return json({}, 404);
+        const archived = events.some((event) => event.type === "session.thread_status_terminated");
+        return json({id, status: archived ? "terminated" : "idle", archived});
+      }
       if (path.endsWith("/internal-events")) {
         if (request.method === "GET")
           return json({
@@ -329,8 +339,14 @@ export class Backend {
           this.timeline.push(structuredClone(event.payload));
           if (!event.ephemeral)
             this.publicLog.set(event.payload.uuid, event.payload);
-          if (event.payload.type === "control_request")
-            await this.onApproval?.(event.payload);
+          if (event.payload.type === "control_request") {
+            this.workerMetadata[`managed_agent_tool_permission_request:${event.payload.request_id}`] = {
+              public_event_id: event.payload.request_id, request_id: event.payload.request_id,
+              provider_tool_use_id: event.payload.request.tool_use_id,
+            };
+            const delegation = ["list_agents", "send_to_agent", "archive_agent"].includes(event.payload.request.tool_name);
+            await (delegation && this.onDelegationApproval ? this.onDelegationApproval : this.onApproval)?.(event.payload);
+          }
         }
         return json({});
       }

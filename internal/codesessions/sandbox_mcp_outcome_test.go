@@ -56,7 +56,7 @@ func TestSandboxMCPToolName(t *testing.T) {
 		{"tools/call", "private-tool", "other"},
 		{"tools/call", "bash", "bash"},
 	} {
-		call := sandboxMCPRequest{Method: tc.method}
+		call := sandboxRPCRequest{Method: tc.method}
 		call.Params.Name = tc.name
 		if got := sandboxMCPToolName(call); got != tc.want {
 			t.Fatalf("%s %s = %q", tc.method, tc.name, got)

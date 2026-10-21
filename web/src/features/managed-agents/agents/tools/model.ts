@@ -63,6 +63,7 @@ export const BUILT_IN_AGENT_TOOLSETS: Record<string, BuiltInAgentTool[]> = {
     { name: 'glob', description: 'File pattern matching' },
     { name: 'grep', description: 'Text search with regex' },
     { name: 'web_fetch', description: 'Fetch URL content' },
+    { name: 'web_search', description: 'Search the web and return sources' },
     { name: 'task', description: 'Run a subagent task' },
     { name: 'ask_user_question', description: 'Ask the user a structured question' },
     { name: 'cron_create', description: 'Create a recurring task' },
@@ -108,6 +109,7 @@ const BUILT_IN_TOOL_DESCRIPTION_KEYS: Record<string, string> = {
   task_stop: 'managedAgents.agents.createDialog.builtInTool.taskStop',
   todo_write: 'managedAgents.agents.createDialog.builtInTool.todoWrite',
   web_fetch: 'managedAgents.agents.createDialog.builtInTool.webFetch',
+  web_search: 'managedAgents.agents.createDialog.builtInTool.webSearch',
   write: 'managedAgents.agents.createDialog.builtInTool.write',
 };
 

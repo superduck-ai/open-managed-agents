@@ -14,6 +14,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
+	"github.com/superduck-ai/open-managed-agents/internal/webtools"
 )
 
 // Handler 是 code-session 的 HTTP transport 边界。
@@ -34,9 +35,12 @@ type Handler struct {
 	// 策略加载函数在生产环境读取数据库，测试可替换为 fixture。
 	loadUpstreamPolicyContext func(ctx context.Context, identity upstreamProxyIdentity) (upstreamProxyPolicyContext, error)
 	loadMCPPolicyContext      func(ctx context.Context, identity upstreamProxyIdentity) (mcpProxyPolicyContext, error)
+	loadMemoryToolMounts      func(context.Context, db.CodeSession) ([]db.SessionMemoryMount, error)
+	loadMemoryToolVersion     func(context.Context, db.CodeSession, string, string) (memoryToolVersion, error)
 	otlpSink                  otlpSink
 	otlpAdmission             *otlpAdmission
 	brainClaims               BrainClaimAuthenticator
+	webTools                  *webtools.Client
 }
 
 // TunnelInvoker is implemented by the Tunnel DataPlane. Named Runtime Gateway
@@ -87,6 +91,8 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 	}
 	handler.loadUpstreamPolicyContext = handler.loadUpstreamProxyPolicyContext
 	handler.loadMCPPolicyContext = handler.loadMCPProxyPolicyContext
+	handler.loadMemoryToolMounts = handler.loadSandboxMemoryMounts
+	handler.loadMemoryToolVersion = handler.loadSandboxMemoryVersion
 	// 只有 MITM 开启时才在构造阶段读取稳定私钥并签发一年期根证书，使配置错误在启动期失败。
 	// MITM 关闭时私钥路径完全休眠，由 CA 下载接口按需生成进程级临时 CA。
 	if cfg.CodeSession.UpstreamProxyMITMEnabled {
@@ -112,7 +118,7 @@ func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaul
 		injector = injector.WithRefreshLease(refreshLease)
 	}
 	h.wrapMCPVaultTransport = func(ctx context.Context, claims SessionCredentialClaims, target *url.URL, base http.RoundTripper) http.RoundTripper {
-		return injector.WrapTransport(
+		return injector.WrapMCPTransport(
 			ctx,
 			claims.SessionID,
 			claims.OrganizationUUID,

@@ -5,16 +5,18 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// OAuthExpiresIn is token-endpoint expires_in (seconds). Providers may send a
-// JSON number or numeric string; invalid/absent values decode as 0.
 type OAuthExpiresIn int64
+
+const maxOAuthExpiresInSeconds = int64((1<<63 - 1) / int64(time.Second))
 
 func (e *OAuthExpiresIn) UnmarshalJSON(data []byte) error {
 	data = bytes.TrimSpace(data)
@@ -34,18 +36,29 @@ func (e *OAuthExpiresIn) UnmarshalJSON(data []byte) error {
 		}
 		parsed, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
+			if errors.Is(err, strconv.ErrRange) {
+				return errors.New("token endpoint expires_in exceeds supported duration")
+			}
 			*e = 0
 			return nil
 		}
-		*e = OAuthExpiresIn(parsed)
-		return nil
+		return e.setSeconds(parsed)
 	}
 	var asFloat float64
 	if err := json.Unmarshal(data, &asFloat); err != nil {
 		*e = 0
 		return nil
 	}
-	*e = OAuthExpiresIn(int64(asFloat))
+	if asFloat > float64(maxOAuthExpiresInSeconds) {
+		return errors.New("token endpoint expires_in exceeds supported duration")
+	}
+	return e.setSeconds(int64(asFloat))
+}
+func (e *OAuthExpiresIn) setSeconds(value int64) error {
+	if value > maxOAuthExpiresInSeconds {
+		return errors.New("token endpoint expires_in exceeds supported duration")
+	}
+	*e = OAuthExpiresIn(value)
 	return nil
 }
 
@@ -69,10 +82,11 @@ type OAuthTokenEndpointResult struct {
 }
 
 type oauthTokenEndpointWire struct {
-	AccessToken  string         `json:"access_token"`
-	RefreshToken string         `json:"refresh_token"`
-	ExpiresIn    OAuthExpiresIn `json:"expires_in"`
-	Scope        string         `json:"scope"`
+	TokenType    json.RawMessage `json:"token_type"`
+	AccessToken  string          `json:"access_token"`
+	RefreshToken string          `json:"refresh_token"`
+	ExpiresIn    OAuthExpiresIn  `json:"expires_in"`
+	Scope        string          `json:"scope"`
 }
 
 // ExchangeOAuthTokenEndpoint POSTs to an OAuth token endpoint with the shared
@@ -119,12 +133,18 @@ func ExchangeOAuthTokenEndpoint(ctx context.Context, client *http.Client, in OAu
 	if err != nil {
 		return OAuthTokenEndpointResult{}, err
 	}
-	var wire oauthTokenEndpointWire
-	if len(respBody) > 0 {
-		_ = json.Unmarshal(respBody, &wire)
-	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return OAuthTokenEndpointResult{}, tokenEndpointStatus(resp.StatusCode)
+	}
+	var wire oauthTokenEndpointWire
+	if json.Unmarshal(respBody, &wire) != nil {
+		return OAuthTokenEndpointResult{}, errors.New("token endpoint returned invalid token response")
+	}
+	if len(wire.TokenType) != 0 {
+		var tokenType string
+		if json.Unmarshal(wire.TokenType, &tokenType) != nil || !strings.EqualFold(tokenType, "Bearer") {
+			return OAuthTokenEndpointResult{}, errors.New("token endpoint returned unsupported token_type")
+		}
 	}
 	accessToken := strings.TrimSpace(wire.AccessToken)
 	if accessToken == "" {

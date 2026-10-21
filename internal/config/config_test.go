@@ -445,11 +445,11 @@ e2b:
 }
 
 func TestValidateAuthConfigAllowsOmittedSMTP(t *testing.T) {
-	if err := validateAuthConfig(AuthConfig{}); err != nil {
+	if err := validateAuthConfig(EnvironmentDev, AuthConfig{}); err != nil {
 		t.Fatalf("validateAuthConfig() error = %v, want omitted SMTP accepted", err)
 	}
 	partial := AuthConfig{SMTP: EmailSMTPConfig{Addr: "smtp.example.com:587"}}
-	if err := validateAuthConfig(partial); err == nil {
+	if err := validateAuthConfig(EnvironmentDev, partial); err == nil {
 		t.Fatal("validateAuthConfig() error = nil, want partial SMTP rejected")
 	}
 }
@@ -481,6 +481,7 @@ func TestLoadYAMLRejectsUnknownField(t *testing.T) {
 		overrides string
 		wantField string
 	}{
+		{name: "provider field", overrides: "web_tools:\n  search_provider: deepseek\n  providers:\n    deepseek:\n      api_key: private-test-key\n      api_kye: typo\n", wantField: "api_kye"},
 		{name: "regular field", overrides: "database:\n  urll: postgresql://typo/database\n", wantField: "urll"},
 		{name: "removed process upstream", overrides: "anthropic_upstream:\n  api_key: leftover\n", wantField: "anthropic_upstream"},
 		{name: "removed SDK fixture configuration", overrides: "sdk_fixtures:\n  api_key: leftover\n", wantField: "sdk_fixtures"},
@@ -562,6 +563,8 @@ func TestLoadYAMLRejectsNullAndNonPositiveValues(t *testing.T) {
 		overrides string
 		wantPath  string
 	}{
+		{name: "provider entry", overrides: "web_tools:\n  providers:\n    deepseek: null\n", wantPath: "web_tools.providers.deepseek"},
+		{name: "provider key", overrides: "web_tools:\n  providers:\n    deepseek:\n      api_key: null\n", wantPath: "web_tools.providers.deepseek.api_key"},
 		{name: "optional boolean", overrides: "database:\n  auto_migrate: null\n", wantPath: "database.auto_migrate"},
 		{name: "optional list", overrides: "bootstrap:\n  seed_api_keys: null\n", wantPath: "bootstrap.seed_api_keys"},
 		{name: "optional list item", overrides: "bootstrap:\n  seed_api_keys:\n    - null\n", wantPath: "bootstrap.seed_api_keys.[0]"},
@@ -1176,7 +1179,7 @@ func unsetEnv(t *testing.T, key string) {
 func TestAllowedEmailDomains(t *testing.T) {
 	for _, domain := range []string{"", "@example.org", "*.example.org", "example.org/evil", "example..org", "-example.org", "example.org.", "user@example.org"} {
 		t.Run(domain, func(t *testing.T) {
-			if err := validateAuthConfig(AuthConfig{AllowedEmailDomains: []string{domain}}); err == nil {
+			if err := validateAuthConfig(EnvironmentDev, AuthConfig{AllowedEmailDomains: []string{domain}}); err == nil {
 				t.Fatal("invalid domain accepted")
 			}
 		})
@@ -1191,4 +1194,15 @@ func TestAllowedEmailDomains(t *testing.T) {
 			t.Fatalf("domains = %v", cfg.Auth.AllowedEmailDomains)
 		}
 	})
+}
+
+func TestLoadWebToolsAPIKey(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, "web_tools:\n  search_provider: deepseek\n  providers:\n    deepseek:\n      api_key: private-test-key\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WebTools.SearchProvider != "deepseek" || cfg.WebTools.Providers["deepseek"].APIKey != "private-test-key" {
+		t.Fatal("API key was not preserved")
+	}
 }

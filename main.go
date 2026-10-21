@@ -42,6 +42,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
+	"github.com/superduck-ai/open-managed-agents/internal/webtools"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -135,13 +136,9 @@ func run(bootstrap *slog.Logger) error {
 
 	workerEventAcks := workerevents.NewRedisAckStore(redisClient)
 	// 启动时只构造一套 code-session 签发器，并同时注入 HTTP server 与 environment runner。
-	codeSessionCredentials, err := codesessions.NewSessionCredentials(cfg)
+	codeRuntime, err := loadCodeRuntime(cfg)
 	if err != nil {
-		return fmt.Errorf("load code-session credentials: %w", err)
-	}
-	brainClaims, err := codesessions.LoadBrainClaimAuthenticator(cfg.CodeSession.BrainClaimTokenFile)
-	if err != nil {
-		return fmt.Errorf("load brain claim token: %w", err)
+		return err
 	}
 	// Filestore 与 code-session ingress 使用独立的 claims 与验证器；
 	// 生产环境可共用同一 Ed25519 私钥文件，但两种 token 绝不互相代用。
@@ -168,9 +165,10 @@ func run(bootstrap *slog.Logger) error {
 	sandboxProvider := e2bruntime.NewProvider(cfg.E2B, cfg.EnvironmentPackages.RegistryHosts()...)
 	// runner 与 worker-event 过期处置共享同一个 code-session Service，
 	// 过期策略只存在一份实现。
-	runnerCodeSessions := codesessions.NewServiceWithCredentials(database, codeSessionCredentials, environmentLogger).
+	runnerCodeSessions := codesessions.NewServiceWithCredentials(database, codeRuntime.credentials, environmentLogger).
 		WithWorkerEventBroker(workerEventBroker).
-		WithWorkerEventState(workerEventAcks, objectStore)
+		WithWorkerEventState(workerEventAcks, objectStore).
+		WithSessionAttachments(filestoreService)
 	codesessions.NewWorkerEventExpiryWorker(runnerCodeSessions, logger.With("component", "worker_event_expiry")).Start(ctx)
 	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
 		DB:              database,
@@ -258,8 +256,9 @@ func run(bootstrap *slog.Logger) error {
 			Logger:                 logger,
 			PlatformStore:          platformSessions,
 			PlatformAuth:           platformAuthProvider,
-			CodeSessionCredentials: codeSessionCredentials,
-			BrainClaims:            brainClaims,
+			CodeSessionCredentials: codeRuntime.credentials,
+			BrainClaims:            codeRuntime.claims,
+			WebTools:               codeRuntime.web,
 			SandboxTimeoutExtender: sandboxProvider,
 			SandboxProvisioner:     environmentRunner,
 			FilestoreCredentials:   filestoreCredentials,
@@ -368,7 +367,7 @@ func initializeDatabase(ctx context.Context, cfg config.Config, database *db.DB,
 	} else {
 		logger.Info("database auto migration disabled", "env", cfg.Env)
 	}
-	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
+	if err := database.Seed(ctx, cfg.Bootstrap); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
 	return nil
@@ -379,4 +378,28 @@ func shutdownHTTP(ctx context.Context, server *http.Server) error {
 		return errors.Join(fmt.Errorf("shutdown server: %w", err), server.Close())
 	}
 	return nil
+}
+
+type codeRuntime struct {
+	credentials *codesessions.SessionCredentials
+	claims      codesessions.BrainClaimAuthenticator
+	web         *webtools.Client
+}
+
+func loadCodeRuntime(cfg config.Config) (codeRuntime, error) {
+	var runtime codeRuntime
+	var err error
+	runtime.credentials, err = codesessions.NewSessionCredentials(cfg)
+	if err != nil {
+		return runtime, fmt.Errorf("load code-session credentials: %w", err)
+	}
+	runtime.claims, err = codesessions.LoadBrainClaimAuthenticator(cfg.CodeSession.BrainClaimTokenFile)
+	if err != nil {
+		return runtime, fmt.Errorf("load brain claim token: %w", err)
+	}
+	runtime.web, err = webtools.Load(cfg.WebTools)
+	if err != nil {
+		return runtime, fmt.Errorf("load web tools: %w", err)
+	}
+	return runtime, nil
 }

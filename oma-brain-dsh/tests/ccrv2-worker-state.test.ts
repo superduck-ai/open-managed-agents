@@ -127,7 +127,7 @@ test("GET worker retries transient failures with current credentials and honors 
 });
 
 test("GET worker retries ordinary HTTP failures ten times and returns null without changing lease accounting", async () => {
-  for (const status of [400, 401, 403, 404, 408, 429, 503]) {
+  for (const status of [400, 401, 403, 408, 429, 503]) {
     let requests = 0;
     let notifications = 0;
     const client = clientWith(async () => {
@@ -562,4 +562,41 @@ test("queued detached PUTs retain their original epoch", async () => {
   await first;
   expect(String(await rejected)).toContain("409");
   expect(calls).toBe(1);
+});
+
+test("GET worker and history reads stop at once when the code session is not found", async () => {
+  let requests = 0;
+  const client = clientWith(async () => { requests++; return new Response(null, { status: 404 }); });
+  await expect(client.getWorkerState("session/a", 7)).rejects.toThrow("404");
+  expect(requests).toBe(1);
+  await expect(client.readInternalEvents("session/a")).rejects.toThrow("404");
+  expect(requests).toBe(2);
+});
+
+test("history pages retry a failed body read but not malformed JSON", async () => {
+  let requests = 0;
+  const client = clientWith(async () => {
+    requests++;
+    if (requests === 1) return new Response(new ReadableStream({ start(controller) { controller.error(new TypeError("socket closed")); } }));
+    return Response.json({ data: [{ event_id: "e", payload: { type: "system" } }] });
+  });
+  expect(await client.readInternalEvents("session/a")).toMatchObject([{ event_id: "e", payload: { type: "system" } }]);
+  expect(requests).toBe(2);
+  const malformed = clientWith(async () => new Response("{", { headers: { "Content-Type": "application/json" } }));
+  await expect(malformed.readInternalEvents("session/a")).rejects.toThrow(SyntaxError);
+});
+
+test("private event reads honour the caller's cancellation", async () => {
+  let requests = 0;
+  const client = clientWith(async () => { requests++; return new Response(null, { status: 503 }); });
+  client.config.sleep = (ms, signal) => new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms * 1000);
+    signal?.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+  });
+  const abort = new AbortController();
+  const reading = client.privateEvents("session/a", { signal: abort.signal });
+  await Bun.sleep(10);
+  abort.abort(new Error("session closed"));
+  await expect(reading).rejects.toThrow("session closed");
+  expect(requests).toBe(1);
 });

@@ -76,7 +76,7 @@ func (h *Handler) proxySandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 		h.errorAdapter.Write(w, r, sandboxRequestReadError(err))
 		return call
 	}
-	var request sandboxMCPRequest
+	var request sandboxRPCRequest
 	if json.Unmarshal(body, &request) != nil || request.JSONRPC != "2.0" || request.Method == "" {
 		h.errorAdapter.Write(w, r, sandboxInvalidRequest(nil))
 		return call
@@ -86,7 +86,7 @@ func (h *Handler) proxySandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 		span.SetAttributes(telemetry.AttrToolName.String(call.tool), telemetry.AttrMCPRequestID.String(sandboxMCPRequestID(request)))
 	}
 	if request.Method == "tools/call" {
-		policies, err := h.service.currentRuntimeToolPolicies(r.Context(), session)
+		policies, err := h.service.currentRuntimeToolPolicies(r.Context(), session, strings.TrimSpace(r.Header.Get(runtimeThreadHeader)))
 		if err != nil {
 			h.errorAdapter.Write(w, r, sandboxOperationError(err))
 			return call.with("policy_error")
@@ -106,6 +106,14 @@ func (h *Handler) proxySandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 		h.errorAdapter.Write(w, r, sandboxOperationError(err))
 		return call.with("epoch_mismatch")
 	}
+	if h.rejectMemoryToolMutation(w, r, session, request) {
+		return call.with("tool_denied")
+	}
+	commit, err := h.prepareMemoryToolCommit(r.Context(), session, request)
+	if err != nil {
+		h.errorAdapter.Write(w, r, sandboxOperationError(err))
+		return call.with("memory_commit_error")
+	}
 	upstream, err := http.NewRequestWithContext(r.Context(), r.Method, endpoint, bytes.NewReader(body))
 	if err != nil {
 		h.errorAdapter.Write(w, r, sandboxOperationError(err))
@@ -124,6 +132,9 @@ func (h *Handler) proxySandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 	span.SetAttributes(attribute.Int("oma.sandbox_mcp.upstream_status_code", response.StatusCode))
 	call.outcome = sandboxMCPStatusOutcome(response.StatusCode)
 	if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
+		if commit != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
+			return call.with(h.relayMemoryToolStream(w, r, response, session, request, commit, call))
+		}
 		return call.with(h.relaySandboxMCPStream(w, r, response, call))
 	}
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, sandboxMCPResponseLimit+1))
@@ -136,6 +147,12 @@ func (h *Handler) proxySandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 	}
 	if replyOutcome, ok := sandboxMCPReplyOutcome(responseBody); ok && call.outcome == telemetry.OutcomeOK {
 		call.outcome = replyOutcome
+	}
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		responseBody, err = commit.confirm(r.Context(), request, responseBody)
+		if err != nil {
+			h.logger.WarnContext(r.Context(), "Memory tool version confirmation failed", "session_id", session.SessionExternalID, "error", err)
+		}
 	}
 	copySandboxMCPResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
@@ -157,6 +174,17 @@ func (h *Handler) relaySandboxMCPStream(w http.ResponseWriter, r *http.Request, 
 	}
 	if call.outcome == telemetry.OutcomeOK && inspector.outcome != "" {
 		return inspector.outcome
+	}
+	return call.outcome
+}
+
+func (h *Handler) relayMemoryToolStream(w http.ResponseWriter, r *http.Request, response *http.Response, session db.CodeSession, request sandboxRPCRequest, commit *memoryToolCommit, call sandboxMCPCall) string {
+	copySandboxMCPResponseHeaders(w.Header(), response.Header)
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(response.StatusCode)
+	if err := streamMemoryToolResponse(r.Context(), w, response.Body, request, commit); err != nil {
+		h.logger.WarnContext(r.Context(), "Memory tool version confirmation failed", "session_id", session.SessionExternalID, "error", err)
+		return sandboxMCPTransportOutcome(r)
 	}
 	return call.outcome
 }

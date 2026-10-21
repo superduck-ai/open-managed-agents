@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -636,6 +638,8 @@ func TestSessionCanonicalMultiAgentEventsFromCodeSessionIngress(t *testing.T) {
 		`mcp__agent_inferred`,
 		`"type":"agent.message"`,
 		"child stream answer",
+		`"type":"agent.thread_message_sent"`,
+		"deliver to coordinator",
 		`"type":"span.model_request_start"`,
 		`"session_thread_id":"` + childThreadID + `"`,
 	} {
@@ -644,7 +648,7 @@ func TestSessionCanonicalMultiAgentEventsFromCodeSessionIngress(t *testing.T) {
 		}
 	}
 	for _, leaked := range []string{
-		"deliver to coordinator",
+		`"type":"agent.thread_message_received"`,
 		"stream preview only",
 		`"type":"session.thread_status_running"`,
 		`"type":"session.thread_status_idle"`,
@@ -1018,7 +1022,6 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 		`"type":"user.message"`,
 		"private child prompt only in child stream",
 		`"type":"agent.thinking"`,
-		"private child thinking only in child stream",
 		`"type":"agent.message"`,
 		"private child answer only in child stream",
 		`"session_thread_id":"` + child.ID + `"`,
@@ -1027,7 +1030,7 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 			t.Fatalf("child transcript missing %q: %+v", want, childEvents.Data)
 		}
 	}
-	for _, leaked := range []string{`"agentId":"agent-a"`, `"_owner_session_thread_id"`, `"type":"session.thread_status_running"`} {
+	for _, leaked := range []string{`"agentId":"agent-a"`, `"_owner_session_thread_id"`, `"type":"session.thread_status_running"`, "private child thinking only in child stream"} {
 		if eventPageContains(childEvents, leaked) {
 			t.Fatalf("child transcript leaked internal field %q: %+v", leaked, childEvents.Data)
 		}

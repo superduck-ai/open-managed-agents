@@ -2,16 +2,18 @@ import type { APIBackend } from './api';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from '@tanstack/react-router';
-import { AlertCircle, Bot, Plus, ShieldAlert } from 'lucide-react';
+import { AlertCircle, Bot, Plus } from 'lucide-react';
+import type { ApiError } from '../../shared/api/client';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
 import { canManageLLMProviders } from '../../shared/permissions/llm-providers';
 import { useWorkspace } from '../../shared/workspaces/context';
 import { workspaceIdFromPath } from '../../shared/workspaces/presentation';
+import { AccessDenied } from '../../shared/ui/access-denied';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '../../shared/ui/empty';
+import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from '../../shared/ui/empty';
 import { Skeleton } from '../../shared/ui/skeleton';
 import { toast } from '../../shared/ui/sonner';
 import {
@@ -37,41 +39,13 @@ import { ProviderDeleteDialog } from './ProviderDeleteDialog';
 import { ProviderFormDialog } from './ProviderFormDialog';
 
 export function LLMModelsPage() {
-  const { account } = useAuth();
-  const { orgUuid } = useWorkspace();
-
-  if (!canManageLLMProviders(account, orgUuid)) {
-    return <LLMModelsAccessDenied />;
-  }
-
-  return <LLMModelsAdminPage />;
-}
-
-function LLMModelsAccessDenied() {
-  const { msg } = useI18n();
-
-  return (
-    <Empty data-testid="llm-models-access-denied" className="min-h-[320px] border border-dashed border-border bg-card">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <ShieldAlert aria-hidden />
-        </EmptyMedia>
-        <EmptyTitle>{msg('llmModels.accessDeniedTitle', 'Administrator access required')}</EmptyTitle>
-        <EmptyDescription>
-          {msg('llmModels.accessDeniedDescription', 'Only organization administrators can manage model configuration.')}
-        </EmptyDescription>
-      </EmptyHeader>
-    </Empty>
-  );
-}
-
-function LLMModelsAdminPage() {
   const location = useLocation();
   const routeWorkspaceId = workspaceIdFromPath(location.pathname);
-  const { csrfToken } = useAuth();
+  const { account, csrfToken } = useAuth();
   const { msg } = useI18n();
   const queryClient = useQueryClient();
   const { orgUuid, activeWorkspaceId, selectWorkspace } = useWorkspace();
+  const canManage = canManageLLMProviders(account, orgUuid);
   const workspaceId = routeWorkspaceId ?? activeWorkspaceId;
   const [editing, setEditing] = useState<LLMProvider | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -98,6 +72,7 @@ function LLMModelsAdminPage() {
     retry: false,
   });
   const providers = providersQuery.data ?? [];
+  const catalogAccessDenied = isCatalogAccessDenied(providersQuery.error);
   const activeProviderId = resolvedProviderSelection(providers, selectedProviderId);
   const catalog = catalogModels(providers);
 
@@ -133,25 +108,9 @@ function LLMModelsAdminPage() {
       const results = await Promise.allSettled(
         targets.map((provider) => syncProviderModels(orgUuid, workspaceId, provider.id, csrfToken)),
       );
-      const skippedModelIds = new Set<string>();
-      for (const result of results) {
-        if (result.status === 'fulfilled') {
-          for (const modelId of result.value.skipped_model_ids ?? []) {
-            skippedModelIds.add(modelId);
-          }
-        }
-      }
       const failed = results.find((result) => result.status === 'rejected');
       if (failed && failed.status === 'rejected') {
         throw failed.reason;
-      }
-      if (skippedModelIds.size > 0) {
-        toast.info(
-          msg('llmModels.syncSkipped', 'Skipped {count} model IDs already configured by another provider.', {
-            count: String(skippedModelIds.size),
-          }),
-          { id: 'llm-models-sync-skipped' },
-        );
       }
     } finally {
       setIsSyncing(false);
@@ -243,13 +202,13 @@ function LLMModelsAdminPage() {
             <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
               {msg('llmModels.title', 'LLM models')}
             </h1>
-            {catalog.length > 0 ? <Badge variant="secondary">{catalog.length}</Badge> : null}
+            {catalog.length > 0 && !catalogAccessDenied ? <Badge variant="secondary">{catalog.length}</Badge> : null}
           </div>
           <p className="mt-2 max-w-[760px] text-sm leading-5 text-muted-foreground">
             {msg('llmModels.description', 'Manage providers and models for this workspace.')}
           </p>
         </div>
-        {providers.length > 0 ? (
+        {canManage && providers.length > 0 && !catalogAccessDenied ? (
           <Button type="button" size="lg" onClick={openCreate}>
             <Plus className="size-4" aria-hidden />
             {msg('llmModels.addProvider', 'Add provider')}
@@ -258,6 +217,7 @@ function LLMModelsAdminPage() {
       </div>
 
       <CatalogBody
+        canManage={canManage}
         providers={providers}
         catalog={catalog}
         selectedProviderId={activeProviderId}
@@ -268,7 +228,7 @@ function LLMModelsAdminPage() {
         isAddingModel={updateModelsMutation.isPending}
         onOpenCreate={openCreate}
         onQueryChange={setQuery}
-        onRefresh={() => void refreshCatalog()}
+        onRefresh={() => void (canManage ? refreshCatalog() : invalidateCatalog())}
         onSelectProvider={setSelectedProviderId}
         onEditProvider={(provider) => {
           setEditing(provider);
@@ -304,6 +264,7 @@ function LLMModelsAdminPage() {
 }
 
 function CatalogBody({
+  canManage,
   providers,
   catalog,
   selectedProviderId,
@@ -320,6 +281,7 @@ function CatalogBody({
   onDeleteProvider,
   onAddModel,
 }: {
+  canManage: boolean;
   providers: LLMProvider[];
   catalog: CatalogModel[];
   selectedProviderId: string;
@@ -337,6 +299,17 @@ function CatalogBody({
   onAddModel: (provider: LLMProvider, modelId: string) => void;
 }) {
   const { msg } = useI18n();
+  if (isCatalogAccessDenied(providersError)) {
+    return (
+      <AccessDenied
+        title={msg('llmModels.accessDeniedTitle', 'Access denied')}
+        description={msg(
+          'llmModels.accessDeniedDescription',
+          'You do not have permission to view models in this workspace. Workspace members can view the catalog read-only, and only organization administrators can manage providers.',
+        )}
+      />
+    );
+  }
   if (providersError) {
     return (
       <Alert variant="destructive">
@@ -357,16 +330,19 @@ function CatalogBody({
           </EmptyMedia>
           <EmptyTitle>{msg('llmModels.catalogEmptyTitle', 'No providers yet')}</EmptyTitle>
         </EmptyHeader>
-        <EmptyContent>
-          <Button type="button" onClick={onOpenCreate}>
-            {msg('llmModels.addProvider', 'Add provider')}
-          </Button>
-        </EmptyContent>
+        {canManage ? (
+          <EmptyContent>
+            <Button type="button" onClick={onOpenCreate}>
+              {msg('llmModels.addProvider', 'Add provider')}
+            </Button>
+          </EmptyContent>
+        ) : null}
       </Empty>
     );
   }
   return (
     <ModelCatalog
+      canManage={canManage}
       providers={providers}
       models={catalog}
       selectedProviderId={selectedProviderId}
@@ -381,6 +357,10 @@ function CatalogBody({
       onAddModel={onAddModel}
     />
   );
+}
+
+function isCatalogAccessDenied(error: unknown) {
+  return Boolean(error && typeof error === 'object' && (error as Partial<ApiError>).status === 403);
 }
 
 function CatalogSkeleton() {

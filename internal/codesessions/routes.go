@@ -24,6 +24,8 @@ func (h *Handler) RegisterV2Routes(router chi.Router) {
 	router.Get("/sessions/{code_session_id}", h.handleSessionContext)
 	router.Handle("/ccr-sessions/{code_session_id}/mcp", http.HandlerFunc(h.handleMCPProxy))
 	router.Post("/ccr-sessions/{code_session_id}/sandbox/mcp", h.handleSandboxMCP)
+	router.Post("/ccr-sessions/{code_session_id}/web/search", h.handleWebSearch)
+	router.Post("/ccr-sessions/{code_session_id}/web/fetch", h.handleWebFetch)
 	router.Handle("/ccr-sessions/{code_session_id}/mcp/*", http.HandlerFunc(h.handleNamedMCPProxy))
 }
 
@@ -47,6 +49,7 @@ func (h *Handler) registerCodeSessionRoutes(router chi.Router) {
 		sessionRouter.Post("/sign-commit", h.errorAdapter.Wrap(h.handleSignCommit))
 		sessionRouter.Route("/worker", func(workerRouter chi.Router) {
 			workerRouter.Get("/", h.handleGetCodeSessionWorker)
+			workerRouter.Get("/subagent-threads/{thread_id}", h.handleGetCodeSessionSubagentThread)
 			workerRouter.Put("/", h.handlePutCodeSessionWorker)
 			workerRouter.HandleFunc("/internal-events", h.handleCodeSessionWorkerInternalEvents)
 			workerRouter.Get("/events/stream", h.handleCodeSessionWorkerEventsStream)

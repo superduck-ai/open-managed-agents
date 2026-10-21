@@ -3,18 +3,41 @@
 # e2b-local 容器以 host 网络模式运行，挂载宿主机 docker.sock，
 # 可创建 sandbox 兄弟容器并直接通过 127.0.0.1 访问其端口。
 #
-# __ENVD_BIN_DIR__ 是占位符 — docker-compose 启动时通过 entrypoint wrapper
-# 替换为宿主机上 envd-bin 目录的真实绝对路径。
+# 本模板与 docs/design/docker-compose-deployment.md §8.2 推荐的本地配置
+# 对齐：enable_fuse 只对受信的 Managed Agent Sandbox template 开启
+# （本地 compose 环境属于受信环境），e2b-local 会为动态 Sandbox 映射
+# /dev/fuse 并添加 SYS_ADMIN capability。
 server:
+  # Gateway listen address.
   addr: "0.0.0.0:3099"
 
+traffic:
+  # Host/IP returned by sandbox port lookup responses. Empty means e2b-local
+  # detects the outbound interface IP on startup.
+  # advertised_host: "192.168.1.10"
+
+  # Optional host network interface used as the advertised IP source.
+  # interface: "eth0"
+
+  # UDP dial target used to choose the outbound interface when
+  # advertised_host and interface are empty, or as the final fallback.
+  advertised_probe_addr: "8.8.8.8:80"
+
 runtime:
+  # Docker runtime creates one container per sandbox through the Docker Engine API.
   type: "docker"
 
 docker:
   container_name_prefix: "e2b-envd-"
-  health_timeout_seconds: 30
+  enable_fuse: true
+
   published_ports: [3001]
+
+  published_host_ip: "0.0.0.0"
+
+  health_timeout_seconds: 30
+
   # envd_binary 必须指向宿主机可访问的路径 — Docker daemon 在宿主机上运行。
-  # 占位符 __ENVD_BIN_DIR__ 会被 docker-compose entrypoint wrapper 替换。
+  # 占位符 __ENVD_BIN_DIR__ 会被 docker-compose entrypoint wrapper 或
+  # dev-init 渲染替换（per-worktree 环境见 development-worktree-environments.md）。
   envd_binary: "__ENVD_BIN_DIR__/envd-linux-amd64"

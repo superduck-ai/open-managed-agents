@@ -1,3 +1,5 @@
+//go:build integration
+
 package db
 
 import (
@@ -55,7 +57,7 @@ func TestOperationalStateCountsPostgres(t *testing.T) {
 	if total != 0 || len(empty.Sessions) != 2 || len(empty.CodeSessions) != 8 || empty.StaleRunningSessions+empty.StuckStartingWork+empty.OldestQueuedWorkSeconds != 0 {
 		t.Fatalf("empty database counts: %+v", empty)
 	}
-	if err := database.Seed(ctx, []config.SeedAPIKey{{ExternalID: "apikey_ops_metrics", Key: "state-metrics-test-key"}}); err != nil {
+	if err := database.Seed(ctx, config.BootstrapConfig{SeedAPIKeys: []config.SeedAPIKey{{ExternalID: "apikey_ops_metrics", Key: "state-metrics-test-key"}}}); err != nil {
 		t.Fatal(err)
 	}
 	key, err := database.GetAPIKey(ctx, auth.HashAPIKey("state-metrics-test-key"))

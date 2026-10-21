@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -369,6 +371,10 @@ func TestFilestoreMemoryNamespaceContract(t *testing.T) {
 			t.Fatalf("first createFile status = %d: %s", first.StatusCode, readAll(t, first.Body))
 		}
 		afterFirst := fakeStoreKeys(objects)
+		beforeRecord, found, err := app.db.GetMemoryByPath(t.Context(), fx.workspaceUUID, fx.store.ID, "/notes/a.txt")
+		if err != nil || !found {
+			t.Fatalf("first Memory missing: found=%v err=%v", found, err)
+		}
 
 		second := fx.createFile(t, "/memory/"+fx.slug()+"/notes/a.txt", []byte("same-bytes"))
 		defer second.Body.Close()
@@ -376,8 +382,34 @@ func TestFilestoreMemoryNamespaceContract(t *testing.T) {
 			t.Fatalf("identical createFile status = %d: %s", second.StatusCode, readAll(t, second.Body))
 		}
 		afterSecond := fakeStoreKeys(objects)
+		record, err := app.db.GetMemory(t.Context(), fx.workspaceUUID, fx.store.ID, beforeRecord.ExternalID)
+		if err != nil {
+			t.Fatalf("updated Memory missing: %v", err)
+		}
+		if record.CurrentVersionExternalID == beforeRecord.CurrentVersionExternalID || record.S3Key == beforeRecord.S3Key {
+			t.Fatal("identical successful write did not create a new snapshot")
+		}
+		version, err := app.db.GetMemoryVersion(t.Context(), fx.workspaceUUID, fx.store.ID, record.CurrentVersionExternalID)
+		if err != nil || version.S3Key == nil || *version.S3Key != record.S3Key || version.MemoryExternalID != beforeRecord.ExternalID {
+			t.Fatalf("new object is not referenced by the new Memory version: %+v err=%v", version, err)
+		}
+		if _, existed := afterFirst[record.S3Key]; existed {
+			t.Fatal("new snapshot reused an existing object key")
+		}
+		afterFirst[record.S3Key] = struct{}{}
 		if !sameStringSet(afterFirst, afterSecond) {
-			t.Fatalf("identical rewrite leaked objects: before=%v after=%v", afterFirst, afterSecond)
+			t.Fatalf("identical rewrite leaked or removed objects: expected=%v actual=%v", afterFirst, afterSecond)
+		}
+		versions := listMemoryVersions(t, app, fx.store.ID, "memory_id="+record.ExternalID+"&limit=20")
+		if len(versions.Data) != 2 {
+			t.Fatalf("identical write version count = %d, want 2", len(versions.Data))
+		}
+		assertMemoryContent(t, retrieveMemoryFull(t, app, fx.store.ID, record.ExternalID), "same-bytes")
+		for _, id := range []string{beforeRecord.CurrentVersionExternalID, record.CurrentVersionExternalID} {
+			snapshot := retrieveMemoryVersion(t, app, fx.store.ID, id)
+			if snapshot.Content == nil || *snapshot.Content != "same-bytes" {
+				t.Fatalf("snapshot content not preserved: %+v", snapshot)
+			}
 		}
 	})
 

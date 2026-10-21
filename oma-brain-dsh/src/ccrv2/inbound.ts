@@ -6,21 +6,18 @@ export interface InboundReceiver {
   readonly abort: AbortController;
   receive(inputId: string, payload: unknown): Promise<void>;
   stop(): void;
-  queueInput?(inputId: string, payload: unknown): boolean;
 }
 
 export async function consumeInbound(client: CcrClient, session: InboundReceiver): Promise<void> {
   let tasks = Promise.resolve();
   let controls = Promise.resolve();
   let failure: unknown;
-  const pending = new Map<string, { repeated: boolean; control: boolean; steered: boolean }>();
+  const pending = new Map<string, { repeated: boolean }>();
   const enqueue = (event: { id: string; payload: Record<string, unknown> }) => {
     const duplicate = pending.get(event.id);
     if (duplicate) { duplicate.repeated = true; return; }
     const control = isControlInput(event.payload.type);
-    const waiting = [...pending.values()].filter((entry) => !entry.control && !entry.steered).length;
-    const steered = !control && waiting <= 1 && (session.queueInput?.(event.id, event.payload) ?? false);
-    const entry = { repeated: false, control, steered };
+    const entry = { repeated: false };
     pending.set(event.id, entry);
     const next = (control ? controls : tasks).then(async () => {
       session.abort.signal.throwIfAborted();

@@ -1148,14 +1148,14 @@ export function registerManagedAgentsAgentsTests() {
     expect(api.requests.some((request) => request.url === '/v1/skills/triage?beta=true')).toBe(true);
     expect(api.requests.some((request) => request.url === '/v1/skills/reporting?beta=true')).toBe(true);
     expect(screen.queryByText('No skills configured.')).toBeNull();
-    const permissionsButton = screen.getByRole('button', { name: /Tool permissions\s+22/ });
+    const permissionsButton = screen.getByRole('button', { name: /Tool permissions\s+23/ });
     expect(permissionsButton).toBeTruthy();
     expect(permissionsButton.querySelector('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
     fireEvent.click(permissionsButton);
     expect(screen.getByText('bash')).toBeTruthy();
     expect(screen.getByText('web_fetch')).toBeTruthy();
     expect(screen.getByText('Fetch URL content')).toBeTruthy();
-    expect(screen.queryByText('web_search')).toBeNull();
+    expect(screen.getByText('web_search')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(false);
     const versionButton = screen.getByRole('button', { name: 'Version: v2' });
     expect(versionButton.className.includes('bg-secondary')).toBe(false);
@@ -1259,7 +1259,7 @@ export function registerManagedAgentsAgentsTests() {
 
     const builtInCard = cards[0];
     expect(within(builtInCard).getByText('Custom')).toBeTruthy();
-    fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+22/ }));
+    fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+23/ }));
     const bashRow = within(builtInCard).getByText('bash').parentElement!;
     expect(within(bashRow).getByText('Always deny')).toBeTruthy();
     expect(within(builtInCard).getAllByText('Always allow').length).toBeGreaterThan(0);
@@ -2151,13 +2151,13 @@ export function registerManagedAgentsAgentsTests() {
     expect(await screen.findByRole('heading', { name: 'Updated agent' })).toBeTruthy();
   });
 
-  test('shows friendly edit save errors for conflict and invalid configuration responses', async () => {
+  test('shows conflict guidance and preserves invalid configuration field errors', async () => {
     for (const [status, message] of [
       [
         409,
         'This agent was updated elsewhere while you were editing. Close and reopen the editor to start from the latest version.',
       ],
-      [400, 'Invalid agent configuration. Check your editor for errors.'],
+      [400, /allowed_domains\.0: Invalid domain format/],
     ] as const) {
       resetTestDom(`https://oma.duck.ai/workspaces/default/agents/agent_edit_error${status}`);
       mockAgentsApi(

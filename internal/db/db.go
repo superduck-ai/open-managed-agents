@@ -23,26 +23,28 @@ import (
 )
 
 var (
-	ErrNotFound                 = platform.ErrNotFound
-	ErrInvalidState             = errors.New("invalid state")
-	ErrSessionInputPaused       = errors.New("session input is paused; resolve pending tools or budget first")
-	ErrSessionInputConflict     = errors.New("session cannot accept input")
-	ErrSessionToolUseNotPending = fmt.Errorf("%w: tool use is not pending", ErrSessionInputConflict)
-	ErrInvalidCursor            = errors.New("invalid page cursor")
-	ErrPreconditionFailed       = errors.New("precondition failed")
-	ErrDuplicate                = errors.New("duplicate")
-	ErrVersionConflict          = errors.New("version conflict")
-	ErrIncompleteSecretEnvelope = errors.New("incomplete vault credential secret envelope")
-	ErrWorkerEpochMismatch      = errors.New("worker epoch mismatch")
-	ErrWorkerNotRegistered      = errors.New("worker not registered")
-	ErrWorkerLeaseExpired       = errors.New("worker lease expired")
-	ErrStorageLimitExceeded     = errors.New("storage limit exceeded")
-	ErrStorageUsageUnderflow    = errors.New("storage usage underflow")
-	ErrLimitExceeded            = errors.New("limit exceeded")
-	ErrFileInUse                = errors.New("file is in use")
-	ErrFileReferenceNotFound    = errors.New("file reference not found")
-	ErrStaleSchedule            = errors.New("stale deployment schedule")
-	ErrWorkspaceArchived        = errors.New("workspace archived")
+	ErrNotFound                       = platform.ErrNotFound
+	ErrInvalidState                   = errors.New("invalid state")
+	ErrSessionInputPaused             = errors.New("session input is paused; resolve pending tools or budget first")
+	ErrSessionInterruptTargetInvalid  = errors.New("interrupt target is terminated or invalid")
+	ErrSessionInputConflict           = errors.New("session cannot accept input")
+	ErrSessionToolUseNotPending       = fmt.Errorf("%w: tool use is not pending", ErrSessionInputConflict)
+	ErrSessionToolConfirmationInvalid = errors.New("tool confirmation requires a pending ask event")
+	ErrInvalidCursor                  = errors.New("invalid page cursor")
+	ErrPreconditionFailed             = errors.New("precondition failed")
+	ErrDuplicate                      = errors.New("duplicate")
+	ErrVersionConflict                = errors.New("version conflict")
+	ErrIncompleteSecretEnvelope       = errors.New("incomplete vault credential secret envelope")
+	ErrWorkerEpochMismatch            = errors.New("worker epoch mismatch")
+	ErrWorkerNotRegistered            = errors.New("worker not registered")
+	ErrWorkerLeaseExpired             = errors.New("worker lease expired")
+	ErrStorageLimitExceeded           = errors.New("storage limit exceeded")
+	ErrStorageUsageUnderflow          = errors.New("storage usage underflow")
+	ErrLimitExceeded                  = errors.New("limit exceeded")
+	ErrFileInUse                      = errors.New("file is in use")
+	ErrFileReferenceNotFound          = errors.New("file reference not found")
+	ErrStaleSchedule                  = errors.New("stale deployment schedule")
+	ErrWorkspaceArchived              = errors.New("workspace archived")
 )
 
 type DB struct {
@@ -433,7 +435,7 @@ func dropForeignKeyConstraints(ctx context.Context, database *sql.DB) error {
 	return nil
 }
 
-func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
+func (d *DB) Seed(ctx context.Context, bootstrap config.BootstrapConfig) error {
 	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		organizationMapper := NewAdminOrganizationMapper(executor)
 		workspaceMapper := NewAdminWorkspaceMapper(executor)
@@ -443,20 +445,20 @@ func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
 		if _, err := organizationMapper.LockSeed(ctx); err != nil {
 			return err
 		}
-		organizationUUID, err := organizationMapper.SeedDefault(ctx, "workspace_default", "default")
+		organizationUUID, err := organizationMapper.SeedDefault(ctx, bootstrap.WorkspaceExternalID, bootstrap.OrganizationName)
 		if err != nil {
 			return err
 		}
-		workspaceUUID, err := workspaceMapper.SeedDefault(ctx, "workspace_default", organizationUUID, "default")
+		workspaceUUID, err := workspaceMapper.SeedDefault(ctx, bootstrap.WorkspaceExternalID, organizationUUID, bootstrap.WorkspaceName)
 		if err != nil {
 			return err
 		}
-		userUUID, err := userMapper.SeedDefault(ctx, "user_default", organizationUUID, "admin@example.local", "Local Admin")
+		userUUID, err := userMapper.SeedDefault(ctx, bootstrap.UserExternalID, organizationUUID, bootstrap.UserEmail, bootstrap.UserName)
 		if err != nil {
 			return err
 		}
 
-		for _, key := range seedAPIKeys {
+		for _, key := range bootstrap.SeedAPIKeys {
 			if strings.TrimSpace(key.ExternalID) == "" || key.Key == "" {
 				return errors.New("seed api keys must include external_id and key")
 			}

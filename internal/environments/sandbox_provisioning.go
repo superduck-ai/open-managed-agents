@@ -13,6 +13,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
@@ -27,11 +28,13 @@ func (r *Runner) startExternalWorker(ctx context.Context, run *runnerRun, env db
 	if err != nil {
 		return err
 	}
-	ctx = run.begin(ctx, "mark_running")
-	if _, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime); err != nil {
-		return err
+	if cloudEnvironment(env) {
+		ctx = run.begin(ctx, "mark_running")
+		if _, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime); err != nil {
+			return err
+		}
 	}
-	if r.cfg.EnvironmentRunner.BrainSandboxPrewarm {
+	if cloudEnvironment(env) && r.cfg.EnvironmentRunner.BrainSandboxPrewarm {
 		ctx = run.begin(ctx, "sandbox_prewarm")
 		code, found, loadErr := r.db.GetCodeSession(ctx, launch.CodeSessionID)
 		if loadErr != nil {
@@ -70,7 +73,15 @@ func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, 
 		return "", db.EnvironmentSandbox{}, db.ErrInvalidState
 	}
 	if sandbox, err := r.db.GetResumableEnvironmentSandboxForCodeSession(ctx, code.ExternalID); err == nil && sandbox.ProviderSandboxID != nil {
-		return r.sessionSandboxEndpoint(ctx, sandbox)
+		endpoint, _, err := r.sessionSandboxEndpoint(ctx, sandbox)
+		if !errors.Is(err, sandboxruntime.ErrSandboxNotFound) {
+			return endpoint, sandbox, err
+		}
+		now := time.Now().UTC()
+		message := "provider sandbox not found"
+		if err := r.db.UpdateEnvironmentSandboxState(ctx, sandbox.WorkspaceUUID, sandbox.ExternalID, "failed", sandbox.ProviderSandboxID, &message, &now); err != nil {
+			return "", db.EnvironmentSandbox{}, err
+		}
 	} else if err != nil && !errors.Is(err, db.ErrNotFound) {
 		return "", db.EnvironmentSandbox{}, err
 	}
@@ -78,7 +89,15 @@ func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, 
 	if err != nil {
 		return "", db.EnvironmentSandbox{}, err
 	}
-	manager, err := brainSandboxManagerCommand(code.ExternalID, code.WorkDir, r.cfg)
+	resources, err := r.db.ListSessionResources(ctx, work.WorkspaceUUID, work.SessionExternalID)
+	if err != nil {
+		return "", db.EnvironmentSandbox{}, err
+	}
+	resolved, err := resolveManagedAgentRuntimeResources(resources)
+	if err != nil {
+		return "", db.EnvironmentSandbox{}, err
+	}
+	manager, err := brainSandboxManagerCommand(code.ExternalID, code.WorkDir, r.cfg, nil, "", resolved.sources)
 	if err != nil {
 		return "", db.EnvironmentSandbox{}, err
 	}
@@ -126,8 +145,13 @@ func (r *Runner) sessionSandboxEndpoint(ctx context.Context, sandbox db.Environm
 }
 
 type brainSandboxManagerPayload struct {
+	Auth           []AuthConfig `json:"auth"`
 	StartupContext struct {
-		APIBaseURL string `json:"api_base_url"`
+		APIBaseURL           string            `json:"api_base_url"`
+		EnvironmentVariables map[string]string `json:"environment_variables,omitempty"`
+		UseCodeSessions      bool              `json:"use_code_sessions"`
+		SessionID            string            `json:"session_id"`
+		Sources              []json.RawMessage `json:"sources"`
 	} `json:"startup_context"`
 	Environment struct {
 		Type string `json:"environment_type"`
@@ -135,9 +159,22 @@ type brainSandboxManagerPayload struct {
 	} `json:"environment"`
 }
 
-func brainSandboxManagerCommand(codeSessionID, workDir string, cfg config.Config) (environmentManagerCommand, error) {
+func brainSandboxManagerCommand(codeSessionID, workDir string, cfg config.Config, placeholders map[string]string, ingressToken string, sources []json.RawMessage) (environmentManagerCommand, error) {
 	request := brainSandboxManagerPayload{}
+	request.StartupContext.Sources = sources
+	if request.StartupContext.Sources == nil {
+		request.StartupContext.Sources = []json.RawMessage{}
+	}
 	request.StartupContext.APIBaseURL = codeSessionSandboxAPIBaseURL(cfg)
+	request.StartupContext.EnvironmentVariables = make(map[string]string, len(placeholders)+2)
+	for key, value := range placeholders {
+		request.StartupContext.EnvironmentVariables[key] = value
+	}
+	request.StartupContext.EnvironmentVariables["CLAUDE_CODE_REMOTE"] = "true"
+	request.StartupContext.EnvironmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] = "1"
+	request.StartupContext.UseCodeSessions = true
+	request.StartupContext.SessionID = codeSessionID
+	request.Auth = []AuthConfig{{Type: "session_ingress", Token: ingressToken}}
 	request.Environment.Type = "anthropic"
 	request.Environment.CWD = workDir
 	payload, err := json.Marshal(request)

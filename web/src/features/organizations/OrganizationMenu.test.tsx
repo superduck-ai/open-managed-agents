@@ -24,14 +24,14 @@ afterEach(() => {
   setConsoleRequestContext({});
 });
 
-function mount() {
+function mount(memberships = [{ organization: { uuid: 'current', name: '当前组织' }, role: 'admin' }]) {
   resetTestDom('https://oma.duck.ai/dashboard');
   const switchOrganization = mock(async () => true);
   const refresh = mock(async () => ({ account: null }));
   const account = {
     uuid: 'account',
     email_address: 'a@example.com',
-    memberships: [{ organization: { uuid: 'current', name: '当前组织' }, role: 'admin' }],
+    memberships,
   };
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -114,9 +114,36 @@ test('拒绝邀请后保持当前组织，失败操作仍可重试', async () =>
 test('组织菜单显示当前 membership 的中文角色，邀请卡片也显示中文角色', async () => {
   globalThis.fetch = mock(async () => Response.json({ data: [invitation] })) as typeof fetch;
   mount();
-  expect(await screen.findByRole('menuitemradio', { name: '当前组织 管理员' })).toBeTruthy();
+  expect(await screen.findByRole('menuitemradio', { name: /当前组织/ })).toBeTruthy();
+  expect(screen.getByText('管理员')).toBeTruthy();
+  expect(screen.queryByRole('menuitem', { name: '切换组织' })).toBeNull();
   fireEvent.click(await screen.findByRole('menuitem', { name: '组织邀请 (1)' }));
   expect(await screen.findByText(/用户 · 有效期至/)).toBeTruthy();
+});
+
+test('组织很多时菜单只保留当前组织，搜索后再切换', async () => {
+  globalThis.fetch = mock(async () => Response.json({ data: [] })) as typeof fetch;
+  const memberships = [
+    { organization: { uuid: 'current', name: '集团-总部-财务中心-财务部' }, role: 'admin' },
+    { organization: { uuid: 'other', name: '伙伴公司-星河-财务部' }, role: 'user' },
+    ...Array.from({ length: 8 }, (_, index) => ({
+      organization: { uuid: `org-${index}`, name: `集团-分部${index}` },
+      role: 'admin',
+    })),
+  ];
+  const { switchOrganization } = mount(memberships);
+  expect(screen.queryByText('分部7')).toBeNull();
+  expect(screen.getAllByRole('menuitemradio')).toHaveLength(3);
+  expect(screen.getByText('财务中心 / 总部 / 集团')).toBeTruthy();
+  fireEvent.click(screen.getByRole('menuitem', { name: '切换组织' }));
+  expect(await screen.findByText(/还有 9 个组织/)).toBeTruthy();
+  fireEvent.change(screen.getByPlaceholderText('搜索组织'), { target: { value: '星河' } });
+  fireEvent.click(await screen.findByRole('option', { name: /星河/ }));
+  expect(switchOrganization).toHaveBeenCalledWith('other');
+  fireEvent.click(screen.getByRole('menuitem', { name: '切换组织' }));
+  expect(screen.getByPlaceholderText('搜索组织')).toHaveProperty('value', '');
+  expect(await screen.findByText(/还有 9 个组织/)).toBeTruthy();
+  expect(screen.queryByRole('option', { name: /星河/ })).toBeNull();
 });
 
 test.each([

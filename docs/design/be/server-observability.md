@@ -624,7 +624,7 @@ worker 输出事件的 span 标注在 `prepareWorkerOutputEvents` 中复用已�
 
 ### P3.1 迁移
 
-`internal/db/migrations/00083_environment_work_observability.sql` 为 Work 增加 `queued_at` 与
+`internal/db/migrations/00092_environment_work_observability.sql` 为 Work 增加 `queued_at` 与
 `trace_parent`。两者仅用于内部排队计量与关联，不进入公开 API DTO。
 
 ### P3.2 Mapper 边界
@@ -719,7 +719,7 @@ Provider 测试覆盖 NotFound 等结果；`tests/sandbox_observability_test.go`
 
 ### P6.1 索引迁移
 
-`00084_operational_metrics_indexes.sql` 创建四个状态部分索引，其中 Work 使用仅含 `state` 的
+`00093_operational_metrics_indexes.sql` 创建四个状态部分索引，其中 Work 使用仅含 `state` 的
 `environment_work_live_state_v2_idx`。当前分支已将原 00085 的索引调整并入 00084；
 此合并只适用于尚未应用旧 00084 的环境，已应用的环境仍需独立增量迁移。
 迁移使用 `NO TRANSACTION` 与 `CONCURRENTLY`，先清理失败构建的遗留索引，再构建替代索引。

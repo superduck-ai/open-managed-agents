@@ -18,9 +18,9 @@ func (a WorkspaceAccess) Permissions() []string {
 	if !a.UseResources() {
 		return []string{}
 	}
-	permissions := []string{"workspaces:view"}
+	permissions := []string{"workspaces:view", "members:view", "workspace:members:view"}
 	if a.ManageOrganization() {
-		permissions = append(permissions, "members:view", "members:manage", "organization:manage", "organization:manage_settings", "workspaces:manage")
+		permissions = append(permissions, "members:manage", "organization:manage", "organization:manage_settings", "workspaces:manage")
 	}
 	if a.ManageMembers() {
 		permissions = append(permissions, "workspace:members:manage")

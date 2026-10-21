@@ -14,7 +14,7 @@ func TestTwoRolePermissions(t *testing.T) {
 	}
 	for _, role := range []string{"workspace_user", "workspace_admin"} {
 		access := WorkspaceAccess{OrganizationRole: "user", Role: role}
-		if !access.UseResources() {
+		if !access.UseResources() || !slices.Contains(access.Permissions(), "members:view") || !slices.Contains(access.Permissions(), "workspace:members:view") {
 			t.Fatalf("role %q cannot use workspace resources", role)
 		}
 		if access.ManageOrganization() || slices.Contains(access.Permissions(), "members:manage") {

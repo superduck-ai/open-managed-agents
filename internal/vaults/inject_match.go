@@ -5,12 +5,21 @@ import (
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 )
 
 // listInjectableMatches returns vault_ids-ordered injectable credentials that
 // match requestURL. hostCovered is true when any credential covers the host
 // (including non-injectable types), for reject-vs-passthrough.
 func listInjectableMatches(requestURL *url.URL, credentials []db.VaultCredential) ([]*db.VaultCredential, bool, error) {
+	return listCredentialMatches(requestURL, credentials, false)
+}
+
+func listMCPInjectableMatches(requestURL *url.URL, credentials []db.VaultCredential) ([]*db.VaultCredential, bool, error) {
+	return listCredentialMatches(requestURL, credentials, true)
+}
+
+func listCredentialMatches(requestURL *url.URL, credentials []db.VaultCredential, exactMCPPath bool) ([]*db.VaultCredential, bool, error) {
 	if requestURL == nil {
 		return nil, false, nil
 	}
@@ -41,11 +50,19 @@ func listInjectableMatches(requestURL *url.URL, credentials []db.VaultCredential
 		if err != nil || serverURL.Host == "" {
 			continue
 		}
-		if !hostsEqual(serverURL, requestURL) {
+		matchingHost := hostsEqual(serverURL, requestURL)
+		if exactMCPPath {
+			matchingHost = mcpHostsEqual(serverURL, requestURL)
+		}
+		if !matchingHost {
 			continue
 		}
 		hostCovered = true
-		if !pathPrefixMatch(serverURL.Path, requestURL.Path) {
+		matchesPath := pathPrefixMatch(serverURL.Path, requestURL.Path)
+		if exactMCPPath {
+			matchesPath = strings.TrimRight(serverURL.EscapedPath(), "/") == strings.TrimRight(requestURL.EscapedPath(), "/") && serverURL.RawQuery == requestURL.RawQuery
+		}
+		if !matchesPath {
 			continue
 		}
 		if !isInjectableAuthType(authType) {
@@ -96,4 +113,13 @@ func normalizeURLPath(path string) string {
 
 func isInjectableAuthType(typ credentialAuthType) bool {
 	return typ == credentialAuthTypeStaticBearer || typ == credentialAuthTypeMCPOAuth
+}
+
+func mcpHostsEqual(serverURL, requestURL *url.URL) bool {
+	serverHost, err := networkpolicy.MCPHostKey(serverURL.Hostname())
+	if err != nil {
+		return false
+	}
+	requestHost, err := networkpolicy.MCPHostKey(requestURL.Hostname())
+	return err == nil && serverHost == requestHost && strings.EqualFold(serverURL.Scheme, requestURL.Scheme) && effectivePort(serverURL) == effectivePort(requestURL)
 }

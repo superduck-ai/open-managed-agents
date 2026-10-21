@@ -69,6 +69,7 @@ func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesess
 			r.Delete("/{resource_id}", wrap(h.deleteResourceRoute))
 		})
 		r.Route("/threads", func(r chi.Router) {
+			r.Use(h.requireThreadBeta)
 			r.Get("/", wrap(h.listThreadsRoute))
 			r.Get("/{thread_id}", wrap(h.retrieveThreadRoute))
 			r.Post("/{thread_id}/archive", wrap(h.archiveThreadRoute))

@@ -1,7 +1,6 @@
 package platformapi
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -23,23 +22,24 @@ const maxLLMProviderModels = 100
 type llmProviderRequest struct {
 	APIBackend *string  `json:"api_backend"`
 	Name       string   `json:"name"`
+	Slug       *string  `json:"slug"`
 	BaseURL    string   `json:"base_url"`
 	APIKey     *string  `json:"api_key"`
 	ModelIDs   []string `json:"model_ids"`
 }
 
 type llmProviderResponse struct {
-	APIBackend      string   `json:"api_backend"`
-	Type            string   `json:"type"`
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	BaseURL         string   `json:"base_url"`
-	HasAPIKey       bool     `json:"has_api_key"`
-	APIKeyLast4     string   `json:"api_key_last4"`
-	ModelIDs        []string `json:"model_ids"`
-	CreatedAt       string   `json:"created_at"`
-	UpdatedAt       string   `json:"updated_at"`
-	SkippedModelIDs []string `json:"skipped_model_ids,omitempty"`
+	APIBackend  string   `json:"api_backend"`
+	Type        string   `json:"type"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Slug        string   `json:"slug"`
+	BaseURL     string   `json:"base_url"`
+	HasAPIKey   bool     `json:"has_api_key"`
+	APIKeyLast4 string   `json:"api_key_last4"`
+	ModelIDs    []string `json:"model_ids"`
+	CreatedAt   string   `json:"created_at"`
+	UpdatedAt   string   `json:"updated_at"`
 }
 
 func RegisterConsoleLLMProviderRoutes(r chi.Router, database *db.DB, secretService *secrets.Service) {
@@ -92,6 +92,10 @@ func createConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 		if !ok {
 			return
 		}
+		slug, ok := newLLMProviderSlug(w, r, database, orgUUID, scope.UUID, body.Slug)
+		if !ok {
+			return
+		}
 		externalID, err := ids.New("llmprov_")
 		if err != nil {
 			internalError(w, "failed to create LLM provider")
@@ -105,6 +109,7 @@ func createConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 			WorkspaceUUID:    scope.UUID,
 			APIBackend:       llmProviderBackend(body.APIBackend, llmproviders.Messages),
 			Name:             name,
+			Slug:             slug,
 			BaseURL:          baseURL,
 			APIKeyLast4:      lastFour(apiKey),
 			ModelIDs:         modelIDs,
@@ -115,7 +120,8 @@ func createConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 			return
 		}
 		created, err := database.CreateLLMProvider(r.Context(), provider)
-		if writeLLMProviderModelConflictError(w, err) {
+		if errors.Is(err, db.ErrLLMProviderSlugConflict) {
+			writeLLMProviderError(w, http.StatusConflict, llmProviderCodeSlugConflict, "provider slug already exists")
 			return
 		}
 		if errors.Is(err, db.ErrDuplicate) {
@@ -154,6 +160,10 @@ func updateConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 		if !ok {
 			return
 		}
+		if body.Slug != nil && strings.TrimSpace(*body.Slug) != "" && strings.TrimSpace(*body.Slug) != current.Slug {
+			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeSlugImmutable, "slug cannot be changed after the provider is created")
+			return
+		}
 		current.APIBackend = llmProviderBackend(body.APIBackend, current.APIBackend)
 		current.Name = name
 		current.BaseURL = baseURL
@@ -167,9 +177,6 @@ func updateConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 			}
 		}
 		updated, err := database.UpdateLLMProvider(r.Context(), current)
-		if writeLLMProviderModelConflictError(w, err) {
-			return
-		}
 		if errors.Is(err, db.ErrDuplicate) {
 			writeLLMProviderError(w, http.StatusConflict, llmProviderCodeNameConflict, "provider name already exists")
 			return
@@ -212,7 +219,7 @@ func llmProviderScope(w http.ResponseWriter, r *http.Request, database *db.DB) (
 		return "", WorkspaceScope{}, false
 	}
 	scope, ok := consoleWorkspaceScopeFromRequest(w, r, database, orgUUID)
-	if !ok || !requireLLMProviderAdministrator(w, r, database, orgUUID) {
+	if !ok || (r.Method != http.MethodGet && !requireLLMProviderAdministrator(w, r, database, orgUUID)) {
 		return "", WorkspaceScope{}, false
 	}
 	return orgUUID, scope, true
@@ -296,25 +303,31 @@ func normalizeLLMModelIDs(values []string) ([]string, error) {
 	return modelIDs, nil
 }
 
-func configuredLLMModelIDs(
-	ctx context.Context,
+func newLLMProviderSlug(
+	w http.ResponseWriter,
+	r *http.Request,
 	database *db.DB,
-	organizationUUID, workspaceUUID, excludedProviderID string,
-) (map[string]struct{}, error) {
-	providers, err := database.ListLLMProviders(ctx, organizationUUID, workspaceUUID)
+	organizationUUID, workspaceUUID string,
+	requested *string,
+) (string, bool) {
+	if requested != nil && strings.TrimSpace(*requested) != "" {
+		slug := strings.TrimSpace(*requested)
+		if err := llmproviders.ValidateSlug(slug); err != nil {
+			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeSlugInvalid, err.Error())
+			return "", false
+		}
+		return slug, true
+	}
+	providers, err := database.ListLLMProviders(r.Context(), organizationUUID, workspaceUUID)
 	if err != nil {
-		return nil, err
+		internalError(w, "failed to list LLM providers")
+		return "", false
 	}
-	configured := make(map[string]struct{})
+	taken := make([]string, 0, len(providers))
 	for _, provider := range providers {
-		if provider.ExternalID == excludedProviderID {
-			continue
-		}
-		for _, modelID := range provider.ModelIDs {
-			configured[modelID] = struct{}{}
-		}
+		taken = append(taken, provider.Slug)
 	}
-	return configured, nil
+	return llmproviders.NextDefaultSlug(taken), true
 }
 
 func sealLLMProviderAPIKey(w http.ResponseWriter, r *http.Request, secretService *secrets.Service, provider *db.LLMProvider, apiKey string) bool {
@@ -339,6 +352,7 @@ func formatLLMProvider(provider db.LLMProvider) llmProviderResponse {
 		Type:        "llm_provider",
 		ID:          provider.ExternalID,
 		Name:        provider.Name,
+		Slug:        provider.Slug,
 		BaseURL:     provider.BaseURL,
 		HasAPIKey:   true,
 		APIKeyLast4: provider.APIKeyLast4,

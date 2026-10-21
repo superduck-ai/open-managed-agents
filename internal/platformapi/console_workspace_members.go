@@ -43,7 +43,7 @@ func handleListConsoleWorkspaceMembers(store OrganizationStore) http.HandlerFunc
 		if !ok {
 			return
 		}
-		if !access.ManageMembers() {
+		if !access.UseResources() {
 			writeConsoleWorkspaceMemberError(w, workspaceaccess.ErrDenied)
 			return
 		}

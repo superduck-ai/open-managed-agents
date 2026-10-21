@@ -28,6 +28,7 @@ import { appendedSystemContext } from "./system-context.ts";
 declare module "@deepseek-ai/dsh-llm" {
   interface MessageSourceMap {
     "oma-interruption": { kind: "oma-interruption"; inputId: string };
+    "oma-reconciliation": { kind: "oma-reconciliation" };
   }
 }
 
@@ -139,7 +140,7 @@ export class CcrSession {
       this.abort.signal.throwIfAborted();
       const model = metadata?.model;
       if (typeof model === "string" && model.trim()) this.applyModel(model);
-      await this.openState((next) => { stage = next; });
+      await this.openState((next) => { stage = next; }, metadata?.[RECONCILIATION_KEY]);
       this.abort.signal.throwIfAborted();
       workerDiagnostic("info", "ccrv2_worker_lifecycle_initialized", {
         session_id: this.id, duration_ms: Date.now() - startMs,
@@ -166,7 +167,7 @@ export class CcrSession {
     if (this.runtime.handle) this.agent.options.model = model;
   }
 
-  private async openState(setStage: (stage: string) => void): Promise<void> {
+  private async openState(setStage: (stage: string) => void, reconciliation?: unknown): Promise<void> {
     setStage("private_events");
     for (const payload of await this.backend.privateEvents(this.id, { signal: this.abort.signal })) {
       if (payload.subtype === "dsh_brain_state") {
@@ -204,11 +205,17 @@ export class CcrSession {
       await this.runtime.flushLog();
       await this.save();
     }
+    if (reconciliation !== undefined) {
+      setStage("reconcile_tool_outcomes");
+      await this.reconcileUnknownOutcomes(reconciliationToolUseIDs(reconciliation));
+    }
     // Clear a previous worker's progress even when recovery remains blocked.
     // Keep recovery persistence before metadata/status and terminal publication.
     setStage("report_metadata");
     await this.backend.reportMetadata(this.id, {
       task_summary: null, pending_action: null, model: this.config.model,
+      [UNKNOWN_OUTCOMES_KEY]: this.unknownOutcomes() ?? null,
+      ...(reconciliation !== undefined ? { [RECONCILIATION_KEY]: null } : {}),
     });
     setStage("update_status");
     if (!this.blocked()) await this.updateStatus();
@@ -457,6 +464,49 @@ export class CcrSession {
     entry.callPhases[callId] = "blocked";
     this.syncCallPhase(entry);
     this.settleDispatch();
+    await this.save();
+    await this.backend.reportMetadata(this.id, { [UNKNOWN_OUTCOMES_KEY]: this.unknownOutcomes() ?? null })
+      .catch(() => {});
+  }
+
+  unknownOutcomes(): Payload[] | undefined {
+    const outcomes = Object.entries(this.state.executions ?? {}).flatMap(([threadId, entry]) =>
+      Object.entries(entry.callPhases ?? {}).filter(([, phase]) => phase === "blocked").map(([callId]) => ({
+        tool_use_id: callId,
+        tool_name: entry.approvedCalls[callId]?.name ?? null,
+        ...(threadId === this.id ? {} : { session_thread_id: threadId }),
+      })));
+    return outcomes.length ? outcomes : undefined;
+  }
+
+  private async reconcileUnknownOutcomes(toolUseIDs: Set<string>): Promise<void> {
+    const reconciled: { callId: string; name?: string }[] = [];
+    for (const [threadId, entry] of Object.entries(this.state.executions ?? {})) {
+      for (const [callId, phase] of Object.entries(entry.callPhases ?? {})) {
+        if (phase !== "blocked" || !toolUseIDs.has(callId)) continue;
+        entry.callPhases![callId] = "result";
+        entry.toolOutcomes[callId] = { text: RECONCILED_OUTCOME_TEXT, failed: true, remoteOutcome: "unknown" };
+        if (threadId === this.id) this.state.toolOutcomes[callId] = entry.toolOutcomes[callId]!;
+        reconciled.push({ callId, name: entry.approvedCalls[callId]?.name });
+      }
+      if (entry.phase === "blocked" && !Object.values(entry.callPhases ?? {}).includes("blocked")) entry.phase = "interrupted";
+    }
+    if (!reconciled.length) return;
+    if (!Object.values(this.state.executions ?? {}).some((entry) => entry.phase === "blocked")) this.state.phase = "completed";
+    const calls = reconciled.map(({ callId, name }) => `${name ?? "tool"} (${callId})`).join(", ");
+    this.agent.session.append("user/message", createUserMessage({
+      source: { kind: "oma-reconciliation" },
+      content: [{ type: "text", text: `An operator acknowledged that the outcomes of these earlier tool calls are unknown: ${calls}. They were not replayed and may or may not have taken effect. Check the current state before relying on their effects or repeating them.` }],
+    }), { surfaceOp: "append" });
+    const key = createHash("sha256").update(reconciled.map(({ callId }) => callId).sort().join("\0")).digest("hex").slice(0, 32);
+    this.state.outbox.push({
+      type: "system.message", uuid: `${this.id}_reconciled_${key}`,
+      content: [{ type: "text", text: `Unknown tool outcomes were acknowledged by an operator: ${calls}. The calls were not replayed; the session accepts new input.` }],
+    });
+    workerDiagnostic("info", "ccrv2_tool_outcomes_reconciled", {
+      session_id: this.id, reconciled_count: reconciled.length, still_blocked: this.blocked(),
+    });
+    await this.runtime.flushLog();
     await this.save();
   }
 
@@ -775,6 +825,15 @@ export class CcrSession {
     const failed = results.find((result) => result.status === "rejected");
     if (failed?.status === "rejected") throw failed.reason;
   }
+}
+
+const UNKNOWN_OUTCOMES_KEY = "unknown_tool_outcomes";
+const RECONCILIATION_KEY = "tool_outcome_reconciliation";
+const RECONCILED_OUTCOME_TEXT = "Tool outcome is unknown. An operator acknowledged it; the call was not replayed.";
+
+function reconciliationToolUseIDs(value: unknown): Set<string> {
+  const ids = typeof value === "object" && value !== null && "tool_use_ids" in value ? value.tool_use_ids : undefined;
+  return new Set(Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string" && id.length > 0) : []);
 }
 
 function validatedExternalToolResult(value: unknown): {content:{type:"text";text:string}[];isError:boolean} {

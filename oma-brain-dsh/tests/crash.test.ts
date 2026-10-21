@@ -160,6 +160,24 @@ for (const duringDispatch of [true, false]) {
         const repairs = [...backend.privateLog.values()].filter((entry) => entry.subtype === "dsh_log" && entry.data.header.id === alphaId).flatMap((entry) => entry.data.events);
         expect(repairs.some((event) => event.type === "tool/result" && event.data.message.isError)).toBe(true);
         expect(backend.executions).toHaveLength(2);
+        expect(backend.workerMetadata.unknown_tool_outcomes).toEqual([{ tool_use_id: "same_call_id", tool_name: "Bash", session_thread_id: alphaId }]);
+        backend.workerMetadata.tool_outcome_reconciliation = { tool_use_ids: ["same_call_id"] };
+        await resumed.close(); await ctx.fiber.dispose();
+        backend.a.worker_epoch++;
+        ctx = new Context();
+        const reconciledApi = new OmaApi(backend.url);
+        await mountOma(ctx, reconciledApi);
+        resumed = createOmaSession(ctx, reconciledApi, backend.a);
+        await resumed.open();
+        expect(resumed.blocked()).toBe(false);
+        expect(resumed.state.executions![alphaId]!.phase).toBe("interrupted");
+        expect(resumed.state.executions![alphaId]!.toolOutcomes.same_call_id).toMatchObject({ failed: true, remoteOutcome: "unknown" });
+        expect(resumed.state.executions![betaId]!.toolOutcomes.same_call_id.text).toBe("confirmed beta output");
+        expect(backend.workerMetadata).not.toHaveProperty("unknown_tool_outcomes");
+        expect(backend.workerMetadata).not.toHaveProperty("tool_outcome_reconciliation");
+        await resumed.receive("after_reconcile", { content: "new independent task" });
+        expect(backend.requests).toHaveLength(requestCount + 1);
+        expect(backend.executions).toHaveLength(2);
       } else {
         expect(resumed.blocked()).toBe(false);
         expect(resumed.state.executions![alphaId]!.phase).toBe("interrupted");

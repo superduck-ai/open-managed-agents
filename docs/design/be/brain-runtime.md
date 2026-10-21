@@ -184,6 +184,40 @@ DSH 将等待后端权限判定与等待用户确认分开：发送 `can_use_too
 
 DSH 的工具执行持久化屏障如下：审批前先刷新 dsh 日志、保存含 outbox 的 Brain 状态并发布 outbox；发布后清空 outbox 的状态不单独保存，由下一次状态保存（dispatch 或 turn 结束）带上，崩溃后重发的 outbox 事件按稳定 UUID 幂等去重。turn 结束与恢复路径仍在 ACK 前保存清空后的 outbox。有副作用的工具（Bash、Write、Edit）审批通过只更新内存中的 `approved` 阶段，与 `dispatch` 合并为一次保存，并在沙箱准备之后、工具转发之前写入；崩溃恢复语义不变：未写入 `dispatch` 的调用按 interrupted 处理，已写入的按 blocked 处理。只读工具（Read、Glob、Grep）不进入 `callPhases`，不做 dispatch 预写和执行前日志 flush，结果只更新内存状态（审批改写参数时仍立即保存），由下一次模型请求前的 flush 一并持久化。只读调用失败时在未中断的前提下重试一次，仍失败则记为失败结果并以 `is_error` 返回模型，不调用 `recordUnknown`、不停止会话；中断时直接记为失败结果。进程在只读调用期间崩溃时，恢复按普通未完成 turn 处理为 interrupted，不进入 blocked，也不重放。dsh 日志 flush 在缓冲为空时一律跳过，新建会话在创建时直接持久化一次只含 header 的 batch。控制输入的重投去重只在同一 Brain 进程内生效，已处理的控制输入 ID 不跨重启持久化。
 
+### 未知工具结果的人工确认
+
+已 dispatch 却没有确认结果的 Bash、Write、Edit 或外部 MCP 调用会把所在线程记为 `blocked`，整个会话拒绝新输入，直到有人确认这些调用的结果未知。DSH 不提供自动解锁，也不会重放这些调用。
+
+DSH 在记录 unknown 时以及每次打开会话时，把仍为 `blocked` 的调用写入 worker external_metadata 的 `unknown_tool_outcomes`（`tool_use_id`、`tool_name`，子线程另带 `session_thread_id`），没有时写 `null` 删除该键。运维使用 `cmd/tool-outcome-reconcile` 查看并确认：
+
+```sh
+CONFIG_FILE=/path/to/config.yaml go run ./cmd/tool-outcome-reconcile \
+  -organization <organization-uuid> -workspace <workspace-uuid> -session sesn_...
+CONFIG_FILE=/path/to/config.yaml go run ./cmd/tool-outcome-reconcile \
+  -organization <organization-uuid> -workspace <workspace-uuid> -session sesn_... -acknowledge toolu_a,toolu_b
+```
+
+命令按组织、workspace 和公开 Session ID 定位最新 Code Session，只接受当前 `unknown_tool_outcomes` 中列出的 call ID，然后在行锁内把 `tool_outcome_reconciliation: {tool_use_ids, requested_at}` 合并进 worker external_metadata，不改动其他键，Code Session 非 active 时拒绝。该命令不调用 Brain，也不让会话立即被领取；确认在会话下次收到输入、Brain 打开会话时生效。
+
+DSH 打开会话、完成崩溃恢复后读取该请求。请求中仍为 `blocked` 的调用改为 `result`，记录 `failed: true`、`remoteOutcome: unknown` 的工具结果；线程不再有 blocked 调用时转为 `interrupted`，所有线程都不再 blocked 时会话恢复可用。随后 DSH 在主线程私有历史中追加 `oma-reconciliation` 用户上下文，说明这些调用结果未知、未重放、需要先核实状态，并发布一条稳定 UUID 的 `system.message`；先刷新日志、保存 Brain 状态，再用 `null` 清除 `tool_outcome_reconciliation` 并刷新 `unknown_tool_outcomes`。请求中不属于当前 blocked 调用的 ID 被忽略；清除请求前崩溃时，下次打开会话重复处理是幂等的。确认针对具体 call ID，旧请求不会解锁之后新出现的 unknown 调用。早于 `executions` 结构的旧版 Brain 状态没有逐调用阶段，不在 `unknown_tool_outcomes` 中列出，也无法用该命令确认。
+
+```mermaid
+sequenceDiagram
+    participant Operator
+    participant DB as Code Session worker metadata
+    participant Brain
+    Brain->>DB: unknown_tool_outcomes = [toolu_a]
+    Operator->>DB: tool_outcome_reconciliation = {tool_use_ids: [toolu_a]}
+    Note over Brain: Next user input claims the session
+    Brain->>DB: Read worker state
+    Brain->>Brain: Record toolu_a as failed, remoteOutcome unknown
+    Brain->>Brain: Append oma-reconciliation context, save state
+    Brain->>DB: Clear tool_outcome_reconciliation and unknown_tool_outcomes
+    Brain->>Brain: Process the new input without replaying toolu_a
+```
+
+`cmd/tool-outcome-reconcile/main_test.go` 覆盖参数校验、跨组织拒绝、未知 ID 拒绝、只读查看和写入请求；`internal/db/code_session_worker_metadata_postgres_test.go` 在真实 PostgreSQL 上验证租户范围、非 active 拒绝和 JSON 合并/删除；`oma-brain-dsh/tests/ccrv2.test.ts` 与 `tests/crash.test.ts` 覆盖主线程和子线程的 unknown 上报、错误 ID 不解锁、确认后解锁、模型上下文与不重放。
+
 ## 迁移与部署
 
 Brain 实现尚未部署，不保留开发阶段创建独立 Brain 表、延迟沙箱字段和迁回 CCRv2 的中间迁移。最终模型直接复用现有 Code Session、公共配置与 CCRv2 私有事件，无需新增表或专用索引。应用过这些中间迁移的本地开发数据库需要重建；旧 Rust/Grok 客户端和旧 registration-token 任务不再兼容。

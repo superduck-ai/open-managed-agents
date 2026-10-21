@@ -176,7 +176,7 @@ agent toolset 的工具名需要归一化到 Managed Agents 配置使用的名�
 | `grep`             | `Grep`                         |
 | `web_fetch`        | `WebFetch`                     |
 
-`WebSearch` / `web_search` 归一化为内置 `web_search`，`WebFetch` / `web_fetch` 归一化为 `web_fetch`。按各自的 Agent 工具配置和 toolset 默认权限计算 allow/ask/deny；缺省遵循现有 enabled + always_allow，显式禁用仍为 deny。Brain 向模型注册小写名称，并把实际网络请求交给 oma-server。外部 self-hosted Worker 经 can_use_tool 发起调用时，继续沿用既有外部执行确认路径；不再把 WebSearch 作为 unknown 硬拒。
+`WebSearch` / `web_search` 归一化为内置 `web_search`，`WebFetch` / `web_fetch` 归一化为 `web_fetch`。按各自的 Agent 工具配置和 toolset 默认权限计算 allow/ask/deny；缺省遵循现有 enabled + always_allow，显式禁用仍为 deny。Brain 向模型注册小写名称，并把实际网络请求交给 oma-server。外部 self-hosted Worker 经 can_use_tool 发起调用时，继续沿用既有外部执行确认路径。
 
 无法识别的工具按 `unknown` 处理。`unknown` 不应被默认放行；除非后续有明确产品决策，默认按 `ask` 或 deny-safe 策略处理。
 

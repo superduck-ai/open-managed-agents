@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,7 +69,7 @@ func TestWebToolsRejectUnsafeAndInvalidInput(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if conn, err := publicDial(ctx, "tcp", "127.0.0.1:80", net.DefaultResolver); err == nil {
+	if conn, err := publicDial(ctx, "tcp", "127.0.0.1:80"); err == nil {
 		conn.Close()
 		t.Fatal("private IP accepted")
 	}

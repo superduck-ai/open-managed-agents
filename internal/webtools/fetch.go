@@ -40,7 +40,7 @@ func (c *Client) Fetch(ctx context.Context, input FetchRequest, policy Policy) (
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		return publicDial(ctx, network, address, net.DefaultResolver)
+		return publicDial(ctx, network, address)
 	}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(r *http.Request, via []*http.Request) error {
@@ -116,12 +116,12 @@ func (c *Client) Fetch(ctx context.Context, input FetchRequest, policy Policy) (
 	return page, nil
 }
 
-func publicDial(ctx context.Context, network, address string, resolver *net.Resolver) (net.Conn, error) {
+func publicDial(ctx context.Context, network, address string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, err
 	}
-	addresses, err := resolver.LookupNetIP(ctx, "ip", host)
+	addresses, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 	if err != nil {
 		return nil, err
 	}

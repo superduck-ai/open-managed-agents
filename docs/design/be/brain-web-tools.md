@@ -37,12 +37,12 @@ web_tools:
 
 启动时直接读取配置中的密钥。密钥不进入 Brain、沙箱、assignment、事件或运行日志。
 没有配置密钥时 Search 返回 unavailable；直接 HTTP Fetch 仍可用。
-Fetch 统一使用系统 DNS，并继续校验实际连接 IP 与每次重定向目标。旧的 deepseek_api_key_file 和 dns_resolver 已移除；配置需改为 deepseek_api_key。
+Fetch 统一使用系统 DNS，并继续校验实际连接 IP 与每次重定向目标。
 SearchProvider 接口定义 `Search(context.Context, SearchRequest) (SearchResponse, error)`，DeepSeek 实现该接口并负责参数映射、凭据、上游错误与响应归一化。Client 接收 Provider；查询校验、Environment / 工具来源过滤由 OMA 统一执行，替换 Provider 不能绕过这些规则。
-Search 厂商字段只存在于服务端适配器，不进入模型工具 schema；启动组装默认选择 DeepSeek，后续替换构造处的实现即可，不需要修改 Brain 或 HTTP handler。第一版没有插件注册表、动态加载或额外 Node 服务。
+Search 厂商字段只存在于服务端适配器，不进入模型工具 schema；启动组装默认选择 DeepSeek，后续替换构造处的实现即可，不需要修改 Brain 或 HTTP handler。
 Fetch 使用 Go HTTP 和已有 HTML parser，参考官方 DSH 行为；不是直接运行 TS 的 dsh-web-fetch-http。
 
-CMA 式 `agent_toolset_20260401.configs` 保留现有 enabled、permission_policy，并新增保存和校验：
+CMA 式 `agent_toolset_20260401.configs` 保留现有 enabled、permission_policy，支持以下配置：
 
 - 两工具独立的 allowed_domains / blocked_domains，互斥；省略/null 不增加工具限制，空列表拒绝。
 - 每列表 1–64 项，ASCII 可注册主机及子域名；允许下划线；不接受 IP、协议、端口、通配符或重复。拒绝 .localdomain 等本地主机后缀。域名错误标注列表名称与从零开始的索引，空列表标注具体字段。
@@ -72,13 +72,13 @@ HTML 使用已有 golang.org/x/net/html 流式转换为基本 Markdown/文本，
 
 Search 的 408/429/5xx 最多重试一次；取消不重试。Provider 的错误正文和凭据不透传。
 两工具都是只读，沿用现有执行和恢复流程。正常短结果不创建沙箱。
-Brain 将实时权限表同时传给外层执行钩子和 Web 工具执行器，使用 web_search/web_fetch 作为权限键。always_allow 不再进入 can_use_tool，always_ask 继续审批。主会话工具刷新同时更新 Sandbox 和 Web 插件，启用/禁用会反映到下一轮模型工具列表。
-发布时，未显式禁用且 toolset 默认允许的存量 Agent，在新建或重新加载运行时时会默认获得 web_search；配置 Search Key 后可实际执行。正在运行的主会话通过已有工具刷新机制更新。
+Brain 将实时权限表同时传给外层执行钩子和 Web 工具执行器，使用 web_search/web_fetch 作为权限键。always_allow 直接执行，always_ask 继续审批。主会话工具刷新同时更新 Sandbox 和 Web 插件，启用/禁用会反映到下一轮模型工具列表。
+未显式禁用且 toolset 默认允许时，运行时包含 web_search；配置 Search Key 后可执行。主会话通过工具刷新机制更新配置。
 
 ## 内容预算与续读
 
 max_content_tokens 默认为 20000。为兼容不同模型且不引入远端计数调用，第一版按 UTF-8 字节作为保守 token 预算；不是 Claude tokenizer 的精确计数。
-工具包装和文件定位提示不属于页面内容预算。网页超过预算时，Server 返回有界预览和完整的有界正文；预算与预览仅在 Server 决定。Brain 原样保留预览，使用现有工具结果保存机制写入完整正文，并附加 output_file；不再用全文覆盖预览或把预算除以四。
+工具包装和文件定位提示不属于页面内容预算。网页超过预算时，Server 返回有界预览和完整的有界正文；预算与预览仅在 Server 决定。Brain 原样保留预览，使用现有工具结果保存机制写入完整正文，并附加 output_file。
 这只在大结果时按需分配沙箱，不通过沙箱抓网页。保存失败（包括 Write 被禁用）仍返回成功的有界预览，并用 storage_error 明确全文未保存；不返回虚假文件路径，也不重复抓取。全文保存遵守既有 Write 权限，不提升工具权限；Read 续读仍要求 Agent 具有 Read 权限。
 受现有 sandbox MCP 1 MiB 请求上限约束，特别大的完整结果可能无法写入，此时仍返回预览并注明保存失败；本版不新增分块写入协议。
 文件在沙箱被替换后不可恢复，延续现有工具输出文件生命周期。

@@ -45,9 +45,8 @@ export function createOmaSession(
     setup: async (scope) => {
       await scope.plugin(OmaSandboxProvider, { api, sessionId: assignment.session_id });
     },
-    setupTools: async (scope, bridge, tools, threadId, permissions) => {
-      return await scope.plugin(WebTools, { client: new WebClient(api, assignment.session_id, scope.get("sandboxExecutor"), threadId), bridge, tools, permissions });
-    },
+    setupTools: async (scope, bridge, tools, threadId, permissions) =>
+      scope.plugin(WebTools, { client: new WebClient(api, assignment.session_id, scope.get("sandboxExecutor"), threadId), bridge, tools, permissions }),
     subagents: assignment.launch.subagents ?? {},
     modelMessageID: (id) => api.modelResponses.get(id),
     bindThread: (id) => {

@@ -20,37 +20,27 @@ func NewDeepSeekSearch(key string, client *http.Client) SearchProvider {
 }
 
 func (c *deepSeekSearch) Search(ctx context.Context, input SearchRequest) (SearchResponse, error) {
-	var result struct {
-		Results []Source `json:"results"`
+	if c.key == "" {
+		return SearchResponse{}, unavailable()
 	}
-	if err := c.request(ctx, "search", struct {
+	body, err := json.Marshal(struct {
 		Query       string `json:"query"`
 		Count       int    `json:"count"`
 		NeedContent bool   `json:"need_content"`
-	}{input.Query, 10, false}, &result); err != nil {
-		return SearchResponse{}, err
-	}
-	return SearchResponse{Sources: result.Results}, nil
-}
-
-func (c *deepSeekSearch) request(ctx context.Context, method string, input, output any) error {
-	if c.key == "" {
-		return unavailable()
-	}
-	body, err := json.Marshal(input)
+	}{input.Query, 10, false})
 	if err != nil {
-		return invalidRequest("Invalid web tool input")
+		return SearchResponse{}, invalidRequest("Invalid web tool input")
 	}
-	for attempt := range 2 {
-		request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.deepseek.com/v1/tools/"+method, bytes.NewReader(body))
+	for attempt := 0; ; attempt++ {
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.deepseek.com/v1/tools/search", bytes.NewReader(body))
 		if err != nil {
-			return requestFailed()
+			return SearchResponse{}, requestFailed()
 		}
 		request.Header.Set("Authorization", "Bearer "+c.key)
 		request.Header.Set("Content-Type", "application/json")
 		response, err := c.http.Do(request)
 		if err != nil {
-			return requestFailed()
+			return SearchResponse{}, requestFailed()
 		}
 		if response.StatusCode != http.StatusOK {
 			_ = response.Body.Close()
@@ -59,21 +49,23 @@ func (c *deepSeekSearch) request(ctx context.Context, method string, input, outp
 				select {
 				case <-ctx.Done():
 					timer.Stop()
-					return requestFailed()
+					return SearchResponse{}, requestFailed()
 				case <-timer.C:
 					continue
 				}
 			}
-			return upstreamFailure(response.StatusCode)
+			return SearchResponse{}, upstreamFailure(response.StatusCode)
+		}
+		var result struct {
+			Results []Source `json:"results"`
 		}
 		raw, readErr := io.ReadAll(io.LimitReader(response.Body, (2<<20)+1))
 		_ = response.Body.Close()
-		if readErr != nil || len(raw) > 2<<20 || !utf8.Valid(raw) || json.Unmarshal(raw, output) != nil {
-			return invalidResponse()
+		if readErr != nil || len(raw) > 2<<20 || !utf8.Valid(raw) || json.Unmarshal(raw, &result) != nil {
+			return SearchResponse{}, invalidResponse()
 		}
-		return nil
+		return SearchResponse{Sources: result.Results}, nil
 	}
-	return requestFailed()
 }
 
 func retryable(status int) bool {

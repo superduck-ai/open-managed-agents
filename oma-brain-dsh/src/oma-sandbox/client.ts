@@ -10,7 +10,7 @@ export class SandboxMcp implements SandboxExecutor {
   private readonly client = new Client({ name: "oma-brain-dsh", version: "0.1.0" }, { versionNegotiation: { mode: "auto" } });
   private readonly transport: StreamableHTTPClientTransport;
   private initialization?: Promise<void>;
-  private readonly calls = new Map<string, { signal: AbortSignal; threadId?: string; cleanup?: () => void; rejection?: string }>();
+  private readonly calls = new Map<string, { signal: AbortSignal; timeoutMs: number; threadId?: string; cleanup?: () => void; rejection?: string }>();
 
   constructor(readonly api: OmaApi, readonly sessionId: string) {
     const endpoint = sandboxEndpoint(api.assignment(sessionId).mcp_config, api.base);
@@ -35,7 +35,7 @@ export class SandboxMcp implements SandboxExecutor {
             if (!Object.keys(body.params._meta).length) delete body.params._meta;
             let response: Response;
             try {
-              response = await api.fetcher(new Request(request, { body: JSON.stringify(body) }));
+              response = await api.fetcher(new Request(request, { body: JSON.stringify(body) }), { timeout: call.timeoutMs + SOCKET_IDLE_MARGIN_MS });
             } catch (error) {
               if (isConnectFailure(error)) call.rejection = "Sandbox tool call was not executed: OMA sandbox gateway is unreachable";
               throw error;
@@ -65,12 +65,13 @@ export class SandboxMcp implements SandboxExecutor {
     await this.provision(signal);
     const start = Date.now();
     const token = crypto.randomUUID();
-    const call = { signal, threadId, cleanup: undefined as (() => void) | undefined, rejection: undefined as string | undefined };
+    const timeoutMs = sandboxCallTimeoutMs(tool, args);
+    const call = { signal, timeoutMs, threadId, cleanup: undefined as (() => void) | undefined, rejection: undefined as string | undefined };
     this.calls.set(token, call);
     let result: Payload;
     try {
       result = object(await this.client.callTool({ name: tool.remoteName, arguments: args, _meta: { progressToken: token } },
-        { timeout: sandboxCallTimeoutMs(tool, args), ...(this.transport.protocolVersion === "2026-07-28" ? { signal } : {}) }));
+        { timeout: timeoutMs, ...(this.transport.protocolVersion === "2026-07-28" ? { signal } : {}) }));
     } catch (error) {
       if (call.rejection !== undefined) throw new ToolNotForwardedError(call.rejection);
       throw error;
@@ -88,6 +89,7 @@ export class SandboxMcp implements SandboxExecutor {
 }
 
 const SANDBOX_CALL_TIMEOUT_MS = 185_000;
+const SOCKET_IDLE_MARGIN_MS = 15_000;
 const BASH_DEFAULT_TIMEOUT_SECONDS = 120;
 const BASH_MAX_TIMEOUT_SECONDS = 600;
 const BASH_RESPONSE_MARGIN_MS = 65_000;

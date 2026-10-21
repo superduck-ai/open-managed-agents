@@ -22,6 +22,7 @@ import {
 
 type ModelCatalogProps = {
   canManage: boolean;
+  organizationEditable: boolean;
   providers: LLMProvider[];
   models: CatalogModel[];
   selectedProviderId: string;
@@ -38,6 +39,7 @@ type ModelCatalogProps = {
 
 export function ModelCatalog({
   canManage,
+  organizationEditable,
   providers,
   models,
   selectedProviderId,
@@ -54,6 +56,7 @@ export function ModelCatalog({
   const { msg } = useI18n();
   const selected = providers.find((provider) => provider.id === selectedProviderId);
   const visibleModels = modelsForProvider(filterCatalogModels(models, query), selectedProviderId);
+  const canEditSelected = canManage && (organizationEditable || selected?.scope !== 'organization');
   const candidateId = addableModelId(query, modelsForProvider(models, selectedProviderId));
 
   return (
@@ -91,7 +94,8 @@ export function ModelCatalog({
 
         {selected ? (
           <ProviderSection
-            canManage={canManage}
+            organizationEditable={organizationEditable}
+            canManage={canEditSelected}
             provider={selected}
             models={visibleModels}
             emptyMessage={
@@ -104,13 +108,14 @@ export function ModelCatalog({
           />
         ) : (
           <ProviderModelGroups
+            organizationEditable={organizationEditable}
             groups={groupCatalogModels(visibleModels, providers, !query.trim())}
             providers={providers}
             query={query}
           />
         )}
 
-        {canManage ? (
+        {canEditSelected ? (
           <AddModelHint
             candidateId={candidateId}
             query={query}
@@ -202,6 +207,7 @@ function ProviderRailButton({
 
 function ProviderSection({
   canManage,
+  organizationEditable,
   provider,
   models,
   emptyMessage,
@@ -209,6 +215,7 @@ function ProviderSection({
   onDelete,
 }: {
   provider: LLMProvider;
+  organizationEditable: boolean;
   models: CatalogModel[];
   emptyMessage: string;
   canManage: boolean;
@@ -219,7 +226,7 @@ function ProviderSection({
   return (
     <section data-testid={`llm-provider-group-${provider.id}`}>
       <div className="flex items-center gap-3 bg-muted/40 px-4 py-3">
-        <ProviderIdentity provider={provider} modelCount={models.length} />
+        <ProviderIdentity provider={provider} modelCount={models.length} organizationReadOnly={!organizationEditable} />
         {canManage ? (
           <div className="flex shrink-0 items-center gap-1">
             <Button
@@ -248,7 +255,16 @@ function ProviderSection({
   );
 }
 
-function ProviderIdentity({ provider, modelCount }: { provider: LLMProvider; modelCount: number }) {
+function ProviderIdentity({
+  provider,
+  modelCount,
+  organizationReadOnly,
+}: {
+  provider: LLMProvider;
+  modelCount: number;
+  organizationReadOnly: boolean;
+}) {
+  const { msg } = useI18n();
   return (
     <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
       <div className="min-w-0">
@@ -265,6 +281,14 @@ function ProviderIdentity({ provider, modelCount }: { provider: LLMProvider; mod
             •••• {provider.api_key_last4}
           </span>
         </div>
+        {provider.scope === 'organization' && organizationReadOnly ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {msg(
+              'llmModels.organizationReadOnly',
+              'Organization models are read-only here. Manage them in organization LLM configuration.',
+            )}
+          </p>
+        ) : null}
       </div>
       <Badge variant="secondary" className="h-6 min-w-6 shrink-0 justify-center px-1.5 font-normal tabular-nums">
         {modelCount}
@@ -274,10 +298,12 @@ function ProviderIdentity({ provider, modelCount }: { provider: LLMProvider; mod
 }
 
 function ProviderModelGroups({
+  organizationEditable,
   groups,
   providers,
   query,
 }: {
+  organizationEditable: boolean;
   groups: CatalogGroup[];
   providers: LLMProvider[];
   query: string;
@@ -298,14 +324,30 @@ function ProviderModelGroups({
       {groups.map((group) => {
         const provider = providers.find((item) => item.id === group.providerId);
         return provider ? (
-          <ProviderModelGroup key={group.providerId} group={group} provider={provider} query={query} />
+          <ProviderModelGroup
+            key={group.providerId}
+            group={group}
+            provider={provider}
+            query={query}
+            organizationEditable={organizationEditable}
+          />
         ) : null;
       })}
     </Accordion>
   );
 }
 
-function ProviderModelGroup({ group, provider, query }: { group: CatalogGroup; provider: LLMProvider; query: string }) {
+function ProviderModelGroup({
+  group,
+  provider,
+  query,
+  organizationEditable,
+}: {
+  group: CatalogGroup;
+  provider: LLMProvider;
+  query: string;
+  organizationEditable: boolean;
+}) {
   const { msg } = useI18n();
   return (
     <AccordionItem value={group.providerId} data-testid={`llm-provider-group-${group.providerId}`}>
@@ -313,7 +355,11 @@ function ProviderModelGroup({ group, provider, query }: { group: CatalogGroup; p
         aria-label={msg('llmModels.providerGroup', '{provider} models', { provider: group.providerName })}
         className="min-h-16 gap-3 rounded-none bg-muted/40 px-4 py-3 hover:bg-muted/60 hover:no-underline"
       >
-        <ProviderIdentity provider={provider} modelCount={group.models.length} />
+        <ProviderIdentity
+          provider={provider}
+          modelCount={group.models.length}
+          organizationReadOnly={!organizationEditable}
+        />
       </AccordionTrigger>
       <AccordionContent className="pb-0">
         <ModelRows

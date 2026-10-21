@@ -11,7 +11,7 @@ type llmProviderRow struct {
 	UUID             string    `db:"uuid"`
 	ExternalID       string    `db:"external_id"`
 	OrganizationUUID string    `db:"organization_uuid"`
-	WorkspaceUUID    string    `db:"workspace_uuid"`
+	WorkspaceUUID    *string   `db:"workspace_uuid"`
 	Name             string    `db:"name"`
 	Slug             string    `db:"slug"`
 	APIBackend       string    `db:"api_backend"`
@@ -32,7 +32,7 @@ type llmProviderWriteParams struct {
 	UUID             string
 	ExternalID       string
 	OrganizationUUID string
-	WorkspaceUUID    string
+	WorkspaceUUID    *string
 	Name             string
 	Slug             string
 	APIBackend       string
@@ -53,6 +53,9 @@ type LLMProviderMapper interface {
 	Insert(ctx context.Context, params llmProviderWriteParams) (llmProviderRow, error)
 	ListByWorkspace(ctx context.Context, organizationUUID, workspaceUUID string) ([]llmProviderRow, error)
 	FindByExternalID(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (llmProviderRow, error)
+	FindOrganizationDefault(ctx context.Context, organizationUUID string) (llmProviderRow, error)
 	UpdateByExternalID(ctx context.Context, params llmProviderWriteParams) (llmProviderRow, error)
+	UpdateOrganizationDefault(ctx context.Context, params llmProviderWriteParams) (llmProviderRow, error)
 	DeleteByExternalID(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (int64, error)
+	DeleteOrganizationDefault(ctx context.Context, organizationUUID, externalID string) (int64, error)
 }

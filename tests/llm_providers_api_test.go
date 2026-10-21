@@ -604,3 +604,293 @@ func assertJSONDoesNotContain(t *testing.T, value any, secret string) {
 		t.Fatalf("response leaked plaintext key: %s", encoded)
 	}
 }
+
+func TestOrganizationLLMProviderIsReadableByMembers(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("llm-providers-organization-console-bucket"))
+	defer app.close()
+	clearTestLLMProviders(t, app)
+
+	const email = "llm-providers-organization-member@example.com"
+	cookies := app.platformLoginCookies(t, email)
+	orgUUID := loadDefaultOrganizationUUID(t, app)
+	if _, err := app.pool.Exec(context.Background(), `
+		update users set role = 'user' where organization_uuid = $1 and lower(email) = lower($2)
+	`, orgUUID, email); err != nil {
+		t.Fatalf("downgrade test user: %v", err)
+	}
+
+	missing := app.platformRequest(t, http.MethodGet, "/api/console/organizations/"+orgUUID+"/llm_provider", nil, cookies)
+	defer missing.Body.Close()
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("member organization provider status = %d, want 404: %s", missing.StatusCode, readAll(t, missing.Body))
+	}
+
+	denied := app.platformRequest(t, http.MethodPut, "/api/console/organizations/"+orgUUID+"/llm_provider", strings.NewReader(`{
+		"name":"Organization default",
+		"base_url":"https://organization.example.com",
+		"api_key":"organization-provider-secret",
+		"model_ids":["org-only"]
+	}`), cookies)
+	defer denied.Body.Close()
+	if denied.StatusCode != http.StatusForbidden {
+		t.Fatalf("member put status = %d, want 403: %s", denied.StatusCode, readAll(t, denied.Body))
+	}
+	var deniedBody map[string]any
+	decodeJSON(t, denied.Body, &deniedBody)
+	if deniedBody["code"] != "llm_provider_permission_denied" {
+		t.Fatalf("permission error = %#v", deniedBody)
+	}
+
+	adminCookies := app.platformLoginCookies(t, "llm-providers-organization-admin@example.com")
+	created := app.platformRequest(t, http.MethodPut, "/api/console/organizations/"+orgUUID+"/llm_provider", strings.NewReader(`{
+		"name":"Organization default",
+		"base_url":"https://organization.example.com",
+		"api_key":"organization-provider-secret",
+		"model_ids":["org-only"]
+	}`), adminCookies)
+	created.Body.Close()
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("admin create status = %d, want 201", created.StatusCode)
+	}
+	read := app.platformRequest(t, http.MethodGet, "/api/console/organizations/"+orgUUID+"/llm_provider", nil, cookies)
+	defer read.Body.Close()
+	if read.StatusCode != http.StatusOK {
+		t.Fatalf("member get status = %d, want 200: %s", read.StatusCode, readAll(t, read.Body))
+	}
+	var body map[string]any
+	decodeJSON(t, read.Body, &body)
+	if body["scope"] != "organization" || body["slug"] != "organization" || body["name"] != "Organization default" || body["has_api_key"] != true || body["api_key_last4"] != "cret" {
+		t.Fatalf("member organization provider = %#v", body)
+	}
+	models, ok := body["model_ids"].([]any)
+	if !ok || len(models) != 1 || models[0] != "org-only" {
+		t.Fatalf("member model IDs = %#v", body["model_ids"])
+	}
+	if _, exists := body["api_key"]; exists {
+		t.Fatal("member response contains an API key field")
+	}
+	assertJSONDoesNotContain(t, body, "organization-provider-secret")
+}
+
+func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("llm-providers-organization-bucket"))
+	defer app.close()
+	clearTestLLMProviders(t, app)
+
+	orgUUID := loadDefaultOrganizationUUID(t, app)
+	workspaceUUID := getDefaultDBIDs(t, app.pool).WorkspaceUUID
+	cookies := app.platformLoginCookies(t, "llm-providers-organization@example.com")
+	path := "/api/console/organizations/" + orgUUID + "/llm_provider"
+	workspacePath := "/api/console/organizations/" + orgUUID + "/workspaces/default/llm_providers"
+	const orgKey = "organization-provider-secret"
+
+	if _, err := llmproviders.ListModelIDs(context.Background(), app.db, orgUUID, workspaceUUID); !errors.Is(err, llmproviders.ErrNotConfigured) {
+		t.Fatalf("empty model list error = %v, want ErrNotConfigured", err)
+	}
+	missing := app.platformRequest(t, http.MethodGet, path, nil, cookies)
+	defer missing.Body.Close()
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing organization provider status = %d, want 404: %s", missing.StatusCode, readAll(t, missing.Body))
+	}
+
+	for _, invalid := range []struct {
+		method string
+		path   string
+		body   string
+		code   string
+	}{
+		{http.MethodPut, path, `{"name":"Organization","slug":"custom","base_url":"https://organization.example.com","api_key":"test-key","model_ids":[]}`, "llm_provider_slug_immutable"},
+		{http.MethodPost, workspacePath, `{"name":"Workspace","slug":"organization","base_url":"https://workspace.example.com","api_key":"test-key","model_ids":[]}`, "llm_provider_slug_invalid"},
+	} {
+		response := app.platformRequest(t, invalid.method, invalid.path, strings.NewReader(invalid.body), cookies)
+		var body map[string]any
+		decodeJSON(t, response.Body, &body)
+		response.Body.Close()
+		if response.StatusCode != http.StatusBadRequest || body["code"] != invalid.code {
+			t.Fatalf("invalid slug response = %d %#v", response.StatusCode, body)
+		}
+	}
+
+	createdResponse := app.platformRequest(t, http.MethodPut, path, strings.NewReader(`{
+		"name":"Organization default",
+		"base_url":"https://organization.example.com/anthropic",
+		"api_key":"organization-provider-secret",
+		"model_ids":["org-only","shared-model"]
+	}`), cookies)
+	defer createdResponse.Body.Close()
+	if createdResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("create organization provider status = %d, want 201: %s", createdResponse.StatusCode, readAll(t, createdResponse.Body))
+	}
+	var created map[string]any
+	decodeJSON(t, createdResponse.Body, &created)
+	if created["scope"] != "organization" || created["api_key_last4"] != "cret" || created["slug"] != "organization" || created["api_backend"] != llmproviders.Messages {
+		t.Fatalf("organization provider = %#v", created)
+	}
+	assertJSONDoesNotContain(t, created, orgKey)
+	createdID, _ := created["id"].(string)
+
+	var storedWorkspace *string
+	if err := app.pool.QueryRow(context.Background(), `
+		select workspace_uuid from llm_providers where external_id = $1
+	`, createdID).Scan(&storedWorkspace); err != nil {
+		t.Fatalf("load organization provider workspace: %v", err)
+	}
+	if storedWorkspace != nil {
+		t.Fatalf("organization provider workspace_uuid = %v, want NULL", *storedWorkspace)
+	}
+
+	workspaceList := app.platformRequest(t, http.MethodGet, workspacePath, nil, cookies)
+	defer workspaceList.Body.Close()
+	workspaceBody := readAll(t, workspaceList.Body)
+	if workspaceList.StatusCode != http.StatusOK || bytes.Contains(workspaceBody, []byte(createdID)) {
+		t.Fatalf("workspace provider list = %d %s", workspaceList.StatusCode, workspaceBody)
+	}
+
+	orgUpstream, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "org-only")
+	if err != nil || orgUpstream.BaseURL != "https://organization.example.com/anthropic" || orgUpstream.APIKey != orgKey {
+		t.Fatalf("organization resolution = %#v, %v", orgUpstream, err)
+	}
+	otherWorkspace := "00000000-0000-4000-8000-000000000077"
+	if _, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, otherWorkspace, "org-only"); err != nil {
+		t.Fatalf("other workspace organization resolution: %v", err)
+	}
+
+	workspaceProvider := createConsoleLLMProvider(t, app, workspacePath, cookies, `{
+		"name":"Workspace",
+		"base_url":"https://workspace.example.com",
+		"api_key":"workspace-provider-secret",
+		"model_ids":["shared-model","workspace-only"]
+	}`)
+	assertJSONDoesNotContain(t, workspaceProvider, "workspace-provider-secret")
+	shared, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "shared-model")
+	if err != nil || shared.BaseURL != "https://workspace.example.com" || shared.APIKey != "workspace-provider-secret" {
+		t.Fatalf("workspace override = %#v, %v", shared, err)
+	}
+	if _, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "org-only"); err != nil {
+		t.Fatalf("organization-only model after workspace override: %v", err)
+	}
+	qualified, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "organization/shared-model")
+	if err != nil || qualified.BaseURL != orgUpstream.BaseURL || qualified.QualifiedModelID != "organization/shared-model" || qualified.ModelID != "shared-model" {
+		t.Fatalf("explicit organization model resolution = %#v, %v", qualified, err)
+	}
+	modelIDs, err := llmproviders.ListModelIDs(context.Background(), app.db, orgUUID, workspaceUUID)
+	if err != nil {
+		t.Fatalf("list merged models: %v", err)
+	}
+	if !slices.Equal(modelIDs, []string{"default/shared-model", "default/workspace-only", "organization/org-only", "organization/shared-model"}) {
+		t.Fatalf("merged models = %#v", modelIDs)
+	}
+
+	externalID, err := ids.New("llmprov_test_")
+	if err != nil {
+		t.Fatalf("generate duplicate organization provider ID: %v", err)
+	}
+	now := time.Now().UTC()
+	duplicate := db.LLMProvider{
+		UUID:             uuid.NewString(),
+		ExternalID:       externalID,
+		OrganizationUUID: orgUUID,
+		Name:             "Second default",
+		Slug:             llmproviders.OrganizationSlug,
+		APIBackend:       llmproviders.Messages,
+		BaseURL:          "https://second.example.com",
+		APIKeyLast4:      "cond",
+		ModelIDs:         []string{"second-model"},
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	plaintext := []byte("second-provider-secret")
+	envelope, err := app.vaultSecrets.Seal(context.Background(), llmproviders.SecretBinding(duplicate), plaintext)
+	clear(plaintext)
+	if err != nil {
+		t.Fatalf("seal duplicate organization provider: %v", err)
+	}
+	duplicate.SecretEnvelope = &envelope
+	if _, err := app.db.CreateLLMProvider(context.Background(), duplicate); !errors.Is(err, db.ErrOrganizationLLMProviderExists) {
+		t.Fatalf("duplicate organization provider error = %v, want ErrOrganizationLLMProviderExists", err)
+	}
+
+	updated := app.platformRequest(t, http.MethodPut, path, strings.NewReader(`{
+		"name":"Organization default updated",
+		"api_backend":"chat_completions",
+		"base_url":"https://organization.example.com/anthropic",
+		"model_ids":["org-only","shared-model"]
+	}`), cookies)
+	defer updated.Body.Close()
+	if updated.StatusCode != http.StatusOK {
+		t.Fatalf("update organization provider status = %d, want 200: %s", updated.StatusCode, readAll(t, updated.Body))
+	}
+	retained, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, otherWorkspace, "org-only")
+	if err != nil || retained.APIKey != orgKey || retained.APIBackend != llmproviders.ChatCompletions {
+		t.Fatalf("updated organization key = %#v, %v", retained, err)
+	}
+
+	deleted := app.platformRequest(t, http.MethodDelete, path, nil, cookies)
+	defer deleted.Body.Close()
+	if deleted.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete organization provider status = %d, want 204: %s", deleted.StatusCode, readAll(t, deleted.Body))
+	}
+	if _, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "org-only"); !errors.Is(err, llmproviders.ErrModelNotConfigured) {
+		t.Fatalf("deleted organization model error = %v, want ErrModelNotConfigured", err)
+	}
+}
+
+func TestOrganizationLLMProviderPreviewAndSync(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("organization-provider-preview"))
+	defer app.close()
+	clearTestLLMProviders(t, app)
+	cookies := app.platformLoginCookies(t, "organization-preview@example.com")
+	orgUUID := loadDefaultOrganizationUUID(t, app)
+	path := "/api/console/organizations/" + orgUUID + "/llm_provider"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" || r.Header.Get("X-Api-Key") != "organization-preview-key" {
+			t.Errorf("unexpected upstream request: %s", r.URL.Path)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"discovered-model"}]}`))
+	}))
+	defer upstream.Close()
+	preview := app.platformRequest(t, http.MethodPost, path+"/preview_models", strings.NewReader(fmt.Sprintf(`{"base_url":%q,"api_key":"organization-preview-key","api_backend":"messages"}`, upstream.URL)), cookies)
+	if preview.StatusCode != http.StatusOK {
+		t.Fatalf("preview status = %d: %s", preview.StatusCode, readAll(t, preview.Body))
+	}
+	var previewBody map[string]any
+	decodeJSON(t, preview.Body, &previewBody)
+	preview.Body.Close()
+	assertJSONDoesNotContain(t, previewBody, "organization-preview-key")
+	if ids, ok := previewBody["model_ids"].([]any); !ok || len(ids) != 1 || ids[0] != "discovered-model" {
+		t.Fatalf("preview models = %#v", previewBody)
+	}
+	created := app.platformRequest(t, http.MethodPut, path, strings.NewReader(fmt.Sprintf(`{"name":"Organization","base_url":%q,"api_key":"organization-preview-key","model_ids":["manual-model"]}`, upstream.URL)), cookies)
+	created.Body.Close()
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d", created.StatusCode)
+	}
+	synced := app.platformRequest(t, http.MethodPost, path+"/models/sync", nil, cookies)
+	if synced.StatusCode != http.StatusOK {
+		t.Fatalf("sync status = %d: %s", synced.StatusCode, readAll(t, synced.Body))
+	}
+	var syncBody map[string]any
+	decodeJSON(t, synced.Body, &syncBody)
+	synced.Body.Close()
+	assertJSONDoesNotContain(t, syncBody, "organization-preview-key")
+	if syncBody["scope"] != "organization" {
+		t.Fatalf("sync scope = %#v", syncBody)
+	}
+	provider, err := app.db.GetOrganizationLLMProvider(t.Context(), orgUUID)
+	if err != nil || !slices.Equal(provider.ModelIDs, []string{"manual-model", "discovered-model"}) {
+		t.Fatalf("synced provider models = %v, %v", provider.ModelIDs, err)
+	}
+	if _, err := app.pool.Exec(t.Context(), `UPDATE users SET role='user' WHERE organization_uuid=$1 AND email='organization-preview@example.com'`, orgUUID); err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range []struct{ method, suffix string }{{http.MethodPost, "/preview_models"}, {http.MethodPost, "/models/sync"}, {http.MethodDelete, ""}} {
+		response := app.platformRequest(t, operation.method, path+operation.suffix, strings.NewReader(`{}`), cookies)
+		response.Body.Close()
+		if response.StatusCode != http.StatusForbidden {
+			t.Fatalf("member %s %s status = %d", operation.method, operation.suffix, response.StatusCode)
+		}
+	}
+}

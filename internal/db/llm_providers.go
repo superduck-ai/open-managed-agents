@@ -11,11 +11,16 @@ import (
 )
 
 var (
-	ErrIncompleteLLMProviderSecret = errors.New("incomplete LLM provider secret envelope")
-	ErrLLMProviderSlugConflict     = errors.New("LLM provider slug already exists")
+	ErrOrganizationLLMProviderExists = errors.New("organization LLM provider already exists")
+	ErrIncompleteLLMProviderSecret   = errors.New("incomplete LLM provider secret envelope")
+	ErrLLMProviderSlugConflict       = errors.New("LLM provider slug already exists")
 )
 
-const llmProviderSlugConstraint = "llm_providers_organization_workspace_slug_key"
+const (
+	OrganizationLLMProviderSecretWorkspace    = "organization"
+	llmProviderSlugConstraint                 = "llm_providers_organization_workspace_slug_key"
+	llmProvidersOrganizationDefaultConstraint = "llm_providers_organization_default_key"
+)
 
 type LLMProvider struct {
 	UUID             string
@@ -39,14 +44,8 @@ func (d *DB) CreateLLMProvider(ctx context.Context, provider LLMProvider) (LLMPr
 		return LLMProvider{}, err
 	}
 	row, err := NewLLMProviderMapper(d.mapperDB).Insert(ctx, params)
-	if isUniqueViolationOnConstraint(err, llmProviderSlugConstraint) {
-		return LLMProvider{}, ErrLLMProviderSlugConflict
-	}
-	if isUniqueViolation(err) {
-		return LLMProvider{}, ErrDuplicate
-	}
 	if err != nil {
-		return LLMProvider{}, err
+		return LLMProvider{}, mapLLMProviderWriteError(err)
 	}
 	return row.provider()
 }
@@ -75,15 +74,27 @@ func (d *DB) GetLLMProvider(ctx context.Context, organizationUUID, workspaceUUID
 	return row.provider()
 }
 
+func (d *DB) GetOrganizationLLMProvider(ctx context.Context, organizationUUID string) (LLMProvider, error) {
+	row, err := NewLLMProviderMapper(d.mapperDB).FindOrganizationDefault(ctx, organizationUUID)
+	if err != nil {
+		return LLMProvider{}, mapNoRows(err)
+	}
+	return row.provider()
+}
+
 func (d *DB) UpdateLLMProvider(ctx context.Context, provider LLMProvider) (LLMProvider, error) {
 	params, err := llmProviderParams(provider)
 	if err != nil {
 		return LLMProvider{}, err
 	}
-	row, err := NewLLMProviderMapper(d.mapperDB).UpdateByExternalID(ctx, params)
-	if isUniqueViolation(err) {
-		return LLMProvider{}, ErrDuplicate
+	mapper := NewLLMProviderMapper(d.mapperDB)
+	var row llmProviderRow
+	if provider.WorkspaceUUID == "" {
+		row, err = mapper.UpdateOrganizationDefault(ctx, params)
+	} else {
+		row, err = mapper.UpdateByExternalID(ctx, params)
 	}
+	err = mapLLMProviderWriteError(err)
 	if err != nil {
 		return LLMProvider{}, mapNoRows(err)
 	}
@@ -91,7 +102,14 @@ func (d *DB) UpdateLLMProvider(ctx context.Context, provider LLMProvider) (LLMPr
 }
 
 func (d *DB) DeleteLLMProvider(ctx context.Context, organizationUUID, workspaceUUID, externalID string) error {
-	rows, err := NewLLMProviderMapper(d.mapperDB).DeleteByExternalID(ctx, organizationUUID, workspaceUUID, externalID)
+	mapper := NewLLMProviderMapper(d.mapperDB)
+	var rows int64
+	var err error
+	if workspaceUUID == "" {
+		rows, err = mapper.DeleteOrganizationDefault(ctx, organizationUUID, externalID)
+	} else {
+		rows, err = mapper.DeleteByExternalID(ctx, organizationUUID, workspaceUUID, externalID)
+	}
 	if err != nil {
 		return err
 	}
@@ -121,7 +139,7 @@ func llmProviderParams(provider LLMProvider) (llmProviderWriteParams, error) {
 		UUID:             provider.UUID,
 		ExternalID:       provider.ExternalID,
 		OrganizationUUID: provider.OrganizationUUID,
-		WorkspaceUUID:    provider.WorkspaceUUID,
+		WorkspaceUUID:    nullableString(provider.WorkspaceUUID),
 		Name:             provider.Name,
 		Slug:             provider.Slug,
 		APIBackend:       provider.APIBackend,
@@ -148,7 +166,7 @@ func (r llmProviderRow) provider() (LLMProvider, error) {
 		UUID:             r.UUID,
 		ExternalID:       r.ExternalID,
 		OrganizationUUID: r.OrganizationUUID,
-		WorkspaceUUID:    r.WorkspaceUUID,
+		WorkspaceUUID:    stringFromNullable(r.WorkspaceUUID),
 		Name:             r.Name,
 		Slug:             r.Slug,
 		APIBackend:       r.APIBackend,
@@ -175,4 +193,17 @@ func requireLLMProviderEnvelope(envelope *secrets.Envelope) error {
 		return ErrIncompleteLLMProviderSecret
 	}
 	return nil
+}
+
+func mapLLMProviderWriteError(err error) error {
+	if isUniqueViolationOnConstraint(err, llmProvidersOrganizationDefaultConstraint) {
+		return ErrOrganizationLLMProviderExists
+	}
+	if isUniqueViolationOnConstraint(err, llmProviderSlugConstraint) {
+		return ErrLLMProviderSlugConflict
+	}
+	if isUniqueViolation(err) {
+		return ErrDuplicate
+	}
+	return err
 }

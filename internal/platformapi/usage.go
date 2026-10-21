@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/analytics"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 )
 
 func RegisterOrganizationUsageRoutes(r chi.Router, database *db.DB) {
@@ -112,9 +113,7 @@ func (h usageHandler) options(r *http.Request, query db.UsageQuery, workspaces [
 		if err != nil {
 			return options, err
 		}
-		for _, provider := range providers {
-			options.Models = append(options.Models, provider.ModelIDs...)
-		}
+		options.Models = append(options.Models, llmproviders.NewCatalog(providers).ModelIDs()...)
 	}
 	slices.Sort(options.Models)
 	options.Models = slices.Compact(options.Models)

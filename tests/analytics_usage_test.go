@@ -6,10 +6,12 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +35,8 @@ func TestAnalyticsMeteredRequests(t *testing.T) {
 	}
 	app := newTestAppWithStore(t, &cfg, newFakeStore("analytics-requests"))
 	defer app.close()
-	seedTestLLMProvider(t, app, "Analytics", upstream.URL, "analytics-key", model)
+	provider := seedTestLLMProvider(t, app, "Analytics", upstream.URL, "analytics-key", model)
+	qualifiedModel := llmproviders.QualifiedModelID(provider.Slug, model)
 	if err := app.db.ReplaceModelPriceCatalog(t.Context(), "openrouter", []db.CatalogPrice{{Model: model, Original: []byte(`{}`), Price: billing.ModelPrice{Source: "openrouter", SourceModel: model, Rates: &billing.Rates{Input: new("10"), Output: new("10"), CacheRead: new("10"), CacheWrite: new("10")}}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -61,6 +64,27 @@ func TestAnalyticsMeteredRequests(t *testing.T) {
 			t.Fatalf("%s: %d %s", request.path, response.StatusCode, payload)
 		}
 	}
+	legacyModel := "legacy-" + model
+	now := time.Now().UTC()
+	if err := app.db.InsertUsageRecord(t.Context(), db.UsageRecord{Finalized: true, OrganizationUUID: provider.OrganizationUUID, WorkspaceUUID: provider.WorkspaceUUID, AttemptID: uuid.NewV4().String(), Source: "api", Model: legacyModel, StartedAt: now, EndedAt: now, ModelCents: new(int64(0)), Complete: true, Version: "request_cents_v1"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, endpoint := range []string{"/usage_cost", "/usage_activities"} {
+		response := app.platformRequest(t, http.MethodGet, prefix+endpoint+"?workspace_id="+provider.WorkspaceUUID, nil, cookies)
+		var report struct {
+			Options struct {
+				Models []string `json:"models"`
+			} `json:"options"`
+		}
+		err := json.UnmarshalRead(response.Body, &report)
+		response.Body.Close()
+		if err != nil || response.StatusCode != http.StatusOK {
+			t.Fatalf("model options: %d %v", response.StatusCode, err)
+		}
+		if slices.Contains(report.Options.Models, model) || !slices.Contains(report.Options.Models, qualifiedModel) || !slices.Contains(report.Options.Models, legacyModel) {
+			t.Fatalf("model options must use qualified provider IDs and preserve ledger IDs: %v", report.Options.Models)
+		}
+	}
 	for _, tc := range []struct {
 		filter   string
 		requests int64
@@ -71,7 +95,7 @@ func TestAnalyticsMeteredRequests(t *testing.T) {
 		var report analytics.Report
 		deadline := time.Now().Add(3 * time.Second)
 		for {
-			response := app.platformRequest(t, http.MethodGet, prefix+"/usage_cost?model="+model+tc.filter, nil, cookies)
+			response := app.platformRequest(t, http.MethodGet, prefix+"/usage_cost?model="+qualifiedModel+tc.filter, nil, cookies)
 			err := json.UnmarshalRead(response.Body, &report)
 			response.Body.Close()
 			if err != nil || response.StatusCode != http.StatusOK {

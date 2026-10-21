@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { childSystemPrompt, rootSystemPrompt } from "../src/prompt/assemble.ts";
+import { childSystemPrompt, currentDatePrompt, rootSystemPrompt } from "../src/prompt/assemble.ts";
 import type { SubagentThread } from "../src/runtime/contracts.ts";
 import { assignment } from "./backend.ts";
 
@@ -124,4 +124,9 @@ test("empty configured instructions are omitted", () => {
   expect(child).not.toContain("# Specialist instructions");
   expect(root).toContain("# Skills");
   expect(root).toContain("# This session");
+});
+
+test("current date is a UTC calendar day without time of day", () => {
+  expect(currentDatePrompt(new Date("2026-10-21T23:59:59-08:00"))).toBe("Current date: 2026-10-22 (UTC)");
+  expect(currentDatePrompt(new Date("2026-10-21T00:00:00Z"))).toBe("Current date: 2026-10-21 (UTC)");
 });

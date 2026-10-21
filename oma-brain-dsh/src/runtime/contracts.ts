@@ -87,6 +87,7 @@ export interface SessionRuntimeConfig {
   model: string;
   workDir: string;
   systemPrompt: string;
+  systemContext?(): string;
   /** Mount root-session services before tool registration. Children share these services. */
   setup?(scope: Context): Promise<void>;
   subagentSystemPrompt?(thread: SubagentThread): string;

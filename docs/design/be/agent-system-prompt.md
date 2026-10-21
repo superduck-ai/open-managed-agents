@@ -12,7 +12,7 @@ flowchart TB
   L1["L1 Environment<br/>Go 按 Environment 配置渲染"] --> L2
   L2["L2 Skills<br/>按 Agent 固定版本"] --> L3
   L3["L3 Agent 指令 / 子 Agent specialist 指令"] --> L4
-  L4["L4 会话<br/>工作目录、Memory 目录"]
+  L4["L4 会话<br/>工作目录、Memory 目录、当前日期"]
 ```
 
 | 层 | 来源 | 内容 |
@@ -21,9 +21,11 @@ flowchart TB
 | L1 | `internal/environments/environment_prompt.tmpl`，经 `append_system_prompt` 下发 | uploads/outputs 路径规则、沙箱持久化语义、Environment `networking` 和 `packages` |
 | L2 | `runtime_skills` | 每个 Skill 一行：名称、描述、`SKILL.md` 路径；不包含版本号 |
 | L3 | Agent `system`，或子 Agent 的 specialist 指令 | 原样插入，不做变量插值 |
-| L4 | `cwd`、`memory_catalog_prompt` | 工作目录、Memory 目录 |
+| L4 | `cwd`、`memory_catalog_prompt`、DSH 运行时时钟 | 工作目录、Memory 目录、当前 UTC 日期 |
 
 DSH 只注册一个 `complete: true` 的 section，各层在 `oma-brain-dsh/src/prompt/assemble.ts` 中按上表顺序用空行拼接。`dsh-system-prompt` 会把所有 section 拼成单一字符串，模型请求也以单个 `system` 字符串发送，因此缓存只能依赖前缀匹配：会话级数据必须位于 L3 之后，不能插入平台规则中间。
+
+当前日期由 `SessionRuntimeConfig.systemContext` 在每次模型请求前重新计算，拼接在 L4 之后、协议下发的 `oma_system_context` 之前，子 Agent 线程继承同一函数。文本为 `Current date: YYYY-MM-DD (UTC)`，只精确到日：时刻会让每次请求的系统提示词都不同而无法命中缓存；按日变化时只有跨日后的第一次请求失去最末尾这一小段的缓存。平台不知道用户所在时区，因此固定写明 UTC；assignment 可能跨天存活，所以不在下发 assignment 时固化日期。
 
 ## 主 Agent 与子 Agent
 
@@ -100,10 +102,13 @@ DSH 设置 `OMA_DEBUG_SYSTEM_PROMPT=1` 时，在发送模型请求前以 `oma_sy
 - 区分用户拒绝、策略阻断和停止的工具错误前缀：当前拒绝统一返回 `Tool use denied by OMA`。
 - 按子 Agent 自身配置过滤 Skill 目录：DSH 线程目前没有携带子 Agent 的 Skill 列表，子 Agent 使用会话的 Skill 目录。
 - 在 transcript 中记录各层提示词的版本或哈希。
+- 沙箱操作系统发行版、CPU 架构等运行环境细节：Environment 可绑定自定义模板，服务端无法静态得知；L0 已说明是远程 Linux 沙箱，Bash 工具说明已写明使用 Bash，其余细节需要时由模型自行探测。
 
 ## 测试
 
 - `oma-brain-dsh/tests/prompt.test.ts`：层顺序、无子 Agent 时不出现委派说明、会话数据变化不影响 L3 之前的前缀、子 Agent 提示词不含委派工具。
+- `oma-brain-dsh/tests/prompt.test.ts`：当前日期按 UTC 取日、不含时刻。
+- `oma-brain-dsh/tests/ccrv2.test.ts`：`systemContext` 拼接在系统提示词之后，主 Agent 与子 Agent 的每次请求都重新读取。
 - `oma-brain-dsh/tests/worker-registration.test.ts`：`append_system_prompt` 与 `memory_catalog_prompt` 分别映射到 assignment。
 - `internal/environments/environment_prompt_test.go`：非法配置、默认 unrestricted、limited 网络与 packages 渲染、无白名单主机、长列表截断。
 - `internal/environments/subagents_test.go`：Claude Code 子 Agent 定义带有渲染后的 Environment 提示词。

@@ -42,6 +42,10 @@ function sessionPrompt(launch: Launch): string {
     .filter(Boolean).join("\n\n");
 }
 
+export function currentDatePrompt(now: Date): string {
+  return `Current date: ${now.toISOString().slice(0, 10)} (UTC)`;
+}
+
 function layers(parts: (string | undefined)[]): string {
   return parts.map((part) => part?.trim()).filter(Boolean).join("\n\n");
 }

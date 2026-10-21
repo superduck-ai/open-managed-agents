@@ -465,6 +465,32 @@ test("automatic approval stays running while the backend evaluates permission", 
   }
 });
 
+test("system context is re-read for each root and child request", async () => {
+  const ctx = new Context();
+  await mountKernel(ctx);
+  const model = new TextModel();
+  await ctx.plugin({ inject: ["llm"], apply(scope: Context) { scope.llm.registerAdapter(["memory"], model); } });
+  await ctx.plugin(CcrBridge, { backend: new MemoryBackend() });
+  let day = "2026-01-01";
+  const session = ctx.ccrv2.createSession({
+    id: "dated", provider: "memory", model: "text", workDir: "/workspace",
+    systemPrompt: "Parent instructions", systemContext: () => `Current date: ${day} (UTC)`, setup, subagents: {},
+  });
+  const system = (index: number) => JSON.stringify(model.requests[index]!.messages);
+  try {
+    await session.open();
+    await session.receive("first", { content: "first task" });
+    expect(system(0)).toContain(JSON.stringify("Parent instructions\n\nCurrent date: 2026-01-01 (UTC)").slice(1, -1));
+    day = "2026-01-02";
+    await session.subagents.send({ name: "child", system_prompt: "Child instructions", message: "child task" }, session.abort.signal);
+    expect(system(1)).toContain("Child instructions");
+    expect(system(1)).toContain("Current date: 2026-01-02 (UTC)");
+    await session.receive("second", { content: "second task" });
+    expect(system(2)).toContain("Current date: 2026-01-02 (UTC)");
+    expect(system(2)).not.toContain("2026-01-01");
+  } finally { await ctx.fiber.dispose(); }
+});
+
 test("child history resumes across scoped and legacy foreground logs", async () => {
   for (const legacy of [false, true]) {
     const backend = new MemoryBackend();

@@ -4,7 +4,7 @@ import { externalMcpFetch } from "./external-mcp/proxy.ts";
 import * as OmaSandboxProvider from "./oma-sandbox/index.ts";
 import { validateAssignment, validateToolPermissions, type Assignment } from "./assignment.ts";
 import type { CcrSession } from "./ccrv2/index.ts";
-import { childSystemPrompt, rootSystemPrompt } from "./prompt/assemble.ts";
+import { childSystemPrompt, currentDatePrompt, rootSystemPrompt } from "./prompt/assemble.ts";
 
 /** Bind OMA credentials and launch metadata before opening the protocol bridge. */
 export function createOmaSession(
@@ -40,6 +40,7 @@ export function createOmaSession(
     },
     systemPrompt: rootSystemPrompt(assignment.launch),
     subagentSystemPrompt: (thread) => childSystemPrompt(assignment.launch, thread),
+    systemContext: () => currentDatePrompt(new Date()),
     setup: async (scope) => {
       await scope.plugin(OmaSandboxProvider, { api, sessionId: assignment.session_id });
     },

@@ -61,7 +61,7 @@ export class SessionRuntime {
         order: 0,
         complete: true,
         interpolate: false,
-        text: () => [this.config.systemPrompt, this.appendedSystem].filter(Boolean).join("\n\n"),
+        text: () => [this.config.systemPrompt, this.config.systemContext?.(), this.appendedSystem].filter(Boolean).join("\n\n"),
       });
       const toolPermissions = this.config.toolPermissions ??= {};
       this.sandboxTools = await scope.plugin(SandboxTools, {

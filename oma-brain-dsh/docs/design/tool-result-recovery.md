@@ -28,6 +28,36 @@ whose content cannot be converted to text is also a failed result, not an
 unknown outcome. Only calls whose sandbox outcome is genuinely unknown block
 the session.
 
+Sandbox initialization is shared by the root and its children. Each caller can
+cancel its own wait without cancelling the handshake. The provider lifetime and
+an independent 185-second timeout govern the handshake. Failed initialization
+releases its client and transport instead of caching a rejected Promise. A later
+call creates a fresh connection. Closing the provider cancels initialization and
+prevents reconnecting. Ordinary tool HTTP failures leave sibling calls and the
+connection intact; an SDK connection-close event invalidates only that connection.
+
+An initialization failure or cancellation before dispatch settles through
+`recordNotDispatched`, which records a failed result directly from `approved`.
+It ends activity and waits for the result checkpoint without inventing a remote
+dispatch or unknown outcome. Initialization errors report that the tool was not
+executed, with the HTTP status when available. User interruption retains the
+existing interruption semantics.
+
+Unmarked tool HTTP failures carry a typed, body-free diagnostic. Read-only tools
+retain the HTTP status after their single retry. A trusted not-forwarded response
+is not retried. Its JSON message is read with a 2 KiB bound and limited to 500
+characters; control characters are removed and messages containing credential
+markers or URLs are omitted. Other response bodies are not exposed. Write tools
+with an unknown outcome remain blocked and are never automatically replayed.
+The bridge persists a safe `system.message` alongside the blocked transition and
+logs only the phase, status and correlation IDs. HTTP status alone never proves
+non-execution. Existing blocked journals are not automatically unlocked.
+
+`tests/sandbox-recovery.test.ts` exercises these paths over a local HTTP backend
+using the real MCP SDK and DSH model loop. `tests/runtime.test.ts` checks the
+pre-dispatch checkpoint and cancellation barriers. These mocks do not establish
+real Sandbox or model-provider behavior.
+
 MCP text conversion belongs to the neutral tool execution boundary. For Bash,
 a structured completed execution with zero exit code, empty stderr, false timeout,
 cancellation and truncation flags and no collection errors can expose exact

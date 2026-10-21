@@ -4,6 +4,7 @@ import { validateJsonSchemaValue, type JsonSchemaNode } from "@deepseek-ai/dsh-t
 import { object, type Payload } from "../json.ts";
 import { approveToolCall } from "./tool-approvals.ts";
 import { toolText } from "./tools.ts";
+import { SandboxRequestError } from "./sandbox-errors.ts";
 import {
   ToolNotForwardedError,
   type ApprovalDecision,
@@ -42,8 +43,15 @@ export class ToolExecution {
     const readOnly = !!tool.readOnly;
     const call = { callId: exec.callId, name: tool.name, original, effective, readOnly };
     await this.bridge.recordApproved(call);
-    if (!decision.externalResult) await this.sandbox.provision?.(exec.signal);
-    exec.signal.throwIfAborted();
+    try {
+      if (!decision.externalResult) await this.sandbox.provision?.(exec.signal);
+      exec.signal.throwIfAborted();
+    } catch (error) {
+      const failure = exec.signal.aborted ? "Tool call interrupted before dispatch."
+        : error instanceof SandboxRequestError ? error.message : "Sandbox initialization failed. The tool was not executed.";
+      await this.bridge.recordNotDispatched({ ...call, text: failure, failed: true });
+      throw new Error(failure);
+    }
     if (!readOnly) {
       await this.bridge.flushLog();
       await this.bridge.recordDispatch(exec.callId);
@@ -54,9 +62,12 @@ export class ToolExecution {
       result = decision.externalResult ?? (readOnly ? await this.callWithRetry(tool, effective, exec.signal) : await this.sandbox.call(tool, effective, exec.signal));
     } catch (error) {
       const userInterrupted = exec.signal.aborted && exec.signal.reason?.kind === "user";
-      if (readOnly && !userInterrupted || error instanceof ToolNotForwardedError) {
-        const failure = error instanceof ToolNotForwardedError ? error.message
-          : exec.signal.aborted ? "Read-only tool call was cancelled" : "Read-only tool outcome is unknown";
+      const notExecuted = error instanceof ToolNotForwardedError
+        || error instanceof SandboxRequestError && error.phase === "initialization";
+      if (readOnly && !userInterrupted || notExecuted) {
+        const failure = notExecuted ? error.message
+          : exec.signal.aborted ? "Read-only tool call was cancelled"
+          : error instanceof SandboxRequestError ? `${error.message}. Read-only tool outcome is unknown.` : "Read-only tool outcome is unknown";
         await this.bridge.recordResult({ ...call, text: failure, failed: true });
         throw new Error(failure);
       }
@@ -64,7 +75,7 @@ export class ToolExecution {
         result = { isError: true, content: [{ type: "text", text: "Tool call interrupted." }] };
         remoteOutcome = "unknown";
       } else {
-        try { await this.bridge.recordUnknown(exec.callId); }
+        try { await this.bridge.recordUnknown(exec.callId, error instanceof SandboxRequestError ? error : undefined); }
         finally { this.bridge.stop(); }
         throw new Error("Remote tool outcome is unknown; turn stopped without replay");
       }
@@ -95,7 +106,7 @@ export class ToolExecution {
     try {
       return await this.sandbox.call(tool, args, signal);
     } catch (error) {
-      if (signal.aborted) throw error;
+      if (signal.aborted || error instanceof ToolNotForwardedError) throw error;
       return await this.sandbox.call(tool, args, signal);
     }
   }

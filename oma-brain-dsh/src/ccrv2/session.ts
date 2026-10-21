@@ -6,6 +6,7 @@ import type { SessionEvent } from "@deepseek-ai/dsh-session";
 import { ACCOUNT_QUOTA_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { SessionRuntime } from "../runtime/session.ts";
 import { Subagents } from "../runtime/subagents.ts";
+import type { SandboxRequestError } from "../runtime/sandbox-errors.ts";
 import { CcrSubagentBridge } from "./subagents.ts";
 import type {
   SessionRuntimeConfig,
@@ -99,7 +100,8 @@ export class CcrSession {
       recordApproved: (call) => this.recordApproved(call),
       flushLog: () => this.runtime.flushLog(),
       recordDispatch: (callId) => this.recordDispatch(callId),
-      recordUnknown: (callId) => this.recordUnknown(callId),
+      recordUnknown: (callId, error) => this.recordUnknown(callId, this.id, error),
+      recordNotDispatched: (outcome) => this.recordNotDispatched(outcome),
       recordResult: (outcome) => this.recordResult(outcome),
       stop: () => this.stop(),
     });
@@ -444,19 +446,41 @@ export class CcrSession {
     await this.save();
   }
 
-  async recordUnknown(callId: string, threadId = this.id): Promise<void> {
+  async recordUnknown(callId: string, threadId = this.id, error?: SandboxRequestError): Promise<void> {
     const entry = this.execution(threadId);
     if (entry.callPhases?.[callId] !== "dispatch") throw new Error("Tool outcome does not match dispatch");
     this.activity.end(threadId, "tool_exec", callId);
     entry.callPhases[callId] = "blocked";
     this.syncCallPhase(entry);
+    if (error) {
+      const name = entry.approvedCalls[callId]!.name;
+      const message = `${name}: ${error.message}. Tool outcome is unknown; the session stopped to avoid replay.`;
+      this.turnErrorMessage = message;
+      const uuid = threadId === this.id ? `${this.state.inputId}_failed_message`
+        : `${entry.inputId}_${threadId}_${callId}_sandbox_unknown`;
+      this.state.outbox.push({ type: "system.message", uuid,
+        session_thread_id: threadId, content: [{ type: "text", text: message }] });
+      workerDiagnostic("error", "ccrv2_sandbox_outcome_unknown", {
+        session_id: this.id, session_thread_id: threadId, call_id: callId,
+        failure_phase: error.phase, ...(error.status !== undefined ? { http_status: error.status } : {}),
+      });
+    }
     await this.save();
   }
 
   async recordResult(outcome: ToolOutcome, threadId = this.id): Promise<void> {
+    await this.settleResult(outcome, threadId, "dispatch");
+  }
+
+  async recordNotDispatched(outcome: ToolOutcome, threadId = this.id): Promise<void> {
+    if (!outcome.failed || outcome.remoteOutcome) throw new Error("Invalid pre-dispatch failure");
+    await this.settleResult(outcome, threadId, "approved");
+  }
+
+  private async settleResult(outcome: ToolOutcome, threadId: string, phase: "approved" | "dispatch"): Promise<void> {
     const entry = this.execution(threadId);
     if (outcome.readOnly ? !entry.approvedCalls[outcome.callId] || entry.callPhases?.[outcome.callId] || entry.toolOutcomes[outcome.callId]
-      : entry.callPhases?.[outcome.callId] !== "dispatch") throw new Error("Tool result does not match dispatch");
+      : entry.callPhases?.[outcome.callId] !== phase) throw new Error("Tool result does not match dispatch");
     this.activity.end(threadId, "tool_exec", outcome.callId);
     entry.toolOutcomes[outcome.callId] = { text: outcome.text, failed: outcome.failed, ...(outcome.remoteOutcome ? { remoteOutcome: outcome.remoteOutcome } : {}) };
     if (threadId === this.id) this.state.toolOutcomes[outcome.callId] = entry.toolOutcomes[outcome.callId]!;
@@ -474,7 +498,7 @@ export class CcrSession {
       ...(threadId === this.id ? {} : { session_thread_id: threadId }),
       content: [{ type: "text", text: `Approved ${outcome.name} arguments: ${JSON.stringify(outcome.effective)}` }],
     });
-    if (!outcome.readOnly || changed || outcome.remoteOutcome) await this.save();
+    if (phase === "approved" || !outcome.readOnly || changed || outcome.remoteOutcome) await this.save();
     workerDiagnostic("info","ccrv2_tool_result_durability",{...diagnostic,phase:"confirmed"});
   }
 

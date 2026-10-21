@@ -18,6 +18,7 @@ test("sandbox tools are built in, isolated per agent and removed with their plug
     async flushLog() {},
     async recordDispatch() {},
     async recordUnknown() {},
+    async recordNotDispatched() {},
     async recordResult() {},
     stop() {},
   };

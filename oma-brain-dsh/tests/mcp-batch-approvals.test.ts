@@ -107,6 +107,7 @@ test("MCP approval prefetch stops at unregistered, builtin and malformed call ba
       approve: async request => { requests.push(request.callId); return { allowed: true }; },
       blocked: () => false, async recordApproved() {}, async flushLog() {},
       async recordDispatch() {}, async recordUnknown() {}, async recordResult() {}, stop() {},
+      async recordNotDispatched() {},
     };
     const calls = [
       { type: "tool-call" as const, id: ToolCallId("first"), name: "mcp__peer__first", arguments: "{}" },

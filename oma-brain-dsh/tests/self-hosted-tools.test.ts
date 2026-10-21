@@ -9,6 +9,7 @@ function fixture(decision: ApprovalDecision) {
  const outcomes:ToolOutcome[]=[];
  const bridge:ToolExecutionBridge={
   blocked:()=>false,approve:async()=>decision,
+  recordNotDispatched:async(outcome)=>{steps.push("not-dispatched");outcomes.push(outcome);},
   recordApproved:async()=>{steps.push("approved");},flushLog:async()=>{steps.push("flush");},recordDispatch:async()=>{steps.push("dispatch");},recordUnknown:async()=>{steps.push("unknown");},recordResult:async(outcome)=>{steps.push("result");outcomes.push(outcome);},stop:()=>{steps.push("stop");},
  };
  const sandbox={provision:async()=>{steps.push("provision");},call:async()=>{steps.push("local-call");return {content:[{type:"text",text:"cloud"}],isError:false};}};

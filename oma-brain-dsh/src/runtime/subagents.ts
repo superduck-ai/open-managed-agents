@@ -203,7 +203,8 @@ export class Subagents {
       recordApproved: (call) => execution.recordApproved(call),
       flushLog: async () => { await child.flushLog(); await execution.flushLog(); },
       recordDispatch: (callId) => execution.recordDispatch(callId),
-      recordUnknown: (callId) => execution.recordUnknown(callId),
+      recordUnknown: (callId, error) => execution.recordUnknown(callId, error),
+      recordNotDispatched: (outcome) => execution.recordNotDispatched(outcome),
       recordResult: (outcome) => execution.recordResult(outcome),
       stop: () => execution.stop(),
     };

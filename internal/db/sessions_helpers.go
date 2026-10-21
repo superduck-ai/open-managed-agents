@@ -3,6 +3,7 @@ package db
 import (
 	"bytes"
 	"context"
+	"time"
 
 	"github.com/superduck-ai/yourbatis"
 )
@@ -65,7 +66,7 @@ func insertSessionTx(
 		if createErr != nil {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, createErr
 		}
-		if _, createErr = bindSessionFileResourceWithLockedFilesystemTx(
+		if created, createErr = bindSessionFileResourceWithLockedFilesystemTx(
 			ctx,
 			executor,
 			session,
@@ -128,6 +129,7 @@ func sessionThreadWriteParameters(thread SessionThread) sessionThreadWriteParams
 		WorkspaceUUID: thread.WorkspaceUUID, SessionUUID: thread.SessionUUID,
 		SessionExternalID: thread.SessionExternalID, ParentThreadUUID: thread.ParentThreadUUID,
 		ParentThreadExternalID: thread.ParentThreadExternalID, AgentSnapshot: agentJSONArg(thread.AgentSnapshot),
+		StatsInitialized: thread.StatsInitialized, UsageInitialized: thread.UsageInitialized,
 		Status: thread.Status, Usage: agentJSONArg(thread.Usage), Stats: agentJSONArg(thread.Stats),
 		CreatedAt: thread.CreatedAt,
 	}
@@ -143,13 +145,17 @@ func sessionResourceWriteParameters(resource SessionResource) sessionResourceWri
 }
 
 func sessionEventWriteParameters(event SessionEvent) sessionEventWriteParams {
+	var processedAt *time.Time
+	if !event.ProcessedAt.IsZero() {
+		processedAt = &event.ProcessedAt
+	}
 	return sessionEventWriteParams{
 		UUID: event.UUID, ExternalID: event.ExternalID, OrganizationUUID: event.OrganizationUUID,
 		WorkspaceUUID: event.WorkspaceUUID, SessionUUID: event.SessionUUID,
 		SessionExternalID: event.SessionExternalID, ThreadUUID: event.ThreadUUID,
 		ThreadExternalID: event.ThreadExternalID, EventType: event.EventType,
 		PayloadBlobUUID: event.PayloadBlobUUID, ToolUseID: event.ToolUseID,
-		Payload: agentJSONArg(event.Payload), ProcessedAt: event.ProcessedAt, CreatedAt: event.CreatedAt,
+		Payload: agentJSONArg(event.Payload), ProcessedAt: processedAt, CreatedAt: event.CreatedAt,
 	}
 }
 
@@ -216,7 +222,7 @@ func (r sessionRow) session() Session {
 		AgentSnapshot: bytes.Clone(r.AgentSnapshot), DeploymentUUID: r.DeploymentUUID,
 		DeploymentID: r.DeploymentID, Title: r.Title, Metadata: bytes.Clone(r.Metadata),
 		VaultIDs: append([]string{}, r.VaultIDs...), Status: r.Status,
-		Usage: bytes.Clone(r.Usage), Stats: bytes.Clone(r.Stats),
+		Usage: r.Activity.usage(r.Usage), Stats: r.Activity.stats(r.Stats),
 		OutcomeEvaluations: bytes.Clone(r.OutcomeEvaluations), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
@@ -227,7 +233,8 @@ func (r sessionThreadRow) thread() SessionThread {
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ParentThreadUUID: r.ParentThreadUUID, ParentThreadExternalID: r.ParentThreadExternalID,
-		AgentSnapshot: bytes.Clone(r.AgentSnapshot), Status: r.Status, Usage: bytes.Clone(r.Usage), Stats: bytes.Clone(r.Stats),
+		StatsInitialized: r.StatsInitialized, UsageInitialized: r.UsageInitialized,
+		AgentSnapshot: bytes.Clone(r.AgentSnapshot), Status: r.Status, Usage: r.Activity.usage(r.Usage), Stats: r.Activity.stats(r.Stats),
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
 }
@@ -243,12 +250,16 @@ func (r sessionResourceRow) resource() SessionResource {
 }
 
 func (r sessionEventRow) event() SessionEvent {
+	var processedAt time.Time
+	if r.ProcessedAt != nil {
+		processedAt = *r.ProcessedAt
+	}
 	return SessionEvent{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ThreadUUID: r.ThreadUUID, ThreadExternalID: r.ThreadExternalID, EventType: r.EventType,
 		PayloadBlobUUID: r.PayloadBlobUUID, ToolUseID: r.ToolUseID,
-		Payload: bytes.Clone(r.Payload), ProcessedAt: r.ProcessedAt, CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
+		Payload: bytes.Clone(r.Payload), ProcessedAt: processedAt, CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
 	}
 }
 

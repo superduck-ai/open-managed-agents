@@ -55,6 +55,10 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
+	input.Config, err = s.managedAgentRuntimeConfig(ctx, input.Session, input.Config)
+	if err != nil {
+		return ManagedAgentCreateResult{}, err
+	}
 	now := time.Now().UTC()
 	metadata, err := managedAgentCodeSessionMetadata(input)
 	if err != nil {
@@ -181,7 +185,7 @@ func (s *Service) convertSessionEventToInbound(
 	codeSession db.CodeSession,
 	event db.SessionEvent,
 ) (preparedInboundEvent, error) {
-	payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event)
+	payload, err := s.publicWorkerPayload(ctx, codeSession, event)
 	if err != nil {
 		return preparedInboundEvent{}, err
 	}
@@ -231,4 +235,38 @@ func managedAgentCodeSessionMetadata(input ManagedAgentCreateInput) (json.RawMes
 		"dangerously_skip_permissions":   input.DangerouslySkipPermissions,
 		"managed_agent_session_work_dir": strings.TrimSpace(input.WorkDir),
 	})
+}
+
+func (s *Service) managedAgentRuntimeConfig(ctx context.Context, session db.Session, raw json.RawMessage) (json.RawMessage, error) {
+	config, err := parseManagedAgentRuntimeConfig(raw)
+	if err != nil {
+		return nil, err
+	}
+	subagents, err := resolveRuntimeSubagents(ctx, s.db, session)
+	if err != nil {
+		return nil, err
+	}
+	config.Subagents = subagents
+	tools, err := runtimeRootToolsets(session.AgentSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	config.RuntimeTools = enabledSandboxTools(tools)
+	config.RuntimeToolPolicies = runtimeToolPolicies(tools)
+	return config.encode()
+}
+
+func (s *Service) SandboxIngressToken(ctx context.Context, session db.Session, codeSessionID string) (string, error) {
+	credentials, err := s.db.GetCodeSessionCredentialContextForIssue(ctx, session.OrganizationUUID, session.WorkspaceUUID, codeSessionID)
+	if err != nil {
+		return "", err
+	}
+	code, found, err := s.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", db.ErrNotFound
+	}
+	return s.issueSessionIngressToken(credentials, code.CurrentWorkerEpoch)
 }

@@ -11,6 +11,20 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
+func (h *Handler) ProcessCodeSessionInputs(ctx context.Context, codeSession db.CodeSession, epoch int64, inputIDs []string) error {
+	events, err := h.db.ProcessSessionInputsForWorker(ctx, codeSession, epoch, inputIDs)
+	if err != nil {
+		return err
+	}
+	events, err = h.eventPayloads.RestorePublicPage(ctx, events)
+	if err != nil {
+		return err
+	}
+	h.publishSessionEvents(ctx, events)
+	h.enqueueWebhooksForSessionEvents(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, events)
+	return nil
+}
+
 func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) error {
 	if h == nil || len(payloads) == 0 {
 		return nil
@@ -31,6 +45,9 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 		isModelRequest := eventType == "span.model_request_start" || eventType == "span.model_request_end"
 		hasModelRequest = hasModelRequest || isModelRequest
 		if maevents.IsStreamDelta(eventType) {
+			if maevents.IsThinkingDelta(raw) {
+				continue
+			}
 			event, err := h.streamDeltaEventFromCodeSessionPayload(ctx, session, codeSession.ExternalID, raw, now)
 			if err != nil {
 				h.logger.WarnContext(ctx, "skip code session stream delta", "session_id", session.ExternalID, "code_session_id", codeSession.ExternalID, "error", err)

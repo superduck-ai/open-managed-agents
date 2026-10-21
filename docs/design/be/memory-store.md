@@ -8,6 +8,55 @@ CRUD、三张表、S3 正文、控制台列表/详情已落地。本文只补运
 
 **方案**：每个 attach 的 store 挂到 `/mnt/memory/{slug}`。Agent 用普通文件工具读写；Filestore 把这些操作变成 Postgres 元数据 + S3 正文 + 不可变 version。
 
+## Memory 路径字符校验
+
+创建与路径更新遵守官方 Memory SDK 的路径合同：绝对路径、NFC、UTF8 总长至多1024字节，不含空段、`.`、`..`、控制字符、格式字符，以及 Unicode 行分隔符 U+2028 和段分隔符 U+2029。后两个字符分别属于 Zl/Zp，必须单独拒绝，不能只用控制字符和格式字符分类代替。
+
+Memory HTTP 创建与更新在访问数据库前返回 `400 invalid_request_error`。共享的 Memory/Filestore 文件路径校验采用相同规则。普通空格、不换行空格和合法中文仍可作为路径字符。该修复不改列表前缀、分页、已有对象和版本策略。
+
+`internal/memorypath/path_test.go` 覆盖两个分隔符及普通路径对照；`internal/memory/path_separators_test.go` 覆盖创建与更新在数据访问前拒绝。
+
+## 每次成功更新生成版本
+
+用户指定的版本策略：每次成功的 Memory 更新都追加一个新的不可变 `modified` 版本，并推进当前 `memory_version_id`，即使提交的正文、路径与现值完全相同，或更新对象为空。省略正文时复制当前真实正文到本次新快照；显式空字符串仍保持零字节内容。共享 Memory 更新事务同样覆盖 Filestore 写入，不按路径或内容摘要相等跳过版本创建。
+
+条件和冲突检查先于版本提交。提供的 `content_sha256` 前置条件不匹配时始终返回 `409 memory_precondition_failed_error`，即使目标正文恰好等于现值，也不将失败的条件请求当成幂等成功。拒绝的请求不改变 head 或历史，预上传对象沿既有补偿路径清理。匹配的条件更新仍生成新版本。已有版本的内容、hash、路径及审计字段保持不变，当前 Memory ID 保持稳定。
+
+`tests/memory_update_versions_test.go` 覆盖错误条件且同正文的拒绝、同正文、同路径、两者同值、空更新和匹配CAS更新。每次成功更新都核对唯一新版本、版本计数、当前读取及所有旧完整快照。
+
+## Store 创建时间边界
+
+Store 的 `created_at` 响应保留数据库实际保存的小数秒精度，以 UTC RFC3339Nano 编码。创建、读取和列表使用同一个响应映射。列表的 `created_at[gte]` 和 `created_at[lte]` 均为包含式边界；客户端将返回的创建时间用作任一边界或同时用作上下界时，结果必须包含该 Store。响应不能截为整秒，否则原始创建时间可能超过客户端收到的上界。
+
+依据 [CMA List memory stores](https://platform.claude.com/docs/en/api/beta/memory_stores/list)。`tests/memory_stores_api_test.go` 使用实际创建响应的时间检查读取一致性，以及包含式下界、上界和相等双边界。其他时间字段和分页排序保持原有行为。
+
+## Memory 列表深度合同
+
+公开 Memory API 的 `depth` 只接受 `0` 或 `1`。省略或显式 `0` 表示返回 `path_prefix` 下整个子树，走相同的普通分页路径，保留实际 Memory 对象和 `view=full` 正文；不会将根目录折叠成 prefix。`1` 表示直接子项，继续使用目录聚合路径。负数、大于 `1`、非整数值返回 `400 invalid_request_error`。
+
+依据 CMA Memory 文档的 List memories 深度规则。`internal/memory/depth_test.go` 覆盖非法值、缺省、零和一；Memory API 回归以两个不同子目录中的 Memory 对照缺省和零的完整 ID、全文及 hash/size，原 `depth=1` 聚合断言保持。
+
+## Brain 的目录加载
+
+本节从废弃 Crush worktree 的 Memory 验证与目录投影迁入，适配当前 Rust Brain。
+共用 Runner 从已解析的 Session attach 快照投影名称、mount_path、access、description 和 instructions，
+保存到既有 Code Session 的 `metadata.config.sandbox_memory_stores`。投影不分 runtime 模式，
+不查询正文、不枚举文件、不访问对象存储，也不创建沙箱。
+
+Brain 将权威目录经过校验和 XML 转义后追加到 launch v2 的 `environment_prompt`，
+Agent 原始 system 保持独立。恢复优先使用持久化目录；旧 Code Session 没有该字段时，
+从已有 Session attach 快照补齐。明确的空目录仍为空，不由 Agent 自报配置或新 attach 值替换。
+非法路径、权限、重复 mount 和超长 instructions 拒绝启动。
+
+Memory Read / Glob / Grep 与 Write / Edit 继续使用沙箱 MCP。目录发现与拒绝调用不分配沙箱，
+首次获准的读取等待沙箱与 FUSE 就绪，后续调用复用沙箱。正文不会预载到提示词。
+Claude 的 `append_system_prompt` 与 `MEMORY.md` 合同保持不变，两种 runtime 使用相同挂载。
+本改动不新增数据库表、语义检索或沙箱外文件操作。
+
+`chat brain-memory` 验证首次目录、拒绝不泄露正文、无沙箱文本、实际读取与复用，以及只读挂载拒写。
+其模型是脚本模型，不代表真实模型的 Memory 选择或 TTFT。六个原有 `memory` 场景仍分别验收
+integrity、isolation、cleanup、lifecycle、filestore 和 mounts。
+
 `/mnt/memory/` 是记忆根目录。启动时在此写入 `MEMORY.md`（一行一个 store：路径、权限、description、instructions）。平台只配 store 和策略，不替 Agent 选落点，也不禁止 Agent 在 store 外写文件。
 
 跨会话能不能留下，由**写到哪里**决定，不由策略禁写：
@@ -15,7 +64,7 @@ CRUD、三张表、S3 正文、控制台列表/详情已落地。本文只补运
 - 写进已挂的 `rw` store → 进 Filestore，下一次 Session attach 同一 store 仍在。
 - 写到 `/mnt/memory/` 根上、工作区或其他未挂载路径 → 只在本沙箱有效，重启后消失。
 
-父目录保持可写，但是沙箱本地盘，不是 Filestore。`instructions` 上限 **500** 字。不把策略追加进 `appendSystemPrompt`，不把各 store 文件清单灌进模型上下文。
+父目录保持可写，但是沙箱本地盘，不是 Filestore。`instructions` 上限 **4096** 字。不把策略追加进 `appendSystemPrompt`，不把各 store 文件清单灌进模型上下文。
 
 ---
 
@@ -91,13 +140,13 @@ Claude 启动前，runner 写入 `/mnt/memory/MEMORY.md`。模型会加载该文
 | 怎么写 | runner 写本地文件，不走 Memory Store API |
 | 内容 | `<!-- oma-stores -->` + 一行一个 store；不写固定引导；每次启动整文件替换 |
 | 一行 | `[name](mount_path) access — description。instructions`；`description`/`instructions` 为空时省掉对应分隔符，不留悬空的 `— 。`；`name` 里的 `[` `]` `\` 转义，防止链接被名字截断 |
-| `instructions` | ≤ **500** 字（Unicode 码点）。超限 **400**，不截断 |
+| `instructions` | ≤ **4096** 字（Unicode 码点）。超限 **400**，不截断 |
 | `description` | store 本体仍 ≤ 1024；挂载时快照进这一行 |
 | 不写什么 | 各 store 文件清单、记忆正文。正文靠 Agent Read `/mnt/memory/{slug}/...` |
 
 无 store 时：不写 `MEMORY.md`，不设 §2.5 后两个环境变量，不创建记忆根。此时没有自动记忆目录，本 session 草稿也只能落在工作区等普通沙箱路径，同样随重启丢掉。
 
-加载该文件有 200 行 / 约 25,000 字上限。500 字 × 8 个 store 远低于此；入口拒绝超限，生成时不再截断策略。运行中 Agent 若把 `MEMORY.md` 撑过上限，超出部分本 session 后续加载可能被截断；下次启动仍按快照重写。
+加载该文件仍有 200 行 / 约 25,000 字上限。单个 store 的 instructions 接受至 4096 个 Unicode 码点且持久化、生成时不截断；多个 store 的总指导可能超过加载预算，单字段接收上限不保证整份文件始终进入模型上下文。运行中 Agent 若把 `MEMORY.md` 撑过上限，超出部分本 session 后续加载可能被截断；下次启动仍按快照重写。
 
 用户说「记住」或模型打算自动记下时：Agent 对照上表自行选择。有匹配的 `rw` store 就写入该 store；没有合适的 store 就写在根上或其他本地路径。平台不指定默认 store。选错 store（把个人口味写进项目 store）是策略写得含糊或模型判断失误，用 description / instructions 收紧，不用资源顺序兜底。
 
@@ -246,12 +295,12 @@ flowchart TB
 
 | 包 | 职责 |
 | --- | --- |
-| `internal/sessions` | 校验（≤8、不重复、access、instructions ≤500、禁止客户端 mount_path/name/description）；slug；快照。Deployment run 共用 `insertSessionTx` |
+| `internal/sessions` | 校验（≤8、不重复、access、instructions ≤4096、禁止客户端 mount_path/name/description）；slug；快照。Deployment run 共用 `insertSessionTx` |
 | `internal/environments` | 创建可写的 `/mnt/memory`；multimount 5→5+N；写 `MEMORY.md`（不锁父目录）；ready 含 store mount 与该文件；删透传；有 store 时设 §2.5 环境变量；写允许覆盖记忆根，`ro` store 除外 |
 | runner / `internal/codesessions` | `appendSystemPrompt` 仅 uploads/outputs |
 | `internal/filestore` | 可写虚拟 namespace `/memory/{slug}`；每请求回查授权。不认领父目录 |
 | `internal/db` | filesystem UUID → 本 Session 的 slug / store / access / 归档。不缓存、不进 JWT |
-| 控制台 | Create session / deployment：选 store、Access、Instructions（500 字）。列表/详情/Add memory 已有 |
+| 控制台 | Create session / deployment：选 store、Access、Instructions（4096 字）。列表/详情/Add memory 已有 |
 
 filestore 通过 `internal/db` 访问记忆数据，并复用 `internal/sessionresource` 的挂载路径解析；不依赖 `internal/memory` handler。`sessions` / `environments` 不碰 memory 三表。
 
@@ -263,7 +312,7 @@ filestore 通过 `internal/db` 访问记忆数据，并复用 `internal/sessionr
 
 - 最多 8 个 store，不得重复。Create Session 请求体与 `POST /resources` 都强制这两条；`CreateSessionResource` 在锁定 Session 行后的同一事务里再次检查，并发附加不会写出重复 `memory_store_id` 或第 9 个 store。冲突返回 `invalid_request_error`。
 - `access` 缺省 `read_write`；仅 `read_write` / `read_only`。这是本次挂载权限，不是 store 属性。
-- `instructions` ≤ 500 字，允许空。Session 与 Deployment 共用该上限。
+- `instructions` ≤ 4096 字，允许空。Session 与 Deployment 共用该上限。
 - 请求携带 `mount_path` / `name` / `description` → 400。
 - 不存在 → 404；已归档 → 400。
 - slug 使用 `gosimple/slug` 转写名称，支持中文及重音字符，保留下划线；空则回退 external id；同 Session 冲突追加 `-2`。Filestore 接受同一 slug 字符集合。
@@ -289,7 +338,7 @@ Memory REST 与 Filestore 共用 `internal/memorypath` 校验文档路径：UTF-
 | 跨 namespace copy/move | 拒绝 |
 | `ttlSeconds` | 非 0 拒绝。Memory 没有 Filestore 过期；成功写入是跨 Session 永久记忆 |
 | 非 UTF-8 正文 | 上传对象存储前拒绝。REST `content` 是 JSON string，本身已是 UTF-8；Filestore/FUSE 写回是唯一能注入非法字节的入口 |
-| 相同正文 flush | 不新建 version，丢弃刚上传、未被引用的 object |
+| 相同正文 flush | 新建不可变 version，保留本次上传对象及历史版本引用 |
 
 S3 key：
 
@@ -333,13 +382,13 @@ Agent 可以改运行中的 `MEMORY.md`。下一 Session 按快照重建，不�
 8. 无 store：不设 §2.5 后两个环境变量；不写 `MEMORY.md`；不创建记忆根。
 9. 控制台能选 store、Access、Instructions；提交体不含 mount_path / name / description。
 10. 控制台 Add memory 的文件，Session 内 Agent 能 Read 到；Agent 写入匹配的 `rw` store 后详情页能看到。父目录和各 store 详情都没有平台 `MEMORY.md`。
-11. `instructions` 501 字 → 400；500 字通过。
+11. `instructions` 4097 字 → 400；4096 字通过。
 12. 有 store 但无匹配职责时，用户要求「记住」可以在根上留下文件；该文件不出现在任何 store；下一 Session 不存在。未挂任何 store 时不产生 store 文件。
 13. Session A 写根文件并改 `MEMORY.md` 索引 → 销毁 → Session B attach 同一批 store：B 只有按快照重建的 `MEMORY.md`，没有 A 的根文件。
 
 测试先失败再成功。sessions / filestore（真 PostgreSQL）/ runner / 控制台 / E2E（A 写指定 store → B 读；A 写根 → B 看不到；`ro` store 写失败）各盖上表。
 
-合入时已同步：[e2b-sandbox-image-contract.md](./e2b-sandbox-image-contract.md)、[filestore.md](./filestore.md)、[messages-proxy.md](./messages-proxy.md)、[deployments-api-contract.md](./deployments-api-contract.md)（instructions 4096→500）。
+合入时已同步：[e2b-sandbox-image-contract.md](./e2b-sandbox-image-contract.md)、[filestore.md](./filestore.md)、[messages-proxy.md](./messages-proxy.md)、[deployments-api-contract.md](./deployments-api-contract.md)。上述 500 字历史实现已在2026-10-19按公开 Memory 文档及固定 SDK v1.76.0 校正为4096个 Unicode 码点，Session、Deployment、Runner与控制台共同遵守。
 
 文件树约束回归：`tests/memory_path_tree_test.go` 使用真实 PostgreSQL 覆盖两个入口的父子冲突、失败不改版本、目录仍可列举、路径段边界、已删除路径复用及并发创建父子路径时仅一个请求成功。
 
@@ -347,10 +396,43 @@ Agent 可以改运行中的 `MEMORY.md`。下一 Session 按快照重建，不�
 
 ### 9.1 可重复的后端验证
 
-使用 [verify-be Memory 功能地图](../../../.agents/skills/verify-be/features/memory.md)。`memory doctor` 后运行 `integrity`、`isolation`、`cleanup`、`lifecycle`、`filestore`，验证生产 HTTP handler、真实 PostgreSQL 与 MinIO；它们不启动 Worker。`memory doctor mounts` 与 `memory mounts` 使用真实 Runner、Docker provider 和 FUSE，通过公开 Session API attach store，直接在挂载目录读写，销毁沙箱后用新 Session 验证 store 保留、根文件消失及 `MEMORY.md` 重建。不使用模型生成来替代文件系统断言。
+使用 [verify-be Memory 功能地图](../../../.agents/skills/verify-be/features/memory.md)。`memory doctor` 后运行 `integrity`、`isolation`、`cleanup`、`lifecycle`、`filestore`，验证生产 HTTP handler、真实 PostgreSQL 与 MinIO；它们不启动 Worker。`memory doctor mounts` 与 `memory mounts` 使用真实 Runner、Docker provider 和 FUSE，通过公开 Session API attach store，直接在挂载目录读写，销毁沙箱后用新 Session 验证 store 保留、父目录与索引写入被拒绝、沙箱临时文件消失及 `MEMORY.md` 重建。不使用模型生成来替代文件系统断言。
 
-删除 store、redact 历史 version 和失败写入的补偿删除必须删除对象 key 的所有 S3 版本及 delete marker。Memory 的 object key 每个 version 唯一，不共享正文 key。store 删除和 version redact 在修改元数据的同一个 Yourbatis 事务中登记 `memory_version` 对象清理任务，任务持久化失败时整个变更回滚，源记录与对象仍可读。事务提交后尝试同步删除；失败由已持久化任务重试，成功后后台任务的重复删除也保持幂等。后台 Worker 按全版本删除完成该任务。Filestore 相同正文 flush 上传出的冗余对象和 metadata 写入失败对象使用同一补偿策略。若删除与任务持久化都失败，该次写入返回失败，不可报告成功。
+删除 store、redact 历史 version 和失败写入的补偿删除必须删除对象 key 的所有 S3 版本及 delete marker。Memory 的 object key 每个 version 唯一，不共享正文 key。store 删除和 version redact 在修改元数据的同一个 Yourbatis 事务中登记 `memory_version` 对象清理任务，任务持久化失败时整个变更回滚，源记录与对象仍可读。事务提交后尝试同步删除；失败由已持久化任务重试，成功后后台任务的重复删除也保持幂等。后台 Worker 按全版本删除完成该任务。Filestore metadata 写入失败后未被引用的对象使用同一补偿策略；相同正文 flush 的对象属于新的审计版本，不得作为冗余对象清理。若删除与任务持久化都失败，该次写入返回失败，不可报告成功。
 
-`memory cleanup` 在真实非版本化 MinIO 上检查同步删除、删除失败后的持久化重试、相同正文和 metadata 拒绝后的补偿，并通过实际读取确认所有待删除的 Memory 对象返回 NotFound。测试只读检查桶从未开启版本控制；Memory 业务历史版本使用独立对象 key，不依赖 MinIO 版本控制。清理由测试显式 `RunOnce` 驱动，重试等待时间也由测试推进；不宣称覆盖自动后台时序、进程崩溃恢复或云端 IAM。
+`memory cleanup` 在真实非版本化 MinIO 上检查同步删除、删除失败后的持久化重试、metadata 拒绝后的补偿，以及相同正文写入后独立审计版本的对象保留，并通过实际读取确认所有待删除的 Memory 对象返回 NotFound。测试只读检查桶从未开启版本控制；Memory 业务历史版本使用独立对象 key，不依赖 MinIO 版本控制。清理由测试显式 `RunOnce` 驱动，重试等待时间也由测试推进；不宣称覆盖自动后台时序、进程崩溃恢复或云端 IAM。
 
 `memory cleanup` 还用 schema 内的 trigger 拒绝任务写入，验证 store 删除和 version redact 返回失败、清理任务及元数据均回滚，恢复任务持久化后可以重试。此保护覆盖元数据变更提交后的进程退出；正文 upload 到 metadata 提交前的崩溃窗口仍未覆盖。
+
+## Memory 列表目录前缀边界
+
+公开 Memory List API 的非空 `path_prefix` 必须以 `/` 结尾。空值表示不筛选，`/` 表示根范围。`/notes/` 限定该目录子树，不包含 `/notes-archive/`；`/notes` 等非目录边界在查询数据前返回 `400 invalid_request_error`，不自动归一或执行原始字符串模糊匹配。分页依照 `next_page`，不承诺 Qoder 风格 `has_more`。该限制放在 Memory HTTP 资源边界，Filestore 共用路径校验保持原语义。
+
+合同来源：[CMA List memories](https://platform.claude.com/docs/en/api/beta/memory_stores/memories/list)。回归覆盖无尾斜线拒绝、结构化错误及合法空值/根/目录/Unicode路径；实际目录子树和邻近目录隔离由 Memory 列表回归验证。
+
+## 版本时间过滤精度
+
+Memory Version的created_at在Get和列表中均使用UTC RFC3339Nano，保留数据库的小数秒精度。公开响应时间可原样用于created_at[gte]/created_at[lte]包含式查询，不因输出截断而排除该版本。仅调整版本created_at序列化，不改变数据库过滤边界或其他时间字段策略。internal/memory/version_time_precision_test.go覆盖basic/full投影、带小数秒、时区偏移和整秒时间到查询边界的往返。依据官方SDK v1.76.0版本列表参数的inclusive说明。
+
+### Runtime binding immutability
+
+Memory Stores bind only during Session creation. Runtime Session resource addition and removal reject `memory_store` with HTTP400 before persistence mutation. Creation-time Memory resolution and File resource mutation retain their existing paths. Memory comparison cases MOUNT005/006 exercise these boundaries.
+
+
+### 2026-10-19 CMA parent-directory correction
+
+The external CMA memory contract, memory.md line384, supersedes the writable-parent statements above. Cloud startup prepares a nonrecursive self bind mount at `/mnt/memory` before rclone child mounts, writes the session-local index after readiness, then remounts only the parent bind read-only. Attached child mounts retain their individual RW/RO authority. Preparation or protection failure prevents runtime publication and follows existing owned Sandbox cleanup. Unattached parent paths are not scratch space. The system catalog now advertises this enforced boundary. No extra Filestore parent mount or Store is introduced.
+
+
+### 2026-10-19 live file-tool Memory mutation authority
+
+The built-in sandbox MCP proxy checks current Session Memory mount authority before dispatching Write/Edit under `/mnt/memory`. A Store archived after sandbox creation is rejected with a real MCP tool error before a buffered local write can claim success. The check uses the authenticated public Session filesystem and current mount/Store state, fails closed on lookup errors or ambiguous/missing mounts, and preserves active RW mounts. Reads, Bash and unrelated namespaces retain their existing execution paths; this boundary does not claim to remount an existing sandbox or provide new Bash isolation. Filestore upload authorization remains an independent enforcement layer.
+
+公开依据：Claude Managed Agents memory.md Attach a memory store to a session 声明 instructions4096characters；anthropic-sdk-go v1.76.0 betasession.go927与betasessionresource.go346同样声明Max4096chars。固定4095/4096/4097 ASCII及中文/emoji/组合字符回归验证不按UTF8字节或UTF16单元截断。
+
+
+## Built-in Memory mutation completion
+
+Successful sandbox MCP Write/Edit results for attached Memory paths are held until the authoritative head has a new immutable version attributed to the authenticated public Session. Write additionally requires the SHA-256 of the exact requested content. The checkpoint is scoped by the live Session mount, Workspace and Store; existing permission checks still execute before the tool. A bounded 30-second wait obeys request cancellation. Upload/storage failure or expiry produces an explicit MCP tool error describing uncertain commit, rather than a successful acknowledgment. This prevents sequential Write then Edit from coalescing into one delayed VFS upload before the first mutation has a historical snapshot.
+
+Only successful matching JSON-RPC completion results are delayed. Progress notifications, failed tool results, unrelated IDs, other tools and non-Memory paths preserve their behavior. JSON and SSE completion paths share the barrier; successful payloads and SSE event bytes are preserved. Memory uses the existing writes cache so filesystem seek/append buffering and uncached reads remain unchanged. This boundary does not serialize concurrent independent filesystem writers or promise a Bash mutation barrier.

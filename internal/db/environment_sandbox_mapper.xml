@@ -194,4 +194,10 @@
         WHERE work.uuid = target.work_uuid
         AND EXISTS (SELECT 1 FROM failed_sandbox)
     </update>
+    <select id="FindPendingForWork">
+        SELECT <include refid="columns"/> FROM environment_sandboxes
+        WHERE organization_uuid = #{organizationUUID} AND workspace_uuid = #{workspaceUUID}
+            AND work_uuid = #{workUUID} AND state IN ('creating', 'running', 'stopping')
+        ORDER BY created_at DESC, uuid DESC LIMIT 1
+    </select>
 </mapper>

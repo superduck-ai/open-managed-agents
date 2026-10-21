@@ -98,6 +98,10 @@ func (h *Handler) serveUpstreamProxyTunnel(connection *websocket.Conn, identity 
 		_ = sendUpstreamProxyHTTPStatus(connection, http.StatusBadRequest)
 		return
 	}
+	if !strings.HasPrefix(string(firstChunk), "CONNECT ") {
+		h.serveUpstreamProxyHTTP(connection, identity, sessionIngressToken, firstChunk)
+		return
+	}
 	connectRequest, err := parseUpstreamProxyConnectRequest(firstChunk)
 	if err != nil {
 		_ = sendUpstreamProxyHTTPStatus(connection, http.StatusBadRequest)

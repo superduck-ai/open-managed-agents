@@ -1,6 +1,6 @@
 # Backend verification
 
-`verify-be` replaces `verify-chat` with domain commands. It shares the existing isolated environment, image preflight, source fingerprint, Go test JSON verdict, reports and cleanup. `chat` retains its six scenarios and performance gate; `files` adds independent HTTP/object-store scenarios; `transcript` runs archive integration scenarios over real PostgreSQL/MinIO. `memory` adds production-handler integration scenarios and real Runner/FUSE mount coverage. `deployment` verifies production Run creation, asynchronous River execution/retry, occurrence deduplication and process recovery. No old CLI aliases are retained.
+`verify-be` replaces `verify-chat` with domain commands. It shares the existing isolated environment, image preflight, source fingerprint, Go test JSON verdict, reports and cleanup. `chat` verifies delivery, tools, recovery, public startup, subagent delegation and performance; `files` adds independent HTTP/object-store scenarios; `transcript` runs archive integration scenarios over real PostgreSQL/MinIO. `memory` adds production-handler integration scenarios and real Runner/FUSE mount coverage. `deployment` verifies production Run creation, asynchronous River execution/retry, occurrence deduplication and process recovery. No old CLI aliases are retained.
 
 ```sh
 just verify-be -h
@@ -41,6 +41,42 @@ flowchart LR
     Cleanup --> Verdict[Report pass only after cleanup succeeds]
 ```
 
+## Chat reliability contract
+
+`chat.reliability` accepts a second public input during a held active turn with HTTP 200,
+requires its history entry to remain unprocessed while queued, and verifies ordered,
+exactly-once execution after release. It retains lost-ACK consumer recreation, Worker
+SSE reconnect, interrupted public SSE/history reconciliation, credential rotation,
+Worker restart and archive consumer cleanup coverage. The proof stages
+`busy_input_queued` and `busy_input_drained` replace the obsolete HTTP 409 rejection
+and manual retry stages. Both final message IDs must match the reconnected SSE and
+paginated history, and the queue must drain before the test replaces the Worker.
+
+The Chat CI artifact also includes `upstream-backoff-observations.json`, containing only the last validation phase, public status/queue counters and model request/reply counts, including failed runs. Raw diagnostic logs and configuration remain private.
+
+## Model environment isolation
+
+Scenario subprocesses and the full Go suite remove inherited provider credentials, endpoints,
+profiles, custom headers and model selection variables. The imported helper filters
+`ANTHROPIC_`, `CLAUDE_`, `OPENAI_`, `AZURE_OPENAI_`, `GEMINI_`, `GOOGLE_GENAI_`, `VERTEX_`,
+`BEDROCK_`, `COHERE_`, `MISTRAL_`, `GROQ_`, `DEEPSEEK_`, `TOGETHER_`, `OPENROUTER_`,
+`OLLAMA_`, `LLM_`, plus `GOOGLE_API_KEY` and `AWS_BEARER_TOKEN_BEDROCK`.
+Infrastructure settings such as PATH, HOME, Docker connection and AWS region remain available.
+Scripted local verification needs no external model key. Explicit cloud credentials continue
+to come from the private cloud configuration.
+
+## Skill loading verification contract
+
+`chat.skills-loading` migrates the focused loading scenario from source commit
+`a54caf7e` in the abandoned Crush worktree. Its original prewarm/deferred Host paths
+depend on that worktree's runtime and are replaced by the supported Brain/Claude paths.
+The current scenario requires both `skill_loading_brain` and `skill_loading_sandbox`,
+real public uploads, binding, approval, file reads, readonly mounts, SSE/history and cleanup.
+Brain binary identity, FUSE and MCP availability are checked by doctor.
+Missing either runtime proof rejects the verdict. Existing `chat.brain-skills` coverage remains.
+See [Skill verification](skill-verification.md) and the
+[feature map](../../../.agents/skills/verify-be/features/skills-loading.md).
+
 ## Deployment / River verification contract
 
 See the [Deployment feature map](../../../.agents/skills/verify-be/features/deployment.md). `deployment.lifecycle`, `deployment.retry`, `deployment.idempotency` and `deployment.restart` reuse existing Go integration fixtures with a unique business schema and the isolated environment's real PostgreSQL/River. `VERIFY_BE_DEPLOYMENT=1` is supplied only to selected scenarios; ordinary suites skip them explicitly. They start asynchronous River consumers and compare the Job terminal state with Run error, Deployment status/schedule, public API responses and Session/Thread/Work/initial event/Filestore rows. A completed River Job may mean a permanent failure Run or an intentional stale-job no-op, so completion alone is insufficient.
@@ -52,6 +88,14 @@ Restart launches a separate process with the production scheduled Worker, Store 
 The PR workflow adds `Deployment verification` and runs all four scenarios. Branch protection must be configured separately to require this job. Reports retain explicit boundaries, skip rejection, source identity and cleanup gates.
 
 ## Memory / Filestore verification contract
+
+The existing six `memory` scenarios are identical to source commit `a54caf7e` in the abandoned
+Crush worktree. Its added Agent Memory fixture is migrated as `chat.brain-memory`, using
+current Rust Brain and real sandbox MCP. It requires `brain_memory_loaded` after catalog,
+denial, body loading, reuse and readonly assertions. The common Runner stores metadata-only
+attachment catalogs in existing Code Session config. Brain renders that catalog; no new
+tables or backend filesystem reads are introduced. See [Memory runtime](memory-store.md)
+and the [feature map](../../../.agents/skills/verify-be/features/memory.md).
 
 See the [Memory feature map](../../../.agents/skills/verify-be/features/memory.md). `memory.integrity`, `memory.isolation`, `memory.cleanup`, `memory.lifecycle` and `memory.filestore` select existing `tests` package fixtures with unique PostgreSQL schemas and real MinIO. They use production HTTP handlers in the test process with `DependenciesOnly`, no standalone backend or Worker. `VERIFY_BE_MEMORY=1` is supplied only to the selected scenario. Default Go suites explicitly list these scenarios as skipped.
 
@@ -99,7 +143,9 @@ Every run rejects skips, missing proof stages, package/test failure, source muta
 
 ## Validation
 
-`just verify-be test` runs the complete default-build Go suite against disposable dependencies, including local MinIO. It reuses the Go dependency/config/cleanup implementation, creates no standalone backend, and enables `TEST_MIGRATION_DATABASE_URL`, `TEST_EVENT_PAYLOAD_S3`, `REDIS_URL`, `TEST_TUNNEL_REDIS_ADDR` and the S3 integration environment. Inherited test targets and opt-in flags are removed. This avoids the default `just test` configuration pointing at a reused development database. It does not reset or migrate that shared database.
+`chat.subagents` uses public configuration and Session APIs with the real Runner and Claude Code 2.1.251. Its seven proof stages cover pinned child dispatch, uploaded skill preload, child SSE, child approval/rejection, child-only HTTP MCP execution, thread history and same-thread continuation through native `SendMessage`. Additional regressions cover event ordering, concurrent instances of the same child configuration, reply deduplication and both tool event IDs. See the [Subagent feature map](../../../.agents/skills/verify-be/features/subagents.md) and [runtime design](subagent-delegation.md). The model response is scripted; directed interruption and child recovery after Worker restart remain separate acceptance work.
+
+`just verify-be test` runs the complete Go suite with `-tags=integration` against disposable dependencies, including local MinIO. It reuses the Go dependency/config/cleanup implementation, creates no standalone backend, and enables `TEST_MIGRATION_DATABASE_URL`, `TEST_EVENT_PAYLOAD_S3`, `REDIS_URL`, `TEST_TUNNEL_REDIS_ADDR` and the S3 integration environment. Inherited test targets and opt-in flags are removed. Ordinary `just test` now runs unit tests only; `just test-integration` explicitly enables integration tests against the supplied isolated configuration. Direct integration commands require an isolated test configuration; verify-be does not reset or migrate the shared development database.
 
 The JSON/Markdown report retains package/test outcomes and lists every skipped test as unverified. Missing or skipped required migration/S3/Redis integration tests fail the run. A successful Go command with optional skips uses `passed_with_skips`, not a full verification pass; exit 0 permits ordinary suite automation while preserving the incomplete coverage in its report. Live scenarios, cloud suites, additional build tags and external SDK language suites remain separate. Cleanup and source-identity checks apply to the suite as well.
 
@@ -108,3 +154,17 @@ Historical migration fixtures use their own schema, including the Session resour
 The cleanup-job lifecycle fixture schedules its retry in the past before checking immediate re-leasing. The notification-driven sandbox lifecycle fixture waits for the River PostgreSQL listener before creating its due schedule; its one-hour fallback poll interval and 15-second dispatch deadline remain unchanged.
 
 Run CLI/config/report unit tests, repository Go quality gates, all nine local Files functional scenarios, a Files performance baseline/gate and chat regression scenarios after changing shared orchestration. Reports include source/binary hashes, tools/image IDs, coverage boundaries and final cleanup status. CI runs eight Files functional scenarios independently of Worker image preparation and gates Files performance against the PR base; `generated` runs in the Worker job. Cloud checks require manual workflow input and protected environment configuration. Cloud reports and recovery IDs contain no credentials; raw configuration/logs/profiles are not uploaded.
+
+Files 性能基线的对象检查只读取已有 File 行，通过带 workspace 范围的 Mapper 定位 UUID 后加载对象引用，不依赖候选分支新增的 Catalog schema，也不向基线数据库应用候选迁移。API 元数据、列表、字节完整性和最终清理断言保持不变。
+
+Chat 性能基线的测试夹具仍使用当前 workload，但通过 Go `-overlay` 将测试进程内的 Session、Session Thread、Session Resource File 和 LLM Provider 四个生成 Mapper 替换为基线构建生成的 SQL 实现。它们只用于准备、激活和清理夹具，避免候选分支的统计函数或列进入旧数据库。隔离 Worker 的 Provider 夹具显式设置 `default` slug；基线 LLM Provider Mapper 使用旧 SQL，不向旧数据库读取或写入新增 slug 列。基线后端二进制在 overlay 之前按原提交独立构建，所有计时请求仍经过真实后端 HTTP；候选运行与其他场景不使用 overlay。缺少基线 Mapper 或接口不兼容会直接失败，不能回退到候选 SQL。overlay 实现计入 Chat workload 摘要，旧摘要的 baseline 不可用于新负载。
+
+```mermaid
+flowchart LR
+    Ref[基线源码] --> Binary[基线后端二进制]
+    Ref --> SQL[基线生成 Mapper]
+    SQL --> Fixture[测试进程的夹具 SQL overlay]
+    Current[当前 workload] --> Fixture
+    Fixture --> HTTP[相同的计时 HTTP 请求]
+    HTTP --> Binary
+```

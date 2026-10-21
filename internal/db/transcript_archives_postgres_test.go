@@ -1,3 +1,5 @@
+//go:build integration
+
 package db
 
 import (
@@ -141,6 +143,25 @@ func TestTranscriptArchivePostgres(t *testing.T) {
 	jobs, err := store.LeaseObjectCleanupJobs(ctx, "archive-test", 10)
 	if err != nil || len(jobs) != 0 {
 		t.Fatalf("attached cleanup: %d %v", len(jobs), err)
+	}
+}
+
+func TestTranscriptArchiveMigrationRollbackGuardPostgres(t *testing.T) {
+	url := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+	ctx, database, provider := newIsolatedMigrationTestDatabase(t, url)
+	if _, err := provider.UpTo(ctx, 62); err != nil {
+		t.Fatal(err)
+	}
+	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
+	archive := TranscriptArchive{UUID: "52000000-0000-0000-0000-000000000090", ExternalID: "tarc_rollback", OrganizationUUID: "52000000-0000-0000-0000-000000000001", WorkspaceUUID: "52000000-0000-0000-0000-000000000002", CodeSessionUUID: "52000000-0000-0000-0000-000000000003", CodeSessionExternalID: "cs_rollback", FromSequence: 1, ToSequence: 2, EventCount: 2, Codec: "jsonl+zstd", Bucket: "history", Key: "transcript/rollback", Size: 10, RawBytes: 20, SHA256: "digest"}
+	if err := store.RegisterTranscriptArchive(ctx, archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AttachTranscriptArchive(ctx, archive.Scope(), archive.UUID); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := provider.DownTo(ctx, 61); err == nil || !strings.Contains(err.Error(), "restore archived transcript segments before rollback") {
 		t.Fatalf("attached archive rollback guard: %v", err)

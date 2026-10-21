@@ -65,7 +65,7 @@ func TestManagedAgentMCPLaunchUsesRuntimeConfigWithoutPersistingCredentials(t *t
 			var transport, remoteTransport string
 			_ = json.Unmarshal(mcpConfigField(t, launch.Manager.Payload, "startup_context", "mcp_config", "mcpServers", "local", "type"), &transport)
 			_ = json.Unmarshal(mcpConfigField(t, launch.Manager.Payload, "startup_context", "mcp_config", "mcpServers", "remote", "type"), &remoteTransport)
-			if transport != "http" || remoteTransport != "sse" {
+			if transport != "http" || remoteTransport != "http" {
 				t.Fatalf("Tunnel transport=%s, remote transport=%s", transport, remoteTransport)
 			}
 			if url != "http://gateway.test/v2/ccr-sessions/cse_test/mcp/local" || auth != "Bearer current-ingress-token" {
@@ -151,7 +151,7 @@ func TestManagedAgentMCPConfigRejectsInvalidRuntimeInput(t *testing.T) {
 }
 
 func TestManagedAgentSessionConfigReturnsEncodingFailure(t *testing.T) {
-	_, err := managedAgentSessionConfig(db.Session{}, managedAgentRuntimeResources{sources: []json.RawMessage{json.RawMessage(`{`)}})
+	_, err := managedAgentSessionConfig(db.Session{}, managedAgentRuntimeResources{sources: []json.RawMessage{json.RawMessage(`{`)}}, nil)
 	if err == nil {
 		t.Fatal("invalid runtime resource JSON was silently discarded")
 	}
@@ -381,4 +381,8 @@ func TestManagedAgentWithoutMCPDoesNotCreateConfigFile(t *testing.T) {
 	if !bytes.Equal(runtime, source) {
 		t.Fatal("empty MCP source acquired launch fields")
 	}
+}
+
+func (r *mcpConfigCodeSessionRuntime) SandboxIngressToken(context.Context, db.Session, string) (string, error) {
+	return "test-ingress", nil
 }

@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -391,6 +393,10 @@ func TestSessionTerminationBatchKeepsActiveWorkers(t *testing.T) {
 			session, found, err := f.app.db.GetSession(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)
 			if err != nil || !found || session.Status != "running" {
 				t.Fatalf("final batch status: %+v %v", session, err)
+			}
+			primary, found, err := f.app.db.GetPrimarySessionThread(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)
+			if err != nil || !found || primary.Status != "running" {
+				t.Fatalf("final primary thread status: %+v %v", primary, err)
 			}
 			oldEpoch, err := strconv.ParseInt(epoch, 10, 64)
 			if err != nil {

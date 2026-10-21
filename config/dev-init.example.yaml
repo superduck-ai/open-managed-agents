@@ -1,0 +1,32 @@
+version: 1
+
+fixed_secrets_dir: ./secrets
+
+organization:
+  name: OMA Local
+
+user:
+  email: test@oma.ai
+  name: Local Test
+  role: admin
+
+workspaces:
+  - ref: default
+    name: default
+    is_default: true
+    api_keys:
+      - ref: key-1
+        name: default-key-1
+      - ref: key-2
+        name: default-key-2
+
+  - ref: secondary
+    name: secondary
+    is_default: false
+    api_keys:
+      - ref: key-1
+        name: secondary-key-1
+      - ref: key-2
+        name: secondary-key-2
+
+model_providers_file: /absolute/path/to/.oma-dev/model-providers.yaml

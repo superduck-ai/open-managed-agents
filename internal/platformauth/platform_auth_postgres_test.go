@@ -1,3 +1,5 @@
+//go:build integration
+
 package platformauth
 
 import (
@@ -59,6 +61,12 @@ func TestVerifiedEmailWithPendingInviteCreatesHomePostgres(t *testing.T) {
 	orgs, err := store.ListBootstrapOrganizationsByEmail(ctx, invite.Email)
 	if err != nil || len(orgs) != 1 || orgs[0].UUID != home {
 		t.Fatalf("首次成员仅自建组织: %+v, %v", orgs, err)
+	}
+	if err := store.WithPlatformAuthTx(ctx, func(tx db.PlatformAuthTxStore) error {
+		_, err := tx.InsertUser(ctx, db.PlatformAuthUserInput{UUID: uuid.NewV4().String(), ExternalID: "user_home_other_admin", OrganizationUUID: home, Email: "other@example.com", Name: "Other admin", Role: "admin"})
+		return err
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := store.DeleteAdminUser(ctx, home, userID); err != nil {
 		t.Fatal(err)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/mcpnames"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
@@ -50,6 +51,7 @@ func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	identity := upstreamProxyIdentity{
 		codeSessionExternalID: claims.SessionID,
+		sessionThreadID:       strings.TrimSpace(r.Header.Get(runtimeThreadHeader)),
 		organizationUUID:      claims.OrganizationUUID,
 		workspaceUUID:         claims.WorkspaceUUID,
 	}
@@ -77,6 +79,7 @@ func (h *Handler) handleNamedMCPProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	identity := upstreamProxyIdentity{
 		codeSessionExternalID: claims.SessionID,
+		sessionThreadID:       strings.TrimSpace(r.Header.Get(runtimeThreadHeader)),
 		organizationUUID:      claims.OrganizationUUID,
 		workspaceUUID:         claims.WorkspaceUUID,
 	}
@@ -118,6 +121,7 @@ func (h *Handler) HandleMCPProtectedResource(w http.ResponseWriter, r *http.Requ
 	}
 	identity := upstreamProxyIdentity{
 		codeSessionExternalID: claims.SessionID,
+		sessionThreadID:       strings.TrimSpace(r.Header.Get(runtimeThreadHeader)),
 		organizationUUID:      claims.OrganizationUUID,
 		workspaceUUID:         claims.WorkspaceUUID,
 	}
@@ -163,12 +167,12 @@ func (h *Handler) HandleMCPProtectedResource(w http.ResponseWriter, r *http.Requ
 }
 
 func canonicalMCPServerName(name string) bool {
-	return name != "" && strings.TrimSpace(name) == name
+	return mcpnames.Valid(name)
 }
 
 func namedMCPServerName(r *http.Request) string {
 	if name := chi.URLParam(r, "*"); name != "" {
-		if decoded, err := url.PathUnescape(name); err == nil {
+		if decoded, err := url.PathUnescape(name); r.URL.RawPath != "" && err == nil {
 			return decoded
 		}
 		return name
@@ -244,7 +248,7 @@ func (h *Handler) namedTargetIsTunnel(target *url.URL) bool {
 
 func sanitizedMCPProxyHeaders(source http.Header) http.Header {
 	headers := source.Clone()
-	for _, name := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Proxy-Connection"} {
+	for _, name := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Proxy-Connection", runtimeThreadHeader} {
 		headers.Del(name)
 	}
 	return headers
@@ -429,7 +433,19 @@ func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *
 			request.Out.URL = &upstreamURL
 			request.Out.Host = target.Host
 		},
+		ModifyResponse: func(response *http.Response) error {
+			if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
+				response.Header.Set("X-Accel-Buffering", "no")
+			}
+			return nil
+		},
 		ErrorHandler: func(writer http.ResponseWriter, request *http.Request, err error) {
+			if errors.Is(err, vaults.ErrUpstreamAuthenticationRejected) || errors.Is(err, vaults.ErrMCPOAuthReauthorizationRequired) {
+				h.logger.WarnContext(request.Context(), "MCP upstream authentication rejected", "code_session_id", codeSessionID, "host", target.Hostname())
+				writer.Header().Set("WWW-Authenticate", "Bearer")
+				httpapi.WriteError(writer, request, mcpUpstreamAuthenticationRejected())
+				return
+			}
 			if errors.Is(err, vaults.ErrInjectionRejected) {
 				h.logger.ErrorContext(request.Context(), "inject MCP proxy credentials", "code_session_id", codeSessionID, "host", target.Hostname(), "error", err)
 				httpapi.WriteError(writer, request, httpapi.NewError(http.StatusBadGateway, "api_error", vaults.InjectionPublicMessage(err)))

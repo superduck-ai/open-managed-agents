@@ -59,3 +59,8 @@ Issue #386 提到的“空闲立即接纳、繁忙排队”来自 PR #379；截�
 - 全量 `just test` 未通过：现有 `config/config.example.yaml` 的工作区改动与最小配置字段断言不一致；NATS 测试报告 insufficient storage；默认 MinIO 端口 9000 不可连接。全量测试随后在 `TestTranscriptArchiveLargeBatchTransactions` 的数据库调用中长时间阻塞，该轮被停止，不能视为完成全量验收。
 - 初次验证中共享 Go 缓存出现标准库和依赖文件读取错误；使用独立 `GOCACHE` 后，相关集成测试与配置测试通过。Go SDK Files 默认测试的对象存储已移到测试侧，因此其最终验证不再依赖本地 MinIO。
 - 未运行外部 Python 服务 E2E，也未把三套官方生成 mock 测试改指向生产 Handler。#379 的接纳状态机验收仍待该变更合并后执行。
+
+
+## 登录与 Skills 分页 fixture 隔离
+
+`TestPlatformEmailLoginRoutes` 和 `newSkillsPaginationTestApp` 复用独立 PostgreSQL schema fixture。登录测试使用固定邮箱，但每次运行都在空 schema 中注册，避免历史 Default 成员记录被误认为本次注册副作用。分页测试的内置和自定义技能都在独立 schema 中创建，最后一页断言不再受其他测试留下的自定义技能影响，也不清理共享库的内置技能。产品合同保持不变：新 Default 工作区不创建显式成员，分页仅在仍有结果时提供下一页。

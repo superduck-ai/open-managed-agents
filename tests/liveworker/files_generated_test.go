@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package liveworker
 
 import (
@@ -21,7 +23,7 @@ func TestFilesGenerated(t *testing.T) {
 	var calls, queued atomic.Int32
 	resume := make(chan struct{})
 	close(resume)
-	modelURL := realWorkerModelFixture(t, &calls, &queued, false, resume, "/mnt/user-data/outputs/verified.txt")
+	modelURL := realWorkerModelFixture(t, &calls, &queued, false, resume, "/mnt/session/outputs/verified.txt")
 	configureChatModel(t, e, strings.Replace(modelURL, "host.docker.internal", "127.0.0.1", 1))
 	_, stopRunner := startPublicRunner(t, e)
 	defer stopRunner()

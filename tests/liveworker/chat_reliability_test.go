@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package liveworker
 
 import (
@@ -218,27 +220,6 @@ func TestChatReliability(t *testing.T) {
 	worker.loseProcessedACK.Store(true)
 	first := submitChat(t, f, "第一条，请回复。")
 	firstPreview := nextChatEvent(t, ctx, events, "event_delta")
-	secondText := "第二条，等待第一条完成。"
-	response := e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey,
-		map[string]any{"events": []any{map[string]any{"type": "user.message", "content": []any{map[string]string{"type": "text", "text": secondText}}}}}, http.StatusConflict)
-	var rejection struct {
-		Error struct {
-			Type string `json:"type"`
-		} `json:"error"`
-	}
-	requireOK(t, json.Unmarshal(response, &rejection))
-	inputs := 0
-	for _, event := range chatHistory(t, f) {
-		if event.Type == "user.message" {
-			inputs++
-			if event.ID != first {
-				t.Fatal("rejected busy input was persisted")
-			}
-		}
-	}
-	if rejection.Error.Type != "conflict_error" || inputs != 1 || calls.Load() != 1 {
-		t.Fatal("busy input rejection changed history or started another model request")
-	}
 	retainedInput := worker.retainedInput(t)
 	before := f.consumer(t)
 	if before.NumAckPending != 1 {
@@ -272,17 +253,31 @@ func TestChatReliability(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatal("reconnect duplicated the running model request")
 	}
-	chatProof(t, started, "busy_input_rejected")
 	chatProof(t, started, "worker_stream_reconnected")
+	second := submitChat(t, f, "第二条，等待第一条完成。")
+	inputs := 0
+	for _, event := range chatHistory(t, f) {
+		if event.Type != "user.message" {
+			continue
+		}
+		inputs++
+		if (inputs == 1 && event.ID != first) || (inputs == 2 && (event.ID != second || event.Processed != nil)) {
+			t.Fatal("active input was not queued in history order")
+		}
+	}
+	if inputs != 2 || calls.Load() != 1 {
+		t.Fatal("queued input started a concurrent model request")
+	}
+	chatProof(t, started, "busy_input_queued")
 	closeStream()
-	release()
-	waitChatIdle(t, f, 1)
-	assertChatTurns(t, f, []string{first})
-	chatProof(t, started, "midstream_history_recovered")
+
 	events, closeRecovered := connectChatStream(t, ctx, f)
 	defer closeRecovered()
 	chatProof(t, started, "public_stream_reconnected")
-	second := submitChat(t, f, secondText)
+	release()
+	waitChatIdle(t, f, 2)
+	assertChatTurns(t, f, []string{first, second})
+	chatProof(t, started, "midstream_history_recovered")
 	recoveredHistory := recoveredChatHistory(t, f)
 	var recoveredFinal chatEvent
 	for _, event := range recoveredHistory {
@@ -292,6 +287,10 @@ func TestChatReliability(t *testing.T) {
 	}
 	if recoveredFinal.ID == "" || recoveredFinal.Type != "agent.message" || len(recoveredFinal.Content) != 1 || recoveredFinal.Content[0].Text != "回复1" {
 		t.Fatal("disconnected preview was not replaced by the same-ID final from history")
+	}
+	firstFinal := nextChatEvent(t, ctx, events, "agent.message")
+	if firstFinal.ID != recoveredFinal.ID {
+		t.Fatal("reconnected stream disagrees with the interrupted turn history")
 	}
 	secondFinal := nextChatEvent(t, ctx, events, "agent.message")
 	if secondFinal.ID == recoveredFinal.ID || len(secondFinal.Content) != 1 || secondFinal.Content[0].Text != "回复2" {
@@ -310,7 +309,7 @@ func TestChatReliability(t *testing.T) {
 	}
 	chatProof(t, started, "public_history_reconciled")
 	closeRecovered()
-	chatProof(t, started, "busy_input_retried")
+	chatProof(t, started, "busy_input_drained")
 	requireOK(t, exec.CommandContext(ctx, "docker", "rm", "-f", worker.container).Run())
 	oldToken := f.token
 	recovered, err := e.service.RecoverManagedAgentCodeSession(ctx, codesessions.ManagedAgentRecoverInput{Session: f.session, CodeSessionID: f.code.ExternalID})

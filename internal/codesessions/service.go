@@ -23,6 +23,7 @@ import (
 // Service 封装会被 sessions、environment runner 与 code-session HTTP handler 共同复用的业务能力。
 // 它不持有 HTTP 鉴权、代理连接或日志状态，因而可以安全地注入非 HTTP 调用方。
 type Service struct {
+	sandboxProvisioner     SandboxProvisioner
 	eventPayloads          *eventpayload.Store
 	db                     *db.DB
 	credentials            *SessionCredentials
@@ -33,6 +34,7 @@ type Service struct {
 	workerEvents           workerevents.Broker
 	workerEventAcks        workerevents.AckStore
 	workerEventObjects     storage.ObjectStore
+	attachments            SessionAttachmentStore
 }
 
 func (s *Service) PurgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {
@@ -143,6 +145,8 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 			handled, controlErr = s.queueControlResponseForToolConfirmation(ctx, codeSession, event)
 		case "user.custom_tool_result":
 			handled, controlErr = s.queueControlResponseForCustomToolResult(ctx, codeSession, event)
+		case "user.tool_result":
+			handled, controlErr = s.queueControlResponseForSelfHostedToolResult(ctx, codeSession, event)
 		}
 		if controlErr != nil {
 			return controlErr
@@ -151,7 +155,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 			queued = true
 			continue
 		}
-		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event)
+		payload, err := s.publicWorkerPayload(ctx, codeSession, event)
 		if err != nil {
 			return fmt.Errorf("convert public session event %s: %w", event.ExternalID, err)
 		}
@@ -169,9 +173,18 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 }
 
 func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession db.CodeSession) error {
-	if s.sandboxTimeoutExtender == nil {
+	if s.sandboxTimeoutExtender == nil || usesBrainClaimTransport(codeSession) {
 		return nil
 	}
+
+	external, err := s.selfHostedCodeSession(ctx, codeSession.ExternalID)
+	if err != nil {
+		return err
+	}
+	if external {
+		return nil
+	}
+
 	sandbox, err := s.db.GetResumableEnvironmentSandboxForCodeSession(ctx, codeSession.ExternalID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -316,12 +329,6 @@ type preparedPublicAction struct {
 	payloads []json.RawMessage
 }
 
-type preparedFailedResultAction struct {
-	preparedPublicAction
-	threadID string
-	at       time.Time
-}
-
 func (preparedNoopAction) implPreparedWorkerOutputEvent()      {}
 func (preparedKeepAliveAction) implPreparedWorkerOutputEvent() {}
 func (preparedStreamAction) implPreparedWorkerOutputEvent()    {}
@@ -367,7 +374,7 @@ func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now
 		return prepared, nil
 	}
 	if input.Ephemeral {
-		if meta.EventType == "stream_event" {
+		if meta.EventType == "stream_event" || maevents.IsStreamDelta(meta.EventType) {
 			return preparedStreamAction{payload: payload}, nil
 		}
 		return preparedNoopAction{}, nil
@@ -382,17 +389,7 @@ func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now
 	if !ok {
 		return preparedNoopAction{}, nil
 	}
-	if meta.EventType == "result" && (meta.EventSubtype == "" || meta.EventSubtype == "error_during_execution") {
-		var schema workerOutputCommonPayload
-		if err := json.Unmarshal(payload, &schema); err != nil {
-			return nil, err
-		}
-		return preparedFailedResultAction{
-			preparedPublicAction: preparedPublicAction{payloads: publicPayloads},
-			threadID:             schema.SessionThreadID,
-			at:                   firstWorkerPayloadTime(schema, now),
-		}, nil
-	}
+
 	return preparedPublicAction{payloads: publicPayloads}, nil
 }
 
@@ -433,12 +430,6 @@ func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessi
 		return nil
 	case preparedControlAction:
 		return s.handleToolPermissionRequest(ctx, codeSessionID, workerEpoch, &prepared.request, prepared.metadata)
-	case preparedFailedResultAction:
-		interrupted, err := s.workerResultWasInterrupted(ctx, codeSessionID, prepared)
-		if err != nil || interrupted {
-			return err
-		}
-		return s.publishWorkerPublicPayloads(ctx, codeSessionID, prepared.payloads)
 	case preparedPublicAction:
 		return s.publishWorkerPublicPayloads(ctx, codeSessionID, prepared.payloads)
 	default:
@@ -532,6 +523,10 @@ func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID strin
 	}
 	if s.sink == nil {
 		return nil
+	}
+	payloads, err = s.enrichSubagentLifecycle(ctx, codeSession, payloads)
+	if err != nil {
+		return err
 	}
 	return s.sink.PublishCodeSessionEvents(ctx, codeSession, payloads)
 }

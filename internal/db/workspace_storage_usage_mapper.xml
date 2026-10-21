@@ -24,7 +24,7 @@
         FROM session_resources resource
         WHERE resource.workspace_uuid = #{workspaceUUID}
         AND resource.file_uuid = file.uuid
-        AND resource.payload IS NULL
+        AND (resource.payload IS NULL OR resource.source_file_uuid IS NOT NULL)
         AND resource.deleted_at IS NULL
         )
         ), 0) AS files_bytes,

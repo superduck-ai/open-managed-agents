@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package liveworker
 
 import (
@@ -19,6 +21,8 @@ import (
 const chatAnswer = "你好，聊天验证完成。"
 
 type chatEvent struct {
+	PrimaryEventID      string          `json:"primary_event_id"`
+	OriginalEventID     string          `json:"original_event_id"`
 	ID                  string          `json:"id"`
 	Type                string          `json:"type"`
 	ThreadID            string          `json:"session_thread_id"`
@@ -26,12 +30,14 @@ type chatEvent struct {
 	Name                string          `json:"name"`
 	Input               json.RawMessage `json:"input"`
 	ToolUseID           string          `json:"tool_use_id"`
+	ToolUseResult       json.RawMessage `json:"tool_use_result,omitempty"`
 	IsError             bool            `json:"is_error"`
 	EvaluatedPermission string          `json:"evaluated_permission"`
 	Evaluation          json.RawMessage `json:"evaluation"`
 	Content             []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+		Type     string `json:"type"`
+		Text     string `json:"text"`
+		Thinking string `json:"thinking"`
 	} `json:"content"`
 	Event struct {
 		ID string `json:"id"`
@@ -65,7 +71,7 @@ func TestChatRoundtrip(t *testing.T) {
 	e := newLiveEnv(t)
 	previewSeen := make(chan struct{}, 2)
 	var calls atomic.Int32
-	model := chatModelFixture(t, previewSeen, &calls)
+	model := chatModelFixture(t, previewSeen, &calls, false)
 	configureChatModel(t, e, model.URL)
 	f := e.newSessionWithSnapshot(t, json.RawMessage(`{"model":{"id":"claude-sonnet-4-6"}}`))
 	ctx, cancel := context.WithTimeout(t.Context(), chatTimeout(t, 90*time.Second))
@@ -117,9 +123,17 @@ func configureChatModel(t *testing.T, e *liveEnv, modelURL string) {
 }
 
 func connectChatStream(t *testing.T, ctx context.Context, f *liveSession) (<-chan chatEvent, func()) {
+	return connectChatThreadStream(t, ctx, f, "")
+}
+
+func connectChatThreadStream(t *testing.T, ctx context.Context, f *liveSession, threadID string) (<-chan chatEvent, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(ctx)
-	req, err := http.NewRequestWithContext(ctx, "GET", f.env.url+"/v1/sessions/"+f.session.ExternalID+"/events/stream?beta=true&event_deltas[]=agent.message", nil)
+	path := f.env.url + "/v1/sessions/" + f.session.ExternalID + "/events/stream?beta=true&event_deltas[]=agent.message"
+	if threadID != "" {
+		path = f.env.url + "/v1/sessions/" + f.session.ExternalID + "/threads/" + threadID + "/stream?beta=true&event_deltas[]=agent.message"
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", path, nil)
 	requireOK(t, err)
 	req.Header.Set("Authorization", "Bearer "+f.env.apiKey)
 	response, err := http.DefaultClient.Do(req)
@@ -159,7 +173,7 @@ func connectChatStream(t *testing.T, ctx context.Context, f *liveSession) (<-cha
 	return events, closeStream
 }
 
-func receiveChatAnswer(t *testing.T, ctx context.Context, events <-chan chatEvent, release func()) chatEvent {
+func receiveChatAnswer(t *testing.T, ctx context.Context, events <-chan chatEvent, release func(), observers ...func(chatEvent)) chatEvent {
 	t.Helper()
 	var previewID, text string
 	for {
@@ -169,6 +183,9 @@ func receiveChatAnswer(t *testing.T, ctx context.Context, events <-chan chatEven
 		case event, open := <-events:
 			if !open {
 				t.Fatal("public SSE ended before final response")
+			}
+			for _, observe := range observers {
+				observe(event)
 			}
 			switch event.Type {
 			case "event_start":
@@ -231,7 +248,7 @@ func verifyChatHistoryScope(t *testing.T, f *liveSession, scope, inputID string,
 	}
 }
 
-func chatModelFixture(t *testing.T, previewSeen <-chan struct{}, calls *atomic.Int32) *httptest.Server {
+func chatModelFixture(t *testing.T, previewSeen <-chan struct{}, calls *atomic.Int32, thinking bool) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
@@ -239,7 +256,7 @@ func chatModelFixture(t *testing.T, previewSeen <-chan struct{}, calls *atomic.I
 			return
 		}
 		_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 1<<20))
-		calls.Add(1)
+		call := calls.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		write := func(kind string, fields map[string]any) {
 			fields["type"] = kind
@@ -247,10 +264,17 @@ func chatModelFixture(t *testing.T, previewSeen <-chan struct{}, calls *atomic.I
 			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", kind, data)
 			w.(http.Flusher).Flush()
 		}
-		write("message_start", map[string]any{"message": map[string]any{"id": "msg_chat_roundtrip", "type": "message", "role": "assistant", "model": "claude-sonnet-4-6", "content": []any{}, "stop_reason": nil, "usage": map[string]int{"input_tokens": 10, "output_tokens": 0}}})
-		write("content_block_start", map[string]any{"index": 0, "content_block": map[string]string{"type": "text", "text": ""}})
+		write("message_start", map[string]any{"message": map[string]any{"id": fmt.Sprintf("msg_chat_roundtrip_%d", call), "type": "message", "role": "assistant", "model": "claude-sonnet-4-6", "content": []any{}, "stop_reason": nil, "usage": map[string]int{"input_tokens": 10, "output_tokens": 0}}})
+		index := 0
+		if thinking {
+			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]string{"type": "thinking", "thinking": ""}})
+			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]string{"type": "thinking_delta", "thinking": "检查回复"}})
+			write("content_block_stop", map[string]any{"index": 0})
+			index = 1
+		}
+		write("content_block_start", map[string]any{"index": index, "content_block": map[string]string{"type": "text", "text": ""}})
 		for _, fragment := range []string{"你好", "，聊天验证完成。"} {
-			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]string{"type": "text_delta", "text": fragment}})
+			write("content_block_delta", map[string]any{"index": index, "delta": map[string]string{"type": "text_delta", "text": fragment}})
 			select {
 			case <-previewSeen:
 			case <-r.Context().Done():
@@ -259,7 +283,7 @@ func chatModelFixture(t *testing.T, previewSeen <-chan struct{}, calls *atomic.I
 				return
 			}
 		}
-		write("content_block_stop", map[string]any{"index": 0})
+		write("content_block_stop", map[string]any{"index": index})
 		write("message_delta", map[string]any{"delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil}, "usage": map[string]int{"output_tokens": 12}})
 		write("message_stop", map[string]any{})
 	}))

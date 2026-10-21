@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 )
 
 type agentAPIResponse struct {
@@ -37,20 +40,20 @@ type agentPageResponse struct {
 	NextPage *string            `json:"next_page"`
 }
 
-func TestAgentsPersistConfiguredModelIDsUnchanged(t *testing.T) {
+func TestAgentsPersistProviderQualifiedModelIDs(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("agents-real-model-ids-bucket"))
 	defer app.close()
 
 	created := createAgent(t, app, `{"model":"kimi-k2.5","name":"real-model-agent"}`)
 	defer cleanupAgentRows(t, app.pool, created.ID)
-	assertRawContains(t, created.Model, `"id":"kimi-k2.5"`)
+	assertRawContains(t, created.Model, `"id":"default/kimi-k2.5"`)
 
-	updated := updateAgent(t, app, created.ID, `{"version":1,"model":{"id":"qwen-max","speed":"fast"}}`, http.StatusOK)
-	assertRawContains(t, updated.Model, `"id":"qwen-max"`)
+	updated := updateAgent(t, app, created.ID, `{"version":1,"model":{"id":"default/qwen-max","speed":"fast"}}`, http.StatusOK)
+	assertRawContains(t, updated.Model, `"id":"default/qwen-max"`)
 	assertRawContains(t, updated.Model, `"speed":"fast"`)
 
 	versionOne := retrieveAgent(t, app, created.ID, "version=1")
-	assertRawContains(t, versionOne.Model, `"id":"kimi-k2.5"`)
+	assertRawContains(t, versionOne.Model, `"id":"default/kimi-k2.5"`)
 }
 
 func TestAgentCanReplaceModelAfterPreviousProviderModelIsRemoved(t *testing.T) {
@@ -66,7 +69,7 @@ func TestAgentCanReplaceModelAfterPreviousProviderModelIsRemoved(t *testing.T) {
 	seedTestLLMProvider(t, app, "New provider", "https://new.example.com", "new-provider-key", "new-model")
 
 	updated := updateAgent(t, app, created.ID, `{"version":1,"model":"new-model"}`, http.StatusOK)
-	assertRawContains(t, updated.Model, `"id":"new-model"`)
+	assertRawContains(t, updated.Model, `"id":"default/new-model"`)
 }
 
 func TestAgentCanUpdateNonModelFieldsAfterPreviousProviderModelIsRemoved(t *testing.T) {
@@ -83,7 +86,7 @@ func TestAgentCanUpdateNonModelFieldsAfterPreviousProviderModelIsRemoved(t *test
 	if updated.Name != "renamed-agent" {
 		t.Fatalf("updated name = %q", updated.Name)
 	}
-	assertRawContains(t, updated.Model, `"id":"old-model"`)
+	assertRawContains(t, updated.Model, `"id":"default/old-model"`)
 }
 
 func TestAgentsAPI(t *testing.T) {
@@ -98,9 +101,14 @@ func TestAgentsAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("failure missing beta query", func(t *testing.T) {
-		resp := doAgentRequest(t, app, http.MethodGet, "/v1/agents", nil, defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	t.Run("success optional beta query", func(t *testing.T) {
+		for _, query := range []string{"", "?beta=true", "?beta=false"} {
+			resp := doAgentRequest(t, app, http.MethodGet, "/v1/agents"+query, nil, defaultTestKey, true)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("query %q status = %d: %s", query, resp.StatusCode, readAll(t, resp.Body))
+			}
+			resp.Body.Close()
+		}
 	})
 
 	t.Run("failure invalid created_at filter", func(t *testing.T) {
@@ -108,9 +116,14 @@ func TestAgentsAPI(t *testing.T) {
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 
-	t.Run("failure search missing beta query", func(t *testing.T) {
-		resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents:search", strings.NewReader(`{"name":"agent"}`), defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	t.Run("success search optional beta query", func(t *testing.T) {
+		for _, query := range []string{"", "?beta=true", "?beta=false"} {
+			resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents:search"+query, strings.NewReader(`{"name":"agent"}`), defaultTestKey, true)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("query %q status = %d: %s", query, resp.StatusCode, readAll(t, resp.Body))
+			}
+			resp.Body.Close()
+		}
 	})
 
 	t.Run("failure search malformed body", func(t *testing.T) {
@@ -126,8 +139,6 @@ func TestAgentsAPI(t *testing.T) {
 
 	t.Run("failure invalid mcp inputs", func(t *testing.T) {
 		for _, body := range []string{
-			`{"model":"claude-opus-4-6","name":"bad mcp name","mcp_servers":[{"name":"you__search","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"you__search"}]}`,
-			`{"model":"claude-opus-4-6","name":"bad mcp name","mcp_servers":[{"name":"unsafe name","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"unsafe name"}]}`,
 			`{"model":"claude-opus-4-6","name":"bad mcp url","mcp_servers":[{"name":"search","type":"url","url":"ftp://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search"}]}`,
 			`{"model":"claude-opus-4-6","name":"bad mcp credentials","mcp_servers":[{"name":"search","type":"url","url":"https://user:secret@example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search"}]}`,
 			`{"model":"claude-opus-4-6","name":"bad mcp fragment","mcp_servers":[{"name":"search","type":"url","url":"https://example.com/mcp#tools"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search"}]}`,
@@ -207,6 +218,14 @@ func TestAgentsAPI(t *testing.T) {
 		slices.Sort(actualNames)
 		if !slices.Equal(actualNames, expectedNames) {
 			t.Fatalf("full built-in tool names = %v, want %v", actualNames, expectedNames)
+		}
+	})
+
+	t.Run("failure MCP servers without any matching toolset", func(t *testing.T) {
+		for _, tools := range []string{"", `,"tools":[]`, `,"tools":null`, `,"tools":[{"type":"agent_toolset_20260401"}]`} {
+			body := `{"model":"claude-opus-4-6","name":"unreferenced server","mcp_servers":[{"name":"peer","type":"url","url":"https://example.com/mcp"}]` + tools + `}`
+			response := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(body), defaultTestKey, true)
+			assertError(t, response, http.StatusBadRequest, "invalid_request_error")
 		}
 	})
 
@@ -310,7 +329,7 @@ func TestAgentsAPI(t *testing.T) {
 		if updated.Version != 2 || updated.Name != "agents-test-parent-v2" || updated.Description != nil || updated.System != nil {
 			t.Fatalf("unexpected updated parent: %+v", updated)
 		}
-		assertRawContains(t, updated.Model, `"id":"claude-sonnet-4-6"`)
+		assertRawContains(t, updated.Model, `"id":"default/claude-sonnet-4-6"`)
 		assertRawContains(t, updated.Metadata, `"c":"d"`)
 		assertRawNotContains(t, updated.Metadata, `"a"`)
 		if string(updated.Multiagent) != "null" {
@@ -502,7 +521,7 @@ func createAgent(t *testing.T, app *testApp, body string) agentAPIResponse {
 
 func createAgentWithKey(t *testing.T, app *testApp, body string, key string) agentAPIResponse {
 	t.Helper()
-	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(body), key, true)
+	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents", strings.NewReader(body), key, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("create agent status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -522,7 +541,7 @@ func searchAgents(t *testing.T, app *testApp, body string) agentPageResponse {
 
 func searchAgentsWithKey(t *testing.T, app *testApp, body string, key string) agentPageResponse {
 	t.Helper()
-	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents:search?beta=true", strings.NewReader(body), key, true)
+	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents:search", strings.NewReader(body), key, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("search agents status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -534,7 +553,7 @@ func searchAgentsWithKey(t *testing.T, app *testApp, body string, key string) ag
 
 func updateAgent(t *testing.T, app *testApp, agentID, body string, wantStatus int) agentAPIResponse {
 	t.Helper()
-	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+agentID+"?beta=true", strings.NewReader(body), defaultTestKey, true)
+	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+agentID, strings.NewReader(body), defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != wantStatus {
 		t.Fatalf("update agent status = %d, want %d: %s", resp.StatusCode, wantStatus, readAll(t, resp.Body))
@@ -548,9 +567,9 @@ func updateAgent(t *testing.T, app *testApp, agentID, body string, wantStatus in
 
 func retrieveAgent(t *testing.T, app *testApp, agentID, query string) agentAPIResponse {
 	t.Helper()
-	path := "/v1/agents/" + agentID + "?beta=true"
+	path := "/v1/agents/" + agentID
 	if query != "" {
-		path += "&" + query
+		path += "?" + query
 	}
 	resp := doAgentRequest(t, app, http.MethodGet, path, nil, defaultTestKey, true)
 	defer resp.Body.Close()
@@ -564,7 +583,7 @@ func retrieveAgent(t *testing.T, app *testApp, agentID, query string) agentAPIRe
 
 func archiveAgent(t *testing.T, app *testApp, agentID string) agentAPIResponse {
 	t.Helper()
-	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+agentID+"/archive?beta=true", nil, defaultTestKey, true)
+	resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+agentID+"/archive", nil, defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("archive agent status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -576,7 +595,7 @@ func archiveAgent(t *testing.T, app *testApp, agentID string) agentAPIResponse {
 
 func listAgents(t *testing.T, app *testApp, query string) agentPageResponse {
 	t.Helper()
-	resp := doAgentRequest(t, app, http.MethodGet, "/v1/agents?beta=true&"+query, nil, defaultTestKey, true)
+	resp := doAgentRequest(t, app, http.MethodGet, "/v1/agents?"+query, nil, defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list agents status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -588,7 +607,7 @@ func listAgents(t *testing.T, app *testApp, query string) agentPageResponse {
 
 func listAgentVersions(t *testing.T, app *testApp, agentID, query string) agentPageResponse {
 	t.Helper()
-	resp := doAgentRequest(t, app, http.MethodGet, "/v1/agents/"+agentID+"/versions?beta=true&"+query, nil, defaultTestKey, true)
+	resp := doAgentRequest(t, app, http.MethodGet, "/v1/agents/"+agentID+"/versions?"+query, nil, defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list agent versions status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -640,5 +659,161 @@ func decodeRawJSON(t *testing.T, raw json.RawMessage, target any) {
 	t.Helper()
 	if err := json.Unmarshal(raw, target); err != nil {
 		t.Fatalf("decode raw JSON %s: %v", raw, err)
+	}
+}
+
+func TestSubagentReferenceVersions(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("subagent-reference-versions"))
+	child := createAgent(t, app, `{"name":"child","model":"claude-opus-4-6"}`)
+	for _, reference := range []string{
+		`{"type":"agent","id":"agent_missing"}`,
+		`{"type":"agent","id":` + quoteJSON(child.ID) + `,"version":0}`,
+		`{"type":"agent","id":` + quoteJSON(child.ID) + `,"version":9999}`,
+	} {
+		response := doAgentRequest(t, app, http.MethodPost, "/v1/agents", strings.NewReader(`{"name":"invalid","model":"claude-opus-4-6","multiagent":{"type":"coordinator","agents":[`+reference+`]}}`), defaultTestKey, true)
+		assertError(t, response, http.StatusBadRequest, "invalid_request_error")
+	}
+	assertVersion := func(parent agentAPIResponse, version int) {
+		t.Helper()
+		var roster struct {
+			Agents []struct {
+				ID      string `json:"id"`
+				Version int    `json:"version"`
+			} `json:"agents"`
+		}
+		decodeRawJSON(t, parent.Multiagent, &roster)
+		if len(roster.Agents) != 1 || roster.Agents[0].ID != child.ID || roster.Agents[0].Version != version {
+			t.Fatalf("roster=%s, want child@%d", parent.Multiagent, version)
+		}
+	}
+	latest := `{"type":"coordinator","agents":[{"type":"agent","id":` + quoteJSON(child.ID) + `}]}`
+	pinned := `{"type":"coordinator","agents":[{"type":"agent","id":` + quoteJSON(child.ID) + `,"version":1}]}`
+	parent := createAgent(t, app, `{"name":"parent","model":"claude-opus-4-6","multiagent":`+latest+`}`)
+	assertVersion(parent, 1)
+	updateAgent(t, app, child.ID, `{"version":1,"name":"child-v2"}`, http.StatusOK)
+	assertVersion(retrieveAgent(t, app, parent.ID, ""), 1)
+	assertVersion(updateAgent(t, app, parent.ID, `{"version":1,"name":"renamed"}`, http.StatusOK), 1)
+	assertVersion(updateAgent(t, app, parent.ID, `{"version":2,"multiagent":`+latest+`}`, http.StatusOK), 2)
+	assertVersion(updateAgent(t, app, parent.ID, `{"version":3,"multiagent":`+pinned+`}`, http.StatusOK), 1)
+	assertVersion(createAgent(t, app, `{"name":"explicit","model":"claude-opus-4-6","multiagent":`+pinned+`}`), 1)
+}
+
+func TestSessionAndDeploymentRejectInvalidSubagentNames(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("subagent-name-validation"))
+	env := createEnvironment(t, app, `{"name":"subagent-name-validation"}`)
+	for _, test := range []struct {
+		name       string
+		childNames []string
+	}{
+		{name: "leading hyphen", childNames: []string{"-reviewer"}},
+		{name: "duplicate names with distinct IDs", childNames: []string{"reviewer", "reviewer"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			references := make([]string, 0, len(test.childNames))
+			var child agentAPIResponse
+			for _, name := range test.childNames {
+				child = createAgent(t, app, `{"name":`+quoteJSON(name)+`,"model":"claude-opus-4-6"}`)
+				references = append(references, `{"type":"agent","id":`+quoteJSON(child.ID)+`,"version":1}`)
+			}
+			parent := createAgent(t, app, `{"name":"parent","model":"claude-opus-4-6","multiagent":{"type":"coordinator","agents":[`+strings.Join(references, ",")+`]}}`)
+			updateAgent(t, app, child.ID, `{"version":1,"name":"valid-latest"}`, http.StatusOK)
+			response := doSessionRequest(t, app, http.MethodPost, "/v1/sessions", strings.NewReader(`{"agent":`+quoteJSON(parent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`), defaultTestKey, true)
+			assertError(t, response, http.StatusBadRequest, "invalid_request_error")
+			response = doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments", strings.NewReader(deploymentBodyWithExtra(parent.ID, env.ID, "")), defaultTestKey, true)
+			assertError(t, response, http.StatusBadRequest, "invalid_request_error")
+		})
+	}
+}
+
+func TestSessionSubagentSnapshotsAreExpandedOnCreation(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("subagent-snapshot-creation"))
+	child := createAgent(t, app, `{"name":"child","model":"claude-opus-4-6","system":"child-v1"}`)
+	parent := createAgent(t, app, `{"name":"parent","model":"claude-opus-4-6","system":"parent-v1","multiagent":{"type":"coordinator","agents":[{"type":"agent","id":`+quoteJSON(child.ID)+`,"version":1},{"type":"self"}]}}`)
+	updateAgent(t, app, child.ID, `{"version":1,"name":"-child-v2","model":"claude-sonnet-4-6","system":"child-v2"}`, http.StatusOK)
+	updateAgent(t, app, parent.ID, `{"version":1,"name":"parent-v2","system":"parent-v2"}`, http.StatusOK)
+	env := createEnvironment(t, app, `{"name":"subagent-snapshot-creation"}`)
+	created := createSession(t, app, `{"agent":`+quoteJSON(parent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	scope := getDefaultDBIDs(t, app.pool)
+	session, found, err := app.db.GetSession(t.Context(), scope.WorkspaceUUID, created.ID)
+	if err != nil || !found {
+		t.Fatalf("load session: %v %t", err, found)
+	}
+	var snapshot agentAPIResponse
+	decodeRawJSON(t, session.AgentSnapshot, &snapshot)
+	var roster struct {
+		Agents []agentAPIResponse `json:"agents"`
+	}
+	decodeRawJSON(t, snapshot.Multiagent, &roster)
+	if len(roster.Agents) != 2 {
+		t.Fatalf("child count=%d", len(roster.Agents))
+	}
+	for i, want := range []struct{ id, system string }{{child.ID, "child-v1"}, {parent.ID, "parent-v1"}} {
+		got := roster.Agents[i]
+		var model struct {
+			ID string `json:"id"`
+		}
+		decodeRawJSON(t, got.Model, &model)
+		if got.ID != want.id || got.Version != 1 || got.System == nil || *got.System != want.system || model.ID != "default/claude-opus-4-6" || string(got.Multiagent) != "null" {
+			t.Fatalf("creation lost pinned child or self configuration: %+v", got)
+		}
+	}
+	primary, found, err := app.db.GetPrimarySessionThread(t.Context(), scope.WorkspaceUUID, created.ID)
+	if err != nil || !found || !agentsnapshot.SameRawJSON(primary.AgentSnapshot, session.AgentSnapshot) {
+		t.Fatalf("creation did not persist the expanded primary snapshot: %v", err)
+	}
+	deployment := createDeployment(t, app, deploymentBodyWithExtra(parent.ID, env.ID, ""))
+	storedDeployment, err := app.db.GetDeployment(t.Context(), scope.WorkspaceUUID, deployment.ID)
+	if err != nil || !agentsnapshot.SameRawJSON(storedDeployment.AgentSnapshot, session.AgentSnapshot) {
+		t.Fatalf("deployment and session creation expanded different configurations: %s %v", storedDeployment.AgentSnapshot, err)
+	}
+}
+
+func TestAgentsMCPReferenceUpdatesAreAtomic(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("agents-mcp-references"))
+	defer app.close()
+	created := createAgent(t, app, `{"model":"claude-opus-4-6","name":"mcp updates","mcp_servers":[{"name":"peer","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"peer"}]}`)
+	defer cleanupAgentRows(t, app.pool, created.ID)
+	for _, body := range []string{
+		`{"version":1,"tools":[]}`,
+		`{"version":1,"tools":null}`,
+		`{"version":1,"mcp_servers":[]}`,
+		`{"version":1,"mcp_servers":null}`,
+	} {
+		updateAgent(t, app, created.ID, body, http.StatusBadRequest)
+		unchanged := retrieveAgent(t, app, created.ID, "")
+		if unchanged.Version != created.Version || string(unchanged.MCPServers) != string(created.MCPServers) || string(unchanged.Tools) != string(created.Tools) {
+			t.Fatalf("rejected update changed Agent: %+v", unchanged)
+		}
+	}
+	cleared := updateAgent(t, app, created.ID, `{"version":1,"mcp_servers":null,"tools":null}`, http.StatusOK)
+	if cleared.Version != created.Version+1 || string(cleared.MCPServers) != `[]` || string(cleared.Tools) != `[]` {
+		t.Fatalf("joint clear failed: %+v", cleared)
+	}
+}
+
+func TestAgentsMCPUnicodeNamesRoundTrip(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("agents-mcp-unicode"))
+	defer app.close()
+	body := `{"model":"claude-opus-4-6","name":"Unicode MCP","mcp_servers":[{"name":"Peer-测试","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"Peer-测试"}]}`
+	created := createAgent(t, app, body)
+	defer cleanupAgentRows(t, app.pool, created.ID)
+	for _, result := range []agentAPIResponse{created, retrieveAgent(t, app, created.ID, "")} {
+		if !strings.Contains(string(result.MCPServers), "Peer-测试") || !strings.Contains(string(result.Tools), "Peer-测试") {
+			t.Fatalf("Unicode name not preserved: %+v", result)
+		}
+	}
+	updateAgent(t, app, created.ID, `{"version":1,"tools":[{"type":"mcp_toolset","mcp_server_name":"peer-测试"}]}`, http.StatusBadRequest)
+	name := strings.Repeat("😀", 255)
+	raw, err := json.Marshal(map[string]any{
+		"version":     1,
+		"mcp_servers": []map[string]string{{"name": name, "type": "url", "url": "https://example.com/mcp"}},
+		"tools":       []map[string]string{{"type": "mcp_toolset", "mcp_server_name": name}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := updateAgent(t, app, created.ID, string(raw), http.StatusOK)
+	if updated.Version != 2 || !strings.Contains(string(updated.MCPServers), name) || !strings.Contains(string(updated.Tools), name) {
+		t.Fatalf("Unicode update not preserved: %+v", updated)
 	}
 }

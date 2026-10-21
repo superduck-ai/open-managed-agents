@@ -60,8 +60,8 @@ func TestMCPAllowedHostsRejectsMalformedRemoteServerContracts(t *testing.T) {
 	}
 }
 
-func TestParseMCPServerTargetsRejectsNonCanonicalServerNames(t *testing.T) {
-	for _, name := range []string{" local_tunnel", "local_tunnel ", "   "} {
+func TestParseMCPServerTargetsRejectsOverlongServerNames(t *testing.T) {
+	for _, name := range []string{strings.Repeat("测", 256), strings.Repeat("😀", 256)} {
 		snapshot := json.RawMessage(`{"mcp_servers":[{"name":` + strconv.Quote(name) + `,"type":"url","url":"https://mcp.example.test/mcp"}]}`)
 		if _, err := parseMCPServerTargets(snapshot); !errors.Is(err, ErrMalformedAgentSnapshot) {
 			t.Fatalf("name %q: expected ErrMalformedAgentSnapshot, got %v", name, err)
@@ -118,5 +118,23 @@ func TestParseMCPServerTargetsPreservesConfiguredURLs(t *testing.T) {
 	want := []string{"https://example.test/mcp?tenant=one", "http://streamable.example/mcp"}
 	if !slices.Equal(targets.urls, want) {
 		t.Fatalf("urls = %v, want %v", targets.urls, want)
+	}
+}
+
+func TestMCPAllowedHostsUsesSessionScope(t *testing.T) {
+	snapshot := json.RawMessage(`{"mcp_servers":[{"name":"shared","type":"http","url":"https://parent.example/mcp"}],"multiagent":{"agents":[{"mcp_servers":[{"name":"shared","type":"http","url":"https://child.example/mcp"}]}]}}`)
+	hosts, err := MCPAllowedHosts(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(hosts, []string{"parent.example"}) {
+		t.Fatalf("MCP hosts=%v", hosts)
+	}
+	policy, err := ParsePolicy([]byte(`{"type":"cloud","networking":{"type":"limited","allow_mcp_servers":true}}`), snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policy.AuthorizeHTTPS("parent.example:443").Allow || policy.AuthorizeHTTPS("child.example:443").Allow {
+		t.Fatal("MCP hosts must use only Session configuration")
 	}
 }

@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -82,7 +84,7 @@ func TestSessionContractUsageIsAtomicAndIdempotent(t *testing.T) {
 	// Waiting child cannot idle a still-running primary thread.
 	publish(`{"type":"session.status_running","id":"sevt_primary_again"}`)
 	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch,
-		`{"type":"system","uuid":"contract-child","subtype":"task_started","task_id":"task-contract","tool_use_id":"tool-contract","description":"Child"}`))
+		`{"type":"system","uuid":"contract-child","subtype":"task_started","task_type":"local_agent","task_id":"task-contract","tool_use_id":"tool-contract","description":"Child"}`))
 	threads, err := app.db.ListSessionThreads(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)
 	if err != nil {
 		t.Fatal(err)

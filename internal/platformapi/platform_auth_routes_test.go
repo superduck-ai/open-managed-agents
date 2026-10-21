@@ -2,13 +2,17 @@ package platformapi
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 )
 
@@ -147,4 +151,31 @@ func serveEmailLoginRequest(handler http.Handler, body string) *httptest.Respons
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+func TestEmailLoginRoutesRejectOtherDomains(t *testing.T) {
+	for _, path := range []string{"/api/auth/send_magic_link", "/auth/send_magic_link", "/api/auth/verify_magic_link", "/auth/verify_magic_link"} {
+		t.Run(path, func(t *testing.T) {
+			router := chi.NewRouter()
+			provider := platformauth.New(config.AuthConfig{AllowedEmailDomains: []string{"example.org"}}, nil, nil, nil)
+			RegisterPlatformEmailLoginRoutes(router, emailLoginStoreStub{}, provider, platformsession.NewMemoryStore())
+			body := `{"email_address":"external@example.com"}`
+			if strings.Contains(path, "verify") {
+				body = `{"credentials":{"email_address":"external@example.com","code":"123456"}}`
+			}
+			if path == "/auth/verify_magic_link" {
+				body = `{"credentials":{"encoded_email_address":"` + base64.StdEncoding.EncodeToString([]byte("external@example.com")) + `","code":"123456"}}`
+			}
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"email_domain_not_allowed"`) {
+				t.Fatalf("response = %d %s, want forbidden email domain", response.Code, response.Body.String())
+			}
+			if len(response.Result().Cookies()) != 0 {
+				t.Fatal("rejected login set session cookies")
+			}
+		})
+	}
 }

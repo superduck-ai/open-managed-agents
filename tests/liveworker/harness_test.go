@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package liveworker
 
 import (
@@ -149,6 +151,8 @@ func (e *liveEnv) requestContext(ctx context.Context, t *testing.T, method, path
 	req, err := http.NewRequestWithContext(ctx, method, e.url+path+separator+"beta=true", bytes.NewReader(encoded))
 	requireOK(t, err)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -199,10 +203,7 @@ func (e *liveEnv) newSessionWithSnapshot(t *testing.T, snapshot json.RawMessage)
 	})
 	requireOK(t, err)
 	t.Cleanup(func() {
-		_, err := e.database.DeleteSession(context.Background(), workspace, sessionID)
-		if err != nil {
-			t.Errorf("delete test session: %v", err)
-		}
+		e.requestContext(context.Background(), t, "DELETE", "/v1/sessions/"+sessionID, e.apiKey, nil, 200)
 	})
 	modelToken := uuid.NewString()
 	code, err := e.database.CreateCodeSession(ctx, db.CreateCodeSessionInput{ExternalID: "cse_" + strings.ReplaceAll(uuid.NewString(), "-", ""), OrganizationUUID: org, WorkspaceUUID: workspace, SessionUUID: session.UUID, SessionExternalID: sessionID, EnvironmentUUID: e.environment.UUID, EnvironmentExternalID: e.environment.ExternalID, Status: "initializing", Model: agentConfig.Model.ID, PermissionMode: "default", Metadata: json.RawMessage(`{"config":{}}`), OAuthAccessTokenHash: auth.HashAPIKey(modelToken), InitialWorkerEpoch: 1, CreatedAt: now})

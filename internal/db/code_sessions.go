@@ -174,6 +174,7 @@ type UpdateCodeSessionWorkerStateInput struct {
 	RequiresActionDetails    json.RawMessage
 	ExternalMetadataSet      bool
 	ExternalMetadata         json.RawMessage
+	RequiredThreadID         string
 }
 
 type CodeSessionWorkerHeartbeatError struct {
@@ -482,6 +483,9 @@ func (d *DB) registerCodeSessionWorker(
 		if expectedEpoch == nil && row.CurrentWorkerEpoch > 0 && row.WorkerLeaseExpiresAt == nil {
 			return ErrWorkerEpochMismatch
 		}
+		if row.Status != "active" || row.DeletedAt != nil {
+			return ErrInvalidState
+		}
 		nextEpoch := row.CurrentWorkerEpoch + 1
 		if expectedEpoch != nil {
 			if row.CurrentWorkerEpoch != *expectedEpoch {
@@ -583,15 +587,16 @@ func (d *DB) HeartbeatCodeSessionWorker(ctx context.Context, codeSessionExternal
 	return time.Time{}, ErrWorkerEpochMismatch
 }
 
-func (d *DB) RecordCodeSessionWorkerHeartbeat(ctx context.Context, codeSessionExternalID string, epoch int64, leaseTTL time.Duration, grace time.Duration) (time.Time, error) {
+type WorkerLeaseTimings struct {
+	TTL   time.Duration
+	Grace time.Duration
+}
+
+type WorkerLeasePolicy func(workerTransport string) WorkerLeaseTimings
+
+func (d *DB) RecordCodeSessionWorkerHeartbeat(ctx context.Context, codeSessionExternalID string, epoch int64, leasePolicy WorkerLeasePolicy) (time.Time, error) {
 	if epoch <= 0 {
 		return time.Time{}, ErrWorkerEpochMismatch
-	}
-	if leaseTTL <= 0 {
-		leaseTTL = time.Minute
-	}
-	if grace < 0 {
-		grace = 0
 	}
 	var expiresAt time.Time
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
@@ -604,6 +609,11 @@ func (d *DB) RecordCodeSessionWorkerHeartbeat(ctx context.Context, codeSessionEx
 			return err
 		}
 
+		timings := leasePolicy(leaseRow.WorkerTransport)
+		leaseTTL, grace := timings.TTL, max(timings.Grace, 0)
+		if leaseTTL <= 0 {
+			leaseTTL = time.Minute
+		}
 		currentEpoch := leaseRow.CurrentWorkerEpoch
 		var leaseExpiresAt *time.Time
 		if leaseRow.WorkerLeaseExpiresAt.Valid {
@@ -644,10 +654,11 @@ func (d *DB) RecordCodeSessionWorkerHeartbeat(ctx context.Context, codeSessionEx
 			Now:       now,
 			ExpiresAt: expiresAt,
 		})
-		if err == nil {
-			expiresAt = row.WorkerLeaseExpiresAt
+		if err != nil {
+			return err
 		}
-		return err
+		expiresAt = row.WorkerLeaseExpiresAt
+		return NewEnvironmentWorkMapper(executor).RenewForCodeSession(ctx, leaseRow.UUID, leaseRow.OrganizationUUID, leaseRow.WorkspaceUUID)
 	})
 	return expiresAt, err
 }
@@ -701,8 +712,17 @@ func (d *DB) UpdateCodeSessionWorkerState(ctx context.Context, codeSessionExtern
 			return ErrInvalidState
 		}
 
-		if input.WorkerEpoch != current.CurrentWorkerEpoch {
+		if current.CurrentWorkerEpoch != input.WorkerEpoch {
 			return ErrWorkerEpochMismatch
+		}
+		if input.RequiredThreadID != "" {
+			thread, err := NewSessionThreadMapper(executor).FindByExternalID(ctx, current.WorkspaceUUID, current.SessionExternalID, input.RequiredThreadID)
+			if err != nil {
+				return mapNoRows(err)
+			}
+			if thread.Status == "terminated" {
+				return ErrInvalidState
+			}
 		}
 
 		workerStatus := current.WorkerStatus

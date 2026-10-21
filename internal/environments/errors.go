@@ -9,15 +9,18 @@ import (
 )
 
 var (
-	errPrebuildUnsupported      = errors.New("this provider does not support this build operation")
-	errPrebuildUnavailable      = errors.New("package build provider is not configured for this build")
-	errPrebuildSuperseded       = errors.New("Build no longer belongs to the current environment configuration.")
-	errPrebuildConflict         = errors.New("package build changed; refresh before retrying this operation")
-	errPrebuildStageNotStarted  = errors.New("Build stage has not started yet")
-	errPrebuildStage            = errors.New("stage must be image or template")
-	errPrebuildCursor           = errors.New("invalid build log cursor")
-	errPrebuildLogCursorExpired = errors.New("Build log changed; reload logs from the beginning")
-	errPrebuildMissingOutput    = errors.New("successful build is missing its output")
+	errSandboxEndpointUnsupported = errors.New("sandbox provider does not support MCP endpoints")
+	errOutputsAliasCreate         = errors.New("session outputs alias creation failed")
+	errWorkerDispatchUnavailable  = errors.New("code session service does not support worker dispatch")
+	errPrebuildUnsupported        = errors.New("this provider does not support this build operation")
+	errPrebuildUnavailable        = errors.New("package build provider is not configured for this build")
+	errPrebuildSuperseded         = errors.New("Build no longer belongs to the current environment configuration.")
+	errPrebuildConflict           = errors.New("package build changed; refresh before retrying this operation")
+	errPrebuildStageNotStarted    = errors.New("Build stage has not started yet")
+	errPrebuildStage              = errors.New("stage must be image or template")
+	errPrebuildCursor             = errors.New("invalid build log cursor")
+	errPrebuildLogCursorExpired   = errors.New("Build log changed; reload logs from the beginning")
+	errPrebuildMissingOutput      = errors.New("successful build is missing its output")
 	// errPrebuildMissingBuildRef reports a provider that accepted the submission
 	// without returning a reference, so remote work may have started unobserved.
 	errPrebuildMissingBuildRef = errors.New("build provider accepted the submission without returning a build reference")

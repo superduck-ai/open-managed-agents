@@ -2,6 +2,7 @@ package codesessions
 
 import (
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"strings"
 	"testing"
@@ -189,12 +190,10 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 	if got, want := len(objects), 2; got != want {
 		t.Fatalf("payload count = %d, want %d: %#v", got, want, objects)
 	}
-	if blocks, ok := objects[0]["content"].([]any); !ok || len(blocks) != 1 || blocks[0].(map[string]any)["thinking"] != "plan" {
-		t.Fatalf("thinking content missing: %#v", objects[0])
+	if strings.Contains(string(payloads[0]), "plan") || strings.Contains(string(payloads[0]), "signature-secret") || objects[0]["content"] != nil || objects[0]["message"] != nil {
+		t.Fatalf("thinking status exposed content: %s", payloads[0])
 	}
-	if strings.Contains(string(payloads[0]), "signature-secret") {
-		t.Fatal("thinking payload exposed signature")
-	}
+
 	wantTypes := []string{"agent.thinking", "agent.message"}
 	for index, wantType := range wantTypes {
 		if objects[index]["type"] != wantType {
@@ -375,7 +374,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeUserToolResults(t *testing.T) {
 	if len(toolObjects) != 1 {
 		t.Fatalf("plain tool_result payload count = %d, want 1: %#v", len(toolObjects), toolObjects)
 	}
-	if toolObjects[0]["type"] != "agent.tool_result" || toolObjects[0]["tool_use_id"] != toolUsePublicEventID("csev_test", "tool_bash") {
+	if toolObjects[0]["type"] != "agent.tool_result" || toolObjects[0]["tool_use_id"] != maevents.ToolUseEventID("csev_test", "tool_bash", "") {
 		t.Fatalf("plain tool_result mapped payload = %#v", toolObjects[0])
 	}
 	if _, ok := toolObjects[0]["raw_tool_result"]; ok {
@@ -391,7 +390,6 @@ func TestPublicWorkerDiagnosticsDoNotBecomeMessages(t *testing.T) {
 		`{"type":"system","subtype":"init"}`,
 		`{"type":"system","subtype":"hook_started"}`,
 		`{"type":"system","subtype":"hook_response","exit_code":1}`,
-		`{"type":"result","is_error":false,"duration_api_ms":12000,"result":"Done"}`,
 	} {
 		var header workerPayloadHeader
 		if err := json.Unmarshal([]byte(raw), &header); err != nil {
@@ -521,6 +519,19 @@ func TestPublicPayloadFromWorkerEventNormalizesIdleStopReasonVariants(t *testing
 	}
 }
 
+func TestPublicPayloadsFromWorkerEventIgnoresNonAgentTasks(t *testing.T) {
+	for _, taskType := range []string{"local_bash", "local_workflow", "monitor_mcp", "dream", "unknown", ""} {
+		t.Run(taskType, func(t *testing.T) {
+			payloads, ok, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: "system"}, mustRawJSON(t, map[string]any{
+				"type": "system", "subtype": "task_started", "task_id": "task", "tool_use_id": "tool", "task_type": taskType,
+			}))
+			if err != nil || ok || len(payloads) != 0 {
+				t.Fatalf("non-agent task produced public events: %s, ok=%t, err=%v", payloads, ok, err)
+			}
+		})
+	}
+}
+
 func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 	startPayloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
 		ExternalID:     "csev_task_started",
@@ -531,6 +542,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 		"type":        "system",
 		"uuid":        "system-task-started",
 		"subtype":     "task_started",
+		"task_type":   "local_agent",
 		"task_id":     "abc123",
 		"tool_use_id": "tool_translate",
 		"description": "Translate to Japanese",
@@ -585,7 +597,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 	if len(doneObjects) != 1 || doneObjects[0]["type"] != "session.thread_status_idle" {
 		t.Fatalf("task_notification payloads = %#v", doneObjects)
 	}
-	if doneObjects[0]["session_thread_id"] != expectedThreadID {
+	if doneObjects[0]["session_thread_id"] != nil {
 		t.Fatalf("thread_status_idle payload = %#v", doneObjects[0])
 	}
 	stopReason, ok := doneObjects[0]["stop_reason"].(map[string]any)
@@ -602,7 +614,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 		t.Fatalf("stopped task_notification: ok=%v err=%v", ok, err)
 	}
 	stoppedObjects := decodePublicPayloads(t, stoppedPayloads)
-	if len(stoppedObjects) != 1 || stoppedObjects[0]["type"] != "session.thread_status_terminated" || stoppedObjects[0]["session_thread_id"] != expectedThreadID {
+	if len(stoppedObjects) != 1 || stoppedObjects[0]["type"] != "session.thread_status_terminated" || stoppedObjects[0]["session_thread_id"] != nil {
 		t.Fatalf("stopped task_notification payloads = %#v", stoppedObjects)
 	}
 	if _, hasReason := stoppedObjects[0]["stop_reason"]; hasReason {
@@ -655,5 +667,61 @@ func TestCompactionPreservesThreadWithoutDiagnostics(t *testing.T) {
 	}
 	if len(candidates[0].payload) != 2 {
 		t.Fatalf("diagnostic fields leaked: %+v", candidates[0].payload)
+	}
+}
+
+func TestSuccessfulResultEndsTurnWithoutLeakingText(t *testing.T) {
+	for _, subtype := range []string{"", "success", "cancelled"} {
+		raw := mustRawJSON(t, map[string]any{"type": "result", "uuid": "completed", "subtype": subtype, "is_error": false, "result": "private credentials"})
+		payloads, ok, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: "result", IdempotencyKey: "completed", CreatedAt: time.Now().UTC()}, raw)
+		if err != nil || !ok || len(payloads) != 1 {
+			t.Fatalf("completed result: %s %v", payloads, err)
+		}
+		event := decodePublicPayloads(t, payloads)[0]
+		if event["type"] != "session.status_idle" || event["stop_reason"].(map[string]any)["type"] != "end_turn" || strings.Contains(string(payloads[0]), "private credentials") {
+			t.Fatalf("invalid completed result: %s", payloads)
+		}
+		prepared, err := prepareWorkerOutputEvent("cse_test", workerOutputEvent{Payload: raw}, time.Now().UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := prepared.(preparedPublicAction); !ok {
+			t.Fatalf("successful result treated as failure: %T", prepared)
+		}
+	}
+}
+
+func TestInternalSubagentToolResultUsesPublicToolResultContract(t *testing.T) {
+	payloads, err := publicPayloadsFromInternalSubagentEvent("cse_test", db.CodeSessionInternalEvent{Payload: json.RawMessage(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool_child","is_error":true,"content":"denied"}]}}`)}, "sthr_child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects := decodePublicPayloads(t, payloads)
+	if len(objects) != 1 || objects[0]["type"] != "agent.tool_result" || objects[0]["tool_use_id"] != maevents.ToolUseEventID("cse_test", "tool_child", "sthr_child") || objects[0]["is_error"] != true {
+		t.Fatalf("child result violates public tool contract: %#v", objects)
+	}
+}
+
+func TestInternalSubagentAssistantPreservesModelRequestCorrelation(t *testing.T) {
+	for _, field := range []string{"requestId", "request_id"} {
+		t.Run(field, func(t *testing.T) {
+			raw := mustRawJSON(t, map[string]any{
+				"type": "assistant", "uuid": "transcript-uuid", field: "sevt_request",
+				"message": map[string]any{"id": "transcript-message", "content": []map[string]string{{"type": "text", "text": "child reply"}}},
+			})
+			payloads, err := publicPayloadsFromInternalSubagentEvent("cse_test", db.CodeSessionInternalEvent{Payload: raw}, "sthr_child")
+			if err != nil || len(payloads) != 1 {
+				t.Fatalf("mapped payloads = %s, error = %v", payloads, err)
+			}
+			var mapped struct {
+				RequestID string `json:"model_request_start_id"`
+			}
+			if err := jsonv2.Unmarshal(payloads[0], &mapped); err != nil {
+				t.Fatal(err)
+			}
+			if mapped.RequestID != "sevt_request" {
+				t.Fatalf("request identity = %q, want sevt_request", mapped.RequestID)
+			}
+		})
 	}
 }

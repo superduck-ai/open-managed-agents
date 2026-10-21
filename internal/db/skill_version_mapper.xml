@@ -111,7 +111,7 @@
         FROM skill_versions
         WHERE workspace_uuid = #{workspaceUUID}
         AND skill_external_id = #{skillExternalID}
-        AND version = #{version}
+        AND (version = #{version} OR external_id = #{version} OR external_id = replace(#{version}, 'skill_version_', 'skver_'))
         AND deleted_at IS NULL
     </select>
 
@@ -138,7 +138,7 @@
         WHERE workspace_uuid = #{workspaceUUID}
         AND skill_uuid = #{skillUUID}
         AND deleted_at IS NULL
-        ORDER BY created_at DESC, uuid DESC
+        ORDER BY <choose><when test="oldestFirst">created_at ASC, uuid ASC</when><otherwise>created_at DESC, uuid DESC</otherwise></choose>
         LIMIT #{limit} OFFSET #{offset}
     </select>
 

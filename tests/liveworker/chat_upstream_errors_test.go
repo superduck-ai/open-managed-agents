@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package liveworker
 
 import (
@@ -118,7 +120,7 @@ func TestChatUpstreamErrors(t *testing.T) {
 		}
 	}
 	if t.Run("backoff_500_interrupt", func(t *testing.T) { verifyBackoffInterrupt(t, e) }) {
-		chatProof(t, started, "backoff_500_interrupted_and_recovered")
+		chatProof(t, started, "backoff_500_failed_turn_and_recovered")
 	}
 }
 

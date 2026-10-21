@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package liveworker
 
 import (
@@ -216,9 +218,13 @@ func realWorkerReplyConsumer(t *testing.T, f *liveSession) *jetstream.ConsumerIn
 	return info
 }
 
-func waitRealWorker(t *testing.T, label string, ready func() bool) {
+func waitRealWorker(t *testing.T, label string, ready func() bool, timeouts ...time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(chatTimeout(t, 30*time.Second))
+	timeout := 30 * time.Second
+	if len(timeouts) > 0 {
+		timeout = timeouts[0]
+	}
+	deadline := time.Now().Add(chatTimeout(t, timeout))
 	if testDeadline, ok := t.Deadline(); ok && testDeadline.Before(deadline) {
 		deadline = testDeadline.Add(-5 * time.Second)
 	}
@@ -500,7 +506,7 @@ func ensureRealWorkerProvider(t *testing.T, e *liveEnv, cfg config.Config) {
 	service, err := secretservice.New(cfg.Vault.MasterKey)
 	requireOK(t, err)
 	now := time.Now().UTC()
-	provider := db.LLMProvider{UUID: uuid.NewString(), ExternalID: "llmprov_probe_" + uuid.NewString(), OrganizationUUID: org, WorkspaceUUID: workspace, Name: "isolated worker model metadata", BaseURL: "http://127.0.0.1:9", APIKeyLast4: "fake", ModelIDs: []string{"claude-opus-4-6", "claude-sonnet-4-6"}, CreatedAt: now, UpdatedAt: now}
+	provider := db.LLMProvider{UUID: uuid.NewString(), ExternalID: "llmprov_probe_" + uuid.NewString(), OrganizationUUID: org, WorkspaceUUID: workspace, Name: "isolated worker model metadata", Slug: llmproviders.DefaultSlug, BaseURL: "http://127.0.0.1:9", APIKeyLast4: "fake", ModelIDs: []string{"claude-opus-4-6", "claude-sonnet-4-6"}, CreatedAt: now, UpdatedAt: now}
 	envelope, err := service.Seal(t.Context(), llmproviders.SecretBinding(provider), []byte("isolated-fake"))
 	requireOK(t, err)
 	provider.SecretEnvelope = &envelope

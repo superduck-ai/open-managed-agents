@@ -19,6 +19,12 @@
         AND deleted_at IS NULL
     </select>
 
+    <insert id="Insert" result="returning" resultType="string">
+        INSERT INTO users (external_id, organization_uuid, email, name, role)
+        VALUES (#{params.ExternalID}, #{params.OrganizationUUID}, #{params.Email}, #{params.Name}, #{params.Role})
+        RETURNING uuid
+    </insert>
+
     <select id="FindPageAnchorByExternalID" resultType="pagePosition">
         SELECT added_at AS created_at, uuid
         FROM users

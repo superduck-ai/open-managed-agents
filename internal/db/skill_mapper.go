@@ -38,11 +38,12 @@ type updateSkillLatestVersionParams struct {
 }
 
 type SkillMapper interface {
+	LockWorkspace(ctx context.Context, workspaceUUID string) error
 	FindExternalIDByDisplayTitle(ctx context.Context, workspaceUUID, displayTitle string) (string, bool, error)
 	Insert(ctx context.Context, params insertSkillParams) (skillRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (skillRow, error)
 	FindForUpdateByExternalID(ctx context.Context, workspaceUUID, externalID string) (skillRow, error)
-	ListPage(ctx context.Context, workspaceUUID string, limit, offset int) ([]skillRow, error)
+	ListPage(ctx context.Context, workspaceUUID string, limit, offset int, onlyVersioned bool) ([]skillRow, error)
 	FindUUIDByExternalID(ctx context.Context, workspaceUUID, externalID string) (string, error)
 	UpdateLatestVersionByExternalID(ctx context.Context, params updateSkillLatestVersionParams) (skillRow, error)
 	SoftDeleteByUUID(ctx context.Context, workspaceUUID, skillUUID string) (skillRow, error)

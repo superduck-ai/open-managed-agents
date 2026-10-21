@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -29,7 +31,7 @@ func TestWebhookAgentRejectedOperations(t *testing.T) {
 		{"invalid create", "/v1/agents", `{"model":"claude-opus-4-6","name":""}`, defaultTestKey, 400},
 		{"invalid field", base, `{"version":1,"name":123}`, defaultTestKey, 400},
 		{"invalid tools", base, `{"version":1,"tools":[{"type":"mcp_toolset","mcp_server_name":"missing"}]}`, defaultTestKey, 400},
-		{"missing version", base, `{"name":"changed"}`, defaultTestKey, 400},
+		{"invalid version", base, `{"version":0,"name":"changed"}`, defaultTestKey, 400},
 		{"missing update", "/v1/agents/agent_missing", `{"version":1}`, defaultTestKey, 404},
 		{"missing archive", "/v1/agents/agent_missing/archive", `{}`, defaultTestKey, 404},
 		{"foreign update", base, `{"version":1,"name":"changed"}`, foreignKey, 404},
@@ -246,7 +248,9 @@ func TestWebhookAgentFilteringAndFormerSDKIdentity(t *testing.T) {
 		}
 		response.Body.Close()
 	}
-	if err := app.db.Seed(t.Context(), []config.SeedAPIKey{{ExternalID: "api_key_official_sdk_resource_tests", Key: formerSDKKey}}); err != nil {
+	bootstrap := app.cfg.Bootstrap
+	bootstrap.SeedAPIKeys = []config.SeedAPIKey{{ExternalID: "api_key_official_sdk_resource_tests", Key: formerSDKKey}}
+	if err := app.db.Seed(t.Context(), bootstrap); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"", "/archive"} {

@@ -1,3 +1,4 @@
+import { BrandLogo } from '@/shared/brand/BrandLogo';
 import { Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import { useEffect, useRef } from 'react';
 import { useAuth } from '../../shared/auth/context';
@@ -23,7 +24,10 @@ export function ProtectedConsoleLayout() {
   if (status === 'loading') {
     return (
       <div className="grid min-h-screen place-items-center bg-background text-foreground">
-        <div className="text-sm text-muted-foreground">Loading Open Managed Agents...</div>
+        <div role="status" className="flex flex-col items-center gap-5">
+          <BrandLogo className="h-10 w-[119px]" />
+          <div className="text-sm text-muted-foreground">Loading Open Managed Agents...</div>
+        </div>
       </div>
     );
   }

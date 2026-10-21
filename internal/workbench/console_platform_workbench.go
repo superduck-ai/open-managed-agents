@@ -701,23 +701,6 @@ func (h *workbenchHandler) anthropicTextFromBody(r *http.Request, upstreamBody m
 	return strings.TrimSpace(text.String()), response.Usage.InputTokens, response.Usage.OutputTokens, nil
 }
 
-func writeWorkbenchInferenceError(w http.ResponseWriter, err error) {
-	message := err.Error()
-	switch {
-	case errors.Is(err, llmproviders.ErrModelNotConfigured), strings.Contains(message, "model is required"):
-		writeProxyMessagesAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "Model is not configured for this workspace")
-	case errors.Is(err, llmproviders.ErrNotConfigured):
-		writeProxyMessagesAnthropicError(w, http.StatusServiceUnavailable, "api_error", "This workspace has no LLM provider configured")
-	case errors.Is(err, llmproviders.ErrInvalidBaseURL),
-		errors.Is(err, llmproviders.ErrUnsafeBaseURL),
-		message == "LLM provider request failed",
-		strings.HasPrefix(message, "LLM provider returned"):
-		writeProxyMessagesAnthropicError(w, http.StatusBadGateway, "api_error", "workspace LLM provider is unavailable")
-	default:
-		writeProxyMessagesAnthropicError(w, http.StatusInternalServerError, "api_error", "Workspace model configuration is unavailable")
-	}
-}
-
 func newWorkbenchAnthropicRequest(
 	ctx context.Context,
 	endpoint string,
@@ -725,6 +708,7 @@ func newWorkbenchAnthropicRequest(
 	upstreamBody map[string]any,
 	accept string,
 ) (*http.Request, error) {
+	upstreamBody["model"] = upstream.ModelID
 	encoded, err := json.Marshal(upstreamBody)
 	if err != nil {
 		return nil, err
@@ -757,6 +741,9 @@ func (h *workbenchHandler) resolveWorkbenchUpstream(r *http.Request, modelID str
 		modelID,
 	)
 	if err != nil {
+		return llmproviders.Upstream{}, "", err
+	}
+	if err := upstream.RequireBackend(llmproviders.Messages); err != nil {
 		return llmproviders.Upstream{}, "", err
 	}
 	endpoint, err := llmproviders.Endpoint(upstream.BaseURL, "/v1/messages", "")

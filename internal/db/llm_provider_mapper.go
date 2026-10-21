@@ -13,6 +13,8 @@ type llmProviderRow struct {
 	OrganizationUUID string    `db:"organization_uuid"`
 	WorkspaceUUID    string    `db:"workspace_uuid"`
 	Name             string    `db:"name"`
+	Slug             string    `db:"slug"`
+	APIBackend       string    `db:"api_backend"`
 	BaseURL          string    `db:"base_url"`
 	APIKeyLast4      string    `db:"api_key_last4"`
 	ModelIDs         []byte    `db:"model_ids"`
@@ -32,6 +34,8 @@ type llmProviderWriteParams struct {
 	OrganizationUUID string
 	WorkspaceUUID    string
 	Name             string
+	Slug             string
+	APIBackend       string
 	BaseURL          string
 	APIKeyLast4      string
 	ModelIDs         []byte
@@ -46,7 +50,6 @@ type llmProviderWriteParams struct {
 }
 
 type LLMProviderMapper interface {
-	LockWorkspace(ctx context.Context, organizationUUID, workspaceUUID string) error
 	Insert(ctx context.Context, params llmProviderWriteParams) (llmProviderRow, error)
 	ListByWorkspace(ctx context.Context, organizationUUID, workspaceUUID string) ([]llmProviderRow, error)
 	FindByExternalID(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (llmProviderRow, error)

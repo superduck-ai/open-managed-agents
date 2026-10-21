@@ -4,7 +4,7 @@ description: "查询当前工作区公开的模型 ID。"
 api: "GET /v1/models"
 ---
 
-返回当前工作区配置的模型 ID，API 调用会原样使用这些 ID。
+返回当前工作区配置的模型 ID，格式为 `{provider_slug}/{upstream_model_id}`，例如 `oma/kimi-k2.5` 或 `oma/deepseek-ai/deepseek-v4.1-flash`。调用 API 时使用这些 ID，OMA 会把上游模型 ID 转发给 Provider。不带 Provider 前缀的历史 ID 仍可使用，前提是工作区内只有一个 Provider 配置了该模型。
 
 ## 响应
 

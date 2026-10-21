@@ -142,8 +142,9 @@ type NATSConfig struct {
 }
 
 type AuthConfig struct {
-	SMTP       EmailSMTPConfig `yaml:"smtp"`
-	ConsoleURL string          `yaml:"console_url"`
+	AllowedEmailDomains []string        `yaml:"allowed_email_domains"`
+	SMTP                EmailSMTPConfig `yaml:"smtp"`
+	ConsoleURL          string          `yaml:"console_url"`
 }
 
 type EmailSMTPConfig struct {
@@ -199,18 +200,24 @@ type BatchConfig struct {
 }
 
 type E2BConfig struct {
-	APIKey         string        `yaml:"api_key"`
-	AccessToken    string        `yaml:"access_token"`
-	Domain         string        `yaml:"domain"`
-	APIURL         string        `yaml:"api_url"`
-	SandboxURL     string        `yaml:"sandbox_url"`
-	Debug          bool          `yaml:"debug"`
-	Template       string        `yaml:"template"`
-	RequestTimeout time.Duration `yaml:"request_timeout"`
-	SandboxTimeout time.Duration `yaml:"sandbox_timeout"`
+	LocalPortLookup  bool          `yaml:"local_port_lookup"`
+	LocalServiceHost string        `yaml:"local_service_host"`
+	APIKey           string        `yaml:"api_key"`
+	AccessToken      string        `yaml:"access_token"`
+	Domain           string        `yaml:"domain"`
+	APIURL           string        `yaml:"api_url"`
+	SandboxURL       string        `yaml:"sandbox_url"`
+	Debug            bool          `yaml:"debug"`
+	Template         string        `yaml:"template"`
+	RequestTimeout   time.Duration `yaml:"request_timeout"`
+	SandboxTimeout   time.Duration `yaml:"sandbox_timeout"`
 }
 
 type EnvironmentRunnerConfig struct {
+	BrainSandboxPrewarm     bool          `yaml:"brain_sandbox_prewarm"`
+	AgentMode               string        `yaml:"agent_mode"`
+	SandboxMCPPort          int           `yaml:"sandbox_mcp_port"`
+	SandboxMCPPath          string        `yaml:"sandbox_mcp_path"`
 	Enabled                 bool          `yaml:"enabled"`
 	Concurrency             int           `yaml:"concurrency"`
 	PackageProvisionTimeout time.Duration `yaml:"package_provision_timeout"`
@@ -232,7 +239,8 @@ type CodeSessionConfig struct {
 	// MITM 开启后，服务启动时读取私钥并在内存中签发根证书；私钥绝不能进入 sandbox。
 	UpstreamProxyCAKeyFile string `yaml:"upstream_proxy_ca_key_file"`
 	// UpstreamProxyDisableSSRFProtection 是仅供本地 fake-IP/TUN 排障使用的危险开关；生产环境必须保持 false。
-	UpstreamProxyDisableSSRFProtection bool `yaml:"upstream_proxy_disable_ssrf_protection"`
+	UpstreamProxyDisableSSRFProtection bool   `yaml:"upstream_proxy_disable_ssrf_protection"`
+	BrainClaimTokenFile                string `yaml:"brain_claim_token_file"`
 }
 
 type ObservabilityConfig struct {
@@ -287,6 +295,8 @@ type BootstrapConfig struct {
 	OrganizationName    string       `yaml:"organization_name"`
 	WorkspaceExternalID string       `yaml:"workspace_external_id"`
 	UserExternalID      string       `yaml:"user_external_id"`
+	UserEmail           string       `yaml:"user_email"`
+	UserName            string       `yaml:"user_name"`
 	APIKeyExternalID    string       `yaml:"api_key_external_id"`
 }
 

@@ -115,6 +115,7 @@ type yamlCodeSessionConfig struct {
 	UpstreamProxyMITMEnabled           bool   `yaml:"upstream_proxy_mitm_enabled"`
 	UpstreamProxyCAKeyFile             string `yaml:"upstream_proxy_ca_key_file"`
 	UpstreamProxyDisableSSRFProtection bool   `yaml:"upstream_proxy_disable_ssrf_protection"`
+	BrainClaimTokenFile                string `yaml:"brain_claim_token_file"`
 }
 
 type yamlWebhookConfig struct {
@@ -132,6 +133,8 @@ type yamlBootstrapConfig struct {
 	OrganizationName    string                 `yaml:"organization_name"`
 	WorkspaceExternalID string                 `yaml:"workspace_external_id"`
 	UserExternalID      string                 `yaml:"user_external_id"`
+	UserEmail           string                 `yaml:"user_email"`
+	UserName            string                 `yaml:"user_name"`
 	APIKeyExternalID    string                 `yaml:"api_key_external_id"`
 }
 
@@ -165,6 +168,7 @@ func newYAMLConfig() yamlConfig {
 			UpstreamProxyMITMEnabled:           defaults.CodeSession.UpstreamProxyMITMEnabled,
 			UpstreamProxyCAKeyFile:             defaults.CodeSession.UpstreamProxyCAKeyFile,
 			UpstreamProxyDisableSSRFProtection: defaults.CodeSession.UpstreamProxyDisableSSRFProtection,
+			BrainClaimTokenFile:                defaults.CodeSession.BrainClaimTokenFile,
 		},
 		Observability: defaults.Observability,
 		Webhook: yamlWebhookConfig{
@@ -181,6 +185,8 @@ func newYAMLConfig() yamlConfig {
 			OrganizationName:    defaults.Bootstrap.OrganizationName,
 			WorkspaceExternalID: defaults.Bootstrap.WorkspaceExternalID,
 			UserExternalID:      defaults.Bootstrap.UserExternalID,
+			UserEmail:           defaults.Bootstrap.UserEmail,
+			UserName:            defaults.Bootstrap.UserName,
 			APIKeyExternalID:    defaults.Bootstrap.APIKeyExternalID,
 		},
 	}
@@ -215,6 +221,7 @@ func (input yamlConfig) resolve() Config {
 			UpstreamProxyMITMEnabled:           input.CodeSession.UpstreamProxyMITMEnabled,
 			UpstreamProxyCAKeyFile:             input.CodeSession.UpstreamProxyCAKeyFile,
 			UpstreamProxyDisableSSRFProtection: input.CodeSession.UpstreamProxyDisableSSRFProtection,
+			BrainClaimTokenFile:                input.CodeSession.BrainClaimTokenFile,
 		},
 		Observability: input.Observability,
 		Webhook: WebhookConfig{
@@ -231,6 +238,8 @@ func (input yamlConfig) resolve() Config {
 			OrganizationName:    input.Bootstrap.OrganizationName,
 			WorkspaceExternalID: input.Bootstrap.WorkspaceExternalID,
 			UserExternalID:      input.Bootstrap.UserExternalID,
+			UserEmail:           input.Bootstrap.UserEmail,
+			UserName:            input.Bootstrap.UserName,
 			APIKeyExternalID:    input.Bootstrap.APIKeyExternalID,
 		},
 	}

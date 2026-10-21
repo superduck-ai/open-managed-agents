@@ -1,4 +1,8 @@
 # OS/editor noise
+/.codex/*
+!/.codex/environments/
+/.codex/environments/*
+!/.codex/environments/environment.toml
 .DS_Store
 Thumbs.db
 .idea/
@@ -23,6 +27,7 @@ Thumbs.db
 *.tmp
 tmp/
 temp/
+.run/
 
 # Go build/test artifacts
 /bin/
@@ -77,4 +82,16 @@ CLAUDE.local.md
 AGENTS.override.md
 .grok/
 .worktrees/
+/herdr/
 .verify-be.cloud.local.yaml
+
+/oma-brain-dsh/node_modules/
+/oma-brain-dsh/dist/
+/oma-brain-dsh/coverage/
+/oma-brain-dsh/.dsh/
+/oma-brain-dsh/.run/
+/oma-brain-dsh/*.bun-build
+/oma-brain-dsh/*.tsbuildinfo
+/oma-brain-dsh/.env
+/oma-brain-dsh/.env.*
+!/oma-brain-dsh/.env.example

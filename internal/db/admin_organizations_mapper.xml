@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="AdminOrganizationMapper">
+    <insert id="Insert" result="exec">
+        INSERT INTO organizations (uuid, name)
+        VALUES (#{organizationUUID}, #{name})
+    </insert>
     <select id="FindByUUID" resultType="AdminOrganization">
         SELECT uuid, name, created_at
         FROM organizations

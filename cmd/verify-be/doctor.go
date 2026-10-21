@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -28,6 +29,18 @@ type doctorResult struct {
 
 func doctor(ctx context.Context, root, worker, selected string) (doctorResult, error) {
 	result := doctorResult{Versions: map[string]string{}, Images: map[string]string{}, APIPort: 18080}
+	if usesBrain(selected) {
+		path := os.Getenv("OMA_BRAIN_BINARY")
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() || info.Mode()&0111 == 0 {
+			return result, errors.New("chat brain requires OMA_BRAIN_BINARY pointing to the built Rust executable")
+		}
+		digest, err := fileSHA256(path)
+		if err != nil {
+			return result, err
+		}
+		result.Versions["brain_binary_sha256"] = digest
+	}
 	for _, name := range []string{"go", "docker", "bash", "git", "tar"} {
 		if _, err := exec.LookPath(name); err != nil {
 			return result, fmt.Errorf("required tool %s: %w", name, err)
@@ -74,11 +87,16 @@ func doctor(ctx context.Context, root, worker, selected string) (doctorResult, e
 	if err != nil {
 		return result, err
 	}
-	if selected == "chat.public" || selected == "chat.upstream-errors" || selected == "files.generated" || selected == "memory.mounts" {
+	if usesBrain(selected) || selected == "chat.public" || selected == "chat.subagents" || selected == "chat.upstream-errors" || selected == "files.generated" || selected == "memory.mounts" {
 		if _, err := doctorProbe(ctx, root, result.Images["worker"], true); err != nil {
 			return result, fmt.Errorf("Docker sandbox requires usable FUSE, SYS_ADMIN and AppArmor configuration: %w", err)
 		}
 		result.PublicSandboxChecked = true
+	}
+	if usesBrain(selected) {
+		if _, err := capture(ctx, root, "docker", "run", "--rm", "--pull=never", "--entrypoint", "sh", result.Images["worker"], "-c", "test -x /usr/local/bin/environment-manager"); err != nil {
+			return result, errors.New("Brain scenario requires /usr/local/bin/environment-manager in the sandbox image")
+		}
 	}
 	return result, nil
 }

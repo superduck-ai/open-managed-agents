@@ -1,0 +1,15 @@
+# Show available commands.
+default:
+    @just --list
+
+# Install the exact dependencies in bun.lock.
+install:
+    bun install --frozen-lockfile
+
+# Build a standalone executable for the current OS and architecture.
+build: install
+    bun run build:executable
+
+# Build the executable and run the test suite against it.
+verify: install
+    bun run verify:executable

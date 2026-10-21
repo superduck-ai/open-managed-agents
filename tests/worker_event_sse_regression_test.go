@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -45,6 +47,9 @@ func TestFailedSSEWritePreservesNewerAcknowledgementReference(t *testing.T) {
 	got, found, err := acks.Get(t.Context(), codeSession.ExternalID, epoch, event.PayloadEventID)
 	if writer.status != http.StatusOK || writer.writes != 1 || err != nil || !found || got != replacement {
 		t.Fatalf("status=%d writes=%d mapping=(%+v, %t, %v)", writer.status, writer.writes, got, found, err)
+	}
+	if buffering := writer.header.Get("X-Accel-Buffering"); buffering != "no" {
+		t.Fatalf("X-Accel-Buffering = %q, want no", buffering)
 	}
 	if len(broker.Pending(codeSession.ExternalID)) != 1 {
 		t.Fatal("failed SSE write acknowledged the message")

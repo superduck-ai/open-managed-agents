@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -34,6 +36,8 @@ func TestSessionWorkerFailedTurnStopReason(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("retry input status=%d: %s", response.StatusCode, readAll(t, response.Body))
 	}
+	queued := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.message", defaultTestKey)
+	consumePublicInput(t, app, worker, epoch, sessionEventStringField(t, queued.Data[0], "id"))
 	state("running")
 	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch,
 		`{"type":"assistant","uuid":"normal-message","message":{"id":"normal-reply","content":[{"type":"text","text":"Recovered"}]}}`,
@@ -73,11 +77,11 @@ func TestSessionWorkerFailedTurnIgnoresChildReply(t *testing.T) {
 	worker, epoch := newPayloadIntegrationSession(t, app)
 	putCodeSessionWorkerState(t, app, worker.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
 	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch,
-		`{"type":"system","uuid":"child-started","subtype":"task_started","task_id":"child-task","tool_use_id":"child-tool","description":"Child"}`,
+		`{"type":"system","uuid":"child-started","subtype":"task_started","task_type":"local_agent","task_id":"child-task","tool_use_id":"child-tool","description":"Child"}`,
 		`{"type":"result","uuid":"primary-failed","is_error":true}`,
 		`{"type":"assistant","uuid":"child-answer","parent_tool_use_id":"child-tool","message":{"id":"child-reply","content":[{"type":"text","text":"Child completed"}]}}`,
 		`{"type":"system","uuid":"child-completed","subtype":"task_notification","task_id":"child-task","tool_use_id":"child-tool","status":"completed"}`,
 	))
 	putCodeSessionWorkerState(t, app, worker.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
-	assertWorkerIdleReasons(t, app, worker.SessionExternalID, "end_turn", "retries_exhausted")
+	assertWorkerIdleReasons(t, app, worker.SessionExternalID, "retries_exhausted")
 }

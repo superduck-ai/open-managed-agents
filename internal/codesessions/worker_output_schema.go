@@ -55,14 +55,15 @@ type workerOutputCommonPayload struct {
 }
 
 type workerAssistantOutputPayload struct {
-	Error             string              `json:"error"`
-	IsAPIErrorMessage bool                `json:"is_api_error_message"`
-	ParentToolUseID   string              `json:"parent_tool_use_id"`
-	RequestID         string              `json:"request_id"`
-	Type              string              `json:"type"`
-	Content           json.RawMessage     `json:"content"`
-	ContentBlockIndex *int                `json:"content_block_index"`
-	Message           workerOutputMessage `json:"message"`
+	Error               string              `json:"error"`
+	IsAPIErrorMessage   bool                `json:"is_api_error_message"`
+	ParentToolUseID     string              `json:"parent_tool_use_id"`
+	RequestID           string              `json:"request_id"`
+	TranscriptRequestID string              `json:"requestId"`
+	Type                string              `json:"type"`
+	Content             json.RawMessage     `json:"content"`
+	ContentBlockIndex   *int                `json:"content_block_index"`
+	Message             workerOutputMessage `json:"message"`
 }
 
 func decodeWorkerAssistantOutputPayload(raw json.RawMessage) (workerAssistantOutputPayload, error) {
@@ -71,7 +72,7 @@ func decodeWorkerAssistantOutputPayload(raw json.RawMessage) (workerAssistantOut
 		return workerAssistantOutputPayload{}, err
 	}
 	payload.Message.ID = strings.TrimSpace(payload.Message.ID)
-	payload.RequestID = strings.TrimSpace(payload.RequestID)
+	payload.RequestID = firstNonEmpty(payload.RequestID, payload.TranscriptRequestID)
 	payload.ParentToolUseID = strings.TrimSpace(payload.ParentToolUseID)
 	return payload, nil
 }
@@ -164,6 +165,7 @@ type workerPermissionRequest struct {
 	ToolName              string                   `json:"tool_name"`
 	ToolUseID             string                   `json:"tool_use_id"`
 	Input                 map[string]any           `json:"input"`
+	ToolAvailable         *bool                    `json:"tool_available,omitempty"`
 	PermissionSuggestions []workerPermissionUpdate `json:"permission_suggestions,omitempty"`
 	BlockedPath           string                   `json:"blocked_path,omitempty"`
 	DecisionReason        string                   `json:"decision_reason,omitempty"`

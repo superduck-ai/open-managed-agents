@@ -1,7 +1,6 @@
 package platformapi
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"slices"
@@ -16,8 +15,9 @@ import (
 )
 
 type previewLLMProviderModelsRequest struct {
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key"`
+	APIBackend *string `json:"api_backend"`
+	BaseURL    string  `json:"base_url"`
+	APIKey     string  `json:"api_key"`
 }
 
 type previewLLMProviderModelsResponse struct {
@@ -32,6 +32,10 @@ func previewConsoleLLMProviderModels(database *db.DB, client *http.Client) http.
 		body, err := readRequiredJSON[previewLLMProviderModelsRequest](r, true)
 		if err != nil {
 			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "request body must match LLM provider configuration")
+			return
+		}
+		if body.APIBackend != nil && !llmproviders.ValidBackend(*body.APIBackend) {
+			writeLLMProviderBackendError(w)
 			return
 		}
 		apiKey := strings.TrimSpace(body.APIKey)
@@ -49,8 +53,9 @@ func previewConsoleLLMProviderModels(database *db.DB, client *http.Client) http.
 			return
 		}
 		modelIDs, err := llmproviders.ListUpstreamModels(r.Context(), client, llmproviders.Upstream{
-			BaseURL: baseURL,
-			APIKey:  apiKey,
+			APIBackend: llmProviderBackend(body.APIBackend, llmproviders.Messages),
+			BaseURL:    baseURL,
+			APIKey:     apiKey,
 		})
 		if err != nil {
 			writeLLMProviderError(w, http.StatusBadGateway, llmProviderCodeUpstreamUnavailable, "failed to list models from provider")
@@ -93,66 +98,26 @@ func syncConsoleLLMProviderModels(database *db.DB, secretService *secrets.Servic
 		}
 		defer clear(plaintext)
 		liveIDs, err := llmproviders.ListUpstreamModels(r.Context(), client, llmproviders.Upstream{
-			BaseURL: provider.BaseURL,
-			APIKey:  string(plaintext),
+			APIBackend: provider.APIBackend,
+			BaseURL:    provider.BaseURL,
+			APIKey:     string(plaintext),
 		})
 		if err != nil {
 			writeLLMProviderError(w, http.StatusBadGateway, llmProviderCodeUpstreamUnavailable, "failed to list models from provider")
 			return
 		}
-		incomingIDs, skippedModelIDs, err := excludeConfiguredModels(
-			r.Context(),
-			database,
-			orgUUID,
-			scope.UUID,
-			provider.ExternalID,
-			liveIDs,
-		)
-		if err != nil {
-			internalError(w, "failed to validate LLM provider models")
-			return
-		}
-		modelIDs := llmproviders.MergeModelIDs(provider.ModelIDs, incomingIDs, maxLLMProviderModels)
+		modelIDs := llmproviders.MergeModelIDs(provider.ModelIDs, liveIDs, maxLLMProviderModels)
 		if slices.Equal(provider.ModelIDs, modelIDs) {
-			response := formatLLMProvider(provider)
-			response.SkippedModelIDs = skippedModelIDs
-			writeJSON(w, http.StatusOK, response)
+			writeJSON(w, http.StatusOK, formatLLMProvider(provider))
 			return
 		}
 		provider.ModelIDs = modelIDs
 		provider.UpdatedAt = time.Now().UTC()
 		updated, err := database.UpdateLLMProvider(r.Context(), provider)
-		if writeLLMProviderModelConflictError(w, err) {
-			return
-		}
 		if err != nil {
 			internalError(w, "failed to update LLM provider")
 			return
 		}
-		response := formatLLMProvider(updated)
-		response.SkippedModelIDs = skippedModelIDs
-		writeJSON(w, http.StatusOK, response)
+		writeJSON(w, http.StatusOK, formatLLMProvider(updated))
 	}
-}
-
-func excludeConfiguredModels(
-	ctx context.Context,
-	database *db.DB,
-	organizationUUID, workspaceUUID, excludedProviderID string,
-	modelIDs []string,
-) ([]string, []string, error) {
-	configured, err := configuredLLMModelIDs(ctx, database, organizationUUID, workspaceUUID, excludedProviderID)
-	if err != nil {
-		return nil, nil, err
-	}
-	filtered := make([]string, 0, len(modelIDs))
-	skipped := make([]string, 0)
-	for _, modelID := range modelIDs {
-		if _, exists := configured[modelID]; exists {
-			skipped = append(skipped, modelID)
-			continue
-		}
-		filtered = append(filtered, modelID)
-	}
-	return filtered, skipped, nil
 }

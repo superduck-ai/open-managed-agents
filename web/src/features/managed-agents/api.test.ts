@@ -16,6 +16,7 @@ import {
   sessionDetailScopeEvents,
   sessionIncompleteStreamEventIds,
   sessionStreamingMessageFromStart,
+  sessionThreadListSignature,
   syncSessionEventHistory,
 } from './api';
 import { sessionEventUpdateTimestamp } from './sessions/sessionDetailModel';
@@ -33,6 +34,20 @@ afterEach(() => {
 });
 
 describe('managed agents API', () => {
+  test('thread metadata repair changes the refresh signature without creating another lane', () => {
+    const thread = {
+      id: 'sthr_child',
+      type: 'session_thread',
+      parent_thread_id: 'sthr_parent',
+      created_at: '2026-10-12T00:00:00Z',
+      updated_at: '2026-10-12T00:00:00Z',
+    };
+    expect(sessionThreadListSignature([thread])).not.toBe(
+      sessionThreadListSignature([
+        { ...thread, updated_at: '2026-10-12T00:00:01Z', agent: { id: 'agent_child', version: 1 } },
+      ]),
+    );
+  });
   test('session event timestamp uses processed_at without created_at', () => {
     expect(sessionEventTimestamp({ id: 'sevt_message', processed_at: '2026-08-26T13:13:00Z' })).toBe(
       Date.parse('2026-08-26T13:13:00Z'),

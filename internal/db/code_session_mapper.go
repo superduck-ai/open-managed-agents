@@ -138,9 +138,12 @@ type codeSessionVaultIDsRow struct {
 }
 
 type codeSessionWorkerLeaseRow struct {
+	OrganizationUUID     string       `db:"organization_uuid"`
+	WorkspaceUUID        string       `db:"workspace_uuid"`
 	UUID                 string       `db:"uuid"`
 	CurrentWorkerEpoch   int64        `db:"current_worker_epoch"`
 	WorkerLeaseExpiresAt sql.NullTime `db:"worker_lease_expires_at"`
+	WorkerTransport      string       `db:"worker_transport"`
 }
 
 type codeSessionWorkerExpiryRow struct {
@@ -157,6 +160,7 @@ type resumeCodeSessionWorkerLeaseParams struct {
 }
 
 // CodeSessionMapper contains queries whose primary table is code_sessions.
+
 type CodeSessionMapper interface {
 	UpdateWorkerToolMetadata(ctx context.Context, workspaceUUID, externalID string, metadata []byte, clearDetails bool) (int64, error)
 	ClearToolPermissionRequest(ctx context.Context, workspaceUUID, codeSessionExternalID, publicEventID string) error

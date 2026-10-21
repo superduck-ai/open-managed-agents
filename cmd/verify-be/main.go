@@ -151,7 +151,8 @@ func perform(ctx context.Context, root, directory, worker string, options cliOpt
 	env.files = strings.HasPrefix(options.Scenario, "files.")
 	env.suite = options.Scenario == "test"
 	env.dependenciesOnly = selected.DependenciesOnly
-	env.publicSandbox = options.Scenario == "chat.public" || options.Scenario == "chat.upstream-errors"
+	env.brain = usesBrain(options.Scenario)
+	env.publicSandbox = env.brain || options.Scenario == "chat.public" || options.Scenario == "chat.subagents" || options.Scenario == "chat.upstream-errors"
 	defer func() {
 		r.CleanupErrors = env.close()
 		r.CleanupComplete = len(r.CleanupErrors) == 0
@@ -229,7 +230,15 @@ func runTest(ctx context.Context, env *environment, worker string, selected scen
 	if strings.HasPrefix(selected.Test, "TestVerifyDeployment") {
 		values = append(values, "VERIFY_BE_DEPLOYMENT=1")
 	}
-	args := []string{"go", "test", selected.Package, "-json", "-count=1", "-timeout=" + (selected.Timeout + 30*time.Second).String()}
+	args := []string{"go", "test", "-tags=integration"}
+	overlay, err := env.baselineFixtureOverlay(selected)
+	if err != nil {
+		return testResult{}, err
+	}
+	if overlay != "" {
+		args = append(args, "-overlay="+overlay)
+	}
+	args = append(args, selected.Package, "-json", "-count=1", "-timeout="+(selected.Timeout+30*time.Second).String())
 	if env.suite {
 		values, err = suiteEnvironment(env)
 		if err != nil {

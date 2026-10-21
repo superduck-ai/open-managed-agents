@@ -28,15 +28,14 @@ describe('consoleApi', () => {
     expect(isModelConfigurationUnavailable({ status: 500, code: 'api_error', message: 'unavailable' })).toBe(false);
   });
 
-  test('reads stable console error codes and structured model IDs', async () => {
+  test('reads stable console error codes', async () => {
     globalThis.fetch = mock(
       async () =>
         new Response(
           JSON.stringify({
             error: 'invalid_request',
-            code: 'model_conflict',
+            code: 'llm_provider_slug_conflict',
             message: 'wording can change',
-            model_id: 'glm-4.7',
           }),
           { status: 409, headers: { 'Content-Type': 'application/json' } },
         ),
@@ -44,9 +43,8 @@ describe('consoleApi', () => {
 
     await expect(consoleApi('/api/test')).rejects.toEqual({
       status: 409,
-      code: 'model_conflict',
+      code: 'llm_provider_slug_conflict',
       message: 'wording can change',
-      modelId: 'glm-4.7',
     });
   });
 

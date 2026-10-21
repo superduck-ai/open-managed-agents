@@ -8,6 +8,7 @@ import (
 	"net/mail"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,9 @@ func Load() (Config, error) {
 	cfg, err := loadYAMLConfig(configPath)
 	if err != nil {
 		return Config{}, err
+	}
+	for i, domain := range cfg.Auth.AllowedEmailDomains {
+		cfg.Auth.AllowedEmailDomains[i] = strings.ToLower(strings.TrimSpace(domain))
 	}
 	cfg.Auth.SMTP.Addr = strings.TrimSpace(cfg.Auth.SMTP.Addr)
 	cfg.Auth.SMTP.Username = strings.TrimSpace(cfg.Auth.SMTP.Username)
@@ -69,13 +73,16 @@ func validate(cfg Config) error {
 	if strings.TrimSpace(cfg.NATS.URL) == "" {
 		return errors.New("nats.url is required")
 	}
-	if err := validateWebhookStream(cfg.NATS.WebhookStream); err != nil {
+	if err := validateBrainRuntimeConfig(cfg.EnvironmentRunner, cfg.CodeSession); err != nil {
 		return err
 	}
-	if err := validateWorkerEventStream(cfg.NATS.WorkerEventStream); err != nil {
+	if err := validateNATSStreams(cfg.NATS); err != nil {
 		return err
 	}
-	if err := validateAuthConfig(cfg.Auth); err != nil {
+	if err := validateBootstrapConfig(cfg.Bootstrap); err != nil {
+		return err
+	}
+	if err := validateAuthConfig(cfg.Env, cfg.Auth); err != nil {
 		return err
 	}
 	if err := validateEnvironmentPrebuildConfig(cfg.EnvironmentPrebuilds, cfg.E2B); err != nil {
@@ -129,9 +136,6 @@ func validate(cfg Config) error {
 	if err := validateGitSSHtoHTTPSHosts(cfg.EnvironmentRunner.GitSSHtoHTTPSHosts); err != nil {
 		return err
 	}
-	if _, err := cfg.RuntimeCost.HourlyUSD(); err != nil {
-		return err
-	}
 	return validateCodeSessionUpstreamProxyMITMConfig(cfg.CodeSession)
 }
 
@@ -146,11 +150,59 @@ func (cfg RuntimeCostConfig) HourlyUSD() (*big.Rat, error) {
 	return rate, nil
 }
 
-func validateAuthConfig(cfg AuthConfig) error {
+func validateNATSStreams(cfg NATSConfig) error {
+	if err := validateWebhookStream(cfg.WebhookStream); err != nil {
+		return err
+	}
+	return validateWorkerEventStream(cfg.WorkerEventStream)
+}
+
+func validateBootstrapConfig(cfg BootstrapConfig) error {
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "bootstrap.workspace_name", value: cfg.WorkspaceName},
+		{name: "bootstrap.organization_name", value: cfg.OrganizationName},
+		{name: "bootstrap.workspace_external_id", value: cfg.WorkspaceExternalID},
+		{name: "bootstrap.user_external_id", value: cfg.UserExternalID},
+		{name: "bootstrap.user_email", value: cfg.UserEmail},
+		{name: "bootstrap.user_name", value: cfg.UserName},
+		{name: "bootstrap.api_key_external_id", value: cfg.APIKeyExternalID},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("%s is required", field.name)
+		}
+	}
+	address, err := mail.ParseAddress(cfg.UserEmail)
+	if err != nil || address.Address != cfg.UserEmail {
+		return errors.New("bootstrap.user_email must be a valid email address")
+	}
+	return nil
+}
+
+func validateAuthConfig(environment string, cfg AuthConfig) error {
+	for _, domain := range cfg.AllowedEmailDomains {
+		valid, _ := regexp.MatchString(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`, domain)
+		if !valid || len(domain) > 253 {
+			return errors.New("auth.allowed_email_domains must contain exact email domains without @ or wildcards")
+		}
+	}
+
 	if cfg.ConsoleURL != "" {
 		u, err := url.Parse(cfg.ConsoleURL)
-		if err != nil || u.Hostname() == "" || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-			return errors.New("auth.console_url must be an HTTPS origin without userinfo, path, query or fragment")
+		if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+			return errors.New("auth.console_url must be an HTTP(S) origin without userinfo, path, query or fragment")
+		}
+		switch u.Scheme {
+		case "https":
+		case "http":
+			if environment != EnvironmentDev {
+				return errors.New("auth.console_url must use HTTPS outside env dev")
+			}
+		default:
+			return errors.New("auth.console_url must be an HTTP(S) origin without userinfo, path, query or fragment")
 		}
 	}
 	if cfg.SMTP.Addr == "" && cfg.SMTP.Username == "" && cfg.SMTP.Password == "" {
@@ -481,6 +533,9 @@ func validatePositiveValues(cfg Config) error {
 	}
 	if cfg.Tunnel.CommandStream.MaxMsgs != -1 && cfg.Tunnel.CommandStream.MaxMsgs <= 0 {
 		return errors.New("tunnel.command_stream.max_msgs must be -1 or greater than zero")
+	}
+	if _, err := cfg.RuntimeCost.HourlyUSD(); err != nil {
+		return err
 	}
 	return nil
 }

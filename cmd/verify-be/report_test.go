@@ -2,9 +2,28 @@ package main
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestSkillLoadingVerdictRequiresBothModes(t *testing.T) {
+	selected := scenarios["chat.skills-loading"]
+	for _, stage := range []string{"skill_loading_brain", "skill_loading_sandbox"} {
+		t.Run(stage, func(t *testing.T) {
+			if !slices.Contains(selected.Stages, stage) {
+				t.Fatal("Skill runtime mode removed from required coverage")
+			}
+			incomplete := selected
+			incomplete.Stages = slices.DeleteFunc(slices.Clone(selected.Stages), func(value string) bool { return value == stage })
+			output := testOutput(t, incomplete, []testEvent{{Test: selected.Test, Action: "pass"}, {Action: "pass"}}, true)
+			result, err := evaluate(strings.NewReader(output), 0, selected)
+			if err != nil || result.Status != "fail" || !slices.Equal(result.MissingStages, []string{stage}) {
+				t.Fatalf("missing Skill evidence accepted: %+v %v", result, err)
+			}
+		})
+	}
+}
 
 func TestEvaluateRejectsIncompleteRuns(t *testing.T) {
 	selected := scenarios["chat.roundtrip"]

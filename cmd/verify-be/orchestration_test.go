@@ -86,7 +86,7 @@ func TestEnvironmentCleanupOwnershipAndFailure(t *testing.T) {
 				t.Setenv("CLEANUP_FAIL", "1")
 			}
 			directory := t.TempDir()
-			for _, file := range []string{"config.json", "jwt.pem", "server", "server.pid", "report.md"} {
+			for _, file := range []string{"config.json", "jwt.pem", "brain-claim-token", "server", "server.pid", "report.md"} {
 				if err := os.WriteFile(filepath.Join(directory, file), []byte("private"), 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -105,7 +105,7 @@ func TestEnvironmentCleanupOwnershipAndFailure(t *testing.T) {
 			if workerIndex < 0 || downIndex <= workerIndex || !strings.Contains(string(data), "label=com.docker.compose.project=test-owned-run") {
 				t.Fatalf("unsafe cleanup sequence: %s", data)
 			}
-			for _, file := range []string{"config.json", "jwt.pem", "server", "server.pid"} {
+			for _, file := range []string{"config.json", "jwt.pem", "brain-claim-token", "server", "server.pid"} {
 				if _, err := os.Stat(filepath.Join(directory, file)); !os.IsNotExist(err) {
 					t.Fatalf("secret remains %s: %v", file, err)
 				}
@@ -250,7 +250,7 @@ func TestGoToolStderrDoesNotCorruptTestEvidence(t *testing.T) {
 	if err := os.WriteFile(evidence, []byte(events), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\nprintf 'go: downloading example.test/module v1.0.0\\n' >&2\ncat \"$VERIFY_TEST_EVENTS\"\n"
+	script := "#!/bin/sh\n[ \"$1\" = test ] && [ \"$2\" = -tags=integration ] || exit 37\nprintf 'go: downloading example.test/module v1.0.0\\n' >&2\ncat \"$VERIFY_TEST_EVENTS\"\n"
 	if err := os.WriteFile(filepath.Join(directory, "go"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -309,5 +309,41 @@ func TestFilesEnvironmentLimits(t *testing.T) {
 	}
 	if cfg.Storage.MaxFileBytes != 65536 || cfg.Storage.WorkspaceLimitBytes != 98304 {
 		t.Fatalf("Files limits=%+v", cfg.Storage)
+	}
+}
+
+func TestEnvironmentConfigWritesBrainClaimTokenOnlyForBrainScenarios(t *testing.T) {
+	for _, brain := range []bool{false, true} {
+		t.Run(stringBool(brain), func(t *testing.T) {
+			fakeDocker(t)
+			directory := t.TempDir()
+			env := newEnvironment(directory, directory, "test-brain-config")
+			env.brain = brain
+			if err := env.writeConfig(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			defer env.close()
+			data, err := os.ReadFile(filepath.Join(directory, "config.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cfg struct {
+				CodeSession map[string]string `json:"code_session"`
+			}
+			if err := json.Unmarshal(data, &cfg); err != nil {
+				t.Fatal(err)
+			}
+			tokenFile, configured := cfg.CodeSession["brain_claim_token_file"]
+			_, statErr := os.Stat(filepath.Join(directory, "brain-claim-token"))
+			if configured != brain || (statErr == nil) != brain {
+				t.Fatalf("brain=%t configured=%t token file err=%v", brain, configured, statErr)
+			}
+			if brain {
+				token, err := os.ReadFile(tokenFile)
+				if err != nil || len(token) < 32 {
+					t.Fatalf("brain claim token too short: %d %v", len(token), err)
+				}
+			}
+		})
 	}
 }

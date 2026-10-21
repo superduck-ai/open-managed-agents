@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -29,34 +31,29 @@ func TestSessionRejectsInvalidUserContentBlocks(t *testing.T) {
 	}
 }
 
-func TestSessionMessageIsAcceptedOnceAtServerTime(t *testing.T) {
+func TestSessionMessageQueuesUntilWorkerProcessing(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("message-acceptance"))
-	worker, _ := newPayloadIntegrationSession(t, app)
-	path := "/v1/sessions/" + worker.SessionExternalID + "/events?beta=true"
+	worker, epoch := newPayloadIntegrationSession(t, app)
 	message := `{"type":"user.message","processed_at":"2000-01-01T00:00:00Z","content":[{"type":"text","text":"hello"}]}`
-	before := time.Now().UTC()
 	accepted := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[`+message+`]}`, defaultTestKey)
-	after := time.Now().UTC()
-	if len(accepted.Data) != 1 {
-		t.Fatalf("accepted events = %s", accepted.Data)
+	if len(accepted.Data) != 1 || sessionInputProcessedAt(t, accepted.Data[0]) != "" {
+		t.Fatalf("input not queued: %s", accepted.Data)
 	}
-	input := accepted.Data[0]
-	processed, err := time.Parse(time.RFC3339Nano, sessionInputProcessedAt(t, input))
-	if err != nil || processed.Before(before) || processed.After(after) {
-		t.Fatalf("processed_at = %s, server window [%s, %s]: %v", sessionInputProcessedAt(t, input), before, after, err)
-	}
+	before := time.Now().UTC()
+	consumePublicInput(t, app, worker, epoch, sessionEventStringField(t, accepted.Data[0], "id"))
 	history := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.message", defaultTestKey)
-	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) != sessionInputProcessedAt(t, input) {
-		t.Fatalf("response and history processing times differ: %s / %s", input, history.Data)
+	processed, err := time.Parse(time.RFC3339Nano, sessionInputProcessedAt(t, history.Data[0]))
+	if err != nil || processed.Before(before) || processed.After(time.Now().UTC()) {
+		t.Fatalf("invalid processing time: %s", history.Data)
 	}
-	baseline := listSessionEvents(t, app, worker.SessionExternalID, "", defaultTestKey)
-	busy := doSessionRequest(t, app, http.MethodPost, path, strings.NewReader(`{"events":[`+message+`]}`), defaultTestKey, true)
-	assertError(t, busy, http.StatusConflict, "conflict_error")
-	batch := doSessionRequest(t, app, http.MethodPost, path, strings.NewReader(`{"events":[{"type":"system.message","content":[{"type":"text","text":"marker"}]},`+message+`]}`), defaultTestKey, true)
-	assertError(t, batch, http.StatusConflict, "conflict_error")
-	all := listSessionEvents(t, app, worker.SessionExternalID, "", defaultTestKey)
-	if len(all.Data) != len(baseline.Data) {
-		t.Fatalf("rejected requests persisted events: %s", all.Data)
+	queued := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[`+message+`,`+message+`]}`, defaultTestKey)
+	if len(queued.Data) != 2 {
+		t.Fatalf("batch not accepted: %s", queued.Data)
+	}
+	for _, event := range queued.Data {
+		if sessionInputProcessedAt(t, event) != "" {
+			t.Fatalf("queued input already processed: %s", event)
+		}
 	}
 }
 
@@ -217,6 +214,9 @@ func TestSessionPendingToolRulesMatchAcceptance(t *testing.T) {
 				putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"requires_action"}`)
 				putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"idle"}`)
 			}
+			if !tc.all {
+				postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch, `{"type":"result","uuid":"no-pending-result","is_error":false}`))
+			}
 			for kind, pending := range map[string]bool{"session.status_idle": tc.all, "session.thread_status_idle": tc.primary} {
 				events := listSessionEvents(t, app, worker.SessionExternalID, "types[]="+kind+"&order=desc", defaultTestKey)
 				if len(events.Data) != 1 {
@@ -242,14 +242,14 @@ func TestSessionPendingToolRulesMatchAcceptance(t *testing.T) {
 			body := `{"events":[{"type":"user.message","content":[{"type":"text","text":"next"}]}]}`
 			if tc.primary {
 				resp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+worker.SessionExternalID+"/events?beta=true", strings.NewReader(body), defaultTestKey, true)
-				assertError(t, resp, http.StatusConflict, "conflict_error")
+				assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 				if events := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.message", defaultTestKey); len(events.Data) != 0 {
 					t.Fatalf("rejected input persisted: %s", events.Data)
 				}
 			} else {
 				sent := sendSessionEvents(t, app, worker.SessionExternalID, body, defaultTestKey)
-				if sessionInputProcessedAt(t, sent.Data[0]) == "" {
-					t.Fatalf("accepted input has no processing time: %s", sent.Data[0])
+				if sessionInputProcessedAt(t, sent.Data[0]) != "" {
+					t.Fatalf("queued input already processed: %s", sent.Data[0])
 				}
 			}
 		})
@@ -271,6 +271,11 @@ func TestSessionIdleReasonChangesAreNotDeduplicated(t *testing.T) {
 			t.Fatal(err)
 		}
 		for range 2 {
+			if i < 2 {
+				putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"requires_action"}`)
+			} else {
+				postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch, `{"type":"result","uuid":"reasons-complete","is_error":false}`))
+			}
 			putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"idle"}`)
 		}
 		if i == 2 {
@@ -296,6 +301,10 @@ func TestSessionStatusRespectsOtherThreads(t *testing.T) {
 		t.Fatalf("primary idle ended active child: %s", status)
 	}
 	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch, `{"type":"session.thread_status_terminated","id":"sevt_child_terminated","uuid":"child-terminated","session_thread_id":`+quoteJSON(childID)+`}`))
+	if status := retrieveSession(t, app, worker.SessionExternalID, defaultTestKey).Status; status != "running" {
+		t.Fatalf("child termination ended unfinished primary: %s", status)
+	}
+	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch, `{"type":"result","uuid":"primary-result","is_error":false}`))
 	if status := retrieveSession(t, app, worker.SessionExternalID, defaultTestKey).Status; status != "idle" {
 		t.Fatalf("child termination should leave idle primary available: %s", status)
 	}
@@ -313,7 +322,7 @@ func TestSessionStatusRespectsOtherThreads(t *testing.T) {
 
 func TestSessionHistoryFiltersByProcessingTimeAndDefaultsToChronologicalOrder(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("history-creation-filter"))
-	worker, _ := newPayloadIntegrationSession(t, app)
+	worker, epoch := newPayloadIntegrationSession(t, app)
 	sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"first"}]}]}`, defaultTestKey)
 	if bytes.Contains(sent.Data[0], []byte(`"created_at"`)) {
 		t.Fatalf("session event response exposed created_at: %s", sent.Data[0])
@@ -327,7 +336,9 @@ func TestSessionHistoryFiltersByProcessingTimeAndDefaultsToChronologicalOrder(t 
 		t.Fatal("accepted event should keep creation time only in its record")
 	}
 	// Claude's created_at query filters compare against processed_at, despite the parameter name.
-	cutoff, err := time.Parse(time.RFC3339Nano, sessionInputProcessedAt(t, sent.Data[0]))
+	consumePublicInput(t, app, worker, epoch, inputID)
+	processed := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.message", defaultTestKey)
+	cutoff, err := time.Parse(time.RFC3339Nano, sessionInputProcessedAt(t, processed.Data[0]))
 	if err != nil {
 		t.Fatal(err)
 	}

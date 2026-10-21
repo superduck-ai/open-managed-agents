@@ -4,7 +4,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { retrieveSessionDetailSession } from '../api';
 import type { SessionApiResponse } from '../types';
 import { errorMessage } from '../utils';
-import { sessionStatusIsLive } from './sessionDetailModel';
+import { useSessionFileRefreshInterval } from './useSessionFileRefreshInterval';
 
 export function useSessionResourceRefresh(
   session: SessionApiResponse | null,
@@ -12,14 +12,14 @@ export function useSessionResourceRefresh(
   resourcesVisible: boolean,
   setSession: Dispatch<SetStateAction<SessionApiResponse | null>>,
 ) {
-  const running = Boolean(session && sessionStatusIsLive(session.status) && !session.archived_at);
+  const fileRefreshInterval = useSessionFileRefreshInterval(session, workspaceId);
   const sessionId = session?.id;
   const { data, error, refetch } = useQuery({
     queryKey: ['session-resources', workspaceId, sessionId],
     queryFn: () => retrieveSessionDetailSession(sessionId!, workspaceId),
     select: (response) => response.resources,
     enabled: Boolean(sessionId),
-    refetchInterval: running ? 3000 : resourcesVisible ? 10000 : false,
+    refetchInterval: fileRefreshInterval || (resourcesVisible ? 10000 : false),
     refetchOnWindowFocus: true,
     retry: false,
   });

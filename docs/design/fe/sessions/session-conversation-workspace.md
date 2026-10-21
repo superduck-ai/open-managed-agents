@@ -15,6 +15,7 @@ Sessions 列表点击「创建会话」并提交成功后，直接进入刚创�
 - Session 列表使用独立的 TanStack Table + shadcn Table，以 `ID / Name / Status / Agent / Cost / Tokens in-out / Created` 排列，行高 44px、表头 36px，采用细分隔线与 hover 反馈。Agent 优先展示快照或已加载 Agent 列表中的名称和版本，未知时使用真实 ID。ID/Name 链接打开完整会话，行内非交互区域打开快速查看。Cost 保留现有计算，并提示公开定价口径；未知用量和费用保持 `—`。加载使用同尺寸 Skeleton；无会话、无匹配结果和请求失败分别提供创建、重置筛选和重试入口。
 - 搜索框移除重复的 ID 前缀；输入完整 `sesn_*` ID 且当前页没有该条目时，防抖 300ms 后按 Workspace 调用 retrieve，在原列表位置显示找到的会话，查询期间展示 Skeleton，找不到或失败时展示错误和重试。按 ID 获取的结果独立于列表分页，查询期间隐藏分页；清除搜索恢复原列表页和筛选。Created/Agent/Deployment/Status 继续使用现有筛选参数和状态预设。
 - 列表行尾提供可见的「快速查看」按钮，菜单也提供「快速查看」和「进入对话」。预览使用 shadcn Sheet，读取当前 Workspace 下的 Session 元数据和最新 20 条事件，按后端返回顺序反向展示为正序，不导航、不重置列表筛选、选择或分页。提供加载、错误、空活动与刷新状态；关闭时中止事件请求并忽略迟到结果。切换 Workspace 时关闭预览，禁止将旧预览带入新作用域。
+- 快速查看的「对话预览」复用 Session 转录模型的 `platformTranscriptFiltering`，在最新 20 条事件范围内展示消息正文、可展开的灰色思考和工具名称/路径/命令摘要；消息使用现有 Markdown 组件。用量、正常模型请求和线程状态等内部事件不逐条展示，执行错误仍可见。消息间使用留白，不添加逐条分隔线，Header/Footer 也不增加横线。窗口内只有内部事件时明确提示进入完整会话查看历史，与从未有活动的空状态区分；这不是完整轮次加载或 Claude 的轮次切换功能。
 - 预览中可复制完整 ID、打开关联 Agent/Environment/Deployment，或进入完整对话。预览只展示近期活动，不在 Sheet 中发送消息或建立 SSE；完整历史、流式转录与审批仍由 Session Viewer 承担。已归档、terminated 或 deleted Session 的按钮使用「查看会话」。
 - 可接收消息的空会话显示 shadcn Empty「开始对话」状态，「输入消息」聚焦该 Viewer 的 Composer。归档或终止会话保留只读空状态；发送、停止与工具审批的 API 合同不变。
 
@@ -40,7 +41,7 @@ Viewer 包含两个区域：
 ## 转录与对齐
 
 - Session 与每条可见子 Thread 都先建立 SSE 订阅，再从第一页扫完事件历史；扫描期间继续接收实时帧。SSE 正常结束、报错、建连超时或流空闲超时后清理未完成预览，退避重连并重新扫全量历史。流已结束时取消尚未完成的本次历史请求，下一次订阅重新扫描；中断的扫描不能留下可用于跳页的游标或“历史已完整”标记。手动刷新实时 Session 也重新订阅并扫描历史。永久停流的子 Thread 结束加载状态。历史与 SSE 按 JSON 事件 ID 合并，重复事件只展示一次；持久事件与对应的 `event_start`、`event_delta` 帧都展示同一个 `id:`，但 `id:` 不用作 `Last-Event-ID` 回放游标。Thinking 与文本是两组独立的事件 ID。
-- 同 ID 的最终 `agent.message` / `agent.thinking` 通过 SSE 或历史同步到达时，清除对应的临时 delta 帧，由最终事件的完整内容接管展示；已完成的事件不再接受迟到的预览开始。`span.model_request_end.event_ids` 仅清理所列 ID 的未完成预览。不同 ID 的 Worker echo 属于 #393，前端不猜测它与预览的对应关系。
+- 同 ID 的最终 `agent.message` / `agent.thinking` 通过 SSE 或历史同步到达时，清除对应的临时 delta 帧；`agent.message` 由最终正文接管展示，`agent.thinking` 只保留状态摘要。已完成的事件不再接受迟到的预览开始。`span.model_request_end.event_ids` 仅清理所列 ID 的未完成预览。不同 ID 的 Worker echo 属于 #393，前端不猜测它与预览的对应关系。
 - Transcript 内容列、待处理 Action Card 和消息输入框共享最大 `720px` 的居中内容轨道。
 - 三者在窄容器中使用相同的 `16px` 水平留白；滚动条采用覆盖式自动隐藏样式，不允许通过 Composer 或 Action Card 的伪滚动容器预留 gutter。左右边界必须逐像素一致。
 - 转录先按未过滤的事件流建立 speaker turn，再按 model request bracket 建立 iteration，最后应用搜索；搜索不得把原本由 User、idle、outcome、status 或 speaker 变化分开的 turn 重新合并。
@@ -49,12 +50,12 @@ Viewer 包含两个区域：
 - User 使用 `session-speaker-user/10` 角色色背景和 `0.5px session-border` 的轻量 panel bubble，圆角 `10px`、水平内边距 `11px`、垂直内边距 `6px`；Bubble 高度由正文自然决定，不设置会在单行正文下方制造额外空白的固定最小高度。Agent 名称和时间在连续 turn 中只展示一次；每个 Agent iteration 使用 `10px` 圆角、`0.5px` 语义边框、`10px 4px` 内边距和 `5px` 间距，Agent text、Thinking 和 Tool Call 在 panel 内保持 `6px 2px` 行内节奏。idle、outcome 和 status 等系统边界保持全宽，不伪装成对话气泡。
 - Agent 标签使用 `session-speaker-agent` 主题变量，User 标签使用 `session-speaker-user`；两个变量必须同时定义浅色和深色值，不使用 chart token 或硬编码颜色冒充领域语义。
 - Agent 消息在流式增量到达时和完成后共用 `react-markdown` 与 `remark-gfm` 渲染 CommonMark/GFM；每次增量更新当前 Markdown，结束时由最终事件内容接管，不从纯文本切换渲染方式。支持标题、有序/无序/嵌套列表、引用、任务列表、删除线、表格、代码、链接和 Markdown 图片。原始 HTML 不解析；URL 只允许 HTTP(S)、邮件、页内锚点与站内根路径；代码块复用现有 Highlight.js 渲染。单条正文按生产 JS 的 UTF-16 `length/slice` 语义最多渲染前 `50,000` 个字符，超限时显示原始总字符数；普通 Markdown 与 fenced code 在流式和完成态均使用同一上限。
-- Agent 正文与 Thinking 摘要都复用 shadcn `Bubble/BubbleContent`；iteration 内使用无额外卡片层级的 `ghost` variant，正文保持 Markdown 语义，Thinking 使用紧凑的 ghost Button。Thinking 保留单行斜体摘要 `Thought for {duration}` 或 `Thinking…`，思考流式输出时展开 Markdown 正文，实时 delta 更新内容；最终事件到达后用完整内容替换并自动折叠，历史思考默认折叠，点击摘要可展开或收起。思考正文在明暗主题下均使用灰色 muted-foreground，包括 Markdown 子元素。无正文或 redacted thinking 仅显示摘要，不展示签名或加密数据。
+- Agent 正文与 Thinking 摘要都复用 shadcn `Bubble/BubbleContent`；iteration 内使用无额外卡片层级的 `ghost` variant，正文保持 Markdown 语义，Thinking 使用紧凑的 ghost Button。Thinking 保留单行斜体摘要 `Thought for {duration}` 或 `Thinking…`。新 thinking 块在开始时发布无正文状态，不传 thinking 内容 delta，结束由原 model request bracket 收敛；相同 ID 的 Worker 预览、回传与重试保持同一条记录。改动前存储的带正文 thinking 在读取时由后端隐藏正文，前端仍保留折叠和 Markdown 展示能力，正文在明暗主题下均使用灰色 muted-foreground，包括 Markdown 子元素。无正文或 redacted thinking 仅显示摘要，不展示签名或加密数据。
 - Agent turn 挂载时只要仍是 open 状态，就播放一次 `180ms ease-out` 入场；首次加载和切换 Lane 后重新挂载的 open turn 也会播放，已经闭合的 turn 直接显示最终状态。`prefers-reduced-motion: reduce` 下不播放位移或缩放。
 - 工具调用保持 `24–28px` 的单行结构，展示工具名、截断输入摘要、执行状态和耗时；点击后在 Inspector 的 Events 页签查看原始事件。
 - Transcript 耗时统一优先使用对应语义的明确上报值（包括 `0`），仅在缺失时使用时间差计算。Thinking 优先使用事件上报耗时，缺失时使用请求开始至 Thinking 事件的时间差，与 `Thought for {duration}` 摘要共用取值；Agent 正文优先使用上报的模型请求耗时，其次使用事件上报耗时，均缺失时使用模型请求总时间差。没有模型请求记录的独立 Agent 消息仍在标题行展示已知耗时。事件执行耗时在解析时拒绝负数及非有限值，保留有效的零值。工具优先使用有效的结果事件上报耗时，其次使用有效的调用事件上报耗时，均缺失或无效时根据确认（若有）或调用事件至结果事件的 `processed_at` 时间差计算，不含确认前的等待时间。Inspector 工具调用表格与详情也区分明确的零值和未知值。并行工具分组展示已知执行耗时的最大值。缺失耗时保留为未知并隐藏标签，明确上报的 `0` 仍显示为零；进行中的模型内容不显示伪造的零耗时。耗时悬浮提示与可见数字使用同一数值。
 - Markdown 的交互链接不能嵌套在事件选择按钮中；正文链接保持自身语义，事件选择使用独立可访问控件。
-- 原始事件审计统一位于 Inspector Events，固定使用 `Event / Preview / Time` 三列，并对事件 namespace 做轻量着色。
+- 原始事件审计统一位于 Inspector Events，固定使用 `Event / Preview / Time` 三列，并对事件 namespace 做轻量着色。前端由 `event_start` 生成的未完成流式占位（`is_streaming: true` 且无 `processed_at`）只参与 Transcript 实时渲染，不列为独立审计事件；正式消息到达后按服务端事件展示，避免占位与正式消息同时出现为两条 `agent.message`。实际未处理的输入事件仍显示 `queued`。
 
 ## 滚动与高度
 
@@ -120,6 +121,28 @@ flowchart LR
 - 通过附件按钮选择多个本地文件，可移除待发送附件，也允许仅附件发送。发送时依次上传到 Files API，再调用 Session resources add 挂载到 `/attachments/{随机 ID}/{文件名}`；每个文件路径独立，同名文件不会相互覆盖。上传名与挂载名统一替换控制字符（Unicode Cc）、路径分隔符和上传接口禁止的文件名字符，空名及点路径使用 `file`；保留原始附件标签、文件内容、类型和修改时间。未挂载附件重试时重新计算合法挂载路径，也可修复已有上传 metadata 的非法路径，继续复用 file ID。消息文本附带 `/mnt/session/uploads/attachments/{随机 ID}/{文件名}`，让 Agent 通过工具读取文件，不改变 `user.message` 文本事件合同。挂载成功后刷新资源及 Files 选择缓存。上传、挂载或发送失败时保留文本与附件；重试复用已成功上传的 file ID 和已完成的挂载，避免重复操作。切换 workspace/session 后清空当前输入状态。
 - 无文本且无附件、发送中、已归档、已终止或已删除的 Session 不能发送；只有 idle 或初始 queued Session 可提交新消息。运行期间保留输入框草稿，但 Send 和 Enter 不发请求；草稿只在当前页面内存中，刷新后丢失。本次不增加客户端待发队列或自动重发。
 - running、queued 或 rescheduled Session 显示停止按钮，并通过既有 `user.interrupt` 合同停止。
+- `user.interrupt` 是控制事件，在用户消息命名空间分类之前归为状态，不生成 User 气泡或原始 JSON 正文。对话中的中断提示在请求未处理或本轮尚未回到 idle 时显示「正在停止」，已处理且观察到同一执行范围的 idle 后显示中性的方形图标、「已停止」与「已由用户停止」。停止请求成功仅表示已提交中断，Composer 保持停止按钮禁用，直到服务端确认 Session 不再运行；请求失败恢复重试，草稿不清空。
+- 模型请求取消与执行失败分开：以 `model_request_start_id` 关联请求，用同一轮、同一线程中已处理的 `user.interrupt` 确认 `cancelled`，转录展示「已中断」，不显示红色错误标记。全局中断覆盖当前各线程，指定线程中断只影响该线程。完整 Session 事件来自主线程和子线程缓存的分段合并；按事件时间排序并计算中断请求集合后，将同一只读集合传给各 lane，不能在 lane 局部数组中重新判定全局停止，也不向子 lane 复制全局停止展示行；未处理的停止请求、没有匹配请求、仅有 `end_turn`、其他线程或下一轮的中断不能消除错误。真实 `session.error` 和非取消的模型失败继续展示；模型失败不再标为「模型请求完成」。展示状态独立于原始事件，Debug/复制 JSON 保留 `is_error` 与 `error` 字段。
+- 工具结果严格识别 Claude 的两种明确中断文案与 `is_error=true`，展示中性的「已中断」而非失败。普通错误仍为失败；权限拒绝为「已拒绝」，审批尚未处理时继续等待，普通工具显示「等待审批」，自定义工具显示「等待结果」。普通自定义工具的等待卡片仅提示等待结果，不提供错误的审批按钮；AskUserQuestion 继续使用问卷。转录、工具详情、Inspector 表格复用状态 Badge；Inspector 将中断计入独立结果类别，不计入失败或进行中，并保留其执行耗时。
+- 普通消息 `processed_at` 为空时显示「排队中」，保留消息正文。`requires_action` 与 `budget_reached` 显示「等待操作」／「已达到预算」及对应状态行，不伪装成执行错误；这两种 idle 状态禁止发送普通消息并保留草稿，恢复 running 后清除旧的 idle 原因。重排队、运行、完成与终止均使用独立中英文状态。正常 `end_turn` 仍作为 idle 边界，不额外制造停止事件。
+- 2026-10-14 提供的 `session.har` 包含 Claude 控制台脚本：`1eg5tx4iwbzta.js` 将 interrupt 操作映射为 `{type:"user.interrupt"}`，`0uh2z7eexsgkn.js` 的 `getEventContent` 对该类型返回 null，并通过 `isInterruptedResult` 识别两种明确的工具中断结果。这份 HAR 没有实际停止请求或本地 Session 的错误事件，不能据此确认截图中执行失败的后端原因；原 HAR 与解出的脚本不纳入仓库。
+- Claude 官方 [事件与流式处理](https://platform.claude.com/docs/en/managed-agents/events-and-streaming) 明确区分中断排队、已处理与回到 idle，且 `end_turn` 同时表示自然结束与中断；[线程文档](https://platform.claude.com/docs/en/managed-agents/session-threads) 描述工具中断结果与线程作用域。HAR 的文案目录分别包含 Stopped、Failed、Denied、Needs approval；没有停止后的详情页，不能据此声称此处文案、图标或位置与 Claude 界面逐项一致。本实现复用可核实的状态语义和项目自身的 shadcn 组件。
+
+```mermaid
+stateDiagram-v2
+  [*] --> Running
+  Running --> Stopping: 提交 user.interrupt
+  Stopping --> Stopped: interrupt 已处理且本轮回到 idle
+  Stopped --> Idle: 等待下一条消息
+  Running --> AwaitingAction: requires_action
+  Running --> BudgetPaused: budget_reached
+  AwaitingAction --> Running: 工具审批或结果已处理
+  BudgetPaused --> Running: 服务端确认预算恢复
+  Idle --> Running: 新一轮消息
+```
+
+- 已处理的 `user.interrupt` 关闭当前执行指示；随后落盘的部分消息仍通过显式 `model_request_start_id` 关联原请求。对已确认中断的请求，思考和部分正文使用同一模型请求分组。模型结束先于部分正文到达时，在本次只读构建内保留已结束请求的关联和结束元数据；迟到正文凭显式请求引用回到原分组，并保持已结束状态及用量、耗时，不重新开启执行指示。对话把停止提示放在该执行范围的收尾内容之后、下一条已处理用户消息／新请求／running／rescheduled 之前；idle 先于模型结束到达时也允许收尾事件归位。当前 lane 已有停止提示时，匹配的模型取消行不再重复展示；子 lane 没有全局停止展示行时继续保留其中的模型中断状态。原始事件数组、Debug、Inspector 与时间线的时间戳及顺序不变；真实错误继续保留。工具行和单条／批量详情的同一生命周期只显示一个状态标识。
+- 验收使用 `sessionExecutionState.test.ts`、Session Transcript/Composer/Inspector 及详情页测试覆盖跨轮、跨线程、pending 中断；详情页测试通过分开的 Session/Thread 历史接口加载事件并切换实际 lane，验证全局／指定线程停止、pending 停止、非取消错误和停止后的新请求，避免仅使用扁平数组的误绿。另覆盖无 trailing idle 的停止括号关闭、工具状态去重、取消与真实失败、工具各终态和预算暂停。浏览器模拟 API 事件，点击实际 Stop 按钮，检查浅色／深色／窄屏、停止后继续发送和各状态展示；截图与脚本放在仓库外，不提交 Git。
 - 最新 `session.status_idle.stop_reason` 为 `requires_action` 时，在转录与输入框之间展示 Action Card。普通工具审批发送 `user.tool_confirmation`，AskUserQuestion 答案发送 `user.custom_tool_result`；等待期间禁用普通消息输入框。
 - 用户离开列表底部后停止自动跟随并显示“回到最新事件”；位于底部时继续跟随流式正文增长。发送新消息成功后重新跟随底部，即使随后重连补入更早的历史事件，也应保持最新回复可见；主动上滚阅读历史时不强制拉回底部。
 - Session 最终状态以 SSE/后端响应为准；前端临时状态只用于交互反馈。
@@ -146,5 +169,21 @@ flowchart LR
 
 - `api.test.ts` 覆盖带 session scope 的全分页请求、beta/workspace/cookie/abort signal，以及循环游标终止。
 - `SessionOutputFiles.test.tsx` 覆盖上传文件排除、输出 ID 去重、无输出占位、错误重试与旧卡片保留、作用域切换取消、运行期与 idle 刷新、下载失败恢复及重复点击保护。
-- `SessionDetailPage.scroll.test.tsx` 覆盖卡片位于聊天末尾、关闭 Inspector 后可下载，以及搜索/子线程作用域切换。
+- `SessionDetailPage.scroll.test.tsx` 覆盖文件卡片独立位于所属回复下方、关闭 Inspector 后可下载，以及搜索/子线程作用域切换。
 - 对 React Query 轮询与组件验证，先通过 `bun test --preload ./src/test/setup.ts ...` 初始化 DOM，避免 Query Core 在其他纯工具测试先加载时被缓存为 server mode。
+
+
+### 按回复展示输出文件
+
+聊天区不再在事件列表末尾追加 Session 文件合集。Session 文件查询仍按 workspace/session 缓存、分页、轮询与取消；文件查询失败的重试提示放在消息列表前面，已加载的卡片继续保留。
+
+- 以用户消息划分轮次，将文件 `created_at` 落在本轮起点与下一轮起点之间的输出文件放在本轮最后一条 Agent 消息下，以独立文件框展示，保持间距，不嵌入消息正文或 iteration 的边框内；消息明确引用已有文件的 Markdown 路径链接或代码路径时，该回复也可再次展示该文件。
+- 本轮存在流式消息、未结束的模型请求或正在运行/等待批准的工具时，不展示本轮文件。Session 仍在运行或存在 pending model request 时，最新轮次也不展示文件；历史已结束轮次保持展示。
+- 文件列表和资源路径使用相同的刷新窗口：运行时每 3 秒刷新，运行结束后继续每 1 秒刷新、持续 30 秒，捕获晚于 idle 事件入库的文件。刚结束的 Session 在重新打开页面时也启用该窗口；旧的空闲 Session 不持续轮询，打开资源检查器时保留原有 10 秒刷新。窗口定时器在切换 Session/Workspace、归档和卸载时清理。资源页签不是发现输出文件的必要条件。
+- 文件按 `created_at` 降序，默认展示最新两个；超过两个时使用共享 shadcn Collapsible 展开全部或收起。搜索结果和子线程不投影 Session 主线程的文件合集。
+- 卡片显示文件名、真实 `resources.mount_path`、类型和大小。路径缺失时不从 basename 猜测，避免不同目录的同名文件误关联。
+- Markdown 文件链接按完整路径匹配当前 Session 的可下载文件，支持百分号编码、`sandbox:` 和 `/mnt/user-data/outputs/` 到公开 `/outputs/` 的别名；命中后通过 Files API 下载并保留文件名，继续发送 workspace/beta/cookie 上下文。普通网站链接保持原行为。
+
+现有 Files API 没有 message/turn 归属字段，以上时间区间归属是控制台推断，不是服务端持久化关系；删除或覆盖文件后不能通过该投影还原历史版本。Session resources 的输出投影存在数量上限，超出投影的文件仍按时间展示，但没有真实路径时不提供正文路径映射。后续如需永久、精确的消息附件及版本快照，需要服务端显式的消息与文件版本关系。
+
+`SessionTranscriptView.test.tsx` 验证两轮之间文件留存、流式时隐藏以及结束后归位；`SessionOutputFiles.test.tsx` 验证最新优先与展开/收起；`sessionOutputModel.test.ts` 和 `SessionTranscriptContent.test.tsx` 验证同名路径隔离、编码路径、别名及正文链接下载。

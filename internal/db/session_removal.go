@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"math/big"
+	"slices"
 	"time"
 	"uuid"
 
@@ -12,7 +13,14 @@ import (
 
 type SessionEventChanges struct {
 	Events                []SessionEvent
+	SettledInputEventIDs  []string
 	RetiredCodeSessionIDs []string
+}
+
+func (c SessionEventChanges) WorkerInputEvents() []SessionEvent {
+	return slices.DeleteFunc(slices.Clone(c.Events), func(event SessionEvent) bool {
+		return event.EventType == "user.interrupt" && slices.Contains(c.SettledInputEventIDs, event.ExternalID)
+	})
 }
 
 type SessionRemoval struct {
@@ -52,6 +60,9 @@ func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, w
 
 func (d *DB) retireSessionWorkersTx(ctx context.Context, executor yourbatis.Executor, removal *SessionRemoval) error {
 	session := removal.Session
+	if err := NewEnvironmentWorkMapper(executor).StopWithoutSandbox(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID); err != nil {
+		return err
+	}
 	ids, err := NewCodeSessionMapper(executor).TerminateBySession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID)
 	if err != nil {
 		return err

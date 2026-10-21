@@ -1,0 +1,90 @@
+diff --git a/cmd/verify-be/report.go b/cmd/verify-be/report.go
+index f742d4c..023cc35 100644
+--- a/cmd/verify-be/report.go
++++ b/cmd/verify-be/report.go
+@@ -56,13 +56,14 @@
+-	"files.lifecycle":   {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesLifecycle", Stages: []string{"upload_stored", "metadata_and_listing", "download_bytes_match", "deleted_objects_absent"}, Description: "上传和对象字节一致、元数据与列表、可下载文件内容一致、删除及对象清理"},
+-	"files.isolation":   {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesIsolation", Stages: []string{"tenant_access_denied", "owner_data_unchanged"}, Description: "同组织跨工作区及跨组织的读取、下载、列表、删除隔离"},
+-	"files.invalid":     {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesInvalid", Stages: []string{"invalid_uploads_rejected", "quota_rollback_verified", "valid_upload_after_rejection"}, Description: "鉴权、无效上传、大小限制、配额拒绝与对象回滚，失败后仍能正常上传"},
+-	"files.storage":     {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesStorage", Stages: []string{"missing_object_rejected", "background_object_cleanup", "storage_permissions_rejected", "storage_disconnect_recovered", "multipart_abort_cleaned", "versioned_objects_cleaned"}, Description: "真实 MinIO 错误与后台清理、权限拒绝、断连恢复、分片中断及版本删除"},
+-	"chat.performance":  {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatPerformance", Stages: []string{"fixed_load_completed", "performance_history_verified"}, Description: "固定串行负载，测量接收、首片段、最终回复及空闲延迟，并可比较基线"},
+-	"chat.instances":    {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatInstances", Stages: []string{"cross_instance_preview_final", "cross_instance_history"}, Description: "两个真实后端实例间的流式广播、最终回复及历史一致性"},
+-	"chat.public":       {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatPublicStart", Stages: []string{"public_runner_error_recovered", "public_session_started", "public_runner_roundtrip", "public_runner_multiple_work"}, Description: "公开创建会话，后台 Runner 连续领取工作，经本地 Docker 沙箱完成聊天"},
+-	"chat.reliability":  {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatReliability", Stages: []string{"busy_input_rejected", "worker_consumers_recreated", "worker_stream_reconnected", "midstream_history_recovered", "public_stream_reconnected", "public_history_reconciled", "busy_input_retried", "worker_restarted", "archive_consumers_reclaimed"}, Description: "忙时拒绝与重试、Worker 重连与重启、公开 SSE 重订阅和历史对账、Session 归档回收 consumer"},
+-	"chat.brain":        {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatBrain", Stages: []string{"brain_fencing", "brain_roundtrip", "brain_mcp_loop", "brain_takeover", "brain_retirement", "brain_lazy_denied", "brain_lazy_text", "brain_lazy_tool", "brain_lazy_cleanup"}, Description: "真实 Rust brain、NATS、多节点租约、沙箱 MCP 与检查点恢复"},
+-	"chat.brain-skills": {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatBrainSkills", Stages: []string{"brain_skills_catalog", "brain_skills_read", "brain_skills_readonly", "brain_skills_snapshot", "brain_skills_cleanup"}, Description: "Brain 分层提示词、无沙箱 Skill 目录、真实 MCP 读取、只读挂载和固定版本"},
+-	"chat.brain-memory": {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatBrainMemory", Stages: []string{"brain_memory_loaded"}, Description: "Brain Memory 目录发现、拒绝与批准 Read、真实 MCP/FUSE 读取及沙箱复用"},
+-	"chat.roundtrip":    {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatRoundtrip", Stages: []string{"sse_connected", "input_submitted", "preview_and_final_match", "history_recovered", "idle_and_drained"}, Description: "消息发送、中文流式预览、最终回复、历史恢复和队列清空"},
+-	"chat.tools":        {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatTools", Stages: []string{"malformed_tool_rejected", "tool_denied", "tool_allowed"}, Description: "拒绝非法参数工具，核对 SSE/历史关联，再通过 Go SDK 拒绝/允许 Write 并核对副作用和队列清空"},
++	"files.lifecycle":     {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesLifecycle", Stages: []string{"upload_stored", "metadata_and_listing", "download_bytes_match", "deleted_objects_absent"}, Description: "上传和对象字节一致、元数据与列表、可下载文件内容一致、删除及对象清理"},
++	"files.isolation":     {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesIsolation", Stages: []string{"tenant_access_denied", "owner_data_unchanged"}, Description: "同组织跨工作区及跨组织的读取、下载、列表、删除隔离"},
++	"files.invalid":       {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesInvalid", Stages: []string{"invalid_uploads_rejected", "quota_rollback_verified", "valid_upload_after_rejection"}, Description: "鉴权、无效上传、大小限制、配额拒绝与对象回滚，失败后仍能正常上传"},
++	"files.storage":       {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesStorage", Stages: []string{"missing_object_rejected", "background_object_cleanup", "storage_permissions_rejected", "storage_disconnect_recovered", "multipart_abort_cleaned", "versioned_objects_cleaned"}, Description: "真实 MinIO 错误与后台清理、权限拒绝、断连恢复、分片中断及版本删除"},
++	"chat.performance":    {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatPerformance", Stages: []string{"fixed_load_completed", "performance_history_verified"}, Description: "固定串行负载，测量接收、首片段、最终回复及空闲延迟，并可比较基线"},
++	"chat.instances":      {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatInstances", Stages: []string{"cross_instance_preview_final", "cross_instance_history"}, Description: "两个真实后端实例间的流式广播、最终回复及历史一致性"},
++	"chat.public":         {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatPublicStart", Stages: []string{"public_runner_error_recovered", "public_session_started", "public_runner_roundtrip", "public_runner_multiple_work"}, Description: "公开创建会话，后台 Runner 连续领取工作，经本地 Docker 沙箱完成聊天"},
++	"chat.reliability":    {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatReliability", Stages: []string{"busy_input_rejected", "worker_consumers_recreated", "worker_stream_reconnected", "midstream_history_recovered", "public_stream_reconnected", "public_history_reconciled", "busy_input_retried", "worker_restarted", "archive_consumers_reclaimed"}, Description: "忙时拒绝与重试、Worker 重连与重启、公开 SSE 重订阅和历史对账、Session 归档回收 consumer"},
++	"chat.brain-dsh-live": {Package: testPackage, Timeout: 8 * time.Minute, Test: "TestChatBrainDshLive", Stages: []string{"dsh_live_approved_tool", "dsh_live_history_takeover", "dsh_live_ccr_modified_input", "dsh_live_inflight_no_replay"}, Description: "Bun dsh with an explicit real model, approvals, CCR replacement input and SIGKILL recovery"},
++	"chat.brain":          {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatBrain", Stages: []string{"brain_fencing", "brain_roundtrip", "brain_mcp_loop", "brain_takeover", "brain_retirement", "brain_lazy_denied", "brain_lazy_text", "brain_lazy_tool", "brain_lazy_cleanup"}, Description: "真实 Rust brain、NATS、多节点租约、沙箱 MCP 与检查点恢复"},
++	"chat.brain-skills":   {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatBrainSkills", Stages: []string{"brain_skills_catalog", "brain_skills_read", "brain_skills_readonly", "brain_skills_snapshot", "brain_skills_cleanup"}, Description: "Brain 分层提示词、无沙箱 Skill 目录、真实 MCP 读取、只读挂载和固定版本"},
++	"chat.brain-memory":   {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatBrainMemory", Stages: []string{"brain_memory_loaded"}, Description: "Brain Memory 目录发现、拒绝与批准 Read、真实 MCP/FUSE 读取及沙箱复用"},
++	"chat.roundtrip":      {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatRoundtrip", Stages: []string{"sse_connected", "input_submitted", "preview_and_final_match", "history_recovered", "idle_and_drained"}, Description: "消息发送、中文流式预览、最终回复、历史恢复和队列清空"},
++	"chat.tools":          {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatTools", Stages: []string{"malformed_tool_rejected", "tool_denied", "tool_allowed"}, Description: "拒绝非法参数工具，核对 SSE/历史关联，再通过 Go SDK 拒绝/允许 Write 并核对副作用和队列清空"},
+@@ -290,1 +291,1 @@
+-		out.WriteString("Coverage: public API, production Runner, real Rust Brain process, PostgreSQL, Redis, JetStream and sandbox MCP with actual FUSE mounts. skills-loading additionally runs the real Claude Worker. Only the upstream model is scripted. See required proofs for mode-specific allocation and loading behavior. Real-model Skill selection, cloud allocation, network partitions and performance are not verified.\n\n")
++		out.WriteString(brainCoverage(r.Scenario))
+@@ -325,0 +327,7 @@
++
++func brainCoverage(scenario string) string {
++	if scenario == "chat.brain-dsh-live" {
++		return "Coverage: real model through explicitly configured OMA, production backend HTTP, PostgreSQL, Redis, three-node NATS and Docker MCP. Bun embeds the original dsh loop. Public allow confirmation, history restoration after SIGKILL and inflight tool crash are checked. Parameter replacement is injected as a CCRv2 reply over JetStream because public updated_input returns HTTP 400. Its private turn completes, but the public approval remains pending until session termination; public approval editing is not verified. No upstream responses are scripted.\n\n"
++	}
++	return "Coverage: public API, production Runner, real Brain process, PostgreSQL, Redis, JetStream and sandbox MCP with actual FUSE mounts. skills-loading additionally runs the real Claude Worker. Only the upstream model is scripted. See required proofs for mode-specific allocation and loading behavior. Real-model Skill selection, cloud allocation, network partitions and performance are not verified.\n\n"
++}
+diff --git a/tests/liveworker/chat_brain_test.go b/tests/liveworker/chat_brain_test.go
+index 7d20ecf..a1aa5b0 100644
+--- a/tests/liveworker/chat_brain_test.go
++++ b/tests/liveworker/chat_brain_test.go
+@@ -108,1 +108,3 @@
+-	if len(snapshots) == 0 || !bytes.Contains(snapshots[len(snapshots)-1].Payload, []byte("chat_history.jsonl")) {
++	if !slices.ContainsFunc(snapshots, func(event db.CodeSessionInternalEvent) bool {
++		return bytes.Contains(event.Payload, []byte("chat_history.jsonl")) || bytes.Contains(event.Payload, []byte("dsh_log")) && bytes.Contains(event.Payload, []byte("assistant/message"))
++	}) {
+diff --git a/.agents/skills/verify-be/features/brain.md b/.agents/skills/verify-be/features/brain.md
+index 6475d17..feecebb 100644
+--- a/.agents/skills/verify-be/features/brain.md
++++ b/.agents/skills/verify-be/features/brain.md
+@@ -50,0 +51,14 @@
++
++## Bun dsh live model verification
++
++`chat brain-dsh-live` launches the Bun executable specified by `OMA_BRAIN_BINARY`.
++`OMA_DSH_LIVE_CONFIG` must point to a private JSON file containing `base`, `model`
++and `key`. This scenario explicitly uses that real model through the OMA Messages
++proxy; it does not script upstream responses. It checks public allow approval and
++sandbox bytes, SIGKILL plus natural lease expiration and retained model history,
++CCRv2 `updatedInput` over real JetStream, and an inflight Bash side effect followed
++by SIGKILL with blocked recovery and no replay. The public `updated_input` field is
++asserted to return HTTP 400, so replacement input is a wire-level Brain test and
++does not certify a public approval editor. The private turn and deliveries settle,
++but the public approval remains pending; the test checks this limitation explicitly
++and terminates that session. Run `chat doctor brain-dsh-live` first.
+diff --git a/docs/design/be/backend-verification.md b/docs/design/be/backend-verification.md
+index 4c92a14..d5a6c75 100644
+--- a/docs/design/be/backend-verification.md
++++ b/docs/design/be/backend-verification.md
+@@ -141,0 +142,14 @@
++
++### Bun dsh live verification
++
++The isolated `chat.brain-dsh-live` scenario uses an explicit private
++`OMA_DSH_LIVE_CONFIG` file to connect its fixture provider to a real OMA model
++proxy. Credentials stay outside evidence. It runs Bun Brain processes, checks
++public approval, sandbox bytes, history and worker epoch takeover after SIGKILL,
++then kills a process during Bash execution and verifies unknown tool results
++remain blocked without replay. The CCRv2 replacement-input check injects a reply
++through JetStream; public `user.tool_confirmation.updated_input` remains rejected.
++After that injection the private turn completes but the public approval stays
++pending. The test asserts this limitation before terminating that session; it does
++not certify public approval editing or a completed public approval lifecycle.
++The scenario does not change backend production handlers or the dsh kernel.

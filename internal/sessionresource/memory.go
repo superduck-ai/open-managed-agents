@@ -31,7 +31,7 @@ const (
 var (
 	ErrMemoryStoreClientIdentity      = errors.New("memory store mount_path, name, and description are assigned by the server")
 	ErrMemoryStoreAccess              = errors.New("access must be read_write or read_only")
-	ErrMemoryStoreInstructionsTooLong = errors.New("instructions must be at most 500 characters")
+	ErrMemoryStoreInstructionsTooLong = fmt.Errorf("instructions must be at most %d characters", MaxMemoryInstructionsRunes)
 	ErrMemoryStoreLimit               = fmt.Errorf("at most %d memory stores are allowed", MaxMemoryStores)
 	ErrMemoryStoreDuplicate           = errors.New("memory_store_id must be unique")
 )

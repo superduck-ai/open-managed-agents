@@ -41,6 +41,7 @@ nats:
 # Optional. Omit the entire auth.smtp block to accept any non-empty verification
 # code without sending email. Configure every SMTP field together for real email.
 auth:
+  allowed_email_domains: []
   # 邀请邮件按钮使用的控制台 HTTPS origin；未配置时只创建站内邀请。
   console_url: ""
   smtp:
@@ -112,6 +113,8 @@ e2b:
   template: managed-agent-sandbox
   request_timeout: 60s
   sandbox_timeout: 30s
+  local_port_lookup: false
+  local_service_host: ""
 
 environment_runner:
   enabled: true
@@ -119,6 +122,10 @@ environment_runner:
   package_provision_timeout: 2m
   manager_path: /usr/local/bin/environment-manager
   claude_path: /opt/claude-code/bin/claude
+  agent_mode: ""
+  brain_sandbox_prewarm: false
+  sandbox_mcp_port: 3001
+  sandbox_mcp_path: /mcp
   # Extra hosts rewritten from SSH remotes to HTTPS (in addition to built-in github.com).
   # Bare DNS hostnames only (labels [a-z0-9-], no leading/trailing hyphen); each adds git@host: and ssh://git@host/ → https://host/.
   git_ssh_to_https_hosts: []
@@ -139,6 +146,10 @@ code_session:
   upstream_proxy_ca_key_file: ""
   # Dangerous local fake-IP/TUN diagnostic switch; keep false in production.
   upstream_proxy_disable_ssrf_protection: false
+  # Required when environment_runner.agent_mode is brain. The file holds the
+  # shared fleet token (at least 32 characters) that oma-brain-dsh sends to
+  # POST /v1/code/brain/claims; mount it like the JWT signing key.
+  brain_claim_token_file: ""
 
 observability:
   enabled: false
@@ -256,6 +267,8 @@ bootstrap:
   organization_name: default
   workspace_external_id: workspace_default
   user_external_id: user_default
+  user_email: admin@example.local
+  user_name: Local Admin
   api_key_external_id: api_key_default
 
 # Long-idle managed sandbox reclamation. Disable dry_run to delete sandbox local state.

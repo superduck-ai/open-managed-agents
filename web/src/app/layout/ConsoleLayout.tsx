@@ -1,3 +1,4 @@
+import { BrandLogo } from '@/shared/brand/BrandLogo';
 import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
 import { canManageMembers } from '../../shared/permissions/members';
 import { OrganizationMenu } from '../../features/organizations/OrganizationMenu';
@@ -53,6 +54,7 @@ import {
   SidebarMenuSubItem,
   SidebarProvider,
   SidebarRail,
+  SidebarTrigger,
   useSidebar,
 } from '@/shared/ui/sidebar';
 import {
@@ -487,17 +489,43 @@ function ShellMobileBar({
       <ShellLink
         href={href}
         onNavigate={onNavigate}
-        className="min-w-0 truncate text-sm font-semibold tracking-[-0.01em] text-foreground"
+        className="flex min-w-0 items-center gap-3 text-sm font-semibold tracking-[-0.01em] text-foreground"
       >
-        {title}
+        <BrandLogo decorative className="h-6 w-[72px]" />
+        <span className="truncate">{title}</span>
       </ShellLink>
     </div>
   );
 }
 
 function ShellSidebarHeader({ currentPath, onNavigate }: { currentPath: string; onNavigate?: NavigateHandler }) {
+  const { state, isMobile } = useSidebar();
+  const { msg } = useI18n();
+  const compact = state === 'collapsed' && !isMobile;
+  const toggleLabel = compact ? msg('common.expand', 'Expand') : msg('common.collapse', 'Collapse');
+
   return (
     <AppSidebarHeader>
+      <div className={clsx('flex h-12 items-center', compact ? 'justify-center' : 'justify-between')}>
+        {!compact && (
+          <ShellLink
+            href="/dashboard"
+            onNavigate={onNavigate}
+            aria-label="Open Managed Agents"
+            className="flex h-12 min-w-0 flex-1 items-center rounded-md px-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <BrandLogo decorative className="h-7 w-[83px]" />
+          </ShellLink>
+        )}
+        {!isMobile && (
+          <SidebarTrigger
+            aria-label={toggleLabel}
+            aria-expanded={!compact}
+            title={toggleLabel}
+            className="text-muted-foreground hover:text-foreground"
+          />
+        )}
+      </div>
       <WorkspaceSwitcher currentPath={currentPath} onNavigate={onNavigate} />
     </AppSidebarHeader>
   );

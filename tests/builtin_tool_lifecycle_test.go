@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -100,6 +102,7 @@ func TestBuiltinToolIntermediateIdleDoesNotEndTurn(t *testing.T) {
 			}
 		}
 	}
+	postCodeSessionWorkerEvents(t, app, record.ExternalID, internalPayloadRequest(epoch, `{"type":"result","uuid":"tool-chain-result","is_error":false}`))
 	if status := retrieveSession(t, app, record.SessionExternalID, defaultTestKey).Status; status != "idle" {
 		t.Fatalf("completed chain status = %s", status)
 	}

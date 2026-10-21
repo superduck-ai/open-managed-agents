@@ -18,10 +18,6 @@ func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
 }
 
-func skillsBetaRequired() error {
-	return apperr.New(apperr.InvalidArgument, "Skills API requires anthropic-beta: skills-2025-10-02 and beta=true", nil)
-}
-
 func skillRouteNotFound() error {
 	return apperr.New(apperr.NotFound, "Not found", nil)
 }
@@ -77,4 +73,21 @@ func mapResolveVersionError(skillID, version string, err error) error {
 		return skillVersionNotFound(version, err)
 	}
 	return internalError("Could not retrieve skill version", fmt.Errorf("resolve skill %q version %q: %w", skillID, version, err))
+}
+
+func skillHasNoVersions() error {
+	return apperr.New(apperr.InvalidArgument, "Skill has no current version", nil)
+}
+func skillVersionsMustBeDeleted() error {
+	return apperr.New(apperr.InvalidArgument, "Delete all skill versions before deleting the skill", nil)
+}
+func skillLastVersionRequired() error {
+	return apperr.New(apperr.InvalidArgument, "Cannot delete the only skill version; upload a replacement or delete the skill", nil)
+}
+func invalidSkillLabel(field string, limit int) error {
+	return apperr.New(apperr.InvalidArgument, fmt.Sprintf("%s must be a single line with at most %d characters", field, limit), nil)
+}
+
+func skillNameImmutable() error {
+	return apperr.New(apperr.InvalidArgument, "Skill name cannot change across versions", nil)
 }

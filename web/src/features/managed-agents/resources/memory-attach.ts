@@ -1,7 +1,7 @@
 import type { MemoryAttachFormValue } from '../types';
 
 export const MAX_MEMORY_ATTACHES = 8;
-export const MAX_MEMORY_ATTACH_INSTRUCTIONS = 500;
+export const MAX_MEMORY_ATTACH_INSTRUCTIONS = 4096;
 
 export function memoryInstructionsCodePointCount(value: string) {
   return Array.from(value).length;

@@ -13,7 +13,7 @@ Code Session 入站事件直接发布到共享 JetStream Stream，并通过每 S
 - 普通入站请求只有获得 JetStream PubAck 后才成功；
 - activation 只有在 initialize 和完整启动历史全部获得 PubAck 后才切换 active；
 - 同一 Code Session 的直接发布与 termination 通过 Code Session 行锁串行；
-- 任务与回应各自的 consumer 保持 `MaxAckPending=1`，各通道内当前消息 ACK 前不交付下一条；
+- 两个 consumer 均使用服务端默认 `MaxAckPending`；逐条按序拉取，执行端按事件 ID 去重并管理输入顺序；
 - `control_response` 和 `control_request/interrupt` 进入回应通道，不受任务的未完成 ACK 阻塞；
 - worker epoch 的强一致来源仍是 PostgreSQL；
 - Redis 丢失、API 重启或 SSE 断开只造成重投；
@@ -91,12 +91,11 @@ Publish initialize 和历史，并在全部 PubAck 后更新 active。部分发�
 `control_request/interrupt` 指已经转换成 Worker 协议的中断消息。公共 `user.interrupt`
 到该协议的转换属于独立问题，不在本次修复范围内，不能据此声称停止按钮已经修复。
 
-两路分别拉取、通过同一个有界 Subscription 交给原 SSE 单写入循环。每路最多一条未完成消息，
-不会为了寻找回应而把用户输入全部预取到内存。两个 consumer 均使用：
+两路分别拉取、通过同一个有界 Subscription 交给原 SSE 单写入循环。两路未完成消息数量均由服务端默认 `MaxAckPending` 限制。控制回应保留独立通道，不能被普通输入窗口耗尽阻塞。两个 consumer 使用：
 
 - `DeliverAll`；
 - `AckExplicit`；
-- `MaxAckPending=1`；
+- `MaxAckPending`：不显式指定，当前 NATS 2.14.6 默认 1000；
 - `MaxDeliver=-1`；
 - backoff 为 1 分钟、5 分钟、15 分钟，之后保持 15 分钟；
 - 单次 pull batch 为 1。
@@ -175,7 +174,7 @@ SSE 写失败不删除映射：旧连接的写失败可能晚于重连重投，�
 5. 发布前由 Broker 校验最终 envelope 不超过配置的 `max_msg_size`，默认 1 MiB。
 
 SSE 读取时限制为声明长度加一字节，并校验对象报告大小、实际大小和 SHA-256。缺失、截断、篡改或
-读取失败都不发送、不 ACK；`MaxAckPending=1` 使同通道的后续消息继续阻塞。PubAck 失败可能是模糊成功，
+读取失败都不发送、不 ACK；本次 SSE 读取失败会结束连接，未 ACK 消息保留以便重投。PubAck 失败可能是模糊成功，
 所以不立即清理对象。processed 后加速清理；否则最迟 30 天清理。
 确定未尝试发布的对象可以加速清理。清理调度在行锁事务外使用不继承请求取消的 5 秒上下文；失败
 只告警，由上传前已提交的到期任务兜底，不能依赖已经取消的请求完成清理。
@@ -229,7 +228,7 @@ consumer ACK floor。
 
 - activation 与普通发布都等待 PubAck；
 - 模糊 PubAck 的稳定 ID 重试只保留一条消息；
-- per-session 两个 durable consumer 重连并分别保持 `MaxAckPending=1`；
+- per-session 两个 durable consumer 重连并保持服务端默认未 ACK 上限；
 - 空闲或阻塞时关闭订阅、任一路解码失败，均会结束两路读取并释放 NATS 订阅，保留未 ACK 消息；
 - 第二路 purge 失败后可幂等重试，残留消息仍受自身到期规则覆盖；
 - Stream sequence 正确写入 SSE；控制回应越过排队输入，含重连后的较小序号输入仍可完成；
@@ -247,6 +246,8 @@ consumer ACK floor。
 Session 归档、删除或整体 `terminated` 的事务按 Session → Worker 的既有锁顺序完成状态转换，并终止租户范围内所有关联 Code Session（包括历史实例），清除 token/lease、推进 epoch。DB 仅返回关联 Code Session ID，不注入清理回调，也不创建 River 清理任务。归档和整体终止保留公开历史；删除沿用软删除合同。Agent 归档不会触发此清理，也不会终止其已有 Session。
 
 事件写入路径由状态应用返回“Session 本次进入 terminated”的结果，批次汇总该结果。整批事件及派生事件写完后，仅在批末状态仍为 terminated 时，事务编排显式终止关联 Worker。事务失败返回空结果，不能向上层泄漏未提交的清理 ID。直接设置状态也返回已退休 ID，重复终态不再次推进 epoch。部署创建入口在同一事务内新建 Session，此时尚无关联 Worker，因此不执行 Worker 退休查询。幂等重放和重复终态不再次推进 epoch；仅 Thread 终止不触发，除非派生出整个 Session 的终止转换。
+
+Session 级状态事件仍按批内顺序更新主 Thread。`terminated → running` 批次以 running 结束，保留 Worker 与 epoch；不能因主 Thread 在批次中途变为 terminated 而丢弃后续 Session 级事件。已终止 Thread 的 Thread 级状态事件仍被忽略，归档 Session 的事件写入仍被拒绝。`TestSessionTerminationBatchKeepsActiveWorkers` 同时检查 Session、主 Thread 与 Worker epoch。
 
 ```mermaid
 sequenceDiagram
@@ -305,3 +306,35 @@ LIVE_WORKER_REAL_CLAUDE=1 LIVE_WORKER_API_URL=http://127.0.0.1:18080 CONFIG_FILE
 临时 consumer 回收不 purge subject。WorkQueue 保留未 ACK 消息，下一次订阅按 DeliverAll 重建 consumer，使用原 event ID 投递。已 ACK 消息已从 Stream 移除。在途消息可再次投递，Worker 必须按 event ID 保持处理幂等；该机制不提供跨进程工具副作用的 exactly-once 保证。旧 SSE 退出仅停止本地 Fetch，禁止删除新连接共享的 consumer。
 
 新增验收覆盖两路 consumer 真实过期、未 ACK 消息及 ID 保留、重建后 ACK 排空、活跃 pull 与旧连接关闭不误删；删除/整体终态的事务回滚、历史 Worker 清理、软删除后的晚订阅补偿与子线程归档保留父会话队列。
+
+
+## 回合完成信号
+
+Worker 运行状态和公开回合完成分别处理。`PUT worker` 上报 idle 只更新运行状态，不能结束公开回合。
+所有执行端通过已有 CCRv2 `result` 结束回合，不需要额外 header 或 worker binding 能力开关。
+成功结果产生 `idle/end_turn`，失败结果产生脱敏的 session.error 和 `idle/retries_exhausted`；
+执行端将已确认的用户取消上报为非失败 result，产生 end_turn，并保留 user.interrupt。后端不从历史推断取消或改判失败 result。重复 result 复用现有事件 ID 去重，
+旧 worker 继续受 epoch 校验约束，待处理输入继续使用现有队列规则。
+
+普通回合有待处理用户消息时，后端保留连续 running，不提前发布 idle。当前线程在本次 running 或 rescheduled 之后已有处理完成的 user.interrupt，且中断不晚于 result 时，待处理消息不能抑制旧回合的 idle/end_turn。下一条消息随后开始新回合。该判断限定工作区、会话和线程，不使用旧回合、其他范围、未处理或已删除的中断，也不改变 result 的成功或失败类别。
+
+`TestInterruptedTurnIdleBoundaryPostgres` 在隔离 PostgreSQL schema 中验证上述边界及普通排队行为；Mapper 合同单测验证 SQL 的租户条件和参数绑定。
+
+发送端顺序为消息及工具结果、model span end、result、输入 processed ACK。worker idle 可以迟到或
+重投，不影响下一轮的公开状态。具体投影和中断回归见 `tests/session_worker_terminal_test.go` 与
+`tests/session_worker_interrupt_test.go`。
+
+
+### 普通空闲会话的中断接受
+
+普通 idle 主线程没有运行中的 Worker 或待确认工具时，公开 `user.interrupt` 返回 200 并记录已处理的事件，保持会话 idle，不产生模型请求或工具调用。此行为按 INT007 用户裁决与 Qoder 实测对齐，不将其描述为 CMA 对普通 idle Session HTTP 状态的明确规定。
+
+接收事务在 Session/Worker 锁内判断空操作，并通过 `SessionEventChanges.SettledInputEventIDs` 将决定传给公开 API。事件继续参与响应、历史和 SSE；`WorkerInputEvents()` 只从 Worker 投递集合排除这些中断，不修改公开事件集合，也不排除后续用户消息。纯空操作不会重置 Worker 的 idle_since，不恢复沙箱，不将延迟中断投递给后续任务。运行中和等待工具确认的中断仍按原流程投递，归档和已终止等拒绝规则不变。对子线程不根据主线程的 idle 状态推断空操作。
+
+普通单测覆盖空闲接受、原拒绝边界、待处理工具不误判为空操作，以及过滤投递时保留下一条用户消息和原公开证据。真实 INT007 使用两个平台公开 events.send、原始 SSE、完整 history 与 10s 状态观察验证，不以本地单测替代平台结果。
+
+## Tool completion settles its pending permission (2026-10-18)
+
+A public agent.tool_result or agent.mcp_tool_result ends its corresponding invocation, including an approval cancelled by user.interrupt. Under the existing Session then Worker locks, the same Yourbatis transaction removes only the matching permission request and its legacy mirror, resolving the public call ID or provider-derived alias within the owning thread. Other calls, threads and unrelated metadata remain intact. Unknown or already settled results do not write metadata. Failed persistence aborts the batch without changing local worker state.
+
+Subsequent idle events in that transaction use the settled metadata. Once the last pending approval is cancelled, a completed end_turn must not be rewritten to stale requires_action. Remaining pending calls retain their IDs and action details. Regression coverage includes cancellation, matching and foreign-thread references, concurrent pending calls, aliases, duplicate settlement and persistence errors. Real CHAT INT013 validates the public interrupt, cancelled result, final idle and cleanup.

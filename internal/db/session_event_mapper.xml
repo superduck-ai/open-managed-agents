@@ -195,17 +195,17 @@
             <if test="params.CreatedAtLT != nil">AND processed_at &lt; #{params.CreatedAtLT}</if>
             <if test="params.CreatedAtLTE != nil">AND processed_at &lt;= #{params.CreatedAtLTE}</if>
             <if test="params.Cursor != nil">
-                AND (processed_at, id)
+                AND (COALESCE(processed_at, created_at), id)
                 <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>
                 (
-                    SELECT processed_at, id FROM session_events
+                    SELECT COALESCE(processed_at, created_at), id FROM session_events
                     WHERE workspace_uuid = #{params.WorkspaceUUID}
                     AND session_external_id = #{params.SessionExternalID}
                     AND external_id = #{params.Cursor.ExternalID}
                 )
             </if>
         </where>
-        ORDER BY session_events.processed_at
+        ORDER BY COALESCE(session_events.processed_at, session_events.created_at)
         <choose><when test="params.Descending">DESC, id DESC</when><otherwise>ASC, id ASC</otherwise></choose>
         LIMIT #{params.FetchLimit}
     </select>
@@ -246,7 +246,6 @@
           AND deleted_at IS NULL
         ORDER BY created_at ASC, id ASC
     </select>
-
     <select id="ListAdminUsagePoints" resultType="adminUsagePointRow">
         SELECT
             e.session_uuid,
@@ -290,5 +289,38 @@
             )
         )
         ORDER BY e.session_uuid, e.processed_at ASC, e.id ASC
+    </select>
+    <select id="HasInputBlockingIdle" result="scalar" resultType="bool">
+        SELECT EXISTS (SELECT 1 FROM session_events
+        WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+        AND thread_external_id = #{threadID} AND event_type = 'user.message'
+        AND processed_at IS NULL AND deleted_at IS NULL)
+        AND NOT EXISTS (
+            SELECT 1 FROM session_events interrupted
+            WHERE interrupted.workspace_uuid = #{workspaceUUID}
+              AND interrupted.session_external_id = #{sessionExternalID}
+              AND interrupted.thread_external_id = #{threadID}
+              AND interrupted.event_type = 'user.interrupt'
+              AND interrupted.processed_at IS NOT NULL
+              AND interrupted.processed_at &lt;= #{at}
+              AND interrupted.deleted_at IS NULL
+              AND interrupted.processed_at &gt;= (
+                  SELECT started.processed_at FROM session_events started
+                  WHERE started.workspace_uuid = #{workspaceUUID}
+                    AND started.session_external_id = #{sessionExternalID}
+                    AND started.event_type IN ('session.thread_status_running', 'session.thread_status_rescheduled')
+                    AND started.payload-&gt;&gt;'session_thread_id' = #{threadID}
+                    AND started.deleted_at IS NULL
+                  ORDER BY started.id DESC LIMIT 1
+              )
+        ) AS blocks_idle
+    </select>
+    <select id="MarkInputProcessed" result="optional" resultType="sessionEventRow">
+        WITH updated AS (UPDATE session_events SET processed_at = #{processedAt}
+        WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+        AND external_id = #{eventExternalID} AND event_type IN ('user.message', 'user.tool_confirmation')
+        AND processed_at IS NULL AND deleted_at IS NULL
+        RETURNING <include refid="columns"/>)
+        SELECT <include refid="columns"/> FROM updated
     </select>
 </mapper>

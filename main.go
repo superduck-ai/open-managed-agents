@@ -23,6 +23,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/diagnostics"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/listeners"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/natsclient"
@@ -54,6 +55,7 @@ func main() {
 func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	context.AfterFunc(ctx, stop)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -81,7 +83,7 @@ func run(logger *slog.Logger) error {
 	} else {
 		logger.Info("database auto migration disabled", "env", cfg.Env)
 	}
-	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
+	if err := database.Seed(ctx, cfg.Bootstrap); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
 	redisClient, err := redisclient.Open(ctx, cfg.Redis.URL)
@@ -135,6 +137,10 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load code-session credentials: %w", err)
 	}
+	brainClaims, err := codesessions.LoadBrainClaimAuthenticator(cfg.CodeSession.BrainClaimTokenFile)
+	if err != nil {
+		return fmt.Errorf("load brain claim token: %w", err)
+	}
 	// Filestore 与 code-session ingress 使用独立的 claims 与验证器；
 	// 生产环境可共用同一 Ed25519 私钥文件，但两种 token 绝不互相代用。
 	filestoreCredentials, err := filestore.NewTokenCredentials(cfg)
@@ -162,7 +168,8 @@ func run(logger *slog.Logger) error {
 	// 过期策略只存在一份实现。
 	runnerCodeSessions := codesessions.NewServiceWithCredentials(database, codeSessionCredentials, environmentLogger).
 		WithWorkerEventBroker(workerEventBroker).
-		WithWorkerEventState(workerEventAcks, objectStore)
+		WithWorkerEventState(workerEventAcks, objectStore).
+		WithSessionAttachments(filestoreService)
 	codesessions.NewWorkerEventExpiryWorker(runnerCodeSessions, logger.With("component", "worker_event_expiry")).Start(ctx)
 	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
 		DB:              database,
@@ -245,7 +252,9 @@ func run(logger *slog.Logger) error {
 			PlatformStore:          platformSessions,
 			PlatformAuth:           platformAuthProvider,
 			CodeSessionCredentials: codeSessionCredentials,
+			BrainClaims:            brainClaims,
 			SandboxTimeoutExtender: sandboxProvider,
+			SandboxProvisioner:     environmentRunner,
 			FilestoreCredentials:   filestoreCredentials,
 			FilestoreService:       filestoreService,
 			VaultSecrets:           vaultSecrets,
@@ -271,6 +280,7 @@ func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) er
 		return fmt.Errorf("listen: %w", err)
 	}
 	defer listener.Close()
+	server.Handler = httpapi.WithStreamShutdown(ctx, server.Handler)
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("claude api server listening", "addr", server.Addr)
@@ -281,13 +291,18 @@ func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) er
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("shutdown server: %w", err)
-		}
+		return shutdownHTTP(shutdownCtx, server)
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("serve: %w", err)
 		}
+	}
+	return nil
+}
+
+func shutdownHTTP(ctx context.Context, server *http.Server) error {
+	if err := server.Shutdown(ctx); err != nil {
+		return errors.Join(fmt.Errorf("shutdown server: %w", err), server.Close())
 	}
 	return nil
 }

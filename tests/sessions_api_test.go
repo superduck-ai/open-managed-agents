@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -169,8 +171,8 @@ func TestSessionsAPI(t *testing.T) {
 		if len(sent.Data) != 1 || !bytes.Contains(sent.Data[0], []byte(`"type":"user.message"`)) {
 			t.Fatalf("unexpected sent events: %+v", sent)
 		}
-		if bytes.Contains(sent.Data[0], []byte(`"created_at"`)) || sessionEventStringField(t, sent.Data[0], "processed_at") == "" {
-			t.Fatalf("sent event must expose processed_at without created_at: %s", sent.Data[0])
+		if bytes.Contains(sent.Data[0], []byte(`"created_at"`)) || !bytes.Contains(sent.Data[0], []byte(`"processed_at":null`)) {
+			t.Fatalf("queued event must expose null processed_at without created_at: %s", sent.Data[0])
 		}
 		events := listSessionEvents(t, app, created.ID, "types[]=user.message", defaultTestKey)
 		if len(events.Data) != 1 || !bytes.Contains(events.Data[0], []byte(`"id":"sevt_`)) {
@@ -434,6 +436,9 @@ func TestPlatformWebSessionStream(t *testing.T) {
 	if contentType := resp.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/event-stream") {
 		t.Fatalf("platform web stream content-type = %q, want text/event-stream", contentType)
 	}
+	if buffering := resp.Header.Get("X-Accel-Buffering"); buffering != "no" {
+		t.Fatalf("platform web stream X-Accel-Buffering = %q, want no", buffering)
+	}
 
 	lineCh := make(chan string, 16)
 	go func() {
@@ -633,6 +638,8 @@ func TestSessionCanonicalMultiAgentEventsFromCodeSessionIngress(t *testing.T) {
 		`mcp__agent_inferred`,
 		`"type":"agent.message"`,
 		"child stream answer",
+		`"type":"agent.thread_message_sent"`,
+		"deliver to coordinator",
 		`"type":"span.model_request_start"`,
 		`"session_thread_id":"` + childThreadID + `"`,
 	} {
@@ -641,7 +648,7 @@ func TestSessionCanonicalMultiAgentEventsFromCodeSessionIngress(t *testing.T) {
 		}
 	}
 	for _, leaked := range []string{
-		"deliver to coordinator",
+		`"type":"agent.thread_message_received"`,
 		"stream preview only",
 		`"type":"session.thread_status_running"`,
 		`"type":"session.thread_status_idle"`,
@@ -664,7 +671,7 @@ func TestSessionClaudeCodeStoppedTaskTerminatesThread(t *testing.T) {
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[
-		{"payload":{"type":"system","uuid":"stopped-task-start","subtype":"task_started","task_id":"stopped-task","tool_use_id":"stopped-tool","description":"Stopped task"}},
+		{"payload":{"type":"system","uuid":"stopped-task-start","subtype":"task_started","task_type":"local_agent","task_id":"stopped-task","tool_use_id":"stopped-tool","description":"Stopped task"}},
 		{"payload":{"type":"system","uuid":"stopped-task-end","subtype":"task_notification","task_id":"stopped-task","tool_use_id":"stopped-tool","status":"stopped"}}
 	]}`)
 	threads := listSessionThreads(t, app, session.ID, defaultTestKey)
@@ -1015,7 +1022,6 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 		`"type":"user.message"`,
 		"private child prompt only in child stream",
 		`"type":"agent.thinking"`,
-		"private child thinking only in child stream",
 		`"type":"agent.message"`,
 		"private child answer only in child stream",
 		`"session_thread_id":"` + child.ID + `"`,
@@ -1024,7 +1030,7 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 			t.Fatalf("child transcript missing %q: %+v", want, childEvents.Data)
 		}
 	}
-	for _, leaked := range []string{`"agentId":"agent-a"`, `"_owner_session_thread_id"`, `"type":"session.thread_status_running"`} {
+	for _, leaked := range []string{`"agentId":"agent-a"`, `"_owner_session_thread_id"`, `"type":"session.thread_status_running"`, "private child thinking only in child stream"} {
 		if eventPageContains(childEvents, leaked) {
 			t.Fatalf("child transcript leaked internal field %q: %+v", leaked, childEvents.Data)
 		}
@@ -1525,16 +1531,21 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	if _, ok := idleState.Worker.ExternalMetadata["pending_action"]; ok {
 		t.Fatalf("pending_action metadata was not deleted on idle: %+v", idleState.Worker.ExternalMetadata)
 	}
+	beforeResult := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
+	if len(beforeResult.Data) != len(idleEventsBefore.Data) {
+		t.Fatalf("worker idle ended turn before result: %s", beforeResult.Data)
+	}
+	postCodeSessionWorkerEvents(t, app, codeSessionID, internalPayloadRequest(workerEpoch, `{"type":"result","uuid":"endpoints-result","is_error":false}`))
 	if got := retrieveSession(t, app, session.ID, defaultTestKey).Status; got != "idle" {
-		t.Fatalf("public session status after idle = %q, want idle", got)
+		t.Fatalf("public session status after result = %q, want idle", got)
 	}
 	threads = listSessionThreads(t, app, session.ID, defaultTestKey)
 	if len(threads.Data) != 1 || threads.Data[0].Status != "idle" {
-		t.Fatalf("primary thread status after idle = %+v, want idle", threads.Data)
+		t.Fatalf("primary thread status after result = %+v, want idle", threads.Data)
 	}
 	idleEvents := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
 	if len(idleEvents.Data) != len(idleEventsBefore.Data)+1 {
-		t.Fatalf("worker idle produced %d total idle events, want %d: %+v", len(idleEvents.Data), len(idleEventsBefore.Data)+1, idleEvents.Data)
+		t.Fatalf("result produced %d total idle events, want %d: %+v", len(idleEvents.Data), len(idleEventsBefore.Data)+1, idleEvents.Data)
 	}
 	idleEvent := sessionEventObjectByType(t, idleEvents, "session.status_idle")
 	if reason, ok := idleEvent["stop_reason"].(map[string]any); !ok || reason["type"] != "end_turn" {
@@ -2698,7 +2709,7 @@ func TestCodeSessionWorkerEpochZeroRejectedAtDBLayer(t *testing.T) {
 	if err := app.db.ValidateCodeSessionWorkerEpoch(ctx, codeSessionID, 0); !errors.Is(err, db.ErrWorkerEpochMismatch) {
 		t.Fatalf("validate epoch 0 error = %v, want worker epoch mismatch", err)
 	}
-	if _, err := app.db.RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, 0, time.Minute, 10*time.Second); !errors.Is(err, db.ErrWorkerEpochMismatch) {
+	if _, err := app.db.RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, 0, fixedWorkerLease(time.Minute, 10*time.Second)); !errors.Is(err, db.ErrWorkerEpochMismatch) {
 		t.Fatalf("record heartbeat epoch 0 error = %v, want worker epoch mismatch", err)
 	}
 	if _, err := app.db.HeartbeatCodeSessionWorker(ctx, codeSessionID, 0, time.Minute); !errors.Is(err, db.ErrWorkerEpochMismatch) {

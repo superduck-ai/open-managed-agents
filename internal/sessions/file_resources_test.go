@@ -2,9 +2,9 @@ package sessions
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -85,7 +85,7 @@ func TestValidateNormalizedSessionResources(t *testing.T) {
 	t.Run("rejects too many files", func(t *testing.T) {
 		resources := make([]normalizedSessionResource, 0, db.MaxSessionFileResources+1)
 		for index := 0; index <= db.MaxSessionFileResources; index++ {
-			resources = append(resources, testNormalizedFileResource(t, "/workspace/files/"+strings.Repeat("x", index+1)))
+			resources = append(resources, testNormalizedFileResource(t, fmt.Sprintf("/workspace/files/file-%d", index)))
 		}
 		if err := validateNormalizedSessionResources(resources); err == nil {
 			t.Fatalf("validateNormalizedSessionResources() accepted more than %d files", db.MaxSessionFileResources)
@@ -127,7 +127,7 @@ func testNormalizedFileResource(t *testing.T, mountPath string) normalizedSessio
 	if err != nil {
 		t.Fatalf("marshal mount path: %v", err)
 	}
-	spec, err := sessionresource.NormalizeFileSpec("file_test", "data.csv", nil, raw)
+	spec, err := sessionresource.NormalizeFileSpec("file_test", nil, raw)
 	if err != nil {
 		t.Fatalf("normalize FileSpec: %v", err)
 	}

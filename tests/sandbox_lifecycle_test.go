@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -40,7 +42,6 @@ func newSandboxLifecycleFixtureWithApp(t *testing.T, app *testApp) sandboxLifecy
 	env := createEnvironment(t, app, `{"name":`+quoteJSON("lifecycle-environment-"+uuid.NewV4().String())+`}`)
 	t.Cleanup(func() { cleanupEnvironmentRows(t, app.pool, env.ID) })
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	t.Cleanup(func() { cleanupSession(t, app, session.ID) })
 	codeID := launchLocalCodeSession(t, app, session.ID)
 	epoch := registerCodeSessionWorker(t, app, codeID)
 	putCodeSessionWorkerState(t, app, codeID, `{"worker_epoch":`+epoch+`,"worker_status":"idle"}`)
@@ -52,6 +53,13 @@ func newSandboxLifecycleFixtureWithApp(t *testing.T, app *testApp) sandboxLifecy
 	if err != nil || !found {
 		t.Fatalf("get session: found=%t err=%v", found, err)
 	}
+	t.Cleanup(func() {
+		if _, found, err := app.db.GetSession(context.Background(), record.WorkspaceUUID, session.ID); err != nil {
+			t.Error(err)
+		} else if found {
+			cleanupSession(t, app, session.ID)
+		}
+	})
 	sandbox, err := app.db.GetResumableEnvironmentSandboxForCodeSession(context.Background(), codeID)
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +174,7 @@ func TestSandboxReclamationRetriesDeletionAndWakesAfterConcurrentInput(t *testin
 	if revoked.CurrentWorkerEpoch <= f.code.CurrentWorkerEpoch || revoked.WorkerLeaseExpiresAt != nil {
 		t.Fatal("old worker not fenced")
 	}
-	if _, err := f.app.db.RecordCodeSessionWorkerHeartbeat(ctx, f.code.ExternalID, f.code.CurrentWorkerEpoch, time.Minute, 10*time.Second); !errors.Is(err, db.ErrWorkerNotRegistered) {
+	if _, err := f.app.db.RecordCodeSessionWorkerHeartbeat(ctx, f.code.ExternalID, f.code.CurrentWorkerEpoch, fixedWorkerLease(time.Minute, 10*time.Second)); !errors.Is(err, db.ErrWorkerNotRegistered) {
 		t.Fatalf("old heartbeat = %v", err)
 	}
 	// Disabling the policy stops new claims but must finish a deletion that was

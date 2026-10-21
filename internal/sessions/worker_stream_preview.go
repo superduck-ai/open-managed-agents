@@ -91,15 +91,13 @@ type workerStreamContentBlock struct {
 }
 
 type previewDeltaContent struct {
-	Type     string `json:"type"`
-	Text     string `json:"text,omitempty"`
-	Thinking string `json:"thinking,omitempty"`
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
 }
 
 type workerStreamDelta struct {
-	Type     string `json:"type"`
-	Text     string `json:"text"`
-	Thinking string `json:"thinking"`
+	Type string `json:"type"`
+	Text string `json:"text"`
 }
 
 func newWorkerPreviewConverter() *workerPreviewConverter {
@@ -152,7 +150,7 @@ func (event workerStreamEvent) affectsPreview() bool {
 	case workerStreamEventTypeContentBlockStart:
 		return event.Index != nil && publicPreviewEventType(event.ContentBlock.Type) != ""
 	case workerStreamEventTypeContentBlockDelta:
-		return event.Index != nil && ((event.Delta.Type == workerStreamDeltaText && event.Delta.Text != "") || (event.Delta.Type == "thinking_delta" && event.Delta.Thinking != ""))
+		return event.Index != nil && event.Delta.Type == workerStreamDeltaText && event.Delta.Text != ""
 	case workerStreamEventTypeContentBlockStop:
 		return event.Index != nil
 	case workerStreamEventTypeMessageStop:
@@ -254,16 +252,13 @@ func (c *workerPreviewConverter) appendPreviewBlockDelta(batch codeSessionStream
 	}
 	index := *payload.Event.Index
 	block, found := state.blocks[index]
-	if !found || (block.eventType == "agent.message" && payload.Event.Delta.Type != workerStreamDeltaText) || (block.eventType == "agent.thinking" && payload.Event.Delta.Type != "thinking_delta") {
+	if !found || block.eventType != "agent.message" || payload.Event.Delta.Type != workerStreamDeltaText {
 		return sessionStreamEvent{}, false
 	}
 	block.updatedAt = now
 	state.blocks[index] = block
 	state.updatedAt = now
 	content := previewDeltaContent{Type: "text", Text: payload.Event.Delta.Text}
-	if block.eventType == "agent.thinking" {
-		content = previewDeltaContent{Type: "thinking", Thinking: payload.Event.Delta.Thinking}
-	}
 	payloadJSON := eventDeltaPayload(block.eventID, content)
 	return previewSessionEvent(batch, payload, now, block.eventID, previewEventDelta, payloadJSON), true
 }
@@ -343,7 +338,7 @@ func eventDeltaPayload(eventID string, content previewDeltaContent) json.RawMess
 
 func publicPreviewEventType(blockType string) string {
 	switch blockType {
-	case workerStreamContentBlockThinking:
+	case workerStreamContentBlockThinking, "redacted_thinking":
 		return "agent.thinking"
 	case workerStreamContentBlockText:
 		return "agent.message"

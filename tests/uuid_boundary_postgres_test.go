@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -389,7 +391,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 		SHA256:              "typed-uuid",
 		CreatedByAPIKeyUUID: ids.APIKeyUUID,
 		CreatedAt:           now,
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("create Skill through typed UUID parameters: %v", err)
 	}
@@ -641,11 +643,12 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 		ids.WorkspaceUUID,
 		skillID,
 		secondSkillVersion.Version,
+		true,
 	)
 	if err != nil || deletedVersion.UUID != secondSkillVersion.UUID || latestVersion == nil || *latestVersion != skillVersion.Version {
 		t.Fatalf("soft delete Skill version = (%+v, %+v, %v)", deletedVersion, latestVersion, err)
 	}
-	deletedSkill, deletedVersions, err := app.db.SoftDeleteSkill(ctx, ids.WorkspaceUUID, skillID)
+	deletedSkill, deletedVersions, err := app.db.SoftDeleteSkill(ctx, ids.WorkspaceUUID, skillID, true)
 	if err != nil || deletedSkill.UUID != skill.UUID || len(deletedVersions) != 1 || deletedVersions[0].UUID != skillVersion.UUID {
 		t.Fatalf("soft delete Skill = (%+v, %+v, %v)", deletedSkill, deletedVersions, err)
 	}
@@ -785,8 +788,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		ctx,
 		codeSession.ExternalID,
 		epoch,
-		time.Minute,
-		time.Second,
+		fixedWorkerLease(time.Minute, time.Second),
 	); err != nil {
 		t.Fatalf("record Code Session heartbeat through typed UUID transaction: %v", err)
 	}

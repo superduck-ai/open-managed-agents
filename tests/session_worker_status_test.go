@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -14,7 +16,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-func TestSessionWorkerIdleRetriesAfterPublicWriteFailure(t *testing.T) {
+func TestSessionWorkerResultRetriesAfterPublicWriteFailure(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("idle-retry"))
 	codeSession, epoch := newPayloadIntegrationSession(t, app)
 	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
@@ -29,6 +31,7 @@ func TestSessionWorkerIdleRetriesAfterPublicWriteFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
+		postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, internalPayloadRequest(epoch, `{"type":"result","uuid":"retry-result","is_error":false}`))
 		putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
 	}
 	events := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=session.status_idle", defaultTestKey)
@@ -51,6 +54,8 @@ func TestSessionWorkerRestartIdleDoesNotEndTurn(t *testing.T) {
 	}
 	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
 	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
+	assertWorkerIdleReasons(t, app, codeSession.SessionExternalID)
+	postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, internalPayloadRequest(epoch, `{"type":"result","uuid":"restarted-result","is_error":false}`))
 	for _, kind := range []string{"running", "idle"} {
 		events := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=session.status_"+kind, defaultTestKey)
 		if len(events.Data) != 1 {
@@ -64,7 +69,6 @@ func TestSessionInputRunningIsAtomic(t *testing.T) {
 	codeSession, epoch := newPayloadIntegrationSession(t, app)
 	path := "/v1/sessions/" + codeSession.SessionExternalID + "/events?beta=true"
 	input := `{"type":"user.message","content":[{"type":"text","text":"Hello"}]}`
-	// Two messages in one turn must roll back the whole batch.
 	resp := doSessionRequest(t, app, http.MethodPost, path, strings.NewReader(`{"events":[`+input+`,{"type":"user.message","session_thread_id":"sthr_missing","content":[{"type":"text","text":"Invalid"}]}]}`), defaultTestKey, true)
 	assertError(t, resp, http.StatusConflict, "conflict_error")
 	if events := listSessionEvents(t, app, codeSession.SessionExternalID, "", defaultTestKey); len(events.Data) != 0 {
@@ -88,7 +92,7 @@ func TestSessionInputRunningIsAtomic(t *testing.T) {
 	for status := range statuses {
 		countsByStatus[status]++
 	}
-	if countsByStatus[http.StatusOK] != 1 || countsByStatus[http.StatusConflict] != 1 {
+	if countsByStatus[http.StatusOK] != 2 || countsByStatus[http.StatusConflict] != 0 {
 		t.Fatalf("concurrent send statuses: %v", countsByStatus)
 	}
 	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
@@ -101,17 +105,17 @@ func TestSessionInputRunningIsAtomic(t *testing.T) {
 			processed++
 		}
 	}
-	if processed != 1 {
-		t.Fatalf("expected exactly one immediately processed input, got %d", processed)
+	if processed != 0 {
+		t.Fatalf("expected no processed input before worker delivery, got %d", processed)
 	}
-	if counts["session.status_running"] != 1 || counts["session.thread_status_running"] != 1 || counts["user.message"] != 1 {
+	if counts["session.status_running"] != 1 || counts["session.thread_status_running"] != 1 || counts["user.message"] != 2 {
 		t.Fatalf("concurrent inputs duplicated running: %v", counts)
 	}
 }
 
 func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("public-status-order"))
-	codeSession, epoch := newPayloadIntegrationSession(t, app)
+	codeSession, epoch := newPayloadIntegrationSessionWithAgent(t, app, bashAskAgentBody)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, app.baseURL+"/v1/sessions/"+codeSession.SessionExternalID+"/events/stream?beta=true", nil)
@@ -146,10 +150,9 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		t.Fatalf("send response must contain only submitted events: %s", sent.Data)
 	}
 	firstProcessedAt := sessionInputProcessedAt(t, sent.Data[0])
-	if firstProcessedAt == "" {
-		t.Fatalf("idle input must be processed on acceptance: %s", sent.Data)
+	if firstProcessedAt != "" {
+		t.Fatalf("input must be queued on acceptance: %s", sent.Data)
 	}
-	// The running pair and message must arrive before any worker ACK.
 	for scanner.Scan() {
 		data, ok := strings.CutPrefix(scanner.Text(), "data: ")
 		if !ok {
@@ -162,12 +165,12 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		if event.ID != "" {
 			live = append(live, event)
 		}
-		if len(live) == 3 {
+		if len(live) == 2 {
 			break
 		}
 	}
-	if len(live) != 3 || live[2].ProcessedAt != firstProcessedAt {
-		t.Fatalf("input missing before ACK: %+v, scan: %v", live, scanner.Err())
+	if len(live) != 2 {
+		t.Fatalf("running pair missing before ACK: %+v, scan: %v", live, scanner.Err())
 	}
 	consumePublicInput(t, app, codeSession, epoch, sessionEventStringField(t, sent.Data[0], "id"))
 
@@ -183,8 +186,8 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		`{"type":"system","uuid":"init","subtype":"init","apiKeySource":"private"}`,
 		`{"type":"system","uuid":"hook","subtype":"hook_response","stdout":"private"}`,
 		`{"type":"assistant","uuid":"answer","message":{"content":"Hello"}}`,
-		`{"type":"result","uuid":"result","is_error":false,"result":"private"}`,
 		`{"type":"system.message","uuid":"context","content":[{"type":"text","text":"Public context"}]}`,
+		`{"type":"result","uuid":"result","is_error":false,"result":"private"}`,
 	))
 	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
 	want := []string{"session.status_running", "session.thread_status_running", "user.message", "agent.message", "system.message", "session.thread_status_idle", "session.usage", "session.status_idle"}
@@ -223,7 +226,7 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		if event.Type != want[i] || event.ID != live[i].ID || event.Type != live[i].Type || event.ProcessedAt != live[i].ProcessedAt || event.StopReason != live[i].StopReason {
 			t.Fatalf("event %d: history=%+v live=%+v want=%s", i, event, live[i], want[i])
 		}
-		if strings.HasPrefix(event.Type, "session.thread_status_") && (event.ThreadID == "" || event.ThreadID != live[i].ThreadID) {
+		if event.ThreadID == "" || event.ThreadID != live[i].ThreadID {
 			t.Fatalf("thread identity differs: %+v %+v", event, live[i])
 		}
 		if strings.Contains(string(raw), "private") {
@@ -234,12 +237,12 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		}
 	}
 
-	if live[2].ProcessedAt != firstProcessedAt {
-		t.Fatalf("ACK changed accepted time: %+v", live)
+	if live[2].ProcessedAt == firstProcessedAt || live[2].ProcessedAt == "" {
+		t.Fatalf("ACK did not mark queued input processed: %+v", live)
 	}
 	next := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"Next turn"}]}]}`, defaultTestKey)
-	if sessionInputProcessedAt(t, next.Data[0]) == "" {
-		t.Fatalf("next idle turn must be accepted immediately: %s", next.Data)
+	if sessionInputProcessedAt(t, next.Data[0]) != "" {
+		t.Fatalf("next idle turn must wait for worker processing: %s", next.Data)
 	}
 	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
 	if status := retrieveSession(t, app, codeSession.SessionExternalID, defaultTestKey).Status; status != "running" {
@@ -250,7 +253,7 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 	if len(running.Data) != 2 {
 		t.Fatalf("expected one running event per turn: %s", running.Data)
 	}
-	postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, internalPayloadRequest(epoch, `{"type":"control_request","uuid":"approval","request_id":"approval-request","request":{"subtype":"can_use_tool","tool_name":"MysteryTool","tool_use_id":"tool-approval","input":{}}}`))
+	postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, internalPayloadRequest(epoch, `{"type":"control_request","uuid":"approval","request_id":"approval-request","request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"tool-approval","input":{}}}`))
 	toolEvents := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=agent.tool_use", defaultTestKey)
 	if len(toolEvents.Data) != 1 {
 		t.Fatalf("approval tool: %s", toolEvents.Data)
@@ -264,7 +267,7 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 			putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"requires_action"}`, epoch))
 		}
 		waiting := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+codeSession.SessionExternalID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.message","content":[{"type":"text","text":"Wait for approval"}]}]}`), defaultTestKey, true)
-		assertError(t, waiting, http.StatusConflict, "conflict_error")
+		assertError(t, waiting, http.StatusBadRequest, "invalid_request_error")
 		if history := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=user.message", defaultTestKey); len(history.Data) != 2 {
 			t.Fatalf("pending tool request persisted a message: %s", history.Data)
 		}
@@ -280,25 +283,33 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 	}
 }
 
-func TestSessionRejectsMultipleMessagesInBatch(t *testing.T) {
+func TestSessionQueuesMultipleMessagesInBatch(t *testing.T) {
 	for _, size := range []int{10, 40000} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			app := newPayloadIntegrationApp(t, newFakeStore("idle-input-batch"))
-			codeSession, _ := newPayloadIntegrationSession(t, app)
-			input := `{"type":"user.message","content":[{"type":"text","text":` + quoteJSON(strings.Repeat("x", size)) + `}]}`
-			response := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+codeSession.SessionExternalID+"/events?beta=true", strings.NewReader(`{"events":[`+input+`,`+input+`]}`), defaultTestKey, true)
-			assertError(t, response, http.StatusConflict, "conflict_error")
-			if history := listSessionEvents(t, app, codeSession.SessionExternalID, "", defaultTestKey); len(history.Data) != 0 {
-				t.Fatalf("rejected batch persisted events: %s", history.Data)
+			worker, epoch := newPayloadIntegrationSession(t, app)
+			text := strings.Repeat("x", size)
+			input := `{"type":"user.message","content":[{"type":"text","text":` + quoteJSON(text) + `}]}`
+			sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[`+input+`,`+input+`]}`, defaultTestKey)
+			if len(sent.Data) != 2 {
+				t.Fatalf("batch length: %d", len(sent.Data))
 			}
-			sent := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[`+input+`]}`, defaultTestKey)
-			processedAt := sessionInputProcessedAt(t, sent.Data[0])
-			if processedAt == "" {
-				t.Fatal("accepted input has no processing time")
+			for _, event := range sent.Data {
+				if sessionInputProcessedAt(t, event) != "" {
+					t.Fatal("queued input already processed")
+				}
 			}
-			history := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=user.message&order=asc", defaultTestKey)
-			if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) != processedAt {
-				t.Fatal("history must preserve receipt time, including offloaded payloads")
+			for _, event := range sent.Data {
+				consumePublicInput(t, app, worker, epoch, sessionEventStringField(t, event, "id"))
+			}
+			history := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.message", defaultTestKey)
+			if len(history.Data) != 2 {
+				t.Fatalf("history length: %d", len(history.Data))
+			}
+			for _, event := range history.Data {
+				if sessionInputProcessedAt(t, event) == "" || !strings.Contains(string(event), text) {
+					t.Fatal("processed history lost content or time")
+				}
 			}
 		})
 	}
@@ -346,6 +357,12 @@ func consumePublicInput(t *testing.T, app *testApp, session db.CodeSession, epoc
 				t.Fatalf("control response must preserve its UUID for ACK and the source input ID: %+v", frame)
 			}
 		}
+		if frame.Payload.Type == "user" {
+			processing := postCodeSessionWorkerDelivery(t, app, session.ExternalID, `{"worker_epoch":`+quoteJSON(epoch)+`,"updates":[{"event_id":`+quoteJSON(frame.EventID)+`,"status":"processing"}]}`)
+			if processing.Applied != 1 {
+				t.Fatalf("input processing was not applied: %+v", processing)
+			}
+		}
 		ack := postCodeSessionWorkerDelivery(t, app, session.ExternalID, `{"worker_epoch":`+quoteJSON(epoch)+`,"updates":[{"event_id":`+quoteJSON(frame.EventID)+`,"status":"processed"}]}`)
 		if ack.Applied != 1 {
 			t.Fatalf("input was not processed: %+v", ack)
@@ -389,8 +406,8 @@ func TestSessionWorkerIdleHasSingleSource(t *testing.T) {
 				publishIdle()
 			default:
 				publishResult()
-				if status := retrieveSession(t, app, codeSession.SessionExternalID, defaultTestKey).Status; order != "failed result" && status != "running" {
-					t.Fatalf("result changed worker state to %s", status)
+				if status := retrieveSession(t, app, codeSession.SessionExternalID, defaultTestKey).Status; status != "idle" {
+					t.Fatalf("result did not end public turn: %s", status)
 				}
 				publishIdle()
 			}
@@ -401,11 +418,19 @@ func TestSessionWorkerIdleHasSingleSource(t *testing.T) {
 				previousResult = result
 			}
 			events := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=session.status_idle&limit=100", defaultTestKey)
-			if len(events.Data) != round+1 {
-				t.Fatalf("idle events=%d, want %d (one per round)", len(events.Data), round+1)
+			expectedIdle := round + 1
+			if order == "worker without result" {
+				expectedIdle = round
 			}
-			if status := retrieveSession(t, app, codeSession.SessionExternalID, defaultTestKey).Status; status != "idle" {
-				t.Fatalf("worker idle projected status=%s", status)
+			if len(events.Data) != expectedIdle {
+				t.Fatalf("idle events=%d, want %d", len(events.Data), expectedIdle)
+			}
+			expectedStatus := "idle"
+			if order == "worker without result" {
+				expectedStatus = "running"
+			}
+			if status := retrieveSession(t, app, codeSession.SessionExternalID, defaultTestKey).Status; status != expectedStatus {
+				t.Fatalf("public status=%s, want %s", status, expectedStatus)
 			}
 			if order == "worker without result" {
 				return
@@ -440,10 +465,10 @@ func sessionInputProcessedAt(t *testing.T, raw []byte) string {
 
 func TestSessionToolConfirmationACKLeavesOriginalInputUnchanged(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("confirmation-ack"))
-	codeSession, epoch := newPayloadIntegrationSession(t, app)
+	codeSession, epoch := newPayloadIntegrationSessionWithAgent(t, app, bashAskAgentBody)
 	// The large request also exercises offloaded control responses.
 	postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, internalPayloadRequest(epoch,
-		`{"type":"control_request","uuid":"approval","request_id":"approval-request","request":{"subtype":"can_use_tool","tool_name":"MysteryTool","tool_use_id":"tool-approval","input":{"text":`+quoteJSON(strings.Repeat("x", 40000))+`}}}`))
+		`{"type":"control_request","uuid":"approval","request_id":"approval-request","request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"tool-approval","input":{"command":`+quoteJSON(strings.Repeat("x", 40000))+`}}}`))
 	toolEvents := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=agent.tool_use", defaultTestKey)
 	if len(toolEvents.Data) != 1 {
 		t.Fatalf("expected a pending tool request, got %d", len(toolEvents.Data))
@@ -530,8 +555,8 @@ func TestSessionWorkerExhaustionCorrectionHistoryOrder(t *testing.T) {
 		t.Run(eventType, func(t *testing.T) {
 			for _, order := range []string{"asc", "desc"} {
 				events := listSessionEvents(t, app, record.SessionExternalID, "types[]="+eventType+"&order="+order, defaultTestKey)
-				if len(events.Data) != 2 {
-					t.Fatalf("%s %s events=%s, want original idle and correction", eventType, order, events.Data)
+				if len(events.Data) != 1 {
+					t.Fatalf("%s %s events=%s, want one result terminal event", eventType, order, events.Data)
 				}
 				index := len(events.Data) - 1
 				if order == "desc" {
@@ -616,6 +641,7 @@ func TestSessionWorkerExhaustedReason(t *testing.T) {
 				t.Fatalf("previous failed result ended new turn: %s", status)
 			}
 			publishIdle()
+			postCodeSessionWorkerEvents(t, app, record.ExternalID, internalPayloadRequest(epoch, `{"type":"result","uuid":"next-successful-result","is_error":false}`))
 			assertReason("session.status_idle", "end_turn")
 			assertReason("session.thread_status_idle", "end_turn")
 		})
@@ -658,9 +684,11 @@ func TestSessionWorkerLateExhaustionDoesNotEndNewTurn(t *testing.T) {
 			record, epoch := newPayloadIntegrationSession(t, app)
 			putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
 			oldTime := time.Now().UTC().Format(time.RFC3339Nano)
+			postCodeSessionWorkerEvents(t, app, record.ExternalID, internalPayloadRequest(epoch, `{"type":"result","uuid":"previous-result","is_error":false}`))
 			putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
 			putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
 			if nextStatus == "idle" {
+				postCodeSessionWorkerEvents(t, app, record.ExternalID, internalPayloadRequest(epoch, `{"type":"result","uuid":"current-result","is_error":false}`))
 				putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
 			}
 			before := listSessionEvents(t, app, record.SessionExternalID, "types[]=session.status_idle", defaultTestKey)

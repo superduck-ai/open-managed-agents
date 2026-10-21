@@ -1,3 +1,6 @@
+import { useSessionFiles } from './SessionFileContext';
+import { sessionOutputFileForPath } from './sessionOutputModel';
+import { useSessionFileDownload } from './useSessionFileDownload';
 import { createElement, isValidElement, type ComponentPropsWithoutRef, type ReactNode } from 'react';
 import ReactMarkdown, { type Components, type UrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -13,16 +16,34 @@ function transcriptHeading(tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') {
     createElement(tag, { ...props, className: transcriptHeadingClassName });
 }
 
-const transcriptMarkdownComponents: Components = {
-  a: ({ node: _node, href, ...props }) => (
+function TranscriptFileLink({ node: _node, href, ...props }: ComponentPropsWithoutRef<'a'> & { node?: unknown }) {
+  const sessionFiles = useSessionFiles();
+  const file = href && sessionFiles ? sessionOutputFileForPath(sessionFiles.files, href) : undefined;
+  const { download, downloading } = useSessionFileDownload(sessionFiles?.workspaceId ?? '');
+  return (
     <a
       {...props}
-      href={href || undefined}
-      target="_blank"
+      href={file ? '#download-file' : href || undefined}
+      target={file ? undefined : '_blank'}
       rel="noreferrer"
+      title={file?.path}
+      aria-busy={file ? downloading : undefined}
+      onClick={
+        file
+          ? (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void download(file);
+            }
+          : undefined
+      }
       className="font-medium text-session-link underline decoration-session-link/35 underline-offset-2 hover:decoration-current"
     />
-  ),
+  );
+}
+
+const transcriptMarkdownComponents: Components = {
+  a: TranscriptFileLink,
   blockquote: ({ node: _node, ...props }) => (
     <blockquote {...props} className="border-l-2 border-border pl-3 text-muted-foreground" />
   ),
@@ -77,6 +98,7 @@ const transcriptMarkdownComponents: Components = {
 };
 
 const transcriptMarkdownUrlTransform: UrlTransform = (value, key) => {
+  if (key === 'href' && value.startsWith('sandbox:/')) return value;
   if (/^https?:/i.test(value) || (value.startsWith('/') && !value.startsWith('//'))) {
     return value;
   }

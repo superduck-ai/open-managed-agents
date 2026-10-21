@@ -207,7 +207,7 @@ func (c *SessionCredentials) Verify(rawToken string) (SessionCredentialClaims, e
 	if !token.Valid {
 		return SessionCredentialClaims{}, errors.New("verify session ingress token: token is invalid")
 	}
-	if err := validateSessionCredentialClaims(claims); err != nil {
+	if err := validateSessionCredentialClaims(claims, "worker"); err != nil {
 		return SessionCredentialClaims{}, err
 	}
 	return claims, nil
@@ -235,7 +235,7 @@ func validateSessionCredentialIdentity(identity SessionCredentialIdentity) error
 	return nil
 }
 
-func validateSessionCredentialClaims(claims SessionCredentialClaims) error {
+func validateSessionCredentialClaims(claims SessionCredentialClaims, role string) error {
 	identity := SessionCredentialIdentity{
 		SessionID:        claims.SessionID,
 		PublicSessionID:  claims.PublicSessionID,
@@ -249,7 +249,7 @@ func validateSessionCredentialClaims(claims SessionCredentialClaims) error {
 		return err
 	}
 	// sub 必须与 session_id 重合，application/role 则把 token 限定为 CCR worker 凭证。
-	if claims.Subject != claims.SessionID || claims.ID == "" || claims.Application != "ccr" || claims.Role != "worker" {
+	if claims.Subject != claims.SessionID || claims.ID == "" || claims.Application != "ccr" || claims.Role != role {
 		return errors.New("invalid session ingress token claims")
 	}
 	return nil

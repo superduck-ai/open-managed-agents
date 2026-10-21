@@ -3,6 +3,7 @@ package skills
 import (
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -35,6 +36,16 @@ type runtimeSkillRef struct {
 	Version string `json:"version"`
 }
 
+type runtimeSkillSnapshot struct {
+	Skills     []runtimeSkillRef `json:"skills"`
+	Multiagent *struct {
+		Type      string                  `json:"type"`
+		Agents    []runtimeSkillAgent     `json:"agents,case:strict"`
+		Subagents *runtimeSkillDelegation `json:"subagents,case:strict"`
+		Workflows *runtimeSkillDelegation `json:"workflows,case:strict"`
+	} `json:"multiagent,case:strict"`
+}
+
 func NewRuntimeResolver(database *db.DB) *RuntimeResolver {
 	return &RuntimeResolver{db: database}
 }
@@ -53,7 +64,7 @@ func (r *RuntimeResolver) ResolveAgentSnapshot(ctx context.Context, workspaceUUI
 
 	resolved := make([]RuntimeSkill, 0, len(refs))
 	seenRefs := map[string]struct{}{}
-	seenResolved := map[string]struct{}{}
+	seenResolved := map[string]int{}
 	dirs := map[string]string{}
 	for _, ref := range refs {
 		ref.Type = strings.TrimSpace(ref.Type)
@@ -70,7 +81,10 @@ func (r *RuntimeResolver) ResolveAgentSnapshot(ctx context.Context, workspaceUUI
 			return nil, err
 		}
 		resolvedKey := skill.Source + "\x00" + skill.SkillID + "\x00" + skill.Version
-		if _, ok := seenResolved[resolvedKey]; ok {
+		if index, ok := seenResolved[resolvedKey]; ok {
+			if ref.Version == "latest" {
+				resolved[index].RequestedVersion = "latest"
+			}
 			continue
 		}
 		dirKey := strings.TrimSpace(skill.Directory)
@@ -78,27 +92,34 @@ func (r *RuntimeResolver) ResolveAgentSnapshot(ctx context.Context, workspaceUUI
 			return nil, fmt.Errorf("skill install directory %q is used by multiple skills", dirKey)
 		}
 		dirs[dirKey] = resolvedKey
-		seenResolved[resolvedKey] = struct{}{}
+		seenResolved[resolvedKey] = len(resolved)
 		resolved = append(resolved, skill)
 	}
 	return resolved, nil
 }
 
 func runtimeSkillRefs(snapshot json.RawMessage) ([]runtimeSkillRef, error) {
-	object := map[string]json.RawMessage{}
 	if len(snapshot) == 0 || strings.TrimSpace(string(snapshot)) == "null" {
 		return nil, nil
 	}
-	if err := json.Unmarshal(snapshot, &object); err != nil {
+	var roster runtimeSkillSnapshot
+	if err := jsonv2.Unmarshal(snapshot, &roster, jsonv2.MatchCaseInsensitiveNames(true), json.MatchCaseSensitiveDelimiter(true)); err != nil {
 		return nil, fmt.Errorf("decode agent snapshot: %w", err)
 	}
-	raw, ok := object["skills"]
-	if !ok || len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
-		return nil, nil
-	}
-	var refs []runtimeSkillRef
-	if err := json.Unmarshal(raw, &refs); err != nil {
-		return nil, fmt.Errorf("decode agent skills: %w", err)
+	refs := roster.Skills
+	if roster.Multiagent != nil {
+		children := roster.Multiagent.Agents
+		if roster.Multiagent.Type == "multiagent_20261001" {
+			children = nil
+			for _, setting := range []*runtimeSkillDelegation{roster.Multiagent.Subagents, roster.Multiagent.Workflows} {
+				if setting != nil && setting.Type == "enabled" {
+					children = append(children, setting.PredefinedAgents...)
+				}
+			}
+		}
+		for _, child := range children {
+			refs = append(refs, child.Skills...)
+		}
 	}
 	for i, ref := range refs {
 		if strings.TrimSpace(ref.Type) != "anthropic" && strings.TrimSpace(ref.Type) != "custom" {
@@ -186,4 +207,13 @@ func (r *RuntimeResolver) resolveCustom(ctx context.Context, workspaceUUID strin
 		SHA256:           record.SHA256,
 		SizeBytes:        record.SizeBytes,
 	}, nil
+}
+
+type runtimeSkillAgent struct {
+	Skills []runtimeSkillRef `json:"skills"`
+}
+
+type runtimeSkillDelegation struct {
+	Type             string              `json:"type"`
+	PredefinedAgents []runtimeSkillAgent `json:"predefined_agents,case:strict"`
 }

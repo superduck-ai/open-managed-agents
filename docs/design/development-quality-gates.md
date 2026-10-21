@@ -32,6 +32,31 @@
 
 规则变更应先在本地通过 `just lint`、`just dead-code` 和 `just duplicates`，再提交配置与必要的代码修复；不要通过全局排除、提高重复率预算、`nolint`、伪造引用或跳过标记隐藏既有问题。
 
+## Go 测试分层
+
+默认 `just test` 在生成 Mapper 后执行 `go test ./... -count=1`，只运行普通单测。单测允许进程内 fake、miniredis、嵌入式 NATS 与临时本地 HTTP/TCP 端点，不读取部署配置连接真实依赖。测试代码需要真实 PostgreSQL、Redis、S3 或外部 SDK/CLI 时使用 `integration` build tag，包括 `tests/` 下的 API、数据库和生命周期回归。同文件混有纯逻辑测试时拆分文件，保持默认单测覆盖不变。
+
+| 命令 | 执行范围 |
+| --- | --- |
+| `just test` | 默认 Go 单测 |
+| `just test ./internal/tunnels -run '^TestRequestBindingRespectsCallerTimeout$'` | 定向普通单测 |
+| `CONFIG_FILE=/path/to/test-config.yaml just test-integration` | 普通单测和集成回归，使用隔离依赖 |
+| `CONFIG_FILE=/path/to/test-config.yaml just test-integration ./tests -run '^TestFilesAPI$'` | 定向 API 集成回归 |
+
+`integration` 标签将集成测试加入对应 package，因此集成命令也运行包内单测。省略标签时，即使环境配置了真实依赖，也不会编译或执行集成测试。`e2e` 和 `e2b_integration` 继续显式启用既有场景；`tests/` 的共享 fixture 同时供这些构建使用。verify-be 子测试显式传递 `-tags=integration`，保持原场景和完整 suite 的覆盖，不将默认单测结果冒充集成验收。
+
+常规 lint、死代码检查与 package 枚举启用 `integration` 标签，保留对集成源码的静态检查。复杂度与重复代码仍按既有生产代码范围分析。`scripts/tests/go-packages_test.sh` 同时守卫仅含集成测试的 package 不会从门禁枚举中消失。CI 的测试分层脚本使用 runner 默认提供的 `grep` 检查 package 和文件列表，不依赖额外安装 ripgrep。CI 的普通单测入口不配置真实依赖，也不启用集成标签。仓库历史验收记录中拆分之前的 `just test` 仍表示当时的全量入口，不改写历史结果。
+
+修改 schema 或 handler 后默认运行普通单测，不再自动触发整个集成包。需要定向集成验证时显式选择最小范围，整域或全量回归按用户指定范围单独触发。缺少依赖、skip 或未执行不能报告为集成通过；`just test-integration` 与 verify-be 的授权要求分别遵循 `AGENTS.md`。
+
+## Herdr 辅助审查
+
+`herdr/review.py` 在当前 Herdr tab 中启动 grok 和 cckimi 并行审查，再将两份终端记录交给独立的 Codex agent。Codex 合并发现、核实代码依据并决定是否修复，修复结果仍受本文件的质量门禁约束。默认范围为当前工作区相对 HEAD 的全部未提交改动，也可显式指定范围。
+
+review 阶段只允许读取代码，终端记录不完整时允许另写临时报告。脚本比较 review 前后的工作区内容摘要，发生变化时停止后续修复。该检查不提供文件系统隔离。审批、失败或超时均中断编排，不代答审批、不自动重投任务，保留 pane 和 `tmp/herdr-review/<run_id>/` 下的记录供检查。终端记录缺少报告首尾标记时，Grok 通过指定 session 的 `export` 恢复，cckimi 按 Herdr 恢复流程写出完整临时报告；无法取得完整报告时停止修复。Grok 的 `agent_prompt_stalled` 仅在已处于 idle/done 且 session 导出含完整最终报告时接受，原错误仍保留。`finished` 表示回合结束且结论文件存在，具体修复和检查结果以 `conclusion.md` 为准。
+
+该编排不自动提交或推送，也不授权 `verify-be`。脚本逻辑通过 `python3 -m unittest discover -s herdr -p 'test_*.py'` 验证；运行入口、依赖和现场处理见 `herdr/README.md`。
+
 ## 验收
 
 生成缓存的验收使用 `go test ./cmd/generate-go -count=1`，覆盖失败、中断、并发、输入和产物变化、删除 Mapper、强制重建、无关代码修改及重启脚本。两个 Just 入口另用 `just --dry-run server` 和 `just --dry-run restart-server` 确认只调用一次重启脚本；Go 单测不依赖 Just。DB 实际生成后执行 `go test ./internal/db -count=1`，确认生成代码可编译且 Mapper 测试通过。

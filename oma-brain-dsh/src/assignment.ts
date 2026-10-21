@@ -49,6 +49,7 @@ export function validateAssignment(a: Assignment): void {
     || Array.isArray(a.launch.model_backends) || Object.values(a.launch.model_backends).some((value) => value !== "messages" && value !== "chat_completions")))
     throw new Error("Invalid model API backends");
   const tools = new Set([...sandboxToolDefinitions(), ...webToolDefinitions()].map((tool) => tool.name));
+  tools.add("ask_user_question");
   if (!Array.isArray(a.launch.tools)
     || a.launch.tools.some((name) => !tools.has(name)))
     throw new Error("Invalid launch tools");

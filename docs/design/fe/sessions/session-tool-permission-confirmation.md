@@ -182,10 +182,10 @@
 2. 子线程请求携带对应 `session_thread_id`。
 3. 接受答案时，设置 `is_error=false`。
 4. 将答案对象 JSON 放入单个文本内容块。
-5. 使用完整 `question` 文本作为答案键。
+5. 答案使用 `{answers:[{id,selected,custom?}]}`，按问题 `id` 关联。
 
 拒绝时，设置 `is_error=true`，无需 `content`。
-后端从私有映射读取原始输入，并设置 Claude Code 的 `updatedInput.answers`。
+后端从私有映射读取调用身份，并通过 `externalResult` 回传 `content` / `isError`。
 公开 `user.tool_confirmation` 不增加 `updated_input` 或 `answers` 字段。
 
 ## 实现与验收

@@ -4,6 +4,7 @@ import { setAnthropicClientForTest } from '@/shared/api/anthropic';
 import { type SessionDetailEventCache } from './types';
 import {
   addSessionFileResource,
+  postSessionToolConfirmation,
   listMemoryStoreOptions,
   listSessionFileOptions,
   listSessionFiles,
@@ -34,6 +35,37 @@ afterEach(() => {
 });
 
 describe('managed agents API', () => {
+  test('sends structured question answers inside the standard custom tool result content', async () => {
+    let sent: Record<string, unknown> = {};
+    globalThis.fetch = (async (_input, init) => {
+      sent = JSON.parse(String(init?.body));
+      return Response.json({ data: [] });
+    }) as typeof fetch;
+    const questionAnswers = [{ id: 'color', selected: ['Blue'], custom: 'Green' }];
+    await postSessionToolConfirmation(
+      'sesn_question',
+      {
+        toolUseId: 'sevt_call',
+        result: 'allow',
+        customTool: true,
+        answers: { answers: questionAnswers },
+        sessionThreadId: 'sthr_child',
+      },
+      'workspace_test',
+    );
+    expect(sent).toEqual({
+      events: [
+        {
+          type: 'user.custom_tool_result',
+          custom_tool_use_id: 'sevt_call',
+          is_error: false,
+          session_thread_id: 'sthr_child',
+          content: [{ type: 'text', text: JSON.stringify({ answers: questionAnswers }) }],
+        },
+      ],
+    });
+  });
+
   test('thread metadata repair changes the refresh signature without creating another lane', () => {
     const thread = {
       id: 'sthr_child',

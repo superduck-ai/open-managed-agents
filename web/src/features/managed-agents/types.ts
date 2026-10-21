@@ -678,6 +678,7 @@ export type MemoryFormValues = {
 };
 
 export type QuickstartQuestion = {
+  id?: string;
   header: string;
   question: string;
   multiSelect: boolean;

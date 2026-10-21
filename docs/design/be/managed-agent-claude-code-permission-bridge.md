@@ -276,7 +276,7 @@ agent toolset：
 5. 子线程工具确认使用相同语义：cross-post 到 primary 的阻塞 public event 带 `session_thread_id`，`stop_reason.event_ids` 指向该 public event id；server 把私有映射中的 `session_thread_id` 保留到 worker `control_response`。
 6. `user.tool_confirmation` 本身保留为 public session event，用于审计和 Session Detail 只读回放。
 
-`AskUserQuestion` 按 custom tool 合同发布 `agent.custom_tool_use`；客户端使用同一个 public event id 发送 `user.custom_tool_result`，将答案对象编码为单个 text content block。server 从私有映射恢复原始 input，把该 JSON 对象写入 Claude Code `updatedInput.answers` 后发送 `control_response`。不扩展 `user.tool_confirmation` 的 `updated_input` 或 `answers` 字段。
+`AskUserQuestion` 按 custom tool 合同发布 `agent.custom_tool_use`；客户端使用同一个 public event id 发送 `user.custom_tool_result`，将答案对象编码为单个 text content block。server 从私有映射恢复调用身份，通过 `control_response.externalResult` 回传 `content` / `isError`。答案采用 DeepSeek 的 `{answers:[{id,selected,custom?}]}`，不再兼容旧 Claude Code 问卷。不扩展 `user.tool_confirmation` 的 `updated_input` 或 `answers` 字段。
 
 ### 4.4 Batch 与单事件一致性
 
@@ -366,7 +366,7 @@ Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`�
 - `always_ask` 生成的 `session.status_idle.stop_reason` 遵循 SDK union shape，`event_ids` 包含阻塞 `agent.tool_use` / `agent.mcp_tool_use` 的 public event id，public status 不含 `requires_action_details`。
 - assistant 原始 `tool_use` 不做 public 投影；`can_use_tool` 产生唯一扁平 tool-use event，`stop_reason.event_ids` 指向这条事件，用该 id 发送 confirmation 仍能生成 Claude Code `control_response`。
 - tool result 的关联 ID 会从 provider tool id 转换为对应 public event id，public 响应不出现 provider tool id 或 worker `request_id`。
-- `AskUserQuestion` 使用 `agent.custom_tool_use` / `user.custom_tool_result` 并恢复为 Claude Code `updatedInput.answers`。
+- `AskUserQuestion` 使用 `agent.custom_tool_use` / `user.custom_tool_result` 并通过 `externalResult` 回传结果。
 
 ### 7.3 Confirmation 测试
 

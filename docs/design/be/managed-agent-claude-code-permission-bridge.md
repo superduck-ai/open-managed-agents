@@ -9,6 +9,9 @@
 Managed Agents API 的权限模型定义在 agent snapshot 的 `tools` 中：
 
 - `agent_toolset_20260401` 默认 `always_allow`；`ask_user_question` 例外：未显式配置时写入路径补充 `enabled:false`，运行时同样 deny，避免已有 snapshot 或纯 API 会话进入无人处理的 HITL 等待。用户显式配置后可以主动开启。
+- 当前 DSH 的内置工具配置仅接受 `bash`、`read`、`write`、`edit`、`glob`、`grep`、`web_fetch`、`web_search`、`ask_user_question` 共 9 项；控制台列表和配置 schema 使用同一范围。
+- 旧的 `task`、`cron_*`、规划模式、worktree、`notebook_edit`、`schedule_wakeup`、`skill`、`task_output`、`task_stop`、`todo_write` 不再作为内置工具接受，运行时按未知工具处理。已有数据库快照不做批量迁移；重新提交工具配置时需移除旧项。
+- 子代理工具继续由多代理配置授权，MCP 发现和 Skill 目录读取机制保持原有行为。
 - `mcp_toolset` 默认 `always_ask`。
 - `default_config` 定义 toolset 默认行为。
 - `configs[]` 定义单个工具的覆盖行为。

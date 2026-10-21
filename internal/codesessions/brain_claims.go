@@ -13,17 +13,34 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 const maxBrainClaimBodySize = 4 << 10
 
-type brainClaimResponse struct {
+type brainClaimRequestBody struct {
+	MaxTasks          int `json:"max_tasks"`
+	MaxSessions       int `json:"max_sessions"`
+	BusySessions      int `json:"busy_sessions"`
+	ResidentSessions  int `json:"resident_sessions"`
+	AdmissionFailures int `json:"admission_failures"`
+}
+
+type brainClaimTask struct {
 	SessionID      string `json:"session_id"`
 	WorkerEpoch    int64  `json:"worker_epoch"`
 	IngressToken   string `json:"ingress_token"`
 	ModelToken     string `json:"model_token"`
 	ClaimExpiresAt string `json:"claim_expires_at"`
+}
+
+type brainClaimResponse struct {
+	Tasks []brainClaimTask `json:"tasks"`
+}
+
+type brainClaimAckRequest struct {
+	WorkerEpoch int64 `json:"worker_epoch"`
 }
 
 type brainClaimReleaseRequest struct {
@@ -71,6 +88,7 @@ func (h *Handler) WithBrainClaims(authenticator BrainClaimAuthenticator) *Handle
 func (h *Handler) registerBrainClaimRoutes(router chi.Router) {
 	router.Route("/code/brain/claims", func(claimRouter chi.Router) {
 		claimRouter.Post("/", h.errorAdapter.Wrap(h.handleBrainClaim))
+		claimRouter.Post("/{code_session_id}/ack", h.errorAdapter.Wrap(h.handleBrainClaimAck))
 		claimRouter.Post("/{code_session_id}/release", h.errorAdapter.Wrap(h.handleBrainClaimRelease))
 	})
 }
@@ -95,6 +113,35 @@ func parseBrainClaimBlock(r *http.Request) (time.Duration, error) {
 	return time.Duration(value) * time.Millisecond, nil
 }
 
+func parseBrainClaimRequest(w http.ResponseWriter, r *http.Request, workerID string) (BrainClaimRequest, error) {
+	block, err := parseBrainClaimBlock(r)
+	if err != nil {
+		return BrainClaimRequest{}, err
+	}
+	body, err := httpapi.DecodeObjectBodyAs[brainClaimRequestBody](w, r, maxBrainClaimBodySize)
+	if err != nil {
+		return BrainClaimRequest{}, brainClaimInvalidRequest("Invalid JSON body", err)
+	}
+	if body.MaxTasks < 1 || body.MaxTasks > brainClaimMaxTasks {
+		return BrainClaimRequest{}, brainClaimInvalidRequest("max_tasks must be between 1 and 32", nil)
+	}
+	if body.MaxSessions < 1 || body.BusySessions < 0 || body.ResidentSessions < body.BusySessions || body.AdmissionFailures < 0 {
+		return BrainClaimRequest{}, brainClaimInvalidRequest(
+			"max_sessions must be positive, busy_sessions must not be negative, resident_sessions must cover busy_sessions and admission_failures must not be negative", nil)
+	}
+	return BrainClaimRequest{
+		WorkerID: workerID,
+		Block:    block,
+		MaxTasks: body.MaxTasks,
+		Load: db.BrainWorkerLoad{
+			MaxSessions:      body.MaxSessions,
+			BusySessions:     body.BusySessions,
+			ResidentSessions: body.ResidentSessions,
+		},
+		AdmissionFailures: body.AdmissionFailures,
+	}, nil
+}
+
 func (h *Handler) handleBrainClaim(w http.ResponseWriter, r *http.Request) error {
 	if err := h.brainClaims.authorize(r); err != nil {
 		return err
@@ -103,11 +150,11 @@ func (h *Handler) handleBrainClaim(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
-	block, err := parseBrainClaimBlock(r)
+	request, err := parseBrainClaimRequest(w, r, workerID)
 	if err != nil {
 		return err
 	}
-	claim, found, err := h.service.ClaimBrainWorker(r.Context(), workerID, block)
+	claims, err := h.service.ClaimBrainWorker(r.Context(), request)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return nil
@@ -115,17 +162,44 @@ func (h *Handler) handleBrainClaim(w http.ResponseWriter, r *http.Request) error
 		return brainClaimFailure(err)
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	if !found {
+	if len(claims) == 0 {
 		w.WriteHeader(http.StatusNoContent)
 		return nil
 	}
-	httpapi.WriteJSON(w, http.StatusOK, brainClaimResponse{
-		SessionID:      claim.CodeSessionID,
-		WorkerEpoch:    claim.WorkerEpoch,
-		IngressToken:   claim.IngressToken,
-		ModelToken:     claim.ModelToken,
-		ClaimExpiresAt: claim.ClaimExpiresAt.Format(time.RFC3339Nano),
-	})
+	response := brainClaimResponse{Tasks: make([]brainClaimTask, len(claims))}
+	for index, claim := range claims {
+		response.Tasks[index] = brainClaimTask{
+			SessionID:      claim.CodeSessionID,
+			WorkerEpoch:    claim.WorkerEpoch,
+			IngressToken:   claim.IngressToken,
+			ModelToken:     claim.ModelToken,
+			ClaimExpiresAt: claim.ClaimExpiresAt.Format(time.RFC3339Nano),
+		}
+	}
+	httpapi.WriteJSON(w, http.StatusOK, response)
+	return nil
+}
+
+func (h *Handler) handleBrainClaimAck(w http.ResponseWriter, r *http.Request) error {
+	if err := h.brainClaims.authorize(r); err != nil {
+		return err
+	}
+	workerID, err := brainClaimWorkerID(r)
+	if err != nil {
+		return err
+	}
+	request, err := httpapi.DecodeObjectBodyAs[brainClaimAckRequest](w, r, maxBrainClaimBodySize)
+	if err != nil {
+		return brainClaimInvalidRequest("Invalid JSON body", err)
+	}
+	if request.WorkerEpoch <= 0 {
+		return brainClaimInvalidRequest("worker_epoch must be positive", nil)
+	}
+	codeSessionID := chi.URLParam(r, "code_session_id")
+	if err := h.service.AckBrainClaim(r.Context(), codeSessionID, workerID, request.WorkerEpoch); err != nil {
+		return mapBrainClaimAckError(err)
+	}
+	httpapi.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	return nil
 }
 

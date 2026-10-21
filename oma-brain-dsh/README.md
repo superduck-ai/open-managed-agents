@@ -58,7 +58,7 @@ bun run restart
 
 The restart script sends SIGTERM to direct Bun entry processes whose working directory is this project, including `bun start` launches. It waits up to thirty seconds for shutdown and cancels the restart if a process remains. It then starts `dist/main.js` in the foreground with output in the current terminal. Press Ctrl+C to stop the service. Run the script as the same user that started the service. A concurrent restart is refused during build and shutdown. If the script is killed and leaves a stale lock, remove `.run/restart.lock` after confirming no restart is running.
 
-The Brain claims Code Sessions with `POST /v1/code/brain/claims?block_ms=25000`, sending the shared fleet token in `OMA_BRAIN_CLAIM_TOKEN` and its process UUID in `X-Worker-ID`. Each claim advances the worker epoch and returns fresh ingress and model credentials to exactly one process. Up to `OMA_BRAIN_CLAIM_CONCURRENCY` long polls run at once, and only while a session slot is free; a busy process stops claiming. Admission registers the worker, loads the session context and restores its journal. If admission fails, the host calls `POST /v1/code/brain/claims/{id}/release`. Transient failures use `reason: "admission_failed"`, so another process can retry after the backend's backoff (5, 10, 20, 40 and 80 seconds); five consecutive failures end the session with `session.error`. Failures that cannot succeed on retry, such as an invalid task envelope, session context or assignment, use `reason: "permanent"`, and the backend publishes `session.error` immediately. Admission is also abandoned with `reason: "shutdown"` when the process is stopping or every local slot is busy, which does not count as a failure. Concurrent admissions reserve a slot before evicting an idle session, so the process never holds more than `OMA_BRAIN_MAX_SESSIONS` sessions. On SIGTERM the host releases claims still being admitted and sessions with an active turn using `reason: "shutdown"`, so another process can take them without waiting for the lease. Idle sessions closed after sixty seconds, evicted for capacity or open at shutdown are released with `reason: "idle"`, which only clears the lease, so new input can be claimed immediately. A crashed process loses its claims when the 20-second lease and 10-second grace period expire.
+The Brain claims Code Sessions with `POST /v1/code/brain/claims?block_ms=25000`, sending the shared fleet token in `OMA_BRAIN_CLAIM_TOKEN` and its process UUID in `X-Worker-ID`. Each claimed task advances the worker epoch and returns fresh ingress and model credentials to exactly one process. The process keeps a single long poll open while a session slot is free; a busy process stops claiming. Each request asks for up to `min(OMA_BRAIN_CLAIM_CONCURRENCY, free slots)` tasks minus admissions in progress, and reports the process's `max_sessions`, `busy_sessions`, `resident_sessions` and consecutive `admission_failures`. The backend uses these reports to let less loaded processes claim first, delaying a busier process by up to 500 ms. After three consecutive admission failures it stops handing that process work for 15 seconds, doubling up to five minutes, and then allows one task at a time until an admission succeeds. The host acknowledges each task with `POST /v1/code/brain/claims/{id}/ack` before admitting it. A task that is not acknowledged within ten seconds, for example because the claim response was lost, becomes claimable again without counting as a failed attempt. A task whose acknowledgement is rejected is dropped. Admission registers the worker, loads the session context and restores its journal. If admission fails, the host calls `POST /v1/code/brain/claims/{id}/release`. Transient failures use `reason: "admission_failed"`, so another process can retry after the backend's backoff (5, 10, 20, 40 and 80 seconds); five consecutive failures end the session with `session.error`. Failures that cannot succeed on retry, such as an invalid task envelope, session context or assignment, use `reason: "permanent"`, and the backend publishes `session.error` immediately. Admission is also abandoned with `reason: "shutdown"` when the process is stopping or every local slot is busy, which does not count as a failure. Concurrent admissions reserve a slot before evicting an idle session, so the process never holds more than `OMA_BRAIN_MAX_SESSIONS` sessions. On SIGTERM the host releases claims still being admitted and sessions with an active turn using `reason: "shutdown"`, so another process can take them without waiting for the lease. Idle sessions closed after sixty seconds, evicted for capacity or open at shutdown are released with `reason: "idle"`, which only clears the lease, so new input can be claimed immediately. A crashed process loses its claims when the 20-second lease and 10-second grace period expire.
 
 At startup the host makes a non-blocking claim before reporting ready. If the backend rejects the token, startup fails with `Brain claim rejected with HTTP 401` and the process exits. Other probe failures, such as a backend that is still starting, are retried after 1, 2, 5, 10 and then every 30 seconds. If the token is rejected after startup, the process keeps running its existing sessions, prints the same message once for each run of rejections and keeps retrying with that backoff. The token must match the backend `code_session.brain_claim_token_file`. Startup errors appear directly in the terminal, and `bun run restart` returns the service's exit code.
 
@@ -73,7 +73,7 @@ The application reads these optional deployment settings at startup. Unset value
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `OMA_BRAIN_CLAIM_TOKEN` | required | Shared fleet token matching the backend `code_session.brain_claim_token_file` |
-| `OMA_BRAIN_CLAIM_CONCURRENCY` | `4` | Concurrent claim long polls, from 1 through 32 |
+| `OMA_BRAIN_CLAIM_CONCURRENCY` | `4` | Maximum tasks per claim and concurrent admissions, from 1 through 32 |
 | `OMA_BRAIN_MAX_SESSIONS` | `8` | Positive session capacity |
 | `OMA_CCR_HEARTBEAT_INTERVAL_MS` | `6000` | Positive integer interval in milliseconds |
 | `OMA_CCR_HEARTBEAT_TIMEOUT_MS` | `5000` | Positive integer request deadline in milliseconds |
@@ -169,10 +169,16 @@ The claim transport admits opaque task JSON. The host validates the task envelop
 
 ## Backend contract
 
-`POST /v1/code/brain/claims` returns this envelope, or `204` when no session is claimable within `block_ms`:
+`POST /v1/code/brain/claims` takes the process load report:
 
 ```json
-{"session_id":"cse_example","worker_epoch":7,"ingress_token":"<session ingress token>","model_token":"<model credential>","claim_expires_at":"2026-10-18T12:00:30Z"}
+{"max_tasks":4,"max_sessions":8,"busy_sessions":2,"resident_sessions":5,"admission_failures":0}
+```
+
+It returns up to `max_tasks` tasks, or `204` when no session is claimable within `block_ms`. `claim_expires_at` is the ten-second delivery deadline; acknowledging the task extends the claim to thirty seconds:
+
+```json
+{"tasks":[{"session_id":"cse_example","worker_epoch":7,"ingress_token":"<session ingress token>","model_token":"<model credential>","claim_expires_at":"2026-10-18T12:00:10Z"}]}
 ```
 
 Admission builds the execution assignment:
@@ -207,7 +213,8 @@ The claim rotates the credential pair and epoch in one transaction, so only the 
 
 | Interface | Purpose |
 | --- | --- |
-| `POST /v1/code/brain/claims?block_ms=N` | Claim a session with the fleet token; returns credentials or `204` |
+| `POST /v1/code/brain/claims?block_ms=N` | Claim a batch of sessions with the fleet token and a load report; returns credentials or `204` |
+| `POST /v1/code/brain/claims/{id}/ack` | Acknowledge a claimed task before admission; `409` means another process now holds it |
 | `POST /v1/code/brain/claims/{id}/release` | Release a claim with `admission_failed`, `permanent`, `shutdown` or `idle` |
 | `POST /v1/code/sessions/{id}/worker/register` | Register the worker and return its epoch |
 | `GET /v1/code/sessions/{id}/worker/events/stream?worker_epoch=N` | Receive user and control events |

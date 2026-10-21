@@ -148,7 +148,8 @@ code_session:
   upstream_proxy_disable_ssrf_protection: false
   # Required when environment_runner.agent_mode is brain. The file holds the
   # shared fleet token (at least 32 characters) that oma-brain-dsh sends to
-  # POST /v1/code/brain/claims; mount it like the JWT signing key.
+  # POST /v1/code/brain/claims and its ack and release routes; mount it like
+  # the JWT signing key.
   brain_claim_token_file: ""
 
 observability:

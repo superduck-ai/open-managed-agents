@@ -35,10 +35,30 @@
             idle_since = NULL,
             worker_claimed_by = #{params.WorkerID},
             worker_claim_expires_at = #{params.ClaimExpiresAt},
-            worker_claim_attempts = worker_claim_attempts + 1,
+            worker_claim_acked_at = NULL,
+            worker_claim_attempts = worker_claim_attempts
+                + CASE
+                    WHEN worker_claimed_by IS NOT NULL AND worker_claim_acked_at IS NULL AND worker_lease_expires_at IS NULL THEN 0
+                    ELSE 1
+                END,
             updated_at = NOW()
         WHERE uuid = #{params.UUID}
         RETURNING current_worker_epoch
+    </update>
+
+    <update id="Ack" result="rows">
+        UPDATE code_sessions
+        SET worker_claim_expires_at = CASE
+                WHEN worker_claim_acked_at IS NULL THEN #{params.ClaimExpiresAt}
+                ELSE worker_claim_expires_at
+            END,
+            worker_claim_acked_at = COALESCE(worker_claim_acked_at, NOW()),
+            updated_at = NOW()
+        WHERE external_id = #{params.ExternalID}
+          AND current_worker_epoch = #{params.Epoch}
+          AND worker_claimed_by = #{params.WorkerID}
+          AND status = 'active'
+          AND deleted_at IS NULL
     </update>
 
     <update id="HoldExhausted" result="returning" resultType="int64">
@@ -86,6 +106,7 @@
         UPDATE code_sessions
         SET worker_lease_expires_at = NULL,
             connection_status = 'disconnected',
+            worker_claim_acked_at = COALESCE(worker_claim_acked_at, NOW()),
             <choose>
                 <when test="params.Kind == 'retry'">
                     worker_claim_requested_at = COALESCE(worker_claim_requested_at, NOW()),

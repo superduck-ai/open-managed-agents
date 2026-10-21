@@ -15,6 +15,7 @@ import (
 const (
 	brainWorkerTransport       = "claim"
 	brainClaimTTL              = 30 * time.Second
+	brainClaimDeliveryTTL      = 10 * time.Second
 	brainClaimMaxAttempts      = 5
 	brainClaimExhaustedHold    = time.Minute
 	brainClaimPollInterval     = time.Second
@@ -98,8 +99,12 @@ func (s *Service) notifyBrainWork(ctx context.Context, codeSessionID string) {
 	}
 }
 
-func (s *Service) ClaimBrainWorker(ctx context.Context, workerID string, block time.Duration) (BrainClaim, bool, error) {
-	deadline := time.Now().Add(min(block, brainClaimMaxBlock))
+func (s *Service) ClaimBrainWorker(ctx context.Context, request BrainClaimRequest) ([]BrainClaim, error) {
+	deadline := time.Now().Add(min(request.Block, brainClaimMaxBlock))
+	plan, err := s.planBrainClaims(ctx, request)
+	if err != nil {
+		return nil, err
+	}
 	waitCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	var signals <-chan struct{}
@@ -111,24 +116,57 @@ func (s *Service) ClaimBrainWorker(ctx context.Context, workerID string, block t
 		signals = subscribed
 	}
 	for {
-		claim, found, err := s.claimNextBrainWorker(ctx, workerID)
-		if err != nil || found {
-			return claim, found, err
+		if plan.claimable(time.Now()) {
+			if err := waitBrainClaimDelay(ctx, plan.delay); err != nil {
+				return nil, err
+			}
+			claims, err := s.claimBrainWorkers(ctx, request.WorkerID, plan.maxTasks)
+			if err != nil || len(claims) > 0 {
+				return claims, err
+			}
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return BrainClaim{}, false, nil
+			return nil, nil
 		}
 		timer := time.NewTimer(min(remaining, brainClaimPollInterval))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return BrainClaim{}, false, ctx.Err()
+			return nil, ctx.Err()
 		case <-signals:
 		case <-timer.C:
 		}
 		timer.Stop()
 	}
+}
+
+func (s *Service) claimBrainWorkers(ctx context.Context, workerID string, limit int) ([]BrainClaim, error) {
+	claims := make([]BrainClaim, 0, limit)
+	for len(claims) < limit {
+		claim, found, err := s.claimNextBrainWorker(ctx, workerID)
+		if err != nil {
+			if len(claims) == 0 {
+				return nil, err
+			}
+			s.logger.WarnContext(ctx, "brain claim batch stopped early", "worker_id", workerID, "claimed", len(claims), "error", err)
+			return claims, nil
+		}
+		if !found {
+			break
+		}
+		claims = append(claims, claim)
+	}
+	return claims, nil
+}
+
+func (s *Service) AckBrainClaim(ctx context.Context, codeSessionID, workerID string, epoch int64) error {
+	return s.db.AckCodeSessionClaim(ctx, db.AckCodeSessionClaimInput{
+		CodeSessionExternalID: codeSessionID,
+		WorkerID:              workerID,
+		WorkerEpoch:           epoch,
+		ClaimExpiresAt:        time.Now().UTC().Add(brainClaimTTL),
+	})
 }
 
 func (s *Service) claimNextBrainWorker(ctx context.Context, workerID string) (BrainClaim, bool, error) {
@@ -140,7 +178,7 @@ func (s *Service) claimNextBrainWorker(ctx context.Context, workerID string) (Br
 		claim, found, err := s.db.ClaimNextCodeSession(ctx, db.ClaimCodeSessionInput{
 			WorkerID:             workerID,
 			OAuthAccessTokenHash: auth.HashAPIKey(modelToken),
-			ClaimTTL:             brainClaimTTL,
+			ClaimTTL:             brainClaimDeliveryTTL,
 			LeaseGrace:           brainWorkerLeaseGrace,
 			MaxAttempts:          brainClaimMaxAttempts,
 			ExhaustedHold:        brainClaimExhaustedHold,

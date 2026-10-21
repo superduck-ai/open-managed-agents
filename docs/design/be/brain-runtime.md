@@ -15,14 +15,15 @@ sequenceDiagram
     R->>C: Create / RecoverManagedAgentCodeSession
     R->>C: DispatchWorker 置位 worker_claim_requested_at
     C-->>C: Core NATS oma.brain.work.available 唤醒长轮询
-    D->>C: POST /v1/code/brain/claims（fleet token、X-Worker-ID）
-    C-->>D: session ID、新 epoch、ingress token、model token
+    D->>C: POST /v1/code/brain/claims（fleet token、X-Worker-ID、负载与准入失败数）
+    C-->>D: tasks[]：session ID、新 epoch、ingress token、model token
+    D->>C: POST /v1/code/brain/claims/{id}/ack
     D->>C: worker/register
     D->>C: GET /v2/sessions/{id}
     D->>C: 恢复私有事件并连接输入流
 ```
 
-Runner 在 brain 模式下把 `metadata.config.worker_transport` 写为 `claim`，创建或恢复 Code Session 后调用 `DispatchWorker`，只置位领取请求，不下发凭据。DSH 以部署级 fleet token（`code_session.brain_claim_token_file`，brain 模式必填）长轮询领取；一次领取在同一事务内锁定一行、推进 epoch、替换模型凭据 hash 并写入领取者与 30 秒领取期限，提交后签发带 epoch 的 ingress JWT。凭据只出现在这一个 HTTPS 响应里，因此同一 epoch 只有一个持有方，不再依赖消息中间件的投递语义。
+Runner 在 brain 模式下把 `metadata.config.worker_transport` 写为 `claim`，创建或恢复 Code Session 后调用 `DispatchWorker`，只置位领取请求，不下发凭据。DSH 以部署级 fleet token（`code_session.brain_claim_token_file`，brain 模式必填）长轮询领取；一次领取在同一事务内锁定一行、推进 epoch、替换模型凭据 hash 并写入领取者与 10 秒送达期限，提交后签发带 epoch 的 ingress JWT；DSH 收到后先 ack，期限延长为 30 秒，未 ack 的领取过期后重新可领且不计失败。每个 DSH 进程只保留一个长轮询，按空闲槽位批量领取，并上报负载与连续准入失败数；服务端据此让负载较低的实例先领取，并熔断连续准入失败的实例，细节见 `brain-worker-claim.md`“多实例负载均衡与故障隔离”。凭据只出现在这一个 HTTPS 响应里，因此同一 epoch 只有一个持有方，不再依赖消息中间件的投递语义。
 
 可领取条件：`worker_transport = claim`、Code Session active、领取期限已过，租约为空或已超过宽限期，并且存在领取请求或公共会话处于 `running`/`rescheduling`。因此首次启动、执行端崩溃和空闲后收到新输入都走同一条件；idle 会话租约失效后不会被领取。`EnvironmentWorkMapper.ClaimNext` 领取云环境的 queued Work，以及已确认但尚无活动 Code Session 的自托管 Work；Brain 执行端崩溃恢复由 HTTP claim 处理，不再由 Work 轮换凭据。
 

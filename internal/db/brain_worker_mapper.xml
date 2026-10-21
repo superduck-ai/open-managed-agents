@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="BrainWorkerMapper">
+    <insert id="Record" result="returning" resultType="brainWorkerRow">
+        INSERT INTO brain_workers (
+            external_id, max_sessions, busy_sessions, resident_sessions, admission_failures, last_seen_at
+        ) VALUES (
+            #{params.ExternalID}, #{params.MaxSessions}, #{params.BusySessions}, #{params.ResidentSessions},
+            #{params.AdmissionFailures}, NOW()
+        )
+        ON CONFLICT (external_id) DO UPDATE SET
+            max_sessions = EXCLUDED.max_sessions,
+            busy_sessions = EXCLUDED.busy_sessions,
+            resident_sessions = EXCLUDED.resident_sessions,
+            admission_failures = EXCLUDED.admission_failures,
+            last_seen_at = NOW(),
+            updated_at = NOW()
+        RETURNING circuit_failures, circuit_open_until, (xmax = 0) AS inserted
+    </insert>
+
+    <update id="UpdateCircuit" result="rows">
+        UPDATE brain_workers
+        SET circuit_failures = #{params.CircuitFailures},
+            circuit_open_until = #{params.CircuitOpenUntil},
+            updated_at = NOW()
+        WHERE external_id = #{params.ExternalID}
+    </update>
+
+    <select id="ListAvailableLoads" resultType="brainWorkerLoadRow">
+        SELECT max_sessions, busy_sessions, resident_sessions
+        FROM brain_workers
+        WHERE last_seen_at &gt; #{seenAfter}
+          AND (circuit_open_until IS NULL OR circuit_open_until &lt;= NOW())
+    </select>
+
+    <delete id="DeleteStale" result="rows">
+        DELETE FROM brain_workers
+        WHERE last_seen_at &lt; #{seenBefore}
+    </delete>
+</mapper>

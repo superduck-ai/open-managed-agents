@@ -60,3 +60,13 @@ test("claim capacity counts only busy sessions", () => {
   ]);
   expect(capacity.available()).toBe(2);
 });
+
+test("claim load reports busy and resident sessions without retiring ones", () => {
+  const { capacity, retiring } = harness(4, [
+    { id: "A", busy: true, lastIdle: 1 },
+    { id: "B", busy: false, lastIdle: 2 },
+    { id: "C", busy: false, lastIdle: 3 },
+  ]);
+  retiring.set("C", true);
+  expect(capacity.load()).toEqual({ max_sessions: 4, busy_sessions: 1, resident_sessions: 2 });
+});

@@ -12,8 +12,20 @@ export interface ClaimedTask {
   worker_epoch: number;
 }
 
+export interface ClaimLoad {
+  max_sessions: number;
+  busy_sessions: number;
+  resident_sessions: number;
+}
+
+export interface ClaimRequest extends ClaimLoad {
+  max_tasks: number;
+  admission_failures: number;
+}
+
 export interface ClaimClient {
-  claim(blockMs: number, signal: AbortSignal): Promise<unknown | undefined>;
+  claim(request: ClaimRequest, blockMs: number, signal: AbortSignal): Promise<unknown[]>;
+  ack(task: ClaimedTask): Promise<void>;
   release(task: ClaimedTask, reason: ReleaseReason): Promise<void>;
 }
 
@@ -21,10 +33,13 @@ export interface ClaimLoopOptions {
   concurrency: number;
   blockMs?: number;
   capacity: () => number;
+  load: () => ClaimLoad;
   slotFreed: (signal: AbortSignal) => Promise<void>;
   admit: (task: unknown, stage: (stage: TaskAdmissionStage) => void) => Promise<void>;
   ready?: () => void;
 }
+
+type AdmissionOutcome = "admitted" | "skipped" | ReleaseReason;
 
 const retryDelaysMs = [1_000, 2_000, 5_000, 10_000, 30_000];
 
@@ -48,14 +63,23 @@ export class BrainClaimClient implements ClaimClient {
     readonly workerId: string,
   ) {}
 
-  async claim(blockMs: number, signal: AbortSignal): Promise<unknown | undefined> {
+  async claim(request: ClaimRequest, blockMs: number, signal: AbortSignal): Promise<unknown[]> {
     const response = await this.api.requestResponse(
-      `/v1/code/brain/claims?block_ms=${blockMs}`, this.token, "POST", {},
+      `/v1/code/brain/claims?block_ms=${blockMs}`, this.token, "POST", request,
       { "X-Worker-ID": this.workerId }, signal, blockMs + 15_000,
     );
-    if (response.status === 204) return undefined;
+    if (response.status === 204) return [];
     if (!response.ok) throw new HttpError(response.status);
-    return response.json();
+    const body = await response.json() as { tasks?: unknown };
+    if (!Array.isArray(body.tasks)) throw new Error("Brain claim response has no task list");
+    return body.tasks;
+  }
+
+  async ack(task: ClaimedTask): Promise<void> {
+    await this.api.request(
+      `/v1/code/brain/claims/${encodeURIComponent(task.session_id)}/ack`, this.token, "POST",
+      { worker_epoch: task.worker_epoch }, { "X-Worker-ID": this.workerId }, undefined, 5_000,
+    );
   }
 
   async release(task: ClaimedTask, reason: ReleaseReason): Promise<void> {
@@ -97,20 +121,31 @@ export async function releaseClaim(client: ClaimClient, task: ClaimedTask, reaso
 
 async function admitClaim(
   client: ClaimClient, signal: AbortSignal, value: unknown, admit: ClaimLoopOptions["admit"],
-): Promise<void> {
+): Promise<AdmissionOutcome> {
   const startMs = Date.now();
   const task = claimedTask(value);
   const fields: Record<string, unknown> = { session_id: task?.session_id, worker_epoch: task?.worker_epoch };
+  if (task) {
+    try {
+      await client.ack(task);
+    } catch (error) {
+      workerDiagnostic("warn", "oma_task_ack_failed", { ...fields, ...failureDiagnostic(error) });
+      return "skipped";
+    }
+  }
   let stage = "validate_assignment";
   workerDiagnostic("info", "oma_task_admission_started", fields);
   try {
     await admit(value, (next) => { stage = next; });
     workerDiagnostic("info", "oma_task_admitted", { ...fields, duration_ms: Date.now() - startMs });
+    return "admitted";
   } catch (error) {
-    if (task) await releaseClaim(client, task, releaseReason(error, signal));
+    const reason = releaseReason(error, signal);
+    if (task) await releaseClaim(client, task, reason);
     if (!signal.aborted) workerDiagnostic("error", "oma_task_admission_failed", {
       ...fields, stage, duration_ms: Date.now() - startMs, ...failureDiagnostic(error),
     });
+    return reason;
   }
 }
 
@@ -122,10 +157,12 @@ function claimRejectedMessage(status: number): string {
   return `Brain claim rejected with HTTP ${status}. Check that OMA_BRAIN_CLAIM_TOKEN matches the backend code_session.brain_claim_token_file.`;
 }
 
-async function probeClaims(client: ClaimClient, signal: AbortSignal): Promise<unknown> {
+async function probeClaims(
+  client: ClaimClient, signal: AbortSignal, request: () => ClaimRequest,
+): Promise<unknown[]> {
   for (let failures = 0; ; failures++) {
     try {
-      return await client.claim(0, signal);
+      return await client.claim(request(), 0, signal);
     } catch (error) {
       const rejected = claimRejection(error);
       if (rejected !== undefined) throw new ConfigurationError(claimRejectedMessage(rejected));
@@ -138,38 +175,46 @@ async function probeClaims(client: ClaimClient, signal: AbortSignal): Promise<un
 
 export async function claimTasks(client: ClaimClient, signal: AbortSignal, options: ClaimLoopOptions): Promise<void> {
   const blockMs = options.blockMs ?? 25_000;
-  const initial = await probeClaims(client, signal);
-  options.ready?.();
-  let claiming = 0;
-  let rejectionReported = false;
-  const loop = async (first: unknown) => {
-    let pending = first;
-    let failures = 0;
-    while (!signal.aborted) {
-      if (pending === undefined && options.capacity() - claiming <= 0) {
-        await options.slotFreed(signal);
-        continue;
-      }
-      claiming++;
-      try {
-        const value = pending ?? await client.claim(blockMs, signal);
-        pending = undefined;
-        failures = 0;
-        rejectionReported = false;
-        if (value !== undefined) await admitClaim(client, signal, value, options.admit);
-      } catch (error) {
-        if (signal.aborted) break;
-        const rejected = claimRejection(error);
-        if (rejected === undefined) workerDiagnostic("warn", "oma_task_claim_failed", failureDiagnostic(error));
-        else if (!rejectionReported) {
-          rejectionReported = true;
-          console.error(claimRejectedMessage(rejected));
-        }
-        await sleep(retryDelaysMs[Math.min(failures++, retryDelaysMs.length - 1)]!, signal);
-      } finally {
-        claiming--;
-      }
+  const admissions = new Set<Promise<void>>();
+  let admissionFailures = 0;
+  const free = () => Math.min(options.concurrency, options.capacity()) - admissions.size;
+  const request = (maxTasks: number): ClaimRequest => ({
+    ...options.load(), max_tasks: maxTasks, admission_failures: admissionFailures,
+  });
+  const start = (values: unknown[]) => {
+    for (const value of values) {
+      const admission: Promise<void> = admitClaim(client, signal, value, options.admit).then((outcome) => {
+        if (outcome === "admitted") admissionFailures = 0;
+        else if (outcome === "admission_failed") admissionFailures++;
+      }).finally(() => { admissions.delete(admission); });
+      admissions.add(admission);
     }
   };
-  await Promise.all(Array.from({ length: options.concurrency }, (_, index) => loop(index === 0 ? initial : undefined)));
+  start(await probeClaims(client, signal, () => request(Math.max(free(), 1))));
+  options.ready?.();
+  let failures = 0;
+  let rejectionReported = false;
+  while (!signal.aborted) {
+    const maxTasks = free();
+    if (maxTasks <= 0) {
+      await Promise.race([options.slotFreed(signal), ...admissions]);
+      continue;
+    }
+    try {
+      const values = await client.claim(request(maxTasks), blockMs, signal);
+      failures = 0;
+      rejectionReported = false;
+      start(values);
+    } catch (error) {
+      if (signal.aborted) break;
+      const rejected = claimRejection(error);
+      if (rejected === undefined) workerDiagnostic("warn", "oma_task_claim_failed", failureDiagnostic(error));
+      else if (!rejectionReported) {
+        rejectionReported = true;
+        console.error(claimRejectedMessage(rejected));
+      }
+      await sleep(retryDelaysMs[Math.min(failures++, retryDelaysMs.length - 1)]!, signal);
+    }
+  }
+  await Promise.allSettled([...admissions]);
 }

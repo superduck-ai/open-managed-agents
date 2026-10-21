@@ -76,6 +76,25 @@ func execClaimTest(t *testing.T, ctx context.Context, database *sql.DB, query st
 	}
 }
 
+func ackClaimTest(t *testing.T, ctx context.Context, store *DB, claim CodeSessionClaim, workerID string) {
+	t.Helper()
+	if err := store.AckCodeSessionClaim(ctx, AckCodeSessionClaimInput{
+		CodeSessionExternalID: claim.CodeSessionExternalID, WorkerID: workerID,
+		WorkerEpoch: claim.WorkerEpoch, ClaimExpiresAt: time.Now().Add(30 * time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func claimAttemptsTest(t *testing.T, ctx context.Context, database *sql.DB, codeSessionID string) int {
+	t.Helper()
+	var attempts int
+	if err := database.QueryRowContext(ctx, `select worker_claim_attempts from code_sessions where external_id = $1`, codeSessionID).Scan(&attempts); err != nil {
+		t.Fatal(err)
+	}
+	return attempts
+}
+
 func TestCodeSessionClaimsPostgresRejectsIneligibleSessions(t *testing.T) {
 	ctx, database, store := newCodeSessionClaimTestStore(t)
 	seedClaimCodeSession(t, ctx, database, 1, "nats", "running")
@@ -214,6 +233,7 @@ func TestCodeSessionClaimsPostgresExhaustion(t *testing.T) {
 		if err != nil || !found || claim.Exhausted {
 			t.Fatalf("attempt %d = %+v found=%t err=%v", attempt, claim, found, err)
 		}
+		ackClaimTest(t, ctx, store, claim, "worker-a")
 		execClaimTest(t, ctx, database, expire, codeSessionID)
 	}
 	exhausted, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-a"))
@@ -341,4 +361,102 @@ func TestCodeSessionClaimsPostgresIdleReleaseClearsLease(t *testing.T) {
 
 func fixedWorkerLease(ttl, grace time.Duration) WorkerLeasePolicy {
 	return func(string) WorkerLeaseTimings { return WorkerLeaseTimings{TTL: ttl, Grace: grace} }
+}
+
+func TestCodeSessionClaimsPostgresAckGuardsAndUndeliveredRefund(t *testing.T) {
+	ctx, database, store := newCodeSessionClaimTestStore(t)
+	codeSessionID := seedClaimCodeSession(t, ctx, database, 1, "claim", "running")
+	expire := `update code_sessions set worker_claim_expires_at = now() - interval '1 second' where external_id = $1`
+	lost, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-a"))
+	if err != nil || !found {
+		t.Fatalf("first claim found=%t err=%v", found, err)
+	}
+	for _, input := range []AckCodeSessionClaimInput{
+		{CodeSessionExternalID: codeSessionID, WorkerID: "worker-b", WorkerEpoch: lost.WorkerEpoch, ClaimExpiresAt: time.Now()},
+		{CodeSessionExternalID: codeSessionID, WorkerID: "worker-a", WorkerEpoch: lost.WorkerEpoch - 1, ClaimExpiresAt: time.Now()},
+	} {
+		if err := store.AckCodeSessionClaim(ctx, input); !errors.Is(err, ErrPreconditionFailed) {
+			t.Fatalf("foreign ack %+v: %v", input, err)
+		}
+	}
+	execClaimTest(t, ctx, database, expire, codeSessionID)
+	delivered, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-b"))
+	if err != nil || !found || delivered.WorkerEpoch != lost.WorkerEpoch+1 {
+		t.Fatalf("reclaim after lost delivery = %+v found=%t err=%v", delivered, found, err)
+	}
+	if attempts := claimAttemptsTest(t, ctx, database, codeSessionID); attempts != 1 {
+		t.Fatalf("attempts after undelivered claim = %d, want 1", attempts)
+	}
+	if err := store.AckCodeSessionClaim(ctx, AckCodeSessionClaimInput{
+		CodeSessionExternalID: codeSessionID, WorkerID: "worker-a", WorkerEpoch: lost.WorkerEpoch, ClaimExpiresAt: time.Now(),
+	}); !errors.Is(err, ErrPreconditionFailed) {
+		t.Fatalf("late ack by superseded worker: %v", err)
+	}
+	ackClaimTest(t, ctx, store, delivered, "worker-b")
+	if _, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-c")); err != nil || found {
+		t.Fatalf("acknowledged claim taken within admission TTL: found=%t err=%v", found, err)
+	}
+	if err := store.ReleaseCodeSessionClaim(ctx, codeSessionID, "worker-b", delivered.WorkerEpoch, CodeSessionClaimReleaseRetry); err != nil {
+		t.Fatal(err)
+	}
+	execClaimTest(t, ctx, database, expire, codeSessionID)
+	if _, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-c")); err != nil || !found {
+		t.Fatalf("claim after retry backoff found=%t err=%v", found, err)
+	}
+	if attempts := claimAttemptsTest(t, ctx, database, codeSessionID); attempts != 2 {
+		t.Fatalf("attempts after delivered failure = %d, want 2", attempts)
+	}
+}
+
+func TestCodeSessionClaimsPostgresUnacknowledgedRegistrationCounts(t *testing.T) {
+	ctx, database, store := newCodeSessionClaimTestStore(t)
+	codeSessionID := seedClaimCodeSession(t, ctx, database, 1, "claim", "running")
+	claim, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-a"))
+	if err != nil || !found {
+		t.Fatalf("claim found=%t err=%v", found, err)
+	}
+	if _, _, err := store.RegisterCodeSessionWorkerAtEpoch(ctx, codeSessionID, claim.WorkerEpoch, CodeSessionWorkerBinding{}, 20*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	execClaimTest(t, ctx, database, `update code_sessions set worker_lease_expires_at = now() - interval '11 seconds' where external_id = $1`, codeSessionID)
+	if _, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-b")); err != nil || !found {
+		t.Fatalf("takeover found=%t err=%v", found, err)
+	}
+	if attempts := claimAttemptsTest(t, ctx, database, codeSessionID); attempts != 2 {
+		t.Fatalf("attempts after crashed registration = %d, want 2", attempts)
+	}
+}
+
+func TestBrainWorkersPostgresRegistry(t *testing.T) {
+	ctx, database, store := newCodeSessionClaimTestStore(t)
+	report := BrainWorkerReport{WorkerID: "worker-a", MaxSessions: 8, BusySessions: 1, ResidentSessions: 3}
+	if err := store.UpdateBrainWorkerCircuit(ctx, "missing", BrainWorkerCircuit{}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("circuit update for missing worker: %v", err)
+	}
+	first, err := store.RecordBrainWorker(ctx, report)
+	if err != nil || !first.Inserted || first.Circuit.Failures != 0 || first.Circuit.OpenUntil != nil {
+		t.Fatalf("first record = %+v err=%v", first, err)
+	}
+	report.AdmissionFailures = 3
+	openUntil := time.Now().Add(time.Minute).UTC().Truncate(time.Microsecond)
+	if err := store.UpdateBrainWorkerCircuit(ctx, "worker-a", BrainWorkerCircuit{Failures: 3, OpenUntil: &openUntil}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.RecordBrainWorker(ctx, report)
+	if err != nil || second.Inserted || second.Circuit.Failures != 3 || second.Circuit.OpenUntil == nil || !second.Circuit.OpenUntil.Equal(openUntil) {
+		t.Fatalf("second record = %+v err=%v", second, err)
+	}
+	if _, err := store.RecordBrainWorker(ctx, BrainWorkerReport{WorkerID: "worker-b", MaxSessions: 4, ResidentSessions: 1}); err != nil {
+		t.Fatal(err)
+	}
+	execClaimTest(t, ctx, database, `insert into brain_workers (external_id, max_sessions, busy_sessions, resident_sessions, last_seen_at)
+		values ('worker-stale', 2, 0, 0, now() - interval '2 hours')`)
+	loads, err := store.ListAvailableBrainWorkerLoads(ctx, time.Now().Add(-time.Minute))
+	if err != nil || len(loads) != 1 || loads[0] != (BrainWorkerLoad{MaxSessions: 4, ResidentSessions: 1}) {
+		t.Fatalf("available loads = %+v err=%v", loads, err)
+	}
+	deleted, err := store.DeleteStaleBrainWorkers(ctx, time.Now().Add(-time.Hour))
+	if err != nil || deleted != 1 {
+		t.Fatalf("deleted stale workers = %d err=%v", deleted, err)
+	}
 }

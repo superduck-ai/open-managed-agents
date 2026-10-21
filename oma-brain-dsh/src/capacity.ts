@@ -1,4 +1,4 @@
-import { CapacityExhaustedError } from "./claim.ts";
+import { CapacityExhaustedError, type ClaimLoad } from "./claim.ts";
 
 export interface CapacityMember {
   readonly id: string;
@@ -17,7 +17,20 @@ export class SessionCapacity<T extends CapacityMember> {
   ) {}
 
   available(): number {
-    return this.maxSessions - [...this.sessions.values()].filter((session) => session.busy).length;
+    return this.maxSessions - this.busy();
+  }
+
+  load(): ClaimLoad {
+    const busy = this.busy();
+    return {
+      max_sessions: this.maxSessions,
+      busy_sessions: busy,
+      resident_sessions: Math.max(this.sessions.size - this.retiring.size, busy),
+    };
+  }
+
+  private busy(): number {
+    return [...this.sessions.values()].filter((session) => session.busy).length;
   }
 
   reserve(): () => void {

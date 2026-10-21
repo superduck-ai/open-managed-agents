@@ -120,7 +120,8 @@ export async function startWorkers(
   });
   const ready = Promise.withResolvers<void>();
   const claiming = claimTasks(claims, abort.signal, {
-    concurrency: options.claimConcurrency, capacity: () => capacity.available(), slotFreed, admit, ready: () => ready.resolve(),
+    concurrency: options.claimConcurrency, capacity: () => capacity.available(), load: () => capacity.load(),
+    slotFreed, admit, ready: () => ready.resolve(),
   });
   watch(claiming.catch((error) => { ready.reject(error); throw error; }));
   await ready.promise;

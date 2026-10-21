@@ -32,7 +32,22 @@ func TestCodeSessionClaimMapperBuilderContracts(t *testing.T) {
 			wantID: "CodeSessionClaimMapper.Claim", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames:          []string{"params.OAuthAccessTokenHash", "params.WorkerID", "params.ClaimExpiresAt", "params.UUID"},
 			wantSensitiveArgumentNames: []string{"params.OAuthAccessTokenHash"},
-			wantSQLFragments:           []string{"current_worker_epoch = current_worker_epoch + 1", "worker_lease_expires_at = NULL", "RETURNING current_worker_epoch"},
+			wantSQLFragments: []string{
+				"current_worker_epoch = current_worker_epoch + 1", "worker_lease_expires_at = NULL", "worker_claim_acked_at = NULL",
+				"WHEN worker_claimed_by IS NOT NULL AND worker_claim_acked_at IS NULL AND worker_lease_expires_at IS NULL THEN 0", "RETURNING current_worker_epoch",
+			},
+		}},
+		{"ack", mapperBuilderContract{
+			statement: codeSessionClaimMapperAckStatement,
+			bound: buildCodeSessionClaimMapperAck(yourbatis.DialectPostgres, ackCodeSessionClaimParams{
+				ExternalID: "cse_test", WorkerID: "worker", Epoch: 2, ClaimExpiresAt: expiresAt,
+			}),
+			wantID: "CodeSessionClaimMapper.Ack", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{"params.ClaimExpiresAt", "params.ExternalID", "params.Epoch", "params.WorkerID"},
+			wantSQLFragments: []string{
+				"WHEN worker_claim_acked_at IS NULL THEN $1", "worker_claim_acked_at = COALESCE(worker_claim_acked_at, NOW())",
+				"current_worker_epoch = $3", "worker_claimed_by = $4",
+			},
 		}},
 		{"release after failure", mapperBuilderContract{
 			statement: codeSessionClaimMapperReleaseStatement,
@@ -59,7 +74,7 @@ func TestCodeSessionClaimMapperBuilderContracts(t *testing.T) {
 			}),
 			wantID: "CodeSessionClaimMapper.Release", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{"params.ExternalID", "params.Epoch", "params.WorkerID"},
-			wantSQLFragments:  []string{"worker_lease_expires_at = NULL", "worker_claim_expires_at = NOW()"},
+			wantSQLFragments:  []string{"worker_lease_expires_at = NULL", "worker_claim_acked_at = COALESCE(worker_claim_acked_at, NOW())", "worker_claim_expires_at = NOW()"},
 		}},
 		{"heartbeat lease lock reads transport", mapperBuilderContract{
 			statement: codeSessionMapperLockWorkerLeaseByExternalIDStatement,

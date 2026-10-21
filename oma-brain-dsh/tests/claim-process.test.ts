@@ -89,6 +89,12 @@ test("claimed sessions register the Bun host and SSE drives user input and appro
     const workerIds = new Set(backend.claimRequests.map((request) => request.workerId));
     expect(workerIds.size).toBe(1);
     expect(backend.claimRequests.some((request) => request.blockMs === 25_000)).toBe(true);
+    expect(backend.claimRequests[0]!.body).toEqual({
+      max_sessions: 8, busy_sessions: 0, resident_sessions: 0, max_tasks: 4, admission_failures: 0,
+    });
+    expect(backend.acks).toEqual([{
+      session_id: backend.a.session_id, worker_id: [...workerIds][0], worker_epoch: backend.a.worker_epoch,
+    }]);
     const initializeId = `initialize_${crypto.randomUUID()}`;
     backend.deliver(initializeId, {
       type: "control_request",

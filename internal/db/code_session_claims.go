@@ -79,6 +79,29 @@ func (d *DB) ResetExhaustedCodeSessionClaim(ctx context.Context, codeSessionUUID
 	return nil
 }
 
+type AckCodeSessionClaimInput struct {
+	CodeSessionExternalID string
+	WorkerID              string
+	WorkerEpoch           int64
+	ClaimExpiresAt        time.Time
+}
+
+func (d *DB) AckCodeSessionClaim(ctx context.Context, input AckCodeSessionClaimInput) error {
+	rows, err := NewCodeSessionClaimMapper(d.mapperDB).Ack(ctx, ackCodeSessionClaimParams{
+		ExternalID:     input.CodeSessionExternalID,
+		WorkerID:       input.WorkerID,
+		Epoch:          input.WorkerEpoch,
+		ClaimExpiresAt: input.ClaimExpiresAt,
+	})
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrPreconditionFailed
+	}
+	return nil
+}
+
 type FailCodeSessionClaimInput struct {
 	CodeSessionExternalID string
 	WorkerID              string

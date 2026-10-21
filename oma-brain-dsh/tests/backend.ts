@@ -98,7 +98,8 @@ export class Backend {
   readonly ready: Promise<void>;
   readonly streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
   readonly claimQueue: Payload[] = [];
-  readonly claimRequests: { workerId: string; blockMs: number }[] = [];
+  readonly claimRequests: { workerId: string; blockMs: number; body: Payload }[] = [];
+  readonly acks: Payload[] = [];
   readonly releases: Payload[] = [];
   claimToken = "test-claim-token";
   registrations = 0;
@@ -367,16 +368,20 @@ export class Backend {
       if (request.headers.get("Authorization") !== `Bearer ${this.claimToken}`) return json({}, 401);
       const workerId = request.headers.get("X-Worker-ID");
       if (!workerId) return json({}, 400);
+      if (path.endsWith("/ack")) {
+        this.acks.push({ session_id: decodeURIComponent(path.split("/")[5]!), worker_id: workerId, ...body });
+        return json({ ok: true });
+      }
       if (path.endsWith("/release")) {
         this.releases.push({ session_id: decodeURIComponent(path.split("/")[5]!), worker_id: workerId, ...body });
         return json({ ok: true });
       }
       const blockMs = Number(url.searchParams.get("block_ms"));
-      this.claimRequests.push({ workerId, blockMs });
+      this.claimRequests.push({ workerId, blockMs, body });
       const deadline = Date.now() + blockMs;
       while (this.claimQueue.length === 0 && Date.now() < deadline && !request.signal.aborted) await delay(10);
-      const task = this.claimQueue.shift();
-      return task ? json(task) : new Response(null, { status: 204 });
+      const tasks = this.claimQueue.splice(0, Number(body.max_tasks));
+      return tasks.length ? json({ tasks }) : new Response(null, { status: 204 });
     }
     return json({ error: "missing route" }, 404);
   }

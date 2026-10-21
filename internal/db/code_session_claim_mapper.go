@@ -31,6 +31,13 @@ type releaseCodeSessionClaimParams struct {
 	Kind       CodeSessionClaimReleaseKind
 }
 
+type ackCodeSessionClaimParams struct {
+	ExternalID     string
+	WorkerID       string
+	Epoch          int64
+	ClaimExpiresAt time.Time
+}
+
 type failedCodeSessionClaimRow struct {
 	UUID               string `db:"uuid"`
 	CurrentWorkerEpoch int64  `db:"current_worker_epoch"`
@@ -47,6 +54,7 @@ type failCodeSessionClaimParams struct {
 type CodeSessionClaimMapper interface {
 	LockNextClaimable(ctx context.Context, leaseGraceMicros int64) (codeSessionClaimCandidateRow, bool, error)
 	Claim(ctx context.Context, params claimCodeSessionParams) (int64, error)
+	Ack(ctx context.Context, params ackCodeSessionClaimParams) (int64, error)
 	HoldExhausted(ctx context.Context, uuid string, holdUntil time.Time) (int64, error)
 	ResetExhausted(ctx context.Context, uuid string, epoch int64) (int64, error)
 	FailPermanently(ctx context.Context, params failCodeSessionClaimParams) (failedCodeSessionClaimRow, error)

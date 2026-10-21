@@ -150,9 +150,20 @@ func brainClaimFailure(cause error) error {
 	return internalError("Could not claim code session", cause)
 }
 
+func mapBrainClaimAckError(err error) error {
+	if errors.Is(err, db.ErrPreconditionFailed) {
+		return brainClaimNoLongerHeld(err)
+	}
+	return internalError("Could not acknowledge code session claim", err)
+}
+
+func brainClaimNoLongerHeld(cause error) error {
+	return apperr.New(apperr.Conflict, "Brain claim is no longer held", cause)
+}
+
 func mapBrainClaimReleaseError(err error) error {
 	if errors.Is(err, db.ErrPreconditionFailed) {
-		return apperr.New(apperr.Conflict, "Brain claim is no longer held", err)
+		return brainClaimNoLongerHeld(err)
 	}
 	return internalError("Could not release code session claim", err)
 }

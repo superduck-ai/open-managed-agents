@@ -181,13 +181,9 @@ func TestAgentsAPI(t *testing.T) {
 			"tools":[{
 				"type":"agent_toolset_20260401",
 				"configs":[
-					{"name":"task"},{"name":"ask_user_question"},{"name":"bash"},
-					{"name":"cron_create"},{"name":"cron_delete"},{"name":"cron_list"},
-					{"name":"edit"},{"name":"enter_plan_mode"},{"name":"enter_worktree"},
-					{"name":"exit_plan_mode"},{"name":"exit_worktree"},{"name":"glob"},
-					{"name":"grep"},{"name":"notebook_edit"},{"name":"read"},
-					{"name":"schedule_wakeup"},{"name":"skill"},{"name":"task_output"},
-					{"name":"task_stop"},{"name":"todo_write"},{"name":"web_fetch"},{"name":"web_search"},{"name":"write"}
+					{"name":"ask_user_question"},{"name":"bash"},{"name":"edit"},
+					{"name":"glob"},{"name":"grep"},{"name":"read"},
+					{"name":"web_fetch"},{"name":"web_search"},{"name":"write"}
 				]
 			}]
 		}`
@@ -197,14 +193,12 @@ func TestAgentsAPI(t *testing.T) {
 			Configs []map[string]any `json:"configs"`
 		}
 		decodeRawJSON(t, created.Tools, &toolsets)
-		if len(toolsets) != 1 || len(toolsets[0].Configs) != 23 {
+		if len(toolsets) != 1 || len(toolsets[0].Configs) != 9 {
 			t.Fatalf("full built-in toolset did not round-trip: %s", created.Tools)
 		}
 		expectedNames := []string{
-			"task", "ask_user_question", "bash", "cron_create", "cron_delete", "cron_list", "edit",
-			"enter_plan_mode", "enter_worktree", "exit_plan_mode", "exit_worktree", "glob", "grep",
-			"notebook_edit", "read", "schedule_wakeup", "skill", "task_output", "task_stop",
-			"todo_write", "web_fetch", "web_search", "write",
+			"ask_user_question", "bash", "edit", "glob", "grep",
+			"read", "web_fetch", "web_search", "write",
 		}
 		actualNames := make([]string, 0, len(toolsets[0].Configs))
 		for _, config := range toolsets[0].Configs {

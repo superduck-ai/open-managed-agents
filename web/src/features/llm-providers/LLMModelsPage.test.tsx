@@ -108,6 +108,7 @@ describe('LLM models page', () => {
           type: 'llm_provider',
           id: 'provider_readonly',
           name: 'Read gateway',
+          slug: 'read-gateway',
           base_url: 'https://llm.example.com',
           has_api_key: true,
           api_key_last4: '1234',
@@ -118,8 +119,8 @@ describe('LLM models page', () => {
       ],
     });
     renderPage('en', 'user');
-    await screen.findByText('model-one');
-    expect(screen.getByText('model-two')).toBeTruthy();
+    await screen.findByText('read-gateway/model-one');
+    expect(screen.getByText('read-gateway/model-two')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Read gateway' }));
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();

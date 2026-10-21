@@ -36,7 +36,7 @@ func (e *environment) baselineFixtureOverlay(selected scenario) (string, error) 
 		if err != nil {
 			return "", fmt.Errorf("baseline fixture mapper %s: %w", name, err)
 		}
-		merged := filepath.Join(e.directory, "fixture-"+filename)
+		merged := filepath.Join(e.directory, "fixture-"+filename+".overlay")
 		if err := os.WriteFile(merged, source, 0o600); err != nil {
 			return "", err
 		}

@@ -69,7 +69,7 @@ func TestBaselineFixtureOverlayPreservesCurrentSource(t *testing.T) {
 		if err != nil || !strings.Contains(string(before), `return "candidate"`) {
 			t.Fatalf("current mapper changed: %v", err)
 		}
-		expected := filepath.Join(env.directory, "fixture-"+filepath.Base(current))
+		expected := filepath.Join(env.directory, "fixture-"+filepath.Base(current)+".overlay")
 		if reference != expected {
 			t.Fatalf("mapper reference = %s, want %s", reference, expected)
 		}

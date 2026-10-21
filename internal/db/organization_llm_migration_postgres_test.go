@@ -3,6 +3,7 @@
 package db
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"testing"
@@ -102,6 +103,30 @@ func TestOrganizationLLMProviderMigrationPreservesWorkspaceReferences(t *testing
  `); err != nil {
 		t.Fatal(err)
 	}
+
+	multiagent := `{"type":"multiagent_20261001","advisor":{"type":"enabled","model":"organization/model"},"subagents":{"type":"enabled","predefined_agents":[{"id":"child","model":{"id":"organization/second","speed":"fast"},"metadata":{"model":"organization/model"}},{"id":"unrelated","model":"other/model"}]},"workflows":{"type":"enabled","predefined_agents":[{"id":"workflow","model":"organization/model"}]},"agents":[{"id":"legacy","model":"organization/second"}],"keep":true}`
+	migratedMultiagent := `{"type":"multiagent_20261001","advisor":{"type":"enabled","model":"organization-3/model"},"subagents":{"type":"enabled","predefined_agents":[{"id":"child","model":{"id":"organization-3/second","speed":"fast"},"metadata":{"model":"organization/model"}},{"id":"unrelated","model":"other/model"}]},"workflows":{"type":"enabled","predefined_agents":[{"id":"workflow","model":"organization-3/model"}]},"agents":[{"id":"legacy","model":"organization-3/second"}],"keep":true}`
+	if _, err := database.ExecContext(ctx, `UPDATE llm_providers SET model_ids='["model","second"]' WHERE external_id='llmprov_old'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"agents", "agent_versions"} {
+		if _, err := database.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET multiagent=$1::jsonb`, table), multiagent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := database.ExecContext(ctx, `UPDATE sessions SET agent_snapshot=jsonb_set(agent_snapshot,'{multiagent}',$1::jsonb)`, multiagent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+ INSERT INTO deployments (external_id,organization_uuid,workspace_uuid,environment_uuid,environment_external_id,agent_uuid,agent_external_id,agent_version,agent_snapshot,name)
+ SELECT external_id,organization_uuid,workspace_uuid,environment_uuid,environment_external_id,agent_uuid,agent_external_id,agent_version,agent_snapshot,external_id FROM sessions;
+ INSERT INTO session_threads (external_id,organization_uuid,workspace_uuid,session_uuid,session_external_id,agent_snapshot)
+ SELECT external_id,organization_uuid,workspace_uuid,uuid,external_id,agent_snapshot FROM sessions;
+ INSERT INTO deployment_runs (external_id,organization_uuid,workspace_uuid,deployment_uuid,deployment_external_id,agent_uuid,agent_external_id,agent_version,agent_snapshot,session_external_id,trigger_type)
+ SELECT external_id,organization_uuid,workspace_uuid,uuid,external_id,agent_uuid,agent_external_id,agent_version,agent_snapshot,external_id,'manual' FROM deployments;
+ `); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := provider.UpTo(ctx, 94); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +141,7 @@ func TestOrganizationLLMProviderMigrationPreservesWorkspaceReferences(t *testing
 		"version_other_org":       `"organization/model"`,
 		"version_unrelated":       `"organization/missing"`,
 	})
-	assertMigratedValues(t, database, `SELECT external_id,agent_snapshot::text FROM sessions`, map[string]string{
+	assertMigratedValues(t, database, `SELECT external_id,(agent_snapshot - 'multiagent')::text FROM sessions`, map[string]string{
 		"session_object":          `{"keep": true, "model": {"id": "organization-3/model", "speed": "fast"}}`,
 		"session_string":          `{"keep": true, "model": "organization-3/model"}`,
 		"session_other_workspace": `{"keep": true, "model": "organization/model"}`,
@@ -131,6 +156,35 @@ func TestOrganizationLLMProviderMigrationPreservesWorkspaceReferences(t *testing
 		"request_other_workspace": `{"model": "organization/model", "max_tokens": 32}`,
 		"request_other_org":       `{"model": "organization/model", "max_tokens": 32}`,
 	})
+
+	for _, table := range []string{"agents", "agent_versions", "sessions", "session_threads", "deployments", "deployment_runs"} {
+		column := "agent_snapshot->'multiagent'"
+		if table == "agents" || table == "agent_versions" {
+			column = "multiagent"
+		}
+		var unchanged int
+		if err := database.QueryRowContext(ctx, fmt.Sprintf(`SELECT count(*) FROM %s WHERE workspace_uuid='bb000000-0000-4000-8000-000000000002' AND %s IS DISTINCT FROM $1::jsonb`, table, column), migratedMultiagent).Scan(&unchanged); err != nil {
+			t.Fatal(err)
+		}
+		if unchanged != 0 {
+			t.Fatalf("%s: %d nested model configurations were not migrated correctly", table, unchanged)
+		}
+		if err := database.QueryRowContext(ctx, fmt.Sprintf(`SELECT count(*) FROM %s WHERE workspace_uuid<>'bb000000-0000-4000-8000-000000000002' AND %s IS DISTINCT FROM $1::jsonb`, table, column), multiagent).Scan(&unchanged); err != nil {
+			t.Fatal(err)
+		}
+		if unchanged != 0 {
+			t.Fatalf("%s: changed %d configurations outside the provider workspace", table, unchanged)
+		}
+	}
+	for _, table := range []string{"session_threads", "deployments", "deployment_runs"} {
+		assertMigratedValues(t, database, fmt.Sprintf(`SELECT external_id,(agent_snapshot - 'multiagent')::text FROM %s`, table), map[string]string{
+			"session_object":          `{"keep": true, "model": {"id": "organization-3/model", "speed": "fast"}}`,
+			"session_string":          `{"keep": true, "model": "organization-3/model"}`,
+			"session_other_workspace": `{"keep": true, "model": "organization/model"}`,
+			"session_other_org":       `{"keep": true, "model": "organization/model"}`,
+			"session_unrelated":       `{"keep": true, "model": "organization/missing"}`,
+		})
+	}
 
 	if _, err := database.ExecContext(ctx, `UPDATE llm_providers SET slug='organization' WHERE external_id='llmprov_old'`); err == nil {
 		t.Fatal("reserved workspace slug was accepted")

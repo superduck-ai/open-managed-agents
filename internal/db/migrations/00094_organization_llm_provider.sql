@@ -57,21 +57,85 @@ AND (
     OR (jsonb_typeof(version.model) = 'string' AND version.model #>> '{}' = ref.model_id)
 );
 
-UPDATE sessions session
-SET agent_snapshot = CASE jsonb_typeof(session.agent_snapshot->'model')
-    WHEN 'object' THEN jsonb_set(session.agent_snapshot, '{model,id}', to_jsonb(ref.qualified_id))
-    ELSE jsonb_set(session.agent_snapshot, '{model}', to_jsonb(ref.qualified_id))
-END
-FROM organization_llm_model_refs ref
-WHERE ref.organization_uuid = session.organization_uuid
-AND ref.workspace_uuid = session.workspace_uuid
-AND jsonb_typeof(session.agent_snapshot) = 'object'
-AND (
-    (jsonb_typeof(session.agent_snapshot->'model') = 'object'
-        AND session.agent_snapshot->'model'->>'id' = ref.model_id)
-    OR (jsonb_typeof(session.agent_snapshot->'model') = 'string'
-        AND session.agent_snapshot->>'model' = ref.model_id)
-);
+-- +goose StatementBegin
+CREATE FUNCTION pg_temp.organization_llm_snapshot(snapshot jsonb, workspace uuid)
+RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+    qualified_id text;
+    roster_path text;
+    path text[];
+    entries jsonb;
+BEGIN
+    IF jsonb_typeof(snapshot) IS DISTINCT FROM 'object' THEN
+        RETURN snapshot;
+    END IF;
+
+    SELECT ref.qualified_id INTO qualified_id
+    FROM organization_llm_model_refs ref
+    WHERE ref.workspace_uuid = workspace
+    AND ref.model_id = CASE jsonb_typeof(snapshot->'model')
+        WHEN 'object' THEN snapshot->'model'->>'id'
+        WHEN 'string' THEN snapshot->>'model'
+    END;
+    IF qualified_id IS NOT NULL THEN
+        IF jsonb_typeof(snapshot->'model') = 'object' THEN
+            snapshot := jsonb_set(snapshot, '{model,id}', to_jsonb(qualified_id));
+        ELSE
+            snapshot := jsonb_set(snapshot, '{model}', to_jsonb(qualified_id));
+        END IF;
+    END IF;
+
+    IF jsonb_typeof(snapshot#>'{multiagent,advisor}') = 'object' THEN
+        snapshot := jsonb_set(snapshot, '{multiagent,advisor}',
+            pg_temp.organization_llm_snapshot(snapshot#>'{multiagent,advisor}', workspace));
+    END IF;
+    FOREACH roster_path IN ARRAY ARRAY[
+        'multiagent.agents',
+        'multiagent.subagents.predefined_agents',
+        'multiagent.workflows.predefined_agents'
+    ] LOOP
+        path := string_to_array(roster_path, '.');
+        IF jsonb_typeof(snapshot#>path) = 'array' THEN
+            SELECT COALESCE(jsonb_agg(pg_temp.organization_llm_snapshot(entry, workspace)
+                ORDER BY ordinal), '[]'::jsonb) INTO entries
+            FROM jsonb_array_elements(snapshot#>path) WITH ORDINALITY AS roster(entry, ordinal);
+            snapshot := jsonb_set(snapshot, path, entries);
+        END IF;
+    END LOOP;
+    RETURN snapshot;
+END;
+$$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+DO $$
+DECLARE
+    table_name text;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY['agents', 'agent_versions'] LOOP
+        EXECUTE format($query$
+            UPDATE %I agent
+            SET multiagent = pg_temp.organization_llm_snapshot(
+                jsonb_build_object('multiagent', agent.multiagent), agent.workspace_uuid)->'multiagent'
+            WHERE agent.multiagent IS NOT NULL
+            AND EXISTS (SELECT 1 FROM organization_provider_slug_changes changes
+                WHERE changes.workspace_uuid = agent.workspace_uuid)
+        $query$, table_name);
+    END LOOP;
+    FOREACH table_name IN ARRAY ARRAY['sessions', 'session_threads', 'deployments', 'deployment_runs'] LOOP
+        EXECUTE format($query$
+            UPDATE %I record
+            SET agent_snapshot = pg_temp.organization_llm_snapshot(record.agent_snapshot, record.workspace_uuid)
+            WHERE EXISTS (SELECT 1 FROM organization_provider_slug_changes changes
+                WHERE changes.organization_uuid = record.organization_uuid
+                AND changes.workspace_uuid = record.workspace_uuid)
+        $query$, table_name);
+    END LOOP;
+END;
+$$;
+-- +goose StatementEnd
+
+DROP FUNCTION pg_temp.organization_llm_snapshot(jsonb, uuid);
 
 UPDATE code_sessions code_session
 SET model = ref.qualified_id

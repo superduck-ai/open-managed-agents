@@ -207,7 +207,7 @@ export class CcrSession {
     }
     if (reconciliation !== undefined) {
       setStage("reconcile_tool_outcomes");
-      await this.reconcileUnknownOutcomes(reconciliationToolUseIDs(reconciliation));
+      await this.reconcileUnknownOutcomes(reconciliationToolUseIDs(reconciliation), reconciliationThreadID(reconciliation));
     }
     // Clear a previous worker's progress even when recovery remains blocked.
     // Keep recovery persistence before metadata/status and terminal publication.
@@ -479,15 +479,20 @@ export class CcrSession {
     return outcomes.length ? outcomes : undefined;
   }
 
-  private async reconcileUnknownOutcomes(toolUseIDs: Set<string>): Promise<void> {
-    const reconciled: { callId: string; name?: string }[] = [];
+  private async reconcileUnknownOutcomes(toolUseIDs: Set<string>, sessionThreadID?: string): Promise<void> {
+    const outcomes = this.unknownOutcomes() ?? [];
+    if (sessionThreadID === undefined) {
+      toolUseIDs = new Set([...toolUseIDs].filter(id => outcomes.filter(call => call.tool_use_id === id).length === 1));
+    }
+    const reconciled: { callId: string; threadId: string; name?: string }[] = [];
     for (const [threadId, entry] of Object.entries(this.state.executions ?? {})) {
+      if (sessionThreadID !== undefined && threadId !== (sessionThreadID || this.id)) continue;
       for (const [callId, phase] of Object.entries(entry.callPhases ?? {})) {
         if (phase !== "blocked" || !toolUseIDs.has(callId)) continue;
         entry.callPhases![callId] = "result";
         entry.toolOutcomes[callId] = { text: RECONCILED_OUTCOME_TEXT, failed: true, remoteOutcome: "unknown" };
         if (threadId === this.id) this.state.toolOutcomes[callId] = entry.toolOutcomes[callId]!;
-        reconciled.push({ callId, name: entry.approvedCalls[callId]?.name });
+        reconciled.push({ callId, threadId, name: entry.approvedCalls[callId]?.name });
       }
       if (entry.phase === "blocked" && !Object.values(entry.callPhases ?? {}).includes("blocked")) entry.phase = "interrupted";
     }
@@ -498,10 +503,10 @@ export class CcrSession {
       source: { kind: "oma-reconciliation" },
       content: [{ type: "text", text: `An operator acknowledged that the outcomes of these earlier tool calls are unknown: ${calls}. They were not replayed and may or may not have taken effect. Check the current state before relying on their effects or repeating them.` }],
     }), { surfaceOp: "append" });
-    const key = createHash("sha256").update(reconciled.map(({ callId }) => callId).sort().join("\0")).digest("hex").slice(0, 32);
+    const key = createHash("sha256").update(reconciled.map(({ callId, threadId }) => JSON.stringify([threadId, callId])).sort().join("\0")).digest("hex").slice(0, 32);
     this.state.outbox.push({
       type: "system.message", uuid: `${this.id}_reconciled_${key}`,
-      content: [{ type: "text", text: `Unknown tool outcomes were acknowledged by an operator: ${calls}. The calls were not replayed; the session accepts new input.` }],
+      content: [{ type: "text", text: `Unknown tool outcomes were acknowledged by an operator: ${calls}. The calls were not replayed; ${this.blocked() ? "the session remains blocked pending reconciliation of other unknown outcomes" : "the session accepts new input"}.` }],
     });
     workerDiagnostic("info", "ccrv2_tool_outcomes_reconciled", {
       session_id: this.id, reconciled_count: reconciled.length, still_blocked: this.blocked(),
@@ -830,6 +835,11 @@ export class CcrSession {
 const UNKNOWN_OUTCOMES_KEY = "unknown_tool_outcomes";
 const RECONCILIATION_KEY = "tool_outcome_reconciliation";
 const RECONCILED_OUTCOME_TEXT = "Tool outcome is unknown. An operator acknowledged it; the call was not replayed.";
+
+function reconciliationThreadID(value: unknown): string | undefined {
+  return typeof value === "object" && value !== null && "session_thread_id" in value
+    && typeof value.session_thread_id === "string" ? value.session_thread_id : undefined;
+}
 
 function reconciliationToolUseIDs(value: unknown): Set<string> {
   const ids = typeof value === "object" && value !== null && "tool_use_ids" in value ? value.tool_use_ids : undefined;

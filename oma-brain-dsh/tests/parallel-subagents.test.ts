@@ -187,7 +187,7 @@ test("an unknown child tool outcome blocks the session and cancels sibling appro
   f.b.onApproval = async (request) => { requests.push(request); };
   const baseRoute = f.b.route.bind(f.b);
   f.b.route = async (request) => {
-    if (new URL(request.url).pathname.endsWith("/mcp")) {
+    if (request.method === "POST" && new URL(request.url).pathname.endsWith("/mcp")) {
       const body = await request.clone().json();
       if (body.method === "tools/call") return new Response(null, { status: 500 });
     }
@@ -230,3 +230,69 @@ test("legacy version-1 state migrates conservatively without replaying an unknow
     await resumed.close();
   } finally { await fresh.fiber.dispose(); }
 });
+
+for (const mode of ["unique", "ambiguous", "scoped"] as const) {
+  test(`operator reconciliation isolates blocked children in ${mode} mode`, async () => {
+    const sameCallId = mode !== "unique";
+    const f = await fixture();
+    const modelCalls = new Map<string, number>();
+    f.b.onModel = async body => {
+      const system = modelSystemText(body);
+      const name = system.includes("You are subagent alpha.") ? "alpha"
+        : system.includes("You are subagent beta.") ? "beta" : "primary";
+      const count = modelCalls.get(name) ?? 0;
+      modelCalls.set(name, count + 1);
+      if (name === "primary") return count === 0 ? parallelDelegations() : textEvents("parent report");
+      return toolEvents(name, sameCallId ? "shared_unknown" : `${name}_unknown`);
+    };
+    const dispatched = new Set<string>();
+    const bothDispatched = Promise.withResolvers<void>();
+    const route = f.b.route.bind(f.b);
+    f.b.route = async request => {
+      if (request.method === "POST" && new URL(request.url).pathname.endsWith("/mcp")) {
+        const body = await request.clone().json();
+        if (body.method === "tools/call") {
+          dispatched.add(body.params.arguments.command);
+          if (dispatched.size === 2) bothDispatched.resolve();
+          await bothDispatched.promise;
+          return new Response(null, { status: 503 });
+        }
+      }
+      return route(request);
+    };
+    f.b.onApproval = async request => { await decide(f.session, request, true); };
+    await f.session.receive("two_unknown_children", { content: "Delegate independent tasks" }).catch(() => {});
+    expect([...dispatched].sort()).toEqual(["alpha", "beta"]);
+    expect(f.session.unknownOutcomes()).toHaveLength(2);
+    const alpha = f.session.state.threads!.find(thread => thread.name === "alpha")!;
+    await f.close();
+    f.b.workerMetadata.tool_outcome_reconciliation = {
+      tool_use_ids: [sameCallId ? "shared_unknown" : "alpha_unknown"],
+      ...(mode === "scoped" ? { session_thread_id: alpha.id } : {}),
+    };
+    const resumed = await fixture(f.b);
+    expect(resumed.session.blocked()).toBe(true);
+    const remaining = resumed.session.unknownOutcomes()!;
+    expect(remaining.map(call => call.tool_use_id)).toEqual(mode === "ambiguous"
+      ? ["shared_unknown", "shared_unknown"] : [sameCallId ? "shared_unknown" : "beta_unknown"]);
+    const notices = () => [...f.b.publicLog.values()].filter(event => event.type === "system.message"
+      && JSON.stringify(event).includes("acknowledged by an operator"));
+    if (mode === "ambiguous") {
+      expect(notices()).toEqual([]);
+      return;
+    }
+    expect(notices()).toHaveLength(1);
+    expect(JSON.stringify(notices()[0])).toContain("session remains blocked");
+    expect(JSON.stringify(notices()[0])).not.toContain("session accepts new input");
+    if (mode === "scoped") {
+      const beta = resumed.session.state.threads!.find(thread => thread.name === "beta")!;
+      await resumed.close();
+      f.b.workerMetadata.tool_outcome_reconciliation = { tool_use_ids: ["shared_unknown"], session_thread_id: beta.id };
+      const completed = await fixture(f.b);
+      expect(completed.session.blocked()).toBe(false);
+      expect(notices()).toHaveLength(2);
+      expect(JSON.stringify(notices().at(-1))).toContain("session accepts new input");
+      expect([...dispatched].sort()).toEqual(["alpha", "beta"]);
+    }
+  });
+}

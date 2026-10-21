@@ -135,7 +135,8 @@ function providerError(detail: string, status?: number, providerRetryAfterMs?: n
   const message = detail || "Model stream error";
   const code = isContextWindowExceededError(message) ? "CONTEXT_WINDOW_EXCEEDED"
     : isQuotaExceededError(message) ? "QUOTA" : status === 429 ? "RATE_LIMIT"
-    : status === 401 || status === 403 ? "AUTH" : status && status >= 500 ? "SERVER" : "TRANSPORT";
+    : status === 401 || status === 403 ? "AUTH" : status === 408 ? "TIMEOUT"
+    : status && status >= 500 ? "SERVER" : status && status >= 400 ? "HTTP_ERROR" : "TRANSPORT";
   return new LlmError(message, code, { status, ...(providerRetryAfterMs !== undefined ? { providerRetryAfterMs } : {}) });
 }
 

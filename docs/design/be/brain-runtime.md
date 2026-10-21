@@ -197,9 +197,16 @@ CONFIG_FILE=/path/to/config.yaml go run ./cmd/tool-outcome-reconcile \
   -organization <organization-uuid> -workspace <workspace-uuid> -session sesn_...
 CONFIG_FILE=/path/to/config.yaml go run ./cmd/tool-outcome-reconcile \
   -organization <organization-uuid> -workspace <workspace-uuid> -session sesn_... -acknowledge toolu_a,toolu_b
+CONFIG_FILE=/path/to/config.yaml go run ./cmd/tool-outcome-reconcile \
+  -organization <organization-uuid> -workspace <workspace-uuid> -session sesn_... \
+  -acknowledge toolu_shared -thread sthr_...
 ```
 
-命令按组织、workspace 和公开 Session ID 定位最新 Code Session，只接受当前 `unknown_tool_outcomes` 中列出的 call ID，然后在行锁内把 `tool_outcome_reconciliation: {tool_use_ids, requested_at}` 合并进 worker external_metadata，不改动其他键，Code Session 非 active 时拒绝。该命令不调用 Brain，也不让会话立即被领取；确认在会话下次收到输入、Brain 打开会话时生效。
+跨线程的 call ID 可以相同。未指定 `-thread` 时，每个 ID 必须唯一；重名时报 ambiguous 错误且不写入。用 `-thread sthr_...` 选择子线程，用 `-thread primary` 选择主线程，后者在确认请求中编码为 `session_thread_id: ""`。DSH 仅确认指定线程的调用；缺少线程范围的旧请求不确认重名调用。不同线程的同名调用按线程和 call ID 共同生成通知 UUID，分别确认时不会丢失后一条通知。部分确认后仍受阻时，公开通知明确说明会话仍阻断。
+
+`tests/parallel-subagents.test.ts` 通过两个实际 dispatch 后返回 503 的子线程验证部分确认、重名 ID 拒绝和逐线程确认，不直接构造执行状态。CLI 普通单测覆盖重名 ID 拒绝、线程选择、主线程选择、空线程参数和跨线程拒绝。
+
+命令按组织、workspace 和公开 Session ID 定位最新 Code Session，只接受当前 `unknown_tool_outcomes` 中列出的 call ID，然后在行锁内把 `tool_outcome_reconciliation: {tool_use_ids, requested_at, session_thread_id?}` 合并进 worker external_metadata，不改动其他键，Code Session 非 active 时拒绝。该命令不调用 Brain，也不让会话立即被领取；确认在会话下次收到输入、Brain 打开会话时生效。
 
 DSH 打开会话、完成崩溃恢复后读取该请求。请求中仍为 `blocked` 的调用改为 `result`，记录 `failed: true`、`remoteOutcome: unknown` 的工具结果；线程不再有 blocked 调用时转为 `interrupted`，所有线程都不再 blocked 时会话恢复可用。随后 DSH 在主线程私有历史中追加 `oma-reconciliation` 用户上下文，说明这些调用结果未知、未重放、需要先核实状态，并发布一条稳定 UUID 的 `system.message`；先刷新日志、保存 Brain 状态，再用 `null` 清除 `tool_outcome_reconciliation` 并刷新 `unknown_tool_outcomes`。请求中不属于当前 blocked 调用的 ID 被忽略；清除请求前崩溃时，下次打开会话重复处理是幂等的。确认针对具体 call ID，旧请求不会解锁之后新出现的 unknown 调用。早于 `executions` 结构的旧版 Brain 状态没有逐调用阶段，不在 `unknown_tool_outcomes` 中列出，也无法用该命令确认。
 
@@ -307,6 +314,10 @@ Self-hosted 的允许调用不得在模型输出预览阶段成为可执行事�
 New self-hosted session Work items with attached Memory Stores carry a URL-safe base64 JSON secret containing a random per-Work `sessions_token`. The token is not a workspace API key. Authentication compares the stored Work secret and rechecks the live Work lease and unarchived session. It permits only that session read/event stream/event submission and that Work heartbeat/stop. Attached Memory Store reads are allowed; memory mutations additionally require a live `read_write` attachment. Store management, unrelated sessions/work/stores, Files, Vaults and Messages are denied. Stop, archive, deletion, lease expiry or attachment removal revoke the corresponding access. Raw secret payloads and tokens must never enter runtime logs.
 
 工具结果持久化诊断仅记录 code-session/thread/call 标识的 SHA-256 关联摘要、阶段 start/confirmed、UTF-16 长度及是否含 NUL。confirmed 仅在状态保存得到确认后发出；HTTP 批量写入失败记录同一 code-session 标识的 SHA-256 关联摘要，避免把不同会话的错误混淆。诊断不记录工具正文、输入、认证信息或任意异常文本，也不改变写入确认、重试、工具结果或恢复语义。
+
+### Model request retries
+
+模型请求只对 `RATE_LIMIT`、`SERVER`、`TIMEOUT`、`TRANSPORT` 和 `EMPTY_RESPONSE` 重试。HTTP 408 映射为 `TIMEOUT`，429 映射为 `RATE_LIMIT`，5xx 映射为 `SERVER`；其他 4xx 为非重试错误，认证、额度和上下文窗口错误优先按专属分类处理。每个失败步骤最多重试四次，单次等待包含抖动在内不超过 30 秒。`tests/model-retry.test.ts` 通过完整 Brain 会话覆盖永久 4xx 仅请求一次和 408/429/5xx 恢复，并用确定性随机源验证实际等待上限。
 
 ### Context-window recovery for large Read histories
 

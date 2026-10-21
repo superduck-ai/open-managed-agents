@@ -29,6 +29,7 @@ type reconcileRequest struct {
 	WorkspaceUUID     string
 	SessionExternalID string
 	Acknowledge       []string
+	SessionThreadID   *string
 	Now               time.Time
 }
 
@@ -39,8 +40,9 @@ type unknownOutcome struct {
 }
 
 type reconciliationRequest struct {
-	ToolUseIDs  []string  `json:"tool_use_ids"`
-	RequestedAt time.Time `json:"requested_at"`
+	ToolUseIDs      []string  `json:"tool_use_ids"`
+	RequestedAt     time.Time `json:"requested_at"`
+	SessionThreadID *string   `json:"session_thread_id,omitempty"`
 }
 
 type workerMetadata struct {
@@ -86,6 +88,7 @@ func parseRequest(args []string, stderr io.Writer) (reconcileRequest, error) {
 	organization := flags.String("organization", "", "organization UUID")
 	workspace := flags.String("workspace", "", "workspace UUID")
 	session := flags.String("session", "", "public session ID")
+	thread := flags.String("thread", "", "subagent thread ID or primary, required when tool_use_id is ambiguous")
 	acknowledge := flags.String("acknowledge", "", "comma-separated tool_use_id values whose unknown outcomes are accepted without replay")
 	if err := flags.Parse(args); err != nil {
 		return reconcileRequest{}, err
@@ -95,6 +98,22 @@ func parseRequest(args []string, stderr io.Writer) (reconcileRequest, error) {
 		WorkspaceUUID:     strings.TrimSpace(*workspace),
 		SessionExternalID: strings.TrimSpace(*session),
 		Now:               time.Now().UTC(),
+	}
+	var threadSelected bool
+	flags.Visit(func(value *flag.Flag) {
+		if value.Name == "thread" {
+			threadSelected = true
+		}
+	})
+	if threadSelected {
+		threadID := strings.TrimSpace(*thread)
+		if threadID == "" {
+			return reconcileRequest{}, errors.New("thread must be a subagent thread ID or primary")
+		}
+		if threadID == "primary" {
+			threadID = ""
+		}
+		request.SessionThreadID = &threadID
 	}
 	for _, value := range []string{request.OrganizationUUID, request.WorkspaceUUID} {
 		if _, err := uuid.Parse(value); err != nil {
@@ -130,11 +149,20 @@ func reconcile(ctx context.Context, store sessionStore, request reconcileRequest
 		return writeReport(stdout, reconcileReport{CodeSessionID: session.ExternalID, UnknownOutcomes: metadata.UnknownOutcomes, PendingReconciliation: metadata.Reconciliation})
 	}
 	for _, id := range request.Acknowledge {
-		if !slices.ContainsFunc(metadata.UnknownOutcomes, func(outcome unknownOutcome) bool { return outcome.ToolUseID == id }) {
+		matches := 0
+		for _, outcome := range metadata.UnknownOutcomes {
+			if outcome.ToolUseID == id && (request.SessionThreadID == nil || outcome.SessionThreadID == *request.SessionThreadID) {
+				matches++
+			}
+		}
+		if matches > 1 {
+			return fmt.Errorf("tool_use_id %q is ambiguous; select a thread with -thread", id)
+		}
+		if matches == 0 {
 			return fmt.Errorf("tool_use_id %q is not an unknown tool outcome of this session", id)
 		}
 	}
-	pending := &reconciliationRequest{ToolUseIDs: request.Acknowledge, RequestedAt: request.Now}
+	pending := &reconciliationRequest{ToolUseIDs: request.Acknowledge, RequestedAt: request.Now, SessionThreadID: request.SessionThreadID}
 	patch, err := json.Marshal(map[string]any{"tool_outcome_reconciliation": pending})
 	if err != nil {
 		return err

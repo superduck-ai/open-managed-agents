@@ -49,7 +49,7 @@ export class ModelRetry {
     const base = retryAfterMs !== undefined && Number.isFinite(retryAfterMs) && retryAfterMs >= 0
       ? Math.min(retryAfterMs, maxDelayMs)
       : Math.min(baseDelayMs * 2 ** (this.failures - 1), maxDelayMs);
-    return Math.round(base + random() * base * 0.2);
+    return Math.min(Math.round(base + random() * base * 0.2), maxDelayMs);
   }
 }
 

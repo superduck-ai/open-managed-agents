@@ -53,6 +53,15 @@ func GenerateConfig(baseConfigPath string, layout Layout, base config.Config, sp
 	e2bURL := "http://127.0.0.1:" + strconv.Itoa(runtime.E2BPort)
 	setMappingValue(root, "e2b", "api_url", e2bURL)
 	setMappingValue(root, "e2b", "sandbox_url", e2bURL)
+	setMappingValue(root, "e2b", "local_service_host", "127.0.0.1")
+	apiKey := base.E2B.APIKey
+	if apiKey == "" {
+		apiKey = "e2b_0000000000000000000000000000000000000000"
+	}
+	setMappingValue(root, "e2b", "api_key", apiKey)
+	setMappingValue(root, "e2b", "template", localSandboxTemplate(base.E2B.Template))
+	setNode(getOrCreateMapping(root, "e2b"), "local_port_lookup", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
+	setMappingValue(root, "code_session", "sandbox_api_base_url", "http://host.docker.internal:"+strconv.Itoa(runtime.APIPort))
 	setMappingValue(root, "tunnel", "public_base_url", "http://"+apiAddr)
 	setMappingValue(root, "auth", "console_url", layout.WebPublicURL)
 

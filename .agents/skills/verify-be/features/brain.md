@@ -30,7 +30,7 @@ MCP 请求被拒绝以及 CCRv2 私有 dsh_log 事件保存的原生模型历史
 `brain_lazy_denied` 通过公开 API 创建禁用工具的会话，核对工具拒绝后沙箱创建次数为零。
 `brain_lazy_text` 通过公开 API 创建纯文本会话，核对回复与历史、沙箱创建次数为零。
 `brain_lazy_tool` 在两个 Go Runner 与两个 dsh 节点下，核对首次获准工具只创建一个沙箱、
-真实挂载和 MCP 写入，以及后续工具复用。
+真实挂载和 MCP 写入，以及后续工具复用。随后删除原沙箱模拟 Provider 过期，核对再次 Write 创建且仅创建一个 replacement，并在新沙箱验证文件字节。
 `brain_lazy_cleanup` 检查公开删除后，包含从未创建沙箱的会话在内的逻辑 Work 均为 stopped。
 
 整个场景使用真实 Go 后端、PostgreSQL、Redis、三节点 NATS 和 Docker MCP；只模拟上游 LLM。

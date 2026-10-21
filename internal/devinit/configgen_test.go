@@ -1,12 +1,18 @@
 package devinit
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 )
 
 const minimalBaseConfig = `
@@ -129,6 +135,12 @@ func TestGenerateConfigProducesLoadableEnvironmentConfig(t *testing.T) {
 	if cfg.E2B.APIURL != "http://127.0.0.1:43080" {
 		t.Errorf("E2B.APIURL = %q", cfg.E2B.APIURL)
 	}
+	if cfg.E2B.APIKey == "" || cfg.E2B.Template != defaultImagePrefix+"/managed-agent-sandbox:latest" || !cfg.E2B.LocalPortLookup || cfg.E2B.LocalServiceHost != "127.0.0.1" {
+		t.Error("generated config is missing local sandbox settings")
+	}
+	if cfg.CodeSession.SandboxAPIBaseURL != "http://host.docker.internal:40080" {
+		t.Errorf("SandboxAPIBaseURL = %q", cfg.CodeSession.SandboxAPIBaseURL)
+	}
 	if cfg.Auth.ConsoleURL != "http://oma-feature-x-web.localhost" {
 		t.Errorf("ConsoleURL = %q", cfg.Auth.ConsoleURL)
 	}
@@ -147,6 +159,20 @@ func TestGenerateConfigProducesLoadableEnvironmentConfig(t *testing.T) {
 	if cfg.CodeSession.BrainClaimTokenFile == "" || !filepath.IsAbs(cfg.CodeSession.BrainClaimTokenFile) {
 		t.Errorf("BrainClaimTokenFile = %q", cfg.CodeSession.BrainClaimTokenFile)
 	}
+	assertGeneratedSandboxCreate(t, cfg)
+	base.E2B.APIKey = "configured-local-key"
+	base.E2B.Template = "custom/sandbox:dev"
+	if err := GenerateConfig(baseConfigPath, layout, base, spec, state, runtime); err != nil {
+		t.Fatal(err)
+	}
+	custom, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custom.E2B.APIKey != base.E2B.APIKey || custom.E2B.Template != base.E2B.Template {
+		t.Fatal("generated config lost explicit sandbox credentials or template")
+	}
+
 	state.Runtime = &runtime
 	result, err := finalizeRun(t.Context(), preparedRun{repoRoot: repoRoot, binding: binding, layout: layout, base: base, spec: spec, state: state})
 	if err != nil {
@@ -154,5 +180,31 @@ func TestGenerateConfigProducesLoadableEnvironmentConfig(t *testing.T) {
 	}
 	if result.State.Runtime.APIPort != runtime.APIPort || result.State.Runtime.WebPort != runtime.WebPort {
 		t.Fatal("re-initialization lost listener ports")
+	}
+}
+
+func assertGeneratedSandboxCreate(t *testing.T, cfg config.Config) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/sandboxes" {
+			http.NotFound(w, r)
+			return
+		}
+		var request struct {
+			TemplateID string `json:"templateID"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.TemplateID != cfg.E2B.Template {
+			t.Errorf("sandbox create template = %q: %v", request.TemplateID, err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"sandboxID":"sbx_generated","templateID":"local","envdVersion":"0.1.0","envdURL":"http://127.0.0.1:1"}`)
+	}))
+	defer server.Close()
+	cfg.E2B.APIURL = server.URL
+	cfg.E2B.SandboxURL = server.URL
+	provider := e2bruntime.NewProvider(cfg.E2B)
+	sandbox, err := provider.Create(t.Context(), db.Environment{}, nil, e2bruntime.Resolution{Template: cfg.E2B.Template})
+	if err != nil || sandbox.ID != "sbx_generated" {
+		t.Fatalf("generated configuration cannot create through the SDK: %v", err)
 	}
 }

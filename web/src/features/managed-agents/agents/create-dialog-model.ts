@@ -162,7 +162,7 @@ const builtInToolConfigSchema = permissionConfigSchema
   })
   .strict()
   .superRefine((config, ctx) => {
-    for (const field of ['allowed_domains', 'blocked_domains', 'max_content_tokens'] as const) {
+    for (const field of ['allowed_domains', 'blocked_domains'] as const) {
       if (config[field] !== undefined && !['web_search', 'web_fetch'].includes(config.name)) {
         ctx.addIssue({ code: 'custom', path: [field], message: 'Only Web tools support this setting.' });
       }
@@ -173,7 +173,11 @@ const builtInToolConfigSchema = permissionConfigSchema
     if (config.allowed_domains != null && config.blocked_domains != null) {
       ctx.addIssue({ code: 'custom', path: ['allowed_domains'], message: 'Only one domain list may be set.' });
     }
-    if (config.max_content_tokens != null && config.name !== 'web_fetch') {
+    if (
+      config.max_content_tokens !== undefined &&
+      config.name !== 'web_fetch' &&
+      (config.name !== 'web_search' || config.max_content_tokens !== null)
+    ) {
       ctx.addIssue({
         code: 'custom',
         path: ['max_content_tokens'],

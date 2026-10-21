@@ -662,3 +662,21 @@ test('CMA search location survives Raw parsing and permission edits', () => {
     ).toBe(false);
   }
 });
+
+test.each([
+  ['web_fetch', undefined, true],
+  ['web_fetch', null, true],
+  ['web_fetch', 10, true],
+  ['web_search', undefined, true],
+  ['web_search', null, true],
+  ['web_search', 10, false],
+  ['bash', undefined, true],
+  ['bash', null, false],
+  ['bash', 10, false],
+])('content budget on %s with %s has validity %s', (name, budget, valid) => {
+  const result = createAgentDraftSchema.safeParse({
+    ...baseDraft,
+    tools: [{ type: 'agent_toolset_20260401', configs: [{ name, max_content_tokens: budget }] }],
+  });
+  expect(result.success).toBe(valid);
+});

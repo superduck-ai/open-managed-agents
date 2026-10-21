@@ -1,6 +1,7 @@
 package codesessions
 
 import (
+	"context"
 	"encoding/json/v2"
 	"io"
 	"net/http"
@@ -35,53 +36,57 @@ func (h *Handler) webToolPolicy(w http.ResponseWriter, r *http.Request, name str
 	if err == nil {
 		err = h.addWebToolScope(&policy, record.AgentSnapshot, name)
 	}
-	threadID := r.Header.Get(runtimeThreadHeader)
-	if err == nil && threadID != "" {
-		codeSession, found, loadErr := h.db.GetCodeSession(r.Context(), id)
-		if loadErr != nil {
-			err = loadErr
-		} else if !found {
-			err = db.ErrNotFound
-		} else {
-			seen := map[string]bool{}
-			var scopes []webtools.ToolConfig
-			for threadID != "" && err == nil {
-				if len(seen) >= 32 || seen[threadID] {
-					err = db.ErrNotFound
-					break
-				}
-				seen[threadID] = true
-				thread, loadErr := h.db.GetSessionThread(r.Context(), codeSession.WorkspaceUUID, codeSession.SessionExternalID, threadID)
-				if loadErr != nil {
-					err = loadErr
-					break
-				}
-				if thread.ParentThreadExternalID == nil {
-					if thread.OrganizationUUID != codeSession.OrganizationUUID || thread.WorkspaceUUID != codeSession.WorkspaceUUID || thread.SessionExternalID != codeSession.SessionExternalID || thread.Status == "terminated" || thread.ArchivedAt != nil || thread.DeletedAt != nil {
-						err = db.ErrNotFound
-					}
-					break
-				}
-				snapshot, loadErr := validatedMCPThreadSnapshot(codeSession, thread)
-				if loadErr != nil {
-					err = loadErr
-					break
-				}
-				var scope webtools.Policy
-				err = h.addWebToolScope(&scope, snapshot, name)
-				scopes = append(scopes, scope.Tools...)
-				threadID = *thread.ParentThreadExternalID
-			}
-			for index := len(scopes) - 1; index >= 0; index-- {
-				policy.Tools = append(policy.Tools, scopes[index])
-			}
-		}
+	if err == nil {
+		var scopes []webtools.ToolConfig
+		scopes, err = h.ancestorWebScopes(r.Context(), id, r.Header.Get(runtimeThreadHeader), name)
+		policy.Tools = append(policy.Tools, scopes...)
 	}
 	if err != nil {
 		h.errorAdapter.Write(w, r, webToolContextFailure(err))
 		return policy, false
 	}
 	return policy, true
+}
+
+func (h *Handler) ancestorWebScopes(ctx context.Context, id, threadID, name string) ([]webtools.ToolConfig, error) {
+	if threadID == "" {
+		return nil, nil
+	}
+	codeSession, found, err := h.db.GetCodeSession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, db.ErrNotFound
+	}
+	seen := map[string]bool{}
+	var scopes webtools.Policy
+	for threadID != "" {
+		if len(seen) >= 32 || seen[threadID] {
+			return nil, db.ErrNotFound
+		}
+		seen[threadID] = true
+		thread, err := h.db.GetSessionThread(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, threadID)
+		if err != nil {
+			return nil, err
+		}
+		if thread.ParentThreadExternalID == nil {
+			if thread.OrganizationUUID != codeSession.OrganizationUUID || thread.WorkspaceUUID != codeSession.WorkspaceUUID || thread.SessionExternalID != codeSession.SessionExternalID || thread.Status == "terminated" || thread.ArchivedAt != nil || thread.DeletedAt != nil {
+				return nil, db.ErrNotFound
+			}
+			break
+		}
+		snapshot, err := validatedMCPThreadSnapshot(codeSession, thread)
+		if err != nil {
+			return nil, err
+		}
+		if err := h.addWebToolScope(&scopes, snapshot, name); err != nil {
+			return nil, err
+		}
+		threadID = *thread.ParentThreadExternalID
+	}
+	slices.Reverse(scopes.Tools)
+	return scopes.Tools, nil
 }
 
 func (h *Handler) addWebToolScope(policy *webtools.Policy, snapshot []byte, name string) error {

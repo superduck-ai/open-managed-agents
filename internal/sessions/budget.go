@@ -10,12 +10,31 @@ import (
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 )
+
+func (h *Handler) prepareCreateBudget(ctx context.Context, principal auth.Principal, snapshot, raw json.RawMessage) (json.RawMessage, error) {
+	budget, _, err := ParseBudgetInput(raw)
+	if err != nil {
+		return nil, invalidRequest(err)
+	}
+	if budget == nil {
+		return nil, nil
+	}
+	if err := h.codeSessions.Billing().ValidateSnapshot(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, snapshot); err != nil {
+		return nil, invalidRequest(err)
+	}
+	encoded, err := httpapi.MarshalRaw(budget)
+	if err != nil {
+		return nil, invalidRequest(err)
+	}
+	return encoded, nil
+}
 
 // settlementEventTypes are the only client events accepted once a session is
 // at or over its budget: they settle work already in progress and never start

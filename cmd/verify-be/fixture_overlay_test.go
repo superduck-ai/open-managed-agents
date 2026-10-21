@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -39,7 +40,11 @@ func TestBaselineFixtureOverlayPreservesCurrentSource(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(path, []byte(root), 0o600); err != nil {
+			source := "package db\nfunc buildExisting() string { return \"reference\" }\n"
+			if root == env.root {
+				source = "package db\nfunc buildExisting() string { return \"candidate\" }\nfunc candidateBudgetMethod() {}\n"
+			}
+			if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -61,12 +66,16 @@ func TestBaselineFixtureOverlayPreservesCurrentSource(t *testing.T) {
 	}
 	for current, reference := range overlay.Replace {
 		before, err := os.ReadFile(current)
-		if err != nil || string(before) != env.root {
+		if err != nil || !strings.Contains(string(before), `return "candidate"`) {
 			t.Fatalf("current mapper changed: %v", err)
 		}
-		expected := filepath.Join(env.directory, "backend-source", "internal", "db", filepath.Base(current))
+		expected := filepath.Join(env.directory, "fixture-"+filepath.Base(current))
 		if reference != expected {
 			t.Fatalf("mapper reference = %s, want %s", reference, expected)
+		}
+		merged, err := os.ReadFile(reference)
+		if err != nil || !strings.Contains(string(merged), `return "reference"`) || !strings.Contains(string(merged), "func candidateBudgetMethod()") {
+			t.Fatalf("基线 SQL 或当前接口实现丢失：%s %v", merged, err)
 		}
 	}
 }

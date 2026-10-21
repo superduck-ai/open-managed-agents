@@ -247,3 +247,5 @@ CI 进一步要求该提交等于 PR base SHA。编排单测覆盖配置隔离�
 `go test -json` 的 stdout 单独保存为 `tests.jsonl` 并严格解析；stderr 保存到
 `tests.stderr.log`。Go 在冷缓存下载模块时会向 stderr 写普通文本，不允许它混入 JSON
 证据流。stderr 仅用于本地诊断，不加入 CI 上传产物，也不替代测试退出码与阶段断言。
+
+基线夹具的 Go overlay 仅替换对应 Mapper 中基线已有的 SQL builder 与行扫描函数，保留当前生成接口实现及新增方法。这样旧数据库沿用原 SQL，当前夹具仍可编译；不能整文件替换生成 Mapper，否则新增接口方法（例如 `SetBudgetReached`）会造成基线在编译阶段失败。overlay 不修改基线源码、迁移或被测二进制，也不放宽负载断言与性能阈值。

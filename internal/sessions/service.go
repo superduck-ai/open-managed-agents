@@ -71,20 +71,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapVaultBindingError(err)
 	}
-	budget, _, err := ParseBudgetInput(body.Budget)
+	sessionBudgetRaw, err := h.prepareCreateBudget(r.Context(), principal, snapshot, body.Budget)
 	if err != nil {
-		return invalidRequest(err)
-	}
-	sessionBudgetRaw := json.RawMessage(nil)
-	if budget != nil {
-		if err := h.codeSessions.Billing().ValidateSnapshot(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, snapshot); err != nil {
-			return invalidRequest(err)
-		}
-		encoded, err := httpapi.MarshalRaw(budget)
-		if err != nil {
-			return invalidRequest(err)
-		}
-		sessionBudgetRaw = encoded
+		return err
 	}
 
 	sessionID, err := ids.New("sesn_")

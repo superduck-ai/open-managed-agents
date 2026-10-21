@@ -37,9 +37,9 @@ type platformOrganizationUpdater interface {
 	UpdatePlatformOrganization(ctx context.Context, orgUUID string, patch OrganizationUpdatePatch) (*OrganizationRecord, error)
 }
 
-func RegisterPlatformAccountRoutes(r chi.Router, store OrganizationStore) {
-	r.Get("/api/bootstrap", handleBootstrap(store))
-	r.Get("/api/bootstrap/{orgUuid}/app_start", handleBootstrap(store))
+func RegisterPlatformAccountRoutes(r chi.Router, store OrganizationStore, resolveAccess PlatformAccessResolver) {
+	r.Get("/api/bootstrap", handleBootstrap(store, resolveAccess))
+	r.Get("/api/bootstrap/{orgUuid}/app_start", handleBootstrap(store, resolveAccess))
 	r.Get("/api/banners", handleBanners)
 }
 

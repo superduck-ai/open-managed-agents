@@ -19,33 +19,72 @@ afterEach(() => {
 });
 
 for (const locale of ['en', 'zh-CN'] as const) {
-  const intl = createIntl({ locale, messages: locale === 'en' ? en : zhCn });
+  const messages = locale === 'en' ? en : zhCn;
+  const intl = createIntl({ locale, messages });
   const msg: I18nContextValue['msg'] = (id, defaultMessage, values) =>
     intl.formatMessage({ id, defaultMessage }, values);
+  const title = messages['invitations.delivery.created'];
+  const notify = (...statuses: OrganizationInvite['email_delivery'][]) =>
+    notifyInvitationDelivery(
+      statuses.map((emailDelivery) => ({ email_delivery: emailDelivery })) as OrganizationInvite[],
+      msg,
+    );
+
   for (const count of [1, 2]) {
-    test(`${locale} 未配置或失败显示本地化警告 ${count}`, () => {
-      const invites = [{ email_delivery: 'failed' }, { email_delivery: 'not_configured' }].slice(0, count);
-      notifyInvitationDelivery(invites as OrganizationInvite[], msg);
-      expect(warning).toHaveBeenCalledWith(
-        locale === 'en'
-          ? `Invitations saved, but delivery of ${count} ${count === 1 ? 'email' : 'emails'} is unconfirmed. Check your email configuration and resend.`
-          : `邀请已保存，但 ${count} 封邮件未确认发送。请检查邮件配置后重发邀请。`,
-      );
+    test(`${locale} 邮件失败仍确认邀请成功，准确显示失败数量 ${count}`, () => {
+      notify(...Array<OrganizationInvite['email_delivery']>(count).fill('failed'));
+      expect(warning).toHaveBeenCalledWith(title, {
+        description:
+          locale === 'en'
+            ? `${count} invitation ${count === 1 ? 'email' : 'emails'} could not be sent. You can resend from the invitation menu.`
+            : `${count} 封邀请邮件发送失败，可在邀请菜单中重发。`,
+      });
       expect(success).not.toHaveBeenCalled();
     });
   }
-  test(`${locale} 缺少服务端状态不视为成功`, () => {
-    notifyInvitationDelivery([{}] as OrganizationInvite[], msg);
-    expect(warning).toHaveBeenCalledTimes(1);
+
+  test(`${locale} 缺少投递状态不归因为配置错误`, () => {
+    notify(undefined);
+    expect(warning).toHaveBeenCalledWith(title, {
+      description:
+        locale === 'en'
+          ? 'The server did not return the delivery status of 1 invitation email. Recipients can sign in to view their invitations.'
+          : '服务端未返回 1 封邀请邮件的投递状态，受邀人可登录查看组织邀请。',
+    });
     expect(success).not.toHaveBeenCalled();
   });
-  test(`${locale} 服务端确认 SMTP 接受才显示提交发送`, () => {
-    notifyInvitationDelivery([{ email_delivery: 'sent' }] as OrganizationInvite[], msg);
-    expect(success).toHaveBeenCalledWith(
-      locale === 'en'
-        ? 'Invitation emails submitted for sending. Remind recipients to check their inbox.'
-        : '邀请邮件已提交发送，请提醒收件人检查邮箱。',
-    );
+
+  test(`${locale} 混合批次仅统计实际失败邮件，分别说明其他状态`, () => {
+    notify('sent', 'failed', 'not_configured', undefined);
+    expect(warning).toHaveBeenCalledTimes(1);
+    expect(warning).toHaveBeenCalledWith(title, {
+      description: [
+        msg('invitations.delivery.sent', ''),
+        msg('invitations.delivery.failed', '', { count: 1 }),
+        msg('invitations.delivery.notConfigured', ''),
+        msg('invitations.delivery.unconfirmed', '', { count: 1 }),
+      ].join(' '),
+    });
+    expect(success).not.toHaveBeenCalled();
+  });
+
+  test(`${locale} 未配置邮件仍提示邀请成功并说明站内接受方式`, () => {
+    notify('not_configured', 'not_configured');
+    expect(success).toHaveBeenCalledWith(title, {
+      description: messages['invitations.delivery.notConfigured'],
+    });
     expect(warning).not.toHaveBeenCalled();
+  });
+
+  test(`${locale} 服务端确认 SMTP 接受才显示提交发送`, () => {
+    notify('sent');
+    expect(success).toHaveBeenCalledWith(title, { description: messages['invitations.delivery.sent'] });
+    expect(warning).not.toHaveBeenCalled();
+  });
+
+  test(`${locale} 空批次不显示成功或警告`, () => {
+    notify();
+    expect(warning).not.toHaveBeenCalled();
+    expect(success).not.toHaveBeenCalled();
   });
 }

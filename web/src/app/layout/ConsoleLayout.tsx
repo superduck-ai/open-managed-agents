@@ -3,6 +3,7 @@ import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
 import { OrganizationMenu } from '../../features/organizations/OrganizationMenu';
 import { useScopeConfirmation } from '../../features/organizations/useScopeConfirmation';
 import { useOrganizations } from '../../shared/organizations/context';
+import { PlatformAdminMenuItem } from '../../features/platform-admin/PlatformAdminMenuItem';
 import {
   ArrowLeft,
   BookOpen,
@@ -85,7 +86,6 @@ import {
   workspaceWebhooksPath,
 } from '../../shared/workspaces/presentation';
 import { useI18n, useLocale } from '../../shared/i18n';
-import { accountRoleLabel, membershipRoleForOrganization } from '../../shared/permissions/roles';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import {
   personalSettingsNavigation,
@@ -775,9 +775,8 @@ export function AccountMenu({
   const { isMobile } = useSidebar();
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const identity = getIdentity(account);
-  const { activeWorkspace, orgUuid } = useWorkspace();
-  const organizationRole = membershipRoleForOrganization(account?.memberships, orgUuid);
+  const { orgUuid } = useWorkspace();
+  const identity = getIdentity(account, orgUuid);
   const { locale, setLocale, supportedLocales: locales } = useLocale();
   const { msg } = useI18n();
 
@@ -815,7 +814,9 @@ export function AccountMenu({
                   'data-[popup-open]:bg-sidebar-accent data-[popup-open]:text-sidebar-accent-foreground',
                   collapsed ? 'justify-center' : '',
                 )}
-                aria-label={collapsed ? identity.name : undefined}
+                aria-label={
+                  collapsed ? [identity.name, identity.organizationName].filter(Boolean).join(' ') : undefined
+                }
               />
             }
           >
@@ -826,16 +827,7 @@ export function AccountMenu({
               <>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-sidebar-foreground">{identity.name}</span>
-                  <span className="block truncate text-xs text-sidebar-foreground/70">
-                    {msg('account.subtitle', '{role} · {workspaceName}', {
-                      role: activeWorkspace.effective_role
-                        ? accountRoleLabel(activeWorkspace.effective_role, msg)
-                        : organizationRole
-                          ? accountRoleLabel(organizationRole, msg)
-                          : msg('account.role.unknown', 'Member'),
-                      workspaceName: localizedWorkspaceName(activeWorkspace.name, msg),
-                    })}
-                  </span>
+                  <span className="block truncate text-xs text-sidebar-foreground/70">{identity.organizationName}</span>
                 </span>
                 <ChevronDown className="size-4 text-sidebar-foreground/70" aria-hidden />
               </>
@@ -853,6 +845,7 @@ export function AccountMenu({
             </DropdownMenuGroup>
 
             <OrganizationMenu />
+            <PlatformAdminMenuItem onNavigate={handleMenuNavigation} />
 
             <DropdownMenuSeparator />
 
@@ -1027,12 +1020,16 @@ async function navigateToMatchingWorkspacePath(currentPath: string, workspaceId:
   }
 }
 
-function getIdentity(account?: AuthAccount | null) {
+function getIdentity(account?: AuthAccount | null, orgUuid?: string) {
+  const organization = account?.memberships?.find(
+    (membership) => membership.organization?.uuid === orgUuid,
+  )?.organization;
   const email = account?.email_address ?? 'test@openmanagedagent.local';
   const emailName = email.split('@')[0] || 'test';
   return {
     email,
     name: account?.display_name ?? account?.full_name ?? emailName,
+    organizationName: organization?.name || organization?.uuid || orgUuid,
   };
 }
 

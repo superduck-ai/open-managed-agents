@@ -18,18 +18,17 @@ afterEach(() => {
 
 describe('ConsoleShell', () => {
   test.each([
-    ['en', 'User', 'Default'],
-    ['zh-CN', '用户', '默认'],
-  ] as const)('用户角色在 %s 显示正确名称', (locale, label, workspaceName) => {
+    ['en', 'user'],
+    ['zh-CN', 'user'],
+  ] as const)('账号菜单在 %s 显示用户名和当前组织', (locale, role) => {
     resetTestDom('https://oma.duck.ai/dashboard');
     renderWithWorkspaces(
-      <ConsoleShell currentPath="/dashboard" account={testAccount('user')} onLogout={() => undefined}>
+      <ConsoleShell currentPath="/dashboard" account={testAccount(role)} onLogout={() => undefined}>
         <div>Dashboard content</div>
       </ConsoleShell>,
       { locale, effectiveRole: 'workspace_user' },
     );
-    expect(screen.getByText(`${label} · ${workspaceName}`)).toBeTruthy();
-    expect(screen.queryByText(`Member · ${workspaceName}`)).toBeNull();
+    expect(screen.getByRole('button', { name: 'test org_test' })).toBeTruthy();
   });
 
   test.each(['/settings/workspaces/default/mcp-tunnels', '/settings/workspaces/default/mcp-tunnels/tunnel_test'])(
@@ -651,7 +650,7 @@ describe('ConsoleShell', () => {
     await waitFor(() => expect(screen.queryByRole('menuitem', { name: /Default/i })).toBeNull());
   });
 
-  test('selects a workspace and updates the account subtitle', async () => {
+  test('selects a workspace and preserves the account name', async () => {
     resetTestDom('https://oma.duck.ai/dashboard');
 
     renderWithWorkspaces(
@@ -676,10 +675,10 @@ describe('ConsoleShell', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /test/i }));
     });
-    expect(screen.getByText('Member · foo')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'test org_test' })).toBeTruthy();
   });
 
-  test('shows the role for the active organization instead of the first membership', () => {
+  test('shows the active organization instead of the first membership', () => {
     resetTestDom('https://oma.duck.ai/dashboard');
 
     renderWithWorkspaces(
@@ -700,7 +699,7 @@ describe('ConsoleShell', () => {
       </ConsoleShell>,
     );
 
-    expect(screen.getByText('Admin · Default')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'test org_test' })).toBeTruthy();
   });
 
   test('uses client navigation when selecting a workspace on managed routes', async () => {

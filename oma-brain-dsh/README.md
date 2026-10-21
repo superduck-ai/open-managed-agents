@@ -459,3 +459,25 @@ text block must parse to the same structured result. Empty stdout may use the
 sandbox's `(no output)` placeholder. Model feedback and public CCRv2 tool results
 share this conversion and omit duplicate execution metadata. Failures,
 inconsistent metadata and other tools retain their diagnostic text.
+
+## Built-in web_search and web_fetch
+
+The Brain exposes `web_search({query})` and `web_fetch({url})` as thin native
+tools. Existing OMA approval, cancellation, journaling and child restrictions
+apply. Agent and Session configuration accepts CMA-style domain restrictions
+and Fetch content budgets. CMA user_location is accepted and preserved as an
+advisory search preference; the current DeepSeek provider ignores it.
+
+Both tools execute on oma-server through session-authenticated
+`POST /v2/ccr-sessions/{id}/web/search` and `/web/fetch`. Search selects its provider using
+`web_tools.search_provider`; set it to `deepseek` and configure
+`web_tools.providers.deepseek.api_key` on the server. Fetch uses direct Go
+HTTP without an external Fetch API. Requests and redirects enforce Environment
+networking, tool domain rules and public-address checks using system DNS.
+Brain receives no provider credentials.
+
+Short results do not allocate a sandbox. Long results use the existing sandbox
+output persistence and Read path, with a bounded preview. Web content remains
+untrusted and responses carry source URLs for citations. There is no extra
+summarization model call. See [the design](../docs/design/be/brain-web-tools.md)
+for supported configuration, limits and acceptance coverage.

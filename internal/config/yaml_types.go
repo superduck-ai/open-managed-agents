@@ -35,6 +35,7 @@ func (o optional[T]) valueOr(fallback T) T {
 }
 
 type yamlConfig struct {
+	WebTools             WebToolsConfig            `yaml:"web_tools"`
 	EnvironmentPackages  EnvironmentPackageConfig  `yaml:"environment_packages"`
 	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
 	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
@@ -151,6 +152,7 @@ func newYAMLConfig() yamlConfig {
 			ConnectTimeout:    defaults.NATS.ConnectTimeout,
 			DrainTimeout:      defaults.NATS.DrainTimeout,
 		},
+		WebTools:             defaults.WebTools,
 		Auth:                 defaults.Auth,
 		Tunnel:               defaults.Tunnel,
 		Storage:              defaults.Storage,
@@ -203,6 +205,7 @@ func (input yamlConfig) resolve() Config {
 			ConnectTimeout:    input.NATS.ConnectTimeout,
 			DrainTimeout:      input.NATS.DrainTimeout,
 		},
+		WebTools:             input.WebTools,
 		Auth:                 input.Auth,
 		Tunnel:               input.Tunnel,
 		Storage:              input.Storage,

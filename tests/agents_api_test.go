@@ -152,8 +152,8 @@ func TestAgentsAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("failure web search agent tool config", func(t *testing.T) {
-		body := `{"model":"claude-opus-4-6","name":"bad web search","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"web_search","enabled":true}]}]}`
+	t.Run("failure unknown agent tool config", func(t *testing.T) {
+		body := `{"model":"claude-opus-4-6","name":"bad tool","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"unsupported_tool","enabled":true}]}]}`
 		resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(body), defaultTestKey, true)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
@@ -187,7 +187,7 @@ func TestAgentsAPI(t *testing.T) {
 					{"name":"exit_plan_mode"},{"name":"exit_worktree"},{"name":"glob"},
 					{"name":"grep"},{"name":"notebook_edit"},{"name":"read"},
 					{"name":"schedule_wakeup"},{"name":"skill"},{"name":"task_output"},
-					{"name":"task_stop"},{"name":"todo_write"},{"name":"web_fetch"},{"name":"write"}
+					{"name":"task_stop"},{"name":"todo_write"},{"name":"web_fetch"},{"name":"web_search"},{"name":"write"}
 				]
 			}]
 		}`
@@ -197,14 +197,14 @@ func TestAgentsAPI(t *testing.T) {
 			Configs []map[string]any `json:"configs"`
 		}
 		decodeRawJSON(t, created.Tools, &toolsets)
-		if len(toolsets) != 1 || len(toolsets[0].Configs) != 22 {
+		if len(toolsets) != 1 || len(toolsets[0].Configs) != 23 {
 			t.Fatalf("full built-in toolset did not round-trip: %s", created.Tools)
 		}
 		expectedNames := []string{
 			"task", "ask_user_question", "bash", "cron_create", "cron_delete", "cron_list", "edit",
 			"enter_plan_mode", "enter_worktree", "exit_plan_mode", "exit_worktree", "glob", "grep",
 			"notebook_edit", "read", "schedule_wakeup", "skill", "task_output", "task_stop",
-			"todo_write", "web_fetch", "write",
+			"todo_write", "web_fetch", "web_search", "write",
 		}
 		actualNames := make([]string, 0, len(toolsets[0].Configs))
 		for _, config := range toolsets[0].Configs {

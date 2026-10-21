@@ -14,6 +14,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
+	"github.com/superduck-ai/open-managed-agents/internal/webtools"
 )
 
 // Handler 是 code-session 的 HTTP transport 边界。
@@ -39,6 +40,7 @@ type Handler struct {
 	otlpSink                  otlpSink
 	otlpAdmission             *otlpAdmission
 	brainClaims               BrainClaimAuthenticator
+	webTools                  *webtools.Client
 }
 
 // TunnelInvoker is implemented by the Tunnel DataPlane. Named Runtime Gateway

@@ -19,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
+	"github.com/superduck-ai/open-managed-agents/internal/webtools"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -53,6 +54,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	}
 	if env.ArchivedAt != nil {
 		return invalidRequest(errors.New("environment must not be archived"))
+	}
+	if err := webtools.ValidateSession(env.Config, snapshot); err != nil {
+		return invalidRequest(err)
 	}
 	if err := networkpolicy.ValidateSessionMCPHosts(env.Config, snapshot); err != nil {
 		return invalidRequest(err)
@@ -322,6 +326,16 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 	if len(body.Agent) > 0 {
 		next.AgentSnapshot, err = patchSessionAgent(next.AgentSnapshot, body.Agent)
 		if err != nil {
+			return invalidRequest(err)
+		}
+		env, err := h.db.GetEnvironment(r.Context(), current.WorkspaceUUID, current.EnvironmentExternalID)
+		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				return environmentNotFound(current.EnvironmentExternalID, err)
+			}
+			return internalError("Could not update session", fmt.Errorf("get environment: %w", err))
+		}
+		if err := webtools.ValidateSession(env.Config, next.AgentSnapshot); err != nil {
 			return invalidRequest(err)
 		}
 	}

@@ -338,3 +338,7 @@ transcript_archive:
   target_segment_raw_bytes: 8388608
   delete_batch_rows: 500
   max_rows_per_job: 50000
+
+web_tools:
+  search_provider: ""
+  providers: {}

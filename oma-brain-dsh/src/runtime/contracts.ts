@@ -2,7 +2,7 @@ import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import type { SessionEvent } from "@deepseek-ai/dsh-session";
 import type { ToolDefinition } from "@deepseek-ai/dsh-tools";
 import type { Payload } from "../json.ts";
-import type { Context } from "@deepseek-ai/cordis";
+import type { Context, Fiber } from "@deepseek-ai/cordis";
 
 export const MAX_LIVE_SUBAGENT_THREADS = 25;
 
@@ -54,6 +54,7 @@ export interface SubagentBridge {
 export interface RemoteTool {
   name: string;
   remoteName: string;
+  permissionName?: string;
   description: string;
   inputSchema: Payload;
   readOnly?: boolean;
@@ -66,8 +67,8 @@ export class ToolNotForwardedError extends Error {}
 
 /** Host-provided sandbox readiness and execution. Resource creation belongs to the provider service. */
 export interface SandboxExecutor {
-  provision(signal: AbortSignal): Promise<void>;
-  call(tool: RemoteTool, args: Payload, signal: AbortSignal): Promise<Payload>;
+  provision?(signal: AbortSignal): Promise<void>;
+  call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string): Promise<Payload>;
 }
 
 declare module "@deepseek-ai/cordis" {
@@ -89,6 +90,7 @@ export interface SessionRuntimeConfig {
   systemPrompt: string;
   /** Mount root-session services before tool registration. Children share these services. */
   setup?(scope: Context): Promise<void>;
+  setupTools?(scope: Context, bridge: ToolExecutionBridge, tools?: string[], threadId?: string, permissions?: ToolPermissions): Promise<Fiber | void>;
   subagentSystemPrompt?(thread: SubagentThread): string;
   tools?: string[];
   toolPermissions?: ToolPermissions;

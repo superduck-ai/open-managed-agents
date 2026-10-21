@@ -74,7 +74,8 @@ export class CcrSubagentBridge implements SubagentBridge {
       recordApproved: (call) => this.session.recordApproved(call, threadId),
       flushLog: () => this.session.runtime.flushLog(),
       recordDispatch: (callId) => this.session.recordDispatch(callId, threadId),
-      recordUnknown: (callId) => this.session.recordUnknown(callId, threadId),
+      recordUnknown: (callId, error) => this.session.recordUnknown(callId, threadId, error),
+      recordNotDispatched: (outcome) => this.session.recordNotDispatched(outcome, threadId),
       recordResult: (outcome) => this.session.recordResult(outcome, threadId),
       stop: () => this.session.stop(),
     };

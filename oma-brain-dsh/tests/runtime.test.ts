@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { ToolCallId } from "@deepseek-ai/dsh-llm";
 import { ToolExecution } from "../src/runtime/execution.ts";
+import { SandboxRequestError } from "../src/runtime/sandbox-errors.ts";
 import type {
   RemoteTool, SandboxExecutor, ToolExecutionBridge, ToolExecutionContext,
 } from "../src/runtime/contracts.ts";
@@ -39,6 +40,7 @@ function fixture() {
     async flushLog() {},
     async recordDispatch() {},
     async recordUnknown() { blocked = true; },
+    async recordNotDispatched() { resultConfirmed = true; },
     async recordResult() { resultConfirmed = true; },
     stop() { stopped = true; },
   };
@@ -89,6 +91,49 @@ test("failed approval or dispatch checkpoints prevent sandbox side effects", asy
   }
 });
 
+test("initialization failure settles without dispatch and waits for its checkpoint", async () => {
+  const f = fixture();
+  const writing = Promise.withResolvers<void>();
+  const confirmation = Promise.withResolvers<void>();
+  let dispatched = false;
+  let settled = false;
+  f.sandbox.provision = async () => { throw new Error("private initialization failure"); };
+  f.bridge.recordDispatch = async () => { dispatched = true; };
+  f.bridge.recordNotDispatched = async (outcome) => {
+    expect(outcome).toMatchObject({ callId: "call_1", failed: true });
+    expect(outcome.text).toContain("not executed");
+    expect(outcome.text).not.toContain("private");
+    writing.resolve(); await confirmation.promise;
+  };
+  const turn = f.execution.execute(tool, { command: "original" }, f.exec)
+    .catch((error: Error) => { settled = true; return error; });
+  await writing.promise;
+  expect(settled).toBe(false);
+  expect(dispatched).toBe(false);
+  confirmation.resolve();
+  expect((await turn as Error).message).toContain("not executed");
+  expect(f.executions).toBe(0);
+  expect(f.stopped).toBe(false);
+});
+
+test("pre-dispatch user cancellation settles without unknown and checkpoint errors propagate", async () => {
+  for (const failCheckpoint of [false, true]) {
+    const f = fixture();
+    const abort = new AbortController();
+    f.sandbox.provision = async () => { abort.abort({ kind: "user" }); abort.signal.throwIfAborted(); };
+    let outcome: Parameters<ToolExecutionBridge["recordResult"]>[0] | undefined;
+    f.bridge.recordNotDispatched = async (value) => {
+      outcome = value;
+      if (failCheckpoint) throw new Error("Write not confirmed");
+    };
+    await expect(f.execution.execute(tool, { command: "original" }, { ...f.exec, signal: abort.signal }))
+      .rejects.toThrow(failCheckpoint ? "Write not confirmed" : "interrupted before dispatch");
+    expect(outcome?.remoteOutcome).toBeUndefined();
+    expect(f.executions).toBe(0);
+    expect(f.bridge.blocked()).toBe(false);
+  }
+});
+
 test("unknown sandbox outcome is journaled before stopping and cannot be replayed", async () => {
   const f = fixture();
   const originalCall = f.sandbox.call;
@@ -116,6 +161,14 @@ test("unknown sandbox outcome is journaled before stopping and cannot be replaye
     .rejects.toThrow("reconciliation");
   expect(f.executions).toBe(1);
   expect(f.approvals).toBe(1);
+});
+
+test("a connection reinitialization failure after local dispatch still proves non-execution", async () => {
+  const f = fixture();
+  f.sandbox.call = async () => { throw new SandboxRequestError("initialization", 503); };
+  await expect(f.execution.execute(tool, { command: "original" }, f.exec)).rejects.toThrow("HTTP 503");
+  expect(f.bridge.blocked()).toBe(false);
+  expect(f.stopped).toBe(false);
 });
 
 test("non-user cancellation still blocks unconfirmed remote outcomes", async () => {

@@ -374,7 +374,7 @@ test("a read-only call that fails twice returns an error result to the model wit
   expect(b.executions).toHaveLength(2);
   expect(session.blocked()).toBe(false);
   expect(session.state.phase).toBe("completed");
-  expect(session.execution(session.id).toolOutcomes.call_0).toEqual({ text: "Read-only tool outcome is unknown", failed: true });
+  expect(session.execution(session.id).toolOutcomes.call_0).toEqual({ text: "Sandbox gateway returned HTTP 500. Read-only tool outcome is unknown.", failed: true });
   const toolResult = JSON.stringify(b.requests.at(-1)!.messages);
   expect(toolResult).toContain('"is_error":true');
   expect(toolResult).toContain("Read-only tool outcome is unknown");
@@ -390,7 +390,7 @@ test("a gateway rejection before forwarding becomes a failed result instead of a
   expect(session.state.phase).toBe("completed");
   expect(session.execution(session.id).callPhases).toEqual({ call_bash: "result" });
   expect(session.execution(session.id).toolOutcomes.call_bash).toEqual({
-    text: "Sandbox tool call was not executed: Sandbox MCP request exceeds 1 MiB", failed: true,
+    text: "Sandbox tool call was not executed: HTTP 400: Sandbox MCP request exceeds 1 MiB", failed: true,
   });
   const messages = JSON.stringify(b.requests.at(-1)!.messages);
   expect(messages).toContain('"is_error":true');

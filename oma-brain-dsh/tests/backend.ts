@@ -108,6 +108,7 @@ export class Backend {
   onModel?: (request: Payload) => Promise<Payload[]>;
   onCancel?: (params: Payload) => Promise<void>;
   onTool?: (params: Payload) => Promise<Payload>;
+  onSandbox?: (body: Payload, request: Request) => Promise<Response | undefined>;
   onApproval?: (payload: Payload) => Promise<void>;
   onDelegationApproval?: (payload: Payload) => Promise<void>;
   hangTool = false;
@@ -231,6 +232,8 @@ export class Backend {
       if (request.method === "GET") return new Response(null, { status: 405 });
       expect(request.headers.get("Authorization")).toBe(path === "/sandbox/mcp" ? "Bearer test-mcp" : `Bearer ${this.a.ingress_token}`);
       expect(request.headers.has("X-Brain-Epoch")).toBe(false);
+      const override = await this.onSandbox?.(body, request);
+      if (override) return override;
       if (body.method === "server/discover") return json({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Method not found" } }, 404);
         this.mcpMethods.push(body.method);
         if (body.method === "notifications/cancelled") { await this.onCancel?.(body.params); return new Response(null, { status: 202 }); }

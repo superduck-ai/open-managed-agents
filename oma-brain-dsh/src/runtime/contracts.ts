@@ -3,6 +3,7 @@ import type { SessionEvent } from "@deepseek-ai/dsh-session";
 import type { ToolDefinition } from "@deepseek-ai/dsh-tools";
 import type { Payload } from "../json.ts";
 import type { Context, Fiber } from "@deepseek-ai/cordis";
+import type { SandboxRequestError } from "./sandbox-errors.ts";
 
 export const MAX_LIVE_SUBAGENT_THREADS = 25;
 
@@ -141,7 +142,8 @@ export interface ToolExecutionBridge {
   recordApproved(call: ApprovedToolCall): Promise<void>;
   flushLog(): Promise<void>;
   recordDispatch(callId: string): Promise<void>;
-  recordUnknown(callId: string): Promise<void>;
+  recordUnknown(callId: string, error?: SandboxRequestError): Promise<void>;
+  recordNotDispatched(outcome: ToolOutcome): Promise<void>;
   recordResult(outcome: ToolOutcome): Promise<void>;
   stop(): void;
 }

@@ -136,6 +136,26 @@ DSH 对沙箱 MCP 先尝试 `server/discover` 协商 2026-07-28，旧版服务�
 
 网关在请求进入处理函数时设置 `X-Oma-Sandbox-Not-Forwarded: true`，仅在向沙箱发出请求前移除。DSH 只信任 `tools/call` 响应上的该标记，收到时记为失败工具结果，文案包含最多 500 字符的网关错误，不记为未知结果、不 block 会话；工具已执行但返回非 text 内容时同样记为失败结果。
 
+根会话的 Sandbox executor 由主线程和子线程共享，同一时刻复用一个初始化任务。握手使用 provider 生命周期与独立的 185 秒超时，调用方中断只取消自己的等待，不中断其他线程的握手。初始化失败时释放本次 Client 和 transport，并清除对应连接及其 Promise；后续调用重新创建连接。旧连接的关闭回调只能清理自身，不能清除新连接。provider 关闭会取消未完成握手并禁止重连。普通工具 HTTP 错误不会主动重建连接或中断其他调用；SDK 确认连接关闭后，下一次调用才能重新建立连接。工具调用使用自身等待完成的连接，不在握手后重新读取共享连接；请求在发出前因连接关闭等原因失败时，按未转发处理为失败结果，不记录 unknown、不 block 会话。
+
+初始化失败发生在工具 dispatch 之前，通过独立的未派发失败入口将 `approved` 调用收尾为失败 `result`，不伪造 dispatch、不记录 unknown。失败 checkpoint 确认后，DSH 向模型反馈工具未执行及可用的 HTTP 状态码，允许模型继续或下一轮重新握手。用户在等待初始化时中断，同样收尾未派发调用，继续遵循用户中断合同。
+
+工具调用的非 2xx 响应通过具名错误保留 HTTP 状态码。只读工具在一次重试后向模型反馈状态码和结果未知说明；带可信 not-forwarded 标记的错误不重试。对该标记中的 JSON 错误消息，最多读取 2 KiB、保留 500 字符，并过滤控制字符及含凭据或 URL 的消息；未知正文不直接公开。无标记的写工具 HTTP 失败、超时和断连继续进入 unknown/blocked，不能仅按 400/404/405 等状态码推定工具未执行。执行层将固定格式的工具名、状态码及结果未知提示写入持久 outbox 的 `system.message`，运行日志仅记录阶段、状态码和关联 ID，不记录响应正文。已有 blocked 会话不会因客户端恢复而自动解锁。
+
+```mermaid
+flowchart TD
+    A[approved] --> B[等待共享 MCP 握手]
+    B -->|初始化失败或等待中断| C[持久化未派发失败 result]
+    B -->|初始化成功| D[dispatch 工具调用]
+    D -->|有效工具结果或可信未转发标记| E[持久化 result]
+    D -->|写工具结果未知| F[持久化 blocked 和安全诊断]
+    C --> G[允许后续新调用]
+    E --> G
+    F --> H[停止并禁止重放]
+```
+
+`oma-brain-dsh/tests/sandbox-recovery.test.ts` 通过本地 HTTP mock 与真实 MCP SDK、DSH 循环覆盖初始化失败恢复、中断隔离、关闭取消、共享连接并发、未转发拒绝、只读错误反馈与写工具 unknown 禁止重放。`tests/runtime.test.ts` 补充未派发失败的持久化屏障与中断收尾。上述测试不访问真实 Sandbox 或模型服务。
+
 非 `notifications/*` 请求在转发前使用 provider `SetTimeout` 唤醒并续期沙箱，随后解析 MCP endpoint。续期按 provider 沙箱 ID 在进程内节流：同一沙箱在 `e2b.sandbox_timeout` 的 1/3 内已成功续期（包括 worker 心跳路径）时跳过，失败的续期不计入；因此转发时沙箱剩余寿命至少为 2/3 TTL，长时间工具调用仍由心跳续期。多实例各自节流，最坏情况每实例一次续期。E2B 非本地端口模式下，服务 host 由沙箱 ID 和端口确定，provider 按沙箱 ID 与端口缓存 5 分钟，避免每次请求都调用 `Connect`；本地端口查询模式不缓存。Brain 沙箱启动 `environment-manager task-run`，设置 `ENVRUNNER_SKIP_CLAUDE_CODE=true`；Manager 初始化工作目录并在同一进程中启动 `/mcp`，不运行独立的 `mcp-server` CLI。启动命令清空 `MCP_ALLOWED_HOSTS`，使 E2B 动态服务域名可以通过 Go 网关访问，Rust 仍拒绝未经允许的浏览器 Origin。沙箱网关仅转发新版协议需要的 MCP 请求头和可选参数头，不发送旧版 MCP 会话头及 OMA 自定义 client ID、scope。未知执行结果留在 DSH 私有日志中处理，不写后端 Brain blocked 状态。
 
 本地协议联调可启动 Rust Manager，将其嵌入式 `/mcp` 地址设为 `OMA_RUST_MCP_URL`，运行 `TestProbeSandboxMCPReadyAgainstRustServer` 和 `TestBrainMCPRustServerInterop`；两项分别覆盖 Go 创建阶段的探测和 Go 网关到真实 Rust 工具的转发。同一地址也用于 DSH 的 `tests/sandbox-contract.test.ts`：它通过 `tools/list` 读取真实 server 的工具 schema，按类型、枚举、必填项和 `additionalProperties` 与 DSH 内置定义逐项比对，防止两份工具契约漂移；未设置 `OMA_RUST_MCP_URL` 时跳过。

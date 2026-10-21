@@ -56,6 +56,7 @@ test("runtime accepts an independent event sink and a class-based execution brid
     flushLog() { return this.delegate.flushLog(); }
     recordDispatch(callId: string) { return this.delegate.recordDispatch(callId); }
     recordUnknown(callId: string) { return this.delegate.recordUnknown(callId); }
+    recordNotDispatched(outcome: ToolOutcome) { return this.delegate.recordNotDispatched(outcome); }
     recordResult(outcome: ToolOutcome) { return this.delegate.recordResult(outcome); }
     stop() { this.delegate.stop(); }
   }

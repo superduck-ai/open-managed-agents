@@ -101,6 +101,7 @@ for (const user of [false, true]) test.skipIf(!binary)(`ordinary ${user ? "user 
     flushLog: async () => {},
     recordDispatch: async () => { events.push("dispatched"); },
     recordUnknown: async () => { blocked = true; events.push("unknown"); },
+    recordNotDispatched: async () => { events.push("not-dispatched"); },
     recordResult: async (outcome) => { remoteOutcome = outcome.remoteOutcome; events.push("result"); },
     stop: () => { events.push("stop"); },
   };

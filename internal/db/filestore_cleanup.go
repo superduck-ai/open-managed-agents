@@ -192,9 +192,12 @@ func processFilesystemCleanupEntries(
 			if anomaly, malformed := sessionResourceFileCleanupAnomaly(cleanupScope, entry); malformed {
 				anomalies = append(anomalies, anomaly)
 			} else {
-				if _, err := enqueueSessionResourceFileCleanupJobTx(
+				if _, _, err := enqueueOwnedSessionResourceFileCleanupJobTx(
 					ctx, tx, cleanupScope, entry, "session_deleted", retiredAt,
 				); err != nil {
+					if errors.Is(err, ErrFileInUse) {
+						continue
+					}
 					return nil, 0, err
 				}
 				var err error
@@ -532,6 +535,13 @@ func enqueueOwnedSessionResourceFileCleanupJobTx(
 ) (FilestoreObjectCleanupJob, bool, error) {
 	if entry.ReferencesSourceFile() {
 		return FilestoreObjectCleanupJob{}, false, nil
+	}
+	referenced, err := NewFileMapper(tx).HasMountedSourceReference(ctx, scope.WorkspaceUUID, entry.UUID)
+	if err != nil {
+		return FilestoreObjectCleanupJob{}, false, err
+	}
+	if referenced {
+		return FilestoreObjectCleanupJob{}, false, ErrFileInUse
 	}
 	job, err := enqueueSessionResourceFileCleanupJobTx(ctx, tx, scope, entry, reason, runAfter)
 	return job, err == nil, err

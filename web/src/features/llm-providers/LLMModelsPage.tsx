@@ -108,25 +108,9 @@ export function LLMModelsPage() {
       const results = await Promise.allSettled(
         targets.map((provider) => syncProviderModels(orgUuid, workspaceId, provider.id, csrfToken)),
       );
-      const skippedModelIds = new Set<string>();
-      for (const result of results) {
-        if (result.status === 'fulfilled') {
-          for (const modelId of result.value.skipped_model_ids ?? []) {
-            skippedModelIds.add(modelId);
-          }
-        }
-      }
       const failed = results.find((result) => result.status === 'rejected');
       if (failed && failed.status === 'rejected') {
         throw failed.reason;
-      }
-      if (skippedModelIds.size > 0) {
-        toast.info(
-          msg('llmModels.syncSkipped', 'Skipped {count} model IDs already configured by another provider.', {
-            count: String(skippedModelIds.size),
-          }),
-          { id: 'llm-models-sync-skipped' },
-        );
       }
     } finally {
       setIsSyncing(false);

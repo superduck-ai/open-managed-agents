@@ -13,6 +13,7 @@ type insertAdminWorkspaceParams struct {
 	ExternalID       string
 	OrganizationUUID string
 	Name             string
+	IsDefault        bool
 	CreatedAt        time.Time
 	CompartmentID    string
 	DisplayColor     string

@@ -32,8 +32,8 @@ func Validate(path string) error {
 		return errors.New("path must be NFC-normalized")
 	}
 	for _, r := range path {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-			return errors.New("path must not contain control or format characters")
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' {
+			return errors.New("path must not contain control, format, or Unicode line/paragraph separator characters")
 		}
 	}
 	for _, segment := range strings.Split(strings.TrimPrefix(path, "/"), "/") {

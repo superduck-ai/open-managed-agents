@@ -1,3 +1,4 @@
+import type { AttachmentStore } from "@deepseek-ai/dsh-attachment";
 import type { GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { OmaApi } from "./api.ts";
 import type { AiSdkAdapterOptions } from "./llm-ai-sdk/index.ts";
@@ -9,8 +10,9 @@ interface PiAiReplay {
   blocks?: { thinkingSignature?: string }[];
 }
 
-export function omaModelOptions(api: OmaApi): AiSdkAdapterOptions {
+export function omaModelOptions(api: OmaApi, attachments?: AttachmentStore): AiSdkAdapterOptions {
   return {
+    attachments,
     route: (options) => omaRoute(api, options),
     history: legacyReplay,
     onCallStart: (options) => { api.modelResponses.delete(modelSessionID(options)); },

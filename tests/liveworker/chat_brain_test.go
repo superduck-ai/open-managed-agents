@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package liveworker
 
 import (
@@ -294,7 +296,7 @@ func brainToolModel(t *testing.T) *httptest.Server {
 				names = append(names, tool.Name)
 			}
 			slices.Sort(names)
-			if !slices.Equal(names, []string{"Bash", "Edit", "Glob", "Grep", "Read", "Write", "archive_agent", "list_agents", "send_to_agent"}) {
+			if !slices.Equal(names, []string{"Bash", "Edit", "Glob", "Grep", "Read", "Write", "archive_agent", "list_agents", "send_to_agent", "web_fetch", "web_search"}) {
 				t.Errorf("unexpected Brain model tools: %v", names)
 			}
 

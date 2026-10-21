@@ -12,6 +12,8 @@ import (
 var (
 	errNotFound           = errors.New("filestore resource not found")
 	errFailedPrecondition = errors.New("filestore precondition failed")
+
+	ErrSessionAttachmentRejected = errors.New("session attachment rejected")
 )
 
 type apiError struct {
@@ -40,6 +42,14 @@ func (e *apiError) Unwrap() error {
 
 func invalidArgument(message string) *apiError {
 	return &apiError{Status: http.StatusBadRequest, Code: "invalid_argument", Message: message}
+}
+
+func fileTooLargeError(cause error) *apiError {
+	return &apiError{Status: http.StatusRequestEntityTooLarge, Code: "resource_exhausted", Message: "File exceeds maximum size", Cause: cause}
+}
+
+func sessionAttachmentContentMismatchError(mediaType string) error {
+	return fmt.Errorf("%w: content does not match media type %q", ErrSessionAttachmentRejected, mediaType)
 }
 
 func permissionDenied(message string) *apiError {
@@ -89,5 +99,39 @@ func mapMemoryMutationError(operation string, err error) *apiError {
 		return &apiError{Status: http.StatusForbidden, Code: "resource_exhausted", Message: "Memory store item limit exceeded"}
 	default:
 		return mapDatabaseError(operation, err)
+	}
+}
+
+func mapDatabaseErrorOrNil(operation string, err error) *apiError {
+	if err == nil {
+		return nil
+	}
+	return mapDatabaseError(operation, err)
+}
+
+func mapDatabaseError(operation string, err error) *apiError {
+	switch {
+	case errors.Is(err, db.ErrFilestoreParentMissing):
+		return failedPreconditionWithCause("parent directory does not exist", err)
+	case errors.Is(err, db.ErrFileInUse):
+		return failedPreconditionWithCause("file is referenced by a session input", err)
+	case errors.Is(err, db.ErrNotFound):
+		return notFound("resource does not exist")
+	case errors.Is(err, db.ErrFilestorePathExists), errors.Is(err, db.ErrDuplicate):
+		return &apiError{Status: http.StatusConflict, Code: "already_exists", Message: "destination already exists", Cause: err}
+	case errors.Is(err, db.ErrFilestoreNotFile):
+		return failedPreconditionWithCause("path is not a file", err)
+	case errors.Is(err, db.ErrFilestoreNotDirectory):
+		return failedPreconditionWithCause("path is not a directory", err)
+	case errors.Is(err, db.ErrFilestoreDirectoryNotEmpty):
+		return failedPreconditionWithCause("directory is not empty", err)
+	case errors.Is(err, db.ErrFilestoreInvalidMove), errors.Is(err, db.ErrPreconditionFailed):
+		return &apiError{Status: http.StatusBadRequest, Code: "invalid_argument", Message: "request violates a filestore precondition", Cause: err}
+	case errors.Is(err, db.ErrStorageLimitExceeded):
+		return &apiError{Status: http.StatusForbidden, Code: "resource_exhausted", Message: "Workspace storage limit exceeded", Cause: err}
+	case errors.Is(err, db.ErrVersionConflict):
+		return &apiError{Status: http.StatusConflict, Code: "conflict", Message: "resource changed concurrently", Cause: err}
+	default:
+		return internalError(operation, err)
 	}
 }

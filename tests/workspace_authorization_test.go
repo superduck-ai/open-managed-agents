@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -118,7 +120,7 @@ func TestWorkspaceAuthorizationInheritance(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertEffectiveWorkspaceRole(t, resolver, refs.OrganizationUUID, userID, "default", "workspace_user")
-		if err := app.db.Seed(ctx, nil); err != nil {
+		if err := app.db.Seed(ctx, app.cfg.Bootstrap); err != nil {
 			t.Fatal(err)
 		}
 		retained, err := app.db.GetAdminWorkspaceMember(ctx, refs.OrganizationUUID, defaultWorkspace.ExternalID, userID)

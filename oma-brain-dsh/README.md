@@ -56,6 +56,16 @@ To rebuild and restart the service in the foreground:
 bun run restart
 ```
 
+## Worktree development environments
+
+When the repository worktree is bound to a dev environment (`.run/env.json`
+created by `just dev-init`), `scripts/restart.sh` and the repository-level
+`just restart-brain` read the environment's API address and Brain claim token
+from `.run/generated/` and export `OMA_API_URL` and `OMA_BRAIN_CLAIM_TOKEN`
+explicitly, so a checked-in `.env` default cannot point the Brain at another
+environment. Explicitly set conflicting values are rejected. Without a bound
+environment the script keeps the behavior described above.
+
 The restart script sends SIGTERM to direct Bun entry processes whose working directory is this project, including `bun start` launches. It waits up to thirty seconds for shutdown and cancels the restart if a process remains. It then starts `dist/main.js` in the foreground with output in the current terminal. Press Ctrl+C to stop the service. Run the script as the same user that started the service. A concurrent restart is refused during build and shutdown. If the script is killed and leaves a stale lock, remove `.run/restart.lock` after confirming no restart is running.
 
 The Brain claims Code Sessions with `POST /v1/code/brain/claims?block_ms=25000`, sending the shared fleet token in `OMA_BRAIN_CLAIM_TOKEN` and its process UUID in `X-Worker-ID`. Each claim advances the worker epoch and returns fresh ingress and model credentials to exactly one process. Up to `OMA_BRAIN_CLAIM_CONCURRENCY` long polls run at once, and only while a session slot is free; a busy process stops claiming. Admission registers the worker, loads the session context and restores its journal. If admission fails, the host calls `POST /v1/code/brain/claims/{id}/release`. Transient failures use `reason: "admission_failed"`, so another process can retry after the backend's backoff (5, 10, 20, 40 and 80 seconds); five consecutive failures end the session with `session.error`. Failures that cannot succeed on retry, such as an invalid task envelope, session context or assignment, use `reason: "permanent"`, and the backend publishes `session.error` immediately. Admission is also abandoned with `reason: "shutdown"` when the process is stopping or every local slot is busy, which does not count as a failure. Concurrent admissions reserve a slot before evicting an idle session, so the process never holds more than `OMA_BRAIN_MAX_SESSIONS` sessions. On SIGTERM the host releases claims still being admitted and sessions with an active turn using `reason: "shutdown"`, so another process can take them without waiting for the lease. Idle sessions closed after sixty seconds, evicted for capacity or open at shutdown are released with `reason: "idle"`, which only clears the lease, so new input can be claimed immediately. A crashed process loses its claims when the 20-second lease and 10-second grace period expire.
@@ -81,7 +91,7 @@ The application reads these optional deployment settings at startup. Unset value
 | `OMA_CCR_HEARTBEAT_MAX_FAILURES` | `0` | Nonnegative integer limit on transient heartbeat failures; `0` keeps retrying |
 | `OMA_CCR_HEARTBEAT_MAX_AUTH_FAILURES` | `10` | Positive integer limit on 401/403 responses across heartbeat and other CCRv2 writes |
 
-Intervals including jitter and request deadlines must fit a 32-bit JavaScript timer. The interval with jitter plus the request deadline must stay below the 20-second worker lease. Existing environment overrides still apply. `409` and `410` stop immediately regardless of either failure limit. For `401`/`403`, an expired JWT also stops immediately; otherwise failures accumulate toward the authentication limit. Successful POST/PUT responses reset that counter, including heartbeats, state updates, publication, persistence and delivery confirmation. GETs and other failed requests do not reset it. Other heartbeat failures, including transport errors, 5xx, 408, 429 and other 4xx, keep scheduling unless a positive transient failure limit is configured.
+Intervals including jitter and request deadlines must fit a 32-bit JavaScript timer. The interval with jitter plus the request deadline must stay below the 20-second worker lease. Existing environment overrides still apply. `409` and `410` stop immediately regardless of either failure limit, as does a heartbeat `404` (`worker_not_registered`), which means the server no longer holds a lease for this worker. For `401`/`403`, an expired JWT also stops immediately; otherwise failures accumulate toward the authentication limit. Successful POST/PUT responses reset that counter, including heartbeats, state updates, publication, persistence and delivery confirmation. GETs and other failed requests do not reset it. Other heartbeat failures, including transport errors, 5xx, 408, 429 and other 4xx, keep scheduling unless a positive transient failure limit is configured.
 
 Set `OMA_DEBUG_SYSTEM_PROMPT=1` to print the system prompt and tool names exactly as sent to the Messages API, as an `oma_system_prompt` JSON line on stdout. Each session and subagent thread prints once, and again only when its prompt or tool list changes. The output contains the configured agent instructions and memory catalog, so enable it only for local debugging. Read it with `jq -r 'select(.event == "oma_system_prompt") | .system'`.
 
@@ -131,11 +141,11 @@ The `SandboxTools` entry is `src/sandbox-tools/index.ts`. It injects the existin
 
 Worker SSE connections send `Accept: text/event-stream` and retain the highest `id:` sequence from complete frames, parsed with `parseInt` before validating event data, matching Superduck. Reconnects send that sequence as both `from_sequence_num` and `Last-Event-ID`, alongside the original `worker_epoch`. Missing, unparseable or lower sequence IDs do not advance the cursor. The cursor remains in memory for the current worker claim, including across inbound stream replacement. `inboundSequenceNum(id)` exposes it, and `inbound(id, signal, initialSequenceNum)` accepts a cursor when rebuilding a client. A replacement claim starts with a fresh cursor; delivery confirmation continues to use the envelope's `event_id`.
 
-Only `event: client_event` frames with usable payloads reach the worker. Missing or unknown event types, malformed JSON and unusable envelopes are logged and skipped. An explicitly different `session_id` is rejected. Complete frames, including keepalive comments, refresh the 45-second liveness timer. SSE connection failures use a one-second exponential backoff capped at thirty seconds with ±25% jitter, and stop after ten minutes of consecutive connection failures. A successful connection resets that budget. HTTP 401, 403 and 404 stop SSE immediately; other HTTP failures reconnect without using `Retry-After`, matching Superduck. Heartbeat and write lease rejection policies still apply independently, and a stream cannot reconnect using credentials for a replacement worker epoch.
+Only `event: client_event` frames with usable payloads reach the worker. Missing or unknown event types, malformed JSON and unusable envelopes are logged and skipped. An explicitly different `session_id` is rejected. Complete frames, including keepalive comments, refresh the 45-second liveness timer. SSE connection failures use a one-second exponential backoff capped at thirty seconds with ±25% jitter, and stop after ten minutes of consecutive connection failures. A successful connection resets that budget. HTTP 401, 403, 404, 409 and 410 stop SSE immediately, because a stale epoch or missing session never recovers on reconnect; other HTTP failures reconnect without using `Retry-After`. Heartbeat and write lease rejection policies still apply independently, and a stream cannot reconnect using credentials for a replacement worker epoch.
 
-Successful writes and heartbeats accept any 2xx response without requiring JSON. Private-event reads still require a valid JSON page; null, omitted and empty cursors end pagination. Delivery batches also use the HTTP success result: `ignored` updates and empty 2xx responses are valid, matching Superduck. Publication, status, persistence and delivery HTTP writes each use a ten-second deadline per attempt, matching Superduck; heartbeat requests retain their five-second default and GETs retain the host's deadline. While a claim's heartbeat binding is active, publication, status, persistence and delivery HTTP writes keep retrying until confirmed, cancelled or rejected by the lease policy. This includes 401/403 within the shared authentication budget and temporary failures beyond three attempts. The original caller remains pending throughout retries. Payloads and UUIDs are snapshotted before the first attempt, and a write cannot adopt a replacement epoch. Invalid local JSON remains an error.
+Successful writes and heartbeats accept any 2xx response without requiring JSON. Private-event reads still require a valid JSON page; null, omitted and empty cursors end pagination. Delivery batches also use the HTTP success result: `ignored` updates and empty 2xx responses are valid, matching Superduck. Publication, status, persistence and delivery HTTP writes each use a ten-second deadline per attempt, matching Superduck; heartbeat requests retain their five-second default and GETs retain the host's deadline. While a claim's heartbeat binding is active, publication, status, persistence and delivery HTTP writes keep retrying until confirmed, cancelled or rejected by the lease policy. This includes 401/403 within the shared authentication budget and temporary failures beyond three attempts. Other 4xx responses, such as 400, 404, 413 and 422, are permanent request failures: the write is rejected after one attempt without reporting lease loss, so a payload the server cannot accept fails its caller instead of blocking the session's queue. The original caller remains pending throughout retries. Payloads and UUIDs are snapshotted before the first attempt, and a write cannot adopt a replacement epoch. Invalid local JSON remains an error.
 
-Internal-event history reads follow Superduck's per-page policy: at most ten attempts, a thirty-second request deadline, a 500ms exponential base capped at thirty seconds, and up to 500ms jitter. The foreground and subagent readers preserve complete event envelopes and return null when ordinary request failures exhaust retries; the dsh adapter rejects null so failed recovery cannot create an empty session. Empty history is valid. Malformed pages and repeated cursors remain errors. Ownership failures stop recovery immediately, and closing an active claim cancels history requests and retry sleeps.
+Internal-event history reads follow Superduck's per-page policy: at most ten attempts, a thirty-second request deadline, a 500ms exponential base capped at thirty seconds, and up to 500ms jitter. The foreground and subagent readers preserve complete event envelopes and return null when ordinary request failures exhaust retries; the dsh adapter rejects null so failed recovery cannot create an empty session. Empty history is valid. A failed body read is retried with the page; malformed JSON, repeated cursors and `404` (missing code session) are errors without retries. GET worker state also fails immediately on `404` instead of retrying ten times. Callers can cancel history reads, and session startup does. Ownership failures stop recovery immediately, and closing an active claim cancels history requests and retry sleeps.
 
 For publication, status and persistence, clients without an active heartbeat binding and final writes after the binding stops retain at most three attempts for transport failures, 5xx, 408 and 429, rejecting other HTTP failures immediately. This keeps shutdown draining bounded. Write retry delays use the reference uploader's 500ms exponential base, 30s cap and up to 500ms jitter. Valid 429 `Retry-After` hints override the exponential delay within those bounds. Heartbeats remain single-attempt requests; the plugin counts their results separately for each claimed session. Stopping the heartbeat binding cancels active write requests and retry sleeps without reporting unconfirmed writes as successful.
 
@@ -143,7 +153,7 @@ Before publishing a tool approval request, the bridge reports `requires_action` 
 
 Delivery receipts use `envelope.event_id` throughout. `CcrClient.inbound()` asynchronously reports `received`, including when used without the bridge. User commands enqueue `processing` after the accepted-input checkpoint without waiting for delivery HTTP confirmation. Controls report `processed` after their effects and output publication, without a redundant `processing` or holding the control queue during delivery retries. User turns still await their final `processed` confirmation after terminal state, output publication and outbox clearance. Redelivered completed inputs flush any pending output and report `processed` again without rerunning the model or tools.
 
-`src/ccrv2/delivery.ts` adapts Superduck's serial uploader to one in-flight request, at most 64 updates per batch and 64 pending updates before backpressure. Its promises resolve on HTTP confirmation; progress and control callers handle them in the background. Failed batches retain their order and contents while retrying with refreshed tokens and the original epoch. Empty credentials defer HTTP writes through the same cancellable backoff without consuming or resetting authentication failures. Session shutdown cancels the in-flight request, queued confirmations and backpressure waits. Delivery failures log protocol fields and known error codes, without tokens, event IDs or payloads. Terminal HTTP failures are logged before lease cancellation; caller cancellation and late replies remain silent. Bound sessions use the shared heartbeat authentication budget; standalone clients also stop delivery retries after ten authentication failures. Successful worker writes reset the counter but cannot reopen a stopped delivery claim. A stopped claim stays closed across token refreshes and later delivery calls; a new epoch, successful registration or fresh lease binding starts a new claim.
+`src/ccrv2/delivery.ts` adapts Superduck's serial uploader to one in-flight request, at most 64 updates per batch and 64 pending updates before backpressure. Its promises resolve on HTTP confirmation; progress and control callers handle them in the background. Failed batches retain their order and contents while retrying with refreshed tokens and the original epoch. Permanent 4xx responses other than 401, 403, 408 and 429 stop the delivery claim like a lease rejection, without reporting lease loss. Empty credentials defer HTTP writes through the same cancellable backoff without consuming or resetting authentication failures. Session shutdown cancels the in-flight request, queued confirmations and backpressure waits. Delivery failures log protocol fields and known error codes, without tokens, event IDs or payloads. Terminal HTTP failures are logged before lease cancellation; caller cancellation and late replies remain silent. Bound sessions use the shared heartbeat authentication budget; standalone clients also stop delivery retries after ten authentication failures. Successful worker writes reset the counter but cannot reopen a stopped delivery claim. A stopped claim stays closed across token refreshes and later delivery calls; a new epoch, successful registration or fresh lease binding starts a new claim.
 
 Long-running user commands repeat `processing` every minute, including while waiting for approval, to refresh the backend's 20-minute per-event ACK mapping. Only one progress receipt is pending at a time. Repetition stops before the final `processed` is enqueued, on a failed turn, or on session shutdown. This timer is separate from worker heartbeats and activity keepalives and does not write checkpoints or enter the durable outbox.
 
@@ -229,10 +239,17 @@ The dsh `tool/call` event retains the original arguments. The Brain private jour
 Public messages and tool results are published before the next tool approval or
 model request. The Brain persists their outbox first and waits for text previews
 to finish before publishing the corresponding final message. A model step without
-text does not create an empty message preview. Approval argument notices are
+text does not create an empty message preview. Previews follow the Claude Managed
+Agents event-delta shape: one `event_start` per previewed text or thinking block,
+then `event_delta` with `delta.index: 0` for text only (thinking previews are
+start-only); there is no `event_stop`. Final `agent.thinking` events are progress
+signals without content. Approval argument notices are
 published only when the argument values changed; object key order does not count
 as a change and does not add model context. The private journal records every
-approved call.
+approved call. dsh log flushes with no new events write nothing; only session
+creation writes a header-only batch. Within one Brain process, a redelivered
+control input that was already handled is acknowledged without repeating its
+effect; handled control IDs are not persisted across restarts.
 
 ## Subagents
 
@@ -349,7 +366,7 @@ been verified against a production gateway's thread-event validation.
 
 ## Persistence and recovery
 
-`CcrPersistence` implements dsh's SessionPersistence interface. Current-format headers and contiguous log batches are stored as CCRv2 private `system` events with subtype `dsh_log`. Input state, completed input IDs, approved arguments, confirmed tool outputs and the public-event outbox use subtype `dsh_brain_state`. The envelopes have schema version 1. Repeated writes retain the same content-derived UUID, allowing the backend to deduplicate a request whose HTTP confirmation was lost.
+`CcrPersistence` implements dsh's SessionPersistence interface. Current-format headers and contiguous log batches are stored as CCRv2 private `system` events with subtype `dsh_log`. Input state, completed input IDs, approved arguments, confirmed tool outputs and the public-event outbox use subtype `dsh_brain_state`. The envelopes have schema version 1. Repeated writes retain the same content-derived UUID, allowing the backend to deduplicate a request whose HTTP confirmation was lost. Restoration compares each batch's header and any repeated event sequence by JSON value, ignoring object key order: the backend returns small payloads from PostgreSQL `jsonb`, which reorders keys, and payloads above 32 KiB byte-for-byte from object storage, so batches of one log can come back with different key orders.
 
 Execution order is:
 
@@ -371,7 +388,7 @@ unknown-outcome recovery policy. Backend regression tests cover forwarding
 failures and concurrent requests; the full inflight crash recovery path still
 requires real-backend verification.
 
-Grok checkpoints are refused rather than silently converted. This version starts new dsh sessions and restores its own logs. Attachments, background jobs, compaction and legacy history migration are outside this implementation. Long histories need a future compaction/storage-retention policy.
+Grok checkpoints are refused rather than silently converted. This version starts new dsh sessions and restores its own logs. Background jobs and legacy history migration are outside this implementation. On a confirmed CONTEXT_WINDOW_EXCEEDED model error, the runtime summarizes older large, successful text Read results into first/last excerpts with an explicit omission notice; the latest two results, user inputs and assistant/tool-call identities remain unchanged. DSH surface replacements retain the original append-only log and replay the reduced model history. After durable persistence the owning root or child thread emits agent.thread_context_compacted and retries the failed step once. Replacement results do not publish duplicate public tool_result events. Other failures or histories without eligible Read output remain terminal; this is targeted recovery, not general semantic conversation summarization.
 
 ## Verify
 
@@ -442,3 +459,25 @@ text block must parse to the same structured result. Empty stdout may use the
 sandbox's `(no output)` placeholder. Model feedback and public CCRv2 tool results
 share this conversion and omit duplicate execution metadata. Failures,
 inconsistent metadata and other tools retain their diagnostic text.
+
+## Built-in web_search and web_fetch
+
+The Brain exposes `web_search({query})` and `web_fetch({url})` as thin native
+tools. Existing OMA approval, cancellation, journaling and child restrictions
+apply. Agent and Session configuration accepts CMA-style domain restrictions
+and Fetch content budgets. CMA user_location is accepted and preserved as an
+advisory search preference; the current DeepSeek provider ignores it.
+
+Both tools execute on oma-server through session-authenticated
+`POST /v2/ccr-sessions/{id}/web/search` and `/web/fetch`. Search selects its provider using
+`web_tools.search_provider`; set it to `deepseek` and configure
+`web_tools.providers.deepseek.api_key` on the server. Fetch uses direct Go
+HTTP without an external Fetch API. Requests and redirects enforce Environment
+networking, tool domain rules and public-address checks using system DNS.
+Brain receives no provider credentials.
+
+Short results do not allocate a sandbox. Long results use the existing sandbox
+output persistence and Read path, with a bounded preview. Web content remains
+untrusted and responses carry source URLs for citations. There is no extra
+summarization model call. See [the design](../docs/design/be/brain-web-tools.md)
+for supported configuration, limits and acceptance coverage.

@@ -15,26 +15,64 @@ import { Input } from '../../shared/ui/input';
 import { toast } from '../../shared/ui/sonner';
 import type { APIBackend, LLMProvider, LLMProviderInput } from './api';
 import { ProviderBackendField } from './ProviderBackendField';
-import { readableError } from './catalog';
+import { isValidSlug, readableError, slugFromName } from './catalog';
 
 type ProviderForm = {
   apiBackend: APIBackend;
   name: string;
+  slug: string;
+  slugEdited: boolean;
   baseUrl: string;
   apiKey: string;
   modelIds: string[];
 };
+
+type MessageFormatter = ReturnType<typeof useI18n>['msg'];
 
 function providerForm(provider: LLMProvider | null): ProviderForm {
   return provider
     ? {
         apiBackend: provider.api_backend,
         name: provider.name,
+        slug: provider.slug,
+        slugEdited: true,
         baseUrl: provider.base_url,
         apiKey: '',
         modelIds: provider.model_ids.length > 0 ? [...provider.model_ids] : [''],
       }
-    : { apiBackend: 'messages', name: '', baseUrl: '', apiKey: '', modelIds: [''] };
+    : { apiBackend: 'messages', name: '', slug: '', slugEdited: false, baseUrl: '', apiKey: '', modelIds: [''] };
+}
+
+function providerFormInput(
+  form: ProviderForm,
+  provider: LLMProvider | null,
+  msg: MessageFormatter,
+): { input: LLMProviderInput } | { error: string } {
+  if (!form.name.trim() || !form.baseUrl.trim() || (!provider && !form.apiKey.trim())) {
+    return { error: msg('llmModels.required', 'Name, base URL, and API key are required.') };
+  }
+  const slug = form.slug.trim();
+  if (slug && !isValidSlug(slug)) {
+    return {
+      error: msg(
+        'llmModels.errorSlugInvalid',
+        'Slug must contain 1 to 32 lowercase letters, digits, ".", "_" or "-" and start with a letter or digit.',
+      ),
+    };
+  }
+  const input: LLMProviderInput = {
+    api_backend: form.apiBackend,
+    name: form.name.trim(),
+    base_url: form.baseUrl.trim(),
+    model_ids: form.modelIds.filter((modelId) => modelId !== ''),
+  };
+  if (slug) {
+    input.slug = slug;
+  }
+  if (form.apiKey.trim()) {
+    input.api_key = form.apiKey.trim();
+  }
+  return { input };
 }
 
 export function ProviderFormDialog({
@@ -84,21 +122,12 @@ export function ProviderFormDialog({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    const modelIds = form.modelIds.filter((modelId) => modelId !== '');
-    if (!form.name.trim() || !form.baseUrl.trim() || (!provider && !form.apiKey.trim())) {
-      setFormError(msg('llmModels.required', 'Name, base URL, and API key are required.'));
+    const result = providerFormInput(form, provider, msg);
+    if ('error' in result) {
+      setFormError(result.error);
       return;
     }
-    const input: LLMProviderInput = {
-      api_backend: form.apiBackend,
-      name: form.name.trim(),
-      base_url: form.baseUrl.trim(),
-      model_ids: modelIds,
-    };
-    if (form.apiKey.trim()) {
-      input.api_key = form.apiKey.trim();
-    }
-    await onSubmit(input);
+    await onSubmit(result.input);
   };
 
   return (
@@ -127,11 +156,22 @@ export function ProviderFormDialog({
             <Input
               id="llm-provider-name"
               value={form.name}
-              onChange={(event) => setForm((value) => ({ ...value, name: event.target.value }))}
+              onChange={(event) =>
+                setForm((value) => ({
+                  ...value,
+                  name: event.target.value,
+                  slug: value.slugEdited ? value.slug : slugFromName(event.target.value),
+                }))
+              }
               placeholder="DashScope"
               autoComplete="off"
             />
           </Field>
+          <ProviderSlugField
+            slug={form.slug}
+            readOnly={Boolean(provider)}
+            onChange={(slug) => setForm((value) => ({ ...value, slug, slugEdited: true }))}
+          />
           <ProviderBackendField
             value={form.apiBackend}
             onChange={(apiBackend) => setForm((value) => ({ ...value, apiBackend }))}
@@ -184,6 +224,44 @@ export function ProviderFormDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ProviderSlugField({
+  slug,
+  readOnly,
+  onChange,
+}: {
+  slug: string;
+  readOnly: boolean;
+  onChange: (slug: string) => void;
+}) {
+  const { msg } = useI18n();
+  return (
+    <Field>
+      <FieldLabel htmlFor="llm-provider-slug">{msg('llmModels.slug', 'Slug')}</FieldLabel>
+      <Input
+        id="llm-provider-slug"
+        value={slug}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="default"
+        autoComplete="off"
+        readOnly={readOnly}
+        aria-readonly={readOnly}
+        className="font-mono"
+      />
+      <FieldDescription>
+        {readOnly
+          ? msg('llmModels.slugReadOnlyHint', 'Models are referenced as {modelId}. The slug cannot be changed.', {
+              modelId: `${slug}/<model-id>`,
+            })
+          : msg(
+              'llmModels.slugHint',
+              'Models are referenced as {modelId}. Leave blank to use default. The slug cannot be changed later.',
+              { modelId: `${slug || 'default'}/<model-id>` },
+            )}
+      </FieldDescription>
+    </Field>
   );
 }
 

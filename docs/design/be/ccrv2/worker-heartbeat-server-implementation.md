@@ -271,7 +271,7 @@ epoch mismatch 和 lease expired 会记录结构化文本日志，字段包括�
 验证命令：
 
 ```bash
-go test ./tests -run 'TestCodeSessionWorker.*Heartbeat|TestCodeSessionWorkerEpochProtection|TestCodeSessionWorkerEpochZeroRejectedAtDBLayer|TestCodeSessionWorkerEpochValidationRejectsInvalidValues' -count=1
+go test -tags=integration ./tests -run 'TestCodeSessionWorker.*Heartbeat|TestCodeSessionWorkerEpochProtection|TestCodeSessionWorkerEpochZeroRejectedAtDBLayer|TestCodeSessionWorkerEpochValidationRejectsInvalidValues' -count=1
 go test ./internal/db ./internal/codesessions -count=1
 ```
 

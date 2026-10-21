@@ -22,22 +22,14 @@ func TestLLMProviderMapperTenantScope(t *testing.T) {
 		name     string
 		contract mapperBuilderContract
 	}{
-		{"lock workspace", mapperBuilderContract{
-			statement:         lLMProviderMapperLockWorkspaceStatement,
-			bound:             buildLLMProviderMapperLockWorkspace(yourbatis.DialectPostgres, organizationUUID, workspaceUUID),
-			wantID:            "LLMProviderMapper.LockWorkspace",
-			wantKind:          yourbatis.StatementUpdate,
-			wantArgumentNames: []string{"organizationUUID", "workspaceUUID"},
-			wantSQLFragments:  []string{"pg_advisory_xact_lock", "CAST($1 AS text)", "CAST($2 AS text)"},
-		}},
 		{"insert", mapperBuilderContract{
 			statement:                  lLMProviderMapperInsertStatement,
 			bound:                      buildLLMProviderMapperInsert(yourbatis.DialectPostgres, params),
 			wantID:                     "LLMProviderMapper.Insert",
 			wantKind:                   yourbatis.StatementInsert,
-			wantArgumentNames:          []string{"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID", "params.Name", "params.APIBackend", "params.BaseURL", "params.APIKeyLast4", "params.ModelIDs", "params.Ciphertext", "params.Nonce", "params.WrappedDEK", "params.FormatVersion", "params.KeyProvider", "params.KeyVersion", "params.CreatedAt", "params.UpdatedAt"},
+			wantArgumentNames:          []string{"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID", "params.Name", "params.Slug", "params.APIBackend", "params.BaseURL", "params.APIKeyLast4", "params.ModelIDs", "params.Ciphertext", "params.Nonce", "params.WrappedDEK", "params.FormatVersion", "params.KeyProvider", "params.KeyVersion", "params.CreatedAt", "params.UpdatedAt"},
 			wantSensitiveArgumentNames: []string{"params.Ciphertext", "params.Nonce", "params.WrappedDEK"},
-			wantSQLFragments:           []string{"name, api_backend, base_url", "$5, $6, $7", "RETURNING"},
+			wantSQLFragments:           []string{"name, slug, api_backend, base_url", "$5, $6, $7, $8", "RETURNING"},
 		}},
 		{"list", mapperBuilderContract{
 			statement:         lLMProviderMapperListByWorkspaceStatement,

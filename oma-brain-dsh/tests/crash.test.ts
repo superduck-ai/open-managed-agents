@@ -112,6 +112,12 @@ for (const duringDispatch of [true, false]) {
     const exited = once(child, "exit");
     const approvals: import("../src/json.ts").Payload[] = [];
     backend.onApproval = async (request) => {
+      if (["list_agents", "send_to_agent", "archive_agent"].includes(request.request.tool_name)) {
+        child.stdin!.write(JSON.stringify({ type: "control_response", response: {
+          subtype: "success", request_id: request.request_id, response: { behavior: "allow" },
+        } }) + "\n");
+        return;
+      }
       approvals.push(request);
       if (duringDispatch) child.stdin!.write(JSON.stringify({ type: "control_response", response: {
         subtype: "success", request_id: request.request_id, response: { behavior: "allow" },

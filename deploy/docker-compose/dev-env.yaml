@@ -1,0 +1,192 @@
+# Per-worktree development environment infrastructure stack.
+#
+# Started by `just dev-init` / restart scripts for bound worktrees:
+#   docker compose -p oma-<name> -f deploy/docker-compose/dev-env.yaml \
+#     --env-file .run/generated/stack.env up -d
+#
+# The compose project name isolates volumes and networks per environment, so
+# resource names inside the stack stay fixed (claude_api / claude-files /
+# default NATS names); no per-environment suffixes or namespaces are needed.
+# e2b-local uses host networking and therefore requires Linux Docker Engine
+# or OrbStack (same constraint as the shared compose topology).
+
+x-oma-labels: &oma-labels
+  - "oma.devinit.worktree=${OMA_WORKTREE:?}"
+  - "oma.devinit.env=${OMA_ENV_NAME:?}"
+  - "oma.devinit.env_id=${OMA_ENV_ID:?}"
+
+services:
+  # Extract envd binaries for the e2b-local runtime (host-path bind mount).
+  init-envd:
+    image: ghcr.io/superduck-ai/e2b-local:latest
+    user: root
+    labels: *oma-labels
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -e
+        if [ ! -f /envd-out/envd-linux-amd64 ]; then
+          cp /app/envd-bin/* /envd-out/
+          echo "envd-bin extracted"
+        else
+          echo "envd-bin already present, skip"
+        fi
+    volumes:
+      - ${OMA_ENVD_BIN_DIR:?}:/envd-out
+    restart: "no"
+
+  postgres:
+    labels: *oma-labels
+    image: docker.io/library/postgres:17
+    environment:
+      POSTGRES_USER: claude
+      POSTGRES_PASSWORD: "123456"
+      POSTGRES_DB: claude_api
+    ports:
+      - "127.0.0.1:${OMA_PG_PORT:?}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U claude -d claude_api"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  redis:
+    labels: *oma-labels
+    image: docker.io/library/redis:8
+    ports:
+      - "127.0.0.1:${OMA_REDIS_PORT:?}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # Three-node cluster, mirroring the shared compose topology so stream
+  # replicas and routing behave like production. Monitor ports stay inside
+  # the compose network (healthchecks reach them via container localhost).
+  nats: &nats-node
+    labels: *oma-labels
+    image: docker.io/library/nats:2.14.6-alpine
+    command:
+      - --name=nats-1
+      - --config=/etc/nats/oma.conf
+      - --jetstream
+      - --store_dir=/data
+      - --http_port=8222
+      - --cluster_name=oma-nats
+      - --cluster=nats://0.0.0.0:6222
+      - --routes=nats://nats-2:6222,nats://nats-3:6222
+    ports:
+      - "127.0.0.1:${OMA_NATS_PORT:?}:4222"
+    expose:
+      - "6222"
+    volumes:
+      - natsdata:/data
+      - ./deploy/docker-compose/nats.conf:/etc/nats/oma.conf:ro
+    healthcheck: &nats-health
+      test:
+        [
+          "CMD",
+          "wget",
+          "-qO-",
+          "http://localhost:8222/healthz?js-enabled-only=true",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  nats-2:
+    <<: *nats-node
+    command:
+      - --name=nats-2
+      - --config=/etc/nats/oma.conf
+      - --jetstream
+      - --store_dir=/data
+      - --http_port=8222
+      - --cluster_name=oma-nats
+      - --cluster=nats://0.0.0.0:6222
+      - --routes=nats://nats:6222,nats://nats-3:6222
+    ports:
+      - "127.0.0.1:${OMA_NATS_PORT_2:?}:4222"
+    volumes:
+      - natsdata2:/data
+      - ./deploy/docker-compose/nats.conf:/etc/nats/oma.conf:ro
+
+  nats-3:
+    <<: *nats-node
+    command:
+      - --name=nats-3
+      - --config=/etc/nats/oma.conf
+      - --jetstream
+      - --store_dir=/data
+      - --http_port=8222
+      - --cluster_name=oma-nats
+      - --cluster=nats://0.0.0.0:6222
+      - --routes=nats://nats:6222,nats://nats-2:6222
+    ports:
+      - "127.0.0.1:${OMA_NATS_PORT_3:?}:4222"
+    volumes:
+      - natsdata3:/data
+      - ./deploy/docker-compose/nats.conf:/etc/nats/oma.conf:ro
+
+  minio:
+    labels: *oma-labels
+    image: docker.io/pgsty/minio:latest
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "127.0.0.1:${OMA_MINIO_PORT:?}:9000"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  # e2b-local — sandbox gateway (host network, manages host sandbox containers).
+  # Per-environment server port and sandbox container name prefix keep
+  # multiple instances apart on the shared Docker daemon.
+  e2b-local:
+    labels: *oma-labels
+    image: ghcr.io/superduck-ai/e2b-local:latest
+    network_mode: host
+    depends_on:
+      init-envd:
+        condition: service_completed_successfully
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${OMA_E2B_CONFIG:?}:/etc/e2b-local/config.yaml:ro
+      - ${OMA_ENVD_BIN_DIR:?}:${OMA_ENVD_BIN_DIR:?}:ro
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+    labels: *oma-labels
+  redisdata:
+    labels: *oma-labels
+  natsdata:
+    labels: *oma-labels
+  natsdata2:
+    labels: *oma-labels
+  natsdata3:
+    labels: *oma-labels
+  miniodata:
+    labels: *oma-labels
+
+networks:
+  default:
+    labels: *oma-labels

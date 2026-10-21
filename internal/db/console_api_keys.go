@@ -38,11 +38,25 @@ func (d *DB) CreateConsoleAPIKey(ctx context.Context, input platform.CreateConso
 	if d == nil || d.mapperDB == nil || input.OrgUUID == "" || input.WorkspaceUUID == "" {
 		return platform.CreateConsoleAPIKeyResult{}, platform.ErrNotFound
 	}
+	rawKey := "sk-ant-api03-" + consoleRandomToken(32)
+	return d.createConsoleAPIKey(ctx, input, consolePrefixedID("apikey", 18), uuid.NewV4().String(), rawKey)
+}
+
+// CreateConsoleAPIKeyWithRawKey persists a caller-supplied key value and
+// external ID into both console and auth records. Dev initialization uses it
+// to keep retries idempotent after persisting pending credentials locally.
+func (d *DB) CreateConsoleAPIKeyWithRawKey(ctx context.Context, input platform.CreateConsoleAPIKeyInput, externalID, rawKey string) (platform.CreateConsoleAPIKeyResult, error) {
+	if d == nil || d.mapperDB == nil || input.OrgUUID == "" || input.WorkspaceUUID == "" || externalID == "" || rawKey == "" {
+		return platform.CreateConsoleAPIKeyResult{}, platform.ErrNotFound
+	}
+	return d.createConsoleAPIKey(ctx, input, externalID, uuid.NewV4().String(), rawKey)
+}
+
+func (d *DB) createConsoleAPIKey(ctx context.Context, input platform.CreateConsoleAPIKeyInput, externalID, workspaceAPIKeyUUID, rawKey string) (platform.CreateConsoleAPIKeyResult, error) {
 	workspaceDisplayID := input.WorkspaceDisplayID
 	if workspaceDisplayID == "" {
 		workspaceDisplayID = input.WorkspaceUUID
 	}
-	rawKey := "sk-ant-api03-" + consoleRandomToken(32)
 	keyPrefix := rawKey
 	if len(keyPrefix) > 16 {
 		keyPrefix = keyPrefix[:16]
@@ -51,8 +65,6 @@ func (d *DB) CreateConsoleAPIKey(ctx context.Context, input platform.CreateConso
 	if len(keySuffix) > 6 {
 		keySuffix = keySuffix[len(keySuffix)-6:]
 	}
-	externalID := consolePrefixedID("apikey", 18)
-	workspaceAPIKeyUUID := uuid.NewV4().String()
 	keyHash := auth.HashAPIKey(rawKey)
 
 	var key platform.ConsoleAPIKey

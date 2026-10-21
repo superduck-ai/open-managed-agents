@@ -15,6 +15,11 @@ async function fixture(b = new Backend()) {
   const api = new OmaApi(b.url);
   await mountOma(ctx, api);
   const session = createOmaSession(ctx, api, b.a);
+  b.onDelegationApproval = async (payload) => {
+    await session.control({ type: "control_response", response: {
+      subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
+    } });
+  };
   let closed = false;
   const close = async () => { if (closed) return; closed = true; await session.close(); await ctx.fiber.dispose(); };
   cleanups.push(async () => { await close(); b.stop(); });
@@ -132,7 +137,7 @@ test("native tool batch starts two children concurrently, isolates identical cal
   }
 });
 
-test("targeted interruption cancels only one concurrent approval and denial does not stop a sibling", async () => {
+test.each(["user.interrupt", "control_request"])("%s targeted interruption cancels only one concurrent approval and denial does not stop a sibling", async (type) => {
   const f = await fixture();
   scriptedChildren(f.b);
   const requests: Payload[] = [];
@@ -142,10 +147,14 @@ test("targeted interruption cancels only one concurrent approval and denial does
   try {
     await eventually(() => requests.length === 2);
     const alpha = f.session.state.threads!.find((thread) => thread.name === "alpha")!;
-    await f.session.control({ type: "user.interrupt", session_thread_id: alpha.id });
+    await f.session.control({ type, session_thread_id: alpha.id, ...(type === "control_request" ? { request_id: "targeted", request: { subtype: "interrupt" } } : {}) });
     await eventually(() => f.session.approvals.size === 1 && alpha.status === "idle"
       && f.b.statuses.at(-1) === "requires_action");
     expect(f.b.statuses.at(-1)).toBe("requires_action");
+    const alphaIdle = [...f.b.publicLog.values()].filter((event) => event.type === "session.thread_status_idle" && event.session_thread_id === alpha.id).at(-1);
+    expect(alphaIdle?.stop_reason?.type).toBe("end_turn");
+    const alphaError = [...f.b.publicLog.values()].find((event) => event.type === "user" && event.session_thread_id === alpha.id && event.message?.content?.some((block: Payload) => block.type === "tool_result" && block.is_error));
+    expect(JSON.stringify(alphaError?.message?.content)).toContain("Tool execution was interrupted before completion. Please retry.");
     const betaRequest = requests.find((request) => request.session_thread_id !== alpha.id)!;
     await decide(f.session, betaRequest, false);
     await turn;

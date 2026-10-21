@@ -28,7 +28,7 @@ test("registration validates epochs and never retries ambiguous claims", async (
 });
 
 test("SSE rejects cross-session input and permanent HTTP errors without reconnecting", async () => {
-  for (const response of [...[401, 403, 404].map((status) => new Response(null, { status })), new Response(
+  for (const response of [...[401, 403, 404, 409, 410].map((status) => new Response(null, { status })), new Response(
     `event: client_event\ndata: ${JSON.stringify({ session_id: "other", event_id: "id", payload: { type: "user" } })}\n\n`,
     { headers: { "Content-Type": "text/event-stream" } },
   )]) {
@@ -163,7 +163,7 @@ test("SSE skips unsupported and malformed events while retaining their frame cur
 test("SSE retries nonpermanent HTTP responses with Superduck backoff and a ten minute budget", async () => {
   let now = 0;
   const delays: number[] = [];
-  const statuses = [409, 410, 400, 408, 429, 500];
+  const statuses = [400, 408, 429, 500];
   const c = new CcrClient({
     credentials: () => ({ token: "ingress", workerEpoch: 7 }), sessionIds: () => ["session"],
     random: () => 0.5, now: () => now,
@@ -407,7 +407,7 @@ test("queued input waits for the current turn while interrupt bypasses a pending
   }
 });
 
-test("active input reaches the next model step before the current turn answers", async () => {
+test("active input waits for its own turn and duplicate delivery cannot overtake queued input", async () => {
   const b = new Backend(); await b.ready;
   const ctx = new Context();
   const api = new OmaApi(b.url);
@@ -427,7 +427,7 @@ test("active input reaches the next model step before the current turn answers",
   };
   let started = false;
   let stream: Promise<void> | undefined;
-  b.modelScript = [toolEvents(), textEvents("first answer\nsecond answer")];
+  b.modelScript = [toolEvents(), textEvents("first answer"), textEvents("second answer"), textEvents("third answer")];
   b.onTool = async () => {
     started = true;
     await tool.promise;
@@ -445,24 +445,38 @@ test("active input reaches the next model step before the current turn answers",
     b.deliver("first", { type: "user", content: "first user" });
     await eventually(() => started);
     b.deliver("second", { type: "user", content: "second user" });
-    await eventually(() => waiting);
     b.deliver("second", { type: "user", content: "second user" });
     b.deliver("third", { type: "user", content: "third user" });
-    await eventually(() => session.state.turnInputs?.length === 2);
-    tool.resolve();
-    await eventually(() => session.state.phase === "result");
+    await eventually(() => b.timeline.some((entry) => entry.type === "input.delivery"
+      && entry.inputId === "third" && entry.status === "received"));
+    expect(waiting).toBe(false);
+    expect(session.state.inputId).toBe("first");
     expect(b.requests).toHaveLength(1);
+    tool.resolve();
+    await eventually(() => waiting);
+    expect(b.processed).toContain("first");
     expect(b.processed).not.toContain("second");
+    expect(session.state.completed).toEqual(["first"]);
+    expect(b.requests).toHaveLength(2);
+    const firstHistory = JSON.stringify(b.requests[1]!.messages);
+    expect(firstHistory).not.toContain("second user");
+    expect(firstHistory).not.toContain("third user");
     processing.resolve();
     await eventually(() => b.processed.includes("third"));
-    const history = JSON.stringify(b.requests[1]!.messages);
-    expect(history).toContain("second user");
-    expect(history.indexOf("third user")).toBeGreaterThan(history.indexOf("second user"));
-    expect(history.split("second user")).toHaveLength(2);
-    expect(b.requests).toHaveLength(2);
+    const secondHistory = JSON.stringify(b.requests[2]!.messages);
+    expect(secondHistory).toContain("first answer");
+    expect(secondHistory).toContain("second user");
+    expect(secondHistory).not.toContain("third user");
+    const thirdHistory = JSON.stringify(b.requests[3]!.messages);
+    expect(thirdHistory.indexOf("third user")).toBeGreaterThan(thirdHistory.indexOf("second answer"));
+    expect(thirdHistory.split("second user")).toHaveLength(2);
+    expect(b.requests).toHaveLength(4);
     expect(b.executions).toHaveLength(1);
     expect(session.state.completed).toEqual(["first", "second", "third"]);
-    expect(b.timeline.filter((e) => e.type === "result")).toHaveLength(1);
+    expect(b.processed.filter((id) => id === "second")).toHaveLength(2);
+    expect(b.timeline.filter((e) => e.type === "result")).toHaveLength(3);
+    expect(b.timeline.filter((e) => e.type === "input.delivery" && e.status === "processing")
+      .map((e) => e.inputId)).toEqual(["first", "second", "third"]);
   } finally {
     tool.resolve(); processing.resolve(); session.stop(); await stream;
     await session.close(); await ctx.fiber.dispose(); b.stop();

@@ -7,7 +7,7 @@ import (
 )
 
 func TestNativeStreamPreviewRejectsInvalidEvents(t *testing.T) {
-	for _, raw := range []string{`{}`, `{"type":"event_start","event":{"type":"agent.tool_use","id":"a"}}`, `{"type":"event_delta","event_id":"a","delta":{"type":"content_delta","index":1,"content":{"type":"text"}}}`} {
+	for _, raw := range []string{`{"type":"event_delta","event_id":"a","delta":{"type":"content_delta","index":0,"content":{"type":"thinking","thinking":"private"}}}`, `{}`, `{"type":"event_start","event":{"type":"agent.tool_use","id":"a"}}`, `{"type":"event_delta","event_id":"a","delta":{"type":"content_delta","index":1,"content":{"type":"text"}}}`} {
 		if _, ok := nativeStreamPreview(codeSessionStreamFanout{WorkspaceUUID: "workspace", SessionExternalID: "session", WorkerEpoch: 2, Payload: json.RawMessage(raw)}); ok {
 			t.Fatalf("accepted invalid preview %s", raw)
 		}

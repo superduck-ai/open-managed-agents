@@ -165,6 +165,7 @@ type workerPermissionRequest struct {
 	ToolName              string                   `json:"tool_name"`
 	ToolUseID             string                   `json:"tool_use_id"`
 	Input                 map[string]any           `json:"input"`
+	ToolAvailable         *bool                    `json:"tool_available,omitempty"`
 	PermissionSuggestions []workerPermissionUpdate `json:"permission_suggestions,omitempty"`
 	BlockedPath           string                   `json:"blocked_path,omitempty"`
 	DecisionReason        string                   `json:"decision_reason,omitempty"`

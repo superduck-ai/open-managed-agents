@@ -7,6 +7,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 var errRuntimeSubagentConfig = errors.New("invalid runtime subagent configuration")
@@ -15,6 +16,24 @@ var errSandboxUnavailable = errors.New("sandbox is unavailable")
 var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
 
 const maxSandboxMCPRequestBytes = 1 << 20
+
+func invalidWebToolRequest() error {
+	return apperr.New(apperr.InvalidArgument, "Invalid web tool request", nil)
+}
+
+func webToolDenied() error {
+	return apperr.New(apperr.PermissionDenied, "Web tool is disabled by the Agent permission policy", nil)
+}
+
+func webToolContextFailure(cause error) error {
+	if errors.Is(cause, db.ErrNotFound) {
+		return apperr.New(apperr.PermissionDenied, "Could not authorize web tool session or network policy", cause)
+	}
+	if app, ok := errors.AsType[*apperr.Error](cause); ok && app.Kind == apperr.PermissionDenied {
+		return app
+	}
+	return apperr.New(apperr.Internal, "Could not load web tool session or network policy", cause)
+}
 
 func sandboxInvalidRequest(cause error) error {
 	return apperr.New(apperr.InvalidArgument, "Invalid sandbox MCP request", cause)
@@ -56,6 +75,10 @@ func codeSessionNotFound(cause error) error {
 	return apperr.New(apperr.NotFound, "Code session not found", cause)
 }
 
+func codeSessionNotActive(cause error) error {
+	return apperr.New(apperr.Conflict, "Code session is not active", cause)
+}
+
 func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
 }
@@ -66,6 +89,10 @@ func sessionModelBackendsFailure(cause error) error {
 
 func sessionMCPConfigFailure(cause error) error {
 	return internalError("Could not build session MCP configuration", cause)
+}
+
+func mcpUpstreamAuthenticationRejected() *httpapi.Error {
+	return httpapi.NewError(http.StatusUnauthorized, "authentication_error", "MCP upstream authentication failed")
 }
 
 func codeSessionRouteNotFound() error {
@@ -124,6 +151,10 @@ type workerPayloadError struct {
 func (e *workerPayloadError) Error() string { return e.message }
 
 func (e *workerPayloadError) Unwrap() error { return e.cause }
+
+func selfHostedResultRoutingError(stage string, err error) error {
+	return fmt.Errorf("self-hosted tool result %s: %w", stage, err)
+}
 
 func brainClaimUnauthenticated() error {
 	return apperr.New(apperr.Unauthenticated, "Invalid brain claim token", nil)

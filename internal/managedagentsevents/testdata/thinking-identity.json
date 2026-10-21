@@ -1,0 +1,14 @@
+[
+  {
+    "codeSessionID": "cse_test",
+    "messageID": "msg_test",
+    "index": 0,
+    "eventID": "sevt_c271d655f0f2c7ab2979e46eea473cba"
+  },
+  {
+    "codeSessionID": "cse_test",
+    "messageID": "msg_thinking",
+    "index": 1,
+    "eventID": "sevt_363f173abfae5a647b8add2ec0d40c21"
+  }
+]

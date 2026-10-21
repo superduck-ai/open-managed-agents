@@ -1,6 +1,7 @@
 export type CcrLeaseFailureReason =
   | "epoch_mismatch" | "authentication_rejected" | "token_expired" | "lease_expired" | "request_rejected"
-  | "rate_limited" | "server_error" | "timeout" | "transport_error" | "credentials_unavailable";
+  | "rate_limited" | "server_error" | "timeout" | "transport_error" | "credentials_unavailable"
+  | "worker_not_registered";
 
 export type CcrLeaseResult =
   | { status: "confirmed" }

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -86,14 +87,33 @@ func Summarize(payload []byte, eventType string) (Summary, *string, error) {
 // Metadata is optional; opaque worker JSON may use these names for non-string values.
 func metadataString(raw json.RawMessage) *string {
 	var value *string
-	if json.Unmarshal(raw, &value) != nil {
+	if json.Unmarshal(raw, &value) != nil || (value != nil && strings.IndexByte(*value, 0) >= 0) {
 		return nil
 	}
 	return value
 }
 
+func needsBlobStorage(payload []byte) bool {
+	if ExceedsThreshold(len(payload)) {
+		return true
+	}
+	if !bytes.Contains(payload, []byte(`\u0000`)) {
+		return false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return false
+		}
+		if value, ok := token.(string); ok && strings.IndexByte(value, 0) >= 0 {
+			return true
+		}
+	}
+}
+
 func (s *Store) prepare(ctx context.Context, organizationUUID, workspaceUUID string, payload []byte, summary Summary) ([]byte, *string, error) {
-	if !ExceedsThreshold(len(payload)) {
+	if !needsBlobStorage(payload) {
 		return payload, nil, nil
 	}
 	if len(payload) > MaxBytes {

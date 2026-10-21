@@ -217,7 +217,7 @@ describe('LLM models page', () => {
     expect(screen.getByText('No models configured for this provider.')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Add or search model'), { target: { value: 'glm-4.7' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add glm-4.7 to Empty Gateway' }));
-    expect(await screen.findByText('glm-4.7')).toBeTruthy();
+    expect(await screen.findByText('empty-gateway/glm-4.7')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     const editDialog = screen.getByRole('dialog', { name: 'Edit provider' });
@@ -250,10 +250,15 @@ describe('LLM models page', () => {
     expect(screen.getByRole('button', { name: 'Moonshot' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'DashScope models' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Moonshot models' })).toBeTruthy();
-    expect(screen.getByText('kimi-k2.5')).toBeTruthy();
-    expect(screen.getByText('qwen-max')).toBeTruthy();
-    expect(screen.getByText('moonshot-v1')).toBeTruthy();
+    expect(screen.getByText('dashscope/kimi-k2.5')).toBeTruthy();
+    expect(screen.getByText('dashscope/qwen-max')).toBeTruthy();
+    expect(screen.getByText('moonshot/moonshot-v1')).toBeTruthy();
     expect(screen.getAllByTestId('llm-model-row')).toHaveLength(3);
+    expect(
+      api.requests
+        .filter((request) => request.method === 'POST' && request.url.endsWith('/llm_providers'))
+        .map((request) => request.body?.slug),
+    ).toEqual(['dashscope', 'moonshot']);
     const groupedDashScope = screen.getByTestId('llm-provider-group-provider_1');
     expect(within(groupedDashScope).getByText('https://dashscope.example.com/anthropic')).toBeTruthy();
     expect(within(groupedDashScope).getByText('•••• 1111')).toBeTruthy();
@@ -273,6 +278,9 @@ describe('LLM models page', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     const editDialog = screen.getByRole('dialog', { name: 'Edit provider' });
+    const editSlug = within(editDialog).getByLabelText('Slug') as HTMLInputElement;
+    expect(editSlug.value).toBe('dashscope');
+    expect(editSlug.readOnly).toBe(true);
     const editApiKey = within(editDialog).getByLabelText('API key') as HTMLInputElement;
     expect(editApiKey.value).toBe('');
     expect(within(editDialog).queryByRole('button', { name: 'Fetch model list' })).toBeNull();
@@ -287,6 +295,7 @@ describe('LLM models page', () => {
 
     expect(await screen.findByRole('button', { name: 'DashScope updated' })).toBeTruthy();
     expect(api.requests.findLast((request) => request.method === 'PUT')?.body).not.toHaveProperty('api_key');
+    expect(api.requests.findLast((request) => request.method === 'PUT')?.body?.slug).toBe('dashscope');
 
     fireEvent.click(screen.getByRole('button', { name: 'Moonshot' }));
     expect(screen.getByText('•••• 2222')).toBeTruthy();
@@ -317,19 +326,19 @@ describe('LLM models page', () => {
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'DashScope' }));
-    await screen.findByText('kimi-k2.5', {}, { timeout: 2000 });
+    await screen.findByText('dashscope/kimi-k2.5', {}, { timeout: 2000 });
 
     fireEvent.change(screen.getByLabelText('Add or search model'), { target: { value: 'kimi' } });
-    expect(screen.getByText('kimi-k2.5')).toBeTruthy();
-    expect(screen.queryByText('qwen-max')).toBeNull();
+    expect(screen.getByText('dashscope/kimi-k2.5')).toBeTruthy();
+    expect(screen.queryByText('dashscope/qwen-max')).toBeNull();
     expect(screen.getByRole('button', { name: 'Add kimi to DashScope' })).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Add or search model'), { target: { value: 'glm-4.7' } });
     fireEvent.click(await screen.findByRole('button', { name: 'Add glm-4.7 to DashScope' }, { timeout: 2000 }));
     await waitFor(
       () => {
-        expect(screen.getByText('glm-4.7')).toBeTruthy();
-        expect(screen.getByText('qwen-max')).toBeTruthy();
+        expect(screen.getByText('dashscope/glm-4.7')).toBeTruthy();
+        expect(screen.getByText('dashscope/qwen-max')).toBeTruthy();
       },
       { timeout: 2000 },
     );
@@ -352,10 +361,9 @@ describe('LLM models page', () => {
   test('shows a localized error and keeps the query when adding a model fails', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
     mockProvidersApi([], {
-      updateStatus: 409,
-      updateCode: 'model_conflict',
+      updateStatus: 400,
+      updateCode: 'model_ids_limit',
       updateMessage: 'wording changed',
-      updateModelId: 'glm-4.7',
     });
     renderPage();
 
@@ -366,10 +374,10 @@ describe('LLM models page', () => {
     fireEvent.change(search, { target: { value: 'glm-4.7' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add glm-4.7 to DashScope' }));
 
-    const toastTitle = await screen.findByText('Model ID glm-4.7 is already configured by another provider.');
+    const toastTitle = await screen.findByText('You can configure at most 100 model IDs.');
     expect(toastTitle.closest('[data-sonner-toast]')?.getAttribute('data-type')).toBe('error');
     expect(search.value).toBe('glm-4.7');
-    expect(screen.queryByText(/model_id is already configured/)).toBeNull();
+    expect(screen.queryByText('wording changed')).toBeNull();
   });
 
   test('fills model IDs from the provider after URL and key, and refresh syncs live models', async () => {
@@ -392,7 +400,7 @@ describe('LLM models page', () => {
     expect(api.requests.some((request) => request.url.endsWith('/preview_models'))).toBe(true);
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
-    expect(await screen.findByText('glm-4.7', {}, { timeout: 2000 })).toBeTruthy();
+    expect(await screen.findByText('dashscope/glm-4.7', {}, { timeout: 2000 })).toBeTruthy();
     expect(api.requests.some((request) => request.url.includes('/models/sync'))).toBe(false);
 
     const beforeRefresh = api.requests.filter((request) => request.url.includes('/models/sync')).length;
@@ -467,22 +475,52 @@ describe('LLM models page', () => {
 
     await waitFor(() => expect(addButton.disabled).toBe(true));
     finishUpdate();
-    expect(await screen.findByText('glm-4.7')).toBeTruthy();
+    expect(await screen.findByText('dashscope/glm-4.7')).toBeTruthy();
   });
 
-  test('reports model IDs skipped during sync', async () => {
+  test('adds a model ID that another provider already serves', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
-    mockProvidersApi([], { syncSkippedModelIds: ['shared-model'] });
+    mockProvidersApi();
     renderPage();
 
     expect(await screen.findByText('No providers yet')).toBeTruthy();
     await createProvider('DashScope', 'https://dashscope.example.com/anthropic', 'test-secret-1111', ['kimi-k2.5']);
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh model list' }));
+    await createProvider('Moonshot', 'https://moonshot.example.com/anthropic', 'test-secret-2222', ['moonshot-v1']);
+    fireEvent.click(screen.getByRole('button', { name: 'Moonshot' }));
+    fireEvent.change(screen.getByLabelText('Add or search model'), { target: { value: 'kimi-k2.5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add kimi-k2.5 to Moonshot' }));
 
-    const toastTitle = await screen.findByText('Skipped 1 model IDs already configured by another provider.');
-    expect(toastTitle.closest('[data-sonner-toast]')?.getAttribute('data-type')).toBe('info');
-    await waitFor(() =>
-      expect((screen.getByRole('button', { name: 'Refresh model list' }) as HTMLButtonElement).disabled).toBe(false),
+    expect(await screen.findByText('moonshot/kimi-k2.5')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Add or search model'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'All providers' }));
+    expect(screen.getByText('dashscope/kimi-k2.5')).toBeTruthy();
+    expect(screen.getByText('moonshot/kimi-k2.5')).toBeTruthy();
+  });
+
+  test('rejects an invalid slug before saving a provider', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
+    const api = mockProvidersApi();
+    renderPage();
+
+    expect(await screen.findByText('No providers yet')).toBeTruthy();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add provider' })[0]);
+    const dialog = screen.getByRole('dialog', { name: 'Add provider' });
+    fireEvent.change(within(dialog).getByLabelText('Provider name'), { target: { value: 'DashScope CN' } });
+    expect((within(dialog).getByLabelText('Slug') as HTMLInputElement).value).toBe('dashscope-cn');
+    fireEvent.change(within(dialog).getByLabelText('Slug'), { target: { value: 'Dash/Scope' } });
+    fireEvent.change(within(dialog).getByLabelText('Base URL'), {
+      target: { value: 'https://dashscope.example.com/anthropic' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('API key'), { target: { value: 'test-secret-1111' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+    expect(
+      await within(dialog).findByText(
+        'Slug must contain 1 to 32 lowercase letters, digits, ".", "_" or "-" and start with a letter or digit.',
+      ),
+    ).toBeTruthy();
+    expect(api.requests.some((request) => request.method === 'POST' && request.url.endsWith('/llm_providers'))).toBe(
+      false,
     );
   });
 
@@ -518,13 +556,12 @@ describe('LLM models page', () => {
     expect(screen.queryByText('not found')).toBeNull();
   });
 
-  test('localizes a model conflict returned while saving a provider', async () => {
+  test('localizes a slug conflict returned while saving a provider', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
-    mockProvidersApi([], {
+    const api = mockProvidersApi([], {
       createStatus: 409,
-      createCode: 'model_conflict',
+      createCode: 'llm_provider_slug_conflict',
       createMessage: 'wording changed',
-      createModelId: 'glm-4.7',
     });
     renderPage('zh-CN');
 
@@ -541,8 +578,9 @@ describe('LLM models page', () => {
     });
     fireEvent.click(within(dialog).getByRole('button', { name: '保存' }));
 
-    expect(await within(dialog).findByText('模型 ID glm-4.7 已由其他 Provider 配置。')).toBeTruthy();
-    expect(within(dialog).queryByText(/model_id is already configured/)).toBeNull();
+    expect(await within(dialog).findByText('已存在使用该 slug 的 Provider。')).toBeTruthy();
+    expect(within(dialog).queryByText('wording changed')).toBeNull();
+    expect(api.requests.find((request) => request.method === 'POST')?.body).not.toHaveProperty('slug');
   });
 });
 
@@ -633,13 +671,10 @@ function mockProvidersApi(
     createStatus?: number;
     createCode?: string;
     createMessage?: string;
-    createModelId?: string;
     updateStatus?: number;
     updateCode?: string;
     updateMessage?: string;
-    updateModelId?: string;
     updateGate?: Promise<void>;
-    syncSkippedModelIds?: string[];
   } = {},
 ) {
   let providers: LLMProvider[] = options.initialProviders ?? [];
@@ -667,17 +702,14 @@ function mockProvidersApi(
       }
       const updated = { ...existing, model_ids: modelIds };
       providers = providers.map((provider) => (provider.id === providerID ? updated : provider));
-      return jsonResponse({ ...updated, skipped_model_ids: options.syncSkippedModelIds });
+      return jsonResponse(updated);
     }
     if (url.endsWith('/llm_providers') && method === 'GET') {
       return jsonResponse(providers);
     }
     if (url.endsWith('/llm_providers') && method === 'POST') {
       if (options.createStatus && options.createStatus >= 400) {
-        return jsonResponse(
-          providerError(options.createCode, options.createMessage, options.createModelId),
-          options.createStatus,
-        );
+        return jsonResponse(providerError(options.createCode, options.createMessage), options.createStatus);
       }
       const provider = providerFromBody(`provider_${nextID++}`, body);
       providers = [...providers, provider];
@@ -690,10 +722,7 @@ function mockProvidersApi(
       if (!existing) return jsonResponse({ error: { message: 'not found' } }, 404);
       await options.updateGate;
       if (options.updateStatus && options.updateStatus >= 400) {
-        return jsonResponse(
-          providerError(options.updateCode, options.updateMessage, options.updateModelId),
-          options.updateStatus,
-        );
+        return jsonResponse(providerError(options.updateCode, options.updateMessage), options.updateStatus);
       }
       const updated = providerFromBody(providerID, body, existing.api_key_last4);
       providers = providers.map((provider) => (provider.id === providerID ? updated : provider));
@@ -714,6 +743,7 @@ function providerFromBody(id: string, body?: Record<string, unknown>, existingLa
     type: 'llm_provider',
     id,
     name: String(body?.name ?? ''),
+    slug: typeof body?.slug === 'string' ? body.slug : 'default',
     api_backend: body?.api_backend === 'chat_completions' ? 'chat_completions' : 'messages',
     base_url: String(body?.base_url ?? ''),
     has_api_key: Boolean(apiKey || existingLast4),
@@ -732,13 +762,8 @@ function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-function providerError(code = 'request_failed', message = 'request failed', modelId?: string) {
-  return {
-    error: 'invalid_request',
-    code,
-    message,
-    ...(modelId ? { model_id: modelId } : {}),
-  };
+function providerError(code = 'request_failed', message = 'request failed') {
+  return { error: 'invalid_request', code, message };
 }
 
 function storageText(storage: Storage) {

@@ -91,18 +91,31 @@ func runtimeToolPolicies(tools []toolPermissionToolset) map[string]string {
 	return policies
 }
 
-func (s *Service) currentRuntimeToolPolicies(ctx context.Context, record db.CodeSession) (map[string]string, error) {
+func (s *Service) currentRuntimeToolPolicies(ctx context.Context, record db.CodeSession, threadID string) (map[string]string, error) {
 	if record.SessionExternalID == "" {
 		return nil, nil
 	}
-	session, found, err := s.db.GetSession(ctx, record.WorkspaceUUID, record.SessionExternalID)
-	if err != nil {
-		return nil, err
+	var snapshot json.RawMessage
+	if threadID != "" {
+		thread, err := s.db.GetSessionThread(ctx, record.WorkspaceUUID, record.SessionExternalID, threadID)
+		if err != nil {
+			return nil, err
+		}
+		snapshot, err = validatedMCPThreadSnapshot(record, thread)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		session, found, err := s.db.GetSession(ctx, record.WorkspaceUUID, record.SessionExternalID)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, db.ErrNotFound
+		}
+		snapshot = session.AgentSnapshot
 	}
-	if !found {
-		return nil, db.ErrNotFound
-	}
-	tools, err := runtimeRootToolsets(session.AgentSnapshot)
+	tools, err := runtimeRootToolsets(snapshot)
 	if err != nil {
 		return nil, err
 	}

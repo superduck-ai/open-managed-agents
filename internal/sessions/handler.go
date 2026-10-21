@@ -18,6 +18,7 @@ import (
 )
 
 const maxSessionBodySize = 4 << 20
+const maxSessionCreateBodySize = 32 << 20
 
 type Handler struct {
 	secretService   *secrets.Service
@@ -36,7 +37,7 @@ type Handler struct {
 }
 
 type sandboxReclaimer interface {
-	EnqueueArchivedSession(context.Context, db.Session) error
+	EnqueueRemovedSession(context.Context, db.Session) error
 }
 
 type webhookEnqueuer interface {
@@ -49,6 +50,7 @@ type pageResponse[T any] struct {
 }
 
 type sessionResponse struct {
+	Budget             json.RawMessage   `json:"budget"`
 	ID                 string            `json:"id"`
 	Agent              json.RawMessage   `json:"agent"`
 	ArchivedAt         *string           `json:"archived_at"`
@@ -79,6 +81,7 @@ type threadResponse struct {
 	Type           string          `json:"type"`
 	UpdatedAt      string          `json:"updated_at"`
 	Usage          json.RawMessage `json:"usage"`
+	WorkflowRunID  *string         `json:"workflow_run_id"`
 }
 
 type deleteResponse struct {
@@ -90,7 +93,13 @@ type sendEventsResponse struct {
 	Data []json.RawMessage `json:"data,omitempty"`
 }
 
+type sessionCreateRequest struct {
+	sessionMutationRequest
+	InitialEvents json.RawMessage `json:"initial_events"`
+}
+
 type sessionMutationRequest struct {
+	Budget        json.RawMessage `json:"budget"`
 	Agent         json.RawMessage `json:"agent"`
 	EnvironmentID json.RawMessage `json:"environment_id"`
 	Metadata      json.RawMessage `json:"metadata"`

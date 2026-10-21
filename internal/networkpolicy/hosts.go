@@ -134,7 +134,7 @@ func validAllowedPort(port string) bool {
 	return err == nil && value >= 1 && value <= 65535
 }
 
-// NormalizeHost 对 allowlist、metadata、MCP URL 与 CONNECT target 使用同一套
+// NormalizeHost 对网络 allowlist、metadata 与 CONNECT target 使用同一套
 // canonicalization 规则。
 func NormalizeHost(raw string) (string, error) {
 	host := strings.ToLower(strings.TrimSpace(raw))
@@ -253,4 +253,19 @@ func (n *hostMatcherNode) matchesExact(port string) bool {
 
 func (n *hostMatcherNode) matchesWildcard(port string) bool {
 	return n.rules[""].wildcard || n.rules[port].wildcard
+}
+
+func MCPHostKey(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	normalized, err := NormalizeHost(raw)
+	if err != nil {
+		return "", err
+	}
+	if _, err := netip.ParseAddr(raw); err == nil {
+		return strings.ToLower(raw), nil
+	}
+	if strings.HasSuffix(raw, ".") {
+		normalized += "."
+	}
+	return normalized, nil
 }

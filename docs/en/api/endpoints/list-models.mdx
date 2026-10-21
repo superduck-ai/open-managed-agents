@@ -4,7 +4,7 @@ description: "Inspect model IDs exposed by this workspace."
 api: "GET /v1/models"
 ---
 
-Returns the model IDs configured for the current workspace. IDs are used unchanged in API calls.
+Returns the model IDs configured for the current workspace in the form `{provider_slug}/{upstream_model_id}`, for example `oma/kimi-k2.5` or `oma/deepseek-ai/deepseek-v4.1-flash`. Use these IDs in API calls; OMA forwards the upstream model ID to the Provider. A legacy ID without the Provider prefix is still accepted when exactly one Provider in the workspace configures it.
 
 ## Response
 

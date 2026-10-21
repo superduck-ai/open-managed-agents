@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { validateJsonSchemaValue, type JsonSchemaNode } from "@deepseek-ai/dsh-tools";
 import { object, type Payload } from "../json.ts";
+import { approveToolCall } from "./tool-approvals.ts";
 import { toolText } from "./tools.ts";
 import {
   ToolNotForwardedError,
@@ -30,39 +31,43 @@ export class ToolExecution {
         throw new Error(`Invalid ${tool.name} arguments: ${errors.join("; ")}`);
     };
     validate(original);
-    const decision: ApprovalDecision = this.permissions?.[tool.remoteName] === "allow"
+    const decision: ApprovalDecision = this.permissions?.[tool.permissionName ?? tool.remoteName] === "allow"
       ? { allowed: true }
-      : await this.bridge.approve({ callId: exec.callId, toolName: tool.name, input: original }, exec.signal);
+      : await approveToolCall(this.bridge, { callId: exec.callId, toolName: tool.name, input: original }, exec.signal);
     if (!decision.allowed)
-      throw new Error("Tool use denied by OMA");
+      throw new Error(decision.reason || "Tool use denied by OMA");
     const effective = decision.input === undefined ? original : object(decision.input);
     validate(effective);
     exec.signal.throwIfAborted();
     const readOnly = !!tool.readOnly;
     const call = { callId: exec.callId, name: tool.name, original, effective, readOnly };
     await this.bridge.recordApproved(call);
-    await this.sandbox.provision(exec.signal);
+    if (!decision.externalResult) await this.sandbox.provision?.(exec.signal);
     exec.signal.throwIfAborted();
     if (!readOnly) {
       await this.bridge.flushLog();
       await this.bridge.recordDispatch(exec.callId);
     }
     let result: Payload;
+    let remoteOutcome: "unknown" | undefined;
     try {
-      result = readOnly ? await this.callWithRetry(tool, effective, exec.signal) : await this.sandbox.call(tool, effective, exec.signal);
+      result = decision.externalResult ?? (readOnly ? await this.callWithRetry(tool, effective, exec.signal) : await this.sandbox.call(tool, effective, exec.signal));
     } catch (error) {
-      if (readOnly || error instanceof ToolNotForwardedError) {
+      const userInterrupted = exec.signal.aborted && exec.signal.reason?.kind === "user";
+      if (readOnly && !userInterrupted || error instanceof ToolNotForwardedError) {
         const failure = error instanceof ToolNotForwardedError ? error.message
           : exec.signal.aborted ? "Read-only tool call was cancelled" : "Read-only tool outcome is unknown";
         await this.bridge.recordResult({ ...call, text: failure, failed: true });
         throw new Error(failure);
       }
-      try {
-        await this.bridge.recordUnknown(exec.callId);
-      } finally {
-        this.bridge.stop();
+      if (userInterrupted) {
+        result = { isError: true, content: [{ type: "text", text: "Tool call interrupted." }] };
+        remoteOutcome = "unknown";
+      } else {
+        try { await this.bridge.recordUnknown(exec.callId); }
+        finally { this.bridge.stop(); }
+        throw new Error("Remote tool outcome is unknown; turn stopped without replay");
       }
-      throw new Error("Remote tool outcome is unknown; turn stopped without replay");
     }
     let text: string;
     let failed = !!result.isError;
@@ -73,7 +78,7 @@ export class ToolExecution {
       failed = true;
     }
     const changed = !isDeepStrictEqual(original, effective);
-    await this.bridge.recordResult({ ...call, text, failed });
+    await this.bridge.recordResult({ ...call, text, failed, ...(remoteOutcome ? { remoteOutcome } : {}) });
     if (changed)
       exec.deferContext(createUserMessage({
         source: { kind: "user" },

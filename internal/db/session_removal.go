@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"slices"
 	"time"
 	"uuid"
 
@@ -11,7 +12,14 @@ import (
 
 type SessionEventChanges struct {
 	Events                []SessionEvent
+	SettledInputEventIDs  []string
 	RetiredCodeSessionIDs []string
+}
+
+func (c SessionEventChanges) WorkerInputEvents() []SessionEvent {
+	return slices.DeleteFunc(slices.Clone(c.Events), func(event SessionEvent) bool {
+		return event.EventType == "user.interrupt" && slices.Contains(c.SettledInputEventIDs, event.ExternalID)
+	})
 }
 
 type SessionRemoval struct {

@@ -20,6 +20,13 @@ globalScope.requestAnimationFrame = testWindow.requestAnimationFrame.bind(testWi
 globalScope.cancelAnimationFrame = testWindow.cancelAnimationFrame.bind(testWindow);
 globalScope.getComputedStyle = testWindow.getComputedStyle.bind(testWindow);
 
+Object.defineProperty(testWindow.Node.prototype, Symbol.for('nodejs.util.inspect.custom'), {
+  configurable: true,
+  value(this: Node) {
+    return `<${this.nodeName.toLowerCase()}>`;
+  },
+});
+
 if (typeof HTMLElement.prototype.getAnimations !== 'function') {
   Object.defineProperty(HTMLElement.prototype, 'getAnimations', {
     configurable: true,

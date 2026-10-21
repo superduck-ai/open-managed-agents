@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package liveworker
 
 import (
@@ -90,8 +92,16 @@ func TestVerifyMemoryMounts(t *testing.T) {
 		t.Fatalf("mounted write actor or versions differ: %+v", versions)
 	}
 	chatProof(t, started, "mounted_write_persisted")
-	requireOK(t, provider.WriteFile(t.Context(), sandbox, "/mnt/memory/local-only.txt", []byte("sandbox local")))
-	requireOK(t, provider.WriteFile(t.Context(), sandbox, "/mnt/memory/MEMORY.md", []byte("local edit")))
+	for _, path := range []string{"/mnt/memory/local-only.txt", "/mnt/memory/MEMORY.md"} {
+		result, err := provider.RunCommand(t.Context(), sandbox, e2bruntime.CommandRequest{Command: "printf changed > '" + path + "'", Timeout: 15 * time.Second})
+		requireOK(t, err)
+		if result.ExitCode == 0 {
+			t.Fatalf("read-only Memory parent accepted write to %s", path)
+		}
+	}
+	memorySandboxMarkdown(t, provider, sandbox, markdown)
+	const scratch = "/tmp/verify-memory-local-only.txt"
+	requireOK(t, provider.WriteFile(t.Context(), sandbox, scratch, []byte("sandbox local")))
 	requireOK(t, provider.Kill(t.Context(), sandbox))
 	second := createMemoryMountSession(t, e, writable, readonly, "read_only")
 	fresh := waitMemorySandbox(t, e, second)
@@ -100,10 +110,10 @@ func TestVerifyMemoryMounts(t *testing.T) {
 		t.Fatal("new session reused destroyed sandbox")
 	}
 	memorySandboxRead(t, provider, fresh, "/mnt/memory/verified-write/from-session.md", content)
-	exists, err = provider.FileExists(t.Context(), fresh, "/mnt/memory/local-only.txt")
+	exists, err = provider.FileExists(t.Context(), fresh, scratch)
 	requireOK(t, err)
 	if exists {
-		t.Fatal("sandbox-local root survived a new session")
+		t.Fatal("sandbox-local scratch file survived a new session")
 	}
 	memorySandboxMarkdown(t, provider, fresh, strings.Replace(markdown, ") rw", ") ro", 1))
 	chatProof(t, started, "sandbox_lifecycle_matches")

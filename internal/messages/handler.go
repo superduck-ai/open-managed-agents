@@ -15,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
 // requestHeadersToRemove 包含 hop-by-hop header、调用方凭证和不可由 sandbox 伪造的租户 header。
@@ -51,6 +52,7 @@ var responseHeadersToRemove = map[string]struct{}{
 
 // Handler 校验顶层 model 后按原样转发请求体。
 type Handler struct {
+	fileObjects  storage.ObjectStore
 	codeSessions *codesessions.Service
 	database     *db.DB
 	secrets      *secrets.Service
@@ -114,6 +116,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 		httpapi.WriteError(w, r, backendMismatchError())
 		return
 	}
+	if backend == llmproviders.Messages {
+		resolvedBody, fileErr := h.managedFileReferences(r.Context(), principal, body)
+		if fileErr != nil {
+			httpapi.WriteError(w, r, fileErr)
+			return
+		}
+		body = resolvedBody
+	}
 	path := "/v1/messages"
 	if backend == llmproviders.ChatCompletions {
 		if err := validateChatRequest(body); err != nil {
@@ -121,6 +131,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 			return
 		}
 		path = "/v1/chat/completions"
+	}
+	body, err = llmproviders.ReplaceRequestModel(body, upstream.ModelID)
+	if err != nil {
+		httpapi.WriteError(w, r, invalidRequestError(err))
+		return
 	}
 	target, err := llmproviders.Endpoint(upstream.BaseURL, path, r.URL.RawQuery)
 	if err != nil {
@@ -142,7 +157,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	} else {
 		llmproviders.ApplyAPIKey(upstreamRequest.Header, upstream.APIKey)
 	}
-	request, err := h.beginModelRequest(r, principal, modelID)
+	request, err := h.beginModelRequest(r, principal, upstream.QualifiedModelID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "start model request", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())

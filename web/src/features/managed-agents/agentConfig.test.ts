@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   agentTemplates,
+  agentEditSaveErrorMessage,
   blankAgentTemplate,
   createDialogAgentConfig,
   createDialogTemplateConfigs,
@@ -135,4 +136,11 @@ describe('localized create-agent template configs', () => {
     expect(config.metadata).toEqual({ source: 'description' });
     expect(createDialogTemplateConfigsZh.blank.metadata).toBeUndefined();
   });
+});
+
+test('edit saves preserve server domain field errors', () => {
+  expect(agentEditSaveErrorMessage({ status: 400, message: 'allowed_domains.0: Invalid domain format' })).toBe(
+    'allowed_domains.0: Invalid domain format',
+  );
+  expect(agentEditSaveErrorMessage({ status: 409, message: 'conflict' })).toContain('updated elsewhere');
 });

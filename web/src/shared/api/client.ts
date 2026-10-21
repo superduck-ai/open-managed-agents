@@ -2,7 +2,6 @@ export type ApiError = {
   status: number;
   code: string;
   message: string;
-  modelId?: string;
 };
 
 export function isModelConfigurationUnavailable(error: unknown) {
@@ -193,7 +192,6 @@ async function requestJson<T>(path: string, options: RequestInit): Promise<T> {
 async function toApiError(response: Response): Promise<ApiError> {
   let message = response.statusText;
   let code = 'request_failed';
-  let modelId: string | undefined;
 
   try {
     const payload = (await response.json()) as Record<string, unknown>;
@@ -218,12 +216,9 @@ async function toApiError(response: Response): Promise<ApiError> {
     if (typeof payload.message === 'string') {
       message = payload.message;
     }
-    if (typeof payload.model_id === 'string') {
-      modelId = payload.model_id;
-    }
   } catch {
     // Keep the status text when the backend returned a non-JSON error body.
   }
 
-  return { status: response.status, code, message, ...(modelId ? { modelId } : {}) };
+  return { status: response.status, code, message };
 }

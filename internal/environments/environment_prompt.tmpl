@@ -7,6 +7,7 @@ These rules describe the sandbox you work in. They do not replace your assigned 
 | Path | Access | Purpose |
 |---|---|---|
 | /mnt/session/uploads | read-only | Files the user attached. The public/API path /uploads/<p> is /mnt/session/uploads/<p> here. |
+| /mnt/session/outputs | read-write | Standard output path; alias of /mnt/user-data/outputs. |
 | /mnt/user-data/outputs | read-write | Deliverables. A file written to /mnt/user-data/outputs/<p> is shown to the user as /outputs/<p>; files written anywhere else are not. |
 
 - Decide where a named file lives before using it:

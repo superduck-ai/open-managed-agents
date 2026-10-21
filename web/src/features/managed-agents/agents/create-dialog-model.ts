@@ -138,10 +138,53 @@ const builtInToolNameSchema = z.enum([
   'task_stop',
   'todo_write',
   'web_fetch',
+  'web_search',
   'write',
 ]);
 
-const builtInToolConfigSchema = permissionConfigSchema.extend({ name: builtInToolNameSchema }).strict();
+const builtInToolConfigSchema = permissionConfigSchema
+  .extend({
+    name: builtInToolNameSchema,
+    allowed_domains: z.array(z.string()).min(1).max(64).nullable().optional(),
+    blocked_domains: z.array(z.string()).min(1).max(64).nullable().optional(),
+    max_content_tokens: z.number().int().positive().nullable().optional(),
+    user_location: z
+      .object({
+        type: z.literal('approximate'),
+        city: z.string().nullable().optional(),
+        region: z.string().nullable().optional(),
+        country: z.string().nullable().optional(),
+        timezone: z.string().nullable().optional(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
+  })
+  .strict()
+  .superRefine((config, ctx) => {
+    for (const field of ['allowed_domains', 'blocked_domains'] as const) {
+      if (config[field] !== undefined && !['web_search', 'web_fetch'].includes(config.name)) {
+        ctx.addIssue({ code: 'custom', path: [field], message: 'Only Web tools support this setting.' });
+      }
+    }
+    if (config.user_location != null && config.name !== 'web_search') {
+      ctx.addIssue({ code: 'custom', path: ['user_location'], message: 'Only web_search supports user_location.' });
+    }
+    if (config.allowed_domains != null && config.blocked_domains != null) {
+      ctx.addIssue({ code: 'custom', path: ['allowed_domains'], message: 'Only one domain list may be set.' });
+    }
+    if (
+      config.max_content_tokens !== undefined &&
+      config.name !== 'web_fetch' &&
+      (config.name !== 'web_search' || config.max_content_tokens !== null)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['max_content_tokens'],
+        message: 'Only web_fetch supports a content budget.',
+      });
+    }
+  });
 
 const mcpToolConfigSchema = permissionConfigSchema
   .extend({
@@ -432,8 +475,22 @@ export function setToolsetPermission(
       if (!predicate(tool)) {
         return tool;
       }
+      const webConfigs = (Array.isArray(tool.configs) ? tool.configs : [])
+        .map(toRecord)
+        .filter((config): config is Record<string, unknown> =>
+          Boolean(
+            config &&
+            ['web_search', 'web_fetch'].includes(String(config.name)) &&
+            ['allowed_domains', 'blocked_domains', 'max_content_tokens', 'user_location'].some(
+              (field) => field in config,
+            ),
+          ),
+        )
+        .map(({ enabled, permission_policy, ...settings }) => ({ ...settings, ...permissionConfig(permission) }));
       const configs =
-        tool.type === 'agent_toolset_20260401' ? [{ name: 'ask_user_question', ...permissionConfig(permission) }] : [];
+        tool.type === 'agent_toolset_20260401'
+          ? [...webConfigs, { name: 'ask_user_question', ...permissionConfig(permission) }]
+          : [];
       return { ...tool, default_config: permissionConfig(permission), configs };
     }),
   };
@@ -457,14 +514,26 @@ export function setToolPermission(
         ? tool.configs.map(toRecord).filter((config): config is Record<string, unknown> => Boolean(config))
         : [];
       const others = existing.filter((config) => config.name !== name);
-      const requiresExplicitPermission = tool.type === 'agent_toolset_20260401' && name === 'ask_user_question';
+      const requiresExplicitPermission =
+        tool.type === 'agent_toolset_20260401' &&
+        (name === 'ask_user_question' ||
+          existing.some(
+            (config) =>
+              config.name === name &&
+              ['allowed_domains', 'blocked_domains', 'max_content_tokens', 'user_location'].some(
+                (field) => field in config,
+              ),
+          ));
       return {
         ...tool,
         default_config: toRecord(tool.default_config) ?? permissionConfig(defaultPermission),
         configs:
           permission === defaultPermission && !requiresExplicitPermission
             ? others
-            : [...others, { name, ...permissionConfig(permission) }],
+            : [
+                ...others,
+                { ...existing.find((config) => config.name === name), name, ...permissionConfig(permission) },
+              ],
       };
     }),
   };

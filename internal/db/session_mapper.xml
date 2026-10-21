@@ -54,6 +54,7 @@ RETURNING <include refid="columns"/>
         status,
         usage,
         stats,
+        oma_session_activity_projection(workspace_uuid,uuid,NULL,NOW(),usage,stats) AS activity,
         outcome_evaluations,
         created_at,
         updated_at,

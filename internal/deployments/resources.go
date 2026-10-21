@@ -160,8 +160,7 @@ func (h *Handler) normalizeResource(
 		if err != nil {
 			return normalizedDeploymentResource{}, err
 		}
-		file, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID)
-		if err != nil {
+		if _, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID); err != nil {
 			return normalizedDeploymentResource{}, resourceReferenceError{
 				ResourceType: sessionresource.FileType,
 				ResourceID:   fileID,
@@ -170,13 +169,12 @@ func (h *Handler) normalizeResource(
 		}
 		if _, err := sessionresource.NormalizeFileSpec(
 			fileID,
-			file.Filename,
 			fields.Source,
 			fields.MountPath,
 		); err != nil {
 			return normalizedDeploymentResource{}, err
 		}
-		defaultMountPath := sandboxmount.DefaultFileMountPath(fileID, file.Filename)
+		defaultMountPath := sandboxmount.DefaultFileMountPath(fileID)
 		mountPath, err := optionalStringWithDefault(fields.MountPath, defaultMountPath, "mount_path")
 		if err != nil {
 			return normalizedDeploymentResource{}, err

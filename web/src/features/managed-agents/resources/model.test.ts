@@ -125,12 +125,11 @@ describe('environment template config', () => {
 });
 
 describe('validateEnvironmentTemplate', () => {
-  test('rejects invalid, reserved and duplicate variables and non-integer resources', () => {
+  test('rejects invalid and duplicate variables and non-integer resources', () => {
     const errors = validateEnvironmentTemplate(
       editValues({
         environmentRows: [
           { key: '1BAD', value: 'x' },
-          { key: 'anthropic_key', value: 'x' },
           { key: 'DUP', value: 'a' },
           { key: 'DUP', value: 'b' },
           { key: '', value: 'orphan' },
@@ -139,7 +138,7 @@ describe('validateEnvironmentTemplate', () => {
       }),
       msgFallback,
     );
-    expect(Object.keys(errors.environmentRows ?? {})).toEqual(['0', '1', '2', '3', '4']);
+    expect(Object.keys(errors.environmentRows ?? {})).toEqual(['0', '1', '2', '3']);
     expect(Object.keys(errors.resources ?? {}).sort()).toEqual(['cpu', 'disk', 'memory']);
   });
 
@@ -147,7 +146,10 @@ describe('validateEnvironmentTemplate', () => {
     const errors = validateEnvironmentTemplate(
       editValues({
         initScript: 'make',
-        environmentRows: [{ key: 'MODE', value: 'test' }],
+        environmentRows: [
+          { key: 'MODE', value: 'test' },
+          { key: 'ANTHROPIC_FLAG', value: 'on' },
+        ],
         resources: { cpu: '2000', memory: '', disk: '40' },
       }),
       msgFallback,

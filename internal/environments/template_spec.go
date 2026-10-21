@@ -18,10 +18,7 @@ const (
 	maxEnvironmentVariableBytes = 64 << 10
 )
 
-var (
-	environmentVariableNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	reservedEnvironmentPrefixes    = []string{"ANTHROPIC_", "CLAUDE_", "OMA_"}
-)
+var environmentVariableNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 type templateResources struct {
 	CPU    uint32 `json:"cpu,omitempty"`
@@ -193,11 +190,6 @@ func validateEnvironmentVariables(variables map[string]string) error {
 	for name, value := range variables {
 		if !environmentVariableNamePattern.MatchString(name) {
 			return errors.New("config.environment keys must be valid environment variable names")
-		}
-		for _, prefix := range reservedEnvironmentPrefixes {
-			if strings.HasPrefix(strings.ToUpper(name), prefix) {
-				return fmt.Errorf("config.environment keys must not use the reserved %s prefix", prefix)
-			}
 		}
 		if strings.ContainsRune(value, 0) {
 			return errors.New("config.environment values must not contain NUL characters")

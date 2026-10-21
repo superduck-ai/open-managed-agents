@@ -141,12 +141,12 @@ Cloud Environment 的 `config` 在 `packages` 之外接受三个字段，构成�
 | `packages` | Dockerfile `RUN`，按 apt → cargo → gem → go → npm → pip | 是 | 启动期安装 |
 | `init_script` | 软件包之后追加 `RUN ["bash","-eo","pipefail","-c", script]`，以 root 在 `/home/user` 执行，脚本作为 JSON 数据传入 | 是 | 拒绝启动 |
 | `resources` | CubeSandbox 模板的 `cpu`（毫核）、`memory`（MiB）、`writableLayerSize`（`disk` GiB） | 是 | 拒绝启动 |
-| `environment` | 创建 Sandbox 时的 `envVars`，平台注入的 `ANTHROPIC_*` 优先 | 否 | 直接生效 |
+| `environment` | 创建 Sandbox 时的 `envVars`，与平台注入变量同名时平台值优先 | 否 | 直接生效 |
 
 校验在 HTTP 边界完成，Runner 与预构建解码时重复校验以防数据库被直接改写：
 
 - `init_script` 修剪首尾空白，上限 64 KiB，拒绝 NUL 与带凭据的 URL。脚本会出现在 API 响应、构建日志和镜像层中，不得包含密钥。
-- `environment` 最多 64 个变量、合计 64 KiB，变量名必须符合 `[A-Za-z_][A-Za-z0-9_]*`，拒绝 `ANTHROPIC_`、`CLAUDE_`、`OMA_` 前缀（忽略大小写）。
+- `environment` 最多 64 个变量、合计 64 KiB，变量名必须符合 `[A-Za-z_][A-Za-z0-9_]*`，不限制前缀；与平台注入变量同名时以平台值为准。
 - `resources` 只接受 `cpu`、`memory`、`disk` 三个正整数，未知字段报错；每个维度不得超过 `environment_prebuilds.template.max_resources` 对应上限，上限为 `0` 表示该维度不可自定义。
 - `init_script` 或 `resources` 非空时要求 `environment_prebuilds.enabled`，否则创建或更新返回 400。
 - 更新时出现的字段整体替换；`null`、空字符串或空对象表示清除。未出现的字段保持原值。

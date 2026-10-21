@@ -2588,7 +2588,6 @@
   "environmentTemplate.resources.diskUnit": "GiB",
   "environmentTemplate.resources.default": "默认规格",
   "environmentTemplate.validation.variableName": "只能使用字母、数字和下划线，且不能以数字开头。",
-  "environmentTemplate.validation.variableReserved": "ANTHROPIC_、CLAUDE_ 和 OMA_ 前缀为保留前缀。",
   "environmentTemplate.validation.variableDuplicate": "环境变量名不能重复。",
   "environmentTemplate.validation.variableRequired": "请输入变量名。",
   "environmentTemplate.validation.resource": "请输入正整数。",

@@ -24,8 +24,6 @@ func TestTemplateConfigRejectsInvalidFields(t *testing.T) {
 		{"script credentials", `{"init_script":"git clone https://user:token@git.example.com/repo"}`, "URL credentials"},
 		{"environment type", `{"environment":{"A":1}}`, "config.environment must be an object"},
 		{"environment name", `{"environment":{"1A":"x"}}`, "valid environment variable names"},
-		{"environment reserved", `{"environment":{"anthropic_api_key":"x"}}`, "reserved ANTHROPIC_ prefix"},
-		{"environment oma reserved", `{"environment":{"OMA_PACKAGE":"x"}}`, "reserved OMA_ prefix"},
 		{"resources unknown", `{"resources":{"gpu":1}}`, "config.resources must be an object"},
 		{"resources negative", `{"resources":{"cpu":-1}}`, "config.resources must be an object"},
 	} {
@@ -203,7 +201,7 @@ func TestResolveEnvironmentSandboxRequiresPrebuiltTemplate(t *testing.T) {
 	}
 	env := db.Environment{
 		ExternalID:       "env_1",
-		Config:           json.RawMessage(`{"type":"cloud","init_script":"make","environment":{"MODE":"test"}}`),
+		Config:           json.RawMessage(`{"type":"cloud","init_script":"make","environment":{"MODE":"test","CLAUDE_FLAG":"on","ANTHROPIC_ENVIRONMENT_ID":"spoofed"}}`),
 		BuildJobID:       &jobID,
 		ResolvedTemplate: "built",
 	}
@@ -211,7 +209,7 @@ func TestResolveEnvironmentSandboxRequiresPrebuiltTemplate(t *testing.T) {
 	if err != nil || !preinstalled || resolution.Template != "built" {
 		t.Fatalf("resolution = %+v preinstalled=%v err=%v", resolution, preinstalled, err)
 	}
-	if resolution.Envs["MODE"] != "test" || resolution.Envs["ANTHROPIC_ENVIRONMENT_ID"] != "env_1" {
+	if resolution.Envs["MODE"] != "test" || resolution.Envs["CLAUDE_FLAG"] != "on" || resolution.Envs["ANTHROPIC_ENVIRONMENT_ID"] != "env_1" {
 		t.Fatalf("envs = %+v", resolution.Envs)
 	}
 }

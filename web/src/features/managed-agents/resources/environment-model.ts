@@ -20,19 +20,12 @@ export type EnvironmentValidationErrors = {
 };
 
 const environmentVariableName = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const reservedEnvironmentPrefixes = ['ANTHROPIC_', 'CLAUDE_', 'OMA_'];
 
 function environmentVariableKeyError(key: string, counts: Map<string, number>, msg: I18nMsg) {
   if (!environmentVariableName.test(key)) {
     return msg(
       'environmentTemplate.validation.variableName',
       'Use letters, digits and underscores, not starting with a digit.',
-    );
-  }
-  if (reservedEnvironmentPrefixes.some((prefix) => key.toUpperCase().startsWith(prefix))) {
-    return msg(
-      'environmentTemplate.validation.variableReserved',
-      'ANTHROPIC_, CLAUDE_ and OMA_ prefixes are reserved.',
     );
   }
   if ((counts.get(key) ?? 0) > 1) {

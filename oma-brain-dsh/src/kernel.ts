@@ -6,6 +6,7 @@ import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
 import ToolRuntime from "@deepseek-ai/dsh-tools";
 import AgentRegistry from "@deepseek-ai/dsh-agent";
 import AgentLoop from "@deepseek-ai/dsh-agent-loop";
+import * as TimeContext from "@deepseek-ai/dsh-time-context";
 import LocalAttachmentStore from "@deepseek-ai/dsh-attachment-local";
 
 /** Native dsh runtime only. Persistence and platform adapters are installed by the host. */
@@ -20,5 +21,6 @@ export async function mountKernel(ctx: Context): Promise<void> {
   });
   await ctx.plugin(ToolRuntime, { mode: "native" });
   await ctx.plugin(AgentRegistry);
+  await ctx.plugin(TimeContext, { timeZone: "Asia/Shanghai" });
   await ctx.plugin(AgentLoop, { agents: [], maxParallelToolCalls: 25 });
 }

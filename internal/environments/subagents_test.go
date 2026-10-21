@@ -88,7 +88,7 @@ func TestManagedAgentSubagentSkillsPreserveVersions(t *testing.T) {
 		{Source: "anthropic", SkillID: "review", Version: "1", RequestedVersion: "1", Directory: "review-v1"},
 		{Source: "anthropic", SkillID: "review", Version: "2", RequestedVersion: "latest", Directory: "review-v2"},
 	}
-	launch, err := managedAgentSessionConfig(db.Session{AgentSnapshot: snapshot}, managedAgentRuntimeResources{}, resolved)
+	launch, err := managedAgentSessionConfig(db.Session{AgentSnapshot: snapshot}, managedAgentRuntimeResources{}, resolved, "")
 	if err != nil {
 		t.Fatal(err)
 	}

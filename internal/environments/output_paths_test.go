@@ -92,7 +92,7 @@ func TestSessionOutputsAliasStartup(t *testing.T) {
 		if len(provider.runCommands) == 0 || provider.runCommands[0] != sessionOutputsAliasCommand(rcloneOutputsDestination, sessionOutputsPath) {
 			t.Fatalf("output alias not prepared: %v", provider.runCommands)
 		}
-		prompt, err := managedAgentEnvironmentPrompt(nil)
+		prompt, err := managedAgentEnvironmentPrompt(nil, "")
 		if err != nil {
 			t.Fatal(err)
 		}

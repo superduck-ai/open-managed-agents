@@ -7,6 +7,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 )
 
@@ -21,19 +22,24 @@ var environmentPromptSource string
 var environmentPromptTemplate = template.Must(template.New("environment").Parse(environmentPromptSource))
 
 type environmentPromptData struct {
+	Architecture string
 	Unrestricted bool
 	Reachable    string
 	Packages     string
 }
 
-func managedAgentEnvironmentPrompt(environmentConfig json.RawMessage) (string, error) {
+func managedAgentEnvironmentPrompt(environmentConfig json.RawMessage, deploymentEnvironment string) (string, error) {
 	policy, err := networkpolicy.ParseConfig(environmentConfig)
 	if err != nil {
 		return "", fmt.Errorf("parse environment networking: %w", err)
 	}
 	data := environmentPromptData{
+		Architecture: "x86_64",
 		Unrestricted: policy.Type != networkpolicy.TypeLimited,
 		Reachable:    reachableDestinations(policy),
+	}
+	if deploymentEnvironment == config.EnvironmentDev {
+		data.Architecture = "aarch64"
 	}
 	if len(environmentConfig) > 0 {
 		packages, err := decodeEnvironmentPackages(environmentConfig)

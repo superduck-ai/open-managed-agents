@@ -2,6 +2,7 @@ package codesessions
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
@@ -116,4 +117,34 @@ func postMCPProxyToolCall(t *testing.T, allowedMCPURL, target string) *http.Resp
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	return recorder.Result()
+}
+
+func TestMCPProxyDiscardsUpstreamNotForwardedHeader(t *testing.T) {
+	received := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var call struct {
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&call); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		received <- call.Method
+		w.Header().Set(mcpNotForwardedHeader, "true")
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(upstream.Close)
+	response := postMCPProxyToolCall(t, upstream.URL, upstream.URL)
+	select {
+	case method := <-received:
+		if method != "tools/call" {
+			t.Fatalf("upstream received method %q", method)
+		}
+	default:
+		t.Fatal("upstream did not receive a valid tool call")
+	}
+	if response.Header.Get(mcpNotForwardedHeader) != "" {
+		t.Fatal("upstream must not assert the gateway's not-forwarded evidence")
+	}
 }

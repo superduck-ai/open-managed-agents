@@ -126,6 +126,7 @@ export class ExternalMcpClient {
   }
 
   private requestTool(tool: RemoteTool, args: Payload, signal: AbortSignal) {
+    this.notForwarded = undefined;
     return this.client.callTool(
       { name: tool.remoteName, arguments: args },
       { signal, timeout: 185_000 },

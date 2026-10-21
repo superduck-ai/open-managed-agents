@@ -438,6 +438,7 @@ func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *
 			request.Out.Host = target.Host
 		},
 		ModifyResponse: func(response *http.Response) error {
+			response.Header.Del(mcpNotForwardedHeader)
 			if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
 				response.Header.Set("X-Accel-Buffering", "no")
 			}

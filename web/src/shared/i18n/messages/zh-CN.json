@@ -2569,5 +2569,11 @@
   "managedAgents.agents.newAgent": "新建智能体",
   "managedAgents.agents.createDialog.configuredTools": "{count} 个工具集",
   "managedAgents.agents.createDialog.describeLabel": "描述您的智能体",
-  "auth.login.emailDomainNotAllowed": "请使用允许登录的邮箱。"
+  "auth.login.emailDomainNotAllowed": "请使用允许登录的邮箱。",
+  "nav.llmSettings": "LLM 配置",
+  "llmModels.organizationDescription": "配置所有工作区共享的默认 Provider，裸模型 ID 查询时优先使用工作区 Provider。",
+  "llmModels.organizationUnavailable": "组织默认暂时无法加载。工作区 Provider 仍可管理。",
+  "llmModels.organizationReadOnly": "组织模型在此处只读，请前往组织级 LLM 配置进行管理。",
+  "llmModels.errorOrganizationProviderExists": "此组织已经有默认供应商。",
+  "llmModels.deleteOrganizationDescription": "删除所有工作区共享的组织默认供应商？使用该供应商的模型将不再可用。"
 }

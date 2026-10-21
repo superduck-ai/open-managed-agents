@@ -2569,5 +2569,11 @@
   "managedAgents.agents.newAgent": "New agent",
   "managedAgents.agents.createDialog.configuredTools": "{count} toolsets",
   "managedAgents.agents.createDialog.describeLabel": "Describe your agent",
-  "auth.login.emailDomainNotAllowed": "Use an approved email address to sign in."
+  "auth.login.emailDomainNotAllowed": "Use an approved email address to sign in.",
+  "nav.llmSettings": "LLM configuration",
+  "llmModels.organizationDescription": "Configure the default provider shared by all workspaces. Bare model IDs prefer workspace providers.",
+  "llmModels.organizationUnavailable": "The organization default could not be loaded. Workspace providers are still available.",
+  "llmModels.organizationReadOnly": "Organization models are read-only here. Manage them in organization LLM configuration.",
+  "llmModels.errorOrganizationProviderExists": "This organization already has a default provider.",
+  "llmModels.deleteOrganizationDescription": "Delete the default provider shared by all workspaces? Models using this provider will no longer be available."
 }

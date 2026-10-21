@@ -7,7 +7,10 @@ import (
 	"strings"
 )
 
-const DefaultSlug = "default"
+const (
+	DefaultSlug      = "default"
+	OrganizationSlug = "organization"
+)
 
 var (
 	ErrInvalidSlug = errors.New("slug must contain 1 to 32 lowercase letters, digits, '.', '_' or '-' and start with a letter or digit")

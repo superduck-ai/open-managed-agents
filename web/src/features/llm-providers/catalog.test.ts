@@ -37,6 +37,27 @@ const moonshotRow = {
 };
 
 describe('LLM model catalog helpers', () => {
+  test('keeps organization and workspace models with the same raw ID separately addressable', () => {
+    const organization = provider('llmprov_org', 'Organization', 'organization', ['shared-model', 'org-only']);
+    organization.scope = 'organization';
+    const workspace = provider('llmprov_ws', 'Workspace', 'workspace', ['shared-model']);
+    expect(catalogModels([organization, workspace])).toEqual([
+      {
+        id: 'shared-model',
+        qualifiedId: 'organization/shared-model',
+        providerId: 'llmprov_org',
+        providerName: 'Organization',
+      },
+      { id: 'org-only', qualifiedId: 'organization/org-only', providerId: 'llmprov_org', providerName: 'Organization' },
+      {
+        id: 'shared-model',
+        qualifiedId: 'workspace/shared-model',
+        providerId: 'llmprov_ws',
+        providerName: 'Workspace',
+      },
+    ]);
+  });
+
   test('builds catalog rows from providers', () => {
     const fromProviders = catalogModels([dashScope, moonshot]);
     expect(fromProviders).toEqual([kimiRow, glmRow, moonshotRow]);

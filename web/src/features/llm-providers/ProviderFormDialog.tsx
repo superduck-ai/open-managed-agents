@@ -77,6 +77,7 @@ function providerFormInput(
 
 export function ProviderFormDialog({
   provider,
+  organization = false,
   error,
   isPending,
   onClose,
@@ -84,6 +85,7 @@ export function ProviderFormDialog({
   onDiscoverModels,
 }: {
   provider: LLMProvider | null;
+  organization?: boolean;
   error: string;
   isPending: boolean;
   onClose: () => void;
@@ -91,7 +93,10 @@ export function ProviderFormDialog({
   onDiscoverModels: (baseUrl: string, apiKey: string, apiBackend: APIBackend) => Promise<string[]>;
 }) {
   const { msg } = useI18n();
-  const [form, setForm] = useState<ProviderForm>(() => providerForm(provider));
+  const [form, setForm] = useState<ProviderForm>(() => ({
+    ...providerForm(provider),
+    ...(organization ? { slug: 'organization', slugEdited: true } : {}),
+  }));
   const [formError, setFormError] = useState('');
   const [discovering, setDiscovering] = useState(false);
 
@@ -169,7 +174,7 @@ export function ProviderFormDialog({
           </Field>
           <ProviderSlugField
             slug={form.slug}
-            readOnly={Boolean(provider)}
+            readOnly={Boolean(provider) || organization}
             onChange={(slug) => setForm((value) => ({ ...value, slug, slugEdited: true }))}
           />
           <ProviderBackendField

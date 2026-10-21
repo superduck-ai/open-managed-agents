@@ -32,6 +32,64 @@ afterEach(() => {
 });
 
 describe('LLM models page', () => {
+  test('organization members can read defaults without management controls', async () => {
+    resetTestDom('https://oma.duck.ai/settings/llm');
+    const api = mockProvidersApi([], { organizationProvider: organizationProvider() });
+    renderPage('en', 'user', 'organization');
+    expect(await screen.findByText('organization/shared-model')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Organization default' }));
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh model list' }));
+    await waitFor(() => expect(api.requests.length).toBeGreaterThan(1));
+    expect(api.requests.every((request) => request.method === 'GET')).toBe(true);
+    expect(api.requests.every((request) => !request.url.includes('/workspaces/'))).toBe(true);
+  });
+
+  test('workspace administrators view organization defaults without editing them', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
+    mockProvidersApi([], { organizationProvider: organizationProvider() });
+    renderPage();
+    expect(await screen.findByText('organization/shared-model')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Organization default' }));
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    fireEvent.change(screen.getByLabelText('Add or search model'), { target: { value: 'new-model' } });
+    expect(screen.queryByRole('button', { name: /Add new-model/ })).toBeNull();
+  });
+
+  test('creates an organization default using organization preview and persistence endpoints', async () => {
+    resetTestDom('https://oma.duck.ai/settings/llm');
+    const api = mockProvidersApi(['shared-model']);
+    renderPage('en', 'admin', 'organization');
+    await screen.findByText('No providers yet');
+    fireEvent.click(screen.getByRole('button', { name: 'Add provider' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add provider' });
+    const slug = within(dialog).getByLabelText('Slug') as HTMLInputElement;
+    expect(slug.value).toBe('organization');
+    expect(slug.readOnly).toBe(true);
+    expect(within(dialog).queryByText('Quick configure AI gateway')).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText('Provider name'), { target: { value: 'Organization default' } });
+    fireEvent.change(within(dialog).getByLabelText('Base URL'), { target: { value: 'https://models.example.com' } });
+    fireEvent.change(within(dialog).getByLabelText('API key'), { target: { value: 'organization-key' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Fetch model list' }));
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url.endsWith('/llm_provider/preview_models'))).toBe(true),
+    );
+    await waitFor(() =>
+      expect((within(dialog).getByRole('textbox', { name: 'Model ID 1' }) as HTMLInputElement).value).toBe(
+        'shared-model',
+      ),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('organization/shared-model')).toBeTruthy();
+    expect(api.requests.find((request) => request.method === 'PUT')?.body?.slug).toBe('organization');
+    expect(api.requests.every((request) => !request.url.includes('/workspaces/'))).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Organization default' }));
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeTruthy();
+  });
+
   test('目录读取被拒绝时显示无权限而不是通用失败', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
     globalThis.fetch = mock(
@@ -107,6 +165,7 @@ describe('LLM models page', () => {
           api_backend: 'messages',
           type: 'llm_provider',
           id: 'provider_readonly',
+          slug: 'readonly',
           name: 'Read gateway',
           base_url: 'https://llm.example.com',
           has_api_key: true,
@@ -118,8 +177,8 @@ describe('LLM models page', () => {
       ],
     });
     renderPage('en', 'user');
-    await screen.findByText('model-one');
-    expect(screen.getByText('model-two')).toBeTruthy();
+    await screen.findByText('readonly/model-one');
+    expect(screen.getByText('readonly/model-two')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Read gateway' }));
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
@@ -619,7 +678,7 @@ function TestRouter({ children }: { children: ReactNode }) {
   return <RouterContextProvider router={router}>{children}</RouterContextProvider>;
 }
 
-function renderPage(locale: Locale = 'en', role = 'admin') {
+function renderPage(locale: Locale = 'en', role = 'admin', scope: 'workspace' | 'organization' = 'workspace') {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   const authValue: AuthContextValue = {
     account: {
@@ -650,7 +709,7 @@ function renderPage(locale: Locale = 'en', role = 'admin') {
           <WorkspaceContext.Provider value={workspaceValue}>
             <QueryClientProvider client={queryClient}>
               <Toaster closeButton toastOptions={{ closeButtonAriaLabel: 'Close' }} />
-              <LLMModelsPage />
+              <LLMModelsPage scope={scope} />
             </QueryClientProvider>
           </WorkspaceContext.Provider>
         </AuthContext.Provider>
@@ -665,6 +724,7 @@ function mockProvidersApi(
   liveModelIds: string[] = [],
   options: {
     initialProviders?: LLMProvider[];
+    organizationProvider?: LLMProvider;
     previewStatus?: number;
     previewCode?: string;
     previewMessage?: string;
@@ -678,6 +738,7 @@ function mockProvidersApi(
   } = {},
 ) {
   let providers: LLMProvider[] = options.initialProviders ?? [];
+  let organization = options.organizationProvider;
   let nextID = 1;
   const requests: RecordedRequest[] = [];
   globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -686,6 +747,20 @@ function mockProvidersApi(
     const body = parseBody(init?.body);
     requests.push({ url, method, body });
 
+    if (url.endsWith('/llm_provider') && method === 'GET')
+      return organization ? jsonResponse(organization) : jsonResponse({}, 404);
+    if (url.endsWith('/llm_provider') && method === 'PUT') {
+      organization = { ...providerFromBody('provider_organization', body), scope: 'organization' };
+      return jsonResponse(organization);
+    }
+    if (url.endsWith('/llm_provider') && method === 'DELETE') {
+      organization = undefined;
+      return new Response(null, { status: 204 });
+    }
+    if (url.endsWith('/llm_provider/models/sync') && method === 'POST' && organization) {
+      organization = { ...organization, model_ids: [...new Set([...organization.model_ids, ...liveModelIds])] };
+      return jsonResponse(organization);
+    }
     if (url.endsWith('/preview_models') && method === 'POST') {
       if (options.previewStatus && options.previewStatus >= 400) {
         return jsonResponse(providerError(options.previewCode, options.previewMessage), options.previewStatus);
@@ -770,4 +845,17 @@ function storageText(storage: Storage) {
   return Array.from({ length: storage.length }, (_, index) => storage.getItem(storage.key(index) ?? '') ?? '').join(
     '\n',
   );
+}
+
+function organizationProvider(): LLMProvider {
+  return {
+    ...providerFromBody('provider_organization', {
+      name: 'Organization default',
+      slug: 'organization',
+      base_url: 'https://models.example.com',
+      api_key: 'organization-key',
+      model_ids: ['shared-model'],
+    }),
+    scope: 'organization',
+  };
 }

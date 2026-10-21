@@ -22,6 +22,7 @@ import {
 
 type ModelCatalogProps = {
   canManage: boolean;
+  organizationEditable: boolean;
   providers: LLMProvider[];
   models: CatalogModel[];
   selectedProviderId: string;
@@ -38,6 +39,7 @@ type ModelCatalogProps = {
 
 export function ModelCatalog({
   canManage,
+  organizationEditable,
   providers,
   models,
   selectedProviderId,
@@ -54,6 +56,7 @@ export function ModelCatalog({
   const { msg } = useI18n();
   const selected = providers.find((provider) => provider.id === selectedProviderId);
   const visibleModels = modelsForProvider(filterCatalogModels(models, query), selectedProviderId);
+  const canEditSelected = canManage && (organizationEditable || selected?.scope !== 'organization');
   const candidateId = addableModelId(query, modelsForProvider(models, selectedProviderId));
 
   return (
@@ -91,7 +94,7 @@ export function ModelCatalog({
 
         {selected ? (
           <ProviderSection
-            canManage={canManage}
+            canManage={canEditSelected}
             provider={selected}
             models={visibleModels}
             emptyMessage={
@@ -110,7 +113,7 @@ export function ModelCatalog({
           />
         )}
 
-        {canManage ? (
+        {canEditSelected ? (
           <AddModelHint
             candidateId={candidateId}
             query={query}
@@ -219,7 +222,17 @@ function ProviderSection({
   return (
     <section data-testid={`llm-provider-group-${provider.id}`}>
       <div className="flex items-center gap-3 bg-muted/40 px-4 py-3">
-        <ProviderIdentity provider={provider} modelCount={models.length} />
+        <div className="min-w-0 flex-1">
+          <ProviderIdentity provider={provider} modelCount={models.length} />
+          {provider.scope === 'organization' && !canManage ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              {msg(
+                'llmModels.organizationReadOnly',
+                'Organization models are read-only here. Manage them in organization LLM configuration.',
+              )}
+            </p>
+          ) : null}
+        </div>
         {canManage ? (
           <div className="flex shrink-0 items-center gap-1">
             <Button

@@ -4,7 +4,7 @@
 
 LLM 模型页是工作区的模型目录，而不是 Provider 卡片墙。
 
-页面只请求 `GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers`。Provider 配置及其 `model_ids` 是目录的唯一数据源，页面不再额外请求 `/v1/models`，避免同一页面出现两份模型集合和无法归属 Provider 的模型。
+工作区页面请求 `GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers` 和组织默认 `GET /api/console/organizations/{orgUuid}/llm_provider`。Provider 配置及其 `model_ids` 是目录的唯一数据源，页面不再额外请求 `/v1/models`，避免同一页面出现两份模型集合和无法归属 Provider 的模型。
 
 填写 Provider 的 Base URL 和 API Key 后，可在表单里点「获取模型列表」，请求 `POST .../llm_providers/preview_models`，用上游 `{base_url}/v1/models` 填入模型 ID。获取结果与表单内已有的非空模型 ID 合并、去重，不覆盖手工输入；上游返回空数组时只提示，不清空表单。编辑 Provider 时，读取接口不会返回旧 Key，因此只有用户输入新 Key 后才显示「获取模型列表」。
 
@@ -55,3 +55,11 @@ Base URL 仍填写 API 根地址，允许路径前缀，不重复填写 `/v1`。
 创建、编辑和模型预览请求均携带 `api_backend`；模型同步由后端使用已保存的 backend。
 模型增删等局部操作的完整 Provider 更新也必须保留该字段，避免将 Chat Completions 配置重置为 Messages。
 组件测试覆盖选择 backend、模型发现、创建与编辑保留，并断言 Responses 选项不可用。
+
+## 组织 LLM 配置
+
+组织设置增加 `/settings/llm` 入口，复用 `LLMModelsPage` 的组织 scope。组织页只请求组织 Provider，不依赖选中的工作区；成员可只读查看，管理员可创建、编辑、删除、预览及同步。组织 Provider 的 slug 固定为 `organization`，表单只读展示，其他字段沿用通用 Provider 表单。
+
+工作区目录合并展示组织默认模型，复制完整 `organization/{model}` 引用。组织 Provider 在工作区页不可编辑、删除或追加模型，刷新只同步工作区 Provider；组织配置应在组织页修改。只读成员刷新只重新读取数据。组织读取返回 404 表示尚未配置，不视为失败；其他组织读取失败在已有工作区目录上提示降级，不能隐藏为正常成功。
+
+添加 Provider 默认打开通用配置表单，不包含公司网关快捷预设。

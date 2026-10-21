@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
+  Cpu,
   Globe2,
   ListTree,
   LogOut,
@@ -750,6 +751,9 @@ function SettingsNavigationIcon({ href }: { href: string }) {
   }
   if (href === '/settings/members') {
     return <UsersRound className="size-4" aria-hidden />;
+  }
+  if (href === '/settings/llm') {
+    return <Cpu className="size-4" aria-hidden />;
   }
   if (href === '/settings/workspaces') {
     return <Box className="size-4" aria-hidden />;

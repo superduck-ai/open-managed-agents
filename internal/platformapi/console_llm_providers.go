@@ -40,10 +40,18 @@ type llmProviderResponse struct {
 	ModelIDs    []string `json:"model_ids"`
 	CreatedAt   string   `json:"created_at"`
 	UpdatedAt   string   `json:"updated_at"`
+	Scope       string   `json:"scope,omitempty"`
 }
 
 func RegisterConsoleLLMProviderRoutes(r chi.Router, database *db.DB, secretService *secrets.Service) {
 	client := llmproviders.NewHTTPClient(15 * time.Second)
+	r.Route("/llm_provider", func(r chi.Router) {
+		r.Get("/", getConsoleOrganizationLLMProvider(database))
+		r.Put("/", putConsoleOrganizationLLMProvider(database, secretService))
+		r.Delete("/", deleteConsoleOrganizationLLMProvider(database))
+		r.Post("/preview_models", previewConsoleOrganizationLLMProviderModels(database, client))
+		r.Post("/models/sync", syncConsoleOrganizationLLMProviderModels(database, secretService, client))
+	})
 	r.Route("/workspaces/{workspaceId}/llm_providers", func(r chi.Router) {
 		r.Get("/", listConsoleLLMProviders(database))
 		r.Post("/", createConsoleLLMProvider(database, secretService))
@@ -312,6 +320,10 @@ func newLLMProviderSlug(
 ) (string, bool) {
 	if requested != nil && strings.TrimSpace(*requested) != "" {
 		slug := strings.TrimSpace(*requested)
+		if slug == llmproviders.OrganizationSlug {
+			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeSlugInvalid, "provider slug is reserved for the organization default provider")
+			return "", false
+		}
 		if err := llmproviders.ValidateSlug(slug); err != nil {
 			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeSlugInvalid, err.Error())
 			return "", false

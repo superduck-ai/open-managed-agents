@@ -91,6 +91,8 @@ func defaultConfig() Config {
 			OrganizationName:    "default",
 			WorkspaceExternalID: "workspace_default",
 			UserExternalID:      "user_default",
+			UserEmail:           "admin@example.local",
+			UserName:            "Local Admin",
 			APIKeyExternalID:    "api_key_default",
 		},
 	}

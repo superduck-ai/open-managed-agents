@@ -914,7 +914,10 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
         return jsonResponse({ error: { message: 'not found' } }, 404);
       }
       if (options.agentUpdateErrorStatus) {
-        return jsonResponse({ error: { message: 'forced update failure' } }, options.agentUpdateErrorStatus);
+        return jsonResponse(
+          { error: { message: 'allowed_domains.0: Invalid domain format' } },
+          options.agentUpdateErrorStatus,
+        );
       }
       if (body?.version !== current.version) {
         return jsonResponse({ error: { message: 'version conflict' } }, 409);

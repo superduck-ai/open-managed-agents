@@ -184,7 +184,10 @@ SQL 和事务仍经现有 `database/sql` 包装层，监听复用同一个 pgxpo
 `internal/runtime/e2bruntime/lifecycle_test.go` 验证 SDK 显式 API URL、鉴权透传、Debug 模式直接 DELETE、删除失败与 404 幂等。
 回收与 River 集成测试也使用真实 `E2BProvider`，通过本地 HTTP 服务模拟 E2B 删除响应。
 `tests/sandbox_lifecycle_river_test.go` 验证 durable schedule 的 sweep → reclaim 投递、LISTEN 连接及
-重复启动不重置 next_run_at。测试队列轮询设为一小时，并用独立 sweep 队列避免同队列通知限流干扰。
+重复启动不重置 next_run_at。每轮等待三个候选沙箱全部回收，测试队列轮询设为一小时，并用独立 sweep 队列避免同队列通知限流干扰。
+验证初始化不重置调度后，移除本次登记的生产 cron，仅由专用的一次性调度驱动测试，避免跨整分钟时生产 sweep 与 reclaim 同队列的通知限流影响断言。生产仍保留默认轮询兜底。
+
+sweep 对每页至多 100 个候选过滤策略后，通过 River `InsertMany` 在同一事务中入队，再统一通知消费者。逐条提交可能让消费者提前取完前几条，后续通知在限流窗口内被抑制，留下任务等待兜底轮询。批量提交保证本页任务在通知生效前全部可见，保留按 sandbox 参数和活跃状态去重的规则；空页或全部被策略过滤时不入队。
 投递超时时记录目标 Session、Worker、Work、Sandbox 的状态及对应 reclaim job 状态，供定位失败使用；诊断不改变调度行为或验收期限。
 原有 `tests/session_sandbox_recovery_test.go` 验证消息触发的 lease 恢复及缺失沙箱重建没有回归。
 

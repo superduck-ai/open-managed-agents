@@ -1579,6 +1579,7 @@
   "managedAgents.agents.createDialog.builtInTool.taskStop": "Stop a background task",
   "managedAgents.agents.createDialog.builtInTool.todoWrite": "Manage the task list",
   "managedAgents.agents.createDialog.builtInTool.webFetch": "Fetch URL content",
+  "managedAgents.agents.createDialog.builtInTool.webSearch": "Search the web and return sources",
   "managedAgents.agents.createDialog.builtInTool.write": "Write files",
   "managedAgents.agents.createDialog.editorMode": "Editor mode",
   "managedAgents.agents.detail.copySkillId": "Copy skill ID",

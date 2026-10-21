@@ -29,6 +29,7 @@ export class SessionRuntime {
   private readonly sandboxScope: symbol;
   readonly externalMcp: ExternalMcp;
   private sandboxTools?: Fiber;
+  private hostTools?: Fiber | void;
 
   constructor(
     readonly ctx: Context,
@@ -69,11 +70,12 @@ export class SessionRuntime {
         tools: this.config.tools,
         permissions: toolPermissions,
       });
+      this.hostTools = await this.config.setupTools?.(scope, this.bridge, this.config.tools, this.parent ? this.config.id : undefined, toolPermissions);
       await this.externalMcp.register(scope, this.bridge, this.abort.signal, async (serverName, phase) => {
         await this.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase);
       }, scope.get("sandboxExecutor")!, async (serverName) => {
         await this.hooks.onExternalMcpConnectionFailure?.(serverName);
-      });
+      }, this.parent ? this.config.id : undefined);
       this.hooks.setupTools?.(scope);
       scope.on("tools/pre-execute", async (exec, next) => {
         const decision = await next();
@@ -165,6 +167,10 @@ export class SessionRuntime {
       if (!this.sandboxTools) throw new Error("Session tools are not initialized");
       this.sandboxTools.update({ bridge: this.bridge, tools: next.tools, permissions: this.config.toolPermissions });
       await this.sandboxTools.await();
+      if (this.hostTools) {
+        this.hostTools.update({ ...this.hostTools.config, tools: next.tools, permissions: this.config.toolPermissions });
+        await this.hostTools.await();
+      }
       this.config.tools = next.tools;
     }
     await this.externalMcp.update(next.externalMcpConfig);

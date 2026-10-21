@@ -8,10 +8,10 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { object, type Payload } from "../json.ts";
-import type { RemoteTool, SandboxExecutor } from "../runtime/contracts.ts";
+import type { RemoteTool } from "../runtime/contracts.ts";
 import type { ExternalServer } from "./config.ts";
 
-export class ExternalMcpClient implements SandboxExecutor {
+export class ExternalMcpClient {
   private client: Client;
   private transport: SSEClientTransport | StreamableHTTPClientTransport;
   private readonly options;

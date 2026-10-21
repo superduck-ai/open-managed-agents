@@ -87,6 +87,31 @@ func TestReconcileRejectsToolUseIDsThatAreNotUnknownOutcomes(t *testing.T) {
 	}
 }
 
+func TestReconcileRejectsUnappliedRequestForAnotherThread(t *testing.T) {
+	store := blockedStore()
+	store.session.WorkerExternalMetadata = json.RawMessage(`{"unknown_tool_outcomes":[{"tool_use_id":"toolu_a"},{"tool_use_id":"toolu_b","session_thread_id":"sthr_child"}],"tool_outcome_reconciliation":{"tool_use_ids":["toolu_b"],"requested_at":"2026-10-21T07:00:00Z","session_thread_id":"sthr_child"}}`)
+
+	err := reconcile(context.Background(), store, request("toolu_a"), &bytes.Buffer{})
+
+	if err == nil || !strings.Contains(err.Error(), "2026-10-21T07:00:00Z") || len(store.merges) != 0 {
+		t.Fatalf("err=%v merges=%d", err, len(store.merges))
+	}
+}
+
+func TestReconcileMergesUnappliedRequestForTheSameThread(t *testing.T) {
+	store := blockedStore()
+	store.session.WorkerExternalMetadata = json.RawMessage(`{"unknown_tool_outcomes":[{"tool_use_id":"toolu_a"},{"tool_use_id":"toolu_b"}],"tool_outcome_reconciliation":{"tool_use_ids":["toolu_a"],"requested_at":"2026-10-21T07:00:00Z"}}`)
+
+	if err := reconcile(context.Background(), store, request("toolu_b", "toolu_a"), &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := `{"tool_outcome_reconciliation":{"tool_use_ids":["toolu_a","toolu_b"],"requested_at":"2026-10-21T08:00:00Z"}}`
+	if len(store.merges) != 1 || string(store.merges[0]) != want {
+		t.Fatalf("merges = %s", store.merges)
+	}
+}
+
 func TestReconcileListsUnknownOutcomesWithoutWriting(t *testing.T) {
 	store := blockedStore()
 	var output bytes.Buffer

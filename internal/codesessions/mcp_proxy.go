@@ -24,7 +24,7 @@ import (
 const (
 	maxMCPProxyURLBytes          = 2048
 	maxMCPDiscoveryResponseBytes = 1 << 20
-	mcpNotForwardedHeader        = "X-Oma-Mcp-Not-Forwarded"
+	mcpNotForwardedHeader        = tunnels.NotForwardedHeader
 )
 
 // mcpProxyTransportWrapper wraps the MCP upstream RoundTripper for vault
@@ -427,13 +427,13 @@ func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *
 	if h.wrapMCPVaultTransport != nil {
 		transport = h.wrapMCPVaultTransport(r.Context(), claims, target, transport)
 	}
-	var sent atomic.Bool
+	var connected atomic.Bool
 	proxy := &httputil.ReverseProxy{
 		Transport:     transport,
 		FlushInterval: -1,
 		Rewrite: func(request *httputil.ProxyRequest) {
 			upstreamURL := *target
-			request.Out = traceRequestWritten(request.Out, &sent)
+			request.Out = traceConnection(request.Out, &connected)
 			request.Out.URL = &upstreamURL
 			request.Out.Host = target.Host
 		},
@@ -445,7 +445,7 @@ func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *
 			return nil
 		},
 		ErrorHandler: func(writer http.ResponseWriter, request *http.Request, err error) {
-			if !sent.Load() {
+			if !connected.Load() {
 				writer.Header().Set(mcpNotForwardedHeader, "true")
 			}
 			if errors.Is(err, vaults.ErrUpstreamAuthenticationRejected) || errors.Is(err, vaults.ErrMCPOAuthReauthorizationRequired) {

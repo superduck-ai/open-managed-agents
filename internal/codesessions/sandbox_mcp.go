@@ -87,9 +87,9 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(sandboxToolCallWriteWindow))
 	}
 	w.Header().Del(sandboxNotForwardedHeader)
-	response, sent, err := sendSandboxMCPRequest(request)
+	response, connected, err := sendSandboxMCPRequest(request)
 	if err != nil {
-		if !sent {
+		if !connected {
 			w.Header().Set(sandboxNotForwardedHeader, "true")
 		}
 		h.errorAdapter.Write(w, r, sandboxOperationError(err))
@@ -127,18 +127,14 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 }
 
 func sendSandboxMCPRequest(request *http.Request) (*http.Response, bool, error) {
-	var sent atomic.Bool
+	var connected atomic.Bool
 	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(traceRequestWritten(request, &sent))
-	return response, sent.Load(), err
+	response, err := client.Do(traceConnection(request, &connected))
+	return response, connected.Load(), err
 }
 
-func traceRequestWritten(request *http.Request, sent *atomic.Bool) *http.Request {
-	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
-		if info.Err == nil {
-			sent.Store(true)
-		}
-	}}
+func traceConnection(request *http.Request, connected *atomic.Bool) *http.Request {
+	trace := &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { connected.Store(true) }}
 	return request.WithContext(httptrace.WithClientTrace(request.Context(), trace))
 }
 

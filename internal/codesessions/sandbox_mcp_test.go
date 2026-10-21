@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestSendSandboxMCPRequestReportsUnsentWhenConnectionIsRefused(t *testing.T) {
+func TestSendSandboxMCPRequestReportsUnconnectedWhenConnectionIsRefused(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -21,7 +21,7 @@ func TestSendSandboxMCPRequestReportsUnsentWhenConnectionIsRefused(t *testing.T)
 	}
 	request := newSandboxMCPTestRequest(t, "http://"+address+"/mcp")
 
-	response, sent, err := sendSandboxMCPRequest(request)
+	response, connected, err := sendSandboxMCPRequest(request)
 	if response != nil {
 		_ = response.Body.Close()
 	}
@@ -29,12 +29,47 @@ func TestSendSandboxMCPRequestReportsUnsentWhenConnectionIsRefused(t *testing.T)
 	if err == nil {
 		t.Fatal("expected a connection error")
 	}
-	if sent {
+	if connected {
 		t.Fatal("refused connection must not be reported as forwarded")
 	}
 }
 
-func TestSendSandboxMCPRequestReportsSentWhenResponseIsLost(t *testing.T) {
+func TestSendSandboxMCPRequestKeepsPartiallyWrittenRequestUnknown(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = connection.(*net.TCPConn).SetLinger(0)
+			_ = connection.Close()
+		}
+	}()
+	body := bytes.Repeat([]byte("x"), 8<<20)
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "http://"+listener.Addr().String()+"/mcp", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response, connected, err := sendSandboxMCPRequest(request)
+	if response != nil {
+		_ = response.Body.Close()
+	}
+
+	if err == nil {
+		t.Fatal("expected the reset connection to fail")
+	}
+	if !connected {
+		t.Fatal("a request that reached an open connection must not be reported as unforwarded")
+	}
+}
+
+func TestSendSandboxMCPRequestReportsConnectedWhenResponseIsLost(t *testing.T) {
 	received := make(chan []byte, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -49,7 +84,7 @@ func TestSendSandboxMCPRequestReportsSentWhenResponseIsLost(t *testing.T) {
 	defer server.Close()
 	request := newSandboxMCPTestRequest(t, server.URL+"/mcp")
 
-	response, sent, err := sendSandboxMCPRequest(request)
+	response, connected, err := sendSandboxMCPRequest(request)
 	if response != nil {
 		_ = response.Body.Close()
 	}
@@ -57,7 +92,7 @@ func TestSendSandboxMCPRequestReportsSentWhenResponseIsLost(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the lost response to fail")
 	}
-	if !sent {
+	if !connected {
 		t.Fatal("a request delivered to the sandbox must be reported as forwarded")
 	}
 	if got := <-received; !bytes.Equal(got, sandboxMCPTestBody) {
@@ -65,7 +100,7 @@ func TestSendSandboxMCPRequestReportsSentWhenResponseIsLost(t *testing.T) {
 	}
 }
 
-func TestSendSandboxMCPRequestReportsSentOnSuccess(t *testing.T) {
+func TestSendSandboxMCPRequestReportsConnectedOnSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
@@ -73,14 +108,14 @@ func TestSendSandboxMCPRequestReportsSentOnSuccess(t *testing.T) {
 	defer server.Close()
 	request := newSandboxMCPTestRequest(t, server.URL+"/mcp")
 
-	response, sent, err := sendSandboxMCPRequest(request)
+	response, connected, err := sendSandboxMCPRequest(request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
 
-	if !sent || response.StatusCode != http.StatusOK {
-		t.Fatalf("sent=%v status=%d", sent, response.StatusCode)
+	if !connected || response.StatusCode != http.StatusOK {
+		t.Fatalf("connected=%v status=%d", connected, response.StatusCode)
 	}
 }
 

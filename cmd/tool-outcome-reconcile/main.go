@@ -162,7 +162,10 @@ func reconcile(ctx context.Context, store sessionStore, request reconcileRequest
 			return fmt.Errorf("tool_use_id %q is not an unknown tool outcome of this session", id)
 		}
 	}
-	pending := &reconciliationRequest{ToolUseIDs: request.Acknowledge, RequestedAt: request.Now, SessionThreadID: request.SessionThreadID}
+	pending, err := mergePendingReconciliation(metadata.Reconciliation, reconciliationRequest{ToolUseIDs: request.Acknowledge, RequestedAt: request.Now, SessionThreadID: request.SessionThreadID})
+	if err != nil {
+		return err
+	}
 	patch, err := json.Marshal(map[string]any{"tool_outcome_reconciliation": pending})
 	if err != nil {
 		return err
@@ -171,6 +174,30 @@ func reconcile(ctx context.Context, store sessionStore, request reconcileRequest
 		return fmt.Errorf("record reconciliation: %w", err)
 	}
 	return writeReport(stdout, reconcileReport{CodeSessionID: session.ExternalID, UnknownOutcomes: metadata.UnknownOutcomes, PendingReconciliation: pending})
+}
+
+func mergePendingReconciliation(existing *reconciliationRequest, next reconciliationRequest) (*reconciliationRequest, error) {
+	if existing == nil {
+		return &next, nil
+	}
+	if !sameThreadScope(existing.SessionThreadID, next.SessionThreadID) {
+		return nil, fmt.Errorf("an unapplied reconciliation requested at %s targets a different thread; wait until the session next receives input and the Brain applies it", existing.RequestedAt.Format(time.RFC3339))
+	}
+	merged := next
+	merged.ToolUseIDs = slices.Clone(existing.ToolUseIDs)
+	for _, id := range next.ToolUseIDs {
+		if !slices.Contains(merged.ToolUseIDs, id) {
+			merged.ToolUseIDs = append(merged.ToolUseIDs, id)
+		}
+	}
+	return &merged, nil
+}
+
+func sameThreadScope(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
 }
 
 func writeReport(stdout io.Writer, report reconcileReport) error {

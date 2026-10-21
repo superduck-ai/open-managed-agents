@@ -63,8 +63,11 @@ test("model idle timeout aborts a stalled HTTP response body", async () => {
     start(controller) { controller.enqueue(new TextEncoder().encode("first")); },
   })) });
   try {
+    const request = new AbortController();
+    const received = await fetch(server.url, { signal: request.signal });
     const idle = new IdleTimeout(100);
-    const response = idle.watch(await fetch(server.url, { signal: idle.signal }));
+    idle.signal.addEventListener("abort", () => request.abort(idle.signal.reason), { once: true });
+    const response = idle.watch(received);
     const reader = response.body!.getReader();
     expect(new TextDecoder().decode((await reader.read()).value)).toBe("first");
     await expect(reader.read()).rejects.toThrow();

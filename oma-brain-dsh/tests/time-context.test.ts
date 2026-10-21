@@ -3,10 +3,11 @@ import { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
-import { Backend, modelSystemText } from "./backend.ts";
+import { Backend, modelSystemText, textEvents } from "./backend.ts";
 
 test("Brain preserves clock readings across resume and refreshes after ten minutes", async () => {
   const backend = new Backend();
+  backend.modelScript = [textEvents("first"), textEvents("resumed"), textEvents("refreshed")];
   await backend.ready;
   let context = new Context();
   let session: ReturnType<typeof createOmaSession> | undefined;

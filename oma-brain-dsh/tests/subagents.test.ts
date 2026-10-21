@@ -187,7 +187,7 @@ test.each(["user.interrupt", "control_request"])("%s interrupting the whole sess
   expect(f.session.state.threads![0]!.status).toBe("idle");
 });
 
-test("lost child tool outcome blocks parent recovery and never replays the command", async () => {
+test("lost child tool outcome blocks parent recovery until new input and never replays the command", async () => {
   const f = await fixture();
   const lostResponse = Promise.withResolvers<Payload>();
   f.b.onTool = () => lostResponse.promise;
@@ -209,8 +209,13 @@ test("lost child tool outcome blocks parent recovery and never replays the comma
   f.b.onCancel = undefined;
   const restored = await fixture(f.b);
   expect(restored.session.blocked()).toBe(true);
-  await expect(restored.session.receive("retry", { content: "try again" })).rejects.toThrow("reconciliation");
+  const requests = f.b.requests.length;
+  f.b.modelScript = [textEvents("checked the child state")];
+  await restored.session.receive("retry", { content: "try again" });
+  expect(restored.session.blocked()).toBe(false);
   expect(f.b.executions).toHaveLength(1);
+  expect(f.b.requests).toHaveLength(requests + 1);
+  expect(JSON.stringify(f.b.requests.at(-1)!.messages)).toContain("(child_tool)");
 });
 
 test.each(["user.interrupt", "control_request"])("%s targeted child interruption leaves parent quiet until user input while primary interruption stops the turn", async (type) => {

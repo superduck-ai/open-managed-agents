@@ -11,7 +11,7 @@ async function checkShutdown(
   force = false,
 ) {
   const child = spawn(process.execPath, ["tests/shutdown-worker.ts"], {
-    env: { ...process.env, TEST_SHUTDOWN_MODE: mode },
+    env: { ...process.env, TEST_SHUTDOWN_MODE: mode, OMA_BRAIN_SHUTDOWN_DRAIN_MS: "0" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const exited = once(child, "exit");
@@ -39,8 +39,8 @@ async function checkShutdown(
 test("SIGINT finishes graceful shutdown", () => checkShutdown("clean", "SIGINT", 0));
 test("shutdown failure exits with code 1", () =>
   checkShutdown("fail", "SIGINT", 1, "Brain shutdown failed"));
-test("hung shutdown forces exit after ten seconds", () =>
-  checkShutdown("hang", "SIGINT", 1, "Brain shutdown timed out after 10 seconds; forcing exit"),
+test("hung shutdown forces exit after the drain, settle and cleanup budget", () =>
+  checkShutdown("hang", "SIGINT", 1, "Brain shutdown timed out after 8 seconds; forcing exit"),
   15_000);
 test("a second SIGINT forces exit during shutdown", () =>
   checkShutdown("hang", "SIGINT", 130, "", true));

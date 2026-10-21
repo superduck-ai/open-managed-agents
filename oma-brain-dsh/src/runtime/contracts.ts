@@ -65,6 +65,31 @@ export type ToolPermissions = Record<string, ToolPermission>;
 
 export class ToolNotForwardedError extends Error {}
 
+export const SHUTDOWN_CANCEL = { kind: "hook", reason: "oma-worker-shutdown" } as const;
+
+export function isShutdownCancel(reason: unknown): boolean {
+  return typeof reason === "object" && reason !== null && "kind" in reason && reason.kind === SHUTDOWN_CANCEL.kind
+    && "reason" in reason && reason.reason === SHUTDOWN_CANCEL.reason;
+}
+
+const CONNECT_FAILURE_CODES = new Set(["ConnectionRefused", "ECONNREFUSED", "FailedToOpenSocket", "ENOTFOUND", "EAI_AGAIN"]);
+
+export function isConnectFailure(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error
+    && CONNECT_FAILURE_CODES.has(String(error.code));
+}
+
+export async function notForwardedDetail(response: Response): Promise<string> {
+  let detail = `HTTP ${response.status}`;
+  try {
+    const message = (await response.json())?.error?.message;
+    if (typeof message === "string" && message) detail = message.slice(0, 500);
+  } catch {
+    return detail;
+  }
+  return detail;
+}
+
 /** Host-provided sandbox readiness and execution. Resource creation belongs to the provider service. */
 export interface SandboxExecutor {
   provision?(signal: AbortSignal): Promise<void>;

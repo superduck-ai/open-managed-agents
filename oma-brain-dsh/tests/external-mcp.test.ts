@@ -201,11 +201,14 @@ async function fixture(
         })
       : route(request);
   const ctx = new Context();
+  let gateway: ((request: Request) => Promise<Response | undefined>) | undefined;
   const api = new OmaApi(b.url, (async (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
     if (url.pathname === `/v2/ccr-sessions/${b.a.session_id}/mcp`) {
       expect(request.headers.get("Authorization")).toBe(`Bearer ${b.a.ingress_token}`);
+      const override = await gateway?.(request.clone());
+      if (override) return override;
       const upstream = new Request(url.searchParams.get("mcp_url")!, request);
       upstream.headers.set("Authorization", "Bearer peer-secret");
       return fetch(upstream, { redirect: "error" });
@@ -232,6 +235,7 @@ async function fixture(
     session,
     ctx,
     api,
+    gateway: (handler: (request: Request) => Promise<Response | undefined>) => { gateway = handler; },
     async close() {
       try {
         await session.close();
@@ -339,6 +343,42 @@ test("denied external tools and invalid approved arguments never dispatch", asyn
     await f.close();
   }
 });
+
+async function isToolCall(request: Request): Promise<boolean> {
+  if (request.method !== "POST") return false;
+  return ((await request.json()) as Payload).method === "tools/call";
+}
+
+for (const [name, reject] of [
+  ["a gateway rejection marked not forwarded", () => Response.json(
+    { type: "error", error: { type: "api_error", message: "MCP upstream is unavailable" } },
+    { status: 502, headers: { "X-Oma-Mcp-Not-Forwarded": "true" } },
+  )],
+  ["an unreachable OMA gateway", () => fetch("http://127.0.0.1:1/mcp", { method: "POST", body: "{}" })],
+] as const) {
+  test(`external call stopped by ${name} records a known failure and permits the next turn`, async () => {
+    const f = await fixture();
+    try {
+      await f.session.open();
+      let rejecting = true;
+      f.gateway(async (request) => rejecting && await isToolCall(request) ? reject() : undefined);
+      f.b.modelScript = [mcpEvents(), textEvents("could not fetch")];
+      await f.session.receive("not_forwarded", { content: "Fetch documentation" });
+      expect(f.session.blocked()).toBe(false);
+      expect(f.p.requests.filter((request) => request.method === "tools/call")).toHaveLength(0);
+      expect(JSON.stringify(f.b.requests[1]!.messages)).toContain("MCP tool call was not executed");
+      expect(f.session.state.executions![f.session.id]!.toolOutcomes.mcp_call).toMatchObject({ failed: true });
+
+      rejecting = false;
+      f.b.modelScript = [mcpEvents("mcp_retry"), textEvents("fetched")];
+      await f.session.receive("after_not_forwarded", { content: "Try again" });
+      expect(f.session.blocked()).toBe(false);
+      expect(f.p.requests.filter((request) => request.method === "tools/call")).toHaveLength(1);
+    } finally {
+      await f.close();
+    }
+  });
+}
 
 test("external transport failure records unknown and blocks the turn without replay", async () => {
   const f = await fixture();

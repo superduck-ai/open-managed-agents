@@ -3,11 +3,13 @@ import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import { createUserMessage, type ContentBlock, type ToolCallBlock } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { ContextRecovery } from "./compaction.ts";
+import { ModelRetry } from "./model-retry.ts";
 import { ExternalMcp } from "../external-mcp/index.ts";
 import * as SandboxTools from "../sandbox-tools/index.ts";
 import { failureDiagnostic, workerDiagnostic } from "../ccrv2/diagnostics.ts";
 import { approveToolCall, releaseToolApproval, clearToolApprovals, prefetchMcpApprovals } from "./tool-approvals.ts";
 import * as UserQuestions from "../user-questions/index.ts";
+import { SHUTDOWN_CANCEL } from "./contracts.ts";
 import { object } from "../json.ts";
 import type {
   SessionRuntimeConfig,
@@ -24,6 +26,7 @@ export class SessionRuntime {
   lastIdle = Date.now();
   private turnCompleted = false;
   private readonly contextRecovery = new ContextRecovery();
+  private readonly modelRetry = new ModelRetry();
   private toolCalls: ToolCallBlock[] = [];
   appendedSystem = "";
   private finishing?: ReturnType<typeof Promise.withResolvers<void>>;
@@ -139,7 +142,14 @@ export class SessionRuntime {
             signal.throwIfAborted();
             await this.hooks.onContextCompacted?.(tokens);
           });
-        return recovered ? { kind: "retry" } : next();
+        if (recovered) return { kind: "retry" };
+        const retried = await this.modelRetry.retry(failure, turn, step, signal, (attempt, delayMs) => {
+          workerDiagnostic("warn", "oma_model_request_retry", {
+            session_id: this.config.id, failure_code: failure.code, http_status: failure.status,
+            attempt, delay_ms: delayMs,
+          });
+        });
+        return retried ? { kind: "retry" } : next();
       });
       scope.on("agent/assistant-stream", ({ frame }) => this.hooks.onStream(frame));
     };
@@ -223,6 +233,10 @@ export class SessionRuntime {
 
   async flushLog(): Promise<void> {
     await this.ctx.sessions.flush(this.agent.session);
+  }
+
+  cancelForShutdown(): void {
+    this.handle?.agent.cancel(SHUTDOWN_CANCEL);
   }
 
   stop(): void {

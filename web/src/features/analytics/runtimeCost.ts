@@ -10,7 +10,7 @@ export type RuntimeCostReport = {
   daily: RuntimeCostDay[];
   groups: RuntimeCostGroup[];
   models: string[];
-  service_accounts: Array<{ ID: string; Label: string }>;
+  service_accounts: Array<{ id: string; label: string }>;
 };
 
 export function runtimeCostLabel(

@@ -370,7 +370,7 @@ test('no Default environment is invented and archived names block new creation',
   const created = api.requests.find((request) => request.method === 'POST' && request.url.includes('/environments'));
   expect(created?.body).toMatchObject({
     name: 'New runtime',
-    config: { type: 'cloud', networking: { type: 'limited' } },
+    config: { type: 'cloud', networking: { type: 'unrestricted' } },
   });
 });
 

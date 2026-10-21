@@ -626,6 +626,45 @@ export function environmentEditValues(entity: EnvironmentApiResponse): Environme
     metadataRows: Object.entries(metadata).length
       ? Object.entries(metadata).map(([key, value]) => ({ key, value: String(value) }))
       : [{ key: '', value: '' }],
+    ...environmentTemplateValues(config),
+  };
+}
+
+function environmentTemplateValues(config: Record<string, unknown>) {
+  const resources = objectRecord(config.resources);
+  const resourceText = (value: unknown) => (typeof value === 'number' && value > 0 ? String(value) : '');
+  return {
+    initScript: typeof config.init_script === 'string' ? config.init_script : '',
+    environmentRows: Object.entries(objectRecord(config.environment)).map(([key, value]) => ({
+      key,
+      value: String(value),
+    })),
+    resources: {
+      cpu: resourceText(resources.cpu),
+      memory: resourceText(resources.memory),
+      disk: resourceText(resources.disk),
+    },
+  };
+}
+
+export function environmentTemplateBody(values: EnvironmentEditValues) {
+  const environment: Record<string, string> = {};
+  for (const row of values.environmentRows) {
+    if (row.key.trim()) {
+      environment[row.key.trim()] = row.value;
+    }
+  }
+  const resources: Record<string, number> = {};
+  for (const name of ['cpu', 'memory', 'disk'] as const) {
+    const value = Number(values.resources[name].trim());
+    if (values.resources[name].trim() && Number.isInteger(value) && value > 0) {
+      resources[name] = value;
+    }
+  }
+  return {
+    init_script: values.initScript.trim(),
+    environment,
+    resources: Object.keys(resources).length ? resources : null,
   };
 }
 
@@ -750,6 +789,7 @@ export function environmentConfigBody(values: EnvironmentEditValues) {
   return {
     type: 'cloud',
     packages,
+    ...environmentTemplateBody(values),
     networking:
       values.networkType === 'limited'
         ? {

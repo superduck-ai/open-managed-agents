@@ -150,11 +150,11 @@ func TestSessionActivityNewWorkerFactAndReplayPostgres(t *testing.T) {
 	session := Session{UUID: sid, ExternalID: "activity-session", OrganizationUUID: org, WorkspaceUUID: workspace, Status: "running"}
 	now := time.Now().UTC()
 	event := SessionEvent{UUID: uuid.NewV4().String(), ExternalID: "fresh-worker-fact", EventType: "agent.thinking", Payload: []byte(`{"type":"agent.thinking","content":[{"type":"thinking","thinking":"measured"}]}`), CreatedAt: now, ProcessedAt: now, ThreadExternalID: func() *string { v := primary; return &v }()}
-	first, err := insertSessionHistoryTx(ctx, tx, session, []SessionEvent{event})
+	first, err := insertSessionHistoryTx(ctx, tx, session, []SessionEvent{event}, nil)
 	if err != nil || len(first.Events) != 1 {
 		t.Fatal("new worker fact must survive missing-history lookup", len(first.Events), err)
 	}
-	replay, err := insertSessionHistoryTx(ctx, tx, session, []SessionEvent{event})
+	replay, err := insertSessionHistoryTx(ctx, tx, session, []SessionEvent{event}, nil)
 	if err != nil || len(replay.Events) != 0 {
 		t.Fatal("worker replay must remain idempotent", len(replay.Events), err)
 	}

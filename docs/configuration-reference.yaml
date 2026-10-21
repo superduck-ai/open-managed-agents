@@ -338,3 +338,8 @@ transcript_archive:
   target_segment_raw_bytes: 8388608
   delete_batch_rows: 500
   max_rows_per_job: 50000
+
+# Omit this block to leave runtime cost unconfigured. The cost page then says it is not configured.
+# usd_per_hour is USD per sandbox hour. Convert yuan and the exchange rate before writing this value.
+runtime_cost:
+  usd_per_hour: "0.01652866"

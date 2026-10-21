@@ -146,6 +146,37 @@ RETURNING <include refid="columns"/>
         AND deleted_at IS NULL
     </update>
 
+    <update id="AddActiveMilliseconds" result="returning" resultType="sessionUsageRow">
+        UPDATE sessions
+        SET usage = jsonb_set(
+                usage - 'active_seconds',
+                '{active_milliseconds}',
+                to_jsonb(
+                    COALESCE(CAST(usage-&gt;&gt;'active_milliseconds' AS bigint), 0)
+                    + CASE
+                        WHEN jsonb_exists(usage, 'active_milliseconds') THEN 0
+                        ELSE COALESCE(CAST(CAST(usage-&gt;&gt;'active_seconds' AS numeric) * 1000 AS bigint), 0)
+                      END
+                    + #{durationMillis}
+                ),
+                true
+            )
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{sessionExternalID}
+        AND deleted_at IS NULL
+        AND status = 'running'
+        RETURNING usage
+    </update>
+
+    <update id="SetUsage" result="returning" resultType="sessionUsageRow">
+        UPDATE sessions
+        SET usage = CAST(#{usage,sensitive=true} AS jsonb)
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{sessionExternalID}
+        AND deleted_at IS NULL
+        RETURNING usage
+    </update>
+
     <update id="Archive" result="returning" resultType="sessionRow">
         UPDATE sessions
         SET archived_at = COALESCE(archived_at, NOW()), updated_at = NOW()

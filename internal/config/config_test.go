@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/base64"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1032,6 +1033,38 @@ func TestLoadVaultMasterKeyContract(t *testing.T) {
 			t.Fatalf("DecryptOnly = %+v, want one entry at version 1", cfg.Vault.MasterKey.Local.DecryptOnly)
 		}
 	})
+}
+
+func TestRuntimeCostRateIsConfigurable(t *testing.T) {
+	cfg, err := loadConfigTestYAML(t, "runtime_cost:\n  usd_per_hour: \"0.2\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RuntimeCost.USDPerHour != "0.2" {
+		t.Fatalf("runtime cost = %+v", cfg.RuntimeCost)
+	}
+	rate, err := cfg.RuntimeCost.HourlyUSD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := big.NewRat(1, 5)
+	if rate.Cmp(want) != 0 {
+		t.Fatalf("usd per hour = %s", rate.FloatString(10))
+	}
+	defaults, err := loadConfigTestYAML(t, "env: dev\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaults.RuntimeCost.USDPerHour != "" {
+		t.Fatalf("unset runtime cost = %+v", defaults.RuntimeCost)
+	}
+	unset, err := defaults.RuntimeCost.HourlyUSD()
+	if err != nil || unset != nil {
+		t.Fatalf("unset rate = %v %v", unset, err)
+	}
+	if _, err := loadConfigTestYAML(t, "runtime_cost:\n  usd_per_hour: \"0\"\n"); err == nil || !strings.Contains(err.Error(), "runtime_cost.usd_per_hour") {
+		t.Fatalf("zero usd rate error = %v", err)
+	}
 }
 
 func validKEKBase64ForConfigTest() string {

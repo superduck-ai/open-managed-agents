@@ -19,7 +19,7 @@ afterEach(() => {
 
 describe('Settings feature pages', () => {
   test('keeps only working organization and personal settings routes', () => {
-    for (const section of ['profile', 'appearance', 'organization', 'members', 'workspaces', 'api-keys']) {
+    for (const section of ['profile', 'appearance', 'organization', 'members', 'workspaces', 'cost', 'api-keys']) {
       expect(settingsSectionFromPath(`/settings/${section}`)).toBe(section);
     }
     for (const section of [
@@ -64,7 +64,7 @@ describe('Settings feature pages', () => {
     expect(container.querySelector('.surface-card')).toBeNull();
   });
 
-  test('organization navigation contains exactly three working sections', () => {
+  test('organization navigation contains the working sections', () => {
     resetTestDom('https://oma.duck.ai/settings/organization');
     renderSettingsFeature('/settings/organization', <div>Organization form</div>);
     const nav = screen.getByRole('navigation', { name: 'Settings navigation' });
@@ -72,6 +72,7 @@ describe('Settings feature pages', () => {
       '/settings/organization',
       '/settings/members',
       '/settings/workspaces',
+      '/settings/cost',
     ]);
   });
 });

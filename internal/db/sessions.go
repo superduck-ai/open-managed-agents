@@ -272,7 +272,7 @@ func (d *DB) CreateSessionWithEvents(ctx context.Context, input CreateSessionInp
 		if txErr != nil || len(events) == 0 {
 			return txErr
 		}
-		batch, txErr := insertSessionHistoryTx(ctx, executor, session, events)
+		batch, txErr := insertSessionHistoryTx(ctx, executor, session, events, d.RuntimeUSDPerHour())
 		if txErr != nil {
 			return txErr
 		}
@@ -401,7 +401,7 @@ func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalI
 	var changed bool
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		var err error
-		if removal, err = prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID, true); err != nil {
+		if removal, err = prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID, true, d.RuntimeUSDPerHour()); err != nil {
 			return err
 		}
 		row, err := NewSessionMapper(executor).Archive(ctx, workspaceUUID, externalID)
@@ -433,7 +433,7 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 	var removal SessionRemoval
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		var err error
-		if removal, err = prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID, false); err != nil {
+		if removal, err = prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID, false, d.RuntimeUSDPerHour()); err != nil {
 			return err
 		}
 		sessionMapper := NewSessionMapper(executor)
@@ -571,7 +571,7 @@ func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceUUID string, ses
 			result, err := insertSessionEventsTx(ctx, executor, session, []SessionEvent{{
 				UUID: uuid.NewV4().String(), ExternalID: eventID, EventType: "session.thread_status_terminated",
 				ThreadExternalID: &threadExternalID, StatusThreadID: threadExternalID, CreatedAt: now, ProcessedAt: now,
-			}})
+			}}, d.RuntimeUSDPerHour())
 			if err != nil {
 				return err
 			}
@@ -700,7 +700,7 @@ func (d *DB) AppendSessionEvents(
 		if session.ArchivedAt != nil {
 			return ErrInvalidState
 		}
-		result, txErr := insertSessionEventsTx(ctx, executor, session, events)
+		result, txErr := insertSessionEventsTx(ctx, executor, session, events, d.RuntimeUSDPerHour())
 		if txErr != nil {
 			return txErr
 		}
@@ -736,7 +736,7 @@ func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID stri
 		if session.ArchivedAt != nil {
 			return ErrInvalidState
 		}
-		result, txErr := insertSessionHistoryTx(ctx, executor, session, events)
+		result, txErr := insertSessionHistoryTx(ctx, executor, session, events, d.RuntimeUSDPerHour())
 		if txErr != nil {
 			return txErr
 		}

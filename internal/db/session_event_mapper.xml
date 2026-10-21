@@ -87,6 +87,15 @@
         ORDER BY id DESC LIMIT 1
     </select>
 
+    <select id="FindLatestSessionRunning" result="optional" resultType="sessionEventRow">
+        SELECT <include refid="columns"/>
+        FROM session_events
+        WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+          AND event_type = 'session.status_running'
+          AND deleted_at IS NULL
+        ORDER BY id DESC LIMIT 1
+    </select>
+
     <select id="FindLatestStatus" result="optional" resultType="sessionEventRow">
         SELECT <include refid="columns"/>
         FROM session_events
@@ -102,6 +111,58 @@
             </otherwise>
         </choose>
         ORDER BY id DESC LIMIT 1
+    </select>
+
+    <select id="ListRuntimeUsagePoints" resultType="runtimeUsagePointRow">
+        SELECT
+            e.session_uuid,
+            e.workspace_uuid,
+            w.name AS workspace_name,
+            w.external_id AS workspace_external_id,
+            e.processed_at,
+            e.id,
+            CAST(
+                CASE
+                    WHEN jsonb_exists(e.payload-&gt;'usage', 'active_milliseconds')
+                        THEN CAST(e.payload-&gt;'usage'-&gt;&gt;'active_milliseconds' AS bigint)
+                    ELSE CAST(CAST(COALESCE(e.payload-&gt;'usage'-&gt;&gt;'active_seconds', '0') AS numeric) * 1000 AS bigint)
+                END
+            AS text) AS active_milliseconds,
+            COALESCE(e.payload-&gt;'usage'-&gt;&gt;'runtime_cost_usd', '') AS runtime_cost_usd,
+            CASE
+                WHEN jsonb_typeof(s.agent_snapshot-&gt;'model') = 'object' THEN COALESCE(s.agent_snapshot-&gt;'model'-&gt;&gt;'id', '')
+                ELSE COALESCE(s.agent_snapshot-&gt;&gt;'model', '')
+            END AS model,
+            COALESCE(k.external_id, '') AS service_account_id,
+            COALESCE(NULLIF(k.name, ''), k.external_id, '') AS service_account_name
+        FROM session_events e
+        JOIN sessions s ON s.uuid = e.session_uuid AND s.workspace_uuid = e.workspace_uuid
+        JOIN workspaces w ON w.uuid = e.workspace_uuid
+        LEFT JOIN api_keys k ON k.uuid = s.created_by_api_key_uuid
+        WHERE e.organization_uuid = #{params.OrganizationUUID}
+        AND e.event_type = 'session.usage'
+        AND e.deleted_at IS NULL
+        AND e.processed_at &lt; #{params.EndingBefore}
+        <if test="params.WorkspaceExternalID != ''">
+            AND w.external_id = #{params.WorkspaceExternalID}
+        </if>
+        AND (
+            e.processed_at &gt;= #{params.StartingAt}
+            OR e.id IN (
+                SELECT DISTINCT ON (baseline.session_uuid) baseline.id
+                FROM session_events baseline
+                JOIN workspaces baseline_workspace ON baseline_workspace.uuid = baseline.workspace_uuid
+                WHERE baseline.organization_uuid = #{params.OrganizationUUID}
+                AND baseline.event_type = 'session.usage'
+                AND baseline.deleted_at IS NULL
+                AND baseline.processed_at &lt; #{params.StartingAt}
+                <if test="params.WorkspaceExternalID != ''">
+                    AND baseline_workspace.external_id = #{params.WorkspaceExternalID}
+                </if>
+                ORDER BY baseline.session_uuid, baseline.processed_at DESC, baseline.id DESC
+            )
+        )
+        ORDER BY e.session_uuid, e.processed_at ASC, e.id ASC
     </select>
 
     <select id="ListPage" resultType="sessionEventRow">
@@ -184,6 +245,50 @@
           AND session_uuid = #{sessionUUID}
           AND deleted_at IS NULL
         ORDER BY created_at ASC, id ASC
+    </select>
+    <select id="ListAdminUsagePoints" resultType="adminUsagePointRow">
+        SELECT
+            e.session_uuid,
+            e.processed_at,
+            e.id,
+            w.external_id AS workspace_external_id,
+            CASE
+                WHEN jsonb_typeof(s.agent_snapshot-&gt;'model') = 'object' THEN COALESCE(s.agent_snapshot-&gt;'model'-&gt;&gt;'id', '')
+                ELSE COALESCE(s.agent_snapshot-&gt;&gt;'model', '')
+            END AS model,
+            COALESCE(e.payload-&gt;'usage'-&gt;&gt;'input_tokens', '0') AS input_tokens,
+            COALESCE(e.payload-&gt;'usage'-&gt;&gt;'output_tokens', '0') AS output_tokens,
+            COALESCE(e.payload-&gt;'usage'-&gt;&gt;'cache_read_input_tokens', '0') AS cache_read_input_tokens,
+            COALESCE(e.payload-&gt;'usage'-&gt;'cache_creation'-&gt;&gt;'ephemeral_5m_input_tokens', '0') AS cache_5m_input_tokens,
+            COALESCE(e.payload-&gt;'usage'-&gt;'cache_creation'-&gt;&gt;'ephemeral_1h_input_tokens', '0') AS cache_1h_input_tokens,
+            CAST(
+                CASE
+                    WHEN jsonb_exists(e.payload-&gt;'usage', 'active_milliseconds')
+                        THEN CAST(e.payload-&gt;'usage'-&gt;&gt;'active_milliseconds' AS bigint)
+                    ELSE CAST(CAST(COALESCE(e.payload-&gt;'usage'-&gt;&gt;'active_seconds', '0') AS numeric) * 1000 AS bigint)
+                END
+            AS text) AS active_milliseconds,
+            COALESCE(e.payload-&gt;'usage'-&gt;&gt;'runtime_cost_usd', '') AS runtime_cost_usd
+        FROM session_events e
+        JOIN sessions s ON s.uuid = e.session_uuid AND s.workspace_uuid = e.workspace_uuid
+        JOIN workspaces w ON w.uuid = e.workspace_uuid
+        WHERE e.organization_uuid = #{params.OrganizationUUID}
+        AND e.event_type = 'session.usage'
+        AND e.deleted_at IS NULL
+        AND e.processed_at &lt; #{params.EndingBefore}
+        AND (
+            e.processed_at &gt;= #{params.StartingAt}
+            OR e.id IN (
+                SELECT DISTINCT ON (baseline.session_uuid) baseline.id
+                FROM session_events baseline
+                WHERE baseline.organization_uuid = #{params.OrganizationUUID}
+                AND baseline.event_type = 'session.usage'
+                AND baseline.deleted_at IS NULL
+                AND baseline.processed_at &lt; #{params.StartingAt}
+                ORDER BY baseline.session_uuid, baseline.processed_at DESC, baseline.id DESC
+            )
+        )
+        ORDER BY e.session_uuid, e.processed_at ASC, e.id ASC
     </select>
     <select id="HasInputBlockingIdle" result="scalar" resultType="bool">
         SELECT EXISTS (SELECT 1 FROM session_events

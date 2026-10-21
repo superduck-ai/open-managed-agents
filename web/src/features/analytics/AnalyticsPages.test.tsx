@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { useMemo, type ReactNode } from 'react';
 import { defaultWorkspace, type Workspace } from '../../shared/workspaces/api';
@@ -126,6 +127,56 @@ describe('Analytics pages', () => {
     expect(screen.getByTestId('analytics-page').querySelector('.surface-card')).toBeNull();
   });
 
+  test('loads runtime cost for the selected model and range', async () => {
+    const urls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return new Response(
+        JSON.stringify({
+          currency: 'USD',
+          total: '0.001484',
+          daily: [
+            {
+              date: '2026-10-14',
+              amount: '0.001484',
+              groups: [{ id: 'claude-opus-4-6', label: 'claude-opus-4-6', amount: '0.001484' }],
+            },
+          ],
+          groups: [],
+          models: ['claude-opus-4-6'],
+          service_accounts: [],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as typeof fetch;
+    try {
+      resetTestDom('https://oma.duck.ai/cost');
+      renderWithWorkspace(<CostPage />);
+      expect(await screen.findByText('$0.001484')).toBeTruthy();
+      expect(urls[0]).toContain('/api/organizations/org_test/runtime_cost');
+      expect(urls[0]).toContain('group_by=model');
+
+      fireEvent.click(screen.getByRole('combobox', { name: 'Model: All' }));
+      selectOption('claude-opus-4-6');
+      await waitFor(() => expect(urls.some((url) => url.includes('model=claude-opus-4-6'))).toBe(true));
+
+      fireEvent.click(screen.getByRole('combobox', { name: 'Group by: Model' }));
+      selectOption('Workspace');
+      await waitFor(() => expect(urls.some((url) => url.includes('group_by=workspace'))).toBe(true));
+
+      fireEvent.click(screen.getByRole('combobox', { name: 'Range: Month to date' }));
+      selectOption('Last 7 days');
+      await waitFor(() => expect(urls.some((url) => url.includes('starting_on='))).toBe(true));
+
+      fireEvent.click(screen.getByRole('combobox', { name: 'Workspace: All workspaces' }));
+      selectOption('Default');
+      await waitFor(() => expect(urls.some((url) => url.includes('workspace_id=default'))).toBe(true));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test('renders all-workspace and scoped cost dashboards', () => {
     resetTestDom('https://oma.duck.ai/cost');
 
@@ -134,13 +185,54 @@ describe('Analytics pages', () => {
     expect(screen.getByRole('heading', { name: 'Cost' })).toBeTruthy();
     expect(screen.getByText('All workspaces')).toBeTruthy();
     expect(screen.getByText('Total token cost')).toBeTruthy();
-    expect(screen.getAllByText('USD 0.00')).toHaveLength(3);
+    expect(screen.getByText('Total runtime cost')).toBeTruthy();
+    expect(screen.getAllByText('$0.00')).toHaveLength(2);
+    expect(screen.getByText('Loading...')).toBeTruthy();
     expect(screen.getByText('Daily token cost')).toBeTruthy();
+    expect(screen.getByText('Daily runtime cost')).toBeTruthy();
 
     cleanup();
     resetTestDom('https://oma.duck.ai/workspaces/default/cost');
     renderWithWorkspace(<CostPage />);
     expect(screen.getByText('Default')).toBeTruthy();
+  });
+
+  test('shows an access error instead of a zero runtime cost', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response('{}', { status: 403 })) as typeof fetch;
+    try {
+      resetTestDom('https://oma.duck.ai/cost');
+      renderWithWorkspace(<CostPage />);
+      expect(await screen.findByText('Only organization administrators can view cost across workspaces.')).toBeTruthy();
+      expect(screen.getAllByText('$0.00')).toHaveLength(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('prompts when the runtime price is not configured', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          configured: false,
+          currency: 'USD',
+          total: '0.00',
+          daily: [],
+          groups: [],
+          models: [],
+          service_accounts: [],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )) as typeof fetch;
+    try {
+      resetTestDom('https://oma.duck.ai/cost');
+      renderWithWorkspace(<CostPage />);
+      expect(await screen.findByText('Runtime price is not configured')).toBeTruthy();
+      expect(screen.getByText('Not configured')).toBeTruthy();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test('lists all workspaces in the logs workspace filter on the non-scoped /logs route', () => {
@@ -264,7 +356,12 @@ describe('Analytics pages', () => {
 });
 
 function renderWithWorkspace(children: ReactNode, workspaces = [defaultWorkspace]) {
-  return render(<WorkspaceHarness workspaces={workspaces}>{children}</WorkspaceHarness>);
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <WorkspaceHarness workspaces={workspaces}>{children}</WorkspaceHarness>
+    </QueryClientProvider>,
+  );
 }
 
 function WorkspaceHarness({

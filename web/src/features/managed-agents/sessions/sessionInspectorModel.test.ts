@@ -365,7 +365,7 @@ describe('session inspector cost', () => {
         eventId: 'usage_first',
         stepCents: 125,
         usage: {
-          activeSeconds: 2.5,
+          activeMilliseconds: 2500,
           cacheRead: 30,
           cacheWrite: 45,
           input: 100,
@@ -380,7 +380,7 @@ describe('session inspector cost', () => {
         eventId: 'usage_stale',
         stepCents: 0,
         usage: {
-          activeSeconds: undefined,
+          activeMilliseconds: undefined,
           cacheRead: 0,
           cacheWrite: 0,
           input: 0,

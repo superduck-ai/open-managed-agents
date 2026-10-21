@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { type ComponentType, type ReactNode, useState } from 'react';
 import { cn } from '@/shared/lib/utils';
+import { Alert, AlertTitle } from '@/shared/ui/alert';
 import { Button, ButtonLink } from '@/shared/ui/button';
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card';
 import {
@@ -34,6 +35,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useI18n } from '../../shared/i18n';
 import { defaultWorkspace } from '../../shared/workspaces/api';
 import { useWorkspace } from '../../shared/workspaces/context';
+import { RuntimeCostChart } from './RuntimeCostChart';
+import { apiErrorStatus, formatDollars, runtimeCostLabel, useRuntimeCost } from './runtimeCost';
 
 type IconComponent = ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
 type FilterOption = { value: string; label: string };
@@ -375,30 +378,48 @@ export function RateLimitsPage() {
 export function CostPage() {
   const { msg } = useI18n();
   const routeWorkspaceId = getWorkspaceIdFromPath();
+  const { orgUuid, workspaces } = useWorkspace();
   const workspaceLabel = useWorkspaceLabel(routeWorkspaceId);
   const allWorkspacesLabel = msg('workspace.all', 'All workspaces');
   const workspaceOptions: FilterOption[] = routeWorkspaceId
-    ? [{ value: 'current', label: workspaceLabel }]
+    ? [{ value: routeWorkspaceId, label: workspaceLabel }]
     : [
         { value: 'all-workspaces', label: allWorkspacesLabel },
-        { value: 'default', label: workspaceLabel },
+        ...workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name })),
       ];
   const groupByOptions: FilterOption[] = [
     { value: 'model', label: msg('analytics.table.model', 'Model') },
     { value: 'workspace', label: msg('analytics.filter.workspace', 'Workspace') },
     { value: 'service-account', label: msg('analytics.filter.serviceAccount', 'Service account') },
   ];
-  const modelOptions: FilterOption[] = [{ value: 'all', label: msg('common.all', 'All') }, ...analyticsModelOptions];
   const rangeOptions: FilterOption[] = [
     { value: 'last-7-days', label: msg('analytics.filter.last7Days', 'Last 7 days') },
     { value: 'last-30-days', label: msg('analytics.filter.last30Days', 'Last 30 days') },
     { value: 'month-to-date', label: msg('analytics.filter.monthToDate', 'Month to date') },
   ];
   const [filters, setFilters] = useState({
-    workspace: routeWorkspaceId ? 'current' : 'all-workspaces',
+    workspace: routeWorkspaceId ?? 'all-workspaces',
     groupBy: 'model',
     model: 'all',
     range: 'month-to-date',
+  });
+  const cost = useRuntimeCost({
+    orgUuid,
+    workspaceId: filters.workspace,
+    model: filters.model,
+    groupBy: filters.groupBy === 'service-account' ? 'service_account' : filters.groupBy,
+    range: filters.range,
+  });
+  const report = cost.data;
+  const modelOptions: FilterOption[] = [
+    { value: 'all', label: msg('common.all', 'All') },
+    ...(report?.models ?? []).map((model) => ({ value: model, label: model })),
+  ];
+  const hasRuntime = report?.daily.some((day) => day.groups.length > 0) ?? false;
+  const runtimeValue = runtimeCostLabel(cost.isPending, cost.isError, report, {
+    loading: msg('common.loading', 'Loading...'),
+    error: msg('common.error', 'Error'),
+    unconfigured: msg('analytics.cost.notConfigured', 'Not configured'),
   });
 
   return (
@@ -431,17 +452,34 @@ export function CostPage() {
         />
       </FilterBar>
 
+      {cost.isError ? (
+        <Alert>
+          <AlertTitle>
+            {apiErrorStatus(cost.error) === 403
+              ? msg('analytics.cost.accessDenied', 'Only organization administrators can view cost across workspaces.')
+              : msg('common.error', 'Error')}
+          </AlertTitle>
+        </Alert>
+      ) : report?.configured === false ? (
+        <Alert>
+          <AlertTitle>{msg('analytics.cost.runtimePriceMissing', 'Runtime price is not configured')}</AlertTitle>
+        </Alert>
+      ) : null}
+
       <div className="grid gap-3 xl:grid-cols-3">
-        <MetricPanel title={msg('analytics.cost.totalTokenCost', 'Total token cost')} value="USD 0.00" />
-        <MetricPanel title={msg('analytics.cost.totalWebSearchCost', 'Total web search cost')} value="USD 0.00" />
+        <MetricPanel title={msg('analytics.cost.totalTokenCost', 'Total token cost')} value={formatDollars('0.00')} />
         <MetricPanel
-          title={msg('analytics.cost.totalCodeExecutionCost', 'Total code execution cost')}
-          value="USD 0.00"
+          title={msg('analytics.cost.totalWebSearchCost', 'Total web search cost')}
+          value={formatDollars('0.00')}
         />
+        <MetricPanel title={msg('analytics.cost.totalRuntimeCost', 'Total runtime cost')} value={runtimeValue} />
       </div>
 
       <ChartPanel title={msg('analytics.cost.dailyTokenCost', 'Daily token cost')}>
         <EmptyChart label={msg('common.noData', 'No data')} />
+      </ChartPanel>
+      <ChartPanel title={msg('analytics.cost.dailyRuntimeCost', 'Daily runtime cost')}>
+        {hasRuntime ? <RuntimeCostChart days={report.daily} /> : <EmptyChart label={msg('common.noData', 'No data')} />}
       </ChartPanel>
     </AnalyticsPageRoot>
   );

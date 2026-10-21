@@ -58,11 +58,11 @@ func TestChildStatusMirrorSurvivesAppliedStatePostgres(t *testing.T) {
 	if err != nil || len(copies) != 2 {
 		t.Fatal(err)
 	}
-	write, err := insertSessionEventIfAbsentTx(ctx, tx, &session, primary, copies[1])
+	write, err := insertSessionEventIfAbsentTx(ctx, tx, &session, primary, copies[1], nil)
 	if err != nil || !write.Inserted || write.Event.ThreadExternalID == nil || *write.Event.ThreadExternalID != child.ExternalID {
 		t.Fatal("own lifecycle mirror filtered after state transition", err)
 	}
-	again, err := insertSessionEventIfAbsentTx(ctx, tx, &session, primary, copies[1])
+	again, err := insertSessionEventIfAbsentTx(ctx, tx, &session, primary, copies[1], nil)
 	if err != nil || again.Inserted {
 		t.Fatal("replayed mirror duplicated", err)
 	}

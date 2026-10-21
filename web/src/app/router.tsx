@@ -495,6 +495,12 @@ const settingsWorkspaceWebhooksRoute = createRoute({
   component: WorkspaceWebhooksPage,
 });
 
+const settingsCostRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: 'settings/cost',
+  component: OrganizationSettingsPage,
+});
+
 const settingsOrganizationRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: 'settings/organization',
@@ -610,6 +616,7 @@ const routeTree = rootRoute.addChildren([
       settingsWorkspaceWebhooksRoute,
     ]),
     settingsOrganizationRoute,
+    settingsCostRoute,
     settingsBillingRoute,
     settingsLimitsRoute,
     settingsMembersRoute,

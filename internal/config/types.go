@@ -34,7 +34,12 @@ type Config struct {
 }
 
 type WebToolsConfig struct {
-	DeepSeekAPIKey string `yaml:"deepseek_api_key"`
+	SearchProvider string                           `yaml:"search_provider"`
+	Providers      map[string]WebToolProviderConfig `yaml:"providers"`
+}
+
+type WebToolProviderConfig struct {
+	APIKey string `yaml:"api_key"`
 }
 
 // VaultConfig configures at-rest encryption for vault credential secrets and

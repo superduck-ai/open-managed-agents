@@ -459,8 +459,9 @@ and Fetch content budgets. CMA user_location is accepted and preserved as an
 advisory search preference; the current DeepSeek provider ignores it.
 
 Both tools execute on oma-server through session-authenticated
-`POST /v2/ccr-sessions/{id}/web/search` and `/web/fetch`. Search uses DeepSeek;
-configure `web_tools.deepseek_api_key` on the server. Fetch uses direct Go
+`POST /v2/ccr-sessions/{id}/web/search` and `/web/fetch`. Search selects its provider using
+`web_tools.search_provider`; set it to `deepseek` and configure
+`web_tools.providers.deepseek.api_key` on the server. Fetch uses direct Go
 HTTP without an external Fetch API. Requests and redirects enforce Environment
 networking, tool domain rules and public-address checks using system DNS.
 Brain receives no provider credentials.

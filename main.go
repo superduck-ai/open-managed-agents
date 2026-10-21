@@ -322,7 +322,7 @@ func loadCodeRuntime(cfg config.Config) (codeRuntime, error) {
 	if err != nil {
 		return runtime, fmt.Errorf("load brain claim token: %w", err)
 	}
-	runtime.web, err = webtools.Load(cfg.WebTools.DeepSeekAPIKey)
+	runtime.web, err = webtools.Load(cfg.WebTools)
 	if err != nil {
 		return runtime, fmt.Errorf("load web tools: %w", err)
 	}

@@ -3,6 +3,7 @@
 package webtools
 
 import (
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"os"
 	"strings"
 	"testing"
@@ -13,7 +14,7 @@ func TestLiveWebTools(t *testing.T) {
 	if apiKey == "" {
 		t.Skip("set OMA_WEBTOOLS_LIVE_API_KEY for real DeepSeek and HTTP acceptance")
 	}
-	client, err := Load(apiKey)
+	client, err := Load(config.WebToolsConfig{SearchProvider: "deepseek", Providers: map[string]config.WebToolProviderConfig{"deepseek": {APIKey: apiKey}}})
 	if err != nil {
 		t.Fatal("could not load live search credentials")
 	}

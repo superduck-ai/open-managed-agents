@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 )
 
@@ -286,17 +287,29 @@ func TestSearchOverlappingDomainsCanHaveNoResults(t *testing.T) {
 	}
 }
 
-func TestLoadDirectAPIKey(t *testing.T) {
-	for _, key := range []string{"invalid key", "invalid\nkey"} {
-		if _, err := Load(key); err == nil || strings.Contains(err.Error(), key) {
+func TestLoadRejectsInvalidProviderSelection(t *testing.T) {
+	for _, cfg := range []config.WebToolsConfig{
+		{SearchProvider: "unknown"},
+		{SearchProvider: "deepseek"},
+		{Providers: map[string]config.WebToolProviderConfig{"deepseek": {APIKey: "private-test-key"}}},
+	} {
+		if _, err := Load(cfg); err == nil || strings.Contains(err.Error(), "private-test-key") {
+			t.Fatal("invalid provider configuration must fail without exposing credentials")
+		}
+	}
+}
+
+func TestLoadSearchProvider(t *testing.T) {
+	for _, key := range []string{"", "invalid key", "invalid\nkey"} {
+		if _, err := Load(config.WebToolsConfig{SearchProvider: "deepseek", Providers: map[string]config.WebToolProviderConfig{"deepseek": {APIKey: key}}}); err == nil || (key != "" && strings.Contains(err.Error(), key)) {
 			t.Fatal("invalid key must be rejected without exposing it")
 		}
 	}
-	client, err := Load("")
+	client, err := Load(config.WebToolsConfig{})
 	if err != nil || client.search != nil {
-		t.Fatal("empty key must leave search unavailable")
+		t.Fatal("unconfigured search must remain unavailable")
 	}
-	client, err = Load(" private-test-key\n")
+	client, err = Load(config.WebToolsConfig{SearchProvider: "deepseek", Providers: map[string]config.WebToolProviderConfig{"deepseek": {APIKey: " private-test-key\n"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

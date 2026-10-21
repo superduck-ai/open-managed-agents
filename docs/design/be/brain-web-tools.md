@@ -32,14 +32,17 @@ sequenceDiagram
 
 ```yaml
 web_tools:
-  deepseek_api_key: "your-deepseek-api-key"
+  search_provider: deepseek
+  providers:
+    deepseek:
+      api_key: "your-deepseek-api-key"
 ```
 
 启动时直接读取配置中的密钥。密钥不进入 Brain、沙箱、assignment、事件或运行日志。
-没有配置密钥时 Search 返回 unavailable；直接 HTTP Fetch 仍可用。
+未配置搜索厂商时 Search 返回 unavailable；直接 HTTP Fetch 仍可用。选择厂商后必须提供该厂商的有效密钥配置；未知厂商、缺失密钥或包含空白的密钥会使启动失败。
 Fetch 统一使用系统 DNS，并继续校验实际连接 IP 与每次重定向目标。
 SearchProvider 接口定义 `Search(context.Context, SearchRequest) (SearchResponse, error)`，DeepSeek 实现该接口并负责参数映射、凭据、上游错误与响应归一化。Client 接收 Provider；查询校验、Environment / 工具来源过滤由 OMA 统一执行，替换 Provider 不能绕过这些规则。
-Search 厂商字段只存在于服务端适配器，不进入模型工具 schema；启动组装默认选择 DeepSeek，后续替换构造处的实现即可，不需要修改 Brain 或 HTTP handler。
+Search 厂商字段只存在于服务端适配器，不进入模型工具 schema；启动组装通过 search_provider 选择实现，providers 按厂商保存凭证；接入新厂商时实现 SearchProvider 并在创建入口增加分支即可，不需要修改 Brain 或 HTTP handler。
 Fetch 使用 Go HTTP 和已有 HTML parser，参考官方 DSH 行为；不是直接运行 TS 的 dsh-web-fetch-http。
 
 CMA 式 `agent_toolset_20260401.configs` 保留现有 enabled、permission_policy，支持以下配置：

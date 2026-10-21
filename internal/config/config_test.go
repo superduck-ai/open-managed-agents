@@ -1195,11 +1195,11 @@ func TestAllowedEmailDomains(t *testing.T) {
 
 func TestLoadWebToolsAPIKey(t *testing.T) {
 	prepareLoadTest(t)
-	cfg, err := loadConfigTestYAML(t, "web_tools:\n  deepseek_api_key: private-test-key\n")
+	cfg, err := loadConfigTestYAML(t, "web_tools:\n  search_provider: deepseek\n  providers:\n    deepseek:\n      api_key: private-test-key\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.WebTools.DeepSeekAPIKey != "private-test-key" {
+	if cfg.WebTools.SearchProvider != "deepseek" || cfg.WebTools.Providers["deepseek"].APIKey != "private-test-key" {
 		t.Fatal("API key was not preserved")
 	}
 }

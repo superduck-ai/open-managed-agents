@@ -312,3 +312,22 @@ func TestLoadDirectAPIKey(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSearchIgnoresAdvisoryUserLocation(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		if strings.Contains(string(raw), "user_location") || strings.Contains(string(raw), "localization") {
+			t.Error("unsupported location reached DeepSeek")
+		}
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+	policy := network(t, `{}`)
+	policy.Tools = []ToolConfig{{Name: "web_search", UserLocation: &UserLocation{Type: "approximate", Country: "US", Timezone: "America/Los_Angeles"}}}
+	result, err := client.Search(t.Context(), SearchRequest{Query: "test"}, policy)
+	if err != nil || result.Sources == nil {
+		t.Fatalf("search failed: %v", err)
+	}
+}

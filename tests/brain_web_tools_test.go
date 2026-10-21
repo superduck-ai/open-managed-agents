@@ -226,3 +226,38 @@ func TestBrainWebDisjointChildPoliciesRejectBeforeProvider(t *testing.T) {
 		t.Fatalf("denied child called provider %d times", calls.Load())
 	}
 }
+
+func TestBrainWebUserLocationConfigurationContracts(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("web-location-contracts"))
+	env := createEnvironment(t, app, `{"name":"web-location","config":{"type":"cloud"}}`)
+	for _, tc := range []struct {
+		location string
+		status   int
+	}{
+		{`{"type":"precise"}`, 400},
+		{`{"type":"approximate","country":42}`, 400},
+		{`{"type":"approximate","country":"US","city":"San Francisco","region":"California","timezone":"America/Los_Angeles"}`, 200},
+	} {
+		t.Run(tc.location, func(t *testing.T) {
+			base := createAgent(t, app, `{"name":"base","model":"claude-opus-4-6"}`)
+			session := createSession(t, app, `{"agent":`+quoteJSON(base.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+			tools := `[{"type":"agent_toolset_20260401","configs":[{"name":"web_search","user_location":` + tc.location + `}]}]`
+			for _, request := range []struct{ path, body string }{
+				{"/v1/agents", `{"name":"location","model":"claude-opus-4-6","tools":` + tools + `}`},
+				{"/v1/agents/" + base.ID, `{"version":1,"tools":` + tools + `}`},
+				{"/v1/sessions", `{"environment_id":` + quoteJSON(env.ID) + `,"agent":{"type":"agent_with_overrides","id":` + quoteJSON(base.ID) + `,"tools":` + tools + `}}`},
+				{"/v1/sessions/" + session.ID, `{"agent":{"tools":` + tools + `}}`},
+			} {
+				response := doSessionRequest(t, app, http.MethodPost, request.path, strings.NewReader(request.body), defaultTestKey, true)
+				body := readAll(t, response.Body)
+				response.Body.Close()
+				if response.StatusCode != tc.status {
+					t.Fatalf("%s: status=%d body=%s", request.path, response.StatusCode, body)
+				}
+				if tc.status == 200 && (!strings.Contains(string(body), `"user_location"`) || !strings.Contains(string(body), "America/Los_Angeles")) {
+					t.Fatalf("%s: location was not preserved: %s", request.path, body)
+				}
+			}
+		})
+	}
+}

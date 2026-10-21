@@ -58,7 +58,12 @@ func ParseToolConfig(raw []byte) (ToolConfig, error) {
 		return c, invalidConfig("max_content_tokens must be a positive integer on web_fetch")
 	}
 	if c.UserLocation != nil {
-		return c, invalidConfig("user_location is not supported by the DeepSeek Search provider")
+		if c.Name != "web_search" {
+			return c, invalidField("user_location", "Only web_search supports user_location")
+		}
+		if c.UserLocation.Type != "approximate" {
+			return c, invalidField("user_location.type", "Must be approximate")
+		}
 	}
 
 	return c, nil

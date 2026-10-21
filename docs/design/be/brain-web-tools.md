@@ -47,7 +47,7 @@ CMA 式 `agent_toolset_20260401.configs` 保留现有 enabled、permission_polic
 - 两工具独立的 allowed_domains / blocked_domains，互斥；省略/null 不增加工具限制，空列表拒绝。
 - 每列表 1–64 项，ASCII 可注册主机及子域名；允许下划线；不接受 IP、协议、端口、通配符或重复。拒绝 .localdomain 等本地主机后缀。域名错误标注列表名称与从零开始的索引，空列表标注具体字段。
 - 工具域名匹配自身及子域名；Fetch 禁止路径，Search 支持区分大小写的路径前缀。
-- Fetch max_content_tokens 为正整数；Search user_location 使用 CMA 的位置对象，但 DeepSeek 独立 Search API 不支持此定位合同，因此显式拒绝而不静默忽略。
+- Fetch max_content_tokens 为正整数；Search user_location 接受并保存 CMA 的位置对象（type 为 approximate，city/region/country/timezone 为可选字符串）；当前 DeepSeek Provider 不使用这一搜索偏好，不影响创建、更新或搜索执行。仅校验字段结构与 type，不按 Provider 能力拒绝，也不把位置提示转换成 IP。域名、权限等安全策略仍须实际执行。
 - 最新 CMA SDK 的 url_sources 暂不支持，传入会被拒绝。也不接受 max_uses、citations、cache_control。
 
 创建 Agent 和 Session 工具更新复用同一校验；创建/更新 Session 时检查工具允许域名不超出 limited 环境。

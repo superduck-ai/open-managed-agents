@@ -16,9 +16,7 @@ func TestWebConfigValidation(t *testing.T) {
 		`{"name":"web_fetch","allowed_domains":["example.com/path"]}`,
 		`{"name":"web_fetch","max_content_tokens":0}`,
 		`{"name":"web_search","max_content_tokens":20}`,
-		`{"name":"web_search","user_location":{"type":"approximate"}}`,
 		`{"name":"web_search","user_location":{"type":"precise","country":"US"}}`,
-		`{"name":"web_search","user_location":{"type":"approximate","country":"US"}}`,
 	} {
 		if _, err := ParseToolConfig([]byte(raw)); err == nil {
 			t.Errorf("accepted %s", raw)
@@ -78,6 +76,30 @@ func TestWebDomainContract(t *testing.T) {
 			if _, err := ParseToolConfig([]byte(`{"name":"` + name + `","` + field + `":["a_b.example.com/"]}`)); err != nil {
 				t.Errorf("underscore %s %s: %v", name, field, err)
 			}
+		}
+	}
+}
+
+func TestUserLocationConfiguration(t *testing.T) {
+	for _, raw := range []string{
+		`{"name":"web_search","user_location":{}}`,
+		`{"name":"web_search","user_location":{"type":"precise"}}`,
+		`{"name":"web_search","user_location":{"type":"approximate","country":42}}`,
+		`{"name":"web_search","user_location":{"type":"approximate","unexpected":true}}`,
+		`{"name":"web_fetch","user_location":{"type":"approximate"}}`,
+	} {
+		if _, err := ParseToolConfig([]byte(raw)); err == nil {
+			t.Errorf("accepted %s", raw)
+		}
+	}
+	for _, location := range []string{`null`, `{"type":"approximate"}`, `{"type":"approximate","country":"US","city":"San Francisco","region":"California","timezone":"America/Los_Angeles"}`} {
+		raw := []byte(`{"tools":[{"type":"agent_toolset_20260401","configs":[{"name":"web_search","user_location":` + location + `}]}]}`)
+		config, err := ConfigFromSnapshot(raw, "web_search")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if location != "null" && (config.UserLocation == nil || config.UserLocation.Type != "approximate") {
+			t.Fatal("location was not preserved")
 		}
 	}
 }

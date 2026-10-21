@@ -455,7 +455,8 @@ inconsistent metadata and other tools retain their diagnostic text.
 The Brain exposes `web_search({query})` and `web_fetch({url})` as thin native
 tools. Existing OMA approval, cancellation, journaling and child restrictions
 apply. Agent and Session configuration accepts CMA-style domain restrictions
-and Fetch content budgets; unsupported provider options fail explicitly.
+and Fetch content budgets. CMA user_location is accepted and preserved as an
+advisory search preference; the current DeepSeek provider ignores it.
 
 Both tools execute on oma-server through session-authenticated
 `POST /v2/ccr-sessions/{id}/web/search` and `/web/fetch`. Search uses DeepSeek;

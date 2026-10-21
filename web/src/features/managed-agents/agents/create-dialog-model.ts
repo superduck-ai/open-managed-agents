@@ -148,6 +148,17 @@ const builtInToolConfigSchema = permissionConfigSchema
     allowed_domains: z.array(z.string()).min(1).max(64).nullable().optional(),
     blocked_domains: z.array(z.string()).min(1).max(64).nullable().optional(),
     max_content_tokens: z.number().int().positive().optional(),
+    user_location: z
+      .object({
+        type: z.literal('approximate'),
+        city: z.string().nullable().optional(),
+        region: z.string().nullable().optional(),
+        country: z.string().nullable().optional(),
+        timezone: z.string().nullable().optional(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .strict()
   .superRefine((config, ctx) => {
@@ -155,6 +166,9 @@ const builtInToolConfigSchema = permissionConfigSchema
       if (config[field] !== undefined && !['web_search', 'web_fetch'].includes(config.name)) {
         ctx.addIssue({ code: 'custom', path: [field], message: 'Only Web tools support this setting.' });
       }
+    }
+    if (config.user_location != null && config.name !== 'web_search') {
+      ctx.addIssue({ code: 'custom', path: ['user_location'], message: 'Only web_search supports user_location.' });
     }
     if (config.allowed_domains != null && config.blocked_domains != null) {
       ctx.addIssue({ code: 'custom', path: ['allowed_domains'], message: 'Only one domain list may be set.' });
@@ -463,7 +477,9 @@ export function setToolsetPermission(
           Boolean(
             config &&
             ['web_search', 'web_fetch'].includes(String(config.name)) &&
-            ['allowed_domains', 'blocked_domains', 'max_content_tokens'].some((field) => field in config),
+            ['allowed_domains', 'blocked_domains', 'max_content_tokens', 'user_location'].some(
+              (field) => field in config,
+            ),
           ),
         )
         .map(({ enabled, permission_policy, ...settings }) => ({ ...settings, ...permissionConfig(permission) }));
@@ -500,7 +516,9 @@ export function setToolPermission(
           existing.some(
             (config) =>
               config.name === name &&
-              ['allowed_domains', 'blocked_domains', 'max_content_tokens'].some((field) => field in config),
+              ['allowed_domains', 'blocked_domains', 'max_content_tokens', 'user_location'].some(
+                (field) => field in config,
+              ),
           ));
       return {
         ...tool,

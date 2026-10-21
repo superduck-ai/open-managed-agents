@@ -627,3 +627,38 @@ test('Web policy fields survive Raw parsing and individual or toolset permission
     ).toBe(false);
   }
 });
+
+test('CMA search location survives Raw parsing and permission edits', () => {
+  const userLocation = {
+    type: 'approximate',
+    country: 'US',
+    city: 'San Francisco',
+    region: 'California',
+    timezone: 'America/Los_Angeles',
+  };
+  const draft: CreateAgentInput = {
+    ...baseDraft,
+    tools: [{ type: 'agent_toolset_20260401', configs: [{ name: 'web_search', user_location: userLocation }] }],
+  };
+  for (const updated of [
+    draft,
+    setToolPermission(draft, () => true, 'web_search', 'always_allow', 'always_allow'),
+    setToolsetPermission(draft, () => true, 'always_ask'),
+  ]) {
+    const parsed = createAgentDraftSchema.safeParse(updated);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.tools[0].configs).toContainEqual(
+      expect.objectContaining({ name: 'web_search', user_location: userLocation }),
+    );
+  }
+  for (const config of [
+    { name: 'web_fetch', user_location: userLocation },
+    { name: 'web_search', user_location: { type: 'precise' } },
+    { name: 'web_search', user_location: { type: 'approximate', country: 42 } },
+  ]) {
+    expect(
+      createAgentDraftSchema.safeParse({ ...draft, tools: [{ type: 'agent_toolset_20260401', configs: [config] }] })
+        .success,
+    ).toBe(false);
+  }
+});

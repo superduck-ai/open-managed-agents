@@ -19,6 +19,7 @@ interface SandboxCall {
   cleanup?: () => void;
   rejection?: string;
   failure?: SandboxRequestError;
+  dispatched?: boolean;
 }
 
 export class SandboxMcp implements SandboxExecutor {
@@ -52,6 +53,7 @@ export class SandboxMcp implements SandboxExecutor {
             }
             delete body.params._meta.progressToken;
             if (!Object.keys(body.params._meta).length) delete body.params._meta;
+            call.dispatched = true;
             const response = await this.fetch(new Request(request, { body: JSON.stringify(body) }));
             if (!response.ok) {
               call.failure = new SandboxRequestError("tool_call", response.status);
@@ -93,6 +95,10 @@ export class SandboxMcp implements SandboxExecutor {
   }
 
   async provision(signal: AbortSignal): Promise<void> {
+    await this.ready(signal);
+  }
+
+  private async ready(signal: AbortSignal): Promise<SandboxConnection> {
     signal.throwIfAborted();
     this.lifetime.signal.throwIfAborted();
     const connection = this.connection ??= this.createConnection();
@@ -104,11 +110,11 @@ export class SandboxMcp implements SandboxExecutor {
       if (signal.aborted) cancel();
     });
     signal.throwIfAborted();
+    return connection;
   }
 
   async call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string): Promise<Payload> {
-    await this.provision(signal);
-    const connection = this.connection!;
+    const connection = await this.ready(signal);
     const start = Date.now();
     const token = crypto.randomUUID();
     const call: SandboxCall = { signal, threadId };
@@ -119,6 +125,7 @@ export class SandboxMcp implements SandboxExecutor {
         { timeout: 185_000, ...(connection.transport.protocolVersion === "2026-07-28" ? { signal } : {}) }));
     } catch {
       if (call.rejection !== undefined) throw new ToolNotForwardedError(call.rejection);
+      if (!call.dispatched && !signal.aborted) throw new ToolNotForwardedError("Sandbox tool call was not sent. The tool was not executed.");
       throw call.failure ?? new SandboxRequestError("tool_call");
     } finally {
       call.cleanup?.();

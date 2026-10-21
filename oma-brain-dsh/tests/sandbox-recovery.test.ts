@@ -5,6 +5,7 @@ import { SandboxMcp } from "../src/oma-sandbox/client.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import { mountOma } from "../src/plugin.ts";
 import { sandboxToolDefinitions } from "../src/sandbox-tools/definitions.ts";
+import { ToolNotForwardedError } from "../src/runtime/contracts.ts";
 import { Backend, textEvents, toolEvents } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
 
@@ -273,4 +274,18 @@ test.each([405, 504])("forwarded write HTTP %s stays blocked and publishes a saf
     expect(calls).toBe(1);
     expect(f.backend.requests).toHaveLength(1);
   } finally { log.mockRestore(); await f.close(); }
+});
+
+test("a connection closed before dispatch rejects the call as not executed", async () => {
+  const f = await clientFixture();
+  const bash = sandboxToolDefinitions().find((tool) => tool.name === "Bash")!;
+  try {
+    await f.client.provision(new AbortController().signal);
+    const pending = f.client.call(bash, { command: "touch once" }, new AbortController().signal);
+    void (f.client as unknown as { connection: { client: { close(): Promise<void> } } }).connection.client.close();
+    const error = await pending.catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ToolNotForwardedError);
+    expect((error as Error).message).toContain("not executed");
+    expect(f.backend.mcpMethods).not.toContain("tools/call");
+  } finally { await f.close(); }
 });

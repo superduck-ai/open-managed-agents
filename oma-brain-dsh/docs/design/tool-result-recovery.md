@@ -35,6 +35,9 @@ releases its client and transport instead of caching a rejected Promise. A later
 call creates a fresh connection. Closing the provider cancels initialization and
 prevents reconnecting. Ordinary tool HTTP failures leave sibling calls and the
 connection intact; an SDK connection-close event invalidates only that connection.
+A tool call uses the connection its own handshake wait returned. If the call
+fails before its request is sent, for example because that connection closed,
+it is a not-forwarded failed result rather than an unknown outcome.
 
 An initialization failure or cancellation before dispatch settles through
 `recordNotDispatched`, which records a failed result directly from `approved`.

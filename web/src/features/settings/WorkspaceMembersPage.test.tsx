@@ -65,7 +65,9 @@ test('普通成员显示中文无权限且不请求成员列表', () => {
   globalThis.fetch = fetchMock as unknown as typeof fetch;
   renderMembers({ ...defaultWorkspace, id: 'wrkspc_denied', is_default: false }, [], 'zh-CN');
   expect(screen.getByText('无权限访问')).toBeTruthy();
-  expect(screen.getByText('只有工作区管理员或组织管理员可以查看和管理工作区成员。请联系管理员。')).toBeTruthy();
+  expect(
+    screen.getByText('工作区成员可以查看成员目录。只有工作区管理员或组织管理员可以管理工作区成员。请联系管理员。'),
+  ).toBeTruthy();
   expect(screen.queryByRole('alert')).toBeNull();
   expect(screen.queryByRole('table')).toBeNull();
   expect(fetchMock).not.toHaveBeenCalled();
@@ -77,6 +79,11 @@ test('管理员上下文遇到403显示无权限而非原始报错', async () =>
   ) as unknown as typeof fetch;
   renderMembers({ ...defaultWorkspace, id: 'wrkspc_denied', is_default: false });
   expect(await screen.findByText('Access denied')).toBeTruthy();
+  expect(
+    screen.getByText(
+      'Workspace members can view this directory. Only workspace or organization administrators can manage workspace members. Contact your administrator.',
+    ),
+  ).toBeTruthy();
   expect(screen.queryByText('Action not allowed')).toBeNull();
   expect(screen.queryByRole('alert')).toBeNull();
   expect(screen.queryByRole('table')).toBeNull();
@@ -209,7 +216,9 @@ test('无管理权限时隐藏添加入口与行操作', async () => {
       ),
     );
   }) as unknown as typeof fetch;
-  renderMembers({ ...defaultWorkspace, id: 'wrkspc_other', external_id: 'wrkspc_other', is_default: false });
+  renderMembers({ ...defaultWorkspace, id: 'wrkspc_other', external_id: 'wrkspc_other', is_default: false }, [
+    'workspace:members:view',
+  ]);
   await screen.findByText('member@example.com');
   expect(screen.queryByRole('button', { name: 'Add to Workspace' })).toBeNull();
   expect(screen.queryByRole('combobox', { name: 'Role for Member' })).toBeNull();
@@ -222,7 +231,9 @@ test('按姓名和邮箱搜索成员', async () => {
     if (path.includes('member-candidates')) return new Response(JSON.stringify([]));
     return new Response(JSON.stringify(directoryResponse()));
   }) as unknown as typeof fetch;
-  renderMembers({ ...defaultWorkspace, id: 'wrkspc_other', external_id: 'wrkspc_other', is_default: false });
+  renderMembers({ ...defaultWorkspace, id: 'wrkspc_other', external_id: 'wrkspc_other', is_default: false }, [
+    'workspace:members:view',
+  ]);
   await screen.findByText('member@example.com');
   fireEvent.change(screen.getByRole('textbox', { name: 'Search members' }), { target: { value: 'admin@' } });
   const table = screen.getByRole('table');

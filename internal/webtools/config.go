@@ -138,8 +138,10 @@ func validateDomains(c ToolConfig) error {
 		}
 		seen := map[string]bool{}
 		for index, domain := range list.domains {
-			host, path, _ := strings.Cut(domain, "/")
-			host = strings.ToLower(host)
+			host, path, err := parseDomainScope(domain)
+			if err != nil {
+				return invalidDomain(list.name, index, "Invalid path encoding")
+			}
 			if _, err := netip.ParseAddr(host); err == nil {
 				return invalidDomain(list.name, index, "IP addresses are not supported; provide a plain hostname like example.com")
 			}

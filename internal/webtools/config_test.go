@@ -7,6 +7,8 @@ import (
 
 func TestWebConfigValidation(t *testing.T) {
 	for _, raw := range []string{
+		`{"name":"web_search","allowed_domains":["example.com/private%GG"]}`,
+		`{"name":"web_search","allowed_domains":["example.com/private","example.com/pr%69vate"]}`,
 		`{"name":"web_fetch","allowed_domains":[],"blocked_domains":["example.com"]}`,
 		`{"name":"web_fetch","allowed_domains":[]}`,
 		`{"name":"web_fetch","allowed_domains":["example.com","EXAMPLE.COM"]}`,

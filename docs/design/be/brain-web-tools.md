@@ -39,7 +39,7 @@ web_tools:
 ```
 
 启动时直接读取配置中的密钥。密钥不进入 Brain、沙箱、assignment、事件或运行日志。
-未配置搜索厂商时 Search 返回 unavailable；直接 HTTP Fetch 仍可用。选择厂商后必须提供该厂商的有效密钥配置；未知厂商、缺失密钥或包含空白的密钥会使启动失败。
+未配置搜索厂商时 Search 返回 unavailable；直接 HTTP Fetch 仍可用。选择厂商后必须提供该厂商的有效密钥配置；未知厂商、缺失密钥或修剪后仍包含内部空白的密钥会使启动失败。Provider 配置同样严格拒绝未知字段和 null 值。
 Fetch 统一使用系统 DNS，并继续校验实际连接 IP 与每次重定向目标。
 SearchProvider 接口定义 `Search(context.Context, SearchRequest) (SearchResponse, error)`，DeepSeek 实现该接口并负责参数映射、凭据、上游错误与响应归一化。Client 接收 Provider；查询校验、Environment / 工具来源过滤由 OMA 统一执行，替换 Provider 不能绕过这些规则。
 Search 厂商字段只存在于服务端适配器，不进入模型工具 schema；启动组装通过 search_provider 选择实现，providers 按厂商保存凭证；接入新厂商时实现 SearchProvider 并在创建入口增加分支即可，不需要修改 Brain 或 HTTP handler。
@@ -49,7 +49,7 @@ CMA 式 `agent_toolset_20260401.configs` 保留现有 enabled、permission_polic
 
 - 两工具独立的 allowed_domains / blocked_domains，互斥；省略/null 不增加工具限制，空列表拒绝。
 - 每列表 1–64 项，ASCII 可注册主机及子域名；允许下划线；不接受 IP、协议、端口、通配符或重复。拒绝 .localdomain 等本地主机后缀。域名错误标注列表名称与从零开始的索引，空列表标注具体字段。
-- 工具域名匹配自身及子域名；Fetch 禁止路径，Search 支持区分大小写的路径前缀。
+- 工具域名匹配自身及子域名；Fetch 禁止路径，Search 支持区分大小写的路径前缀。配置路径和结果 URL 路径均按一次百分号解码后的值匹配，白名单交集使用相同规则；非法路径编码被拒绝。
 - Fetch max_content_tokens 为正整数或 null（使用默认预算）；Search user_location 接受并保存 CMA 的位置对象（type 为 approximate，city/region/country/timezone 为可选字符串）；当前 DeepSeek Provider 不使用这一搜索偏好，不影响创建、更新或搜索执行。仅校验字段结构与 type，不按 Provider 能力拒绝，也不把位置提示转换成 IP。域名、权限等安全策略仍须实际执行。
 - 最新 CMA SDK 的 url_sources 暂不支持，传入会被拒绝。也不接受 max_uses、citations、cache_control。
 
@@ -85,7 +85,7 @@ max_content_tokens 默认为 20000。为兼容不同模型且不引入远端计�
 这只在大结果时按需分配沙箱，不通过沙箱抓网页。保存失败（包括 Write 被禁用）仍返回成功的有界预览，并用 storage_error 明确全文未保存；不返回虚假文件路径，也不重复抓取。全文保存遵守既有 Write 权限，不提升工具权限；Read 续读仍要求 Agent 具有 Read 权限。
 受现有 sandbox MCP 1 MiB 请求上限约束，特别大的完整结果可能无法写入，此时仍返回预览并注明保存失败；本版不新增分块写入协议。
 Search 超过 100000 个字符时复用通用输出保存与首尾预览；保存不可用或 Write 被拒绝时，仍返回成功的有界预览并注明全文未保存。取消仍作为取消处理。
-Fetch 和外部 MCP 结果保存携带调用子线程的标识，由 Server 按对应线程的 Write 权限校验；根会话与子线程并行调用时各自保留请求上下文。
+Search、Fetch 和外部 MCP 结果保存携带调用子线程的标识，由 Server 按对应线程的 Write 权限校验；根会话与子线程并行调用时各自保留请求上下文。
 文件在沙箱被替换后不可恢复，延续现有工具输出文件生命周期。
 前端接受 null 内容预算；域名规则由服务端统一校验，编辑保存展示具体字段错误。服务端会话或网络策略读取故障返回内部错误，权限拒绝或线程不存在返回 403。
 

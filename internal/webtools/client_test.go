@@ -359,3 +359,38 @@ func TestFetchBoundsTitleIndependentlyOfContent(t *testing.T) {
 		t.Fatalf("title bytes=%d content bytes=%d", len(page.Title), len(page.Content))
 	}
 }
+
+func TestSearchEncodedPathPolicies(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		configs []string
+		target  string
+		want    int
+	}{
+		{"blocked encoded source", []string{`{"name":"web_search","blocked_domains":["example.com/private"]}`}, "https://example.com/pr%69vate/page", 0},
+		{"blocked encoded rule", []string{`{"name":"web_search","blocked_domains":["example.com/pr%69vate"]}`}, "https://example.com/private/page", 0},
+		{"case sensitive", []string{`{"name":"web_search","allowed_domains":["example.com/private"]}`}, "https://example.com/Private/page", 0},
+		{"encoded intersection", []string{`{"name":"web_search","allowed_domains":["example.com/pr%69vate"]}`, `{"name":"web_search","allowed_domains":["example.com/private/page"]}`}, "https://example.com/private/page", 1},
+		{"literal percent intersection", []string{`{"name":"web_search","allowed_domains":["example.com/a%25b"]}`, `{"name":"web_search","allowed_domains":["example.com/a%25b/page"]}`, `{"name":"web_search","allowed_domains":["example.com/a%25b/page"]}`}, "https://example.com/a%25b/page", 1},
+		{"encoded source allowed", []string{`{"name":"web_search","allowed_domains":["example.com/private"]}`}, "https://example.com/pr%69vate/page", 1},
+		{"decode once", []string{`{"name":"web_search","blocked_domains":["example.com/private"]}`}, "https://example.com/pr%2569vate/page", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := network(t, `{}`)
+			for _, raw := range tc.configs {
+				config, err := ParseToolConfig([]byte(raw))
+				if err != nil {
+					t.Fatal(err)
+				}
+				policy.Tools = append(policy.Tools, config)
+			}
+			client := NewClient(searchProviderFunc(func(context.Context, SearchRequest) (SearchResponse, error) {
+				return SearchResponse{Sources: []Source{{URL: tc.target}}}, nil
+			}), nil)
+			result, err := client.Search(t.Context(), SearchRequest{Query: "test"}, policy)
+			if err != nil || len(result.Sources) != tc.want {
+				t.Fatalf("sources=%d want=%d err=%v", len(result.Sources), tc.want, err)
+			}
+		})
+	}
+}

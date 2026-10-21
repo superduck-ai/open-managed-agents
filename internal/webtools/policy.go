@@ -43,9 +43,8 @@ func (p Policy) Allows(target *url.URL) bool {
 
 func matchesDomains(target *url.URL, domains []string) bool {
 	for _, domain := range domains {
-		host, path, _ := strings.Cut(domain, "/")
-		host = strings.ToLower(host)
-		if matchesDomain(target.Hostname(), host) && (path == "" || strings.HasPrefix(target.EscapedPath(), "/"+path)) {
+		host, path, err := parseDomainScope(domain)
+		if err == nil && matchesDomain(target.Hostname(), host) && (path == "" || strings.HasPrefix(target.Path, "/"+path)) {
 			return true
 		}
 	}
@@ -76,9 +75,14 @@ func (p Policy) hasDomainIntersection() bool {
 }
 
 func intersectDomains(a, b string) (string, bool) {
-	ah, ap, _ := strings.Cut(a, "/")
-	bh, bp, _ := strings.Cut(b, "/")
-	ah, bh = strings.ToLower(ah), strings.ToLower(bh)
+	ah, ap, err := parseDomainScope(a)
+	if err != nil {
+		return "", false
+	}
+	bh, bp, err := parseDomainScope(b)
+	if err != nil {
+		return "", false
+	}
 	host := ah
 	if matchesDomain(bh, ah) {
 		host = bh
@@ -92,7 +96,13 @@ func intersectDomains(a, b string) (string, bool) {
 		return "", false
 	}
 	if path != "" {
-		host += "/" + path
+		host += (&url.URL{Path: "/" + path}).EscapedPath()
 	}
 	return host, true
+}
+
+func parseDomainScope(domain string) (string, string, error) {
+	host, path, _ := strings.Cut(domain, "/")
+	path, err := url.PathUnescape(path)
+	return strings.ToLower(host), path, err
 }

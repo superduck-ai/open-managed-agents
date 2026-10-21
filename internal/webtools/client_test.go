@@ -286,3 +286,29 @@ func TestSearchOverlappingDomainsCanHaveNoResults(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadDirectAPIKey(t *testing.T) {
+	for _, key := range []string{"invalid key", "invalid\nkey"} {
+		if _, err := Load(key); err == nil || strings.Contains(err.Error(), key) {
+			t.Fatal("invalid key must be rejected without exposing it")
+		}
+	}
+	client, err := Load("")
+	if err != nil || client.search != nil {
+		t.Fatal("empty key must leave search unavailable")
+	}
+	client, err = Load(" private-test-key\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := client.search.(*deepSeekSearch)
+	provider.http.Transport = testTransport(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("Authorization") != "Bearer private-test-key" {
+			t.Error("configured credential was not forwarded")
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"results":[]}`))}, nil
+	})
+	if _, err := client.Search(t.Context(), SearchRequest{Query: "test"}, network(t, `{}`)); err != nil {
+		t.Fatal(err)
+	}
+}

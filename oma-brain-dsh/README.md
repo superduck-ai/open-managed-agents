@@ -459,11 +459,10 @@ and Fetch content budgets; unsupported provider options fail explicitly.
 
 Both tools execute on oma-server through session-authenticated
 `POST /v2/ccr-sessions/{id}/web/search` and `/web/fetch`. Search uses DeepSeek;
-configure `web_tools.deepseek_api_key_file` on the server. Fetch uses direct Go
+configure `web_tools.deepseek_api_key` on the server. Fetch uses direct Go
 HTTP without an external Fetch API. Requests and redirects enforce Environment
-networking, tool domain rules and public-address checks. Optional
-`web_tools.dns_resolver` selects an IP:53 TCP resolver on networks using Fake-IP
-DNS. Brain receives no provider credentials.
+networking, tool domain rules and public-address checks using system DNS.
+Brain receives no provider credentials.
 
 Short results do not allocate a sandbox. Long results use the existing sandbox
 output persistence and Read path, with a bounded preview. Web content remains

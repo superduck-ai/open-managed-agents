@@ -481,6 +481,8 @@ func TestLoadYAMLRejectsUnknownField(t *testing.T) {
 		overrides string
 		wantField string
 	}{
+		{name: "removed web DNS resolver", overrides: "web_tools:\n  dns_resolver: 1.1.1.1:53\n", wantField: "dns_resolver"},
+		{name: "removed web key file", overrides: "web_tools:\n  deepseek_api_key_file: secrets/key\n", wantField: "deepseek_api_key_file"},
 		{name: "regular field", overrides: "database:\n  urll: postgresql://typo/database\n", wantField: "urll"},
 		{name: "removed process upstream", overrides: "anthropic_upstream:\n  api_key: leftover\n", wantField: "anthropic_upstream"},
 		{name: "removed SDK fixture configuration", overrides: "sdk_fixtures:\n  api_key: leftover\n", wantField: "sdk_fixtures"},
@@ -1191,4 +1193,15 @@ func TestAllowedEmailDomains(t *testing.T) {
 			t.Fatalf("domains = %v", cfg.Auth.AllowedEmailDomains)
 		}
 	})
+}
+
+func TestLoadWebToolsAPIKey(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, "web_tools:\n  deepseek_api_key: private-test-key\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WebTools.DeepSeekAPIKey != "private-test-key" {
+		t.Fatal("API key was not preserved")
+	}
 }

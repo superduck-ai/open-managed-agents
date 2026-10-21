@@ -34,8 +34,7 @@ type Config struct {
 }
 
 type WebToolsConfig struct {
-	DNSResolver        string `yaml:"dns_resolver"`
-	DeepSeekAPIKeyFile string `yaml:"deepseek_api_key_file"`
+	DeepSeekAPIKey string `yaml:"deepseek_api_key"`
 }
 
 // VaultConfig configures at-rest encryption for vault credential secrets and

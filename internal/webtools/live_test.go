@@ -9,11 +9,11 @@ import (
 )
 
 func TestLiveWebTools(t *testing.T) {
-	keyFile := os.Getenv("OMA_WEBTOOLS_LIVE_KEY_FILE")
-	if keyFile == "" {
-		t.Skip("set OMA_WEBTOOLS_LIVE_KEY_FILE for real DeepSeek and HTTP acceptance")
+	apiKey := os.Getenv("OMA_WEBTOOLS_LIVE_API_KEY")
+	if apiKey == "" {
+		t.Skip("set OMA_WEBTOOLS_LIVE_API_KEY for real DeepSeek and HTTP acceptance")
 	}
-	client, err := Load(keyFile, os.Getenv("OMA_WEBTOOLS_LIVE_DNS_RESOLVER"))
+	client, err := Load(apiKey)
 	if err != nil {
 		t.Fatal("could not load live search credentials")
 	}

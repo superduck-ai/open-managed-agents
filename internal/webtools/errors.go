@@ -28,10 +28,6 @@ func requestFailed() error {
 	return apperr.New(apperr.Unavailable, "Web service request failed or timed out", nil)
 }
 
-func invalidCredentialFile() error {
-	return apperr.New(apperr.InvalidArgument, "Could not load the web tools API key file", nil)
-}
-
 func upstreamFailure(status int) error {
 	kind, message := apperr.Unavailable, "Web service request failed"
 	switch status {

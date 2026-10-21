@@ -338,5 +338,4 @@ transcript_archive:
   max_rows_per_job: 50000
 
 web_tools:
-  deepseek_api_key_file: ""
-  dns_resolver: ""
+  deepseek_api_key: ""

@@ -39,12 +39,8 @@ func (c *Client) Fetch(ctx context.Context, input FetchRequest, policy Policy) (
 	defer cancel()
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	resolver := net.DefaultResolver
-	if c != nil && c.resolver != nil {
-		resolver = c.resolver
-	}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		return publicDial(ctx, network, address, resolver)
+		return publicDial(ctx, network, address, net.DefaultResolver)
 	}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(r *http.Request, via []*http.Request) error {

@@ -32,13 +32,12 @@ sequenceDiagram
 
 ```yaml
 web_tools:
-  deepseek_api_key_file: secrets/deepseek-web-key
-  dns_resolver: ""
+  deepseek_api_key: "your-deepseek-api-key"
 ```
 
-相对路径按 YAML 所在目录解析；启动时读取密钥。密钥不进入 Brain、沙箱、assignment、事件或运行日志。
+启动时直接读取配置中的密钥。密钥不进入 Brain、沙箱、assignment、事件或运行日志。
 没有配置密钥时 Search 返回 unavailable；直接 HTTP Fetch 仍可用。
-默认使用系统 DNS；如运行环境返回代理 Fake-IP，可由管理员设置 dns_resolver 为真实 DNS 的 IP:53，以 TCP 查询。它不放宽目标 IP 检查，也不修改机器的 DNS 设置。
+Fetch 统一使用系统 DNS，并继续校验实际连接 IP 与每次重定向目标。旧的 deepseek_api_key_file 和 dns_resolver 已移除；配置需改为 deepseek_api_key。
 SearchProvider 接口定义 `Search(context.Context, SearchRequest) (SearchResponse, error)`，DeepSeek 实现该接口并负责参数映射、凭据、上游错误与响应归一化。Client 接收 Provider；查询校验、Environment / 工具来源过滤由 OMA 统一执行，替换 Provider 不能绕过这些规则。
 Search 厂商字段只存在于服务端适配器，不进入模型工具 schema；启动组装默认选择 DeepSeek，后续替换构造处的实现即可，不需要修改 Brain 或 HTTP handler。第一版没有插件注册表、动态加载或额外 Node 服务。
 Fetch 使用 Go HTTP 和已有 HTML parser，参考官方 DSH 行为；不是直接运行 TS 的 dsh-web-fetch-http。

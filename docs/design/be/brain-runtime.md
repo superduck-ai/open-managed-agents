@@ -158,7 +158,7 @@ result 复用既有事件 ID 去重、epoch 校验和队列过滤；普通成功
 
 用户中断完成后，Brain 在私有 DSH 消息历史中持久写入带原输入 ID 的 `oma-interruption` 上下文，说明该轮未完成操作已经取消，只有后续用户明确要求时才能重新执行。先刷新此日志，再保存旧输入完成状态、发布结束和确认投递。该上下文会进入下一次模型请求并在会话恢复后保留；已完成输入重投不重复写入。它不删除旧消息，不生成公开的用户消息或 `Turn cancelled` 提示，也不限制后续用户明确发起的新任务。
 
-主动中断的原 call ID 在当前执行日志中不能再次批准或 dispatch；已完成输入重复投递只补发事件和 ACK，不重新执行。恢复后保留本地中断结果及未确认的远端状态，不重放旧调用。下一轮新调用可以开始，接受与远端 Bash 清理短暂重叠的窗口。没有主动用户中断的网络失败、超时、Worker 停止，以及崩溃恢复时未记录结果的 dispatch，继续进入 unknown/blocked，不自动重放。
+主动中断的原 call ID 在当前执行日志中不能再次批准或 dispatch；已完成输入重复投递只补发事件和 ACK，不重新执行。恢复后保留本地中断结果及未确认的远端状态，不重放旧调用。下一轮新调用可以开始，接受与远端 Bash 清理短暂重叠的窗口。没有主动用户中断的网络失败、超时、Worker 停止，以及崩溃恢复时未记录结果的 dispatch，继续进入 unknown/blocked，不自动重放；用户发送下一条输入时按“未知工具结果的处理”记为未知并继续。
 
 Rust 不维护 TaskManager、任务结果缓存或 TTL 回收器。Bash 正常收到取消时终止进程组并等待退出；执行 future 被丢弃时由进程组 guard 强制终止命令。grep/glob 取消时终止并等待子进程；明确请求的后台 Bash 保留原有语义。停止进程不会回滚已经发生的文件写入等副作用。
 
@@ -186,9 +186,13 @@ DSH 将等待后端权限判定与等待用户确认分开：发送 `can_use_too
 
 DSH 的工具执行持久化屏障如下：审批前先刷新 dsh 日志、保存含 outbox 的 Brain 状态并发布 outbox；发布后清空 outbox 的状态不单独保存，由下一次状态保存（dispatch 或 turn 结束）带上，崩溃后重发的 outbox 事件按稳定 UUID 幂等去重。turn 结束与恢复路径仍在 ACK 前保存清空后的 outbox。有副作用的工具（Bash、Write、Edit）审批通过只更新内存中的 `approved` 阶段，与 `dispatch` 合并为一次保存，并在沙箱准备之后、工具转发之前写入；崩溃恢复语义不变：未写入 `dispatch` 的调用按 interrupted 处理，已写入的按 blocked 处理。只读工具（Read、Glob、Grep）不进入 `callPhases`，不做 dispatch 预写和执行前日志 flush，结果只更新内存状态（审批改写参数时仍立即保存），由下一次模型请求前的 flush 一并持久化。只读调用失败时在未中断的前提下重试一次，仍失败则记为失败结果并以 `is_error` 返回模型，不调用 `recordUnknown`、不停止会话；中断时直接记为失败结果。进程在只读调用期间崩溃时，恢复按普通未完成 turn 处理为 interrupted，不进入 blocked，也不重放。dsh 日志 flush 在缓冲为空时一律跳过，新建会话在创建时直接持久化一次只含 header 的 batch。控制输入的重投去重只在同一 Brain 进程内生效，已处理的控制输入 ID 不跨重启持久化。
 
-### 未知工具结果的人工确认
+### 未知工具结果的处理
 
-已 dispatch 却没有确认结果的 Bash、Write、Edit 或外部 MCP 调用会把所在线程记为 `blocked`，整个会话拒绝新输入，直到有人确认这些调用的结果未知。DSH 不提供自动解锁，也不会重放这些调用。
+已 dispatch 却没有确认结果的 Bash、Write、Edit 或外部 MCP 调用会把所在线程记为 `blocked`：当前 turn 停止，同一 turn 内不再 dispatch 新调用，也不会重放这些调用。会话在两种情况下恢复可用：用户发送新输入，或运维事先确认。
+
+用户新输入到达仍为 `blocked` 的会话时，DSH 先在同一输入的处理路径上把所有 `blocked` 调用（含子线程）记为 `result`，工具结果为 `failed: true`、`remoteOutcome: unknown`；没有逐调用阶段的旧版状态只解除线程与会话的 blocked。随后在主线程私有历史中追加 `oma-reconciliation` 用户上下文，说明这些调用结果未知、未重放、可能已生效、需先核实状态再依赖或重复；发布 UUID 为 `<input_id>_unknown_outcomes` 的 `system.message`；刷新日志、保存 Brain 状态并用 `null` 清除 `unknown_tool_outcomes`，然后按普通输入执行这一轮。处理前崩溃时输入会被重投，处理是幂等的。这一语义与用户主动中断一致：只在用户明确继续对话时放行，由模型和用户核实副作用，系统不自动重放。
+
+DSH 在记录 unknown 时以及每次打开会话时，把仍为 `blocked` 的调用写入 worker external_metadata 的 `unknown_tool_outcomes`（`tool_use_id`、`tool_name`，子线程另带 `session_thread_id`），没有时写 `null` 删除该键。运维可在用户继续之前使用 `cmd/tool-outcome-reconcile` 查看并确认：
 
 DSH 在记录 unknown 时以及每次打开会话时，把仍为 `blocked` 的调用写入 worker external_metadata 的 `unknown_tool_outcomes`（`tool_use_id`、`tool_name`，子线程另带 `session_thread_id`），没有时写 `null` 删除该键。运维使用 `cmd/tool-outcome-reconcile` 查看并确认：
 

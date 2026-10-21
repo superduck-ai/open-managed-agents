@@ -147,56 +147,29 @@ test("a confirmed sibling cannot clear an unknown call or allow further dispatch
   await expect(session.recordDispatch("waiting")).rejects.toThrow("Invalid or blocked tool dispatch");
 });
 
-test("a new input rejected by reconciliation is processed durably without clearing the unknown call", async () => {
+test("a new input after an unknown call settles it as unknown without replay and continues", async () => {
   const { session, b } = await fixture();
   session.state.inputId = "uncertain-original";
   await session.recordApproved(approved("uncertain-call"));
   await session.recordDispatch("uncertain-call");
   await session.recordUnknown("uncertain-call");
-  const original = structuredClone(session.state.executions);
-  await expect(session.receive("rejected-followup", { content: "read another server" })).rejects.toThrow("reconciliation");
-  expect(b.processed).toContain("rejected-followup");
-  expect(session.state.completed).toContain("rejected-followup");
-  expect(session.state.inputId).toBe("uncertain-original");
-  expect(session.state.executions).toEqual(original);
-  expect(session.blocked()).toBe(true);
-  expect(b.requests).toHaveLength(0);
-  expect(b.executions).toHaveLength(0);
-  expect(b.publicLog.get("rejected-followup_failed_result")?.is_error).toBe(true);
-  const processing = b.timeline.findIndex((e) => e.type === "input.delivery" && e.inputId === "rejected-followup" && e.status === "processing");
-  const checkpoint = b.timeline.findIndex((e) => e.type === "private.persist" && e.payload.subtype === "dsh_brain_state" && e.payload.data.completed.includes("rejected-followup"));
-  const published = b.timeline.findIndex((e) => e.uuid === "rejected-followup_failed_result");
-  const ack = b.timeline.findIndex((e) => e.type === "input.ack" && e.inputId === "rejected-followup");
-  expect(processing).toBeGreaterThan(-1);
-  expect(checkpoint).toBeGreaterThan(processing);
-  expect(published).toBeGreaterThan(checkpoint);
-  expect(ack).toBeGreaterThan(published);
-  await session.receive("rejected-followup", { content: "duplicate" });
-  expect(b.requests).toHaveLength(0);
-  expect(b.executions).toHaveLength(0);
-  expect(session.state.executions).toEqual(original);
-  expect(b.timeline.filter((e) => e.uuid === "rejected-followup_failed_result")).toHaveLength(1);
-});
-
-test("an unconfirmed reconciliation rejection is never acknowledged", async () => {
-  const { session, b } = await fixture();
-  session.state.inputId = "uncertain-original";
-  await session.recordApproved(approved("uncertain-call"));
-  await session.recordDispatch("uncertain-call");
-  await session.recordUnknown("uncertain-call");
-  b.failWrites = true;
-  const rejected = session.receive("unconfirmed-rejection", { content: "another task" });
-  rejected.catch(() => {});
-  await eventually(() => b.failedCcrWrites > 0);
-  session.stop();
-  await expect(rejected).rejects.toThrow();
-  expect(b.processed).toEqual([]);
-  expect(b.requests).toEqual([]);
+  expect(b.workerMetadata.unknown_tool_outcomes).toEqual([{ tool_use_id: "uncertain-call", tool_name: "Read" }]);
+  await session.receive("continued-followup", { content: "read another server" });
+  expect(b.processed).toContain("continued-followup");
+  expect(session.state.completed).toContain("continued-followup");
+  expect(session.blocked()).toBe(false);
+  expect(b.workerMetadata).not.toHaveProperty("unknown_tool_outcomes");
+  expect(b.requests).toHaveLength(1);
+  expect(JSON.stringify(b.requests[0]!.messages)).toContain("these earlier tool calls are unknown: Read (uncertain-call)");
+  expect(b.publicLog.get("continued-followup_unknown_outcomes")?.type).toBe("system.message");
+  expect(b.publicLog.get("continued-followup_result")?.is_error).toBe(false);
   expect(b.executions).toEqual([]);
-  b.failWrites = false;
+  const settled = [...b.privateLog.values()].filter((p) => p.subtype === "dsh_brain_state")
+    .find((p) => p.data.executions?.[session.id]?.callPhases?.["uncertain-call"] === "result");
+  expect(settled?.data.executions[session.id].toolOutcomes["uncertain-call"]).toMatchObject({ failed: true, remoteOutcome: "unknown" });
 });
 
-test("restoration blocks each unfinished dispatch and preserves confirmed siblings without replay", async () => {
+test("restoration blocks each unfinished dispatch, preserves confirmed siblings and continues without replay", async () => {
   const { session, b } = await fixture();
   session.state.inputId = "interrupted-read-batch";
   for (const id of ["unfinished", "confirmed", "waiting"]) await session.recordApproved(approved(id));
@@ -213,9 +186,11 @@ test("restoration blocks each unfinished dispatch and preserves confirmed siblin
     expect(resumed.blocked()).toBe(true);
     expect(resumed.execution(resumed.id).callPhases).toEqual({ unfinished: "blocked", confirmed: "result", waiting: "interrupted" });
     expect(resumed.execution(resumed.id).toolOutcomes.confirmed!.text).toBe("confirmed");
-    await expect(resumed.receive("new-input", { content: "continue" })).rejects.toThrow("reconciliation");
+    await resumed.receive("new-input", { content: "continue" });
+    expect(resumed.blocked()).toBe(false);
     expect(b.executions).toHaveLength(0);
-    expect(b.requests).toHaveLength(0);
+    expect(b.requests).toHaveLength(1);
+    expect(JSON.stringify(b.requests[0]!.messages)).toContain("(unfinished)");
   } finally { await resumed.close(); await ctx.fiber.dispose(); }
 });
 

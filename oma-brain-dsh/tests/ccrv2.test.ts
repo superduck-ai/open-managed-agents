@@ -915,7 +915,6 @@ test("operator reconciliation unblocks only acknowledged unknown outcomes withou
     expect(mounted.session.blocked()).toBe(true);
     expect(backend.metadata.get(config.id)).not.toHaveProperty("tool_outcome_reconciliation");
     expect(backend.metadata.get(config.id)?.unknown_tool_outcomes).toEqual([{ tool_use_id: "lost-call", tool_name: "Bash" }]);
-    await expect(mounted.session.receive("still-blocked", { content: "Continue" })).rejects.toThrow("operator reconciliation");
   } finally { mounted.restore(); await mounted.ctx.fiber.dispose(); }
 
   backend.metadata.set(config.id, { ...backend.metadata.get(config.id), tool_outcome_reconciliation: { tool_use_ids: ["lost-call"] } });

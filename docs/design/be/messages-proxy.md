@@ -307,6 +307,6 @@ Console API（相对 `/api/console/organizations/{orgUuid}`）：
 
 组织模型预览不依赖工作区。读取只返回 Key 是否存在及末四位，PUT 省略或留空 Key 保留旧密钥；首次创建返回 201，更新返回 200，不存在返回 404。组织 Provider 不混入工作区 Provider 管理 API 的列表。
 
-迁移 `00094_organization_llm_provider.sql` 从主干版本 91 追加升级，不修改已有迁移。已有工作区 slug `organization` 改为当前空间中第一个未占用的 `organization-N`，同步改写 Agent、版本、Session 快照、Code Session 模型与恢复元数据、待执行 Batch 的对应完整引用；其他引用和已完成 Batch 不改写。外部调用方若使用旧 `organization/{model}`，需改用迁移后的工作区 slug。Down 删除组织 Provider 及索引并恢复 workspace 非空，不回退已经改名的工作区 slug 和引用；回退前需备份组织配置。
+迁移 `00094_organization_llm_provider.sql` 从主干版本 91 追加升级，不修改已有迁移。已有工作区 slug `organization` 改为当前空间中第一个未占用的 `organization-N`，同步改写 `agents.model`、`agent_versions.model`，以及 `sessions`、`session_threads`、`deployments`、`deployment_runs` 的 `agent_snapshot` 顶层模型；同时改写 Agent、版本的 `multiagent` 列与上述快照中的 `multiagent.advisor.model`，并递归处理展开 roster（`multiagent.agents`、`multiagent.subagents.predefined_agents`、`multiagent.workflows.predefined_agents`）内嵌的模型引用。Code Session 模型与恢复元数据、queued / in_flight Batch 的对应完整引用也同步改写。改写仅作用于发生 slug 变更的组织和工作区，支持字符串及对象模型，保留模型的其他字段、roster 顺序和其他 JSON 内容；`metadata.model`、无关引用、其他租户数据与已完成 Batch 不改写。外部调用方若使用旧 `organization/{model}`，需改用迁移后的工作区 slug。Down 删除组织 Provider 及索引并恢复 workspace 非空，不回退已经改名的工作区 slug 和引用；回退前需备份组织配置。
 
 组织 Provider 的通用 API 和配置不包含任何公司网关预设、公司控制台链接或专属域名。

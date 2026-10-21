@@ -64,7 +64,7 @@ export class SandboxMcp implements SandboxExecutor {
     let result: Payload;
     try {
       result = object(await this.client.callTool({ name: tool.remoteName, arguments: args, _meta: { progressToken: token } },
-        { timeout: 185_000, ...(this.transport.protocolVersion === "2026-07-28" ? { signal } : {}) }));
+        { timeout: sandboxCallTimeoutMs(tool, args), ...(this.transport.protocolVersion === "2026-07-28" ? { signal } : {}) }));
     } catch (error) {
       if (call.rejection !== undefined) throw new ToolNotForwardedError(call.rejection);
       throw error;
@@ -79,6 +79,18 @@ export class SandboxMcp implements SandboxExecutor {
   }
 
   async close(): Promise<void> { await this.client.close(); }
+}
+
+const SANDBOX_CALL_TIMEOUT_MS = 185_000;
+const BASH_DEFAULT_TIMEOUT_SECONDS = 120;
+const BASH_MAX_TIMEOUT_SECONDS = 600;
+const BASH_RESPONSE_MARGIN_MS = 65_000;
+
+export function sandboxCallTimeoutMs(tool: RemoteTool, args: Payload): number {
+  if (tool.remoteName !== "bash") return SANDBOX_CALL_TIMEOUT_MS;
+  const requested = Number.isFinite(args.timeout) && args.timeout > 0 ? args.timeout : BASH_DEFAULT_TIMEOUT_SECONDS;
+  const seconds = Math.min(requested, BASH_MAX_TIMEOUT_SECONDS);
+  return Math.max(SANDBOX_CALL_TIMEOUT_MS, seconds * 1000 + BASH_RESPONSE_MARGIN_MS);
 }
 
 async function rejectionMessage(response: Response): Promise<string> {

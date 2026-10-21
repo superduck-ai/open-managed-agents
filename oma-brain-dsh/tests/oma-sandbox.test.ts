@@ -5,9 +5,22 @@ import { OmaApi } from "../src/api.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import { mountOma } from "../src/plugin.ts";
 import * as OmaSandboxProvider from "../src/oma-sandbox/index.ts";
+import { sandboxCallTimeoutMs } from "../src/oma-sandbox/client.ts";
 import * as SandboxTools from "../src/sandbox-tools/index.ts";
 import { sandboxToolDefinitions } from "../src/sandbox-tools/definitions.ts";
 import { assignment, Backend, textEvents, toolEvents } from "./backend.ts";
+
+test("sandbox call timeout outlasts the requested Bash timeout", () => {
+  const tools = sandboxToolDefinitions();
+  const bash = tools.find((tool) => tool.name === "Bash")!;
+  const read = tools.find((tool) => tool.name === "Read")!;
+  expect(sandboxCallTimeoutMs(bash, { command: "true", timeout: 600 })).toBe(665_000);
+  expect(sandboxCallTimeoutMs(bash, { command: "true", timeout: 3600 })).toBe(665_000);
+  expect(sandboxCallTimeoutMs(bash, { command: "true", timeout: 300 })).toBe(365_000);
+  expect(sandboxCallTimeoutMs(bash, { command: "true" })).toBe(185_000);
+  expect(sandboxCallTimeoutMs(bash, { command: "true", timeout: "900" })).toBe(185_000);
+  expect(sandboxCallTimeoutMs(read, { file_path: "/tmp/a", timeout: 600 })).toBe(185_000);
+});
 
 test("OMA providers isolate roots, initialize lazily and retain separate MCP sessions", async () => {
   const ctx = new Context();

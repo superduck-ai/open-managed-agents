@@ -8,7 +8,7 @@ import type { AiSdkRoute } from "./llm-ai-sdk/index.ts";
 
 type ModelBackend = "messages" | "chat_completions";
 
-const MODEL_TIMEOUT_MS = 300_000;
+const MODEL_IDLE_TIMEOUT_MS = 300_000;
 const MESSAGES_DEFAULT_MAX_TOKENS = 8192;
 
 export function modelSessionID(options: GenerateOptions): string {
@@ -53,8 +53,69 @@ function proxyFetch(api: OmaApi, endpoint: string, agentID: string | undefined,
     const headers = new Headers(init.headers);
     headers.delete("x-api-key");
     if (agentID) headers.set("X-Claude-Code-Agent-Id", agentID);
-    const timeout = AbortSignal.timeout(MODEL_TIMEOUT_MS);
-    return response(await api.fetcher(endpoint, { method: "POST", headers, body: init.body, redirect: "error",
-      signal: init.signal ? AbortSignal.any([init.signal, timeout]) : timeout }));
+    const idle = new IdleTimeout(MODEL_IDLE_TIMEOUT_MS);
+    try {
+      const result = await api.fetcher(endpoint, { method: "POST", headers, body: init.body, redirect: "error",
+        signal: init.signal ? AbortSignal.any([init.signal, idle.signal]) : idle.signal });
+      return response(idle.watch(result));
+    } catch (error) {
+      idle.clear();
+      throw error;
+    }
   }) as typeof fetch;
+}
+
+export class IdleTimeout {
+  private readonly controller = new AbortController();
+  private timer?: ReturnType<typeof setTimeout>;
+
+  constructor(private readonly ms: number) {
+    this.touch();
+  }
+
+  get signal(): AbortSignal {
+    return this.controller.signal;
+  }
+
+  touch(): void {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.controller.abort(new DOMException(`Model response idle for ${this.ms} ms`, "TimeoutError"));
+    }, this.ms);
+  }
+
+  clear(): void {
+    clearTimeout(this.timer);
+  }
+
+  watch(response: Response): Response {
+    if (!response.body) {
+      this.clear();
+      return response;
+    }
+    this.touch();
+    const reader = response.body.getReader();
+    const body = new ReadableStream<Uint8Array>({
+      pull: async (controller) => {
+        try {
+          const next = await reader.read();
+          if (next.done) {
+            this.clear();
+            controller.close();
+            return;
+          }
+          this.touch();
+          controller.enqueue(next.value);
+        } catch (error) {
+          this.clear();
+          controller.error(error);
+        }
+      },
+      cancel: (reason) => {
+        this.clear();
+        return reader.cancel(reason);
+      },
+    });
+    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+  }
 }

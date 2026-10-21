@@ -105,7 +105,7 @@ export class Backend {
   connections = 0;
   sandboxCount = 0;
   modelScript: Payload[][] = [textEvents("hello")];
-  onModel?: (request: Payload) => Promise<Payload[]>;
+  onModel?: (request: Payload) => Promise<Payload[] | Response>;
   onCancel?: (params: Payload) => Promise<void>;
   onTool?: (params: Payload) => Promise<Payload>;
   onApproval?: (payload: Payload) => Promise<void>;
@@ -220,6 +220,7 @@ export class Backend {
       this.timeline.push({ type: "model.request" });
       const script = this.onModel ? await this.onModel(body) : this.modelScript.shift();
       if (!script) return json({ error: "model script exhausted" }, 500);
+      if (script instanceof Response) return script;
       return new Response(
         script
           .map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`)

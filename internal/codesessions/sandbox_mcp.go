@@ -5,13 +5,19 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-const sandboxNotForwardedHeader = "X-Oma-Sandbox-Not-Forwarded"
+const (
+	sandboxNotForwardedHeader  = "X-Oma-Sandbox-Not-Forwarded"
+	sandboxToolCallWriteWindow = 15 * time.Minute
+)
 
 func (h *Handler) handleSandboxMCP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(sandboxNotForwardedHeader, "true")
@@ -77,10 +83,15 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 		return
 	}
 	copySandboxMCPRequestHeaders(request.Header, r.Header)
-	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	if call.Method == "tools/call" {
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(sandboxToolCallWriteWindow))
+	}
 	w.Header().Del(sandboxNotForwardedHeader)
-	response, err := client.Do(request)
+	response, sent, err := sendSandboxMCPRequest(request)
 	if err != nil {
+		if !sent {
+			w.Header().Set(sandboxNotForwardedHeader, "true")
+		}
 		h.errorAdapter.Write(w, r, sandboxOperationError(err))
 		return
 	}
@@ -113,6 +124,18 @@ func (h *Handler) serveSandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 	copySandboxMCPResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(responseBody)
+}
+
+func sendSandboxMCPRequest(request *http.Request) (*http.Response, bool, error) {
+	var sent atomic.Bool
+	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
+		if info.Err == nil {
+			sent.Store(true)
+		}
+	}}
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(request.WithContext(httptrace.WithClientTrace(request.Context(), trace)))
+	return response, sent.Load(), err
 }
 
 func copySandboxMCPRequestHeaders(target, source http.Header) {

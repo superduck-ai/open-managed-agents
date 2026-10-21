@@ -7,6 +7,7 @@ import { ExternalMcp } from "../external-mcp/index.ts";
 import * as SandboxTools from "../sandbox-tools/index.ts";
 import { failureDiagnostic, workerDiagnostic } from "../ccrv2/diagnostics.ts";
 import { approveToolCall, releaseToolApproval, clearToolApprovals, prefetchMcpApprovals } from "./tool-approvals.ts";
+import * as UserQuestions from "../user-questions/index.ts";
 import { object } from "../json.ts";
 import type {
   SessionRuntimeConfig,
@@ -30,6 +31,7 @@ export class SessionRuntime {
   readonly externalMcp: ExternalMcp;
   private sandboxTools?: Fiber;
   private hostTools?: Fiber | void;
+  private questionTools?: Fiber;
 
   constructor(
     readonly ctx: Context,
@@ -70,6 +72,7 @@ export class SessionRuntime {
         tools: this.config.tools,
         permissions: toolPermissions,
       });
+      if (!this.parent) this.questionTools = await scope.plugin(UserQuestions, { bridge: this.bridge, tools: this.config.tools });
       this.hostTools = await this.config.setupTools?.(scope, this.bridge, this.config.tools, this.parent ? this.config.id : undefined, toolPermissions);
       await this.externalMcp.register(scope, this.bridge, this.abort.signal, async (serverName, phase) => {
         await this.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase);
@@ -88,6 +91,7 @@ export class SessionRuntime {
         return approval.allowed ? decision : { kind: "deny", reason: approval.reason || "Tool use denied by OMA" };
       });
       scope.on("tools/execute", async (exec, next) => {
+        if (exec.name === "AskUserQuestion") return next();
         if (!exec.name.startsWith("mcp__") && toolPermissions[exec.name.toLowerCase()] === "allow") return next();
         prefetchMcpApprovals(this.bridge, this.toolCalls, exec.callId,
           name => name.startsWith("mcp__") && !!scope.tools.get(name, exec.agent), exec.signal);
@@ -170,6 +174,10 @@ export class SessionRuntime {
       if (this.hostTools) {
         this.hostTools.update({ ...this.hostTools.config, tools: next.tools, permissions: this.config.toolPermissions });
         await this.hostTools.await();
+      }
+      if (this.questionTools) {
+        this.questionTools.update({ bridge: this.bridge, tools: next.tools });
+        await this.questionTools.await();
       }
       this.config.tools = next.tools;
     }

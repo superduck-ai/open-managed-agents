@@ -380,3 +380,12 @@ Brain 保持运行而沙箱已被 Provider 删除时，下一次 MCP 调用先�
 并发 MCP 请求通过既有 Work 事务锁及 `CreateEnvironmentSandbox` 的 pending 检查复用同一个 replacement。恢复不更换宿主机 Brain 的 Code Session 或 worker epoch。Provider 已删除的临时文件与进程无法保留，持久化事件和已提交 Filestore 内容不受影响。
 
 本地端口查询前也执行 SDK Connect，使 paused 恢复及过期错误分类与云端一致。端口查询本身返回 404 时同样识别为沙箱已删除。单测检查暂停连接、缺失分类及服务端错误保留；实际开发环境验收包含首次 Bash 调用、超过 TTL 后再次调用和环境信息查询。
+
+## DSH 自定义问卷工具
+
+主 Agent 显式启用 `ask_user_question` 后，Brain 注册 `AskUserQuestion`，不访问沙箱。
+参数采用 DeepSeek 的 `questions`：每题必填唯一 `id`、`question`，可选 `header`、`options`、`multi_select`。
+答案为 `{answers:[{id,selected,custom?}]}`；单选自由文本替代选择，多选自由文本补充选择。
+沿用 `agent.custom_tool_use` / `user.custom_tool_result` 和现有控制通道，按调用 ID、问题 ID 关联答案。
+服务端通过 `externalResult` 返回结果，不再兼容旧 Claude Code 的 `updatedInput.answers`。
+不新增依赖、接口或存储；取消、线程归属、epoch 与恢复沿用现有机制。

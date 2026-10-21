@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { resetTestDom } from '../../../test/setup';
-import { type ToolCallEntry } from '../types';
+import { type SessionToolConfirmationInput, type ToolCallEntry } from '../types';
 import {
   isAskUserQuestionCall,
   SessionRequiresActionCard,
@@ -151,7 +151,7 @@ describe('SessionRequiresActionCard', () => {
     });
   });
 
-  test('renders questionnaire with multiSelect and custom input, submitting questions as keys', async () => {
+  test('renders questionnaire and submits selected options by id', async () => {
     const confirmations: any[] = [];
     const handleConfirm = async (input: unknown) => {
       confirmations.push(input);
@@ -168,19 +168,21 @@ describe('SessionRequiresActionCard', () => {
         input: {
           questions: [
             {
+              id: 'flavor',
               header: 'Flavor',
               question: 'Which ice cream flavors do you want?',
               options: [
                 { label: 'Vanilla', description: 'Classic vanilla bean' },
                 { label: 'Chocolate', description: 'Dark cocoa' },
               ],
-              multiSelect: true,
+              multi_select: true,
             },
             {
+              id: 'topping',
               header: 'Topping',
               question: 'Select a topping',
               options: [{ label: 'Sprinkles' }, { label: 'Nuts' }],
-              multiSelect: false,
+              multi_select: false,
             },
           ],
         },
@@ -219,9 +221,50 @@ describe('SessionRequiresActionCard', () => {
       expect(payload.result).toBe('allow');
       expect(payload.customTool).toBe(true);
       expect(payload.sessionThreadId).toBe('sthr_subagent_1');
-      expect(payload.answers['Which ice cream flavors do you want?']).toEqual(['Vanilla', 'Chocolate']);
-      expect(payload.answers['Select a topping']).toBe('Sprinkles');
+      expect(payload.answers).toEqual({
+        answers: [
+          { id: 'flavor', selected: ['Vanilla', 'Chocolate'] },
+          { id: 'topping', selected: ['Sprinkles'] },
+        ],
+      });
     });
+  });
+
+  test('returns DeepSeek answers by id with duplicate question text and custom multi-select input', async () => {
+    const confirmations: SessionToolConfirmationInput[] = [];
+    const askCall: ToolCallEntry = {
+      ...baseToolCall,
+      event: {
+        id: 'sevt_native',
+        type: 'agent.custom_tool_use',
+        name: 'AskUserQuestion',
+        input: {
+          questions: [
+            { id: 'colors', question: 'Choose', multi_select: true, options: [{ label: 'Blue' }, { label: 'Red' }] },
+            { id: 'detail', question: 'Choose' },
+          ],
+        },
+      },
+    };
+    render(
+      <SessionRequiresActionCard
+        toolCall={askCall}
+        onConfirm={async (input) => {
+          confirmations.push(input);
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByText('Blue'));
+    fireEvent.change(screen.getAllByLabelText('Something else')[0]!, { target: { value: 'Green' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.change(screen.getAllByLabelText('Something else')[1]!, { target: { value: 'Free text' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(confirmations).toHaveLength(1));
+    expect(confirmations[0]?.answers?.answers).toEqual([
+      { id: 'colors', selected: ['Blue'], custom: 'Green' },
+      { id: 'detail', selected: [], custom: 'Free text' },
+    ]);
+    expect(confirmations[0]?.toolUseId).toBe('sevt_native');
   });
 
   test('supports deny on questionnaire card', async () => {
@@ -240,6 +283,7 @@ describe('SessionRequiresActionCard', () => {
         input: {
           questions: [
             {
+              id: 'agree',
               question: 'Do you agree?',
               options: [{ label: 'Yes' }, { label: 'No' }],
             },
@@ -273,7 +317,7 @@ describe('SessionRequiresActionCard', () => {
         type: 'agent.custom_tool_use',
         name: 'AskUserQuestion',
         input: {
-          questions: [{ question: 'Pick a color', options: [{ label: 'Blue' }, { label: 'Green' }] }],
+          questions: [{ id: 'color', question: 'Pick a color', options: [{ label: 'Blue' }, { label: 'Green' }] }],
         },
       },
     };
@@ -284,7 +328,7 @@ describe('SessionRequiresActionCard', () => {
         type: 'agent.custom_tool_use',
         name: 'AskUserQuestion',
         input: {
-          questions: [{ question: 'Pick an animal', options: [{ label: 'Cat' }, { label: 'Dog' }] }],
+          questions: [{ id: 'animal', question: 'Pick an animal', options: [{ label: 'Cat' }, { label: 'Dog' }] }],
         },
       },
     };

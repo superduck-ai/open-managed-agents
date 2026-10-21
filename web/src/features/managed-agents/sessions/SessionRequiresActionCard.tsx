@@ -204,24 +204,19 @@ export function SessionQuestionnaireActionCard({
     }
     setSubmitting(true);
     try {
-      const answers: Record<string, string | string[]> = {};
-      questions.forEach((question, index) => {
-        const itemKey = items[index]?.name ?? `question-${index}`;
-        const draft = drafts[itemKey];
-        const selectedOptions = draft?.options ?? [];
-        const customText = draft?.other?.trim() ?? '';
-        if (question.multiSelect) {
-          const combined = [...selectedOptions, ...(customText ? [customText] : [])];
-          answers[question.question] = combined;
-        } else {
-          answers[question.question] = customText || selectedOptions[0] || '';
-        }
+      const answers = questions.map((question, index) => {
+        const draft = drafts[items[index]?.name ?? `question-${index}`];
+        const custom = draft?.other.trim() ?? '';
+        return {
+          id: question.id,
+          selected: !question.multiSelect && custom ? [] : (draft?.options ?? []),
+          ...(custom ? { custom } : {}),
+        };
       });
-
       await onConfirm({
         toolUseId,
         result: 'allow',
-        answers,
+        answers: { answers },
         customTool: true,
         sessionThreadId,
       });
@@ -247,7 +242,7 @@ export function SessionQuestionnaireActionCard({
     }
   };
 
-  if (!questions.length) {
+  if (!questions.length || questions.some((question) => !question.id)) {
     return <SessionToolApprovalActionCard toolCall={toolCall} onConfirm={onConfirm} disabled={disabled} />;
   }
 

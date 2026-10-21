@@ -88,7 +88,7 @@ func Run(ctx context.Context, repoRoot, initFile string, opts Options) (Result, 
 		return Result{}, err
 	}
 	prepped.state.Phase = phaseKeys
-	if err := reconcileEnvironments(ctx, database, prepped.base.E2B.Template, &prepped.state); err != nil {
+	if err := reconcileEnvironments(ctx, database, prepped.base.E2B.Template, &prepped.state, opts); err != nil {
 		return Result{}, err
 	}
 	if err := SaveState(prepped.layout, prepped.state); err != nil {

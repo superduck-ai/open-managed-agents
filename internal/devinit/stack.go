@@ -3,6 +3,7 @@ package devinit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -60,12 +61,12 @@ func EnsureStack(ctx context.Context, repoRoot string, binding EnvBinding, previ
 func reconcileStack(ctx context.Context, repoRoot string, binding EnvBinding, previous *StackPorts) (StackPorts, error) {
 	if adopted, ok := adoptStackPorts(ctx, repoRoot, binding); ok {
 		if healthy, err := stackHealthy(ctx, repoRoot, binding, adopted); err == nil && healthy {
-			return adopted, nil
+			return refreshHealthyStack(ctx, repoRoot, binding, adopted)
 		}
 		previous = &adopted
 	} else if previous != nil {
 		if healthy, err := stackHealthy(ctx, repoRoot, binding, *previous); err == nil && healthy {
-			return *previous, nil
+			return refreshHealthyStack(ctx, repoRoot, binding, *previous)
 		}
 	}
 	var lastErr error
@@ -77,7 +78,7 @@ func reconcileStack(ctx context.Context, repoRoot string, binding EnvBinding, pr
 		if err := fillStackPorts(binding, &ports); err != nil {
 			return StackPorts{}, err
 		}
-		if err := writeStackFiles(repoRoot, binding, ports); err != nil {
+		if err := writeStackFiles(ctx, repoRoot, binding, ports); err != nil {
 			return StackPorts{}, err
 		}
 		command := composeCommand(ctx, repoRoot, binding, "up", "--detach")
@@ -194,7 +195,11 @@ func composeCommand(ctx context.Context, repoRoot string, binding EnvBinding, ar
 	return command
 }
 
-func writeStackFiles(repoRoot string, binding EnvBinding, ports StackPorts) error {
+func writeStackFiles(ctx context.Context, repoRoot string, binding EnvBinding, ports StackPorts) error {
+	images, err := loadImagesConfig()
+	if err != nil {
+		return err
+	}
 	stateDir := generatedDir(repoRoot)
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return err
@@ -206,36 +211,47 @@ OMA_NATS_PORT_2=%d
 OMA_NATS_PORT_3=%d
 OMA_MINIO_PORT=%d
 OMA_E2B_PORT=%d
+OMA_E2B_LOCAL_IMAGE=%s
 OMA_ENVD_BIN_DIR=%s
 OMA_E2B_CONFIG=%s
 OMA_WORKTREE=%s
 OMA_ENV_NAME=%s
 OMA_ENV_ID=%s
-`, ports.PGPort, ports.RedisPort, ports.NATSPort, ports.NATSPort2, ports.NATSPort3, ports.MinIOPort, ports.E2BPort,
+`, ports.PGPort, ports.RedisPort, ports.NATSPort, ports.NATSPort2, ports.NATSPort3, ports.MinIOPort, ports.E2BPort, images.reference("e2b-local"),
 		filepath.Join(repoRoot, "envd-bin"),
 		filepath.Join(stateDir, "e2b-local.yaml"),
 		repoRoot, binding.Name, binding.EnvID)
 	if err := os.WriteFile(filepath.Join(stateDir, "stack.env"), []byte(envFile), 0o600); err != nil {
 		return err
 	}
-	return renderE2BConfig(repoRoot, binding.Name, ports.E2BPort)
+	return renderE2BConfig(ctx, repoRoot, binding.Name, ports.E2BPort)
 }
 
-func renderE2BConfig(repoRoot, name string, e2bPort int) error {
+func renderE2BConfig(ctx context.Context, repoRoot, name string, e2bPort int) error {
 	template, err := os.ReadFile(filepath.Join(repoRoot, "deploy", "docker-compose", "e2b-local.yaml"))
 	if err != nil {
 		return err
 	}
-	rendered := renderE2BConfigTemplate(string(template), name, e2bPort, filepath.Join(repoRoot, "envd-bin"))
+	base, err := loadBaseConfig(repoRoot)
+	if err != nil {
+		return err
+	}
+	command := exec.CommandContext(ctx, "docker", "image", "inspect", base.E2B.Template, "--format", "{{.Architecture}}")
+	output, err := command.Output()
+	if err != nil {
+		return fmt.Errorf("inspect sandbox image %s; build or pull it before dev-init: %w", base.E2B.Template, err)
+	}
+	architecture := strings.TrimSpace(string(output))
+	if architecture != "amd64" && architecture != "arm64" {
+		return fmt.Errorf("unsupported sandbox image architecture %q", architecture)
+	}
+	rendered := renderE2BConfigTemplate(string(template), name, e2bPort, filepath.Join(repoRoot, "envd-bin"), architecture)
 	return os.WriteFile(filepath.Join(generatedDir(repoRoot), "e2b-local.yaml"), []byte(rendered), 0o600)
 }
 
-// renderE2BConfigTemplate substitutes the per-environment server port, the
-// sandbox container name prefix and the host envd binary directory. The
-// shared compose topology performs the same substitution in its entrypoint;
-// per-environment stacks must render it themselves.
-func renderE2BConfigTemplate(template, name string, e2bPort int, envdDir string) string {
+func renderE2BConfigTemplate(template, name string, e2bPort int, envdDir, architecture string) string {
 	rendered := strings.ReplaceAll(template, "__ENVD_BIN_DIR__", envdDir)
+	rendered = strings.ReplaceAll(rendered, "envd-linux-amd64", "envd-linux-"+architecture)
 	rendered = strings.ReplaceAll(rendered, `addr: "0.0.0.0:3099"`, fmt.Sprintf(`addr: "0.0.0.0:%d"`, e2bPort))
 	return strings.ReplaceAll(rendered, `container_name_prefix: "e2b-envd-"`, fmt.Sprintf(`container_name_prefix: "e2b-envd-%s-"`, name))
 }
@@ -433,4 +449,46 @@ func e2bHealthy(ctx context.Context, port int) error {
 		return fmt.Errorf("e2b health on :%d returned %d", port, response.StatusCode)
 	}
 	return nil
+}
+
+func refreshHealthyStack(ctx context.Context, repoRoot string, binding EnvBinding, ports StackPorts) (StackPorts, error) {
+	path := filepath.Join(generatedDir(repoRoot), "e2b-local.yaml")
+	previous, err := os.ReadFile(path)
+	if err != nil {
+		return StackPorts{}, err
+	}
+	envPath := filepath.Join(generatedDir(repoRoot), "stack.env")
+	previousEnv, err := os.ReadFile(envPath)
+	if err != nil && !os.IsNotExist(err) {
+		return StackPorts{}, err
+	}
+	if err := writeStackFiles(ctx, repoRoot, binding, ports); err != nil {
+		return StackPorts{}, err
+	}
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return StackPorts{}, err
+	}
+	currentEnv, err := os.ReadFile(envPath)
+	if err != nil {
+		return StackPorts{}, err
+	}
+	if string(previous) == string(current) && string(previousEnv) == string(currentEnv) {
+		return ports, nil
+	}
+	output, err := composeCommand(ctx, repoRoot, binding, "up", "--detach", "--force-recreate", "e2b-local").CombinedOutput()
+	if err == nil {
+		err = awaitStack(ctx, repoRoot, binding, ports)
+	}
+	if err != nil {
+		restoreErr := os.WriteFile(path, previous, 0o600)
+		var restoreEnvErr error
+		if previousEnv == nil {
+			restoreEnvErr = os.Remove(envPath)
+		} else {
+			restoreEnvErr = os.WriteFile(envPath, previousEnv, 0o600)
+		}
+		return StackPorts{}, errors.Join(fmt.Errorf("refresh e2b-local config: %s: %w", strings.TrimSpace(string(output)), err), restoreErr, restoreEnvErr)
+	}
+	return ports, nil
 }

@@ -15,7 +15,7 @@ func TestLoadBaseConfigRequiresRunInput(t *testing.T) {
 	if err := os.WriteFile(legacy, []byte(minimalBaseConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadBaseConfig(root); err == nil {
+	if _, err := loadBaseConfigWithImages(root, imagesConfig{}); err == nil {
 		t.Fatal("expected missing .run/config.yaml error despite legacy config")
 	}
 }
@@ -31,7 +31,7 @@ func TestLoadBaseConfigResolvesPathsFromRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("CONFIG_FILE", "/original/config.yaml")
-	cfg, err := loadBaseConfig(root)
+	cfg, err := loadBaseConfigWithImages(root, imagesConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,5 +40,17 @@ func TestLoadBaseConfigResolvesPathsFromRun(t *testing.T) {
 	}
 	if os.Getenv("CONFIG_FILE") != "/original/config.yaml" {
 		t.Fatal("base config loading changed CONFIG_FILE")
+	}
+}
+
+func TestLocalSandboxTemplate(t *testing.T) {
+	for _, template := range []string{"", "managed-agent-sandbox", "custom/sandbox:dev"} {
+		want := defaultImagePrefix + "/managed-agent-sandbox:latest"
+		if template == "custom/sandbox:dev" {
+			want = template
+		}
+		if got := localSandboxTemplate(template); got != want {
+			t.Errorf("localSandboxTemplate(%q) = %q, want %q", template, got, want)
+		}
 	}
 }

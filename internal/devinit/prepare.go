@@ -41,7 +41,7 @@ func prepareLocal(repoRoot, sharedDir string) error {
 		return err
 	}
 	if configExists && initExists {
-		return nil
+		return prepareImagesConfig(repoRoot, sharedDir)
 	}
 	if _, bound, err := LoadBinding(envFilePath(repoRoot)); err != nil {
 		return err
@@ -65,6 +65,9 @@ func prepareLocal(repoRoot, sharedDir string) error {
 		if err := prepareLocalSecrets(runDir); err != nil {
 			return err
 		}
+	}
+	if err := prepareImagesConfig(repoRoot, sharedDir); err != nil {
+		return err
 	}
 	sharedProviders := filepath.Join(sharedDir, "model-providers.yaml")
 	if err := prepareYAMLTemplate(repoRoot, "model-providers.example.yaml", sharedProviders, nil); err != nil {

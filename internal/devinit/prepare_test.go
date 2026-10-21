@@ -18,7 +18,7 @@ func prepareTestRepo(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(root, "config"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"config.example.yaml", "dev-init.example.yaml", "model-providers.example.yaml"} {
+	for _, name := range []string{"config.example.yaml", "dev-init.example.yaml", "model-providers.example.yaml", "images.example.yaml"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "config", name))
 		if err != nil {
 			t.Fatal(err)
@@ -107,10 +107,10 @@ func TestPrepareLocalCreatesBrainConfigAndStableKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	sharedFiles, err := os.ReadDir(shared)
-	if err != nil || len(sharedFiles) != 1 || sharedFiles[0].Name() != "model-providers.yaml" {
-		t.Fatal("shared directory must only contain model-providers.yaml")
+	if err != nil || len(sharedFiles) != 2 || sharedFiles[0].Name() != "images.yaml" || sharedFiles[1].Name() != "model-providers.yaml" {
+		t.Fatal("shared directory must contain image and model provider configurations")
 	}
-	cfg, err := loadBaseConfig(root)
+	cfg, err := loadBaseConfigWithImages(root, imagesConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestPrepareLocalCreatesBrainConfigAndStableKeys(t *testing.T) {
 	}
 	snapshot := map[string]string{}
 	for _, path := range []string{
-		baseConfigPath(root), filepath.Join(root, ".run", "dev-init.yaml"), spec.ModelProviders,
+		baseConfigPath(root), filepath.Join(root, ".run", "dev-init.yaml"), spec.ModelProviders, filepath.Join(shared, "images.yaml"),
 		filepath.Join(spec.FixedSecretsDir, "code-session-jwt-ed25519.pem"),
 		filepath.Join(spec.FixedSecretsDir, "upstream-proxy-ca-key.pem"),
 		filepath.Join(spec.FixedSecretsDir, "vault-kek"),

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { consoleApi } from '../../shared/api/client';
+import { useQuery } from '@tanstack/react-query';
+import { consoleApi, type ApiError } from '../../shared/api/client';
 
 export type RuntimeCostGroup = { id: string; label: string; amount: string };
 export type RuntimeCostDay = { date: string; amount: string; groups: RuntimeCostGroup[] };
@@ -13,15 +13,23 @@ export type RuntimeCostReport = {
   service_accounts: Array<{ ID: string; Label: string }>;
 };
 
-export const emptyRuntimeCost: RuntimeCostReport = {
-  configured: true,
-  currency: 'USD',
-  total: '0.00',
-  daily: [],
-  groups: [],
-  models: [],
-  service_accounts: [],
-};
+export function runtimeCostLabel(
+  isPending: boolean,
+  isError: boolean,
+  report: RuntimeCostReport | undefined,
+  labels: { loading: string; error: string; unconfigured: string },
+) {
+  if (isError) {
+    return labels.error;
+  }
+  if (isPending || !report) {
+    return labels.loading;
+  }
+  if (report.configured === false) {
+    return labels.unconfigured;
+  }
+  return formatDollars(report.total);
+}
 
 export function formatDollars(amount: string) {
   return `$${amount}`;
@@ -49,42 +57,35 @@ export function useRuntimeCost(input: {
   groupBy: string;
   range: string;
 }) {
-  const [report, setReport] = useState(emptyRuntimeCost);
-  useEffect(() => {
-    if (!input.orgUuid) {
-      return undefined;
-    }
-    const bounds = runtimeCostRange(input.range);
-    const params = new URLSearchParams({
-      starting_on: bounds.startingOn,
-      ending_before: bounds.endingBefore,
-      group_by: input.groupBy,
-    });
-    if (input.workspaceId && input.workspaceId !== 'all-workspaces') {
-      params.set('workspace_id', input.workspaceId);
-    }
-    if (input.model && input.model !== 'all') {
-      params.set('model', input.model);
-    }
-    let ignore = false;
-    consoleApi<RuntimeCostReport>(
-      `/api/organizations/${encodeURIComponent(input.orgUuid)}/runtime_cost?${params.toString()}`,
-    )
-      .then((next) => {
-        if (!ignore) {
-          setReport(next);
-        }
-      })
-      .catch(() => {
-        if (!ignore) {
-          setReport(emptyRuntimeCost);
-        }
+  return useQuery({
+    queryKey: ['console', 'runtime-cost', input.orgUuid, input.workspaceId, input.model, input.groupBy, input.range],
+    enabled: Boolean(input.orgUuid),
+    retry: false,
+    queryFn: () => {
+      const bounds = runtimeCostRange(input.range);
+      const params = new URLSearchParams({
+        starting_on: bounds.startingOn,
+        ending_before: bounds.endingBefore,
+        group_by: input.groupBy,
       });
-    return () => {
-      ignore = true;
-    };
-  }, [input.orgUuid, input.workspaceId, input.model, input.groupBy, input.range]);
-  return report;
+      if (input.workspaceId && input.workspaceId !== 'all-workspaces') {
+        params.set('workspace_id', input.workspaceId);
+      }
+      if (input.model && input.model !== 'all') {
+        params.set('model', input.model);
+      }
+      return consoleApi<RuntimeCostReport>(
+        `/api/organizations/${encodeURIComponent(input.orgUuid)}/runtime_cost?${params.toString()}`,
+      );
+    },
+  });
+}
+
+export function apiErrorStatus(error: unknown) {
+  if (error && typeof error === 'object' && 'status' in error) {
+    return (error as ApiError).status;
+  }
+  return 0;
 }
 
 function addUTCDays(date: Date, days: number) {

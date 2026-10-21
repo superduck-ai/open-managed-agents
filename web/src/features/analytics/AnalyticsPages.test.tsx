@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { useMemo, type ReactNode } from 'react';
 import { defaultWorkspace, type Workspace } from '../../shared/workspaces/api';
@@ -185,7 +186,8 @@ describe('Analytics pages', () => {
     expect(screen.getByText('All workspaces')).toBeTruthy();
     expect(screen.getByText('Total token cost')).toBeTruthy();
     expect(screen.getByText('Total runtime cost')).toBeTruthy();
-    expect(screen.getAllByText('$0.00')).toHaveLength(3);
+    expect(screen.getAllByText('$0.00')).toHaveLength(2);
+    expect(screen.getByText('Loading...')).toBeTruthy();
     expect(screen.getByText('Daily token cost')).toBeTruthy();
     expect(screen.getByText('Daily runtime cost')).toBeTruthy();
 
@@ -193,6 +195,19 @@ describe('Analytics pages', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/cost');
     renderWithWorkspace(<CostPage />);
     expect(screen.getByText('Default')).toBeTruthy();
+  });
+
+  test('shows an access error instead of a zero runtime cost', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response('{}', { status: 403 })) as typeof fetch;
+    try {
+      resetTestDom('https://oma.duck.ai/cost');
+      renderWithWorkspace(<CostPage />);
+      expect(await screen.findByText('Only organization administrators can view cost across workspaces.')).toBeTruthy();
+      expect(screen.getAllByText('$0.00')).toHaveLength(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test('prompts when the runtime price is not configured', async () => {
@@ -341,7 +356,12 @@ describe('Analytics pages', () => {
 });
 
 function renderWithWorkspace(children: ReactNode, workspaces = [defaultWorkspace]) {
-  return render(<WorkspaceHarness workspaces={workspaces}>{children}</WorkspaceHarness>);
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <WorkspaceHarness workspaces={workspaces}>{children}</WorkspaceHarness>
+    </QueryClientProvider>,
+  );
 }
 
 function WorkspaceHarness({

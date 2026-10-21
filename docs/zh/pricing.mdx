@@ -4,7 +4,7 @@ sidebarTitle: "成本"
 description: "使用 Open Managed Agents 的费用由模型 Token 和会话运行时两部分组成。"
 ---
 
-使用 Open Managed Agents 的费用由两部分组成，单位都是美元：会话消耗的模型 Token，以及会话处于 `running` 时的沙箱时长。一次会话的费用是这两部分之和。Token 数量和运行秒数都记在 `session.usage` 上。
+使用 Open Managed Agents 的费用由两部分组成，单位都是美元：会话消耗的模型 Token，以及会话处于 `running` 时的沙箱时长。一次会话的费用是这两部分之和。Token 数量和运行毫秒数（`active_milliseconds`）都记在 `session.usage` 上。
 
 ## Token
 
@@ -36,7 +36,7 @@ description: "使用 Open Managed Agents 的费用由模型 Token 和会话运�
 | 内存 | \$0.00098446 / GB / 小时 | 4 GB |
 | 会话运行时 | \$0.01652866 / 小时 | 会话状态为 `running` 的时长 |
 
-例如 2 vCPU、4 GB：CPU 0.042336 元/vCPU/小时，内存 0.0066204 元/GB/小时，合计 0.1111536 元/小时。按 1 美元 = 6.7249 元换算后约为每小时 \$0.01652866。把换算结果填进 `runtime_cost.usd_per_hour`。没写这项时，成本页提示未配置，不计算新的运行时金额。只在会话状态为 `running` 时累计，记成 `active_milliseconds` 里的毫秒整数。`idle`（等待下一条消息或工具确认）、`rescheduling` 和 `terminated` 不计。多个线程重叠时仍算一段，不把各线程时长相加。
+把换算结果填进 `runtime_cost.usd_per_hour`。没写这项时，成本页提示未配置，不计算新的运行时金额。只在会话状态为 `running` 时累计，记成 `active_milliseconds` 里的毫秒整数。`idle`（等待下一条消息或工具确认）、`rescheduling` 和 `terminated` 不计。多个线程重叠时仍算一段，不把各线程时长相加。
 
 沙箱里执行命令的时间已经包含在 `running` 时长里，不再另收。这段时长结束时，按当时的单价把美元金额累加进 `usage.runtime_cost_usd`。之后修改 `runtime_cost.usd_per_hour`，只影响之后新结束的时长，已经记下来的金额不变。还没离开 `running` 的这段时间，要等它结束并写入快照后才计入。
 

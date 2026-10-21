@@ -1,6 +1,6 @@
 # 会话成本
 
-2026-10-14。对照 [用量与成本核对](usage-cost-module-research.md) 里的 CMA 与 Qoder Cloud Agents。本文只定 OMA 第一版记什么、在哪记。不实现价目、Credits 余额、组织费用页或 Admin 报表。
+2026-10-14。对照 [用量与成本核对](usage-cost-module-research.md) 里的 CMA 与 Qoder Cloud Agents。本文定 OMA 记什么、在哪记。运行时单价、冻进 `usage` 的金额、控制台成本页，以及 Admin `usage_report` / `cost_report` 按本文实现。不实现 Credits 余额。
 
 ## 记两笔，都挂在会话上
 
@@ -58,10 +58,9 @@ sequenceDiagram
 - 不把沙箱 `state = running` 或 `stopped_at` 算进成本。容器在会话 `idle` 时通常仍在运行。
 - 不建价目表、Credits 余额、资源包或服务账号限额。没有单价时，`list_cost` 继续不出现。检查器已经会在没有 `list_cost` 时不画成本点。
 - 不在这一版拒绝超预算的用户消息。OMA 的 `session.usage` 现在固定带 `budget: null`。
-- 不填 Admin `cost_report`、`usage_report` 和 Console `/usage_cost`。这三个入口现在返回空结果；在有稳定的会话数字之前，不要用估计金额把它们填成 CMA 账单的形状。
 - 不记网页搜索次数，也不记代码执行容器小时。
 
-以后若要显示金额，只给这两笔配组织自己的单价，并在累加的那次事务里把当时的金额冻进 `usage`。历史不随以后的改价重算。那一步不在本设计里。
+运行时长按 `runtime_cost.usd_per_hour` 计价，并在累加的那次事务里把当时的金额冻进 `usage.runtime_cost_usd`。历史不随以后的改价重算。Token 价目仍只在文档里，不写入 `usage`。不带 `workspace_id` 的成本查询只对组织管理员开放。
 
 ## 验收
 

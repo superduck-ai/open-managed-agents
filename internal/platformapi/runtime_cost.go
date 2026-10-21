@@ -1,11 +1,13 @@
 package platformapi
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -18,6 +20,13 @@ func handleRuntimeCost(database *db.DB) http.HandlerFunc {
 		orgUUID, ok := visibleOrgUUID(w, r)
 		if !ok {
 			return
+		}
+		if r.URL.Query().Get("workspace_id") == "" {
+			principal, allowed := auth.PrincipalFromContext(r.Context())
+			if !allowed || !principal.WorkspaceAccess.ManageOrganization() {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "organization administrator required"})
+				return
+			}
 		}
 		query, err := runtimeCostQuery(r, orgUUID)
 		if err != nil {
@@ -38,8 +47,12 @@ func handleRuntimeCost(database *db.DB) http.HandlerFunc {
 			return
 		}
 		result, err := database.RuntimeCost(r.Context(), query)
-		if err != nil {
+		if errors.Is(err, db.ErrInvalidState) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid runtime cost query"})
+			return
+		}
+		if err != nil {
+			internalError(w, "runtime cost is unavailable")
 			return
 		}
 		writeJSON(w, http.StatusOK, runtimeCostResponse(result))

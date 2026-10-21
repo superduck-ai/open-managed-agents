@@ -36,7 +36,7 @@ import { useI18n } from '../../shared/i18n';
 import { defaultWorkspace } from '../../shared/workspaces/api';
 import { useWorkspace } from '../../shared/workspaces/context';
 import { RuntimeCostChart } from './RuntimeCostChart';
-import { formatDollars, useRuntimeCost } from './runtimeCost';
+import { apiErrorStatus, formatDollars, runtimeCostLabel, useRuntimeCost } from './runtimeCost';
 
 type IconComponent = ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
 type FilterOption = { value: string; label: string };
@@ -403,18 +403,24 @@ export function CostPage() {
     model: 'all',
     range: 'month-to-date',
   });
-  const report = useRuntimeCost({
+  const cost = useRuntimeCost({
     orgUuid,
     workspaceId: filters.workspace,
     model: filters.model,
     groupBy: filters.groupBy === 'service-account' ? 'service_account' : filters.groupBy,
     range: filters.range,
   });
+  const report = cost.data;
   const modelOptions: FilterOption[] = [
     { value: 'all', label: msg('common.all', 'All') },
-    ...report.models.map((model) => ({ value: model, label: model })),
+    ...(report?.models ?? []).map((model) => ({ value: model, label: model })),
   ];
-  const hasRuntime = report.daily.some((day) => day.groups.length > 0);
+  const hasRuntime = report?.daily.some((day) => day.groups.length > 0) ?? false;
+  const runtimeValue = runtimeCostLabel(cost.isPending, cost.isError, report, {
+    loading: msg('common.loading', 'Loading...'),
+    error: msg('common.error', 'Error'),
+    unconfigured: msg('analytics.cost.notConfigured', 'Not configured'),
+  });
 
   return (
     <AnalyticsPageRoot title={msg('analytics.cost.title', 'Cost')} icon={CircleDollarSign}>
@@ -446,7 +452,15 @@ export function CostPage() {
         />
       </FilterBar>
 
-      {report.configured === false ? (
+      {cost.isError ? (
+        <Alert>
+          <AlertTitle>
+            {apiErrorStatus(cost.error) === 403
+              ? msg('analytics.cost.accessDenied', 'Only organization administrators can view cost across workspaces.')
+              : msg('common.error', 'Error')}
+          </AlertTitle>
+        </Alert>
+      ) : report?.configured === false ? (
         <Alert>
           <AlertTitle>{msg('analytics.cost.runtimePriceMissing', 'Runtime price is not configured')}</AlertTitle>
         </Alert>
@@ -458,14 +472,7 @@ export function CostPage() {
           title={msg('analytics.cost.totalWebSearchCost', 'Total web search cost')}
           value={formatDollars('0.00')}
         />
-        <MetricPanel
-          title={msg('analytics.cost.totalRuntimeCost', 'Total runtime cost')}
-          value={
-            report.configured === false
-              ? msg('analytics.cost.notConfigured', 'Not configured')
-              : formatDollars(report.total)
-          }
-        />
+        <MetricPanel title={msg('analytics.cost.totalRuntimeCost', 'Total runtime cost')} value={runtimeValue} />
       </div>
 
       <ChartPanel title={msg('analytics.cost.dailyTokenCost', 'Daily token cost')}>

@@ -4,7 +4,7 @@ sidebarTitle: "Pricing"
 description: "The cost of using Open Managed Agents is model tokens plus session runtime."
 ---
 
-Using Open Managed Agents has two charges, both in USD: model tokens the session consumes, and sandbox time while the session status is `running`. A session's cost is the sum of the two. Token counts and runtime seconds are both stored on `session.usage`.
+Using Open Managed Agents has two charges, both in USD: model tokens the session consumes, and sandbox time while the session status is `running`. A session's cost is the sum of the two. Token counts and runtime milliseconds (`active_milliseconds`) are both stored on `session.usage`.
 
 ## Tokens
 
@@ -36,7 +36,7 @@ For example, a 2 vCPU, 4 GB sandbox priced at 0.042336 yuan per vCPU-hour and 0.
 | Memory | \$0.00098446 per GB-hour | 4 GB |
 | Session runtime | \$0.01652866 per hour | Time the session status is `running` |
 
-For example, 2 vCPUs and 4 GB at 0.042336 yuan per vCPU-hour and 0.0066204 yuan per GB-hour is 0.1111536 yuan per hour. At 6.7249 yuan per USD that is about \$0.01652866 per hour. Write that converted number in `runtime_cost.usd_per_hour`. When the field is omitted, the cost page says the price is not configured and does not calculate a new runtime amount. Time accrues only while the session status is `running` and is stored as an integer number of milliseconds in `active_milliseconds`. `idle` (waiting for the next message or a tool confirmation), `rescheduling`, and `terminated` do not count. Overlapping threads stay one interval; their durations are not added together.
+Write that converted number in `runtime_cost.usd_per_hour`. When the field is omitted, the cost page says the price is not configured and does not calculate a new runtime amount. Time accrues only while the session status is `running` and is stored as an integer number of milliseconds in `active_milliseconds`. `idle` (waiting for the next message or a tool confirmation), `rescheduling`, and `terminated` do not count. Overlapping threads stay one interval; their durations are not added together.
 
 Command execution inside the sandbox is already included in `running` time and is not charged again. When that stretch ends, its dollar amount is added to `usage.runtime_cost_usd` at the price then in effect. Later changes to `runtime_cost.usd_per_hour` apply only to stretches that end afterward. Amounts already stored stay as they are. Time still inside `running` counts only after that stretch ends and is snapshotted.
 

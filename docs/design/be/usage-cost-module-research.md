@@ -57,11 +57,11 @@ Qoder Cloud Agents 与 CMA、OMA 同属托管 Agent：Agent、Environment、Sess
 
 | 表面 | 路径 | 调用方 | OMA 现状 |
 | --- | --- | --- | --- |
-| Admin Usage | `GET /v1/organizations/usage_report/messages` | Admin 凭证 | 校验时间后返回空 `data` |
-| Admin Cost | `GET /v1/organizations/cost_report` | 组织管理员 | 同上，且只接受 `bucket_width=1d` |
+| Admin Usage | `GET /v1/organizations/usage_report/messages` | Admin 凭证 | 按时间桶返回 token 与 `active_milliseconds` 增量 |
+| Admin Cost | `GET /v1/organizations/cost_report` | 组织管理员 | 按日返回运行时成本增量，只接受 `bucket_width=1d` |
 | Admin Claude Code | `GET /v1/organizations/usage_report/claude_code` | 组织管理员 | 只校验 `YYYY-MM-DD`，返回空 `data` |
 | Console 成本 | `GET /api/organizations/{org}/usage_cost` 和 `.../workspaces/{workspaceId}/usage_cost` | 控制台页面 | 固定返回五个空对象 |
-| Console 页面 | `/cost`、`/workspaces/{id}/cost` | 浏览器 | 写死 `USD 0.00`，不请求接口 |
+| Console 页面 | `/cost`、`/workspaces/{id}/cost` | 浏览器 | 请求 `/runtime_cost`。运行时总成本来自接口；Token 与网页搜索卡仍是 `USD 0.00`。不带工作区时只允许组织管理员 |
 
 来源：
 

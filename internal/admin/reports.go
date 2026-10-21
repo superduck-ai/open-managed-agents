@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"time"
 
@@ -73,7 +74,7 @@ func (s *Service) messagesUsageReport(ctx context.Context, principal auth.Princi
 	}
 	report, err := s.db.AdminUsageReport(ctx, dbQuery)
 	if err != nil {
-		return reportResponse{}, invalidRequest(err.Error())
+		return reportResponse{}, reportLoadError(err)
 	}
 	data := make([]any, 0, len(report.Buckets))
 	for _, bucket := range report.Buckets {
@@ -107,7 +108,7 @@ func (s *Service) costReport(ctx context.Context, principal auth.Principal, quer
 	}
 	report, err := s.db.AdminCostReport(ctx, dbQuery)
 	if err != nil {
-		return reportResponse{}, invalidRequest(err.Error())
+		return reportResponse{}, reportLoadError(err)
 	}
 	data := make([]any, 0, len(report.Buckets))
 	for _, bucket := range report.Buckets {
@@ -122,6 +123,13 @@ func (s *Service) costReport(ctx context.Context, principal auth.Principal, quer
 		})
 	}
 	return pagedReport(data, report.HasMore, dbQuery.Offset, dbQuery.Limit), nil
+}
+
+func reportLoadError(err error) error {
+	if errors.Is(err, db.ErrInvalidState) {
+		return invalidRequest("invalid report query")
+	}
+	return err
 }
 
 func (s *Service) adminReportQuery(principal auth.Principal, query reportQuery, bucket time.Duration, groupBy string, maxLimit int) (db.AdminReportQuery, error) {

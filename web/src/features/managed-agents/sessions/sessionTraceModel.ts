@@ -1544,7 +1544,7 @@ export function sessionEventAppearsInTranscript(event: QuickstartSessionEvent, o
     if (sessionEventType(event) === 'session.status_running') {
       return false;
     }
-    if (sessionIdleEventIsHidden(event)) {
+    if (sessionIdleEventIsHidden(event) || sessionIdlePresentationState(event) === 'awaiting_action') {
       return false;
     }
   }

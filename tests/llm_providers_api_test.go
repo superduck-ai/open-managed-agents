@@ -640,6 +640,36 @@ func TestOrganizationLLMProviderIsReadableByMembers(t *testing.T) {
 	if deniedBody["code"] != "llm_provider_permission_denied" {
 		t.Fatalf("permission error = %#v", deniedBody)
 	}
+
+	adminCookies := app.platformLoginCookies(t, "llm-providers-organization-admin@example.com")
+	created := app.platformRequest(t, http.MethodPut, "/api/console/organizations/"+orgUUID+"/llm_provider", strings.NewReader(`{
+		"name":"Organization default",
+		"base_url":"https://organization.example.com",
+		"api_key":"organization-provider-secret",
+		"model_ids":["org-only"]
+	}`), adminCookies)
+	created.Body.Close()
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("admin create status = %d, want 201", created.StatusCode)
+	}
+	read := app.platformRequest(t, http.MethodGet, "/api/console/organizations/"+orgUUID+"/llm_provider", nil, cookies)
+	defer read.Body.Close()
+	if read.StatusCode != http.StatusOK {
+		t.Fatalf("member get status = %d, want 200: %s", read.StatusCode, readAll(t, read.Body))
+	}
+	var body map[string]any
+	decodeJSON(t, read.Body, &body)
+	if body["scope"] != "organization" || body["slug"] != "organization" || body["name"] != "Organization default" || body["has_api_key"] != true || body["api_key_last4"] != "cret" {
+		t.Fatalf("member organization provider = %#v", body)
+	}
+	models, ok := body["model_ids"].([]any)
+	if !ok || len(models) != 1 || models[0] != "org-only" {
+		t.Fatalf("member model IDs = %#v", body["model_ids"])
+	}
+	if _, exists := body["api_key"]; exists {
+		t.Fatal("member response contains an API key field")
+	}
+	assertJSONDoesNotContain(t, body, "organization-provider-secret")
 }
 
 func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {

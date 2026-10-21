@@ -46,12 +46,21 @@ function providerForm(provider: LLMProvider | null): ProviderForm {
 function providerFormInput(
   form: ProviderForm,
   provider: LLMProvider | null,
+  organization: boolean,
   msg: MessageFormatter,
 ): { input: LLMProviderInput } | { error: string } {
   if (!form.name.trim() || !form.baseUrl.trim() || (!provider && !form.apiKey.trim())) {
     return { error: msg('llmModels.required', 'Name, base URL, and API key are required.') };
   }
   const slug = form.slug.trim();
+  if (!organization && slug === 'organization') {
+    return {
+      error: msg(
+        'llmModels.errorSlugReserved',
+        'The slug "organization" is reserved for the organization default provider.',
+      ),
+    };
+  }
   if (slug && !isValidSlug(slug)) {
     return {
       error: msg(
@@ -127,7 +136,7 @@ export function ProviderFormDialog({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    const result = providerFormInput(form, provider, msg);
+    const result = providerFormInput(form, provider, organization, msg);
     if ('error' in result) {
       setFormError(result.error);
       return;

@@ -45,7 +45,7 @@ export function ProviderDeleteDialog({
             {provider?.scope === 'organization'
               ? msg(
                   'llmModels.deleteOrganizationDescription',
-                  'This removes the organization default for every workspace. Workspace providers stay. Models that exist only on the organization default stop resolving.',
+                  'This removes the organization default for every workspace. Workspace providers remain available. Models referenced through this organization provider will stop working.',
                 )
               : msg('llmModels.deleteDescription', 'Its models will stop working immediately in this workspace.')}
           </AlertDialogDescription>

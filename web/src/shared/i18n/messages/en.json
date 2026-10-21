@@ -2575,5 +2575,6 @@
   "llmModels.organizationUnavailable": "The organization default could not be loaded. Workspace providers are still available.",
   "llmModels.organizationReadOnly": "Organization models are read-only here. Manage them in organization LLM configuration.",
   "llmModels.errorOrganizationProviderExists": "This organization already has a default provider.",
-  "llmModels.deleteOrganizationDescription": "Delete the default provider shared by all workspaces? Models using this provider will no longer be available."
+  "llmModels.deleteOrganizationDescription": "This removes the organization default for every workspace. Workspace providers remain available. Models referenced through this organization provider will stop working.",
+  "llmModels.errorSlugReserved": "The slug \"organization\" is reserved for the organization default provider."
 }

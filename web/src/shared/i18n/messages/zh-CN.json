@@ -2575,5 +2575,6 @@
   "llmModels.organizationUnavailable": "组织默认暂时无法加载。工作区 Provider 仍可管理。",
   "llmModels.organizationReadOnly": "组织模型在此处只读，请前往组织级 LLM 配置进行管理。",
   "llmModels.errorOrganizationProviderExists": "此组织已经有默认供应商。",
-  "llmModels.deleteOrganizationDescription": "删除所有工作区共享的组织默认供应商？使用该供应商的模型将不再可用。"
+  "llmModels.deleteOrganizationDescription": "这会移除所有工作区共享的组织默认 Provider。工作区 Provider 仍可使用；通过该组织 Provider 引用的模型将不再可用。",
+  "llmModels.errorSlugReserved": "slug“organization”保留给组织默认 Provider，工作区 Provider 请使用其他名称。"
 }

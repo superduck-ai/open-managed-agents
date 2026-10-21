@@ -32,6 +32,77 @@ afterEach(() => {
 });
 
 describe('LLM models page', () => {
+  test('workspace all-provider groups identify inherited organization models as read-only', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
+    mockProvidersApi([], { organizationProvider: organizationProvider() });
+    renderPage();
+    const group = await screen.findByTestId('llm-provider-group-provider_organization');
+    expect(
+      within(group).getByText('Organization models are read-only here. Manage them in organization LLM configuration.'),
+    ).toBeTruthy();
+    expect(within(group).queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(within(group).queryByRole('button', { name: 'Delete' })).toBeNull();
+  });
+
+  test.each([
+    {
+      locale: 'en' as const,
+      title: 'Add provider',
+      name: 'Provider name',
+      key: 'API key',
+      save: 'Save',
+      error: 'The slug "organization" is reserved for the organization default provider.',
+    },
+    {
+      locale: 'zh-CN' as const,
+      title: '添加 Provider',
+      name: 'Provider 名称',
+      key: 'API Key',
+      save: '保存',
+      error: 'slug“organization”保留给组织默认 Provider，工作区 Provider 请使用其他名称。',
+    },
+  ])(
+    'rejects the reserved workspace slug before submitting in $locale',
+    async ({ locale, title, name, key, save, error }) => {
+      resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
+      const api = mockProvidersApi();
+      renderPage(locale);
+      fireEvent.click(await screen.findByRole('button', { name: title }));
+      const dialog = screen.getByRole('dialog', { name: title });
+      fireEvent.change(within(dialog).getByLabelText(name), { target: { value: 'Organization' } });
+      fireEvent.change(within(dialog).getByLabelText('Base URL'), {
+        target: { value: 'https://workspace.example.com' },
+      });
+      fireEvent.change(within(dialog).getByLabelText(key), { target: { value: 'workspace-key' } });
+      fireEvent.click(within(dialog).getByRole('button', { name: save }));
+      expect(await within(dialog).findByText(error)).toBeTruthy();
+      expect(api.requests.every((request) => request.method === 'GET')).toBe(true);
+    },
+  );
+
+  test.each([
+    {
+      locale: 'en' as const,
+      remove: 'Delete',
+      description:
+        'This removes the organization default for every workspace. Workspace providers remain available. Models referenced through this organization provider will stop working.',
+    },
+    {
+      locale: 'zh-CN' as const,
+      remove: '删除',
+      description:
+        '这会移除所有工作区共享的组织默认 Provider。工作区 Provider 仍可使用；通过该组织 Provider 引用的模型将不再可用。',
+    },
+  ])('explains the organization deletion scope in $locale', async ({ locale, remove, description }) => {
+    resetTestDom('https://oma.duck.ai/settings/llm');
+    mockProvidersApi([], { organizationProvider: organizationProvider() });
+    renderPage(locale, 'admin', 'organization');
+    fireEvent.click(await screen.findByRole('button', { name: 'Organization default' }));
+    fireEvent.click(screen.getByRole('button', { name: remove }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText(description)).toBeTruthy();
+  });
+
   test('organization members can read defaults without management controls', async () => {
     resetTestDom('https://oma.duck.ai/settings/llm');
     const api = mockProvidersApi([], { organizationProvider: organizationProvider() });

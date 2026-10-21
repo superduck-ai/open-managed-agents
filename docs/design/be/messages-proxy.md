@@ -204,7 +204,7 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 ## 最小实现边界
 
 - 不建独立 Model 表；`model_ids` 直接存 Provider JSON 数组，只保存上游 ID，不带前缀。同名模型可分属不同 Provider，因此写入不再需要跨 Provider 的归属检查或 advisory lock；slug 唯一性由数据库唯一约束保证，并发冲突返回 `409 llm_provider_slug_conflict`。
-- Provider 的所有读写都同时绑定 `organization_uuid` 和 `workspace_uuid`。
+- 工作区 Provider 的读写同时绑定 `organization_uuid` 和 `workspace_uuid`；组织默认 Provider 的读写绑定 `organization_uuid` 并限定 `workspace_uuid IS NULL`。两种范围分别查询，不能省略组织过滤。
 - 不加缓存；删除或修改 Provider 立即生效。
 - 不建立只有单实现的 Resolver 接口；调用方直接使用 `internal/llmproviders`。
 

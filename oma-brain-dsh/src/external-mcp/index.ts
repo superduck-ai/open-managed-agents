@@ -38,13 +38,18 @@ export class ExternalMcp {
     const bindings: { client: ExternalMcpClient; tool: RemoteTool }[] = [];
     const names = new Set<string>();
     try {
-      for (const client of this.clients) {
-        let tools: RemoteTool[];
+      const outcomes = await Promise.allSettled(this.clients.map(async (client) => {
         try {
-          tools = await client.discover(signal);
+          return await client.discover(signal);
         } catch (error) {
-          signal.throwIfAborted();
           await client.close();
+          throw error;
+        }
+      }));
+      signal.throwIfAborted();
+      for (const [index, outcome] of outcomes.entries()) {
+        const client = this.clients[index]!;
+        if (outcome.status === "rejected") {
           this.discoveryFailed = true;
           if (client.authenticationFailed) {
             await authenticationFailure(client.server.name);
@@ -53,7 +58,7 @@ export class ExternalMcp {
           }
           continue;
         }
-        for (const tool of tools) {
+        for (const tool of outcome.value) {
           if (!/^mcp__[a-zA-Z0-9_-]+$/.test(tool.name) || names.has(tool.name))
             throw new Error("Invalid or duplicate external MCP tool name");
           names.add(tool.name);

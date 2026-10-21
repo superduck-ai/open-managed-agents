@@ -23,6 +23,10 @@ function peer(transport: "http" | "sse" | "fallback" = "http", serverName = "pee
   let outputContent: Payload[] | undefined;
   let protocolErrorCode: number | undefined;
   let hangCall = false;
+  let discoveryHold: Promise<void> | undefined;
+  const listRequested = Promise.withResolvers<void>();
+  const listCompleted = Promise.withResolvers<void>();
+  const listAborted = Promise.withResolvers<void>();
   const dispatched = Promise.withResolvers<void>();
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   const disconnected = Promise.withResolvers<void>();
@@ -82,7 +86,19 @@ function peer(transport: "http" | "sse" | "fallback" = "http", serverName = "pee
           serverInfo: { name: "peer", version: "1" },
         });
       if (body.method === "tools/list") {
+        const aborted = Promise.withResolvers<void>();
+        const onAbort = () => { listAborted.resolve(); aborted.resolve(); };
+        request.signal.addEventListener("abort", onAbort, { once: true });
+        try {
+          if (request.signal.aborted) onAbort();
+          listRequested.resolve();
+          if (discoveryHold) await Promise.race([discoveryHold, aborted.promise]);
+          if (request.signal.aborted) return new Response(null, { status: 499 });
+        } finally {
+          request.signal.removeEventListener("abort", onAbort);
+        }
         if (failDiscovery) return new Response(null, { status: 503 });
+        if (body.params?.cursor === "page2") listCompleted.resolve();
         const tool = {
           name: "microsoft_docs_fetch",
           description: "Fetch documentation",
@@ -130,6 +146,10 @@ function peer(transport: "http" | "sse" | "fallback" = "http", serverName = "pee
     content: (blocks: Payload[]) => { outputContent = blocks; },
     dispatched: dispatched.promise,
     disconnected: disconnected.promise,
+    listRequested: listRequested.promise,
+    listCompleted: listCompleted.promise,
+    listAborted: listAborted.promise,
+    holdDiscovery: (until: Promise<void>) => { discoveryHold = until; },
     hangCall: () => {
       hangCall = true;
     },
@@ -670,6 +690,127 @@ test("authentication failure disables only its server and preserves healthy real
     expect(f.p.requests.filter(request => request.method === "tools/call")).toHaveLength(0);
     expect([...f.b.publicLog.values()].filter(event => event.type === "session.error")).toHaveLength(1);
   } finally { await f.close(); healthy.close(); }
+});
+
+function within<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`not settled within ${ms}ms`)), ms)),
+  ]);
+}
+
+test("parallel discovery failures are reported in configuration order", async () => {
+  const second = peer("http", "second");
+  const f = await fixture("http", "peer", second.config.mcpServers);
+  try {
+    f.p.failDiscovery();
+    f.p.holdDiscovery(new Promise(resolve => setTimeout(resolve, 200)));
+    second.failAuthentication(401);
+    await f.session.open();
+    const errors = [...f.b.publicLog.values()].filter(event => event.type === "session.error").map(event => event.error);
+    expect(errors).toEqual([
+      expect.objectContaining({ type: "mcp_connection_failed_error", mcp_server_name: "peer" }),
+      expect.objectContaining({ type: "mcp_authentication_failed_error", mcp_server_name: "second" }),
+    ]);
+  } finally { await f.close(); second.close(); }
+});
+
+for (const [firstTransport, secondTransport] of [["http", "http"], ["sse", "sse"], ["http", "sse"]] as const) {
+  test(`stopping parallel ${firstTransport}/${secondTransport} discovery cancels every HTTP request and closes SSE streams`, async () => {
+    const second = peer(secondTransport, "second");
+    const f = await fixture(firstTransport, "peer", second.config.mcpServers);
+    let opening: Promise<void> | undefined;
+    try {
+      const never = new Promise<void>(() => {});
+      f.p.holdDiscovery(never);
+      second.holdDiscovery(never);
+      opening = f.session.open();
+      await within(Promise.all([f.p.listRequested, second.listRequested]), 5_000);
+      expect(f.b.requests).toHaveLength(0);
+      f.session.stop();
+      await expect(within(opening, 5_000)).rejects.toThrow();
+      await within(Promise.all([f.p.listAborted, second.listAborted]), 5_000);
+      if (firstTransport === "sse") await within(f.p.disconnected, 5_000);
+      if (secondTransport === "sse") await within(second.disconnected, 5_000);
+      expect(f.b.requests).toHaveLength(0);
+      expect([...f.b.publicLog.values()].filter(event => event.type === "session.error")).toHaveLength(0);
+    } finally {
+      f.session.stop();
+      await opening?.catch(() => {});
+      await f.close();
+      second.close();
+    }
+  });
+}
+
+test("stopping discovery closes an SSE server that already returned its tool catalog", async () => {
+  const healthy = peer("sse", "healthy");
+  const f = await fixture("http", "peer", healthy.config.mcpServers);
+  let opening: Promise<void> | undefined;
+  try {
+    f.p.holdDiscovery(new Promise<void>(() => {}));
+    opening = f.session.open();
+    await within(Promise.all([f.p.listRequested, healthy.listCompleted]), 5_000);
+    f.session.stop();
+    await expect(within(opening, 5_000)).rejects.toThrow();
+    await within(Promise.all([f.p.listAborted, healthy.disconnected]), 5_000);
+    expect(healthy.requests.filter(request => request.method === "tools/list")).toHaveLength(2);
+    expect(f.b.requests).toHaveLength(0);
+    expect([...f.b.publicLog.values()].filter(event => event.type === "session.error")).toHaveLength(0);
+  } finally {
+    f.session.stop();
+    await opening?.catch(() => {});
+    await f.close();
+    healthy.close();
+  }
+});
+
+test("failed SSE discovery closes its stream while another server is still discovering", async () => {
+  const healthy = peer("http", "healthy");
+  const f = await fixture("sse", "peer", healthy.config.mcpServers);
+  const release = Promise.withResolvers<void>();
+  let opening: Promise<void> | undefined;
+  try {
+    f.p.failDiscovery();
+    f.p.holdDiscovery(healthy.listRequested);
+    healthy.holdDiscovery(release.promise);
+    opening = f.session.open();
+    await within(f.p.disconnected, 5_000);
+    expect(f.b.requests).toHaveLength(0);
+    expect(healthy.requests.filter(request => request.method === "tools/list")).toHaveLength(1);
+    release.resolve();
+    await within(opening, 5_000);
+    f.b.modelScript = [textEvents("healthy server ready")];
+    await f.session.receive("failed_sse_discovery", { content: "List tools" });
+    const tools = f.b.requests[0]!.tools.map((tool: Payload) => tool.name).filter((name: string) => name.startsWith("mcp__"));
+    expect(tools).toEqual(["mcp__healthy__microsoft_docs_fetch", "mcp__healthy__second_page"]);
+    expect([...f.b.publicLog.values()].filter(event => event.type === "session.error").map(event => event.error)).toEqual([
+      expect.objectContaining({ type: "mcp_connection_failed_error", mcp_server_name: "peer" }),
+    ]);
+  } finally {
+    release.resolve();
+    await opening?.catch(() => {});
+    await f.close();
+    healthy.close();
+  }
+});
+
+test("external servers are discovered in parallel and registered in configuration order", async () => {
+  const second = peer("http", "second");
+  const f = await fixture("http", "peer", second.config.mcpServers);
+  try {
+    f.p.holdDiscovery(second.listCompleted);
+    await within(f.session.open(), 5_000);
+    f.b.modelScript = [textEvents("both servers ready")];
+    await f.session.receive("parallel_discovery", { content: "List tools" });
+    const tools = f.b.requests[0]!.tools.map((tool: Payload) => tool.name).filter((name: string) => name.startsWith("mcp__"));
+    expect(tools).toEqual([
+      "mcp__peer__microsoft_docs_fetch",
+      "mcp__peer__second_page",
+      "mcp__second__microsoft_docs_fetch",
+      "mcp__second__second_page",
+    ]);
+  } finally { await f.close(); second.close(); }
 });
 
 for (const status of [401, 403]) {

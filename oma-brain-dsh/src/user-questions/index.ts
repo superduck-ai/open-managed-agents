@@ -70,7 +70,7 @@ export function questionAnswers(questions: InferArgs<typeof parameters>["questio
     const labels = new Set(question.options?.map(option => option.label));
     if (answer.selected.some(label => !labels.has(label))) throw new Error("Answer contains an unknown option");
     if (!question.multi_select && (answer.selected.length > 1 || answer.selected.length > 0 && answer.custom))
-      throw new Error("Single-select question requires one answer");
+      throw new Error("Single-select question allows at most one option or a custom answer, not both");
   }
   return result;
 }

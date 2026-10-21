@@ -154,7 +154,7 @@ result 复用既有事件 ID 去重、epoch 校验和队列过滤；普通成功
 
 公开 `user.interrupt` 经后端转换为 CCRv2 `control_request/interrupt`；执行端的两种中断入口都记录取消意图。主动中断保留内部取消处理，公开 `session.status_idle.stop_reason.type` 按 CMA 契约使用 `end_turn`，允许同会话继续；保留 `user.interrupt`，不生成 `Turn cancelled` 消息。这表示当前 Agent 回合已中断，不承诺远端进程已清理完成。
 
-普通工具调用复用官方客户端与 HTTP transport，单次请求等待上限为 185 秒；Bash 按参数 `timeout`（默认 120 秒，最多计 600 秒）加 65 秒余量计算，且不低于 185 秒，避免命令仍在执行时客户端先超时并把会话阻断为未知结果。Bun `fetch` 另有默认 5 分钟的套接字空闲超时（`BUN_CONFIG_HTTP_IDLE_TIMEOUT`），沙箱在命令执行期间通常不向响应写入任何字节，因此每次 `tools/call` 的 `fetch` 显式设置 Bun `timeout` 为该次等待时间加 15 秒；初始化等其他请求保持默认。不增加私有取消 RPC 或结果查询通道。中断与自然完成竞态以客户端实际收到的结果为准。收到完整工具结果时保留实际结果。只有执行 signal 已取消且 DSH 取消原因明确为 `kind: user` 时，缺失远端结果才转换为本地工具错误 `Tool call interrupted.`；私有 tool outcome 同时保存 `remoteOutcome: unknown`，不伪造 Bash 退出码、信号或远端 cancelled 状态。该结果持久化后完成原 dispatch，DSH 保存工具错误结果，当前轮发送非失败 CCRv2 result，由后端映射为 `idle/end_turn`，允许下一轮输入。
+普通工具调用复用官方客户端与 HTTP transport，单次请求等待上限为 185 秒；Bash 按参数 `timeout`（默认 120 秒，最多计 600 秒）加 65 秒余量计算，且不低于 185 秒，避免命令仍在执行时客户端先超时并把会话阻断为未知结果。Bun `fetch` 另有默认 5 分钟的套接字空闲超时（`BUN_CONFIG_HTTP_IDLE_TIMEOUT`），沙箱在命令执行期间通常不向响应写入任何字节，因此每次 `tools/call` 的 `fetch` 传 `timeout: false` 关闭该计时器，并改用该次等待时间加 15 秒的整体截止 signal 限制连接存活；Bun 1.4 之前会忽略正数 `timeout`（实测 1.3.11 在 300 秒切断），只有 `false` 在 1.3 与 1.4 上都生效。初始化等其他请求保持默认。不增加私有取消 RPC 或结果查询通道。中断与自然完成竞态以客户端实际收到的结果为准。收到完整工具结果时保留实际结果。只有执行 signal 已取消且 DSH 取消原因明确为 `kind: user` 时，缺失远端结果才转换为本地工具错误 `Tool call interrupted.`；私有 tool outcome 同时保存 `remoteOutcome: unknown`，不伪造 Bash 退出码、信号或远端 cancelled 状态。该结果持久化后完成原 dispatch，DSH 保存工具错误结果，当前轮发送非失败 CCRv2 result，由后端映射为 `idle/end_turn`，允许下一轮输入。
 
 用户中断完成后，Brain 在私有 DSH 消息历史中持久写入带原输入 ID 的 `oma-interruption` 上下文，说明该轮未完成操作已经取消，只有后续用户明确要求时才能重新执行。先刷新此日志，再保存旧输入完成状态、发布结束和确认投递。该上下文会进入下一次模型请求并在会话恢复后保留；已完成输入重投不重复写入。它不删除旧消息，不生成公开的用户消息或 `Turn cancelled` 提示，也不限制后续用户明确发起的新任务。
 
@@ -193,8 +193,6 @@ DSH 的工具执行持久化屏障如下：审批前先刷新 dsh 日志、保�
 用户新输入到达仍为 `blocked` 的会话时，DSH 先在同一输入的处理路径上把所有 `blocked` 调用（含子线程）记为 `result`，工具结果为 `failed: true`、`remoteOutcome: unknown`；没有逐调用阶段的旧版状态只解除线程与会话的 blocked。随后在主线程私有历史中追加 `oma-reconciliation` 用户上下文，说明这些调用结果未知、未重放、可能已生效、需先核实状态再依赖或重复；发布 UUID 为 `<input_id>_unknown_outcomes` 的 `system.message`；刷新日志、保存 Brain 状态并用 `null` 清除 `unknown_tool_outcomes`，然后按普通输入执行这一轮。处理前崩溃时输入会被重投，处理是幂等的。这一语义与用户主动中断一致：只在用户明确继续对话时放行，由模型和用户核实副作用，系统不自动重放。
 
 DSH 在记录 unknown 时以及每次打开会话时，把仍为 `blocked` 的调用写入 worker external_metadata 的 `unknown_tool_outcomes`（`tool_use_id`、`tool_name`，子线程另带 `session_thread_id`），没有时写 `null` 删除该键。运维可在用户继续之前使用 `cmd/tool-outcome-reconcile` 查看并确认：
-
-DSH 在记录 unknown 时以及每次打开会话时，把仍为 `blocked` 的调用写入 worker external_metadata 的 `unknown_tool_outcomes`（`tool_use_id`、`tool_name`，子线程另带 `session_thread_id`），没有时写 `null` 删除该键。运维使用 `cmd/tool-outcome-reconcile` 查看并确认：
 
 ```sh
 CONFIG_FILE=/path/to/config.yaml go run ./cmd/tool-outcome-reconcile \

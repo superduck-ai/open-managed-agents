@@ -35,7 +35,9 @@ export class SandboxMcp implements SandboxExecutor {
             if (!Object.keys(body.params._meta).length) delete body.params._meta;
             let response: Response;
             try {
-              response = await api.fetcher(new Request(request, { body: JSON.stringify(body) }), { timeout: call.timeoutMs + SOCKET_IDLE_MARGIN_MS });
+              const deadline = AbortSignal.timeout(call.timeoutMs + CALL_DEADLINE_MARGIN_MS);
+              response = await api.fetcher(new Request(request, { body: JSON.stringify(body) }),
+                { timeout: false, signal: AbortSignal.any([request.signal, deadline]) });
             } catch (error) {
               if (isConnectFailure(error)) call.rejection = "Sandbox tool call was not executed: OMA sandbox gateway is unreachable";
               throw error;
@@ -89,7 +91,7 @@ export class SandboxMcp implements SandboxExecutor {
 }
 
 const SANDBOX_CALL_TIMEOUT_MS = 185_000;
-const SOCKET_IDLE_MARGIN_MS = 15_000;
+const CALL_DEADLINE_MARGIN_MS = 15_000;
 const BASH_DEFAULT_TIMEOUT_SECONDS = 120;
 const BASH_MAX_TIMEOUT_SECONDS = 600;
 const BASH_RESPONSE_MARGIN_MS = 65_000;

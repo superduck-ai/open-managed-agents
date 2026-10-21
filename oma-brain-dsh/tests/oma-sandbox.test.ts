@@ -33,8 +33,9 @@ test("a silent Bash call outlives Bun's default socket idle timeout", async () =
   expect(JSON.parse(output.trim().split("\n").at(-1)!)).toEqual({ ok: true, result: { content: [{ type: "text", text: "finished" }] } });
 }, 30_000);
 
-test("sandbox tool calls raise the socket idle timeout above the call timeout", async () => {
+test("sandbox tool calls disable Bun's socket idle timeout and bound the request by the call timeout", async () => {
   const idleTimeouts: unknown[] = [];
+  const deadlines: AbortSignal[] = [];
   const api = new OmaApi("http://oma.test", (async (input: RequestInfo | URL, init?: RequestInit & { timeout?: unknown }) => {
     const request = new Request(input, init);
     const body = request.method === "POST" ? await request.json() as Payload : {};
@@ -44,6 +45,7 @@ test("sandbox tool calls raise the socket idle timeout above the call timeout", 
     } });
     if (body.method !== "tools/call") return new Response(null, { status: 202 });
     idleTimeouts.push(init?.timeout);
+    if (init?.signal) deadlines.push(init.signal);
     return Response.json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "ok" }] } });
   }) as typeof fetch);
   const a = assignment(); api.assignments.set(a.session_id, a);
@@ -52,7 +54,9 @@ test("sandbox tool calls raise the socket idle timeout above the call timeout", 
   try {
     await executor.call(tools.find((tool) => tool.name === "Bash")!, { command: "true", timeout: 600 }, new AbortController().signal);
     await executor.call(tools.find((tool) => tool.name === "Read")!, { file_path: "/tmp/a" }, new AbortController().signal);
-    expect(idleTimeouts).toEqual([680_000, 200_000]);
+    expect(idleTimeouts).toEqual([false, false]);
+    expect(deadlines).toHaveLength(2);
+    expect(deadlines.every((signal) => !signal.aborted)).toBe(true);
   } finally { await executor.close(); }
 });
 

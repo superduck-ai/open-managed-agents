@@ -680,9 +680,9 @@ export class CcrSession {
       await this.backend.acknowledge(this.id, inputId, this.abort.signal);
       return;
     }
-    if (this.blocked()) await this.continueAfterUnknownOutcomes(inputId);
     if (this.busy || this.abort.signal.aborted)
       throw new Error("Session is busy or stopped");
+    if (this.blocked()) await this.continueAfterUnknownOutcomes(inputId);
     let stopProgress = () => {};
     try {
       await this.runtime.run(() => {

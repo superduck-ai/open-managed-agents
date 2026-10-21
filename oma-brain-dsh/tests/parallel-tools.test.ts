@@ -169,6 +169,22 @@ test("a new input after an unknown call settles it as unknown without replay and
   expect(settled?.data.executions[session.id].toolOutcomes["uncertain-call"]).toMatchObject({ failed: true, remoteOutcome: "unknown" });
 });
 
+test("a busy session rejects new input without settling unknown calls", async () => {
+  const { session, b } = await fixture();
+  session.state.inputId = "uncertain-original";
+  await session.recordApproved(approved("uncertain-call"));
+  await session.recordDispatch("uncertain-call");
+  await session.recordUnknown("uncertain-call");
+  session.runtime.busy = true;
+  try {
+    await expect(session.receive("concurrent-followup", { content: "continue" })).rejects.toThrow("busy");
+  } finally { session.runtime.busy = false; }
+  expect(session.blocked()).toBe(true);
+  expect(session.execution(session.id).callPhases).toEqual({ "uncertain-call": "blocked" });
+  expect(b.publicLog.has("concurrent-followup_unknown_outcomes")).toBe(false);
+  expect(b.workerMetadata.unknown_tool_outcomes).toEqual([{ tool_use_id: "uncertain-call", tool_name: "Read" }]);
+});
+
 test("restoration blocks each unfinished dispatch, preserves confirmed siblings and continues without replay", async () => {
   const { session, b } = await fixture();
   session.state.inputId = "interrupted-read-batch";

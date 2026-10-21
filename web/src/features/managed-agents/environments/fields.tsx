@@ -1,7 +1,6 @@
-import { ArrowUpRight, Cloud, Globe, LockKeyhole, Monitor, Plus, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Cloud, Globe, LockKeyhole, Monitor } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useI18n } from '../../../shared/i18n';
-import { Button } from '../../../shared/ui/button';
 import { Checkbox } from '../../../shared/ui/checkbox';
 import { Input } from '../../../shared/ui/input';
 import { Textarea } from '../../../shared/ui/textarea';
@@ -10,6 +9,7 @@ import { Field, FieldLabel, FieldError } from '../../../shared/ui/field';
 import type { EnvironmentValidationErrors } from '../resources/environment-model';
 import { parseAllowedHostsText } from '../resources/model';
 import type { EnvironmentFormValues } from './model';
+import { EnvironmentKeyValueRows } from './key-value-rows';
 
 export type EnvironmentFieldsProps = {
   values: EnvironmentFormValues;
@@ -260,11 +260,6 @@ export function EnvironmentNetworking({ values, onChange, readOnly }: Environmen
 
 export function EnvironmentMetadata({ values, onChange, errors, readOnly }: EnvironmentFieldsProps) {
   const { msg } = useI18n();
-  const update = (index: number, field: 'key' | 'value', value: string) =>
-    onChange({
-      ...values,
-      metadataRows: values.metadataRows.map((row, position) => (position === index ? { ...row, [field]: value } : row)),
-    });
   return (
     <EnvironmentSection
       title={msg('managedAgents.environments.metadata.title', 'Metadata')}
@@ -274,66 +269,20 @@ export function EnvironmentMetadata({ values, onChange, errors, readOnly }: Envi
       )}
     >
       <div className="space-y-3">
-        {values.metadataRows.map((row, index) => (
-          <div key={index}>
-            <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_36px] gap-2">
-              <Input
-                aria-label={msg('environmentPage.metadataKey', 'Metadata key {number}', { number: index + 1 })}
-                autoFocus={!row.key && index === values.metadataRows.length - 1}
-                readOnly={readOnly}
-                placeholder={msg('common.key', 'Key')}
-                className="read-only:bg-muted/50"
-                value={row.key}
-                aria-invalid={Boolean(errors.metadataRows[index]?.key)}
-                onChange={(event) => update(index, 'key', event.target.value)}
-              />
-              <Input
-                aria-label={msg('environmentPage.metadataValue', 'Metadata value {number}', { number: index + 1 })}
-                readOnly={readOnly}
-                placeholder={msg('common.value', 'Value')}
-                className="read-only:bg-muted/50"
-                value={row.value}
-                aria-invalid={Boolean(errors.metadataRows[index]?.value)}
-                onChange={(event) => update(index, 'value', event.target.value)}
-              />
-              {!readOnly ? (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={msg('environmentPage.removeMetadata', 'Remove {key}', {
-                    key: row.key || msg('environmentPage.emptyEntry', 'empty entry'),
-                  })}
-                  onClick={() =>
-                    onChange({
-                      ...values,
-                      metadataRows: values.metadataRows.filter((_, position) => index !== position),
-                    })
-                  }
-                >
-                  <Trash2 className="size-4" strokeWidth={1.5} />
-                </Button>
-              ) : null}
-            </div>
-            {errors.metadataRows[index] ? (
-              <FieldError>{errors.metadataRows[index].key || errors.metadataRows[index].value}</FieldError>
-            ) : null}
-          </div>
-        ))}
-        {readOnly && !values.metadataRows.length ? (
-          <p className="text-sm text-muted-foreground">{msg('environmentPage.noMetadata', 'No metadata.')}</p>
-        ) : null}
-        {!readOnly ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={values.metadataRows.length >= 16}
-            onClick={() => onChange({ ...values, metadataRows: [...values.metadataRows, { key: '', value: '' }] })}
-          >
-            <Plus className="size-4" strokeWidth={1.5} />
-            {msg('managedAgents.environments.metadata.add', 'Add metadata')}
-          </Button>
-        ) : null}
+        <EnvironmentKeyValueRows
+          rows={values.metadataRows}
+          onRowsChange={(metadataRows) => onChange({ ...values, metadataRows })}
+          errors={errors.metadataRows}
+          readOnly={readOnly}
+          limit={16}
+          labels={{
+            key: (number) => msg('environmentPage.metadataKey', 'Metadata key {number}', { number }),
+            value: (number) => msg('environmentPage.metadataValue', 'Metadata value {number}', { number }),
+            remove: (key) => msg('environmentPage.removeMetadata', 'Remove {key}', { key }),
+            add: msg('managedAgents.environments.metadata.add', 'Add metadata'),
+            empty: msg('environmentPage.noMetadata', 'No metadata.'),
+          }}
+        />
         {errors.metadata ? <FieldError>{errors.metadata}</FieldError> : null}
       </div>
     </EnvironmentSection>

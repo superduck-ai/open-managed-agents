@@ -53,7 +53,7 @@ flowchart LR
   同一 Tunnel 可以配置多个不同 Channel，同一 Tunnel + Channel 不得重复。
 - 已配置 Tunnel 的 Channel 使用本地编辑缓冲；Apply 或选择有效建议后，原子更新 `mcp_server` 的名称和 URL 以及
   `mcp_toolset.mcp_server_name`，保留权限与顺序，并在已连接时重新发现工具。
-- 内置工具展示当前 23 项可选工具。列表优先展示 8 项：`bash`、`read`、`write`、`edit`、`glob`、`grep`、`web_fetch`、`web_search`，随后展示 `task`、`ask_user_question`、`cron_create`、`cron_delete`、`cron_list`、`enter_plan_mode`、`enter_worktree`、`exit_plan_mode`、`exit_worktree`、`notebook_edit`、`schedule_wakeup`、`skill`、`task_output`、`task_stop`、`todo_write`。除 `ask_user_question` 默认关闭并要求用户主动开启外，其余工具默认 `always_allow`；这样纯 API 调用不会进入无人处理的 HITL 等待。Brain 的 `web_search` / `web_fetch` 请求在 oma-server 执行，外部 Claude Code 的 `WebFetch` 仍按客户端工具处理，不表示 Messages API 的模型服务端工具；Rendered 与 Raw 均支持内置 `web_search`；Web 工具域名策略和 Fetch 内容预算保留在配置中；新 MCP 默认 `always_ask`。
+- 内置工具展示当前 9 项可选工具：`bash`、`read`、`write`、`edit`、`glob`、`grep`、`web_fetch`、`web_search`、`ask_user_question`。除 `ask_user_question` 默认关闭并要求用户主动开启外，其余工具默认 `always_allow`；这样纯 API 调用不会进入无人处理的 HITL 等待。Brain 的 `web_search` / `web_fetch` 请求在 oma-server 执行，外部 Claude Code 的 `WebFetch` 仍按客户端工具处理，不表示 Messages API 的模型服务端工具；Rendered 与 Raw 均支持内置 `web_search`；Web 工具域名策略和 Fetch 内容预算保留在配置中；新 MCP 默认 `always_ask`。旧的 `task`、`cron_*`、规划模式、worktree、`notebook_edit`、`schedule_wakeup`、`skill`、`task_output`、`task_stop`、`todo_write` 不再作为内置工具接受。
 - 内置 Toolset 可以整体移除，并可通过“添加内置工具”恢复；恢复操作不会复制已存在的 Toolset。
 - Toolset 级权限写入 `default_config` 并重置逐工具权限；Web 工具的域名策略和内容预算保留；内置工具集会额外保留一条与分组权限一致的 `ask_user_question` 显式配置，避免提交规范化把它静默改回 deny。逐工具权限与默认值一致时不保留冗余覆盖，但 `ask_user_question` 即使选 `always_allow` 也保留显式配置。
 - `always_deny` 规范化为 `enabled:false`；`custom` 只是聚合展示状态，不写入 API。

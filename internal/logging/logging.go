@@ -112,14 +112,14 @@ func formatHTTPLine(r slog.Record, values map[string]string, order []string) str
 	var b strings.Builder
 	b.WriteString(r.Time.Format("15:04:05.000"))
 	b.WriteString(" [")
-	b.WriteString(values["clientKind"])
+	b.WriteString(values["client_kind"])
 	b.WriteString("] ")
 	b.WriteString(values["method"])
 	if status := values["status"]; status != "" {
 		b.WriteString(" ")
 		b.WriteString(status)
 	}
-	if duration := values["durationMs"]; duration != "" {
+	if duration := values["duration_ms"]; duration != "" {
 		b.WriteString(" ")
 		b.WriteString(duration)
 		b.WriteString("ms")
@@ -128,8 +128,8 @@ func formatHTTPLine(r slog.Record, values map[string]string, order []string) str
 	b.WriteString(values["url"])
 
 	skip := map[string]bool{
-		"component": true, "event": true, "clientKind": true,
-		"method": true, "status": true, "durationMs": true, "url": true,
+		"component": true, "event": true, "client_kind": true,
+		"method": true, "status": true, "duration_ms": true, "url": true,
 	}
 	appendRest(&b, values, order, skip)
 	return b.String()

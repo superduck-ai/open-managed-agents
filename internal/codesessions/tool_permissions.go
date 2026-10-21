@@ -32,6 +32,7 @@ type toolIdentity struct {
 }
 
 type toolPermissionRequest struct {
+	RequestedAt     time.Time      `json:"requested_at,omitzero"`
 	PublicEventID   string         `json:"public_event_id"`
 	EventType       string         `json:"event_type"`
 	ToolName        string         `json:"tool_name"`
@@ -70,11 +71,12 @@ func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID
 	if payload.Request.ToolAvailable != nil && !*payload.Request.ToolAvailable {
 		permission = resolvedToolPermissionDeny
 	}
-	s.logger.InfoContext(ctx, "resolved tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "tool_kind", identity.Kind, "server_name", identity.ServerName, "normalized_tool_name", identity.ToolName, "permission", permission)
+	s.logger.DebugContext(ctx, "resolved tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "tool_kind", identity.Kind, "server_name", identity.ServerName, "normalized_tool_name", identity.ToolName, "permission", permission)
 	request, payloads, err := toolPermissionPublicPayloads(codeSessionID, payload, meta, identity, permission)
 	if err != nil {
 		return err
 	}
+	observeToolPermissionDecision(ctx, codeSessionID, toolName, permission, identity)
 	if len(payloads) == 0 {
 		return nil
 	}
@@ -392,7 +394,7 @@ func (s *Service) queueControlResponseForToolConfirmation(ctx context.Context, c
 	request, err := toolPermissionRequestFromMetadata(codeSession.WorkerExternalMetadata, codeSession.ExternalID, toolUseID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			return false, db.ErrSessionInputConflict
+			return false, db.ErrSessionToolUseNotPending
 		}
 		return false, err
 	}
@@ -444,6 +446,7 @@ func (s *Service) persistToolPermissionRequest(ctx context.Context, codeSessionI
 		}
 		workerEpoch = codeSession.CurrentWorkerEpoch
 	}
+	request.RequestedAt = time.Now().UTC()
 	metadata, err := marshalRaw(map[string]any{toolPermissionRequestMetadataKey(request.PublicEventID): request})
 	if err != nil {
 		return err
@@ -529,6 +532,7 @@ func (s *Service) respondToToolPermissionRequest(ctx context.Context, codeSessio
 	if request.RequestID == "" {
 		return nil
 	}
+	observeToolPermissionResponse(ctx, codeSessionID, behavior, source, request.RequestedAt)
 	if request.Input == nil {
 		request.Input = map[string]any{}
 	}

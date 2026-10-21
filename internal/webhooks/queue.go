@@ -11,14 +11,15 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
 const (
-	StreamName       = "OMA_WEBHOOK_DELIVERY"
-	deliverySubject  = "oma.webhook.delivery.v1"
-	deliveryConsumer = "oma_webhook_delivery"
-	maxMessageBytes  = 64 << 10
-	defaultBatchSize = 10
+	StreamName           = "OMA_WEBHOOK_DELIVERY"
+	deliverySubject      = "oma.webhook.delivery.v1"
+	DeliveryConsumerName = "oma_webhook_delivery"
+	maxMessageBytes      = 64 << 10
+	defaultBatchSize     = 10
 )
 
 // Envelope is the queue boundary. Event preserves the original signed payload.
@@ -58,7 +59,7 @@ func NewQueue(ctx context.Context, conn *nats.Conn, cfg config.WebhookStreamConf
 		return nil, fmt.Errorf("ensure webhook stream: %w", err)
 	}
 	consumer, err := js.CreateOrUpdateConsumer(ctx, StreamName, jetstream.ConsumerConfig{
-		Name: deliveryConsumer, Durable: deliveryConsumer, FilterSubject: deliverySubject,
+		Name: DeliveryConsumerName, Durable: DeliveryConsumerName, FilterSubject: deliverySubject,
 		DeliverPolicy: jetstream.DeliverAllPolicy, AckPolicy: jetstream.AckExplicitPolicy,
 		MaxDeliver: webhookMaxAttempts(delivery), AckWait: max(time.Minute, webhookTimeout(delivery)+30*time.Second),
 		MaxAckPending: 3000, MaxRequestBatch: defaultBatchSize,
@@ -81,7 +82,10 @@ func (q *Queue) Publish(ctx context.Context, envelope Envelope) error {
 	if len(body) > maxMessageBytes {
 		return errors.New("webhook envelope exceeds 64 KiB")
 	}
-	_, err = q.js.Publish(ctx, deliverySubject, body, jetstream.WithMsgID(event.ID+":"+envelope.EndpointUUID), jetstream.WithRetryAttempts(0))
+	message := nats.NewMsg(deliverySubject)
+	message.Data = body
+	telemetry.InjectTraceParent(ctx, message.Header.Set)
+	_, err = q.js.PublishMsg(ctx, message, jetstream.WithMsgID(event.ID+":"+envelope.EndpointUUID), jetstream.WithRetryAttempts(0))
 	return err
 }
 

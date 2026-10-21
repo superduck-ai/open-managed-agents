@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
@@ -63,6 +64,9 @@ func (s *Service) applyWorkerDeliveryUpdates(
 			err = s.db.WithLockedCodeSessionWorkerEpoch(ackCtx, codeSessionID, epoch, apply)
 		}
 	}
+	if err != nil {
+		recordFailedWorkerDeliveryUpdates(ctx, updates, result, err)
+	}
 	cancel()
 	// 对象清理会访问 jobs 表，必须在释放 Code Session 事务后执行，避免回调
 	// 另取 DB 连接。即使后续 update 失败，已 DoubleAck 的对象仍可以清理。
@@ -84,6 +88,7 @@ func (s *Service) applyLockedWorkerDeliveryUpdates(
 	for _, update := range updates {
 		reference, found := references[update.EventID]
 		if !found {
+			recordWorkerEventUpdate(ctx, update.Status, "ignored")
 			result.Ignored++
 			continue
 		}
@@ -102,15 +107,27 @@ func (s *Service) applyLockedWorkerDeliveryUpdates(
 			if err := s.workerEventAcks.Delete(ctx, codeSessionID, epoch, update.EventID); err != nil {
 				s.logger.WarnContext(ctx, "delete processed worker event ACK", "code_session_id", codeSessionID, "event_id", update.EventID, "error", err)
 			}
+			observeWorkerEventAck(ctx, codeSessionID, update.EventID, reference)
 			if reference.CleanupJobID != "" {
 				cleanupJobIDs = append(cleanupJobIDs, reference.CleanupJobID)
 			}
 		default:
 			return result, cleanupJobIDs, db.ErrInvalidState
 		}
+		recordWorkerEventUpdate(ctx, update.Status, "applied")
 		result.Applied++
 	}
 	return result, cleanupJobIDs, nil
+}
+
+func recordFailedWorkerDeliveryUpdates(ctx context.Context, updates []workerDeliveryUpdate, result workerDeliveryResult, err error) {
+	outcome := telemetry.Outcome(err)
+	if ctx.Err() != nil {
+		outcome = telemetry.OutcomeCanceled
+	}
+	for _, update := range updates[min(result.Applied+result.Ignored, len(updates)):] {
+		recordWorkerEventUpdate(ctx, update.Status, outcome)
+	}
 }
 
 func (s *Service) publishProcessingInputs(ctx context.Context, codeSessionID string, epoch int64, updates []workerDeliveryUpdate, references map[string]workerevents.AckRef) error {

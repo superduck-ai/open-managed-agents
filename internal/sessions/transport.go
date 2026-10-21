@@ -85,6 +85,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.router.ServeHTTP(w, r)
 }
 
+var _ chi.Routes = (*Handler)(nil)
+
+func (h *Handler) Routes() []chi.Route {
+	return h.router.Routes()
+}
+
+func (h *Handler) Middlewares() chi.Middlewares {
+	return h.router.Middlewares()
+}
+
+func (h *Handler) Match(rctx *chi.Context, method, path string) bool {
+	return h.router.Match(rctx, method, path)
+}
+
+func (h *Handler) Find(rctx *chi.Context, method, path string) string {
+	return h.router.Find(rctx, method, path)
+}
+
 func (h *Handler) notFound(http.ResponseWriter, *http.Request) error {
 	return sessionRouteNotFound()
 }

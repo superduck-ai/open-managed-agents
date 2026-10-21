@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/listeners"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestShutdownHTTPDeadlineClosesActiveRequests(t *testing.T) {
@@ -130,5 +132,21 @@ func waitForShutdownEvent(t *testing.T, event <-chan struct{}) {
 	case <-event:
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for shutdown event")
+	}
+}
+
+func TestLogContextAttrs(t *testing.T) {
+	if got := logContextAttrs(context.Background()); len(got) != 0 {
+		t.Fatalf("unexpected empty-context attrs: %v", got)
+	}
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}})
+	ctx := trace.ContextWithSpanContext(httpapi.WithRequestID(t.Context(), "req_test"), spanContext)
+	got := map[string]string{}
+	for _, attr := range logContextAttrs(ctx) {
+		got[attr.Key] = attr.Value.String()
+	}
+	want := map[string]string{"request_id": "req_test", "trace_id": spanContext.TraceID().String(), "span_id": spanContext.SpanID().String()}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("context attrs = %v, want %v", got, want)
 	}
 }

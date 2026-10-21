@@ -24,6 +24,7 @@ type brainClaimResponse struct {
 	IngressToken   string `json:"ingress_token"`
 	ModelToken     string `json:"model_token"`
 	ClaimExpiresAt string `json:"claim_expires_at"`
+	TraceParent    string `json:"trace_parent,omitempty"`
 }
 
 type brainClaimReleaseRequest struct {
@@ -125,6 +126,7 @@ func (h *Handler) handleBrainClaim(w http.ResponseWriter, r *http.Request) error
 		IngressToken:   claim.IngressToken,
 		ModelToken:     claim.ModelToken,
 		ClaimExpiresAt: claim.ClaimExpiresAt.Format(time.RFC3339Nano),
+		TraceParent:    claim.TraceParent,
 	})
 	return nil
 }

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/riverqueue/river"
 	"github.com/superduck-ai/open-managed-agents/internal/api"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
@@ -35,12 +36,15 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secretservice"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
+	"github.com/superduck-ai/open-managed-agents/internal/statemetrics"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	"github.com/superduck-ai/open-managed-agents/internal/webtools"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func main() {
@@ -53,7 +57,7 @@ func main() {
 	}
 }
 
-func run(logger *slog.Logger) error {
+func run(bootstrap *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	context.AfterFunc(ctx, stop)
@@ -62,6 +66,14 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	telemetryRuntime, err := telemetry.Setup(ctx, cfg.Telemetry, cfg.Env, bootstrap)
+	if err != nil {
+		return fmt.Errorf("setup telemetry: %w", err)
+	}
+	defer shutdownTelemetry(telemetryRuntime, bootstrap)
+	logger := newApplicationLogger(bootstrap.Handler(), telemetryRuntime, cfg.Telemetry.Logs.SlogLevel())
+	slog.SetDefault(logger)
+
 	closeDiagnostics, err := diagnostics.Start(cfg.Server.DiagnosticsAddr, os.Getenv("OMA_DIAGNOSTICS_LISTENER_FD"), logger.With("component", "diagnostics"))
 	if err != nil {
 		return fmt.Errorf("start diagnostics: %w", err)
@@ -74,18 +86,8 @@ func run(logger *slog.Logger) error {
 	}
 	defer database.Close()
 
-	if cfg.Database.AutoMigrate {
-		if err := database.Migrate(ctx); err != nil {
-			return fmt.Errorf("migrate database: %w", err)
-		}
-		if err := riverjobs.Migrate(ctx, database, logger.With("component", "river_jobs")); err != nil {
-			return fmt.Errorf("migrate River: %w", err)
-		}
-	} else {
-		logger.Info("database auto migration disabled", "env", cfg.Env)
-	}
-	if err := database.Seed(ctx, cfg.Bootstrap); err != nil {
-		return fmt.Errorf("seed database: %w", err)
+	if err := initializeDatabase(ctx, cfg, database, logger); err != nil {
+		return err
 	}
 	redisClient, err := redisclient.Open(ctx, cfg.Redis.URL)
 	if err != nil {
@@ -235,6 +237,12 @@ func run(logger *slog.Logger) error {
 		}
 	}()
 
+	stopReporter, err := startStateMetrics(ctx, cfg, database, natsConnection, logger)
+	if err != nil {
+		return err
+	}
+	defer stopReporter()
+
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
@@ -294,6 +302,73 @@ func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) er
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("serve: %w", err)
 		}
+	}
+	return nil
+}
+
+func newApplicationLogger(console slog.Handler, telemetryRuntime *telemetry.Runtime, level slog.Level) *slog.Logger {
+	handler := console
+	if otelHandler := telemetryRuntime.LogHandler(); otelHandler != nil {
+		handler = slog.NewMultiHandler(console, logging.NewLevelHandler(otelHandler, level))
+	}
+	return slog.New(logging.NewContextHandler(handler, logContextAttrs))
+}
+
+func logContextAttrs(ctx context.Context) []slog.Attr {
+	attrs := make([]slog.Attr, 0, 3)
+	if spanContext := trace.SpanContextFromContext(ctx); spanContext.IsValid() {
+		attrs = append(attrs,
+			slog.String("trace_id", spanContext.TraceID().String()),
+			slog.String("span_id", spanContext.SpanID().String()),
+		)
+	}
+	if requestID := httpapi.RequestID(ctx); requestID != "" {
+		attrs = append(attrs, slog.String("request_id", requestID))
+	}
+	return attrs
+}
+
+func shutdownTelemetry(telemetryRuntime *telemetry.Runtime, bootstrap *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := telemetryRuntime.Shutdown(ctx); err != nil {
+		bootstrap.WarnContext(ctx, "shutdown telemetry", "error", err)
+	}
+}
+
+func startStateMetrics(ctx context.Context, cfg config.Config, database *db.DB, natsConnection *nats.Conn, logger *slog.Logger) (func(), error) {
+	if !cfg.Telemetry.StateMetricsActive() {
+		return func() {}, nil
+	}
+	reporter, err := statemetrics.New(statemetrics.Dependencies{
+		DB: database, NATS: natsConnection, Config: cfg.Telemetry.StateMetrics,
+		Streams:   []string{workerevents.StreamName, webhooks.StreamName, tunnels.CommandStreamName},
+		Consumers: []statemetrics.ConsumerTarget{{Stream: webhooks.StreamName, Consumer: webhooks.DeliveryConsumerName}},
+		Logger:    logger.With("component", "state_metrics"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create state metrics reporter: %w", err)
+	}
+	stop, err := reporter.Start(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("start state metrics reporter: %w", err)
+	}
+	return stop, nil
+}
+
+func initializeDatabase(ctx context.Context, cfg config.Config, database *db.DB, logger *slog.Logger) error {
+	if cfg.Database.AutoMigrate {
+		if err := database.Migrate(ctx); err != nil {
+			return fmt.Errorf("migrate database: %w", err)
+		}
+		if err := riverjobs.Migrate(ctx, database, logger.With("component", "river_jobs")); err != nil {
+			return fmt.Errorf("migrate River: %w", err)
+		}
+	} else {
+		logger.Info("database auto migration disabled", "env", cfg.Env)
+	}
+	if err := database.Seed(ctx, cfg.Bootstrap); err != nil {
+		return fmt.Errorf("seed database: %w", err)
 	}
 	return nil
 }

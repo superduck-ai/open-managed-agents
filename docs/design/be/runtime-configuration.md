@@ -192,6 +192,7 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 | `EnvironmentRunnerConfig` | `environment_runner` | Environment runner 并发及 Claude 运行命令                                                |
 | `CodeSessionConfig`       | `code_session`       | Code session ingress、sandbox 回调 URL、JWT 和上游代理安全配置                           |
 | `ObservabilityConfig`     | `observability`      | Claude Code signal 策略、Backend 选择器、OpenObserve ingestion/query 连接与 OTLP ingress |
+| `TelemetryConfig` | `telemetry` | 服务端 OTel 导出，见[服务端业务可观测性](server-observability.md) |
 | `WebhookConfig`           | `webhook`            | Webhook 投递 worker 开关、超时、重试、失败窗口和地址策略                                           |
 | `BootstrapConfig`         | `bootstrap`          | 本地默认身份和需要 seed 的 API keys                                                      |
 

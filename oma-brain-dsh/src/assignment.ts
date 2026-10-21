@@ -8,6 +8,7 @@ export interface Assignment {
   worker_epoch: number;
   ingress_token: string;
   model_token: string;
+  trace_parent?: string;
   mcp_config: unknown;
   external_mcp_config?: unknown;
   launch: {

@@ -239,7 +239,7 @@ func validateSessionInputBatch(primary SessionThread, worker codeSessionInputSta
 				if event.EventType == "user.tool_confirmation" && event.ThreadExternalID == nil {
 					return "", ErrSessionToolConfirmationInvalid
 				}
-				return "", ErrSessionInputConflict
+				return "", ErrSessionToolUseNotPending
 			}
 		case "user.tool_result":
 			accepted, err := sessionToolResultInputAccepted(primary, worker, event)

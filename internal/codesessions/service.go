@@ -17,6 +17,7 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
@@ -165,6 +166,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 		return nil
 	}
 	if len(payloads) > 0 {
+		s.observeInputWorkerAvailability(ctx, codeSession, len(payloads), time.Now())
 		if err := s.QueueRawPublicSessionEvents(ctx, codeSession, payloads); err != nil {
 			return err
 		}
@@ -173,28 +175,48 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 }
 
 func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession db.CodeSession) error {
-	if s.sandboxTimeoutExtender == nil || usesBrainClaimTransport(codeSession) {
-		return nil
+	ctx, span := telemetry.Start(ctx, "oma.sandbox.resume", telemetry.AttrCodeSessionID.String(codeSession.ExternalID), telemetry.AttrSessionID.String(codeSession.SessionExternalID))
+	startedAt := time.Now()
+	outcome, err := s.resumeSandbox(ctx, codeSession)
+	if err != nil {
+		outcome = telemetry.OutcomeError
+	}
+	span.SetAttributes(telemetry.AttrOutcome.String(outcome))
+	observeOperation(ctx, codeSessionMetrics.Get().sandboxResume, outcome, startedAt)
+	telemetry.SetErrorStatus(span, err)
+	span.End()
+	return err
+}
+
+func (s *Service) resumeSandbox(ctx context.Context, codeSession db.CodeSession) (string, error) {
+	if s.sandboxTimeoutExtender == nil {
+		return "disabled", nil
+	}
+	if usesBrainClaimTransport(codeSession) {
+		return "brain_claim", nil
 	}
 
 	external, err := s.selfHostedCodeSession(ctx, codeSession.ExternalID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if external {
-		return nil
+		return "self_hosted", nil
 	}
 
 	sandbox, err := s.db.GetResumableEnvironmentSandboxForCodeSession(ctx, codeSession.ExternalID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			_, err = s.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, codeSession.ExternalID, "", nil)
-			return err
+			scheduled, err := s.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, codeSession.ExternalID, "", nil, telemetry.TraceParent(ctx))
+			if err == nil && !scheduled {
+				return "no_sandbox", nil
+			}
+			return "recovery_requested", err
 		}
-		return err
+		return "", err
 	}
 	if sandbox.ProviderSandboxID == nil || *sandbox.ProviderSandboxID == "" {
-		return nil
+		return "no_provider_id", nil
 	}
 	providerSandboxID := *sandbox.ProviderSandboxID
 	err = s.sandboxTimeoutExtender.SetTimeout(ctx, providerSandboxID, s.sandboxTimeout)
@@ -207,19 +229,20 @@ func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession d
 			providerSandboxID,
 			codeSessionWorkerLeaseTTL,
 		)
-		return err
+		return "extended", err
 	}
 	if !errors.Is(err, sandboxruntime.ErrSandboxNotFound) {
-		return err
+		return "", err
 	}
 	scheduled, scheduleErr := s.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(
 		ctx,
 		codeSession.ExternalID,
 		providerSandboxID,
 		err,
+		telemetry.TraceParent(ctx),
 	)
 	if scheduleErr != nil {
-		return fmt.Errorf("schedule replacement sandbox: %w", scheduleErr)
+		return "", fmt.Errorf("schedule replacement sandbox: %w", scheduleErr)
 	}
 	if scheduled {
 		s.logger.InfoContext(
@@ -229,7 +252,7 @@ func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession d
 			"provider_sandbox_id", providerSandboxID,
 		)
 	}
-	return nil
+	return "recovery_scheduled", nil
 }
 
 func (s *Service) QueueRawPublicSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) error {
@@ -294,7 +317,8 @@ func (s *Service) AppendWorkerOutputEventsForEpoch(ctx context.Context, route Co
 		return db.ErrWorkerEpochMismatch
 	}
 	now := time.Now().UTC()
-	prepared, err := prepareWorkerOutputEvents(codeSessionID, events, now)
+	prepared, eventTypes, err := prepareWorkerOutputEvents(codeSessionID, events, now)
+	annotateWorkerEventBatch(ctx, len(events), eventTypes)
 	if err != nil {
 		return err
 	}
@@ -335,25 +359,37 @@ func (preparedStreamAction) implPreparedWorkerOutputEvent()    {}
 func (preparedControlAction) implPreparedWorkerOutputEvent()   {}
 func (preparedPublicAction) implPreparedWorkerOutputEvent()    {}
 
-func prepareWorkerOutputEvents(codeSessionID string, events []workerOutputEvent, now time.Time) ([]preparedWorkerOutputEvent, error) {
+func prepareWorkerOutputEvents(codeSessionID string, events []workerOutputEvent, now time.Time) ([]preparedWorkerOutputEvent, []string, error) {
 	prepared := make([]preparedWorkerOutputEvent, 0, len(events))
+	eventTypes := make([]string, 0, len(events))
 	for i, event := range events {
-		output, err := prepareWorkerOutputEvent(codeSessionID, event, now)
+		header, err := decodeWorkerPayloadHeader(event.Payload)
+		if err == nil {
+			eventTypes = append(eventTypes, header.Type)
+		}
+		var output preparedWorkerOutputEvent
+		if err == nil {
+			output, err = prepareDecodedWorkerOutputEvent(codeSessionID, header, event, now)
+		}
 		if err != nil {
-			return nil, fmt.Errorf("%w: events[%d]: %v", ErrProtocol, i, err)
+			return nil, eventTypes, fmt.Errorf("%w: events[%d]: %v", ErrProtocol, i, err)
 		}
 		prepared = append(prepared, output)
 	}
-	return prepared, nil
+	return prepared, eventTypes, nil
 }
 
 func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now time.Time) (preparedWorkerOutputEvent, error) {
-	if codeSessionID == "" {
-		return nil, ErrProtocol
-	}
 	header, err := decodeWorkerPayloadHeader(input.Payload)
 	if err != nil {
 		return nil, err
+	}
+	return prepareDecodedWorkerOutputEvent(codeSessionID, header, input, now)
+}
+
+func prepareDecodedWorkerOutputEvent(codeSessionID string, header workerPayloadHeader, input workerOutputEvent, now time.Time) (preparedWorkerOutputEvent, error) {
+	if codeSessionID == "" {
+		return nil, ErrProtocol
 	}
 	if header.Type == "keep_alive" {
 		return preparedKeepAliveAction{}, nil

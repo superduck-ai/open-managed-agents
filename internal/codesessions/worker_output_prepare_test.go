@@ -68,7 +68,7 @@ func TestPrepareWorkerOutputEventsRejectsBatchBeforeApply(t *testing.T) {
 		}`)},
 	}
 
-	prepared, err := prepareWorkerOutputEvents("cse_test", events, time.Unix(1, 0).UTC())
+	prepared, _, err := prepareWorkerOutputEvents("cse_test", events, time.Unix(1, 0).UTC())
 	if !errors.Is(err, ErrProtocol) {
 		t.Fatalf("prepareWorkerOutputEvents() error = %v, want ErrProtocol", err)
 	}
@@ -101,7 +101,7 @@ func TestPrepareWorkerOutputEventsBuildsActions(t *testing.T) {
 		}`)},
 	}
 
-	prepared, err := prepareWorkerOutputEvents("cse_test", events, time.Unix(1, 0).UTC())
+	prepared, _, err := prepareWorkerOutputEvents("cse_test", events, time.Unix(1, 0).UTC())
 	if err != nil {
 		t.Fatalf("prepareWorkerOutputEvents() error = %v", err)
 	}

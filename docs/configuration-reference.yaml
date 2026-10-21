@@ -339,6 +339,30 @@ transcript_archive:
   delete_batch_rows: 500
   max_rows_per_job: 50000
 
+telemetry:
+  enabled: false
+  service_name: oma-server
+  otlp:
+    base_url: http://openobserve:5080
+    organization: oma
+    username: ""
+    password: "" # 敏感值：OpenObserve 写入账号密码
+    traces_stream: oma_server
+    logs_stream: oma_server
+    timeout: 10s
+  traces:
+    enabled: true
+  metrics:
+    enabled: true
+    export_interval: 30s
+  logs:
+    enabled: true
+    level: info
+  state_metrics:
+    interval: 60s
+    stale_running_after: 10m
+    stuck_starting_after: 10m
+
 web_tools:
   search_provider: ""
   providers: {}

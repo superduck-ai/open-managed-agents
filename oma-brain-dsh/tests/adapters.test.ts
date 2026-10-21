@@ -33,6 +33,7 @@ test("OMA Messages adapter binds concurrent root/child requests to their OMA tok
   }) as typeof fetch);
   const a = assignment(); const b = assignment();
   a.model_token = "root-a"; b.model_token = "root-b";
+  a.trace_parent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01";
   api.assignments.set(a.session_id, a); api.assignments.set(b.session_id, b);
   api.modelSessions.set("child-a", a.session_id);
   const adapter = new AiSdkAdapter(omaModelOptions(api));
@@ -40,6 +41,9 @@ test("OMA Messages adapter binds concurrent root/child requests to their OMA tok
     collect(adapter.stream(options("child-a")))]);
   expect(requests.map((request) => request.headers.get("Authorization")).sort()).toEqual(["Bearer root-a", "Bearer root-a", "Bearer root-b"]);
   expect(requests.map((request) => request.headers.get("X-Claude-Code-Agent-Id"))).toEqual([null, null, "child-a"]);
+  expect(requests.map((request) => [request.headers.get("Authorization"), request.headers.get("traceparent")]).sort()).toEqual([
+    ["Bearer root-a", a.trace_parent], ["Bearer root-a", a.trace_parent], ["Bearer root-b", null],
+  ]);
   expect(requests.every((request) => request.headers.get("user-agent")?.startsWith("deepseek-harness/"))).toBe(true);
   for (const [index, chunks] of streams.entries()) {
     expect(chunks).toContainEqual({ type: "text-delta", index: 0, text: index === 1 ? "Bearer root-b" : "Bearer root-a" });

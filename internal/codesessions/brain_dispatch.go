@@ -9,6 +9,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
@@ -46,6 +47,7 @@ type BrainClaim struct {
 	IngressToken   string
 	ModelToken     string
 	ClaimExpiresAt time.Time
+	TraceParent    string
 }
 
 type codeSessionTransportMetadata struct {
@@ -83,7 +85,7 @@ func (s *Service) brainWorkSignal() workerevents.BrainWorkSignal {
 }
 
 func (s *Service) DispatchWorker(ctx context.Context, session db.Session, codeSessionID string) error {
-	if err := s.db.RequestCodeSessionWorker(ctx, session.OrganizationUUID, session.WorkspaceUUID, codeSessionID); err != nil {
+	if err := s.db.RequestCodeSessionWorker(ctx, session.OrganizationUUID, session.WorkspaceUUID, codeSessionID, telemetry.TraceParent(ctx)); err != nil {
 		return err
 	}
 	s.notifyBrainWork(ctx, codeSessionID)
@@ -99,6 +101,13 @@ func (s *Service) notifyBrainWork(ctx context.Context, codeSessionID string) {
 }
 
 func (s *Service) ClaimBrainWorker(ctx context.Context, workerID string, block time.Duration) (BrainClaim, bool, error) {
+	startedAt := time.Now()
+	claim, found, err := s.waitForBrainClaim(ctx, workerID, block)
+	observeBrainClaimPoll(ctx, startedAt, found, err)
+	return claim, found, err
+}
+
+func (s *Service) waitForBrainClaim(ctx context.Context, workerID string, block time.Duration) (BrainClaim, bool, error) {
 	deadline := time.Now().Add(min(block, brainClaimMaxBlock))
 	waitCtx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -149,6 +158,7 @@ func (s *Service) claimNextBrainWorker(ctx context.Context, workerID string) (Br
 			return BrainClaim{}, false, err
 		}
 		if claim.Exhausted {
+			recordBrainClaimExhausted(ctx, "attempts")
 			s.failExhaustedBrainClaim(ctx, claim)
 			continue
 		}
@@ -165,12 +175,14 @@ func (s *Service) claimNextBrainWorker(ctx context.Context, workerID string) (Br
 			return BrainClaim{}, false, err
 		}
 		s.logger.InfoContext(ctx, "brain worker claimed code session", "code_session_id", claim.CodeSessionExternalID, "worker_id", workerID, "worker_epoch", claim.WorkerEpoch)
+		observeBrainClaimIssued(ctx, workerID, claim)
 		return BrainClaim{
 			CodeSessionID:  claim.CodeSessionExternalID,
 			WorkerEpoch:    claim.WorkerEpoch,
 			IngressToken:   ingressToken,
 			ModelToken:     modelToken,
 			ClaimExpiresAt: claim.ClaimExpiresAt,
+			TraceParent:    claim.TraceParent,
 		}, true, nil
 	}
 	return BrainClaim{}, false, nil
@@ -207,7 +219,8 @@ func (s *Service) failExhaustedBrainClaim(ctx context.Context, claim db.CodeSess
 	s.logger.WarnContext(ctx, "brain worker claims exhausted", "code_session_id", claim.CodeSessionExternalID, "attempts", brainClaimMaxAttempts)
 }
 
-func (s *Service) ReleaseBrainClaim(ctx context.Context, codeSessionID, workerID string, epoch int64, reason BrainClaimReleaseReason) error {
+func (s *Service) ReleaseBrainClaim(ctx context.Context, codeSessionID, workerID string, epoch int64, reason BrainClaimReleaseReason) (err error) {
+	defer func() { recordBrainClaimRelease(ctx, reason, err) }()
 	if reason == BrainClaimPermanent {
 		claim, err := s.db.FailCodeSessionClaimPermanently(ctx, db.FailCodeSessionClaimInput{
 			CodeSessionExternalID: codeSessionID, WorkerID: workerID, WorkerEpoch: epoch,
@@ -217,6 +230,7 @@ func (s *Service) ReleaseBrainClaim(ctx context.Context, codeSessionID, workerID
 			return err
 		}
 		s.logger.WarnContext(ctx, "brain worker reported permanent admission failure", "code_session_id", codeSessionID, "worker_id", workerID, "worker_epoch", epoch)
+		recordBrainClaimExhausted(ctx, "permanent")
 		s.failExhaustedBrainClaim(ctx, claim)
 		return nil
 	}

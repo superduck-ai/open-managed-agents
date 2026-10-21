@@ -123,3 +123,20 @@ func TestReadRequestModelPreservesMaxBytesError(t *testing.T) {
 		t.Fatalf("readRequestModel() error = %v, want *http.MaxBytesError", err)
 	}
 }
+
+func TestSanitizedRequestHeadersDropTraceContext(t *testing.T) {
+	source := http.Header{}
+	source.Set("Traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
+	source.Set("Tracestate", "oma=internal")
+	source.Set("Authorization", "Bearer secret")
+	source.Set("Anthropic-Version", "2023-06-01")
+	headers := sanitizedRequestHeaders(source)
+	for _, name := range []string{"Traceparent", "Tracestate", "Authorization"} {
+		if headers.Get(name) != "" {
+			t.Fatalf("%s forwarded upstream", name)
+		}
+	}
+	if headers.Get("Anthropic-Version") != "2023-06-01" {
+		t.Fatal("protocol header dropped")
+	}
+}

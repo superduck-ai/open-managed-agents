@@ -1,9 +1,15 @@
 package sessionfanout
 
 import (
+	"context"
 	"encoding/json"
+	"strconv"
+	"time"
 
 	"github.com/nats-io/nats.go"
+	"go.opentelemetry.io/otel/metric"
+
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
 // receive clears ephemeral state once when a connection gap starts. nats.go
@@ -36,6 +42,7 @@ func (b *NATSBus) receiveMessage(sessionID string, message *nats.Msg) {
 		b.logger.WarnContext(b.ctx, "discard invalid session event fanout", "session_id", sessionID, "error", err)
 		return
 	}
+	observeFanoutLag(b.ctx, message)
 	b.mu.Lock()
 	handlers := append([]Handler(nil), b.handlers...)
 	b.mu.Unlock()
@@ -64,3 +71,18 @@ func (b *NATSBus) runResetters(sessionID string) {
 		reset(b.ctx, sessionID)
 	}
 }
+
+func observeFanoutLag(ctx context.Context, message *nats.Msg) {
+	if message.Header == nil {
+		return
+	}
+	publishedAt, err := strconv.ParseInt(message.Header.Get(publishedAtHeader), 10, 64)
+	if err != nil {
+		return
+	}
+	telemetry.RecordWait(ctx, fanoutLag.Get(), time.Since(time.Unix(0, publishedAt)))
+}
+
+var fanoutLag = telemetry.NewInstruments(func(meter metric.Meter) metric.Float64Histogram {
+	return telemetry.Histogram(meter, "oma.fanout.lag", "s", "Fanout lag", telemetry.LatencyBuckets)
+})

@@ -14,23 +14,28 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
-func (r *Runner) startExternalWorker(ctx context.Context, env db.Environment, work *db.EnvironmentWork) error {
+func (r *Runner) startExternalWorker(ctx context.Context, run *runnerRun, env db.Environment, work *db.EnvironmentWork) error {
 	preparation, err := r.prepareManagedAgentLaunch(ctx, env, work)
 	if err != nil {
 		return err
 	}
+	run.markRecovered(isRecoveryLaunch(preparation))
+	ctx = run.begin(ctx, "code_session")
 	launch, err := r.createManagedAgentRuntimeLaunch(ctx, env, *work, *preparation)
 	if err != nil {
 		return err
 	}
 	if cloudEnvironment(env) {
+		ctx = run.begin(ctx, "mark_running")
 		if _, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime); err != nil {
 			return err
 		}
 	}
 	if cloudEnvironment(env) && r.cfg.EnvironmentRunner.BrainSandboxPrewarm {
+		ctx = run.begin(ctx, "sandbox_prewarm")
 		code, found, loadErr := r.db.GetCodeSession(ctx, launch.CodeSessionID)
 		if loadErr != nil {
 			return loadErr
@@ -38,14 +43,26 @@ func (r *Runner) startExternalWorker(ctx context.Context, env db.Environment, wo
 		if !found {
 			return db.ErrNotFound
 		}
-		if _, _, err := r.EnsureSessionSandbox(ctx, code); err != nil {
+		if _, _, err := r.ensureSessionSandbox(ctx, code, runnerTriggerPrewarm); err != nil {
 			return err
 		}
 	}
-	return r.finishManagedAgentRuntime(ctx, preparation.Session, *work, launch)
+	return r.finishManagedAgentRuntime(ctx, run, preparation.Session, *work, launch)
 }
 
 func (r *Runner) EnsureSessionSandbox(ctx context.Context, code db.CodeSession) (string, db.EnvironmentSandbox, error) {
+	return r.ensureSessionSandbox(ctx, code, runnerTriggerLazyMCP)
+}
+
+func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, trigger string) (endpoint string, _ db.EnvironmentSandbox, err error) {
+	startedAt := time.Now()
+	ensureOutcome := "reused"
+	defer func() {
+		if err != nil {
+			ensureOutcome = telemetry.Outcome(err)
+		}
+		recordSandboxEnsure(ctx, trigger, ensureOutcome, startedAt)
+	}()
 	ctx, cancel := context.WithTimeout(ctx, 150*time.Second)
 	defer cancel()
 	work, err := r.db.GetLatestEnvironmentWorkForSession(ctx, code.WorkspaceUUID, code.EnvironmentExternalID, code.SessionUUID)
@@ -85,8 +102,15 @@ func (r *Runner) EnsureSessionSandbox(ctx context.Context, code db.CodeSession) 
 		return "", db.EnvironmentSandbox{}, err
 	}
 	launch := managedAgentRuntimeLaunch{CodeSessionID: code.ExternalID, Recovered: true, Manager: manager}
-	if _, err := r.createEnvironmentSandbox(ctx, env, &work, &launch); err != nil {
+	runCtx, run := startSandboxRun(ctx, work, trigger)
+	created, err := r.createEnvironmentSandbox(runCtx, run, env, &work, &launch)
+	run.end(runCtx, err)
+	if err != nil {
 		return "", db.EnvironmentSandbox{}, err
+	}
+	ensureOutcome = "joined"
+	if created {
+		ensureOutcome = "created"
 	}
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()

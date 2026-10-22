@@ -292,6 +292,17 @@ func (d *DB) GetCodeSessionCredentialContextForIssue(ctx context.Context, organi
 	return row.context(), nil
 }
 
+func (d *DB) ValidateCodeSessionSandbox(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID, sandboxUUID string) error {
+	count, err := NewCodeSessionMapper(d.mapperDB).CountActiveSandbox(ctx, organizationUUID, workspaceUUID, codeSessionExternalID, sandboxUUID)
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (d *DB) ValidateCodeSessionIngressWorkerEpoch(
 	ctx context.Context,
 	organizationUUID string,

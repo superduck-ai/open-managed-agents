@@ -72,7 +72,7 @@ flowchart LR
 
 ## 配置与密钥材料
 
-启用 MITM 需要配置：
+MITM 默认开启，需要配置稳定私钥；显式设置 `upstream_proxy_mitm_enabled: false` 可使用 CONNECT 透传。
 
 ```yaml
 code_session:
@@ -328,7 +328,7 @@ CONNECT、TLS SNI、HTTP Host 三层必须收敛到同一个规范化主机，�
 
 ### 已实现防护
 
-- MITM 默认关闭，必须显式启用并提供稳定 private key。
+- MITM 默认开启，必须提供稳定 private key；省略开关时同样校验私钥。显式配置 `false` 可关闭，关闭时继续忽略休眠的私钥路径。
 - 根私钥与公开证书使用不同分发边界。
 - CONNECT 需要 WebSocket credential 和 Basic credential 同时绑定同一 code session。
 - 默认只允许端口 `443` 和公网目标。

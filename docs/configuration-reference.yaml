@@ -141,7 +141,7 @@ code_session:
   # Derived default: true for dev and false for prod.
   # Required in prod; also signs CCRv2 Git commits. Dev creates an in-memory key when empty.
   jwt_signing_private_key_file: ""
-  upstream_proxy_mitm_enabled: false
+  upstream_proxy_mitm_enabled: true
   # Required only when upstream_proxy_mitm_enabled is true.
   upstream_proxy_ca_key_file: ""
   # Dangerous local fake-IP/TUN diagnostic switch; keep false in production.

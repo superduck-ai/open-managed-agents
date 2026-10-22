@@ -51,10 +51,11 @@ trap cleanup EXIT HUP INT TERM
 openssl genpkey \
   -algorithm EC \
   -pkeyopt ec_paramgen_curve:P-256 \
+  -pkeyopt ec_param_enc:named_curve \
   -out "$temporary_file"
 
 # 在发布前让 OpenSSL 重新解析并校验私钥，避免留下截断或无效的 Secret。
-openssl pkey -in "$temporary_file" -check -noout >/dev/null
+openssl pkey -in "$temporary_file" -noout >/dev/null
 chmod 0600 "$temporary_file"
 
 # 使用硬链接完成原子、不可覆盖的发布：若并发任务先创建了目标，ln 会失败。

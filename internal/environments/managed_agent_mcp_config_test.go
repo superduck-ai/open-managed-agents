@@ -383,6 +383,6 @@ func TestManagedAgentWithoutMCPDoesNotCreateConfigFile(t *testing.T) {
 	}
 }
 
-func (r *mcpConfigCodeSessionRuntime) SandboxIngressToken(context.Context, db.Session, string) (string, error) {
+func (r *mcpConfigCodeSessionRuntime) SandboxIngressToken(context.Context, db.Session, string, string) (string, error) {
 	return "test-ingress", nil
 }

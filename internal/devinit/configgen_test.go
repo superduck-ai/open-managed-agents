@@ -25,6 +25,8 @@ redis:
   url: redis://localhost:6379
 nats:
   url: nats://localhost:4222
+code_session:
+  upstream_proxy_mitm_enabled: false
 storage:
   type: s3
   s3:
@@ -48,7 +50,10 @@ func TestGenerateConfigProducesLoadableEnvironmentConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	baseConfigPath := filepath.Join(configDir, "config.yaml")
-	if err := os.WriteFile(baseConfigPath, []byte(minimalBaseConfig), 0o600); err != nil {
+	keyPath := filepath.Join(configDir, "secrets", "upstream-proxy-ca-key.pem")
+	writeTestProxyKey(t, keyPath)
+	contents := strings.Replace(minimalBaseConfig, "upstream_proxy_mitm_enabled: false", fmt.Sprintf("upstream_proxy_ca_key_file: %q", keyPath), 1)
+	if err := os.WriteFile(baseConfigPath, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("CONFIG_FILE", baseConfigPath)
@@ -67,6 +72,7 @@ func TestGenerateConfigProducesLoadableEnvironmentConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	writeTestProxyKey(t, filepath.Join(layout.SecretsDir, "upstream-proxy-ca-key.pem"))
 	runtime := RuntimePorts{APIPort: 40080, WebPort: 61080, PGPort: 45480, RedisPort: 62080, NATSPort: 44280, NATSPort2: 44281, NATSPort3: 44282, MinIOPort: 49080, E2BPort: 43080}
 	spec := Spec{
 		Version:          1,
@@ -141,6 +147,9 @@ func TestGenerateConfigProducesLoadableEnvironmentConfig(t *testing.T) {
 	if cfg.CodeSession.SandboxAPIBaseURL != "http://host.docker.internal:40080" {
 		t.Errorf("SandboxAPIBaseURL = %q", cfg.CodeSession.SandboxAPIBaseURL)
 	}
+	if !cfg.CodeSession.UpstreamProxyMITMEnabled {
+		t.Fatal("generated configuration must preserve the default-enabled MITM mode")
+	}
 	if cfg.Auth.ConsoleURL != "http://oma-feature-x-web.localhost" {
 		t.Errorf("ConsoleURL = %q", cfg.Auth.ConsoleURL)
 	}
@@ -206,5 +215,19 @@ func assertGeneratedSandboxCreate(t *testing.T, cfg config.Config) {
 	sandbox, err := provider.Create(t.Context(), db.Environment{}, nil, e2bruntime.Resolution{Template: cfg.E2B.Template})
 	if err != nil || sandbox.ID != "sbx_generated" {
 		t.Fatalf("generated configuration cannot create through the SDK: %v", err)
+	}
+}
+
+func writeTestProxyKey(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	key, err := generateProxyKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, key, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

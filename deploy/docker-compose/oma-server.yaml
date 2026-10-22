@@ -55,6 +55,8 @@ vault:
       kek: "rFF/9K42dW9xtX3zvE3rm6HzJshGCVntS62F2884M78="
 
 code_session:
+  upstream_proxy_mitm_enabled: true
+  upstream_proxy_ca_key_file: /etc/open-managed-agents/secrets/upstream-proxy-ca-key.pem
   sandbox_api_base_url: http://host.docker.internal:38080
 
 observability:

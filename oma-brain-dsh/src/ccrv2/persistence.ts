@@ -1,3 +1,4 @@
+import type { DshLogData } from "./persistence-contracts.ts";
 import type { Context } from "@deepseek-ai/cordis";
 import {
   SessionPersistence,
@@ -152,7 +153,7 @@ export class CcrPersistence extends SessionPersistence {
     if (previous && previous !== parent) throw new Error("Thread belongs to another session");
     this.parents.set(SessionId(id), SessionId(parent));
   }
-  persist(id: SessionId, data: unknown): Promise<void> {
+  persist(id: SessionId, data: DshLogData): Promise<void> {
     const parent = this.parents.get(id);
     return this.backend.persist(parent ?? id, "dsh_log", data, parent ? id : undefined);
   }

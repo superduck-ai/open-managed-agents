@@ -77,6 +77,10 @@ verify-be *args:
 test-e2e-memory-sandbox: generate
   if [[ -z "${CONFIG_FILE:-}" && -f config/config.yaml ]]; then export CONFIG_FILE="$PWD/config/config.yaml"; fi; go test ./tests -tags e2e -count=1 -timeout 25m -run 'TestMemorySandbox'
 
+# Real E2B agent-score sandbox. Skips without e2b.api_key. Uses config/config.yaml when present.
+test-e2e-agent-score-sandbox: generate
+  if [[ -z "${CONFIG_FILE:-}" && -f config/config.yaml ]]; then export CONFIG_FILE="$PWD/config/config.yaml"; fi; go test ./tests -tags e2e -count=1 -timeout 25m -run 'TestAgentScoreSandbox'
+
 # Regenerate DB mappers with the version pinned by go.mod's tool directive.
 generate-yourbatis-mappers:
   ./scripts/generate-go.sh

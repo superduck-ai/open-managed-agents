@@ -1,10 +1,10 @@
 # QCA Evaluation 对齐计划
 
-- 状态：M1 评测集、M2 自定义评估器、M3 实验与 Compare、Session 终态收口、LLM 打分、Agent 打分 Session、预置目录、timeout/env 注入、Compare 分数列、打分 Agent 版本冻结、打分 sandbox 的 `/data` 与 `/output` 契约路径、评测 OpenAPI，以及把 Console Session 回流成评测 case 已实现。今日额度不在范围内。
-- 剩余缺口：没有真实 E2B 端到端。评测集预置仍是 OMA demo case。会话回流不复制文件字节，也不自动发现线上异常。
+- 状态：M1 评测集、M2 自定义评估器、M3 实验与 Compare、Session 终态收口、LLM 打分、Agent 打分 Session、预置目录、timeout/env 注入、Compare 分数列、打分 Agent 版本冻结、打分 sandbox 的 `/data` 与 `/output` 契约路径、评测 OpenAPI，以及把 Console Session 回流成评测 case 已实现。单条和最多 50 条回流会把可用文件字节复制成 workspace Files。打分 sandbox 的真实 E2B 路径有可跳过的 e2e。今日额度不在范围内。
+- 剩余缺口：`just test-e2e-agent-score-sandbox` 在有 `e2b.api_key` 时启动打分 sandbox，经 `/output/score.json` 把 score 行收成 completed；没有凭证时跳过，跳过不是通过。评测集预置仍是 OMA demo case。不自动发现线上异常，不从 Agent 输出生成 gold checkpoints，Session 列表没有多选。
 - 日期：2026-10-22
 - 来源：qoder.com.cn 企业控制台，分析 → 评测（Beta）。下文只采用这次实测看到的信息架构和字段，不补写未出现的产品文案。评估器预置是 OMA 自写的维度包，覆盖同一类评分维度和路径/分数契约，不是 QCA 原文，也不使用 QCA 评估器 id。评测集预置仍是标明 OMA demo 的示例 case。
-- 非目标：不改 Workbench Evaluate 的请求、表格或测试预期。不实现今日额度、额度计数或额度 UI。不复制 QCA 预置 case 或评估器正文。不自动发现线上异常，不批量导入 session，不从 Agent 输出生成 checkpoints。
+- 非目标：不改 Workbench Evaluate 的请求、表格或测试预期。不实现今日额度、额度计数或额度 UI。不复制 QCA 预置 case 或评估器正文。不自动发现线上异常，不从 Agent 输出生成 checkpoints，不在 Session 列表做多选。
 
 Workbench Evaluate 仍是 prompt revision 上的变量行 A/B。QCA 评测不是这个表格，也没有一等的 Runs、Outcome 或 Results 页面；那些路径在实测里是空壳。
 
@@ -196,7 +196,7 @@ Session 完成：`sessions.Handler.publishSessionEvents` 在 SSE fanout 之后�
 
 列表、读取和 Compare 都返回 `scores`。读取仍带 item。打分失败时 item 的 `status` 仍是 completed。
 
-timeout 和 env 从实验写进 case Session 和打分 Session 的 metadata。Session 创建把它们复制到 Environment Work metadata。已有 sandbox 创建读取这份 metadata：`timeout_seconds` 覆盖 E2B sandbox 的创建超时和后续续期，`env` 并入 sandbox 环境变量，同时写入 Managed Agent session config 的 `environment_variables`，由已有的 environment-manager 启动载荷合并。平台已经放进 resolution 的环境变量名不会被实验 env 覆盖。省略 env 时不写这个字段，Session 仍能创建。resources 会交给 case Session，不交给打分 Session。没有在真实 E2B/FUSE sandbox 里跑通打分 Agent。这些都不属于今日额度。
+timeout 和 env 从实验写进 case Session 和打分 Session 的 metadata。Session 创建把它们复制到 Environment Work metadata。已有 sandbox 创建读取这份 metadata：`timeout_seconds` 覆盖 E2B sandbox 的创建超时和后续续期，`env` 并入 sandbox 环境变量，同时写入 Managed Agent session config 的 `environment_variables`，由已有的 environment-manager 启动载荷合并。平台已经放进 resolution 的环境变量名不会被实验 env 覆盖。省略 env 时不写这个字段，Session 仍能创建。resources 会交给 case Session，不交给打分 Session。真实 E2B 打分路径由 `just test-e2e-agent-score-sandbox` 覆盖：它创建自定义评测集、Agent 评估器和实验，用 in-process runner 启动 case sandbox 与打分 sandbox，确认 `/data` → `/mnt/session/uploads/data`、`/output` → `/mnt/user-data/outputs`，把 `{score, explanation, details}` 写到 `/output/score.json`，等 Filestore `/outputs/score.json` 出现，再以打分 Session 的 `end_turn` 把 score 行收成 completed。case Session 的 `end_turn` 用 worker `result` 事件注入，用来启动打分 Session，不依赖模型自己写分数。配置里的 `environment_runner.agent_mode=brain` 在这个测试里改成空，以便 runner 在进程内创建 sandbox；生产 brain 模式仍走 `createEnvironmentSandbox`，同一处安装这两条软链。没有 `e2b.api_key` 或完整本地网关配置时测试跳过。这些都不属于今日额度。
 
 ## API
 
@@ -284,7 +284,7 @@ Workbench 的 prompt/evaluate 开关保持原样。
 3. **M2**：自定义评估器。LLM 与 Agent 两种类型，创建时写入版本 1。变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。
 4. **M3**：实验与 Compare。绑定数据集版本、Agent、Environment、timeout 和冻结的评估器版本；每个 case 复用已有 Session 创建并记下 session id。已有 Session 终态事件把 item 收成 completed 或 failed，并汇总实验状态。`end_turn` 后对冻结的 LLM 评估器打分并写入 `evalscore_`。Compare 固定数据集版本和评估器，只列出 completed，并按评估器展示分数。名称在组织和工作区下唯一。timeout/env 经已有 Session metadata 和 sandbox 创建注入。
 5. **预置目录**：只读的已发布评测集和评估器。评测集是 19 个 OMA demo。评估器是 11 个 OMA 自写的 Agent 维度，目录不带 `agent_id`；复制时绑定真实 Agent，并带上预置 prompt。不是 QCA 原文。
-6. **Agent 打分 sandbox**：case `end_turn` 后为 Agent 评估器启动打分 Session，把 case 结果交给打分 Agent，并在打分 Session 终态读取 `/outputs/score.json`。打分 sandbox 用软链暴露 `/data/session/result.json` 和 `/output/score.json`，不增加 Filestore 根。
+6. **Agent 打分 sandbox**：case `end_turn` 后为 Agent 评估器启动打分 Session，把 case 结果交给打分 Agent，并在打分 Session 终态读取 `/outputs/score.json`。打分 sandbox 用软链暴露 `/data/session/result.json` 和 `/output/score.json`，不增加 Filestore 根。真实 E2B 由 `just test-e2e-agent-score-sandbox` 覆盖，没有凭证时跳过。
 7. **会话回流评测集（本变更）**：把一条或最多 50 条 Console Session 追加成自定义评测集当前版本的 case。turns 来自用户消息。checkpoints 只来自请求。输入文件字节复制成新的 workspace Files 对象。输出文件只在请求打开时写入 `reference_files`。打分 Session、空用户消息、已归档评测集和错误 workspace 不写入。批量里单条失败记在 `failed`，不回滚其他 session。
 
 今日额度不在里程碑里。不实现每日 100 次、上海时区重置、Agent 评估器是否计入，也不做额度 UI 或计数器。
@@ -293,7 +293,7 @@ Workbench 的 prompt/evaluate 开关保持原样。
 
 ## 未排期
 
-不把今日额度排进后续切片。不改 Workbench。预置目录已做只读浏览和复用。评估器预置是 OMA 自写维度包，不收录 QCA 原文。还没有目录编辑，也不能把目录 id 直接绑到实验上。会话回流不从 Agent 输出打标，也不在 Session 列表做多选。复制不到 Files 记录的会话文件会跳过。真实 E2B 端到端仍未做。
+不把今日额度排进后续切片。不改 Workbench。预置目录已做只读浏览和复用。评估器预置是 OMA 自写维度包，不收录 QCA 原文。还没有目录编辑，也不能把目录 id 直接绑到实验上。会话回流会复制能找到 Files 记录的字节；复制不到的文件会跳过。回流不从 Agent 输出打标，也不在 Session 列表做多选。真实打分 sandbox 由可跳过的 E2E 覆盖，没有 `e2b.api_key` 时不运行。
 
 ## 验收与未覆盖
 
@@ -306,6 +306,8 @@ Workbench 的 prompt/evaluate 开关保持原样。
 同一 workspace 可以创建实验：冻结 `edv_` 与评估器版本，item 先为 pending；接上 Session starter 后每个 case 得到 `sesn_`，实验变为 running。创建 body 带 `timeout_seconds` 和 `env` 时，starter 收到这两个值；省略 `env` 时 Session 仍会创建。Agent 评估器在创建时把打分 Agent 的当前版本写进绑定。之后即使该 Agent 的当前版本变了，打分 Session 仍使用冻结版本。打分 Agent 不存在时实验创建失败，不写库。Starter 失败时 item 为 failed。`requires_action` 保持 running。`end_turn` 把 item 和实验收成 completed。LLM 评估器把模型返回的 `score`、`explanation`、`details` 记为 completed。Agent 评估器用冻结的 `agent_id` 启动打分 Session，并把 case 结果放进用户消息和 `/uploads/data/session/result.json`。版本带 prompt 时，渲染后的说明写在同一条用户消息里。打分 Session 启动时创建 `/data` → `/mnt/session/uploads/data` 与 `/output` → `/mnt/user-data/outputs`，所以 `/data/session/result.json` 与 `/output/score.json` 在该容器内可解析。普通 Session 不创建这两条软链。打分 Session 的 `end_turn` 读取 Filestore `/outputs/score.json`（与 `/output/score.json` 是同一文件），形状为 `{score, explanation, details}`，score 行为 completed。文件缺失时 score 为 failed，文案是 `Evaluation score file is missing`。无法解析时文案是 `Could not parse evaluator score`。没有配置 sandbox 时文案仍是 `Agent evaluator scoring is not executed`。这些失败都不改变 item 或实验的 completed。已经离开 running 的 item 不会被后到的终态改写，也不会再次打分；已有 score 行不会再写一行。`retries_exhausted` 或 `session.status_terminated` 把 case item 收成 failed，且不打分。打分 Session 自己的终止只让对应 score 行失败。列表不返回 item，但返回 scores。Compare 在没有 completed 实验时返回空列表。空 name、重复评估器、非法 timeout、没有 case、已归档 Environment、重名和另一 workspace 的 id 会失败。
 
 会话回流在接上文件复制器时，把非输出文件复制成新的 workspace Files 对象并写入 `input_files`。找不到的文件被跳过，case 仍然写入。`include_output_files` 为 true 时，`/outputs/` 下的文件写入 `reference_files`。批量接口最多 50 条，空列表、超过 50 条和已归档评测集不写 case；缺会话、打分会话和没有用户消息只出现在 `failed`。
+
+`just test-e2e-agent-score-sandbox` 在有 E2B 凭证时跑 `TestAgentScoreSandboxContract`。它确认打分 sandbox 的 `/data` 与 `/output` 软链、`/data/session/result.json`、实验 env，把分数写到 `/output/score.json`，并在 Filestore `/outputs/score.json` 可读之后把 score 行收成 completed。没有凭证或 `go test -short` 时跳过。默认 `just test` 不跑这个 e2e。
 
 `TestEvaluationOpenAPIContract` 检查中英文 OpenAPI 都覆盖上述 Console 路径，创建请求含 `source_version_id`，实验响应含 `scores`，并且这些操作使用 Console 会话而不是 `/v1` 的 beta 参数。Workbench Evaluate 和今日额度不在这两份文档里。
 

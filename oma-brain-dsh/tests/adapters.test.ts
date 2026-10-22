@@ -48,7 +48,7 @@ test("OMA Messages adapter binds concurrent root/child requests to their OMA tok
   a.model_token = "rotated";
   await collect(adapter.stream(options(a.session_id)));
   expect(requests.at(-1)!.headers.get("Authorization")).toBe("Bearer rotated");
-  expect((await requests[0]!.json()).max_tokens).toBe(8192);
+  expect((await requests[0]!.json()).max_tokens).toBe(943718);
 });
 
 test("OMA Messages adapter streams tools and preserves signed history", async () => {

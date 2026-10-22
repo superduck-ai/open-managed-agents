@@ -9,7 +9,7 @@ import type { AiSdkRoute } from "./llm-ai-sdk/index.ts";
 type ModelBackend = "messages" | "chat_completions";
 
 const MODEL_IDLE_TIMEOUT_MS = 300_000;
-const MESSAGES_DEFAULT_MAX_TOKENS = 8192;
+const MESSAGES_DEFAULT_MAX_TOKENS = 943718;
 
 export function modelSessionID(options: GenerateOptions): string {
   if (!options.sessionId) throw new LlmError("Model request has no session identity", "INVALID_ARGS");

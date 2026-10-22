@@ -1,5 +1,7 @@
 # Brain 验证
 
+`just verify-be chat doctor brain-proxy` 和 `just verify-be chat brain-proxy` 专门验证沙箱代理在 owner 接管后继续工作，需要同样的 `OMA_BRAIN_BINARY` 与本地 Worker 镜像。该场景启动真实 Brain 进程，让脚本模型两次请求 Bash，使用自动继承的代理访问 `https://1.1.1.1/cdn-cgi/trace`。第一次成功后杀掉 owner，等待真实租约失效，再启动 replacement。必须观察 epoch 增长、同一个旧 worker token 在接管前后读取 session_context 均返回 200（`brain_proxy_old_token_identity`）、旧 worker token 调用沙箱网关返回 409 epoch 冲突、沙箱 UUID/provider ID/relay 地址全部不变，以及第二次 HTTP 200、CONNECT 200 和 TLS 校验成功。它使用隔离依赖和实际公网 HTTPS，不修改现存开发会话；公网不可达时不能报告通过。
+
 运行前构建 oma-brain-dsh，设置 `OMA_BRAIN_BINARY` 为该可执行文件的绝对路径。
 
 ```sh

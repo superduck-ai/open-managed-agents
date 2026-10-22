@@ -107,17 +107,17 @@ func TestBrainMCPRejectsInvalidIngress(t *testing.T) {
 		t.Error("invalid ingress reached the sandbox")
 	}))
 	foreign := codeSessionIngressTokenWithScope(t, app, worker.ExternalID, worker.OrganizationUUID, uuid.NewString())
-	reject := func(credential string) {
+	reject := func(credential string, status int) {
 		t.Helper()
 		response := doSessionRequest(t, app, http.MethodPost, "/v2/ccr-sessions/"+worker.ExternalID+"/sandbox/mcp",
 			strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read","arguments":{"file_path":"/tmp/test"}}}`), credential, false)
 		response.Body.Close()
-		if response.StatusCode != http.StatusUnauthorized {
+		if response.StatusCode != status {
 			t.Fatalf("invalid ingress status=%d", response.StatusCode)
 		}
 	}
-	reject("")
-	reject(foreign)
+	reject("", http.StatusUnauthorized)
+	reject(foreign, http.StatusUnauthorized)
 	public, _, err := app.db.GetSession(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func TestBrainMCPRejectsInvalidIngress(t *testing.T) {
 	if _, err := app.db.RotateManagedAgentCodeSessionCredentials(t.Context(), public, worker.ExternalID, "replacement"); err != nil {
 		t.Fatal(err)
 	}
-	reject(token)
+	reject(token, http.StatusConflict)
 }
 
 func TestBrainMCPForwardingDoesNotHoldSessionLock(t *testing.T) {

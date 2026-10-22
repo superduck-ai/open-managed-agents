@@ -65,7 +65,7 @@ func (h *Handler) handleUpstreamProxyCACertificate(w http.ResponseWriter, r *htt
 
 func (h *Handler) handleUpstreamProxyWebSocket(w http.ResponseWriter, r *http.Request) {
 	// 必须在升级协议前完成 Bearer/X-Api-Key 鉴权，避免未授权客户端占用长连接。
-	claims, sessionIngressToken, ok := h.authenticateRuntimeSession(w, r)
+	claims, sessionIngressToken, ok := h.authorizeRuntimeSession(w, r)
 	if !ok {
 		return
 	}

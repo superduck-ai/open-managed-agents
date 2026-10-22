@@ -95,6 +95,10 @@ func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 		writeOTLPStatus(w, otlpProtocolJSON, http.StatusUnsupportedMediaType, protocolError.Error(), "")
 		return
 	}
+	if err := h.service.authorizeWorkerClaims(r.Context(), claims); err != nil {
+		h.writeOTLPDatabaseError(w, r, protocol, codeSessionID, err)
+		return
+	}
 	signal, err := otlpEndpointFromPath(r.URL.Path)
 	if err != nil {
 		writeOTLPStatus(w, protocol, http.StatusNotFound, err.Error(), "")
@@ -198,6 +202,10 @@ func credentialContextMatchesClaims(context db.CodeSessionCredentialContext, cla
 
 func (h *Handler) writeOTLPDatabaseError(w http.ResponseWriter, r *http.Request, protocol otlpProtocol, codeSessionID string, err error) {
 	switch {
+	case errors.Is(err, errSessionIngressIdentity):
+		writeOTLPStatus(w, protocol, http.StatusUnauthorized, "session ingress identity is no longer active", "")
+	case errors.Is(err, db.ErrWorkerEpochMismatch):
+		writeOTLPStatus(w, protocol, http.StatusConflict, "Worker epoch mismatch", "")
 	case errors.Is(err, db.ErrNotFound):
 		writeOTLPStatus(w, protocol, http.StatusGone, "code session is no longer active", "")
 	case errors.Is(err, db.ErrWorkerLeaseExpired):

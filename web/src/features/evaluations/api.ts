@@ -43,9 +43,58 @@ export type EvaluationCasePage = {
   next_page: string | null;
 };
 
+export const evaluationVariables = ['input', 'output', 'checkpoints', 'agent_trajectory', 'invocation_result'] as const;
+
+export type EvaluationVariable = (typeof evaluationVariables)[number];
+
+export type EvaluationEvaluatorType = 'llm' | 'agent';
+
+export type EvaluationEvaluatorContract = {
+  result_path: string;
+  score_path: string;
+  score_fields: string[];
+};
+
+export type EvaluationEvaluatorVersion = {
+  id: string;
+  version: number;
+  evaluator_type: EvaluationEvaluatorType;
+  model?: string;
+  agent_id?: string;
+  prompt_template?: string;
+  variables: string[];
+  agent_contract?: EvaluationEvaluatorContract;
+};
+
+export type EvaluationEvaluator = {
+  id: string;
+  type: 'evaluation_evaluator';
+  name: string;
+  desc: string;
+  status: 'available' | 'archived';
+  version: EvaluationEvaluatorVersion;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EvaluationEvaluatorPage = {
+  data: EvaluationEvaluator[];
+  next_page: string | null;
+};
+
 export type CreateEvaluationDatasetInput = {
   name: string;
   desc?: string;
+};
+
+export type CreateEvaluationEvaluatorInput = {
+  name: string;
+  desc?: string;
+  evaluator_type: EvaluationEvaluatorType;
+  model?: string;
+  agent_id?: string;
+  prompt_template?: string;
+  variables: string[];
 };
 
 export type CreateEvaluationCaseInput = {
@@ -56,6 +105,10 @@ export type CreateEvaluationCaseInput = {
 
 function collectionPath(orgUuid: string, workspaceId: string) {
   return `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/evaluation-datasets`;
+}
+
+function evaluatorCollectionPath(orgUuid: string, workspaceId: string) {
+  return `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/evaluation-evaluators`;
 }
 
 function datasetPath(orgUuid: string, workspaceId: string, datasetId: string) {
@@ -125,6 +178,26 @@ export function importEvaluationCases(
     headers: { ...workspaceHeaders(workspaceId), 'Content-Type': 'application/x-ndjson' },
     csrfToken,
     body: jsonl,
+  });
+}
+
+export function listEvaluationEvaluators(orgUuid: string, workspaceId: string) {
+  return consoleApi<EvaluationEvaluatorPage>(evaluatorCollectionPath(orgUuid, workspaceId), {
+    headers: workspaceHeaders(workspaceId),
+  });
+}
+
+export function createEvaluationEvaluator(
+  orgUuid: string,
+  workspaceId: string,
+  input: CreateEvaluationEvaluatorInput,
+  csrfToken?: string,
+) {
+  return consoleApi<EvaluationEvaluator>(evaluatorCollectionPath(orgUuid, workspaceId), {
+    method: 'POST',
+    headers: workspaceHeaders(workspaceId),
+    csrfToken,
+    body: JSON.stringify(input),
   });
 }
 

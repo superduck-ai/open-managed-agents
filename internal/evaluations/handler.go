@@ -23,6 +23,9 @@ type Store interface {
 	GetEvaluationDataset(context.Context, string, string, string) (db.EvaluationDataset, error)
 	ListEvaluationCasesPage(context.Context, db.ListEvaluationCasesPageParams) ([]db.EvaluationCase, bool, error)
 	CreateEvaluationCases(context.Context, string, string, string, []db.EvaluationCaseWrite, time.Time) ([]db.EvaluationCase, error)
+	CreateEvaluationEvaluator(context.Context, db.EvaluationEvaluator) (db.EvaluationEvaluator, error)
+	ListEvaluationEvaluatorsPage(context.Context, db.ListEvaluationEvaluatorsPageParams) ([]db.EvaluationEvaluator, bool, error)
+	GetEvaluationEvaluator(context.Context, string, string, string) (db.EvaluationEvaluator, error)
 }
 
 type Handler struct {
@@ -41,10 +44,13 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases", h.wrap(h.listCases))
 	r.Post("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases", h.wrap(h.createCase))
 	r.Post("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:import", h.wrap(h.importCases))
+	r.Post("/workspaces/{workspaceId}/evaluation-evaluators", h.wrap(h.createEvaluator))
+	r.Get("/workspaces/{workspaceId}/evaluation-evaluators", h.wrap(h.listEvaluators))
+	r.Get("/workspaces/{workspaceId}/evaluation-evaluators/{evaluatorId}", h.wrap(h.getEvaluator))
 }
 
 func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request) error {
-	principal, err := scopedPrincipal(r)
+	principal, err := scopedPrincipal(r, datasetNotFound())
 	if err != nil {
 		return err
 	}
@@ -58,14 +64,14 @@ func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request) error {
 	}
 	created, err := h.store.CreateEvaluationDataset(r.Context(), dataset)
 	if err != nil {
-		return mapStoreError(err, createDatasetFailedMessage)
+		return mapStoreError(err, datasetNotFoundMessage, createDatasetFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, datasetResponseFrom(created))
 	return nil
 }
 
 func (h *Handler) listDatasets(w http.ResponseWriter, r *http.Request) error {
-	principal, err := scopedPrincipal(r)
+	principal, err := scopedPrincipal(r, datasetNotFound())
 	if err != nil {
 		return err
 	}
@@ -80,7 +86,7 @@ func (h *Handler) listDatasets(w http.ResponseWriter, r *http.Request) error {
 		Cursor:           cursor,
 	})
 	if err != nil {
-		return mapStoreError(err, listDatasetsFailedMessage)
+		return mapStoreError(err, datasetNotFoundMessage, listDatasetsFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, datasetPage(datasets, hasMore))
 	return nil
@@ -93,7 +99,7 @@ func (h *Handler) getDataset(w http.ResponseWriter, r *http.Request) error {
 	}
 	dataset, err := h.store.GetEvaluationDataset(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, datasetID)
 	if err != nil {
-		return mapStoreError(err, loadDatasetFailedMessage)
+		return mapStoreError(err, datasetNotFoundMessage, loadDatasetFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, datasetResponseFrom(dataset))
 	return nil
@@ -116,7 +122,7 @@ func (h *Handler) listCases(w http.ResponseWriter, r *http.Request) error {
 		Cursor:            cursor,
 	})
 	if err != nil {
-		return mapStoreError(err, listCasesFailedMessage)
+		return mapStoreError(err, datasetNotFoundMessage, listCasesFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, casePage(cases, hasMore))
 	return nil
@@ -140,7 +146,7 @@ func (h *Handler) createCase(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if len(created) == 0 {
-		return mapStoreError(errMissingCreatedCase, createCasesFailedMessage)
+		return mapStoreError(errMissingCreatedCase, datasetNotFoundMessage, createCasesFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, caseResponseFrom(created[0]))
 	return nil
@@ -166,7 +172,7 @@ func (h *Handler) importCases(w http.ResponseWriter, r *http.Request) error {
 func (h *Handler) insertCases(r *http.Request, principal auth.Principal, datasetID string, cases []normalizedCase) ([]db.EvaluationCase, error) {
 	writes, err := newCaseWrites(cases)
 	if err != nil {
-		return nil, mapStoreError(err, createCasesFailedMessage)
+		return nil, mapStoreError(err, datasetNotFoundMessage, createCasesFailedMessage)
 	}
 	created, err := h.store.CreateEvaluationCases(
 		r.Context(),
@@ -177,7 +183,7 @@ func (h *Handler) insertCases(r *http.Request, principal auth.Principal, dataset
 		time.Now().UTC(),
 	)
 	if err != nil {
-		return nil, mapStoreError(err, createCasesFailedMessage)
+		return nil, mapStoreError(err, datasetNotFoundMessage, createCasesFailedMessage)
 	}
 	return created, nil
 }
@@ -189,11 +195,11 @@ func newDataset(principal auth.Principal, body createDatasetRequest) (db.Evaluat
 	}
 	externalID, err := ids.New("evalds_")
 	if err != nil {
-		return db.EvaluationDataset{}, mapStoreError(err, createDatasetFailedMessage)
+		return db.EvaluationDataset{}, mapStoreError(err, datasetNotFoundMessage, createDatasetFailedMessage)
 	}
 	versionID, err := ids.New("edv_")
 	if err != nil {
-		return db.EvaluationDataset{}, mapStoreError(err, createDatasetFailedMessage)
+		return db.EvaluationDataset{}, mapStoreError(err, datasetNotFoundMessage, createDatasetFailedMessage)
 	}
 	now := time.Now().UTC()
 	return db.EvaluationDataset{
@@ -237,27 +243,35 @@ func newCaseWrites(cases []normalizedCase) ([]db.EvaluationCaseWrite, error) {
 }
 
 func scopedDatasetID(r *http.Request) (auth.Principal, string, error) {
-	principal, err := scopedPrincipal(r)
+	return scopedPathID(r, "datasetId", datasetNotFound())
+}
+
+func scopedEvaluatorID(r *http.Request) (auth.Principal, string, error) {
+	return scopedPathID(r, "evaluatorId", evaluatorNotFound())
+}
+
+func scopedPathID(r *http.Request, param string, missing error) (auth.Principal, string, error) {
+	principal, err := scopedPrincipal(r, missing)
 	if err != nil {
 		return auth.Principal{}, "", err
 	}
-	datasetID := strings.TrimSpace(chi.URLParam(r, "datasetId"))
-	if datasetID == "" {
-		return auth.Principal{}, "", datasetNotFound()
+	value := strings.TrimSpace(chi.URLParam(r, param))
+	if value == "" {
+		return auth.Principal{}, "", missing
 	}
-	return principal, datasetID, nil
+	return principal, value, nil
 }
 
-func scopedPrincipal(r *http.Request) (auth.Principal, error) {
+func scopedPrincipal(r *http.Request, missing error) (auth.Principal, error) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok || strings.TrimSpace(principal.OrganizationUUID) == "" || strings.TrimSpace(principal.WorkspaceUUID) == "" {
-		return auth.Principal{}, datasetNotFound()
+		return auth.Principal{}, missing
 	}
 	if strings.TrimSpace(chi.URLParam(r, "orgUuid")) != strings.TrimSpace(principal.OrganizationUUID) {
-		return auth.Principal{}, datasetNotFound()
+		return auth.Principal{}, missing
 	}
 	if !workspacePathMatches(principal, chi.URLParam(r, "workspaceId")) {
-		return auth.Principal{}, datasetNotFound()
+		return auth.Principal{}, missing
 	}
 	return principal, nil
 }

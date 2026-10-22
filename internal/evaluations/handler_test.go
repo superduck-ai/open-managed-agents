@@ -52,6 +52,85 @@ func TestEvaluationRoutesRejectInvalidInputBeforeStore(t *testing.T) {
 	}
 }
 
+func TestEvaluationEvaluatorRoutesRejectInvalidInputBeforeStore(t *testing.T) {
+	store := &evaluationStoreStub{}
+	router := evaluationRouter(store)
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		want   string
+	}{
+		{name: "empty name", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":" ","evaluator_type":"llm","model":"m","prompt_template":"{{input}}","variables":["input"]}`, want: nameRequiredMessage},
+		{name: "bad type", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":"score","evaluator_type":"human","variables":[]}`, want: evaluatorTypeInvalidMessage},
+		{name: "llm without model", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":"score","evaluator_type":"llm","prompt_template":"{{input}}","variables":["input"]}`, want: modelRequiredMessage},
+		{name: "llm without variables", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":"score","evaluator_type":"llm","model":"m","prompt_template":"score","variables":[]}`, want: variablesRequiredMessage},
+		{name: "unknown variable", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":"score","evaluator_type":"llm","model":"m","prompt_template":"{{ideal}}","variables":["ideal"]}`, want: variablesInvalidMessage},
+		{name: "unselected placeholder", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":"score","evaluator_type":"llm","model":"m","prompt_template":"{{output}}","variables":["input"]}`, want: promptVariableMessage},
+		{name: "agent without id", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":"score","evaluator_type":"agent","variables":[]}`, want: agentIDRequiredMessage},
+		{name: "agent with prompt", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":"score","evaluator_type":"agent","agent_id":"agent_score","prompt_template":"{{input}}","variables":["input"]}`, want: promptForbiddenMessage},
+		{name: "other workspace", method: http.MethodGet, path: "/api/console/organizations/org_test/workspaces/other/evaluation-evaluators/evalev_test", want: evaluatorNotFoundMessage},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := serveEvaluation(router, test.method, test.path, test.body, "")
+			if response.Code != http.StatusBadRequest && test.name != "other workspace" {
+				t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
+			}
+			if test.name == "other workspace" && response.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404: %s", response.Code, response.Body.String())
+			}
+			if !strings.Contains(response.Body.String(), test.want) || strings.Contains(response.Body.String(), `"type"`) {
+				t.Fatalf("response = %s, want console error %q", response.Body.String(), test.want)
+			}
+		})
+	}
+	if store.createEvaluatorCalls != 0 || store.getEvaluatorCalls != 0 || store.listEvaluatorCalls != 0 {
+		t.Fatalf("store calls = %+v, want none", store)
+	}
+}
+
+func TestCreateAndListEvaluationEvaluators(t *testing.T) {
+	store := &evaluationStoreStub{}
+	router := evaluationRouter(store)
+	llmBody := `{"name":" score ","desc":" nightly ","evaluator_type":"llm","model":" claude ","prompt_template":"Score {{output}} against {{input}}","variables":["output","input"]}`
+	llmResponse := serveEvaluation(router, http.MethodPost, "/api/console/organizations/org_test/workspaces/default/evaluation-evaluators", llmBody, "")
+	created := store.createdEvaluator
+	if llmResponse.Code != http.StatusOK || created == nil || created.WorkspaceUUID != "workspace-uuid" || created.Name != "score" || created.Description != "nightly" {
+		t.Fatalf("llm create = %d %#v body=%s", llmResponse.Code, created, llmResponse.Body.String())
+	}
+	if created.Version.Version != 1 || created.Version.EvaluatorType != "llm" || created.Version.Model != "claude" || created.Version.AgentID != "" {
+		t.Fatalf("llm version = %#v", created.Version)
+	}
+	if len(created.Version.Variables) != 2 || created.Version.Variables[0] != "input" || created.Version.Variables[1] != "output" || !strings.HasPrefix(created.Version.ExternalID, "eev_") {
+		t.Fatalf("llm variables = %#v", created.Version)
+	}
+	if !strings.HasPrefix(created.ExternalID, "evalev_") || strings.Contains(llmResponse.Body.String(), "agent_contract") || !strings.Contains(llmResponse.Body.String(), `"type":"evaluation_evaluator"`) {
+		t.Fatalf("llm response = %s", llmResponse.Body.String())
+	}
+
+	agentBody := `{"name":"judge","evaluator_type":"agent","agent_id":" agent_score ","variables":["invocation_result"]}`
+	agentResponse := serveEvaluation(router, http.MethodPost, evaluationEvaluatorPath(""), agentBody, "")
+	created = store.createdEvaluator
+	if agentResponse.Code != http.StatusOK || created.Version.EvaluatorType != "agent" || created.Version.AgentID != "agent_score" || created.Version.Model != "" || created.Version.PromptTemplate != "" {
+		t.Fatalf("agent create = %d %#v body=%s", agentResponse.Code, created, agentResponse.Body.String())
+	}
+	if !strings.Contains(agentResponse.Body.String(), `"result_path":"/data/session/result.json"`) || !strings.Contains(agentResponse.Body.String(), `"score_path":"/output/score.json"`) || !strings.Contains(agentResponse.Body.String(), `"score_fields":["score","explanation","details"]`) {
+		t.Fatalf("agent response = %s", agentResponse.Body.String())
+	}
+
+	store.evaluators = []db.EvaluationEvaluator{*created}
+	listResponse := serveEvaluation(router, http.MethodGet, evaluationEvaluatorPath(""), "", "")
+	if listResponse.Code != http.StatusOK || store.lastEvaluatorList.WorkspaceUUID != "workspace-uuid" || !strings.Contains(listResponse.Body.String(), `"id":"`+created.ExternalID+`"`) {
+		t.Fatalf("list = %d params=%#v body=%s", listResponse.Code, store.lastEvaluatorList, listResponse.Body.String())
+	}
+	getResponse := serveEvaluation(router, http.MethodGet, evaluationEvaluatorPath("/"+created.ExternalID), "", "")
+	if getResponse.Code != http.StatusOK || store.getEvaluatorCalls != 1 || !strings.Contains(getResponse.Body.String(), `"evaluator_type":"agent"`) {
+		t.Fatalf("get = %d calls=%d body=%s", getResponse.Code, store.getEvaluatorCalls, getResponse.Body.String())
+	}
+}
+
 func TestCreateEvaluationDatasetScopesPrincipalAndCreatesVersion(t *testing.T) {
 	store := &evaluationStoreStub{}
 	response := serveEvaluation(
@@ -136,6 +215,10 @@ func evaluationDatasetPath(suffix string) string {
 	return "/api/console/organizations/org_test/workspaces/workspace_test/evaluation-datasets" + suffix
 }
 
+func evaluationEvaluatorPath(suffix string) string {
+	return "/api/console/organizations/org_test/workspaces/workspace_test/evaluation-evaluators" + suffix
+}
+
 func serveEvaluation(router http.Handler, method, path, body, contentType string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
 	if contentType != "" {
@@ -170,17 +253,23 @@ func zipImport(name, jsonl, extra string) []byte {
 }
 
 type evaluationStoreStub struct {
-	createdDataset     *db.EvaluationDataset
-	createDatasetCalls int
-	datasets           []db.EvaluationDataset
-	listDatasetCalls   int
-	lastDatasetList    db.ListEvaluationDatasetsPageParams
-	getCalls           int
-	createCaseCalls    int
-	createdWrites      []db.EvaluationCaseWrite
-	caseWorkspace      string
-	lastCaseList       db.ListEvaluationCasesPageParams
-	listedCases        []db.EvaluationCase
+	createdDataset       *db.EvaluationDataset
+	createDatasetCalls   int
+	datasets             []db.EvaluationDataset
+	listDatasetCalls     int
+	lastDatasetList      db.ListEvaluationDatasetsPageParams
+	getCalls             int
+	createCaseCalls      int
+	createdWrites        []db.EvaluationCaseWrite
+	caseWorkspace        string
+	lastCaseList         db.ListEvaluationCasesPageParams
+	listedCases          []db.EvaluationCase
+	createdEvaluator     *db.EvaluationEvaluator
+	createEvaluatorCalls int
+	evaluators           []db.EvaluationEvaluator
+	listEvaluatorCalls   int
+	lastEvaluatorList    db.ListEvaluationEvaluatorsPageParams
+	getEvaluatorCalls    int
 }
 
 func (s *evaluationStoreStub) CreateEvaluationDataset(_ context.Context, dataset db.EvaluationDataset) (db.EvaluationDataset, error) {
@@ -232,4 +321,24 @@ func (s *evaluationStoreStub) CreateEvaluationCases(_ context.Context, _, worksp
 	}
 	s.listedCases = created
 	return created, nil
+}
+
+func (s *evaluationStoreStub) CreateEvaluationEvaluator(_ context.Context, evaluator db.EvaluationEvaluator) (db.EvaluationEvaluator, error) {
+	s.createEvaluatorCalls++
+	s.createdEvaluator = &evaluator
+	return evaluator, nil
+}
+
+func (s *evaluationStoreStub) ListEvaluationEvaluatorsPage(_ context.Context, params db.ListEvaluationEvaluatorsPageParams) ([]db.EvaluationEvaluator, bool, error) {
+	s.listEvaluatorCalls++
+	s.lastEvaluatorList = params
+	return s.evaluators, false, nil
+}
+
+func (s *evaluationStoreStub) GetEvaluationEvaluator(_ context.Context, _, _, _ string) (db.EvaluationEvaluator, error) {
+	s.getEvaluatorCalls++
+	if len(s.evaluators) == 0 {
+		return db.EvaluationEvaluator{}, db.ErrNotFound
+	}
+	return s.evaluators[0], nil
 }

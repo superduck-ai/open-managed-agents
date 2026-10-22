@@ -56,6 +56,39 @@ type casePageResponse struct {
 	NextPage *string        `json:"next_page"`
 }
 
+type evaluatorVersionResponse struct {
+	ID             string                 `json:"id"`
+	Version        int                    `json:"version"`
+	EvaluatorType  string                 `json:"evaluator_type"`
+	Model          string                 `json:"model,omitempty"`
+	AgentID        string                 `json:"agent_id,omitempty"`
+	PromptTemplate string                 `json:"prompt_template,omitempty"`
+	Variables      []string               `json:"variables"`
+	AgentContract  *agentContractResponse `json:"agent_contract,omitempty"`
+}
+
+type agentContractResponse struct {
+	ResultPath  string   `json:"result_path"`
+	ScorePath   string   `json:"score_path"`
+	ScoreFields []string `json:"score_fields"`
+}
+
+type evaluatorResponse struct {
+	ID        string                   `json:"id"`
+	Type      string                   `json:"type"`
+	Name      string                   `json:"name"`
+	Desc      string                   `json:"desc"`
+	Status    string                   `json:"status"`
+	Version   evaluatorVersionResponse `json:"version"`
+	CreatedAt string                   `json:"created_at"`
+	UpdatedAt string                   `json:"updated_at"`
+}
+
+type evaluatorPageResponse struct {
+	Data     []evaluatorResponse `json:"data"`
+	NextPage *string             `json:"next_page"`
+}
+
 type datasetCursorWire struct {
 	CreatedAt time.Time `json:"created_at"`
 	UUID      string    `json:"uuid"`
@@ -98,6 +131,57 @@ func datasetPage(datasets []db.EvaluationDataset, hasMore bool) datasetPageRespo
 		nextPage = &value
 	}
 	return datasetPageResponse{Data: data, NextPage: nextPage}
+}
+
+func evaluatorResponseFrom(evaluator db.EvaluationEvaluator) evaluatorResponse {
+	status := "available"
+	if evaluator.ArchivedAt != nil {
+		status = "archived"
+	}
+	variables := evaluator.Version.Variables
+	if variables == nil {
+		variables = []string{}
+	}
+	version := evaluatorVersionResponse{
+		ID:             evaluator.Version.ExternalID,
+		Version:        evaluator.Version.Version,
+		EvaluatorType:  evaluator.Version.EvaluatorType,
+		Model:          evaluator.Version.Model,
+		AgentID:        evaluator.Version.AgentID,
+		PromptTemplate: evaluator.Version.PromptTemplate,
+		Variables:      variables,
+	}
+	if evaluator.Version.EvaluatorType == evaluatorTypeAgent {
+		version.AgentContract = &agentContractResponse{
+			ResultPath:  evaluatorResultPath,
+			ScorePath:   evaluatorScorePath,
+			ScoreFields: evaluatorScoreFields,
+		}
+	}
+	return evaluatorResponse{
+		ID:        evaluator.ExternalID,
+		Type:      "evaluation_evaluator",
+		Name:      evaluator.Name,
+		Desc:      evaluator.Description,
+		Status:    status,
+		Version:   version,
+		CreatedAt: evaluator.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt: evaluator.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+}
+
+func evaluatorPage(evaluators []db.EvaluationEvaluator, hasMore bool) evaluatorPageResponse {
+	data := make([]evaluatorResponse, 0, len(evaluators))
+	for _, evaluator := range evaluators {
+		data = append(data, evaluatorResponseFrom(evaluator))
+	}
+	var nextPage *string
+	if hasMore && len(evaluators) > 0 {
+		last := evaluators[len(evaluators)-1]
+		value := encodeCursor(datasetCursorWire{CreatedAt: last.CreatedAt, UUID: last.UUID})
+		nextPage = &value
+	}
+	return evaluatorPageResponse{Data: data, NextPage: nextPage}
 }
 
 func caseResponseFrom(item db.EvaluationCase) caseResponse {
@@ -149,6 +233,14 @@ func pageQuery[T any](r *http.Request, decode func(string) (*T, error)) (int, *T
 }
 
 func decodeDatasetCursor(raw string) (*db.EvaluationDatasetPageCursor, error) {
+	cursor, err := decodeTimeUUIDCursor(raw)
+	if err != nil || cursor == nil {
+		return nil, err
+	}
+	return &db.EvaluationDatasetPageCursor{CreatedAt: cursor.CreatedAt, UUID: cursor.UUID}, nil
+}
+
+func decodeTimeUUIDCursor(raw string) (*datasetCursorWire, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
 	}
@@ -163,7 +255,16 @@ func decodeDatasetCursor(raw string) (*db.EvaluationDatasetPageCursor, error) {
 	if err != nil {
 		return nil, invalidPage(err)
 	}
-	return &db.EvaluationDatasetPageCursor{CreatedAt: wire.CreatedAt, UUID: parsed.String()}, nil
+	wire.UUID = parsed.String()
+	return &wire, nil
+}
+
+func decodeEvaluatorCursor(raw string) (*db.EvaluationEvaluatorPageCursor, error) {
+	cursor, err := decodeTimeUUIDCursor(raw)
+	if err != nil || cursor == nil {
+		return nil, err
+	}
+	return &db.EvaluationEvaluatorPageCursor{CreatedAt: cursor.CreatedAt, UUID: cursor.UUID}, nil
 }
 
 func decodeCaseCursor(raw string) (*db.EvaluationCasePageCursor, error) {

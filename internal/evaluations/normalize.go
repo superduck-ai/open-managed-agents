@@ -41,31 +41,28 @@ type normalizedCase struct {
 }
 
 func normalizeDataset(body createDatasetRequest) (string, string, error) {
-	name := strings.TrimSpace(body.Name)
-	if name == "" {
+	return normalizeNameAndDescription(body.Name, body.Desc)
+}
+
+func normalizeNameAndDescription(name, desc string) (string, string, error) {
+	trimmedName := strings.TrimSpace(name)
+	if trimmedName == "" {
 		return "", "", nameRequired()
 	}
-	if utf8.RuneCountInString(name) > maxDatasetNameLen {
+	if utf8.RuneCountInString(trimmedName) > maxDatasetNameLen {
 		return "", "", nameTooLong()
 	}
-	description := strings.TrimSpace(body.Desc)
+	description := strings.TrimSpace(desc)
 	if utf8.RuneCountInString(description) > maxDatasetDescriptionLen {
 		return "", "", descriptionTooLong()
 	}
-	return name, description, nil
+	return trimmedName, description, nil
 }
 
 func normalizeCase(input caseInput) (normalizedCase, error) {
-	name := strings.TrimSpace(input.Name)
-	if name == "" {
-		return normalizedCase{}, nameRequired()
-	}
-	if utf8.RuneCountInString(name) > maxDatasetNameLen {
-		return normalizedCase{}, nameTooLong()
-	}
-	description := strings.TrimSpace(input.Desc)
-	if utf8.RuneCountInString(description) > maxDatasetDescriptionLen {
-		return normalizedCase{}, descriptionTooLong()
+	name, description, err := normalizeNameAndDescription(input.Name, input.Desc)
+	if err != nil {
+		return normalizedCase{}, err
 	}
 	turns, err := normalizeTurns(input.Turns)
 	if err != nil {

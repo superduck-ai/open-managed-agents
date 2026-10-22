@@ -61,6 +61,9 @@ export function workspaceSwitchPath(currentPath: string, workspaceId: string) {
   const scope = `/workspaces/${encodeURIComponent(workspaceId || 'default')}`;
   const settings = path.match(/^\/settings\/workspaces\/[^/]+\/(keys|webhooks|mcp-tunnels)(?:\/|$)/);
   if (settings) return `/settings${scope}/${settings[1]}`;
+  if (path === '/evaluations/evaluators' || /^\/workspaces\/[^/]+\/evaluations\/evaluators(?:\/|$)/.test(path)) {
+    return `${scope}/evaluations/evaluators`;
+  }
   const scoped = path.match(/^\/workspaces\/[^/]+\/([^/]+)/);
   if (scoped) return `${scope}/${scoped[1]}`;
   const section = path.split('/')[1];

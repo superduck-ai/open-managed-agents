@@ -931,6 +931,7 @@ const managedAgentPathByHref: Record<string, string> = {
   '/agents': 'agents',
   '/sessions': 'sessions',
   '/evaluations': 'evaluations',
+  '/evaluations/evaluators': 'evaluations/evaluators',
   '/observability': 'observability',
   '/deployments': 'deployments',
   '/environments': 'environments',
@@ -1070,6 +1071,9 @@ function isActivePath(currentPath: string, href: string) {
   }
   const managedPath = managedAgentPathByHref[href];
   if (managedPath) {
+    if (managedPath === 'evaluations' && /(^|\/)evaluations\/evaluators(\/|$)/.test(currentPath)) {
+      return false;
+    }
     return (
       currentPath === href ||
       currentPath === `/workspaces/default/${managedPath}` ||
@@ -1129,6 +1133,7 @@ function isManagedAgentsPath(currentPath: string) {
       '/agents',
       '/sessions',
       '/evaluations',
+      '/evaluations/evaluators',
       '/observability',
       '/deployments',
       '/environments',

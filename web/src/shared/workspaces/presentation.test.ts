@@ -33,6 +33,13 @@ test.each([
   expect(workspaceSwitchPath(`/${section}`, 'other')).toBe(`/workspaces/other/${section}`);
 });
 
+test('切换评估器列表时留在评估器', () => {
+  expect(workspaceSwitchPath('/workspaces/default/evaluations/evaluators', 'other')).toBe(
+    '/workspaces/other/evaluations/evaluators',
+  );
+  expect(workspaceSwitchPath('/evaluations/evaluators', 'other')).toBe('/workspaces/other/evaluations/evaluators');
+});
+
 test('组织设置保持原路由，工作区设置使用新作用域', () => {
   expect(workspaceSwitchPath('/settings/members', 'other')).toBe('/settings/members');
   expect(workspaceSwitchPath('/members', 'other')).toBe('/members');

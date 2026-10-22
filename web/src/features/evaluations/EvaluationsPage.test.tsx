@@ -15,6 +15,7 @@ import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/works
 import { resetTestDom } from '../../test/setup';
 import { DatasetCasesPage } from './DatasetCasesPage';
 import { EvaluationsPage } from './EvaluationsPage';
+import { EvaluatorsPage } from './EvaluatorsPage';
 
 const testingLibrary = await import('@testing-library/react');
 const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
@@ -118,6 +119,69 @@ test('lists cases and imports JSONL', async () => {
   expect(imported?.body).toBe('{"name":"second","turns":["hi"]}\n');
   expect(imported?.url).toContain('/evaluation-datasets/evalds_test/cases:import');
 });
+
+test('lists evaluators and creates an llm evaluator', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/evaluators');
+  const requests: Array<{ url: string; method: string; body: string; csrf: string }> = [];
+  globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    const headers = new Headers(init?.headers);
+    requests.push({
+      url,
+      method,
+      body: typeof init?.body === 'string' ? init.body : '',
+      csrf: headers.get('X-CSRF-Token') ?? '',
+    });
+    if (method === 'POST') {
+      return Response.json(evaluator());
+    }
+    return Response.json({ data: [evaluator()], next_page: null });
+  });
+
+  renderPage(<EvaluatorsPage />);
+  expect(await screen.findByText('judge')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Datasets' }).getAttribute('href')).toBe('/workspaces/default/evaluations');
+  fireEvent.click(screen.getByRole('button', { name: 'Create evaluator' }));
+  const dialog = screen.getByRole('dialog');
+  fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'judge' } });
+  fireEvent.change(within(dialog).getByLabelText('Model'), { target: { value: 'claude' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'input' }));
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Create evaluator' }));
+
+  await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
+  const created = requests.find((request) => request.method === 'POST');
+  expect(created?.url).toContain('/evaluation-evaluators');
+  expect(created?.csrf).toBe('csrf_test');
+  expect(JSON.parse(created?.body ?? '{}')).toEqual({
+    name: 'judge',
+    desc: '',
+    evaluator_type: 'llm',
+    model: 'claude',
+    prompt_template: '{{input}}',
+    variables: ['input'],
+  });
+});
+
+function evaluator() {
+  return {
+    id: 'evalev_test',
+    type: 'evaluation_evaluator',
+    name: 'judge',
+    desc: '',
+    status: 'available',
+    version: {
+      id: 'eev_test',
+      version: 1,
+      evaluator_type: 'llm',
+      model: 'claude',
+      prompt_template: '{{input}}',
+      variables: ['input'],
+    },
+    created_at: '2026-10-22T00:00:00Z',
+    updated_at: '2026-10-22T00:00:00Z',
+  };
+}
 
 function dataset(overrides: Record<string, unknown> = {}) {
   return {

@@ -10,6 +10,7 @@ import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../f
 import { LoginPage } from '../features/auth/LoginPage';
 import { DatasetCasesPage } from '../features/evaluations/DatasetCasesPage';
 import { EvaluationsPage } from '../features/evaluations/EvaluationsPage';
+import { EvaluatorsPage } from '../features/evaluations/EvaluatorsPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
 import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
 import { CreateMCPServerPage, MCPServerDetailPage, MCPServersPage } from '../features/mcp-servers/MCPServersPage';
@@ -243,6 +244,18 @@ const workspaceEvaluationDatasetRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/evaluations/datasets/$datasetId',
   component: DatasetCasesPage,
+});
+
+const evaluatorsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'evaluations/evaluators',
+  component: EvaluatorsPage,
+});
+
+const workspaceEvaluatorsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations/evaluators',
+  component: EvaluatorsPage,
 });
 
 const observabilityRoute = createRoute({
@@ -590,7 +603,9 @@ const routeTree = rootRoute.addChildren([
       workspaceSessionsRoute,
       workspaceSessionDetailRoute,
       evaluationsRoute,
+      evaluatorsRoute,
       workspaceEvaluationsRoute,
+      workspaceEvaluatorsRoute,
       workspaceEvaluationDatasetRoute,
       observabilityRoute,
       workspaceObservabilityRoute,

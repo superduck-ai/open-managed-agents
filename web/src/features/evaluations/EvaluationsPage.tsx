@@ -9,6 +9,7 @@ import { Label } from '../../shared/ui/label';
 import { TableEmptyRow, TableErrorRow, TableLoadingRow } from '../../shared/ui/resource-table';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { evaluationErrorMessage, type EvaluationDataset } from './api';
+import { EvaluationSectionNav } from './EvaluationSectionNav';
 import { evaluationDatasetHref, useCreateEvaluationDataset, useEvaluationDatasetList } from './useEvaluationDatasets';
 
 export function EvaluationsPage() {
@@ -19,6 +20,7 @@ export function EvaluationsPage() {
 
   return (
     <section className="relative min-h-[calc(100vh-48px)] text-foreground">
+      <EvaluationSectionNav current="datasets" />
       <header className="mb-5 flex items-start justify-between gap-6">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">

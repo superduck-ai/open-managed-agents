@@ -104,6 +104,10 @@ export function evaluationDatasetHref(workspaceId: string, datasetId: string) {
   return `${evaluationsIndexHref(workspaceId)}/datasets/${encodeURIComponent(datasetId)}`;
 }
 
+export function evaluationEvaluatorsHref(workspaceId: string) {
+  return `${evaluationsIndexHref(workspaceId)}/evaluators`;
+}
+
 function workspaceIdFromPath() {
   return window.location.pathname.match(/^\/workspaces\/([^/]+)\/evaluations(?:\/|$)/)?.[1] ?? '';
 }

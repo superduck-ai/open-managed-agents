@@ -1,9 +1,9 @@
 # QCA Evaluation 对齐计划
 
-- 状态：M1 已按控制台实测信息架构校正。评测集与 case 可以创建、导入、列出，并带数据集版本。评估器与实验未开始。
+- 状态：M1 评测集与 M2 自定义评估器已实现。实验、Compare、预置目录和今日额度未开始。评估器只保存配置，不执行打分。
 - 日期：2026-10-22
 - 来源：qoder.com.cn 企业控制台，分析 → 评测（Beta）。下文只采用这次实测看到的信息架构和字段，不补写未出现的产品文案。
-- 非目标：不改 Workbench Evaluate 的请求、表格或测试预期。不在本切片创建实验、评估器、session 或配额。
+- 非目标：不改 Workbench Evaluate 的请求、表格或测试预期。不在本切片创建实验、session 或配额，也不预置官方评估器。
 
 Workbench Evaluate 仍是 prompt revision 上的变量行 A/B。QCA 评测不是这个表格，也没有一等的 Runs、Outcome 或 Results 页面；那些路径在实测里是空壳。
 
@@ -86,7 +86,7 @@ flowchart LR
 | QCA feature | OMA today | gap | proposed approach | priority |
 | --- | --- | --- | --- | --- |
 | 评测集：创建、导入、列出，带版本和 case | Evaluate 行挂在单个 prompt revision 上。CSV 只覆盖变量和 ideal output | 没有 workspace 级评测集、版本和 turns case | M1：`evaluation_datasets`、`evaluation_dataset_versions`、`evaluation_cases`。创建集时写入版本 1。JSONL/ZIP 导入。不迁移 `workbench_evaluations`，不预置官方数据集 | P0，本切片 |
-| 评估器 | 无评测打分对象。`user.define_outcome` 只属于 deployment/session | 不能配置 LLM 或 Agent 评估器，也不能保存 score.json | M2：评估器资源，区分 LLM 与 Agent。变量只用实测列出的五个名字。Agent 评估器的 score 文件留到实验执行时读取 | P0 |
+| 评估器 | M2 可创建、列出、读取自定义评估器。LLM 保存单个 model 和 prompt。Agent 保存打分 Agent id。不执行打分 | 预置评估器、额度、以及实验里真正跑 sandbox session 仍未做 | M2：`evaluation_evaluators` 与版本 1。变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。Agent 的 `/data/session/result.json` 与 `/output/score.json` 留到实验执行 | P0，本切片 |
 | 实验 | Evaluate 只跑无工具的 prompt completion | 不能把数据集版本、Agent、环境和评估器绑成一次实验，也不能为每个 case 建 session | M3：实验绑定数据集版本、Agent、Environment、timeout 和冻结的评估器。每个 case 创建一个已有 Managed session | P0 |
 | Compare | 浏览器里并排两份 prompt completion，不落库 | 不能在固定数据集版本和评估器下比较 Agent 版本 | M3：Compare 只比较同一数据集版本、同一组评估器下的实验，变化的是 Agent 版本。名称按 space 与模式唯一 | P0 |
 | 预置评测集 / 预置评估器 | 无 | 没有只读的已发布目录 | 目录与「复用已发布版本」放到预置数据就绪之后。M1 只做自定义集 | P1 |
@@ -96,7 +96,7 @@ flowchart LR
 
 ## 为什么不改现有 Evaluate 表格
 
-Workbench Evaluate 继续做 prompt 变量实验。评测集的 case 是 `turns`，不是 `{{var}}` 行；评估器和实验也没有落点。入口还拒绝 tools。因此保留 `web/src/features/workbench/` 与 `internal/workbench/`。新页面放在 Managed Agents，不放进隐藏的 `/workbench`，也不做空的评估器或实验路由。
+Workbench Evaluate 继续做 prompt 变量实验。评测集的 case 是 `turns`，不是 `{{var}}` 行。入口还拒绝 tools。因此保留 `web/src/features/workbench/` 与 `internal/workbench/`。评测集和评估器放在 Managed Agents，不放进隐藏的 `/workbench`。不添加空的实验路由。
 
 ## 数据模型
 
@@ -124,7 +124,25 @@ Workbench Evaluate 继续做 prompt 变量实验。评测集的 case 是 `turns`
 - `checkpoints` 可空，只接受 JSON 数组或对象，不解释内部字段
 - `input_files`、`reference_files` 可空，只接受 JSON 数组，不解释元素。`reference_files` 留到评估器使用
 
-不建实验表、评估器表或 memory pin 表。
+`00096_evaluation_evaluators.sql` 增加自定义评估器。不建实验表或 memory pin 表。不写入预置评估器。
+
+`evaluation_evaluators`
+
+- `external_id` 前缀 `evalev_`
+- `name` 1–255 字符，`description` 最长 1024，API 字段名是 `desc`
+- `archived_at` 为空时状态为 `available`，否则为 `archived`。M2 不提供归档接口
+- 列表不返回已归档行
+
+`evaluation_evaluator_versions`
+
+- `external_id` 前缀 `eev_`
+- `evaluator_uuid` 加 `version` 唯一，`version` 从 1 开始
+- M2 创建评估器时在同一事务写入版本 1。实验以后冻结的是这个版本，本切片不另存新版本
+- `evaluator_type` 为 `llm` 或 `agent`
+- LLM：`model` 必填，最长 255；`prompt_template` 必填，最长 16000。`agent_id` 必须为空
+- Agent：`agent_id` 必填，最长 255。`model` 与 `prompt_template` 必须为空。M2 只保存 id，不检查 Agent 是否存在，也不创建 sandbox session
+- `variables` 是 JSON 数组，元素只能是 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。LLM 至少选一个。prompt 里的 `{{name}}` 必须落在已选变量里
+- Agent 响应带固定契约：读 `/data/session/result.json` 和 artifacts，写 `/output/score.json`，字段为 `score`、`explanation`、`details`。这些路径不入库
 
 ## API
 
@@ -143,7 +161,14 @@ M1：
 
 单条 case 与 JSONL 每行的字段是 `name`、`turns`、`desc`、`checkpoints`、`input_files`、`reference_files`。未知字段拒绝。导入是 JSONL（`application/x-ndjson` 或 `application/jsonl`），或只含一个 `.jsonl` 成员的 ZIP。超过 1000 条或 100MB 返回 400，校验通过前不写入。这与 Workbench 的 `{{var}},ideal_output` CSV 不是同一格式。
 
-M1 不做 PATCH、DELETE、归档、预置目录、评估器、实验、Compare、配额和 OpenAPI。
+M2：
+
+- `GET/POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators`
+- `GET .../evaluation-evaluators/{evaluatorId}`
+
+创建评估器的 body 是 `{name, desc, evaluator_type, model, agent_id, prompt_template, variables}`。`evaluator_type` 为 `llm` 或 `agent`。响应带 `status` 和 `version`。Agent 版本额外带 `agent_contract`。
+
+M2 不做 PATCH、DELETE、归档、预置目录、实验、Compare、配额和 OpenAPI。不执行打分。
 
 ## UI
 
@@ -151,23 +176,26 @@ Managed Agents 导航在 Sessions 与 Observability 之间增加 Datasets。OMA 
 
 - `/workspaces/$workspaceId/evaluations`：评测集列表和创建（name、desc）
 - `/workspaces/$workspaceId/evaluations/datasets/$datasetId`：当前版本、case 列表、单条 case、JSONL 导入
+- `/workspaces/$workspaceId/evaluations/evaluators`：评估器列表和创建。类型在 LLM 与 Agent 之间切换。LLM 填写 model 和 prompt，变量芯片插入 `{{name}}`。Agent 填写 Agent id，并展示 score.json 契约
 
-不添加 `/evaluators`、`/experiments` 或 `/experiments/compare` 的空路由。Workbench 的 prompt/evaluate 开关保持原样。
+Managed Agents 导航在 Datasets 旁增加 Evaluators。不添加 `/experiments` 或 `/experiments/compare`。Workbench 的 prompt/evaluate 开关保持原样。
 
 ## 里程碑
 
 1. **M0**：差距说明。
-2. **M1（本变更）**：评测集、版本 1 和 case 的 migration、Yourbatis、创建 / 导入 / 列出，以及 Datasets 页面。无 session，不改 Workbench Evaluate。
-3. **M2**：评估器。LLM 与 Agent 两种类型，变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。不执行打分。
-4. **M3**：实验与 Compare。绑定数据集版本、Agent、Environment、timeout 和冻结的评估器；每个 case 创建一个 Managed session。Compare 固定数据集版本和评估器。名称按 space 与模式唯一。
+2. **M1**：评测集、版本 1 和 case 的 migration、Yourbatis、创建 / 导入 / 列出，以及 Datasets 页面。无 session，不改 Workbench Evaluate。
+3. **M2（本变更）**：自定义评估器。LLM 与 Agent 两种类型，创建时写入版本 1。变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。不执行打分，不预置 11 个官方评估器。
+4. **M3**：实验与 Compare。绑定数据集版本、Agent、Environment、timeout 和冻结的评估器版本；每个 case 创建一个 Managed session。Compare 固定数据集版本和评估器。名称按 space 与模式唯一。
 5. **M4**：预置评测集和预置评估器的只读目录，以及从已发布版本复用 case。今日额度：预置 100、自定义 LLM 100、Asia/Shanghai 零点；Agent 评估器不计入。
 
-## 下一切片（M2）
+## 下一切片（M3）
 
-只加评估器资源，不创建实验，不跑 session，不改 Workbench。
+只加实验和 Compare。绑定已经存在的数据集版本和评估器版本，为每个 case 创建一个 Managed session。不改 Workbench，不做额度。
 
 ## 验收与未覆盖
 
 同一 workspace 可以创建评测集（同时得到 `edv_` 版本 1）、用 JSONL 或单成员 ZIP 导入 case，并列出 case。空 name、空 turns、超过 1000 条、错误 ZIP 和另一 workspace 的 id 在写库前失败。归档行不出现在列表里。
+
+同一 workspace 可以创建 LLM 评估器（model、prompt、已选变量，版本 `eev_`）和 Agent 评估器（agent id，响应带 score.json 契约），并列出、读取。错误类型、未选变量、Agent 带 prompt，以及另一 workspace 的 id，在写库前失败。
 
 Postgres 迁移测试在设置 `TEST_MIGRATION_DATABASE_URL` 时执行。默认 `just test` 不连接外部数据库；未设置该变量时，不能把迁移说成已经在真实 Postgres 上应用过。

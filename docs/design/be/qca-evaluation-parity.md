@@ -1,7 +1,7 @@
 # QCA Evaluation 对齐计划
 
-- 状态：M1 评测集、M2 自定义评估器、M3 实验与 Compare、Session 终态收口、LLM 打分、Agent 打分 Session、预置目录、timeout/env 注入、Compare 分数列，以及打分 Agent 版本冻结已实现。今日额度不在范围内。
-- 剩余缺口：没有真实 E2B 端到端。契约路径对应 sandbox 的 `/mnt/session/uploads/data/session/result.json` 与 `/mnt/session/outputs/score.json`，容器里没有字面的 `/data` 与 `/output`。没有 OpenAPI。
+- 状态：M1 评测集、M2 自定义评估器、M3 实验与 Compare、Session 终态收口、LLM 打分、Agent 打分 Session、预置目录、timeout/env 注入、Compare 分数列、打分 Agent 版本冻结，以及打分 sandbox 的 `/data` 与 `/output` 契约路径已实现。今日额度不在范围内。
+- 剩余缺口：没有真实 E2B 端到端。没有 OpenAPI。
 - 日期：2026-10-22
 - 来源：qoder.com.cn 企业控制台，分析 → 评测（Beta）。下文只采用这次实测看到的信息架构和字段，不补写未出现的产品文案。没有 QCA 目录导出，所以预置内容是标明 OMA demo 的示例，不是 QCA 原文。
 - 非目标：不改 Workbench Evaluate 的请求、表格或测试预期。不实现今日额度、额度计数或额度 UI。不复制 QCA 预置 case 或评估器正文。
@@ -189,8 +189,8 @@ Session 完成：`sessions.Handler.publishSessionEvents` 在 SSE fanout 之后�
 - LLM：用冻结版本的 `model` 和 `prompt_template`。变量从 case 与已持久化的 Session 事件填充：`input` 用用户消息，没有则用 case turns；`output` 用 agent 消息；`checkpoints` 用 case JSON；`agent_trajectory` 拼用户、agent 和工具事件；`invocation_result` 用最后一条 `agent.tool_result` 文本，没有工具结果时用最后一次 idle 的 `stop_reason.type`。请求走现有 LLM provider 解析和 `/v1/messages` 或 `/v1/chat/completions`。模型需返回 `{score, explanation, details}`。
 - Agent：case item 因 `end_turn` 变成 completed 之后，为这个冻结评估器版本启动一个打分 Session。打分 Agent 用评估器版本上的 `agent_id`。版本在实验创建时冻结：和被测 Agent 一样，当时解析该 Agent 的当前版本，写到 `evaluation_experiment_evaluators.agent_version`。之后打分 Session 用这个数字调用已有的 Agent 版本读取，不用后来的当前版本。Agent 在创建实验时不存在或已归档，实验创建失败，和被测 Agent 相同。LLM 绑定的这一列为空。`00100` 之前已创建、该列为空的实验，打分时仍读取当时的当前版本。Environment、timeout 和 env 复用实验上的值。resources 只交给 case Session，不交给打分 Session。打分 Session 的 metadata 带 `evaluation_role=agent_score`、`experiment_id`、`item_id`、`evaluator_version_id`，以及 `timeout_seconds` 和有值时的 `env`，所以它的终态不会被当成另一个 case item。
 - 同一个 case `end_turn` 只启动一次。item 已经离开 running，或 `(item_uuid, version_uuid)` 已经有 score 行时，不再启动，也不再写第二行。
-- case 结果写成 JSON：`session_id`、`input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`，以及 `artifacts.input_files` 和 `artifacts.reference_files`。这份 JSON 放进打分 Session 的第一条用户消息。Filestore 再把它写到 `/uploads/data/session/result.json`。Sandbox 挂载点是 `/mnt/session/uploads/data/session/result.json`。评估器 API 契约里的 `/data/session/result.json` 仍是对外路径名；OMA 只挂载五个固定根，不能把文件放到容器里的 `/data/session/result.json`。写文件失败只记日志，打分 Session 仍然启动，用户消息里仍有这份 JSON。
-- 打分 Session 以 `end_turn` 结束时，读取 `/outputs/score.json`。Sandbox 里对应 `/mnt/session/outputs/score.json`。契约路径 `/output/score.json` 对应该输出根。文件内容须是 `{score, explanation, details}`。解析成功则 score 行为 completed。文件缺失时错误文案是 `Evaluation score file is missing`。内容无法解析时错误文案是 `Could not parse evaluator score`。打分 Session 被终止或 `retries_exhausted` 时，score 行用和 case 相同的终态文案标为 failed。
+- case 结果写成 JSON：`session_id`、`input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`，以及 `artifacts.input_files` 和 `artifacts.reference_files`。这份 JSON 放进打分 Session 的第一条用户消息。Filestore 再把它写到 `/uploads/data/session/result.json`。五个固定根不变。打分 Session 的 metadata 含 `evaluation_role=agent_score` 时，Runner 在启动 rclone 前额外创建两条软链：`/data` → `/mnt/session/uploads/data`，`/output` → `/mnt/user-data/outputs`。因此容器里的 `/data/session/result.json` 就是该文件，`/output/score.json` 写进可写的 outputs 挂载。其他 Session 不创建这两条软链。软链冲突（普通文件、非空目录、指向别处的软链）会使打分 sandbox 启动失败，规则与 `/mnt/session/outputs` 别名相同。写文件失败只记日志，打分 Session 仍然启动，用户消息里仍有这份 JSON；此时 `/data` 软链在，但 `result.json` 可能还不存在。
+- 打分 Session 以 `end_turn` 结束时，仍读取 Filestore `/outputs/score.json`。`/output/score.json`、`/mnt/session/outputs/score.json` 和 `/mnt/user-data/outputs/score.json` 在打分 sandbox 里是同一份文件，所以写到契约路径的分数会被这次读取拿到。服务端不把 `/output` 当成第六个 Filestore 根，也不另读一条路径。文件内容须是 `{score, explanation, details}`。解析成功则 score 行为 completed。文件缺失时错误文案是 `Evaluation score file is missing`。内容无法解析时错误文案是 `Could not parse evaluator score`。打分 Session 被终止或 `retries_exhausted` 时，score 行用和 case 相同的终态文案标为 failed。
 - 打分 Session 还没结束时，实验可以已经是 completed，但这条 Agent score 还不存在。score 行只在打分 Session 进入终态后写入。没有配置 sandbox 时，score 行仍是 failed，文案是 `Agent evaluator scoring is not executed`。生产组装会接上 sandbox。
 - Agent 不存在时 score 行失败，文案是 `Agent not found`。已归档 Agent 的文案是 `agent must not be archived`。启动 Session 失败的文案是 `Could not score evaluation`。这些都只写 score 行。
 
@@ -273,11 +273,11 @@ Workbench 的 prompt/evaluate 开关保持原样。
 3. **M2**：自定义评估器。LLM 与 Agent 两种类型，创建时写入版本 1。变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。
 4. **M3**：实验与 Compare。绑定数据集版本、Agent、Environment、timeout 和冻结的评估器版本；每个 case 复用已有 Session 创建并记下 session id。已有 Session 终态事件把 item 收成 completed 或 failed，并汇总实验状态。`end_turn` 后对冻结的 LLM 评估器打分并写入 `evalscore_`。Compare 固定数据集版本和评估器，只列出 completed，并按评估器展示分数。名称在组织和工作区下唯一。timeout/env 经已有 Session metadata 和 sandbox 创建注入。
 5. **预置目录**：只读的已发布评测集和评估器，以及从已发布版本复制 case 或评估器定义。内容是 19 个评测集和 11 个评估器的 OMA demo，不是 QCA 原文。
-6. **Agent 打分 sandbox（本变更）**：case `end_turn` 后为 Agent 评估器启动打分 Session，把 case 结果交给打分 Agent，并在打分 Session 终态读取 `/outputs/score.json`。
+6. **Agent 打分 sandbox（本变更）**：case `end_turn` 后为 Agent 评估器启动打分 Session，把 case 结果交给打分 Agent，并在打分 Session 终态读取 `/outputs/score.json`。打分 sandbox 用软链暴露 `/data/session/result.json` 和 `/output/score.json`，不增加 Filestore 根。
 
 今日额度不在里程碑里。不实现每日 100 次、上海时区重置、Agent 评估器是否计入，也不做额度 UI 或计数器。
 
-预置 Agent 的 id 和 LLM 的 `oma-demo` model 都没有对应的已配置资源。打分 Agent 的版本冻结在实验绑定上，不写进评估器版本。契约路径映射到 sandbox 的 `/mnt/session/uploads/data/session/result.json` 和 `/mnt/session/outputs/score.json`。这些都不属于额度。
+预置 Agent 的 id 和 LLM 的 `oma-demo` model 都没有对应的已配置资源。打分 Agent 的版本冻结在实验绑定上，不写进评估器版本。这些都不属于额度。
 
 ## 未排期
 
@@ -291,6 +291,6 @@ Workbench 的 prompt/evaluate 开关保持原样。
 
 同一 workspace 可以创建 LLM 评估器（model、prompt、已选变量，版本 `eev_`）和 Agent 评估器（agent id，响应带 score.json 契约），并列出、读取。错误类型、未选变量、Agent 带 prompt，以及另一 workspace 的 id，在写库前失败。
 
-同一 workspace 可以创建实验：冻结 `edv_` 与评估器版本，item 先为 pending；接上 Session starter 后每个 case 得到 `sesn_`，实验变为 running。创建 body 带 `timeout_seconds` 和 `env` 时，starter 收到这两个值；省略 `env` 时 Session 仍会创建。Agent 评估器在创建时把打分 Agent 的当前版本写进绑定。之后即使该 Agent 的当前版本变了，打分 Session 仍使用冻结版本。打分 Agent 不存在时实验创建失败，不写库。Starter 失败时 item 为 failed。`requires_action` 保持 running。`end_turn` 把 item 和实验收成 completed。LLM 评估器把模型返回的 `score`、`explanation`、`details` 记为 completed。Agent 评估器用冻结的 `agent_id` 启动打分 Session，并把 case 结果放进用户消息和 `/uploads/data/session/result.json`。打分 Session 的 `end_turn` 读取 `/outputs/score.json`，形状为 `{score, explanation, details}`，score 行为 completed。文件缺失时 score 为 failed，文案是 `Evaluation score file is missing`。无法解析时文案是 `Could not parse evaluator score`。没有配置 sandbox 时文案仍是 `Agent evaluator scoring is not executed`。这些失败都不改变 item 或实验的 completed。已经离开 running 的 item 不会被后到的终态改写，也不会再次打分；已有 score 行不会再写一行。`retries_exhausted` 或 `session.status_terminated` 把 case item 收成 failed，且不打分。打分 Session 自己的终止只让对应 score 行失败。列表不返回 item，但返回 scores。Compare 在没有 completed 实验时返回空列表。空 name、重复评估器、非法 timeout、没有 case、已归档 Environment、重名和另一 workspace 的 id 会失败。
+同一 workspace 可以创建实验：冻结 `edv_` 与评估器版本，item 先为 pending；接上 Session starter 后每个 case 得到 `sesn_`，实验变为 running。创建 body 带 `timeout_seconds` 和 `env` 时，starter 收到这两个值；省略 `env` 时 Session 仍会创建。Agent 评估器在创建时把打分 Agent 的当前版本写进绑定。之后即使该 Agent 的当前版本变了，打分 Session 仍使用冻结版本。打分 Agent 不存在时实验创建失败，不写库。Starter 失败时 item 为 failed。`requires_action` 保持 running。`end_turn` 把 item 和实验收成 completed。LLM 评估器把模型返回的 `score`、`explanation`、`details` 记为 completed。Agent 评估器用冻结的 `agent_id` 启动打分 Session，并把 case 结果放进用户消息和 `/uploads/data/session/result.json`。打分 Session 启动时创建 `/data` → `/mnt/session/uploads/data` 与 `/output` → `/mnt/user-data/outputs`，所以 `/data/session/result.json` 与 `/output/score.json` 在该容器内可解析。普通 Session 不创建这两条软链。打分 Session 的 `end_turn` 读取 Filestore `/outputs/score.json`（与 `/output/score.json` 是同一文件），形状为 `{score, explanation, details}`，score 行为 completed。文件缺失时 score 为 failed，文案是 `Evaluation score file is missing`。无法解析时文案是 `Could not parse evaluator score`。没有配置 sandbox 时文案仍是 `Agent evaluator scoring is not executed`。这些失败都不改变 item 或实验的 completed。已经离开 running 的 item 不会被后到的终态改写，也不会再次打分；已有 score 行不会再写一行。`retries_exhausted` 或 `session.status_terminated` 把 case item 收成 failed，且不打分。打分 Session 自己的终止只让对应 score 行失败。列表不返回 item，但返回 scores。Compare 在没有 completed 实验时返回空列表。空 name、重复评估器、非法 timeout、没有 case、已归档 Environment、重名和另一 workspace 的 id 会失败。
 
 Postgres 迁移测试在设置 `TEST_MIGRATION_DATABASE_URL` 时覆盖到 `00100`。默认 `just test` 不连接外部数据库；未设置该变量时，不能把 `00097`、`00098`、`00099` 或 `00100` 说成已经在真实 Postgres 上应用过。

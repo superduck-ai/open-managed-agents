@@ -49,8 +49,9 @@ type rcloneMultimountConfig struct {
 }
 
 type rcloneFilestoreLaunch struct {
-	ConfigPayload []byte
-	MemoryMounts  []memoryRuntimeMount
+	ConfigPayload        []byte
+	MemoryMounts         []memoryRuntimeMount
+	ScoreContractAliases bool
 }
 
 // prepareRcloneFilestoreLaunch resolves the Session filesystem authority and
@@ -82,7 +83,11 @@ func (r *Runner) prepareRcloneFilestoreLaunch(
 	if err != nil {
 		return rcloneFilestoreLaunch{}, fmt.Errorf("encode managed-agent filestore config: %w", err)
 	}
-	return rcloneFilestoreLaunch{ConfigPayload: configPayload, MemoryMounts: memoryMounts}, nil
+	return rcloneFilestoreLaunch{
+		ConfigPayload:        configPayload,
+		MemoryMounts:         memoryMounts,
+		ScoreContractAliases: sessionRequestsAgentScorePaths(session.Metadata),
+	}, nil
 }
 
 func filestoreTokenIdentityFromScope(scope db.FilestoreTokenScope) filestore.TokenIdentity {

@@ -245,8 +245,7 @@ func agentScoreResultJSON(sessionID string, values scoreValues) ([]byte, error) 
 func agentScoreTurns(result []byte) []string {
 	return []string{
 		"Read " + evaluatorResultPath + " and write " + evaluatorScorePath + " as JSON with score, explanation, and details.\n" +
-			"Sandbox input: " + agentScoreSandboxResultPath + "\n" +
-			"Sandbox output: " + agentScoreSandboxOutputPath + "\n" +
+			"This scoring sandbox links " + evaluatorResultPath + " to " + agentScoreSandboxResultPath + " and " + evaluatorScorePath + " to " + agentScoreSandboxOutputPath + ".\n" +
 			string(result),
 	}
 }

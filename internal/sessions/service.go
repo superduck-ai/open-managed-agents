@@ -162,7 +162,7 @@ func (h *Handler) createFromBody(r *http.Request, principal auth.Principal, body
 			WorkspaceUUID:         principal.WorkspaceUUID,
 			EnvironmentUUID:       env.UUID,
 			EnvironmentExternalID: env.ExternalID,
-			Metadata:              json.RawMessage(`{}`),
+			Metadata:              environmentWorkMetadata(metadata),
 			State:                 "queued",
 			Secret:                workSecret,
 			CreatedAt:             now,

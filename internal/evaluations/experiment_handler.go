@@ -145,7 +145,7 @@ func (h *Handler) persistExperiment(ctx context.Context, principal auth.Principa
 	if err != nil {
 		return db.EvaluationExperiment{}, err
 	}
-	input, err := newExperiment(principal, draft, resolved)
+	input, err := h.newExperiment(ctx, principal, draft, resolved)
 	if err != nil {
 		return db.EvaluationExperiment{}, err
 	}
@@ -239,14 +239,14 @@ func (h *Handler) loadEvaluators(ctx context.Context, principal auth.Principal, 
 	return evaluators, nil
 }
 
-func newExperiment(principal auth.Principal, draft experimentDraft, resolved resolvedExperiment) (db.EvaluationExperimentCreate, error) {
+func (h *Handler) newExperiment(ctx context.Context, principal auth.Principal, draft experimentDraft, resolved resolvedExperiment) (db.EvaluationExperimentCreate, error) {
 	externalID, err := ids.New("evalexp_")
 	if err != nil {
 		return db.EvaluationExperimentCreate{}, mapStoreError(err, experimentNotFoundMessage, createExperimentFailedMessage)
 	}
 	now := time.Now().UTC()
 	experimentUUID := uuid.NewString()
-	bindings, versionIDs, err := newExperimentBindings(principal, experimentUUID, resolved.Evaluators, now)
+	bindings, versionIDs, err := h.newExperimentBindings(ctx, principal, experimentUUID, resolved.Evaluators, now)
 	if err != nil {
 		return db.EvaluationExperimentCreate{}, err
 	}
@@ -283,13 +283,17 @@ func newExperiment(principal auth.Principal, draft experimentDraft, resolved res
 	}, nil
 }
 
-func newExperimentBindings(principal auth.Principal, experimentUUID string, evaluators []db.EvaluationEvaluator, now time.Time) ([]db.EvaluationExperimentBinding, []string, error) {
+func (h *Handler) newExperimentBindings(ctx context.Context, principal auth.Principal, experimentUUID string, evaluators []db.EvaluationEvaluator, now time.Time) ([]db.EvaluationExperimentBinding, []string, error) {
 	bindings := make([]db.EvaluationExperimentBinding, 0, len(evaluators))
 	versionIDs := make([]string, 0, len(evaluators))
 	for index, evaluator := range evaluators {
 		externalID, err := ids.New("evalbind_")
 		if err != nil {
 			return nil, nil, mapStoreError(err, experimentNotFoundMessage, createExperimentFailedMessage)
+		}
+		agentVersion, err := h.frozenScorerVersion(ctx, principal.WorkspaceUUID, evaluator)
+		if err != nil {
+			return nil, nil, err
 		}
 		versionIDs = append(versionIDs, evaluator.Version.ExternalID)
 		bindings = append(bindings, db.EvaluationExperimentBinding{
@@ -303,10 +307,22 @@ func newExperimentBindings(principal auth.Principal, experimentUUID string, eval
 			EvaluatorExternalID: evaluator.ExternalID,
 			VersionUUID:         evaluator.Version.UUID,
 			VersionExternalID:   evaluator.Version.ExternalID,
+			AgentVersion:        agentVersion,
 			CreatedAt:           now,
 		})
 	}
 	return bindings, versionIDs, nil
+}
+
+func (h *Handler) frozenScorerVersion(ctx context.Context, workspaceUUID string, evaluator db.EvaluationEvaluator) (int, error) {
+	if evaluator.Version.EvaluatorType != evaluatorTypeAgent {
+		return 0, nil
+	}
+	agent, err := h.loadAgent(ctx, workspaceUUID, evaluator.Version.AgentID, 0)
+	if err != nil {
+		return 0, err
+	}
+	return agent.CurrentVersion, nil
 }
 
 func newExperimentItems(principal auth.Principal, experimentUUID string, cases []db.EvaluationCase, now time.Time) ([]db.EvaluationExperimentItem, error) {
@@ -428,6 +444,8 @@ func caseSessionInput(experiment db.EvaluationExperiment, item db.EvaluationExpe
 			"experiment_id": experiment.ExternalID,
 			"case_id":       item.CaseExternalID,
 		},
+		TimeoutSeconds: experiment.TimeoutSeconds,
+		Env:            experiment.Env,
 	}
 }
 

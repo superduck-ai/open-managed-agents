@@ -35,6 +35,8 @@ type AgentScoreInput struct {
 	ResultJSON            []byte
 	Turns                 []string
 	Metadata              map[string]string
+	TimeoutSeconds        int
+	Env                   json.RawMessage
 }
 
 type AgentScoreClaim struct {
@@ -79,7 +81,7 @@ func (h *Handler) scoreAgent(ctx context.Context, outcome sessionOutcome, experi
 		h.recordScore(ctx, outcome, experiment, item, binding, version, nil, "", nil, agentScoringUnavailableMessage)
 		return
 	}
-	agent, err := h.store.GetAgent(ctx, outcome.WorkspaceUUID, version.AgentID)
+	agent, err := h.scoringAgent(ctx, outcome.WorkspaceUUID, version.AgentID, binding.AgentVersion)
 	if err != nil {
 		message := evaluatorScoreFailedMessage
 		if errors.Is(err, db.ErrNotFound) {
@@ -111,6 +113,8 @@ func (h *Handler) scoreAgent(ctx context.Context, outcome sessionOutcome, experi
 		ResultJSON:            result,
 		Turns:                 agentScoreTurns(result),
 		Metadata:              agentScoreMetadata(experiment.ExternalID, item.ExternalID, binding.VersionExternalID),
+		TimeoutSeconds:        experiment.TimeoutSeconds,
+		Env:                   experiment.Env,
 	})
 	if err != nil {
 		h.logger.WarnContext(ctx, "start evaluation agent score",
@@ -122,6 +126,13 @@ func (h *Handler) scoreAgent(ctx context.Context, outcome sessionOutcome, experi
 		)
 		h.recordScore(ctx, outcome, experiment, item, binding, version, nil, "", nil, evaluatorScoreFailedMessage)
 	}
+}
+
+func (h *Handler) scoringAgent(ctx context.Context, workspaceUUID, agentID string, frozenVersion int) (db.Agent, error) {
+	if frozenVersion > 0 {
+		return h.store.GetAgentVersion(ctx, workspaceUUID, agentID, frozenVersion)
+	}
+	return h.store.GetAgent(ctx, workspaceUUID, agentID)
 }
 
 func (h *Handler) settleAgentScore(ctx context.Context, outcome sessionOutcome) {

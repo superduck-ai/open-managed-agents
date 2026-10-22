@@ -46,11 +46,12 @@ func TestEvaluationAgentScoreSandboxStartsScoringSession(t *testing.T) {
 		OrganizationUUID: "org", WorkspaceUUID: "ws", UserUUID: "user",
 		AgentExternalID: "agent_score", AgentVersion: 7, EnvironmentExternalID: "env_test",
 		ResultJSON: []byte(`{"output":"hi"}`), Turns: []string{"grade"}, Metadata: metadata,
+		TimeoutSeconds: 60, Env: []byte(`{"TRACE":"1"}`),
 	})
 	if err != nil || sessionID != "sesn_score" {
 		t.Fatalf("start = (%s, %v)", sessionID, err)
 	}
-	if creator.spec.AgentExternalID != "agent_score" || creator.spec.AgentVersion != 7 || creator.spec.EnvironmentExternalID != "env_test" || len(creator.spec.Resources) != 0 {
+	if creator.spec.AgentExternalID != "agent_score" || creator.spec.AgentVersion != 7 || creator.spec.EnvironmentExternalID != "env_test" || len(creator.spec.Resources) != 0 || creator.spec.TimeoutSeconds != 60 || string(creator.spec.Env) != `{"TRACE":"1"}` {
 		t.Fatalf("spec = %#v", creator.spec)
 	}
 	if creator.principal.UserUUID != "user" || string(files.written) != `{"output":"hi"}` || files.pathHint != evaluationsapi.AgentScoreResultPath {

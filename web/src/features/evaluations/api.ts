@@ -157,6 +157,17 @@ export type EvaluationExperimentItem = {
   error?: string;
 };
 
+export type EvaluationExperimentScore = {
+  id: string;
+  item_id: string;
+  evaluator_id: string;
+  version_id: string;
+  status: 'completed' | 'failed';
+  score?: number;
+  explanation?: string;
+  error?: string;
+};
+
 export type EvaluationExperiment = {
   id: string;
   type: 'evaluation_experiment';
@@ -174,6 +185,7 @@ export type EvaluationExperiment = {
   evaluator_count: number;
   evaluators?: EvaluationExperimentEvaluator[];
   items?: EvaluationExperimentItem[];
+  scores?: EvaluationExperimentScore[];
   created_at: string;
   updated_at: string;
 };

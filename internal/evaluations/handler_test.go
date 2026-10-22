@@ -278,6 +278,7 @@ type evaluationStoreStub struct {
 	versionCases          []db.EvaluationCase
 	agent                 db.Agent
 	agentVersion          db.Agent
+	frozenAgents          []db.Agent
 	environment           db.Environment
 	createdExperiment     *db.EvaluationExperimentCreate
 	experiment            db.EvaluationExperiment
@@ -405,6 +406,11 @@ func (s *evaluationStoreStub) GetAgent(_ context.Context, _, externalID string) 
 
 func (s *evaluationStoreStub) GetAgentVersion(_ context.Context, _, externalID string, version int) (db.Agent, error) {
 	s.getAgentCalls++
+	for _, agent := range s.frozenAgents {
+		if agent.ExternalID == externalID && agent.CurrentVersion == version {
+			return agent, nil
+		}
+	}
 	if s.agentVersion.ExternalID == "" || s.agentVersion.ExternalID != externalID || s.agentVersion.CurrentVersion != version {
 		return db.Agent{}, db.ErrNotFound
 	}

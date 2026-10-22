@@ -25,8 +25,8 @@ func TestEvaluationExperimentsPostgres(t *testing.T) {
 	if err := database.QueryRowContext(ctx, `select max(version_id) from goose_db_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version < 99 {
-		t.Fatalf("goose version = %d, want at least 99", version)
+	if version < 100 {
+		t.Fatalf("goose version = %d, want at least 100", version)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
 	now := time.Date(2026, time.October, 22, 1, 2, 3, 0, time.UTC)
@@ -122,7 +122,7 @@ func TestEvaluationExperimentsPostgres(t *testing.T) {
 		t.Fatalf("duplicate score = %v", err)
 	}
 	loaded, err := store.GetEvaluationExperiment(ctx, organizationUUID, workspaceUUID, "evalexp_one")
-	if err != nil || loaded.Status != EvaluationExperimentStatusRunning || loaded.Items[0].SessionExternalID != "sesn_case" || loaded.SessionCount != 1 || len(loaded.Scores) != 1 || loaded.Scores[0].ExternalID != "evalscore_one" {
+	if err != nil || loaded.Status != EvaluationExperimentStatusRunning || loaded.Items[0].SessionExternalID != "sesn_case" || loaded.SessionCount != 1 || len(loaded.Scores) != 1 || loaded.Scores[0].ExternalID != "evalscore_one" || loaded.Bindings[0].AgentVersion != 3 {
 		t.Fatalf("loaded = (%+v, %v)", loaded, err)
 	}
 	var env map[string]string
@@ -156,7 +156,7 @@ func experimentCreate(organizationUUID, workspaceUUID, name string, now time.Tim
 			UUID: "51000000-0000-4000-8000-000000000001", ExternalID: "evalbind_one",
 			OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, ExperimentUUID: experimentUUID,
 			Position: 1, EvaluatorUUID: "40000000-0000-4000-8000-000000000001", EvaluatorExternalID: "evalev_test",
-			VersionUUID: "41000000-0000-4000-8000-000000000001", VersionExternalID: "eev_test", CreatedAt: now,
+			VersionUUID: "41000000-0000-4000-8000-000000000001", VersionExternalID: "eev_test", AgentVersion: 3, CreatedAt: now,
 		}},
 		Items: []EvaluationExperimentItem{{
 			UUID: "52000000-0000-4000-8000-000000000001", ExternalID: "evalitem_one",

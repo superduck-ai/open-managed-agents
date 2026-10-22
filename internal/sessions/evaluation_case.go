@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 type EvaluationCaseSessionSpec struct {
@@ -16,6 +18,8 @@ type EvaluationCaseSessionSpec struct {
 	Resources             json.RawMessage
 	Turns                 []string
 	Metadata              map[string]string
+	TimeoutSeconds        int
+	Env                   json.RawMessage
 }
 
 func (h *Handler) CreateEvaluationCaseSession(ctx context.Context, principal auth.Principal, spec EvaluationCaseSessionSpec) (db.Session, error) {
@@ -43,11 +47,7 @@ func evaluationCaseSessionRequest(spec EvaluationCaseSessionSpec) (sessionCreate
 	if err != nil {
 		return sessionCreateRequest{}, err
 	}
-	metadata := spec.Metadata
-	if metadata == nil {
-		metadata = map[string]string{}
-	}
-	metadataJSON, err := json.Marshal(metadata)
+	metadataJSON, err := json.Marshal(evaluationCaseSessionMetadata(spec))
 	if err != nil {
 		return sessionCreateRequest{}, err
 	}
@@ -71,4 +71,18 @@ func evaluationCaseSessionRequest(spec EvaluationCaseSessionSpec) (sessionCreate
 		request.Resources = spec.Resources
 	}
 	return request, nil
+}
+
+func evaluationCaseSessionMetadata(spec EvaluationCaseSessionSpec) map[string]string {
+	metadata := make(map[string]string, len(spec.Metadata)+2)
+	for key, value := range spec.Metadata {
+		metadata[key] = value
+	}
+	if spec.TimeoutSeconds > 0 {
+		metadata[sessioncontract.SandboxTimeoutMetadataKey] = strconv.Itoa(spec.TimeoutSeconds)
+	}
+	if len(spec.Env) > 0 {
+		metadata[sessioncontract.SandboxEnvMetadataKey] = string(spec.Env)
+	}
+	return metadata
 }

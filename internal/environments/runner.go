@@ -284,6 +284,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 
 	// provider.Create 返回的 ID 是 E2B 的真实 Sandbox ID，与上面的 envsbx_ ID
 	// 分属远端 Provider 和本服务两个命名空间。
+	resolution = applySessionSandboxLaunch(resolution, work.Metadata)
 	sandbox, err := r.provider.Create(ctx, env, work, resolution)
 	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, "", err)

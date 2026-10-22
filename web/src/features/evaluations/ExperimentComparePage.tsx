@@ -6,7 +6,7 @@ import { Input } from '../../shared/ui/input';
 import { Label } from '../../shared/ui/label';
 import { Textarea } from '../../shared/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
-import { evaluationErrorMessage, type EvaluationExperiment } from './api';
+import { evaluationErrorMessage, type EvaluationExperiment, type EvaluationExperimentScore } from './api';
 import { EvaluationSectionNav } from './EvaluationSectionNav';
 import { useCompareEvaluationExperiments } from './useEvaluationExperiments';
 
@@ -73,6 +73,7 @@ function CompareResults({ submitted, experiments }: { submitted: boolean; experi
       <p className="text-sm text-muted-foreground">{msg('evaluations.compareEmpty', 'No completed experiments.')}</p>
     );
   }
+  const evaluatorIDs = compareEvaluatorIDs(experiments);
   return (
     <Table>
       <TableHeader>
@@ -81,6 +82,9 @@ function CompareResults({ submitted, experiments }: { submitted: boolean; experi
           <TableHead>{msg('evaluations.agentId', 'Agent')}</TableHead>
           <TableHead>{msg('evaluations.agentVersion', 'Agent version')}</TableHead>
           <TableHead>{msg('evaluations.status', 'Status')}</TableHead>
+          {evaluatorIDs.map((evaluatorID) => (
+            <TableHead key={evaluatorID}>{evaluatorID}</TableHead>
+          ))}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -90,9 +94,56 @@ function CompareResults({ submitted, experiments }: { submitted: boolean; experi
             <TableCell>{experiment.agent_id}</TableCell>
             <TableCell>{experiment.agent_version}</TableCell>
             <TableCell>{experiment.status}</TableCell>
+            {evaluatorIDs.map((evaluatorID) => (
+              <TableCell key={evaluatorID}>{compareScoreText(experiment, evaluatorID, msg)}</TableCell>
+            ))}
           </TableRow>
         ))}
       </TableBody>
     </Table>
   );
+}
+
+type CompareMessage = (key: string, fallback: string) => string;
+
+function compareEvaluatorIDs(experiments: EvaluationExperiment[]) {
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  const evaluators = experiments.flatMap((experiment) => experiment.evaluators ?? []);
+  evaluators.sort((left, right) => left.position - right.position);
+  for (const evaluator of evaluators) {
+    if (seen.has(evaluator.id)) {
+      continue;
+    }
+    seen.add(evaluator.id);
+    ordered.push(evaluator.id);
+  }
+  for (const experiment of experiments) {
+    for (const score of experiment.scores ?? []) {
+      if (seen.has(score.evaluator_id)) {
+        continue;
+      }
+      seen.add(score.evaluator_id);
+      ordered.push(score.evaluator_id);
+    }
+  }
+  return ordered;
+}
+
+function compareScoreText(experiment: EvaluationExperiment, evaluatorID: string, msg: CompareMessage) {
+  const scores = (experiment.scores ?? []).filter((score) => score.evaluator_id === evaluatorID);
+  if (scores.length === 0) {
+    return msg('evaluations.scoreMissing', 'Missing');
+  }
+  return scores.map((score) => compareScoreValue(score, msg)).join(', ');
+}
+
+function compareScoreValue(score: EvaluationExperimentScore, msg: CompareMessage) {
+  if (score.status === 'failed') {
+    return score.error || msg('evaluations.scoreFailed', 'Failed');
+  }
+  if (score.status === 'completed' && typeof score.score === 'number') {
+    return String(score.score);
+  }
+  return msg('evaluations.scoreMissing', 'Missing');
 }

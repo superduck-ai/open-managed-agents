@@ -63,6 +63,8 @@ func (s *evaluationAgentScoreSandbox) Start(ctx context.Context, input evaluatio
 		EnvironmentExternalID: input.EnvironmentExternalID,
 		Turns:                 input.Turns,
 		Metadata:              input.Metadata,
+		TimeoutSeconds:        input.TimeoutSeconds,
+		Env:                   input.Env,
 	})
 	if err != nil {
 		return "", err

@@ -174,6 +174,7 @@ func (m *recordingEvaluatorModel) Score(_ context.Context, request EvaluatorScor
 func TestSessionEndTurnFailsAgentScoreWhenAgentIsMissing(t *testing.T) {
 	store, handler, sandbox := startAgentScoreExperiment(t, &agentScoreSandboxStub{sessionID: "sesn_score"}, nil, false)
 	store.agent = db.Agent{}
+	store.frozenAgents = nil
 	observeEndTurn(handler, "sesn_case")
 	if sandbox.starts != 0 {
 		t.Fatalf("starts = %d", sandbox.starts)
@@ -223,7 +224,7 @@ func TestSessionEndTurnAttachesAgentScore(t *testing.T) {
 		t.Fatalf("starts = %d", sandbox.starts)
 	}
 	input := sandbox.last
-	if input.AgentExternalID != "agent_score" || input.AgentVersion != 7 || input.EnvironmentExternalID != "env_test" || input.UserUUID != "user-uuid" {
+	if input.AgentExternalID != "agent_score" || input.AgentVersion != 7 || input.EnvironmentExternalID != "env_test" || input.UserUUID != "user-uuid" || input.TimeoutSeconds != 60 || len(input.Env) != 0 {
 		t.Fatalf("score session = %#v", input)
 	}
 	if input.Metadata[agentScoreRoleKey] != agentScoreRole || input.Metadata[agentScoreItemKey] == "" {
@@ -275,12 +276,42 @@ func TestSessionEndTurnScoresLLMAndAgent(t *testing.T) {
 	if agent.Status != db.EvaluationExperimentScoreStatusCompleted || agent.Score == nil || *agent.Score != 0.25 || agent.Explanation != "agent" || store.experiment.Items[0].Status != db.EvaluationExperimentStatusCompleted {
 		t.Fatalf("agent score = %#v item=%s", agent, store.experiment.Items[0].Status)
 	}
+	if sandbox.last.TimeoutSeconds != 60 || string(sandbox.last.Env) != `{"TRACE":"1"}` || sandbox.last.AgentVersion != 7 {
+		t.Fatalf("score session = %#v", sandbox.last)
+	}
+}
+
+func TestAgentScoreSessionUsesFrozenAgentVersion(t *testing.T) {
+	sandbox := &agentScoreSandboxStub{sessionID: "sesn_score", scoreJSON: []byte(`{"score":1,"explanation":"frozen","details":{}}`)}
+	store, handler, _ := startAgentScoreExperiment(t, sandbox, nil, false)
+	var frozen int
+	for _, binding := range store.createdExperiment.Bindings {
+		if binding.EvaluatorExternalID == "evalev_a" {
+			frozen = binding.AgentVersion
+		}
+	}
+	if frozen != 7 {
+		t.Fatalf("frozen version = %d", frozen)
+	}
+	store.agent.CurrentVersion = 9
+	observeEndTurn(handler, "sesn_case")
+	if sandbox.starts != 1 || sandbox.last.AgentVersion != 7 || sandbox.last.TimeoutSeconds != 60 {
+		t.Fatalf("score session = %#v starts=%d", sandbox.last, sandbox.starts)
+	}
 }
 
 func startAgentScoreExperiment(t *testing.T, sandbox *agentScoreSandboxStub, model EvaluatorModel, withLLM bool) (*evaluationStoreStub, *Handler, *agentScoreSandboxStub) {
 	t.Helper()
 	store := readyExperimentStore()
 	store.agent = db.Agent{ExternalID: "agent_score", CurrentVersion: 7}
+	store.frozenAgents = []db.Agent{{ExternalID: "agent_score", CurrentVersion: 7}}
+	for index := range store.evaluators {
+		if store.evaluators[index].ExternalID != "evalev_a" {
+			continue
+		}
+		store.evaluators[index].Version.EvaluatorType = evaluatorTypeAgent
+		store.evaluators[index].Version.AgentID = "agent_score"
+	}
 	store.versionCases[0].Checkpoints = json.RawMessage(`["ready"]`)
 	store.versionCases[0].InputFiles = json.RawMessage(`["in.txt"]`)
 	store.versionCases[0].ReferenceFiles = json.RawMessage(`["guide.txt"]`)

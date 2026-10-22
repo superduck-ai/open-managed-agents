@@ -20,6 +20,8 @@ func (s evaluationCaseSessionStarter) StartCaseSession(ctx context.Context, prin
 		Resources:             input.Resources,
 		Turns:                 input.Turns,
 		Metadata:              input.Metadata,
+		TimeoutSeconds:        input.TimeoutSeconds,
+		Env:                   input.Env,
 	})
 	if err != nil {
 		return "", err

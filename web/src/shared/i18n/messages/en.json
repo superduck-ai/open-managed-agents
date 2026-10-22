@@ -1285,6 +1285,8 @@
   "evaluations.compare": "Compare",
   "evaluations.compareAction": "Compare",
   "evaluations.compareEmpty": "No completed experiments.",
+  "evaluations.scoreMissing": "Missing",
+  "evaluations.scoreFailed": "Failed",
   "evaluations.status": "Status",
   "evaluations.session": "Session",
   "evaluations.start": "Start",

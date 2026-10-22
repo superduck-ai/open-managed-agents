@@ -18,6 +18,7 @@ type evaluationExperimentBindingRow struct {
 	EvaluatorExternalID string    `db:"evaluator_external_id"`
 	VersionUUID         string    `db:"version_uuid"`
 	VersionExternalID   string    `db:"version_external_id"`
+	AgentVersion        *int      `db:"agent_version"`
 	CreatedAt           time.Time `db:"created_at"`
 }
 
@@ -32,6 +33,7 @@ type evaluationExperimentBindingWriteParams struct {
 	EvaluatorExternalID string
 	VersionUUID         string
 	VersionExternalID   string
+	AgentVersion        *int
 	CreatedAt           time.Time
 }
 

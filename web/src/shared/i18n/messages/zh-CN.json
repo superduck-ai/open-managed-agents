@@ -1285,6 +1285,8 @@
   "evaluations.compare": "对比",
   "evaluations.compareAction": "对比",
   "evaluations.compareEmpty": "还没有已完成的实验。",
+  "evaluations.scoreMissing": "缺失",
+  "evaluations.scoreFailed": "失败",
   "evaluations.status": "状态",
   "evaluations.session": "会话",
   "evaluations.start": "开始",

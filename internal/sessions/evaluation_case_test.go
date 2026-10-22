@@ -37,6 +37,32 @@ func TestEvaluationCaseSessionRequestBuildsManagedSession(t *testing.T) {
 	}
 }
 
+func TestEvaluationCaseSessionRequestInjectsTimeoutAndEnv(t *testing.T) {
+	request, err := evaluationCaseSessionRequest(EvaluationCaseSessionSpec{
+		AgentExternalID: "agent_test", AgentVersion: 4, EnvironmentExternalID: "env_test",
+		Turns: []string{"hello"}, Metadata: map[string]string{"experiment_id": "evalexp_test"},
+		TimeoutSeconds: 60, Env: json.RawMessage(`{"TRACE":"1"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal(request.Metadata, &metadata); err != nil || metadata["timeout_seconds"] != "60" || metadata["env"] != `{"TRACE":"1"}` || metadata["experiment_id"] != "evalexp_test" {
+		t.Fatalf("metadata = %s err=%v", request.Metadata, err)
+	}
+	omitted, err := evaluationCaseSessionRequest(EvaluationCaseSessionSpec{
+		AgentExternalID: "agent_test", AgentVersion: 4, EnvironmentExternalID: "env_test",
+		Turns: []string{"hello"}, TimeoutSeconds: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata = map[string]string{}
+	if err := json.Unmarshal(omitted.Metadata, &metadata); err != nil || metadata["timeout_seconds"] != "60" || metadata["env"] != "" {
+		t.Fatalf("omitted env metadata = %s err=%v", omitted.Metadata, err)
+	}
+}
+
 func TestEvaluationCaseSessionRequestOmitsEmptyResources(t *testing.T) {
 	request, err := evaluationCaseSessionRequest(EvaluationCaseSessionSpec{
 		AgentExternalID: "agent_test", AgentVersion: 1, EnvironmentExternalID: "env_test", Turns: []string{"hello"},

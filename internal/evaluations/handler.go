@@ -53,6 +53,8 @@ type CaseSessionInput struct {
 	Resources             json.RawMessage
 	Turns                 []string
 	Metadata              map[string]string
+	TimeoutSeconds        int
+	Env                   json.RawMessage
 }
 
 type CaseSessionStarter interface {

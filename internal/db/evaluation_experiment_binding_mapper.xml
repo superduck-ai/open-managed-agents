@@ -11,6 +11,7 @@
         evaluator_external_id,
         version_uuid,
         version_external_id,
+        agent_version,
         created_at
     </sql>
 
@@ -26,6 +27,7 @@
             evaluator_external_id,
             version_uuid,
             version_external_id,
+            agent_version,
             created_at
         ) VALUES (
             #{params.UUID},
@@ -38,6 +40,7 @@
             #{params.EvaluatorExternalID},
             #{params.VersionUUID},
             #{params.VersionExternalID},
+            #{params.AgentVersion},
             #{params.CreatedAt}
         )
         RETURNING

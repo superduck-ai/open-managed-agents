@@ -67,7 +67,7 @@ func TestCreateExperimentFreezesBindingsAndStartsSessions(t *testing.T) {
 	if len(created.Items) != 1 || created.Items[0].Status != db.EvaluationExperimentStatusPending || created.Items[0].CaseExternalID != "evalcase_test" || !strings.HasPrefix(created.Items[0].ExternalID, "evalitem_") {
 		t.Fatalf("items = %#v", created.Items)
 	}
-	if starter.calls != 1 || starter.last.AgentVersion != 4 || starter.last.Turns[0] != "hello" || starter.last.Metadata["case_id"] != "evalcase_test" || string(starter.last.Resources) != `[{"type":"file"}]` {
+	if starter.calls != 1 || starter.last.AgentVersion != 4 || starter.last.Turns[0] != "hello" || starter.last.Metadata["case_id"] != "evalcase_test" || string(starter.last.Resources) != `[{"type":"file"}]` || starter.last.TimeoutSeconds != 60 || string(starter.last.Env) != `{"TRACE":"1"}` {
 		t.Fatalf("starter = %#v", starter)
 	}
 	if store.lastStatus != db.EvaluationExperimentStatusRunning || len(store.itemSessionUpdates) != 1 || store.itemSessionUpdates[0].SessionExternalID != "sesn_case" {
@@ -75,6 +75,25 @@ func TestCreateExperimentFreezesBindingsAndStartsSessions(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), `"session_id":"sesn_case"`) || !strings.Contains(response.Body.String(), `"status":"running"`) || !strings.HasPrefix(created.Experiment.ExternalID, "evalexp_") {
 		t.Fatalf("response = %s", response.Body.String())
+	}
+}
+
+func TestCreateExperimentOmitsEnvAndStillStartsSession(t *testing.T) {
+	store := readyExperimentStore()
+	starter := &evaluationSessionStarterStub{sessionID: "sesn_case"}
+	response := serveEvaluation(evaluationRouterWith(NewHandler(store, nil).WithSessionStarter(starter)), http.MethodPost, evaluationExperimentPath(""), `{"name":"nightly","dataset_version_id":"edv_test","agent_id":"agent_pinned","agent_version":4,"environment_id":"env_test","timeout_seconds":60,"evaluator_ids":["evalev_b"]}`, "")
+	if response.Code != http.StatusOK || starter.calls != 1 || starter.last.TimeoutSeconds != 60 || len(starter.last.Env) != 0 || starter.last.AgentVersion != 4 {
+		t.Fatalf("start = %d starter=%#v body=%s", response.Code, starter, response.Body.String())
+	}
+}
+
+func TestCreateExperimentRejectsMissingScorerAgent(t *testing.T) {
+	store := readyExperimentStore()
+	store.evaluators[1].Version.EvaluatorType = evaluatorTypeAgent
+	store.evaluators[1].Version.AgentID = "agent_score"
+	response := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationExperimentPath(""), `{"name":"nightly","dataset_version_id":"edv_test","agent_id":"agent_pinned","agent_version":4,"environment_id":"env_test","timeout_seconds":60,"evaluator_ids":["evalev_a"]}`, "")
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), agentNotFoundMessage) || store.createExperimentCalls != 0 {
+		t.Fatalf("missing scorer = %d calls=%d body=%s", response.Code, store.createExperimentCalls, response.Body.String())
 	}
 }
 

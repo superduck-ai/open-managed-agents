@@ -533,15 +533,17 @@ func (h *Handler) renewSandboxTimeout(ctx context.Context, sandbox db.Environmen
 	if sandbox.ProviderSandboxID == nil || strings.TrimSpace(*sandbox.ProviderSandboxID) == "" {
 		return errors.New("active sandbox is missing provider sandbox id")
 	}
-	if err := h.sandboxTimeoutExtender.SetTimeout(ctx, *sandbox.ProviderSandboxID, h.cfg.E2B.SandboxTimeout); err != nil {
+	timeout := sandboxLifetime(h.cfg.E2B.SandboxTimeout, sandbox.Metadata)
+	if err := h.sandboxTimeoutExtender.SetTimeout(ctx, *sandbox.ProviderSandboxID, timeout); err != nil {
 		return fmt.Errorf("set provider sandbox timeout: %w", err)
 	}
-	h.sandboxRenewals.record(*sandbox.ProviderSandboxID, time.Now(), sandboxRenewalWindow(h.cfg.E2B.SandboxTimeout))
+	h.sandboxRenewals.record(*sandbox.ProviderSandboxID, time.Now(), sandboxRenewalWindow(timeout))
 	return nil
 }
 
 func (h *Handler) renewStaleSandboxTimeout(ctx context.Context, sandbox db.EnvironmentSandbox) error {
-	if sandbox.ProviderSandboxID != nil && h.sandboxRenewals.fresh(*sandbox.ProviderSandboxID, time.Now(), sandboxRenewalWindow(h.cfg.E2B.SandboxTimeout)) {
+	timeout := sandboxLifetime(h.cfg.E2B.SandboxTimeout, sandbox.Metadata)
+	if sandbox.ProviderSandboxID != nil && h.sandboxRenewals.fresh(*sandbox.ProviderSandboxID, time.Now(), sandboxRenewalWindow(timeout)) {
 		return nil
 	}
 	return h.renewSandboxTimeout(ctx, sandbox)

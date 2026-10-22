@@ -159,6 +159,29 @@ func TestEvaluationExperimentMapperBuilderContracts(t *testing.T) {
 	}
 }
 
+func TestEvaluationExperimentBindingMapperInsertsFrozenAgentVersion(t *testing.T) {
+	now := time.Date(2026, time.October, 22, 1, 2, 3, 0, time.UTC)
+	agentVersion := 7
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: evaluationExperimentBindingMapperInsertStatement,
+		bound: buildEvaluationExperimentBindingMapperInsert(yourbatis.DialectPostgres, evaluationExperimentBindingWriteParams{
+			UUID: "00000000-0000-4000-8000-000000000060", ExternalID: "evalbind_test",
+			OrganizationUUID: "00000000-0000-4000-8000-000000000001", WorkspaceUUID: "00000000-0000-4000-8000-000000000002",
+			ExperimentUUID: "00000000-0000-4000-8000-000000000050", Position: 1,
+			EvaluatorUUID: "00000000-0000-4000-8000-000000000021", EvaluatorExternalID: "evalev_a",
+			VersionUUID: "00000000-0000-4000-8000-000000000032", VersionExternalID: "eev_a",
+			AgentVersion: &agentVersion, CreatedAt: now,
+		}),
+		wantID: "EvaluationExperimentBindingMapper.Insert", wantKind: yourbatis.StatementInsert,
+		wantArgumentNames: []string{
+			"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
+			"params.ExperimentUUID", "params.Position", "params.EvaluatorUUID", "params.EvaluatorExternalID",
+			"params.VersionUUID", "params.VersionExternalID", "params.AgentVersion", "params.CreatedAt",
+		},
+		wantSQLFragments: []string{"INSERT INTO evaluation_experiment_evaluators", "agent_version", "RETURNING"},
+	})
+}
+
 func TestEvaluationExperimentMapperResultSemantics(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.October, 22, 1, 2, 3, 0, time.UTC)

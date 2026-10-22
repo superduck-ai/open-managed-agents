@@ -28,6 +28,7 @@ type EvaluationExperimentBinding struct {
 	EvaluatorExternalID string
 	VersionUUID         string
 	VersionExternalID   string
+	AgentVersion        int
 	Position            int
 	CreatedAt           time.Time
 }
@@ -444,6 +445,7 @@ func insertEvaluationExperimentBindings(ctx context.Context, executor yourbatis.
 			EvaluatorExternalID: binding.EvaluatorExternalID,
 			VersionUUID:         binding.VersionUUID,
 			VersionExternalID:   binding.VersionExternalID,
+			AgentVersion:        optionalPositiveInt(binding.AgentVersion),
 			CreatedAt:           binding.CreatedAt,
 		})
 		if err != nil {
@@ -536,6 +538,10 @@ func (row evaluationExperimentRow) evaluationExperiment() EvaluationExperiment {
 }
 
 func (row evaluationExperimentBindingRow) evaluationExperimentBinding() EvaluationExperimentBinding {
+	agentVersion := 0
+	if row.AgentVersion != nil {
+		agentVersion = *row.AgentVersion
+	}
 	return EvaluationExperimentBinding{
 		UUID:                row.UUID,
 		ExternalID:          row.ExternalID,
@@ -546,9 +552,18 @@ func (row evaluationExperimentBindingRow) evaluationExperimentBinding() Evaluati
 		EvaluatorExternalID: row.EvaluatorExternalID,
 		VersionUUID:         row.VersionUUID,
 		VersionExternalID:   row.VersionExternalID,
+		AgentVersion:        agentVersion,
 		Position:            row.Position,
 		CreatedAt:           row.CreatedAt,
 	}
+}
+
+func optionalPositiveInt(value int) *int {
+	if value < 1 {
+		return nil
+	}
+	copied := value
+	return &copied
 }
 
 func (row evaluationExperimentItemRow) evaluationExperimentItem() EvaluationExperimentItem {

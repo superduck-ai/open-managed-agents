@@ -349,6 +349,62 @@ test('creates an evaluator from a published preset', async () => {
   });
 });
 
+test('compare shows per-evaluator scores for completed experiments', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/experiments/compare');
+  globalThis.fetch = mock(async () =>
+    Response.json({
+      data: [
+        {
+          ...experiment(),
+          status: 'completed',
+          evaluators: [
+            { id: 'evalev_a', version_id: 'eev_a', position: 1 },
+            { id: 'evalev_b', version_id: 'eev_b', position: 2 },
+            { id: 'evalev_c', version_id: 'eev_c', position: 3 },
+          ],
+          scores: [
+            {
+              id: 'evalscore_a1',
+              item_id: 'evalitem_1',
+              evaluator_id: 'evalev_a',
+              version_id: 'eev_a',
+              status: 'completed',
+              score: 0.5,
+            },
+            {
+              id: 'evalscore_a2',
+              item_id: 'evalitem_2',
+              evaluator_id: 'evalev_a',
+              version_id: 'eev_a',
+              status: 'completed',
+              score: 1,
+            },
+            {
+              id: 'evalscore_b',
+              item_id: 'evalitem_1',
+              evaluator_id: 'evalev_b',
+              version_id: 'eev_b',
+              status: 'failed',
+              error: 'Could not parse evaluator score',
+            },
+          ],
+        },
+      ],
+      next_page: null,
+    }),
+  );
+  renderPage(<ExperimentComparePage />);
+  fireEvent.change(screen.getByLabelText('Dataset version'), { target: { value: 'edv_test' } });
+  fireEvent.change(screen.getByLabelText('Evaluators'), { target: { value: 'evalev_a, evalev_b, evalev_c' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Compare' }));
+  expect(await screen.findByRole('columnheader', { name: 'evalev_a' })).toBeTruthy();
+  expect(screen.getByRole('columnheader', { name: 'evalev_b' })).toBeTruthy();
+  expect(screen.getByRole('columnheader', { name: 'evalev_c' })).toBeTruthy();
+  expect(screen.getByRole('cell', { name: '0.5, 1' })).toBeTruthy();
+  expect(screen.getByRole('cell', { name: 'Could not parse evaluator score' })).toBeTruthy();
+  expect(screen.getByRole('cell', { name: 'Missing' })).toBeTruthy();
+});
+
 test('compare shows an empty state when no experiments are completed', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/experiments/compare');
   globalThis.fetch = mock(async () => Response.json({ data: [], next_page: null }));

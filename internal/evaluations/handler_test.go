@@ -296,6 +296,10 @@ type evaluationStoreStub struct {
 	itemSessionUpdates    []db.EvaluationExperimentItemSession
 	evaluatorVersions     []db.EvaluationEvaluatorVersion
 	sessionEvents         []db.SessionEvent
+	sessions              []db.Session
+	resources             []db.SessionResource
+	getSessionCalls       int
+	listResourceCalls     int
 	getVersionCalls       int
 	listVersionCaseCalls  int
 	getAgentCalls         int
@@ -511,6 +515,33 @@ func (s *evaluationStoreStub) CreateEvaluationExperimentScore(_ context.Context,
 
 func (s *evaluationStoreStub) ListSessionEventsPage(_ context.Context, _ db.ListSessionEventsPageParams) ([]db.SessionEvent, bool, error) {
 	return append([]db.SessionEvent(nil), s.sessionEvents...), false, nil
+}
+
+func (s *evaluationStoreStub) GetSession(_ context.Context, workspaceUUID, externalID string) (db.Session, bool, error) {
+	s.getSessionCalls++
+	if workspaceUUID != "workspace-uuid" {
+		return db.Session{}, false, nil
+	}
+	for _, session := range s.sessions {
+		if session.ExternalID == externalID {
+			return session, true, nil
+		}
+	}
+	return db.Session{}, false, nil
+}
+
+func (s *evaluationStoreStub) ListSessionResources(_ context.Context, workspaceUUID, sessionExternalID string) ([]db.SessionResource, error) {
+	s.listResourceCalls++
+	if workspaceUUID != "workspace-uuid" {
+		return nil, nil
+	}
+	resources := make([]db.SessionResource, 0)
+	for _, resource := range s.resources {
+		if resource.SessionExternalID == sessionExternalID {
+			resources = append(resources, resource)
+		}
+	}
+	return resources, nil
 }
 
 func (s *evaluationStoreStub) FinishRunningEvaluationExperimentItem(_ context.Context, _, _, externalID, status, errorMessage string, updatedAt time.Time) (bool, error) {

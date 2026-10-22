@@ -28,6 +28,12 @@ const (
 	importJSONLInvalidMessage       = "import body must be JSONL"
 	importZipInvalidMessage         = "import ZIP must contain one JSONL file"
 	datasetNotFoundMessage          = "Evaluation dataset not found"
+	datasetArchivedMessage          = "Evaluation dataset is archived"
+	sessionIDRequiredMessage        = "session_id is required"
+	sessionIDTooLongMessage         = "session_id must be at most 255 characters"
+	sessionNotFoundMessage          = "Session not found"
+	scoringSessionMessage           = "Evaluation scoring sessions cannot be added to a dataset"
+	loadSessionFailedMessage        = "Could not load session"
 	presetDatasetNotFoundMessage    = "Evaluation dataset preset not found"
 	presetEvaluatorNotFoundMessage  = "Evaluation evaluator preset not found"
 	presetArchivedMessage           = "Published preset is archived"
@@ -160,6 +166,26 @@ func invalidImportZip(cause error) error {
 
 func datasetNotFound() error {
 	return apperr.New(apperr.NotFound, datasetNotFoundMessage, nil)
+}
+
+func datasetArchived() error {
+	return apperr.New(apperr.InvalidArgument, datasetArchivedMessage, nil)
+}
+
+func sessionIDRequired() error {
+	return apperr.New(apperr.InvalidArgument, sessionIDRequiredMessage, nil)
+}
+
+func sessionIDTooLong() error {
+	return apperr.New(apperr.InvalidArgument, sessionIDTooLongMessage, nil)
+}
+
+func sessionNotFound() error {
+	return apperr.New(apperr.NotFound, sessionNotFoundMessage, nil)
+}
+
+func scoringSessionRejected() error {
+	return apperr.New(apperr.InvalidArgument, scoringSessionMessage, nil)
 }
 
 func presetSourceConflict() error {

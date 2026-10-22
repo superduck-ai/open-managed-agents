@@ -1,10 +1,10 @@
 # QCA Evaluation 对齐计划
 
-- 状态：M1 评测集、M2 自定义评估器、M3 实验与 Compare、Session 终态收口、LLM 打分、Agent 打分 Session、预置目录、timeout/env 注入、Compare 分数列、打分 Agent 版本冻结、打分 sandbox 的 `/data` 与 `/output` 契约路径，以及评测 OpenAPI 已实现。今日额度不在范围内。
-- 剩余缺口：没有真实 E2B 端到端。评测集预置仍是 OMA demo case。
+- 状态：M1 评测集、M2 自定义评估器、M3 实验与 Compare、Session 终态收口、LLM 打分、Agent 打分 Session、预置目录、timeout/env 注入、Compare 分数列、打分 Agent 版本冻结、打分 sandbox 的 `/data` 与 `/output` 契约路径、评测 OpenAPI，以及把 Console Session 回流成评测 case 已实现。今日额度不在范围内。
+- 剩余缺口：没有真实 E2B 端到端。评测集预置仍是 OMA demo case。会话回流不复制文件字节，也不自动发现线上异常。
 - 日期：2026-10-22
 - 来源：qoder.com.cn 企业控制台，分析 → 评测（Beta）。下文只采用这次实测看到的信息架构和字段，不补写未出现的产品文案。评估器预置是 OMA 自写的维度包，覆盖同一类评分维度和路径/分数契约，不是 QCA 原文，也不使用 QCA 评估器 id。评测集预置仍是标明 OMA demo 的示例 case。
-- 非目标：不改 Workbench Evaluate 的请求、表格或测试预期。不实现今日额度、额度计数或额度 UI。不复制 QCA 预置 case 或评估器正文。
+- 非目标：不改 Workbench Evaluate 的请求、表格或测试预期。不实现今日额度、额度计数或额度 UI。不复制 QCA 预置 case 或评估器正文。不自动发现线上异常，不批量导入 session，不从 Agent 输出生成 checkpoints。
 
 Workbench Evaluate 仍是 prompt revision 上的变量行 A/B。QCA 评测不是这个表格，也没有一等的 Runs、Outcome 或 Results 页面；那些路径在实测里是空壳。
 
@@ -86,7 +86,7 @@ flowchart LR
 
 | QCA feature | OMA today | gap | proposed approach | priority |
 | --- | --- | --- | --- | --- |
-| 评测集：创建、导入、列出，带版本和 case | M1 可创建、导入、列出 workspace 评测集。创建时可以复用已发布预置版本的 case | 预置正文不是 QCA 原文 | M1：`evaluation_datasets`、`evaluation_dataset_versions`、`evaluation_cases`。创建集时写入版本 1。JSONL/ZIP 导入。不迁移 `workbench_evaluations` | P0，本切片 |
+| 评测集：创建、导入、列出，带版本和 case | M1 可创建、导入、列出 workspace 评测集。创建时可以复用已发布预置版本的 case。可以把本 workspace 的 Console Session 追加成当前版本的一条 case | 预置正文不是 QCA 原文。会话上的文件字节不复制进 case | M1：`evaluation_datasets`、`evaluation_dataset_versions`、`evaluation_cases`。创建集时写入版本 1。JSONL/ZIP 导入。`cases:from-session` 复用同一条追加路径。不迁移 `workbench_evaluations` | P0，本切片 |
 | 评估器 | M2 可创建、列出、读取自定义评估器。LLM 保存单个 model 和 prompt。手写 Agent 保存打分 Agent id。从预置复制的 Agent 评估器同时保存预置 prompt 和请求里的真实 `agent_id`。case `end_turn` 后 LLM 评估器会打分并落库。Agent 评估器会另开打分 Session，读 score 文件后落库 | 今日额度不实现。目录里的评估器预置没有 `agent_id`，要复制并绑定真实 Agent 后才能进实验。打分 Agent 的版本在实验创建时冻结，不跟随后续当前版本 | M2：`evaluation_evaluators` 与版本 1。变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。LLM 打分复用已有 provider。Agent 打分复用已有 Session 创建和 Filestore | P0，本切片 |
 | 实验 | M3 可创建、列出、读取实验。创建时冻结数据集版本、被测 Agent 版本、环境和评估器版本，并为每个 case 调用已有 Session 创建。Session 终态事件把 item 收成 completed 或 failed。`end_turn` 后为每个冻结评估器写入 `evalscore_`。Agent 评估器的 score 在打分 Session 终态之后写入 | timeout 与 env 进入 case Session 和打分 Session，再由已有 sandbox 创建读取 | M3：`evaluation_experiments` 与 case item。Session id 记在 item 上。`publishSessionEvents` 上的观察者读取已持久化的 `session.status_idle` / `session.status_terminated`，再写 score | P0，本切片 |
 | Compare | M3 按数据集版本和冻结评估器版本列出 status 为 completed 的实验，响应带 `scores`。对比页按评估器列出分数，失败显示错误，没有分数显示缺失 | 只有全部 item 都 completed 的实验会出现 | 固定数据集版本和评估器，变化的是 Agent 版本。名称在组织和工作区下唯一 | P0，本切片 |
@@ -217,6 +217,10 @@ M1：
 
 单条 case 与 JSONL 每行的字段是 `name`、`turns`、`desc`、`checkpoints`、`input_files`、`reference_files`。未知字段拒绝。导入是 JSONL（`application/x-ndjson` 或 `application/jsonl`），或只含一个 `.jsonl` 成员的 ZIP。超过 1000 条或 100MB 返回 400，校验通过前不写入。这与 Workbench 的 `{{var}},ideal_output` CSV 不是同一格式。
 
+会话回流：`POST .../evaluation-datasets/{datasetId}/cases:from-session`，body 是 `{session_id, name?, desc?, checkpoints?}`。只写自定义评测集。预置 id 不在这张表里，返回 404。已归档评测集返回 400，不读 session。另一 workspace 返回 404。本 workspace 没有该 session 返回 404。`metadata.evaluation_role` 为 `agent_score` 的打分 Session 返回 400。没有用户消息返回 400。这些失败都不写 case。
+
+写入复用手工创建的 `CreateEvaluationCases`：追加到当前最新版本，不新开版本。`turns` 是按事件顺序的 `user.message` 文本，Agent 消息和工具结果不进入 turns。`name` 用请求里的 name；为空时用 session title；title 也为空时用截断后的第一条用户消息。`desc` 只用请求值。`checkpoints` 只来自请求，不从 Agent 输出生成标准答案。`input_files` 只收录类型为 file、路径不在 `/outputs/` 下、并且能读出名称的 session resource，元素是 `{name, file_id}`。读不出的资源跳过。`reference_files` 留空。不把文件字节复制进 Filestore，输出文件也不当成参考答案。
+
 M2：
 
 - `GET/POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators`
@@ -256,7 +260,8 @@ M3 不做取消。不实现今日额度。创建、列表、读取、start 和 c
 Managed Agents 导航在 Sessions 与 Observability 之间增加 Datasets。OMA 没有「分析」分组，所以不把评测放进用量分析。
 
 - `/workspaces/$workspaceId/evaluations`：Custom 与 Presets 两个页签。Custom 仍是评测集列表和创建（name、desc）。Presets 列出已发布目录，Reuse 打开已发布版本的 case，并以 `source_version_id` 复制成自定义评测集
-- `/workspaces/$workspaceId/evaluations/datasets/$datasetId`：当前版本、case 列表、单条 case、JSONL 导入
+- `/workspaces/$workspaceId/evaluations/datasets/$datasetId`：当前版本、case 列表、单条 case、JSONL 导入，以及「从会话导入」/ Import from session
+- Session 详情：按钮「加入评测集」/ Add to evaluation dataset。选择未归档的自定义评测集，可选 name、desc、checkpoints JSON。提交 `cases:from-session`
 - `/workspaces/$workspaceId/evaluations/evaluators`：Custom 与 Presets 两个页签。Custom 仍在 LLM 与 Agent 之间切换。Presets 列出 11 个 Agent 维度。Create from preset 要填写真实 Agent，再复制预置 prompt
 
 Managed Agents 导航在 Evaluators 旁增加 Experiments。
@@ -275,7 +280,8 @@ Workbench 的 prompt/evaluate 开关保持原样。
 3. **M2**：自定义评估器。LLM 与 Agent 两种类型，创建时写入版本 1。变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。
 4. **M3**：实验与 Compare。绑定数据集版本、Agent、Environment、timeout 和冻结的评估器版本；每个 case 复用已有 Session 创建并记下 session id。已有 Session 终态事件把 item 收成 completed 或 failed，并汇总实验状态。`end_turn` 后对冻结的 LLM 评估器打分并写入 `evalscore_`。Compare 固定数据集版本和评估器，只列出 completed，并按评估器展示分数。名称在组织和工作区下唯一。timeout/env 经已有 Session metadata 和 sandbox 创建注入。
 5. **预置目录**：只读的已发布评测集和评估器。评测集是 19 个 OMA demo。评估器是 11 个 OMA 自写的 Agent 维度，目录不带 `agent_id`；复制时绑定真实 Agent，并带上预置 prompt。不是 QCA 原文。
-6. **Agent 打分 sandbox（本变更）**：case `end_turn` 后为 Agent 评估器启动打分 Session，把 case 结果交给打分 Agent，并在打分 Session 终态读取 `/outputs/score.json`。打分 sandbox 用软链暴露 `/data/session/result.json` 和 `/output/score.json`，不增加 Filestore 根。
+6. **Agent 打分 sandbox**：case `end_turn` 后为 Agent 评估器启动打分 Session，把 case 结果交给打分 Agent，并在打分 Session 终态读取 `/outputs/score.json`。打分 sandbox 用软链暴露 `/data/session/result.json` 和 `/output/score.json`，不增加 Filestore 根。
+7. **会话回流评测集（本变更）**：把一条 Console Session 追加成自定义评测集当前版本的 case。turns 来自用户消息。checkpoints 只来自请求。打分 Session、空用户消息、已归档评测集和错误 workspace 不写入。
 
 今日额度不在里程碑里。不实现每日 100 次、上海时区重置、Agent 评估器是否计入，也不做额度 UI 或计数器。
 
@@ -283,7 +289,7 @@ Workbench 的 prompt/evaluate 开关保持原样。
 
 ## 未排期
 
-不把今日额度排进后续切片。不改 Workbench。预置目录已做只读浏览和复用。评估器预置是 OMA 自写维度包，不收录 QCA 原文。还没有目录编辑，也不能把目录 id 直接绑到实验上。真实 E2B 端到端仍未做。
+不把今日额度排进后续切片。不改 Workbench。预置目录已做只读浏览和复用。评估器预置是 OMA 自写维度包，不收录 QCA 原文。还没有目录编辑，也不能把目录 id 直接绑到实验上。会话回流不复制文件字节，不批量导入，也不从 Agent 输出打标。真实 E2B 端到端仍未做。
 
 ## 验收与未覆盖
 

@@ -33,6 +33,7 @@ func TestEvaluationOpenAPIContract(t *testing.T) {
 		{method: "get", path: evaluationOpenAPIPrefix + "/evaluation-datasets/{datasetId}/cases", id: "ConsoleListEvaluationCases"},
 		{method: "post", path: evaluationOpenAPIPrefix + "/evaluation-datasets/{datasetId}/cases", id: "ConsoleCreateEvaluationCase"},
 		{method: "post", path: evaluationOpenAPIPrefix + "/evaluation-datasets/{datasetId}/cases:import", id: "ConsoleImportEvaluationCases"},
+		{method: "post", path: evaluationOpenAPIPrefix + "/evaluation-datasets/{datasetId}/cases:from-session", id: "ConsoleCreateEvaluationCaseFromSession"},
 		{method: "get", path: evaluationOpenAPIPrefix + "/evaluation-dataset-presets", id: "ConsoleListEvaluationDatasetPresets"},
 		{method: "get", path: evaluationOpenAPIPrefix + "/evaluation-dataset-presets/{presetId}", id: "ConsoleGetEvaluationDatasetPreset"},
 		{method: "get", path: evaluationOpenAPIPrefix + "/evaluation-dataset-presets/{presetId}/cases", id: "ConsoleListEvaluationDatasetPresetCases"},
@@ -86,6 +87,10 @@ func assertEvaluationSchemaFields(t *testing.T, spec openAPISpec) {
 	score := spec.Components.Schemas["EvaluationExperimentScore"].Properties
 	if _, ok := dataset["source_version_id"]; !ok {
 		t.Fatalf("%s dataset create missing source_version_id", spec.Language)
+	}
+	fromSession := spec.Components.Schemas["EvaluationCaseFromSession"].Properties
+	if _, ok := fromSession["session_id"]; !ok {
+		t.Fatalf("%s case from session missing session_id", spec.Language)
 	}
 	if _, ok := evaluator["source_version_id"]; !ok {
 		t.Fatalf("%s evaluator create missing source_version_id", spec.Language)

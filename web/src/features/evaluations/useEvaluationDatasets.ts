@@ -4,6 +4,7 @@ import { useAuth } from '../../shared/auth/context';
 import { useWorkspace } from '../../shared/workspaces/context';
 import {
   createEvaluationCase,
+  createEvaluationCaseFromSession,
   createEvaluationDataset,
   getEvaluationDataset,
   importEvaluationCases,
@@ -11,6 +12,7 @@ import {
   listEvaluationDatasetPresetCases,
   listEvaluationDatasetPresets,
   listEvaluationDatasets,
+  type CreateEvaluationCaseFromSessionInput,
   type CreateEvaluationCaseInput,
   type CreateEvaluationDatasetInput,
 } from './api';
@@ -94,6 +96,19 @@ export function useCreateEvaluationCase(datasetId: string) {
   return useMutation({
     mutationFn: (input: CreateEvaluationCaseInput) =>
       createEvaluationCase(workspace.orgUuid ?? '', workspace.workspaceId, datasetId, input, csrfToken),
+    onSuccess: async () => {
+      await invalidateCases(queryClient, workspace.orgUuid, workspace.workspaceId, datasetId);
+    },
+  });
+}
+
+export function useCreateEvaluationCaseFromSession(datasetId: string) {
+  const workspace = useEvaluationWorkspace();
+  const { csrfToken } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateEvaluationCaseFromSessionInput) =>
+      createEvaluationCaseFromSession(workspace.orgUuid ?? '', workspace.workspaceId, datasetId, input, csrfToken),
     onSuccess: async () => {
       await invalidateCases(queryClient, workspace.orgUuid, workspace.workspaceId, datasetId);
     },

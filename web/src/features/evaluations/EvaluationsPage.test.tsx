@@ -13,6 +13,7 @@ import { I18nProvider } from '../../shared/i18n';
 import { defaultWorkspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
 import { resetTestDom } from '../../test/setup';
+import { AddSessionToEvaluationDataset } from './AddSessionToEvaluationDataset';
 import { DatasetCasesPage } from './DatasetCasesPage';
 import { ExperimentComparePage } from './ExperimentComparePage';
 import { ExperimentNewPage } from './ExperimentNewPage';
@@ -121,6 +122,118 @@ test('lists cases and imports JSONL', async () => {
   expect(imported?.contentType).toContain('application/x-ndjson');
   expect(imported?.body).toBe('{"name":"second","turns":["hi"]}\n');
   expect(imported?.url).toContain('/evaluation-datasets/evalds_test/cases:import');
+});
+
+test('imports a dataset case from a session id', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/datasets/evalds_test');
+  const requests: Array<{ url: string; method: string; body: string; csrf: string }> = [];
+  globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    const headers = new Headers(init?.headers);
+    requests.push({
+      url,
+      method,
+      body: typeof init?.body === 'string' ? init.body : '',
+      csrf: headers.get('X-CSRF-Token') ?? '',
+    });
+    if (method === 'POST') {
+      return Response.json({
+        id: 'evalcase_from_session',
+        type: 'evaluation_case',
+        dataset_id: 'evalds_test',
+        version_id: 'edv_test',
+        position: 2,
+        name: 'checkout',
+        desc: '',
+        turns: ['where is my order'],
+        checkpoints: ['ready'],
+        input_files: null,
+        reference_files: null,
+        created_at: '2026-10-22T00:00:00Z',
+        updated_at: '2026-10-22T00:00:00Z',
+      });
+    }
+    if (url.endsWith('/cases')) {
+      return Response.json({ data: [], next_page: null });
+    }
+    return Response.json(dataset());
+  });
+
+  renderPage(<DatasetCasesPage />);
+  fireEvent.change(await screen.findByLabelText('Session'), { target: { value: 'sesn_case' } });
+  fireEvent.change(screen.getByLabelText('Checkpoints'), { target: { value: '{' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Import from session' }));
+  expect(await screen.findByText('Checkpoints must be a JSON array or object.')).toBeTruthy();
+  expect(requests.some((request) => request.method === 'POST')).toBe(false);
+  fireEvent.change(screen.getByLabelText('Checkpoints'), { target: { value: '["ready"]' } });
+  fireEvent.change(screen.getAllByLabelText('Name')[1], { target: { value: 'checkout' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Import from session' }));
+  await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
+  const created = requests.find((request) => request.method === 'POST');
+  expect(created?.url).toContain('/evaluation-datasets/evalds_test/cases:from-session');
+  expect(created?.csrf).toBe('csrf_test');
+  expect(JSON.parse(created?.body ?? '{}')).toEqual({
+    session_id: 'sesn_case',
+    name: 'checkout',
+    desc: '',
+    checkpoints: ['ready'],
+  });
+});
+
+test('adds a session to a custom evaluation dataset', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_case');
+  const requests: Array<{ url: string; method: string; body: string; csrf: string }> = [];
+  globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    const headers = new Headers(init?.headers);
+    requests.push({
+      url,
+      method,
+      body: typeof init?.body === 'string' ? init.body : '',
+      csrf: headers.get('X-CSRF-Token') ?? '',
+    });
+    if (method === 'POST') {
+      return Response.json({ id: 'evalcase_from_session', type: 'evaluation_case' });
+    }
+    return Response.json({
+      data: [
+        dataset(),
+        dataset({ id: 'evalds_old', name: 'old', status: 'archived' }),
+        dataset({ id: 'evalds_refunds', name: 'refunds' }),
+      ],
+      next_page: null,
+    });
+  });
+
+  renderPage(<AddSessionToEvaluationDataset sessionId="sesn_case" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Add to evaluation dataset' }));
+  const dialog = await screen.findByRole('dialog');
+  fireEvent.click(within(dialog).getByRole('combobox', { name: 'Dataset' }));
+  const listbox = await screen.findByRole('listbox');
+  expect(within(listbox).queryByText('old')).toBeNull();
+  const option = within(listbox).getByRole('option', { name: 'refunds' });
+  fireEvent.pointerDown(option);
+  fireEvent.mouseDown(option);
+  fireEvent.pointerUp(option);
+  fireEvent.mouseUp(option);
+  fireEvent.click(option);
+  await waitFor(() =>
+    expect(within(dialog).getByRole('combobox', { name: 'Dataset' }).textContent).toContain('refunds'),
+  );
+  fireEvent.change(within(dialog).getByLabelText('Checkpoints'), { target: { value: '["ready"]' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Add to evaluation dataset' }));
+  await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
+  const created = requests.find((request) => request.method === 'POST');
+  expect(created?.url).toContain('/evaluation-datasets/evalds_refunds/cases:from-session');
+  expect(created?.csrf).toBe('csrf_test');
+  expect(JSON.parse(created?.body ?? '{}')).toEqual({
+    session_id: 'sesn_case',
+    name: '',
+    desc: '',
+    checkpoints: ['ready'],
+  });
 });
 
 test('lists evaluators and creates an llm evaluator', async () => {

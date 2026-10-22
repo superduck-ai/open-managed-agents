@@ -141,6 +141,13 @@ export type CreateEvaluationCaseInput = {
   turns: string[];
 };
 
+export type CreateEvaluationCaseFromSessionInput = {
+  session_id: string;
+  name?: string;
+  desc?: string;
+  checkpoints?: unknown;
+};
+
 export type EvaluationExperimentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 export type EvaluationExperimentEvaluator = {
@@ -317,6 +324,21 @@ export function createEvaluationCase(
   csrfToken?: string,
 ) {
   return consoleApi<EvaluationCase>(`${datasetPath(orgUuid, workspaceId, datasetId)}/cases`, {
+    method: 'POST',
+    headers: workspaceHeaders(workspaceId),
+    csrfToken,
+    body: JSON.stringify(input),
+  });
+}
+
+export function createEvaluationCaseFromSession(
+  orgUuid: string,
+  workspaceId: string,
+  datasetId: string,
+  input: CreateEvaluationCaseFromSessionInput,
+  csrfToken?: string,
+) {
+  return consoleApi<EvaluationCase>(`${datasetPath(orgUuid, workspaceId, datasetId)}/cases:from-session`, {
     method: 'POST',
     headers: workspaceHeaders(workspaceId),
     csrfToken,

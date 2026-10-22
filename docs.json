@@ -485,7 +485,8 @@
                       "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}",
                       "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases",
                       "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases",
-                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:import"
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:import",
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:from-session"
                     ]
                   },
                   {
@@ -859,7 +860,8 @@
                       "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}",
                       "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases",
                       "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases",
-                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:import"
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:import",
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:from-session"
                     ]
                   },
                   {

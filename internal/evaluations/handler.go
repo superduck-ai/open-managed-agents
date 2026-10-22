@@ -44,6 +44,8 @@ type Store interface {
 	GetEvaluationEvaluatorVersion(context.Context, string, string, string) (db.EvaluationEvaluatorVersion, error)
 	CreateEvaluationExperimentScore(context.Context, db.EvaluationExperimentScore) (db.EvaluationExperimentScore, error)
 	ListSessionEventsPage(context.Context, db.ListSessionEventsPageParams) ([]db.SessionEvent, bool, error)
+	GetSession(context.Context, string, string) (db.Session, bool, error)
+	ListSessionResources(context.Context, string, string) ([]db.SessionResource, error)
 }
 
 type CaseSessionInput struct {
@@ -100,6 +102,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases", h.wrap(h.listCases))
 	r.Post("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases", h.wrap(h.createCase))
 	r.Post("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:import", h.wrap(h.importCases))
+	r.Post("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:from-session", h.wrap(h.createCaseFromSession))
 	r.Post("/workspaces/{workspaceId}/evaluation-evaluators", h.wrap(h.createEvaluator))
 	r.Get("/workspaces/{workspaceId}/evaluation-evaluators", h.wrap(h.listEvaluators))
 	r.Get("/workspaces/{workspaceId}/evaluation-evaluators/{evaluatorId}", h.wrap(h.getEvaluator))

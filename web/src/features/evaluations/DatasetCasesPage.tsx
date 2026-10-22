@@ -8,10 +8,13 @@ import { TableEmptyRow, TableErrorRow, TableLoadingRow } from '../../shared/ui/r
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { Textarea } from '../../shared/ui/textarea';
 import { evaluationErrorMessage, type EvaluationCase } from './api';
+import { parseSessionCaseCheckpoints } from './sessionCase';
+import { SessionCaseFields } from './SessionCaseFields';
 import {
   datasetIdFromPath,
   evaluationsIndexHref,
   useCreateEvaluationCase,
+  useCreateEvaluationCaseFromSession,
   useEvaluationCaseList,
   useImportEvaluationCases,
 } from './useEvaluationDatasets';
@@ -47,6 +50,7 @@ export function DatasetCasesPage() {
       <div className="mb-8 grid gap-6 lg:grid-cols-2">
         <AddCaseForm datasetId={datasetId} />
         <ImportCasesForm datasetId={datasetId} />
+        <ImportSessionCaseForm datasetId={datasetId} />
       </div>
       <Table>
         <TableHeader>
@@ -149,6 +153,70 @@ function AddCaseForm({ datasetId }: { datasetId: string }) {
       {create.error ? <p className="text-sm text-destructive">{evaluationErrorMessage(create.error)}</p> : null}
       <Button type="submit" disabled={create.isPending}>
         {msg('evaluations.addCase', 'Add case')}
+      </Button>
+    </form>
+  );
+}
+
+function ImportSessionCaseForm({ datasetId }: { datasetId: string }) {
+  const { msg } = useI18n();
+  const create = useCreateEvaluationCaseFromSession(datasetId);
+  const [sessionId, setSessionId] = useState('');
+  const [name, setName] = useState('');
+  const [desc, setDesc] = useState('');
+  const [checkpoints, setCheckpoints] = useState('');
+  const [checkpointError, setCheckpointError] = useState(false);
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const parsed = parseSessionCaseCheckpoints(checkpoints);
+    if (parsed.error) {
+      setCheckpointError(true);
+      return;
+    }
+    setCheckpointError(false);
+    create.mutate(
+      { session_id: sessionId, name, desc, checkpoints: parsed.checkpoints },
+      {
+        onSuccess: () => {
+          setSessionId('');
+          setName('');
+          setDesc('');
+          setCheckpoints('');
+        },
+      },
+    );
+  }
+
+  return (
+    <form className="grid gap-3 lg:col-span-2" onSubmit={submit}>
+      <h2 className="text-sm font-medium">{msg('evaluations.importFromSession', 'Import from session')}</h2>
+      <p className="text-sm text-muted-foreground">
+        {msg(
+          'evaluations.addSessionToDatasetHint',
+          'User messages become turns. Agent replies are not saved as checkpoints.',
+        )}
+      </p>
+      <Label htmlFor="evaluation-case-session">{msg('evaluations.sessionId', 'Session')}</Label>
+      <Input
+        id="evaluation-case-session"
+        value={sessionId}
+        onChange={(event) => setSessionId(event.target.value)}
+        required
+      />
+      <SessionCaseFields
+        idPrefix="import-session-case"
+        name={name}
+        desc={desc}
+        checkpoints={checkpoints}
+        checkpointError={checkpointError}
+        onName={setName}
+        onDesc={setDesc}
+        onCheckpoints={setCheckpoints}
+      />
+      {create.error ? <p className="text-sm text-destructive">{evaluationErrorMessage(create.error)}</p> : null}
+      <Button type="submit" disabled={create.isPending}>
+        {msg('evaluations.importFromSession', 'Import from session')}
       </Button>
     </form>
   );

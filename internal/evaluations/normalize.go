@@ -18,9 +18,11 @@ const (
 )
 
 type createDatasetRequest struct {
-	Name            string `json:"name"`
-	Desc            string `json:"desc"`
-	SourceVersionID string `json:"source_version_id"`
+	Name            string   `json:"name"`
+	Desc            string   `json:"desc"`
+	SourceVersionID string   `json:"source_version_id"`
+	SourceDatasetID string   `json:"source_dataset_id"`
+	CaseIDs         []string `json:"case_ids"`
 }
 
 type caseInput struct {

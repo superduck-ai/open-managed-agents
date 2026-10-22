@@ -10,6 +10,7 @@ import {
   deleteEvaluationCase,
   getEvaluationDataset,
   importEvaluationCases,
+  listAllEvaluationCases,
   listEvaluationCases,
   listEvaluationDatasetPresetCases,
   listEvaluationDatasetPresets,
@@ -52,6 +53,20 @@ export function useEvaluationDatasetPresetList(enabled = true) {
     queryFn: () => listEvaluationDatasetPresets(workspace.orgUuid ?? '', workspace.workspaceId),
   });
   return { workspace, query };
+}
+
+export function useEvaluationReuseCases(kind: '' | 'dataset' | 'preset', id: string, versionId: string) {
+  const workspace = useEvaluationWorkspace();
+  return useQuery({
+    queryKey: ['evaluation-reuse-cases', workspace.orgUuid, workspace.workspaceId, kind, id, versionId],
+    enabled: workspace.workspaceReady && kind !== '' && id.length > 0 && versionId.length > 0,
+    queryFn: () =>
+      kind === 'preset'
+        ? listEvaluationDatasetPresetCases(workspace.orgUuid ?? '', workspace.workspaceId, id, versionId).then(
+            (page) => page.data,
+          )
+        : listAllEvaluationCases(workspace.orgUuid ?? '', workspace.workspaceId, id),
+  });
 }
 
 export function useEvaluationDatasetPresetCases(presetId: string, versionId: string) {

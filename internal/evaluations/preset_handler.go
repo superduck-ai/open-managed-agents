@@ -86,12 +86,16 @@ func (h *Handler) getEvaluatorPreset(w http.ResponseWriter, r *http.Request) err
 	return nil
 }
 
-func (h *Handler) createDatasetFromPreset(ctx context.Context, dataset db.EvaluationDataset, sourceVersionID string) (db.EvaluationDataset, error) {
+func (h *Handler) createDatasetFromPreset(ctx context.Context, dataset db.EvaluationDataset, sourceVersionID string, caseIDs []string) (db.EvaluationDataset, error) {
 	_, version, err := lookupPresetDatasetVersion(sourceVersionID)
 	if err != nil {
 		return db.EvaluationDataset{}, presetLookupError(err, presetDatasetNotFoundMessage)
 	}
-	writes, err := newCaseWrites(presetCasesNormalized(version))
+	cases, err := presetCasesByID(version, caseIDs)
+	if err != nil {
+		return db.EvaluationDataset{}, err
+	}
+	writes, err := newCaseWrites(cases)
 	if err != nil {
 		return db.EvaluationDataset{}, mapStoreError(err, datasetNotFoundMessage, createDatasetFailedMessage)
 	}

@@ -116,6 +116,8 @@ export type CreateEvaluationDatasetInput = {
   name: string;
   desc?: string;
   source_version_id?: string;
+  source_dataset_id?: string;
+  case_ids?: string[];
 };
 
 export type CreateEvaluationEvaluatorFromPresetInput = {
@@ -349,6 +351,27 @@ export function listEvaluationCases(orgUuid: string, workspaceId: string, datase
   return consoleApi<EvaluationCasePage>(`${datasetPath(orgUuid, workspaceId, datasetId)}/cases`, {
     headers: workspaceHeaders(workspaceId),
   });
+}
+
+export async function listAllEvaluationCases(orgUuid: string, workspaceId: string, datasetId: string) {
+  const cases: EvaluationCase[] = [];
+  let page = '';
+  for (let index = 0; index < 10; index += 1) {
+    const params = new URLSearchParams({ limit: '100' });
+    if (page) {
+      params.set('page', page);
+    }
+    const result = await consoleApi<EvaluationCasePage>(
+      `${datasetPath(orgUuid, workspaceId, datasetId)}/cases?${params.toString()}`,
+      { headers: workspaceHeaders(workspaceId) },
+    );
+    cases.push(...result.data);
+    if (!result.next_page) {
+      return cases;
+    }
+    page = result.next_page;
+  }
+  return cases;
 }
 
 export function createEvaluationCase(

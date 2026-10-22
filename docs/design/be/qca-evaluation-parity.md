@@ -114,7 +114,7 @@ Workbench Evaluate 继续做 prompt 变量实验。评测集的 case 是 `turns`
 
 - `external_id` 前缀 `edv_`
 - `dataset_uuid` 加 `version` 唯一，`version` 从 1 开始
-- M1 创建评测集时在同一事务写入版本 1。带 `source_version_id` 时，同一事务把已发布预置版本的 case 复制进来，并生成新的 `evalcase_` id
+- M1 创建评测集时在同一事务写入版本 1。带 `source_version_id` 时，同一事务把已发布预置版本的 case 复制进来，并生成新的 `evalcase_` id。`case_ids` 可以只复制其中一部分。`source_dataset_id` 从自定义评测集的当前版本按 `case_ids` 复制
 
 `evaluation_cases`
 
@@ -214,7 +214,7 @@ M1：
 
 路径里的 workspace 可以是 `default`、workspace UUID 或 external id。查询和写入使用 principal 的组织与 workspace UUID。另一 workspace 的 id 返回 404，且不读库。
 
-创建评测集的 body 是 `{name, desc}`，也可以加 `source_version_id`。`source_version_id` 指向已发布预置版本时，复制该版本的 case。响应带 `status` 和 `version: {id, version, case_count}`。已归档预置返回 400，未知 id 返回 404，都不写库。
+创建评测集的 body 是 `{name, desc}`。也可以带 `source_version_id` 复制已发布预置版本的全部 case。`case_ids` 和 `source_version_id` 一起出现时，按请求顺序只复制这些 case；未知、重复或空 id 返回 400，不写库。`source_dataset_id` 复制自定义评测集当前版本里选中的 case，并且必须带非空 `case_ids`。已归档源返回 400，未知评测集返回 404，都不写库。`source_version_id` 和 `source_dataset_id` 不能同时出现。只带 `case_ids` 返回 400。省略这两个源字段时仍创建空评测集。响应带 `status` 和 `version: {id, version, case_count}`。已归档预置返回 400，未知预置版本返回 404，都不写库。
 
 单条 case 与 JSONL 每行的字段是 `name`、`turns`、`desc`、`checkpoints`、`input_files`、`reference_files`。未知字段拒绝。导入是 JSONL（`application/x-ndjson` 或 `application/jsonl`），或 ZIP。ZIP 含一个 `.jsonl`，还可以带 `input_files/` 与 `reference_files/` 下的文件；一层公共根目录会剥掉。其他成员返回 400。超过 1000 条或 100MB 返回 400，校验通过前不写入。这与 Workbench 的 `{{var}},ideal_output` CSV 不是同一格式。
 
@@ -269,7 +269,7 @@ M3 不做取消。不实现今日额度。创建、列表、读取、start 和 c
 
 Managed Agents 侧边栏在 Sessions 与 Observability 之间只有一条「评测」/ Evaluation，不显示 Beta。它打开评测集页。页内用 EvaluationSectionNav 保留三个页签：评测集、评估器、实验。不再把这三项做成并列的侧边栏入口。OMA 没有「分析」分组，所以不把评测放进用量分析。
 
-- `/workspaces/$workspaceId/evaluations`：Custom 与 Presets 两个页签。Custom 列出评测集，列有版本、用例数和状态。创建对话框可以选择空白、上传 JSONL 或 ZIP，或从预置复制。对话框里的「如何创建评测集」/ How to create a dataset 说明格式和字段，并可以下载 `cases.jsonl` 模板。ZIP 示例是 `cases.jsonl` 加上可选的 `input_files/` 与 `reference_files/`，用例里写相对路径。Presets 列出已发布目录，Reuse 打开已发布版本的 case，并以 `source_version_id` 复制成自定义评测集
+- `/workspaces/$workspaceId/evaluations`：Custom 与 Presets 两个页签。Custom 列出评测集，列有版本、用例数和状态。新建评测集对话框只有两条路径：上传数据，或复用已有。上传页签要求 JSONL 或 ZIP（最大 100MB、1000 条），拖拽或选择文件；附件放在 ZIP 里。「下载模板」得到 ZIP，里面是 `cases.jsonl` 以及示例 `input_files/`、`reference_files/`。「如何创建评测集」说明字段。名称在对话框里最多 50 个字符，API 仍允许 255。复用页签选择源评测集和可用版本，左侧多选用例，右侧显示已选择的条数，创建时只复制这些 case。自定义源用 `source_dataset_id` 加 `case_ids`。预置源用 `source_version_id`，带 `case_ids` 时只复制选中的 case。Presets 页的整版复用仍走不带 `case_ids` 的 `source_version_id`。会话导入留在评测集详情里
 - `/workspaces/$workspaceId/evaluations/datasets/$datasetId`：当前版本、case 列表、点开用例抽屉。抽屉可以改 name、turns、desc、checkpoints 和 input/reference 的 `{name, file_id}` JSON，保存打到当前版本；删除要确认。检查点输入是每行一条纯文本，提交时写成字符串数组；整段能解析成字符串 JSON 数组时按原样保存，对象或其他形状会提示改成每行一条或字符串数组。有 `file_id` 时仍可下载。可以添加单条 case、粘贴 JSONL，或上传 JSONL / ZIP。ZIP 的伴随文件会变成 workspace Files。JSONL 里的 `input_files` / `reference_files` 可以是相对路径字符串；能对上 ZIP 成员时写成 `{name, file_id}`。「从会话导入」/ Import from session 和「批量导入会话」/ Import sessions 仍在。后两个都可以勾选是否把输出文件写入 reference files。批量输入用换行或逗号分隔 session id，提交后按条显示成功数和失败原因
 - Session 详情：按钮「加入评测集」/ Add to evaluation dataset。选择未归档的自定义评测集，可选 name、desc、每行一条的检查点，以及是否包含输出文件。提交 `cases:from-session`。Session 列表没有多选，所以批量入口只在评测集 case 页
 - `/workspaces/$workspaceId/evaluations/evaluators`：Custom 与 Presets 两个页签。Custom 仍在 LLM 与 Agent 之间切换，名称链到详情。Presets 列出 11 个 Agent 维度。Create from preset 要填写真实 Agent，再复制预置 prompt
@@ -304,7 +304,7 @@ Workbench 的 prompt/evaluate 开关保持原样。
 
 同一 workspace 可以创建评测集（同时得到 `edv_` 版本 1）、用 JSONL 或 ZIP 导入 case，并列出 case。ZIP 可以在一个 JSONL 之外包含 `input_files/` 与 `reference_files/`，以及一层公共根目录。接上文件复制器时，伴随字节写入 workspace Files，case 上是新的 `file_id`；已经带 `file_id` 且名称对不上的引用保持不变。没有复制器时这种 ZIP 失败。空 name、空 turns、超过 1000 条、错误 ZIP 和另一 workspace 的 id 在写库前失败。归档行不出现在列表里。`PATCH` 和 `DELETE` 改当前版本上的 case，不新开 `edv_`。不存在的 case 返回 404。
 
-预置目录列出 19 个评测集和 11 个 Agent 评估器。`evalds_oma_demo_03` 的 v2 有两条 case。复用 `edv_oma_demo_03_v2` 会在同一事务写入自定义评测集和两条新 case。已归档评测集和未知 id 不写库。`eev_oma_latency_v1` 复制出 Agent 评估器：保存请求里的 `agent_id` 和预置 prompt。缺少 `agent_id` 不写库。`source_version_id` 和 model 同时出现会失败。另一 workspace 读不到目录。
+预置目录列出 19 个评测集和 11 个 Agent 评估器。`evalds_oma_demo_03` 的 v2 有两条 case。复用 `edv_oma_demo_03_v2` 会在同一事务写入自定义评测集和两条新 case。只带其中一条 `case_ids` 时只复制那一条。从自定义评测集复制时，`source_dataset_id` 加 `case_ids` 按请求顺序写入新 case；已归档、未知评测集、未知 case、空 `case_ids`、重复 id，以及和 `source_version_id` 同时出现，都不写库。已归档预置和未知 id 不写库。`eev_oma_latency_v1` 复制出 Agent 评估器：保存请求里的 `agent_id` 和预置 prompt。缺少 `agent_id` 不写库。`source_version_id` 和 model 同时出现会失败。另一 workspace 读不到目录。
 
 同一 workspace 可以创建 LLM 评估器（model、prompt、已选变量，版本 `eev_`）和 Agent 评估器（agent id，响应带 score.json 契约），并列出、读取。错误类型、未选变量、Agent 带 prompt，以及另一 workspace 的 id，在写库前失败。`POST .../versions` 追加版本。LLM 可以改 model、prompt 和变量。Agent 只能改 `agent_id`，prompt 从当前版本复制；提交 prompt 会失败。GET 返回新的最大版本，旧的 `eev_` 仍能按 id 读取。
 
@@ -314,6 +314,6 @@ Workbench 的 prompt/evaluate 开关保持原样。
 
 `just test-e2e-agent-score-sandbox` 在有 E2B 凭证时跑 `TestAgentScoreSandboxContract`。它确认打分 sandbox 的 `/data` 与 `/output` 软链、`/data/session/result.json`、实验 env，把分数写到 `/output/score.json`，并在 Filestore `/outputs/score.json` 可读之后把 score 行收成 completed。没有凭证或 `go test -short` 时跳过。默认 `just test` 不跑这个 e2e。
 
-`TestEvaluationOpenAPIContract` 检查中英文 OpenAPI 都覆盖上述 Console 路径，创建请求含 `source_version_id`，实验响应含 `scores`，并且这些操作使用 Console 会话而不是 `/v1` 的 beta 参数。Workbench Evaluate 和今日额度不在这两份文档里。
+`TestEvaluationOpenAPIContract` 检查中英文 OpenAPI 都覆盖上述 Console 路径，创建请求含 `source_version_id`、`source_dataset_id` 和 `case_ids`，实验响应含 `scores`，并且这些操作使用 Console 会话而不是 `/v1` 的 beta 参数。Workbench Evaluate 和今日额度不在这两份文档里。
 
 Postgres 迁移测试在设置 `TEST_MIGRATION_DATABASE_URL` 时覆盖到 `00100`。默认 `just test` 不连接外部数据库；未设置该变量时，不能把 `00097`、`00098`、`00099` 或 `00100` 说成已经在真实 Postgres 上应用过。

@@ -45,6 +45,9 @@ test('lists datasets and creates one', async () => {
       body: typeof init?.body === 'string' ? init.body : '',
       csrf: headers.get('X-CSRF-Token') ?? '',
     });
+    if (url.includes('/cases:import')) {
+      return Response.json({ data: [], next_page: null });
+    }
     if (method === 'POST') {
       return Response.json(dataset({ id: 'evalds_created', name: 'billing', desc: 'nightly' }));
     }
@@ -57,15 +60,24 @@ test('lists datasets and creates one', async () => {
   expect(screen.getByRole('columnheader', { name: 'Cases' })).toBeTruthy();
   expect(screen.getByRole('cell', { name: 'Available' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Create dataset' }));
+  expect(screen.getByRole('heading', { name: 'New dataset' })).toBeTruthy();
+  expect(screen.getByText('0/50')).toBeTruthy();
+  expect(screen.getByPlaceholderText('What this dataset evaluates')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'billing' } });
   fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'nightly' } });
+  expect(screen.getByText('7/50')).toBeTruthy();
+  const file = new File(['{"name":"second","turns":["hi"]}\n'], 'cases.jsonl', { type: 'application/jsonl' });
+  fireEvent.change(screen.getByLabelText(/Drag or choose a dataset file/), { target: { files: [file] } });
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create dataset' }));
 
-  await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
-  const created = requests.find((request) => request.method === 'POST');
+  await waitFor(() => expect(requests.some((request) => request.url.includes('/cases:import'))).toBe(true));
+  const created = requests.find((request) => request.method === 'POST' && request.body.startsWith('{'));
+  const imported = requests.find((request) => request.url.includes('/cases:import'));
   expect(created?.url).toContain('/api/console/organizations/org_test/workspaces/default/evaluation-datasets');
   expect(created?.csrf).toBe('csrf_test');
   expect(JSON.parse(created?.body ?? '{}')).toEqual({ name: 'billing', desc: 'nightly' });
+  expect(imported?.method).toBe('POST');
+  expect(imported?.csrf).toBe('csrf_test');
   expect(screen.getByRole('link', { name: 'billing' }).getAttribute('href')).toBe(
     '/workspaces/default/evaluations/datasets/evalds_test',
   );
@@ -76,9 +88,10 @@ test('explains dataset files and checkpoints in the create dialog', async () => 
   globalThis.fetch = mock(async () => Response.json({ data: [], next_page: null }));
   renderPage(<EvaluationsPage />);
   fireEvent.click(screen.getByRole('button', { name: 'Create dataset' }));
-  expect(screen.getByRole('button', { name: 'Upload a file' })).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Reuse a preset' })).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Upload data' })).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Reuse existing' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Download template' })).toBeTruthy();
+  expect(screen.getByText(/ZIP template is a complete example/)).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'How to create a dataset' }));
   expect(await screen.findByRole('heading', { name: 'File format' })).toBeTruthy();
   expect(screen.getAllByText(/cases\.jsonl/).length).toBeGreaterThan(0);
@@ -86,6 +99,62 @@ test('explains dataset files and checkpoints in the create dialog', async () => 
   expect(screen.getByText(/Acceptance checks the evaluator/)).toBeTruthy();
   expect(screen.getByRole('cell', { name: 'input_files' })).toBeTruthy();
   expect(screen.getByRole('cell', { name: 'reference_files' })).toBeTruthy();
+});
+
+test('creates a dataset from selected cases', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations');
+  const requests: Array<{ url: string; method: string; body: string }> = [];
+  globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    requests.push({ url, method, body: typeof init?.body === 'string' ? init.body : '' });
+    if (url.includes('/cases')) {
+      return Response.json({
+        data: [evaluationCase('evalcase_a', 'alpha', 'one'), evaluationCase('evalcase_b', 'beta', 'two')],
+        next_page: null,
+      });
+    }
+    if (url.includes('evaluation-dataset-presets')) {
+      return Response.json({
+        data: [
+          {
+            id: 'evalds_oma_demo_03',
+            type: 'evaluation_dataset_preset',
+            name: 'Demo',
+            desc: '',
+            status: 'available',
+            versions: [{ id: 'edv_oma_demo_03_v2', version: 2, case_count: 2 }],
+            published_at: '2026-10-22T00:00:00Z',
+          },
+        ],
+        next_page: null,
+      });
+    }
+    if (method === 'POST') {
+      return Response.json(dataset({ id: 'evalds_created', name: 'combined' }));
+    }
+    return Response.json({ data: [dataset()], next_page: null });
+  });
+
+  renderPage(<EvaluationsPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Create dataset' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Reuse existing' }));
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'combined' } });
+  expect(await screen.findByRole('checkbox', { name: /beta/ })).toBeTruthy();
+  expect(screen.getByRole('combobox', { name: 'Source dataset' })).toBeTruthy();
+  expect(screen.getByRole('combobox', { name: 'Available version' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('checkbox', { name: /beta/ }));
+  expect(await screen.findByText('Selected 1')).toBeTruthy();
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create dataset' }));
+
+  await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
+  const created = requests.find((request) => request.method === 'POST');
+  expect(JSON.parse(created?.body ?? '{}')).toEqual({
+    name: 'combined',
+    desc: '',
+    source_dataset_id: 'evalds_test',
+    case_ids: ['evalcase_b'],
+  });
 });
 
 test('lists cases and imports JSONL', async () => {
@@ -818,6 +887,24 @@ function evaluator() {
       prompt_template: '{{input}}',
       variables: ['input'],
     },
+    created_at: '2026-10-22T00:00:00Z',
+    updated_at: '2026-10-22T00:00:00Z',
+  };
+}
+
+function evaluationCase(id: string, name: string, turn: string) {
+  return {
+    id,
+    type: 'evaluation_case',
+    dataset_id: 'evalds_test',
+    version_id: 'edv_test',
+    position: 1,
+    name,
+    desc: '',
+    turns: [turn],
+    checkpoints: null,
+    input_files: null,
+    reference_files: null,
     created_at: '2026-10-22T00:00:00Z',
     updated_at: '2026-10-22T00:00:00Z',
   };

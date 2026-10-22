@@ -45,6 +45,12 @@ const (
 	presetEvaluatorNotFoundMessage      = "Evaluation evaluator preset not found"
 	presetArchivedMessage               = "Published preset is archived"
 	presetSourceConflictMessage         = "source_version_id cannot be combined with evaluator fields"
+	datasetSourceConflictMessage        = "source_version_id cannot be combined with source_dataset_id"
+	caseIDsRequiredMessage              = "case_ids must include at least one entry"
+	caseIDsRequireSourceMessage         = "case_ids requires source_version_id or source_dataset_id"
+	caseIDsUnknownMessage               = "case_ids includes a case that is not on the source"
+	caseIDsInvalidMessage               = "case_ids must be a list of unique case ids"
+	caseIDsTooManyMessage               = "case_ids accepts at most 1000 entries"
 	duplicateResourceMessage            = "Evaluation resource already exists"
 	createDatasetFailedMessage          = "Could not create evaluation dataset"
 	listDatasetsFailedMessage           = "Could not list evaluation datasets"
@@ -212,6 +218,30 @@ func datasetNotFound() error {
 
 func datasetArchived() error {
 	return apperr.New(apperr.InvalidArgument, datasetArchivedMessage, nil)
+}
+
+func datasetSourceConflict() error {
+	return apperr.New(apperr.InvalidArgument, datasetSourceConflictMessage, nil)
+}
+
+func caseIDsRequired() error {
+	return apperr.New(apperr.InvalidArgument, caseIDsRequiredMessage, nil)
+}
+
+func caseIDsRequireSource() error {
+	return apperr.New(apperr.InvalidArgument, caseIDsRequireSourceMessage, nil)
+}
+
+func caseIDsUnknown() error {
+	return apperr.New(apperr.InvalidArgument, caseIDsUnknownMessage, nil)
+}
+
+func caseIDsInvalid() error {
+	return apperr.New(apperr.InvalidArgument, caseIDsInvalidMessage, nil)
+}
+
+func caseIDsTooMany() error {
+	return apperr.New(apperr.InvalidArgument, caseIDsTooManyMessage, nil)
 }
 
 func sessionIDRequired() error {

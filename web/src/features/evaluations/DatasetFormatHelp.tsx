@@ -36,6 +36,12 @@ export function DatasetFormatHelp({ open, onOpenChange }: { open: boolean; onOpe
             <pre className="overflow-x-auto rounded-lg bg-muted px-3 py-2 font-mono text-xs leading-5">
               {datasetZipTree}
             </pre>
+            <p className="text-sm text-muted-foreground">
+              {msg(
+                'evaluations.templateHelper',
+                'The ZIP template is a complete example: cases.jsonl plus sample input_files/ and reference_files/.',
+              )}
+            </p>
           </section>
           <section className="grid gap-2">
             <h2 className="text-sm font-medium">{msg('evaluations.helpFieldsTitle', 'Case fields')}</h2>

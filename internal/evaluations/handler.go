@@ -139,18 +139,9 @@ func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	sourceVersionID := strings.TrimSpace(body.SourceVersionID)
-	var created db.EvaluationDataset
-	if sourceVersionID == "" {
-		created, err = h.store.CreateEvaluationDataset(r.Context(), dataset)
-		if err != nil {
-			return mapStoreError(err, datasetNotFoundMessage, createDatasetFailedMessage)
-		}
-	} else {
-		created, err = h.createDatasetFromPreset(r.Context(), dataset, sourceVersionID)
-		if err != nil {
-			return err
-		}
+	created, err := h.createDatasetFromSource(r.Context(), principal, dataset, *body)
+	if err != nil {
+		return err
 	}
 	httpapi.WriteJSON(w, http.StatusOK, datasetResponseFrom(created))
 	return nil

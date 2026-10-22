@@ -89,8 +89,10 @@ func assertEvaluationSchemaFields(t *testing.T, spec openAPISpec) {
 	evaluator := spec.Components.Schemas["EvaluationEvaluatorCreate"].Properties
 	experiment := spec.Components.Schemas["EvaluationExperiment"].Properties
 	score := spec.Components.Schemas["EvaluationExperimentScore"].Properties
-	if _, ok := dataset["source_version_id"]; !ok {
-		t.Fatalf("%s dataset create missing source_version_id", spec.Language)
+	for _, field := range []string{"source_version_id", "source_dataset_id", "case_ids"} {
+		if _, ok := dataset[field]; !ok {
+			t.Fatalf("%s dataset create missing %s", spec.Language, field)
+		}
 	}
 	fromSession := spec.Components.Schemas["EvaluationCaseFromSession"].Properties
 	for _, field := range []string{"session_id", "include_output_files"} {

@@ -436,3 +436,29 @@ func sessionStatusAfterSourceTx(ctx context.Context, executor yourbatis.Executor
 	}
 	return sessionStatusAfterThread(threads, thread.ExternalID, status), nil
 }
+
+func budgetAllowsStatus(primary SessionThread, event SessionEvent) (bool, error) {
+	if event.threadStatusMirror {
+		return true, nil
+	}
+	status, isThread := maevents.ThreadStatus(event.EventType)
+	if isThread {
+		if event.StatusThreadID != "" && event.StatusThreadID != primary.ExternalID {
+			return true, nil
+		}
+	} else {
+		status, _ = maevents.SessionStatus(event.EventType)
+	}
+	switch status {
+	case "running", "rescheduling":
+		return false, nil
+	case "idle":
+		var payload sessionStatusPayload
+		if err := jsonv2.Unmarshal(event.Payload, &payload); err != nil {
+			return false, err
+		}
+		return payload.StopReason != nil && payload.StopReason.Type == "budget_reached", nil
+	default:
+		return true, nil
+	}
+}

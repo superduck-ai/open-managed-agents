@@ -206,6 +206,29 @@ describe("original dsh loop over CCRv2", () => {
     expect(b.publicLog.get("stdout_result")?.is_error).toBe(false);
   });
 
+  test("预算门禁不重试、不发布失败结果，恢复后接受新输入", async () => {
+    const b = backend();
+    const route = b.route.bind(b);
+    let paused = true;
+    let attempts = 0;
+    b.route = async (request) => {
+      if (new URL(request.url).pathname === "/v1/messages" && paused) {
+        attempts++;
+        return Response.json({ error: { type: "invalid_request_error", code: "session_budget_reached", message: "budget reached" } }, { status: 400 });
+      }
+      return route(request);
+    };
+    const { session } = await open(b);
+    await session.receive("budget_pause", { message: { content: "hi" } });
+    expect(attempts).toBe(1);
+    expect(b.publicLog.has("budget_pause_failed_result")).toBe(false);
+    expect(b.publicLog.has("budget_pause_result")).toBe(false);
+    expect(session.state.completed).toContain("budget_pause");
+    paused = false;
+    await session.receive("budget_resume", { message: { content: "continue" } });
+    expect(b.publicLog.get("budget_resume_result")?.is_error).toBe(false);
+  });
+
   test("provider HTTP 402 publishes a safe quota error before ACK and a later turn can recover", async () => {
     const b = backend();
     const route = b.route.bind(b);

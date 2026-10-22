@@ -88,7 +88,12 @@ func run(logger *slog.Logger) error {
 	if err := database.Seed(ctx, cfg.Bootstrap); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
-	syncModelPrices(ctx, database, logger)
+	prices := pricing.NewStore(cfg.Pricing, logger.With("component", "pricing"))
+	if err := prices.Reload(); err != nil {
+		logger.WarnContext(ctx, "load model prices failed", "error", err)
+	}
+	stopPrices := prices.Start(ctx)
+	defer stopPrices()
 	redisClient, err := redisclient.Open(ctx, cfg.Redis.URL)
 	if err != nil {
 		return fmt.Errorf("open redis client: %w", err)
@@ -240,6 +245,7 @@ func run(logger *slog.Logger) error {
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
+			Prices:                 prices,
 			Prebuilds:              prebuilds,
 			SandboxLifecycle:       lifecycle,
 			Config:                 cfg,
@@ -298,15 +304,6 @@ func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) er
 		}
 	}
 	return nil
-}
-
-func syncModelPrices(ctx context.Context, database *db.DB, logger *slog.Logger) {
-	if err := pricing.Sync(ctx, database); err != nil {
-		logger.Warn("sync model prices", "source", "openrouter", "error", err)
-	}
-	if err := pricing.SyncNarrows(ctx, database); err != nil {
-		logger.Warn("sync model prices", "source", "narrows", "error", err)
-	}
 }
 
 func shutdownHTTP(ctx context.Context, server *http.Server) error {

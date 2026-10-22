@@ -195,7 +195,7 @@ flowchart LR
 
 ## 数据库来源标价与缓存 TTL
 
-价格由服务端从 OpenRouter `https://openrouter.ai/api/v1/models` 获取，启动时同步到全局公开价格目录 `model_price_catalog`。Narrows 网关（`narrows-gateway.test.seewo.com`）使用独立的 `https://narrows.seewo.com/pricing/api/rules` 目录，固定以 1 USD = 7.2 CNY 换算；缺失 Narrows 价格时不回退至 OpenRouter。用户无需填写、选择或保存价格；原手工标价弹窗、参考价接口、YAML 导入接口均已移除。旧 `llm_model_prices` 表保留历史数据，但不参与新请求计费。
+价格由服务端从 OpenRouter `https://openrouter.ai/api/v1/models` 获取，由后台周期刷新到 `pricing.snapshot_file` 指定的 JSON 文件，热路径读取内存快照。Provider slug 为 `narrows` 的 AI 网关（`default` 暂时兼容映射到同一价格源）使用独立的 `https://narrows.seewo.com/pricing/api/rules` 目录，固定以 1 USD = 7.2 CNY 换算；缺失 Narrows 价格时不回退至 OpenRouter。用户无需填写、选择或保存价格；原手工标价弹窗、参考价接口、YAML 导入接口均已移除。旧 `llm_model_prices` 表保留历史数据，但不参与新请求计费。
 
 同步保留原始 pricing JSON、转换后的 USD/百万 Token 价格及价格内容摘要版本。HTTP 超时 15 秒、响应最多 8 MiB；成功解析后事务替换目录。同步失败保留上次成功数据并记录告警，不把未知价当成零，不回退到 YAML 或手工标价。当前在服务启动时更新，不增加定时任务或管理页面。
 
@@ -240,3 +240,5 @@ Narrows 解析回归使用合成规则验证固定汇率、分档上下界及无
 用量和成本的模型筛选项合并账本中已有的模型值与当前供应商目录的限定模型名，再排序去重。配置中的模型不再以短名额外加入选项，避免与精确匹配的账本查询不一致；历史账本中的短名仍原样保留并可筛选。
 
 Chat Completions 当前仅允许 Brain 模型凭据及流式调用，由现有 `chatObservation` 将普通输入、缓存输入和输出转成会话模型请求用量，随后通过会话结束事件入账。通用计量 Transport 跳过这类请求，避免重复计费；没有新增普通凭据的 Chat Completions 能力。
+
+当前价格目录不再写入数据库，迁移 00096 删除旧目录表；账本与请求价格快照保留。多实例文件共享、失败退避及 Brain 读取协议见 [标价文件缓存](be/model-price-file-cache.md)。

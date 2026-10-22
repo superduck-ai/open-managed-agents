@@ -12,6 +12,7 @@ const (
 )
 
 type Config struct {
+	Pricing              PricingConfig             `yaml:"pricing"`
 	WebTools             WebToolsConfig            `yaml:"web_tools"`
 	EnvironmentPackages  EnvironmentPackageConfig  `yaml:"environment_packages"`
 	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`

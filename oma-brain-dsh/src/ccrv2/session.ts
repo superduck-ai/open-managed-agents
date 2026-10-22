@@ -42,6 +42,7 @@ export class CcrSession {
   private readonly assistantStream: CcrAssistantStream;
   private readonly toolResults = new CcrToolResults();
   private turnErrorMessage?: string;
+  private budgetPaused = false;
   private interrupted = false;
   private waitingOnInterruptedChild = false;
   private readonly interruptedApprovals = new Set<string>();
@@ -283,6 +284,9 @@ export class CcrSession {
     if (event.type === "turn/end") {
       this.activity.endThread(threadId ?? this.id);
       const reason = event.data.reason;
+      if (reason?.kind === "error" && reason.error.code === "SESSION_BUDGET_REACHED") this.budgetPaused = true;
+      if (!threadId && reason?.kind === "error" && reason.error.code === "MODEL_PRICE_UNAVAILABLE")
+        this.turnErrorMessage = "Model pricing is unavailable. Retry after pricing recovers.";
       if (!threadId && reason?.kind === "error"
         && [QUOTA_EXCEEDED_CODE, ACCOUNT_QUOTA_EXCEEDED_CODE].includes(reason.error.code)) {
         this.turnErrorMessage = "Model provider balance or quota is exhausted. Top up the provider account or switch model credentials.";
@@ -616,6 +620,7 @@ export class CcrSession {
       }, {
         beforeRun: async () => {
           this.turnErrorMessage = undefined;
+          this.budgetPaused = false;
           this.interrupted = false;
           this.waitingOnInterruptedChild = false;
           this.state.inputId = inputId;
@@ -644,9 +649,9 @@ export class CcrSession {
             await this.runtime.flushLog();
           }
           const failed = this.blocked() || (!completed && !cancelled);
-          if (failed)
+          if (failed && !this.budgetPaused)
             this.addError(this.turnErrorMessage ?? "The turn stopped before successful completion.", "failed");
-          else
+          else if (!this.budgetPaused)
             this.state.outbox.push({
               type: "result",
               uuid: `${inputId}_result`,

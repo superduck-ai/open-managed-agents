@@ -1,3 +1,4 @@
+import { sessionBilling, type SessionBilling } from "./billing.ts";
 import type { SubagentConfig, ToolPermissions } from "./runtime/contracts.ts";
 import { sandboxToolDefinitions } from "./sandbox-tools/definitions.ts";
 import { sandboxEndpoint } from "./oma-sandbox/config.ts";
@@ -11,6 +12,7 @@ export interface Assignment {
   mcp_config: unknown;
   external_mcp_config?: unknown;
   launch: {
+    billing?: SessionBilling;
     version: number;
     model: string;
     model_backends?: Record<string, "messages" | "chat_completions">;
@@ -52,6 +54,7 @@ export function validateAssignment(a: Assignment): void {
   if (!Array.isArray(a.launch.tools)
     || a.launch.tools.some((name) => !tools.has(name)))
     throw new Error("Invalid launch tools");
+  sessionBilling(a.launch.billing);
   validateToolPermissions(a.launch.tool_permissions);
   const config = a.launch.subagents;
   if (config) {

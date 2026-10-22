@@ -89,25 +89,13 @@ func validate(cfg Config) error {
 	if err := validateEnvironmentPackageConfig(cfg.EnvironmentPackages); err != nil {
 		return err
 	}
-	if strings.TrimSpace(cfg.Storage.Type) == "" {
-		return errors.New("storage.type is required")
-	}
-	if cfg.Storage.Type != StorageTypeS3 {
-		return fmt.Errorf("storage.type must be %q", StorageTypeS3)
-	}
-	if strings.TrimSpace(cfg.Storage.S3.Endpoint) == "" {
-		return errors.New("storage.s3.endpoint is required")
-	}
-	if strings.TrimSpace(cfg.Storage.S3.Bucket) == "" {
-		return errors.New("storage.s3.bucket is required")
-	}
-	if strings.TrimSpace(cfg.Storage.S3.Region) == "" {
-		return errors.New("storage.s3.region is required")
-	}
-	if strings.TrimSpace(cfg.Storage.S3.AccessKeyID) == "" || strings.TrimSpace(cfg.Storage.S3.SecretAccessKey) == "" {
-		return errors.New("storage.s3.access_key_id and storage.s3.secret_access_key are required")
+	if err := validateStorage(cfg.Storage); err != nil {
+		return err
 	}
 	if err := validatePositiveValues(cfg); err != nil {
+		return err
+	}
+	if err := validatePricing(cfg.Pricing); err != nil {
 		return err
 	}
 	if err := ValidateTranscriptArchive(cfg.TranscriptArchive); err != nil {
@@ -583,6 +571,28 @@ func validateCodeSessionUpstreamProxyMITMConfig(cfg CodeSessionConfig) error {
 	}
 	if !keyInfo.Mode().IsRegular() {
 		return errors.New("CCR upstream proxy stable CA private key must be an existing regular file")
+	}
+	return nil
+}
+
+func validateStorage(storage StorageConfig) error {
+	if strings.TrimSpace(storage.Type) == "" {
+		return errors.New("storage.type is required")
+	}
+	if storage.Type != StorageTypeS3 {
+		return fmt.Errorf("storage.type must be %q", StorageTypeS3)
+	}
+	if strings.TrimSpace(storage.S3.Endpoint) == "" {
+		return errors.New("storage.s3.endpoint is required")
+	}
+	if strings.TrimSpace(storage.S3.Bucket) == "" {
+		return errors.New("storage.s3.bucket is required")
+	}
+	if strings.TrimSpace(storage.S3.Region) == "" {
+		return errors.New("storage.s3.region is required")
+	}
+	if strings.TrimSpace(storage.S3.AccessKeyID) == "" || strings.TrimSpace(storage.S3.SecretAccessKey) == "" {
+		return errors.New("storage.s3.access_key_id and storage.s3.secret_access_key are required")
 	}
 	return nil
 }

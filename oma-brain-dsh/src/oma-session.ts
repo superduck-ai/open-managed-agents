@@ -1,3 +1,4 @@
+import { checkSessionBudget, sessionBilling } from "./billing.ts";
 import type { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "./api.ts";
 import { externalMcpFetch } from "./external-mcp/proxy.ts";
@@ -36,6 +37,9 @@ export function createOmaSession(
     refreshToolPermissions: async (signal, threadId) => {
       const response = await api.request(`/v2/sessions/${encodeURIComponent(assignment.session_id)}`,
         assignment.ingress_token, "GET", undefined, threadId ? { "X-OMA-Session-Thread-ID": threadId } : undefined, signal);
+      const billing = sessionBilling(response.session_context?.billing);
+      assignment.launch.billing = billing;
+      checkSessionBudget(billing);
       const permissions = response.session_context?.runtime_tool_permissions;
       validateToolPermissions(permissions);
       return permissions;

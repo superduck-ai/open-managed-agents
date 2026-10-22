@@ -1,7 +1,7 @@
 # QCA Evaluation 对齐计划
 
-- 状态：M1 评测集、M2 自定义评估器、M3 实验与 Compare、Session 终态收口、LLM 打分、Agent 打分 Session、预置目录、timeout/env 注入、Compare 分数列、打分 Agent 版本冻结，以及打分 sandbox 的 `/data` 与 `/output` 契约路径已实现。今日额度不在范围内。
-- 剩余缺口：没有真实 E2B 端到端。没有 OpenAPI。
+- 状态：M1 评测集、M2 自定义评估器、M3 实验与 Compare、Session 终态收口、LLM 打分、Agent 打分 Session、预置目录、timeout/env 注入、Compare 分数列、打分 Agent 版本冻结、打分 sandbox 的 `/data` 与 `/output` 契约路径，以及评测 OpenAPI 已实现。今日额度不在范围内。
+- 剩余缺口：没有真实 E2B 端到端。预置 Agent 的 id 和 LLM 的 `oma-demo` model 仍是占位符。
 - 日期：2026-10-22
 - 来源：qoder.com.cn 企业控制台，分析 → 评测（Beta）。下文只采用这次实测看到的信息架构和字段，不补写未出现的产品文案。没有 QCA 目录导出，所以预置内容是标明 OMA demo 的示例，不是 QCA 原文。
 - 非目标：不改 Workbench Evaluate 的请求、表格或测试预期。不实现今日额度、额度计数或额度 UI。不复制 QCA 预置 case 或评估器正文。
@@ -202,6 +202,8 @@ timeout 和 env 从实验写进 case Session 和打分 Session 的 metadata。Se
 
 Console cookie + CSRF 组，与 MCP servers 相同。错误体是 `{error, message}`。成功响应状态码 200。
 
+这些路由写在 `openapi/oma.en.json` 和 `openapi/oma.zh.json`，文档导航有评测分组。路径与 Console 路由相同。认证是会话 cookie `sessionKey`；POST 还要 `X-CSRF-Token`，不使用 `/v1` API key，也不要求 `anthropic-beta`。评测 handler 的 400、404、409 和 500 使用 `{error, message}`。会话缺失和 CSRF 失败沿用平台的 `ErrorResponse`。Workbench Evaluate 仍不在这两份 OpenAPI 里。没有今日额度端点。
+
 M1：
 
 - `GET/POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets`
@@ -222,7 +224,7 @@ M2：
 
 创建评估器的 body 是 `{name, desc, evaluator_type, model, agent_id, prompt_template, variables}`。`evaluator_type` 为 `llm` 或 `agent`。也可以只传 `{name, desc, source_version_id}`，从已发布预置版本复制类型、model、prompt、variables 或 agent id。`source_version_id` 不能和这些字段同时出现。响应带 `status` 和 `version`。Agent 版本额外带 `agent_contract`。
 
-M2 不做 PATCH、DELETE、归档和 OpenAPI。自定义评估器的打分在 case `end_turn` 之后执行。不实现今日额度。
+M2 不做 PATCH、DELETE 和归档。自定义评估器的打分在 case `end_turn` 之后执行。不实现今日额度。创建、列表和读取在 OpenAPI 里。
 
 预置目录：
 
@@ -247,7 +249,7 @@ M3：
 
 列表不返回 item，但返回已有的 `scores`。读取返回冻结的评估器、每个 case 的 session id，以及 `scores`。`:start` 只重试仍为 pending 的 item。Compare 的 body 是 `{dataset_version_id, evaluator_ids}`，只返回 `completed`，并带上 `scores`。没有完成实验时 `data` 为空数组，不是 404。Session 以 `end_turn` 结束后，对应实验可以变成 `completed` 并出现在 Compare 里。
 
-M3 不做取消和 OpenAPI。不实现今日额度。LLM 或 Agent 打分失败都不把实验从 completed 改回 failed。
+M3 不做取消。不实现今日额度。创建、列表、读取、start 和 compare 在 OpenAPI 里，响应包含 `scores`。LLM 或 Agent 打分失败都不把实验从 completed 改回 failed。
 
 ## UI
 
@@ -292,5 +294,7 @@ Workbench 的 prompt/evaluate 开关保持原样。
 同一 workspace 可以创建 LLM 评估器（model、prompt、已选变量，版本 `eev_`）和 Agent 评估器（agent id，响应带 score.json 契约），并列出、读取。错误类型、未选变量、Agent 带 prompt，以及另一 workspace 的 id，在写库前失败。
 
 同一 workspace 可以创建实验：冻结 `edv_` 与评估器版本，item 先为 pending；接上 Session starter 后每个 case 得到 `sesn_`，实验变为 running。创建 body 带 `timeout_seconds` 和 `env` 时，starter 收到这两个值；省略 `env` 时 Session 仍会创建。Agent 评估器在创建时把打分 Agent 的当前版本写进绑定。之后即使该 Agent 的当前版本变了，打分 Session 仍使用冻结版本。打分 Agent 不存在时实验创建失败，不写库。Starter 失败时 item 为 failed。`requires_action` 保持 running。`end_turn` 把 item 和实验收成 completed。LLM 评估器把模型返回的 `score`、`explanation`、`details` 记为 completed。Agent 评估器用冻结的 `agent_id` 启动打分 Session，并把 case 结果放进用户消息和 `/uploads/data/session/result.json`。打分 Session 启动时创建 `/data` → `/mnt/session/uploads/data` 与 `/output` → `/mnt/user-data/outputs`，所以 `/data/session/result.json` 与 `/output/score.json` 在该容器内可解析。普通 Session 不创建这两条软链。打分 Session 的 `end_turn` 读取 Filestore `/outputs/score.json`（与 `/output/score.json` 是同一文件），形状为 `{score, explanation, details}`，score 行为 completed。文件缺失时 score 为 failed，文案是 `Evaluation score file is missing`。无法解析时文案是 `Could not parse evaluator score`。没有配置 sandbox 时文案仍是 `Agent evaluator scoring is not executed`。这些失败都不改变 item 或实验的 completed。已经离开 running 的 item 不会被后到的终态改写，也不会再次打分；已有 score 行不会再写一行。`retries_exhausted` 或 `session.status_terminated` 把 case item 收成 failed，且不打分。打分 Session 自己的终止只让对应 score 行失败。列表不返回 item，但返回 scores。Compare 在没有 completed 实验时返回空列表。空 name、重复评估器、非法 timeout、没有 case、已归档 Environment、重名和另一 workspace 的 id 会失败。
+
+`TestEvaluationOpenAPIContract` 检查中英文 OpenAPI 都覆盖上述 Console 路径，创建请求含 `source_version_id`，实验响应含 `scores`，并且这些操作使用 Console 会话而不是 `/v1` 的 beta 参数。Workbench Evaluate 和今日额度不在这两份文档里。
 
 Postgres 迁移测试在设置 `TEST_MIGRATION_DATABASE_URL` 时覆盖到 `00100`。默认 `just test` 不连接外部数据库；未设置该变量时，不能把 `00097`、`00098`、`00099` 或 `00100` 说成已经在真实 Postgres 上应用过。

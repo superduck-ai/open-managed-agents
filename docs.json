@@ -475,6 +475,55 @@
                 ]
               },
               {
+                "group": "评测",
+                "pages": [
+                  {
+                    "group": "评测集",
+                    "pages": [
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases",
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases",
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:import"
+                    ]
+                  },
+                  {
+                    "group": "预置评测集",
+                    "pages": [
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-dataset-presets",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-dataset-presets/{presetId}",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-dataset-presets/{presetId}/cases"
+                    ]
+                  },
+                  {
+                    "group": "评估器",
+                    "pages": [
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators/{evaluatorId}"
+                    ]
+                  },
+                  {
+                    "group": "预置评估器",
+                    "pages": [
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluator-presets",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluator-presets/{presetId}"
+                    ]
+                  },
+                  {
+                    "group": "实验",
+                    "pages": [
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-experiments",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-experiments",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-experiments/{experimentId}",
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-experiments/{experimentId}:start",
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-experiments:compare"
+                    ]
+                  }
+                ]
+              },
+              {
                 "group": "Webhook",
                 "pages": [
                   "POST /v1/webhooks",
@@ -795,6 +844,55 @@
                           "POST /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact"
                         ]
                       }
+                    ]
+                  }
+                ]
+              },
+              {
+                "group": "Evaluations",
+                "pages": [
+                  {
+                    "group": "Datasets",
+                    "pages": [
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases",
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases",
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:import"
+                    ]
+                  },
+                  {
+                    "group": "Dataset presets",
+                    "pages": [
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-dataset-presets",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-dataset-presets/{presetId}",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-dataset-presets/{presetId}/cases"
+                    ]
+                  },
+                  {
+                    "group": "Evaluators",
+                    "pages": [
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators/{evaluatorId}"
+                    ]
+                  },
+                  {
+                    "group": "Evaluator presets",
+                    "pages": [
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluator-presets",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluator-presets/{presetId}"
+                    ]
+                  },
+                  {
+                    "group": "Experiments",
+                    "pages": [
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-experiments",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-experiments",
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-experiments/{experimentId}",
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-experiments/{experimentId}:start",
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-experiments:compare"
                     ]
                   }
                 ]

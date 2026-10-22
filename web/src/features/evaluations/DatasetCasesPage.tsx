@@ -8,6 +8,7 @@ import { TableEmptyRow, TableErrorRow, TableLoadingRow } from '../../shared/ui/r
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { Textarea } from '../../shared/ui/textarea';
 import { evaluationErrorMessage, type EvaluationCase, type EvaluationCaseFromSessionsResult } from './api';
+import { CaseDrawer } from './CaseDrawer';
 import { parseSessionCaseCheckpoints, parseSessionIDs } from './sessionCase';
 import { IncludeOutputFilesField, SessionCaseFields } from './SessionCaseFields';
 import {
@@ -26,6 +27,7 @@ export function DatasetCasesPage() {
   const { workspace, datasetQuery, casesQuery } = useEvaluationCaseList(datasetId);
   const cases = casesQuery.data?.data ?? [];
   const version = datasetQuery.data?.version;
+  const [openCase, setOpenCase] = useState<EvaluationCase | null>(null);
 
   return (
     <section className="relative min-h-[calc(100vh-48px)] text-foreground">
@@ -69,9 +71,20 @@ export function DatasetCasesPage() {
             isLoading={!workspace.workspaceReady || casesQuery.isLoading}
             errorMessage={casesQuery.error ? evaluationErrorMessage(casesQuery.error) : ''}
             onRetry={() => void casesQuery.refetch()}
+            onOpen={setOpenCase}
           />
         </TableBody>
       </Table>
+      <CaseDrawer
+        item={openCase}
+        workspaceId={workspace.workspaceId}
+        open={openCase !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setOpenCase(null);
+          }
+        }}
+      />
     </section>
   );
 }
@@ -81,11 +94,13 @@ function CaseRows({
   isLoading,
   errorMessage,
   onRetry,
+  onOpen,
 }: {
   cases: EvaluationCase[];
   isLoading: boolean;
   errorMessage: string;
   onRetry: () => void;
+  onOpen: (item: EvaluationCase) => void;
 }) {
   const { msg } = useI18n();
   if (isLoading) {
@@ -108,7 +123,11 @@ function CaseRows({
   return cases.map((item) => (
     <TableRow key={item.id}>
       <TableCell>{item.position}</TableCell>
-      <TableCell>{item.name}</TableCell>
+      <TableCell>
+        <button type="button" className="font-medium underline-offset-4 hover:underline" onClick={() => onOpen(item)}>
+          {item.name}
+        </button>
+      </TableCell>
       <TableCell className="whitespace-pre-wrap">{item.turns.join('\n')}</TableCell>
       <TableCell>{item.desc}</TableCell>
     </TableRow>
@@ -317,29 +336,67 @@ function ImportSessionsForm({ datasetId }: { datasetId: string }) {
   );
 }
 
+const maxImportBytes = 100 * 1024 * 1024;
+
 function ImportCasesForm({ datasetId }: { datasetId: string }) {
   const { msg } = useI18n();
   const importCases = useImportEvaluationCases(datasetId);
   const [jsonl, setJsonl] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [tooLarge, setTooLarge] = useState(false);
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    importCases.mutate(jsonl, { onSuccess: () => setJsonl('') });
+    if (file && file.size > maxImportBytes) {
+      setTooLarge(true);
+      return;
+    }
+    setTooLarge(false);
+    const payload = file ? importFilePayload(file) : { body: jsonl, contentType: 'application/x-ndjson' };
+    importCases.mutate(payload, {
+      onSuccess: () => {
+        setJsonl('');
+        setFile(null);
+      },
+    });
   }
 
   return (
     <form className="grid gap-3" onSubmit={submit}>
       <h2 className="text-sm font-medium">{msg('evaluations.importJsonl', 'Import JSONL')}</h2>
+      <Label htmlFor="evaluation-case-file">{msg('evaluations.importFile', 'JSONL or ZIP file')}</Label>
+      <Input
+        id="evaluation-case-file"
+        type="file"
+        accept=".jsonl,.zip,application/jsonl,application/zip"
+        onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+      />
+      <p className="text-sm text-muted-foreground">
+        {msg(
+          'evaluations.importFileHint',
+          'A JSONL file, or a ZIP up to 100MB with one JSONL plus optional input_files/ and reference_files/. Companion file bytes are not copied into workspace Files.',
+        )}
+      </p>
       <Label htmlFor="evaluation-case-jsonl">
         {msg('evaluations.importHint', 'One JSON object per line, with name and turns.')}
       </Label>
-      <Textarea id="evaluation-case-jsonl" value={jsonl} onChange={(event) => setJsonl(event.target.value)} required />
+      <Textarea id="evaluation-case-jsonl" value={jsonl} onChange={(event) => setJsonl(event.target.value)} />
+      {tooLarge ? (
+        <p className="text-sm text-destructive">
+          {msg('evaluations.importFileTooLarge', 'File must be 100MB or smaller.')}
+        </p>
+      ) : null}
       {importCases.error ? (
         <p className="text-sm text-destructive">{evaluationErrorMessage(importCases.error)}</p>
       ) : null}
-      <Button type="submit" disabled={importCases.isPending}>
+      <Button type="submit" disabled={importCases.isPending || (!file && jsonl.trim().length === 0)}>
         {msg('evaluations.import', 'Import')}
       </Button>
     </form>
   );
+}
+
+function importFilePayload(file: File) {
+  const zip = file.name.toLowerCase().endsWith('.zip');
+  return { body: file, contentType: zip ? 'application/zip' : 'application/jsonl' };
 }

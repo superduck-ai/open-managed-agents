@@ -135,8 +135,15 @@ export function useImportEvaluationCases(datasetId: string) {
   const { csrfToken } = useAuth();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (jsonl: string) =>
-      importEvaluationCases(workspace.orgUuid ?? '', workspace.workspaceId, datasetId, jsonl, csrfToken),
+    mutationFn: (input: { body: BodyInit; contentType: string }) =>
+      importEvaluationCases(
+        workspace.orgUuid ?? '',
+        workspace.workspaceId,
+        datasetId,
+        input.body,
+        input.contentType,
+        csrfToken,
+      ),
     onSuccess: async () => {
       await invalidateCases(queryClient, workspace.orgUuid, workspace.workspaceId, datasetId);
     },
@@ -158,6 +165,10 @@ export function evaluationDatasetHref(workspaceId: string, datasetId: string) {
 
 export function evaluationEvaluatorsHref(workspaceId: string) {
   return `${evaluationsIndexHref(workspaceId)}/evaluators`;
+}
+
+export function evaluationEvaluatorHref(workspaceId: string, evaluatorId: string) {
+  return `${evaluationEvaluatorsHref(workspaceId)}/${encodeURIComponent(evaluatorId)}`;
 }
 
 export function evaluationExperimentsHref(workspaceId: string) {

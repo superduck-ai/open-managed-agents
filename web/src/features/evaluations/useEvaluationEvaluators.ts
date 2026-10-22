@@ -4,6 +4,7 @@ import { useAuth } from '../../shared/auth/context';
 import {
   createEvaluationEvaluator,
   createEvaluationEvaluatorFromPreset,
+  getEvaluationEvaluator,
   listEvaluationEvaluatorPresets,
   listEvaluationEvaluators,
   type CreateEvaluationEvaluatorFromPresetInput,
@@ -27,6 +28,21 @@ export function useEvaluationEvaluatorPresetList() {
     queryKey: ['evaluation-evaluator-presets', workspace.orgUuid, workspace.workspaceId],
     enabled: workspace.workspaceReady,
     queryFn: () => listEvaluationEvaluatorPresets(workspace.orgUuid ?? '', workspace.workspaceId),
+  });
+  return { workspace, query };
+}
+
+export function evaluatorIdFromPath() {
+  const match = window.location.pathname.match(/\/evaluations\/evaluators\/([^/]+)$/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+export function useEvaluationEvaluator(evaluatorId: string) {
+  const workspace = useEvaluationWorkspace();
+  const query = useQuery({
+    queryKey: ['evaluation-evaluator', workspace.orgUuid, workspace.workspaceId, evaluatorId],
+    enabled: workspace.workspaceReady && evaluatorId.length > 0,
+    queryFn: () => getEvaluationEvaluator(workspace.orgUuid ?? '', workspace.workspaceId, evaluatorId),
   });
   return { workspace, query };
 }

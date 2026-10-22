@@ -7,6 +7,7 @@ import { Label } from '../../shared/ui/label';
 import { Textarea } from '../../shared/ui/textarea';
 import { evaluationErrorMessage } from './api';
 import { EvaluationSectionNav } from './EvaluationSectionNav';
+import { parseExperimentEnv, parseExperimentResources } from './experimentDraft';
 import { evaluationExperimentHref } from './useEvaluationDatasets';
 import { useCreateEvaluationExperiment, useEvaluationExperimentList } from './useEvaluationExperiments';
 
@@ -18,6 +19,8 @@ type ExperimentDraft = {
   agentVersion: string;
   environmentId: string;
   timeoutSeconds: string;
+  env: string;
+  resources: string;
   evaluatorIds: string;
 };
 
@@ -29,6 +32,8 @@ const emptyDraft: ExperimentDraft = {
   agentVersion: '',
   environmentId: '',
   timeoutSeconds: '',
+  env: '',
+  resources: '',
   evaluatorIds: '',
 };
 
@@ -38,6 +43,8 @@ export function ExperimentNewPage() {
   const create = useCreateEvaluationExperiment();
   const [draft, setDraft] = useState(emptyDraft);
   const [createdId, setCreatedId] = useState('');
+  const [envError, setEnvError] = useState(false);
+  const [resourcesError, setResourcesError] = useState(false);
 
   function setField(key: keyof ExperimentDraft) {
     return (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -49,6 +56,13 @@ export function ExperimentNewPage() {
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const agentVersion = draft.agentVersion.trim();
+    const env = parseExperimentEnv(draft.env);
+    const resources = parseExperimentResources(draft.resources);
+    setEnvError(env.error);
+    setResourcesError(resources.error);
+    if (env.error || resources.error) {
+      return;
+    }
     create.mutate(
       {
         name: draft.name,
@@ -58,6 +72,8 @@ export function ExperimentNewPage() {
         ...(agentVersion ? { agent_version: Number(agentVersion) } : {}),
         environment_id: draft.environmentId,
         timeout_seconds: Number(draft.timeoutSeconds),
+        ...(env.env ? { env: env.env } : {}),
+        ...(resources.resources ? { resources: resources.resources } : {}),
         evaluator_ids: splitIds(draft.evaluatorIds),
       },
       { onSuccess: (experiment) => setCreatedId(experiment.id) },
@@ -110,6 +126,36 @@ export function ExperimentNewPage() {
           value={draft.timeoutSeconds}
           onChange={setField('timeoutSeconds')}
         />
+        <div className="grid gap-2">
+          <Label htmlFor="env">{msg('evaluations.env', 'Environment variables')}</Label>
+          <Textarea id="env" value={draft.env} onChange={setField('env')} />
+          <p className="text-sm text-muted-foreground">
+            {msg('evaluations.envHint', 'One KEY=VALUE per line, or a JSON object of strings.')}
+          </p>
+          {envError ? (
+            <p className="text-sm text-destructive">
+              {msg(
+                'evaluations.envInvalid',
+                'Environment variables must be KEY=VALUE lines or a JSON object of strings.',
+              )}
+            </p>
+          ) : null}
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="resources">{msg('evaluations.resources', 'Resources')}</Label>
+          <Textarea id="resources" value={draft.resources} onChange={setField('resources')} />
+          <p className="text-sm text-muted-foreground">
+            {msg(
+              'evaluations.resourcesHint',
+              'JSON array of file, repository, secret, or memory mounts, in the same shape a session accepts.',
+            )}
+          </p>
+          {resourcesError ? (
+            <p className="text-sm text-destructive">
+              {msg('evaluations.resourcesInvalid', 'Resources must be a JSON array.')}
+            </p>
+          ) : null}
+        </div>
         <div className="grid gap-2">
           <Label htmlFor="evaluator_ids">{msg('evaluations.evaluatorIds', 'Evaluators')}</Label>
           <Textarea id="evaluator_ids" value={draft.evaluatorIds} onChange={setField('evaluatorIds')} />

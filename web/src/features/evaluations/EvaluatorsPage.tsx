@@ -20,6 +20,7 @@ import {
 import { EvaluationOriginTabs, type EvaluationOrigin } from './EvaluationOriginTabs';
 import { EvaluationSectionNav } from './EvaluationSectionNav';
 import { EvaluatorPresets } from './EvaluatorPresets';
+import { evaluationEvaluatorHref } from './useEvaluationDatasets';
 import { useCreateEvaluationEvaluator, useEvaluationEvaluatorList } from './useEvaluationEvaluators';
 
 export function EvaluatorsPage() {
@@ -65,6 +66,7 @@ export function EvaluatorsPage() {
           <TableBody>
             <EvaluatorRows
               evaluators={evaluators}
+              workspaceId={workspace.workspaceId}
               isLoading={!workspace.workspaceReady || query.isLoading}
               errorMessage={query.error ? evaluationErrorMessage(query.error) : ''}
               onRetry={() => void query.refetch()}
@@ -79,11 +81,13 @@ export function EvaluatorsPage() {
 
 function EvaluatorRows({
   evaluators,
+  workspaceId,
   isLoading,
   errorMessage,
   onRetry,
 }: {
   evaluators: EvaluationEvaluator[];
+  workspaceId: string;
   isLoading: boolean;
   errorMessage: string;
   onRetry: () => void;
@@ -108,7 +112,11 @@ function EvaluatorRows({
   }
   return evaluators.map((evaluator) => (
     <TableRow key={evaluator.id}>
-      <TableCell className="font-medium">{evaluator.name}</TableCell>
+      <TableCell className="font-medium">
+        <a className="underline-offset-4 hover:underline" href={evaluationEvaluatorHref(workspaceId, evaluator.id)}>
+          {evaluator.name}
+        </a>
+      </TableCell>
       <TableCell>{evaluator.version.evaluator_type}</TableCell>
       <TableCell className="text-muted-foreground">{evaluator.desc}</TableCell>
     </TableRow>

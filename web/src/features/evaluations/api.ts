@@ -202,6 +202,8 @@ export type EvaluationExperiment = {
   agent_version: number;
   environment_id: string;
   timeout_seconds: number;
+  env?: Record<string, string>;
+  resources?: unknown[];
   item_count: number;
   session_count: number;
   evaluator_count: number;
@@ -225,6 +227,8 @@ export type CreateEvaluationExperimentInput = {
   agent_version?: number;
   environment_id: string;
   timeout_seconds: number;
+  env?: Record<string, string>;
+  resources?: unknown[];
   evaluator_ids: string[];
 };
 
@@ -382,14 +386,15 @@ export function importEvaluationCases(
   orgUuid: string,
   workspaceId: string,
   datasetId: string,
-  jsonl: string,
+  body: BodyInit,
+  contentType: string,
   csrfToken?: string,
 ) {
   return consoleApi<EvaluationCasePage>(`${datasetPath(orgUuid, workspaceId, datasetId)}/cases:import`, {
     method: 'POST',
-    headers: { ...workspaceHeaders(workspaceId), 'Content-Type': 'application/x-ndjson' },
+    headers: { ...workspaceHeaders(workspaceId), 'Content-Type': contentType },
     csrfToken,
-    body: jsonl,
+    body,
   });
 }
 
@@ -397,6 +402,13 @@ export function listEvaluationEvaluators(orgUuid: string, workspaceId: string) {
   return consoleApi<EvaluationEvaluatorPage>(evaluatorCollectionPath(orgUuid, workspaceId), {
     headers: workspaceHeaders(workspaceId),
   });
+}
+
+export function getEvaluationEvaluator(orgUuid: string, workspaceId: string, evaluatorId: string) {
+  return consoleApi<EvaluationEvaluator>(
+    `${evaluatorCollectionPath(orgUuid, workspaceId)}/${encodeURIComponent(evaluatorId)}`,
+    { headers: workspaceHeaders(workspaceId) },
+  );
 }
 
 export function createEvaluationEvaluator(

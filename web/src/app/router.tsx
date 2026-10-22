@@ -12,6 +12,7 @@ import { DatasetCasesPage } from '../features/evaluations/DatasetCasesPage';
 import { ExperimentComparePage } from '../features/evaluations/ExperimentComparePage';
 import { ExperimentDetailPage } from '../features/evaluations/ExperimentDetailPage';
 import { ExperimentNewPage } from '../features/evaluations/ExperimentNewPage';
+import { EvaluatorDetailPage } from '../features/evaluations/EvaluatorDetailPage';
 import { EvaluationsPage } from '../features/evaluations/EvaluationsPage';
 import { EvaluatorsPage } from '../features/evaluations/EvaluatorsPage';
 import { ExperimentsPage } from '../features/evaluations/ExperimentsPage';
@@ -256,10 +257,22 @@ const evaluatorsRoute = createRoute({
   component: EvaluatorsPage,
 });
 
+const evaluatorDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'evaluations/evaluators/$evaluatorId',
+  component: EvaluatorDetailPage,
+});
+
 const workspaceEvaluatorsRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/evaluations/evaluators',
   component: EvaluatorsPage,
+});
+
+const workspaceEvaluatorDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations/evaluators/$evaluatorId',
+  component: EvaluatorDetailPage,
 });
 
 const experimentsRoute = createRoute({
@@ -656,12 +669,14 @@ const routeTree = rootRoute.addChildren([
       workspaceSessionDetailRoute,
       evaluationsRoute,
       evaluatorsRoute,
+      evaluatorDetailRoute,
       experimentsRoute,
       experimentNewRoute,
       experimentCompareRoute,
       experimentDetailRoute,
       workspaceEvaluationsRoute,
       workspaceEvaluatorsRoute,
+      workspaceEvaluatorDetailRoute,
       workspaceExperimentsRoute,
       workspaceExperimentNewRoute,
       workspaceExperimentCompareRoute,

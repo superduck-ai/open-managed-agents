@@ -194,6 +194,29 @@ func TestImportAndListEvaluationCases(t *testing.T) {
 	}
 }
 
+func TestEvaluationZipImportAllowsCompanionFiles(t *testing.T) {
+	now := time.Date(2026, time.October, 22, 1, 2, 3, 0, time.UTC)
+	store := &evaluationStoreStub{datasets: []db.EvaluationDataset{{
+		UUID: "00000000-0000-4000-8000-000000000003", ExternalID: "evalds_test", Name: "billing",
+		CreatedAt: now, UpdatedAt: now,
+		Version: db.EvaluationDatasetVersion{UUID: "00000000-0000-4000-8000-000000000008", ExternalID: "edv_test", Version: 1, CreatedAt: now},
+	}}}
+	body := zipMembers(map[string]string{
+		"pack/cases.jsonl":              "{\"name\":\"packed\",\"turns\":[\"hi\"]}\n",
+		"pack/input_files/brief.txt":    "brief",
+		"pack/reference_files/gold.txt": "gold",
+		"pack/.DS_Store":                "x",
+		"pack/__MACOSX/cases.jsonl":     "{\"name\":\"hidden\",\"turns\":[\"no\"]}\n",
+	})
+	response := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationDatasetPath("/evalds_test/cases:import"), string(body), "application/zip")
+	if response.Code != http.StatusOK || len(store.createdWrites) != 1 || store.createdWrites[0].Name != "packed" {
+		t.Fatalf("companion zip = %d writes=%#v body=%s", response.Code, store.createdWrites, response.Body.String())
+	}
+	if _, ok := zipMemberPath("../notes.txt"); ok {
+		t.Fatal("zip member path accepted traversal")
+	}
+}
+
 func TestCreateEvaluationCaseReturnsSingleCase(t *testing.T) {
 	store := &evaluationStoreStub{}
 	response := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationDatasetPath("/evalds_test/cases"), `{"name":"one","turns":["hello"],"desc":"note"}`, "")
@@ -244,13 +267,19 @@ func importOverLimitBody() string {
 }
 
 func zipImport(name, jsonl, extra string) []byte {
+	members := map[string]string{name: jsonl}
+	if extra != "" {
+		members[extra] = "x"
+	}
+	return zipMembers(members)
+}
+
+func zipMembers(members map[string]string) []byte {
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
-	file, _ := writer.Create(name)
-	_, _ = file.Write([]byte(jsonl))
-	if extra != "" {
-		other, _ := writer.Create(extra)
-		_, _ = other.Write([]byte("x"))
+	for name, contents := range members {
+		file, _ := writer.Create(name)
+		_, _ = file.Write([]byte(contents))
 	}
 	_ = writer.Close()
 	return buffer.Bytes()

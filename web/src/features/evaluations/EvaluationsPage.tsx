@@ -50,7 +50,9 @@ export function EvaluationsPage() {
           <TableHeader>
             <TableRow>
               <TableHead>{msg('evaluations.name', 'Name')}</TableHead>
-              <TableHead>{msg('evaluations.descriptionField', 'Description')}</TableHead>
+              <TableHead>{msg('evaluations.versionColumn', 'Version')}</TableHead>
+              <TableHead>{msg('evaluations.caseCount', 'Cases')}</TableHead>
+              <TableHead>{msg('evaluations.status', 'Status')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -84,12 +86,12 @@ function DatasetRows({
 }) {
   const { msg } = useI18n();
   if (isLoading) {
-    return <TableLoadingRow colSpan={2} label={msg('common.loading', 'Loading...')} />;
+    return <TableLoadingRow colSpan={4} label={msg('common.loading', 'Loading...')} />;
   }
   if (errorMessage) {
     return (
       <TableErrorRow
-        colSpan={2}
+        colSpan={4}
         title={msg('evaluations.loadFailed', 'Could not load datasets')}
         message={errorMessage}
         retryLabel={msg('common.retry', 'Retry')}
@@ -98,7 +100,7 @@ function DatasetRows({
     );
   }
   if (datasets.length === 0) {
-    return <TableEmptyRow colSpan={2}>{msg('evaluations.empty', 'No datasets yet.')}</TableEmptyRow>;
+    return <TableEmptyRow colSpan={4}>{msg('evaluations.empty', 'No datasets yet.')}</TableEmptyRow>;
   }
   return datasets.map((dataset) => (
     <TableRow key={dataset.id}>
@@ -110,9 +112,18 @@ function DatasetRows({
           {dataset.name}
         </a>
       </TableCell>
-      <TableCell className="text-muted-foreground">{dataset.desc}</TableCell>
+      <TableCell>{dataset.version.version}</TableCell>
+      <TableCell>{dataset.version.case_count}</TableCell>
+      <TableCell>{datasetStatusLabel(dataset.status, msg)}</TableCell>
     </TableRow>
   ));
+}
+
+function datasetStatusLabel(status: EvaluationDataset['status'], msg: ReturnType<typeof useI18n>['msg']) {
+  if (status === 'archived') {
+    return msg('evaluations.statusArchived', 'Archived');
+  }
+  return msg('evaluations.statusAvailable', 'Available');
 }
 
 function CreateDatasetDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {

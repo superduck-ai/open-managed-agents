@@ -931,8 +931,6 @@ const managedAgentPathByHref: Record<string, string> = {
   '/agents': 'agents',
   '/sessions': 'sessions',
   '/evaluations': 'evaluations',
-  '/evaluations/evaluators': 'evaluations/evaluators',
-  '/evaluations/experiments': 'evaluations/experiments',
   '/observability': 'observability',
   '/deployments': 'deployments',
   '/environments': 'environments',
@@ -1078,19 +1076,19 @@ function isActivePath(currentPath: string, href: string) {
 }
 
 function isManagedAgentNavActive(currentPath: string, href: string, managedPath: string) {
-  if (managedPath === 'evaluations' && isEvaluationChildPath(currentPath)) {
-    return false;
+  if (managedPath === 'evaluations') {
+    return (
+      currentPath === href ||
+      currentPath.startsWith(`${href}/`) ||
+      currentPath === `/workspaces/default/${managedPath}` ||
+      new RegExp(`^/workspaces/[^/]+/${managedPath}(/|$)`).test(currentPath)
+    );
   }
   return (
     currentPath === href ||
-    (managedPath === 'evaluations/experiments' && currentPath.startsWith(`${href}/`)) ||
     currentPath === `/workspaces/default/${managedPath}` ||
     new RegExp(`^/workspaces/[^/]+/${managedPath}(/|$)`).test(currentPath)
   );
-}
-
-function isEvaluationChildPath(currentPath: string) {
-  return /(^|\/)evaluations\/(evaluators|experiments)(\/|$)/.test(currentPath);
 }
 
 function isWideConsolePath(currentPath: string) {

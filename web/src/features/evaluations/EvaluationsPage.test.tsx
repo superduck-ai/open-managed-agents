@@ -16,7 +16,9 @@ import { resetTestDom } from '../../test/setup';
 import { AddSessionToEvaluationDataset } from './AddSessionToEvaluationDataset';
 import { DatasetCasesPage } from './DatasetCasesPage';
 import { ExperimentComparePage } from './ExperimentComparePage';
+import { ExperimentDetailPage } from './ExperimentDetailPage';
 import { ExperimentNewPage } from './ExperimentNewPage';
+import { EvaluatorDetailPage } from './EvaluatorDetailPage';
 import { EvaluationsPage } from './EvaluationsPage';
 import { EvaluatorsPage } from './EvaluatorsPage';
 import { ExperimentsPage } from './ExperimentsPage';
@@ -51,6 +53,9 @@ test('lists datasets and creates one', async () => {
 
   renderPage(<EvaluationsPage />);
   expect(await screen.findByRole('link', { name: 'billing' })).toBeTruthy();
+  expect(screen.getByRole('columnheader', { name: 'Version' })).toBeTruthy();
+  expect(screen.getByRole('columnheader', { name: 'Cases' })).toBeTruthy();
+  expect(screen.getByRole('cell', { name: 'Available' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Create dataset' }));
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'billing' } });
   fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'nightly' } });
@@ -109,12 +114,16 @@ test('lists cases and imports JSONL', async () => {
 
   renderPage(<DatasetCasesPage />);
   expect(await screen.findByText('hello')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'greeting' }));
+  expect(await screen.findByText('Input files')).toBeTruthy();
+  expect(screen.getByText('Cases can be added or imported. Editing or deleting a case is not available.')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
   expect(screen.getByText('Version 1')).toBeTruthy();
   expect(screen.getByText('nightly')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('One JSON object per line, with name and turns.'), {
     target: { value: '{"name":"second","turns":["hi"]}\n' },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Import' }));
 
   await waitFor(() => expect(requests.some((request) => request.url.endsWith('/cases:import'))).toBe(true));
   const imported = requests.find((request) => request.url.endsWith('/cases:import'));
@@ -298,7 +307,10 @@ test('lists evaluators and creates an llm evaluator', async () => {
   });
 
   renderPage(<EvaluatorsPage />);
-  expect(await screen.findByText('judge')).toBeTruthy();
+  expect(await screen.findByRole('link', { name: 'judge' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'judge' }).getAttribute('href')).toBe(
+    '/workspaces/default/evaluations/evaluators/evalev_test',
+  );
   expect(screen.getByRole('link', { name: 'Datasets' }).getAttribute('href')).toBe('/workspaces/default/evaluations');
   fireEvent.click(screen.getByRole('button', { name: 'Create evaluator' }));
   const dialog = screen.getByRole('dialog');
@@ -353,6 +365,10 @@ test('lists experiments and creates one', async () => {
   fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'agent_test' } });
   fireEvent.change(screen.getByLabelText('Environment'), { target: { value: 'env_test' } });
   fireEvent.change(screen.getByLabelText('Timeout (seconds)'), { target: { value: '60' } });
+  fireEvent.change(screen.getByLabelText('Environment variables'), { target: { value: 'TRACE=1' } });
+  fireEvent.change(screen.getByLabelText('Resources'), {
+    target: { value: '[{"type":"file","file_id":"file_a"}]' },
+  });
   fireEvent.change(screen.getByLabelText('Evaluators'), { target: { value: 'evalev_a, evalev_b' } });
   fireEvent.click(screen.getByRole('button', { name: 'New experiment' }));
   await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
@@ -366,8 +382,63 @@ test('lists experiments and creates one', async () => {
     agent_id: 'agent_test',
     environment_id: 'env_test',
     timeout_seconds: 60,
+    env: { TRACE: '1' },
+    resources: [{ type: 'file', file_id: 'file_a' }],
     evaluator_ids: ['evalev_a', 'evalev_b'],
   });
+});
+
+test('shows evaluator prompt, score schema, and agent-owned skills', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/evaluators/evalev_test');
+  globalThis.fetch = mock(async () =>
+    Response.json({
+      ...evaluator(),
+      version: {
+        ...evaluator().version,
+        evaluator_type: 'agent',
+        agent_id: 'agent_score',
+        prompt_template: '',
+        agent_contract: {
+          result_path: '/data/session/result.json',
+          score_path: '/output/score.json',
+          score_fields: ['score', 'explanation', 'details'],
+        },
+      },
+    }),
+  );
+  renderPage(<EvaluatorDetailPage />);
+  expect(await screen.findByRole('heading', { name: 'Prompt template' })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Output metrics' })).toBeTruthy();
+  expect(screen.getByText('/data/session/result.json → /output/score.json')).toBeTruthy();
+  expect(
+    screen.getByText('Skills stay on the bound Agent. This evaluator does not mount skills of its own.'),
+  ).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Open Agent agent_score' }).getAttribute('href')).toBe(
+    '/workspaces/default/agents/agent_score',
+  );
+});
+
+test('shows scores on an experiment', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/experiments/evalexp_test');
+  globalThis.fetch = mock(async () =>
+    Response.json({
+      ...experiment(),
+      scores: [
+        {
+          id: 'evalscore_test',
+          item_id: 'evalitem_test',
+          evaluator_id: 'evalev_test',
+          version_id: 'eev_test',
+          status: 'completed',
+          score: 0.91,
+          explanation: 'contract path',
+        },
+      ],
+    }),
+  );
+  renderPage(<ExperimentDetailPage />);
+  expect(await screen.findByRole('cell', { name: 'contract path' })).toBeTruthy();
+  expect(screen.getByRole('cell', { name: '0.91' })).toBeTruthy();
 });
 
 test('reuses a published dataset preset', async () => {

@@ -40,6 +40,44 @@ export function ExperimentDetailPage() {
           <span>
             {msg('evaluations.datasetVersion', 'Dataset version')}: {experiment.version_id}
           </span>
+          <span>
+            {msg('evaluations.timeoutSeconds', 'Timeout (seconds)')}: {experiment.timeout_seconds}
+          </span>
+          {experiment.env ? (
+            <pre className="whitespace-pre-wrap text-muted-foreground">{JSON.stringify(experiment.env, null, 2)}</pre>
+          ) : null}
+          {experiment.resources ? (
+            <pre className="whitespace-pre-wrap text-muted-foreground">
+              {JSON.stringify(experiment.resources, null, 2)}
+            </pre>
+          ) : null}
+        </div>
+      ) : null}
+      {(experiment?.scores?.length ?? 0) > 0 ? (
+        <div className="mb-6">
+          <h2 className="mb-2 text-sm font-medium">{msg('evaluations.scores', 'Scores')}</h2>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{msg('evaluations.evaluators', 'Evaluators')}</TableHead>
+                <TableHead>{msg('evaluations.cases', 'Cases')}</TableHead>
+                <TableHead>{msg('evaluations.score', 'Score')}</TableHead>
+                <TableHead>{msg('evaluations.explanation', 'Explanation')}</TableHead>
+                <TableHead>{msg('evaluations.status', 'Status')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {experiment?.scores?.map((score) => (
+                <TableRow key={score.id}>
+                  <TableCell>{score.evaluator_id}</TableCell>
+                  <TableCell>{score.item_id}</TableCell>
+                  <TableCell>{score.score ?? ''}</TableCell>
+                  <TableCell>{score.explanation || score.error}</TableCell>
+                  <TableCell>{score.status}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       ) : null}
       <Table>

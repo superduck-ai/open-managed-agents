@@ -25,6 +25,7 @@ func TestEvaluationExperimentMapperBuilderContracts(t *testing.T) {
 		EnvJSON: &env, ResourcesJSON: &resources, EvaluatorSetKey: "eev_a|eev_b", Status: "pending",
 		CreatedByUserUUID: &creator, CreatedAt: now,
 	}
+	scoreValue := 0.75
 	page := evaluationExperimentPageParams{
 		OrganizationUUID: params.OrganizationUUID, WorkspaceUUID: params.WorkspaceUUID, FetchLimit: 21,
 		Cursor: &EvaluationExperimentPageCursor{CreatedAt: now, UUID: params.UUID},
@@ -96,6 +97,34 @@ func TestEvaluationExperimentMapperBuilderContracts(t *testing.T) {
 				"params.OrganizationUUID", "params.WorkspaceUUID", "params.ExternalID",
 			},
 			wantSQLFragments: []string{"SET status = $1", "AND status = 'running'"},
+		}},
+		{"insert score", mapperBuilderContract{
+			statement: evaluationExperimentScoreMapperInsertStatement,
+			bound: buildEvaluationExperimentScoreMapperInsert(yourbatis.DialectPostgres, evaluationExperimentScoreWriteParams{
+				UUID: "00000000-0000-4000-8000-000000000070", ExternalID: "evalscore_test",
+				OrganizationUUID: params.OrganizationUUID, WorkspaceUUID: params.WorkspaceUUID,
+				ExperimentUUID: params.UUID, ItemUUID: "00000000-0000-4000-8000-000000000071", ItemExternalID: "evalitem_test",
+				EvaluatorUUID: "00000000-0000-4000-8000-000000000021", EvaluatorExternalID: "evalev_a",
+				VersionUUID: "00000000-0000-4000-8000-000000000032", VersionExternalID: "eev_a",
+				Position: 1, Status: "completed", Score: &scoreValue, Explanation: "matches",
+				DetailsJSON: &env, CreatedAt: now,
+			}),
+			wantID: "EvaluationExperimentScoreMapper.Insert", wantKind: yourbatis.StatementInsert,
+			wantArgumentNames: []string{
+				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
+				"params.ExperimentUUID", "params.ItemUUID", "params.ItemExternalID",
+				"params.EvaluatorUUID", "params.EvaluatorExternalID", "params.VersionUUID", "params.VersionExternalID",
+				"params.Position", "params.Status", "params.Score", "params.Explanation", "params.DetailsJSON",
+				"params.ErrorMessage", "params.CreatedAt", "params.CreatedAt",
+			},
+			wantSQLFragments: []string{"INSERT INTO evaluation_experiment_scores", "CAST(", "AS jsonb)", "RETURNING"},
+		}},
+		{"list scores", mapperBuilderContract{
+			statement: evaluationExperimentScoreMapperListByExperimentStatement,
+			bound:     buildEvaluationExperimentScoreMapperListByExperiment(yourbatis.DialectPostgres, params.OrganizationUUID, params.WorkspaceUUID, params.UUID),
+			wantID:    "EvaluationExperimentScoreMapper.ListByExperiment", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "experimentUUID"},
+			wantSQLFragments:  []string{"experiment_uuid = $3", "ORDER BY position ASC, uuid ASC"},
 		}},
 		{"set session", mapperBuilderContract{
 			statement: evaluationExperimentItemMapperSetSessionStatement,

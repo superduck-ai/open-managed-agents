@@ -75,6 +75,7 @@ type EvaluationExperiment struct {
 	EvaluatorCount        int64
 	Bindings              []EvaluationExperimentBinding
 	Items                 []EvaluationExperimentItem
+	Scores                []EvaluationExperimentScore
 }
 
 type EvaluationExperimentCreate struct {
@@ -172,6 +173,11 @@ func (d *DB) GetEvaluationExperiment(ctx context.Context, organizationUUID, work
 	}
 	experiment.Bindings = bindings
 	experiment.Items = items
+	scores, err := d.ListEvaluationExperimentScores(ctx, organizationUUID, workspaceUUID, experiment.UUID)
+	if err != nil {
+		return EvaluationExperiment{}, err
+	}
+	experiment.Scores = scores
 	return experiment, nil
 }
 
@@ -197,6 +203,9 @@ func (d *DB) ListEvaluationExperimentsPage(ctx context.Context, params ListEvalu
 	if hasMore {
 		experiments = experiments[:limit]
 	}
+	if err := d.attachEvaluationExperimentScores(ctx, experiments); err != nil {
+		return nil, false, err
+	}
 	return experiments, hasMore, nil
 }
 
@@ -220,6 +229,9 @@ func (d *DB) ListCompletedEvaluationExperiments(ctx context.Context, organizatio
 		}
 		experiment.Bindings = evaluationExperimentBindings(bindings)
 		experiments = append(experiments, experiment)
+	}
+	if err := d.attachEvaluationExperimentScores(ctx, experiments); err != nil {
+		return nil, err
 	}
 	return experiments, nil
 }
@@ -292,6 +304,110 @@ func (row evaluationExperimentSessionItemRow) evaluationExperimentItem() Evaluat
 		CreatedAt:         row.CreatedAt,
 		UpdatedAt:         row.UpdatedAt,
 	}.evaluationExperimentItem()
+}
+
+const (
+	EvaluationExperimentScoreStatusCompleted = "completed"
+	EvaluationExperimentScoreStatusFailed    = "failed"
+)
+
+type EvaluationExperimentScore struct {
+	UUID                string
+	ExternalID          string
+	OrganizationUUID    string
+	WorkspaceUUID       string
+	ExperimentUUID      string
+	ItemUUID            string
+	ItemExternalID      string
+	EvaluatorUUID       string
+	EvaluatorExternalID string
+	VersionUUID         string
+	VersionExternalID   string
+	Position            int
+	Status              string
+	Score               *float64
+	Explanation         string
+	Details             json.RawMessage
+	ErrorMessage        string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+func (d *DB) CreateEvaluationExperimentScore(ctx context.Context, score EvaluationExperimentScore) (EvaluationExperimentScore, error) {
+	row, err := NewEvaluationExperimentScoreMapper(d.mapperDB).Insert(ctx, evaluationExperimentScoreWriteParams{
+		UUID:                score.UUID,
+		ExternalID:          score.ExternalID,
+		OrganizationUUID:    score.OrganizationUUID,
+		WorkspaceUUID:       score.WorkspaceUUID,
+		ExperimentUUID:      score.ExperimentUUID,
+		ItemUUID:            score.ItemUUID,
+		ItemExternalID:      score.ItemExternalID,
+		EvaluatorUUID:       score.EvaluatorUUID,
+		EvaluatorExternalID: score.EvaluatorExternalID,
+		VersionUUID:         score.VersionUUID,
+		VersionExternalID:   score.VersionExternalID,
+		Position:            score.Position,
+		Status:              score.Status,
+		Score:               score.Score,
+		Explanation:         score.Explanation,
+		DetailsJSON:         encodeOptionalJSON(score.Details),
+		ErrorMessage:        score.ErrorMessage,
+		CreatedAt:           score.CreatedAt,
+	})
+	if isUniqueViolation(err) {
+		return EvaluationExperimentScore{}, ErrDuplicate
+	}
+	if err != nil {
+		return EvaluationExperimentScore{}, err
+	}
+	return row.evaluationExperimentScore(), nil
+}
+
+func (d *DB) ListEvaluationExperimentScores(ctx context.Context, organizationUUID, workspaceUUID, experimentUUID string) ([]EvaluationExperimentScore, error) {
+	rows, err := NewEvaluationExperimentScoreMapper(d.mapperDB).ListByExperiment(ctx, organizationUUID, workspaceUUID, experimentUUID)
+	if err != nil {
+		return nil, err
+	}
+	scores := make([]EvaluationExperimentScore, 0, len(rows))
+	for _, row := range rows {
+		scores = append(scores, row.evaluationExperimentScore())
+	}
+	return scores, nil
+}
+
+func (d *DB) attachEvaluationExperimentScores(ctx context.Context, experiments []EvaluationExperiment) error {
+	for index := range experiments {
+		scores, err := d.ListEvaluationExperimentScores(ctx, experiments[index].OrganizationUUID, experiments[index].WorkspaceUUID, experiments[index].UUID)
+		if err != nil {
+			return err
+		}
+		experiments[index].Scores = scores
+	}
+	return nil
+}
+
+func (row evaluationExperimentScoreRow) evaluationExperimentScore() EvaluationExperimentScore {
+	return EvaluationExperimentScore{
+		UUID:                row.UUID,
+		ExternalID:          row.ExternalID,
+		OrganizationUUID:    row.OrganizationUUID,
+		WorkspaceUUID:       row.WorkspaceUUID,
+		ExperimentUUID:      row.ExperimentUUID,
+		ItemUUID:            row.ItemUUID,
+		ItemExternalID:      row.ItemExternalID,
+		EvaluatorUUID:       row.EvaluatorUUID,
+		EvaluatorExternalID: row.EvaluatorExternalID,
+		VersionUUID:         row.VersionUUID,
+		VersionExternalID:   row.VersionExternalID,
+		Position:            row.Position,
+		Status:              row.Status,
+		Score:               row.Score,
+		Explanation:         row.Explanation,
+		Details:             decodeOptionalJSON(row.DetailsJSON),
+		ErrorMessage:        row.ErrorMessage,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
+	}
 }
 
 func (d *DB) SetEvaluationExperimentItemSession(ctx context.Context, update EvaluationExperimentItemSession) error {

@@ -40,6 +40,9 @@ type Store interface {
 	SetEvaluationExperimentItemSession(context.Context, db.EvaluationExperimentItemSession) error
 	ListRunningEvaluationExperimentItemsBySession(context.Context, string, string, string) ([]db.EvaluationExperimentSessionMatch, error)
 	FinishRunningEvaluationExperimentItem(context.Context, string, string, string, string, string, time.Time) (bool, error)
+	GetEvaluationEvaluatorVersion(context.Context, string, string, string) (db.EvaluationEvaluatorVersion, error)
+	CreateEvaluationExperimentScore(context.Context, db.EvaluationExperimentScore) (db.EvaluationExperimentScore, error)
+	ListSessionEventsPage(context.Context, db.ListSessionEventsPageParams) ([]db.SessionEvent, bool, error)
 }
 
 type CaseSessionInput struct {
@@ -59,6 +62,7 @@ type Handler struct {
 	store   Store
 	logger  *slog.Logger
 	starter CaseSessionStarter
+	model   EvaluatorModel
 }
 
 func NewHandler(store Store, logger *slog.Logger) *Handler {
@@ -67,6 +71,11 @@ func NewHandler(store Store, logger *slog.Logger) *Handler {
 
 func (h *Handler) WithSessionStarter(starter CaseSessionStarter) *Handler {
 	h.starter = starter
+	return h
+}
+
+func (h *Handler) WithEvaluatorModel(model EvaluatorModel) *Handler {
+	h.model = model
 	return h
 }
 

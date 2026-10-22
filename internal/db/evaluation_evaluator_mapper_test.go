@@ -71,6 +71,15 @@ func TestEvaluationEvaluatorMapperBuilderContracts(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) { assertMapperBuilderContract(t, test.contract) })
 	}
+	t.Run("scoped evaluator version", func(t *testing.T) {
+		assertMapperBuilderContract(t, mapperBuilderContract{
+			statement: evaluationEvaluatorVersionMapperFindScopedByExternalIDStatement,
+			bound:     buildEvaluationEvaluatorVersionMapperFindScopedByExternalID(yourbatis.DialectPostgres, params.OrganizationUUID, params.WorkspaceUUID, "eev_test"),
+			wantID:    "EvaluationEvaluatorVersionMapper.FindScopedByExternalID", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "externalID"},
+			wantSQLFragments:  []string{"organization_uuid = $1", "workspace_uuid = $2", "external_id = $3"},
+		})
+	})
 
 	t.Run("list page omits cursor", func(t *testing.T) {
 		bound := buildEvaluationEvaluatorMapperListPage(yourbatis.DialectPostgres, evaluationEvaluatorPageParams{

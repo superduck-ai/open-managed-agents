@@ -293,6 +293,8 @@ type evaluationStoreStub struct {
 	updateStatusCalls     int
 	lastStatus            string
 	itemSessionUpdates    []db.EvaluationExperimentItemSession
+	evaluatorVersions     []db.EvaluationEvaluatorVersion
+	sessionEvents         []db.SessionEvent
 	getVersionCalls       int
 	listVersionCaseCalls  int
 	getAgentCalls         int
@@ -469,6 +471,32 @@ func (s *evaluationStoreStub) ListRunningEvaluationExperimentItemsBySession(_ co
 		}
 	}
 	return matches, nil
+}
+
+func (s *evaluationStoreStub) GetEvaluationEvaluatorVersion(_ context.Context, _, _, externalID string) (db.EvaluationEvaluatorVersion, error) {
+	for _, version := range s.evaluatorVersions {
+		if version.ExternalID == externalID {
+			return version, nil
+		}
+	}
+	return db.EvaluationEvaluatorVersion{}, db.ErrNotFound
+}
+
+func (s *evaluationStoreStub) CreateEvaluationExperimentScore(_ context.Context, score db.EvaluationExperimentScore) (db.EvaluationExperimentScore, error) {
+	for _, existing := range s.experiment.Scores {
+		if existing.ItemUUID == score.ItemUUID && existing.VersionUUID == score.VersionUUID {
+			return db.EvaluationExperimentScore{}, db.ErrDuplicate
+		}
+	}
+	if score.UpdatedAt.IsZero() {
+		score.UpdatedAt = score.CreatedAt
+	}
+	s.experiment.Scores = append(s.experiment.Scores, score)
+	return score, nil
+}
+
+func (s *evaluationStoreStub) ListSessionEventsPage(_ context.Context, _ db.ListSessionEventsPageParams) ([]db.SessionEvent, bool, error) {
+	return append([]db.SessionEvent(nil), s.sessionEvents...), false, nil
 }
 
 func (s *evaluationStoreStub) FinishRunningEvaluationExperimentItem(_ context.Context, _, _, externalID, status, errorMessage string, updatedAt time.Time) (bool, error) {

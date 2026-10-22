@@ -104,11 +104,13 @@ func TestStartExperimentRecordsSessionFailure(t *testing.T) {
 
 func TestCompareExperimentsReturnsOnlyCompletedMatches(t *testing.T) {
 	store := readyExperimentStore()
+	score := 1.0
 	store.completedExperiments = []db.EvaluationExperiment{{
 		ExternalID: "evalexp_done", Name: "done", Status: db.EvaluationExperimentStatusCompleted,
 		DatasetExternalID: "evalds_test", VersionExternalID: "edv_test", AgentExternalID: "agent_other", AgentVersion: 2,
 		EnvironmentExternalID: "env_test", TimeoutSeconds: 60, CreatedAt: time.Date(2026, time.October, 22, 1, 2, 3, 0, time.UTC), UpdatedAt: time.Date(2026, time.October, 22, 1, 2, 3, 0, time.UTC),
 		Bindings: []db.EvaluationExperimentBinding{{EvaluatorExternalID: "evalev_a", VersionExternalID: "eev_a", Position: 1}},
+		Scores:   []db.EvaluationExperimentScore{{ExternalID: "evalscore_done", ItemExternalID: "evalitem_done", VersionExternalID: "eev_a", Status: db.EvaluationExperimentScoreStatusCompleted, Score: &score}},
 	}}
 	empty := serveEvaluation(evaluationRouter(&evaluationStoreStub{version: store.version, evaluators: store.evaluators}), http.MethodPost, evaluationExperimentPath(":compare"), `{"dataset_version_id":"edv_test","evaluator_ids":["evalev_b","evalev_a"]}`, "")
 	if empty.Code != http.StatusOK || !strings.Contains(empty.Body.String(), `"data":[]`) {
@@ -118,23 +120,29 @@ func TestCompareExperimentsReturnsOnlyCompletedMatches(t *testing.T) {
 	if response.Code != http.StatusOK || store.lastCompareKey != "eev_a|eev_b" || store.lastCompareVersion != "edv_test" {
 		t.Fatalf("compare = %d key=%s version=%s body=%s", response.Code, store.lastCompareKey, store.lastCompareVersion, response.Body.String())
 	}
-	if !strings.Contains(response.Body.String(), `"id":"evalexp_done"`) || !strings.Contains(response.Body.String(), `"agent_version":2`) || strings.Contains(response.Body.String(), `"items"`) {
+	if !strings.Contains(response.Body.String(), `"id":"evalexp_done"`) || !strings.Contains(response.Body.String(), `"agent_version":2`) || !strings.Contains(response.Body.String(), `"id":"evalscore_done"`) || strings.Contains(response.Body.String(), `"items"`) {
 		t.Fatalf("compare body = %s", response.Body.String())
 	}
 }
 
 func TestListExperimentsOmitsItems(t *testing.T) {
 	store := readyExperimentStore()
+	score := 0.5
 	store.experiments = []db.EvaluationExperiment{{
 		ExternalID: "evalexp_list", Name: "nightly", Status: db.EvaluationExperimentStatusPending,
 		DatasetExternalID: "evalds_test", VersionExternalID: "edv_test", AgentExternalID: "agent_test", AgentVersion: 4,
 		EnvironmentExternalID: "env_test", TimeoutSeconds: 60, ItemCount: 1, EvaluatorCount: 2,
 		CreatedAt: time.Date(2026, time.October, 22, 1, 2, 3, 0, time.UTC), UpdatedAt: time.Date(2026, time.October, 22, 1, 2, 3, 0, time.UTC),
 		Items: []db.EvaluationExperimentItem{{ExternalID: "evalitem_hidden", CaseExternalID: "evalcase_test", Status: db.EvaluationExperimentStatusPending}},
+		Scores: []db.EvaluationExperimentScore{{
+			ExternalID: "evalscore_list", ItemExternalID: "evalitem_scored", VersionExternalID: "eev_a",
+			Status: db.EvaluationExperimentScoreStatusCompleted, Score: &score,
+		}},
 	}}
 	response := serveEvaluation(evaluationRouter(store), http.MethodGet, evaluationExperimentPath(""), "", "")
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"item_count":1`) || strings.Contains(response.Body.String(), "evalitem_hidden") {
-		t.Fatalf("list = %d %s", response.Code, response.Body.String())
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, `"item_count":1`) || strings.Contains(body, `"items"`) || strings.Contains(body, "evalitem_hidden") || !strings.Contains(body, `"id":"evalscore_list"`) || !strings.Contains(body, `"score":0.5`) {
+		t.Fatalf("list = %d %s", response.Code, body)
 	}
 }
 

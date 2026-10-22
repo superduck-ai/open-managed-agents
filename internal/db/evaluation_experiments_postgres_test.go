@@ -25,8 +25,8 @@ func TestEvaluationExperimentsPostgres(t *testing.T) {
 	if err := database.QueryRowContext(ctx, `select max(version_id) from goose_db_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version < 98 {
-		t.Fatalf("goose version = %d, want at least 98", version)
+	if version < 99 {
+		t.Fatalf("goose version = %d, want at least 99", version)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
 	now := time.Date(2026, time.October, 22, 1, 2, 3, 0, time.UTC)
@@ -87,8 +87,42 @@ func TestEvaluationExperimentsPostgres(t *testing.T) {
 	if err != nil || finishedAgain {
 		t.Fatalf("second finish = (%v, %v)", finishedAgain, err)
 	}
+	missingScore, err := store.CreateEvaluationExperimentScore(ctx, EvaluationExperimentScore{
+		UUID: "53000000-0000-4000-8000-000000000001", ExternalID: "evalscore_missing",
+		OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, ExperimentUUID: first.UUID,
+		ItemUUID: "52000000-0000-4000-8000-000000000001", ItemExternalID: "evalitem_one",
+		EvaluatorUUID: "40000000-0000-4000-8000-000000000001", EvaluatorExternalID: "evalev_test",
+		VersionUUID: "41000000-0000-4000-8000-000000000001", VersionExternalID: "eev_test",
+		Position: 1, Status: EvaluationExperimentScoreStatusCompleted, CreatedAt: now.Add(5 * time.Minute),
+	})
+	if err == nil {
+		t.Fatalf("completed score without a value = %+v", missingScore)
+	}
+	scoreValue := 0.75
+	score, err := store.CreateEvaluationExperimentScore(ctx, EvaluationExperimentScore{
+		UUID: "53000000-0000-4000-8000-000000000002", ExternalID: "evalscore_one",
+		OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, ExperimentUUID: first.UUID,
+		ItemUUID: "52000000-0000-4000-8000-000000000001", ItemExternalID: "evalitem_one",
+		EvaluatorUUID: "40000000-0000-4000-8000-000000000001", EvaluatorExternalID: "evalev_test",
+		VersionUUID: "41000000-0000-4000-8000-000000000001", VersionExternalID: "eev_test",
+		Position: 1, Status: EvaluationExperimentScoreStatusCompleted, Score: &scoreValue, Explanation: "matches",
+		Details: json.RawMessage(`{"pass":true}`), CreatedAt: now.Add(5 * time.Minute),
+	})
+	if err != nil || score.ExternalID != "evalscore_one" || score.Score == nil || *score.Score != 0.75 {
+		t.Fatalf("score = (%+v, %v)", score, err)
+	}
+	if _, err := store.CreateEvaluationExperimentScore(ctx, EvaluationExperimentScore{
+		UUID: "53000000-0000-4000-8000-000000000003", ExternalID: "evalscore_dup",
+		OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, ExperimentUUID: first.UUID,
+		ItemUUID: "52000000-0000-4000-8000-000000000001", ItemExternalID: "evalitem_one",
+		EvaluatorUUID: "40000000-0000-4000-8000-000000000001", EvaluatorExternalID: "evalev_test",
+		VersionUUID: "41000000-0000-4000-8000-000000000001", VersionExternalID: "eev_test",
+		Position: 1, Status: EvaluationExperimentScoreStatusFailed, ErrorMessage: "again", CreatedAt: now.Add(6 * time.Minute),
+	}); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("duplicate score = %v", err)
+	}
 	loaded, err := store.GetEvaluationExperiment(ctx, organizationUUID, workspaceUUID, "evalexp_one")
-	if err != nil || loaded.Status != EvaluationExperimentStatusRunning || loaded.Items[0].SessionExternalID != "sesn_case" || loaded.SessionCount != 1 {
+	if err != nil || loaded.Status != EvaluationExperimentStatusRunning || loaded.Items[0].SessionExternalID != "sesn_case" || loaded.SessionCount != 1 || len(loaded.Scores) != 1 || loaded.Scores[0].ExternalID != "evalscore_one" {
 		t.Fatalf("loaded = (%+v, %v)", loaded, err)
 	}
 	var env map[string]string

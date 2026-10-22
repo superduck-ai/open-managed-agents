@@ -51,9 +51,13 @@ func (h *Handler) ObserveSessionEvents(ctx context.Context, events []db.SessionE
 				)
 				continue
 			}
-			if finished {
-				updated[match.ExperimentExternalID] = outcome
+			if !finished {
+				continue
 			}
+			if outcome.Status == db.EvaluationExperimentStatusCompleted {
+				h.scoreCompletedItem(ctx, outcome, match)
+			}
+			updated[match.ExperimentExternalID] = outcome
 		}
 	}
 	for experimentID, outcome := range updated {

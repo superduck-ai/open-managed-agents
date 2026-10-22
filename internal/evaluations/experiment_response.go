@@ -25,6 +25,18 @@ type experimentItemResponse struct {
 	Error     string `json:"error,omitempty"`
 }
 
+type experimentScoreResponse struct {
+	ID          string          `json:"id"`
+	ItemID      string          `json:"item_id"`
+	EvaluatorID string          `json:"evaluator_id"`
+	VersionID   string          `json:"version_id"`
+	Status      string          `json:"status"`
+	Score       *float64        `json:"score,omitempty"`
+	Explanation string          `json:"explanation,omitempty"`
+	Details     json.RawMessage `json:"details,omitempty"`
+	Error       string          `json:"error,omitempty"`
+}
+
 type experimentResponse struct {
 	ID             string                        `json:"id"`
 	Type           string                        `json:"type"`
@@ -44,6 +56,7 @@ type experimentResponse struct {
 	EvaluatorCount int                           `json:"evaluator_count"`
 	Evaluators     []experimentEvaluatorResponse `json:"evaluators,omitempty"`
 	Items          []experimentItemResponse      `json:"items,omitempty"`
+	Scores         []experimentScoreResponse     `json:"scores,omitempty"`
 	CreatedAt      string                        `json:"created_at"`
 	UpdatedAt      string                        `json:"updated_at"`
 }
@@ -73,6 +86,7 @@ func experimentResponseFrom(experiment db.EvaluationExperiment, includeChildren 
 		EvaluatorCount: int(experiment.EvaluatorCount),
 		CreatedAt:      experiment.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:      experiment.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		Scores:         experimentScoresFrom(experiment.Scores),
 	}
 	if !includeChildren {
 		response.Env = nil
@@ -114,6 +128,27 @@ func experimentEvaluatorsFrom(bindings []db.EvaluationExperimentBinding) []exper
 		})
 	}
 	return evaluators
+}
+
+func experimentScoresFrom(scores []db.EvaluationExperimentScore) []experimentScoreResponse {
+	if len(scores) == 0 {
+		return nil
+	}
+	responses := make([]experimentScoreResponse, 0, len(scores))
+	for _, score := range scores {
+		responses = append(responses, experimentScoreResponse{
+			ID:          score.ExternalID,
+			ItemID:      score.ItemExternalID,
+			EvaluatorID: score.EvaluatorExternalID,
+			VersionID:   score.VersionExternalID,
+			Status:      score.Status,
+			Score:       score.Score,
+			Explanation: score.Explanation,
+			Details:     score.Details,
+			Error:       score.ErrorMessage,
+		})
+	}
+	return responses
 }
 
 func experimentItemsFrom(items []db.EvaluationExperimentItem) []experimentItemResponse {

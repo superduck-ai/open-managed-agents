@@ -98,6 +98,14 @@ func (d *DB) CreateEvaluationEvaluator(ctx context.Context, evaluator Evaluation
 	return created, err
 }
 
+func (d *DB) GetEvaluationEvaluatorVersion(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (EvaluationEvaluatorVersion, error) {
+	row, err := NewEvaluationEvaluatorVersionMapper(d.mapperDB).FindScopedByExternalID(ctx, organizationUUID, workspaceUUID, externalID)
+	if err != nil {
+		return EvaluationEvaluatorVersion{}, mapNoRows(err)
+	}
+	return row.evaluationEvaluatorVersion()
+}
+
 func (d *DB) GetEvaluationEvaluator(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (EvaluationEvaluator, error) {
 	row, err := NewEvaluationEvaluatorMapper(d.mapperDB).FindByExternalID(ctx, organizationUUID, workspaceUUID, externalID)
 	if err != nil {

@@ -46,4 +46,13 @@
         RETURNING
         <include refid="columns"/>
     </insert>
+
+    <select id="FindScopedByExternalID" resultType="evaluationEvaluatorVersionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM evaluation_evaluator_versions
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+    </select>
 </mapper>

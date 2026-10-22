@@ -114,10 +114,14 @@ func (h *Handler) createEvaluatorFromPreset(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		return presetLookupError(err, presetEvaluatorNotFoundMessage)
 	}
+	agentID, err := normalizePresetAgentID(body.AgentID)
+	if err != nil {
+		return err
+	}
 	evaluator, err := newCustomEvaluator(principal, name, description, db.EvaluationEvaluatorVersion{
 		EvaluatorType:  preset.EvaluatorType,
 		Model:          preset.Model,
-		AgentID:        preset.AgentID,
+		AgentID:        agentID,
 		PromptTemplate: preset.PromptTemplate,
 		Variables:      append([]string(nil), preset.Variables...),
 	})
@@ -133,7 +137,7 @@ func (h *Handler) createEvaluatorFromPreset(w http.ResponseWriter, r *http.Reque
 }
 
 func evaluatorPresetConflict(body createEvaluatorRequest) bool {
-	if strings.TrimSpace(body.EvaluatorType) != "" || strings.TrimSpace(body.Model) != "" || strings.TrimSpace(body.AgentID) != "" || strings.TrimSpace(body.PromptTemplate) != "" {
+	if strings.TrimSpace(body.EvaluatorType) != "" || strings.TrimSpace(body.Model) != "" || strings.TrimSpace(body.PromptTemplate) != "" {
 		return true
 	}
 	return len(body.Variables) > 0

@@ -25,24 +25,24 @@ func TestPresetCatalogCoversPublishedIA(t *testing.T) {
 			t.Fatalf("dataset = %#v", dataset)
 		}
 	}
-	llm := 0
-	archivedEvaluators := 0
+	seen := map[string]struct{}{}
 	for _, evaluator := range evaluators {
-		if evaluator.Archived {
-			archivedEvaluators++
-		}
-		if evaluator.EvaluatorType == evaluatorTypeLLM {
-			llm++
-			if !strings.Contains(evaluator.PromptTemplate, "{{") || evaluator.Model != "oma-demo" {
-				t.Fatalf("llm preset = %#v", evaluator)
-			}
-		}
-		if !strings.Contains(evaluator.Description, "Not a QCA evaluator") {
+		if evaluator.Archived || evaluator.EvaluatorType != evaluatorTypeAgent || evaluator.AgentID != "" || evaluator.Model != "" {
 			t.Fatalf("evaluator = %#v", evaluator)
 		}
+		if _, ok := seen[evaluator.ID]; ok || !strings.Contains(evaluator.Description, "Not a QCA evaluator") {
+			t.Fatalf("evaluator = %#v", evaluator)
+		}
+		seen[evaluator.ID] = struct{}{}
+		if !strings.Contains(evaluator.PromptTemplate, "/data/session/result.json") || !strings.Contains(evaluator.PromptTemplate, "/output/score.json") || !strings.Contains(evaluator.PromptTemplate, "0 to 1") {
+			t.Fatalf("prompt = %s", evaluator.PromptTemplate)
+		}
+		if err := validatePromptPlaceholders(evaluator.PromptTemplate, evaluator.Variables); err != nil {
+			t.Fatalf("placeholders %s: %v", evaluator.ID, err)
+		}
 	}
-	if multiVersion != 1 || archivedDatasets != 1 || llm != 4 || archivedEvaluators != 1 {
-		t.Fatalf("versions=%d archived datasets=%d llm=%d archived evaluators=%d", multiVersion, archivedDatasets, llm, archivedEvaluators)
+	if multiVersion != 1 || archivedDatasets != 1 || len(seen) != presetEvaluatorCount {
+		t.Fatalf("versions=%d archived datasets=%d evaluators=%d", multiVersion, archivedDatasets, len(seen))
 	}
 }
 
@@ -79,20 +79,24 @@ func TestListPresetsAndReusePublishedVersion(t *testing.T) {
 	}
 
 	evaluatorList := serveEvaluation(router, http.MethodGet, evaluationEvaluatorPresetPath(""), "", "")
-	if evaluatorList.Code != http.StatusOK || !strings.Contains(evaluatorList.Body.String(), `"id":"evalev_oma_demo_01"`) || !strings.Contains(evaluatorList.Body.String(), `"evaluator_type":"agent"`) || !strings.Contains(evaluatorList.Body.String(), `"type":"evaluation_evaluator_preset"`) {
+	if evaluatorList.Code != http.StatusOK || strings.Count(evaluatorList.Body.String(), `"evaluator_type":"agent"`) != presetEvaluatorCount || !strings.Contains(evaluatorList.Body.String(), `"id":"evalev_oma_latency"`) || strings.Contains(evaluatorList.Body.String(), "agent_oma_demo") || strings.Contains(evaluatorList.Body.String(), `"evaluator_type":"llm"`) {
 		t.Fatalf("evaluator presets = %d %s", evaluatorList.Code, evaluatorList.Body.String())
 	}
-	copied := serveEvaluation(router, http.MethodPost, evaluationEvaluatorPath(""), `{"name":"copied judge","desc":"mine","source_version_id":"eev_oma_demo_01_v1"}`, "")
-	if copied.Code != http.StatusOK || store.createEvaluatorCalls != 1 || store.createdEvaluator.Version.EvaluatorType != evaluatorTypeLLM || store.createdEvaluator.Version.Model != "oma-demo" || !strings.Contains(store.createdEvaluator.Version.PromptTemplate, "{{input}}") {
+	missingAgent := serveEvaluation(router, http.MethodPost, evaluationEvaluatorPath(""), `{"name":"copied judge","source_version_id":"eev_oma_latency_v1"}`, "")
+	if missingAgent.Code != http.StatusBadRequest || !strings.Contains(missingAgent.Body.String(), agentIDRequiredMessage) || store.createEvaluatorCalls != 0 {
+		t.Fatalf("missing agent = %d calls=%d %s", missingAgent.Code, store.createEvaluatorCalls, missingAgent.Body.String())
+	}
+	copied := serveEvaluation(router, http.MethodPost, evaluationEvaluatorPath(""), `{"name":"copied judge","desc":"mine","source_version_id":"eev_oma_latency_v1","agent_id":" agent_score "}`, "")
+	if copied.Code != http.StatusOK || store.createEvaluatorCalls != 1 || store.createdEvaluator.Version.EvaluatorType != evaluatorTypeAgent || store.createdEvaluator.Version.AgentID != "agent_score" || store.createdEvaluator.Version.Model != "" || !strings.Contains(store.createdEvaluator.Version.PromptTemplate, "{{agent_trajectory}}") || !strings.Contains(store.createdEvaluator.Version.PromptTemplate, "/output/score.json") {
 		t.Fatalf("copy evaluator = %d evaluator=%#v body=%s", copied.Code, store.createdEvaluator, copied.Body.String())
 	}
-	conflict := serveEvaluation(router, http.MethodPost, evaluationEvaluatorPath(""), `{"name":"copied","source_version_id":"eev_oma_demo_01_v1","model":"other"}`, "")
+	conflict := serveEvaluation(router, http.MethodPost, evaluationEvaluatorPath(""), `{"name":"copied","source_version_id":"eev_oma_latency_v1","agent_id":"agent_score","model":"other"}`, "")
 	if conflict.Code != http.StatusBadRequest || !strings.Contains(conflict.Body.String(), presetSourceConflictMessage) || store.createEvaluatorCalls != 1 {
 		t.Fatalf("conflict = %d calls=%d %s", conflict.Code, store.createEvaluatorCalls, conflict.Body.String())
 	}
-	archivedEvaluator := serveEvaluation(router, http.MethodPost, evaluationEvaluatorPath(""), `{"name":"old","source_version_id":"eev_oma_demo_11_v1"}`, "")
-	if archivedEvaluator.Code != http.StatusBadRequest || !strings.Contains(archivedEvaluator.Body.String(), presetArchivedMessage) {
-		t.Fatalf("archived evaluator = %d %s", archivedEvaluator.Code, archivedEvaluator.Body.String())
+	missingEvaluator := serveEvaluation(router, http.MethodPost, evaluationEvaluatorPath(""), `{"name":"missing","source_version_id":"eev_missing","agent_id":"agent_score"}`, "")
+	if missingEvaluator.Code != http.StatusNotFound || !strings.Contains(missingEvaluator.Body.String(), presetEvaluatorNotFoundMessage) || store.createEvaluatorCalls != 1 {
+		t.Fatalf("missing evaluator = %d calls=%d %s", missingEvaluator.Code, store.createEvaluatorCalls, missingEvaluator.Body.String())
 	}
 }
 

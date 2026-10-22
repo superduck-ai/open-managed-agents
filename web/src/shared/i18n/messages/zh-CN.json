@@ -1266,6 +1266,7 @@
   "evaluations.evaluatorAgent": "Agent",
   "evaluations.model": "模型",
   "evaluations.agentId": "Agent",
+  "evaluations.presetAgentHint": "会复制预置评分说明。填写用来执行它的 Agent。",
   "evaluations.promptTemplate": "Prompt",
   "evaluations.variables": "变量",
   "evaluations.agentContract": "读取 /data/session/result.json 和 artifacts，写出 /output/score.json，包含 score、explanation、details。",

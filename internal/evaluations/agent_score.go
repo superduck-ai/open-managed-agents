@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -111,7 +112,7 @@ func (h *Handler) scoreAgent(ctx context.Context, outcome sessionOutcome, experi
 		AgentVersion:          agent.CurrentVersion,
 		EnvironmentExternalID: experiment.EnvironmentExternalID,
 		ResultJSON:            result,
-		Turns:                 agentScoreTurns(result),
+		Turns:                 agentScoreTurns(version, values, result),
 		Metadata:              agentScoreMetadata(experiment.ExternalID, item.ExternalID, binding.VersionExternalID),
 		TimeoutSeconds:        experiment.TimeoutSeconds,
 		Env:                   experiment.Env,
@@ -242,12 +243,16 @@ func agentScoreResultJSON(sessionID string, values scoreValues) ([]byte, error) 
 	})
 }
 
-func agentScoreTurns(result []byte) []string {
-	return []string{
-		"Read " + evaluatorResultPath + " and write " + evaluatorScorePath + " as JSON with score, explanation, and details.\n" +
-			"This scoring sandbox links " + evaluatorResultPath + " to " + agentScoreSandboxResultPath + " and " + evaluatorScorePath + " to " + agentScoreSandboxOutputPath + ".\n" +
-			string(result),
+func agentScoreTurns(version db.EvaluationEvaluatorVersion, values scoreValues, result []byte) []string {
+	var body strings.Builder
+	body.WriteString("Read " + evaluatorResultPath + " and write " + evaluatorScorePath + " as JSON with score, explanation, and details.\n")
+	body.WriteString("This scoring sandbox links " + evaluatorResultPath + " to " + agentScoreSandboxResultPath + " and " + evaluatorScorePath + " to " + agentScoreSandboxOutputPath + ".\n")
+	if strings.TrimSpace(version.PromptTemplate) != "" {
+		body.WriteString(renderEvaluatorPrompt(version.PromptTemplate, version.Variables, values))
+		body.WriteByte('\n')
 	}
+	body.Write(result)
+	return []string{body.String()}
 }
 
 func agentScoreMetadata(experimentID, itemID, versionID string) map[string]string {

@@ -230,7 +230,7 @@ func TestSessionEndTurnAttachesAgentScore(t *testing.T) {
 	if input.Metadata[agentScoreRoleKey] != agentScoreRole || input.Metadata[agentScoreItemKey] == "" {
 		t.Fatalf("metadata = %#v", input.Metadata)
 	}
-	if len(input.Turns) != 1 || !strings.Contains(input.Turns[0], evaluatorResultPath) || !strings.Contains(input.Turns[0], evaluatorScorePath) || !strings.Contains(input.Turns[0], agentScoreSandboxResultPath) || !strings.Contains(input.Turns[0], agentScoreSandboxOutputPath) {
+	if len(input.Turns) != 1 || !strings.Contains(input.Turns[0], evaluatorResultPath) || !strings.Contains(input.Turns[0], evaluatorScorePath) || !strings.Contains(input.Turns[0], agentScoreSandboxResultPath) || !strings.Contains(input.Turns[0], agentScoreSandboxOutputPath) || !strings.Contains(input.Turns[0], "OMA rubric for hi") {
 		t.Fatalf("turns = %#v", input.Turns)
 	}
 	if !strings.Contains(string(input.ResultJSON), `"session_id":"sesn_case"`) || !strings.Contains(string(input.ResultJSON), `"input":"hello"`) || !strings.Contains(string(input.ResultJSON), `"output":"hi"`) || !strings.Contains(string(input.ResultJSON), `"checkpoints":["ready"]`) || !strings.Contains(string(input.ResultJSON), `"reference_files":["guide.txt"]`) || !strings.Contains(string(input.ResultJSON), `"input_files":["in.txt"]`) {
@@ -321,7 +321,7 @@ func startAgentScoreExperiment(t *testing.T, sandbox *agentScoreSandboxStub, mod
 	}
 	agentVersion := db.EvaluationEvaluatorVersion{
 		UUID: "00000000-0000-4000-8000-000000000032", ExternalID: "eev_a", EvaluatorUUID: "00000000-0000-4000-8000-000000000022",
-		EvaluatorType: evaluatorTypeAgent, AgentID: "agent_score",
+		EvaluatorType: evaluatorTypeAgent, AgentID: "agent_score", PromptTemplate: "OMA rubric for {{output}}", Variables: []string{"output"},
 	}
 	body := `{"name":"nightly","dataset_version_id":"edv_test","agent_id":"agent_pinned","agent_version":4,"environment_id":"env_test","timeout_seconds":60,"evaluator_ids":["evalev_a"]}`
 	store.evaluatorVersions = []db.EvaluationEvaluatorVersion{agentVersion}

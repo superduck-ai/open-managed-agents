@@ -1266,6 +1266,7 @@
   "evaluations.evaluatorAgent": "Agent",
   "evaluations.model": "Model",
   "evaluations.agentId": "Agent",
+  "evaluations.presetAgentHint": "The preset rubric is copied. Enter the Agent that will run it.",
   "evaluations.promptTemplate": "Prompt",
   "evaluations.variables": "Variables",
   "evaluations.agentContract": "Reads /data/session/result.json and artifacts, and writes /output/score.json with score, explanation, and details.",

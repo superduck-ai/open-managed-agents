@@ -120,11 +120,12 @@ function CreateFromEvaluatorPresetDialog({
   const create = useCreateEvaluationEvaluatorFromPreset();
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
+  const [agentId, setAgentId] = useState('');
 
   function submit(event: FormEvent) {
     event.preventDefault();
     create.mutate(
-      { name, desc, source_version_id: preset.version.id },
+      { name, desc, source_version_id: preset.version.id, agent_id: agentId },
       {
         onSuccess: () => {
           onClose();
@@ -148,6 +149,16 @@ function CreateFromEvaluatorPresetDialog({
           <Input id="preset-evaluator-name" value={name} onChange={(event) => setName(event.target.value)} required />
           <Label htmlFor="preset-evaluator-description">{msg('evaluations.descriptionField', 'Description')}</Label>
           <Input id="preset-evaluator-description" value={desc} onChange={(event) => setDesc(event.target.value)} />
+          <Label htmlFor="preset-evaluator-agent">{msg('evaluations.agentId', 'Agent')}</Label>
+          <Input
+            id="preset-evaluator-agent"
+            value={agentId}
+            onChange={(event) => setAgentId(event.target.value)}
+            required
+          />
+          <p className="text-sm text-muted-foreground">
+            {msg('evaluations.presetAgentHint', 'The preset rubric is copied. Enter the Agent that will run it.')}
+          </p>
           {create.error ? <p className="text-sm text-destructive">{evaluationErrorMessage(create.error)}</p> : null}
           <DialogFooter>
             <Button type="submit" disabled={create.isPending}>

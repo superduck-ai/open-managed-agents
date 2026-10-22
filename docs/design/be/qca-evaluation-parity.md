@@ -1,9 +1,9 @@
 # QCA Evaluation 对齐计划
 
 - 状态：M1 评测集、M2 自定义评估器、M3 实验与 Compare、Session 终态收口、LLM 打分、Agent 打分 Session、预置目录、timeout/env 注入、Compare 分数列、打分 Agent 版本冻结、打分 sandbox 的 `/data` 与 `/output` 契约路径，以及评测 OpenAPI 已实现。今日额度不在范围内。
-- 剩余缺口：没有真实 E2B 端到端。预置 Agent 的 id 和 LLM 的 `oma-demo` model 仍是占位符。
+- 剩余缺口：没有真实 E2B 端到端。评测集预置仍是 OMA demo case。
 - 日期：2026-10-22
-- 来源：qoder.com.cn 企业控制台，分析 → 评测（Beta）。下文只采用这次实测看到的信息架构和字段，不补写未出现的产品文案。没有 QCA 目录导出，所以预置内容是标明 OMA demo 的示例，不是 QCA 原文。
+- 来源：qoder.com.cn 企业控制台，分析 → 评测（Beta）。下文只采用这次实测看到的信息架构和字段，不补写未出现的产品文案。评估器预置是 OMA 自写的维度包，覆盖同一类评分维度和路径/分数契约，不是 QCA 原文，也不使用 QCA 评估器 id。评测集预置仍是标明 OMA demo 的示例 case。
 - 非目标：不改 Workbench Evaluate 的请求、表格或测试预期。不实现今日额度、额度计数或额度 UI。不复制 QCA 预置 case 或评估器正文。
 
 Workbench Evaluate 仍是 prompt revision 上的变量行 A/B。QCA 评测不是这个表格，也没有一等的 Runs、Outcome 或 Results 页面；那些路径在实测里是空壳。
@@ -87,10 +87,10 @@ flowchart LR
 | QCA feature | OMA today | gap | proposed approach | priority |
 | --- | --- | --- | --- | --- |
 | 评测集：创建、导入、列出，带版本和 case | M1 可创建、导入、列出 workspace 评测集。创建时可以复用已发布预置版本的 case | 预置正文不是 QCA 原文 | M1：`evaluation_datasets`、`evaluation_dataset_versions`、`evaluation_cases`。创建集时写入版本 1。JSONL/ZIP 导入。不迁移 `workbench_evaluations` | P0，本切片 |
-| 评估器 | M2 可创建、列出、读取自定义评估器。LLM 保存单个 model 和 prompt。Agent 保存打分 Agent id。case `end_turn` 后 LLM 评估器会打分并落库。Agent 评估器会另开打分 Session，读 score 文件后落库。可以从已发布预置版本复制出自定义评估器 | 今日额度不实现。预置 Agent 的 `agent_id` 是占位符。OMA 没有 `/data` 和 `/output` 挂载，结果文件和分数文件落在 uploads/outputs。打分 Agent 的版本在实验创建时冻结，不跟随后续当前版本 | M2：`evaluation_evaluators` 与版本 1。变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。LLM 打分复用已有 provider。Agent 打分复用已有 Session 创建和 Filestore | P0，本切片 |
+| 评估器 | M2 可创建、列出、读取自定义评估器。LLM 保存单个 model 和 prompt。手写 Agent 保存打分 Agent id。从预置复制的 Agent 评估器同时保存预置 prompt 和请求里的真实 `agent_id`。case `end_turn` 后 LLM 评估器会打分并落库。Agent 评估器会另开打分 Session，读 score 文件后落库 | 今日额度不实现。目录里的评估器预置没有 `agent_id`，要复制并绑定真实 Agent 后才能进实验。打分 Agent 的版本在实验创建时冻结，不跟随后续当前版本 | M2：`evaluation_evaluators` 与版本 1。变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。LLM 打分复用已有 provider。Agent 打分复用已有 Session 创建和 Filestore | P0，本切片 |
 | 实验 | M3 可创建、列出、读取实验。创建时冻结数据集版本、被测 Agent 版本、环境和评估器版本，并为每个 case 调用已有 Session 创建。Session 终态事件把 item 收成 completed 或 failed。`end_turn` 后为每个冻结评估器写入 `evalscore_`。Agent 评估器的 score 在打分 Session 终态之后写入 | timeout 与 env 进入 case Session 和打分 Session，再由已有 sandbox 创建读取 | M3：`evaluation_experiments` 与 case item。Session id 记在 item 上。`publishSessionEvents` 上的观察者读取已持久化的 `session.status_idle` / `session.status_terminated`，再写 score | P0，本切片 |
 | Compare | M3 按数据集版本和冻结评估器版本列出 status 为 completed 的实验，响应带 `scores`。对比页按评估器列出分数，失败显示错误，没有分数显示缺失 | 只有全部 item 都 completed 的实验会出现 | 固定数据集版本和评估器，变化的是 Agent 版本。名称在组织和工作区下唯一 | P0，本切片 |
-| 预置评测集 / 预置评估器 | 只读目录：19 个 OMA demo 评测集、11 个 OMA demo 评估器。评测集页和评估器页用 Custom / Presets 分开。创建自定义资源时可以复用已发布版本 | 数量对齐实测目录规模，正文不是 QCA 原文。目录编译在服务里，不是按 workspace 存的行，也不能在 API 里改。已归档预置可以浏览，不能复用 | 不建新表。`evaluation-dataset-presets` 与 `evaluation-evaluator-presets` 返回目录。`source_version_id` 把已发布版本复制进 workspace 的自定义评测集或评估器 | P0，本切片 |
+| 预置评测集 / 预置评估器 | 只读目录：19 个 OMA demo 评测集、11 个 OMA 自写的 Agent 维度评估器。评测集页和评估器页用 Custom / Presets 分开。复制评估器预置时另填真实 `agent_id`，prompt 和 variables 来自预置 | 评测集正文不是 QCA 原文。评估器正文是 OMA 自写维度说明，不是 QCA 原文。目录编译在服务里，不是按 workspace 存的行，也不能在 API 里改。已归档评测集预置可以浏览，不能复用。目录里的评估器不能直接绑到实验 | 不建新表。`evaluation-dataset-presets` 与 `evaluation-evaluator-presets` 返回目录。`source_version_id` 把已发布版本复制进 workspace 的自定义评测集或评估器 | P0，本切片 |
 | 今日额度 | 无评测额度 | QCA 有预置 100、自定义 LLM 100、上海时区零点和 Agent 评估器不计入 | 不实现。不记账，不做额度 UI 或计数器，也不放进后续里程碑 | 不做 |
 | Session trace | Session 事件和详情已覆盖模型、工具和任务状态 | 实验不另存 trace | M3 的 item 保存 session id，详情链到现有 Session 页。不新写 trace 存储 | P1 |
 | Memory pin | Memory 版本存在 | 实测评测页没有这项 | 不纳入当前里程碑 | 不做 |
@@ -141,7 +141,7 @@ Workbench Evaluate 继续做 prompt 变量实验。评测集的 case 是 `turns`
 - M2 创建评估器时在同一事务写入版本 1。实验以后冻结的是这个版本，本切片不另存新版本
 - `evaluator_type` 为 `llm` 或 `agent`
 - LLM：`model` 必填，最长 255；`prompt_template` 必填，最长 16000。`agent_id` 必须为空
-- Agent：`agent_id` 必填，最长 255。`model` 与 `prompt_template` 必须为空。M2 只保存 id，不检查 Agent 是否存在，也不创建 sandbox session
+- Agent：手写创建时 `agent_id` 必填，最长 255。`model` 与 `prompt_template` 必须为空。M2 只保存 id，不检查 Agent 是否存在，也不创建 sandbox session。从预置复制的 Agent 评估器例外：版本保存预置的 `prompt_template` 和 variables，`agent_id` 来自复制请求
 - `variables` 是 JSON 数组，元素只能是 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。LLM 至少选一个。prompt 里的 `{{name}}` 必须落在已选变量里
 - Agent 响应带固定契约：读 `/data/session/result.json` 和 artifacts，写 `/output/score.json`，字段为 `score`、`explanation`、`details`。这些路径不入库
 
@@ -189,7 +189,7 @@ Session 完成：`sessions.Handler.publishSessionEvents` 在 SSE fanout 之后�
 - LLM：用冻结版本的 `model` 和 `prompt_template`。变量从 case 与已持久化的 Session 事件填充：`input` 用用户消息，没有则用 case turns；`output` 用 agent 消息；`checkpoints` 用 case JSON；`agent_trajectory` 拼用户、agent 和工具事件；`invocation_result` 用最后一条 `agent.tool_result` 文本，没有工具结果时用最后一次 idle 的 `stop_reason.type`。请求走现有 LLM provider 解析和 `/v1/messages` 或 `/v1/chat/completions`。模型需返回 `{score, explanation, details}`。
 - Agent：case item 因 `end_turn` 变成 completed 之后，为这个冻结评估器版本启动一个打分 Session。打分 Agent 用评估器版本上的 `agent_id`。版本在实验创建时冻结：和被测 Agent 一样，当时解析该 Agent 的当前版本，写到 `evaluation_experiment_evaluators.agent_version`。之后打分 Session 用这个数字调用已有的 Agent 版本读取，不用后来的当前版本。Agent 在创建实验时不存在或已归档，实验创建失败，和被测 Agent 相同。LLM 绑定的这一列为空。`00100` 之前已创建、该列为空的实验，打分时仍读取当时的当前版本。Environment、timeout 和 env 复用实验上的值。resources 只交给 case Session，不交给打分 Session。打分 Session 的 metadata 带 `evaluation_role=agent_score`、`experiment_id`、`item_id`、`evaluator_version_id`，以及 `timeout_seconds` 和有值时的 `env`，所以它的终态不会被当成另一个 case item。
 - 同一个 case `end_turn` 只启动一次。item 已经离开 running，或 `(item_uuid, version_uuid)` 已经有 score 行时，不再启动，也不再写第二行。
-- case 结果写成 JSON：`session_id`、`input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`，以及 `artifacts.input_files` 和 `artifacts.reference_files`。这份 JSON 放进打分 Session 的第一条用户消息。Filestore 再把它写到 `/uploads/data/session/result.json`。五个固定根不变。打分 Session 的 metadata 含 `evaluation_role=agent_score` 时，Runner 在启动 rclone 前额外创建两条软链：`/data` → `/mnt/session/uploads/data`，`/output` → `/mnt/user-data/outputs`。因此容器里的 `/data/session/result.json` 就是该文件，`/output/score.json` 写进可写的 outputs 挂载。其他 Session 不创建这两条软链。软链冲突（普通文件、非空目录、指向别处的软链）会使打分 sandbox 启动失败，规则与 `/mnt/session/outputs` 别名相同。写文件失败只记日志，打分 Session 仍然启动，用户消息里仍有这份 JSON；此时 `/data` 软链在，但 `result.json` 可能还不存在。
+- case 结果写成 JSON：`session_id`、`input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`，以及 `artifacts.input_files` 和 `artifacts.reference_files`。这份 JSON 放进打分 Session 的第一条用户消息。版本带 `prompt_template` 时，同一条消息在 JSON 前附上按变量渲染后的评分说明。预置复制出来的 Agent 评估器带这份说明。手写且没有 prompt 的 Agent 评估器仍只有路径说明和结果 JSON。Filestore 再把它写到 `/uploads/data/session/result.json`。五个固定根不变。打分 Session 的 metadata 含 `evaluation_role=agent_score` 时，Runner 在启动 rclone 前额外创建两条软链：`/data` → `/mnt/session/uploads/data`，`/output` → `/mnt/user-data/outputs`。因此容器里的 `/data/session/result.json` 就是该文件，`/output/score.json` 写进可写的 outputs 挂载。其他 Session 不创建这两条软链。软链冲突（普通文件、非空目录、指向别处的软链）会使打分 sandbox 启动失败，规则与 `/mnt/session/outputs` 别名相同。写文件失败只记日志，打分 Session 仍然启动，用户消息里仍有这份 JSON；此时 `/data` 软链在，但 `result.json` 可能还不存在。
 - 打分 Session 以 `end_turn` 结束时，仍读取 Filestore `/outputs/score.json`。`/output/score.json`、`/mnt/session/outputs/score.json` 和 `/mnt/user-data/outputs/score.json` 在打分 sandbox 里是同一份文件，所以写到契约路径的分数会被这次读取拿到。服务端不把 `/output` 当成第六个 Filestore 根，也不另读一条路径。文件内容须是 `{score, explanation, details}`。解析成功则 score 行为 completed。文件缺失时错误文案是 `Evaluation score file is missing`。内容无法解析时错误文案是 `Could not parse evaluator score`。打分 Session 被终止或 `retries_exhausted` 时，score 行用和 case 相同的终态文案标为 failed。
 - 打分 Session 还没结束时，实验可以已经是 completed，但这条 Agent score 还不存在。score 行只在打分 Session 进入终态后写入。没有配置 sandbox 时，score 行仍是 failed，文案是 `Agent evaluator scoring is not executed`。生产组装会接上 sandbox。
 - Agent 不存在时 score 行失败，文案是 `Agent not found`。已归档 Agent 的文案是 `agent must not be archived`。启动 Session 失败的文案是 `Could not score evaluation`。这些都只写 score 行。
@@ -222,7 +222,7 @@ M2：
 - `GET/POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators`
 - `GET .../evaluation-evaluators/{evaluatorId}`
 
-创建评估器的 body 是 `{name, desc, evaluator_type, model, agent_id, prompt_template, variables}`。`evaluator_type` 为 `llm` 或 `agent`。也可以只传 `{name, desc, source_version_id}`，从已发布预置版本复制类型、model、prompt、variables 或 agent id。`source_version_id` 不能和这些字段同时出现。响应带 `status` 和 `version`。Agent 版本额外带 `agent_contract`。
+创建评估器的 body 是 `{name, desc, evaluator_type, model, agent_id, prompt_template, variables}`。`evaluator_type` 为 `llm` 或 `agent`。手写 Agent 仍只保存 `agent_id`，`prompt_template` 必须为空。从预置复制时 body 是 `{name, desc, source_version_id, agent_id}`：类型、prompt 和 variables 来自预置，`agent_id` 是执行该评分说明的真实 Agent。`source_version_id` 不能和 `evaluator_type`、`model`、`prompt_template`、`variables` 同时出现。缺少 `agent_id` 返回 400，不写库。响应带 `status` 和 `version`。Agent 版本额外带 `agent_contract`。目录预置本身没有 `agent_id`，不能直接创建实验。
 
 M2 不做 PATCH、DELETE 和归档。自定义评估器的打分在 case `end_turn` 之后执行。不实现今日额度。创建、列表和读取在 OpenAPI 里。
 
@@ -236,7 +236,7 @@ M2 不做 PATCH、DELETE 和归档。自定义评估器的打分在 case `end_tu
 
 目录不按 workspace 存行。请求仍要过 Console 的组织和 workspace 校验，另一 workspace 返回 404。列表一次返回全部，`next_page` 为 null。评测集预置响应类型是 `evaluation_dataset_preset`，带 `versions`。评估器预置响应类型是 `evaluation_evaluator_preset`。
 
-种子是编译进 `internal/evaluations/presets.go` 的 OMA demo，不是 migration，也不是 QCA 导出。19 个评测集里 18 个可用、1 个已归档；`evalds_oma_demo_03` 有 v1 和 v2。11 个评估器里 4 个 LLM、6 个可用 Agent、1 个已归档 Agent。LLM 的 model 是 `oma-demo`。Agent 的 `agent_id` 是 `agent_oma_demo_XX` 占位符，不对应已创建的 Agent。case 文案都标明 OMA demo，并要求回复 ready。
+种子编译在 `internal/evaluations/presets.go`，不是 migration，也不是 QCA 导出。19 个评测集里 18 个可用、1 个已归档；`evalds_oma_demo_03` 有 v1 和 v2。case 文案都标明 OMA demo，并要求回复 ready。11 个评估器全部是可用的 Agent 类型，目录上的 `agent_id` 为空。它们是 OMA 自写的维度包：时延效率（`evalev_oma_latency`）、调用稳定性（`evalev_oma_invocation_stability`）、工具调用可靠性（`evalev_oma_tool_reliability`）、幻觉检测（`evalev_oma_hallucination`）、任务完成度（`evalev_oma_task_completion`）、工具参数正确性（`evalev_oma_tool_arguments`）、工具选择质量（`evalev_oma_tool_selection`）、检查点正确性（`evalev_oma_checkpoint_correctness`）、轨迹质量（`evalev_oma_trajectory_quality`）、回答证据支持（`evalev_oma_answer_evidence`）、步骤效率（`evalev_oma_step_efficiency`）。每条 prompt 要求读取 `/data/session/result.json`，并把 `{score, explanation, details}`、score 在 0 到 1，写到 `/output/score.json`。说明里写明这是 OMA 评分说明，不是 QCA 评估器。
 
 M3：
 
@@ -257,7 +257,7 @@ Managed Agents 导航在 Sessions 与 Observability 之间增加 Datasets。OMA 
 
 - `/workspaces/$workspaceId/evaluations`：Custom 与 Presets 两个页签。Custom 仍是评测集列表和创建（name、desc）。Presets 列出已发布目录，Reuse 打开已发布版本的 case，并以 `source_version_id` 复制成自定义评测集
 - `/workspaces/$workspaceId/evaluations/datasets/$datasetId`：当前版本、case 列表、单条 case、JSONL 导入
-- `/workspaces/$workspaceId/evaluations/evaluators`：Custom 与 Presets 两个页签。Custom 仍在 LLM 与 Agent 之间切换。Presets 列出已发布评估器，Create from preset 复制已发布版本
+- `/workspaces/$workspaceId/evaluations/evaluators`：Custom 与 Presets 两个页签。Custom 仍在 LLM 与 Agent 之间切换。Presets 列出 11 个 Agent 维度。Create from preset 要填写真实 Agent，再复制预置 prompt
 
 Managed Agents 导航在 Evaluators 旁增加 Experiments。
 
@@ -274,26 +274,26 @@ Workbench 的 prompt/evaluate 开关保持原样。
 2. **M1**：评测集、版本 1 和 case 的 migration、Yourbatis、创建 / 导入 / 列出，以及 Datasets 页面。无 session，不改 Workbench Evaluate。
 3. **M2**：自定义评估器。LLM 与 Agent 两种类型，创建时写入版本 1。变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。
 4. **M3**：实验与 Compare。绑定数据集版本、Agent、Environment、timeout 和冻结的评估器版本；每个 case 复用已有 Session 创建并记下 session id。已有 Session 终态事件把 item 收成 completed 或 failed，并汇总实验状态。`end_turn` 后对冻结的 LLM 评估器打分并写入 `evalscore_`。Compare 固定数据集版本和评估器，只列出 completed，并按评估器展示分数。名称在组织和工作区下唯一。timeout/env 经已有 Session metadata 和 sandbox 创建注入。
-5. **预置目录**：只读的已发布评测集和评估器，以及从已发布版本复制 case 或评估器定义。内容是 19 个评测集和 11 个评估器的 OMA demo，不是 QCA 原文。
+5. **预置目录**：只读的已发布评测集和评估器。评测集是 19 个 OMA demo。评估器是 11 个 OMA 自写的 Agent 维度，目录不带 `agent_id`；复制时绑定真实 Agent，并带上预置 prompt。不是 QCA 原文。
 6. **Agent 打分 sandbox（本变更）**：case `end_turn` 后为 Agent 评估器启动打分 Session，把 case 结果交给打分 Agent，并在打分 Session 终态读取 `/outputs/score.json`。打分 sandbox 用软链暴露 `/data/session/result.json` 和 `/output/score.json`，不增加 Filestore 根。
 
 今日额度不在里程碑里。不实现每日 100 次、上海时区重置、Agent 评估器是否计入，也不做额度 UI 或计数器。
 
-预置 Agent 的 id 和 LLM 的 `oma-demo` model 都没有对应的已配置资源。打分 Agent 的版本冻结在实验绑定上，不写进评估器版本。这些都不属于额度。
+目录里的评估器预置没有 `agent_id`，不能直接创建实验；复制成自定义评估器并填入真实 Agent 之后，实验创建会冻结该 Agent 的当前版本。打分 Agent 的版本冻结在实验绑定上，不写进评估器版本。这些都不属于额度。
 
 ## 未排期
 
-不把今日额度排进后续切片。不改 Workbench。预置目录已做只读浏览和复用；还没有 QCA 原文、目录编辑、或把预置 id 直接绑到实验上。
+不把今日额度排进后续切片。不改 Workbench。预置目录已做只读浏览和复用。评估器预置是 OMA 自写维度包，不收录 QCA 原文。还没有目录编辑，也不能把目录 id 直接绑到实验上。真实 E2B 端到端仍未做。
 
 ## 验收与未覆盖
 
 同一 workspace 可以创建评测集（同时得到 `edv_` 版本 1）、用 JSONL 或单成员 ZIP 导入 case，并列出 case。空 name、空 turns、超过 1000 条、错误 ZIP 和另一 workspace 的 id 在写库前失败。归档行不出现在列表里。
 
-预置目录列出 19 个评测集和 11 个评估器。`evalds_oma_demo_03` 的 v2 有两条 case。复用 `edv_oma_demo_03_v2` 会在同一事务写入自定义评测集和两条新 case。已归档预置和未知 id 不写库。`eev_oma_demo_01_v1` 复制出 LLM 评估器，model 为 `oma-demo`。`source_version_id` 和 model 同时出现会失败。另一 workspace 读不到目录。
+预置目录列出 19 个评测集和 11 个 Agent 评估器。`evalds_oma_demo_03` 的 v2 有两条 case。复用 `edv_oma_demo_03_v2` 会在同一事务写入自定义评测集和两条新 case。已归档评测集和未知 id 不写库。`eev_oma_latency_v1` 复制出 Agent 评估器：保存请求里的 `agent_id` 和预置 prompt。缺少 `agent_id` 不写库。`source_version_id` 和 model 同时出现会失败。另一 workspace 读不到目录。
 
 同一 workspace 可以创建 LLM 评估器（model、prompt、已选变量，版本 `eev_`）和 Agent 评估器（agent id，响应带 score.json 契约），并列出、读取。错误类型、未选变量、Agent 带 prompt，以及另一 workspace 的 id，在写库前失败。
 
-同一 workspace 可以创建实验：冻结 `edv_` 与评估器版本，item 先为 pending；接上 Session starter 后每个 case 得到 `sesn_`，实验变为 running。创建 body 带 `timeout_seconds` 和 `env` 时，starter 收到这两个值；省略 `env` 时 Session 仍会创建。Agent 评估器在创建时把打分 Agent 的当前版本写进绑定。之后即使该 Agent 的当前版本变了，打分 Session 仍使用冻结版本。打分 Agent 不存在时实验创建失败，不写库。Starter 失败时 item 为 failed。`requires_action` 保持 running。`end_turn` 把 item 和实验收成 completed。LLM 评估器把模型返回的 `score`、`explanation`、`details` 记为 completed。Agent 评估器用冻结的 `agent_id` 启动打分 Session，并把 case 结果放进用户消息和 `/uploads/data/session/result.json`。打分 Session 启动时创建 `/data` → `/mnt/session/uploads/data` 与 `/output` → `/mnt/user-data/outputs`，所以 `/data/session/result.json` 与 `/output/score.json` 在该容器内可解析。普通 Session 不创建这两条软链。打分 Session 的 `end_turn` 读取 Filestore `/outputs/score.json`（与 `/output/score.json` 是同一文件），形状为 `{score, explanation, details}`，score 行为 completed。文件缺失时 score 为 failed，文案是 `Evaluation score file is missing`。无法解析时文案是 `Could not parse evaluator score`。没有配置 sandbox 时文案仍是 `Agent evaluator scoring is not executed`。这些失败都不改变 item 或实验的 completed。已经离开 running 的 item 不会被后到的终态改写，也不会再次打分；已有 score 行不会再写一行。`retries_exhausted` 或 `session.status_terminated` 把 case item 收成 failed，且不打分。打分 Session 自己的终止只让对应 score 行失败。列表不返回 item，但返回 scores。Compare 在没有 completed 实验时返回空列表。空 name、重复评估器、非法 timeout、没有 case、已归档 Environment、重名和另一 workspace 的 id 会失败。
+同一 workspace 可以创建实验：冻结 `edv_` 与评估器版本，item 先为 pending；接上 Session starter 后每个 case 得到 `sesn_`，实验变为 running。创建 body 带 `timeout_seconds` 和 `env` 时，starter 收到这两个值；省略 `env` 时 Session 仍会创建。Agent 评估器在创建时把打分 Agent 的当前版本写进绑定。之后即使该 Agent 的当前版本变了，打分 Session 仍使用冻结版本。打分 Agent 不存在时实验创建失败，不写库。Starter 失败时 item 为 failed。`requires_action` 保持 running。`end_turn` 把 item 和实验收成 completed。LLM 评估器把模型返回的 `score`、`explanation`、`details` 记为 completed。Agent 评估器用冻结的 `agent_id` 启动打分 Session，并把 case 结果放进用户消息和 `/uploads/data/session/result.json`。版本带 prompt 时，渲染后的说明写在同一条用户消息里。打分 Session 启动时创建 `/data` → `/mnt/session/uploads/data` 与 `/output` → `/mnt/user-data/outputs`，所以 `/data/session/result.json` 与 `/output/score.json` 在该容器内可解析。普通 Session 不创建这两条软链。打分 Session 的 `end_turn` 读取 Filestore `/outputs/score.json`（与 `/output/score.json` 是同一文件），形状为 `{score, explanation, details}`，score 行为 completed。文件缺失时 score 为 failed，文案是 `Evaluation score file is missing`。无法解析时文案是 `Could not parse evaluator score`。没有配置 sandbox 时文案仍是 `Agent evaluator scoring is not executed`。这些失败都不改变 item 或实验的 completed。已经离开 running 的 item 不会被后到的终态改写，也不会再次打分；已有 score 行不会再写一行。`retries_exhausted` 或 `session.status_terminated` 把 case item 收成 failed，且不打分。打分 Session 自己的终止只让对应 score 行失败。列表不返回 item，但返回 scores。Compare 在没有 completed 实验时返回空列表。空 name、重复评估器、非法 timeout、没有 case、已归档 Environment、重名和另一 workspace 的 id 会失败。
 
 `TestEvaluationOpenAPIContract` 检查中英文 OpenAPI 都覆盖上述 Console 路径，创建请求含 `source_version_id`，实验响应含 `scores`，并且这些操作使用 Console 会话而不是 `/v1` 的 beta 参数。Workbench Evaluate 和今日额度不在这两份文档里。
 

@@ -122,6 +122,17 @@ func normalizeLLMEvaluator(item normalizedEvaluator, body createEvaluatorRequest
 	return item, nil
 }
 
+func normalizePresetAgentID(value string) (string, error) {
+	agentID := strings.TrimSpace(value)
+	if agentID == "" {
+		return "", agentIDRequired()
+	}
+	if utf8.RuneCountInString(agentID) > maxEvaluatorAgentIDLen {
+		return "", agentIDTooLong()
+	}
+	return agentID, nil
+}
+
 func normalizeAgentEvaluator(item normalizedEvaluator, body createEvaluatorRequest) (normalizedEvaluator, error) {
 	if strings.TrimSpace(body.Model) != "" {
 		return normalizedEvaluator{}, modelForbidden()
@@ -129,12 +140,9 @@ func normalizeAgentEvaluator(item normalizedEvaluator, body createEvaluatorReque
 	if strings.TrimSpace(body.PromptTemplate) != "" {
 		return normalizedEvaluator{}, promptForbidden()
 	}
-	agentID := strings.TrimSpace(body.AgentID)
-	if agentID == "" {
-		return normalizedEvaluator{}, agentIDRequired()
-	}
-	if utf8.RuneCountInString(agentID) > maxEvaluatorAgentIDLen {
-		return normalizedEvaluator{}, agentIDTooLong()
+	agentID, err := normalizePresetAgentID(body.AgentID)
+	if err != nil {
+		return normalizedEvaluator{}, err
 	}
 	item.AgentID = agentID
 	return item, nil

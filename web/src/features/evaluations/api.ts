@@ -122,6 +122,7 @@ export type CreateEvaluationEvaluatorFromPresetInput = {
   name: string;
   desc?: string;
   source_version_id: string;
+  agent_id: string;
 };
 
 export type CreateEvaluationEvaluatorInput = {

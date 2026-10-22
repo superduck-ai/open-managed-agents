@@ -308,18 +308,17 @@ test('creates an evaluator from a published preset', async () => {
       return Response.json({
         data: [
           {
-            id: 'evalev_oma_demo_01',
+            id: 'evalev_oma_latency',
             type: 'evaluation_evaluator_preset',
-            name: 'OMA demo evaluator 01',
-            desc: 'OMA demo preset. Not a QCA evaluator.',
+            name: '时延效率',
+            desc: 'OMA-authored preset. Not a QCA evaluator.',
             status: 'available',
             version: {
-              id: 'eev_oma_demo_01_v1',
+              id: 'eev_oma_latency_v1',
               version: 1,
-              evaluator_type: 'llm',
-              model: 'oma-demo',
-              prompt_template: 'OMA demo scorer. Score the answer from 0 to 1. {{input}}',
-              variables: ['input'],
+              evaluator_type: 'agent',
+              prompt_template: 'Read /data/session/result.json and write /output/score.json. {{agent_trajectory}}',
+              variables: ['agent_trajectory', 'invocation_result'],
             },
             created_at: '2026-10-22T00:00:00Z',
             updated_at: '2026-10-22T00:00:00Z',
@@ -333,10 +332,11 @@ test('creates an evaluator from a published preset', async () => {
 
   renderPage(<EvaluatorsPage />);
   fireEvent.click(await screen.findByRole('tab', { name: 'Presets' }));
-  expect(await screen.findByText('OMA demo evaluator 01')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'Create from preset OMA demo evaluator 01' }));
+  expect(await screen.findByText('时延效率')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Create from preset 时延效率' }));
   const dialog = screen.getByRole('dialog');
   fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'copied judge' } });
+  fireEvent.change(within(dialog).getByLabelText('Agent'), { target: { value: 'agent_score' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Create from preset' }));
   await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
   const created = requests.find((request) => request.method === 'POST');
@@ -345,7 +345,8 @@ test('creates an evaluator from a published preset', async () => {
   expect(JSON.parse(created?.body ?? '{}')).toEqual({
     name: 'copied judge',
     desc: '',
-    source_version_id: 'eev_oma_demo_01_v1',
+    source_version_id: 'eev_oma_latency_v1',
+    agent_id: 'agent_score',
   });
 });
 

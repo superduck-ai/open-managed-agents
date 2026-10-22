@@ -56,6 +56,34 @@
         ORDER BY position ASC, uuid ASC
     </select>
 
+    <select id="ListRunningBySession" resultType="evaluationExperimentSessionItemRow">
+        SELECT
+            item.uuid,
+            item.external_id,
+            item.organization_uuid,
+            item.workspace_uuid,
+            item.experiment_uuid,
+            item.case_uuid,
+            item.case_external_id,
+            item.position,
+            item.session_external_id,
+            item.status,
+            item.error_message,
+            item.created_at,
+            item.updated_at,
+            experiment.external_id AS experiment_external_id
+        FROM evaluation_experiment_items AS item
+        JOIN evaluation_experiments AS experiment
+            ON experiment.uuid = item.experiment_uuid
+            AND experiment.organization_uuid = item.organization_uuid
+            AND experiment.workspace_uuid = item.workspace_uuid
+        WHERE item.organization_uuid = #{organizationUUID}
+        AND item.workspace_uuid = #{workspaceUUID}
+        AND item.session_external_id = #{sessionExternalID}
+        AND item.status = 'running'
+        ORDER BY item.position ASC, item.uuid ASC
+    </select>
+
     <update id="SetSession" result="rows">
         UPDATE evaluation_experiment_items
         SET session_external_id = #{params.SessionExternalID},
@@ -65,5 +93,16 @@
         WHERE organization_uuid = #{params.OrganizationUUID}
         AND workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}
+    </update>
+
+    <update id="FinishRunning" result="rows">
+        UPDATE evaluation_experiment_items
+        SET status = #{params.Status},
+            error_message = #{params.ErrorMessage},
+            updated_at = #{params.UpdatedAt}
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+        AND status = 'running'
     </update>
 </mapper>

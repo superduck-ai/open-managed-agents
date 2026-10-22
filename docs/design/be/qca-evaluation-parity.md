@@ -1,6 +1,6 @@
 # QCA Evaluation 对齐计划
 
-- 状态：M1 评测集、M2 自定义评估器和 M3 实验与 Compare 已实现。预置目录延后，可选。今日额度不在范围内。评估器只保存配置，不执行打分。实验会为每个 case 创建 Managed session，但不轮询 session 结束，也不会把实验标成 completed。
+- 状态：M1 评测集、M2 自定义评估器和 M3 实验与 Compare 已实现。Session 终态事件会把实验 item 从 running 收成 completed 或 failed，并汇总实验状态。预置目录延后，可选。今日额度不在范围内。评估器打分仍未做。
 - 日期：2026-10-22
 - 来源：qoder.com.cn 企业控制台，分析 → 评测（Beta）。下文只采用这次实测看到的信息架构和字段，不补写未出现的产品文案。
 - 非目标：不改 Workbench Evaluate 的请求、表格或测试预期。不实现今日额度、额度计数或额度 UI。本切片不做预置目录，也不打分。
@@ -87,8 +87,8 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | 评测集：创建、导入、列出，带版本和 case | Evaluate 行挂在单个 prompt revision 上。CSV 只覆盖变量和 ideal output | 没有 workspace 级评测集、版本和 turns case | M1：`evaluation_datasets`、`evaluation_dataset_versions`、`evaluation_cases`。创建集时写入版本 1。JSONL/ZIP 导入。不迁移 `workbench_evaluations`，不预置官方数据集 | P0，本切片 |
 | 评估器 | M2 可创建、列出、读取自定义评估器。LLM 保存单个 model 和 prompt。Agent 保存打分 Agent id。不执行打分 | 预置评估器延后。今日额度不实现。实验里的打分 sandbox 仍未做 | M2：`evaluation_evaluators` 与版本 1。变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。Agent 的 `/data/session/result.json` 与 `/output/score.json` 留到后续执行，不跟额度绑定 | P0，本切片 |
-| 实验 | M3 可创建、列出、读取实验。创建时冻结数据集版本、Agent 版本、环境和评估器版本，并为每个 case 调用已有 Session 创建 | 不轮询 session 完成，不打分，timeout 与 env 只落库 | M3：`evaluation_experiments` 与 case item。Session id 记在 item 上。状态停在 running 或 failed，completed 留给后续执行 | P0，本切片 |
-| Compare | M3 按数据集版本和冻结评估器版本列出 status 为 completed 的实验 | 本切片没有路径把实验标成 completed，所以 Compare 在只有新建实验时是空列表 | 固定数据集版本和评估器，变化的是 Agent 版本。名称在组织和工作区下唯一 | P0，本切片 |
+| 实验 | M3 可创建、列出、读取实验。创建时冻结数据集版本、Agent 版本、环境和评估器版本，并为每个 case 调用已有 Session 创建。Session 终态事件把 item 收成 completed 或 failed | 不执行评估器打分。timeout 与 env 只落库 | M3：`evaluation_experiments` 与 case item。Session id 记在 item 上。`publishSessionEvents` 上的观察者读取已持久化的 `session.status_idle` / `session.status_terminated` | P0，本切片 |
+| Compare | M3 按数据集版本和冻结评估器版本列出 status 为 completed 的实验 | 只有全部 item 都 completed 的实验会出现。打分列仍没有 | 固定数据集版本和评估器，变化的是 Agent 版本。名称在组织和工作区下唯一 | P0，本切片 |
 | 预置评测集 / 预置评估器 | 无 | 没有只读的已发布目录 | 目录与「复用已发布版本」延后，可选。本变更不建目录 | 延后 |
 | 今日额度 | 无评测额度 | QCA 有预置 100、自定义 LLM 100、上海时区零点和 Agent 评估器不计入 | 不实现。不记账，不做额度 UI 或计数器，也不放进后续里程碑 | 不做 |
 | Session trace | Session 事件和详情已覆盖模型、工具和任务状态 | 实验不另存 trace | M3 的 item 保存 session id，详情链到现有 Session 页。不新写 trace 存储 | P1 |
@@ -153,7 +153,7 @@ Workbench Evaluate 继续做 prompt 变量实验。评测集的 case 是 `turns`
 - 绑定 `version_external_id`、`agent_external_id`、`agent_version`、`environment_external_id`
 - `timeout_seconds` 为 1–86400。`env` 可空，必须是 JSON 对象。`resources` 可空，必须是 JSON 数组
 - `evaluator_set_key` 是冻结评估器版本 id 排序后用 `|` 连接。Compare 用它和数据集版本定位同一组实验
-- `status` 为 `pending`、`running`、`completed`、`failed`、`cancelled`。本切片创建后是 pending；Session 创建成功变为 running，失败变为 failed。没有把实验标成 completed 或 cancelled 的接口
+- `status` 为 `pending`、`running`、`completed`、`failed`、`cancelled`。创建后是 pending；Session 创建成功变为 running，创建失败变为 failed。Session 终态事件再把仍为 running 的 item 收成 completed 或 failed。没有取消接口
 
 `evaluation_experiment_evaluators`
 
@@ -167,7 +167,21 @@ Workbench Evaluate 继续做 prompt 变量实验。评测集的 case 是 `turns`
 - 每个 case 一行，`session_external_id` 在 Session 创建成功后写入
 - 状态与实验相同。`error_message` 最长 1024。case 的 `turns` 超过 Session `initial_events` 的 50 条上限时，这一行失败，不另写执行引擎
 
-执行缺口：timeout 和 env 只保存在实验上，不传给 Session 或 sandbox。resources 会交给已有 Session 创建。本切片不轮询 session 状态，不读 `/output/score.json`，因此 Compare 只在已有 `completed` 实验时返回行，新建实验不会出现在 Compare 里。
+`00098_evaluation_experiment_item_session_idx.sql` 为 `(organization_uuid, workspace_uuid, session_external_id)` 加索引，供终态事件按 Session 找到仍在 running 的 item。
+
+Session 完成：`sessions.Handler.publishSessionEvents` 在 SSE fanout 之后调用评估观察者。这条路径和 webhook 一样，只看已经写入的 Session 事件，不另起执行器。
+
+- `session.status_idle` 且 `stop_reason.type` 为 `end_turn`：item 变为 completed
+- `session.status_idle` 且 `stop_reason.type` 为 `retries_exhausted`：item 变为 failed，错误文案为 `Session retries exhausted`
+- `session.status_terminated` 与 `session.deleted`：item 变为 failed，错误文案为 `Session terminated`
+- `requires_action` 和其他非终态事件保持 running
+- 同一批事件里，failed 不会被后面的 end_turn 盖掉。item 离开 running 之后不再改写
+
+实验汇总：还有 running 则为 running；否则还有 pending 则为 pending；否则有 failed 则为 failed；全部 completed 才是 completed。Compare 因此要等每个 case session 都以 `end_turn` 结束。
+
+创建 Session 时 item 还没写成 running，所以创建当下的初始事件不会把实验提前收口。
+
+执行缺口：timeout 和 env 只保存在实验上，不传给 Session 或 sandbox。resources 会交给已有 Session 创建。评估器打分仍未做：不启动打分 sandbox，不读 `/output/score.json`，item 上也没有 score。这是下一切片，不属于今日额度。
 
 ## API
 
@@ -204,7 +218,7 @@ M3：
 
 创建 body 是 `{name, desc, dataset_version_id, agent_id, agent_version, environment_id, timeout_seconds, env, resources, evaluator_ids}`。`agent_version`、`env`、`resources` 可省略。省略 `agent_version` 时使用 Agent 当前版本，并把它写进实验。Agent 或 Environment 不存在返回 404，已归档返回 400。数据集版本没有 case 时不创建实验。
 
-列表不返回 item。读取返回冻结的评估器和每个 case 的 session id。`:start` 只重试仍为 pending 的 item。Compare 的 body 是 `{dataset_version_id, evaluator_ids}`，只返回 `completed`。没有完成实验时 `data` 为空数组，不是 404。
+列表不返回 item。读取返回冻结的评估器和每个 case 的 session id。`:start` 只重试仍为 pending 的 item。Compare 的 body 是 `{dataset_version_id, evaluator_ids}`，只返回 `completed`。没有完成实验时 `data` 为空数组，不是 404。Session 以 `end_turn` 结束后，对应实验可以变成 `completed` 并出现在 Compare 里。
 
 M3 不做取消、打分、预置目录和 OpenAPI。不实现今日额度。
 
@@ -230,12 +244,12 @@ Workbench 的 prompt/evaluate 开关保持原样。
 1. **M0**：差距说明。
 2. **M1**：评测集、版本 1 和 case 的 migration、Yourbatis、创建 / 导入 / 列出，以及 Datasets 页面。无 session，不改 Workbench Evaluate。
 3. **M2**：自定义评估器。LLM 与 Agent 两种类型，创建时写入版本 1。变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。不执行打分，不预置 11 个官方评估器。
-4. **M3（本变更）**：实验与 Compare。绑定数据集版本、Agent、Environment、timeout 和冻结的评估器版本；每个 case 复用已有 Session 创建并记下 session id。Compare 固定数据集版本和评估器，只列出 completed。名称在组织和工作区下唯一。不轮询完成，不把 timeout/env 注入 sandbox。
+4. **M3（本变更）**：实验与 Compare。绑定数据集版本、Agent、Environment、timeout 和冻结的评估器版本；每个 case 复用已有 Session 创建并记下 session id。已有 Session 终态事件把 item 收成 completed 或 failed，并汇总实验状态。Compare 固定数据集版本和评估器，只列出 completed。名称在组织和工作区下唯一。不把 timeout/env 注入 sandbox。
 5. **预置目录（延后，可选）**：只读的已发布评测集和评估器，以及从已发布版本复用 case。未排进本变更。
 
 今日额度不在里程碑里。不实现每日 100 次、上海时区重置、Agent 评估器是否计入，也不做额度 UI 或计数器。
 
-实验从 running 到 completed、打分，以及把 timeout/env 注入 sandbox，都还没做。它们不属于额度。
+评估器打分是下一切片：case session 结束后，按冻结的评估器版本执行 LLM 或 Agent 打分，并保存 score。本变更只根据 Session 状态收口，不读 `/output/score.json`。把 timeout/env 注入 sandbox 也还没做。这些都不属于额度。
 
 ## 未排期
 
@@ -247,6 +261,6 @@ Workbench 的 prompt/evaluate 开关保持原样。
 
 同一 workspace 可以创建 LLM 评估器（model、prompt、已选变量，版本 `eev_`）和 Agent 评估器（agent id，响应带 score.json 契约），并列出、读取。错误类型、未选变量、Agent 带 prompt，以及另一 workspace 的 id，在写库前失败。
 
-同一 workspace 可以创建实验：冻结 `edv_` 与评估器版本，item 先为 pending；接上 Session starter 后每个 case 得到 `sesn_`，实验变为 running。Starter 失败时 item 为 failed。列表不返回 item。Compare 在没有 completed 实验时返回空列表。空 name、重复评估器、非法 timeout、没有 case、已归档 Environment、重名和另一 workspace 的 id 会失败。
+同一 workspace 可以创建实验：冻结 `edv_` 与评估器版本，item 先为 pending；接上 Session starter 后每个 case 得到 `sesn_`，实验变为 running。Starter 失败时 item 为 failed。`requires_action` 保持 running。`end_turn` 把 item 和实验收成 completed。`retries_exhausted` 或 `session.status_terminated` 把 item 收成 failed；仍有其他 running item 时实验保持 running，全部终态且含 failed 时实验为 failed。已经离开 running 的 item 不会被后到的终态改写。列表不返回 item。Compare 在没有 completed 实验时返回空列表。空 name、重复评估器、非法 timeout、没有 case、已归档 Environment、重名和另一 workspace 的 id 会失败。
 
-Postgres 迁移测试在设置 `TEST_MIGRATION_DATABASE_URL` 时覆盖到 `00097`。默认 `just test` 不连接外部数据库；未设置该变量时，不能把 `00097` 说成已经在真实 Postgres 上应用过。
+Postgres 迁移测试在设置 `TEST_MIGRATION_DATABASE_URL` 时覆盖到 `00098`。默认 `just test` 不连接外部数据库；未设置该变量时，不能把 `00097` 或 `00098` 说成已经在真实 Postgres 上应用过。

@@ -458,6 +458,33 @@ func (s *evaluationStoreStub) UpdateEvaluationExperimentStatus(_ context.Context
 	return nil
 }
 
+func (s *evaluationStoreStub) ListRunningEvaluationExperimentItemsBySession(_ context.Context, organizationUUID, workspaceUUID, sessionExternalID string) ([]db.EvaluationExperimentSessionMatch, error) {
+	matches := make([]db.EvaluationExperimentSessionMatch, 0)
+	if s.experiment.OrganizationUUID != organizationUUID || s.experiment.WorkspaceUUID != workspaceUUID {
+		return matches, nil
+	}
+	for _, item := range s.experiment.Items {
+		if item.Status == db.EvaluationExperimentStatusRunning && item.SessionExternalID == sessionExternalID {
+			matches = append(matches, db.EvaluationExperimentSessionMatch{Item: item, ExperimentExternalID: s.experiment.ExternalID})
+		}
+	}
+	return matches, nil
+}
+
+func (s *evaluationStoreStub) FinishRunningEvaluationExperimentItem(_ context.Context, _, _, externalID, status, errorMessage string, updatedAt time.Time) (bool, error) {
+	for index := range s.experiment.Items {
+		item := &s.experiment.Items[index]
+		if item.ExternalID != externalID || item.Status != db.EvaluationExperimentStatusRunning {
+			continue
+		}
+		item.Status = status
+		item.ErrorMessage = errorMessage
+		item.UpdatedAt = updatedAt
+		return true, nil
+	}
+	return false, nil
+}
+
 func (s *evaluationStoreStub) SetEvaluationExperimentItemSession(_ context.Context, update db.EvaluationExperimentItemSession) error {
 	s.itemSessionUpdates = append(s.itemSessionUpdates, update)
 	for index := range s.experiment.Items {

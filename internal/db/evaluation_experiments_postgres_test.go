@@ -25,8 +25,8 @@ func TestEvaluationExperimentsPostgres(t *testing.T) {
 	if err := database.QueryRowContext(ctx, `select max(version_id) from goose_db_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version < 97 {
-		t.Fatalf("goose version = %d, want at least 97", version)
+	if version < 98 {
+		t.Fatalf("goose version = %d, want at least 98", version)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
 	now := time.Date(2026, time.October, 22, 1, 2, 3, 0, time.UTC)
@@ -70,6 +70,22 @@ func TestEvaluationExperimentsPostgres(t *testing.T) {
 	}
 	if err := store.UpdateEvaluationExperimentStatus(ctx, organizationUUID, workspaceUUID, "evalexp_one", EvaluationExperimentStatusRunning, now.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
+	}
+	runningItems, err := store.ListRunningEvaluationExperimentItemsBySession(ctx, organizationUUID, workspaceUUID, "sesn_case")
+	if err != nil || len(runningItems) != 1 || runningItems[0].ExperimentExternalID != "evalexp_one" || runningItems[0].Item.ExternalID != "evalitem_one" {
+		t.Fatalf("running items = (%+v, %v)", runningItems, err)
+	}
+	otherItems, err := store.ListRunningEvaluationExperimentItemsBySession(ctx, organizationUUID, otherWorkspaceUUID, "sesn_case")
+	if err != nil || len(otherItems) != 0 {
+		t.Fatalf("other workspace items = (%+v, %v)", otherItems, err)
+	}
+	finished, err := store.FinishRunningEvaluationExperimentItem(ctx, organizationUUID, workspaceUUID, "evalitem_one", EvaluationExperimentStatusCompleted, "", now.Add(3*time.Minute))
+	if err != nil || !finished {
+		t.Fatalf("finish = (%v, %v)", finished, err)
+	}
+	finishedAgain, err := store.FinishRunningEvaluationExperimentItem(ctx, organizationUUID, workspaceUUID, "evalitem_one", EvaluationExperimentStatusFailed, "late", now.Add(4*time.Minute))
+	if err != nil || finishedAgain {
+		t.Fatalf("second finish = (%v, %v)", finishedAgain, err)
 	}
 	loaded, err := store.GetEvaluationExperiment(ctx, organizationUUID, workspaceUUID, "evalexp_one")
 	if err != nil || loaded.Status != EvaluationExperimentStatusRunning || loaded.Items[0].SessionExternalID != "sesn_case" || loaded.SessionCount != 1 {

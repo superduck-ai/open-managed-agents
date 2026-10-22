@@ -77,6 +77,26 @@ func TestEvaluationExperimentMapperBuilderContracts(t *testing.T) {
 			},
 			wantSQLFragments: []string{"SET status = $1", "external_id = $5"},
 		}},
+		{"running items by session", mapperBuilderContract{
+			statement: evaluationExperimentItemMapperListRunningBySessionStatement,
+			bound:     buildEvaluationExperimentItemMapperListRunningBySession(yourbatis.DialectPostgres, params.OrganizationUUID, params.WorkspaceUUID, "sesn_case"),
+			wantID:    "EvaluationExperimentItemMapper.ListRunningBySession", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "sessionExternalID"},
+			wantSQLFragments:  []string{"item.session_external_id = $3", "item.status = 'running'", "experiment.external_id AS experiment_external_id"},
+		}},
+		{"finish running item", mapperBuilderContract{
+			statement: evaluationExperimentItemMapperFinishRunningStatement,
+			bound: buildEvaluationExperimentItemMapperFinishRunning(yourbatis.DialectPostgres, evaluationExperimentItemFinishParams{
+				OrganizationUUID: params.OrganizationUUID, WorkspaceUUID: params.WorkspaceUUID, ExternalID: "evalitem_test",
+				Status: "completed", UpdatedAt: now,
+			}),
+			wantID: "EvaluationExperimentItemMapper.FinishRunning", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{
+				"params.Status", "params.ErrorMessage", "params.UpdatedAt",
+				"params.OrganizationUUID", "params.WorkspaceUUID", "params.ExternalID",
+			},
+			wantSQLFragments: []string{"SET status = $1", "AND status = 'running'"},
+		}},
 		{"set session", mapperBuilderContract{
 			statement: evaluationExperimentItemMapperSetSessionStatement,
 			bound: buildEvaluationExperimentItemMapperSetSession(yourbatis.DialectPostgres, evaluationExperimentItemSessionParams{

@@ -38,6 +38,8 @@ type Store interface {
 	ListCompletedEvaluationExperiments(context.Context, string, string, string, string) ([]db.EvaluationExperiment, error)
 	UpdateEvaluationExperimentStatus(context.Context, string, string, string, string, time.Time) error
 	SetEvaluationExperimentItemSession(context.Context, db.EvaluationExperimentItemSession) error
+	ListRunningEvaluationExperimentItemsBySession(context.Context, string, string, string) ([]db.EvaluationExperimentSessionMatch, error)
+	FinishRunningEvaluationExperimentItem(context.Context, string, string, string, string, string, time.Time) (bool, error)
 }
 
 type CaseSessionInput struct {

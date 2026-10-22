@@ -432,29 +432,38 @@ func caseSessionInput(experiment db.EvaluationExperiment, item db.EvaluationExpe
 }
 
 func experimentStatus(items []db.EvaluationExperimentItem) string {
-	running := false
-	pending := false
-	failed := false
+	if len(items) == 0 {
+		return db.EvaluationExperimentStatusPending
+	}
+	var running, pending, failed, cancelled, completed int
 	for _, item := range items {
 		switch item.Status {
 		case db.EvaluationExperimentStatusRunning:
-			running = true
+			running++
 		case db.EvaluationExperimentStatusPending:
-			pending = true
+			pending++
+		case db.EvaluationExperimentStatusCancelled:
+			cancelled++
 		case db.EvaluationExperimentStatusFailed:
-			failed = true
+			failed++
+		case db.EvaluationExperimentStatusCompleted:
+			completed++
 		}
 	}
-	if running {
+	switch {
+	case running > 0:
 		return db.EvaluationExperimentStatusRunning
-	}
-	if pending {
+	case pending > 0:
+		return db.EvaluationExperimentStatusPending
+	case failed > 0:
+		return db.EvaluationExperimentStatusFailed
+	case cancelled > 0:
+		return db.EvaluationExperimentStatusCancelled
+	case completed == len(items):
+		return db.EvaluationExperimentStatusCompleted
+	default:
 		return db.EvaluationExperimentStatusPending
 	}
-	if failed {
-		return db.EvaluationExperimentStatusFailed
-	}
-	return db.EvaluationExperimentStatusPending
 }
 
 func caseSessionErrorMessage(err error) string {

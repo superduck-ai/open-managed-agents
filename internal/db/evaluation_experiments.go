@@ -241,6 +241,59 @@ func (d *DB) UpdateEvaluationExperimentStatus(ctx context.Context, organizationU
 	return nil
 }
 
+type EvaluationExperimentSessionMatch struct {
+	Item                 EvaluationExperimentItem
+	ExperimentExternalID string
+}
+
+func (d *DB) ListRunningEvaluationExperimentItemsBySession(ctx context.Context, organizationUUID, workspaceUUID, sessionExternalID string) ([]EvaluationExperimentSessionMatch, error) {
+	rows, err := NewEvaluationExperimentItemMapper(d.mapperDB).ListRunningBySession(ctx, organizationUUID, workspaceUUID, sessionExternalID)
+	if err != nil {
+		return nil, err
+	}
+	matches := make([]EvaluationExperimentSessionMatch, 0, len(rows))
+	for _, row := range rows {
+		matches = append(matches, EvaluationExperimentSessionMatch{
+			Item:                 row.evaluationExperimentItem(),
+			ExperimentExternalID: row.ExperimentExternalID,
+		})
+	}
+	return matches, nil
+}
+
+func (d *DB) FinishRunningEvaluationExperimentItem(ctx context.Context, organizationUUID, workspaceUUID, externalID, status, errorMessage string, updatedAt time.Time) (bool, error) {
+	rows, err := NewEvaluationExperimentItemMapper(d.mapperDB).FinishRunning(ctx, evaluationExperimentItemFinishParams{
+		OrganizationUUID: organizationUUID,
+		WorkspaceUUID:    workspaceUUID,
+		ExternalID:       externalID,
+		Status:           status,
+		ErrorMessage:     errorMessage,
+		UpdatedAt:        updatedAt,
+	})
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
+func (row evaluationExperimentSessionItemRow) evaluationExperimentItem() EvaluationExperimentItem {
+	return evaluationExperimentItemRow{
+		UUID:              row.UUID,
+		ExternalID:        row.ExternalID,
+		OrganizationUUID:  row.OrganizationUUID,
+		WorkspaceUUID:     row.WorkspaceUUID,
+		ExperimentUUID:    row.ExperimentUUID,
+		CaseUUID:          row.CaseUUID,
+		CaseExternalID:    row.CaseExternalID,
+		Position:          row.Position,
+		SessionExternalID: row.SessionExternalID,
+		Status:            row.Status,
+		ErrorMessage:      row.ErrorMessage,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
+	}.evaluationExperimentItem()
+}
+
 func (d *DB) SetEvaluationExperimentItemSession(ctx context.Context, update EvaluationExperimentItemSession) error {
 	rows, err := NewEvaluationExperimentItemMapper(d.mapperDB).SetSession(ctx, evaluationExperimentItemSessionParams{
 		OrganizationUUID:  update.OrganizationUUID,

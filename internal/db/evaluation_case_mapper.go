@@ -42,6 +42,20 @@ type evaluationCaseWriteParams struct {
 	CreatedAt          time.Time
 }
 
+type evaluationCaseUpdateParams struct {
+	OrganizationUUID   string
+	WorkspaceUUID      string
+	VersionUUID        string
+	ExternalID         string
+	Name               string
+	Description        string
+	TurnsJSON          string
+	CheckpointsJSON    *string
+	InputFilesJSON     *string
+	ReferenceFilesJSON *string
+	UpdatedAt          time.Time
+}
+
 type evaluationCasePageParams struct {
 	OrganizationUUID string
 	WorkspaceUUID    string
@@ -53,6 +67,8 @@ type evaluationCasePageParams struct {
 type EvaluationCaseMapper interface {
 	MaxPosition(ctx context.Context, organizationUUID, workspaceUUID, versionUUID string) (int, error)
 	Insert(ctx context.Context, params evaluationCaseWriteParams) (evaluationCaseRow, error)
+	Update(ctx context.Context, params evaluationCaseUpdateParams) (evaluationCaseRow, error)
+	Delete(ctx context.Context, organizationUUID, workspaceUUID, versionUUID, externalID string) (evaluationCaseRow, error)
 	ListPage(ctx context.Context, params evaluationCasePageParams) ([]evaluationCaseRow, error)
 	ListByVersion(ctx context.Context, organizationUUID, workspaceUUID, versionUUID string) ([]evaluationCaseRow, error)
 }

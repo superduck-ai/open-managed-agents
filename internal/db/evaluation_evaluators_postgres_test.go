@@ -72,6 +72,22 @@ func TestEvaluationEvaluatorsPostgres(t *testing.T) {
 		t.Fatalf("create agent = (%+v, %v)", agent, err)
 	}
 
+	next, err := store.AppendEvaluationEvaluatorVersion(ctx, organizationUUID, workspaceUUID, llm.ExternalID, EvaluationEvaluatorVersion{
+		UUID: "41000000-0000-4000-8000-000000000004", ExternalID: "eev_llm_v2",
+		EvaluatorType: "llm", Model: "claude", PromptTemplate: "Score {{input}} again", Variables: []string{"input"}, CreatedAt: now.Add(time.Minute),
+	})
+	if err != nil || next.Version.Version != 2 || next.Version.ExternalID != "eev_llm_v2" || next.Version.PromptTemplate != "Score {{input}} again" || next.ExternalID != "evalev_llm" {
+		t.Fatalf("append version = (%+v, %v)", next, err)
+	}
+	current, err := store.GetEvaluationEvaluator(ctx, organizationUUID, workspaceUUID, llm.ExternalID)
+	if err != nil || current.Version.Version != 2 || current.Version.ExternalID != "eev_llm_v2" {
+		t.Fatalf("latest = (%+v, %v)", current, err)
+	}
+	frozen, err := store.GetEvaluationEvaluatorVersion(ctx, organizationUUID, workspaceUUID, "eev_llm")
+	if err != nil || frozen.Version != 1 || frozen.PromptTemplate != "Score {{input}}" {
+		t.Fatalf("frozen version = (%+v, %v)", frozen, err)
+	}
+
 	listed, _, err := store.ListEvaluationEvaluatorsPage(ctx, ListEvaluationEvaluatorsPageParams{
 		OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, Limit: 20,
 	})

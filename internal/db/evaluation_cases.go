@@ -2,11 +2,15 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/superduck-ai/yourbatis"
 )
+
+var ErrEvaluationCaseMissing = errors.New("evaluation case missing")
 
 type EvaluationCase struct {
 	UUID              string
@@ -139,6 +143,79 @@ func (d *DB) CreateEvaluationCases(ctx context.Context, organizationUUID, worksp
 		return nil, ErrDuplicate
 	}
 	return created, err
+}
+
+func (d *DB) UpdateEvaluationCase(ctx context.Context, organizationUUID, workspaceUUID, datasetExternalID, caseExternalID string, write EvaluationCaseWrite, now time.Time) (EvaluationCase, error) {
+	turnsJSON, err := encodeEvaluationTurns(write.Turns)
+	if err != nil {
+		return EvaluationCase{}, err
+	}
+	var updated EvaluationCase
+	err = d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		dataset, lockErr := lockEvaluationDataset(ctx, executor, organizationUUID, workspaceUUID, datasetExternalID)
+		if lockErr != nil {
+			return lockErr
+		}
+		version, versionErr := NewEvaluationDatasetVersionMapper(executor).FindLatest(ctx, organizationUUID, workspaceUUID, dataset.UUID)
+		if versionErr != nil {
+			return mapNoRows(versionErr)
+		}
+		row, updateErr := NewEvaluationCaseMapper(executor).Update(ctx, evaluationCaseUpdateParams{
+			OrganizationUUID:   organizationUUID,
+			WorkspaceUUID:      workspaceUUID,
+			VersionUUID:        version.UUID,
+			ExternalID:         caseExternalID,
+			Name:               write.Name,
+			Description:        write.Description,
+			TurnsJSON:          turnsJSON,
+			CheckpointsJSON:    encodeOptionalJSON(write.Checkpoints),
+			InputFilesJSON:     encodeOptionalJSON(write.InputFiles),
+			ReferenceFilesJSON: encodeOptionalJSON(write.ReferenceFiles),
+			UpdatedAt:          now,
+		})
+		if updateErr != nil {
+			return mapMissingEvaluationCase(updateErr)
+		}
+		item, decodeErr := row.evaluationCase(dataset.ExternalID, version.ExternalID)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		updated = item
+		return nil
+	})
+	return updated, err
+}
+
+func (d *DB) DeleteEvaluationCase(ctx context.Context, organizationUUID, workspaceUUID, datasetExternalID, caseExternalID string) (EvaluationCase, error) {
+	var deleted EvaluationCase
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		dataset, lockErr := lockEvaluationDataset(ctx, executor, organizationUUID, workspaceUUID, datasetExternalID)
+		if lockErr != nil {
+			return lockErr
+		}
+		version, versionErr := NewEvaluationDatasetVersionMapper(executor).FindLatest(ctx, organizationUUID, workspaceUUID, dataset.UUID)
+		if versionErr != nil {
+			return mapNoRows(versionErr)
+		}
+		row, deleteErr := NewEvaluationCaseMapper(executor).Delete(ctx, organizationUUID, workspaceUUID, version.UUID, caseExternalID)
+		if deleteErr != nil {
+			return mapMissingEvaluationCase(deleteErr)
+		}
+		item, decodeErr := row.evaluationCase(dataset.ExternalID, version.ExternalID)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		deleted = item
+		return nil
+	})
+	return deleted, err
+}
+
+func mapMissingEvaluationCase(err error) error {
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(mapNoRows(err), ErrNotFound) {
+		return ErrEvaluationCaseMissing
+	}
+	return err
 }
 
 type evaluationCaseInsertTarget struct {

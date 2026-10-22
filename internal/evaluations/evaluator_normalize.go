@@ -3,6 +3,8 @@ package evaluations
 import (
 	"strings"
 	"unicode/utf8"
+
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 const (
@@ -18,6 +20,13 @@ const (
 var evaluatorVariableOrder = []string{"input", "output", "checkpoints", "agent_trajectory", "invocation_result"}
 
 var evaluatorScoreFields = []string{"score", "explanation", "details"}
+
+type evaluatorVersionRequest struct {
+	Model          string   `json:"model"`
+	AgentID        string   `json:"agent_id"`
+	PromptTemplate string   `json:"prompt_template"`
+	Variables      []string `json:"variables"`
+}
 
 type createEvaluatorRequest struct {
 	Name            string   `json:"name"`
@@ -94,6 +103,61 @@ func normalizeEvaluatorVariables(values []string, requireOne bool) ([]string, er
 		}
 	}
 	return ordered, nil
+}
+
+func nextEvaluatorVersion(current db.EvaluationEvaluatorVersion, body evaluatorVersionRequest) (db.EvaluationEvaluatorVersion, error) {
+	switch current.EvaluatorType {
+	case evaluatorTypeLLM:
+		return nextLLMEvaluatorVersion(body)
+	case evaluatorTypeAgent:
+		return nextAgentEvaluatorVersion(current, body)
+	default:
+		return db.EvaluationEvaluatorVersion{}, evaluatorTypeInvalid()
+	}
+}
+
+func nextLLMEvaluatorVersion(body evaluatorVersionRequest) (db.EvaluationEvaluatorVersion, error) {
+	variables, err := normalizeEvaluatorVariables(body.Variables, true)
+	if err != nil {
+		return db.EvaluationEvaluatorVersion{}, err
+	}
+	item, err := normalizeLLMEvaluator(normalizedEvaluator{Variables: variables}, createEvaluatorRequest{
+		Model:          body.Model,
+		AgentID:        body.AgentID,
+		PromptTemplate: body.PromptTemplate,
+		Variables:      variables,
+	})
+	if err != nil {
+		return db.EvaluationEvaluatorVersion{}, err
+	}
+	return db.EvaluationEvaluatorVersion{
+		EvaluatorType:  evaluatorTypeLLM,
+		Model:          item.Model,
+		PromptTemplate: item.PromptTemplate,
+		Variables:      item.Variables,
+	}, nil
+}
+
+func nextAgentEvaluatorVersion(current db.EvaluationEvaluatorVersion, body evaluatorVersionRequest) (db.EvaluationEvaluatorVersion, error) {
+	if strings.TrimSpace(body.Model) != "" {
+		return db.EvaluationEvaluatorVersion{}, modelForbidden()
+	}
+	if strings.TrimSpace(body.PromptTemplate) != "" {
+		return db.EvaluationEvaluatorVersion{}, promptForbidden()
+	}
+	if body.Variables != nil {
+		return db.EvaluationEvaluatorVersion{}, variablesInvalid()
+	}
+	agentID, err := normalizePresetAgentID(body.AgentID)
+	if err != nil {
+		return db.EvaluationEvaluatorVersion{}, err
+	}
+	return db.EvaluationEvaluatorVersion{
+		EvaluatorType:  evaluatorTypeAgent,
+		AgentID:        agentID,
+		PromptTemplate: current.PromptTemplate,
+		Variables:      append([]string(nil), current.Variables...),
+	}, nil
 }
 
 func normalizeLLMEvaluator(item normalizedEvaluator, body createEvaluatorRequest) (normalizedEvaluator, error) {

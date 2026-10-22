@@ -202,18 +202,65 @@ func TestEvaluationZipImportAllowsCompanionFiles(t *testing.T) {
 		Version: db.EvaluationDatasetVersion{UUID: "00000000-0000-4000-8000-000000000008", ExternalID: "edv_test", Version: 1, CreatedAt: now},
 	}}}
 	body := zipMembers(map[string]string{
-		"pack/cases.jsonl":              "{\"name\":\"packed\",\"turns\":[\"hi\"]}\n",
+		"pack/cases.jsonl":              "{\"name\":\"packed\",\"turns\":[\"hi\"],\"input_files\":[{\"name\":\"keep.txt\",\"file_id\":\"file_keep\"}]}\n",
 		"pack/input_files/brief.txt":    "brief",
 		"pack/reference_files/gold.txt": "gold",
 		"pack/.DS_Store":                "x",
 		"pack/__MACOSX/cases.jsonl":     "{\"name\":\"hidden\",\"turns\":[\"no\"]}\n",
 	})
-	response := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationDatasetPath("/evalds_test/cases:import"), string(body), "application/zip")
+	copier := &recordingCaseFileCopier{}
+	response := serveEvaluation(evaluationRouterWith(NewHandler(store, nil).WithCaseFileCopier(copier)), http.MethodPost, evaluationDatasetPath("/evalds_test/cases:import"), string(body), "application/zip")
 	if response.Code != http.StatusOK || len(store.createdWrites) != 1 || store.createdWrites[0].Name != "packed" {
 		t.Fatalf("companion zip = %d writes=%#v body=%s", response.Code, store.createdWrites, response.Body.String())
 	}
+	if len(copier.puts) != 2 || !strings.Contains(string(store.createdWrites[0].InputFiles), `"file_id":"file_keep"`) || !strings.Contains(string(store.createdWrites[0].InputFiles), `"file_id":"file_put_brief.txt"`) || !strings.Contains(string(store.createdWrites[0].ReferenceFiles), `"file_id":"file_put_gold.txt"`) {
+		t.Fatalf("files input=%s reference=%s puts=%v", store.createdWrites[0].InputFiles, store.createdWrites[0].ReferenceFiles, copier.puts)
+	}
+	missing := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationDatasetPath("/evalds_test/cases:import"), string(body), "application/zip")
+	if missing.Code != http.StatusBadRequest || !strings.Contains(missing.Body.String(), importCompanionUnavailableMessage) {
+		t.Fatalf("missing copier = %d %s", missing.Code, missing.Body.String())
+	}
 	if _, ok := zipMemberPath("../notes.txt"); ok {
 		t.Fatal("zip member path accepted traversal")
+	}
+}
+
+func TestUpdateAndDeleteEvaluationCase(t *testing.T) {
+	store := &evaluationStoreStub{}
+	updated := serveEvaluation(evaluationRouter(store), http.MethodPatch, evaluationDatasetPath("/evalds_test/cases/evalcase_test"), `{"name":" edited ","turns":[" hello "],"desc":" note ","checkpoints":["done"],"input_files":[{"name":"brief.txt","file_id":"file_brief"}]}`, "")
+	if updated.Code != http.StatusOK || store.updatedWrite == nil || store.updatedWrite.Name != "edited" || store.updatedWrite.Turns[0] != "hello" || store.caseWorkspace != "workspace-uuid" || !strings.Contains(updated.Body.String(), `"id":"evalcase_test"`) {
+		t.Fatalf("update = %d write=%#v body=%s", updated.Code, store.updatedWrite, updated.Body.String())
+	}
+	deleted := serveEvaluation(evaluationRouter(store), http.MethodDelete, evaluationDatasetPath("/evalds_test/cases/evalcase_test"), "", "")
+	if deleted.Code != http.StatusOK || store.deletedCaseID != "evalcase_test" || !strings.Contains(deleted.Body.String(), `"type":"evaluation_case"`) {
+		t.Fatalf("delete = %d id=%s body=%s", deleted.Code, store.deletedCaseID, deleted.Body.String())
+	}
+	store.caseMissing = true
+	missing := serveEvaluation(evaluationRouter(store), http.MethodDelete, evaluationDatasetPath("/evalds_test/cases/evalcase_gone"), "", "")
+	if missing.Code != http.StatusNotFound || !strings.Contains(missing.Body.String(), caseNotFoundMessage) {
+		t.Fatalf("missing = %d %s", missing.Code, missing.Body.String())
+	}
+}
+
+func TestCreateEvaluationEvaluatorVersion(t *testing.T) {
+	store := &evaluationStoreStub{evaluators: []db.EvaluationEvaluator{{
+		ExternalID: "evalev_test", Name: "judge",
+		Version: db.EvaluationEvaluatorVersion{Version: 1, EvaluatorType: "llm", Model: "claude", PromptTemplate: "Score {{input}}", Variables: []string{"input"}},
+	}, {
+		ExternalID: "evalev_agent", Name: "rubric",
+		Version: db.EvaluationEvaluatorVersion{Version: 1, EvaluatorType: "agent", AgentID: "agent_old", PromptTemplate: "Read the result.", Variables: []string{"invocation_result"}},
+	}}}
+	llm := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationEvaluatorPath("/evalev_test/versions"), `{"model":"claude","prompt_template":"Score {{input}} again","variables":["input"]}`, "")
+	if llm.Code != http.StatusOK || store.appendedVersion == nil || store.appendedVersion.PromptTemplate != "Score {{input}} again" || store.appendedVersion.EvaluatorType != "llm" || !strings.Contains(llm.Body.String(), `"version":2`) {
+		t.Fatalf("llm version = %d version=%#v body=%s", llm.Code, store.appendedVersion, llm.Body.String())
+	}
+	agent := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationEvaluatorPath("/evalev_agent/versions"), `{"agent_id":"agent_new"}`, "")
+	if agent.Code != http.StatusOK || store.appendedVersion.AgentID != "agent_new" || store.appendedVersion.PromptTemplate != "Read the result." || !strings.Contains(agent.Body.String(), `"version":2`) {
+		t.Fatalf("agent version = %d version=%#v body=%s", agent.Code, store.appendedVersion, agent.Body.String())
+	}
+	rejected := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationEvaluatorPath("/evalev_agent/versions"), `{"agent_id":"agent_new","prompt_template":"invented"}`, "")
+	if rejected.Code != http.StatusBadRequest || !strings.Contains(rejected.Body.String(), promptForbiddenMessage) {
+		t.Fatalf("agent prompt = %d %s", rejected.Code, rejected.Body.String())
 	}
 }
 
@@ -274,6 +321,19 @@ func zipImport(name, jsonl, extra string) []byte {
 	return zipMembers(members)
 }
 
+type recordingCaseFileCopier struct {
+	puts []string
+}
+
+func (f *recordingCaseFileCopier) CopyCaseFile(_ context.Context, _ string, source sessionCaseFileRef) (sessionCaseFileRef, error) {
+	return source, nil
+}
+
+func (f *recordingCaseFileCopier) PutCaseFile(_ context.Context, _, name string, _ []byte) (sessionCaseFileRef, error) {
+	f.puts = append(f.puts, name)
+	return sessionCaseFileRef{Name: name, FileID: "file_put_" + name}, nil
+}
+
 func zipMembers(members map[string]string) []byte {
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
@@ -294,10 +354,14 @@ type evaluationStoreStub struct {
 	getCalls              int
 	createCaseCalls       int
 	createdWrites         []db.EvaluationCaseWrite
+	updatedWrite          *db.EvaluationCaseWrite
+	deletedCaseID         string
+	caseMissing           bool
 	caseWorkspace         string
 	lastCaseList          db.ListEvaluationCasesPageParams
 	listedCases           []db.EvaluationCase
 	createdEvaluator      *db.EvaluationEvaluator
+	appendedVersion       *db.EvaluationEvaluatorVersion
 	createEvaluatorCalls  int
 	evaluators            []db.EvaluationEvaluator
 	listEvaluatorCalls    int
@@ -394,10 +458,53 @@ func (s *evaluationStoreStub) CreateEvaluationCases(_ context.Context, _, worksp
 	return created, nil
 }
 
+func (s *evaluationStoreStub) UpdateEvaluationCase(_ context.Context, _, workspaceUUID, datasetExternalID, caseExternalID string, write db.EvaluationCaseWrite, now time.Time) (db.EvaluationCase, error) {
+	s.updatedWrite = &write
+	s.caseWorkspace = workspaceUUID
+	if s.caseMissing {
+		return db.EvaluationCase{}, db.ErrEvaluationCaseMissing
+	}
+	return db.EvaluationCase{
+		ExternalID: caseExternalID, WorkspaceUUID: workspaceUUID, DatasetExternalID: datasetExternalID,
+		VersionExternalID: "edv_test", Position: 1, Name: write.Name, Description: write.Description, Turns: write.Turns,
+		Checkpoints: write.Checkpoints, InputFiles: write.InputFiles, ReferenceFiles: write.ReferenceFiles,
+		CreatedAt: now, UpdatedAt: now,
+	}, nil
+}
+
+func (s *evaluationStoreStub) DeleteEvaluationCase(_ context.Context, _, workspaceUUID, datasetExternalID, caseExternalID string) (db.EvaluationCase, error) {
+	s.deletedCaseID = caseExternalID
+	s.caseWorkspace = workspaceUUID
+	if s.caseMissing {
+		return db.EvaluationCase{}, db.ErrEvaluationCaseMissing
+	}
+	return db.EvaluationCase{
+		ExternalID: caseExternalID, WorkspaceUUID: workspaceUUID, DatasetExternalID: datasetExternalID,
+		VersionExternalID: "edv_test", Position: 1, Name: "greeting", Turns: []string{"hello"},
+		CreatedAt: time.Date(2026, time.October, 22, 1, 2, 3, 0, time.UTC),
+		UpdatedAt: time.Date(2026, time.October, 22, 1, 2, 3, 0, time.UTC),
+	}, nil
+}
+
 func (s *evaluationStoreStub) CreateEvaluationEvaluator(_ context.Context, evaluator db.EvaluationEvaluator) (db.EvaluationEvaluator, error) {
 	s.createEvaluatorCalls++
 	s.createdEvaluator = &evaluator
 	return evaluator, nil
+}
+
+func (s *evaluationStoreStub) AppendEvaluationEvaluatorVersion(_ context.Context, _, _, externalID string, version db.EvaluationEvaluatorVersion) (db.EvaluationEvaluator, error) {
+	s.appendedVersion = &version
+	for _, evaluator := range s.evaluators {
+		if evaluator.ExternalID != externalID {
+			continue
+		}
+		evaluator.Version = version
+		if evaluator.Version.Version == 0 {
+			evaluator.Version.Version = 2
+		}
+		return evaluator, nil
+	}
+	return db.EvaluationEvaluator{}, db.ErrNotFound
 }
 
 func (s *evaluationStoreStub) ListEvaluationEvaluatorsPage(_ context.Context, params db.ListEvaluationEvaluatorsPageParams) ([]db.EvaluationEvaluator, bool, error) {

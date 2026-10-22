@@ -86,6 +86,17 @@
         AND d.archived_at IS NULL
     </select>
 
+    <select id="FindForUpdate" resultType="evaluationEvaluatorRow">
+        SELECT
+        <include refid="columns"/>
+        FROM evaluation_evaluators
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND archived_at IS NULL
+        FOR UPDATE
+    </select>
+
     <select id="ListPage" resultType="evaluationEvaluatorPageRow">
         SELECT
         <include refid="page_columns"/>

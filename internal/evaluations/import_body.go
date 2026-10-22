@@ -12,30 +12,42 @@ import (
 	"strings"
 )
 
-func readImportedCases(w http.ResponseWriter, r *http.Request) ([]normalizedCase, error) {
+type importBundle struct {
+	cases      []normalizedCase
+	companions []zipCompanionBytes
+}
+
+type zipCompanionBytes struct {
+	kind string
+	rel  string
+	body []byte
+}
+
+func readImportedCases(w http.ResponseWriter, r *http.Request) (importBundle, error) {
 	body, err := readLimitedBody(w, r, maxImportBodyBytes)
 	if err != nil {
-		return nil, err
+		return importBundle{}, err
 	}
 	if len(bytes.TrimSpace(body)) == 0 {
-		return nil, importRequired()
+		return importBundle{}, importRequired()
 	}
-	payload, err := importPayload(r, body)
-	if err != nil {
-		return nil, err
+	payload := body
+	var companions []zipCompanionBytes
+	if isZip(r) {
+		payload, companions, err = readZipImport(body)
+		if err != nil {
+			return importBundle{}, err
+		}
 	}
 	inputs, err := parseCaseJSONL(payload)
 	if err != nil {
-		return nil, err
+		return importBundle{}, err
 	}
-	return normalizeCases(inputs)
-}
-
-func importPayload(r *http.Request, body []byte) ([]byte, error) {
-	if isZip(r) {
-		return jsonlFromZip(body)
+	cases, err := normalizeCases(inputs)
+	if err != nil {
+		return importBundle{}, err
 	}
-	return body, nil
+	return importBundle{cases: cases, companions: companions}, nil
 }
 
 func isZip(r *http.Request) bool {
@@ -82,50 +94,87 @@ func parseCaseJSONL(body []byte) ([]caseInput, error) {
 	return inputs, nil
 }
 
-func jsonlFromZip(body []byte) ([]byte, error) {
+func readZipImport(body []byte) ([]byte, []zipCompanionBytes, error) {
 	reader, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
 	if err != nil {
-		return nil, invalidImportZip(err)
+		return nil, nil, invalidImportZip(err)
 	}
-	member, err := zipJSONLMember(reader.File)
+	named, err := zipNamedFiles(reader.File)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return readZipMember(member)
+	return zipImportMembers(named)
+}
+
+func zipImportMembers(named []zipNamedFile) ([]byte, []zipCompanionBytes, error) {
+	root := sharedZipRoot(named)
+	var member *zip.File
+	companions := make([]zipCompanionBytes, 0)
+	seen := make(map[string]struct{})
+	for _, item := range named {
+		name := stripZipRoot(item.name, root)
+		kind, rel, companion := splitCompanion(name)
+		if companion {
+			key := kind + "/" + strings.ToLower(rel)
+			if _, ok := seen[key]; ok {
+				return nil, nil, invalidImportZip(errZipMember)
+			}
+			seen[key] = struct{}{}
+			payload, readErr := readZipMember(item.file)
+			if readErr != nil {
+				return nil, nil, readErr
+			}
+			companions = append(companions, zipCompanionBytes{kind: kind, rel: rel, body: payload})
+			continue
+		}
+		if strings.Contains(name, "/") || !strings.HasSuffix(strings.ToLower(name), ".jsonl") {
+			return nil, nil, invalidImportZip(errZipMember)
+		}
+		if member != nil {
+			return nil, nil, invalidImportZip(errZipMember)
+		}
+		member = item.file
+	}
+	if member == nil {
+		return nil, nil, invalidImportZip(errZipMember)
+	}
+	payload, err := readZipMember(member)
+	if err != nil {
+		return nil, nil, err
+	}
+	return payload, companions, nil
+}
+
+func stripZipRoot(name, root string) string {
+	if root == "" {
+		return name
+	}
+	return strings.TrimPrefix(name, root+"/")
+}
+
+func splitCompanion(name string) (string, string, bool) {
+	lower := strings.ToLower(name)
+	for _, prefix := range []struct {
+		path string
+		kind string
+	}{
+		{path: "input_files/", kind: "input"},
+		{path: "reference_files/", kind: "reference"},
+	} {
+		if strings.HasPrefix(lower, prefix.path) {
+			rel := name[len(prefix.path):]
+			if rel == "" {
+				return "", "", false
+			}
+			return prefix.kind, rel, true
+		}
+	}
+	return "", "", false
 }
 
 type zipNamedFile struct {
 	name string
 	file *zip.File
-}
-
-func zipJSONLMember(files []*zip.File) (*zip.File, error) {
-	named, err := zipNamedFiles(files)
-	if err != nil {
-		return nil, err
-	}
-	root := sharedZipRoot(named)
-	var member *zip.File
-	for _, item := range named {
-		name := item.name
-		if root != "" {
-			name = strings.TrimPrefix(name, root+"/")
-		}
-		if zipCompanion(name) {
-			continue
-		}
-		if strings.Contains(name, "/") || !strings.HasSuffix(strings.ToLower(name), ".jsonl") {
-			return nil, invalidImportZip(errZipMember)
-		}
-		if member != nil {
-			return nil, invalidImportZip(errZipMember)
-		}
-		member = item.file
-	}
-	if member == nil {
-		return nil, invalidImportZip(errZipMember)
-	}
-	return member, nil
 }
 
 func zipNamedFiles(files []*zip.File) ([]zipNamedFile, error) {
@@ -173,11 +222,6 @@ func zipIgnored(name string) bool {
 		}
 	}
 	return false
-}
-
-func zipCompanion(name string) bool {
-	lower := strings.ToLower(name)
-	return strings.HasPrefix(lower, "input_files/") || strings.HasPrefix(lower, "reference_files/")
 }
 
 func sharedZipRoot(files []zipNamedFile) string {

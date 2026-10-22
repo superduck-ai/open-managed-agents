@@ -78,12 +78,15 @@ export function DatasetCasesPage() {
       <CaseDrawer
         item={openCase}
         workspaceId={workspace.workspaceId}
+        datasetId={datasetId}
         open={openCase !== null}
         onOpenChange={(open) => {
           if (!open) {
             setOpenCase(null);
           }
         }}
+        onSaved={setOpenCase}
+        onDeleted={() => setOpenCase(null)}
       />
     </section>
   );

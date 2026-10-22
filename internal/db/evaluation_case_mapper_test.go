@@ -49,6 +49,27 @@ func TestEvaluationCaseMapperBuilderContracts(t *testing.T) {
 			},
 			wantSQLFragments: []string{"INSERT INTO evaluation_cases", "CAST(", "AS jsonb)", "RETURNING"},
 		}},
+		{"update", mapperBuilderContract{
+			statement: evaluationCaseMapperUpdateStatement, bound: buildEvaluationCaseMapperUpdate(yourbatis.DialectPostgres, evaluationCaseUpdateParams{
+				OrganizationUUID: params.OrganizationUUID, WorkspaceUUID: params.WorkspaceUUID, VersionUUID: params.VersionUUID,
+				ExternalID: params.ExternalID, Name: params.Name, Description: params.Description, TurnsJSON: params.TurnsJSON,
+				CheckpointsJSON: params.CheckpointsJSON, InputFilesJSON: params.InputFilesJSON, UpdatedAt: now,
+			}),
+			wantID: "EvaluationCaseMapper.Update", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{
+				"params.Name", "params.Description", "params.TurnsJSON", "params.CheckpointsJSON",
+				"params.InputFilesJSON", "params.ReferenceFilesJSON", "params.UpdatedAt",
+				"params.OrganizationUUID", "params.WorkspaceUUID", "params.VersionUUID", "params.ExternalID",
+			},
+			wantSQLFragments: []string{"UPDATE evaluation_cases", "CAST(", "AS jsonb)", "external_id = $11", "RETURNING"},
+		}},
+		{"delete", mapperBuilderContract{
+			statement: evaluationCaseMapperDeleteStatement,
+			bound:     buildEvaluationCaseMapperDelete(yourbatis.DialectPostgres, params.OrganizationUUID, params.WorkspaceUUID, params.VersionUUID, params.ExternalID),
+			wantID:    "EvaluationCaseMapper.Delete", wantKind: yourbatis.StatementDelete,
+			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "versionUUID", "externalID"},
+			wantSQLFragments:  []string{"DELETE FROM evaluation_cases", "external_id = $4", "RETURNING"},
+		}},
 		{"list page", mapperBuilderContract{
 			statement: evaluationCaseMapperListPageStatement, bound: buildEvaluationCaseMapperListPage(yourbatis.DialectPostgres, page),
 			wantID: "EvaluationCaseMapper.ListPage", wantKind: yourbatis.StatementSelect,

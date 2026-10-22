@@ -9,84 +9,93 @@ import (
 )
 
 const (
-	invalidJSONMessage              = "Invalid JSON body"
-	invalidLimitMessage             = "limit must be between 1 and 100"
-	invalidPageMessage              = "page is invalid"
-	nameRequiredMessage             = "name is required"
-	nameTooLongMessage              = "name must be at most 255 characters"
-	descriptionTooLongMessage       = "desc must be at most 1024 characters"
-	turnsRequiredMessage            = "turns must include at least one entry"
-	turnsInvalidMessage             = "turns must be an array of strings"
-	turnEmptyMessage                = "turns cannot include an empty entry"
-	checkpointsInvalidMessage       = "checkpoints must be a JSON array or object"
-	inputFilesInvalidMessage        = "input_files must be a JSON array"
-	referenceFilesInvalidMessage    = "reference_files must be a JSON array"
-	attachmentTooLargeMessage       = "case attachment is too large"
-	importRequiredMessage           = "import requires at least one case"
-	importTooLargeMessage           = "import accepts at most 1000 cases"
-	importBodyTooLargeMessage       = "import body is too large"
-	importJSONLInvalidMessage       = "import body must be JSONL"
-	importZipInvalidMessage         = "import ZIP must contain one JSONL file"
-	datasetNotFoundMessage          = "Evaluation dataset not found"
-	datasetArchivedMessage          = "Evaluation dataset is archived"
-	sessionIDRequiredMessage        = "session_id is required"
-	sessionIDTooLongMessage         = "session_id must be at most 255 characters"
-	sessionIDsRequiredMessage       = "session_ids must include at least one entry"
-	sessionIDsTooManyMessage        = "session_ids accepts at most 50 entries"
-	sessionNotFoundMessage          = "Session not found"
-	scoringSessionMessage           = "Evaluation scoring sessions cannot be added to a dataset"
-	loadSessionFailedMessage        = "Could not load session"
-	presetDatasetNotFoundMessage    = "Evaluation dataset preset not found"
-	presetEvaluatorNotFoundMessage  = "Evaluation evaluator preset not found"
-	presetArchivedMessage           = "Published preset is archived"
-	presetSourceConflictMessage     = "source_version_id cannot be combined with evaluator fields"
-	duplicateResourceMessage        = "Evaluation resource already exists"
-	createDatasetFailedMessage      = "Could not create evaluation dataset"
-	listDatasetsFailedMessage       = "Could not list evaluation datasets"
-	loadDatasetFailedMessage        = "Could not load evaluation dataset"
-	createCasesFailedMessage        = "Could not create evaluation cases"
-	listCasesFailedMessage          = "Could not list evaluation cases"
-	evaluatorTypeInvalidMessage     = "evaluator_type must be llm or agent"
-	modelRequiredMessage            = "model is required"
-	modelForbiddenMessage           = "model must be empty for an agent evaluator"
-	modelTooLongMessage             = "model must be at most 255 characters"
-	agentIDRequiredMessage          = "agent_id is required"
-	agentIDForbiddenMessage         = "agent_id must be empty for an llm evaluator"
-	agentIDTooLongMessage           = "agent_id must be at most 255 characters"
-	promptRequiredMessage           = "prompt_template is required"
-	promptForbiddenMessage          = "prompt_template must be empty for an agent evaluator"
-	promptTooLongMessage            = "prompt_template must be at most 16000 characters"
-	promptVariableMessage           = "prompt_template references a variable that is not selected"
-	variablesInvalidMessage         = "variables must use input, output, checkpoints, agent_trajectory, or invocation_result"
-	variablesDuplicateMessage       = "variables cannot contain duplicates"
-	variablesRequiredMessage        = "variables must include at least one entry"
-	evaluatorNotFoundMessage        = "Evaluation evaluator not found"
-	createEvaluatorFailedMessage    = "Could not create evaluation evaluator"
-	listEvaluatorsFailedMessage     = "Could not list evaluation evaluators"
-	loadEvaluatorFailedMessage      = "Could not load evaluation evaluator"
-	datasetVersionRequiredMessage   = "dataset_version_id is required"
-	datasetVersionNotFoundMessage   = "Evaluation dataset version not found"
-	casesRequiredMessage            = "dataset version has no cases"
-	environmentIDRequiredMessage    = "environment_id is required"
-	environmentNotFoundMessage      = "Environment not found"
-	agentNotFoundMessage            = "Agent not found"
-	agentArchivedMessage            = "agent must not be archived"
-	environmentArchivedMessage      = "environment must not be archived"
-	agentVersionInvalidMessage      = "agent_version must be at least 1"
-	timeoutInvalidMessage           = "timeout_seconds must be between 1 and 86400"
-	evaluatorIDsRequiredMessage     = "evaluator_ids must include at least one entry"
-	evaluatorIDsDuplicateMessage    = "evaluator_ids cannot contain duplicates"
-	evaluatorIDsTooManyMessage      = "evaluator_ids accepts at most 20 entries"
-	envInvalidMessage               = "env must be a JSON object of strings"
-	resourcesInvalidMessage         = "resources must be a JSON array"
-	experimentNotFoundMessage       = "Evaluation experiment not found"
-	createExperimentFailedMessage   = "Could not create evaluation experiment"
-	listExperimentsFailedMessage    = "Could not list evaluation experiments"
-	loadExperimentFailedMessage     = "Could not load evaluation experiment"
-	startExperimentFailedMessage    = "Could not start evaluation experiment"
-	compareExperimentsFailedMessage = "Could not compare evaluation experiments"
-	caseSessionFailedMessage        = "Could not create session"
-	internalServerErrorMessage      = "Internal server error"
+	invalidJSONMessage                  = "Invalid JSON body"
+	invalidLimitMessage                 = "limit must be between 1 and 100"
+	invalidPageMessage                  = "page is invalid"
+	nameRequiredMessage                 = "name is required"
+	nameTooLongMessage                  = "name must be at most 255 characters"
+	descriptionTooLongMessage           = "desc must be at most 1024 characters"
+	turnsRequiredMessage                = "turns must include at least one entry"
+	turnsInvalidMessage                 = "turns must be an array of strings"
+	turnEmptyMessage                    = "turns cannot include an empty entry"
+	checkpointsInvalidMessage           = "checkpoints must be a JSON array or object"
+	inputFilesInvalidMessage            = "input_files must be a JSON array"
+	referenceFilesInvalidMessage        = "reference_files must be a JSON array"
+	attachmentTooLargeMessage           = "case attachment is too large"
+	importRequiredMessage               = "import requires at least one case"
+	importTooLargeMessage               = "import accepts at most 1000 cases"
+	importBodyTooLargeMessage           = "import body is too large"
+	importJSONLInvalidMessage           = "import body must be JSONL"
+	importZipInvalidMessage             = "import ZIP must contain one JSONL file"
+	importCompanionUnavailableMessage   = "import ZIP companion files require workspace file storage"
+	importCompanionTooLargeMessage      = "import companion file is too large"
+	importCompanionStorageMessage       = "workspace storage limit exceeded"
+	importCompanionFailedMessage        = "could not store import companion file"
+	importCompanionUnresolvedMessage    = "import file reference does not match a ZIP companion or an existing file_id"
+	datasetNotFoundMessage              = "Evaluation dataset not found"
+	datasetArchivedMessage              = "Evaluation dataset is archived"
+	sessionIDRequiredMessage            = "session_id is required"
+	sessionIDTooLongMessage             = "session_id must be at most 255 characters"
+	sessionIDsRequiredMessage           = "session_ids must include at least one entry"
+	sessionIDsTooManyMessage            = "session_ids accepts at most 50 entries"
+	sessionNotFoundMessage              = "Session not found"
+	scoringSessionMessage               = "Evaluation scoring sessions cannot be added to a dataset"
+	loadSessionFailedMessage            = "Could not load session"
+	presetDatasetNotFoundMessage        = "Evaluation dataset preset not found"
+	presetEvaluatorNotFoundMessage      = "Evaluation evaluator preset not found"
+	presetArchivedMessage               = "Published preset is archived"
+	presetSourceConflictMessage         = "source_version_id cannot be combined with evaluator fields"
+	duplicateResourceMessage            = "Evaluation resource already exists"
+	createDatasetFailedMessage          = "Could not create evaluation dataset"
+	listDatasetsFailedMessage           = "Could not list evaluation datasets"
+	loadDatasetFailedMessage            = "Could not load evaluation dataset"
+	createCasesFailedMessage            = "Could not create evaluation cases"
+	updateCaseFailedMessage             = "Could not update evaluation case"
+	deleteCaseFailedMessage             = "Could not delete evaluation case"
+	caseNotFoundMessage                 = "Evaluation case not found"
+	listCasesFailedMessage              = "Could not list evaluation cases"
+	evaluatorTypeInvalidMessage         = "evaluator_type must be llm or agent"
+	modelRequiredMessage                = "model is required"
+	modelForbiddenMessage               = "model must be empty for an agent evaluator"
+	modelTooLongMessage                 = "model must be at most 255 characters"
+	agentIDRequiredMessage              = "agent_id is required"
+	agentIDForbiddenMessage             = "agent_id must be empty for an llm evaluator"
+	agentIDTooLongMessage               = "agent_id must be at most 255 characters"
+	promptRequiredMessage               = "prompt_template is required"
+	promptForbiddenMessage              = "prompt_template must be empty for an agent evaluator"
+	promptTooLongMessage                = "prompt_template must be at most 16000 characters"
+	promptVariableMessage               = "prompt_template references a variable that is not selected"
+	variablesInvalidMessage             = "variables must use input, output, checkpoints, agent_trajectory, or invocation_result"
+	variablesDuplicateMessage           = "variables cannot contain duplicates"
+	variablesRequiredMessage            = "variables must include at least one entry"
+	evaluatorNotFoundMessage            = "Evaluation evaluator not found"
+	createEvaluatorFailedMessage        = "Could not create evaluation evaluator"
+	createEvaluatorVersionFailedMessage = "Could not create evaluation evaluator version"
+	listEvaluatorsFailedMessage         = "Could not list evaluation evaluators"
+	loadEvaluatorFailedMessage          = "Could not load evaluation evaluator"
+	datasetVersionRequiredMessage       = "dataset_version_id is required"
+	datasetVersionNotFoundMessage       = "Evaluation dataset version not found"
+	casesRequiredMessage                = "dataset version has no cases"
+	environmentIDRequiredMessage        = "environment_id is required"
+	environmentNotFoundMessage          = "Environment not found"
+	agentNotFoundMessage                = "Agent not found"
+	agentArchivedMessage                = "agent must not be archived"
+	environmentArchivedMessage          = "environment must not be archived"
+	agentVersionInvalidMessage          = "agent_version must be at least 1"
+	timeoutInvalidMessage               = "timeout_seconds must be between 1 and 86400"
+	evaluatorIDsRequiredMessage         = "evaluator_ids must include at least one entry"
+	evaluatorIDsDuplicateMessage        = "evaluator_ids cannot contain duplicates"
+	evaluatorIDsTooManyMessage          = "evaluator_ids accepts at most 20 entries"
+	envInvalidMessage                   = "env must be a JSON object of strings"
+	resourcesInvalidMessage             = "resources must be a JSON array"
+	experimentNotFoundMessage           = "Evaluation experiment not found"
+	createExperimentFailedMessage       = "Could not create evaluation experiment"
+	listExperimentsFailedMessage        = "Could not list evaluation experiments"
+	loadExperimentFailedMessage         = "Could not load evaluation experiment"
+	startExperimentFailedMessage        = "Could not start evaluation experiment"
+	compareExperimentsFailedMessage     = "Could not compare evaluation experiments"
+	caseSessionFailedMessage            = "Could not create session"
+	internalServerErrorMessage          = "Internal server error"
 )
 
 var errInvalidPageCursor = errors.New("invalid evaluation page cursor")
@@ -164,6 +173,37 @@ func invalidImportJSONL(cause error) error {
 
 func invalidImportZip(cause error) error {
 	return apperr.New(apperr.InvalidArgument, importZipInvalidMessage, cause)
+}
+
+func importCompanionsUnavailable() error {
+	return apperr.New(apperr.InvalidArgument, importCompanionUnavailableMessage, nil)
+}
+
+func importCompanionTooLarge() error {
+	return apperr.New(apperr.InvalidArgument, importCompanionTooLargeMessage, nil)
+}
+
+func importCompanionStorage() error {
+	return apperr.New(apperr.InvalidArgument, importCompanionStorageMessage, nil)
+}
+
+func importCompanionFailed(cause error) error {
+	return apperr.New(apperr.Internal, importCompanionFailedMessage, cause)
+}
+
+func importCompanionUnresolved() error {
+	return apperr.New(apperr.InvalidArgument, importCompanionUnresolvedMessage, nil)
+}
+
+func caseNotFound() error {
+	return apperr.New(apperr.NotFound, caseNotFoundMessage, nil)
+}
+
+func mapCaseMutationError(err error, failed string) error {
+	if errors.Is(err, db.ErrEvaluationCaseMissing) {
+		return caseNotFound()
+	}
+	return mapStoreError(err, datasetNotFoundMessage, failed)
 }
 
 func datasetNotFound() error {

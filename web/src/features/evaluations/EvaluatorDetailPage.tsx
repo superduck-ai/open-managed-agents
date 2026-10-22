@@ -1,6 +1,7 @@
 import { useI18n } from '../../shared/i18n';
 import { evaluationErrorMessage, type EvaluationEvaluator } from './api';
 import { EvaluationSectionNav } from './EvaluationSectionNav';
+import { EvaluatorVersionForm } from './EvaluatorVersionForm';
 import { agentDetailHref } from '../managed-agents/utils';
 import { evaluationEvaluatorsHref, useEvaluationWorkspace } from './useEvaluationDatasets';
 import { evaluatorIdFromPath, useEvaluationEvaluator } from './useEvaluationEvaluators';
@@ -48,27 +49,7 @@ function EvaluatorBlocks({ evaluator, workspaceId }: { evaluator: EvaluationEval
     <div className="grid max-w-3xl gap-8">
       <section className="grid gap-2">
         <h2 className="text-sm font-medium">{msg('evaluations.promptBlock', 'Prompt template')}</h2>
-        {agent ? (
-          <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-            {evaluator.version.prompt_template ||
-              msg(
-                'evaluations.agentContract',
-                'Reads /data/session/result.json and artifacts, and writes /output/score.json with score, explanation, and details.',
-              )}
-          </p>
-        ) : (
-          <>
-            <pre className="whitespace-pre-wrap text-sm text-muted-foreground">
-              {evaluator.version.prompt_template || '—'}
-            </pre>
-            <p className="text-sm text-muted-foreground">
-              {msg(
-                'evaluations.promptReadOnly',
-                "This version's prompt is read-only. Saving a new version is not available.",
-              )}
-            </p>
-          </>
-        )}
+        <EvaluatorVersionForm evaluator={evaluator} />
       </section>
       <section className="grid gap-2">
         <h2 className="text-sm font-medium">{msg('evaluations.outputMetrics', 'Output metrics')}</h2>

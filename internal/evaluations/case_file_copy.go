@@ -1,9 +1,14 @@
 package evaluations
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"path"
 	"strings"
 	"time"
@@ -28,6 +33,7 @@ var (
 
 type CaseFileCopier interface {
 	CopyCaseFile(ctx context.Context, workspaceUUID string, source sessionCaseFileRef) (sessionCaseFileRef, error)
+	PutCaseFile(ctx context.Context, workspaceUUID, name string, body []byte) (sessionCaseFileRef, error)
 }
 
 type caseFileRecords interface {
@@ -38,6 +44,7 @@ type caseFileRecords interface {
 type caseFileObjects interface {
 	Name() string
 	Copy(ctx context.Context, sourceKey, destinationKey string) (storage.CopyResult, error)
+	Upload(ctx context.Context, key string, body io.Reader, opts storage.UploadOptions) (storage.UploadResult, error)
 	Delete(ctx context.Context, key string, opts storage.DeleteOptions) error
 }
 
@@ -66,40 +73,77 @@ func (c *WorkspaceFileCopier) CopyCaseFile(ctx context.Context, workspaceUUID st
 		return sessionCaseFileRef{}, err
 	}
 	filename := caseFileObjectName(source.Name, record.Filename)
-	fileUUID := uuid.NewString()
-	externalID, err := ids.New("file_")
+	externalID, err := c.writeCaseFile(ctx, workspaceUUID, filename, caseFileMimeType(record.MimeType), record.SHA256, record.SizeBytes, record.Downloadable, func(key string) error {
+		_, copyErr := c.objects.Copy(ctx, record.S3Key, key)
+		return copyErr
+	})
 	if err != nil {
 		return sessionCaseFileRef{}, err
-	}
-	key := fmt.Sprintf("workspaces/%s/files/%s/%s", workspaceUUID, fileUUID, filename)
-	if _, err = c.objects.Copy(ctx, record.S3Key, key); err != nil {
-		return sessionCaseFileRef{}, fmt.Errorf("%w: %w", errCaseFileCopy, err)
-	}
-	copied := db.FileRecord{
-		UUID:          fileUUID,
-		ExternalID:    externalID,
-		WorkspaceUUID: workspaceUUID,
-		Filename:      filename,
-		MimeType:      caseFileMimeType(record.MimeType),
-		SizeBytes:     record.SizeBytes,
-		SHA256:        record.SHA256,
-		S3Bucket:      c.objects.Name(),
-		S3Key:         key,
-		Downloadable:  record.Downloadable,
-		CreatedAt:     time.Now().UTC(),
-	}
-	if err = c.records.CreateFileIfWithinLimit(ctx, copied, c.workspaceLimitBytes); err != nil {
-		_ = c.objects.Delete(ctx, key, storage.DeleteOptions{})
-		if errors.Is(err, db.ErrStorageLimitExceeded) {
-			return sessionCaseFileRef{}, errCaseFileStorage
-		}
-		return sessionCaseFileRef{}, fmt.Errorf("%w: %w", errCaseFileCopy, err)
 	}
 	name := source.Name
 	if name == "" {
 		name = filename
 	}
 	return sessionCaseFileRef{Name: name, FileID: externalID}, nil
+}
+
+func (c *WorkspaceFileCopier) PutCaseFile(ctx context.Context, workspaceUUID, name string, body []byte) (sessionCaseFileRef, error) {
+	if body == nil {
+		body = []byte{}
+	}
+	if c.maxFileBytes > 0 && int64(len(body)) > c.maxFileBytes {
+		return sessionCaseFileRef{}, errCaseFileTooLarge
+	}
+	filename := caseFileObjectName(name, caseFileFallbackName)
+	sum := sha256.Sum256(body)
+	externalID, err := c.writeCaseFile(ctx, workspaceUUID, filename, caseFileContentType(filename), hex.EncodeToString(sum[:]), int64(len(body)), true, func(key string) error {
+		_, uploadErr := c.objects.Upload(ctx, key, bytes.NewReader(body), storage.UploadOptions{
+			Size:        int64(len(body)),
+			ContentType: caseFileContentType(filename),
+		})
+		return uploadErr
+	})
+	if err != nil {
+		return sessionCaseFileRef{}, err
+	}
+	display := strings.TrimSpace(name)
+	if display == "" {
+		display = filename
+	}
+	return sessionCaseFileRef{Name: display, FileID: externalID}, nil
+}
+
+func (c *WorkspaceFileCopier) writeCaseFile(ctx context.Context, workspaceUUID, filename, mimeType, sha string, size int64, downloadable bool, write func(key string) error) (string, error) {
+	fileUUID := uuid.NewString()
+	externalID, err := ids.New("file_")
+	if err != nil {
+		return "", err
+	}
+	key := fmt.Sprintf("workspaces/%s/files/%s/%s", workspaceUUID, fileUUID, filename)
+	if err = write(key); err != nil {
+		return "", fmt.Errorf("%w: %w", errCaseFileCopy, err)
+	}
+	record := db.FileRecord{
+		UUID:          fileUUID,
+		ExternalID:    externalID,
+		WorkspaceUUID: workspaceUUID,
+		Filename:      filename,
+		MimeType:      mimeType,
+		SizeBytes:     size,
+		SHA256:        sha,
+		S3Bucket:      c.objects.Name(),
+		S3Key:         key,
+		Downloadable:  downloadable,
+		CreatedAt:     time.Now().UTC(),
+	}
+	if err = c.records.CreateFileIfWithinLimit(ctx, record, c.workspaceLimitBytes); err != nil {
+		_ = c.objects.Delete(ctx, key, storage.DeleteOptions{})
+		if errors.Is(err, db.ErrStorageLimitExceeded) {
+			return "", errCaseFileStorage
+		}
+		return "", fmt.Errorf("%w: %w", errCaseFileCopy, err)
+	}
+	return externalID, nil
 }
 
 func (c *WorkspaceFileCopier) sourceFile(ctx context.Context, workspaceUUID, fileID string) (db.FileRecord, error) {
@@ -149,6 +193,14 @@ func sanitizeCaseFileName(filename string) string {
 
 func caseFileMimeType(value string) string {
 	if strings.TrimSpace(value) == "" {
+		return "application/octet-stream"
+	}
+	return value
+}
+
+func caseFileContentType(filename string) string {
+	value := mime.TypeByExtension(path.Ext(filename))
+	if value == "" {
 		return "application/octet-stream"
 	}
 	return value

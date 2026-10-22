@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/superduck-ai/yourbatis"
@@ -86,6 +87,55 @@ func (d *DB) CreateEvaluationEvaluator(ctx context.Context, evaluator Evaluation
 		}
 		created = row.evaluationEvaluator()
 		decoded, decodeErr := version.evaluationEvaluatorVersion()
+		if decodeErr != nil {
+			return decodeErr
+		}
+		created.Version = decoded
+		return nil
+	})
+	if isUniqueViolation(err) {
+		return EvaluationEvaluator{}, ErrDuplicate
+	}
+	return created, err
+}
+
+func (d *DB) AppendEvaluationEvaluatorVersion(ctx context.Context, organizationUUID, workspaceUUID, externalID string, version EvaluationEvaluatorVersion) (EvaluationEvaluator, error) {
+	variablesJSON, err := encodeEvaluatorVariables(version.Variables)
+	if err != nil {
+		return EvaluationEvaluator{}, err
+	}
+	var created EvaluationEvaluator
+	err = d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		row, lockErr := NewEvaluationEvaluatorMapper(executor).FindForUpdate(ctx, organizationUUID, workspaceUUID, externalID)
+		if lockErr != nil {
+			return mapNoRows(lockErr)
+		}
+		latest, latestErr := NewEvaluationEvaluatorVersionMapper(executor).FindLatest(ctx, organizationUUID, workspaceUUID, row.UUID)
+		if latestErr != nil {
+			return mapNoRows(latestErr)
+		}
+		if latest.EvaluatorType != version.EvaluatorType {
+			return fmt.Errorf("evaluation evaluator type is %s", latest.EvaluatorType)
+		}
+		inserted, insertErr := NewEvaluationEvaluatorVersionMapper(executor).Insert(ctx, evaluationEvaluatorVersionWriteParams{
+			UUID:             version.UUID,
+			ExternalID:       version.ExternalID,
+			OrganizationUUID: organizationUUID,
+			WorkspaceUUID:    workspaceUUID,
+			EvaluatorUUID:    row.UUID,
+			Version:          latest.Version + 1,
+			EvaluatorType:    latest.EvaluatorType,
+			Model:            version.Model,
+			AgentID:          version.AgentID,
+			PromptTemplate:   version.PromptTemplate,
+			VariablesJSON:    variablesJSON,
+			CreatedAt:        version.CreatedAt,
+		})
+		if insertErr != nil {
+			return insertErr
+		}
+		created = row.evaluationEvaluator()
+		decoded, decodeErr := inserted.evaluationEvaluatorVersion()
 		if decodeErr != nil {
 			return decodeErr
 		}

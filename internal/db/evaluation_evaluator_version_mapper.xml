@@ -47,6 +47,17 @@
         <include refid="columns"/>
     </insert>
 
+    <select id="FindLatest" resultType="evaluationEvaluatorVersionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM evaluation_evaluator_versions
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND evaluator_uuid = #{evaluatorUUID}
+        ORDER BY version DESC
+        LIMIT 1
+    </select>
+
     <select id="FindScopedByExternalID" resultType="evaluationEvaluatorVersionRow">
         SELECT
         <include refid="columns"/>

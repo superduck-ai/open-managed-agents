@@ -116,7 +116,7 @@ test('lists cases and imports JSONL', async () => {
   expect(await screen.findByText('hello')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'greeting' }));
   expect(await screen.findByText('Input files')).toBeTruthy();
-  expect(screen.getByText('Cases can be added or imported. Editing or deleting a case is not available.')).toBeTruthy();
+  expect(screen.getByText('Saving updates this case on the current dataset version.')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Close' }));
   expect(screen.getByText('Version 1')).toBeTruthy();
   expect(screen.getByText('nightly')).toBeTruthy();
@@ -131,6 +131,86 @@ test('lists cases and imports JSONL', async () => {
   expect(imported?.contentType).toContain('application/x-ndjson');
   expect(imported?.body).toBe('{"name":"second","turns":["hi"]}\n');
   expect(imported?.url).toContain('/evaluation-datasets/evalds_test/cases:import');
+});
+
+test('edits and deletes a dataset case', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/datasets/evalds_test');
+  const requests: Array<{ url: string; method: string; body: string; csrf: string }> = [];
+  globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    const headers = new Headers(init?.headers);
+    requests.push({
+      url,
+      method,
+      body: typeof init?.body === 'string' ? init.body : '',
+      csrf: headers.get('X-CSRF-Token') ?? '',
+    });
+    if (url.endsWith('/cases')) {
+      return Response.json({
+        data: [
+          {
+            id: 'evalcase_test',
+            type: 'evaluation_case',
+            dataset_id: 'evalds_test',
+            version_id: 'edv_test',
+            position: 1,
+            name: 'greeting',
+            desc: '',
+            turns: ['hello'],
+            checkpoints: ['done'],
+            input_files: [{ name: 'brief.txt', file_id: 'file_brief' }],
+            reference_files: null,
+            created_at: '2026-10-22T00:00:00Z',
+            updated_at: '2026-10-22T00:00:00Z',
+          },
+        ],
+        next_page: null,
+      });
+    }
+    if (method === 'PATCH') {
+      return Response.json({
+        id: 'evalcase_test',
+        type: 'evaluation_case',
+        dataset_id: 'evalds_test',
+        version_id: 'edv_test',
+        position: 1,
+        name: 'edited',
+        desc: 'note',
+        turns: ['hello again'],
+        checkpoints: ['done'],
+        input_files: [{ name: 'brief.txt', file_id: 'file_brief' }],
+        reference_files: null,
+        created_at: '2026-10-22T00:00:00Z',
+        updated_at: '2026-10-22T00:00:00Z',
+      });
+    }
+    return Response.json(dataset({ desc: 'nightly' }));
+  });
+
+  renderPage(<DatasetCasesPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'greeting' }));
+  const drawer = await screen.findByRole('dialog');
+  fireEvent.change(within(drawer).getByLabelText('Name'), { target: { value: 'edited' } });
+  fireEvent.change(within(drawer).getByLabelText('Turns'), { target: { value: 'hello again' } });
+  fireEvent.click(within(drawer).getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(requests.some((request) => request.method === 'PATCH')).toBe(true));
+  const saved = requests.find((request) => request.method === 'PATCH');
+  expect(saved?.url).toContain('/evaluation-datasets/evalds_test/cases/evalcase_test');
+  expect(saved?.csrf).toBe('csrf_test');
+  expect(JSON.parse(saved?.body ?? '{}')).toMatchObject({
+    name: 'edited',
+    turns: ['hello again'],
+    checkpoints: ['done'],
+    input_files: [{ name: 'brief.txt', file_id: 'file_brief' }],
+  });
+  fireEvent.click(within(drawer).getByRole('button', { name: 'Delete case' }));
+  const confirm = await screen.findByRole('alertdialog');
+  fireEvent.click(within(confirm).getByRole('button', { name: 'Delete' }));
+  await waitFor(() => expect(requests.some((request) => request.method === 'DELETE')).toBe(true));
+  const deleted = requests.find((request) => request.method === 'DELETE');
+  expect(deleted?.url).toContain('/cases/evalcase_test');
+  expect(deleted?.csrf).toBe('csrf_test');
 });
 
 test('imports a dataset case from a session id', async () => {
@@ -416,6 +496,39 @@ test('shows evaluator prompt, score schema, and agent-owned skills', async () =>
   expect(screen.getByRole('link', { name: 'Open Agent agent_score' }).getAttribute('href')).toBe(
     '/workspaces/default/agents/agent_score',
   );
+});
+
+test('saves an llm evaluator prompt as a new version', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/evaluators/evalev_test');
+  const requests: Array<{ url: string; method: string; body: string; csrf: string }> = [];
+  globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    const headers = new Headers(init?.headers);
+    requests.push({
+      url,
+      method,
+      body: typeof init?.body === 'string' ? init.body : '',
+      csrf: headers.get('X-CSRF-Token') ?? '',
+    });
+    return Response.json(evaluator());
+  });
+  renderPage(<EvaluatorDetailPage />);
+  expect(await screen.findByLabelText('Prompt')).toBeTruthy();
+  expect(
+    screen.getByText('Saving creates a new version. Experiments already created keep the previous version.'),
+  ).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Score {{input}} again' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save as new version' }));
+  await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
+  const saved = requests.find((request) => request.method === 'POST');
+  expect(saved?.url).toContain('/evaluation-evaluators/evalev_test/versions');
+  expect(saved?.csrf).toBe('csrf_test');
+  expect(JSON.parse(saved?.body ?? '{}')).toEqual({
+    model: 'claude',
+    prompt_template: 'Score {{input}} again',
+    variables: ['input'],
+  });
 });
 
 test('shows scores on an experiment', async () => {

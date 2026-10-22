@@ -100,6 +100,29 @@ func TestEvaluationDatasetsPostgres(t *testing.T) {
 		dataset = created
 	})
 
+	t.Run("update and delete the current version", func(t *testing.T) {
+		updated, err := store.UpdateEvaluationCase(ctx, organizationUUID, workspaceUUID, dataset.ExternalID, "evalcase_one", EvaluationCaseWrite{
+			Name: "one edited", Description: "note", Turns: []string{"hello again"}, Checkpoints: json.RawMessage(`{"ready":true}`),
+			InputFiles: json.RawMessage(`[{"name":"brief.txt","file_id":"file_brief"}]`),
+		}, now.Add(time.Minute))
+		if err != nil || updated.Name != "one edited" || updated.Position != 1 || updated.Turns[0] != "hello again" || string(updated.InputFiles) != `[{"name":"brief.txt","file_id":"file_brief"}]` || updated.VersionExternalID != "edv_billing" {
+			t.Fatalf("update = (%+v, %v)", updated, err)
+		}
+		deleted, err := store.DeleteEvaluationCase(ctx, organizationUUID, workspaceUUID, dataset.ExternalID, "evalcase_three")
+		if err != nil || deleted.ExternalID != "evalcase_three" || deleted.Name != "three" {
+			t.Fatalf("delete = (%+v, %v)", deleted, err)
+		}
+		if _, err := store.DeleteEvaluationCase(ctx, organizationUUID, workspaceUUID, dataset.ExternalID, "evalcase_three"); !errors.Is(err, ErrEvaluationCaseMissing) {
+			t.Fatalf("second delete = %v", err)
+		}
+		listed, _, err := store.ListEvaluationDatasetsPage(ctx, ListEvaluationDatasetsPageParams{
+			OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, Limit: 20,
+		})
+		if err != nil || len(listed) != 2 || listed[0].Version.CaseCount != 2 {
+			t.Fatalf("case count = (%+v, %v)", listed, err)
+		}
+	})
+
 	t.Run("other workspace cannot read dataset", func(t *testing.T) {
 		_, err := store.GetEvaluationDataset(ctx, organizationUUID, otherWorkspaceUUID, dataset.ExternalID)
 		if !errors.Is(err, ErrNotFound) {

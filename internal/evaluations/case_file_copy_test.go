@@ -1,8 +1,12 @@
 package evaluations
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -29,6 +33,27 @@ func TestWorkspaceFileCopierCopiesBytesIntoWorkspaceFile(t *testing.T) {
 	}
 	if records.created.ExternalID != copied.FileID || records.created.S3Key != objects.destination || records.created.SizeBytes != 4 || records.created.SHA256 != "abcd" || records.created.MimeType != "text/plain" || !records.created.Downloadable || records.created.ScopeType != nil {
 		t.Fatalf("record = %#v", records.created)
+	}
+}
+
+func TestWorkspaceFileCopierStoresUploadedBytes(t *testing.T) {
+	records := &fakeCaseFileRecords{}
+	objects := &fakeCaseFileObjects{name: "files"}
+	copier := &WorkspaceFileCopier{records: records, objects: objects, maxFileBytes: 10, workspaceLimitBytes: 100}
+	body := []byte("brief")
+	sum := sha256.Sum256(body)
+	stored, err := copier.PutCaseFile(context.Background(), "workspace-uuid", "input_files/brief.txt", body)
+	if err != nil || !strings.HasPrefix(stored.FileID, "file_") || stored.Name != "input_files/brief.txt" {
+		t.Fatalf("stored = %#v err=%v", stored, err)
+	}
+	if objects.uploadedKey == "" || !strings.HasSuffix(objects.uploadedKey, "/brief.txt") || !bytes.Equal(objects.uploadedBody, body) || !strings.HasPrefix(objects.uploadedType, "text/plain") {
+		t.Fatalf("upload key=%s type=%s body=%q", objects.uploadedKey, objects.uploadedType, objects.uploadedBody)
+	}
+	if records.created.ExternalID != stored.FileID || records.created.SHA256 != hex.EncodeToString(sum[:]) || records.created.SizeBytes != 5 || !records.created.Downloadable || records.created.Filename != "brief.txt" {
+		t.Fatalf("record = %#v", records.created)
+	}
+	if _, err = copier.PutCaseFile(context.Background(), "workspace-uuid", "big.bin", bytes.Repeat([]byte("a"), 11)); !errors.Is(err, errCaseFileTooLarge) || records.created.Filename != "brief.txt" {
+		t.Fatalf("large err=%v record=%#v", err, records.created)
 	}
 }
 
@@ -80,10 +105,13 @@ func (f *fakeCaseFileRecords) CreateFileIfWithinLimit(_ context.Context, file db
 }
 
 type fakeCaseFileObjects struct {
-	name        string
-	source      string
-	destination string
-	deleted     string
+	name         string
+	source       string
+	destination  string
+	deleted      string
+	uploadedKey  string
+	uploadedBody []byte
+	uploadedType string
 }
 
 func (f *fakeCaseFileObjects) Name() string { return f.name }
@@ -92,6 +120,17 @@ func (f *fakeCaseFileObjects) Copy(_ context.Context, sourceKey, destinationKey 
 	f.source = sourceKey
 	f.destination = destinationKey
 	return storage.CopyResult{}, nil
+}
+
+func (f *fakeCaseFileObjects) Upload(_ context.Context, key string, body io.Reader, opts storage.UploadOptions) (storage.UploadResult, error) {
+	payload, err := io.ReadAll(body)
+	if err != nil {
+		return storage.UploadResult{}, err
+	}
+	f.uploadedKey = key
+	f.uploadedBody = payload
+	f.uploadedType = opts.ContentType
+	return storage.UploadResult{Size: int64(len(payload))}, nil
 }
 
 func (f *fakeCaseFileObjects) Delete(_ context.Context, key string, _ storage.DeleteOptions) error {

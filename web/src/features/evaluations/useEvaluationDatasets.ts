@@ -7,16 +7,19 @@ import {
   createEvaluationCaseFromSession,
   createEvaluationCasesFromSessions,
   createEvaluationDataset,
+  deleteEvaluationCase,
   getEvaluationDataset,
   importEvaluationCases,
   listEvaluationCases,
   listEvaluationDatasetPresetCases,
   listEvaluationDatasetPresets,
   listEvaluationDatasets,
+  updateEvaluationCase,
   type CreateEvaluationCaseFromSessionInput,
   type CreateEvaluationCaseInput,
   type CreateEvaluationCasesFromSessionsInput,
   type CreateEvaluationDatasetInput,
+  type UpdateEvaluationCaseInput,
 } from './api';
 
 export function useEvaluationWorkspace() {
@@ -124,6 +127,39 @@ export function useCreateEvaluationCasesFromSessions(datasetId: string) {
   return useMutation({
     mutationFn: (input: CreateEvaluationCasesFromSessionsInput) =>
       createEvaluationCasesFromSessions(workspace.orgUuid ?? '', workspace.workspaceId, datasetId, input, csrfToken),
+    onSuccess: async () => {
+      await invalidateCases(queryClient, workspace.orgUuid, workspace.workspaceId, datasetId);
+    },
+  });
+}
+
+export function useUpdateEvaluationCase(datasetId: string) {
+  const workspace = useEvaluationWorkspace();
+  const { csrfToken } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { caseId: string; body: UpdateEvaluationCaseInput }) =>
+      updateEvaluationCase(
+        workspace.orgUuid ?? '',
+        workspace.workspaceId,
+        datasetId,
+        input.caseId,
+        input.body,
+        csrfToken,
+      ),
+    onSuccess: async () => {
+      await invalidateCases(queryClient, workspace.orgUuid, workspace.workspaceId, datasetId);
+    },
+  });
+}
+
+export function useDeleteEvaluationCase(datasetId: string) {
+  const workspace = useEvaluationWorkspace();
+  const { csrfToken } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (caseId: string) =>
+      deleteEvaluationCase(workspace.orgUuid ?? '', workspace.workspaceId, datasetId, caseId, csrfToken),
     onSuccess: async () => {
       await invalidateCases(queryClient, workspace.orgUuid, workspace.workspaceId, datasetId);
     },

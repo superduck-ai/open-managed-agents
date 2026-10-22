@@ -25,7 +25,10 @@ type Store interface {
 	GetEvaluationDataset(context.Context, string, string, string) (db.EvaluationDataset, error)
 	ListEvaluationCasesPage(context.Context, db.ListEvaluationCasesPageParams) ([]db.EvaluationCase, bool, error)
 	CreateEvaluationCases(context.Context, string, string, string, []db.EvaluationCaseWrite, time.Time) ([]db.EvaluationCase, error)
+	UpdateEvaluationCase(context.Context, string, string, string, string, db.EvaluationCaseWrite, time.Time) (db.EvaluationCase, error)
+	DeleteEvaluationCase(context.Context, string, string, string, string) (db.EvaluationCase, error)
 	CreateEvaluationEvaluator(context.Context, db.EvaluationEvaluator) (db.EvaluationEvaluator, error)
+	AppendEvaluationEvaluatorVersion(context.Context, string, string, string, db.EvaluationEvaluatorVersion) (db.EvaluationEvaluator, error)
 	ListEvaluationEvaluatorsPage(context.Context, db.ListEvaluationEvaluatorsPageParams) ([]db.EvaluationEvaluator, bool, error)
 	GetEvaluationEvaluator(context.Context, string, string, string) (db.EvaluationEvaluator, error)
 	GetEvaluationDatasetVersion(context.Context, string, string, string) (db.EvaluationDatasetVersion, error)
@@ -107,12 +110,15 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}", h.wrap(h.getDataset))
 	r.Get("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases", h.wrap(h.listCases))
 	r.Post("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases", h.wrap(h.createCase))
+	r.Patch("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases/{caseId}", h.wrap(h.updateCase))
+	r.Delete("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases/{caseId}", h.wrap(h.deleteCase))
 	r.Post("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:import", h.wrap(h.importCases))
 	r.Post("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:from-session", h.wrap(h.createCaseFromSession))
 	r.Post("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:from-sessions", h.wrap(h.createCasesFromSessions))
 	r.Post("/workspaces/{workspaceId}/evaluation-evaluators", h.wrap(h.createEvaluator))
 	r.Get("/workspaces/{workspaceId}/evaluation-evaluators", h.wrap(h.listEvaluators))
 	r.Get("/workspaces/{workspaceId}/evaluation-evaluators/{evaluatorId}", h.wrap(h.getEvaluator))
+	r.Post("/workspaces/{workspaceId}/evaluation-evaluators/{evaluatorId}/versions", h.wrap(h.createEvaluatorVersion))
 	r.Post("/workspaces/{workspaceId}/evaluation-experiments", h.wrap(h.createExperiment))
 	r.Get("/workspaces/{workspaceId}/evaluation-experiments", h.wrap(h.listExperiments))
 	r.Post("/workspaces/{workspaceId}/evaluation-experiments:compare", h.wrap(h.compareExperiments))
@@ -237,7 +243,11 @@ func (h *Handler) importCases(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	cases, err := readImportedCases(w, r)
+	bundle, err := readImportedCases(w, r)
+	if err != nil {
+		return err
+	}
+	cases, err := h.storeImportCompanions(r.Context(), principal.WorkspaceUUID, bundle)
 	if err != nil {
 		return err
 	}
@@ -246,6 +256,48 @@ func (h *Handler) importCases(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpapi.WriteJSON(w, http.StatusOK, casePage(created, false))
+	return nil
+}
+
+func (h *Handler) updateCase(w http.ResponseWriter, r *http.Request) error {
+	principal, datasetID, caseID, err := scopedCaseID(r)
+	if err != nil {
+		return err
+	}
+	body, err := httpapi.DecodeObjectBodyAs[caseInput](w, r, maxDatasetBodyBytes)
+	if err != nil {
+		return invalidJSONRequest(err)
+	}
+	item, err := normalizeCase(*body)
+	if err != nil {
+		return err
+	}
+	updated, err := h.store.UpdateEvaluationCase(
+		r.Context(),
+		principal.OrganizationUUID,
+		principal.WorkspaceUUID,
+		datasetID,
+		caseID,
+		caseWrite(caseID, item),
+		time.Now().UTC(),
+	)
+	if err != nil {
+		return mapCaseMutationError(err, updateCaseFailedMessage)
+	}
+	httpapi.WriteJSON(w, http.StatusOK, caseResponseFrom(updated))
+	return nil
+}
+
+func (h *Handler) deleteCase(w http.ResponseWriter, r *http.Request) error {
+	principal, datasetID, caseID, err := scopedCaseID(r)
+	if err != nil {
+		return err
+	}
+	deleted, err := h.store.DeleteEvaluationCase(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, datasetID, caseID)
+	if err != nil {
+		return mapCaseMutationError(err, deleteCaseFailedMessage)
+	}
+	httpapi.WriteJSON(w, http.StatusOK, caseResponseFrom(deleted))
 	return nil
 }
 
@@ -324,6 +376,30 @@ func newCaseWrites(cases []normalizedCase) ([]db.EvaluationCaseWrite, error) {
 
 func scopedDatasetID(r *http.Request) (auth.Principal, string, error) {
 	return scopedPathID(r, "datasetId", datasetNotFound())
+}
+
+func scopedCaseID(r *http.Request) (auth.Principal, string, string, error) {
+	principal, datasetID, err := scopedDatasetID(r)
+	if err != nil {
+		return auth.Principal{}, "", "", err
+	}
+	caseID := strings.TrimSpace(chi.URLParam(r, "caseId"))
+	if caseID == "" {
+		return auth.Principal{}, "", "", caseNotFound()
+	}
+	return principal, datasetID, caseID, nil
+}
+
+func caseWrite(externalID string, item normalizedCase) db.EvaluationCaseWrite {
+	return db.EvaluationCaseWrite{
+		ExternalID:     externalID,
+		Name:           item.Name,
+		Description:    item.Description,
+		Turns:          item.Turns,
+		Checkpoints:    item.Checkpoints,
+		InputFiles:     item.InputFiles,
+		ReferenceFiles: item.ReferenceFiles,
+	}
 }
 
 func scopedEvaluatorID(r *http.Request) (auth.Principal, string, error) {

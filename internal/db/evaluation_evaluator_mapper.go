@@ -63,5 +63,6 @@ type evaluationEvaluatorPageParams struct {
 type EvaluationEvaluatorMapper interface {
 	Insert(ctx context.Context, params evaluationEvaluatorWriteParams) (evaluationEvaluatorRow, error)
 	FindByExternalID(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (evaluationEvaluatorPageRow, error)
+	FindForUpdate(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (evaluationEvaluatorRow, error)
 	ListPage(ctx context.Context, params evaluationEvaluatorPageParams) ([]evaluationEvaluatorPageRow, error)
 }

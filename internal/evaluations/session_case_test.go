@@ -211,3 +211,7 @@ func (f *fakeCaseFileCopier) CopyCaseFile(_ context.Context, _ string, source se
 	}
 	return sessionCaseFileRef{Name: source.Name, FileID: "file_copy_" + source.FileID}, nil
 }
+
+func (f *fakeCaseFileCopier) PutCaseFile(_ context.Context, _, name string, _ []byte) (sessionCaseFileRef, error) {
+	return sessionCaseFileRef{Name: name, FileID: "file_put"}, nil
+}

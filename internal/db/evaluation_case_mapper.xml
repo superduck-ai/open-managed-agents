@@ -64,6 +64,34 @@
         <include refid="columns"/>
     </insert>
 
+    <update id="Update" result="returning" resultType="evaluationCaseRow">
+        UPDATE evaluation_cases
+        SET
+            name = #{params.Name},
+            description = #{params.Description},
+            turns = CAST(#{params.TurnsJSON} AS jsonb),
+            checkpoints = CAST(#{params.CheckpointsJSON} AS jsonb),
+            input_files = CAST(#{params.InputFilesJSON} AS jsonb),
+            reference_files = CAST(#{params.ReferenceFilesJSON} AS jsonb),
+            updated_at = #{params.UpdatedAt}
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND version_uuid = #{params.VersionUUID}
+        AND external_id = #{params.ExternalID}
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <delete id="Delete" result="returning" resultType="evaluationCaseRow">
+        DELETE FROM evaluation_cases
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND version_uuid = #{versionUUID}
+        AND external_id = #{externalID}
+        RETURNING
+        <include refid="columns"/>
+    </delete>
+
     <select id="ListPage" resultType="evaluationCaseRow">
         SELECT
         <include refid="columns"/>

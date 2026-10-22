@@ -485,6 +485,8 @@
                       "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}",
                       "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases",
                       "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases",
+                      "PATCH /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases/{caseId}",
+                      "DELETE /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases/{caseId}",
                       "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:import",
                       "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:from-session",
                       "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:from-sessions"
@@ -503,7 +505,8 @@
                     "pages": [
                       "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators",
                       "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators",
-                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators/{evaluatorId}"
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators/{evaluatorId}",
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators/{evaluatorId}/versions"
                     ]
                   },
                   {
@@ -861,6 +864,8 @@
                       "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}",
                       "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases",
                       "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases",
+                      "PATCH /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases/{caseId}",
+                      "DELETE /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases/{caseId}",
                       "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:import",
                       "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:from-session",
                       "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:from-sessions"
@@ -879,7 +884,8 @@
                     "pages": [
                       "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators",
                       "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators",
-                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators/{evaluatorId}"
+                      "GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators/{evaluatorId}",
+                      "POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators/{evaluatorId}/versions"
                     ]
                   },
                   {

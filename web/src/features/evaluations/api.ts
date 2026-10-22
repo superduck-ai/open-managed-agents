@@ -141,6 +141,22 @@ export type CreateEvaluationCaseInput = {
   turns: string[];
 };
 
+export type UpdateEvaluationCaseInput = {
+  name: string;
+  desc?: string;
+  turns: string[];
+  checkpoints?: unknown;
+  input_files?: unknown;
+  reference_files?: unknown;
+};
+
+export type CreateEvaluationEvaluatorVersionInput = {
+  model?: string;
+  agent_id?: string;
+  prompt_template?: string;
+  variables?: string[];
+};
+
 export type CreateEvaluationCaseFromSessionInput = {
   session_id: string;
   name?: string;
@@ -382,6 +398,42 @@ export function createEvaluationCasesFromSessions(
   );
 }
 
+export function updateEvaluationCase(
+  orgUuid: string,
+  workspaceId: string,
+  datasetId: string,
+  caseId: string,
+  input: UpdateEvaluationCaseInput,
+  csrfToken?: string,
+) {
+  return consoleApi<EvaluationCase>(
+    `${datasetPath(orgUuid, workspaceId, datasetId)}/cases/${encodeURIComponent(caseId)}`,
+    {
+      method: 'PATCH',
+      headers: workspaceHeaders(workspaceId),
+      csrfToken,
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function deleteEvaluationCase(
+  orgUuid: string,
+  workspaceId: string,
+  datasetId: string,
+  caseId: string,
+  csrfToken?: string,
+) {
+  return consoleApi<EvaluationCase>(
+    `${datasetPath(orgUuid, workspaceId, datasetId)}/cases/${encodeURIComponent(caseId)}`,
+    {
+      method: 'DELETE',
+      headers: workspaceHeaders(workspaceId),
+      csrfToken,
+    },
+  );
+}
+
 export function importEvaluationCases(
   orgUuid: string,
   workspaceId: string,
@@ -408,6 +460,24 @@ export function getEvaluationEvaluator(orgUuid: string, workspaceId: string, eva
   return consoleApi<EvaluationEvaluator>(
     `${evaluatorCollectionPath(orgUuid, workspaceId)}/${encodeURIComponent(evaluatorId)}`,
     { headers: workspaceHeaders(workspaceId) },
+  );
+}
+
+export function createEvaluationEvaluatorVersion(
+  orgUuid: string,
+  workspaceId: string,
+  evaluatorId: string,
+  input: CreateEvaluationEvaluatorVersionInput,
+  csrfToken?: string,
+) {
+  return consoleApi<EvaluationEvaluator>(
+    `${evaluatorCollectionPath(orgUuid, workspaceId)}/${encodeURIComponent(evaluatorId)}/versions`,
+    {
+      method: 'POST',
+      headers: workspaceHeaders(workspaceId),
+      csrfToken,
+      body: JSON.stringify(input),
+    },
   );
 }
 

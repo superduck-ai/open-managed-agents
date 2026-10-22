@@ -49,6 +49,13 @@ func TestEvaluationEvaluatorMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "externalID"},
 			wantSQLFragments:  []string{"evaluation_evaluator_versions", "variables_json", "archived_at IS NULL"},
 		}},
+		{"lock", mapperBuilderContract{
+			statement: evaluationEvaluatorMapperFindForUpdateStatement,
+			bound:     buildEvaluationEvaluatorMapperFindForUpdate(yourbatis.DialectPostgres, params.OrganizationUUID, params.WorkspaceUUID, params.ExternalID),
+			wantID:    "EvaluationEvaluatorMapper.FindForUpdate", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "externalID"},
+			wantSQLFragments:  []string{"FROM evaluation_evaluators", "archived_at IS NULL", "FOR UPDATE"},
+		}},
 		{"list page", mapperBuilderContract{
 			statement: evaluationEvaluatorMapperListPageStatement, bound: buildEvaluationEvaluatorMapperListPage(yourbatis.DialectPostgres, page),
 			wantID: "EvaluationEvaluatorMapper.ListPage", wantKind: yourbatis.StatementSelect,
@@ -56,6 +63,13 @@ func TestEvaluationEvaluatorMapperBuilderContracts(t *testing.T) {
 				"params.OrganizationUUID", "params.WorkspaceUUID", "params.Cursor.CreatedAt", "params.Cursor.UUID", "params.FetchLimit",
 			},
 			wantSQLFragments: []string{"(d.created_at, d.uuid) < ($3, $4)", "ORDER BY d.created_at DESC, d.uuid DESC", "LIMIT $5"},
+		}},
+		{"latest version", mapperBuilderContract{
+			statement: evaluationEvaluatorVersionMapperFindLatestStatement,
+			bound:     buildEvaluationEvaluatorVersionMapperFindLatest(yourbatis.DialectPostgres, params.OrganizationUUID, params.WorkspaceUUID, params.UUID),
+			wantID:    "EvaluationEvaluatorVersionMapper.FindLatest", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "evaluatorUUID"},
+			wantSQLFragments:  []string{"evaluator_uuid = $3", "ORDER BY version DESC", "LIMIT 1"},
 		}},
 		{"insert version", mapperBuilderContract{
 			statement: evaluationEvaluatorVersionMapperInsertStatement, bound: buildEvaluationEvaluatorVersionMapperInsert(yourbatis.DialectPostgres, version),

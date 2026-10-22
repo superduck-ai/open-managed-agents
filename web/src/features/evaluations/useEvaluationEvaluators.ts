@@ -4,11 +4,13 @@ import { useAuth } from '../../shared/auth/context';
 import {
   createEvaluationEvaluator,
   createEvaluationEvaluatorFromPreset,
+  createEvaluationEvaluatorVersion,
   getEvaluationEvaluator,
   listEvaluationEvaluatorPresets,
   listEvaluationEvaluators,
   type CreateEvaluationEvaluatorFromPresetInput,
   type CreateEvaluationEvaluatorInput,
+  type CreateEvaluationEvaluatorVersionInput,
 } from './api';
 import { useEvaluationWorkspace } from './useEvaluationDatasets';
 
@@ -55,6 +57,24 @@ export function useCreateEvaluationEvaluatorFromPreset() {
     mutationFn: (input: CreateEvaluationEvaluatorFromPresetInput) =>
       createEvaluationEvaluatorFromPreset(workspace.orgUuid ?? '', workspace.workspaceId, input, csrfToken),
     onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: evaluationEvaluatorKey(workspace.orgUuid, workspace.workspaceId),
+      });
+    },
+  });
+}
+
+export function useCreateEvaluationEvaluatorVersion(evaluatorId: string) {
+  const workspace = useEvaluationWorkspace();
+  const { csrfToken } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateEvaluationEvaluatorVersionInput) =>
+      createEvaluationEvaluatorVersion(workspace.orgUuid ?? '', workspace.workspaceId, evaluatorId, input, csrfToken),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ['evaluation-evaluator', workspace.orgUuid, workspace.workspaceId, evaluatorId],
+      });
       await queryClient.invalidateQueries({
         queryKey: evaluationEvaluatorKey(workspace.orgUuid, workspace.workspaceId),
       });

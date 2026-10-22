@@ -40,4 +40,5 @@ type evaluationEvaluatorVersionWriteParams struct {
 type EvaluationEvaluatorVersionMapper interface {
 	Insert(ctx context.Context, params evaluationEvaluatorVersionWriteParams) (evaluationEvaluatorVersionRow, error)
 	FindScopedByExternalID(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (evaluationEvaluatorVersionRow, error)
+	FindLatest(ctx context.Context, organizationUUID, workspaceUUID, evaluatorUUID string) (evaluationEvaluatorVersionRow, error)
 }

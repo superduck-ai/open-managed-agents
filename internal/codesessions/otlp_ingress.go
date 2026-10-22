@@ -99,11 +99,6 @@ func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 		h.writeOTLPDatabaseError(w, r, protocol, codeSessionID, err)
 		return
 	}
-	signal, err := otlpEndpointFromPath(r.URL.Path)
-	if err != nil {
-		writeOTLPStatus(w, protocol, http.StatusNotFound, err.Error(), "")
-		return
-	}
 	if h.otlpSink == nil || !h.cfg.Observability.Enabled {
 		writeOTLPStatus(w, protocol, http.StatusServiceUnavailable, "agent observability is not enabled", "")
 		return
@@ -147,20 +142,20 @@ func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 		writeOTLPStatus(w, protocol, status, err.Error(), "")
 		return
 	}
-	canonicalBody, err := canonicalizeOTLPPayload(signal, protocol, body, trustedOTLPResourceAttributes{
+	canonicalBody, err := prepareNativeOTLP(protocol, body, trustedOTLPResourceAttributes{
 		organizationUUID: credentialContext.OrganizationUUID,
 		workspaceUUID:    credentialContext.WorkspaceUUID,
 		publicSessionID:  credentialContext.PublicSessionExternalID,
 		codeSessionID:    credentialContext.CodeSessionExternalID,
 		agentID:          credentialContext.AgentExternalID,
 		agentVersion:     int64(credentialContext.AgentVersion),
-	})
+	}, h.cfg.Observability.ContentCaptureEnabled)
 	if err != nil {
 		writeOTLPStatus(w, protocol, http.StatusBadRequest, err.Error(), "")
 		return
 	}
 
-	response, err := h.otlpSink.forward(r.Context(), signal, protocol, canonicalBody)
+	response, err := h.otlpSink.forward(r.Context(), protocol, canonicalBody)
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		retryAfter := ""
@@ -170,7 +165,7 @@ func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 			retryAfter = sinkError.retryAfter
 		}
 		// 上游细节只进日志，对 worker 只回固定文案。
-		h.logger.WarnContext(r.Context(), "forward code session OTLP", "code_session_id", codeSessionID, "signal", signal, "status", status, "error", err)
+		h.logger.WarnContext(r.Context(), "forward code session OTLP", "code_session_id", codeSessionID, "status", status, "error", err)
 		writeOTLPStatus(w, protocol, status, "OTLP backend rejected the request", retryAfter)
 		return
 	}
@@ -213,20 +208,6 @@ func (h *Handler) writeOTLPDatabaseError(w http.ResponseWriter, r *http.Request,
 	default:
 		h.logger.ErrorContext(r.Context(), "validate code session OTLP lifecycle", "code_session_id", codeSessionID, "error", err)
 		writeOTLPStatus(w, protocol, http.StatusServiceUnavailable, "could not validate code session lifecycle", "")
-	}
-}
-
-func otlpEndpointFromPath(path string) (string, error) {
-	path = strings.TrimRight(path, "/")
-	switch {
-	case strings.HasSuffix(path, "/otlp/metrics"):
-		return "metrics", nil
-	case strings.HasSuffix(path, "/otlp/logs"), strings.HasSuffix(path, "/otlp/v1/logs"):
-		return "logs", nil
-	case strings.HasSuffix(path, "/otlp/v1/traces"):
-		return "traces", nil
-	default:
-		return "", errors.New("unsupported OTLP endpoint")
 	}
 }
 

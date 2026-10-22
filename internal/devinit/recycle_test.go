@@ -162,7 +162,7 @@ func TestRecycleStopsServicesAndRetainsWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := fmt.Sprintf("compose -p oma-%s --project-directory %s -f deploy/docker-compose/dev-env.yaml down --volumes --remove-orphans", binding.Name, root)
+	expected := fmt.Sprintf("compose -p oma-%s --project-directory %s -f deploy/docker-compose/dev-env.yaml --profile * down --volumes --remove-orphans", binding.Name, root)
 	if !strings.Contains(string(calls), expected) {
 		t.Fatalf("missing volume cleanup: %s", calls)
 	}

@@ -33,6 +33,7 @@ type environment struct {
 	suite                                      bool
 	dependenciesOnly                           bool
 	publicSandbox, brain                       bool
+	observability                              bool
 	sandboxAPI                                 *httptest.Server
 	storageFault                               *storageFault
 	root, directory, runID                     string
@@ -90,6 +91,13 @@ func (e *environment) writeConfig(ctx context.Context) error {
 		"storage":      map[string]any{"type": "s3", "s3": map[string]any{"endpoint": "http://127.0.0.1:" + ports["minio"], "bucket": "verify-be", "region": "us-east-1", "access_key_id": "verifychat", "secret_access_key": "verifychat-local-only", "force_path_style": true}},
 		"vault":        map[string]any{"master_key": map[string]any{"version": 1, "kek": base64.StdEncoding.EncodeToString(kek)}},
 		"code_session": map[string]string{"jwt_signing_private_key_file": filepath.Join(e.directory, "jwt.pem"), "upstream_proxy_ca_key_file": filepath.Join(e.directory, "proxy-ca.pem")},
+	}
+	if e.observability {
+		port, err := e.port(ctx, "openobserve", 5080)
+		if err != nil {
+			return err
+		}
+		config["observability"] = map[string]any{"enabled": true, "openobserve": map[string]any{"base_url": "http://127.0.0.1:" + port, "organization": "default", "logs_stream": "oma_dsh", "ingestion": map[string]string{"username": "verify@oma.local", "password": "Verify-Be-OpenObserve-Local-Only9!"}, "query": map[string]string{"username": "verify@oma.local", "password": "Verify-Be-OpenObserve-Local-Only9!"}}}
 	}
 	if e.brain {
 		if err := e.writeBrainClaimToken(); err != nil {

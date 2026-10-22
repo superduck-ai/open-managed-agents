@@ -249,11 +249,7 @@ type CodeSessionConfig struct {
 }
 
 type ObservabilityConfig struct {
-	Enabled bool `yaml:"enabled"`
-	// ContentCaptureEnabled defaults to true. It authorizes prompt originals,
-	// model output, and tool input/output payloads to enter the observability
-	// store. Set false to keep structural telemetry only (spans, durations,
-	// tokens, tool names).
+	Enabled               bool                    `yaml:"enabled"`
 	ContentCaptureEnabled bool                    `yaml:"content_capture_enabled"`
 	OTLP                  ObservabilityOTLPConfig `yaml:"otlp"`
 	Backend               string                  `yaml:"backend"`
@@ -264,7 +260,6 @@ type OpenObserveConfig struct {
 	BaseURL      string                   `yaml:"base_url"`
 	Organization string                   `yaml:"organization"`
 	LogsStream   string                   `yaml:"logs_stream"`
-	TracesStream string                   `yaml:"traces_stream"`
 	Ingestion    BackendCredentialsConfig `yaml:"ingestion"`
 	Query        BackendQueryConfig       `yaml:"query"`
 }

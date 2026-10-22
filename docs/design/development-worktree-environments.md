@@ -45,6 +45,8 @@ worktree 时仍需显式执行对应命令。`.codex/` 下的其他本地文件�
 的绝对路径。共享文件缺失时从模板创建，用户首次填写模型和凭证后重跑同一命令。
 已有配置、共享文件与密钥不覆盖；已绑定环境缺少输入时拒绝重新生成密钥。
 
+首次生成的本地 `.run/config.yaml` 设置 `code_session.upstream_proxy_disable_ssrf_protection: true`，允许 Clash/TUN 将公网域名解析为 `198.18.0.0/15` Fake-IP 时使用沙箱代理。该设置仅属于 dev-init 的本地配置准备，放开代理拨号层的私网地址过滤，仍保留租户鉴权和 Environment 网络策略。通用配置模板与生产默认继续启用 SSRF 防护。已有 `.run/config.yaml` 不自动覆盖，使用 Fake-IP 的现有环境需显式设置该项并重启后端。
+
 共享文件采用同目录临时文件与不可覆盖的硬链接发布，多个 worktree 同时准备时
 只保留第一个完整文件。本环境准备与初始化分别使用文件锁防止重复写入。
 配置准备只针对默认初始化文件，自定义初始化文件保留显式准备输入的行为。
@@ -565,8 +567,10 @@ flowchart TD
     A[确认 --yes 与目标属于同一 Git 仓库] --> B[校验绑定、注册表路径和 Docker env_id 标签]
     B --> C[核对服务命令、cwd 和已登记监听端口]
     C --> D[SIGTERM 并等待三个服务退出]
-    D --> E[Compose down --volumes --remove-orphans]
-    E --> F[移除 portless alias、环境登记和生成状态]
+    D --> E[启用全部 profile 执行 Compose down --volumes --remove-orphans]
+    E --> R{容器、卷和网络均已移除}
+    R -->|是| F[移除 portless alias、环境登记和生成状态]
+    R -->|否或检查失败| X[报错并保留登记供重试]
     F --> G[返回成功并保留 worktree]
     G --> H[外部流程决定是否删除 worktree]
 ```
@@ -575,7 +579,7 @@ flowchart TD
 
 服务识别结合已登记 API/Web 端口与 `ps` 命令，再用 `lsof` 核对 cwd，只接受目标根目录、`web/` 和 `oma-brain-dsh/`。命令匹配同时发现没有监听端口的 Brain、Go 启动器与 Vite。发送信号前再次核对命令与 cwd，避免停止其他 worktree 的进程。等待上限为 30 秒，不自动升级 SIGKILL；停止失败时不清理 Compose。不得并发运行初始化、重启与回收。
 
-服务退出后复用 `dev-teardown` 的资源清理逻辑。Compose 清理失败时保留绑定和注册表，允许重试；成功时删除绑定与 `.run/generated/`，保留 `.run/config.yaml`、`.run/dev-init.yaml`、`.run/secrets/`、源码和共享 LLM 配置。命令退出码为 0 后，外部流程再执行 worktree 删除。重复执行已经清理的目标会跳过 Compose。
+服务退出后复用 `dev-teardown` 的资源清理逻辑，启用全部 Compose profile。Compose 清理失败、有残留资源或无法检查残留时保留 alias、绑定、注册表和生成状态，允许重试；确认资源全部移除后删除绑定与 `.run/generated/`，保留 `.run/config.yaml`、`.run/dev-init.yaml`、`.run/secrets/`、源码和共享 LLM 配置。命令退出码为 0 后，外部流程再执行 worktree 删除。重复执行已经清理的目标会跳过 Compose。
 
 普通单测使用隔离的临时 Git clone/worktree 与模拟 Docker，覆盖确认参数、跨仓库拒绝、身份不符、Compose 失败保留状态、停止服务后删除数据卷、清理后保留目录与私钥、重复清理，以及主 checkout、脏文件和锁定 worktree 的保留；进程测试校验命令/cwd 归属。测试不清理开发者的实际环境。
 
@@ -584,3 +588,19 @@ flowchart TD
 审查补充的恢复与重启约束：凭证文件丢失时，只要组织或客户端 key 身份已预留，即使 phase 因重跑回退到 infra/migrated，也必须拒绝生成新明文 key。回收前同时验证 registry 和 binding 的 worktree 路径；Stat 权限或 I/O 错误不作为孤儿依据。初始化 YAML 只接受一个文档。Compose up 失败与健康检查失败均进入有上限的重新探测重试。
 
 后端绑定环境在停止旧实例前完成二进制构建；`start-locked` 使用机器本地 flock，从端口探测、配置写入、alias 注册一直保护到 lsof 确认该后端 PID 实际监听。通过继承的 FD 3 通知锁持有者释放锁，随后继续等待前台服务退出。不同 worktree 可以并行编译，但端口分配与开始监听串行执行。Herdr panel 与后台监听进程的归属均以 Git worktree 顶层目录精确匹配，嵌套 linked worktree 不作为当前仓库处理。Brain token 读取失败或为空时在启动前报错。
+
+## 本地 OpenObserve
+
+`.run/dev-init.yaml` 的 `local_openobserve: true` 为本环境启用独立 OpenObserve，新建本地初始化模板默认 true，已有显式设置保留。首次启用前拉取固定镜像 `public.ecr.aws/zinclabs/openobserve:v1.1.2`。`dev-init` 与三个 restart 入口的 `set-runtime` 会启动同一 Compose 项目的 `observability` profile，检查 `/healthz`，并把 Docker 分配的 loopback 端口写入 `state.json.runtime.openobserve_port`。
+
+该服务使用独立 `openobservedata` volume，限制 2 CPU、1GiB 内存，不发布到非 loopback 地址。`.run/secrets/openobserve.json` 保存自动生成的强密码，重启复用；`.run/generated/openobserve.env` 为 Compose 提供启动凭据。两者权限为 0600。丢失凭据时不要通过生成新密码尝试覆盖已有数据卷，需恢复原文件或显式回收环境。
+
+生成配置开启 `observability.enabled`，后端为 OpenObserve，organization 为 `default`，logs stream 为 `oma_dsh`，使用动态地址。只覆盖当前环境的生成配置，人工 `.run/config.yaml` 不变；本地开发 ingestion/query 使用同一实例的本地管理员凭据，生产部署应分别配置最小权限账号。OpenObserve 凭据不下发 Brain、浏览器或沙箱。
+
+关闭开关停止自动启用，不主动销毁已有数据。`dev-recycle` 与 `dev-teardown` 统一执行 Compose `--profile '*' down --volumes --remove-orphans`，启用全部 profile 后连同 OpenObserve 容器和 volume 一起回收，不依赖当前开关。未启用的 profile 中仍有定义的服务不属于 orphan，不能仅依赖 `--remove-orphans` 清理。
+
+Compose 返回成功后，在同一栈锁内按项目标签重新列出全部容器（含已停止）、卷和网络。仍有资源或无法完成检查时，回收失败并保留 alias、注册表、绑定和生成状态，供修复后重试；只有确认资源全部移除后才删除这些登记。该检查同样适用于孤儿环境回收。私有输入和密钥仍按既有规则保留。
+
+若旧版本漏清理的 profile 资源与新绑定 UUID 冲突，保持归属拒绝，不自动接管或改写 UUID。恢复时应先核对残留资源的旧 UUID、worktree 路径和 Compose 项目，显式清理确认属于旧环境的资源，再使用当前绑定重试回收。
+
+普通单测使用模拟 Docker 覆盖全部 profile 参数、容器/卷/网络单独或同时残留、资源列表失败、Compose 报告项目不存在但仍有资源，以及失败保留状态后重试成功。该测试不删除真实开发环境资源。

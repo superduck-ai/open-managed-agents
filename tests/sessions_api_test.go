@@ -1583,8 +1583,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	postCodeSessionWorkerInternalEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{"type":"user","uuid":"internal-`+strings.TrimPrefix(session.ID, "sesn_")+`"}}]}`)
 	assertCodeSessionWorkerDelivery(t, app, codeSessionID, workerEpoch)
 	assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, workerEpoch)
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "metrics")
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "logs")
+	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "v1/logs")
 
 	eventSuffix := strings.TrimPrefix(session.ID, "sesn_")
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"events":[{"payload":{"type":"assistant","uuid":"assistant-worker-`+eventSuffix+`","message":{"role":"assistant","content":"hello from ccr worker"},"created_at":"2026-06-16T01:10:00Z"}}],"worker_epoch":`+quoteJSON(workerEpoch)+`}`)
@@ -2554,11 +2553,8 @@ func TestCodeSessionWorkerEpochProtection(t *testing.T) {
 	postCodeSessionWorkerInternalEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(epoch2)+`,"events":[]}`)
 	assertCodeSessionWorkerDelivery(t, app, codeSessionID, epoch2)
 	assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, epoch2)
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "metrics")
-	assertCodeSessionWorkerOTLPJSON(t, app, codeSessionID, "metrics")
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "logs")
 	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "v1/logs")
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "v1/traces")
+	assertCodeSessionWorkerOTLPJSON(t, app, codeSessionID, "v1/logs")
 	postCodeSessionWorkerEvents(t, app, codeSessionID, workerEventBody(session.ID, "current", epoch2))
 	postCodeSessionWorkerDiagnostics(t, app, codeSessionID, workerDiagnosticsBody(codeSessionID, epoch2, "current diag"))
 }
@@ -2787,7 +2783,7 @@ func TestCodeSessionWorkerOTLPAcceptsWithoutEpochWithoutWorkerActivity(t *testin
 		t.Fatalf("load code session before OTLP: %v", err)
 	}
 
-	for _, suffix := range []string{"metrics", "logs"} {
+	for _, suffix := range []string{"v1/logs"} {
 		assertCodeSessionWorkerOTLP(t, app, codeSessionID, suffix)
 	}
 
@@ -3055,7 +3051,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	if calls := app.sandboxTimeouts.snapshotCalls(); len(calls) != 3 {
 		t.Fatalf("expired heartbeat sandbox timeout calls = %d, want 3", len(calls))
 	}
-	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", "application/x-protobuf", nil)
+	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "v1/logs", "application/x-protobuf", nil)
 	assertCodeSessionWorkerOTLPResponse(t, resp, http.StatusGone, "code session worker lease expired")
 	afterExpiredHeartbeat, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
@@ -4521,7 +4517,7 @@ func assertCodeSessionWorkerOTLP(t *testing.T, app *testApp, codeSessionID strin
 
 func assertCodeSessionWorkerOTLPJSON(t *testing.T, app *testApp, codeSessionID string, suffix string) {
 	t.Helper()
-	resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, suffix, "application/json", []byte(`{"resourceMetrics":[]}`))
+	resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, suffix, "application/json", []byte(`{"resourceLogs":[]}`))
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("post worker otlp/%s json status = %d, want 200: %s", suffix, resp.StatusCode, readAll(t, resp.Body))

@@ -135,8 +135,7 @@ environment_runner:
 
 code_session:
   # Set when a sandbox must call this service through a specific reachable URL.
-  # Required when observability.enabled is true: workers derive their OTLP
-  # export endpoints from this URL, so telemetry silently stops without it.
+  # Sandbox callbacks use this URL. Brain telemetry uses OMA_API_URL.
   sandbox_api_base_url: ""
   # Derived default: true for dev and false for prod.
   # Required in prod; also signs CCRv2 Git commits. Dev creates an in-memory key when empty.
@@ -156,7 +155,7 @@ observability:
   # Content capture sends prompt originals, model output, and tool input/output
   # (which may include source code, command output, and secrets) to the
   # observability store. It is enabled by default when observability is on; set
-  # false to keep structure-only telemetry (spans, durations, tokens, tool names).
+  # false to keep structure-only DSH telemetry (event types, durations, tokens, tool names).
   content_capture_enabled: true
   otlp:
     max_request_bytes: 16777216
@@ -165,8 +164,7 @@ observability:
   openobserve:
     base_url: http://openobserve:5080
     organization: oma
-    logs_stream: oma_claude_code
-    traces_stream: oma_claude_code
+    logs_stream: oma_dsh
     ingestion:
       username: ""
       password: ""

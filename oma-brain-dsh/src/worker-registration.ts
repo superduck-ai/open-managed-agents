@@ -34,6 +34,7 @@ export async function registerWorkerTask(api: OmaApi, task: BrainTask, signal?: 
     ...task,
     external_mcp_config: context.mcp_config,
     launch: {
+      billing: context.billing,
       version: 2, models: context.models, model: context.model, work_dir: context.cwd,
       system: context.system_prompt || context.custom_system_prompt || "",
       environment_prompt: context.append_system_prompt ?? "",

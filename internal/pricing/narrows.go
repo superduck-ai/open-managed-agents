@@ -1,7 +1,6 @@
 package pricing
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -9,7 +8,6 @@ import (
 	"math/big"
 
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
-	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 const NarrowsCNYPerUSD = "7.2"
@@ -37,11 +35,7 @@ type narrowsRule struct {
 	} `json:"pricing"`
 }
 
-func SyncNarrows(ctx context.Context, database *db.DB) error {
-	return syncCatalog(ctx, database, narrowsEndpoint, "narrows", ParseNarrows)
-}
-
-func ParseNarrows(body []byte) ([]db.CatalogPrice, error) {
+func ParseNarrows(body []byte) ([]CatalogPrice, error) {
 	var data struct {
 		Rules []narrowsRule `json:"rules"`
 	}
@@ -51,7 +45,7 @@ func ParseNarrows(body []byte) ([]db.CatalogPrice, error) {
 	if len(data.Rules) == 0 {
 		return nil, errors.New("Narrows 返回空价格目录")
 	}
-	result := make([]db.CatalogPrice, 0, len(data.Rules))
+	result := make([]CatalogPrice, 0, len(data.Rules))
 	seen := map[string]bool{}
 	for _, rule := range data.Rules {
 		if rule.Model == "" || seen[rule.Model] || rule.Currency != "CNY" || rule.BillingType != "llm" {
@@ -79,7 +73,7 @@ func ParseNarrows(body []byte) ([]db.CatalogPrice, error) {
 			}
 			price.Overrides = append(price.Overrides, billing.PriceOverride{MinPromptTokens: new(lower), MaxPromptTokens: tier.Condition.Maximum, Rates: rates})
 		}
-		result = append(result, db.CatalogPrice{Model: rule.Model, Price: price, Original: original})
+		result = append(result, CatalogPrice{Model: rule.Model, Price: price, Original: original})
 	}
 	return result, nil
 }

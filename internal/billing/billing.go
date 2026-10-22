@@ -106,6 +106,7 @@ func ParseCentsAmount(value string) (int64, error) {
 
 // ModelPrice 保存每百万 Token 的原币价格和美元换算快照。
 type ModelPrice struct {
+	FetchedAt      time.Time       `json:"fetched_at,omitzero" yaml:"-"`
 	SourceCurrency string          `json:"source_currency,omitempty" yaml:"-"`
 	ExchangeRate   string          `json:"exchange_rate,omitempty" yaml:"-"`
 	Source         string          `json:"source,omitempty" yaml:"-"`

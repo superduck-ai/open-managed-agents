@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
@@ -43,5 +44,14 @@ func TestModelRequestStartBudgetError(t *testing.T) {
 	httpapi.WriteError(response, request, modelRequestStartError(fmt.Errorf("persist start: %w", db.ErrSessionBudgetReached)))
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "session budget reached:") {
 		t.Fatalf("预算拒绝被当成上游故障：status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestModelRequestPriceUnavailableError(t *testing.T) {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	httpapi.WriteError(response, request, modelRequestStartError(fmt.Errorf("pricing: %w", codesessions.ErrModelPriceUnavailable)))
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"code":"model_price_unavailable"`) {
+		t.Fatalf("错误价格门禁响应: %s", response.Body.String())
 	}
 }

@@ -190,3 +190,5 @@ func workerIngressAuthorizationFailure(cause error) error {
 	}
 	return internalError("Could not authorize code session worker", cause)
 }
+
+var ErrModelPriceUnavailable = errors.New("model price unavailable for budgeted session")

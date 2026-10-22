@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
+	"github.com/superduck-ai/open-managed-agents/internal/pricing"
 	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 	"io"
 	"net/http"
@@ -37,7 +38,7 @@ func TestAnalyticsMeteredRequests(t *testing.T) {
 	defer app.close()
 	provider := seedTestLLMProvider(t, app, "Analytics", upstream.URL, "analytics-key", model)
 	qualifiedModel := llmproviders.QualifiedModelID(provider.Slug, model)
-	if err := app.db.ReplaceModelPriceCatalog(t.Context(), "openrouter", []db.CatalogPrice{{Model: model, Original: []byte(`{}`), Price: billing.ModelPrice{Source: "openrouter", SourceModel: model, Rates: &billing.Rates{Input: new("10"), Output: new("10"), CacheRead: new("10"), CacheWrite: new("10")}}}}); err != nil {
+	if err := app.prices.Replace("openrouter", []pricing.CatalogPrice{{Model: model, Original: []byte(`{}`), Price: billing.ModelPrice{Source: "openrouter", SourceCurrency: "USD", Version: "fixture", SourceModel: model, Rates: &billing.Rates{Input: new("10"), Output: new("10"), CacheRead: new("10"), CacheWrite: new("10")}}}}); err != nil {
 		t.Fatal(err)
 	}
 

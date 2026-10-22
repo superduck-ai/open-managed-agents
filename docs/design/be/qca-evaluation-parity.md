@@ -1,11 +1,11 @@
 # QCA Evaluation 对齐计划
 
-- 状态：计划。本文件只记录差距和下一切片，不改变运行时行为。
+- 状态：M1 已按控制台实测信息架构校正。评测集与 case 可以创建、导入、列出，并带数据集版本。评估器与实验未开始。
 - 日期：2026-10-22
-- 范围：把公开材料里的 Qoder Cloud Agents Evaluation（Beta）能力映射到当前 OMA 代码，并给出可实施的 P0 待办。
-- 非目标：不复制 Qoder 界面文案。下文 Datasets / Runs / Compare / Outcome 只作为信息架构名称。不改 Workbench Evaluate 的请求、表格或测试预期。
+- 来源：qoder.com.cn 企业控制台，分析 → 评测（Beta）。下文只采用这次实测看到的信息架构和字段，不补写未出现的产品文案。
+- 非目标：不改 Workbench Evaluate 的请求、表格或测试预期。不在本切片创建实验、评估器、session 或配额。
 
-假设已核对：OMA Workbench Evaluate 是 prompt revision 上的变量行 A/B，没有一等的 Dataset、Run、Outcome 对象。Agent 版本、Session 轨迹和 `user.define_outcome` 已存在，但没有被一次评估运行串起来。
+Workbench Evaluate 仍是 prompt revision 上的变量行 A/B。QCA 评测不是这个表格，也没有一等的 Runs、Outcome 或 Results 页面；那些路径在实测里是空壳。
 
 ## 当前实现（只依据仓库）
 
@@ -30,223 +30,144 @@ Workbench Evaluate 是 Console 路由，不在 `openapi/oma.en.json` / `openapi/
 - CSV 导入/导出在浏览器完成，列是 `{{variable}}` 和 `ideal_output`，然后逐行 `evaluations/create`。导入会替换当前表格，不保留数据集版本。
 - 未保存的 prompt 修改会使表格只读，提示先存成新 revision。
 
-旁边已经存在、但没有评估运行对象的能力：
+OMA 里已经存在、但实测评测页没有当成一等对象的能力：
 
 - Agent 版本：`agents.current_version` 与 `agent_versions`。Session 创建时钉住 `agent_version` 和 `agent_snapshot`。
-- 任务状态与轨迹：`session_events` 已分类 `session.status_*`、`agent.tool_use` / `agent.tool_result`、`span.model_request_start` / `span.model_request_end`。Session 详情用 `sessionTraceModel.ts` 渲染。
-- Outcome：Deployment 初始事件接受 `user.define_outcome`，rubric 必须是 object，类型为 `text` 或 `file`。`span.outcome_evaluation_start|ongoing|end` 写入 session 事件；`sessions.outcome_evaluations` 是该 session 的 JSON 投影。Webhook `session.outcome_evaluation_ended` 只由 `span.outcome_evaluation_end` 触发。前端把 status 显示为 satisfied、needs revision、max iterations、failed、interrupted。
-- Trace 查询：`observability.enabled` 时才注册 `GET /api/organizations/{orgUuid}/observability/traces`。关闭时 404。这是 OTLP/OpenObserve 查询，不是 evaluation run。
-- Memory：`memory_stores` / `memories` / `memory_versions` 可挂到 session。评估代码不读取这些版本，也不把结果写回 memory。
+- 任务状态与轨迹：`session_events` 已分类 `session.status_*`、`agent.tool_use` / `agent.tool_result`、`span.model_request_start` / `span.model_request_end`。
+- Deployment outcome：`user.define_outcome` 与 `span.outcome_evaluation_*` 服务单次 session。实测评测的打分入口是评估器，不是这套 outcome 页。
+- Trace 查询：`observability.enabled` 时才注册 observability traces。
+- Memory：`memory_stores` 可挂到 session。实测评测信息架构没有 memory pin。
+
+## 实测信息架构
+
+评测在「分析 → 评测」下，三个页签加今日额度：
+
+| 页签 | 控制台路径 | 实测内容 |
+| --- | --- | --- |
+| 评测集 | `/cloud/evaluation`、`/evaluation/datasets` | 自定义集可空。另有已发布预置集，带版本（`edv_`）、case 数、状态 可用 / 已归档 |
+| 评估器 | `/evaluators` | 自定义可空。另有预置评估器，类型为 Agent。创建支持 LLM 与 Agent |
+| 实验 | `/experiments`、`/experiments/new`、`/experiments/compare` | 绑定数据集版本、Agent 与多个评估器。Compare 固定数据集版本和评估器，更换 Agent 版本 |
+
+没有一等的 Runs、Outcome 或 Results 页面。
+
+评测集：
+
+- 创建时填写 name、desc。上传 JSONL 或 ZIP（不超过 100MB、不超过 1000 条），或复用已发布版本里的 case。
+- Case 字段：`name` 必填，`turns` 为必填的字符串数组，另有 `desc`、`checkpoints`、`input_files`、`reference_files`。`reference_files` 只给评估器使用。
+- 预置集详情是版本列表、case 列表和 case JSON 快照，只读。
+
+评估器：
+
+- LLM：单个模型打分。
+- Agent：在打分 Agent 的 sandbox session 里读 `/data/session/result.json` 和 artifacts，写出 `/output/score.json`，形状为 `{score, explanation, details}`。
+- 变量：`input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。
+- 今日额度：预置 100，自定义 LLM 100，按 Asia/Shanghai 零点重置。Agent 评估器不在额度弹层里。
+
+实验：
+
+- 绑定数据集版本、Agent（加 Environment、timeout、可选 env/resources）和多个评估器。评估器在实验上冻结。
+- 每个 case 创建一个 Managed session。
+- Compare 固定数据集版本和评估器，变化的是 Agent 及其版本。
+- 名称在同一个 space 内还要按模式唯一：Managed Agents 与 Forward Mode 分开。
 
 ```mermaid
 flowchart LR
-  subgraph today [今天]
-    PromptRev[prompt revision]
-    EvalRow[workbench_evaluations payload]
-    Completion[workbench completions]
-    PromptRev --> EvalRow
-    EvalRow --> Completion
-  end
-  subgraph existing [已有但未接入评估]
-    AgentVer[agent version]
-    Session[session plus events]
-    Outcome[define_outcome and outcome spans]
-    Memory[memory store versions]
-    Traces[observability traces]
-    AgentVer --> Session
-    Session --> Outcome
-    Session --> Memory
-    Session --> Traces
-  end
+  Dataset[评测集版本 edv_]
+  Evaluator[评估器 LLM 或 Agent]
+  Experiment[实验]
+  Session[Managed session]
+  Dataset --> Experiment
+  Evaluator --> Experiment
+  Experiment --> Session
 ```
 
 ## 能力矩阵
 
 | QCA feature | OMA today | gap | proposed approach | priority |
 | --- | --- | --- | --- | --- |
-| Datasets：创建、导入、列出 cases | Evaluate 行挂在单个 prompt revision 上。CSV 只覆盖变量和 ideal output。生成结果进一次性队列 | 没有 workspace 级、可复用、与 prompt 解耦的 dataset/case。不能对同一组 case 重复跑不同 agent 版本 | 新表 `evaluation_datasets` 与 `evaluation_cases`。Console CRUD 加 JSON/CSV 导入。不迁移 `workbench_evaluations` | P0 |
-| 对 agent/version 跑 evaluation | Evaluate 只跑无工具的 prompt completion。Agent 版本只在普通 session 上钉住 | 没有 run 对象，不能指定 agent、version、environment，也不能记录每个 case 的 session | `evaluation_runs` 钉 `agent_uuid` + `agent_version` + `environment_uuid`。每个 case 创建一个已有 Session，把 `session_uuid` 记到 `evaluation_run_items` | P0 |
-| 版本对比 / 回归 | 浏览器里并排两份 prompt revision 的 completion 文本，不落库，无通过/失败差分 | 不能比较两个 agent 版本在同一 dataset 上的 outcome，也不能标出回退 | 同一 dataset 的两次已完成 run 做逐 case 比较。回归定义先用 outcome status 从 `satisfied` 变为其他，或 item 从成功变为失败。不做统计模型 | P1 |
-| 模型调用、工具执行、任务状态 trace | Session 事件和 Session 详情已覆盖这三类。OTLP trace 另有开关 | 评估行只有一段 `completion_text`，没有 session、工具或 span 链接 | Run item 只存 session 引用。详情复用现有 Session trace。`observability.enabled` 时再按 session 时间窗链到 traces API。P0 不新写 trace 存储 | P1 |
-| 按用户标准做 outcome / acceptance | `user.define_outcome`、rubric、outcome span 和 session JSON 投影已存在，且只服务单次 session / deployment | Dataset 上没有可复用标准。Run 不会汇总 satisfied / failed。Workbench `golden_answer` 与 `rating` 不是这套标准 | Dataset 保存与现有 text rubric 同形的 criteria。创建 session 时写入一条 `user.define_outcome`。`span.outcome_evaluation_end` 投影到 run item 的 `outcome_status` | P0 |
-| Memory、eval、outcome 闭环 | Memory 版本和 outcome 各自存在 | Run 不记录开始时的 memory head，结果也不回写，无法解释「这次评估看到的记忆」 | Run 开始时记录所附 memory store 的当前 version id。UI 只展示钉住的版本和 session 期间的新版本。P0/P1 不自动把评估结果写入 memory | P2 |
+| 评测集：创建、导入、列出，带版本和 case | Evaluate 行挂在单个 prompt revision 上。CSV 只覆盖变量和 ideal output | 没有 workspace 级评测集、版本和 turns case | M1：`evaluation_datasets`、`evaluation_dataset_versions`、`evaluation_cases`。创建集时写入版本 1。JSONL/ZIP 导入。不迁移 `workbench_evaluations`，不预置官方数据集 | P0，本切片 |
+| 评估器 | 无评测打分对象。`user.define_outcome` 只属于 deployment/session | 不能配置 LLM 或 Agent 评估器，也不能保存 score.json | M2：评估器资源，区分 LLM 与 Agent。变量只用实测列出的五个名字。Agent 评估器的 score 文件留到实验执行时读取 | P0 |
+| 实验 | Evaluate 只跑无工具的 prompt completion | 不能把数据集版本、Agent、环境和评估器绑成一次实验，也不能为每个 case 建 session | M3：实验绑定数据集版本、Agent、Environment、timeout 和冻结的评估器。每个 case 创建一个已有 Managed session | P0 |
+| Compare | 浏览器里并排两份 prompt completion，不落库 | 不能在固定数据集版本和评估器下比较 Agent 版本 | M3：Compare 只比较同一数据集版本、同一组评估器下的实验，变化的是 Agent 版本。名称按 space 与模式唯一 | P0 |
+| 预置评测集 / 预置评估器 | 无 | 没有只读的已发布目录 | 目录与「复用已发布版本」放到预置数据就绪之后。M1 只做自定义集 | P1 |
+| 今日额度 | 无评测额度 | 预置与自定义 LLM 的每日 100 次、上海时区零点、Agent 评估器不计入，都还没有 | 实验执行时再做额度。M1 不记账 | P1 |
+| Session trace | Session 事件和详情已覆盖模型、工具和任务状态 | 实验 case 还没有 session 链接 | 实验 case 只存 session 引用，详情复用现有 Session 页。不新写 trace 存储 | P1 |
+| Memory pin | Memory 版本存在 | 实测评测页没有这项 | 不纳入当前里程碑 | 不做 |
 
 ## 为什么不改现有 Evaluate 表格
 
-Workbench Evaluate 可以继续做 prompt 变量实验，但不能在原表格上长出 QCA 所需对象：
+Workbench Evaluate 继续做 prompt 变量实验。评测集的 case 是 `turns`，不是 `{{var}}` 行；评估器和实验也没有落点。入口还拒绝 tools。因此保留 `web/src/features/workbench/` 与 `internal/workbench/`。新页面放在 Managed Agents，不放进隐藏的 `/workbench`，也不做空的评估器或实验路由。
 
-- 行的主键是 revision 下的 evaluation，换 agent 版本没有落点。
-- 入口明确拒绝 tools。Agent 评估的主要信号是工具轨迹。
-- 对比列是 React state。把 run、outcome、trace 塞进 `EvaluateTestCase` 会改 `WorkbenchPage` 的运行循环和现有测试。
-- 导航里 Workbench 当前隐藏。Agent 评估应出现在 Managed Agents，靠近 Agents、Sessions、Observability、Memory stores。
+## 数据模型
 
-因此保留 `web/src/features/workbench/` 与 `internal/workbench/` 的合同。新模块并列，不从 Evaluate 表格渐进改写。本文件的 UI 一节就是前端信息架构，不再单开一份重复的 `docs/design/fe` 说明。
-
-## 目标数据模型
-
-新表只通过 goose 增加，编号取当前最大 migration 的下一个（写本文时最大是 `00094`，实现时以分支当时的最大号为准）。不改 `internal/db/schema.go` 里的历史快照，不建外键。
-
-租户条件始终同时带 `organization_uuid` 和 `workspace_uuid`。跨表引用用目标 UUID，不用 identity `id`。`external_id` 只给 Console/API 使用。
+`00095_evaluation_datasets.sql` 在写入前已按实测字段校正，不另起已应用 migration。不改 `internal/db/schema.go`，不建外键。租户条件同时带 `organization_uuid` 和 `workspace_uuid`。
 
 `evaluation_datasets`
 
-- `uuid`，`external_id`（建议前缀 `evalds_`）
-- `organization_uuid`，`workspace_uuid`
-- `name`，可空 `description`
-- `criteria` jsonb，可空。P0 只接受与 Deployment 相同的 text rubric：`type=text` 加有长度上限的 `content`，另加 `description` 与 `max_iterations`
-- `created_by_user_uuid` 可空，`archived_at`，时间戳
+- `external_id` 前缀 `evalds_`
+- `name` 1–255 字符，`description` 最长 1024，API 字段名是 `desc`
+- `archived_at` 为空时状态为 `available`，否则为 `archived`。M1 不提供归档接口，列先留着
+- 列表不返回已归档行
+
+`evaluation_dataset_versions`
+
+- `external_id` 前缀 `edv_`
+- `dataset_uuid` 加 `version` 唯一，`version` 从 1 开始
+- M1 创建评测集时在同一事务写入版本 1。不提供另存新版本或复用预置版本的接口
 
 `evaluation_cases`
 
-- `uuid`，`external_id`（建议前缀 `evalcase_`）
-- `organization_uuid`，`workspace_uuid`，`dataset_uuid`
-- `position` 整数，用于稳定排序
-- `title`
-- `input` jsonb。P0 形状为 `{ "text": "..." }`，表示发给 session 的一条 user message。不在 P0 接受任意消息树
-- `expected` jsonb 可空。只保存用户填写的参考文本，P0 不拿它做自动打分
-- 时间戳
+- `external_id` 前缀 `evalcase_`
+- 属于 `dataset_uuid` 和 `version_uuid`。`(version_uuid, position)` 唯一
+- `name` 必填。`description` 对应 API 的 `desc`
+- `turns` jsonb，必须是数组，且至少一条非空字符串
+- `checkpoints` 可空，只接受 JSON 数组或对象，不解释内部字段
+- `input_files`、`reference_files` 可空，只接受 JSON 数组，不解释元素。`reference_files` 留到评估器使用
 
-`evaluation_runs`
+不建实验表、评估器表或 memory pin 表。
 
-- `uuid`，`external_id`（建议前缀 `evalrun_`）
-- `organization_uuid`，`workspace_uuid`，`dataset_uuid`
-- `agent_uuid`，`agent_version`（正整数，必须是该 workspace 里已存在的版本）
-- `environment_uuid`
-- `status`：`queued`、`running`、`completed`、`failed`、`canceled`
-- `summary` jsonb：计数，而不是原始事件。例如 total、completed、satisfied、failed
-- `created_at`，`updated_at`，`finished_at`
+## API
 
-`evaluation_run_items`
+Console cookie + CSRF 组，与 MCP servers 相同。错误体是 `{error, message}`。成功响应状态码 200。
 
-- `uuid`（不必单独 external_id，列表嵌在 run 下）
-- `organization_uuid`，`workspace_uuid`，`run_uuid`，`case_uuid`
-- `session_uuid` 可空，创建成功后写入
-- `status`：`pending`、`running`、`succeeded`、`failed`、`canceled`
-- `outcome_status` 可空，只接受 session trace 已有的状态词
-- `error` 可空短文本，不存 prompt 或工具输出
-- `started_at`，`finished_at`
-- 唯一键：`(run_uuid, case_uuid)`
+M1：
 
-`evaluation_run_memory_pins`（P2 再加，P0 不建）
-
-- `run_uuid`，`memory_store_uuid`，`memory_version_uuid`
-- 记录开跑时的 head，供之后对照
-
-写入规则靠近 run 状态机：
-
-- 创建 run 时在同一事务插入全部 item，状态 `pending`，run 为 `queued`。Dataset 在此之后新增的 case 不进入这次 run。
-- 每个 item 成功创建 session 后把 item 标为 `running` 并保存 `session_uuid`。Session 创建失败标 `failed`，不重试到另一 agent。
-- Session 进入终态且 outcome span 已结束，或 session 失败/终止且不会再有 outcome 时，item 进入 `succeeded` 或 `failed`。全部 item 终态后 run 进入 `completed`；若创建阶段整体失败则为 `failed`。
-- 取消只停止尚未创建 session 的 item。已经跑起来的 session 沿用现有 session 终止语义，不在本模块发明第二套终止。
-- 重复投递 `span.outcome_evaluation_end` 时，同一 item 以最后一次非空 `outcome_status` 覆盖，不新开 item。
-
-```mermaid
-sequenceDiagram
-  participant UI as Evaluation UI
-  participant API as evaluations API
-  participant DB as Postgres
-  participant Sessions as sessions
-  UI->>API: create run dataset agent version environment
-  API->>DB: insert run and pending items
-  loop each case
-    API->>Sessions: create session with pinned agent version and define_outcome
-    Sessions-->>API: session uuid
-    API->>DB: item running
-  end
-  Sessions-->>API: outcome span end and session terminal status
-  API->>DB: item outcome_status and run summary
-```
-
-## API 触点
-
-P0 使用 Console JSON API，不进 `/v1`，也不进 OpenAPI 的 Anthropic 面。等 run 合同稳定后再决定是否公开。
-
-挂载在已有组织鉴权组下，路径带 workspace，与 Files、Memory 一样由服务端确认 workspace 属于该组织：
-
-- `GET/POST /api/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets`
-- `GET/PATCH /api/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets/{datasetId}`
-- `POST .../evaluation-datasets/{datasetId}/archive`
+- `GET/POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-datasets`
+- `GET .../evaluation-datasets/{datasetId}`
 - `GET/POST .../evaluation-datasets/{datasetId}/cases`
 - `POST .../evaluation-datasets/{datasetId}/cases:import`
-- `PATCH/DELETE .../evaluation-cases/{caseId}`，删除和修改都要带 dataset 所属 workspace
-- `GET/POST /api/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-runs`
-- `GET .../evaluation-runs/{runId}`，响应带 item 摘要
-- `POST .../evaluation-runs/{runId}/cancel`
 
-P1 再加 `GET .../evaluation-runs:compare?base={runId}&candidate={runId}`。两次 run 必须同一 workspace、同一 dataset。
+路径里的 workspace 可以是 `default`、workspace UUID 或 external id。查询和写入使用 principal 的组织与 workspace UUID。另一 workspace 的 id 返回 404，且不读库。
 
-包边界：
+创建评测集的 body 是 `{name, desc}`。响应带 `status` 和 `version: {id, version, case_count}`。
 
-- 新包 `internal/evaluations`：handler、校验、状态机、`errors.go`。
-- `internal/db` 按 Yourbatis 拆成 `evaluation_datasets.go`、`evaluation_dataset_mapper.go`、XML，以及 runs 的对应文件。不要把 Mapper 写进对上暴露的 DB 方法文件。
-- `internal/api` 只挂路由。不在 `internal/workbench` 注册这些路径。
-- Session 创建复用现有 session 服务。Outcome 事件到达时由 session 事件入口调用 evaluations 的投影函数，避免 evaluations 再扫一遍事件表。
-- 列表和详情不返回模型原文、工具参数或 rubric 以外的大段 session payload。需要原文时打开已有 Session 页。
+单条 case 与 JSONL 每行的字段是 `name`、`turns`、`desc`、`checkpoints`、`input_files`、`reference_files`。未知字段拒绝。导入是 JSONL（`application/x-ndjson` 或 `application/jsonl`），或只含一个 `.jsonl` 成员的 ZIP。超过 1000 条或 100MB 返回 400，校验通过前不写入。这与 Workbench 的 `{{var}},ideal_output` CSV 不是同一格式。
 
-导入：
+M1 不做 PATCH、DELETE、归档、预置目录、评估器、实验、Compare、配额和 OpenAPI。
 
-- JSON 数组：`[{ "title": "", "text": "", "expected": "" }]`
-- CSV 表头固定为 `title,text,expected`。这与 Workbench 的 `{{var}},ideal_output` 不是同一格式，不尝试自动兼容。
-- 单次导入设置明确条数上限。超限返回 400，不部分写入。
-- 空 `text` 的行拒绝。
+## UI
 
-## UI 信息架构
+Managed Agents 导航在 Sessions 与 Observability 之间增加 Datasets。OMA 没有「分析」分组，所以不把评测放进用量分析。
 
-新路由放在 Managed Agents，不放进 `/workbench`：
+- `/workspaces/$workspaceId/evaluations`：评测集列表和创建（name、desc）
+- `/workspaces/$workspaceId/evaluations/datasets/$datasetId`：当前版本、case 列表、单条 case、JSONL 导入
 
-- `/workspaces/$workspaceId/evaluations`：Datasets 列表
-- `/workspaces/$workspaceId/evaluations/datasets/$datasetId`：cases 与 criteria
-- `/workspaces/$workspaceId/evaluations/runs/$runId`：这次 run 的 item 状态
-- `/workspaces/$workspaceId/evaluations/compare`：选择两次 run
-
-四个区的职责：
-
-| 区 | 内容 | 不放什么 |
-| --- | --- | --- |
-| Datasets | 名称、case 列表、导入、text criteria | prompt revision、变量表格、模型参数 |
-| Runs | 选择 dataset、已有 agent 版本、environment；进度和每个 case 的 status | 在此编辑 agent system prompt |
-| Compare | 同一 dataset 的两次 run，列出 outcome 变化的 case | 并排粘贴两段 completion |
-| Outcome | 展示 criteria 原文、item 的 `outcome_status`、跳到该 session 的现有 trace | 新的评分量表；P0 不编辑 `golden_answer` |
-
-导航加在 Managed Agents 组，位于 Sessions 与 Observability 之间。`isManagedAgentsPath` 需要认识 `/evaluations`。Workbench 的 prompt/evaluate 开关、CSV 和 comparison 菜单保持原样。
-
-前端切片建议：`web/src/features/evaluations/`，内含 dataset、run、compare 三个页面和各自的 API client。不要把类型加进 `web/src/features/workbench/model.ts`。
-
-P0 的下一实现切片可以先不做页面。API 与表落地后，再做 Datasets 列表和 case 导入。Runs 页面等到 session 创建切片一起做，避免空按钮。
+不添加 `/evaluators`、`/experiments` 或 `/experiments/compare` 的空路由。Workbench 的 prompt/evaluate 开关保持原样。
 
 ## 里程碑
 
-1. **M0（本变更）**：本设计与 P0 待办。不改代码。
-2. **M1 / P0**：Dataset 与 Case 的 migration、Yourbatis、Console CRUD 和导入。无 session，无 UI。测试覆盖校验、租户隔离条件、导入的全成或全败。
-3. **M2 / P0**：Run 与 item。按 case 创建 session，钉 agent version 和 environment，写入 `user.define_outcome`。状态机测试覆盖创建失败、取消未开始 item、重复 outcome 事件。
-4. **M3 / P0**：把 `span.outcome_evaluation_end` 投影到 item，并维护 run `summary`。不新造 outcome 词汇。
-5. **M4 / P1**：Compare API 与页面。回归规则只看 status 变化。
-6. **M5 / P1**：Run item 链到现有 Session trace。Observability trace 只在功能开启且能按 session 关联时显示入口。
-7. **M6 / P2**：开跑时钉 memory version，并在 Outcome 区显示。仍不把评估结果写回 memory。
+1. **M0**：差距说明。
+2. **M1（本变更）**：评测集、版本 1 和 case 的 migration、Yourbatis、创建 / 导入 / 列出，以及 Datasets 页面。无 session，不改 Workbench Evaluate。
+3. **M2**：评估器。LLM 与 Agent 两种类型，变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。不执行打分。
+4. **M3**：实验与 Compare。绑定数据集版本、Agent、Environment、timeout 和冻结的评估器；每个 case 创建一个 Managed session。Compare 固定数据集版本和评估器。名称按 space 与模式唯一。
+5. **M4**：预置评测集和预置评估器的只读目录，以及从已发布版本复用 case。今日额度：预置 100、自定义 LLM 100、Asia/Shanghai 零点；Agent 评估器不计入。
 
-## 下一切片（M1）
+## 下一切片（M2）
 
-只做数据集，避免一次改动同时碰到 session 创建和 Workbench。
+只加评估器资源，不创建实验，不跑 session，不改 Workbench。
 
-建议文件：
+## 验收与未覆盖
 
-- `internal/db/migrations/00095_evaluation_datasets.sql`（若已有更大编号则顺延）
-- `internal/db/evaluation_datasets.go`
-- `internal/db/evaluation_dataset_mapper.go`
-- `internal/db/evaluation_dataset_mapper.xml`
-- `internal/evaluations/errors.go`
-- `internal/evaluations/datasets.go` 及 handler
-- `internal/api` 里的挂载
-- mapper SQL 单测，以及 handler 对空 text、越权 workspace、导入超限的失败用例，然后才是创建成功用例
+同一 workspace 可以创建评测集（同时得到 `edv_` 版本 1）、用 JSONL 或单成员 ZIP 导入 case，并列出 case。空 name、空 turns、超过 1000 条、错误 ZIP 和另一 workspace 的 id 在写库前失败。归档行不出现在列表里。
 
-明确不做：
-
-- 不改 `workbench_evaluations`、Evaluate 页面和 `WorkbenchPage.test.tsx`
-- 不加空路由或未引用类型。未使用的 Go 声明会撞死代码检查；挂在 workbench handler 上的空路由会把两个产品绑在一起
-- 不在 M1 创建 session，不读 memory，不写 OpenAPI
-
-M1 完成后的验收：同一 workspace 可创建 dataset、导入 cases、列出 cases；另一 workspace 的 id 不可读；Workbench prompt 评估行为不变。集成测试不在 M1 默认命令里，需要时再定向跑新包。
-
-## 本变更没有脚手架的原因
-
-Dataset 表一旦写入 migration 就会成为已应用 schema，后面的 mapper 必须同一批落地才有测试。单独的类型和空 handler 没有调用方，过不了不可达声明检查，也不能减少 M1 的工作。计划本身已经把 M1 的文件和状态机边界写死，下一 PR 可以直接从 migration 开始。
+Postgres 迁移测试在设置 `TEST_MIGRATION_DATABASE_URL` 时执行。默认 `just test` 不连接外部数据库；未设置该变量时，不能把迁移说成已经在真实 Postgres 上应用过。

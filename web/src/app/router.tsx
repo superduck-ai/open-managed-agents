@@ -8,6 +8,8 @@ import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { WorkspaceSettingsRedirect } from '../features/settings/WorkspaceSettingsRedirect';
 import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../features/analytics/AnalyticsPages';
 import { LoginPage } from '../features/auth/LoginPage';
+import { DatasetCasesPage } from '../features/evaluations/DatasetCasesPage';
+import { EvaluationsPage } from '../features/evaluations/EvaluationsPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
 import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
 import { CreateMCPServerPage, MCPServerDetailPage, MCPServersPage } from '../features/mcp-servers/MCPServersPage';
@@ -223,6 +225,24 @@ const workspaceSessionDetailRoute = createRoute({
   path: 'workspaces/$workspaceId/sessions/$sessionId',
   validateSearch: sessionDetailSearch,
   component: () => <ManagedAgentsPage section="sessions" />,
+});
+
+const evaluationsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'evaluations',
+  component: EvaluationsPage,
+});
+
+const workspaceEvaluationsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations',
+  component: EvaluationsPage,
+});
+
+const workspaceEvaluationDatasetRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations/datasets/$datasetId',
+  component: DatasetCasesPage,
 });
 
 const observabilityRoute = createRoute({
@@ -569,6 +589,9 @@ const routeTree = rootRoute.addChildren([
       sessionsRoute,
       workspaceSessionsRoute,
       workspaceSessionDetailRoute,
+      evaluationsRoute,
+      workspaceEvaluationsRoute,
+      workspaceEvaluationDatasetRoute,
       observabilityRoute,
       workspaceObservabilityRoute,
       deploymentsRoute,

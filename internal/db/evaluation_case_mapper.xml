@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EvaluationCaseMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        dataset_uuid,
+        version_uuid,
+        position,
+        name,
+        description,
+        CAST(turns AS text) AS turns_json,
+        CAST(checkpoints AS text) AS checkpoints_json,
+        CAST(input_files AS text) AS input_files_json,
+        CAST(reference_files AS text) AS reference_files_json,
+        created_at,
+        updated_at
+    </sql>
+
+    <select id="MaxPosition" result="scalar">
+        SELECT COALESCE(MAX(position), 0)
+        FROM evaluation_cases
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND version_uuid = #{versionUUID}
+    </select>
+
+    <insert id="Insert" result="returning" resultType="evaluationCaseRow">
+        INSERT INTO evaluation_cases (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            dataset_uuid,
+            version_uuid,
+            position,
+            name,
+            description,
+            turns,
+            checkpoints,
+            input_files,
+            reference_files,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.DatasetUUID},
+            #{params.VersionUUID},
+            #{params.Position},
+            #{params.Name},
+            #{params.Description},
+            CAST(#{params.TurnsJSON} AS jsonb),
+            CAST(#{params.CheckpointsJSON} AS jsonb),
+            CAST(#{params.InputFilesJSON} AS jsonb),
+            CAST(#{params.ReferenceFilesJSON} AS jsonb),
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="ListPage" resultType="evaluationCaseRow">
+        SELECT
+        <include refid="columns"/>
+        FROM evaluation_cases
+        <where>
+            organization_uuid = #{params.OrganizationUUID}
+            AND workspace_uuid = #{params.WorkspaceUUID}
+            AND version_uuid = #{params.VersionUUID}
+            <if test="params.Cursor != nil">
+                AND (position, uuid) &gt; (#{params.Cursor.Position}, #{params.Cursor.UUID})
+            </if>
+        </where>
+        ORDER BY position ASC, uuid ASC
+        LIMIT #{params.FetchLimit}
+    </select>
+</mapper>

@@ -81,6 +81,7 @@ export function workspaceSwitchPath(currentPath: string, workspaceId: string) {
     'batches',
     'agents',
     'sessions',
+    'evaluations',
     'observability',
     'deployments',
     'environments',

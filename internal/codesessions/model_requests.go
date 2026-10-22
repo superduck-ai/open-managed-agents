@@ -120,6 +120,19 @@ func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID,
 	if err != nil {
 		return nil, err
 	}
+	publicSession, found, err := s.db.GetSession(ctx, workspaceID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, db.ErrNotFound
+	}
+	if publicSession.BudgetReachedAt != nil {
+		return nil, db.ErrSessionBudgetReached
+	}
+	if len(publicSession.Budget) > 0 && !calculator.HasModel(model) {
+		return nil, ErrModelPriceUnavailable
+	}
 	request := &ModelRequest{calculator: calculator, StartID: startID, CodeSessionID: codeSessionID, ThreadID: threadID, Model: model, codeSession: codeSession}
 	if agentID != "" {
 		request.toolThreadID = threadID

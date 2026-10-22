@@ -48,6 +48,7 @@ func defaultConfig() Config {
 			JobLeaseHeartbeatInterval: 30 * time.Second,
 			ExpirySweepInterval:       5 * time.Minute,
 		},
+		Pricing:           PricingConfig{SnapshotFile: "./data/model-prices.json", RefreshInterval: 6 * time.Hour, ReloadInterval: 30 * time.Second},
 		TranscriptArchive: TranscriptArchiveConfig{DryRun: true, TerminalSweepEnabled: true, TerminalDwell: 24 * time.Hour, ArchiveMinAge: 168 * time.Hour, SoftDeleteWindow: 336 * time.Hour, TargetSegmentRawBytes: 8388608, DeleteBatchRows: 500, MaxRowsPerJob: 50000},
 		SandboxLifecycle:  SandboxLifecycleConfig{Enabled: true, DryRun: true, IdleTimeout: 24 * time.Hour},
 		E2B: E2BConfig{

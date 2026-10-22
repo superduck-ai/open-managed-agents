@@ -19,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/metering"
 	"github.com/superduck-ai/open-managed-agents/internal/pricing"
 )
@@ -63,8 +64,10 @@ func TestModelPriceReconciliation(t *testing.T) {
 			seen[tc.Model] = true
 		}
 	}
-	provider := seedTestLLMProviderForWorkspace(t, app, uuid.NewV4().String(), uuid.NewV4().String(), "多模型计费对账", "https://example.test", "fixture-key", models...)
-	if err := app.db.ReplaceModelPriceCatalog(t.Context(), "openrouter", prices); err != nil {
+	organizationID, workspaceID := uuid.NewV4().String(), uuid.NewV4().String()
+	seedTestLLMProviderForWorkspace(t, app, organizationID, workspaceID, "默认网关", "https://example.test", "fixture-key", "other")
+	provider := seedTestLLMProviderForWorkspace(t, app, organizationID, workspaceID, "多模型计费对账", "https://example.test", "fixture-key", models...)
+	if err := app.prices.Replace("openrouter", prices); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range cases {
@@ -86,7 +89,7 @@ func TestModelPriceReconciliation(t *testing.T) {
 			for _, stream := range []bool{false, true} {
 				t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
 					store := &billingRecordedStore{database: app.db}
-					transport := &metering.Transport{Base: http.DefaultTransport, Store: store, Calculator: app.db.BillingCalculator(), Source: "api"}
+					transport := &metering.Transport{Base: http.DefaultTransport, Store: store, Calculator: llmproviders.BillingCalculator(app.db.ListLLMProviders, app.prices), Source: "api"}
 					ctx := auth.WithPrincipal(t.Context(), auth.Principal{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUID: provider.WorkspaceUUID})
 					request, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s?stream=%t", upstream.URL, stream), strings.NewReader(fmt.Sprintf(`{"model":%q}`, tc.Model)))
 					if err != nil {

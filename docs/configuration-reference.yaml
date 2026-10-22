@@ -18,6 +18,12 @@ database:
   # Derived default: true for dev and false for prod.
   auto_migrate: true
 
+pricing:
+  snapshot_file: ./data/model-prices.json
+  read_only: false
+  refresh_interval: 6h
+  reload_interval: 30s
+
 redis:
   url: redis://localhost:6379
 

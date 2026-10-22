@@ -109,7 +109,7 @@ export class AiSdkStream {
 
 export function modelError(error: unknown, signal?: AbortSignal): unknown {
   if (signal?.aborted || error instanceof LlmError) return error;
-  if (APICallError.isInstance(error)) return providerError(apiErrorMessage(error), error.statusCode);
+  if (APICallError.isInstance(error)) return billingError(error.responseBody, error.statusCode) ?? providerError(apiErrorMessage(error), error.statusCode);
   if (error instanceof Error) return providerError(error.message);
   const message = typeof error === "object" && error && "message" in error ? String(error.message) : String(error);
   return providerError(message);
@@ -148,4 +148,13 @@ function tokenUsage(usage: LanguageModelV4Usage): TokenUsage | undefined {
   return { inputTokens: input.noCache ?? input.total ?? 0, outputTokens: usage.outputTokens.total ?? 0,
     ...(input.cacheRead !== undefined ? { cacheReadTokens: input.cacheRead } : {}),
     ...(input.cacheWrite !== undefined ? { cacheWriteTokens: input.cacheWrite } : {}) };
+}
+
+export function billingError(body: string | undefined, status?: number): LlmError | undefined {
+  try {
+    const error = JSON.parse(body ?? "").error;
+    if (error?.code === "session_budget_reached" || error?.code === "model_price_unavailable")
+      return new LlmError(typeof error.message === "string" ? error.message : error.code, error.code.toUpperCase(), { status });
+  } catch {}
+  return undefined;
 }

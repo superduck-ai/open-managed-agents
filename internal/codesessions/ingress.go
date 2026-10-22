@@ -681,6 +681,12 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 		}
 		sessionContext["model_backends"] = backends
 	}
+	billingContext, err := h.service.billingContext(r.Context(), record)
+	if err != nil {
+		h.errorAdapter.Write(w, r, sessionModelBackendsFailure(err))
+		return
+	}
+	sessionContext["billing"] = billingContext
 	w.Header().Set("Cache-Control", "no-store")
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{
 		"session_context": sessionContext,

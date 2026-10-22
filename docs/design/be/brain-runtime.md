@@ -372,3 +372,9 @@ HTTP 与流内错误、取消、工具分片、大参数线性耗时、用量尾
 主子模型 backend 选择和凭据轮换。
 
 `oma-brain-dsh/tests/chat-runtime.test.ts` 通过原生 Brain 与本地协议 fixture 执行工具审批、工具结果下一轮回传、关闭后历史恢复，确认恢复不会重复执行已完成的工具。该测试不连接真实模型或 Worker 沙箱。
+
+## 运行时标价与预算
+
+`GET /v2/sessions/{id}` 在已有 ingress 和线程权限校验后返回 `session_context.billing`。Brain 注册时保存到 `assignment.launch.billing`，每次请求前与工具权限一起刷新。字段包含共享会话预算、累计费用、剩余金额、触顶状态，以及主模型和配置子模型的价格快照；未知价格为 null，不向 Worker 暴露完整目录或凭据。
+
+模型 API 的 `session_budget_reached` 和 `model_price_unavailable` 错误映射为不可自动重试的 DSH 错误。预算触顶结束当前轮并确认输入，不额外发布通用失败／成功结果；公开预算暂停由后端维护。提高或移除预算后，下次输入重新读取当前状态。价格恢复后可重新发起输入。子线程共用会话预算，不在 Brain 内重复扣减。费用最终以服务端请求快照为准。

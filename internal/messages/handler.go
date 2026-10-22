@@ -166,7 +166,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	}
 	request, err := h.beginModelRequest(r, principal, upstream.QualifiedModelID)
 	if err != nil {
-		if errors.Is(err, db.ErrSessionBudgetReached) {
+		if errors.Is(err, db.ErrSessionBudgetReached) || errors.Is(err, codesessions.ErrModelPriceUnavailable) {
 			w.Header().Set("X-Should-Retry", "false")
 		} else {
 			h.logger.ErrorContext(r.Context(), "start model request", "error", err)

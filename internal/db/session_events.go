@@ -293,6 +293,12 @@ func prepareSessionEventTx(ctx context.Context, executor yourbatis.Executor, ses
 	if event.EventType == "span.model_request_start" && session.BudgetReachedAt != nil {
 		return SessionEvent{}, false, ErrSessionBudgetReached
 	}
+	if session.BudgetReachedAt != nil {
+		allowed, err := budgetAllowsStatus(primary, event)
+		if err != nil || !allowed {
+			return SessionEvent{}, false, err
+		}
+	}
 	write, err := shouldWriteSessionStatus(ctx, executor, *session, primary, event)
 	if err != nil || !write {
 		return SessionEvent{}, false, err

@@ -1,20 +1,15 @@
 package pricing
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
-	"io"
 	"math/big"
-	"net/http"
 	"strings"
-	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
-	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 const endpoint = "https://openrouter.ai/api/v1/models"
@@ -38,39 +33,7 @@ type sourcePrice struct {
 	Overrides []override `json:"overrides"`
 }
 
-func Sync(ctx context.Context, database *db.DB) error {
-	return syncCatalog(ctx, database, endpoint, "openrouter", Parse)
-}
-
-func syncCatalog(ctx context.Context, database *db.DB, url, source string, parse func([]byte) ([]db.CatalogPrice, error)) error {
-	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return errors.New("模型价格源返回非成功状态")
-	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
-	if err != nil {
-		return err
-	}
-	if len(body) > 8<<20 {
-		return errors.New("模型价格目录超过大小限制")
-	}
-	prices, err := parse(body)
-	if err != nil {
-		return err
-	}
-	return database.ReplaceModelPriceCatalog(ctx, source, prices)
-}
-
-func Parse(body []byte) ([]db.CatalogPrice, error) {
+func Parse(body []byte) ([]CatalogPrice, error) {
 	var data struct {
 		Data []struct {
 			ID      string         `json:"id"`
@@ -80,7 +43,7 @@ func Parse(body []byte) ([]db.CatalogPrice, error) {
 	if err := json.Unmarshal(body, &data); err != nil {
 		return nil, err
 	}
-	result := make([]db.CatalogPrice, 0, len(data.Data))
+	result := make([]CatalogPrice, 0, len(data.Data))
 	for _, model := range data.Data {
 		var source sourcePrice
 		if err := json.Unmarshal(model.Pricing, &source); err != nil {
@@ -102,7 +65,7 @@ func Parse(body []byte) ([]db.CatalogPrice, error) {
 			}
 			price.Overrides = append(price.Overrides, billing.PriceOverride{MinPromptTokens: o.MinPromptTokens, UTCStart: o.UTCStart, UTCEnd: o.UTCEnd, UTCDays: o.UTCDays, Rates: rates})
 		}
-		result = append(result, db.CatalogPrice{Model: model.ID, Price: price, Original: model.Pricing})
+		result = append(result, CatalogPrice{Model: model.ID, Price: price, Original: model.Pricing})
 	}
 	if len(result) == 0 {
 		return nil, errors.New("OpenRouter 返回空价格目录")

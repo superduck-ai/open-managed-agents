@@ -26,7 +26,7 @@ func TestBudgetMigrationsUpgradeFromMainPostgres(t *testing.T) {
 	for _, entry := range entries {
 		_, name, _ := strings.Cut(entry.Name(), "_")
 		switch name {
-		case "session_budget.sql", "usage_records.sql", "llm_model_prices.sql", "model_price_catalog.sql":
+		case "session_budget.sql", "usage_records.sql", "llm_model_prices.sql", "model_price_catalog.sql", "remove_model_price_catalog.sql":
 			continue
 		}
 		data, err := fs.ReadFile(embeddedMigrations, "migrations/"+entry.Name())
@@ -57,8 +57,8 @@ func TestBudgetMigrationsUpgradeFromMainPostgres(t *testing.T) {
 		}
 	}
 	var finalVersion, finalCount int64
-	if err := database.QueryRowContext(ctx, `SELECT max(version_id), count(*) FROM goose_db_version WHERE is_applied`).Scan(&finalVersion, &finalCount); err != nil || finalVersion != 95 || finalCount != historyCount+4 {
-		t.Fatalf("升级历史=%d/%d，预期 95/%d：%v", finalVersion, finalCount, historyCount+4, err)
+	if err := database.QueryRowContext(ctx, `SELECT max(version_id), count(*) FROM goose_db_version WHERE is_applied`).Scan(&finalVersion, &finalCount); err != nil || finalVersion != 96 || finalCount != historyCount+5 {
+		t.Fatalf("升级历史=%d/%d，预期 96/%d：%v", finalVersion, finalCount, historyCount+5, err)
 	}
 	for _, column := range []string{"budget", "budget_reached_at", "budget_removed_at"} {
 		assertMigrationColumnNullable(t, ctx, database, "sessions", column, "YES")
@@ -67,11 +67,15 @@ func TestBudgetMigrationsUpgradeFromMainPostgres(t *testing.T) {
 	assertMigrationColumnNullable(t, ctx, database, "code_sessions", "worker_claim_requested_at", "YES")
 	assertMigrationColumnNullable(t, ctx, database, "llm_providers", "api_backend", "NO")
 	assertMigrationColumnNullable(t, ctx, database, "llm_providers", "slug", "NO")
-	for _, table := range []string{"usage_records", "llm_model_prices", "model_price_catalog"} {
+	for _, table := range []string{"usage_records", "llm_model_prices"} {
 		var exists bool
 		if err := database.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil || !exists {
 			t.Fatalf("升级后缺少表 %s：%v", table, err)
 		}
+	}
+	var catalogExists bool
+	if err := database.QueryRowContext(ctx, `SELECT to_regclass('model_price_catalog') IS NOT NULL`).Scan(&catalogExists); err != nil || catalogExists {
+		t.Fatalf("标价目录表未移除: %v", err)
 	}
 	var sessions int
 	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM sessions WHERE external_id IN ('sesn_migration_work_active','sesn_migration_work_deleted') AND budget IS NULL AND budget_reached_at IS NULL AND budget_removed_at IS NULL`).Scan(&sessions); err != nil || sessions != 2 {

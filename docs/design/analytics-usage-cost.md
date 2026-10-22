@@ -195,7 +195,7 @@ flowchart LR
 
 ## 数据库来源标价与缓存 TTL
 
-价格由服务端从 OpenRouter `https://openrouter.ai/api/v1/models` 获取，启动时同步到全局公开价格目录 `model_price_catalog`。Narrows 网关（`narrows-gateway.test.seewo.com`）使用独立的 `https://narrows.seewo.com/pricing/api/rules` 目录，固定以 1 USD = 7.2 CNY 换算；缺失 Narrows 价格时不回退至 OpenRouter。用户无需填写、选择或保存价格；原手工标价弹窗、参考价接口、YAML 导入接口均已移除。旧 `llm_model_prices` 表保留历史数据，但不参与新请求计费。
+价格由服务端从 OpenRouter `https://openrouter.ai/api/v1/models` 获取，由后台周期刷新到 `pricing.snapshot_file` 指定的 JSON 文件，热路径读取内存快照。Provider slug 为 `narrows` 的 AI 网关（`default` 暂时兼容映射到同一价格源）使用独立的 `https://narrows.seewo.com/pricing/api/rules` 目录，固定以 1 USD = 7.2 CNY 换算；缺失 Narrows 价格时不回退至 OpenRouter。用户无需填写、选择或保存价格；原手工标价弹窗、参考价接口、YAML 导入接口均已移除。旧 `llm_model_prices` 表保留历史数据，但不参与新请求计费。
 
 同步保留原始 pricing JSON、转换后的 USD/百万 Token 价格及价格内容摘要版本。HTTP 超时 15 秒、响应最多 8 MiB；成功解析后事务替换目录。同步失败保留上次成功数据并记录告警，不把未知价当成零，不回退到 YAML 或手工标价。当前在服务启动时更新，不增加定时任务或管理页面。
 
@@ -257,3 +257,4 @@ Chat 非流式响应和流式 usage 尾帧采用同一分项：`completion_token
 SSE 按空行分隔完整事件，支持 CRLF、多行 data 和任意读取分片。finish reason 不提前结束观察，继续读取 usage 尾帧；`[DONE]` 是终止标记而非 JSON，只有已观察到的 choices 均正常结束才确认完成。有效 finish 后的正常 EOF 兼容已有 Brain Chat 合同；断流、解析错误、provider error、未结束 choice、未完整尾帧或提前关闭不构成完整成功。无论终止方式，只有输入与输出 usage 完整时才将入账记录标为 complete；错误前已确认的 usage 不丢弃。
 
 Builder Chat 调用方必须发送 `stream_options: { include_usage: true }`，由前端协议请求及断言配套整合；Messages 请求无此字段。供应商即使不返回 usage 也继续透明返回内容，但计量明确不完整，不凭文本估算消费。本次普通回归覆盖 JSON、usage 尾帧、DONE/EOF、分片、多行、错误、取消式提前关闭、缺失/真实零/非法用量、费用和字节透传；未执行真实供应商或数据库集成验收。
+当前价格目录不再写入数据库，迁移 00100 删除旧目录表；账本与请求价格快照保留。多实例文件共享、失败退避及 Brain 读取协议见 [标价文件缓存](be/model-price-file-cache.md)。

@@ -44,6 +44,7 @@ type Config struct {
 	TelemetryExport        TelemetryExportConfig      `yaml:"telemetry_export"`
 	Vault                  VaultConfig                `yaml:"vault"`
 	Bootstrap              BootstrapConfig            `yaml:"bootstrap"`
+	Pricing              PricingConfig             `yaml:"pricing"`
 }
 
 type WebToolsConfig struct {

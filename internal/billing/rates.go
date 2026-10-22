@@ -78,7 +78,7 @@ func (r Rates) cost(u TokenUsage, exchangeRate string) (int64, bool) {
 
 type PriceLoader func(context.Context, string, string, []string) (map[string]ModelPrice, error)
 
-func NewDatabaseCalculator(loader PriceLoader) *Calculator { return &Calculator{loader: loader} }
+func NewScopedCalculator(loader PriceLoader) *Calculator { return &Calculator{loader: loader} }
 
 func (c *Calculator) Scope(ctx context.Context, org, workspace string, models ...string) (*Calculator, error) {
 	if c == nil || c.loader == nil {

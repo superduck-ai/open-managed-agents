@@ -175,8 +175,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	}
 	request, err := h.beginModelRequest(r, principal, upstream.QualifiedModelID)
 	if err != nil {
+<<<<<<< HEAD
 		if errors.Is(err, db.ErrSessionBudgetReached) {
 			call.failBeforeProxy("budget_reached")
+=======
+		if errors.Is(err, db.ErrSessionBudgetReached) || errors.Is(err, codesessions.ErrModelPriceUnavailable) {
+>>>>>>> 0a78b100 (feat(pricing): refresh JSON catalogs asynchronously and expose prices to Brain)
 			w.Header().Set("X-Should-Retry", "false")
 		} else {
 			call.failBeforeProxy("begin_model_request")

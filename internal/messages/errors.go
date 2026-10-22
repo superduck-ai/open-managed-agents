@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
@@ -92,7 +93,10 @@ func chatSessionLookupError(cause error) *httpapi.Error {
 
 func modelRequestStartError(cause error) *httpapi.Error {
 	if errors.Is(cause, db.ErrSessionBudgetReached) {
-		return httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "session budget reached: change or remove the budget before starting another model request")
+		return &httpapi.Error{Status: http.StatusBadRequest, Type: "invalid_request_error", Code: "session_budget_reached", Message: "session budget reached: change or remove the budget before starting another model request"}
+	}
+	if errors.Is(cause, codesessions.ErrModelPriceUnavailable) {
+		return &httpapi.Error{Status: http.StatusServiceUnavailable, Type: "api_error", Code: "model_price_unavailable", Message: "model price unavailable for budgeted session"}
 	}
 	return upstreamUnavailableError()
 }

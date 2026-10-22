@@ -54,6 +54,7 @@ export class CcrSession {
   private readonly proxyCompletions = new Map<string, Payload[]>();
   private readonly toolResults = new CcrToolResults();
   private turnErrorMessage?: string;
+  private budgetPaused = false;
   private interrupted = false;
   private draining = false;
   private readonly dispatchWaiters = new Set<() => void>();
@@ -390,6 +391,9 @@ export class CcrSession {
       }
       this.activity.endThread(threadId ?? this.id);
       const reason = event.data.reason;
+      if (reason?.kind === "error" && reason.error.code === "SESSION_BUDGET_REACHED") this.budgetPaused = true;
+      if (!threadId && reason?.kind === "error" && reason.error.code === "MODEL_PRICE_UNAVAILABLE")
+        this.turnErrorMessage = "Model pricing is unavailable. Retry after pricing recovers.";
       if (!threadId && reason?.kind === "error"
         && [QUOTA_EXCEEDED_CODE, ACCOUNT_QUOTA_EXCEEDED_CODE].includes(reason.error.code)) {
         this.turnErrorMessage = "Model provider balance or quota is exhausted. Top up the provider account or switch model credentials.";
@@ -411,9 +415,14 @@ export class CcrSession {
       });
       this.outcomeConfirmations.add(confirmation);
     }
+<<<<<<< HEAD
     if (!threadId && event.type === "turn/end") return;
     const output = sessionEventOutput(this.id, this.inputId, event, toolName, threadId);
     this.pendingEvents.push(...(event.type === "assistant/message" ? this.assistantStream.complete(output, threadId) : output));
+=======
+    if (threadId || event.type !== "turn/end" || !this.budgetPaused)
+      this.pendingEvents.push(...nativeOutput(this.id, this.inputId, event, toolName, threadId));
+>>>>>>> 0a78b100 (feat(pricing): refresh JSON catalogs asynchronously and expose prices to Brain)
   }
 
   async approve(request: ToolApproval, signal: AbortSignal, threadId?: string): Promise<ApprovalDecision> {
@@ -654,6 +663,7 @@ export class CcrSession {
           this.inputFinished = false;
           this.rootTurnReason = undefined;
           this.turnErrorMessage = undefined;
+          this.budgetPaused = false;
           this.interrupted = false;
           this.waitingOnInterruptedChild = false;
           this.inputId = inputId;
@@ -668,7 +678,7 @@ export class CcrSession {
         },
         afterRun: async () => {
           this.inputFinished = true;
-          if (!this.receivedInputIds.has(inputId)) {
+          if (!this.receivedInputIds.has(inputId) && !this.budgetPaused) {
             if (this.interrupted) this.pendingEvents.push({ type: "result", uuid: `${inputId}_result`, subtype: "success", is_error: false });
             else this.addError(this.turnErrorMessage ?? "The turn stopped before successful completion.", "failed");
           }

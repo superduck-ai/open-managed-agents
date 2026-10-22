@@ -71,6 +71,23 @@ test('lists datasets and creates one', async () => {
   );
 });
 
+test('explains dataset files and checkpoints in the create dialog', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations');
+  globalThis.fetch = mock(async () => Response.json({ data: [], next_page: null }));
+  renderPage(<EvaluationsPage />);
+  fireEvent.click(screen.getByRole('button', { name: 'Create dataset' }));
+  expect(screen.getByRole('button', { name: 'Upload a file' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Reuse a preset' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Download template' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'How to create a dataset' }));
+  expect(await screen.findByRole('heading', { name: 'File format' })).toBeTruthy();
+  expect(screen.getAllByText(/cases\.jsonl/).length).toBeGreaterThan(0);
+  expect(screen.getByRole('cell', { name: 'checkpoints' })).toBeTruthy();
+  expect(screen.getByText(/Acceptance checks the evaluator/)).toBeTruthy();
+  expect(screen.getByRole('cell', { name: 'input_files' })).toBeTruthy();
+  expect(screen.getByRole('cell', { name: 'reference_files' })).toBeTruthy();
+});
+
 test('lists cases and imports JSONL', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/datasets/evalds_test');
   const requests: Array<{ url: string; method: string; body: string; contentType: string }> = [];
@@ -114,6 +131,7 @@ test('lists cases and imports JSONL', async () => {
 
   renderPage(<DatasetCasesPage />);
   expect(await screen.findByText('hello')).toBeTruthy();
+  expect(screen.getAllByText(/acceptance checklist for evaluators/).length).toBeGreaterThan(0);
   fireEvent.click(screen.getByRole('button', { name: 'greeting' }));
   expect(await screen.findByText('Input files')).toBeTruthy();
   expect(screen.getByText('Saving updates this case on the current dataset version.')).toBeTruthy();
@@ -251,11 +269,20 @@ test('imports a dataset case from a session id', async () => {
 
   renderPage(<DatasetCasesPage />);
   fireEvent.change(await screen.findByLabelText('Session'), { target: { value: 'sesn_case' } });
-  fireEvent.change(screen.getAllByLabelText('Checkpoints')[0], { target: { value: '{' } });
+  const checkpoints = document.getElementById('import-session-case-checkpoints');
+  if (!checkpoints) {
+    throw new Error('missing checkpoints');
+  }
+  expect(checkpoints.getAttribute('placeholder')).toContain('Produce a PDF report');
+  fireEvent.change(checkpoints, { target: { value: '{' } });
   fireEvent.click(screen.getByRole('button', { name: 'Import from session' }));
-  expect(await screen.findByText('Checkpoints must be a JSON array or object.')).toBeTruthy();
+  expect(
+    await screen.findByText(
+      'Write one checkpoint per line, or paste a string array such as ["The task finishes without an error"].',
+    ),
+  ).toBeTruthy();
   expect(requests.some((request) => request.method === 'POST')).toBe(false);
-  fireEvent.change(screen.getAllByLabelText('Checkpoints')[0], { target: { value: '["ready"]' } });
+  fireEvent.change(checkpoints, { target: { value: '期望的结果是不会报错，正常结束' } });
   fireEvent.change(screen.getAllByLabelText('Name')[1], { target: { value: 'checkout' } });
   fireEvent.click(screen.getByRole('button', { name: 'Import from session' }));
   await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
@@ -266,7 +293,7 @@ test('imports a dataset case from a session id', async () => {
     session_id: 'sesn_case',
     name: 'checkout',
     desc: '',
-    checkpoints: ['ready'],
+    checkpoints: ['期望的结果是不会报错，正常结束'],
     include_output_files: false,
   });
 });

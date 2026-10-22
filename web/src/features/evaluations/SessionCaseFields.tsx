@@ -36,18 +36,53 @@ export function SessionCaseFields({
       ) : null}
       <Label htmlFor={`${idPrefix}-description`}>{msg('evaluations.descriptionField', 'Description')}</Label>
       <Input id={`${idPrefix}-description`} value={desc} onChange={(event) => onDesc(event.target.value)} />
-      <Label htmlFor={`${idPrefix}-checkpoints`}>{msg('evaluations.checkpoints', 'Checkpoints')}</Label>
-      <Textarea
+      <CheckpointsField
         id={`${idPrefix}-checkpoints`}
         value={checkpoints}
-        onChange={(event) => onCheckpoints(event.target.value)}
+        onChange={onCheckpoints}
+        error={checkpointError}
+      />
+    </>
+  );
+}
+
+export function CheckpointsField({
+  id,
+  value,
+  onChange,
+  error = false,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  error?: boolean;
+}) {
+  const { msg } = useI18n();
+  return (
+    <>
+      <Label htmlFor={id}>{msg('evaluations.checkpoints', 'Checkpoints')}</Label>
+      <Textarea
+        id={id}
+        className="placeholder:whitespace-pre-line"
+        value={value}
+        placeholder={msg(
+          'evaluations.checkpointsPlaceholder',
+          'The task finishes without an error\nThe final reply includes the conclusion\nProduce a PDF report',
+        )}
+        onChange={(event) => onChange(event.target.value)}
       />
       <p className="text-sm text-muted-foreground">
-        {msg('evaluations.checkpointsHint', 'Optional JSON array or object.')}
+        {msg(
+          'evaluations.checkpointsHint',
+          'An acceptance checklist for evaluators, not instructions sent to the agent under test. One checkpoint per line, or paste a JSON array.',
+        )}
       </p>
-      {checkpointError ? (
+      {error ? (
         <p className="text-sm text-destructive">
-          {msg('evaluations.checkpointsInvalid', 'Checkpoints must be a JSON array or object.')}
+          {msg(
+            'evaluations.checkpointsInvalid',
+            'Write one checkpoint per line, or paste a string array such as ["The task finishes without an error"].',
+          )}
         </p>
       ) : null}
     </>

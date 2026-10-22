@@ -275,6 +275,18 @@ func TestCreateEvaluationCaseReturnsSingleCase(t *testing.T) {
 	}
 }
 
+func TestCreateCaseCheckpointsAreStringArrays(t *testing.T) {
+	store := &evaluationStoreStub{}
+	object := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationDatasetPath("/evalds_test/cases"), `{"name":"one","turns":["hello"],"checkpoints":{"ok":true}}`, "")
+	if object.Code != http.StatusBadRequest || !strings.Contains(object.Body.String(), checkpointsInvalidMessage) || store.createCaseCalls != 0 {
+		t.Fatalf("object = %d calls=%d %s", object.Code, store.createCaseCalls, object.Body.String())
+	}
+	lines := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationDatasetPath("/evalds_test/cases"), `{"name":"one","turns":["hello"],"checkpoints":[" done "]}`, "")
+	if lines.Code != http.StatusOK || string(store.createdWrites[0].Checkpoints) != `["done"]` {
+		t.Fatalf("lines = %d write=%s %s", lines.Code, store.createdWrites[0].Checkpoints, lines.Body.String())
+	}
+}
+
 func evaluationRouter(store Store) http.Handler {
 	return evaluationRouterWith(NewHandler(store, nil))
 }

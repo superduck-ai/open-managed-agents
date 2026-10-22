@@ -69,7 +69,7 @@ func normalizeCase(input caseInput) (normalizedCase, error) {
 	if err != nil {
 		return normalizedCase{}, err
 	}
-	checkpoints, err := normalizeAttachment(input.Checkpoints, false, checkpointsInvalid)
+	checkpoints, err := normalizeCheckpoints(input.Checkpoints)
 	if err != nil {
 		return normalizedCase{}, err
 	}
@@ -111,6 +111,40 @@ func normalizeTurns(turns []string) ([]string, error) {
 
 var errAttachmentTooLarge = errors.New("attachment too large")
 var errBadJSONValue = errors.New("bad json value")
+
+func normalizeCheckpoints(raw json.RawMessage) (json.RawMessage, error) {
+	value, err := normalizeJSONValue(raw, true)
+	if errors.Is(err, errAttachmentTooLarge) {
+		return nil, attachmentTooLarge()
+	}
+	if err != nil {
+		return nil, checkpointsInvalid()
+	}
+	if len(value) == 0 {
+		return nil, nil
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(bytes.TrimSpace(value), &items); err != nil {
+		return nil, checkpointsInvalid()
+	}
+	lines := make([]string, 0, len(items))
+	for _, item := range items {
+		var line string
+		if err := json.Unmarshal(bytes.TrimSpace(item), &line); err != nil {
+			return nil, checkpointsInvalid()
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			return nil, checkpointsInvalid()
+		}
+		lines = append(lines, line)
+	}
+	encoded, err := json.Marshal(lines)
+	if err != nil {
+		return nil, checkpointsInvalid()
+	}
+	return encoded, nil
+}
 
 func normalizeAttachment(raw json.RawMessage, arrayOnly bool, invalid func() error) (json.RawMessage, error) {
 	value, err := normalizeJSONValue(raw, arrayOnly)

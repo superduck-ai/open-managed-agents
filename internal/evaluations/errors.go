@@ -18,7 +18,7 @@ const (
 	turnsRequiredMessage                = "turns must include at least one entry"
 	turnsInvalidMessage                 = "turns must be an array of strings"
 	turnEmptyMessage                    = "turns cannot include an empty entry"
-	checkpointsInvalidMessage           = "checkpoints must be a JSON array or object"
+	checkpointsInvalidMessage           = "checkpoints must be a JSON array of strings"
 	inputFilesInvalidMessage            = "input_files must be a JSON array"
 	referenceFilesInvalidMessage        = "reference_files must be a JSON array"
 	attachmentTooLargeMessage           = "case attachment is too large"

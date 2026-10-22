@@ -5,7 +5,7 @@ import { Button } from '../../shared/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
 import { evaluationErrorMessage } from './api';
-import { parseSessionCaseCheckpoints } from './sessionCase';
+import { parseCheckpointsField } from './sessionCase';
 import { IncludeOutputFilesField, SessionCaseFields } from './SessionCaseFields';
 import { useCreateEvaluationCaseFromSession, useEvaluationDatasetList } from './useEvaluationDatasets';
 
@@ -38,7 +38,7 @@ function AddSessionToDatasetDialog({ sessionId, onClose }: { sessionId: string; 
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const parsed = parseSessionCaseCheckpoints(checkpoints);
+    const parsed = parseCheckpointsField(checkpoints);
     if (parsed.error || selectedDatasetId === '') {
       setCheckpointError(Boolean(parsed.error));
       return;

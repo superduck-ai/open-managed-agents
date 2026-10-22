@@ -35,6 +35,14 @@ func TestAssignStoredCompanionsMatchesNamesAndCaseDirectories(t *testing.T) {
 	if !strings.Contains(string(assigned[0].ReferenceFiles), `"file_id":"file_gold"`) || !strings.Contains(string(assigned[1].ReferenceFiles), `"file_id":"file_gold"`) {
 		t.Fatalf("references = %s %s", assigned[0].ReferenceFiles, assigned[1].ReferenceFiles)
 	}
+	paths, err := assignStoredCompanions([]normalizedCase{{
+		Name:           "alpha",
+		InputFiles:     json.RawMessage(`["brief.txt"]`),
+		ReferenceFiles: json.RawMessage(`["gold.txt"]`),
+	}}, stored)
+	if err != nil || !strings.Contains(string(paths[0].InputFiles), `"file_id":"file_brief"`) || !strings.Contains(string(paths[0].ReferenceFiles), `"file_id":"file_gold"`) {
+		t.Fatalf("paths = %v %s %s", err, paths[0].InputFiles, paths[0].ReferenceFiles)
+	}
 	_, err = assignStoredCompanions([]normalizedCase{{
 		Name:       "alpha",
 		InputFiles: json.RawMessage(`[{"name":"missing.txt"}]`),

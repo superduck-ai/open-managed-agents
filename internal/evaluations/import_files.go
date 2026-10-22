@@ -187,13 +187,29 @@ func decodeCaseFileRefs(raw json.RawMessage) ([]sessionCaseFileRef, error) {
 	}
 	refs := make([]sessionCaseFileRef, 0, len(items))
 	for _, item := range items {
-		var ref sessionCaseFileRef
-		if err := json.Unmarshal(item, &ref); err != nil {
+		ref, err := decodeCaseFileRef(item)
+		if err != nil {
 			return nil, err
 		}
 		refs = append(refs, ref)
 	}
 	return refs, nil
+}
+
+func decodeCaseFileRef(item json.RawMessage) (sessionCaseFileRef, error) {
+	trimmed := strings.TrimSpace(string(item))
+	if strings.HasPrefix(trimmed, `"`) {
+		var name string
+		if err := json.Unmarshal([]byte(trimmed), &name); err != nil {
+			return sessionCaseFileRef{}, err
+		}
+		return sessionCaseFileRef{Name: strings.TrimSpace(name)}, nil
+	}
+	var ref sessionCaseFileRef
+	if err := json.Unmarshal(item, &ref); err != nil {
+		return sessionCaseFileRef{}, err
+	}
+	return ref, nil
 }
 
 func compactCaseFileRefs(refs []sessionCaseFileRef) []sessionCaseFileRef {

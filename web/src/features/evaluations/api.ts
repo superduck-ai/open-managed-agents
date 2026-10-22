@@ -139,6 +139,7 @@ export type CreateEvaluationCaseInput = {
   name: string;
   desc?: string;
   turns: string[];
+  checkpoints?: string[];
 };
 
 export type UpdateEvaluationCaseInput = {

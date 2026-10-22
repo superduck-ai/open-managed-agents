@@ -19,6 +19,8 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Textarea } from '../../shared/ui/textarea';
 import { evaluationErrorMessage, type EvaluationCase, type UpdateEvaluationCaseInput } from './api';
 import { evaluationCaseFiles, evaluationCaseJSON, type EvaluationCaseFile } from './caseFiles';
+import { checkpointsFieldValue, parseCheckpointsField } from './sessionCase';
+import { CheckpointsField } from './SessionCaseFields';
 import { useDeleteEvaluationCase, useUpdateEvaluationCase } from './useEvaluationDatasets';
 
 export function CaseDrawer({
@@ -82,9 +84,10 @@ function CaseEditor({
   const [name, setName] = useState(item.name);
   const [desc, setDesc] = useState(item.desc);
   const [turns, setTurns] = useState(item.turns.join('\n'));
-  const [checkpoints, setCheckpoints] = useState(evaluationCaseJSON(item.checkpoints));
+  const [checkpoints, setCheckpoints] = useState(checkpointsFieldValue(item.checkpoints));
   const [inputFiles, setInputFiles] = useState(evaluationCaseJSON(item.input_files));
   const [referenceFiles, setReferenceFiles] = useState(evaluationCaseJSON(item.reference_files));
+  const [checkpointError, setCheckpointError] = useState(false);
   const [jsonError, setJsonError] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const filesHint = msg(
@@ -95,12 +98,12 @@ function CaseEditor({
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     const parsed = caseUpdateInput({ name, desc, turns, checkpoints, inputFiles, referenceFiles });
-    if (!parsed) {
-      setJsonError(true);
+    setCheckpointError(parsed.checkpointError);
+    setJsonError(parsed.fileError);
+    if (!parsed.input) {
       return;
     }
-    setJsonError(false);
-    const saved = await update.mutateAsync({ caseId: item.id, body: parsed });
+    const saved = await update.mutateAsync({ caseId: item.id, body: parsed.input });
     onSaved(saved);
   }
 
@@ -112,11 +115,11 @@ function CaseEditor({
       <Textarea id="evaluation-case-desc" value={desc} onChange={(event) => setDesc(event.target.value)} />
       <Label htmlFor="evaluation-case-turns">{msg('evaluations.turns', 'Turns')}</Label>
       <Textarea id="evaluation-case-turns" value={turns} onChange={(event) => setTurns(event.target.value)} required />
-      <Label htmlFor="evaluation-case-checkpoints">{msg('evaluations.checkpoints', 'Checkpoints')}</Label>
-      <Textarea
+      <CheckpointsField
         id="evaluation-case-checkpoints"
         value={checkpoints}
-        onChange={(event) => setCheckpoints(event.target.value)}
+        onChange={setCheckpoints}
+        error={checkpointError}
       />
       <CaseFileField
         id="evaluation-case-input-files"
@@ -142,7 +145,7 @@ function CaseEditor({
       />
       {jsonError ? (
         <p className="text-sm text-destructive">
-          {msg('evaluations.caseJSONInvalid', 'Checkpoints and file lists must be valid JSON.')}
+          {msg('evaluations.caseJSONInvalid', 'File lists must be valid JSON.')}
         </p>
       ) : null}
       {update.error ? <p className="text-sm text-destructive">{evaluationErrorMessage(update.error)}</p> : null}
@@ -236,21 +239,28 @@ function caseUpdateInput(draft: {
   checkpoints: string;
   inputFiles: string;
   referenceFiles: string;
-}): UpdateEvaluationCaseInput | null {
+}): { input: UpdateEvaluationCaseInput | null; checkpointError: boolean; fileError: boolean } {
+  const parsedCheckpoints = parseCheckpointsField(draft.checkpoints);
   try {
     return {
-      name: draft.name,
-      desc: draft.desc,
-      turns: draft.turns
-        .split('\n')
-        .map((turn) => turn.trim())
-        .filter((turn) => turn.length > 0),
-      checkpoints: parseCaseJSON(draft.checkpoints, false),
-      input_files: parseCaseJSON(draft.inputFiles, true),
-      reference_files: parseCaseJSON(draft.referenceFiles, true),
+      checkpointError: Boolean(parsedCheckpoints.error),
+      fileError: false,
+      input: parsedCheckpoints.error
+        ? null
+        : {
+            name: draft.name,
+            desc: draft.desc,
+            turns: draft.turns
+              .split('\n')
+              .map((turn) => turn.trim())
+              .filter((turn) => turn.length > 0),
+            checkpoints: parsedCheckpoints.checkpoints,
+            input_files: parseCaseJSON(draft.inputFiles, true),
+            reference_files: parseCaseJSON(draft.referenceFiles, true),
+          },
     };
   } catch {
-    return null;
+    return { input: null, checkpointError: Boolean(parsedCheckpoints.error), fileError: true };
   }
 }
 

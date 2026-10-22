@@ -9,8 +9,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Textarea } from '../../shared/ui/textarea';
 import { evaluationErrorMessage, type EvaluationCase, type EvaluationCaseFromSessionsResult } from './api';
 import { CaseDrawer } from './CaseDrawer';
-import { parseSessionCaseCheckpoints, parseSessionIDs } from './sessionCase';
-import { IncludeOutputFilesField, SessionCaseFields } from './SessionCaseFields';
+import { parseCheckpointsField, parseSessionIDs } from './sessionCase';
+import { CheckpointsField, IncludeOutputFilesField, SessionCaseFields } from './SessionCaseFields';
 import {
   datasetIdFromPath,
   evaluationsIndexHref,
@@ -143,9 +143,17 @@ function AddCaseForm({ datasetId }: { datasetId: string }) {
   const [name, setName] = useState('');
   const [turns, setTurns] = useState('');
   const [desc, setDesc] = useState('');
+  const [checkpoints, setCheckpoints] = useState('');
+  const [checkpointError, setCheckpointError] = useState(false);
 
   function submit(event: FormEvent) {
     event.preventDefault();
+    const parsed = parseCheckpointsField(checkpoints);
+    if (parsed.error) {
+      setCheckpointError(true);
+      return;
+    }
+    setCheckpointError(false);
     create.mutate(
       {
         name,
@@ -154,12 +162,14 @@ function AddCaseForm({ datasetId }: { datasetId: string }) {
           .split('\n')
           .map((turn) => turn.trim())
           .filter((turn) => turn.length > 0),
+        checkpoints: parsed.checkpoints,
       },
       {
         onSuccess: () => {
           setName('');
           setTurns('');
           setDesc('');
+          setCheckpoints('');
         },
       },
     );
@@ -174,6 +184,12 @@ function AddCaseForm({ datasetId }: { datasetId: string }) {
       <Textarea id="evaluation-case-turns" value={turns} onChange={(event) => setTurns(event.target.value)} required />
       <Label htmlFor="evaluation-case-desc">{msg('evaluations.descriptionField', 'Description')}</Label>
       <Textarea id="evaluation-case-desc" value={desc} onChange={(event) => setDesc(event.target.value)} />
+      <CheckpointsField
+        id="evaluation-add-case-checkpoints"
+        value={checkpoints}
+        onChange={setCheckpoints}
+        error={checkpointError}
+      />
       {create.error ? <p className="text-sm text-destructive">{evaluationErrorMessage(create.error)}</p> : null}
       <Button type="submit" disabled={create.isPending}>
         {msg('evaluations.addCase', 'Add case')}
@@ -194,7 +210,7 @@ function ImportSessionCaseForm({ datasetId }: { datasetId: string }) {
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const parsed = parseSessionCaseCheckpoints(checkpoints);
+    const parsed = parseCheckpointsField(checkpoints);
     if (parsed.error) {
       setCheckpointError(true);
       return;
@@ -271,7 +287,7 @@ function ImportSessionsForm({ datasetId }: { datasetId: string }) {
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const parsed = parseSessionCaseCheckpoints(checkpoints);
+    const parsed = parseCheckpointsField(checkpoints);
     const ids = parseSessionIDs(sessionIDs);
     if (parsed.error || ids.length === 0) {
       setCheckpointError(Boolean(parsed.error));
@@ -384,6 +400,12 @@ function ImportCasesForm({ datasetId }: { datasetId: string }) {
         {msg('evaluations.importHint', 'One JSON object per line, with name and turns.')}
       </Label>
       <Textarea id="evaluation-case-jsonl" value={jsonl} onChange={(event) => setJsonl(event.target.value)} />
+      <p className="text-sm text-muted-foreground">
+        {msg(
+          'evaluations.importCheckpointsHint',
+          'checkpoints is an optional string array: an acceptance checklist for evaluators, not instructions for the agent. On the form, write one checkpoint per line.',
+        )}
+      </p>
       {tooLarge ? (
         <p className="text-sm text-destructive">
           {msg('evaluations.importFileTooLarge', 'File must be 100MB or smaller.')}

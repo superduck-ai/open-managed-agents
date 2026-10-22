@@ -1,18 +1,16 @@
 import { Plus } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
 
 import { useI18n } from '../../shared/i18n';
 import { Button } from '../../shared/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
-import { Input } from '../../shared/ui/input';
-import { Label } from '../../shared/ui/label';
 import { TableEmptyRow, TableErrorRow, TableLoadingRow } from '../../shared/ui/resource-table';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { evaluationErrorMessage, type EvaluationDataset } from './api';
+import { CreateDatasetDialog } from './CreateDatasetDialog';
 import { DatasetPresets } from './DatasetPresets';
 import { EvaluationOriginTabs, type EvaluationOrigin } from './EvaluationOriginTabs';
 import { EvaluationSectionNav } from './EvaluationSectionNav';
-import { evaluationDatasetHref, useCreateEvaluationDataset, useEvaluationDatasetList } from './useEvaluationDatasets';
+import { evaluationDatasetHref, useEvaluationDatasetList } from './useEvaluationDatasets';
 
 export function EvaluationsPage() {
   const { msg } = useI18n();
@@ -124,47 +122,4 @@ function datasetStatusLabel(status: EvaluationDataset['status'], msg: ReturnType
     return msg('evaluations.statusArchived', 'Archived');
   }
   return msg('evaluations.statusAvailable', 'Available');
-}
-
-function CreateDatasetDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const { msg } = useI18n();
-  const create = useCreateEvaluationDataset();
-  const [name, setName] = useState('');
-  const [desc, setDesc] = useState('');
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    create.mutate(
-      { name, desc },
-      {
-        onSuccess: () => {
-          setName('');
-          setDesc('');
-          onOpenChange(false);
-        },
-      },
-    );
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{msg('evaluations.create', 'Create dataset')}</DialogTitle>
-        </DialogHeader>
-        <form className="grid gap-3" onSubmit={submit}>
-          <Label htmlFor="evaluation-dataset-name">{msg('evaluations.name', 'Name')}</Label>
-          <Input id="evaluation-dataset-name" value={name} onChange={(event) => setName(event.target.value)} required />
-          <Label htmlFor="evaluation-dataset-description">{msg('evaluations.descriptionField', 'Description')}</Label>
-          <Input id="evaluation-dataset-description" value={desc} onChange={(event) => setDesc(event.target.value)} />
-          {create.error ? <p className="text-sm text-destructive">{evaluationErrorMessage(create.error)}</p> : null}
-          <DialogFooter>
-            <Button type="submit" disabled={create.isPending}>
-              {msg('evaluations.create', 'Create dataset')}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
 }

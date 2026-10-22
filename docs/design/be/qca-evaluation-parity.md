@@ -122,7 +122,7 @@ Workbench Evaluate 继续做 prompt 变量实验。评测集的 case 是 `turns`
 - 属于 `dataset_uuid` 和 `version_uuid`。`(version_uuid, position)` 唯一
 - `name` 必填。`description` 对应 API 的 `desc`
 - `turns` jsonb，必须是数组，且至少一条非空字符串
-- `checkpoints` 可空，只接受 JSON 数组或对象，不解释内部字段
+- `checkpoints` 可空，只接受 JSON 字符串数组。空字符串拒绝。这是给评估器核对的验收要求，不是发给被测 Agent 的指令
 - `input_files`、`reference_files` 可空，只接受 JSON 数组，不解释元素。`reference_files` 留到评估器使用
 
 `00096_evaluation_evaluators.sql` 增加自定义评估器。不建实验表或 memory pin 表。预置评估器不写进这张表。
@@ -269,9 +269,9 @@ M3 不做取消。不实现今日额度。创建、列表、读取、start 和 c
 
 Managed Agents 侧边栏在 Sessions 与 Observability 之间只有一条「评测」/ Evaluation，不显示 Beta。它打开评测集页。页内用 EvaluationSectionNav 保留三个页签：评测集、评估器、实验。不再把这三项做成并列的侧边栏入口。OMA 没有「分析」分组，所以不把评测放进用量分析。
 
-- `/workspaces/$workspaceId/evaluations`：Custom 与 Presets 两个页签。Custom 列出评测集，列有版本、用例数和状态，并可以创建（name、desc）。Presets 列出已发布目录，Reuse 打开已发布版本的 case，并以 `source_version_id` 复制成自定义评测集
-- `/workspaces/$workspaceId/evaluations/datasets/$datasetId`：当前版本、case 列表、点开用例抽屉。抽屉可以改 name、turns、desc、checkpoints 和 input/reference 的 `{name, file_id}` JSON，保存打到当前版本；删除要确认。有 `file_id` 时仍可下载。可以添加单条 case、粘贴 JSONL，或上传 JSONL / ZIP。ZIP 的伴随文件会变成 workspace Files。「从会话导入」/ Import from session 和「批量导入会话」/ Import sessions 仍在。后两个都可以勾选是否把输出文件写入 reference files。批量输入用换行或逗号分隔 session id，提交后按条显示成功数和失败原因
-- Session 详情：按钮「加入评测集」/ Add to evaluation dataset。选择未归档的自定义评测集，可选 name、desc、checkpoints JSON，以及是否包含输出文件。提交 `cases:from-session`。Session 列表没有多选，所以批量入口只在评测集 case 页
+- `/workspaces/$workspaceId/evaluations`：Custom 与 Presets 两个页签。Custom 列出评测集，列有版本、用例数和状态。创建对话框可以选择空白、上传 JSONL 或 ZIP，或从预置复制。对话框里的「如何创建评测集」/ How to create a dataset 说明格式和字段，并可以下载 `cases.jsonl` 模板。ZIP 示例是 `cases.jsonl` 加上可选的 `input_files/` 与 `reference_files/`，用例里写相对路径。Presets 列出已发布目录，Reuse 打开已发布版本的 case，并以 `source_version_id` 复制成自定义评测集
+- `/workspaces/$workspaceId/evaluations/datasets/$datasetId`：当前版本、case 列表、点开用例抽屉。抽屉可以改 name、turns、desc、checkpoints 和 input/reference 的 `{name, file_id}` JSON，保存打到当前版本；删除要确认。检查点输入是每行一条纯文本，提交时写成字符串数组；整段能解析成字符串 JSON 数组时按原样保存，对象或其他形状会提示改成每行一条或字符串数组。有 `file_id` 时仍可下载。可以添加单条 case、粘贴 JSONL，或上传 JSONL / ZIP。ZIP 的伴随文件会变成 workspace Files。JSONL 里的 `input_files` / `reference_files` 可以是相对路径字符串；能对上 ZIP 成员时写成 `{name, file_id}`。「从会话导入」/ Import from session 和「批量导入会话」/ Import sessions 仍在。后两个都可以勾选是否把输出文件写入 reference files。批量输入用换行或逗号分隔 session id，提交后按条显示成功数和失败原因
+- Session 详情：按钮「加入评测集」/ Add to evaluation dataset。选择未归档的自定义评测集，可选 name、desc、每行一条的检查点，以及是否包含输出文件。提交 `cases:from-session`。Session 列表没有多选，所以批量入口只在评测集 case 页
 - `/workspaces/$workspaceId/evaluations/evaluators`：Custom 与 Presets 两个页签。Custom 仍在 LLM 与 Agent 之间切换，名称链到详情。Presets 列出 11 个 Agent 维度。Create from preset 要填写真实 Agent，再复制预置 prompt
 - `/workspaces/$workspaceId/evaluations/evaluators/$evaluatorId`：三块。Prompt 区可以编辑。LLM 改 model、prompt 和变量，保存为新版本；已经创建的实验仍用旧版本。Agent 只改 `agent_id`，展示当前 prompt 或契约说明，不提供 Prompt 编辑框。输出指标是只读的 `{score, explanation, details}`，Agent 再标出 `result_path` 与 `score_path`。挂载技能是只读说明：技能在绑定的 Agent 上，评估器没有自己的 skills 字段；Agent 类型给出 Agent 详情链接。不把 QCA 技能原文写进预置
 

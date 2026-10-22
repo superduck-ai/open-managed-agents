@@ -44,11 +44,11 @@ export function useEvaluationDatasetList() {
   return { workspace, query };
 }
 
-export function useEvaluationDatasetPresetList() {
+export function useEvaluationDatasetPresetList(enabled = true) {
   const workspace = useEvaluationWorkspace();
   const query = useQuery({
     queryKey: ['evaluation-dataset-presets', workspace.orgUuid, workspace.workspaceId],
-    enabled: workspace.workspaceReady,
+    enabled: enabled && workspace.workspaceReady,
     queryFn: () => listEvaluationDatasetPresets(workspace.orgUuid ?? '', workspace.workspaceId),
   });
   return { workspace, query };

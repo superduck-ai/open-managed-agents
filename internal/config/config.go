@@ -122,10 +122,7 @@ func validate(cfg Config) error {
 	if err := ValidateMasterKey(cfg.Vault.MasterKey); err != nil {
 		return err
 	}
-	if err := validateObservabilityConfig(cfg.Observability); err != nil {
-		return err
-	}
-	if err := validateCodeSessionSandboxAPIBaseURL(cfg.Env, cfg.CodeSession, cfg.Observability.Enabled); err != nil {
+	if err := validateCodeSessionSandboxAPIBaseURL(cfg.Env, cfg.CodeSession); err != nil {
 		return err
 	}
 	if err := validatePlatformOAuthClients(cfg.Vault.PlatformOAuthClients); err != nil {
@@ -453,17 +450,9 @@ func validateHashicorpVaultMasterKey(mk MasterKeyConfig) error {
 	return nil
 }
 
-// validateCodeSessionSandboxAPIBaseURL 校验 sandbox 回连 OMA 的地址
-// （启动 payload 里的 startup_context.api_base_url）。常规会话流量走
-// environment-manager relay，不依赖该地址，所以平时可以为空；但开启
-// observability 后 worker 要用它拼 OTLP 导出 endpoint 把遥测送回 OMA，
-// 为空会导致 sandbox 内导出静默失败、数据永远不到达，因此升级为启动期硬错误。
-func validateCodeSessionSandboxAPIBaseURL(environment string, cfg CodeSessionConfig, observabilityEnabled bool) error {
+func validateCodeSessionSandboxAPIBaseURL(environment string, cfg CodeSessionConfig) error {
 	baseURL := strings.TrimSpace(cfg.SandboxAPIBaseURL)
 	if baseURL == "" {
-		if observabilityEnabled {
-			return errors.New("code_session.sandbox_api_base_url is required when observability.enabled is true")
-		}
 		return nil
 	}
 	parsed, err := url.Parse(baseURL)
@@ -506,8 +495,6 @@ func validatePositiveValues(cfg Config) error {
 		{name: "e2b.sandbox_timeout", valid: cfg.E2B.SandboxTimeout > 0},
 		{name: "environment_runner.concurrency", valid: cfg.EnvironmentRunner.Concurrency > 0},
 		{name: "environment_runner.package_provision_timeout", valid: cfg.EnvironmentRunner.PackageProvisionTimeout > 0},
-		{name: "observability.otlp.max_request_bytes", valid: cfg.Observability.OTLP.MaxRequestBytes > 0},
-		{name: "observability.otlp.forward_timeout", valid: cfg.Observability.OTLP.ForwardTimeout > 0},
 		{name: "webhook.concurrency", valid: cfg.Webhook.Concurrency > 0},
 		{name: "webhook.timeout", valid: cfg.Webhook.Timeout > 0},
 		{name: "webhook.max_attempts", valid: cfg.Webhook.MaxAttempts > 0},
@@ -524,9 +511,15 @@ func validatePositiveValues(cfg Config) error {
 	return nil
 }
 
-func validateObservabilityConfig(cfg ObservabilityConfig) error {
+func ValidateObservabilityConfig(cfg ObservabilityConfig) error {
 	if !cfg.Enabled {
 		return nil
+	}
+	if cfg.OTLP.MaxRequestBytes <= 0 {
+		return errors.New("observability.otlp.max_request_bytes must be greater than zero")
+	}
+	if cfg.OTLP.ForwardTimeout <= 0 {
+		return errors.New("observability.otlp.forward_timeout must be greater than zero")
 	}
 	switch strings.TrimSpace(cfg.Backend) {
 	case ObservabilityBackendOpenObserve:
@@ -544,7 +537,6 @@ func validateOpenObserveConfig(cfg OpenObserveConfig) error {
 		{name: "observability.openobserve.base_url", value: cfg.BaseURL},
 		{name: "observability.openobserve.organization", value: cfg.Organization},
 		{name: "observability.openobserve.logs_stream", value: cfg.LogsStream},
-		{name: "observability.openobserve.traces_stream", value: cfg.TracesStream},
 		{name: "observability.openobserve.ingestion.username", value: cfg.Ingestion.Username},
 		{name: "observability.openobserve.ingestion.password", value: cfg.Ingestion.Password},
 		{name: "observability.openobserve.query.username", value: cfg.Query.Username},

@@ -4,6 +4,7 @@ import { sandboxEndpoint } from "./oma-sandbox/config.ts";
 import { webToolDefinitions } from "./web-tools/definitions.ts";
 
 export interface Assignment {
+  observability_enabled?: boolean;
   session_id: string;
   worker_epoch: number;
   ingress_token: string;

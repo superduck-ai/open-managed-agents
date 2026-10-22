@@ -32,6 +32,7 @@ export async function registerWorkerTask(api: OmaApi, task: BrainTask, signal?: 
     throw new PermanentAdmissionError("Invalid session_context");
   const assignment: Assignment = {
     ...task,
+    observability_enabled: registered.observability_enabled === true,
     external_mcp_config: context.mcp_config,
     launch: {
       version: 2, model: context.model, model_backends: context.model_backends, work_dir: context.cwd,

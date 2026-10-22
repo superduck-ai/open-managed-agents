@@ -16,7 +16,7 @@ docker compose
 │   ├── node 2 (:4223/8223)
 │   └── node 3 (:4224/8224)
 ├── minio (:9000/9001)   — S3 兼容对象存储
-└── openobserve (:5082)  — OTel Logs、Metrics 和 Traces 存储，仅回环地址开放调试入口
+└── openobserve (:5082)  — 可选的 DSH OTLP Logs 存储，仅回环地址开放调试入口
 ```
 
 **依赖关系**：
@@ -41,7 +41,7 @@ MITM 默认开启。`just init-compose-config` 同时准备 `config/secrets/upst
 | minio       | `docker.io/pgsty/minio:latest`                | 社区维护 fork（原版已归档）   |
 | oma-server  | `Dockerfile`（多阶段构建）                    | Go 后端 + 前端 bun build      |
 | e2b-local   | `Dockerfile`（多阶段构建）                    | Go 后端 + envd 二进制         |
-| openobserve | `public.ecr.aws/zinclabs/openobserve:v0.91.1` | 固定版本的单节点 OTel 存储    |
+| openobserve | `public.ecr.aws/zinclabs/openobserve:v1.1.2` | 固定版本的单节点 OTel 存储    |
 
 所有服务镜像均为公开可拉取，无需本地编译。
 
@@ -204,14 +204,14 @@ docker compose down -v     # 同时删除数据卷
 | NATS monitoring      | `http://localhost:8222` / `8223` / `8224` |
 | OpenObserve 调试入口 | `http://localhost:5082`                   |
 
+OpenObserve 是可选依赖，位于 `observability` Compose profile。普通 `docker compose up -d` 不启动该服务，部署配置默认 `observability.enabled: false`。需要观测时，在核心服务启动后单独执行 `docker compose --profile observability up -d openobserve`，并在 OMA 配置中显式开启 `observability.enabled`、设置匹配的写入和查询凭据。未启用、未部署或运行中故障不影响后端启动、readiness 和聊天执行；只影响观测上报和查询。本地 dev-init 使用独立模板，默认启用本地观测。
+
 OpenObserve 数据保存在独立的 `openobservedata` named volume。Compose 设置
-`ZO_COMPACT_DATA_RETENTION_DAYS=61` 和 `ZO_IGNORE_FILE_RETENTION_BY_STREAM=true`，确保 Logs、Metrics 和
-Traces 统一保存 61 天——Analytics 需要对比最大 30 天当前窗口与上一等长窗口，保留期必须覆盖两个窗口，且
-Stream 设置不能延长全局保留期。本地调试端口只绑定 `127.0.0.1`；OMA 服务间访问
+`ZO_COMPACT_DATA_RETENTION_DAYS=61` 和 `ZO_IGNORE_FILE_RETENTION_BY_STREAM=true`，让原生 Session 日志保存 61 天。Stream 设置不能延长全局保留期。本地调试端口只绑定 `127.0.0.1`；OMA 服务间访问
 使用 `http://openobserve:5080`。
 
-新生成的 `oma-server.local.yaml` 默认启用 Observability 和内容采集，并使用 Compose 的
-OpenObserve 本地账号。修改 Compose 账号时需同步修改该文件；生产环境必须使用独立 Secret。
+新生成的 `oma-server.local.yaml` 默认关闭 Observability，保留内容采集策略与 Compose 的
+OpenObserve 本地账号配置，供显式启用时使用。修改 Compose 账号时需同步修改该文件；生产环境必须使用独立 Secret。
 `just init-compose-config` 不覆盖已有文件，旧部署升级时需手动补齐开关和凭据。
 
 ## 8. 本地开发模式

@@ -1,99 +1,55 @@
 package observability
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 )
 
-func errInvalidArgument(message string) error {
-	return apperr.New(apperr.InvalidArgument, message, nil)
+var ErrHistoryGap = errors.New("trajectory history gap")
+var ErrEventConflict = errors.New("trajectory event conflict")
+
+func InvalidTimeRange() error {
+	return apperr.New(apperr.InvalidArgument, "invalid trajectory time range", nil)
 }
 
-func errNotFound(message string) error {
-	return apperr.New(apperr.NotFound, message, nil)
+func InvalidTimeWindow() error {
+	return apperr.New(apperr.InvalidArgument, "trajectory time range must be positive and at most one year", nil)
 }
 
-func errTimeout(message string, cause error) error {
-	return apperr.New(apperr.Timeout, message, cause)
+func InvalidCursor() error {
+	return apperr.New(apperr.InvalidArgument, "invalid trajectory cursor", nil)
 }
 
-func errUnavailable(message string, cause error) error {
-	return apperr.New(apperr.Unavailable, message, cause)
+func InvalidOffset() error {
+	return apperr.New(apperr.InvalidArgument, "invalid trajectory offset", nil)
 }
 
-func errInternal(message string, cause error) error {
-	return apperr.New(apperr.Internal, message, cause)
+func MissingTrajectoryID() error {
+	return apperr.New(apperr.InvalidArgument, "trajectory id is required", nil)
 }
 
-func errRequestTooLarge(message string) error {
-	return apperr.New(apperr.RequestTooLarge, message, nil)
+func invalidStorageScope() error {
+	return apperr.New(apperr.Internal, "invalid trajectory storage scope", nil)
 }
 
-func QueryTimeout(cause error) error {
-	return errTimeout("observability query timed out", cause)
+func historyGap(expected, actual int64) error {
+	return apperr.New(apperr.Unavailable, "trajectory history has a sequence gap", fmt.Errorf("%w: expected %d, got %d", ErrHistoryGap, expected, actual))
 }
 
-func QueryUnavailable(cause error) error {
-	return errUnavailable("observability query is unavailable", cause)
+func eventConflict() error {
+	return apperr.New(apperr.Conflict, "trajectory contains conflicting events", ErrEventConflict)
 }
 
-func QueryInternal(message string, cause error) error {
-	return errInternal(message, cause)
+func unavailable(cause error) error {
+	return apperr.New(apperr.Unavailable, "trajectory storage is unavailable", cause)
 }
 
-func MissingScopePlaceholder() error {
-	return errMissingScopePlaceholder()
+func invalidResponse(cause error) error {
+	return apperr.New(apperr.Internal, "invalid trajectory storage response", cause)
 }
 
-func UnresolvedPlaceholder(placeholder string) error {
-	return errUnresolvedPlaceholder(placeholder)
-}
-
-func InvalidLiteral(message string) error {
-	return errInvalidArgument(message)
-}
-
-func QueryRequestTooLarge() error {
-	return errRequestTooLarge("observability query request is too large")
-}
-
-func errQueryRefNotFound(queryRef string) error {
-	return errNotFound(fmt.Sprintf("query_ref %q was not found", queryRef))
-}
-
-func errAgentNotFound() error {
-	return errNotFound("agent not found")
-}
-
-func errSessionNotFound() error {
-	return errNotFound("session not found")
-}
-
-func errMissingScopePlaceholder() error {
-	return errInternal("observability query is missing a tenant scope placeholder", nil)
-}
-
-func errUnresolvedPlaceholder(placeholder string) error {
-	return errInternal(fmt.Sprintf("observability query has unresolved placeholder %s", placeholder), nil)
-}
-
-func errInvalidRequestBody() error {
-	return errInvalidArgument("request body must be a JSON object")
-}
-
-func errQueryRefRequired() error {
-	return errInvalidArgument("query_ref is required")
-}
-
-func errInvalidStatus() error {
-	return errInvalidArgument("status must be ok or error")
-}
-
-func errInvalidOffset() error {
-	return errInvalidArgument("offset must be a non-negative integer")
-}
-
-func errTraceIDRequired() error {
-	return errInvalidArgument("trace_id is required")
+func notFound() error {
+	return apperr.New(apperr.NotFound, "trajectory resource not found", nil)
 }

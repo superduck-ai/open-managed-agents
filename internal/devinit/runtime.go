@@ -74,6 +74,7 @@ func setRuntimeLocked(ctx context.Context, repoRoot string, apiPort, webPort int
 	runtime.NATSPort2 = stackPorts.NATSPort2
 	runtime.NATSPort3 = stackPorts.NATSPort3
 	runtime.MinIOPort = stackPorts.MinIOPort
+	runtime.OpenObservePort = stackPorts.OpenObservePort
 	runtime.E2BPort = stackPorts.E2BPort
 	spec, err := LoadSpec(binding.InitFile)
 	if err != nil {

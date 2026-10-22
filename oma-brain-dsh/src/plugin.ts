@@ -3,6 +3,7 @@ import { OmaApi } from "./api.ts";
 import { createOmaCcrClient, logOmaHeartbeatHealth, stopOmaSessionOnLeaseLoss } from "./oma-ccrv2.ts";
 import type { CcrClient } from "./ccrv2";
 import * as CcrBridge from "./ccrv2/index.ts";
+import { mountTelemetry } from "./observability/index.ts";
 import { mountKernel } from "./kernel.ts";
 import * as LlmAiSdk from "./llm-ai-sdk/index.ts";
 import { omaModelOptions } from "./model.ts";
@@ -28,6 +29,7 @@ export async function mountOma(
       onHealth: logOmaHeartbeatHealth,
     },
   });
+  await mountTelemetry(ctx, api);
   await ctx.plugin(LlmAiSdk, { providers: ["oma"], adapter: omaModelOptions(api, ctx.get("attachments")) });
   return client;
 }

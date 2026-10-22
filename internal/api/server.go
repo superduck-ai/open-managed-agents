@@ -30,7 +30,6 @@ import (
 	messagesapi "github.com/superduck-ai/open-managed-agents/internal/messages"
 	modelsapi "github.com/superduck-ai/open-managed-agents/internal/models"
 	"github.com/superduck-ai/open-managed-agents/internal/observability"
-	"github.com/superduck-ai/open-managed-agents/internal/observability/openobserve"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	platformapi "github.com/superduck-ai/open-managed-agents/internal/platformapi"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
@@ -120,6 +119,10 @@ type ServerDeps struct {
 // 注入 CodeSessionCredentials，保证 HTTP 验签与 sandbox 启动签发使用同一公钥身份。
 func NewServer(deps ServerDeps) *Server {
 	rootLogger := logging.LoggerOrDefault(deps.Logger)
+	if err := config.ValidateObservabilityConfig(deps.Config.Observability); err != nil {
+		deps.Config.Observability.Enabled = false
+		rootLogger.With("component", "observability").Warn("observability disabled", "error", err)
+	}
 	componentLogger := func(component string) *slog.Logger {
 		return rootLogger.With("component", component)
 	}
@@ -318,8 +321,8 @@ func (s *Server) registerPlatformConsoleRoutes(
 			if s.cfg.Observability.Enabled {
 				obsLogger := s.logger.With("component", "observability")
 				// 配置校验保证 enabled 时 backend 只会是受支持的值。
-				backend := openobserve.New(s.cfg.Observability.OpenObserve, obsLogger)
-				handler := observability.NewHandler(backend, observability.DBStore{DB: s.db}, obsLogger)
+				backend := observability.NewOpenObserve(s.cfg.Observability.OpenObserve, nil)
+				handler := observability.New(backend, s.db)
 				platformapi.RegisterOrganizationObservabilityRoutes(r, handler, obsLogger)
 			}
 		})

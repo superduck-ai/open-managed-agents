@@ -73,8 +73,7 @@ func defaultConfig() Config {
 			OpenObserve: OpenObserveConfig{
 				BaseURL:      "http://openobserve:5080",
 				Organization: "oma",
-				LogsStream:   "oma_claude_code",
-				TracesStream: "oma_claude_code",
+				LogsStream:   "oma_dsh",
 				Query: BackendQueryConfig{
 					Timeout: 15 * time.Second,
 				},

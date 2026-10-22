@@ -34,6 +34,7 @@ func TestEvaluationOpenAPIContract(t *testing.T) {
 		{method: "post", path: evaluationOpenAPIPrefix + "/evaluation-datasets/{datasetId}/cases", id: "ConsoleCreateEvaluationCase"},
 		{method: "post", path: evaluationOpenAPIPrefix + "/evaluation-datasets/{datasetId}/cases:import", id: "ConsoleImportEvaluationCases"},
 		{method: "post", path: evaluationOpenAPIPrefix + "/evaluation-datasets/{datasetId}/cases:from-session", id: "ConsoleCreateEvaluationCaseFromSession"},
+		{method: "post", path: evaluationOpenAPIPrefix + "/evaluation-datasets/{datasetId}/cases:from-sessions", id: "ConsoleCreateEvaluationCasesFromSessions"},
 		{method: "get", path: evaluationOpenAPIPrefix + "/evaluation-dataset-presets", id: "ConsoleListEvaluationDatasetPresets"},
 		{method: "get", path: evaluationOpenAPIPrefix + "/evaluation-dataset-presets/{presetId}", id: "ConsoleGetEvaluationDatasetPreset"},
 		{method: "get", path: evaluationOpenAPIPrefix + "/evaluation-dataset-presets/{presetId}/cases", id: "ConsoleListEvaluationDatasetPresetCases"},
@@ -89,8 +90,22 @@ func assertEvaluationSchemaFields(t *testing.T, spec openAPISpec) {
 		t.Fatalf("%s dataset create missing source_version_id", spec.Language)
 	}
 	fromSession := spec.Components.Schemas["EvaluationCaseFromSession"].Properties
-	if _, ok := fromSession["session_id"]; !ok {
-		t.Fatalf("%s case from session missing session_id", spec.Language)
+	for _, field := range []string{"session_id", "include_output_files"} {
+		if _, ok := fromSession[field]; !ok {
+			t.Fatalf("%s case from session missing %s", spec.Language, field)
+		}
+	}
+	fromSessions := spec.Components.Schemas["EvaluationCasesFromSessions"].Properties
+	for _, field := range []string{"session_ids", "name_prefix", "include_output_files"} {
+		if _, ok := fromSessions[field]; !ok {
+			t.Fatalf("%s cases from sessions missing %s", spec.Language, field)
+		}
+	}
+	batch := spec.Components.Schemas["EvaluationCasesFromSessionsResult"].Properties
+	for _, field := range []string{"created", "failed"} {
+		if _, ok := batch[field]; !ok {
+			t.Fatalf("%s cases from sessions result missing %s", spec.Language, field)
+		}
 	}
 	if _, ok := evaluator["source_version_id"]; !ok {
 		t.Fatalf("%s evaluator create missing source_version_id", spec.Language)

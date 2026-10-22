@@ -69,6 +69,7 @@ type Handler struct {
 	starter CaseSessionStarter
 	model   EvaluatorModel
 	sandbox AgentScoreSandbox
+	files   CaseFileCopier
 }
 
 func NewHandler(store Store, logger *slog.Logger) *Handler {
@@ -90,6 +91,11 @@ func (h *Handler) WithAgentScoreSandbox(sandbox AgentScoreSandbox) *Handler {
 	return h
 }
 
+func (h *Handler) WithCaseFileCopier(copier CaseFileCopier) *Handler {
+	h.files = copier
+	return h
+}
+
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/workspaces/{workspaceId}/evaluation-datasets", h.wrap(h.createDataset))
 	r.Get("/workspaces/{workspaceId}/evaluation-datasets", h.wrap(h.listDatasets))
@@ -103,6 +109,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases", h.wrap(h.createCase))
 	r.Post("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:import", h.wrap(h.importCases))
 	r.Post("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:from-session", h.wrap(h.createCaseFromSession))
+	r.Post("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases:from-sessions", h.wrap(h.createCasesFromSessions))
 	r.Post("/workspaces/{workspaceId}/evaluation-evaluators", h.wrap(h.createEvaluator))
 	r.Get("/workspaces/{workspaceId}/evaluation-evaluators", h.wrap(h.listEvaluators))
 	r.Get("/workspaces/{workspaceId}/evaluation-evaluators/{evaluatorId}", h.wrap(h.getEvaluator))

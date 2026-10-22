@@ -513,8 +513,15 @@ func (s *evaluationStoreStub) CreateEvaluationExperimentScore(_ context.Context,
 	return score, nil
 }
 
-func (s *evaluationStoreStub) ListSessionEventsPage(_ context.Context, _ db.ListSessionEventsPageParams) ([]db.SessionEvent, bool, error) {
-	return append([]db.SessionEvent(nil), s.sessionEvents...), false, nil
+func (s *evaluationStoreStub) ListSessionEventsPage(_ context.Context, params db.ListSessionEventsPageParams) ([]db.SessionEvent, bool, error) {
+	events := make([]db.SessionEvent, 0, len(s.sessionEvents))
+	for _, event := range s.sessionEvents {
+		if event.SessionExternalID != "" && event.SessionExternalID != params.SessionExternalID {
+			continue
+		}
+		events = append(events, event)
+	}
+	return events, false, nil
 }
 
 func (s *evaluationStoreStub) GetSession(_ context.Context, workspaceUUID, externalID string) (db.Session, bool, error) {

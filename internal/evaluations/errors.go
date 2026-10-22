@@ -31,6 +31,8 @@ const (
 	datasetArchivedMessage          = "Evaluation dataset is archived"
 	sessionIDRequiredMessage        = "session_id is required"
 	sessionIDTooLongMessage         = "session_id must be at most 255 characters"
+	sessionIDsRequiredMessage       = "session_ids must include at least one entry"
+	sessionIDsTooManyMessage        = "session_ids accepts at most 50 entries"
 	sessionNotFoundMessage          = "Session not found"
 	scoringSessionMessage           = "Evaluation scoring sessions cannot be added to a dataset"
 	loadSessionFailedMessage        = "Could not load session"
@@ -178,6 +180,14 @@ func sessionIDRequired() error {
 
 func sessionIDTooLong() error {
 	return apperr.New(apperr.InvalidArgument, sessionIDTooLongMessage, nil)
+}
+
+func sessionIDsRequired() error {
+	return apperr.New(apperr.InvalidArgument, sessionIDsRequiredMessage, nil)
+}
+
+func sessionIDsTooMany() error {
+	return apperr.New(apperr.InvalidArgument, sessionIDsTooManyMessage, nil)
 }
 
 func sessionNotFound() error {

@@ -146,6 +146,20 @@ export type CreateEvaluationCaseFromSessionInput = {
   name?: string;
   desc?: string;
   checkpoints?: unknown;
+  include_output_files?: boolean;
+};
+
+export type CreateEvaluationCasesFromSessionsInput = {
+  session_ids: string[];
+  name_prefix?: string;
+  desc?: string;
+  checkpoints?: unknown;
+  include_output_files?: boolean;
+};
+
+export type EvaluationCaseFromSessionsResult = {
+  created: EvaluationCase[];
+  failed: Array<{ session_id: string; error: string }>;
 };
 
 export type EvaluationExperimentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -344,6 +358,24 @@ export function createEvaluationCaseFromSession(
     csrfToken,
     body: JSON.stringify(input),
   });
+}
+
+export function createEvaluationCasesFromSessions(
+  orgUuid: string,
+  workspaceId: string,
+  datasetId: string,
+  input: CreateEvaluationCasesFromSessionsInput,
+  csrfToken?: string,
+) {
+  return consoleApi<EvaluationCaseFromSessionsResult>(
+    `${datasetPath(orgUuid, workspaceId, datasetId)}/cases:from-sessions`,
+    {
+      method: 'POST',
+      headers: workspaceHeaders(workspaceId),
+      csrfToken,
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 export function importEvaluationCases(

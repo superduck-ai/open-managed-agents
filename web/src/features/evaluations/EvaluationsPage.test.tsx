@@ -162,11 +162,11 @@ test('imports a dataset case from a session id', async () => {
 
   renderPage(<DatasetCasesPage />);
   fireEvent.change(await screen.findByLabelText('Session'), { target: { value: 'sesn_case' } });
-  fireEvent.change(screen.getByLabelText('Checkpoints'), { target: { value: '{' } });
+  fireEvent.change(screen.getAllByLabelText('Checkpoints')[0], { target: { value: '{' } });
   fireEvent.click(screen.getByRole('button', { name: 'Import from session' }));
   expect(await screen.findByText('Checkpoints must be a JSON array or object.')).toBeTruthy();
   expect(requests.some((request) => request.method === 'POST')).toBe(false);
-  fireEvent.change(screen.getByLabelText('Checkpoints'), { target: { value: '["ready"]' } });
+  fireEvent.change(screen.getAllByLabelText('Checkpoints')[0], { target: { value: '["ready"]' } });
   fireEvent.change(screen.getAllByLabelText('Name')[1], { target: { value: 'checkout' } });
   fireEvent.click(screen.getByRole('button', { name: 'Import from session' }));
   await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
@@ -178,7 +178,48 @@ test('imports a dataset case from a session id', async () => {
     name: 'checkout',
     desc: '',
     checkpoints: ['ready'],
+    include_output_files: false,
   });
+});
+
+test('imports several sessions and shows per-id failures', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/datasets/evalds_test');
+  const requests: Array<{ url: string; method: string; body: string }> = [];
+  globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    requests.push({ url, method, body: typeof init?.body === 'string' ? init.body : '' });
+    if (url.includes('/cases:from-sessions')) {
+      return Response.json({
+        created: [{ id: 'evalcase_from_session', type: 'evaluation_case' }],
+        failed: [{ session_id: 'sesn_missing', error: 'Session not found' }],
+      });
+    }
+    if (url.endsWith('/cases')) {
+      return Response.json({ data: [], next_page: null });
+    }
+    return Response.json(dataset());
+  });
+
+  renderPage(<DatasetCasesPage />);
+  fireEvent.change(await screen.findByLabelText('Session ids'), {
+    target: { value: 'sesn_ok, sesn_missing\nsesn_ok' },
+  });
+  fireEvent.change(screen.getByLabelText('Name prefix'), { target: { value: 'bad-' } });
+  const outputFiles = document.querySelectorAll('input[type="checkbox"]')[1] as HTMLInputElement;
+  fireEvent.click(outputFiles);
+  await waitFor(() => expect(screen.getAllByRole('checkbox')[1].getAttribute('aria-checked')).toBe('true'));
+  fireEvent.click(screen.getByRole('button', { name: 'Import sessions' }));
+  await waitFor(() => expect(requests.some((request) => request.url.includes('/cases:from-sessions'))).toBe(true));
+  const created = requests.find((request) => request.url.includes('/cases:from-sessions'));
+  expect(JSON.parse(created?.body ?? '{}')).toEqual({
+    session_ids: ['sesn_ok', 'sesn_missing', 'sesn_ok'],
+    name_prefix: 'bad-',
+    desc: '',
+    include_output_files: true,
+  });
+  expect(await screen.findByText('Added 1.')).toBeTruthy();
+  expect(screen.getByText('sesn_missing: Session not found')).toBeTruthy();
 });
 
 test('adds a session to a custom evaluation dataset', async () => {
@@ -233,6 +274,7 @@ test('adds a session to a custom evaluation dataset', async () => {
     name: '',
     desc: '',
     checkpoints: ['ready'],
+    include_output_files: false,
   });
 });
 

@@ -7,14 +7,15 @@ import { Label } from '../../shared/ui/label';
 import { TableEmptyRow, TableErrorRow, TableLoadingRow } from '../../shared/ui/resource-table';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { Textarea } from '../../shared/ui/textarea';
-import { evaluationErrorMessage, type EvaluationCase } from './api';
-import { parseSessionCaseCheckpoints } from './sessionCase';
-import { SessionCaseFields } from './SessionCaseFields';
+import { evaluationErrorMessage, type EvaluationCase, type EvaluationCaseFromSessionsResult } from './api';
+import { parseSessionCaseCheckpoints, parseSessionIDs } from './sessionCase';
+import { IncludeOutputFilesField, SessionCaseFields } from './SessionCaseFields';
 import {
   datasetIdFromPath,
   evaluationsIndexHref,
   useCreateEvaluationCase,
   useCreateEvaluationCaseFromSession,
+  useCreateEvaluationCasesFromSessions,
   useEvaluationCaseList,
   useImportEvaluationCases,
 } from './useEvaluationDatasets';
@@ -51,6 +52,7 @@ export function DatasetCasesPage() {
         <AddCaseForm datasetId={datasetId} />
         <ImportCasesForm datasetId={datasetId} />
         <ImportSessionCaseForm datasetId={datasetId} />
+        <ImportSessionsForm datasetId={datasetId} />
       </div>
       <Table>
         <TableHeader>
@@ -165,6 +167,7 @@ function ImportSessionCaseForm({ datasetId }: { datasetId: string }) {
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
   const [checkpoints, setCheckpoints] = useState('');
+  const [includeOutputFiles, setIncludeOutputFiles] = useState(false);
   const [checkpointError, setCheckpointError] = useState(false);
 
   function submit(event: FormEvent) {
@@ -176,7 +179,13 @@ function ImportSessionCaseForm({ datasetId }: { datasetId: string }) {
     }
     setCheckpointError(false);
     create.mutate(
-      { session_id: sessionId, name, desc, checkpoints: parsed.checkpoints },
+      {
+        session_id: sessionId,
+        name,
+        desc,
+        checkpoints: parsed.checkpoints,
+        include_output_files: includeOutputFiles,
+      },
       {
         onSuccess: () => {
           setSessionId('');
@@ -214,9 +223,95 @@ function ImportSessionCaseForm({ datasetId }: { datasetId: string }) {
         onDesc={setDesc}
         onCheckpoints={setCheckpoints}
       />
+      <IncludeOutputFilesField
+        id="import-session-case-outputs"
+        checked={includeOutputFiles}
+        onChange={setIncludeOutputFiles}
+      />
       {create.error ? <p className="text-sm text-destructive">{evaluationErrorMessage(create.error)}</p> : null}
       <Button type="submit" disabled={create.isPending}>
         {msg('evaluations.importFromSession', 'Import from session')}
+      </Button>
+    </form>
+  );
+}
+
+function ImportSessionsForm({ datasetId }: { datasetId: string }) {
+  const { msg } = useI18n();
+  const create = useCreateEvaluationCasesFromSessions(datasetId);
+  const [sessionIDs, setSessionIDs] = useState('');
+  const [namePrefix, setNamePrefix] = useState('');
+  const [desc, setDesc] = useState('');
+  const [checkpoints, setCheckpoints] = useState('');
+  const [includeOutputFiles, setIncludeOutputFiles] = useState(false);
+  const [checkpointError, setCheckpointError] = useState(false);
+  const [result, setResult] = useState<EvaluationCaseFromSessionsResult | null>(null);
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const parsed = parseSessionCaseCheckpoints(checkpoints);
+    const ids = parseSessionIDs(sessionIDs);
+    if (parsed.error || ids.length === 0) {
+      setCheckpointError(Boolean(parsed.error));
+      return;
+    }
+    setCheckpointError(false);
+    create.mutate(
+      {
+        session_ids: ids,
+        name_prefix: namePrefix,
+        desc,
+        checkpoints: parsed.checkpoints,
+        include_output_files: includeOutputFiles,
+      },
+      { onSuccess: (created) => setResult(created) },
+    );
+  }
+
+  return (
+    <form className="grid gap-3 lg:col-span-2" onSubmit={submit}>
+      <h2 className="text-sm font-medium">{msg('evaluations.importSessions', 'Import sessions')}</h2>
+      <p className="text-sm text-muted-foreground">
+        {msg('evaluations.sessionIdsHint', 'One session id per line, or separated by commas. At most 50.')}
+      </p>
+      <Label htmlFor="evaluation-case-sessions">{msg('evaluations.sessionIds', 'Session ids')}</Label>
+      <Textarea
+        id="evaluation-case-sessions"
+        value={sessionIDs}
+        onChange={(event) => setSessionIDs(event.target.value)}
+        required
+      />
+      <Label htmlFor="evaluation-case-prefix">{msg('evaluations.namePrefix', 'Name prefix')}</Label>
+      <Input id="evaluation-case-prefix" value={namePrefix} onChange={(event) => setNamePrefix(event.target.value)} />
+      <SessionCaseFields
+        idPrefix="import-sessions"
+        showName={false}
+        desc={desc}
+        checkpoints={checkpoints}
+        checkpointError={checkpointError}
+        onDesc={setDesc}
+        onCheckpoints={setCheckpoints}
+      />
+      <IncludeOutputFilesField
+        id="import-sessions-outputs"
+        checked={includeOutputFiles}
+        onChange={setIncludeOutputFiles}
+      />
+      {create.error ? <p className="text-sm text-destructive">{evaluationErrorMessage(create.error)}</p> : null}
+      {result ? (
+        <div className="grid gap-1">
+          <p className="text-sm text-muted-foreground">
+            {msg('evaluations.sessionsImported', 'Added {count}.', { count: result.created.length })}
+          </p>
+          {result.failed.map((item, index) => (
+            <p key={`${item.session_id}-${index}`} className="text-sm text-destructive">
+              {item.session_id}: {item.error}
+            </p>
+          ))}
+        </div>
+      ) : null}
+      <Button type="submit" disabled={create.isPending}>
+        {msg('evaluations.importSessions', 'Import sessions')}
       </Button>
     </form>
   );

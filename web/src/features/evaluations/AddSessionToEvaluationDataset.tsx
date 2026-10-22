@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
 import { evaluationErrorMessage } from './api';
 import { parseSessionCaseCheckpoints } from './sessionCase';
-import { SessionCaseFields } from './SessionCaseFields';
+import { IncludeOutputFilesField, SessionCaseFields } from './SessionCaseFields';
 import { useCreateEvaluationCaseFromSession, useEvaluationDatasetList } from './useEvaluationDatasets';
 
 export function AddSessionToEvaluationDataset({ sessionId }: { sessionId: string }) {
@@ -33,6 +33,7 @@ function AddSessionToDatasetDialog({ sessionId, onClose }: { sessionId: string; 
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
   const [checkpoints, setCheckpoints] = useState('');
+  const [includeOutputFiles, setIncludeOutputFiles] = useState(false);
   const [checkpointError, setCheckpointError] = useState(false);
 
   function submit(event: FormEvent) {
@@ -44,7 +45,13 @@ function AddSessionToDatasetDialog({ sessionId, onClose }: { sessionId: string; 
     }
     setCheckpointError(false);
     create.mutate(
-      { session_id: sessionId, name, desc, checkpoints: parsed.checkpoints },
+      {
+        session_id: sessionId,
+        name,
+        desc,
+        checkpoints: parsed.checkpoints,
+        include_output_files: includeOutputFiles,
+      },
       {
         onSuccess: () => {
           onClose();
@@ -81,6 +88,11 @@ function AddSessionToDatasetDialog({ sessionId, onClose }: { sessionId: string; 
             onName={setName}
             onDesc={setDesc}
             onCheckpoints={setCheckpoints}
+          />
+          <IncludeOutputFilesField
+            id="session-case-outputs"
+            checked={includeOutputFiles}
+            onChange={setIncludeOutputFiles}
           />
           {create.error ? <p className="text-sm text-destructive">{evaluationErrorMessage(create.error)}</p> : null}
           <DialogFooter>

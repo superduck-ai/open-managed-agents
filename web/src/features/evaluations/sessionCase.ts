@@ -1,3 +1,10 @@
+export function parseSessionIDs(value: string) {
+  return value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
 export function parseSessionCaseCheckpoints(value: string): { checkpoints?: unknown; error?: boolean } {
   const trimmed = value.trim();
   if (!trimmed) {

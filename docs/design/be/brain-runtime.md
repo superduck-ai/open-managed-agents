@@ -347,7 +347,7 @@ OMA 侧只提供配置，由 `plugin.ts` 以 `providers: ["oma"]` 加载插件�
 - `model-provider.ts`：按会话取得 assignment 与实际模型的 backend，每次请求用当前 model token
   创建 provider，Messages 使用 `authToken`（Bearer），Chat 使用 `apiKey`（Bearer）。自定义 fetch
   只允许向对应 Go 代理路径发送 POST，删除 `x-api-key`，为子 Agent 设置
-  `X-Claude-Code-Agent-Id`，禁止重定向，总超时 300 秒。Messages 路由默认输出上限 8192，
+  `X-Claude-Code-Agent-Id`，禁止重定向，总超时 300 秒。Messages 路由默认输出上限 943718，
   关闭 SDK 默认的 `eager_input_streaming`；Chat 未显式指定时不发送上限，并把 `max_tokens`
   改名为 `max_completion_tokens`。
 - `chat-reasoning.ts`：Chat 响应进入 AI SDK 前按与 Go 相同的规则规范化 reasoning 字段，
@@ -372,3 +372,7 @@ HTTP 与流内错误、取消、工具分片、大参数线性耗时、用量尾
 主子模型 backend 选择和凭据轮换。
 
 `oma-brain-dsh/tests/chat-runtime.test.ts` 通过原生 Brain 与本地协议 fixture 执行工具审批、工具结果下一轮回传、关闭后历史恢复，确认恢复不会重复执行已完成的工具。该测试不连接真实模型或 Worker 沙箱。
+
+### 默认输出预算
+
+Messages backend 的默认输出预算为 943718 token（依据 2026-10-22 OpenRouter `/api/v1/models` 中精确型号 `deepseek/deepseek-v4.1-flash` 的 `top_provider.max_completion_tokens`），调用方显式提供 maxTokens 时仍优先使用显式值。推理模型的推理内容与最终正文共享输出预算；原先固定 8192 token 会使长资料抽取和全量事实复核在正文完成前终止。预算扩大只提高单次上限，不强制消耗完整额度，也不能将截断结果视为成功；仍须正常结束回合。该变更需发布 Brain 后才影响正式站。

@@ -41,3 +41,5 @@
 回归覆盖供应商限定模型的价格与预算校验、同名模型的供应商隔离、触顶后新请求拒绝及迟到结算、提高和移除预算后的消息接纳，以及详情页旧 idle 事件下的发送恢复。
 
 Brain 从 `session_context.billing` 读取共享会话预算和当前模型价格；`narrows` 与兼容 slug `default` 读取 Narrows 源，其他 slug 使用 OpenRouter 参考价。有预算且缺价的请求在上游调用前拒绝，预算触顶仍由开始事件事务做最终门禁。协议和文件部署说明见 [标价文件缓存](model-price-file-cache.md)。
+
+预算触顶后，状态写入事务忽略迟到的会话／主线程 running、rescheduling 和非 budget_reached 的 idle，避免 Worker 报告覆盖公开暂停原因。子线程状态、在途请求结算以及终止／删除仍允许写入。提高或移除预算清除触顶标记后，普通运行与结束状态恢复接收。

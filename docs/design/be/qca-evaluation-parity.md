@@ -1,6 +1,7 @@
 # QCA Evaluation 对齐计划
 
-- 状态：M1 评测集、M2 自定义评估器、M3 实验与 Compare、Session 终态收口、LLM 打分和预置目录已实现。Agent 评估器打分 sandbox 仍未执行。今日额度不在范围内。
+- 状态：M1 评测集、M2 自定义评估器、M3 实验与 Compare、Session 终态收口、LLM 打分、Agent 打分 Session 和预置目录已实现。今日额度不在范围内。
+- 剩余缺口：timeout 与 env 仍只落在实验上，不注入 case Session 或打分 Session。没有真实 E2B 端到端。打分 Agent 的版本未冻结，用的是启动当时的当前版本。契约路径对应 sandbox 的 `/mnt/session/uploads/data/session/result.json` 与 `/mnt/session/outputs/score.json`，容器里没有字面的 `/data` 与 `/output`。Compare 页还不展示 score 列。没有 OpenAPI。
 - 日期：2026-10-22
 - 来源：qoder.com.cn 企业控制台，分析 → 评测（Beta）。下文只采用这次实测看到的信息架构和字段，不补写未出现的产品文案。没有 QCA 目录导出，所以预置内容是标明 OMA demo 的示例，不是 QCA 原文。
 - 非目标：不改 Workbench Evaluate 的请求、表格或测试预期。不实现今日额度、额度计数或额度 UI。不复制 QCA 预置 case 或评估器正文。

@@ -8,6 +8,8 @@ import {
   getEvaluationDataset,
   importEvaluationCases,
   listEvaluationCases,
+  listEvaluationDatasetPresetCases,
+  listEvaluationDatasetPresets,
   listEvaluationDatasets,
   type CreateEvaluationCaseInput,
   type CreateEvaluationDatasetInput,
@@ -33,6 +35,26 @@ export function useEvaluationDatasetList() {
     queryFn: () => listEvaluationDatasets(workspace.orgUuid ?? '', workspace.workspaceId),
   });
   return { workspace, query };
+}
+
+export function useEvaluationDatasetPresetList() {
+  const workspace = useEvaluationWorkspace();
+  const query = useQuery({
+    queryKey: ['evaluation-dataset-presets', workspace.orgUuid, workspace.workspaceId],
+    enabled: workspace.workspaceReady,
+    queryFn: () => listEvaluationDatasetPresets(workspace.orgUuid ?? '', workspace.workspaceId),
+  });
+  return { workspace, query };
+}
+
+export function useEvaluationDatasetPresetCases(presetId: string, versionId: string) {
+  const workspace = useEvaluationWorkspace();
+  return useQuery({
+    queryKey: ['evaluation-dataset-preset-cases', workspace.orgUuid, workspace.workspaceId, presetId, versionId],
+    enabled: workspace.workspaceReady && presetId.length > 0 && versionId.length > 0,
+    queryFn: () =>
+      listEvaluationDatasetPresetCases(workspace.orgUuid ?? '', workspace.workspaceId, presetId, versionId),
+  });
 }
 
 export function useCreateEvaluationDataset() {

@@ -121,44 +121,69 @@ func (d *DB) CreateEvaluationCases(ctx context.Context, organizationUUID, worksp
 		if positionErr != nil {
 			return positionErr
 		}
-		created = make([]EvaluationCase, 0, len(writes))
-		for _, write := range writes {
-			position++
-			turnsJSON, encodeErr := encodeEvaluationTurns(write.Turns)
-			if encodeErr != nil {
-				return encodeErr
-			}
-			row, insertErr := cases.Insert(ctx, evaluationCaseWriteParams{
-				UUID:               write.UUID,
-				ExternalID:         write.ExternalID,
-				OrganizationUUID:   organizationUUID,
-				WorkspaceUUID:      workspaceUUID,
-				DatasetUUID:        dataset.UUID,
-				VersionUUID:        version.UUID,
-				Position:           position,
-				Name:               write.Name,
-				Description:        write.Description,
-				TurnsJSON:          turnsJSON,
-				CheckpointsJSON:    encodeOptionalJSON(write.Checkpoints),
-				InputFilesJSON:     encodeOptionalJSON(write.InputFiles),
-				ReferenceFilesJSON: encodeOptionalJSON(write.ReferenceFiles),
-				CreatedAt:          now,
-			})
-			if insertErr != nil {
-				return insertErr
-			}
-			item, decodeErr := row.evaluationCase(dataset.ExternalID, version.ExternalID)
-			if decodeErr != nil {
-				return decodeErr
-			}
-			created = append(created, item)
+		inserted, insertErr := insertEvaluationCaseWrites(ctx, cases, evaluationCaseInsertTarget{
+			OrganizationUUID:  organizationUUID,
+			WorkspaceUUID:     workspaceUUID,
+			DatasetUUID:       dataset.UUID,
+			DatasetExternalID: dataset.ExternalID,
+			VersionUUID:       version.UUID,
+			VersionExternalID: version.ExternalID,
+		}, writes, position, now)
+		if insertErr != nil {
+			return insertErr
 		}
+		created = inserted
 		return nil
 	})
 	if isUniqueViolation(err) {
 		return nil, ErrDuplicate
 	}
 	return created, err
+}
+
+type evaluationCaseInsertTarget struct {
+	OrganizationUUID  string
+	WorkspaceUUID     string
+	DatasetUUID       string
+	DatasetExternalID string
+	VersionUUID       string
+	VersionExternalID string
+}
+
+func insertEvaluationCaseWrites(ctx context.Context, cases EvaluationCaseMapper, target evaluationCaseInsertTarget, writes []EvaluationCaseWrite, position int, now time.Time) ([]EvaluationCase, error) {
+	created := make([]EvaluationCase, 0, len(writes))
+	for _, write := range writes {
+		position++
+		turnsJSON, err := encodeEvaluationTurns(write.Turns)
+		if err != nil {
+			return nil, err
+		}
+		row, err := cases.Insert(ctx, evaluationCaseWriteParams{
+			UUID:               write.UUID,
+			ExternalID:         write.ExternalID,
+			OrganizationUUID:   target.OrganizationUUID,
+			WorkspaceUUID:      target.WorkspaceUUID,
+			DatasetUUID:        target.DatasetUUID,
+			VersionUUID:        target.VersionUUID,
+			Position:           position,
+			Name:               write.Name,
+			Description:        write.Description,
+			TurnsJSON:          turnsJSON,
+			CheckpointsJSON:    encodeOptionalJSON(write.Checkpoints),
+			InputFilesJSON:     encodeOptionalJSON(write.InputFiles),
+			ReferenceFilesJSON: encodeOptionalJSON(write.ReferenceFiles),
+			CreatedAt:          now,
+		})
+		if err != nil {
+			return nil, err
+		}
+		item, err := row.evaluationCase(target.DatasetExternalID, target.VersionExternalID)
+		if err != nil {
+			return nil, err
+		}
+		created = append(created, item)
+	}
+	return created, nil
 }
 
 func (row evaluationCaseRow) evaluationCase(datasetExternalID, versionExternalID string) (EvaluationCase, error) {

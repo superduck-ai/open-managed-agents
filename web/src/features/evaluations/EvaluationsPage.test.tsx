@@ -215,6 +215,140 @@ test('lists experiments and creates one', async () => {
   });
 });
 
+test('reuses a published dataset preset', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations');
+  const requests: Array<{ url: string; method: string; body: string }> = [];
+  globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    requests.push({ url, method, body: typeof init?.body === 'string' ? init.body : '' });
+    if (method === 'POST') {
+      return Response.json(dataset({ id: 'evalds_copied', name: 'copied' }));
+    }
+    if (url.includes('/evaluation-dataset-presets/') && url.includes('/cases')) {
+      return Response.json({
+        data: [
+          {
+            id: 'evalcase_oma_demo_03_v2_01',
+            type: 'evaluation_case',
+            dataset_id: 'evalds_oma_demo_03',
+            version_id: 'edv_oma_demo_03_v2',
+            position: 1,
+            name: 'OMA demo case 01',
+            desc: '',
+            turns: ['OMA demo case 1 on dataset 3 version 2. Reply with the word ready.'],
+            checkpoints: null,
+            input_files: null,
+            reference_files: null,
+            created_at: '2026-10-22T00:00:00Z',
+            updated_at: '2026-10-22T00:00:00Z',
+          },
+        ],
+        next_page: null,
+      });
+    }
+    if (url.includes('/evaluation-dataset-presets')) {
+      return Response.json({
+        data: [
+          {
+            id: 'evalds_oma_demo_03',
+            type: 'evaluation_dataset_preset',
+            name: 'OMA demo dataset 03',
+            desc: 'OMA demo preset. Not a QCA dataset.',
+            status: 'available',
+            versions: [
+              { id: 'edv_oma_demo_03_v1', version: 1, case_count: 1 },
+              { id: 'edv_oma_demo_03_v2', version: 2, case_count: 2 },
+            ],
+            published_at: '2026-10-22T00:00:00Z',
+          },
+        ],
+        next_page: null,
+      });
+    }
+    return Response.json({ data: [dataset()], next_page: null });
+  });
+
+  renderPage(<EvaluationsPage />);
+  fireEvent.click(await screen.findByRole('tab', { name: 'Presets' }));
+  expect(await screen.findByText('OMA demo dataset 03')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Reuse OMA demo dataset 03' }));
+  expect(await screen.findByText('OMA demo case 1 on dataset 3 version 2. Reply with the word ready.')).toBeTruthy();
+  const dialog = screen.getByRole('dialog');
+  fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'copied' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Reuse' }));
+  await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
+  const created = requests.find((request) => request.method === 'POST');
+  expect(created?.url).toContain('/evaluation-datasets');
+  expect(JSON.parse(created?.body ?? '{}')).toEqual({
+    name: 'copied',
+    desc: '',
+    source_version_id: 'edv_oma_demo_03_v2',
+  });
+  expect(requests.some((request) => request.url.includes('version_id=edv_oma_demo_03_v2'))).toBe(true);
+});
+
+test('creates an evaluator from a published preset', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/evaluators');
+  const requests: Array<{ url: string; method: string; body: string; csrf: string }> = [];
+  globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    const headers = new Headers(init?.headers);
+    requests.push({
+      url,
+      method,
+      body: typeof init?.body === 'string' ? init.body : '',
+      csrf: headers.get('X-CSRF-Token') ?? '',
+    });
+    if (method === 'POST') {
+      return Response.json(evaluator());
+    }
+    if (url.includes('/evaluation-evaluator-presets')) {
+      return Response.json({
+        data: [
+          {
+            id: 'evalev_oma_demo_01',
+            type: 'evaluation_evaluator_preset',
+            name: 'OMA demo evaluator 01',
+            desc: 'OMA demo preset. Not a QCA evaluator.',
+            status: 'available',
+            version: {
+              id: 'eev_oma_demo_01_v1',
+              version: 1,
+              evaluator_type: 'llm',
+              model: 'oma-demo',
+              prompt_template: 'OMA demo scorer. Score the answer from 0 to 1. {{input}}',
+              variables: ['input'],
+            },
+            created_at: '2026-10-22T00:00:00Z',
+            updated_at: '2026-10-22T00:00:00Z',
+          },
+        ],
+        next_page: null,
+      });
+    }
+    return Response.json({ data: [evaluator()], next_page: null });
+  });
+
+  renderPage(<EvaluatorsPage />);
+  fireEvent.click(await screen.findByRole('tab', { name: 'Presets' }));
+  expect(await screen.findByText('OMA demo evaluator 01')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Create from preset OMA demo evaluator 01' }));
+  const dialog = screen.getByRole('dialog');
+  fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'copied judge' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Create from preset' }));
+  await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
+  const created = requests.find((request) => request.method === 'POST');
+  expect(created?.url).toContain('/evaluation-evaluators');
+  expect(created?.csrf).toBe('csrf_test');
+  expect(JSON.parse(created?.body ?? '{}')).toEqual({
+    name: 'copied judge',
+    desc: '',
+    source_version_id: 'eev_oma_demo_01_v1',
+  });
+});
+
 test('compare shows an empty state when no experiments are completed', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/experiments/compare');
   globalThis.fetch = mock(async () => Response.json({ data: [], next_page: null }));

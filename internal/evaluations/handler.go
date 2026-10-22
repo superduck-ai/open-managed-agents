@@ -20,6 +20,7 @@ import (
 
 type Store interface {
 	CreateEvaluationDataset(context.Context, db.EvaluationDataset) (db.EvaluationDataset, error)
+	CreateEvaluationDatasetWithCases(context.Context, db.EvaluationDataset, []db.EvaluationCaseWrite) (db.EvaluationDataset, error)
 	ListEvaluationDatasetsPage(context.Context, db.ListEvaluationDatasetsPageParams) ([]db.EvaluationDataset, bool, error)
 	GetEvaluationDataset(context.Context, string, string, string) (db.EvaluationDataset, error)
 	ListEvaluationCasesPage(context.Context, db.ListEvaluationCasesPageParams) ([]db.EvaluationCase, bool, error)
@@ -82,6 +83,11 @@ func (h *Handler) WithEvaluatorModel(model EvaluatorModel) *Handler {
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/workspaces/{workspaceId}/evaluation-datasets", h.wrap(h.createDataset))
 	r.Get("/workspaces/{workspaceId}/evaluation-datasets", h.wrap(h.listDatasets))
+	r.Get("/workspaces/{workspaceId}/evaluation-dataset-presets", h.wrap(h.listDatasetPresets))
+	r.Get("/workspaces/{workspaceId}/evaluation-dataset-presets/{presetId}", h.wrap(h.getDatasetPreset))
+	r.Get("/workspaces/{workspaceId}/evaluation-dataset-presets/{presetId}/cases", h.wrap(h.listDatasetPresetCases))
+	r.Get("/workspaces/{workspaceId}/evaluation-evaluator-presets", h.wrap(h.listEvaluatorPresets))
+	r.Get("/workspaces/{workspaceId}/evaluation-evaluator-presets/{presetId}", h.wrap(h.getEvaluatorPreset))
 	r.Get("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}", h.wrap(h.getDataset))
 	r.Get("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases", h.wrap(h.listCases))
 	r.Post("/workspaces/{workspaceId}/evaluation-datasets/{datasetId}/cases", h.wrap(h.createCase))
@@ -109,9 +115,18 @@ func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	created, err := h.store.CreateEvaluationDataset(r.Context(), dataset)
-	if err != nil {
-		return mapStoreError(err, datasetNotFoundMessage, createDatasetFailedMessage)
+	sourceVersionID := strings.TrimSpace(body.SourceVersionID)
+	var created db.EvaluationDataset
+	if sourceVersionID == "" {
+		created, err = h.store.CreateEvaluationDataset(r.Context(), dataset)
+		if err != nil {
+			return mapStoreError(err, datasetNotFoundMessage, createDatasetFailedMessage)
+		}
+	} else {
+		created, err = h.createDatasetFromPreset(r.Context(), dataset, sourceVersionID)
+		if err != nil {
+			return err
+		}
 	}
 	httpapi.WriteJSON(w, http.StatusOK, datasetResponseFrom(created))
 	return nil

@@ -2,14 +2,11 @@ package evaluations
 
 import (
 	"net/http"
-	"time"
+	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
-	"github.com/superduck-ai/open-managed-agents/internal/ids"
-
-	"github.com/google/uuid"
 )
 
 func (h *Handler) createEvaluator(w http.ResponseWriter, r *http.Request) error {
@@ -20,6 +17,9 @@ func (h *Handler) createEvaluator(w http.ResponseWriter, r *http.Request) error 
 	body, err := httpapi.DecodeObjectBodyAs[createEvaluatorRequest](w, r, maxDatasetBodyBytes)
 	if err != nil {
 		return invalidJSONRequest(err)
+	}
+	if strings.TrimSpace(body.SourceVersionID) != "" {
+		return h.createEvaluatorFromPreset(w, r, principal, *body)
 	}
 	evaluator, err := newEvaluator(principal, *body)
 	if err != nil {
@@ -73,35 +73,11 @@ func newEvaluator(principal auth.Principal, body createEvaluatorRequest) (db.Eva
 	if err != nil {
 		return db.EvaluationEvaluator{}, err
 	}
-	externalID, err := ids.New("evalev_")
-	if err != nil {
-		return db.EvaluationEvaluator{}, mapStoreError(err, evaluatorNotFoundMessage, createEvaluatorFailedMessage)
-	}
-	versionID, err := ids.New("eev_")
-	if err != nil {
-		return db.EvaluationEvaluator{}, mapStoreError(err, evaluatorNotFoundMessage, createEvaluatorFailedMessage)
-	}
-	now := time.Now().UTC()
-	return db.EvaluationEvaluator{
-		UUID:              uuid.NewString(),
-		ExternalID:        externalID,
-		OrganizationUUID:  principal.OrganizationUUID,
-		WorkspaceUUID:     principal.WorkspaceUUID,
-		Name:              normalized.Name,
-		Description:       normalized.Description,
-		CreatedByUserUUID: principal.UserUUID,
-		CreatedAt:         now,
-		UpdatedAt:         now,
-		Version: db.EvaluationEvaluatorVersion{
-			UUID:           uuid.NewString(),
-			ExternalID:     versionID,
-			Version:        1,
-			EvaluatorType:  normalized.EvaluatorType,
-			Model:          normalized.Model,
-			AgentID:        normalized.AgentID,
-			PromptTemplate: normalized.PromptTemplate,
-			Variables:      normalized.Variables,
-			CreatedAt:      now,
-		},
-	}, nil
+	return newCustomEvaluator(principal, normalized.Name, normalized.Description, db.EvaluationEvaluatorVersion{
+		EvaluatorType:  normalized.EvaluatorType,
+		Model:          normalized.Model,
+		AgentID:        normalized.AgentID,
+		PromptTemplate: normalized.PromptTemplate,
+		Variables:      normalized.Variables,
+	})
 }

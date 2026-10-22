@@ -307,6 +307,14 @@ func (s *evaluationStoreStub) CreateEvaluationDataset(_ context.Context, dataset
 	return dataset, nil
 }
 
+func (s *evaluationStoreStub) CreateEvaluationDatasetWithCases(_ context.Context, dataset db.EvaluationDataset, writes []db.EvaluationCaseWrite) (db.EvaluationDataset, error) {
+	s.createDatasetCalls++
+	s.createdDataset = &dataset
+	s.createdWrites = append([]db.EvaluationCaseWrite(nil), writes...)
+	dataset.Version.CaseCount = len(writes)
+	return dataset, nil
+}
+
 func (s *evaluationStoreStub) ListEvaluationDatasetsPage(_ context.Context, params db.ListEvaluationDatasetsPageParams) ([]db.EvaluationDataset, bool, error) {
 	s.listDatasetCalls++
 	s.lastDatasetList = params

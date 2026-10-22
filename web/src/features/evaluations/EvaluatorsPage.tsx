@@ -17,13 +17,16 @@ import {
   type EvaluationEvaluator,
   type EvaluationEvaluatorType,
 } from './api';
+import { EvaluationOriginTabs, type EvaluationOrigin } from './EvaluationOriginTabs';
 import { EvaluationSectionNav } from './EvaluationSectionNav';
+import { EvaluatorPresets } from './EvaluatorPresets';
 import { useCreateEvaluationEvaluator, useEvaluationEvaluatorList } from './useEvaluationEvaluators';
 
 export function EvaluatorsPage() {
   const { msg } = useI18n();
   const { workspace, query } = useEvaluationEvaluatorList();
   const [createOpen, setCreateOpen] = useState(false);
+  const [section, setSection] = useState<EvaluationOrigin>('custom');
   const evaluators = query.data?.data ?? [];
 
   return (
@@ -40,28 +43,35 @@ export function EvaluatorsPage() {
             })}
           </p>
         </div>
-        <Button type="button" className="h-9 shrink-0" onClick={() => setCreateOpen(true)}>
-          <Plus className="size-4" aria-hidden />
-          {msg('evaluations.createEvaluator', 'Create evaluator')}
-        </Button>
+        {section === 'custom' ? (
+          <Button type="button" className="h-9 shrink-0" onClick={() => setCreateOpen(true)}>
+            <Plus className="size-4" aria-hidden />
+            {msg('evaluations.createEvaluator', 'Create evaluator')}
+          </Button>
+        ) : null}
       </header>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>{msg('evaluations.name', 'Name')}</TableHead>
-            <TableHead>{msg('evaluations.evaluatorType', 'Type')}</TableHead>
-            <TableHead>{msg('evaluations.descriptionField', 'Description')}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <EvaluatorRows
-            evaluators={evaluators}
-            isLoading={!workspace.workspaceReady || query.isLoading}
-            errorMessage={query.error ? evaluationErrorMessage(query.error) : ''}
-            onRetry={() => void query.refetch()}
-          />
-        </TableBody>
-      </Table>
+      <EvaluationOriginTabs section={section} onSection={setSection} />
+      {section === 'presets' ? (
+        <EvaluatorPresets onCreated={() => setSection('custom')} />
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{msg('evaluations.name', 'Name')}</TableHead>
+              <TableHead>{msg('evaluations.evaluatorType', 'Type')}</TableHead>
+              <TableHead>{msg('evaluations.descriptionField', 'Description')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <EvaluatorRows
+              evaluators={evaluators}
+              isLoading={!workspace.workspaceReady || query.isLoading}
+              errorMessage={query.error ? evaluationErrorMessage(query.error) : ''}
+              onRetry={() => void query.refetch()}
+            />
+          </TableBody>
+        </Table>
+      )}
       <CreateEvaluatorDialog open={createOpen} onOpenChange={setCreateOpen} />
     </section>
   );

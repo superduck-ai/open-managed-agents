@@ -9,6 +9,8 @@ import { Label } from '../../shared/ui/label';
 import { TableEmptyRow, TableErrorRow, TableLoadingRow } from '../../shared/ui/resource-table';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { evaluationErrorMessage, type EvaluationDataset } from './api';
+import { DatasetPresets } from './DatasetPresets';
+import { EvaluationOriginTabs, type EvaluationOrigin } from './EvaluationOriginTabs';
 import { EvaluationSectionNav } from './EvaluationSectionNav';
 import { evaluationDatasetHref, useCreateEvaluationDataset, useEvaluationDatasetList } from './useEvaluationDatasets';
 
@@ -16,6 +18,7 @@ export function EvaluationsPage() {
   const { msg } = useI18n();
   const { workspace, query } = useEvaluationDatasetList();
   const [createOpen, setCreateOpen] = useState(false);
+  const [section, setSection] = useState<EvaluationOrigin>('custom');
   const datasets = query.data?.data ?? [];
 
   return (
@@ -32,28 +35,35 @@ export function EvaluationsPage() {
             })}
           </p>
         </div>
-        <Button type="button" className="h-9 shrink-0" onClick={() => setCreateOpen(true)}>
-          <Plus className="size-4" aria-hidden />
-          {msg('evaluations.create', 'Create dataset')}
-        </Button>
+        {section === 'custom' ? (
+          <Button type="button" className="h-9 shrink-0" onClick={() => setCreateOpen(true)}>
+            <Plus className="size-4" aria-hidden />
+            {msg('evaluations.create', 'Create dataset')}
+          </Button>
+        ) : null}
       </header>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>{msg('evaluations.name', 'Name')}</TableHead>
-            <TableHead>{msg('evaluations.descriptionField', 'Description')}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <DatasetRows
-            datasets={datasets}
-            workspaceId={workspace.workspaceId}
-            isLoading={!workspace.workspaceReady || query.isLoading}
-            errorMessage={query.error ? evaluationErrorMessage(query.error) : ''}
-            onRetry={() => void query.refetch()}
-          />
-        </TableBody>
-      </Table>
+      <EvaluationOriginTabs section={section} onSection={setSection} />
+      {section === 'presets' ? (
+        <DatasetPresets onReused={() => setSection('custom')} />
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{msg('evaluations.name', 'Name')}</TableHead>
+              <TableHead>{msg('evaluations.descriptionField', 'Description')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <DatasetRows
+              datasets={datasets}
+              workspaceId={workspace.workspaceId}
+              isLoading={!workspace.workspaceReady || query.isLoading}
+              errorMessage={query.error ? evaluationErrorMessage(query.error) : ''}
+              onRetry={() => void query.refetch()}
+            />
+          </TableBody>
+        </Table>
+      )}
       <CreateDatasetDialog open={createOpen} onOpenChange={setCreateOpen} />
     </section>
   );

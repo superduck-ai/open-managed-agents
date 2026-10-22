@@ -20,13 +20,14 @@ var evaluatorVariableOrder = []string{"input", "output", "checkpoints", "agent_t
 var evaluatorScoreFields = []string{"score", "explanation", "details"}
 
 type createEvaluatorRequest struct {
-	Name           string   `json:"name"`
-	Desc           string   `json:"desc"`
-	EvaluatorType  string   `json:"evaluator_type"`
-	Model          string   `json:"model"`
-	AgentID        string   `json:"agent_id"`
-	PromptTemplate string   `json:"prompt_template"`
-	Variables      []string `json:"variables"`
+	Name            string   `json:"name"`
+	Desc            string   `json:"desc"`
+	EvaluatorType   string   `json:"evaluator_type"`
+	Model           string   `json:"model"`
+	AgentID         string   `json:"agent_id"`
+	PromptTemplate  string   `json:"prompt_template"`
+	Variables       []string `json:"variables"`
+	SourceVersionID string   `json:"source_version_id"`
 }
 
 type normalizedEvaluator struct {

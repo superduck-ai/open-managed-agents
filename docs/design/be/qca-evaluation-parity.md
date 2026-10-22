@@ -1,9 +1,9 @@
 # QCA Evaluation 对齐计划
 
-- 状态：M1 评测集、M2 自定义评估器和 M3 实验与 Compare 已实现。Session 终态事件会把实验 item 从 running 收成 completed 或 failed，并汇总实验状态。case 以 `end_turn` 完成后，冻结的 LLM 评估器会写入 score；Agent 评估器只记下未执行。预置目录延后，可选。今日额度不在范围内。
+- 状态：M1 评测集、M2 自定义评估器、M3 实验与 Compare、Session 终态收口、LLM 打分和预置目录已实现。Agent 评估器打分 sandbox 仍未执行。今日额度不在范围内。
 - 日期：2026-10-22
-- 来源：qoder.com.cn 企业控制台，分析 → 评测（Beta）。下文只采用这次实测看到的信息架构和字段，不补写未出现的产品文案。
-- 非目标：不改 Workbench Evaluate 的请求、表格或测试预期。不实现今日额度、额度计数或额度 UI。本切片不做预置目录，也不打分。
+- 来源：qoder.com.cn 企业控制台，分析 → 评测（Beta）。下文只采用这次实测看到的信息架构和字段，不补写未出现的产品文案。没有 QCA 目录导出，所以预置内容是标明 OMA demo 的示例，不是 QCA 原文。
+- 非目标：不改 Workbench Evaluate 的请求、表格或测试预期。不实现今日额度、额度计数或额度 UI。不复制 QCA 预置 case 或评估器正文。
 
 Workbench Evaluate 仍是 prompt revision 上的变量行 A/B。QCA 评测不是这个表格，也没有一等的 Runs、Outcome 或 Results 页面；那些路径在实测里是空壳。
 
@@ -85,11 +85,11 @@ flowchart LR
 
 | QCA feature | OMA today | gap | proposed approach | priority |
 | --- | --- | --- | --- | --- |
-| 评测集：创建、导入、列出，带版本和 case | Evaluate 行挂在单个 prompt revision 上。CSV 只覆盖变量和 ideal output | 没有 workspace 级评测集、版本和 turns case | M1：`evaluation_datasets`、`evaluation_dataset_versions`、`evaluation_cases`。创建集时写入版本 1。JSONL/ZIP 导入。不迁移 `workbench_evaluations`，不预置官方数据集 | P0，本切片 |
-| 评估器 | M2 可创建、列出、读取自定义评估器。LLM 保存单个 model 和 prompt。Agent 保存打分 Agent id。case `end_turn` 后 LLM 评估器会打分并落库 | 预置评估器延后。今日额度不实现。Agent 打分 sandbox 仍未执行，score 行记为 failed | M2：`evaluation_evaluators` 与版本 1。变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。LLM 打分复用已有 provider。Agent 的 `/data/session/result.json` 与 `/output/score.json` 仍不执行 | P0，本切片 |
+| 评测集：创建、导入、列出，带版本和 case | M1 可创建、导入、列出 workspace 评测集。创建时可以复用已发布预置版本的 case | 预置正文不是 QCA 原文 | M1：`evaluation_datasets`、`evaluation_dataset_versions`、`evaluation_cases`。创建集时写入版本 1。JSONL/ZIP 导入。不迁移 `workbench_evaluations` | P0，本切片 |
+| 评估器 | M2 可创建、列出、读取自定义评估器。LLM 保存单个 model 和 prompt。Agent 保存打分 Agent id。case `end_turn` 后 LLM 评估器会打分并落库。可以从已发布预置版本复制出自定义评估器 | 今日额度不实现。Agent 打分 sandbox 仍未执行，score 行记为 failed。预置 Agent 的 `agent_id` 是占位符 | M2：`evaluation_evaluators` 与版本 1。变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。LLM 打分复用已有 provider。Agent 的 `/data/session/result.json` 与 `/output/score.json` 仍不执行 | P0，本切片 |
 | 实验 | M3 可创建、列出、读取实验。创建时冻结数据集版本、Agent 版本、环境和评估器版本，并为每个 case 调用已有 Session 创建。Session 终态事件把 item 收成 completed 或 failed。`end_turn` 后为每个冻结评估器写入 `evalscore_` | timeout 与 env 只落库，不注入 Session。Agent 打分 sandbox 未执行 | M3：`evaluation_experiments` 与 case item。Session id 记在 item 上。`publishSessionEvents` 上的观察者读取已持久化的 `session.status_idle` / `session.status_terminated`，再写 score | P0，本切片 |
 | Compare | M3 按数据集版本和冻结评估器版本列出 status 为 completed 的实验，响应带 `scores` | 只有全部 item 都 completed 的实验会出现。Console 对比页还不展示 score 列 | 固定数据集版本和评估器，变化的是 Agent 版本。名称在组织和工作区下唯一 | P0，本切片 |
-| 预置评测集 / 预置评估器 | 无 | 没有只读的已发布目录 | 目录与「复用已发布版本」延后，可选。本变更不建目录 | 延后 |
+| 预置评测集 / 预置评估器 | 只读目录：19 个 OMA demo 评测集、11 个 OMA demo 评估器。评测集页和评估器页用 Custom / Presets 分开。创建自定义资源时可以复用已发布版本 | 数量对齐实测目录规模，正文不是 QCA 原文。目录编译在服务里，不是按 workspace 存的行，也不能在 API 里改。已归档预置可以浏览，不能复用 | 不建新表。`evaluation-dataset-presets` 与 `evaluation-evaluator-presets` 返回目录。`source_version_id` 把已发布版本复制进 workspace 的自定义评测集或评估器 | P0，本切片 |
 | 今日额度 | 无评测额度 | QCA 有预置 100、自定义 LLM 100、上海时区零点和 Agent 评估器不计入 | 不实现。不记账，不做额度 UI 或计数器，也不放进后续里程碑 | 不做 |
 | Session trace | Session 事件和详情已覆盖模型、工具和任务状态 | 实验不另存 trace | M3 的 item 保存 session id，详情链到现有 Session 页。不新写 trace 存储 | P1 |
 | Memory pin | Memory 版本存在 | 实测评测页没有这项 | 不纳入当前里程碑 | 不做 |
@@ -113,7 +113,7 @@ Workbench Evaluate 继续做 prompt 变量实验。评测集的 case 是 `turns`
 
 - `external_id` 前缀 `edv_`
 - `dataset_uuid` 加 `version` 唯一，`version` 从 1 开始
-- M1 创建评测集时在同一事务写入版本 1。不提供另存新版本或复用预置版本的接口
+- M1 创建评测集时在同一事务写入版本 1。带 `source_version_id` 时，同一事务把已发布预置版本的 case 复制进来，并生成新的 `evalcase_` id
 
 `evaluation_cases`
 
@@ -124,7 +124,7 @@ Workbench Evaluate 继续做 prompt 变量实验。评测集的 case 是 `turns`
 - `checkpoints` 可空，只接受 JSON 数组或对象，不解释内部字段
 - `input_files`、`reference_files` 可空，只接受 JSON 数组，不解释元素。`reference_files` 留到评估器使用
 
-`00096_evaluation_evaluators.sql` 增加自定义评估器。不建实验表或 memory pin 表。不写入预置评估器。
+`00096_evaluation_evaluators.sql` 增加自定义评估器。不建实验表或 memory pin 表。预置评估器不写进这张表。
 
 `evaluation_evaluators`
 
@@ -205,7 +205,7 @@ M1：
 
 路径里的 workspace 可以是 `default`、workspace UUID 或 external id。查询和写入使用 principal 的组织与 workspace UUID。另一 workspace 的 id 返回 404，且不读库。
 
-创建评测集的 body 是 `{name, desc}`。响应带 `status` 和 `version: {id, version, case_count}`。
+创建评测集的 body 是 `{name, desc}`，也可以加 `source_version_id`。`source_version_id` 指向已发布预置版本时，复制该版本的 case。响应带 `status` 和 `version: {id, version, case_count}`。已归档预置返回 400，未知 id 返回 404，都不写库。
 
 单条 case 与 JSONL 每行的字段是 `name`、`turns`、`desc`、`checkpoints`、`input_files`、`reference_files`。未知字段拒绝。导入是 JSONL（`application/x-ndjson` 或 `application/jsonl`），或只含一个 `.jsonl` 成员的 ZIP。超过 1000 条或 100MB 返回 400，校验通过前不写入。这与 Workbench 的 `{{var}},ideal_output` CSV 不是同一格式。
 
@@ -214,9 +214,21 @@ M2：
 - `GET/POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/evaluation-evaluators`
 - `GET .../evaluation-evaluators/{evaluatorId}`
 
-创建评估器的 body 是 `{name, desc, evaluator_type, model, agent_id, prompt_template, variables}`。`evaluator_type` 为 `llm` 或 `agent`。响应带 `status` 和 `version`。Agent 版本额外带 `agent_contract`。
+创建评估器的 body 是 `{name, desc, evaluator_type, model, agent_id, prompt_template, variables}`。`evaluator_type` 为 `llm` 或 `agent`。也可以只传 `{name, desc, source_version_id}`，从已发布预置版本复制类型、model、prompt、variables 或 agent id。`source_version_id` 不能和这些字段同时出现。响应带 `status` 和 `version`。Agent 版本额外带 `agent_contract`。
 
-M2 不做 PATCH、DELETE、归档、预置目录和 OpenAPI。不执行打分。不实现今日额度。
+M2 不做 PATCH、DELETE、归档和 OpenAPI。自定义评估器的打分在 case `end_turn` 之后执行。不实现今日额度。
+
+预置目录：
+
+- `GET .../evaluation-dataset-presets`
+- `GET .../evaluation-dataset-presets/{presetId}`
+- `GET .../evaluation-dataset-presets/{presetId}/cases?version_id=`
+- `GET .../evaluation-evaluator-presets`
+- `GET .../evaluation-evaluator-presets/{presetId}`
+
+目录不按 workspace 存行。请求仍要过 Console 的组织和 workspace 校验，另一 workspace 返回 404。列表一次返回全部，`next_page` 为 null。评测集预置响应类型是 `evaluation_dataset_preset`，带 `versions`。评估器预置响应类型是 `evaluation_evaluator_preset`。
+
+种子是编译进 `internal/evaluations/presets.go` 的 OMA demo，不是 migration，也不是 QCA 导出。19 个评测集里 18 个可用、1 个已归档；`evalds_oma_demo_03` 有 v1 和 v2。11 个评估器里 4 个 LLM、6 个可用 Agent、1 个已归档 Agent。LLM 的 model 是 `oma-demo`。Agent 的 `agent_id` 是 `agent_oma_demo_XX` 占位符，不对应已创建的 Agent。case 文案都标明 OMA demo，并要求回复 ready。
 
 M3：
 
@@ -229,15 +241,15 @@ M3：
 
 列表不返回 item，但返回已有的 `scores`。读取返回冻结的评估器、每个 case 的 session id，以及 `scores`。`:start` 只重试仍为 pending 的 item。Compare 的 body 是 `{dataset_version_id, evaluator_ids}`，只返回 `completed`，并带上 `scores`。没有完成实验时 `data` 为空数组，不是 404。Session 以 `end_turn` 结束后，对应实验可以变成 `completed` 并出现在 Compare 里。
 
-M3 不做取消、Agent 打分 sandbox、预置目录和 OpenAPI。不实现今日额度。LLM 打分失败不把实验从 completed 改回 failed。
+M3 不做取消、Agent 打分 sandbox 和 OpenAPI。不实现今日额度。LLM 打分失败不把实验从 completed 改回 failed。
 
 ## UI
 
 Managed Agents 导航在 Sessions 与 Observability 之间增加 Datasets。OMA 没有「分析」分组，所以不把评测放进用量分析。
 
-- `/workspaces/$workspaceId/evaluations`：评测集列表和创建（name、desc）
+- `/workspaces/$workspaceId/evaluations`：Custom 与 Presets 两个页签。Custom 仍是评测集列表和创建（name、desc）。Presets 列出已发布目录，Reuse 打开已发布版本的 case，并以 `source_version_id` 复制成自定义评测集
 - `/workspaces/$workspaceId/evaluations/datasets/$datasetId`：当前版本、case 列表、单条 case、JSONL 导入
-- `/workspaces/$workspaceId/evaluations/evaluators`：评估器列表和创建。类型在 LLM 与 Agent 之间切换。LLM 填写 model 和 prompt，变量芯片插入 `{{name}}`。Agent 填写 Agent id，并展示 score.json 契约
+- `/workspaces/$workspaceId/evaluations/evaluators`：Custom 与 Presets 两个页签。Custom 仍在 LLM 与 Agent 之间切换。Presets 列出已发布评估器，Create from preset 复制已发布版本
 
 Managed Agents 导航在 Evaluators 旁增加 Experiments。
 
@@ -252,21 +264,23 @@ Workbench 的 prompt/evaluate 开关保持原样。
 
 1. **M0**：差距说明。
 2. **M1**：评测集、版本 1 和 case 的 migration、Yourbatis、创建 / 导入 / 列出，以及 Datasets 页面。无 session，不改 Workbench Evaluate。
-3. **M2**：自定义评估器。LLM 与 Agent 两种类型，创建时写入版本 1。变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。不执行打分，不预置 11 个官方评估器。
-4. **M3（本变更）**：实验与 Compare。绑定数据集版本、Agent、Environment、timeout 和冻结的评估器版本；每个 case 复用已有 Session 创建并记下 session id。已有 Session 终态事件把 item 收成 completed 或 failed，并汇总实验状态。`end_turn` 后对冻结的 LLM 评估器打分并写入 `evalscore_`；Agent 评估器只记录未执行。Compare 固定数据集版本和评估器，只列出 completed。名称在组织和工作区下唯一。不把 timeout/env 注入 sandbox。
-5. **预置目录（延后，可选）**：只读的已发布评测集和评估器，以及从已发布版本复用 case。未排进本变更。
+3. **M2**：自定义评估器。LLM 与 Agent 两种类型，创建时写入版本 1。变量只用 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。
+4. **M3**：实验与 Compare。绑定数据集版本、Agent、Environment、timeout 和冻结的评估器版本；每个 case 复用已有 Session 创建并记下 session id。已有 Session 终态事件把 item 收成 completed 或 failed，并汇总实验状态。`end_turn` 后对冻结的 LLM 评估器打分并写入 `evalscore_`；Agent 评估器只记录未执行。Compare 固定数据集版本和评估器，只列出 completed。名称在组织和工作区下唯一。不把 timeout/env 注入 sandbox。
+5. **预置目录（本变更）**：只读的已发布评测集和评估器，以及从已发布版本复制 case 或评估器定义。内容是 19 个评测集和 11 个评估器的 OMA demo，不是 QCA 原文。
 
 今日额度不在里程碑里。不实现每日 100 次、上海时区重置、Agent 评估器是否计入，也不做额度 UI 或计数器。
 
-Agent 评估器打分仍未做：不启动打分 sandbox，不读 `/data/session/result.json` 或 `/output/score.json`。对应 score 行是 failed，case item 保持 completed。把 timeout/env 注入 sandbox 也还没做。这些都不属于额度。
+Agent 评估器打分仍未做：不启动打分 sandbox，不读 `/data/session/result.json` 或 `/output/score.json`。对应 score 行是 failed，case item 保持 completed。把 timeout/env 注入 sandbox 也还没做。预置 Agent 的 id 和 LLM 的 `oma-demo` model 都没有对应的已配置资源。这些都不属于额度。
 
 ## 未排期
 
-预置目录仍可选、延后。不把今日额度排进后续切片。不改 Workbench。
+不把今日额度排进后续切片。不改 Workbench。预置目录已做只读浏览和复用；还没有 QCA 原文、目录编辑、或把预置 id 直接绑到实验上。
 
 ## 验收与未覆盖
 
 同一 workspace 可以创建评测集（同时得到 `edv_` 版本 1）、用 JSONL 或单成员 ZIP 导入 case，并列出 case。空 name、空 turns、超过 1000 条、错误 ZIP 和另一 workspace 的 id 在写库前失败。归档行不出现在列表里。
+
+预置目录列出 19 个评测集和 11 个评估器。`evalds_oma_demo_03` 的 v2 有两条 case。复用 `edv_oma_demo_03_v2` 会在同一事务写入自定义评测集和两条新 case。已归档预置和未知 id 不写库。`eev_oma_demo_01_v1` 复制出 LLM 评估器，model 为 `oma-demo`。`source_version_id` 和 model 同时出现会失败。另一 workspace 读不到目录。
 
 同一 workspace 可以创建 LLM 评估器（model、prompt、已选变量，版本 `eev_`）和 Agent 评估器（agent id，响应带 score.json 契约），并列出、读取。错误类型、未选变量、Agent 带 prompt，以及另一 workspace 的 id，在写库前失败。
 

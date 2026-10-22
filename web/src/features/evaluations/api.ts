@@ -82,9 +82,46 @@ export type EvaluationEvaluatorPage = {
   next_page: string | null;
 };
 
+export type EvaluationPresetVersion = {
+  id: string;
+  version: number;
+  case_count: number;
+};
+
+export type EvaluationDatasetPreset = {
+  id: string;
+  type: 'evaluation_dataset_preset';
+  name: string;
+  desc: string;
+  status: 'available' | 'archived';
+  versions: EvaluationPresetVersion[];
+  published_at: string;
+};
+
+export type EvaluationDatasetPresetPage = {
+  data: EvaluationDatasetPreset[];
+  next_page: string | null;
+};
+
+export type EvaluationEvaluatorPreset = Omit<EvaluationEvaluator, 'type'> & {
+  type: 'evaluation_evaluator_preset';
+};
+
+export type EvaluationEvaluatorPresetPage = {
+  data: EvaluationEvaluatorPreset[];
+  next_page: string | null;
+};
+
 export type CreateEvaluationDatasetInput = {
   name: string;
   desc?: string;
+  source_version_id?: string;
+};
+
+export type CreateEvaluationEvaluatorFromPresetInput = {
+  name: string;
+  desc?: string;
+  source_version_id: string;
 };
 
 export type CreateEvaluationEvaluatorInput = {
@@ -178,8 +215,53 @@ function datasetPath(orgUuid: string, workspaceId: string, datasetId: string) {
   return `${collectionPath(orgUuid, workspaceId)}/${encodeURIComponent(datasetId)}`;
 }
 
+function datasetPresetCollectionPath(orgUuid: string, workspaceId: string) {
+  return `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/evaluation-dataset-presets`;
+}
+
+function evaluatorPresetCollectionPath(orgUuid: string, workspaceId: string) {
+  return `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/evaluation-evaluator-presets`;
+}
+
 function workspaceHeaders(workspaceId: string) {
   return { 'X-Workspace-ID': workspaceId };
+}
+
+export function listEvaluationDatasetPresets(orgUuid: string, workspaceId: string) {
+  return consoleApi<EvaluationDatasetPresetPage>(datasetPresetCollectionPath(orgUuid, workspaceId), {
+    headers: workspaceHeaders(workspaceId),
+  });
+}
+
+export function listEvaluationDatasetPresetCases(
+  orgUuid: string,
+  workspaceId: string,
+  presetId: string,
+  versionId: string,
+) {
+  const path = `${datasetPresetCollectionPath(orgUuid, workspaceId)}/${encodeURIComponent(presetId)}/cases`;
+  const query = versionId ? `?version_id=${encodeURIComponent(versionId)}` : '';
+  return consoleApi<EvaluationCasePage>(`${path}${query}`, { headers: workspaceHeaders(workspaceId) });
+}
+
+export function listEvaluationEvaluatorPresets(orgUuid: string, workspaceId: string) {
+  return consoleApi<EvaluationEvaluatorPresetPage>(evaluatorPresetCollectionPath(orgUuid, workspaceId), {
+    headers: workspaceHeaders(workspaceId),
+  });
+}
+
+export function createEvaluationEvaluatorFromPreset(
+  orgUuid: string,
+  workspaceId: string,
+  input: CreateEvaluationEvaluatorFromPresetInput,
+  csrfToken?: string,
+) {
+  return consoleApi<EvaluationEvaluator>(evaluatorCollectionPath(orgUuid, workspaceId), {
+    method: 'POST',
+    headers: workspaceHeaders(workspaceId),
+    csrfToken,
+    body: JSON.stringify(input),
+  });
 }
 
 export function listEvaluationDatasets(orgUuid: string, workspaceId: string) {

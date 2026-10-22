@@ -28,6 +28,10 @@ const (
 	importJSONLInvalidMessage       = "import body must be JSONL"
 	importZipInvalidMessage         = "import ZIP must contain one JSONL file"
 	datasetNotFoundMessage          = "Evaluation dataset not found"
+	presetDatasetNotFoundMessage    = "Evaluation dataset preset not found"
+	presetEvaluatorNotFoundMessage  = "Evaluation evaluator preset not found"
+	presetArchivedMessage           = "Published preset is archived"
+	presetSourceConflictMessage     = "source_version_id cannot be combined with evaluator fields"
 	duplicateResourceMessage        = "Evaluation resource already exists"
 	createDatasetFailedMessage      = "Could not create evaluation dataset"
 	listDatasetsFailedMessage       = "Could not list evaluation datasets"
@@ -156,6 +160,17 @@ func invalidImportZip(cause error) error {
 
 func datasetNotFound() error {
 	return apperr.New(apperr.NotFound, datasetNotFoundMessage, nil)
+}
+
+func presetSourceConflict() error {
+	return apperr.New(apperr.InvalidArgument, presetSourceConflictMessage, nil)
+}
+
+func presetLookupError(err error, notFoundMessage string) error {
+	if errors.Is(err, errPresetArchived) {
+		return apperr.New(apperr.InvalidArgument, presetArchivedMessage, err)
+	}
+	return apperr.New(apperr.NotFound, notFoundMessage, err)
 }
 
 func evaluatorNotFound() error {

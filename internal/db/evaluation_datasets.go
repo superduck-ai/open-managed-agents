@@ -44,41 +44,71 @@ type ListEvaluationDatasetsPageParams struct {
 }
 
 func (d *DB) CreateEvaluationDataset(ctx context.Context, dataset EvaluationDataset) (EvaluationDataset, error) {
+	return d.createEvaluationDataset(ctx, dataset, nil)
+}
+
+func (d *DB) CreateEvaluationDatasetWithCases(ctx context.Context, dataset EvaluationDataset, writes []EvaluationCaseWrite) (EvaluationDataset, error) {
+	return d.createEvaluationDataset(ctx, dataset, writes)
+}
+
+func (d *DB) createEvaluationDataset(ctx context.Context, dataset EvaluationDataset, writes []EvaluationCaseWrite) (EvaluationDataset, error) {
 	var created EvaluationDataset
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		row, insertErr := NewEvaluationDatasetMapper(executor).Insert(ctx, evaluationDatasetWriteParams{
-			UUID:              dataset.UUID,
-			ExternalID:        dataset.ExternalID,
-			OrganizationUUID:  dataset.OrganizationUUID,
-			WorkspaceUUID:     dataset.WorkspaceUUID,
-			Name:              dataset.Name,
-			Description:       dataset.Description,
-			CreatedByUserUUID: nullableString(dataset.CreatedByUserUUID),
-			CreatedAt:         dataset.CreatedAt,
-		})
+		inserted, insertErr := insertEvaluationDataset(ctx, executor, dataset)
 		if insertErr != nil {
 			return insertErr
 		}
-		version, versionErr := NewEvaluationDatasetVersionMapper(executor).Insert(ctx, evaluationDatasetVersionWriteParams{
-			UUID:             dataset.Version.UUID,
-			ExternalID:       dataset.Version.ExternalID,
-			OrganizationUUID: dataset.OrganizationUUID,
-			WorkspaceUUID:    dataset.WorkspaceUUID,
-			DatasetUUID:      dataset.UUID,
-			Version:          dataset.Version.Version,
-			CreatedAt:        dataset.Version.CreatedAt,
-		})
-		if versionErr != nil {
-			return versionErr
+		if len(writes) > 0 {
+			if _, caseErr := insertEvaluationCaseWrites(ctx, NewEvaluationCaseMapper(executor), evaluationCaseInsertTarget{
+				OrganizationUUID:  dataset.OrganizationUUID,
+				WorkspaceUUID:     dataset.WorkspaceUUID,
+				DatasetUUID:       inserted.UUID,
+				DatasetExternalID: inserted.ExternalID,
+				VersionUUID:       inserted.Version.UUID,
+				VersionExternalID: inserted.Version.ExternalID,
+			}, writes, 0, dataset.CreatedAt); caseErr != nil {
+				return caseErr
+			}
+			inserted.Version.CaseCount = len(writes)
 		}
-		created = row.evaluationDataset()
-		created.Version = version.evaluationDatasetVersion()
+		created = inserted
 		return nil
 	})
 	if isUniqueViolation(err) {
 		return EvaluationDataset{}, ErrDuplicate
 	}
 	return created, err
+}
+
+func insertEvaluationDataset(ctx context.Context, executor yourbatis.Executor, dataset EvaluationDataset) (EvaluationDataset, error) {
+	row, err := NewEvaluationDatasetMapper(executor).Insert(ctx, evaluationDatasetWriteParams{
+		UUID:              dataset.UUID,
+		ExternalID:        dataset.ExternalID,
+		OrganizationUUID:  dataset.OrganizationUUID,
+		WorkspaceUUID:     dataset.WorkspaceUUID,
+		Name:              dataset.Name,
+		Description:       dataset.Description,
+		CreatedByUserUUID: nullableString(dataset.CreatedByUserUUID),
+		CreatedAt:         dataset.CreatedAt,
+	})
+	if err != nil {
+		return EvaluationDataset{}, err
+	}
+	version, err := NewEvaluationDatasetVersionMapper(executor).Insert(ctx, evaluationDatasetVersionWriteParams{
+		UUID:             dataset.Version.UUID,
+		ExternalID:       dataset.Version.ExternalID,
+		OrganizationUUID: dataset.OrganizationUUID,
+		WorkspaceUUID:    dataset.WorkspaceUUID,
+		DatasetUUID:      dataset.UUID,
+		Version:          dataset.Version.Version,
+		CreatedAt:        dataset.Version.CreatedAt,
+	})
+	if err != nil {
+		return EvaluationDataset{}, err
+	}
+	created := row.evaluationDataset()
+	created.Version = version.evaluationDatasetVersion()
+	return created, nil
 }
 
 func (d *DB) GetEvaluationDataset(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (EvaluationDataset, error) {

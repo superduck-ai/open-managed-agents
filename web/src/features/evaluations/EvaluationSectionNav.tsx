@@ -1,7 +1,12 @@
 import { useI18n } from '../../shared/i18n';
-import { evaluationEvaluatorsHref, evaluationsIndexHref, useEvaluationWorkspace } from './useEvaluationDatasets';
+import {
+  evaluationEvaluatorsHref,
+  evaluationExperimentsHref,
+  evaluationsIndexHref,
+  useEvaluationWorkspace,
+} from './useEvaluationDatasets';
 
-export function EvaluationSectionNav({ current }: { current: 'datasets' | 'evaluators' }) {
+export function EvaluationSectionNav({ current }: { current: 'datasets' | 'evaluators' | 'experiments' }) {
   const { msg } = useI18n();
   const workspace = useEvaluationWorkspace();
   const items = [
@@ -14,6 +19,11 @@ export function EvaluationSectionNav({ current }: { current: 'datasets' | 'evalu
       id: 'evaluators' as const,
       href: evaluationEvaluatorsHref(workspace.workspaceId),
       label: msg('evaluations.evaluators', 'Evaluators'),
+    },
+    {
+      id: 'experiments' as const,
+      href: evaluationExperimentsHref(workspace.workspaceId),
+      label: msg('evaluations.experiments', 'Experiments'),
     },
   ];
   return (

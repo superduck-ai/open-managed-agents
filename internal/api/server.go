@@ -190,6 +190,7 @@ func NewServer(deps ServerDeps) *Server {
 	if deps.SandboxLifecycle != nil {
 		s.sessions.WithSandboxReclaimer(deps.SandboxLifecycle)
 	}
+	evaluationHandler.WithSessionStarter(evaluationCaseSessionStarter{sessions: s.sessions})
 	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)

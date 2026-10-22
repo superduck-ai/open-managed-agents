@@ -9,8 +9,12 @@ import { WorkspaceSettingsRedirect } from '../features/settings/WorkspaceSetting
 import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../features/analytics/AnalyticsPages';
 import { LoginPage } from '../features/auth/LoginPage';
 import { DatasetCasesPage } from '../features/evaluations/DatasetCasesPage';
+import { ExperimentComparePage } from '../features/evaluations/ExperimentComparePage';
+import { ExperimentDetailPage } from '../features/evaluations/ExperimentDetailPage';
+import { ExperimentNewPage } from '../features/evaluations/ExperimentNewPage';
 import { EvaluationsPage } from '../features/evaluations/EvaluationsPage';
 import { EvaluatorsPage } from '../features/evaluations/EvaluatorsPage';
+import { ExperimentsPage } from '../features/evaluations/ExperimentsPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
 import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
 import { CreateMCPServerPage, MCPServerDetailPage, MCPServersPage } from '../features/mcp-servers/MCPServersPage';
@@ -256,6 +260,54 @@ const workspaceEvaluatorsRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/evaluations/evaluators',
   component: EvaluatorsPage,
+});
+
+const experimentsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'evaluations/experiments',
+  component: ExperimentsPage,
+});
+
+const experimentNewRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'evaluations/experiments/new',
+  component: ExperimentNewPage,
+});
+
+const experimentCompareRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'evaluations/experiments/compare',
+  component: ExperimentComparePage,
+});
+
+const experimentDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'evaluations/experiments/$experimentId',
+  component: ExperimentDetailPage,
+});
+
+const workspaceExperimentsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations/experiments',
+  component: ExperimentsPage,
+});
+
+const workspaceExperimentNewRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations/experiments/new',
+  component: ExperimentNewPage,
+});
+
+const workspaceExperimentCompareRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations/experiments/compare',
+  component: ExperimentComparePage,
+});
+
+const workspaceExperimentDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations/experiments/$experimentId',
+  component: ExperimentDetailPage,
 });
 
 const observabilityRoute = createRoute({
@@ -604,8 +656,16 @@ const routeTree = rootRoute.addChildren([
       workspaceSessionDetailRoute,
       evaluationsRoute,
       evaluatorsRoute,
+      experimentsRoute,
+      experimentNewRoute,
+      experimentCompareRoute,
+      experimentDetailRoute,
       workspaceEvaluationsRoute,
       workspaceEvaluatorsRoute,
+      workspaceExperimentsRoute,
+      workspaceExperimentNewRoute,
+      workspaceExperimentCompareRoute,
+      workspaceExperimentDetailRoute,
       workspaceEvaluationDatasetRoute,
       observabilityRoute,
       workspaceObservabilityRoute,

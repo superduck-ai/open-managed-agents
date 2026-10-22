@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EvaluationExperimentItemMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        experiment_uuid,
+        case_uuid,
+        case_external_id,
+        position,
+        session_external_id,
+        status,
+        error_message,
+        created_at,
+        updated_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="evaluationExperimentItemRow">
+        INSERT INTO evaluation_experiment_items (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            experiment_uuid,
+            case_uuid,
+            case_external_id,
+            position,
+            status,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.ExperimentUUID},
+            #{params.CaseUUID},
+            #{params.CaseExternalID},
+            #{params.Position},
+            #{params.Status},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="ListByExperiment" resultType="evaluationExperimentItemRow">
+        SELECT
+        <include refid="columns"/>
+        FROM evaluation_experiment_items
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND experiment_uuid = #{experimentUUID}
+        ORDER BY position ASC, uuid ASC
+    </select>
+
+    <update id="SetSession" result="rows">
+        UPDATE evaluation_experiment_items
+        SET session_external_id = #{params.SessionExternalID},
+            status = #{params.Status},
+            error_message = #{params.ErrorMessage},
+            updated_at = #{params.UpdatedAt}
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+    </update>
+</mapper>

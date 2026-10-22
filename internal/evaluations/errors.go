@@ -9,50 +9,72 @@ import (
 )
 
 const (
-	invalidJSONMessage           = "Invalid JSON body"
-	invalidLimitMessage          = "limit must be between 1 and 100"
-	invalidPageMessage           = "page is invalid"
-	nameRequiredMessage          = "name is required"
-	nameTooLongMessage           = "name must be at most 255 characters"
-	descriptionTooLongMessage    = "desc must be at most 1024 characters"
-	turnsRequiredMessage         = "turns must include at least one entry"
-	turnsInvalidMessage          = "turns must be an array of strings"
-	turnEmptyMessage             = "turns cannot include an empty entry"
-	checkpointsInvalidMessage    = "checkpoints must be a JSON array or object"
-	inputFilesInvalidMessage     = "input_files must be a JSON array"
-	referenceFilesInvalidMessage = "reference_files must be a JSON array"
-	attachmentTooLargeMessage    = "case attachment is too large"
-	importRequiredMessage        = "import requires at least one case"
-	importTooLargeMessage        = "import accepts at most 1000 cases"
-	importBodyTooLargeMessage    = "import body is too large"
-	importJSONLInvalidMessage    = "import body must be JSONL"
-	importZipInvalidMessage      = "import ZIP must contain one JSONL file"
-	datasetNotFoundMessage       = "Evaluation dataset not found"
-	duplicateResourceMessage     = "Evaluation resource already exists"
-	createDatasetFailedMessage   = "Could not create evaluation dataset"
-	listDatasetsFailedMessage    = "Could not list evaluation datasets"
-	loadDatasetFailedMessage     = "Could not load evaluation dataset"
-	createCasesFailedMessage     = "Could not create evaluation cases"
-	listCasesFailedMessage       = "Could not list evaluation cases"
-	evaluatorTypeInvalidMessage  = "evaluator_type must be llm or agent"
-	modelRequiredMessage         = "model is required"
-	modelForbiddenMessage        = "model must be empty for an agent evaluator"
-	modelTooLongMessage          = "model must be at most 255 characters"
-	agentIDRequiredMessage       = "agent_id is required"
-	agentIDForbiddenMessage      = "agent_id must be empty for an llm evaluator"
-	agentIDTooLongMessage        = "agent_id must be at most 255 characters"
-	promptRequiredMessage        = "prompt_template is required"
-	promptForbiddenMessage       = "prompt_template must be empty for an agent evaluator"
-	promptTooLongMessage         = "prompt_template must be at most 16000 characters"
-	promptVariableMessage        = "prompt_template references a variable that is not selected"
-	variablesInvalidMessage      = "variables must use input, output, checkpoints, agent_trajectory, or invocation_result"
-	variablesDuplicateMessage    = "variables cannot contain duplicates"
-	variablesRequiredMessage     = "variables must include at least one entry"
-	evaluatorNotFoundMessage     = "Evaluation evaluator not found"
-	createEvaluatorFailedMessage = "Could not create evaluation evaluator"
-	listEvaluatorsFailedMessage  = "Could not list evaluation evaluators"
-	loadEvaluatorFailedMessage   = "Could not load evaluation evaluator"
-	internalServerErrorMessage   = "Internal server error"
+	invalidJSONMessage              = "Invalid JSON body"
+	invalidLimitMessage             = "limit must be between 1 and 100"
+	invalidPageMessage              = "page is invalid"
+	nameRequiredMessage             = "name is required"
+	nameTooLongMessage              = "name must be at most 255 characters"
+	descriptionTooLongMessage       = "desc must be at most 1024 characters"
+	turnsRequiredMessage            = "turns must include at least one entry"
+	turnsInvalidMessage             = "turns must be an array of strings"
+	turnEmptyMessage                = "turns cannot include an empty entry"
+	checkpointsInvalidMessage       = "checkpoints must be a JSON array or object"
+	inputFilesInvalidMessage        = "input_files must be a JSON array"
+	referenceFilesInvalidMessage    = "reference_files must be a JSON array"
+	attachmentTooLargeMessage       = "case attachment is too large"
+	importRequiredMessage           = "import requires at least one case"
+	importTooLargeMessage           = "import accepts at most 1000 cases"
+	importBodyTooLargeMessage       = "import body is too large"
+	importJSONLInvalidMessage       = "import body must be JSONL"
+	importZipInvalidMessage         = "import ZIP must contain one JSONL file"
+	datasetNotFoundMessage          = "Evaluation dataset not found"
+	duplicateResourceMessage        = "Evaluation resource already exists"
+	createDatasetFailedMessage      = "Could not create evaluation dataset"
+	listDatasetsFailedMessage       = "Could not list evaluation datasets"
+	loadDatasetFailedMessage        = "Could not load evaluation dataset"
+	createCasesFailedMessage        = "Could not create evaluation cases"
+	listCasesFailedMessage          = "Could not list evaluation cases"
+	evaluatorTypeInvalidMessage     = "evaluator_type must be llm or agent"
+	modelRequiredMessage            = "model is required"
+	modelForbiddenMessage           = "model must be empty for an agent evaluator"
+	modelTooLongMessage             = "model must be at most 255 characters"
+	agentIDRequiredMessage          = "agent_id is required"
+	agentIDForbiddenMessage         = "agent_id must be empty for an llm evaluator"
+	agentIDTooLongMessage           = "agent_id must be at most 255 characters"
+	promptRequiredMessage           = "prompt_template is required"
+	promptForbiddenMessage          = "prompt_template must be empty for an agent evaluator"
+	promptTooLongMessage            = "prompt_template must be at most 16000 characters"
+	promptVariableMessage           = "prompt_template references a variable that is not selected"
+	variablesInvalidMessage         = "variables must use input, output, checkpoints, agent_trajectory, or invocation_result"
+	variablesDuplicateMessage       = "variables cannot contain duplicates"
+	variablesRequiredMessage        = "variables must include at least one entry"
+	evaluatorNotFoundMessage        = "Evaluation evaluator not found"
+	createEvaluatorFailedMessage    = "Could not create evaluation evaluator"
+	listEvaluatorsFailedMessage     = "Could not list evaluation evaluators"
+	loadEvaluatorFailedMessage      = "Could not load evaluation evaluator"
+	datasetVersionRequiredMessage   = "dataset_version_id is required"
+	datasetVersionNotFoundMessage   = "Evaluation dataset version not found"
+	casesRequiredMessage            = "dataset version has no cases"
+	environmentIDRequiredMessage    = "environment_id is required"
+	environmentNotFoundMessage      = "Environment not found"
+	agentNotFoundMessage            = "Agent not found"
+	agentArchivedMessage            = "agent must not be archived"
+	environmentArchivedMessage      = "environment must not be archived"
+	agentVersionInvalidMessage      = "agent_version must be at least 1"
+	timeoutInvalidMessage           = "timeout_seconds must be between 1 and 86400"
+	evaluatorIDsRequiredMessage     = "evaluator_ids must include at least one entry"
+	evaluatorIDsDuplicateMessage    = "evaluator_ids cannot contain duplicates"
+	evaluatorIDsTooManyMessage      = "evaluator_ids accepts at most 20 entries"
+	envInvalidMessage               = "env must be a JSON object of strings"
+	resourcesInvalidMessage         = "resources must be a JSON array"
+	experimentNotFoundMessage       = "Evaluation experiment not found"
+	createExperimentFailedMessage   = "Could not create evaluation experiment"
+	listExperimentsFailedMessage    = "Could not list evaluation experiments"
+	loadExperimentFailedMessage     = "Could not load evaluation experiment"
+	startExperimentFailedMessage    = "Could not start evaluation experiment"
+	compareExperimentsFailedMessage = "Could not compare evaluation experiments"
+	caseSessionFailedMessage        = "Could not create session"
+	internalServerErrorMessage      = "Internal server error"
 )
 
 var errInvalidPageCursor = errors.New("invalid evaluation page cursor")
@@ -194,6 +216,58 @@ func variablesDuplicate() error {
 
 func variablesRequired() error {
 	return apperr.New(apperr.InvalidArgument, variablesRequiredMessage, nil)
+}
+
+func datasetVersionRequired() error {
+	return apperr.New(apperr.InvalidArgument, datasetVersionRequiredMessage, nil)
+}
+
+func casesRequired() error {
+	return apperr.New(apperr.InvalidArgument, casesRequiredMessage, nil)
+}
+
+func environmentIDRequired() error {
+	return apperr.New(apperr.InvalidArgument, environmentIDRequiredMessage, nil)
+}
+
+func agentArchived() error {
+	return apperr.New(apperr.InvalidArgument, agentArchivedMessage, nil)
+}
+
+func environmentArchived() error {
+	return apperr.New(apperr.InvalidArgument, environmentArchivedMessage, nil)
+}
+
+func agentVersionInvalid() error {
+	return apperr.New(apperr.InvalidArgument, agentVersionInvalidMessage, nil)
+}
+
+func timeoutInvalid() error {
+	return apperr.New(apperr.InvalidArgument, timeoutInvalidMessage, nil)
+}
+
+func evaluatorIDsRequired() error {
+	return apperr.New(apperr.InvalidArgument, evaluatorIDsRequiredMessage, nil)
+}
+
+func evaluatorIDsDuplicate() error {
+	return apperr.New(apperr.InvalidArgument, evaluatorIDsDuplicateMessage, nil)
+}
+
+func evaluatorIDsTooMany() error {
+	return apperr.New(apperr.InvalidArgument, evaluatorIDsTooManyMessage, nil)
+}
+
+func envInvalid() error {
+	return apperr.New(apperr.InvalidArgument, envInvalidMessage, nil)
+}
+
+func resourcesInvalid() error {
+	return apperr.New(apperr.InvalidArgument, resourcesInvalidMessage, nil)
+}
+
+func experimentNotFound() error {
+	return apperr.New(apperr.NotFound, experimentNotFoundMessage, nil)
 }
 
 func mapStoreError(err error, notFoundMessage, message string) error {

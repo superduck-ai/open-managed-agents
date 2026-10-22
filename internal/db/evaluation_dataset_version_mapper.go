@@ -27,7 +27,19 @@ type evaluationDatasetVersionWriteParams struct {
 	CreatedAt        time.Time
 }
 
+type evaluationDatasetVersionScopeRow struct {
+	UUID              string    `db:"uuid"`
+	ExternalID        string    `db:"external_id"`
+	OrganizationUUID  string    `db:"organization_uuid"`
+	WorkspaceUUID     string    `db:"workspace_uuid"`
+	DatasetUUID       string    `db:"dataset_uuid"`
+	DatasetExternalID string    `db:"dataset_external_id"`
+	Version           int       `db:"version"`
+	CreatedAt         time.Time `db:"created_at"`
+}
+
 type EvaluationDatasetVersionMapper interface {
 	Insert(ctx context.Context, params evaluationDatasetVersionWriteParams) (evaluationDatasetVersionRow, error)
 	FindLatest(ctx context.Context, organizationUUID, workspaceUUID, datasetUUID string) (evaluationDatasetVersionRow, error)
+	FindScopedByExternalID(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (evaluationDatasetVersionScopeRow, error)
 }

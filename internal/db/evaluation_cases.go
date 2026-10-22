@@ -86,6 +86,22 @@ func (d *DB) ListEvaluationCasesPage(ctx context.Context, params ListEvaluationC
 	return cases, hasMore, nil
 }
 
+func (d *DB) ListEvaluationCasesByVersion(ctx context.Context, organizationUUID, workspaceUUID, versionUUID string) ([]EvaluationCase, error) {
+	rows, err := NewEvaluationCaseMapper(d.mapperDB).ListByVersion(ctx, organizationUUID, workspaceUUID, versionUUID)
+	if err != nil {
+		return nil, err
+	}
+	cases := make([]EvaluationCase, 0, len(rows))
+	for _, row := range rows {
+		item, decodeErr := row.evaluationCase("", "")
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		cases = append(cases, item)
+	}
+	return cases, nil
+}
+
 func (d *DB) CreateEvaluationCases(ctx context.Context, organizationUUID, workspaceUUID, datasetExternalID string, writes []EvaluationCaseWrite, now time.Time) ([]EvaluationCase, error) {
 	if len(writes) == 0 {
 		return nil, ErrNotFound

@@ -14,8 +14,11 @@ import { defaultWorkspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
 import { resetTestDom } from '../../test/setup';
 import { DatasetCasesPage } from './DatasetCasesPage';
+import { ExperimentComparePage } from './ExperimentComparePage';
+import { ExperimentNewPage } from './ExperimentNewPage';
 import { EvaluationsPage } from './EvaluationsPage';
 import { EvaluatorsPage } from './EvaluatorsPage';
+import { ExperimentsPage } from './ExperimentsPage';
 
 const testingLibrary = await import('@testing-library/react');
 const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
@@ -162,6 +165,86 @@ test('lists evaluators and creates an llm evaluator', async () => {
     variables: ['input'],
   });
 });
+
+test('lists experiments and creates one', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/experiments');
+  const requests: Array<{ url: string; method: string; body: string; csrf: string }> = [];
+  globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    const headers = new Headers(init?.headers);
+    requests.push({
+      url,
+      method,
+      body: typeof init?.body === 'string' ? init.body : '',
+      csrf: headers.get('X-CSRF-Token') ?? '',
+    });
+    if (method === 'POST') {
+      return Response.json(experiment());
+    }
+    return Response.json({ data: [experiment()], next_page: null });
+  });
+
+  renderPage(<ExperimentsPage />);
+  expect(await screen.findByText('nightly')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Evaluators' }).getAttribute('href')).toBe(
+    '/workspaces/default/evaluations/evaluators',
+  );
+  cleanup();
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/experiments/new');
+  renderPage(<ExperimentNewPage />);
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'nightly' } });
+  fireEvent.change(screen.getByLabelText('Dataset version'), { target: { value: 'edv_test' } });
+  fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'agent_test' } });
+  fireEvent.change(screen.getByLabelText('Environment'), { target: { value: 'env_test' } });
+  fireEvent.change(screen.getByLabelText('Timeout (seconds)'), { target: { value: '60' } });
+  fireEvent.change(screen.getByLabelText('Evaluators'), { target: { value: 'evalev_a, evalev_b' } });
+  fireEvent.click(screen.getByRole('button', { name: 'New experiment' }));
+  await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
+  const created = requests.find((request) => request.method === 'POST');
+  expect(created?.url).toContain('/evaluation-experiments');
+  expect(created?.csrf).toBe('csrf_test');
+  expect(JSON.parse(created?.body ?? '{}')).toEqual({
+    name: 'nightly',
+    desc: '',
+    dataset_version_id: 'edv_test',
+    agent_id: 'agent_test',
+    environment_id: 'env_test',
+    timeout_seconds: 60,
+    evaluator_ids: ['evalev_a', 'evalev_b'],
+  });
+});
+
+test('compare shows an empty state when no experiments are completed', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/experiments/compare');
+  globalThis.fetch = mock(async () => Response.json({ data: [], next_page: null }));
+  renderPage(<ExperimentComparePage />);
+  fireEvent.change(screen.getByLabelText('Dataset version'), { target: { value: 'edv_test' } });
+  fireEvent.change(screen.getByLabelText('Evaluators'), { target: { value: 'evalev_a' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Compare' }));
+  expect(await screen.findByText('No completed experiments.')).toBeTruthy();
+});
+
+function experiment() {
+  return {
+    id: 'evalexp_test',
+    type: 'evaluation_experiment',
+    name: 'nightly',
+    desc: '',
+    status: 'running',
+    dataset_id: 'evalds_test',
+    version_id: 'edv_test',
+    agent_id: 'agent_test',
+    agent_version: 4,
+    environment_id: 'env_test',
+    timeout_seconds: 60,
+    item_count: 1,
+    session_count: 1,
+    evaluator_count: 1,
+    created_at: '2026-10-22T00:00:00Z',
+    updated_at: '2026-10-22T00:00:00Z',
+  };
+}
 
 function evaluator() {
   return {

@@ -206,8 +206,12 @@ func TestCreateEvaluationCaseReturnsSingleCase(t *testing.T) {
 }
 
 func evaluationRouter(store Store) http.Handler {
+	return evaluationRouterWith(NewHandler(store, nil))
+}
+
+func evaluationRouterWith(handler *Handler) http.Handler {
 	router := chi.NewRouter()
-	router.Route("/api/console/organizations/{orgUuid}", NewHandler(store, nil).RegisterRoutes)
+	router.Route("/api/console/organizations/{orgUuid}", handler.RegisterRoutes)
 	return router
 }
 
@@ -253,23 +257,46 @@ func zipImport(name, jsonl, extra string) []byte {
 }
 
 type evaluationStoreStub struct {
-	createdDataset       *db.EvaluationDataset
-	createDatasetCalls   int
-	datasets             []db.EvaluationDataset
-	listDatasetCalls     int
-	lastDatasetList      db.ListEvaluationDatasetsPageParams
-	getCalls             int
-	createCaseCalls      int
-	createdWrites        []db.EvaluationCaseWrite
-	caseWorkspace        string
-	lastCaseList         db.ListEvaluationCasesPageParams
-	listedCases          []db.EvaluationCase
-	createdEvaluator     *db.EvaluationEvaluator
-	createEvaluatorCalls int
-	evaluators           []db.EvaluationEvaluator
-	listEvaluatorCalls   int
-	lastEvaluatorList    db.ListEvaluationEvaluatorsPageParams
-	getEvaluatorCalls    int
+	createdDataset        *db.EvaluationDataset
+	createDatasetCalls    int
+	datasets              []db.EvaluationDataset
+	listDatasetCalls      int
+	lastDatasetList       db.ListEvaluationDatasetsPageParams
+	getCalls              int
+	createCaseCalls       int
+	createdWrites         []db.EvaluationCaseWrite
+	caseWorkspace         string
+	lastCaseList          db.ListEvaluationCasesPageParams
+	listedCases           []db.EvaluationCase
+	createdEvaluator      *db.EvaluationEvaluator
+	createEvaluatorCalls  int
+	evaluators            []db.EvaluationEvaluator
+	listEvaluatorCalls    int
+	lastEvaluatorList     db.ListEvaluationEvaluatorsPageParams
+	getEvaluatorCalls     int
+	version               db.EvaluationDatasetVersion
+	versionCases          []db.EvaluationCase
+	agent                 db.Agent
+	agentVersion          db.Agent
+	environment           db.Environment
+	createdExperiment     *db.EvaluationExperimentCreate
+	experiment            db.EvaluationExperiment
+	experiments           []db.EvaluationExperiment
+	completedExperiments  []db.EvaluationExperiment
+	createExperimentErr   error
+	createExperimentCalls int
+	getExperimentCalls    int
+	listExperimentCalls   int
+	compareCalls          int
+	lastCompareVersion    string
+	lastCompareKey        string
+	updateStatusCalls     int
+	lastStatus            string
+	itemSessionUpdates    []db.EvaluationExperimentItemSession
+	getVersionCalls       int
+	listVersionCaseCalls  int
+	getAgentCalls         int
+	getEnvironmentCalls   int
 }
 
 func (s *evaluationStoreStub) CreateEvaluationDataset(_ context.Context, dataset db.EvaluationDataset) (db.EvaluationDataset, error) {
@@ -335,10 +362,119 @@ func (s *evaluationStoreStub) ListEvaluationEvaluatorsPage(_ context.Context, pa
 	return s.evaluators, false, nil
 }
 
-func (s *evaluationStoreStub) GetEvaluationEvaluator(_ context.Context, _, _, _ string) (db.EvaluationEvaluator, error) {
+func (s *evaluationStoreStub) GetEvaluationEvaluator(_ context.Context, _, _, externalID string) (db.EvaluationEvaluator, error) {
 	s.getEvaluatorCalls++
-	if len(s.evaluators) == 0 {
-		return db.EvaluationEvaluator{}, db.ErrNotFound
+	for _, evaluator := range s.evaluators {
+		if evaluator.ExternalID == externalID {
+			return evaluator, nil
+		}
 	}
-	return s.evaluators[0], nil
+	return db.EvaluationEvaluator{}, db.ErrNotFound
+}
+
+func (s *evaluationStoreStub) GetEvaluationDatasetVersion(_ context.Context, _, _, externalID string) (db.EvaluationDatasetVersion, error) {
+	s.getVersionCalls++
+	if s.version.ExternalID == "" || s.version.ExternalID != externalID {
+		return db.EvaluationDatasetVersion{}, db.ErrNotFound
+	}
+	return s.version, nil
+}
+
+func (s *evaluationStoreStub) ListEvaluationCasesByVersion(_ context.Context, _, _, _ string) ([]db.EvaluationCase, error) {
+	s.listVersionCaseCalls++
+	return append([]db.EvaluationCase(nil), s.versionCases...), nil
+}
+
+func (s *evaluationStoreStub) GetAgent(_ context.Context, _, externalID string) (db.Agent, error) {
+	s.getAgentCalls++
+	if s.agent.ExternalID == "" || s.agent.ExternalID != externalID {
+		return db.Agent{}, db.ErrNotFound
+	}
+	return s.agent, nil
+}
+
+func (s *evaluationStoreStub) GetAgentVersion(_ context.Context, _, externalID string, version int) (db.Agent, error) {
+	s.getAgentCalls++
+	if s.agentVersion.ExternalID == "" || s.agentVersion.ExternalID != externalID || s.agentVersion.CurrentVersion != version {
+		return db.Agent{}, db.ErrNotFound
+	}
+	return s.agentVersion, nil
+}
+
+func (s *evaluationStoreStub) GetEnvironment(_ context.Context, _, externalID string) (db.Environment, error) {
+	s.getEnvironmentCalls++
+	if s.environment.ExternalID == "" || s.environment.ExternalID != externalID {
+		return db.Environment{}, db.ErrNotFound
+	}
+	return s.environment, nil
+}
+
+func (s *evaluationStoreStub) CreateEvaluationExperiment(_ context.Context, input db.EvaluationExperimentCreate) (db.EvaluationExperiment, error) {
+	s.createExperimentCalls++
+	if s.createExperimentErr != nil {
+		return db.EvaluationExperiment{}, s.createExperimentErr
+	}
+	copied := input
+	s.createdExperiment = &copied
+	created := input.Experiment
+	created.Bindings = append([]db.EvaluationExperimentBinding(nil), input.Bindings...)
+	created.Items = append([]db.EvaluationExperimentItem(nil), input.Items...)
+	created.ItemCount = int64(len(created.Items))
+	created.EvaluatorCount = int64(len(created.Bindings))
+	s.experiment = created
+	return created, nil
+}
+
+func (s *evaluationStoreStub) GetEvaluationExperiment(_ context.Context, _, _, externalID string) (db.EvaluationExperiment, error) {
+	s.getExperimentCalls++
+	if s.experiment.ExternalID == "" || s.experiment.ExternalID != externalID {
+		return db.EvaluationExperiment{}, db.ErrNotFound
+	}
+	return s.experiment, nil
+}
+
+func (s *evaluationStoreStub) ListEvaluationExperimentsPage(_ context.Context, params db.ListEvaluationExperimentsPageParams) ([]db.EvaluationExperiment, bool, error) {
+	s.listExperimentCalls++
+	if params.WorkspaceUUID != "workspace-uuid" {
+		return nil, false, nil
+	}
+	return append([]db.EvaluationExperiment(nil), s.experiments...), false, nil
+}
+
+func (s *evaluationStoreStub) ListCompletedEvaluationExperiments(_ context.Context, _, _, versionExternalID, evaluatorSetKey string) ([]db.EvaluationExperiment, error) {
+	s.compareCalls++
+	s.lastCompareVersion = versionExternalID
+	s.lastCompareKey = evaluatorSetKey
+	return append([]db.EvaluationExperiment(nil), s.completedExperiments...), nil
+}
+
+func (s *evaluationStoreStub) UpdateEvaluationExperimentStatus(_ context.Context, _, _, externalID, status string, updatedAt time.Time) error {
+	s.updateStatusCalls++
+	s.lastStatus = status
+	if s.experiment.ExternalID == externalID {
+		s.experiment.Status = status
+		s.experiment.UpdatedAt = updatedAt
+	}
+	return nil
+}
+
+func (s *evaluationStoreStub) SetEvaluationExperimentItemSession(_ context.Context, update db.EvaluationExperimentItemSession) error {
+	s.itemSessionUpdates = append(s.itemSessionUpdates, update)
+	for index := range s.experiment.Items {
+		if s.experiment.Items[index].ExternalID != update.ExternalID {
+			continue
+		}
+		s.experiment.Items[index].Status = update.Status
+		s.experiment.Items[index].SessionExternalID = update.SessionExternalID
+		s.experiment.Items[index].ErrorMessage = update.ErrorMessage
+		s.experiment.Items[index].UpdatedAt = update.UpdatedAt
+	}
+	sessions := 0
+	for _, item := range s.experiment.Items {
+		if item.SessionExternalID != "" {
+			sessions++
+		}
+	}
+	s.experiment.SessionCount = int64(sessions)
+	return nil
 }

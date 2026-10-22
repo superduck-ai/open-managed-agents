@@ -54,4 +54,5 @@ type EvaluationCaseMapper interface {
 	MaxPosition(ctx context.Context, organizationUUID, workspaceUUID, versionUUID string) (int, error)
 	Insert(ctx context.Context, params evaluationCaseWriteParams) (evaluationCaseRow, error)
 	ListPage(ctx context.Context, params evaluationCasePageParams) ([]evaluationCaseRow, error)
+	ListByVersion(ctx context.Context, organizationUUID, workspaceUUID, versionUUID string) ([]evaluationCaseRow, error)
 }

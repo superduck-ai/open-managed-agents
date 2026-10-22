@@ -103,12 +103,75 @@ export type CreateEvaluationCaseInput = {
   turns: string[];
 };
 
+export type EvaluationExperimentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export type EvaluationExperimentEvaluator = {
+  id: string;
+  version_id: string;
+  position: number;
+};
+
+export type EvaluationExperimentItem = {
+  id: string;
+  case_id: string;
+  position: number;
+  session_id?: string;
+  status: EvaluationExperimentStatus;
+  error?: string;
+};
+
+export type EvaluationExperiment = {
+  id: string;
+  type: 'evaluation_experiment';
+  name: string;
+  desc: string;
+  status: EvaluationExperimentStatus;
+  dataset_id: string;
+  version_id: string;
+  agent_id: string;
+  agent_version: number;
+  environment_id: string;
+  timeout_seconds: number;
+  item_count: number;
+  session_count: number;
+  evaluator_count: number;
+  evaluators?: EvaluationExperimentEvaluator[];
+  items?: EvaluationExperimentItem[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type EvaluationExperimentPage = {
+  data: EvaluationExperiment[];
+  next_page: string | null;
+};
+
+export type CreateEvaluationExperimentInput = {
+  name: string;
+  desc?: string;
+  dataset_version_id: string;
+  agent_id: string;
+  agent_version?: number;
+  environment_id: string;
+  timeout_seconds: number;
+  evaluator_ids: string[];
+};
+
+export type CompareEvaluationExperimentsInput = {
+  dataset_version_id: string;
+  evaluator_ids: string[];
+};
+
 function collectionPath(orgUuid: string, workspaceId: string) {
   return `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/evaluation-datasets`;
 }
 
 function evaluatorCollectionPath(orgUuid: string, workspaceId: string) {
   return `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/evaluation-evaluators`;
+}
+
+function experimentCollectionPath(orgUuid: string, workspaceId: string) {
+  return `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/evaluation-experiments`;
 }
 
 function datasetPath(orgUuid: string, workspaceId: string, datasetId: string) {
@@ -194,6 +257,59 @@ export function createEvaluationEvaluator(
   csrfToken?: string,
 ) {
   return consoleApi<EvaluationEvaluator>(evaluatorCollectionPath(orgUuid, workspaceId), {
+    method: 'POST',
+    headers: workspaceHeaders(workspaceId),
+    csrfToken,
+    body: JSON.stringify(input),
+  });
+}
+
+export function listEvaluationExperiments(orgUuid: string, workspaceId: string) {
+  return consoleApi<EvaluationExperimentPage>(experimentCollectionPath(orgUuid, workspaceId), {
+    headers: workspaceHeaders(workspaceId),
+  });
+}
+
+export function getEvaluationExperiment(orgUuid: string, workspaceId: string, experimentId: string) {
+  return consoleApi<EvaluationExperiment>(
+    `${experimentCollectionPath(orgUuid, workspaceId)}/${encodeURIComponent(experimentId)}`,
+    { headers: workspaceHeaders(workspaceId) },
+  );
+}
+
+export function createEvaluationExperiment(
+  orgUuid: string,
+  workspaceId: string,
+  input: CreateEvaluationExperimentInput,
+  csrfToken?: string,
+) {
+  return consoleApi<EvaluationExperiment>(experimentCollectionPath(orgUuid, workspaceId), {
+    method: 'POST',
+    headers: workspaceHeaders(workspaceId),
+    csrfToken,
+    body: JSON.stringify(input),
+  });
+}
+
+export function startEvaluationExperiment(
+  orgUuid: string,
+  workspaceId: string,
+  experimentId: string,
+  csrfToken?: string,
+) {
+  return consoleApi<EvaluationExperiment>(
+    `${experimentCollectionPath(orgUuid, workspaceId)}/${encodeURIComponent(experimentId)}:start`,
+    { method: 'POST', headers: workspaceHeaders(workspaceId), csrfToken },
+  );
+}
+
+export function compareEvaluationExperiments(
+  orgUuid: string,
+  workspaceId: string,
+  input: CompareEvaluationExperimentsInput,
+  csrfToken?: string,
+) {
+  return consoleApi<EvaluationExperimentPage>(`${experimentCollectionPath(orgUuid, workspaceId)}:compare`, {
     method: 'POST',
     headers: workspaceHeaders(workspaceId),
     csrfToken,

@@ -79,4 +79,14 @@
         ORDER BY position ASC, uuid ASC
         LIMIT #{params.FetchLimit}
     </select>
+
+    <select id="ListByVersion" resultType="evaluationCaseRow">
+        SELECT
+        <include refid="columns"/>
+        FROM evaluation_cases
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND version_uuid = #{versionUUID}
+        ORDER BY position ASC, uuid ASC
+    </select>
 </mapper>

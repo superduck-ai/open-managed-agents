@@ -61,9 +61,8 @@ export function workspaceSwitchPath(currentPath: string, workspaceId: string) {
   const scope = `/workspaces/${encodeURIComponent(workspaceId || 'default')}`;
   const settings = path.match(/^\/settings\/workspaces\/[^/]+\/(keys|webhooks|mcp-tunnels)(?:\/|$)/);
   if (settings) return `/settings${scope}/${settings[1]}`;
-  if (path === '/evaluations/evaluators' || /^\/workspaces\/[^/]+\/evaluations\/evaluators(?:\/|$)/.test(path)) {
-    return `${scope}/evaluations/evaluators`;
-  }
+  const evaluationPath = scopedEvaluationPath(path, scope);
+  if (evaluationPath) return evaluationPath;
   const scoped = path.match(/^\/workspaces\/[^/]+\/([^/]+)/);
   if (scoped) return `${scope}/${scoped[1]}`;
   const section = path.split('/')[1];
@@ -95,4 +94,20 @@ export function workspaceSwitchPath(currentPath: string, workspaceId: string) {
   ];
   if (aliases[section] || workspaceSections.includes(section)) return `${scope}/${aliases[section] || section}`;
   return path;
+}
+
+function scopedEvaluationPath(path: string, scope: string) {
+  if (path === '/evaluations/evaluators' || /^\/workspaces\/[^/]+\/evaluations\/evaluators(?:\/|$)/.test(path)) {
+    return `${scope}/evaluations/evaluators`;
+  }
+  if (path === '/evaluations/experiments/new' || /\/evaluations\/experiments\/new(?:\/|$)/.test(path)) {
+    return `${scope}/evaluations/experiments/new`;
+  }
+  if (path === '/evaluations/experiments/compare' || /\/evaluations\/experiments\/compare(?:\/|$)/.test(path)) {
+    return `${scope}/evaluations/experiments/compare`;
+  }
+  if (path === '/evaluations/experiments' || /\/evaluations\/experiments(?:\/|$)/.test(path)) {
+    return `${scope}/evaluations/experiments`;
+  }
+  return '';
 }

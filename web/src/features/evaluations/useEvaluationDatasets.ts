@@ -108,6 +108,30 @@ export function evaluationEvaluatorsHref(workspaceId: string) {
   return `${evaluationsIndexHref(workspaceId)}/evaluators`;
 }
 
+export function evaluationExperimentsHref(workspaceId: string) {
+  return `${evaluationsIndexHref(workspaceId)}/experiments`;
+}
+
+export function evaluationExperimentNewHref(workspaceId: string) {
+  return `${evaluationExperimentsHref(workspaceId)}/new`;
+}
+
+export function evaluationExperimentCompareHref(workspaceId: string) {
+  return `${evaluationExperimentsHref(workspaceId)}/compare`;
+}
+
+export function evaluationExperimentHref(workspaceId: string, experimentId: string) {
+  return `${evaluationExperimentsHref(workspaceId)}/${encodeURIComponent(experimentId)}`;
+}
+
+export function experimentIdFromPath() {
+  const match = window.location.pathname.match(/\/evaluations\/experiments\/([^/]+)$/);
+  if (!match || match[1] === 'new' || match[1] === 'compare') {
+    return '';
+  }
+  return decodeURIComponent(match[1]);
+}
+
 function workspaceIdFromPath() {
   return window.location.pathname.match(/^\/workspaces\/([^/]+)\/evaluations(?:\/|$)/)?.[1] ?? '';
 }

@@ -932,6 +932,7 @@ const managedAgentPathByHref: Record<string, string> = {
   '/sessions': 'sessions',
   '/evaluations': 'evaluations',
   '/evaluations/evaluators': 'evaluations/evaluators',
+  '/evaluations/experiments': 'evaluations/experiments',
   '/observability': 'observability',
   '/deployments': 'deployments',
   '/environments': 'environments',
@@ -1071,16 +1072,25 @@ function isActivePath(currentPath: string, href: string) {
   }
   const managedPath = managedAgentPathByHref[href];
   if (managedPath) {
-    if (managedPath === 'evaluations' && /(^|\/)evaluations\/evaluators(\/|$)/.test(currentPath)) {
-      return false;
-    }
-    return (
-      currentPath === href ||
-      currentPath === `/workspaces/default/${managedPath}` ||
-      new RegExp(`^/workspaces/[^/]+/${managedPath}(/|$)`).test(currentPath)
-    );
+    return isManagedAgentNavActive(currentPath, href, managedPath);
   }
   return currentPath === href || currentPath.startsWith(`${href}/`);
+}
+
+function isManagedAgentNavActive(currentPath: string, href: string, managedPath: string) {
+  if (managedPath === 'evaluations' && isEvaluationChildPath(currentPath)) {
+    return false;
+  }
+  return (
+    currentPath === href ||
+    (managedPath === 'evaluations/experiments' && currentPath.startsWith(`${href}/`)) ||
+    currentPath === `/workspaces/default/${managedPath}` ||
+    new RegExp(`^/workspaces/[^/]+/${managedPath}(/|$)`).test(currentPath)
+  );
+}
+
+function isEvaluationChildPath(currentPath: string) {
+  return /(^|\/)evaluations\/(evaluators|experiments)(\/|$)/.test(currentPath);
 }
 
 function isWideConsolePath(currentPath: string) {
@@ -1134,6 +1144,7 @@ function isManagedAgentsPath(currentPath: string) {
       '/sessions',
       '/evaluations',
       '/evaluations/evaluators',
+      '/evaluations/experiments',
       '/observability',
       '/deployments',
       '/environments',
@@ -1141,6 +1152,7 @@ function isManagedAgentsPath(currentPath: string) {
       '/memory-stores',
       '/dreams',
     ].includes(currentPath) ||
+    currentPath.startsWith('/evaluations/experiments/') ||
     /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|evaluations|observability|deployments|environments|vaults|memory-stores|dreams)(\/|$)/.test(
       currentPath,
     )

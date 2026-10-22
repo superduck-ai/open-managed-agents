@@ -8,12 +8,13 @@ import (
 )
 
 type EvaluationDatasetVersion struct {
-	UUID        string
-	ExternalID  string
-	DatasetUUID string
-	Version     int
-	CaseCount   int
-	CreatedAt   time.Time
+	UUID              string
+	ExternalID        string
+	DatasetUUID       string
+	DatasetExternalID string
+	Version           int
+	CaseCount         int
+	CreatedAt         time.Time
 }
 
 type EvaluationDataset struct {
@@ -150,6 +151,22 @@ func (row evaluationDatasetPageRow) evaluationDataset() EvaluationDataset {
 		CreatedAt:   row.VersionCreatedAt,
 	}
 	return dataset
+}
+
+func (d *DB) GetEvaluationDatasetVersion(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (EvaluationDatasetVersion, error) {
+	row, err := NewEvaluationDatasetVersionMapper(d.mapperDB).FindScopedByExternalID(ctx, organizationUUID, workspaceUUID, externalID)
+	if err != nil {
+		return EvaluationDatasetVersion{}, mapNoRows(err)
+	}
+	version := EvaluationDatasetVersion{
+		UUID:        row.UUID,
+		ExternalID:  row.ExternalID,
+		DatasetUUID: row.DatasetUUID,
+		Version:     row.Version,
+		CreatedAt:   row.CreatedAt,
+	}
+	version.DatasetExternalID = row.DatasetExternalID
+	return version, nil
 }
 
 func (row evaluationDatasetVersionRow) evaluationDatasetVersion() EvaluationDatasetVersion {

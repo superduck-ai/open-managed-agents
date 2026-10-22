@@ -40,6 +40,21 @@ test('切换评估器列表时留在评估器', () => {
   expect(workspaceSwitchPath('/evaluations/evaluators', 'other')).toBe('/workspaces/other/evaluations/evaluators');
 });
 
+test('切换实验列表、新建和对比时留在实验', () => {
+  expect(workspaceSwitchPath('/workspaces/default/evaluations/experiments', 'other')).toBe(
+    '/workspaces/other/evaluations/experiments',
+  );
+  expect(workspaceSwitchPath('/evaluations/experiments/new', 'other')).toBe(
+    '/workspaces/other/evaluations/experiments/new',
+  );
+  expect(workspaceSwitchPath('/workspaces/default/evaluations/experiments/compare', 'other')).toBe(
+    '/workspaces/other/evaluations/experiments/compare',
+  );
+  expect(workspaceSwitchPath('/workspaces/default/evaluations/experiments/evalexp_old', 'other')).toBe(
+    '/workspaces/other/evaluations/experiments',
+  );
+});
+
 test('组织设置保持原路由，工作区设置使用新作用域', () => {
   expect(workspaceSwitchPath('/settings/members', 'other')).toBe('/settings/members');
   expect(workspaceSwitchPath('/members', 'other')).toBe('/members');

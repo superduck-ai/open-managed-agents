@@ -2,6 +2,7 @@ package evaluations
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -26,15 +27,45 @@ type Store interface {
 	CreateEvaluationEvaluator(context.Context, db.EvaluationEvaluator) (db.EvaluationEvaluator, error)
 	ListEvaluationEvaluatorsPage(context.Context, db.ListEvaluationEvaluatorsPageParams) ([]db.EvaluationEvaluator, bool, error)
 	GetEvaluationEvaluator(context.Context, string, string, string) (db.EvaluationEvaluator, error)
+	GetEvaluationDatasetVersion(context.Context, string, string, string) (db.EvaluationDatasetVersion, error)
+	ListEvaluationCasesByVersion(context.Context, string, string, string) ([]db.EvaluationCase, error)
+	GetAgent(context.Context, string, string) (db.Agent, error)
+	GetAgentVersion(context.Context, string, string, int) (db.Agent, error)
+	GetEnvironment(context.Context, string, string) (db.Environment, error)
+	CreateEvaluationExperiment(context.Context, db.EvaluationExperimentCreate) (db.EvaluationExperiment, error)
+	GetEvaluationExperiment(context.Context, string, string, string) (db.EvaluationExperiment, error)
+	ListEvaluationExperimentsPage(context.Context, db.ListEvaluationExperimentsPageParams) ([]db.EvaluationExperiment, bool, error)
+	ListCompletedEvaluationExperiments(context.Context, string, string, string, string) ([]db.EvaluationExperiment, error)
+	UpdateEvaluationExperimentStatus(context.Context, string, string, string, string, time.Time) error
+	SetEvaluationExperimentItemSession(context.Context, db.EvaluationExperimentItemSession) error
+}
+
+type CaseSessionInput struct {
+	AgentExternalID       string
+	AgentVersion          int
+	EnvironmentExternalID string
+	Resources             json.RawMessage
+	Turns                 []string
+	Metadata              map[string]string
+}
+
+type CaseSessionStarter interface {
+	StartCaseSession(context.Context, auth.Principal, CaseSessionInput) (string, error)
 }
 
 type Handler struct {
-	store  Store
-	logger *slog.Logger
+	store   Store
+	logger  *slog.Logger
+	starter CaseSessionStarter
 }
 
 func NewHandler(store Store, logger *slog.Logger) *Handler {
 	return &Handler{store: store, logger: logging.LoggerOrDefault(logger)}
+}
+
+func (h *Handler) WithSessionStarter(starter CaseSessionStarter) *Handler {
+	h.starter = starter
+	return h
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -47,6 +78,11 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/workspaces/{workspaceId}/evaluation-evaluators", h.wrap(h.createEvaluator))
 	r.Get("/workspaces/{workspaceId}/evaluation-evaluators", h.wrap(h.listEvaluators))
 	r.Get("/workspaces/{workspaceId}/evaluation-evaluators/{evaluatorId}", h.wrap(h.getEvaluator))
+	r.Post("/workspaces/{workspaceId}/evaluation-experiments", h.wrap(h.createExperiment))
+	r.Get("/workspaces/{workspaceId}/evaluation-experiments", h.wrap(h.listExperiments))
+	r.Post("/workspaces/{workspaceId}/evaluation-experiments:compare", h.wrap(h.compareExperiments))
+	r.Get("/workspaces/{workspaceId}/evaluation-experiments/{experimentId}", h.wrap(h.getExperiment))
+	r.Post("/workspaces/{workspaceId}/evaluation-experiments/{experimentId}:start", h.wrap(h.startExperiment))
 }
 
 func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request) error {

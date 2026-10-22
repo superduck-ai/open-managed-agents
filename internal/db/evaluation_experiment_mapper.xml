@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EvaluationExperimentMapper">
+    <sql id="returning_columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        name,
+        description,
+        dataset_uuid,
+        dataset_external_id,
+        version_uuid,
+        version_external_id,
+        agent_external_id,
+        agent_version,
+        environment_external_id,
+        timeout_seconds,
+        CAST(env AS text) AS env_json,
+        CAST(resources AS text) AS resources_json,
+        evaluator_set_key,
+        status,
+        created_by_user_uuid,
+        created_at,
+        updated_at,
+        0 AS item_count,
+        0 AS session_count,
+        0 AS evaluator_count
+    </sql>
+
+    <sql id="columns">
+        e.uuid,
+        e.external_id,
+        e.organization_uuid,
+        e.workspace_uuid,
+        e.name,
+        e.description,
+        e.dataset_uuid,
+        e.dataset_external_id,
+        e.version_uuid,
+        e.version_external_id,
+        e.agent_external_id,
+        e.agent_version,
+        e.environment_external_id,
+        e.timeout_seconds,
+        CAST(e.env AS text) AS env_json,
+        CAST(e.resources AS text) AS resources_json,
+        e.evaluator_set_key,
+        e.status,
+        e.created_by_user_uuid,
+        e.created_at,
+        e.updated_at,
+        (
+            SELECT COUNT(*)
+            FROM evaluation_experiment_items AS item_row
+            WHERE item_row.organization_uuid = e.organization_uuid
+            AND item_row.workspace_uuid = e.workspace_uuid
+            AND item_row.experiment_uuid = e.uuid
+        ) AS item_count,
+        (
+            SELECT COUNT(*)
+            FROM evaluation_experiment_items AS session_row
+            WHERE session_row.organization_uuid = e.organization_uuid
+            AND session_row.workspace_uuid = e.workspace_uuid
+            AND session_row.experiment_uuid = e.uuid
+            AND session_row.session_external_id IS NOT NULL
+        ) AS session_count,
+        (
+            SELECT COUNT(*)
+            FROM evaluation_experiment_evaluators AS evaluator_row
+            WHERE evaluator_row.organization_uuid = e.organization_uuid
+            AND evaluator_row.workspace_uuid = e.workspace_uuid
+            AND evaluator_row.experiment_uuid = e.uuid
+        ) AS evaluator_count
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="evaluationExperimentRow">
+        INSERT INTO evaluation_experiments (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            name,
+            description,
+            dataset_uuid,
+            dataset_external_id,
+            version_uuid,
+            version_external_id,
+            agent_external_id,
+            agent_version,
+            environment_external_id,
+            timeout_seconds,
+            env,
+            resources,
+            evaluator_set_key,
+            status,
+            created_by_user_uuid,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.Name},
+            #{params.Description},
+            #{params.DatasetUUID},
+            #{params.DatasetExternalID},
+            #{params.VersionUUID},
+            #{params.VersionExternalID},
+            #{params.AgentExternalID},
+            #{params.AgentVersion},
+            #{params.EnvironmentExternalID},
+            #{params.TimeoutSeconds},
+            CAST(#{params.EnvJSON} AS jsonb),
+            CAST(#{params.ResourcesJSON} AS jsonb),
+            #{params.EvaluatorSetKey},
+            #{params.Status},
+            #{params.CreatedByUserUUID},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="returning_columns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="evaluationExperimentRow">
+        SELECT
+        <include refid="columns"/>
+        FROM evaluation_experiments AS e
+        WHERE e.organization_uuid = #{organizationUUID}
+        AND e.workspace_uuid = #{workspaceUUID}
+        AND e.external_id = #{externalID}
+    </select>
+
+    <select id="ListPage" resultType="evaluationExperimentRow">
+        SELECT
+        <include refid="columns"/>
+        FROM evaluation_experiments AS e
+        <where>
+            e.organization_uuid = #{params.OrganizationUUID}
+            AND e.workspace_uuid = #{params.WorkspaceUUID}
+            <if test="params.Cursor != nil">
+                AND (e.created_at, e.uuid) &lt; (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
+            </if>
+        </where>
+        ORDER BY e.created_at DESC, e.uuid DESC
+        LIMIT #{params.FetchLimit}
+    </select>
+
+    <select id="ListMatching" resultType="evaluationExperimentRow">
+        SELECT
+        <include refid="columns"/>
+        FROM evaluation_experiments AS e
+        WHERE e.organization_uuid = #{params.OrganizationUUID}
+        AND e.workspace_uuid = #{params.WorkspaceUUID}
+        AND e.version_external_id = #{params.VersionExternalID}
+        AND e.evaluator_set_key = #{params.EvaluatorSetKey}
+        AND e.status = #{params.Status}
+        ORDER BY e.created_at DESC, e.uuid DESC
+    </select>
+
+    <update id="UpdateStatus" result="rows">
+        UPDATE evaluation_experiments
+        SET status = #{params.Status},
+            updated_at = #{params.UpdatedAt}
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+    </update>
+</mapper>

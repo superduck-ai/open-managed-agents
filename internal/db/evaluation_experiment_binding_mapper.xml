@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EvaluationExperimentBindingMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        experiment_uuid,
+        position,
+        evaluator_uuid,
+        evaluator_external_id,
+        version_uuid,
+        version_external_id,
+        created_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="evaluationExperimentBindingRow">
+        INSERT INTO evaluation_experiment_evaluators (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            experiment_uuid,
+            position,
+            evaluator_uuid,
+            evaluator_external_id,
+            version_uuid,
+            version_external_id,
+            created_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.ExperimentUUID},
+            #{params.Position},
+            #{params.EvaluatorUUID},
+            #{params.EvaluatorExternalID},
+            #{params.VersionUUID},
+            #{params.VersionExternalID},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="ListByExperiment" resultType="evaluationExperimentBindingRow">
+        SELECT
+        <include refid="columns"/>
+        FROM evaluation_experiment_evaluators
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND experiment_uuid = #{experimentUUID}
+        ORDER BY position ASC, uuid ASC
+    </select>
+</mapper>

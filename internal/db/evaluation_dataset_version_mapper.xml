@@ -42,4 +42,25 @@
         ORDER BY version DESC, uuid DESC
         LIMIT 1
     </select>
+
+    <select id="FindScopedByExternalID" resultType="evaluationDatasetVersionScopeRow">
+        SELECT
+            v.uuid,
+            v.external_id,
+            v.organization_uuid,
+            v.workspace_uuid,
+            v.dataset_uuid,
+            d.external_id AS dataset_external_id,
+            v.version,
+            v.created_at
+        FROM evaluation_dataset_versions AS v
+        JOIN evaluation_datasets AS d
+            ON d.uuid = v.dataset_uuid
+            AND d.organization_uuid = v.organization_uuid
+            AND d.workspace_uuid = v.workspace_uuid
+        WHERE v.organization_uuid = #{organizationUUID}
+        AND v.workspace_uuid = #{workspaceUUID}
+        AND v.external_id = #{externalID}
+        AND d.archived_at IS NULL
+    </select>
 </mapper>

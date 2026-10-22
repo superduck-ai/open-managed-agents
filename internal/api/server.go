@@ -192,6 +192,7 @@ func NewServer(deps ServerDeps) *Server {
 	}
 	evaluationHandler.WithSessionStarter(evaluationCaseSessionStarter{sessions: s.sessions})
 	evaluationHandler.WithEvaluatorModel(evaluationsapi.NewLLMEvaluatorModel(deps.DB, deps.VaultSecrets))
+	evaluationHandler.WithAgentScoreSandbox(newEvaluationAgentScoreSandbox(s.sessions, deps.DB, filestoreService, componentLogger("evaluations")))
 	s.sessions.WithSessionEventObserver(evaluationHandler)
 	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)
 	router := chi.NewRouter()

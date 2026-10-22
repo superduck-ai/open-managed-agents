@@ -64,6 +64,7 @@ type Handler struct {
 	logger  *slog.Logger
 	starter CaseSessionStarter
 	model   EvaluatorModel
+	sandbox AgentScoreSandbox
 }
 
 func NewHandler(store Store, logger *slog.Logger) *Handler {
@@ -77,6 +78,11 @@ func (h *Handler) WithSessionStarter(starter CaseSessionStarter) *Handler {
 
 func (h *Handler) WithEvaluatorModel(model EvaluatorModel) *Handler {
 	h.model = model
+	return h
+}
+
+func (h *Handler) WithAgentScoreSandbox(sandbox AgentScoreSandbox) *Handler {
+	h.sandbox = sandbox
 	return h
 }
 

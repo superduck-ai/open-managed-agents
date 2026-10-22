@@ -30,6 +30,9 @@ type scoreValues struct {
 	Input            string
 	Output           string
 	Checkpoints      string
+	CheckpointsJSON  json.RawMessage
+	InputFiles       json.RawMessage
+	ReferenceFiles   json.RawMessage
 	AgentTrajectory  string
 	InvocationResult string
 }
@@ -68,7 +71,7 @@ func (h *Handler) scoreBinding(ctx context.Context, outcome sessionOutcome, expe
 		return
 	}
 	if version.EvaluatorType == evaluatorTypeAgent {
-		h.recordScore(ctx, outcome, experiment, item, binding, version, nil, "", nil, agentScoringUnavailableMessage)
+		h.scoreAgent(ctx, outcome, experiment, item, binding, version, values)
 		return
 	}
 	if h.model == nil {
@@ -153,6 +156,8 @@ func (h *Handler) recordScore(ctx context.Context, outcome sessionOutcome, exper
 
 func scoreFailureMessage(err error) string {
 	switch {
+	case errors.Is(err, ErrAgentScoreFileMissing):
+		return agentScoreFileMissingMessage
 	case errors.Is(err, errEvaluatorScoreParse):
 		return evaluatorScoreParseMessage
 	case errors.Is(err, errEvaluatorModelMissing):
@@ -205,7 +210,12 @@ func (h *Handler) sessionScoreEvents(ctx context.Context, workspaceUUID, session
 }
 
 func scoreValuesFrom(item db.EvaluationCase, events []db.SessionEvent) scoreValues {
-	values := scoreValues{Checkpoints: jsonText(item.Checkpoints)}
+	values := scoreValues{
+		Checkpoints:     jsonText(item.Checkpoints),
+		CheckpointsJSON: jsonValueOrNull(item.Checkpoints),
+		InputFiles:      jsonArrayOrEmpty(item.InputFiles),
+		ReferenceFiles:  jsonArrayOrEmpty(item.ReferenceFiles),
+	}
 	var input, output, trajectory strings.Builder
 	var toolResult string
 	var sawToolResult bool
@@ -332,4 +342,18 @@ func jsonText(raw json.RawMessage) string {
 		return ""
 	}
 	return string(raw)
+}
+
+func jsonValueOrNull(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" || !json.Valid(raw) {
+		return json.RawMessage(`null`)
+	}
+	return raw
+}
+
+func jsonArrayOrEmpty(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" || !json.Valid(raw) {
+		return json.RawMessage(`[]`)
+	}
+	return raw
 }

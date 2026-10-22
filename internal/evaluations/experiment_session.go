@@ -37,6 +37,7 @@ func (h *Handler) ObserveSessionEvents(ctx context.Context, events []db.SessionE
 				"session_id", outcome.SessionExternalID,
 				"error", err,
 			)
+			h.settleAgentScore(ctx, outcome)
 			continue
 		}
 		for _, match := range matches {
@@ -59,6 +60,7 @@ func (h *Handler) ObserveSessionEvents(ctx context.Context, events []db.SessionE
 			}
 			updated[match.ExperimentExternalID] = outcome
 		}
+		h.settleAgentScore(ctx, outcome)
 	}
 	for experimentID, outcome := range updated {
 		if err := h.rollUpExperiment(ctx, outcome, experimentID); err != nil {

@@ -261,7 +261,7 @@ M3 不做取消。不实现今日额度。创建、列表、读取、start 和 c
 
 ## UI
 
-Managed Agents 侧边栏在 Sessions 与 Observability 之间只有一条「评测」/ Evaluation，带 Beta。它打开评测集页。页内用 EvaluationSectionNav 保留三个页签：评测集、评估器、实验。不再把这三项做成并列的侧边栏入口。OMA 没有「分析」分组，所以不把评测放进用量分析。
+Managed Agents 侧边栏在 Sessions 与 Observability 之间只有一条「评测」/ Evaluation，不显示 Beta。它打开评测集页。页内用 EvaluationSectionNav 保留三个页签：评测集、评估器、实验。不再把这三项做成并列的侧边栏入口。OMA 没有「分析」分组，所以不把评测放进用量分析。
 
 - `/workspaces/$workspaceId/evaluations`：Custom 与 Presets 两个页签。Custom 列出评测集，列有版本、用例数和状态，并可以创建（name、desc）。Presets 列出已发布目录，Reuse 打开已发布版本的 case，并以 `source_version_id` 复制成自定义评测集
 - `/workspaces/$workspaceId/evaluations/datasets/$datasetId`：当前版本、case 列表、点开用例抽屉（turns、checkpoints、input/reference files；有 `file_id` 时可下载）。可以添加单条 case、粘贴 JSONL，或上传 JSONL / ZIP。「从会话导入」/ Import from session 和「批量导入会话」/ Import sessions 仍在。后两个都可以勾选是否把输出文件写入 reference files。批量输入用换行或逗号分隔 session id，提交后按条显示成功数和失败原因。没有编辑或删除用例

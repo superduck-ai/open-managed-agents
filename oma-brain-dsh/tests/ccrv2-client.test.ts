@@ -1,3 +1,4 @@
+import { stateData, logData } from "./persistence-fixtures.ts";
 import { expect, test } from "bun:test";
 import { CcrClient, CcrHttpError, type CcrHttpRequest } from "../src/ccrv2/index.ts";
 
@@ -27,14 +28,14 @@ test("lost persistence confirmation retries the same durable envelope with curre
       return new Response(null, { status: 204 });
     },
   });
-  await client.persist("session/a", "dsh_brain_state", { revision: 1 });
+  await client.persist("session/a", "dsh_brain_state", stateData({ revision: 1 }));
   expect(requests).toHaveLength(3);
   const envelope = {
     type: "system",
-    uuid: "614f1799a27f00337ff2132dd1d42f9b2d87cd2d1192042469f9798010311bab",
+    uuid: "ddb8dd2411772033980a632b0c014f9f77300318c9bfc8484c7fb5c81ca2a53e",
     subtype: "dsh_brain_state",
     schema_version: 1,
-    data: { revision: 1 },
+    data: stateData({ revision: 1 }),
   };
   for (const [index, request] of requests.entries()) {
     expect(request.path).toBe("/v1/code/sessions/session%2Fa/worker/internal-events");
@@ -57,7 +58,7 @@ test("unbound persistence uses a bounded retry budget and refuses stale epochs i
       return new Response(null, { status });
     });
     try {
-      await client.persist("session/a", "dsh_log", {});
+      await client.persist("session/a", "dsh_log", logData({}));
       throw new Error("Persistence should fail");
     } catch (error) {
       expect(error).toBeInstanceOf(CcrHttpError);
@@ -103,7 +104,7 @@ test("subagent history keeps its scope on every page and writes agent_id outside
   expect(await client.privateEvents("session/a", { subagents: true })).toEqual([{ sequence: 1 }, { sequence: 2 }]);
   expect(requests[0]!.path).toEndWith("/internal-events?subagents=true");
   expect(requests[1]!.path).toEndWith("/internal-events?subagents=true&cursor=501");
-  await client.persist("session/a", "dsh_log", { header: { id: "child" } }, "child");
+  await client.persist("session/a", "dsh_log", logData({}, "child"), "child");
   const body = requests[2]!.body as { events: { agent_id: string; payload: Record<string, unknown>; is_compaction: boolean }[] };
   expect(body.events[0]!.agent_id).toBe("child");
   expect(body.events[0]!.payload.agent_id).toBeUndefined();
@@ -270,7 +271,7 @@ test("successful empty write responses are accepted without retry or false lease
       requests++;
       return new Response(null, { status });
     });
-    await client.persist("session/a", "dsh_log", {});
+    await client.persist("session/a", "dsh_log", logData({}));
     await client.events("session/a", [{ type: "agent.message", uuid: "message" }]);
     await client.setStatus("session/a", "idle");
     expect(await client.checkLease("session/a")).toBe("confirmed");

@@ -1,3 +1,4 @@
+import type { CcrPersistArgs } from "./persistence-contracts.ts";
 import { createHash } from "node:crypto";
 import type { CcrBackend } from "./contracts.ts";
 import type {
@@ -638,7 +639,7 @@ export class CcrClient implements CcrBackend {
     return events.map((event) => event.payload);
   }
 
-  async persist(id: string, subtype: string, data: unknown, agentId?: string): Promise<void> {
+  async persist(id: string, ...[subtype, data, agentId]: CcrPersistArgs): Promise<void> {
     const payload = {
       type: "system",
       uuid: stableId(agentId === undefined ? [id, subtype, data] : [id, agentId, subtype, data]),

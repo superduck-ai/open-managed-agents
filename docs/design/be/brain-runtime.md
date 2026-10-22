@@ -4,6 +4,12 @@
 
 本地在仓库根目录运行 `just restart-brain`，复用 `oma-brain-dsh/scripts/restart.sh`，先构建，再停止当前 Brain 目录启动的 Bun 入口进程，并在前台启动新进程。构建失败时保留旧进程，旧进程未能在 30 秒内退出时取消重启。
 
+## 私有持久化写入类型
+
+DSH 的 CCRv2 `persist` 通过 `CcrPersistArgs` 将 subtype 与 data 关联：`dsh_log` 必须携带 `SessionHeader`、`inherited` 和只读 `SessionEvent` 数组；`dsh_brain_state` 必须携带完整 `BrainState`。该约束由客户端、后端接口和日志持久化适配器共用，拒绝未知 subtype、缺失字段及 subtype/data 错配。类型回归由 `oma-brain-dsh/tests/ccrv2-persistence-types.test.ts` 配合 `bun run typecheck` 验证。
+
+这是 TypeScript 写入边界约束，不新增运行时校验。HTTP envelope、`schema_version: 1`、稳定 UUID 的计算、入队前 JSON 快照、确认与恢复行为保持不变。
+
 ## 启动与多节点恢复
 
 ```mermaid

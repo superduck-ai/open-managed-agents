@@ -1,3 +1,4 @@
+import type { CcrPersistArgs } from "../src/ccrv2/persistence-contracts.ts";
 import { test, expect } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
 import { mountKernel } from "../src/kernel.ts";
@@ -32,7 +33,7 @@ test.each(["event", "control"])("%s interruption context survives recovery in na
     async getWorkerState() { return { metadata: null, durationMs: 0 }; },
     async isToolConfirmationPending() { return false; },
     async privateEvents(id) { return structuredClone(logs.get(id) ?? []); },
-    async persist(id: string, subtype: string, data: unknown) { logs.set(id, [...(logs.get(id) ?? []), { subtype, schema_version: 1, data }]); },
+    async persist(id: string, ...[subtype, data]: CcrPersistArgs) { logs.set(id, [...(logs.get(id) ?? []), { subtype, schema_version: 1, data }]); },
     async events(_id: string, events: unknown[]) { published.push(...events); }, async acknowledge() {}, async reportDelivery() {}, async reportMetadata() {}, async setStatus() {},
     sessionIds() { return logs.keys(); },
   };

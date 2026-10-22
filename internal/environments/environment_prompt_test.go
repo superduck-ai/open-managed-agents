@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
 func mustEnvironmentPrompt(t *testing.T, environmentConfig json.RawMessage) string {
 	t.Helper()
-	prompt, err := managedAgentEnvironmentPrompt(environmentConfig)
+	prompt, err := managedAgentEnvironmentPrompt(environmentConfig, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +24,7 @@ func TestManagedAgentEnvironmentPromptRejectsInvalidConfig(t *testing.T) {
 		`{"type":"cloud","networking":{"type":"sometimes"}}`,
 		`{"type":"cloud","packages":{"type":"packages","pip":["--index-url=https://example.test"]}}`,
 	} {
-		if _, err := managedAgentEnvironmentPrompt(json.RawMessage(raw)); err == nil {
+		if _, err := managedAgentEnvironmentPrompt(json.RawMessage(raw), ""); err == nil {
 			t.Errorf("config %s accepted", raw)
 		}
 	}
@@ -54,6 +56,37 @@ func TestManagedAgentEnvironmentPromptDefaultsToUnrestricted(t *testing.T) {
 	}
 	if prompt != mustEnvironmentPrompt(t, json.RawMessage(`{"type":"cloud"}`)) {
 		t.Fatal("prompt differs between missing config and cloud defaults")
+	}
+}
+
+func TestManagedAgentEnvironmentPromptSystemInformation(t *testing.T) {
+	for _, test := range []struct {
+		environment  string
+		architecture string
+	}{
+		{environment: config.EnvironmentDev, architecture: "aarch64"},
+		{environment: config.EnvironmentProd, architecture: "x86_64"},
+		{architecture: "x86_64"},
+	} {
+		t.Run(test.environment+test.architecture, func(t *testing.T) {
+			prompt, err := managedAgentEnvironmentPrompt(nil, test.environment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{
+				"Operating system: Linux",
+				"Distribution: Ubuntu 24.04.4 LTS (Noble Numbat)",
+				"Architecture: " + test.architecture,
+				"Shell: /bin/bash",
+				"Current user: root",
+				"user account exists with UID 1000 and belongs to the sudo group",
+				"sudo is available at /usr/bin/sudo",
+			} {
+				if !strings.Contains(prompt, want) {
+					t.Errorf("prompt missing %q:\n%s", want, prompt)
+				}
+			}
+		})
 	}
 }
 

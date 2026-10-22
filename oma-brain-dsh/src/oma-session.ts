@@ -5,6 +5,8 @@ import * as OmaSandboxProvider from "./oma-sandbox/index.ts";
 import { validateAssignment, validateToolPermissions, type Assignment } from "./assignment.ts";
 import type { CcrSession } from "./ccrv2/index.ts";
 import { childSystemPrompt, rootSystemPrompt } from "./prompt/assemble.ts";
+import { WebClient } from "./web-tools/client.ts";
+import * as WebTools from "./web-tools/index.ts";
 
 /** Bind OMA credentials and launch metadata before opening the protocol bridge. */
 export function createOmaSession(
@@ -43,6 +45,8 @@ export function createOmaSession(
     setup: async (scope) => {
       await scope.plugin(OmaSandboxProvider, { api, sessionId: assignment.session_id });
     },
+    setupTools: async (scope, bridge, tools, threadId, permissions) =>
+      scope.plugin(WebTools, { client: new WebClient(api, assignment.session_id, scope.get("sandboxExecutor"), threadId), bridge, tools, permissions }),
     subagents: assignment.launch.subagents ?? {},
     modelMessageID: (id) => api.modelResponses.get(id),
     bindThread: (id) => {

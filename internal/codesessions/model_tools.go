@@ -36,6 +36,9 @@ func (s *Service) modelToolUsePayloads(ctx context.Context, request *ModelReques
 	return payloads, nil
 }
 func modelToolUsePayload(request *ModelRequest, tool ModelRequestToolUse, identity toolIdentity, permission resolvedToolPermission, external bool, at time.Time) (json.RawMessage, error) {
+	if identity.Kind == "agent_toolset" && identity.ToolName == "ask_user_question" {
+		return nil, nil
+	}
 	if tool.InputRejected {
 		eventType, _ := toolPermissionPublicIdentity(tool.Name, identity)
 		if identity.Kind != "agent_toolset" || eventType != "agent.tool_use" {

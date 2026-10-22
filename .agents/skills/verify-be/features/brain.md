@@ -1,5 +1,7 @@
 # Brain 验证
 
+`just verify-be chat doctor brain-proxy` 和 `just verify-be chat brain-proxy` 专门验证沙箱代理在 owner 接管后继续工作，需要同样的 `OMA_BRAIN_BINARY` 与本地 Worker 镜像。该场景启动真实 Brain 进程，让脚本模型两次请求 Bash，使用自动继承的代理访问 `https://1.1.1.1/cdn-cgi/trace`。第一次成功后杀掉 owner，等待真实租约失效，再启动 replacement。必须观察 epoch 增长、同一个旧 worker token 在接管前后读取 session_context 均返回 200（`brain_proxy_old_token_identity`）、旧 worker token 调用沙箱网关返回 409 epoch 冲突、沙箱 UUID/provider ID/relay 地址全部不变，以及第二次 HTTP 200、CONNECT 200 和 TLS 校验成功。它使用隔离依赖和实际公网 HTTPS，不修改现存开发会话；公网不可达时不能报告通过。
+
 运行前构建 oma-brain-dsh，设置 `OMA_BRAIN_BINARY` 为该可执行文件的绝对路径。
 
 ```sh
@@ -18,7 +20,7 @@ Doctor 检查 Brain binary 的可执行性并记录 SHA-256；沙箱镜像必须
 `span.model_request_start → agent.thinking → agent.message → span.model_request_end`，且对应事件 ID 一致。
 `brain_mcp_loop` 让真实原生循环请求 sandbox MCP Write，核对沙箱文件字节及下一次模型请求中的
 工具结果。上游模型请求必须携带 `anthropic-version: 2023-06-01`，并且工具列表严格为
-`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob` 以及 dsh 内置的 `archive_agent`、`list_agents`、`send_to_agent`。
+`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`web_search`、`web_fetch` 以及 dsh 内置的 `archive_agent`、`list_agents`、`send_to_agent`。
 每次模型响应使用独立 message ID，避免不同回合被当作重复事件。任务通过 NATS 分发；输出、审批、状态和心跳复用 CCRv2 worker 接口，输入与回复通过 Worker SSE 接收，
 processed 回执通过 CCRv2 delivery 接口确认。
 `brain_takeover` 杀掉节点，先投递待恢复输入，再等待真实租约过期，重新派发任务并启动新节点，检查 epoch 增长、旧节点
@@ -30,7 +32,7 @@ MCP 请求被拒绝以及 CCRv2 私有 dsh_log 事件保存的原生模型历史
 `brain_lazy_denied` 通过公开 API 创建禁用工具的会话，核对工具拒绝后沙箱创建次数为零。
 `brain_lazy_text` 通过公开 API 创建纯文本会话，核对回复与历史、沙箱创建次数为零。
 `brain_lazy_tool` 在两个 Go Runner 与两个 dsh 节点下，核对首次获准工具只创建一个沙箱、
-真实挂载和 MCP 写入，以及后续工具复用。
+真实挂载和 MCP 写入，以及后续工具复用。随后删除原沙箱模拟 Provider 过期，核对再次 Write 创建且仅创建一个 replacement，并在新沙箱验证文件字节。
 `brain_lazy_cleanup` 检查公开删除后，包含从未创建沙箱的会话在内的逻辑 Work 均为 stopped。
 
 整个场景使用真实 Go 后端、PostgreSQL、Redis、三节点 NATS 和 Docker MCP；只模拟上游 LLM。

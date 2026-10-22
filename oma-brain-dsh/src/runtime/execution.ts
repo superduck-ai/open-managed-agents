@@ -6,6 +6,7 @@ import { approveToolCall } from "./tool-approvals.ts";
 import { toolText } from "./tools.ts";
 import {
   ToolNotForwardedError,
+  isShutdownCancel,
   type ApprovalDecision,
   type RemoteTool,
   type SandboxExecutor,
@@ -31,7 +32,7 @@ export class ToolExecution {
         throw new Error(`Invalid ${tool.name} arguments: ${errors.join("; ")}`);
     };
     validate(original);
-    const decision: ApprovalDecision = this.permissions?.[tool.remoteName] === "allow"
+    const decision: ApprovalDecision = this.permissions?.[tool.permissionName ?? tool.remoteName] === "allow"
       ? { allowed: true }
       : await approveToolCall(this.bridge, { callId: exec.callId, toolName: tool.name, input: original }, exec.signal);
     if (!decision.allowed)
@@ -42,7 +43,7 @@ export class ToolExecution {
     const readOnly = !!tool.readOnly;
     const call = { callId: exec.callId, name: tool.name, original, effective, readOnly };
     await this.bridge.recordApproved(call);
-    if (!decision.externalResult) await this.sandbox.provision(exec.signal);
+    if (!decision.externalResult) await this.sandbox.provision?.(exec.signal);
     exec.signal.throwIfAborted();
     if (!readOnly) {
       await this.bridge.flushLog();
@@ -54,14 +55,17 @@ export class ToolExecution {
       result = decision.externalResult ?? (readOnly ? await this.callWithRetry(tool, effective, exec.signal) : await this.sandbox.call(tool, effective, exec.signal));
     } catch (error) {
       const userInterrupted = exec.signal.aborted && exec.signal.reason?.kind === "user";
+      const shutdownInterrupted = exec.signal.aborted && isShutdownCancel(exec.signal.reason);
       if (readOnly && !userInterrupted || error instanceof ToolNotForwardedError) {
         const failure = error instanceof ToolNotForwardedError ? error.message
           : exec.signal.aborted ? "Read-only tool call was cancelled" : "Read-only tool outcome is unknown";
         await this.bridge.recordResult({ ...call, text: failure, failed: true });
         throw new Error(failure);
       }
-      if (userInterrupted) {
-        result = { isError: true, content: [{ type: "text", text: "Tool call interrupted." }] };
+      if (userInterrupted || shutdownInterrupted) {
+        const text = userInterrupted ? "Tool call interrupted."
+          : "Tool call interrupted because the Brain worker shut down; its outcome is unknown.";
+        result = { isError: true, content: [{ type: "text", text }] };
         remoteOutcome = "unknown";
       } else {
         try { await this.bridge.recordUnknown(exec.callId); }

@@ -9,7 +9,7 @@ import { createOmaSession } from "../src/oma-session.ts";
 import type { CcrSession } from "../src/ccrv2/index.ts";
 import { Backend, eventually, toolEvents, textEvents } from "./backend.ts";
 
-test("SIGKILL during sandbox execution restores logs and blocks replay", async () => {
+test("SIGKILL during sandbox execution restores logs, never replays and continues on new input", async () => {
   const backend = new Backend();
   backend.modelScript = [toolEvents()];
   backend.hangTool = true;
@@ -58,11 +58,20 @@ test("SIGKILL during sandbox execution restores logs and blocks replay", async (
     await resumed.receive("crash_input", {
       message: { content: "execute a command" },
     });
-    await expect(
-      resumed.receive("new_input", { message: { content: "run again" } }),
-    ).rejects.toThrow("reconciliation");
-    expect(backend.executions).toHaveLength(1);
+    expect(resumed.blocked()).toBe(true);
     expect(backend.requests).toHaveLength(1);
+    backend.hangTool = false;
+    backend.modelScript = [textEvents("checked state")];
+    await resumed.receive("new_input", { message: { content: "what happened?" } });
+    expect(resumed.blocked()).toBe(false);
+    const settled = [...backend.privateLog.values()].filter((p) => p.subtype === "dsh_brain_state")
+      .some((p) => p.data.toolOutcomes?.call_1?.remoteOutcome === "unknown" && p.data.phase === "completed");
+    expect(settled).toBe(true);
+    expect(backend.executions).toHaveLength(1);
+    expect(backend.requests).toHaveLength(2);
+    expect(JSON.stringify(backend.requests[1]!.messages)).toContain("They were not replayed and may or may not have taken effect");
+    expect(backend.publicLog.get("new_input_unknown_outcomes")?.type).toBe("system.message");
+    expect(backend.publicLog.get("new_input_result")?.is_error).toBe(false);
     expect(
       [...backend.publicLog.values()].some((p) => p.type === "result" && p.is_error === true),
     ).toBe(true);
@@ -156,9 +165,26 @@ for (const duringDispatch of [true, false]) {
         expect(resumed.blocked()).toBe(true);
         expect(resumed.state.executions![alphaId]!.phase).toBe("blocked");
         expect(resumed.state.executions![betaId]!.phase).toBe("completed");
-        await expect(resumed.receive("retry", { content: "retry command" })).rejects.toThrow("reconciliation");
         const repairs = [...backend.privateLog.values()].filter((entry) => entry.subtype === "dsh_log" && entry.data.header.id === alphaId).flatMap((entry) => entry.data.events);
         expect(repairs.some((event) => event.type === "tool/result" && event.data.message.isError)).toBe(true);
+        expect(backend.executions).toHaveLength(2);
+        expect(backend.workerMetadata.unknown_tool_outcomes).toEqual([{ tool_use_id: "same_call_id", tool_name: "Bash", session_thread_id: alphaId }]);
+        backend.workerMetadata.tool_outcome_reconciliation = { tool_use_ids: ["same_call_id"] };
+        await resumed.close(); await ctx.fiber.dispose();
+        backend.a.worker_epoch++;
+        ctx = new Context();
+        const reconciledApi = new OmaApi(backend.url);
+        await mountOma(ctx, reconciledApi);
+        resumed = createOmaSession(ctx, reconciledApi, backend.a);
+        await resumed.open();
+        expect(resumed.blocked()).toBe(false);
+        expect(resumed.state.executions![alphaId]!.phase).toBe("interrupted");
+        expect(resumed.state.executions![alphaId]!.toolOutcomes.same_call_id).toMatchObject({ failed: true, remoteOutcome: "unknown" });
+        expect(resumed.state.executions![betaId]!.toolOutcomes.same_call_id.text).toBe("confirmed beta output");
+        expect(backend.workerMetadata).not.toHaveProperty("unknown_tool_outcomes");
+        expect(backend.workerMetadata).not.toHaveProperty("tool_outcome_reconciliation");
+        await resumed.receive("after_reconcile", { content: "new independent task" });
+        expect(backend.requests).toHaveLength(requestCount + 1);
         expect(backend.executions).toHaveLength(2);
       } else {
         expect(resumed.blocked()).toBe(false);

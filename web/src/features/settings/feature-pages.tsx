@@ -10,7 +10,15 @@ import { Field, FieldDescription, FieldLabel } from '../../shared/ui/field';
 import { Input } from '../../shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
 
-export const settingsSections = ['profile', 'appearance', 'organization', 'members', 'workspaces', 'api-keys'] as const;
+export const settingsSections = [
+  'profile',
+  'appearance',
+  'organization',
+  'llm',
+  'members',
+  'workspaces',
+  'api-keys',
+] as const;
 export type SettingsPageSection = (typeof settingsSections)[number] | 'retired';
 
 export function settingsSectionFromPath(pathname: string): SettingsPageSection {

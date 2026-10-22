@@ -113,6 +113,13 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 				"SELECT COUNT(*)", "current_worker_epoch = $4", "status = 'active'",
 			},
 		}},
+		{"active sandbox credential", mapperBuilderContract{
+			statement: codeSessionMapperCountActiveSandboxStatement,
+			bound:     buildCodeSessionMapperCountActiveSandbox(yourbatis.DialectPostgres, "org-uuid", "workspace-uuid", "codeses_test", "sandbox-uuid"),
+			wantID:    "CodeSessionMapper.CountActiveSandbox", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "codeSessionExternalID", "sandboxUUID"},
+			wantSQLFragments:  []string{"SELECT COUNT(*)", "sandbox.uuid = $4", "sandbox.state IN ('creating', 'running')", "work.state = 'active'", "'{config,worker_transport}' = 'claim'"},
+		}},
 		{"network policy context", mapperBuilderContract{
 			statement: codeSessionMapperFindNetworkPolicyContextStatement,
 			bound: buildCodeSessionMapperFindNetworkPolicyContext(

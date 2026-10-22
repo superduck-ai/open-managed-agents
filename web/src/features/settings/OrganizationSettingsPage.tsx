@@ -33,6 +33,7 @@ import {
   settingsSectionFromPath,
   type SettingsPageSection,
 } from './feature-pages';
+import { OrganizationLLMSettingsPage } from './OrganizationLLMSettingsPage';
 import { OrganizationMembersPage } from './OrganizationMembersPage';
 import { WorkspacesSettingsPage } from './WorkspacesSettingsPage';
 import { RetiredConsolePage } from '../dashboard/RetiredConsolePage';
@@ -87,6 +88,7 @@ export function OrganizationSettingsPage({ section = 'organization' }: { section
       {resolvedSection === 'profile' ? <ProfileSettingsPage /> : null}
       {resolvedSection === 'appearance' ? <AppearanceSettingsPage /> : null}
       {resolvedSection === 'organization' ? <OrganizationSettingsContent /> : null}
+      {resolvedSection === 'llm' ? <OrganizationLLMSettingsPage /> : null}
       {resolvedSection === 'members' ? <OrganizationMembersPage /> : null}
       {resolvedSection === 'workspaces' ? <WorkspacesSettingsPage /> : null}
       {resolvedSection === 'retired' ? <RetiredConsolePage organizationSettings /> : null}

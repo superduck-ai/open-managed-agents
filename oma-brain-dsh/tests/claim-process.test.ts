@@ -152,3 +152,80 @@ test("shutdown hands busy claimed sessions back to the backend", async () => {
     backend.stop();
   }
 });
+
+async function runShutdownDuringBash(drainMs: string, onTool: (backend: Backend, started: () => void) => Promise<Record<string, unknown>>) {
+  const backend = new Backend();
+  await backend.ready;
+  backend.modelScript = [toolEvents("long-running"), textEvents("finished after drain")];
+  const toolStarted = Promise.withResolvers<void>();
+  backend.onTool = () => onTool(backend, () => toolStarted.resolve());
+  backend.onApproval = async (p) => {
+    backend.deliver(`reply_${crypto.randomUUID()}`, { type: "control_response", response: {
+      subtype: "success", request_id: p.request_id, response: { behavior: "allow" },
+    } });
+  };
+  const child = Bun.spawn([process.execPath, process.env.BRAIN_TEST_ENTRY ?? "src/main.ts"], {
+    env: { ...process.env, OMA_API_URL: backend.url, OMA_BRAIN_CLAIM_TOKEN: backend.claimToken, OMA_BRAIN_SHUTDOWN_DRAIN_MS: drainMs },
+    stdin: "ignore", stdout: "pipe", stderr: "pipe",
+  });
+  const brainState = () => [...backend.privateLog.values()].filter((p) => p.subtype === "dsh_brain_state").at(-1)!.data;
+  return { backend, child, toolStarted: toolStarted.promise, brainState };
+}
+
+test("shutdown drains an in-flight Bash dispatch before handing the session back", async () => {
+  const release = Promise.withResolvers<void>();
+  const run = await runShutdownDuringBash("10000", async (_backend, started) => {
+    started();
+    await release.promise;
+    return { content: [{ type: "text", text: "drained stdout\n" }] };
+  });
+  try {
+    run.backend.queueClaim();
+    await eventually(() => run.backend.connections === 1);
+    run.backend.deliver(`task_${crypto.randomUUID()}`, { type: "user", message: { content: "run long command" } });
+    await run.toolStarted;
+    run.child.kill("SIGTERM");
+    await Bun.sleep(4_000);
+    expect(run.child.exitCode).toBeNull();
+    release.resolve();
+    expect(await run.child.exited).toBe(0);
+    const state = run.brainState();
+    expect(state.phase).not.toBe("blocked");
+    expect(state.executions[run.backend.a.session_id].toolOutcomes.call_1).toEqual({ text: "drained stdout\n", failed: false });
+    expect(run.backend.executions).toHaveLength(1);
+    expect(run.backend.releases).toHaveLength(1);
+    expect(["idle", "shutdown"]).toContain(run.backend.releases[0]!.reason);
+  } finally {
+    run.child.kill("SIGKILL");
+    run.backend.stop();
+  }
+});
+
+test("shutdown past the drain deadline interrupts Bash without blocking the session", async () => {
+  const cancelled = Promise.withResolvers<void>();
+  const run = await runShutdownDuringBash("200", async (backend, started) => {
+    backend.onCancel = async () => { cancelled.resolve(); };
+    started();
+    await cancelled.promise;
+    return { isError: true, content: [{ type: "text", text: "cancelled by worker shutdown" }] };
+  });
+  try {
+    run.backend.queueClaim();
+    await eventually(() => run.backend.connections === 1);
+    run.backend.deliver(`task_${crypto.randomUUID()}`, { type: "user", message: { content: "run long command" } });
+    await run.toolStarted;
+    run.child.kill("SIGTERM");
+    expect(await run.child.exited).toBe(0);
+    const state = run.brainState();
+    expect(state.phase).not.toBe("blocked");
+    expect(Object.values(state.executions[run.backend.a.session_id].callPhases)).toEqual(["result"]);
+    expect(state.executions[run.backend.a.session_id].toolOutcomes.call_1).toMatchObject({ failed: true });
+    const published = [...run.backend.publicLog.values()];
+    expect(published.some((p) => p.type === "result" && p.is_error === true)).toBe(true);
+    expect(JSON.stringify(published)).toContain("The Brain worker shut down during this turn");
+    expect(run.backend.requests).toHaveLength(1);
+  } finally {
+    run.child.kill("SIGKILL");
+    run.backend.stop();
+  }
+});

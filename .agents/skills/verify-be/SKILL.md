@@ -133,7 +133,7 @@ The backend PR workflow has separate Files, Transcript, Memory and Deployment ve
 
 ## Cleanup
 
-Scenario execution cleans up on success, failure, Ctrl-C and SIGTERM. It stops its backend process, removes only Worker containers carrying this run's label, then removes its Compose project and volumes. Config, ephemeral signing key and backend binary are removed; evidence survives.
+Scenario execution cleans up on success, failure, Ctrl-C and SIGTERM. It stops its backend process, removes only Worker containers carrying this run's label, then removes its Compose project and volumes. Config, ephemeral JWT and proxy CA private keys and backend binary are removed; evidence survives.
 
 After an uncatchable SIGKILL or host crash, use the exact run ID and evidence directory printed by the CLI. Inspect the owned resources before removing them:
 
@@ -142,7 +142,7 @@ docker ps -a --filter label=oma.verify-be.run=RUN_ID
 docker compose -p RUN_ID -f /absolute/evidence/directory/compose.json ps -a
 ```
 
-Remove only the listed Worker container IDs with `docker rm -f`, then use the same Compose arguments with `down --volumes`. Check any remaining backend process against the exact `/absolute/evidence/directory/server` executable before stopping it. Remove that run's `jwt.pem` and `config.json` after cleanup. Never flush shared Redis or purge shared NATS streams. An interrupted report without a final verdict is not proof.
+Remove only the listed Worker container IDs with `docker rm -f`, then use the same Compose arguments with `down --volumes`. Check any remaining backend process against the exact `/absolute/evidence/directory/server` executable before stopping it. Remove that run's `jwt.pem`, `proxy-ca.pem` and `config.json` after cleanup. Never flush shared Redis or purge shared NATS streams. An interrupted report without a final verdict is not proof.
 
 ## Helpers
 

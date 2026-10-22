@@ -36,12 +36,16 @@ const (
 
 func (h *Handler) handlePutCodeSessionWorker(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	if !h.authorizeSessionIngress(w, r, codeSessionID) {
+	claims, authorized := h.authorizeSessionIngressClaims(w, r, codeSessionID)
+	if !authorized {
 		return
 	}
 	input, err := decodeCodeSessionWorkerStateBody(w, r)
 	if err != nil {
 		writeCodeSessionWorkerBodyReadError(w, r, err)
+		return
+	}
+	if !h.validateClaimedWorkerEpoch(w, r, codeSessionID, claims, input.WorkerEpoch) {
 		return
 	}
 	updated, err := h.db.UpdateCodeSessionWorkerState(r.Context(), codeSessionID, input)
@@ -61,7 +65,7 @@ func (h *Handler) handlePutCodeSessionWorker(w http.ResponseWriter, r *http.Requ
 
 func (h *Handler) handleGetCodeSessionWorker(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	if !h.authorizeSessionIngress(w, r, codeSessionID) {
+	if _, ok := h.sessionIngressAccessClaims(w, r, codeSessionID, false); !ok {
 		return
 	}
 	if _, _, ok := h.validateOptionalWorkerEpochRequest(w, r, codeSessionID); !ok {
@@ -77,7 +81,8 @@ func (h *Handler) handleGetCodeSessionWorker(w http.ResponseWriter, r *http.Requ
 
 func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	if !h.authorizeSessionIngress(w, r, codeSessionID) {
+	claims, ok := h.sessionIngressAccessClaims(w, r, codeSessionID, r.Method != http.MethodGet)
+	if !ok {
 		return
 	}
 	record, err := h.requireCodeSession(r.Context(), codeSessionID)
@@ -98,7 +103,7 @@ func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 			return
 		}
-		if !h.validateWorkerEpochValue(w, r, codeSessionID, epoch) {
+		if !h.validateClaimedWorkerEpoch(w, r, codeSessionID, claims, epoch) || !h.validateWorkerEpochValue(w, r, codeSessionID, epoch) {
 			return
 		}
 		events, err := decodeCodeSessionWorkerInternalEventsPayload(codeSessionID, body)
@@ -176,6 +181,9 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 	}
 	epoch, hasEpoch, ok := h.validateOptionalWorkerEpochRequest(w, r, codeSessionID)
 	if !ok {
+		return
+	}
+	if hasEpoch && !h.validateClaimedWorkerEpoch(w, r, codeSessionID, claims, epoch) {
 		return
 	}
 	if !hasEpoch && claims.WorkerEpoch > 0 {
@@ -376,6 +384,9 @@ func (h *Handler) handleCodeSessionWorkerEvents(w http.ResponseWriter, r *http.R
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "worker_epoch must be a positive integer"))
 		return
 	}
+	if !h.validateClaimedWorkerEpoch(w, r, codeSessionID, claims, int64(workerReq.WorkerEpoch)) {
+		return
+	}
 	if len(workerReq.Events) == 0 {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "events must be a non-empty array"))
 		return
@@ -403,11 +414,15 @@ func (h *Handler) handleCodeSessionWorkerEvents(w http.ResponseWriter, r *http.R
 
 func (h *Handler) handleCodeSessionWorkerDelivery(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	if !h.authorizeSessionIngress(w, r, codeSessionID) {
+	claims, authorized := h.authorizeSessionIngressClaims(w, r, codeSessionID)
+	if !authorized {
 		return
 	}
 	workerReq, ok := h.requireWorkerEpochBody(w, r, codeSessionID)
 	if !ok {
+		return
+	}
+	if !h.validateClaimedWorkerEpoch(w, r, codeSessionID, claims, workerReq.epoch) {
 		return
 	}
 	updates, err := decodeCodeSessionWorkerDeliveryPayload(workerReq.body)
@@ -451,6 +466,9 @@ func (h *Handler) handleCodeSessionWorkerDiagnostics(w http.ResponseWriter, r *h
 	if !ok {
 		return
 	}
+	if !h.validateClaimedWorkerEpoch(w, r, codeSessionID, claims, workerReq.epoch) {
+		return
+	}
 	payloads, err := decodeDiagLogPayload(workerReq.body)
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
@@ -477,12 +495,16 @@ func (h *Handler) handleCodeSessionWorkerDiagnostics(w http.ResponseWriter, r *h
 
 func (h *Handler) handleCodeSessionWorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	if !h.authorizeSessionIngress(w, r, codeSessionID) {
+	claims, authorized := h.authorizeSessionIngressClaims(w, r, codeSessionID)
+	if !authorized {
 		return
 	}
 	input, err := decodeCodeSessionWorkerHeartbeatBody(w, r, codeSessionID)
 	if err != nil {
 		writeCodeSessionWorkerBodyReadError(w, r, err)
+		return
+	}
+	if !h.validateClaimedWorkerEpoch(w, r, codeSessionID, claims, input.WorkerEpoch) {
 		return
 	}
 	expiresAt, err := h.db.RecordCodeSessionWorkerHeartbeat(r.Context(), codeSessionID, input.WorkerEpoch, leaseTimingsForTransport)
@@ -562,9 +584,12 @@ func (h *Handler) handleSessionIngressEvents(w http.ResponseWriter, r *http.Requ
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
-	route := codeSessionStreamRouteFromClaims(claims)
 	for _, payload := range payloads {
-		if err := h.service.AppendWorkerEvent(r.Context(), route, payload); err != nil {
+		if err := h.appendSessionIngressEvent(r, claims, payload); err != nil {
+			if errors.Is(err, db.ErrWorkerEpochMismatch) || errors.Is(err, db.ErrNotFound) {
+				h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not append session ingress event")
+				return
+			}
 			if errors.Is(err, ErrProtocol) {
 				httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 				return
@@ -592,9 +617,12 @@ func (h *Handler) handleSessionIngressDiagLogs(w http.ResponseWriter, r *http.Re
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
-	route := codeSessionStreamRouteFromClaims(claims)
 	for _, payload := range payloads {
-		if err := h.service.AppendWorkerEvent(r.Context(), route, payload); err != nil {
+		if err := h.appendSessionIngressEvent(r, claims, payload); err != nil {
+			if errors.Is(err, db.ErrWorkerEpochMismatch) || errors.Is(err, db.ErrNotFound) {
+				h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not append session ingress event")
+				return
+			}
 			if errors.Is(err, ErrProtocol) {
 				httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 				return
@@ -609,7 +637,7 @@ func (h *Handler) handleSessionIngressDiagLogs(w http.ResponseWriter, r *http.Re
 
 func (h *Handler) handleSessionIngressPersistence(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	claims, ok := h.authorizeSessionIngressClaims(w, r, codeSessionID)
+	claims, ok := h.sessionIngressAccessClaims(w, r, codeSessionID, r.Method != http.MethodGet)
 	if !ok {
 		return
 	}
@@ -630,9 +658,12 @@ func (h *Handler) handleSessionIngressPersistence(w http.ResponseWriter, r *http
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
-	route := codeSessionStreamRouteFromClaims(claims)
 	for _, payload := range payloads {
-		if err := h.service.AppendWorkerEvent(r.Context(), route, payload); err != nil {
+		if err := h.appendSessionIngressEvent(r, claims, payload); err != nil {
+			if errors.Is(err, db.ErrWorkerEpochMismatch) || errors.Is(err, db.ErrNotFound) {
+				h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not append session ingress event")
+				return
+			}
 			h.logger.ErrorContext(r.Context(), "append code session persistence event", "code_session_id", codeSessionID, "error", err)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not append session ingress event"))
 			return
@@ -643,7 +674,7 @@ func (h *Handler) handleSessionIngressPersistence(w http.ResponseWriter, r *http
 
 func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	if !h.authorizeSessionIngress(w, r, codeSessionID) {
+	if _, ok := h.sessionIngressAccessClaims(w, r, codeSessionID, false); !ok {
 		return
 	}
 	record, err := h.requireCodeSession(r.Context(), codeSessionID)
@@ -921,6 +952,22 @@ func (h *Handler) validateOptionalWorkerEpochRequest(w http.ResponseWriter, r *h
 		return 0, true, false
 	}
 	return epoch, true, true
+}
+
+func (h *Handler) appendSessionIngressEvent(r *http.Request, claims SessionCredentialClaims, payload json.RawMessage) error {
+	route := codeSessionStreamRouteFromClaims(claims)
+	if claims.WorkerEpoch > 0 {
+		return h.service.AppendWorkerEventForEpoch(r.Context(), route, claims.WorkerEpoch, payload)
+	}
+	return h.service.AppendWorkerEvent(r.Context(), route, payload)
+}
+
+func (h *Handler) validateClaimedWorkerEpoch(w http.ResponseWriter, r *http.Request, codeSessionID string, claims SessionCredentialClaims, epoch int64) bool {
+	if claims.WorkerEpoch > 0 && claims.WorkerEpoch != epoch {
+		h.writeWorkerEpochDBError(w, r, codeSessionID, db.ErrWorkerEpochMismatch, "Could not authorize code session worker epoch")
+		return false
+	}
+	return true
 }
 
 func (h *Handler) validateWorkerEpochValue(w http.ResponseWriter, r *http.Request, codeSessionID string, epoch int64) bool {

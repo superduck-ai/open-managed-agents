@@ -487,29 +487,16 @@ describe('create agent draft model', () => {
     expect(normalizeCreateAgentDraft(allowed)).toEqual(allowed);
   });
 
-  test('accepts the full pinned built-in tool permission surface while rejecting web search', () => {
+  test('accepts the built-in tool permission surface and rejects unknown tools', () => {
     const configs = [
-      'task',
       'ask_user_question',
       'bash',
-      'cron_create',
-      'cron_delete',
-      'cron_list',
       'edit',
-      'enter_plan_mode',
-      'enter_worktree',
-      'exit_plan_mode',
-      'exit_worktree',
       'glob',
       'grep',
-      'notebook_edit',
       'read',
-      'schedule_wakeup',
-      'skill',
-      'task_output',
-      'task_stop',
-      'todo_write',
       'web_fetch',
+      'web_search',
       'write',
     ].map((name) => ({ name, enabled: true, permission_policy: { type: 'always_allow' as const } }));
 
@@ -525,7 +512,7 @@ describe('create agent draft model', () => {
         tools: [
           {
             type: 'agent_toolset_20260401',
-            configs: [{ name: 'web_search', enabled: true, permission_policy: { type: 'always_allow' } }],
+            configs: [{ name: 'unsupported_tool', enabled: true, permission_policy: { type: 'always_allow' } }],
           },
         ],
       }).success,
@@ -590,4 +577,92 @@ describe('create agent draft model', () => {
       }).success,
     ).toBe(true);
   });
+});
+
+test('Web policy fields survive Raw parsing and individual or toolset permission edits', () => {
+  const draft: CreateAgentInput = {
+    ...baseDraft,
+    tools: [
+      {
+        type: 'agent_toolset_20260401',
+        configs: [{ name: 'web_fetch', allowed_domains: ['example.com'], max_content_tokens: 1000 }],
+      },
+    ],
+  };
+  expect(createAgentDraftSchema.safeParse(draft).success).toBe(true);
+  for (const updated of [
+    setToolPermission(draft, () => true, 'web_fetch', 'always_allow', 'always_allow'),
+    setToolPermission(draft, () => true, 'web_fetch', 'always_ask', 'always_allow'),
+    setToolsetPermission(draft, () => true, 'always_ask'),
+    setToolsetPermission(draft, () => true, 'always_deny'),
+  ]) {
+    expect(createAgentDraftSchema.safeParse(updated).success).toBe(true);
+    expect(updated.tools[0].configs).toContainEqual(
+      expect.objectContaining({ name: 'web_fetch', allowed_domains: ['example.com'], max_content_tokens: 1000 }),
+    );
+  }
+  for (const config of [
+    { name: 'bash', allowed_domains: ['example.com'] },
+    { name: 'web_search', max_content_tokens: 10 },
+    { name: 'web_fetch', allowed_domains: [] },
+    { name: 'web_search', allowed_domains: ['example.com'], blocked_domains: ['iana.org'] },
+  ]) {
+    expect(
+      createAgentDraftSchema.safeParse({ ...draft, tools: [{ type: 'agent_toolset_20260401', configs: [config] }] })
+        .success,
+    ).toBe(false);
+  }
+});
+
+test('CMA search location survives Raw parsing and permission edits', () => {
+  const userLocation = {
+    type: 'approximate',
+    country: 'US',
+    city: 'San Francisco',
+    region: 'California',
+    timezone: 'America/Los_Angeles',
+  };
+  const draft: CreateAgentInput = {
+    ...baseDraft,
+    tools: [{ type: 'agent_toolset_20260401', configs: [{ name: 'web_search', user_location: userLocation }] }],
+  };
+  for (const updated of [
+    draft,
+    setToolPermission(draft, () => true, 'web_search', 'always_allow', 'always_allow'),
+    setToolsetPermission(draft, () => true, 'always_ask'),
+  ]) {
+    const parsed = createAgentDraftSchema.safeParse(updated);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.tools[0].configs).toContainEqual(
+      expect.objectContaining({ name: 'web_search', user_location: userLocation }),
+    );
+  }
+  for (const config of [
+    { name: 'web_fetch', user_location: userLocation },
+    { name: 'web_search', user_location: { type: 'precise' } },
+    { name: 'web_search', user_location: { type: 'approximate', country: 42 } },
+  ]) {
+    expect(
+      createAgentDraftSchema.safeParse({ ...draft, tools: [{ type: 'agent_toolset_20260401', configs: [config] }] })
+        .success,
+    ).toBe(false);
+  }
+});
+
+test.each([
+  ['web_fetch', undefined, true],
+  ['web_fetch', null, true],
+  ['web_fetch', 10, true],
+  ['web_search', undefined, true],
+  ['web_search', null, true],
+  ['web_search', 10, false],
+  ['bash', undefined, true],
+  ['bash', null, false],
+  ['bash', 10, false],
+])('content budget on %s with %s has validity %s', (name, budget, valid) => {
+  const result = createAgentDraftSchema.safeParse({
+    ...baseDraft,
+    tools: [{ type: 'agent_toolset_20260401', configs: [{ name, max_content_tokens: budget }] }],
+  });
+  expect(result.success).toBe(valid);
 });

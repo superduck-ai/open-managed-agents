@@ -2,20 +2,27 @@ import type { APIBackend } from './api';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from '@tanstack/react-router';
-import { AlertCircle, Bot, Plus, ShieldAlert } from 'lucide-react';
+import { AlertCircle, Bot, Plus } from 'lucide-react';
+import type { ApiError } from '../../shared/api/client';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
 import { canManageLLMProviders } from '../../shared/permissions/llm-providers';
 import { useWorkspace } from '../../shared/workspaces/context';
 import { workspaceIdFromPath } from '../../shared/workspaces/presentation';
+import { AccessDenied } from '../../shared/ui/access-denied';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '../../shared/ui/empty';
+import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from '../../shared/ui/empty';
 import { Skeleton } from '../../shared/ui/skeleton';
 import { toast } from '../../shared/ui/sonner';
 import {
-  createLLMProvider,
+  deleteOrganizationLLMProvider,
+  getOrganizationLLMProvider,
+  persistLLMProvider,
+  previewOrganizationProviderModels,
+  syncOrganizationLLMProvider,
+  upsertOrganizationLLMProvider,
   deleteLLMProvider,
   listLLMProviders,
   previewProviderModels,
@@ -36,42 +43,16 @@ import { ModelCatalog } from './ModelCatalog';
 import { ProviderDeleteDialog } from './ProviderDeleteDialog';
 import { ProviderFormDialog } from './ProviderFormDialog';
 
-export function LLMModelsPage() {
-  const { account } = useAuth();
-  const { orgUuid } = useWorkspace();
+type ProviderScope = 'workspace' | 'organization';
 
-  if (!canManageLLMProviders(account, orgUuid)) {
-    return <LLMModelsAccessDenied />;
-  }
-
-  return <LLMModelsAdminPage />;
-}
-
-function LLMModelsAccessDenied() {
-  const { msg } = useI18n();
-
-  return (
-    <Empty data-testid="llm-models-access-denied" className="min-h-[320px] border border-dashed border-border bg-card">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <ShieldAlert aria-hidden />
-        </EmptyMedia>
-        <EmptyTitle>{msg('llmModels.accessDeniedTitle', 'Administrator access required')}</EmptyTitle>
-        <EmptyDescription>
-          {msg('llmModels.accessDeniedDescription', 'Only organization administrators can manage model configuration.')}
-        </EmptyDescription>
-      </EmptyHeader>
-    </Empty>
-  );
-}
-
-function LLMModelsAdminPage() {
+export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }) {
   const location = useLocation();
   const routeWorkspaceId = workspaceIdFromPath(location.pathname);
-  const { csrfToken } = useAuth();
+  const { account, csrfToken } = useAuth();
   const { msg } = useI18n();
   const queryClient = useQueryClient();
   const { orgUuid, activeWorkspaceId, selectWorkspace } = useWorkspace();
+  const canManage = canManageLLMProviders(account, orgUuid);
   const workspaceId = routeWorkspaceId ?? activeWorkspaceId;
   const [editing, setEditing] = useState<LLMProvider | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -85,6 +66,8 @@ function LLMModelsAdminPage() {
     [orgUuid, workspaceId],
   );
 
+  const organizationKey = useMemo(() => ['console', 'llm-providers', 'organization', orgUuid] as const, [orgUuid]);
+
   useEffect(() => {
     if (routeWorkspaceId && routeWorkspaceId !== activeWorkspaceId) {
       selectWorkspace(routeWorkspaceId);
@@ -94,15 +77,30 @@ function LLMModelsAdminPage() {
   const providersQuery = useQuery({
     queryKey: providersKey,
     queryFn: () => listLLMProviders(orgUuid ?? '', workspaceId),
-    enabled: Boolean(orgUuid && workspaceId),
+    enabled: scope === 'workspace' && Boolean(orgUuid && workspaceId),
     retry: false,
   });
-  const providers = providersQuery.data ?? [];
+  const organizationQuery = useQuery({
+    queryKey: organizationKey,
+    queryFn: () => getOrganizationLLMProvider(orgUuid ?? ''),
+    enabled: Boolean(orgUuid),
+    retry: false,
+  });
+  const organizationProvider = organizationQuery.data;
+  const providers = [
+    ...(scope === 'workspace' ? (providersQuery.data ?? []) : []),
+    ...(organizationProvider ? [organizationProvider] : []),
+  ];
+  const providersError = scope === 'organization' ? organizationQuery.error : providersQuery.error;
+  const catalogAccessDenied = isCatalogAccessDenied(providersError);
   const activeProviderId = resolvedProviderSelection(providers, selectedProviderId);
   const catalog = catalogModels(providers);
 
   const invalidateCatalog = async () => {
-    await queryClient.invalidateQueries({ queryKey: providersKey });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: providersKey }),
+      queryClient.invalidateQueries({ queryKey: organizationKey }),
+    ]);
   };
 
   const discoverModels = useCallback(
@@ -110,15 +108,14 @@ function LLMModelsAdminPage() {
       if (!orgUuid) {
         throw new Error(msg('llmModels.noOrganization', 'No organization is available.'));
       }
-      const preview = await previewProviderModels(
-        orgUuid,
-        workspaceId,
-        { base_url: baseUrl, api_key: apiKey, api_backend: apiBackend },
-        csrfToken,
-      );
+      const input = { base_url: baseUrl, api_key: apiKey, api_backend: apiBackend };
+      const preview =
+        scope === 'organization'
+          ? await previewOrganizationProviderModels(orgUuid, input, csrfToken)
+          : await previewProviderModels(orgUuid, workspaceId, input, csrfToken);
       return preview.model_ids ?? [];
     },
-    [csrfToken, msg, orgUuid, workspaceId],
+    [csrfToken, msg, orgUuid, scope, workspaceId],
   );
 
   const syncLiveModels = async (targets: LLMProvider[]) => {
@@ -131,7 +128,11 @@ function LLMModelsAdminPage() {
     setIsSyncing(true);
     try {
       const results = await Promise.allSettled(
-        targets.map((provider) => syncProviderModels(orgUuid, workspaceId, provider.id, csrfToken)),
+        targets.map((provider) =>
+          scope === 'organization'
+            ? syncOrganizationLLMProvider(orgUuid, csrfToken)
+            : syncProviderModels(orgUuid, workspaceId, provider.id, csrfToken),
+        ),
       );
       const failed = results.find((result) => result.status === 'rejected');
       if (failed && failed.status === 'rejected') {
@@ -147,9 +148,9 @@ function LLMModelsAdminPage() {
       if (!orgUuid) {
         throw new Error(msg('llmModels.noOrganization', 'No organization is available.'));
       }
-      return editing
-        ? updateLLMProvider(orgUuid, workspaceId, editing.id, input, csrfToken)
-        : createLLMProvider(orgUuid, workspaceId, input, csrfToken);
+      return scope === 'organization'
+        ? upsertOrganizationLLMProvider(orgUuid, input, csrfToken)
+        : persistLLMProvider(orgUuid, workspaceId, editing, input, csrfToken);
     },
     onSuccess: async () => {
       closeForm();
@@ -158,7 +159,10 @@ function LLMModelsAdminPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (provider: LLMProvider) => deleteLLMProvider(orgUuid ?? '', workspaceId, provider.id, csrfToken),
+    mutationFn: (provider: LLMProvider) =>
+      scope === 'organization'
+        ? deleteOrganizationLLMProvider(orgUuid ?? '', csrfToken)
+        : deleteLLMProvider(orgUuid ?? '', workspaceId, provider.id, csrfToken),
     onSuccess: async () => {
       setDeleting(null);
       await invalidateCatalog();
@@ -170,7 +174,10 @@ function LLMModelsAdminPage() {
       if (!orgUuid) {
         throw new Error(msg('llmModels.noOrganization', 'No organization is available.'));
       }
-      return updateLLMProvider(orgUuid, workspaceId, provider.id, providerInput(provider, modelIds), csrfToken);
+      const input = providerInput(provider, modelIds);
+      return scope === 'organization'
+        ? upsertOrganizationLLMProvider(orgUuid, input, csrfToken)
+        : updateLLMProvider(orgUuid, workspaceId, provider.id, input, csrfToken);
     },
     onSuccess: async () => {
       setQuery('');
@@ -207,10 +214,11 @@ function LLMModelsAdminPage() {
   };
 
   const refreshCatalog = async () => {
-    const targets =
+    const targets = (
       activeProviderId === ALL_PROVIDERS_ID
         ? providers
-        : providers.filter((provider) => provider.id === activeProviderId);
+        : providers.filter((provider) => provider.id === activeProviderId)
+    ).filter((provider) => scope === 'organization' || provider.scope !== 'organization');
     try {
       await syncLiveModels(targets);
     } catch (error) {
@@ -221,38 +229,30 @@ function LLMModelsAdminPage() {
 
   return (
     <section className="w-full max-w-none" data-testid="llm-models-page">
-      <div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
-              {msg('llmModels.title', 'LLM models')}
-            </h1>
-            {catalog.length > 0 ? <Badge variant="secondary">{catalog.length}</Badge> : null}
-          </div>
-          <p className="mt-2 max-w-[760px] text-sm leading-5 text-muted-foreground">
-            {msg('llmModels.description', 'Manage providers and models for this workspace.')}
-          </p>
-        </div>
-        {providers.length > 0 ? (
-          <Button type="button" size="lg" onClick={openCreate}>
-            <Plus className="size-4" aria-hidden />
-            {msg('llmModels.addProvider', 'Add provider')}
-          </Button>
-        ) : null}
-      </div>
+      <CatalogHeader
+        scope={scope}
+        modelCount={catalog.length}
+        providerCount={providers.length}
+        canManage={canManage}
+        accessDenied={catalogAccessDenied}
+        onCreate={openCreate}
+      />
 
       <CatalogBody
+        canManage={canManage}
+        organizationEditable={scope === 'organization'}
         providers={providers}
         catalog={catalog}
         selectedProviderId={activeProviderId}
         query={query}
-        isLoading={providersQuery.isLoading}
-        providersError={providersQuery.error}
-        isRefreshing={providersQuery.isFetching || isSyncing}
+        isLoading={providersQuery.isLoading || organizationQuery.isLoading}
+        providersError={providersError}
+        organizationError={scope === 'workspace' ? organizationQuery.error : null}
+        isRefreshing={providersQuery.isFetching || organizationQuery.isFetching || isSyncing}
         isAddingModel={updateModelsMutation.isPending}
         onOpenCreate={openCreate}
         onQueryChange={setQuery}
-        onRefresh={() => void refreshCatalog()}
+        onRefresh={() => void (canManage ? refreshCatalog() : invalidateCatalog())}
         onSelectProvider={setSelectedProviderId}
         onEditProvider={(provider) => {
           setEditing(provider);
@@ -266,6 +266,7 @@ function LLMModelsAdminPage() {
       {formOpen ? (
         <ProviderFormDialog
           provider={editing}
+          organization={scope === 'organization'}
           error={formError}
           isPending={saveMutation.isPending}
           onClose={closeForm}
@@ -287,7 +288,56 @@ function LLMModelsAdminPage() {
   );
 }
 
+function CatalogHeader({
+  scope,
+  modelCount,
+  providerCount,
+  canManage,
+  accessDenied,
+  onCreate,
+}: {
+  scope: ProviderScope;
+  modelCount: number;
+  providerCount: number;
+  canManage: boolean;
+  accessDenied: boolean;
+  onCreate: () => void;
+}) {
+  const { msg } = useI18n();
+  return (
+    <div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row">
+      <div>
+        <div className="flex items-center gap-2">
+          <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
+            {scope === 'organization'
+              ? msg('nav.llmSettings', 'LLM configuration')
+              : msg('llmModels.title', 'LLM models')}
+          </h1>
+          {modelCount > 0 && !accessDenied ? <Badge variant="secondary">{modelCount}</Badge> : null}
+        </div>
+        <p className="mt-2 max-w-[760px] text-sm leading-5 text-muted-foreground">
+          {scope === 'organization'
+            ? msg(
+                'llmModels.organizationDescription',
+                'Configure the default provider shared by all workspaces. Bare model IDs prefer workspace providers.',
+              )
+            : msg('llmModels.description', 'Manage providers and models for this workspace.')}
+        </p>
+      </div>
+      {canManage && providerCount > 0 && scope === 'workspace' && !accessDenied ? (
+        <Button type="button" size="lg" onClick={onCreate}>
+          <Plus className="size-4" aria-hidden />
+          {msg('llmModels.addProvider', 'Add provider')}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 function CatalogBody({
+  canManage,
+  organizationEditable,
+  organizationError,
   providers,
   catalog,
   selectedProviderId,
@@ -304,6 +354,9 @@ function CatalogBody({
   onDeleteProvider,
   onAddModel,
 }: {
+  canManage: boolean;
+  organizationEditable: boolean;
+  organizationError: unknown;
   providers: LLMProvider[];
   catalog: CatalogModel[];
   selectedProviderId: string;
@@ -321,6 +374,17 @@ function CatalogBody({
   onAddModel: (provider: LLMProvider, modelId: string) => void;
 }) {
   const { msg } = useI18n();
+  if (isCatalogAccessDenied(providersError)) {
+    return (
+      <AccessDenied
+        title={msg('llmModels.accessDeniedTitle', 'Access denied')}
+        description={msg(
+          'llmModels.accessDeniedDescription',
+          'You do not have permission to view models in this workspace. Workspace members can view the catalog read-only, and only organization administrators can manage providers.',
+        )}
+      />
+    );
+  }
   if (providersError) {
     return (
       <Alert variant="destructive">
@@ -332,39 +396,59 @@ function CatalogBody({
   if (isLoading) {
     return <CatalogSkeleton />;
   }
-  if (providers.length === 0) {
-    return (
-      <Empty className="min-h-[320px] border border-dashed border-border bg-card">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <Bot aria-hidden />
-          </EmptyMedia>
-          <EmptyTitle>{msg('llmModels.catalogEmptyTitle', 'No providers yet')}</EmptyTitle>
-        </EmptyHeader>
-        <EmptyContent>
-          <Button type="button" onClick={onOpenCreate}>
-            {msg('llmModels.addProvider', 'Add provider')}
-          </Button>
-        </EmptyContent>
-      </Empty>
-    );
-  }
+
   return (
-    <ModelCatalog
-      providers={providers}
-      models={catalog}
-      selectedProviderId={selectedProviderId}
-      query={query}
-      isRefreshing={isRefreshing}
-      isAddingModel={isAddingModel}
-      onQueryChange={onQueryChange}
-      onRefresh={onRefresh}
-      onSelectProvider={onSelectProvider}
-      onEditProvider={onEditProvider}
-      onDeleteProvider={onDeleteProvider}
-      onAddModel={onAddModel}
-    />
+    <>
+      {organizationError ? (
+        <Alert variant="destructive" className="mb-4">
+          <AlertDescription>
+            {msg(
+              'llmModels.organizationUnavailable',
+              'The organization default could not be loaded. Workspace providers are still available.',
+            )}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {providers.length === 0 ? (
+        <Empty className="min-h-[320px] border border-dashed border-border bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Bot aria-hidden />
+            </EmptyMedia>
+            <EmptyTitle>{msg('llmModels.catalogEmptyTitle', 'No providers yet')}</EmptyTitle>
+          </EmptyHeader>
+          {canManage ? (
+            <EmptyContent>
+              <Button type="button" onClick={onOpenCreate}>
+                {msg('llmModels.addProvider', 'Add provider')}
+              </Button>
+            </EmptyContent>
+          ) : null}
+        </Empty>
+      ) : (
+        <ModelCatalog
+          organizationEditable={organizationEditable}
+          canManage={canManage}
+          providers={providers}
+          models={catalog}
+          selectedProviderId={selectedProviderId}
+          query={query}
+          isRefreshing={isRefreshing}
+          isAddingModel={isAddingModel}
+          onQueryChange={onQueryChange}
+          onRefresh={onRefresh}
+          onSelectProvider={onSelectProvider}
+          onEditProvider={onEditProvider}
+          onDeleteProvider={onDeleteProvider}
+          onAddModel={onAddModel}
+        />
+      )}
+    </>
   );
+}
+
+function isCatalogAccessDenied(error: unknown) {
+  return Boolean(error && typeof error === 'object' && (error as Partial<ApiError>).status === 403);
 }
 
 function CatalogSkeleton() {

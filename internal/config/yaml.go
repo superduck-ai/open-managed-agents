@@ -149,13 +149,18 @@ func validateYAMLNodeWithAliases(node *yaml.Node, target reflect.Type, prefix []
 			}
 		}
 	case yaml.MappingNode:
-		if target.Kind() != reflect.Struct {
+		var fields map[string]reflect.Type
+		if target.Kind() == reflect.Struct {
+			fields = yamlFieldTypes(target)
+		} else if target.Kind() != reflect.Map {
 			return nil
 		}
-		fields := yamlFieldTypes(target)
 		for index := 0; index+1 < len(node.Content); index += 2 {
 			name := node.Content[index].Value
 			fieldType, ok := fields[name]
+			if target.Kind() == reflect.Map {
+				fieldType, ok = target.Elem(), true
+			}
 			if !ok {
 				return fmt.Errorf("field %s not found in type %s", name, target)
 			}

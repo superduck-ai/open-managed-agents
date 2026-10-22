@@ -40,7 +40,7 @@ var (
 // CodeSessionRuntime exposes the managed-agent Code Session operations needed
 // by Runner without coupling it to the concrete service implementation.
 type CodeSessionRuntime interface {
-	SandboxIngressToken(context.Context, db.Session, string) (string, error)
+	SandboxIngressToken(context.Context, db.Session, string, string) (string, error)
 	CreateManagedAgentCodeSession(context.Context, codesessions.ManagedAgentCreateInput) (codesessions.ManagedAgentCreateResult, error)
 	RecoverManagedAgentCodeSession(context.Context, codesessions.ManagedAgentRecoverInput) (codesessions.ManagedAgentCreateResult, error)
 	TerminateManagedAgentCodeSession(context.Context, db.Session, string) error
@@ -356,7 +356,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 
 	// Cloud Session 还需创建 Code Session，并在 Sandbox 内启动 Environment Manager。
 	if preparation != nil {
-		launch, err := r.prepareSandboxRuntimeLaunch(ctx, env, *work, *preparation, existingLaunch)
+		launch, err := r.prepareSandboxRuntimeLaunch(ctx, env, *work, *preparation, existingLaunch, record.UUID)
 		if err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, fmt.Errorf("create managed-agent runtime launch: %w", err)
@@ -394,7 +394,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 
 func (r *Runner) markSandboxRunningAfterFilesystem(ctx context.Context, record db.EnvironmentSandbox, providerSandboxID string, managed bool) error {
 	if managed && r.cfg.EnvironmentRunner.AgentMode == "brain" {
-		return nil
+		return r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceUUID, record.ExternalID, "creating", &providerSandboxID, nil, nil)
 	}
 	return r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceUUID, record.ExternalID, "running", &providerSandboxID, nil, nil)
 }
@@ -630,7 +630,7 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
 		runtimeResources.workerTransport = "claim"
 	}
-	sessionConfig, err := managedAgentSessionConfig(session, runtimeResources, runtimeSkills)
+	sessionConfig, err := managedAgentSessionConfig(session, runtimeResources, runtimeSkills, r.cfg.Env)
 	if err != nil {
 		return nil, err
 	}
@@ -671,20 +671,23 @@ func (r *Runner) prepareEnvCredentialPlaceholders(ctx context.Context, session d
 	return placeholders, nil
 }
 
-func (r *Runner) prepareSandboxRuntimeLaunch(ctx context.Context, env db.Environment, work db.EnvironmentWork, preparation managedAgentLaunchPreparation, existing *managedAgentRuntimeLaunch) (managedAgentRuntimeLaunch, error) {
+func (r *Runner) prepareSandboxRuntimeLaunch(ctx context.Context, env db.Environment, work db.EnvironmentWork, preparation managedAgentLaunchPreparation, existing *managedAgentRuntimeLaunch, sandboxUUID string) (managedAgentRuntimeLaunch, error) {
+	var launch managedAgentRuntimeLaunch
 	if existing == nil {
-		return r.createManagedAgentRuntimeLaunch(ctx, env, work, preparation)
-	}
-	launch := *existing
-	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
-		if launch.Credentials.SessionIngressToken == "" {
-			token, err := r.codeSessions.SandboxIngressToken(ctx, preparation.Session, launch.CodeSessionID)
-			if err != nil {
-				return managedAgentRuntimeLaunch{}, err
-			}
-			launch.Credentials.SessionIngressToken = token
+		created, err := r.createManagedAgentRuntimeLaunch(ctx, env, work, preparation)
+		if err != nil {
+			return managedAgentRuntimeLaunch{}, err
 		}
-		manager, err := brainSandboxManagerCommand(launch.CodeSessionID, preparation.WorkDir, r.cfg, preparation.EnvPlaceholders, launch.Credentials.SessionIngressToken, preparation.RuntimeSources)
+		launch = created
+	} else {
+		launch = *existing
+	}
+	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
+		token, err := r.codeSessions.SandboxIngressToken(ctx, preparation.Session, launch.CodeSessionID, sandboxUUID)
+		if err != nil {
+			return managedAgentRuntimeLaunch{}, err
+		}
+		manager, err := brainSandboxManagerCommand(launch.CodeSessionID, preparation.WorkDir, r.cfg, preparation.EnvPlaceholders, token, preparation.RuntimeSources)
 		if err != nil {
 			return managedAgentRuntimeLaunch{}, err
 		}

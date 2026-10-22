@@ -1511,7 +1511,7 @@ export function registerManagedAgentsResourceTests() {
     }
   });
 
-  test('renders AskUserQuestion questionnaire in session detail and sends answers with question keys', async () => {
+  test('renders AskUserQuestion questionnaire in session detail and sends answers with question ids', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi();
     api.resources.sessions[0].status = 'idle';
@@ -1531,13 +1531,14 @@ export function registerManagedAgentsResourceTests() {
         input: {
           questions: [
             {
+              id: 'color',
               header: 'Color',
               question: 'Which verification color should I use?',
               options: [
                 { label: 'Blue', description: 'Sky blue' },
                 { label: 'Green', description: 'Grass green' },
               ],
-              multiSelect: false,
+              multi_select: false,
             },
           ],
         },
@@ -1555,7 +1556,7 @@ export function registerManagedAgentsResourceTests() {
     expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
     const questionnaire = await screen.findByTestId('session-questionnaire-card');
     expect(questionnaire.closest('[data-slot="collapsible-content"]')).toBeNull();
-    expect(questionnaire.closest('[data-entry-kind="tool_call"]')).toBeTruthy();
+    expect(questionnaire.closest('[data-testid="session-pending-action"]')).toBeTruthy();
     expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
     expect(screen.getByText('Which verification color should I use?')).toBeTruthy();
     expect(screen.getByText('Blue')).toBeTruthy();
@@ -1577,7 +1578,7 @@ export function registerManagedAgentsResourceTests() {
       expect(resultEvent?.is_error).toBe(false);
       const content = objectRecord(Array.isArray(resultEvent?.content) ? resultEvent.content[0] : null);
       expect(JSON.parse(String(content.text))).toEqual({
-        'Which verification color should I use?': 'Blue',
+        answers: [{ id: 'color', selected: ['Blue'] }],
       });
     });
     await waitFor(() => expect(screen.queryByTestId('session-questionnaire-card')).toBeNull());

@@ -71,6 +71,7 @@ type WorkspaceState struct {
 }
 
 type EnvironmentState struct {
+	Template   string `json:"template,omitempty"`
 	UUID       string `json:"uuid"`
 	ExternalID string `json:"external_id"`
 	Pending    bool   `json:"pending,omitempty"`

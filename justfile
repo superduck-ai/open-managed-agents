@@ -19,6 +19,8 @@ init-compose-config:
       install -m 600 "$compose_template" "$compose_local"; \
       echo "created $compose_local with mode 0600"; \
     fi
+  @mkdir -p -m 700 config/secrets
+  @if [[ ! -e config/secrets/upstream-proxy-ca-key.pem && ! -L config/secrets/upstream-proxy-ca-key.pem ]]; then ./scripts/generate-upstream-proxy-ca-key.sh config/secrets/upstream-proxy-ca-key.pem; fi
 
 server:
   PORT="${PORT:-38080}" ./scripts/restart-server.sh

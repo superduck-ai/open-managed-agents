@@ -1,4 +1,4 @@
-import { consoleApi } from '../../shared/api/client';
+import { consoleApi, type ApiError } from '../../shared/api/client';
 
 export type APIBackend = 'messages' | 'chat_completions';
 
@@ -12,6 +12,7 @@ export type LLMProvider = {
   has_api_key: boolean;
   api_key_last4: string;
   model_ids: string[];
+  scope?: 'organization';
   created_at: string;
   updated_at: string;
 };
@@ -27,6 +28,58 @@ export type LLMProviderInput = {
 
 function providersPath(orgUuid: string, workspaceId: string) {
   return `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/llm_providers`;
+}
+
+function organizationLLMProviderPath(orgUuid: string) {
+  return `/api/console/organizations/${encodeURIComponent(orgUuid)}/llm_provider`;
+}
+
+export function getOrganizationLLMProvider(orgUuid: string) {
+  return consoleApi<LLMProvider>(organizationLLMProviderPath(orgUuid)).catch((error: unknown) => {
+    if (isMissingProvider(error)) {
+      return null;
+    }
+    throw error;
+  });
+}
+
+export function upsertOrganizationLLMProvider(orgUuid: string, input: LLMProviderInput, csrfToken?: string) {
+  return consoleApi<LLMProvider>(organizationLLMProviderPath(orgUuid), {
+    method: 'PUT',
+    body: JSON.stringify(input),
+    csrfToken,
+  });
+}
+
+export function deleteOrganizationLLMProvider(orgUuid: string, csrfToken?: string) {
+  return consoleApi<void>(organizationLLMProviderPath(orgUuid), {
+    method: 'DELETE',
+    csrfToken,
+  });
+}
+
+export function syncOrganizationLLMProvider(orgUuid: string, csrfToken?: string) {
+  return consoleApi<LLMProvider>(`${organizationLLMProviderPath(orgUuid)}/models/sync`, {
+    method: 'POST',
+    csrfToken,
+  });
+}
+
+export function persistLLMProvider(
+  orgUuid: string,
+  workspaceId: string,
+  editing: LLMProvider | null,
+  input: LLMProviderInput,
+  csrfToken?: string,
+) {
+  if (editing) {
+    return updateLLMProvider(orgUuid, workspaceId, editing.id, input, csrfToken);
+  }
+  return createLLMProvider(orgUuid, workspaceId, input, csrfToken);
+}
+
+function isMissingProvider(error: unknown): error is ApiError {
+  return Boolean(error && typeof error === 'object' && 'status' in error && (error as ApiError).status === 404);
 }
 
 export function listLLMProviders(orgUuid: string, workspaceId: string) {
@@ -83,4 +136,16 @@ export function syncProviderModels(orgUuid: string, workspaceId: string, provide
       csrfToken,
     },
   );
+}
+
+export function previewOrganizationProviderModels(
+  orgUuid: string,
+  input: { base_url: string; api_key: string; api_backend: APIBackend },
+  csrfToken?: string,
+) {
+  return consoleApi<{ model_ids: string[] }>(`${organizationLLMProviderPath(orgUuid)}/preview_models`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+    csrfToken,
+  });
 }

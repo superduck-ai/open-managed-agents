@@ -13,10 +13,10 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function open(backend: Backend) {
+async function open(backend: Backend, fetcher?: typeof fetch) {
   await backend.ready;
   const ctx = new Context();
-  const api = new OmaApi(backend.url);
+  const api = new OmaApi(backend.url, fetcher);
   const client = await mountOma(ctx, api);
   let session!: ReturnType<typeof createOmaSession>;
   await ctx.plugin({
@@ -84,7 +84,8 @@ describe("original dsh loop over CCRv2", () => {
     ];
     await session.receive("image_input", { content });
     const first = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
-    expect(first.map((block: Payload) => block.type)).toEqual(["text", "image", "text"]);
+    expect(first.map((block: Payload) => block.type)).toEqual(["text", "image", "text", "text"]);
+    expect(first[3].text).toStartWith("Time sampled while preparing turn");
     expect(first[0]).toEqual(content[0]);
     expect(first[2]).toEqual(content[2]);
     expect(first[1].source.type).toBe("base64");
@@ -104,7 +105,9 @@ describe("original dsh loop over CCRv2", () => {
     ];
     await session.receive("image_refs", { content });
     const requestContent = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
-    expect(requestContent.map((block: Payload) => ({ type: block.type, source: block.source }))).toEqual(content);
+    expect(requestContent).toHaveLength(content.length + 1);
+    expect(requestContent.slice(0, content.length).map((block: Payload) => ({ type: block.type, source: block.source }))).toEqual(content);
+    expect(requestContent.at(-1).text).toStartWith("Time sampled while preparing turn");
     expect(JSON.stringify([...b.privateLog.values()])).not.toContain("base64");
     expect(b.publicLog.get("image_refs_result")?.is_error).toBe(false);
   });
@@ -204,6 +207,80 @@ describe("original dsh loop over CCRv2", () => {
     expect(published?.message.content[0]).toEqual({ type: "tool_result", tool_use_id: "call_1", tool_name: "Bash", content: [{ type: "text", text: "exact stdout\n" }], is_error: false });
     expect(result).not.toHaveProperty("tool_name");
     expect(b.publicLog.get("stdout_result")?.is_error).toBe(false);
+  });
+
+  test("an unreachable sandbox gateway records a known Bash failure without blocking the session", async () => {
+    const b = backend();
+    b.modelScript = [toolEvents(), textEvents("gateway unavailable"), textEvents("next turn")];
+    const { session } = await open(b, (async (input, init) => {
+      const request = new Request(input, init);
+      if (request.method === "POST" && new URL(request.url).pathname.endsWith("/sandbox/mcp")
+        && ((await request.clone().json()) as Payload).method === "tools/call")
+        return fetch("http://127.0.0.1:1/mcp", { method: "POST", body: "{}" });
+      return fetch(request);
+    }) as typeof fetch);
+    b.onApproval = async (p) => {
+      await session.control({ type: "control_response", response: {
+        subtype: "success", request_id: p.request_id, response: { behavior: "allow" },
+      } });
+    };
+    await session.receive("gateway_down", { message: { content: "run" } });
+    expect(session.blocked()).toBe(false);
+    expect(b.executions).toHaveLength(0);
+    const result = b.requests[1]!.messages.flatMap((m: Payload) => m.content)
+      .find((block: Payload) => block.type === "tool_result");
+    expect(result.is_error).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("OMA sandbox gateway is unreachable");
+    await session.receive("after_gateway_down", { message: { content: "continue" } });
+    expect(b.requests).toHaveLength(3);
+  });
+
+  test("a draining worker refuses new side-effecting dispatches without blocking the session", async () => {
+    const b = backend();
+    b.modelScript = [toolEvents(), textEvents("not executed")];
+    const { session } = await open(b);
+    b.onApproval = async (p) => {
+      await session.control({ type: "control_response", response: {
+        subtype: "success", request_id: p.request_id, response: { behavior: "allow" },
+      } });
+    };
+    expect(await session.drain(0)).toBe(true);
+    await session.receive("draining", { message: { content: "run" } });
+    expect(b.executions).toHaveLength(0);
+    expect(session.blocked()).toBe(false);
+    expect(session.dispatching()).toBe(false);
+    const result = b.requests[1]!.messages.flatMap((m: Payload) => m.content)
+      .find((block: Payload) => block.type === "tool_result");
+    expect(result.is_error).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("shutting down");
+  });
+
+  test("drain waits for an in-flight dispatch to record its result", async () => {
+    const b = backend();
+    b.modelScript = [toolEvents(), textEvents("done")];
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    b.onTool = async () => {
+      started.resolve();
+      await release.promise;
+      return { content: [{ type: "text", text: "drained\n" }] };
+    };
+    const { session } = await open(b);
+    b.onApproval = async (p) => {
+      await session.control({ type: "control_response", response: {
+        subtype: "success", request_id: p.request_id, response: { behavior: "allow" },
+      } });
+    };
+    const turn = session.receive("in_flight", { message: { content: "run" } });
+    await started.promise;
+    expect(session.dispatching()).toBe(true);
+    expect(await session.drain(50)).toBe(false);
+    const draining = session.drain(5_000);
+    release.resolve();
+    expect(await draining).toBe(true);
+    await turn;
+    expect(session.state.toolOutcomes.call_1).toEqual({ text: "drained\n", failed: false });
+    expect(session.blocked()).toBe(false);
   });
 
   test("provider HTTP 402 publishes a safe quota error before ACK and a later turn can recover", async () => {

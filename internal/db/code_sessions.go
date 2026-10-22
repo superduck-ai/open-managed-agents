@@ -292,6 +292,17 @@ func (d *DB) GetCodeSessionCredentialContextForIssue(ctx context.Context, organi
 	return row.context(), nil
 }
 
+func (d *DB) ValidateCodeSessionSandbox(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID, sandboxUUID string) error {
+	count, err := NewCodeSessionMapper(d.mapperDB).CountActiveSandbox(ctx, organizationUUID, workspaceUUID, codeSessionExternalID, sandboxUUID)
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (d *DB) ValidateCodeSessionIngressWorkerEpoch(
 	ctx context.Context,
 	organizationUUID string,
@@ -972,6 +983,34 @@ func (d *DB) codeSessionWorkerEpochUpdateError(ctx context.Context, codeSessionE
 		return err
 	}
 	return ErrWorkerEpochMismatch
+}
+
+func (d *DB) MergeCodeSessionWorkerExternalMetadata(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string, patch json.RawMessage) error {
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewCodeSessionMapper(executor)
+		current, found, err := mapper.LockCodeSessionByExternalID(ctx, codeSessionExternalID)
+		if err != nil {
+			return err
+		}
+		if !found || current.OrganizationUUID != organizationUUID || current.WorkspaceUUID != workspaceUUID {
+			return ErrNotFound
+		}
+		if current.Status != "active" {
+			return ErrInvalidState
+		}
+		merged, err := mergeCodeSessionWorkerExternalMetadata(current.WorkerExternalMetadata, patch)
+		if err != nil {
+			return err
+		}
+		rows, err := mapper.UpdateWorkerToolMetadata(ctx, current.WorkspaceUUID, current.ExternalID, merged, false)
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 func mergeCodeSessionWorkerExternalMetadata(base json.RawMessage, patch json.RawMessage) (json.RawMessage, error) {

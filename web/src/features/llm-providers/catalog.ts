@@ -56,6 +56,10 @@ const PROVIDER_ERROR_MESSAGES: Record<string, { id: string; defaultMessage: stri
     id: 'llmModels.errorProviderNameExists',
     defaultMessage: 'A provider with this name already exists.',
   },
+  organization_llm_provider_exists: {
+    id: 'llmModels.errorOrganizationProviderExists',
+    defaultMessage: 'This organization already has a default provider.',
+  },
   llm_provider_configuration_invalid: {
     id: 'llmModels.errorInvalidConfiguration',
     defaultMessage: 'The provider configuration is invalid.',

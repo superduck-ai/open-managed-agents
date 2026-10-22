@@ -4,7 +4,7 @@
 
 LLM 模型页是工作区的模型目录，而不是 Provider 卡片墙。
 
-页面只请求 `GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers`。Provider 配置及其 `model_ids` 是目录的唯一数据源，页面不再额外请求 `/v1/models`，避免同一页面出现两份模型集合和无法归属 Provider 的模型。
+工作区页面请求 `GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers` 和组织默认 `GET /api/console/organizations/{orgUuid}/llm_provider`。Provider 配置及其 `model_ids` 是目录的唯一数据源，页面不再额外请求 `/v1/models`，避免同一页面出现两份模型集合和无法归属 Provider 的模型。
 
 填写 Provider 的 Base URL 和 API Key 后，可在表单里点「获取模型列表」，请求 `POST .../llm_providers/preview_models`，用上游 `{base_url}/v1/models` 填入模型 ID。获取结果与表单内已有的非空模型 ID 合并、去重，不覆盖手工输入；上游返回空数组时只提示，不清空表单。编辑 Provider 时，读取接口不会返回旧 Key，因此只有用户输入新 Key 后才显示「获取模型列表」。
 
@@ -30,7 +30,7 @@ flowchart LR
 
 ## 交互
 
-- 模型配置只允许当前组织的 `admin` 管理。非管理员不显示侧栏入口；直接访问页面时展示无权限状态，且不请求 Provider API。Workbench、Quickstart 和 Agent 创建页缺少模型时，管理员看到「配置模型」，非管理员只看到「请联系组织管理员配置模型」。前端判断只用于避免无效入口，后端 RBAC 仍是最终权限边界。
+- 模型配置只允许当前组织的 `admin` 管理。工作区用户可从侧栏进入并查看当前工作区全部模型、搜索及筛选供应商；只读用户不显示新增、编辑、删除及添加模型入口，刷新仅重新读取目录，不调用上游同步。Provider 列表读取校验当前工作区访问权限，新增、更新、删除、预览与同步仍要求组织管理员。目录读取返回 403（无权访问、手改工作区地址或空间已归档）时展示无权限空状态，说明工作区成员可以只读查看、只有组织管理员可以管理供应商；其他读取失败仍使用本地化错误提示。管理写入被拒绝时继续提示需要组织管理员。Workbench、Quickstart 和 Agent 创建页缺少模型时，管理员看到「配置模型」，非管理员只看到「请联系组织管理员配置模型」。前端判断只用于避免无效入口，后端 RBAC 仍是最终权限边界。
 - 搜索没有精确模型 ID 命中且已选中 Provider 时，可以把当前输入作为新的上游模型 ID 追加到该 Provider；精确命中只在当前选中 Provider 内判断，因此其他 Provider 已有同名模型时仍显示添加入口。即使已有模糊匹配也仍显示添加入口。
 - Provider 表单在名称下方提供 `Slug` 字段。创建时在用户手动修改前随名称自动生成（小写，非法字符替换为 `-`，最长 32 字符；中文等无法转换的名称得到空值），留空时由服务端分配 `default`/`default-N`；提交前按 `^[a-z0-9][a-z0-9._-]{0,31}$` 本地校验。编辑时只读展示，局部更新仍回传原 slug。
 - 添加模型的请求进行中时禁用添加按钮，防止重复提交。
@@ -55,3 +55,13 @@ Base URL 仍填写 API 根地址，允许路径前缀，不重复填写 `/v1`。
 创建、编辑和模型预览请求均携带 `api_backend`；模型同步由后端使用已保存的 backend。
 模型增删等局部操作的完整 Provider 更新也必须保留该字段，避免将 Chat Completions 配置重置为 Messages。
 组件测试覆盖选择 backend、模型发现、创建与编辑保留，并断言 Responses 选项不可用。
+
+## 组织 LLM 配置
+
+组织设置增加 `/settings/llm` 入口，复用 `LLMModelsPage` 的组织 scope。组织页只请求组织 Provider，不依赖选中的工作区；成员可只读查看，管理员可创建、编辑、删除、预览及同步。组织 Provider 的 slug 固定为 `organization`，表单只读展示，其他字段沿用通用 Provider 表单。
+
+工作区目录合并展示组织默认模型，复制完整 `organization/{model}` 引用。全部 Provider 分组与单个 Provider 详情都显示组织模型只读提示。组织 Provider 在工作区页不可编辑、删除或追加模型，刷新只同步工作区 Provider；组织配置应在组织页修改。只读成员刷新只重新读取数据。组织读取返回 404 表示尚未配置，不视为失败；其他组织读取失败在已有工作区目录上提示降级，不能隐藏为正常成功。
+
+添加 Provider 默认打开通用配置表单，不包含公司网关快捷预设。
+
+工作区 Provider 表单在提交前拒绝保留 slug `organization`，并显示本地化提示；组织 Provider 表单固定且允许该值。删除组织默认的确认文案在默认消息与中英文翻译中保持同一语义：工作区 Provider 仍可使用，通过组织 Provider 引用的模型将不再可用。

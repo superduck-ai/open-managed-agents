@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
 )
 
 var errInvalidServiceEndpoint = errors.New("sandbox service endpoint is unavailable or invalid")
@@ -24,6 +26,9 @@ type publishedPort struct {
 
 func (p *E2BProvider) ServiceEndpoint(ctx context.Context, sandboxID string, port int, path string) (string, error) {
 	if p.cfg.LocalPortLookup {
+		if _, err := p.connect(ctx, sandboxID); err != nil {
+			return "", classifySandboxError(err)
+		}
 		return p.publishedServiceEndpoint(ctx, sandboxID, port, path)
 	}
 	key := sandboxID + ":" + strconv.Itoa(port)
@@ -31,7 +36,7 @@ func (p *E2BProvider) ServiceEndpoint(ctx context.Context, sandboxID string, por
 	if !ok {
 		sandbox, err := p.connect(ctx, sandboxID)
 		if err != nil {
-			return "", err
+			return "", classifySandboxError(err)
 		}
 		host = sandbox.GetHost(port)
 		p.serviceHosts.put(key, host, time.Now())
@@ -99,6 +104,9 @@ func (p *E2BProvider) publishedServiceEndpoint(ctx context.Context, sandboxID st
 		return "", errInvalidServiceEndpoint
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return "", sandboxruntime.ErrSandboxNotFound
+	}
 	if response.StatusCode != http.StatusOK {
 		return "", errInvalidServiceEndpoint
 	}

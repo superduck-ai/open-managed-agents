@@ -124,7 +124,7 @@ flowchart LR
 - `user.interrupt` 是控制事件，在用户消息命名空间分类之前归为状态，不生成 User 气泡或原始 JSON 正文。对话中的中断提示在请求未处理或本轮尚未回到 idle 时显示「正在停止」，已处理且观察到同一执行范围的 idle 后显示中性的方形图标、「已停止」与「已由用户停止」。停止请求成功仅表示已提交中断，Composer 保持停止按钮禁用，直到服务端确认 Session 不再运行；请求失败恢复重试，草稿不清空。
 - 模型请求取消与执行失败分开：以 `model_request_start_id` 关联请求，用同一轮、同一线程中已处理的 `user.interrupt` 确认 `cancelled`，转录展示「已中断」，不显示红色错误标记。全局中断覆盖当前各线程，指定线程中断只影响该线程。完整 Session 事件来自主线程和子线程缓存的分段合并；按事件时间排序并计算中断请求集合后，将同一只读集合传给各 lane，不能在 lane 局部数组中重新判定全局停止，也不向子 lane 复制全局停止展示行；未处理的停止请求、没有匹配请求、仅有 `end_turn`、其他线程或下一轮的中断不能消除错误。真实 `session.error` 和非取消的模型失败继续展示；模型失败不再标为「模型请求完成」。展示状态独立于原始事件，Debug/复制 JSON 保留 `is_error` 与 `error` 字段。
 - 工具结果严格识别 Claude 的两种明确中断文案与 `is_error=true`，展示中性的「已中断」而非失败。普通错误仍为失败；权限拒绝为「已拒绝」，审批尚未处理时继续等待，普通工具显示「等待审批」，自定义工具显示「等待结果」。普通自定义工具的等待卡片仅提示等待结果，不提供错误的审批按钮；AskUserQuestion 继续使用问卷。转录、工具详情、Inspector 表格复用状态 Badge；Inspector 将中断计入独立结果类别，不计入失败或进行中，并保留其执行耗时。
-- 普通消息 `processed_at` 为空时显示「排队中」，保留消息正文。`requires_action` 与 `budget_reached` 显示「等待操作」／「已达到预算」及对应状态行，不伪装成执行错误；这两种 idle 状态禁止发送普通消息并保留草稿，恢复 running 后清除旧的 idle 原因。重排队、运行、完成与终止均使用独立中英文状态。正常 `end_turn` 仍作为 idle 边界，不额外制造停止事件。
+- 普通消息 `processed_at` 为空时显示「排队中」，保留消息正文。`requires_action` 通过工具行与 Action Card 表达待处理操作，`budget_reached` 显示「已达到预算」及对应状态行，不伪装成执行错误；这两种 idle 状态禁止发送普通消息并保留草稿，恢复 running 后清除旧的 idle 原因。重排队、运行、完成与终止均使用独立中英文状态。正常 `end_turn` 仍作为 idle 边界，不额外制造停止事件。
 - 2026-10-14 提供的 `session.har` 包含 Claude 控制台脚本：`1eg5tx4iwbzta.js` 将 interrupt 操作映射为 `{type:"user.interrupt"}`，`0uh2z7eexsgkn.js` 的 `getEventContent` 对该类型返回 null，并通过 `isInterruptedResult` 识别两种明确的工具中断结果。这份 HAR 没有实际停止请求或本地 Session 的错误事件，不能据此确认截图中执行失败的后端原因；原 HAR 与解出的脚本不纳入仓库。
 - Claude 官方 [事件与流式处理](https://platform.claude.com/docs/en/managed-agents/events-and-streaming) 明确区分中断排队、已处理与回到 idle，且 `end_turn` 同时表示自然结束与中断；[线程文档](https://platform.claude.com/docs/en/managed-agents/session-threads) 描述工具中断结果与线程作用域。HAR 的文案目录分别包含 Stopped、Failed、Denied、Needs approval；没有停止后的详情页，不能据此声称此处文案、图标或位置与 Claude 界面逐项一致。本实现复用可核实的状态语义和项目自身的 shadcn 组件。
 
@@ -143,6 +143,7 @@ stateDiagram-v2
 
 - 已处理的 `user.interrupt` 关闭当前执行指示；随后落盘的部分消息仍通过显式 `model_request_start_id` 关联原请求。对已确认中断的请求，思考和部分正文使用同一模型请求分组。模型结束先于部分正文到达时，在本次只读构建内保留已结束请求的关联和结束元数据；迟到正文凭显式请求引用回到原分组，并保持已结束状态及用量、耗时，不重新开启执行指示。对话把停止提示放在该执行范围的收尾内容之后、下一条已处理用户消息／新请求／running／rescheduled 之前；idle 先于模型结束到达时也允许收尾事件归位。当前 lane 已有停止提示时，匹配的模型取消行不再重复展示；子 lane 没有全局停止展示行时继续保留其中的模型中断状态。原始事件数组、Debug、Inspector 与时间线的时间戳及顺序不变；真实错误继续保留。工具行和单条／批量详情的同一生命周期只显示一个状态标识。
 - 验收使用 `sessionExecutionState.test.ts`、Session Transcript/Composer/Inspector 及详情页测试覆盖跨轮、跨线程、pending 中断；详情页测试通过分开的 Session/Thread 历史接口加载事件并切换实际 lane，验证全局／指定线程停止、pending 停止、非取消错误和停止后的新请求，避免仅使用扁平数组的误绿。另覆盖无 trailing idle 的停止括号关闭、工具状态去重、取消与真实失败、工具各终态和预算暂停。浏览器模拟 API 事件，点击实际 Stop 按钮，检查浅色／深色／窄屏、停止后继续发送和各状态展示；截图与脚本放在仓库外，不提交 Git。
+- 工具审批暂停不额外生成转录中的「等待操作」状态行；待处理状态由对应工具行的「等待审批」／「等待结果」和 Action Card 表达，避免审批已允许、拒绝或执行完成后留下历史等待提示。Debug 保留原始 `session.status_idle` 事件，预算暂停等其他状态行不受影响。提供的 `session.har` 中，前端 `getEventContent` 对 `session.status_idle` 返回 null，`isTurnEnd` 明确排除 `requires_action`；据此对齐审批暂停不作为独立对话正文的处理。HAR 与提取脚本仅用于本地检查，不纳入仓库。
 - 最新 `session.status_idle.stop_reason` 为 `requires_action` 时，在转录与输入框之间展示 Action Card。普通工具审批发送 `user.tool_confirmation`，AskUserQuestion 答案发送 `user.custom_tool_result`；等待期间禁用普通消息输入框。
 - 用户离开列表底部后停止自动跟随并显示“回到最新事件”；位于底部时继续跟随流式正文增长。发送新消息成功后重新跟随底部，即使随后重连补入更早的历史事件，也应保持最新回复可见；主动上滚阅读历史时不强制拉回底部。
 - Session 最终状态以 SSE/后端响应为准；前端临时状态只用于交互反馈。

@@ -18,12 +18,20 @@ flowchart TB
 | 层 | 来源 | 内容 |
 |---|---|---|
 | L0 | `oma-brain-dsh/src/prompt/platform.ts` | 运行环境说明、提问与直接执行的取舍、工作习惯与完成前验证、审批、子 Agent 委派（仅配置了 `subagents` 时出现）、指令信任与优先级、收尾格式 |
-| L1 | `internal/environments/environment_prompt.tmpl`，经 `append_system_prompt` 下发 | uploads/outputs 路径规则、沙箱持久化语义、Environment `networking` 和 `packages` |
+| L1 | `internal/environments/environment_prompt.tmpl`，经 `append_system_prompt` 下发 | 沙箱系统信息、uploads/outputs 路径规则、沙箱持久化语义、Environment `networking` 和 `packages` |
 | L2 | `runtime_skills` | 每个 Skill 一行：名称、描述、`SKILL.md` 路径；不包含版本号 |
 | L3 | Agent `system`，或子 Agent 的 specialist 指令 | 原样插入，不做变量插值 |
 | L4 | `cwd`、`memory_catalog_prompt` | 工作目录、Memory 目录 |
 
 DSH 只注册一个 `complete: true` 的 section，各层在 `oma-brain-dsh/src/prompt/assemble.ts` 中按上表顺序用空行拼接。`dsh-system-prompt` 会把所有 section 拼成单一字符串，模型请求也以单个 `system` 字符串发送，因此缓存只能依赖前缀匹配：会话级数据必须位于 L3 之后，不能插入平台规则中间。
+
+## 时间上下文
+
+Brain 在 `oma-brain-dsh/src/kernel.ts` 挂载与其他 DSH 包同版本的 `@deepseek-ai/dsh-time-context`。插件通过 `agent/pre-step` 在进入模型步骤前追加带 `time-context` 来源的持久化 user-role 消息，包含当前日期时间、时区和经过时长；不改写 L0–L4 的 system 前缀。默认最短刷新间隔为 10 分钟，间隔内复用已有读数，恢复会话后仍依据持久化状态判断是否刷新。主 Agent 与子 Agent 均经过该步骤入口，各自维护时间读数。
+
+该插件不使用 `systemPrompt.context`，因此保留 `includeRuntimeContext: false` 不会关闭时间注入。时间来自 Brain 进程时钟，备用显示时区明确设为 `Asia/Shanghai`，即北京时间 UTC+08:00，不使用宿主机默认时区。当前 OMA 消息没有传递插件识别的浏览器时区来源，插件会标明浏览器时区不可用，并提示对未指定时区的日期时间询问用户；`Asia/Shanghai` 仅是显示时间的备用值，不代表所有用户的时区。后续如需按用户时区解释时间，必须另行传递经过校验的用户时区。本次接入不提供沙箱 OS、架构或 shell 信息。
+
+`oma-brain-dsh/tests/time-context.test.ts` 覆盖真实模型请求中的读数、北京时间显示、会话恢复后的间隔抑制、超过 10 分钟后的刷新，以及 system 前缀保持不变。测试使用进程内后端，不需要真实沙箱或外部服务。
 
 ## 主 Agent 与子 Agent
 
@@ -74,6 +82,7 @@ Agent 指令与平台规则的关系分两类：
 
 ## L1 渲染规则
 
+- 系统信息采用部署方确认的 Managed Agent Sandbox 镜像合同：Linux、Ubuntu 24.04.4 LTS (Noble Numbat)、`/bin/bash`、默认执行用户 root，另有 UID 1000 且属于 sudo 组的 user 账户，以及 `/usr/bin/sudo`。按当前部署约定，服务配置 `env: dev` 使用 `aarch64`，其他环境使用 `x86_64`。Runner 显式传入部署环境，既不读取 Brain 宿主机架构，也不为生成提示词提前创建沙箱。该文本随 Code Session 启动配置保存，主 Agent 与子 Agent 共用；它是镜像合同而非运行时探测结果，变更镜像或部署架构时必须同步更新。时间由独立的 time-context 插件提供。
 - `networking` 由 `networkpolicy.ParseConfig` 解析，非 cloud 或缺失时视为 unrestricted。limited 模式把可访问目标合成一句：`allow_package_managers` 对应 package registries，`allow_mcp_servers` 对应 configured MCP servers，`allowed_hosts` 最多列 50 项、超出部分写为 `and N more`；三者都为空时写明全部出站访问被阻断，避免出现“全部阻断”后又说“某些可达”的矛盾表述。配置非法时启动失败，与网络策略执行端一致地 fail closed。
 - `packages` 复用 `decodeEnvironmentPackages`，按 apt → cargo → gem → go → npm → pip 列出，每个包管理器最多 20 项。
 - 持久化说明与 [sandbox-lifecycle](sandbox-lifecycle.md) 一致：idle 时暂停，长时间 idle 后可能被替换；替换后保留 `/mnt/user-data`、`/mnt/session/uploads` 和已挂载的 Memory store。

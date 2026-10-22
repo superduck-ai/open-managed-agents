@@ -3,6 +3,7 @@ package devinit
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -15,7 +16,7 @@ func TestLoadBaseConfigRequiresRunInput(t *testing.T) {
 	if err := os.WriteFile(legacy, []byte(minimalBaseConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadBaseConfig(root); err == nil {
+	if _, err := loadBaseConfigWithImages(root, imagesConfig{}); err == nil {
 		t.Fatal("expected missing .run/config.yaml error despite legacy config")
 	}
 }
@@ -26,12 +27,12 @@ func TestLoadBaseConfigResolvesPathsFromRun(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	data := minimalBaseConfig + "\ncode_session:\n  brain_claim_token_file: ./generated/secrets/brain-claim-token\n"
+	data := strings.Replace(minimalBaseConfig, "code_session:\n", "code_session:\n  brain_claim_token_file: ./generated/secrets/brain-claim-token\n", 1)
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("CONFIG_FILE", "/original/config.yaml")
-	cfg, err := loadBaseConfig(root)
+	cfg, err := loadBaseConfigWithImages(root, imagesConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,5 +41,17 @@ func TestLoadBaseConfigResolvesPathsFromRun(t *testing.T) {
 	}
 	if os.Getenv("CONFIG_FILE") != "/original/config.yaml" {
 		t.Fatal("base config loading changed CONFIG_FILE")
+	}
+}
+
+func TestLocalSandboxTemplate(t *testing.T) {
+	for _, template := range []string{"", "managed-agent-sandbox", "custom/sandbox:dev"} {
+		want := defaultImagePrefix + "/managed-agent-sandbox:latest"
+		if template == "custom/sandbox:dev" {
+			want = template
+		}
+		if got := localSandboxTemplate(template); got != want {
+			t.Errorf("localSandboxTemplate(%q) = %q, want %q", template, got, want)
+		}
 	}
 }

@@ -3,10 +3,13 @@ import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import { createUserMessage, type ContentBlock, type ToolCallBlock } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { ContextRecovery } from "./compaction.ts";
+import { ModelRetry } from "./model-retry.ts";
 import { ExternalMcp } from "../external-mcp/index.ts";
 import * as SandboxTools from "../sandbox-tools/index.ts";
 import { failureDiagnostic, workerDiagnostic } from "../ccrv2/diagnostics.ts";
 import { approveToolCall, releaseToolApproval, clearToolApprovals, prefetchMcpApprovals } from "./tool-approvals.ts";
+import * as UserQuestions from "../user-questions/index.ts";
+import { SHUTDOWN_CANCEL } from "./contracts.ts";
 import { object } from "../json.ts";
 import type {
   SessionRuntimeConfig,
@@ -23,12 +26,15 @@ export class SessionRuntime {
   lastIdle = Date.now();
   private turnCompleted = false;
   private readonly contextRecovery = new ContextRecovery();
+  private readonly modelRetry = new ModelRetry();
   private toolCalls: ToolCallBlock[] = [];
   appendedSystem = "";
   private finishing?: ReturnType<typeof Promise.withResolvers<void>>;
   private readonly sandboxScope: symbol;
   readonly externalMcp: ExternalMcp;
   private sandboxTools?: Fiber;
+  private hostTools?: Fiber | void;
+  private questionTools?: Fiber;
 
   constructor(
     readonly ctx: Context,
@@ -69,11 +75,13 @@ export class SessionRuntime {
         tools: this.config.tools,
         permissions: toolPermissions,
       });
+      if (!this.parent) this.questionTools = await scope.plugin(UserQuestions, { bridge: this.bridge, tools: this.config.tools });
+      this.hostTools = await this.config.setupTools?.(scope, this.bridge, this.config.tools, this.parent ? this.config.id : undefined, toolPermissions);
       await this.externalMcp.register(scope, this.bridge, this.abort.signal, async (serverName, phase) => {
         await this.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase);
       }, scope.get("sandboxExecutor")!, async (serverName) => {
         await this.hooks.onExternalMcpConnectionFailure?.(serverName);
-      });
+      }, this.parent ? this.config.id : undefined);
       this.hooks.setupTools?.(scope);
       scope.on("tools/pre-execute", async (exec, next) => {
         const decision = await next();
@@ -86,6 +94,7 @@ export class SessionRuntime {
         return approval.allowed ? decision : { kind: "deny", reason: approval.reason || "Tool use denied by OMA" };
       });
       scope.on("tools/execute", async (exec, next) => {
+        if (exec.name === "AskUserQuestion") return next();
         if (!exec.name.startsWith("mcp__") && toolPermissions[exec.name.toLowerCase()] === "allow") return next();
         prefetchMcpApprovals(this.bridge, this.toolCalls, exec.callId,
           name => name.startsWith("mcp__") && !!scope.tools.get(name, exec.agent), exec.signal);
@@ -133,7 +142,14 @@ export class SessionRuntime {
             signal.throwIfAborted();
             await this.hooks.onContextCompacted?.(tokens);
           });
-        return recovered ? { kind: "retry" } : next();
+        if (recovered) return { kind: "retry" };
+        const retried = await this.modelRetry.retry(failure, turn, step, signal, (attempt, delayMs) => {
+          workerDiagnostic("warn", "oma_model_request_retry", {
+            session_id: this.config.id, failure_code: failure.code, http_status: failure.status,
+            attempt, delay_ms: delayMs,
+          });
+        });
+        return retried ? { kind: "retry" } : next();
       });
       scope.on("agent/assistant-stream", ({ frame }) => this.hooks.onStream(frame));
     };
@@ -165,6 +181,14 @@ export class SessionRuntime {
       if (!this.sandboxTools) throw new Error("Session tools are not initialized");
       this.sandboxTools.update({ bridge: this.bridge, tools: next.tools, permissions: this.config.toolPermissions });
       await this.sandboxTools.await();
+      if (this.hostTools) {
+        this.hostTools.update({ ...this.hostTools.config, tools: next.tools, permissions: this.config.toolPermissions });
+        await this.hostTools.await();
+      }
+      if (this.questionTools) {
+        this.questionTools.update({ bridge: this.bridge, tools: next.tools });
+        await this.questionTools.await();
+      }
       this.config.tools = next.tools;
     }
     await this.externalMcp.update(next.externalMcpConfig);
@@ -209,6 +233,10 @@ export class SessionRuntime {
 
   async flushLog(): Promise<void> {
     await this.ctx.sessions.flush(this.agent.session);
+  }
+
+  cancelForShutdown(): void {
+    this.handle?.agent.cancel(SHUTDOWN_CANCEL);
   }
 
   stop(): void {

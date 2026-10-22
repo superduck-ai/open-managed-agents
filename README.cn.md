@@ -15,7 +15,7 @@ Open Managed Agents 是一个用 Go 实现的本地优先 Managed Agents API 服
 - 后端：Go `1.27.0`、`chi`、`pgx`、`goose`、AWS SDK for Go v2、Redis、NATS、Anthropic Go SDK。
 - 前端：Bun、Vite、React、TypeScript、Tailwind CSS、TanStack Router/Query/Table、Base UI、shadcn/ui 风格组件。
 - 存储与消息：PostgreSQL、Redis、NATS JetStream、S3 兼容对象存储，默认本地使用 MinIO。
-- 沙箱：E2B 相关能力通过 `config/config.yaml` 的 `e2b` 节点启用；没有配置时，多数 API/单元测试仍可在 fake store 或非真实沙箱路径下运行。
+- 沙箱：E2B 相关能力通过 `.run/config.yaml` 的 `e2b` 节点启用；没有配置时，多数 API/单元测试仍可在 fake store 或非真实沙箱路径下运行。
 
 ## 目录结构
 
@@ -74,10 +74,11 @@ docker compose up -d
 复制示例文件后再按需修改：
 
 ```bash
-cp config/config.example.yaml config/config.yaml
+mkdir -p .run
+cp config/config.example.yaml .run/config.yaml
 ```
 
-应用会从当前目录向上查找 `config/config.yaml`，直到遇到 `go.mod`；也可以用 `CONFIG_FILE=/path/to/config.yaml` 显式指定。配置文件是必需的，未找到时拒绝启动。YAML 采用严格字段校验，写错字段名会拒绝启动；顶层 `env` 只接受 `dev` 或 `prod`。常用本地配置如下：
+应用会从当前目录向上查找 `.run/config.yaml`，直到遇到 `go.mod`；也可以用 `CONFIG_FILE=/path/to/config.yaml` 显式指定。配置文件是必需的，未找到时拒绝启动。YAML 采用严格字段校验，写错字段名会拒绝启动；顶层 `env` 只接受 `dev` 或 `prod`。常用本地配置如下：
 
 ```yaml
 env: dev
@@ -109,7 +110,7 @@ e2b:
   api_url: ""
 ```
 
-加载优先级为“代码默认值 < `config/config.yaml`”。业务环境变量不会覆盖 YAML；`CONFIG_FILE` 只负责选择配置文件，路径字段中的 `${HOME}` 等变量只用于路径展开。生产环境应把完整 YAML 作为只读 Secret 挂载，并限制文件权限。
+加载优先级为“代码默认值 < `.run/config.yaml`”。业务环境变量不会覆盖 YAML；`CONFIG_FILE` 只负责选择配置文件，路径字段中的 `${HOME}` 等变量只用于路径展开。生产环境应把完整 YAML 作为只读 Secret 挂载，并限制文件权限。
 
 从仍使用 `.env` 或业务环境变量的旧版本升级属于 breaking change：升级前必须先生成并验证完整 YAML，当前版本不会回退读取旧变量。字段映射、已移除配置和回滚步骤见 [`docs/design/be/runtime-configuration.md`](docs/design/be/runtime-configuration.md#从-env-迁移)。
 
@@ -118,32 +119,32 @@ e2b:
 先创建一个只有当前用户可访问的目录，再使用仓库脚本生成两份私钥：
 
 ```bash
-mkdir -p config/secrets
-chmod 700 config/secrets
+mkdir -p .run/secrets
+chmod 700 .run/secrets
 
 just generate-code-session-jwt-key \
-  config/secrets/code-session-jwt-ed25519.pem
+  .run/secrets/code-session-jwt-ed25519.pem
 
 just generate-upstream-proxy-ca-key \
-  config/secrets/upstream-proxy-ca-key.pem
+  .run/secrets/upstream-proxy-ca-key.pem
 ```
 
-两个脚本都会将文件权限设置为 `0600`，并在目标文件已经存在时拒绝覆盖，避免意外轮换密钥。`config/config.yaml` 和 `config/secrets/` 下的真实私钥均被 Git 忽略。YAML 路径支持 `${HOME}`、`~/`，相对路径以配置文件所在目录为基准：
+两个脚本都会将文件权限设置为 `0600`，并在目标文件已经存在时拒绝覆盖，避免意外轮换密钥。`.run/config.yaml` 和 `.run/secrets/` 下的真实私钥均被 Git 忽略。YAML 路径支持 `${HOME}`、`~/`，相对路径以配置文件所在目录为基准：
 
 ```yaml
 code_session:
   jwt_signing_private_key_file: secrets/code-session-jwt-ed25519.pem
 
-  # 只有启用 CCRv2 HTTPS MITM 时才需要下面两项
+  # CCRv2 HTTPS MITM 默认开启；显式 false 可关闭
   upstream_proxy_mitm_enabled: true
   upstream_proxy_ca_key_file: secrets/upstream-proxy-ca-key.pem
 ```
 
 `code_session.jwt_signing_private_key_file` 指向 PKCS#8 PEM 格式的 Ed25519 私钥，用于签发 session-ingress JWT。开发和测试环境省略时会在进程内生成临时密钥；生产环境缺失会拒绝启动。
 
-`code_session.upstream_proxy_ca_key_file` 指向 PKCS#8 PEM 格式的 ECDSA P-256 私钥。只有 `code_session.upstream_proxy_mitm_enabled: true` 时才需要配置；服务启动时使用它在内存中签发根证书，不会在磁盘上生成证书文件。
+`code_session.upstream_proxy_ca_key_file` 指向 PKCS#8 PEM 格式的 ECDSA P-256 私钥。MITM 默认开启，省略开关时同样需要配置；显式设置 `code_session.upstream_proxy_mitm_enabled: false` 可关闭；服务启动时使用它在内存中签发根证书，不会在磁盘上生成证书文件。
 
-`config/config.example.yaml` 是正常本地开发使用的最小可运行示例；Batch、Webhook、Environment Runner 等通常无需调整的字段继续使用代码默认值，不放入该文件。全部支持字段及其安全示例值见 `docs/configuration-reference.yaml`。配置加载入口在 `internal/config/config.go`，领域类型位于 `internal/config/types.go`；运行时配置按数据库、存储、Batch、Code Session、Webhook 等职责分组。未显式配置 `database.auto_migrate` 时，开发环境默认开启，生产环境默认关闭。
+`config/config.example.yaml` 是正常本地开发使用的最小配置示例；使用前生成其中引用的 CA 私钥，或运行 `just dev-init` 自动准备配置和密钥；Batch、Webhook、Environment Runner 等通常无需调整的字段继续使用代码默认值，不放入该文件。全部支持字段及其安全示例值见 `docs/configuration-reference.yaml`。配置加载入口在 `internal/config/config.go`，领域类型位于 `internal/config/types.go`；运行时配置按数据库、存储、Batch、Code Session、Webhook 等职责分组。未显式配置 `database.auto_migrate` 时，开发环境默认开启，生产环境默认关闭。
 
 ## 启动后端
 
@@ -155,9 +156,10 @@ code_session:
 
 需要调试 Managed Agent Sandbox、Filestore FUSE 挂载或 Environment Runner 时，推荐让 Docker Compose 只运行 PostgreSQL、Redis、NATS、MinIO，并从源码在宿主机分别启动 e2b-local、oma-server 和 Vite。完整启动顺序与必要配置见[本地开发模式](docs/design/docker-compose-deployment.md#8-本地开发模式)。
 
-脚本要求存在 `config/config.yaml`，并在释放端口前完成检查；缺失时会直接退出。首次运行先执行 `cp config/config.example.yaml config/config.yaml`。
+脚本要求存在 `.run/config.yaml`，并在释放端口前完成检查；缺失时会直接退出。首次运行先执行 `mkdir -p .run
+cp config/config.example.yaml .run/config.yaml`。
 
-监听地址由 `config/config.yaml` 的 `server.addr` 决定。修改端口后，用 `PORT` 告诉重启脚本释放对应监听端口：
+监听地址由 `.run/config.yaml` 的 `server.addr` 决定。修改端口后，用 `PORT` 告诉重启脚本释放对应监听端口：
 
 ```yaml
 server:

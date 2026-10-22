@@ -5,9 +5,60 @@ import { OmaApi } from "../src/api.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import { mountOma } from "../src/plugin.ts";
 import * as OmaSandboxProvider from "../src/oma-sandbox/index.ts";
+import { SandboxMcp, sandboxCallTimeoutMs } from "../src/oma-sandbox/client.ts";
 import * as SandboxTools from "../src/sandbox-tools/index.ts";
 import { sandboxToolDefinitions } from "../src/sandbox-tools/definitions.ts";
 import { assignment, Backend, textEvents, toolEvents } from "./backend.ts";
+import type { Payload } from "../src/json.ts";
+
+test("sandbox call timeout outlasts the requested Bash timeout", () => {
+  const tools = sandboxToolDefinitions();
+  const bash = tools.find((tool) => tool.name === "Bash")!;
+  const read = tools.find((tool) => tool.name === "Read")!;
+  expect(sandboxCallTimeoutMs(bash, { command: "true", timeout: 600 })).toBe(665_000);
+  expect(sandboxCallTimeoutMs(bash, { command: "true", timeout: 3600 })).toBe(665_000);
+  expect(sandboxCallTimeoutMs(bash, { command: "true", timeout: 300 })).toBe(365_000);
+  expect(sandboxCallTimeoutMs(bash, { command: "true" })).toBe(185_000);
+  expect(sandboxCallTimeoutMs(bash, { command: "true", timeout: "900" })).toBe(185_000);
+  expect(sandboxCallTimeoutMs(read, { file_path: "/tmp/a", timeout: 600 })).toBe(185_000);
+});
+
+test("a silent Bash call outlives Bun's default socket idle timeout", async () => {
+  const child = Bun.spawn([process.execPath, "tests/sandbox-idle-worker.ts"], {
+    env: { ...process.env, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "2", TEST_TOOL_DELAY_MS: "9000" },
+    stdout: "pipe", stderr: "pipe",
+  });
+  const [output, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+  expect(code).toBe(0);
+  expect(JSON.parse(output.trim().split("\n").at(-1)!)).toEqual({ ok: true, result: { content: [{ type: "text", text: "finished" }] } });
+}, 30_000);
+
+test("sandbox tool calls disable Bun's socket idle timeout and bound the request by the call timeout", async () => {
+  const idleTimeouts: unknown[] = [];
+  const deadlines: AbortSignal[] = [];
+  const api = new OmaApi("http://oma.test", (async (input: RequestInfo | URL, init?: RequestInit & { timeout?: unknown }) => {
+    const request = new Request(input, init);
+    const body = request.method === "POST" ? await request.json() as Payload : {};
+    if (body.method === "server/discover") return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Method not found" } }, { status: 404 });
+    if (body.method === "initialize") return Response.json({ jsonrpc: "2.0", id: body.id, result: {
+      protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "sandbox", version: "1" },
+    } });
+    if (body.method !== "tools/call") return new Response(null, { status: 202 });
+    idleTimeouts.push(init?.timeout);
+    if (init?.signal) deadlines.push(init.signal);
+    return Response.json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "ok" }] } });
+  }) as typeof fetch);
+  const a = assignment(); api.assignments.set(a.session_id, a);
+  const executor = new SandboxMcp(api, a.session_id);
+  const tools = sandboxToolDefinitions();
+  try {
+    await executor.call(tools.find((tool) => tool.name === "Bash")!, { command: "true", timeout: 600 }, new AbortController().signal);
+    await executor.call(tools.find((tool) => tool.name === "Read")!, { file_path: "/tmp/a" }, new AbortController().signal);
+    expect(idleTimeouts).toEqual([false, false]);
+    expect(deadlines).toHaveLength(2);
+    expect(deadlines.every((signal) => !signal.aborted)).toBe(true);
+  } finally { await executor.close(); }
+});
 
 test("OMA providers isolate roots, initialize lazily and retain separate MCP sessions", async () => {
   const ctx = new Context();
@@ -52,13 +103,13 @@ test("OMA providers isolate roots, initialize lazily and retain separate MCP ses
     const tool = sandboxToolDefinitions().find((tool) => tool.name === "Bash")!;
     const signal = new AbortController().signal;
     for (const executor of [executorA, executorB, executorA]) {
-      await executor.provision(signal);
+      await executor.provision!(signal);
       await executor.call(tool, { command: "pwd" }, signal);
     }
     await providerA.dispose();
     expect(scopeA.get("sandboxExecutor")).toBeUndefined();
     expect(scopeB.get("sandboxExecutor")).toBe(executorB);
-    await executorB.provision(signal);
+    await executorB.provision!(signal);
     await executorB.call(tool, { command: "still available" }, signal);
     for (const value of [a, b]) {
       const calls = requests.filter((entry) => entry.id === value.session_id);

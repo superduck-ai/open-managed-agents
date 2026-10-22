@@ -20,7 +20,7 @@ func TestSessionContextRuntimeTools(t *testing.T) {
 		{"mcp only", `[{"type":"mcp_toolset"}]`, []string{}},
 		{"read only", `[{"type":"agent_toolset_20260401","default_config":{"enabled":false},"configs":[{"name":"read","enabled":true}]}]`, []string{"Read"}},
 		{"approval required", `[{"type":"agent_toolset_20260401","default_config":{"enabled":false},"configs":[{"name":"bash","enabled":true,"permission_policy":{"type":"always_ask"}}]}]`, []string{"Bash"}},
-		{"default enabled", `[{"type":"agent_toolset_20260401","configs":[{"name":"bash","enabled":false}]}]`, []string{"Read", "Write", "Edit", "Grep", "Glob"}},
+		{"default enabled", `[{"type":"agent_toolset_20260401","configs":[{"name":"bash","enabled":false}]}]`, []string{"Read", "Write", "Edit", "Grep", "Glob", "web_search", "web_fetch"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			record := db.CodeSession{Metadata: json.RawMessage(`{"config":{"tools":` + test.tools + `}}`)}

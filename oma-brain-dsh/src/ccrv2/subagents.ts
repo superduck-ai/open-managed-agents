@@ -61,8 +61,11 @@ export class CcrSubagentBridge implements SubagentBridge {
     await this.session.flushEvents();
     await this.session.updateStatus();
   }
-  onContextCompacted(threadId: string, tokens?: number): Promise<void> {
-    return this.session.contextCompacted(tokens, threadId);
+  contextCompactionSequence(threadId: string): number | undefined {
+    return this.session.state.compactionSequences?.[threadId];
+  }
+  onContextCompacted(threadId: string, tokens: number | undefined, sequence: number): Promise<void> {
+    return this.session.contextCompacted(tokens, sequence, threadId);
   }
   beforeRequest(): Promise<void> { return this.session.flushEvents(); }
   onEvent(threadId: string, event: SessionEvent): void { this.session.record(event, threadId); }

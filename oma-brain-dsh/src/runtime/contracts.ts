@@ -46,7 +46,8 @@ export interface SubagentBridge {
   bindPersistence(threadId: string): void;
   emit(event: SubagentEvent): Promise<void>;
   beforeRequest(): Promise<void>;
-  onContextCompacted?(threadId: string, tokens?: number): Promise<void>;
+  contextCompactionSequence?(threadId: string): number | undefined;
+  onContextCompacted?(threadId: string, tokens: number | undefined, sequence: number): Promise<void>;
   onEvent(threadId: string, event: SessionEvent): void;
   onStream(threadId: string, frame: AssistantStreamFrame): void;
   toolExecution(threadId: string): ToolExecutionBridge;
@@ -174,7 +175,8 @@ export interface ToolExecutionBridge {
 }
 
 export interface SessionRuntimeHooks {
-  onContextCompacted?(tokens?: number): Promise<void>;
+  contextCompactionSequence?(): number | undefined;
+  onContextCompacted?(tokens: number | undefined, sequence: number): Promise<void>;
   onExternalMcpConnectionFailure?(serverName: string): Promise<void>;
   onExternalMcpAuthenticationFailure?(serverName: string, phase?: "discovery" | "tool_call"): Promise<void>;
   setupTools?(scope: Context): void;

@@ -21,6 +21,7 @@ export interface BrainState {
   completed: string[];
   turnInputs?: string[];
   outbox: Payload[];
+  compactionSequences?: Record<string, number>;
   approvedCalls: Record<
     string,
     { name: string; original: Payload; effective: Payload }

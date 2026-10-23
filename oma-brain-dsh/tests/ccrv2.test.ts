@@ -799,6 +799,86 @@ test("native compaction waits for journal persistence before notification and ne
   } finally { failPersistence = false; await ctx.fiber.dispose(); }
 });
 
+async function compactedSessionFixture() {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  const model = new TextModel();
+  model.stream = async function* (options): AsyncIterable<StreamChunk> {
+    yield { type: "block-end", index: 0, block: { type: "text", text: options.purpose === "compaction" ? "Previous task details." : "a".repeat(12000) } };
+    yield { type: "finish", reason: { kind: "stop" } };
+  };
+  await mountKernel(ctx);
+  await ctx.plugin(CcrBridge, { backend });
+  ctx.llm.registerAdapter(["test"], model);
+  const config = { id: "compaction-notification", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", tools: [], setup };
+  const session = ctx.ccrv2.createSession(config);
+  await session.open();
+  await session.receive("first", { content: "u".repeat(12000) });
+  expect(await ctx.compaction.compactNow(session.runtime.agent, new AbortController().signal)).not.toBeNull();
+  return { backend, ctx, model, config, session };
+}
+
+test.each(["state", "publication", "callback"] as const)("compaction notification retries after failed %s without duplicate enqueue", async failure => {
+  const { backend, ctx, session } = await compactedSessionFixture();
+  const persist = backend.persist.bind(backend);
+  const events = backend.events.bind(backend);
+  const notify = session.runtime.hooks.onContextCompacted!;
+  let failing = true;
+  let deliveredId: string | undefined;
+  backend.persist = async (id, ...args) => {
+    if (failing && failure === "state" && args[0] === "dsh_brain_state") throw new Error("notification unavailable");
+    await persist(id, ...args);
+  };
+  backend.events = async (id, payloads) => {
+    const notification = payloads.find(event => event.type === "agent.thread_context_compacted");
+    if (notification) deliveredId = notification.uuid;
+    if (failing && failure === "publication") throw new Error("notification unavailable");
+    await events(id, payloads);
+  };
+  session.runtime.hooks.onContextCompacted = async (...args) => {
+    if (failing && failure === "callback") throw new Error("notification unavailable");
+    await notify(...args);
+  };
+  try {
+    await expect(session.runtime.flushLog()).rejects.toThrow("notification unavailable");
+    const queuedId = session.state.outbox.find(event => event.type === "agent.thread_context_compacted")?.uuid;
+    const attemptedId = deliveredId;
+    failing = false;
+    await session.runtime.flushLog();
+    const notifications = backend.output.get(session.id)!.filter(event => event.type === "agent.thread_context_compacted");
+    expect(notifications).toHaveLength(1);
+    if (queuedId ?? attemptedId) expect(notifications[0]!.uuid).toBe(queuedId ?? attemptedId);
+    await session.runtime.flushLog();
+    expect(backend.output.get(session.id)!.filter(event => event.type === "agent.thread_context_compacted")).toHaveLength(1);
+  } finally { failing = false; await ctx.fiber.dispose(); }
+});
+
+test("restart recovers a compaction notification when its journal is durable but its outbox checkpoint failed", async () => {
+  const { backend, ctx, session, model, config } = await compactedSessionFixture();
+  const resumedContext = new Context();
+  const persist = backend.persist.bind(backend);
+  backend.persist = async (id, ...args) => {
+    if (args[0] === "dsh_brain_state") throw new Error("notification checkpoint unavailable");
+    await persist(id, ...args);
+  };
+  try {
+    await expect(session.runtime.flushLog()).rejects.toThrow("notification checkpoint unavailable");
+    const queuedId = session.state.outbox.find(event => event.type === "agent.thread_context_compacted")!.uuid;
+    const recovered = new MemoryBackend();
+    for (const [id, logs] of backend.logs) recovered.logs.set(id, structuredClone(logs));
+    for (const [id, output] of backend.output) recovered.output.set(id, structuredClone(output));
+    await mountKernel(resumedContext);
+    await resumedContext.plugin(CcrBridge, { backend: recovered });
+    resumedContext.llm.registerAdapter(["test"], model);
+    const resumed = resumedContext.ccrv2.createSession(config);
+    await resumed.open();
+    expect(recovered.output.get(config.id)!.filter(event => event.type === "agent.thread_context_compacted")).toEqual([
+      expect.objectContaining({ uuid: queuedId }),
+    ]);
+    expect(resumed.runtime.agent.session.deriveMessages()).toEqual(session.runtime.agent.session.deriveMessages());
+  } finally { backend.persist = persist; await resumedContext.fiber.dispose(); await ctx.fiber.dispose(); }
+});
+
 test("native overflow recovery stops after one unsuccessful retry", async () => {
   const backend = new MemoryBackend();
   const ctx = new Context();

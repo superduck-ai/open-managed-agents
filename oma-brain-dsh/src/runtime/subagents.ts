@@ -220,7 +220,8 @@ export class Subagents {
     }, {
       onExternalMcpAuthenticationFailure: (serverName, phase) => this.parent.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase) ?? Promise.resolve(),
       beforeRequest: async () => { await child.flushLog(); await this.bridge.beforeRequest(); },
-      onContextCompacted: tokens => this.bridge.onContextCompacted?.(thread.id, tokens) ?? Promise.resolve(),
+      contextCompactionSequence: () => this.bridge.contextCompactionSequence?.(thread.id),
+      onContextCompacted: (tokens, sequence) => this.bridge.onContextCompacted?.(thread.id, tokens, sequence) ?? Promise.resolve(),
       onEvent: (event) => this.bridge.onEvent(thread.id, event),
       onStream: (frame) => this.bridge.onStream(thread.id, frame),
       stop: () => execution.stop(),

@@ -93,7 +93,8 @@ export class CcrSession {
       }]),
       setupTools: (scope) => this.subagents.register(scope),
       beforeRequest: () => this.beforePrimaryRequest(),
-      onContextCompacted: tokens => this.contextCompacted(tokens),
+      contextCompactionSequence: () => this.state.compactionSequences?.[this.id],
+      onContextCompacted: (tokens, sequence) => this.contextCompacted(tokens, sequence),
       onEvent: (event) => this.record(event),
       onStream: (frame) => this.stream(frame),
       stop: () => this.stop(),
@@ -279,11 +280,19 @@ export class CcrSession {
     return promise;
   }
 
-  async contextCompacted(tokens?: number, threadId?: string): Promise<void> {
-    this.state.outbox.push({ type: "agent.thread_context_compacted", uuid: crypto.randomUUID(),
-      ...(threadId ? { session_thread_id: threadId } : {}),
-      ...(tokens !== undefined ? { pre_compaction_tokens: tokens } : {}) });
-    await this.flushEvents();
+  async contextCompacted(tokens: number | undefined, sequence: number, threadId?: string): Promise<void> {
+    const owner = threadId ?? this.id;
+    const sequences = this.state.compactionSequences ??= {};
+    if (sequence > (sequences[owner] ?? -1)) {
+      const uuid = createHash("sha256").update(JSON.stringify([this.id, owner, "context_compacted", sequence])).digest("hex");
+      this.state.outbox.push({ type: "agent.thread_context_compacted", uuid,
+        ...(threadId ? { session_thread_id: threadId } : {}),
+        ...(tokens !== undefined ? { pre_compaction_tokens: tokens } : {}) });
+      sequences[owner] = sequence;
+    }
+    await this.save();
+    await this.previews;
+    await this.publish(false);
   }
 
   record(event: SessionEvent, threadId?: string) {

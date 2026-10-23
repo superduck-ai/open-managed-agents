@@ -25,7 +25,7 @@ export class SessionRuntime {
   lastIdle = Date.now();
   private turnCompleted = false;
   private compactionTokens?: number;
-  private pendingCompaction?: { tokens: number };
+  private pendingCompaction?: { tokens?: number; sequence: number };
   private readonly modelRetry = new ModelRetry();
   private toolCalls: ToolCallBlock[] = [];
   appendedSystem = "";
@@ -116,9 +116,9 @@ export class SessionRuntime {
         if (event.type === "assistant/message")
           this.toolCalls = event.data.message.content.filter((block): block is ToolCallBlock => block.type === "tool-call");
         if (event.type === "compaction/start") this.compactionTokens = this.ctx.tokenMeter.measure(session).totalTokens;
-        if (event.type === "compaction/prune") this.pendingCompaction ??= { tokens: this.ctx.tokenMeter.measure(session).totalTokens };
+        if (event.type === "compaction/prune") this.queueCompaction(event.seq, this.ctx.tokenMeter.measure(session).totalTokens);
         if (event.type === "compaction/end" && event.data.error === undefined)
-          this.pendingCompaction ??= { tokens: this.compactionTokens ?? this.ctx.tokenMeter.measure(session).totalTokens };
+          this.queueCompaction(event.seq, this.compactionTokens ?? this.ctx.tokenMeter.measure(session).totalTokens);
         this.hooks.onEvent(event);
         if (event.type === "tool/result") releaseToolApproval(this.bridge, event.data.message.toolCallId);
         if (event.type === "turn/end") {
@@ -169,6 +169,17 @@ export class SessionRuntime {
           } : {}) },
           ...options,
         });
+    const notifiedSequence = this.hooks.contextCompactionSequence?.() ?? -1;
+    for (const event of this.agent.session.snapshotEvents()) {
+      if (event.seq <= notifiedSequence) continue;
+      if (event.type === "compaction/prune" || (event.type === "compaction/end" && event.data.error === undefined))
+        this.queueCompaction(event.seq);
+    }
+    if (this.pendingCompaction) await this.flushLog();
+  }
+
+  private queueCompaction(sequence: number, tokens?: number): void {
+    this.pendingCompaction = { sequence, tokens: this.pendingCompaction?.tokens ?? tokens };
   }
 
   async refreshTools(): Promise<void> {
@@ -234,8 +245,8 @@ export class SessionRuntime {
     await this.ctx.sessions.flush(this.agent.session);
     const pending = this.pendingCompaction;
     if (pending) {
-      this.pendingCompaction = undefined;
-      await this.hooks.onContextCompacted?.(pending.tokens);
+      await this.hooks.onContextCompacted?.(pending.tokens, pending.sequence);
+      if (this.pendingCompaction === pending) this.pendingCompaction = undefined;
     }
   }
 

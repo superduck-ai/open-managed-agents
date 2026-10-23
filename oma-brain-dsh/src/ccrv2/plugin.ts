@@ -29,6 +29,7 @@ export class CcrBridge extends Service {
   static inject = [
     "attachments",
     "llm",
+    "tokenMeter",
     "sessions",
     "sessionPersistence",
     "agents",

@@ -329,13 +329,53 @@ New self-hosted session Work items with attached Memory Stores carry a URL-safe 
 
 模型请求只对 `RATE_LIMIT`、`SERVER`、`TIMEOUT`、`TRANSPORT` 和 `EMPTY_RESPONSE` 重试。HTTP 408 映射为 `TIMEOUT`，429 映射为 `RATE_LIMIT`，5xx 映射为 `SERVER`；其他 4xx 为非重试错误，认证、额度和上下文窗口错误优先按专属分类处理。每个失败步骤最多重试四次，单次等待包含抖动在内不超过 30 秒。`tests/model-retry.test.ts` 通过完整 Brain 会话覆盖永久 4xx 仅请求一次和 408/429/5xx 恢复，并用确定性随机源验证实际等待上限。
 
-### Context-window recovery for large Read histories
+### Native DSH context compaction
 
-A `CONTEXT_WINDOW_EXCEEDED` provider failure now has a bounded runtime recovery path for both primary and child sessions. Only older successful text-only `Read` results of at least 16 KiB are summarized. The latest two results are retained. A summary identifies the omitted character count, retains first and last excerpts and explicitly tells the model to reread the source file for omitted details. User inputs, instructions, assistant messages and tool-call identities are unchanged.
+Brain mounts the pinned `@deepseek-ai/dsh-token-meter`, `dsh-compaction-basic`, `dsh-compaction-tool-result-pruner` and `dsh-compaction-image-offload` plugins. `dsh-compaction` and `dsh-commands` satisfy package/API dependencies; automatic compaction does not require a commands service or a `/compact` product entry. The Read-specific recovery implementation is removed. Ordinary model retries remain separate and do not retry context overflow themselves.
 
-Each summary replaces its original model-surface node through DSH's append-only `tool/result` replacement operation and cites the original sequence. The original event and full output remain available for history and replay. CCRv2 suppresses public publication of replacement results, so each actual tool execution still has one public result. This suppression does not remove the internal replacement log.
+The native engine checks pressure before each step. Its defaults are `thresholdRatio=0.8`, `headroomTokens=65536`, `retainRatio=0.16`, `compactionRetries=1` and `maxOverflowRetries=1`. Given adapter capacity `W` and the effective request output reservation `O`, the trigger is `floor(min(0.8*W, W-O-65536))`; the retained-tail budget is `floor((W-O)*0.16)`. The native selector preserves valid message/tool pairing and indivisible units, so the actual retained size can exceed that budget. Pressure first invokes the optional model-free pruner, which uses the native 8192-character threshold and 4096/1024-character excerpts across tool names. If pressure remains, the engine summarizes a balanced old span. Provider-confirmed `CONTEXT_WINDOW_EXCEEDED` bypasses the normal pressure threshold and attempts bounded recovery. A successful response or idle transition resets its overflow retry sequence.
 
-Recovery flushes the reduced history before emitting `agent.thread_context_compacted` on the owning thread, then retries the failed model step once. `pre_compaction_tokens` is included only when the provider supplies the message-token count in its diagnostic. Cancellation, other provider failures, unchanged histories and repeat overflow at the same step do not retry. This policy does not summarize arbitrary conversations or unsupported tool payloads; it targets large Read-result pressure and keeps those limits explicit.
+```mermaid
+flowchart TD
+    Step[Agent pre-step] --> Meter[Token-meter pressure check]
+    Meter -->|Above threshold| Prune[Native tool-result pruner]
+    Prune -->|Still above threshold| Summary[Native balanced-span summary]
+    Overflow[CONTEXT_WINDOW_EXCEEDED] --> Recovery[Native bounded recovery]
+    Recovery --> Prune
+    Prune --> Journal[Append-only journal and surface replacement]
+    Summary --> Journal
+    Journal --> Flush[Flush owning thread journal]
+    Flush --> Notify[Publish thread_context_compacted]
+    Notify --> Request[Next model request]
+```
+
+Summary requests use the same authenticated OMA model route with `purpose=compaction`, the native structured checkpoint instruction and a default 65536-token generation cap. They reuse the conversation prefix and tool schemas. They do not replace the business model-response ID or publish an assistant response to CCRv2. Native `compaction/start`, `compaction/summary`, `compaction/end`, `compaction/prune` and replacement events remain in the private append-only DSH journal; summaries replace the model-visible surface through a checkpoint user message. Original user, assistant and tool events remain available for history and replay. This reduces model context, not stored transcript size.
+
+The runtime coalesces successful summary and prune changes until its next log flush. It flushes the owning root or child journal before publishing `agent.thread_context_compacted`, including the token-meter's estimated pre-compaction pressure, and before the next ordinary model request. Failed summary attempts alone do not publish success. Replacement tool results stay private so each real execution still has exactly one public tool result. Failed persistence prevents the next model request and success notification. Reopening a session replays the native journal without re-executing tools or republishing old compaction notifications.
+
+The model-configuration storage and management work is deferred to a separate PR. This change adds no database columns, migrations, Mapper changes or Console Provider API fields. For now `temporaryBrainModelConfigs` is the only temporary source: it supplies a fixed `context_window=1000000` and `max_tokens=256000` for every model key already present in the existing tenant-scoped `model_backends` map. These values are placeholders for exercising the transport and native compaction, not discovered model capabilities or Brain-side fallback defaults.
+
+For claim transport, `GET /v2/sessions/{id}` publishes this map as `session_context.model_configs` alongside `model_backends`. Qualified IDs and available unambiguous legacy aliases use the existing backend map's keys. No additional database query is made to obtain limits, and no credentials or upstream URLs enter this payload. Brain validates the map at registration and refreshes it through the existing per-request session-context read. The later model-configuration PR can replace the temporary backend source while retaining this contract and the Brain consumer.
+
+Each root session registers a DSH adapter under the internal provider route `oma:<session_id>`. Its model-info callback reads that session's assignment by the exact requested model ID, returning `context.contextWindow` and `defaultMaxTokens` only when supplied. Children use the same session-owned provider route and select their own model entry. This keeps identical model names in different tenants from sharing limits through the process-wide DSH adapter registry. The registration belongs to the root's plugin scope and is released with that scope. The model token, HTTP backend and upstream model string continue to use the existing OMA proxy route.
+
+Ordinary agent request configuration binds the session-owned provider and replaces any logged previous-model output budget with the currently selected model's `max_tokens`. The root's CCR model override is applied before the final binding; children use their own configured model. Thus set_model, configuration refresh and session restoration do not reuse a previous model's cap. Adapter metadata and the actual Messages/Chat Completions request use the same source. Auxiliary compaction requests retain their native explicit summary-generation budget. The generic AI SDK adapter still supports caller-specified request caps.
+
+Brain has no local model-capacity defaults or environment variables; the only fixed values are explicitly supplied by the temporary backend source. Missing metadata stays unknown; an absent configured cap removes any stale ordinary-request budget. Native DSH warns and skips capacity-based proactive compaction when no window is known; overflow recovery remains available. Native pre-step pressure checks use the latest durable routed envelope, so a model switch can first be reflected by the next ordinary request, with bounded overflow recovery protecting that request if the smaller window rejects it. The SDK/provider may apply its own output fallback when no limit is supplied. In particular, the installed Anthropic SDK falls back to 4096 tokens for unknown non-Claude model IDs; that is not authoritative model-capacity information.
+
+```mermaid
+flowchart LR
+    Routes[Existing tenant-scoped model_backends keys] --> Temporary[Temporary fixed backend model limits]
+    Temporary --> Context[session_context.model_configs]
+    Context --> Assignment[Brain assignment and request refresh]
+    Assignment --> Adapter[Session-owned DSH adapter]
+    Adapter --> Meter[Selected model window for DSH]
+    Adapter --> Request[Selected model output cap for AI SDK]
+```
+
+Image-offload recovery follows the native `IMAGE_OFFLOAD_REQUIRED` contract. Previously offloaded native image references serialize as DSH text placeholders without loading bytes. Mounting the plugin does not introduce an OMA image-byte quota, a remote file-upload adapter, or offload semantics for opaque `oma-image`/`oma-document` blocks. A huge uncompressible system prompt, tool schema, document or indivisible message can still exceed the upstream window.
+
+Regression coverage uses in-process fake models and persistence. It covers pressure-triggered conversation summaries, summary failure, one bounded overflow retry, root/child Bash-result pruning, journal durability before retry and notification, public result uniqueness, replay and process restart, request-budget parity for both backends, auxiliary-response identity and offloaded-image placeholders. It does not establish real-provider summary quality, billing, image-budget behavior or production performance; verify-be remains an explicitly requested acceptance path.
 
 ### Repository sources in Brain sandbox startup
 
@@ -404,7 +444,7 @@ OMA 侧只提供配置，由 `plugin.ts` 以 `providers: ["oma"]` 加载插件�
 - `model-provider.ts`：按会话取得 assignment 与实际模型的 backend，每次请求用当前 model token
   创建 provider，Messages 使用 `authToken`（Bearer），Chat 使用 `apiKey`（Bearer）。自定义 fetch
   只允许向对应 Go 代理路径发送 POST，删除 `x-api-key`，为子 Agent 设置
-  `X-Claude-Code-Agent-Id`，禁止重定向，总超时 300 秒。Messages 路由默认输出上限 943718，
+  `X-Claude-Code-Agent-Id`，禁止重定向，总超时 300 秒。Messages 路由采用调用方或模型元数据提供的输出上限，
   关闭 SDK 默认的 `eager_input_streaming`；Chat 未显式指定时不发送上限，并把 `max_tokens`
   改名为 `max_completion_tokens`。
 - `chat-reasoning.ts`：Chat 响应进入 AI SDK 前按与 Go 相同的规则规范化 reasoning 字段，
@@ -432,7 +472,7 @@ HTTP 与流内错误、取消、工具分片、大参数线性耗时、用量尾
 
 ### 默认输出预算
 
-Messages backend 的默认输出预算为 943718 token（依据 2026-10-22 OpenRouter `/api/v1/models` 中精确型号 `deepseek/deepseek-v4.1-flash` 的 `top_provider.max_completion_tokens`），调用方显式提供 maxTokens 时仍优先使用显式值。推理模型的推理内容与最终正文共享输出预算；原先固定 8192 token 会使长资料抽取和全量事实复核在正文完成前终止。预算扩大只提高单次上限，不强制消耗完整额度，也不能将截断结果视为成功；仍须正常结束回合。该变更需发布 Brain 后才影响正式站。
+Messages 与 Chat Completions backend 均不设置固定输出预算。实际模型配置通过适配器元数据 `defaultMaxTokens` 注入，并供 DSH 预算计算和实际请求共用；调用方显式提供 maxTokens 时优先使用显式值。当前由后端临时固定配置经会话上下文、Brain assignment 和会话独立的适配器传递；模型切换及恢复后重新绑定当前模型条目。正式模型配置的数据存储与管理另行提交，本次不新增 DB 操作或环境变量。推理内容与最终正文共享输出预算。SDK/provider 自身的回退行为不能视为真实模型容量，截断结果也不能视为成功。
 
 ## 懒加载沙箱的 Provider 过期恢复
 

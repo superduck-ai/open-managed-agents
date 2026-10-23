@@ -711,6 +711,7 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		sessionContext["model_backends"] = backends
+		sessionContext["model_configs"] = temporaryBrainModelConfigs(backends)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{

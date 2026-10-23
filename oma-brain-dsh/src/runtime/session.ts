@@ -2,7 +2,6 @@ import type { Context, Fiber } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import { createUserMessage, type ContentBlock, type ToolCallBlock } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
-import { ContextRecovery } from "./compaction.ts";
 import { ModelRetry } from "./model-retry.ts";
 import { ExternalMcp } from "../external-mcp/index.ts";
 import * as SandboxTools from "../sandbox-tools/index.ts";
@@ -25,7 +24,8 @@ export class SessionRuntime {
   busy = false;
   lastIdle = Date.now();
   private turnCompleted = false;
-  private readonly contextRecovery = new ContextRecovery();
+  private compactionTokens?: number;
+  private pendingCompaction?: { tokens: number };
   private readonly modelRetry = new ModelRetry();
   private toolCalls: ToolCallBlock[] = [];
   appendedSystem = "";
@@ -115,6 +115,10 @@ export class SessionRuntime {
         }
         if (event.type === "assistant/message")
           this.toolCalls = event.data.message.content.filter((block): block is ToolCallBlock => block.type === "tool-call");
+        if (event.type === "compaction/start") this.compactionTokens = this.ctx.tokenMeter.measure(session).totalTokens;
+        if (event.type === "compaction/prune") this.pendingCompaction ??= { tokens: this.ctx.tokenMeter.measure(session).totalTokens };
+        if (event.type === "compaction/end" && event.data.error === undefined)
+          this.pendingCompaction ??= { tokens: this.compactionTokens ?? this.ctx.tokenMeter.measure(session).totalTokens };
         this.hooks.onEvent(event);
         if (event.type === "tool/result") releaseToolApproval(this.bridge, event.data.message.toolCallId);
         if (event.type === "turn/end") {
@@ -130,19 +134,14 @@ export class SessionRuntime {
           for (const name of Object.keys(toolPermissions)) delete toolPermissions[name];
           Object.assign(toolPermissions, permissions);
         }
+        await this.flushLog();
         await this.hooks.beforeRequest();
         signal.throwIfAborted();
-        return next();
+        const call = await next();
+        return this.config.configureModel?.(call) ?? call;
       });
-      scope.on("agent/request-error", async ({ agent, failure, turn, step, signal }, next) => {
+      scope.on("agent/request-error", async ({ failure, turn, step, signal }, next) => {
         signal.throwIfAborted();
-        const recovered = await this.contextRecovery.recover(agent.session, failure, turn, step,
-          () => this.ctx.sessions.flush(agent.session),
-          async tokens => {
-            signal.throwIfAborted();
-            await this.hooks.onContextCompacted?.(tokens);
-          });
-        if (recovered) return { kind: "retry" };
         const retried = await this.modelRetry.retry(failure, turn, step, signal, (attempt, delayMs) => {
           workerDiagnostic("warn", "oma_model_request_retry", {
             session_id: this.config.id, failure_code: failure.code, http_status: failure.status,
@@ -233,6 +232,11 @@ export class SessionRuntime {
 
   async flushLog(): Promise<void> {
     await this.ctx.sessions.flush(this.agent.session);
+    const pending = this.pendingCompaction;
+    if (pending) {
+      this.pendingCompaction = undefined;
+      await this.hooks.onContextCompacted?.(pending.tokens);
+    }
   }
 
   cancelForShutdown(): void {

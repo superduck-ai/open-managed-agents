@@ -5,6 +5,9 @@ import * as OmaSandboxProvider from "./oma-sandbox/index.ts";
 import { validateAssignment, validateToolPermissions, type Assignment } from "./assignment.ts";
 import type { CcrSession } from "./ccrv2/index.ts";
 import { childSystemPrompt, rootSystemPrompt } from "./prompt/assemble.ts";
+import * as LlmAiSdk from "./llm-ai-sdk/index.ts";
+import { omaModelOptions } from "./model.ts";
+import { configureOmaModel, omaModelInfo, validateModelConfigs } from "./model-configs.ts";
 import { WebClient } from "./web-tools/client.ts";
 import * as WebTools from "./web-tools/index.ts";
 
@@ -16,9 +19,11 @@ export function createOmaSession(
 ): CcrSession {
   validateAssignment(assignment);
   api.assignments.set(assignment.session_id, assignment);
+  const provider = `oma:${assignment.session_id}`;
   return ctx.ccrv2.createSession({
     id: assignment.session_id,
-    provider: "oma",
+    provider,
+    configureModel: call => configureOmaModel(assignment, provider, call),
     model: assignment.launch.model,
     workDir: assignment.launch.work_dir,
     tools: assignment.launch.tools,
@@ -36,6 +41,9 @@ export function createOmaSession(
     refreshToolPermissions: async (signal, threadId) => {
       const response = await api.request(`/v2/sessions/${encodeURIComponent(assignment.session_id)}`,
         assignment.ingress_token, "GET", undefined, threadId ? { "X-OMA-Session-Thread-ID": threadId } : undefined, signal);
+      const modelConfigs = response.session_context?.model_configs;
+      validateModelConfigs(modelConfigs);
+      assignment.launch.model_configs = modelConfigs;
       const permissions = response.session_context?.runtime_tool_permissions;
       validateToolPermissions(permissions);
       return permissions;
@@ -43,6 +51,8 @@ export function createOmaSession(
     systemPrompt: rootSystemPrompt(assignment.launch),
     subagentSystemPrompt: (thread) => childSystemPrompt(assignment.launch, thread),
     setup: async (scope) => {
+      await scope.plugin(LlmAiSdk, { providers: [provider],
+        adapter: omaModelOptions(api, scope.get("attachments"), (route, model) => omaModelInfo(assignment, route, model)) });
       await scope.plugin(OmaSandboxProvider, { api, sessionId: assignment.session_id });
     },
     setupTools: async (scope, bridge, tools, threadId, permissions) =>

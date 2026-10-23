@@ -8,6 +8,10 @@ import AgentRegistry from "@deepseek-ai/dsh-agent";
 import AgentLoop from "@deepseek-ai/dsh-agent-loop";
 import * as TimeContext from "@deepseek-ai/dsh-time-context";
 import LocalAttachmentStore from "@deepseek-ai/dsh-attachment-local";
+import TokenMeter from "@deepseek-ai/dsh-token-meter";
+import BasicCompaction from "@deepseek-ai/dsh-compaction-basic";
+import * as ImageOffload from "@deepseek-ai/dsh-compaction-image-offload";
+import ToolResultPruner from "@deepseek-ai/dsh-compaction-tool-result-pruner";
 
 /** Native dsh runtime only. Persistence and platform adapters are installed by the host. */
 export async function mountKernel(ctx: Context): Promise<void> {
@@ -15,6 +19,10 @@ export async function mountKernel(ctx: Context): Promise<void> {
   await ctx.plugin(LlmRuntime);
   await ctx.plugin(SessionStore);
   await ctx.plugin(SessionProjectionRegistry);
+  await ctx.plugin(TokenMeter);
+  await ctx.plugin(ToolResultPruner);
+  await ctx.plugin(BasicCompaction);
+  await ctx.plugin(ImageOffload);
   await ctx.plugin(SystemPrompt, {
     includeHarnessIdentity: false,
     includeRuntimeContext: false,

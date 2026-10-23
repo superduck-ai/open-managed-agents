@@ -1,7 +1,7 @@
 import type { AttachmentStore } from "@deepseek-ai/dsh-attachment";
 import type { JSONSchema7, LanguageModelV4CallOptions, LanguageModelV4Message, LanguageModelV4Prompt } from "@ai-sdk/provider";
 import {
-  LlmError, attributionHeaders, type AssistantMessage, type ContentBlock, type GenerateOptions, type ToolResultMessage,
+  LlmError, attributionHeaders, offloadedImageText, type AssistantMessage, type ContentBlock, type GenerateOptions, type ToolResultMessage,
 } from "@deepseek-ai/dsh-llm";
 import type { AiSdkRoute } from "./route.ts";
 
@@ -51,6 +51,7 @@ type UserPart = Extract<LanguageModelV4Message, { role: "user" }>["content"][num
 async function userPart(block: ContentBlock, attachments?: AttachmentStore, signal?: AbortSignal): Promise<UserPart> {
   if (block.type === "text") return { type: "text", text: block.text };
   if (block.type === "image") {
+    if (block.offloaded) return { type: "text", text: offloadedImageText(block.attachment) };
     if (!attachments) throw new LlmError("Image attachment storage is unavailable", "INVALID_ARGS");
     const image = await attachments.readImage(block.attachment, signal);
     return { type: "file", mediaType: image.ref.mediaType, data: { type: "data", data: image.data } };

@@ -31,13 +31,14 @@ test("claim admission reuses CCR registration and session context", async () => 
  a.launch.environment_prompt = "# Managed-agent environment";
  a.launch.memory_catalog_prompt = "<attached_memory_stores/>";
  a.launch.tools = ["Read", "Grep"];
+ a.launch.model_configs = { [a.launch.model]: { context_window: 200000, max_tokens: 32000 } };
  a.launch.tool_permissions = { read: "allow", grep: "ask" };
  const task = {session_id:a.session_id, worker_epoch:a.worker_epoch, ingress_token:a.ingress_token, model_token:a.model_token};
  const calls: Request[] = [];
  const api = new OmaApi("http://oma.test", (async (url, init) => {
   const request = new Request(url, init); calls.push(request);
   return Response.json(request.method === "POST" ? {worker_epoch:String(a.worker_epoch)} : {session_context: {
-   cwd:a.launch.work_dir, model:a.launch.model, system_prompt:a.launch.system,
+   cwd:a.launch.work_dir, model:a.launch.model, model_configs:a.launch.model_configs, system_prompt:a.launch.system,
    append_system_prompt:a.launch.environment_prompt, memory_catalog_prompt:a.launch.memory_catalog_prompt, runtime_skills:a.launch.skills, subagents:a.launch.subagents, runtime_tools:["Read"],
    runtime_tool_permissions:a.launch.tool_permissions,
   }});
@@ -48,6 +49,7 @@ test("claim admission reuses CCR registration and session context", async () => 
  expect(result.launch.tools).toEqual(["Read"]);
  expect(result.launch.system).toBe(a.launch.system);
  expect(result.launch.model).toBe(a.launch.model);
+ expect(result.launch.model_configs).toEqual(a.launch.model_configs);
  expect(result.launch.work_dir).toBe(a.launch.work_dir);
  expect(result.launch.environment_prompt).toBe("# Managed-agent environment");
  expect(result.launch.memory_catalog_prompt).toBe("<attached_memory_stores/>");

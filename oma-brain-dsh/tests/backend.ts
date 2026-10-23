@@ -209,6 +209,7 @@ export class Backend {
       runtime_tools: this.a.launch.tools, mcp_config: this.a.external_mcp_config ?? {},
       cwd: this.a.launch.work_dir, model: this.a.launch.model, system_prompt: this.a.launch.system,
       append_system_prompt: this.a.launch.environment_prompt, memory_catalog_prompt: this.a.launch.memory_catalog_prompt, runtime_skills: this.a.launch.skills, subagents: this.a.launch.subagents,
+      model_backends: this.a.launch.model_backends, model_configs: this.a.launch.model_configs,
       runtime_tool_permissions: this.a.launch.tool_permissions,
     }});
     if (path === "/v1/messages") {

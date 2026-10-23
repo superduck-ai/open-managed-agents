@@ -10,14 +10,16 @@ interface PiAiReplay {
   blocks?: { thinkingSignature?: string }[];
 }
 
-export function omaModelOptions(api: OmaApi, attachments?: AttachmentStore): AiSdkAdapterOptions {
+export function omaModelOptions(api: OmaApi, attachments?: AttachmentStore, modelInfo?: AiSdkAdapterOptions["modelInfo"]): AiSdkAdapterOptions {
   return {
     attachments,
-    route: (options) => omaRoute(api, options),
+    modelInfo,
+    route: (options) => ({ ...omaRoute(api, options),
+      maxOutputTokens: modelInfo?.(options.provider, options.model).defaultMaxTokens }),
     history: legacyReplay,
-    onCallStart: (options) => { api.modelResponses.delete(modelSessionID(options)); },
+    onCallStart: (options) => { if (options.purpose !== "compaction") api.modelResponses.delete(modelSessionID(options)); },
     onRequestBody: (options, body) => { logSystemPrompt(modelSessionID(options), body); },
-    onMessageID: (options, messageID) => { api.modelResponses.set(modelSessionID(options), messageID); },
+    onMessageID: (options, messageID) => { if (options.purpose !== "compaction") api.modelResponses.set(modelSessionID(options), messageID); },
   };
 }
 

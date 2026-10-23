@@ -73,7 +73,8 @@ export class CcrSession {
       // through the public request hook, without rewriting the durable log.
       scope.on("agent/request", async (_request, next) => {
         const call = await next();
-        return this.modelOverride ? { ...call, model: this.modelOverride } : call;
+        const selected = this.modelOverride ? { ...call, model: this.modelOverride } : call;
+        return config.configureModel?.(selected) ?? selected;
       });
     } }, {
       onExternalMcpConnectionFailure: (serverName) => this.backend.events(this.id, [{

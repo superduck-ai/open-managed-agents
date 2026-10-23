@@ -2,6 +2,7 @@ import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import type { SessionEvent } from "@deepseek-ai/dsh-session";
 import type { ToolDefinition } from "@deepseek-ai/dsh-tools";
 import type { Payload } from "../json.ts";
+import type { LlmCallConfig } from "@deepseek-ai/dsh-llm";
 import type { Context, Fiber } from "@deepseek-ai/cordis";
 
 export const MAX_LIVE_SUBAGENT_THREADS = 25;
@@ -104,6 +105,7 @@ declare module "@deepseek-ai/cordis" {
 }
 
 export interface SessionRuntimeConfig {
+  configureModel?(call: LlmCallConfig): LlmCallConfig;
   refreshTools?(signal: AbortSignal): Promise<{ tools: string[]; externalMcpConfig: unknown }>;
   threadMcpContext?(threadId: string): Promise<{ config: unknown; fetcher: typeof fetch }>;
   externalMcpConfig?: unknown;

@@ -9,7 +9,6 @@ import type { AiSdkRoute } from "./llm-ai-sdk/index.ts";
 type ModelBackend = "messages" | "chat_completions";
 
 const MODEL_IDLE_TIMEOUT_MS = 300_000;
-const MESSAGES_DEFAULT_MAX_TOKENS = 943718;
 
 export function modelSessionID(options: GenerateOptions): string {
   if (!options.sessionId) throw new LlmError("Model request has no session identity", "INVALID_ARGS");
@@ -25,7 +24,7 @@ export function omaRoute(api: OmaApi, options: GenerateOptions): AiSdkRoute {
   if (backend === "messages") {
     const fetcher = proxyFetch(api, `${root}/messages`, agentID);
     return { model: createAnthropic({ baseURL: root, authToken: assignment.model_token, fetch: fetcher })(options.model),
-      replayFormat: "oma-messages-v1", signedReasoning: true, maxOutputTokens: MESSAGES_DEFAULT_MAX_TOKENS,
+      replayFormat: "oma-messages-v1", signedReasoning: true,
       providerOptions: { anthropic: { toolStreaming: false } } };
   }
   const fetcher = proxyFetch(api, `${root}/chat/completions`, agentID, normalizeChatReasoning);

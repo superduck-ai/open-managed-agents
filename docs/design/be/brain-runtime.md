@@ -345,9 +345,11 @@ Brain sandbox startup forwards the server-resolved Git source URL, checkout ref 
 
 ## 模型 API backend
 
+统一模型配置使用 `session_context.models`，替换旧 `model_backends`。Server 与 Brain 必须成对更新：先停止接收新会话并等待现有任务结束，停止旧 Brain 与所有旧 Server，再执行数据库迁移并启动新版 Server、Brain。不能按混合版本滚动发布；旧 Brain 读取不到 `model_backends` 时可能按 Messages 路由，新 Brain 读取旧 Server 时同样可能回退。回滚也须同步恢复 Server、Brain 和数据库结构，迁移前需备份模型参数。
+
 Provider 的 `api_backend` 决定 Brain 模型适配器，当前支持 `messages` 和 `chat_completions`。
-`GET /v2/sessions/{id}` 为 claim transport 在 `session_context.model_backends` 返回当前 workspace 的
-模型 ID 到 backend 映射，不包含上游 URL 或 Key。映射构建失败返回 500 `api_error`，
+`GET /v2/sessions/{id}` 为 claim transport 在 `session_context.models` 返回当前 workspace 的
+模型路由索引，每项包含模型参数和 Provider 的 api_backend，不包含上游 URL 或 Key。映射构建失败返回 500 `api_error`，
 公开文案为 `Could not resolve model API backends`；MCP 配置构建失败保留独立的 MCP 错误文案。
 子 Agent 继承与覆盖模型、运行时切换模型均按实际
 请求 model 查表。旧服务端没有该字段时沿用 Messages；显式映射中缺少模型或 backend 不支持时失败。
@@ -404,9 +406,9 @@ OMA 侧只提供配置，由 `plugin.ts` 以 `providers: ["oma"]` 加载插件�
 - `model-provider.ts`：按会话取得 assignment 与实际模型的 backend，每次请求用当前 model token
   创建 provider，Messages 使用 `authToken`（Bearer），Chat 使用 `apiKey`（Bearer）。自定义 fetch
   只允许向对应 Go 代理路径发送 POST，删除 `x-api-key`，为子 Agent 设置
-  `X-Claude-Code-Agent-Id`，禁止重定向，总超时 300 秒。Messages 路由默认输出上限 943718，
-  关闭 SDK 默认的 `eager_input_streaming`；Chat 未显式指定时不发送上限，并把 `max_tokens`
-  改名为 `max_completion_tokens`。
+  `X-Claude-Code-Agent-Id`，禁止重定向，流空闲超时 300 秒。两种协议均按调用方显式 `maxTokens`、模型
+  `max_output_tokens`、32768 的顺序选择输出上限。Messages 关闭 SDK 默认的
+  `eager_input_streaming`；Chat 把 `max_tokens` 改名为 `max_completion_tokens`，未配置时也发送默认上限。
 - `chat-reasoning.ts`：Chat 响应进入 AI SDK 前按与 Go 相同的规则规范化 reasoning 字段，
   只保留 `reasoning_content`，弥补 SDK 只识别 `reasoning_content ?? reasoning` 的差异。
   按完整 SSE 事件处理：多行 `data:` 先按规范拼接再解析，只有负载包含 `"reasoning` 的事件
@@ -432,7 +434,9 @@ HTTP 与流内错误、取消、工具分片、大参数线性耗时、用量尾
 
 ### 默认输出预算
 
-Messages backend 的默认输出预算为 943718 token（依据 2026-10-22 OpenRouter `/api/v1/models` 中精确型号 `deepseek/deepseek-v4.1-flash` 的 `top_provider.max_completion_tokens`），调用方显式提供 maxTokens 时仍优先使用显式值。推理模型的推理内容与最终正文共享输出预算；原先固定 8192 token 会使长资料抽取和全量事实复核在正文完成前终止。预算扩大只提高单次上限，不强制消耗完整额度，也不能将截断结果视为成功；仍须正常结束回合。该变更需发布 Brain 后才影响正式站。
+Messages 和 Chat Completions 的默认输出预算均为 32768 token，与通用 DeepSeek Harness 默认值一致，不按具体模型名称猜测。模型配置的 `max_output_tokens` 覆盖默认值，调用方显式 `maxTokens` 优先级最高。Chat 请求始终携带选定的 `max_completion_tokens` 上限。推理内容与最终正文共享输出预算；预算只声明单次请求上限，不扩大上游能力，也不能将截断结果视为成功。
+
+升级影响：未配置逐模型上限时，Messages 的默认输出上限由 943718 降为 32768，Chat Completions 由省略上限改为默认发送 32768。需要保留更大输出预算的模型应显式配置 `max_output_tokens`。
 
 ## 懒加载沙箱的 Provider 过期恢复
 

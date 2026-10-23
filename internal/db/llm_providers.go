@@ -2,7 +2,7 @@ package db
 
 import (
 	"context"
-	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"time"
@@ -22,7 +22,39 @@ const (
 	llmProvidersOrganizationDefaultConstraint = "llm_providers_organization_default_key"
 )
 
+type LLMModel struct {
+	ID              string   `json:"id"`
+	ContextWindow   *int     `json:"context_window,omitzero"`
+	MaxOutputTokens *int     `json:"max_output_tokens,omitzero"`
+	InputModalities []string `json:"input_modalities,omitempty"`
+}
+
+type LLMModels []LLMModel
+
+func (models LLMModels) IDs() []string {
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		ids = append(ids, model.ID)
+	}
+	return ids
+}
+
+func (models LLMModels) WithIDs(ids []string) LLMModels {
+	existing := make(map[string]LLMModel, len(models))
+	for _, model := range models {
+		existing[model.ID] = model
+	}
+	result := make(LLMModels, 0, len(ids))
+	for _, id := range ids {
+		model := existing[id]
+		model.ID = id
+		result = append(result, model)
+	}
+	return result
+}
+
 type LLMProvider struct {
+	Models           LLMModels
 	UUID             string
 	ExternalID       string
 	OrganizationUUID string
@@ -32,7 +64,6 @@ type LLMProvider struct {
 	APIBackend       string
 	BaseURL          string
 	APIKeyLast4      string
-	ModelIDs         []string
 	SecretEnvelope   *secrets.Envelope
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
@@ -126,16 +157,13 @@ func llmProviderParams(provider LLMProvider) (llmProviderWriteParams, error) {
 	if err := requireLLMProviderEnvelope(provider.SecretEnvelope); err != nil {
 		return llmProviderWriteParams{}, err
 	}
-	modelIDsValue := provider.ModelIDs
-	if modelIDsValue == nil {
-		modelIDsValue = []string{}
-	}
-	modelIDs, err := json.Marshal(modelIDsValue)
+	models, err := jsonv2.Marshal(provider.Models)
 	if err != nil {
-		return llmProviderWriteParams{}, fmt.Errorf("encode LLM provider model IDs: %w", err)
+		return llmProviderWriteParams{}, fmt.Errorf("encode provider models: %w", err)
 	}
 	envelope := provider.SecretEnvelope
 	return llmProviderWriteParams{
+		Models:           models,
 		UUID:             provider.UUID,
 		ExternalID:       provider.ExternalID,
 		OrganizationUUID: provider.OrganizationUUID,
@@ -145,7 +173,6 @@ func llmProviderParams(provider LLMProvider) (llmProviderWriteParams, error) {
 		APIBackend:       provider.APIBackend,
 		BaseURL:          provider.BaseURL,
 		APIKeyLast4:      provider.APIKeyLast4,
-		ModelIDs:         modelIDs,
 		Ciphertext:       envelope.Ciphertext,
 		Nonce:            envelope.Nonce,
 		WrappedDEK:       envelope.WrappedDEK,
@@ -158,11 +185,12 @@ func llmProviderParams(provider LLMProvider) (llmProviderWriteParams, error) {
 }
 
 func (r llmProviderRow) provider() (LLMProvider, error) {
-	modelIDs := make([]string, 0)
-	if err := json.Unmarshal(r.ModelIDs, &modelIDs); err != nil {
-		return LLMProvider{}, fmt.Errorf("decode LLM provider model IDs: %w", err)
+	models := LLMModels{}
+	if err := jsonv2.Unmarshal(r.Models, &models); err != nil {
+		return LLMProvider{}, fmt.Errorf("decode provider models: %w", err)
 	}
 	return LLMProvider{
+		Models:           models,
 		UUID:             r.UUID,
 		ExternalID:       r.ExternalID,
 		OrganizationUUID: r.OrganizationUUID,
@@ -172,7 +200,6 @@ func (r llmProviderRow) provider() (LLMProvider, error) {
 		APIBackend:       r.APIBackend,
 		BaseURL:          r.BaseURL,
 		APIKeyLast4:      r.APIKeyLast4,
-		ModelIDs:         modelIDs,
 		SecretEnvelope: &secrets.Envelope{
 			Ciphertext:    r.Ciphertext,
 			Nonce:         r.Nonce,

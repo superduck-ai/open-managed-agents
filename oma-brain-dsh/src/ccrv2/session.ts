@@ -67,7 +67,7 @@ export class CcrSession {
   ) {
     this.defaultModel = config.model;
     this.assistantStream = new CcrAssistantStream(config.id, config.modelMessageID);
-    this.runtime = new SessionRuntime(ctx, { ...config }, {
+    this.runtime = new SessionRuntime(ctx, { ...config, setup: async scope => { await config.setup?.(scope); } }, {
       selectModel: model => this.modelOverride ?? model,
       onExternalMcpConnectionFailure: (serverName) => this.backend.events(this.id, [{
         type: "session.error", uuid: crypto.randomUUID(), processed_at: new Date().toISOString(),

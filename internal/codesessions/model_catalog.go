@@ -7,10 +7,10 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 )
 
-func (s *Service) modelBackends(ctx context.Context, session db.CodeSession) (map[string]string, error) {
+func (s *Service) modelCatalog(ctx context.Context, session db.CodeSession) (map[string]llmproviders.RuntimeModel, error) {
 	catalog, err := llmproviders.LoadCatalog(ctx, s.db, session.OrganizationUUID, session.WorkspaceUUID)
 	if err != nil {
 		return nil, err
 	}
-	return catalog.Backends()
+	return catalog.RuntimeModels()
 }

@@ -11,6 +11,7 @@ export interface AiSdkRoute {
 }
 
 export interface AiSdkAdapterOptions {
+  modelInfo?(provider: string, model: string): LlmResolvedModelInfo;
   attachments?: AttachmentStore;
   route(options: GenerateOptions): AiSdkRoute;
   modelInfo?(provider: string, model: string): LlmResolvedModelInfo;

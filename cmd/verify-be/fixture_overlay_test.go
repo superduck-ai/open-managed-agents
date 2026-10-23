@@ -60,7 +60,7 @@ func TestBaselineFixtureOverlayPreservesCurrentSource(t *testing.T) {
 		t.Fatalf("unexpected fixture scope: %v", overlay.Replace)
 	}
 	if _, exists := overlay.Replace[filepath.Join(env.root, "internal", "db", "llm_provider_mapper.sqlmap.gen.go")]; exists {
-		t.Fatal("schema-compatible Provider fixture was replaced with an incompatible baseline interface")
+		t.Fatal("Provider setup must use the public API instead of a baseline database interface")
 	}
 	for current, reference := range overlay.Replace {
 		before, err := os.ReadFile(current)

@@ -705,13 +705,12 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 		delete(sessionContext, "runtime_tool_permissions")
 	}
 	if usesBrainClaimTransport(record) {
-		backends, err := h.service.modelBackends(r.Context(), record)
+		models, err := h.service.modelCatalog(r.Context(), record)
 		if err != nil {
 			h.errorAdapter.Write(w, r, sessionModelBackendsFailure(err))
 			return
 		}
-		sessionContext["model_backends"] = backends
-		sessionContext["model_configs"] = temporaryBrainModelConfigs(backends)
+		sessionContext["models"] = models
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{

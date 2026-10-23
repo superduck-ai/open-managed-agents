@@ -7,14 +7,14 @@ import { OmaApi } from "../src/api.ts";
 import { assignment, textEvents } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
 
-test("model limits remain unknown until metadata is supplied", async () => {
+test("unconfigured model limits use the unified catalog defaults", async () => {
   const api = new OmaApi("http://model.test");
   const task = assignment();
   api.assignments.set(task.session_id, task);
   const config = omaModelOptions(api);
   const adapter = new AiSdkAdapter(config);
-  expect(await adapter.resolveModel("oma", "test-model")).toEqual({ provider: "oma", id: "test-model", name: "test-model" });
-  expect(config.route({ provider: "oma", model: "test-model", sessionId: SessionId(task.session_id), messages: [] }).maxOutputTokens).toBeUndefined();
+  expect(await adapter.resolveModel("oma", "test-model")).toEqual({ provider: "oma", id: "test-model", name: "test-model", inputModalities: ["text"], context: { contextWindow: 262144 } });
+  expect(config.route({ provider: "oma", model: "test-model", sessionId: SessionId(task.session_id), messages: [] }).maxOutputTokens).toBe(32768);
 });
 
 test.each(["messages", "chat_completions"] as const)("injected model metadata and actual %s request share per-model limits and explicit overrides", async backend => {
@@ -25,13 +25,12 @@ test.each(["messages", "chat_completions"] as const)("injected model metadata an
     return new Response(textEvents("done").map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "Content-Type": "text/event-stream" } });
   }) as typeof fetch);
   const task = assignment();
-  task.launch.model_backends = { "test-model": backend, "larger-model": backend };
+  task.launch.models = {
+    "test-model": { id: "test-model", api_backend: backend, context_window: 200000, max_output_tokens: 32000 },
+    "larger-model": { id: "larger-model", api_backend: backend, context_window: 400000, max_output_tokens: 64000 },
+  };
   api.assignments.set(task.session_id, task);
-  const adapter = new AiSdkAdapter(omaModelOptions(api, undefined, (provider, model) => ({
-    provider, id: model, name: model,
-    context: { contextWindow: model === "larger-model" ? 400000 : 200000 },
-    defaultMaxTokens: model === "larger-model" ? 64000 : 32000,
-  })));
+  const adapter = new AiSdkAdapter(omaModelOptions(api, undefined, () => task.session_id));
   expect(await adapter.resolveModel("oma", "test-model")).toMatchObject({ context: { contextWindow: 200000 }, defaultMaxTokens: 32000 });
   expect(await adapter.resolveModel("oma", "larger-model")).toMatchObject({ context: { contextWindow: 400000 }, defaultMaxTokens: 64000 });
   for (const [model, maxTokens] of [["test-model", undefined], ["larger-model", undefined], ["larger-model", 1234]] as const) {

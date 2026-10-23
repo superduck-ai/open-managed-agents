@@ -357,24 +357,21 @@ Pending compaction is cleared only after the notification callback succeeds. The
 
 Per-request log flushing dispatches the native durability checkpoint and waits for the owning persistence handle's serialized writes. The CCRv2 handle returns before backend persistence when its event buffer is empty; it neither serializes nor uploads the full journal. A dirty flush uploads only buffered events. Repeated clean flushes therefore add local dispatch and Promise scheduling, without another HTTP write or work proportional to the stored history. Regression coverage checks 100 clean flushes after approximately 4 MiB of history produce zero backend writes and a subsequent dirty flush sends only the new event; this is an in-process contract check, not a production latency benchmark.
 
-The model-configuration storage and management work is deferred to a separate PR. This change adds no database columns, migrations, Mapper changes or Console Provider API fields. For now `temporaryBrainModelConfigs` is the only temporary source: it supplies a fixed `context_window=1000000` and `max_tokens=256000` for every model key already present in the existing tenant-scoped `model_backends` map. These values are placeholders for exercising the transport and native compaction, not discovered model capabilities or Brain-side fallback defaults.
-
-For claim transport, `GET /v2/sessions/{id}` publishes this map as `session_context.model_configs` alongside `model_backends`. Qualified IDs and available unambiguous legacy aliases use the existing backend map's keys. No additional database query is made to obtain limits, and no credentials or upstream URLs enter this payload. Brain validates the map at registration and refreshes it through the existing per-request session-context read. The later model-configuration PR can replace the temporary backend source while retaining this contract and the Brain consumer.
+Model configuration comes from the unified provider catalog introduced on main. `GET /v2/sessions/{id}` publishes tenant-scoped `session_context.models`, containing each route's `id`, `api_backend`, optional `context_window`, `max_output_tokens` and `input_modalities`. Brain consumes this catalog directly at registration and refresh, with no temporary capacity map or additional database lookup. Qualified IDs and available unambiguous legacy aliases retain the catalog's keys. Provider credentials and upstream URLs remain on the server.
 
 The per-request callback is `refreshSessionContext`, shared by root and child requests with the child's thread header when applicable. It reads model configs and runtime tool permissions in one request, validates both before replacing either, then updates the session-owned model metadata and returns the tool permissions for the runtime to apply. Invalid model configs or permissions stop that turn before calling the model; they do not silently retain a stale budget or partially apply the other field. A later turn can retry after the server returns valid context. Missing optional model configs clear the previous metadata, matching registration semantics.
 
-Each root session registers a DSH adapter under the internal provider route `oma:<session_id>`. Its model-info callback reads that session's assignment by the exact requested model ID, returning `context.contextWindow` and `defaultMaxTokens` only when supplied. Children use the same session-owned provider route and select their own model entry. This keeps identical model names in different tenants from sharing limits through the process-wide DSH adapter registry. The registration belongs to the root's plugin scope and is released with that scope. The model token, HTTP backend and upstream model string continue to use the existing OMA proxy route.
+Each root session registers a DSH adapter under the internal provider route `oma:<session_id>`. Its model-info callback reads that session's assignment by the exact requested model ID, returning the selected catalog entry's context window, output limit and input modalities. Children use the same session-owned provider route and select their own model entry. This keeps identical model names in different tenants from sharing limits through the process-wide DSH adapter registry. The registration belongs to the root's plugin scope and is released with that scope. The model token, HTTP backend and upstream model string continue to use the existing OMA proxy route.
 
-Ordinary agent request configuration binds the session-owned provider and replaces any logged previous-model output budget with the currently selected model's `max_tokens`. The root's CCR model override is applied before the final binding; children use their own configured model. Thus set_model, configuration refresh and session restoration do not reuse a previous model's cap. Adapter metadata and the actual Messages/Chat Completions request use the same source. Auxiliary compaction requests retain their native explicit summary-generation budget. The generic AI SDK adapter still supports caller-specified request caps.
+Ordinary agent request configuration binds the session-owned provider and replaces any logged previous-model output budget with the currently selected model's `max_output_tokens`, or the shared default when omitted. The root's CCR model override is applied before the final binding; children use their own configured model. Thus set_model, configuration refresh and session restoration do not reuse a previous model's cap. Adapter metadata and the actual Messages/Chat Completions request use the same source. Auxiliary compaction requests retain their native explicit summary-generation budget. The generic AI SDK adapter still supports caller-specified request caps.
 
 `SessionRuntime` owns the single final `configureModel` call for each ordinary request. The order is session-context refresh, journal flush, protocol `beforeRequest`, native request-config resolution, optional root `selectModel` override, then `configureModel`. CCR supplies only the root model selector; it does not bind the budget again. Children use the same runtime binding path without inheriting the root selector. Regression tests count one binding per model request across root calls, children, model switching and restoration, and verify invalid refreshes leave the previous context unchanged without sending a model request.
 
-Brain has no local model-capacity defaults or environment variables; the only fixed values are explicitly supplied by the temporary backend source. Missing metadata stays unknown; an absent configured cap removes any stale ordinary-request budget. Native DSH warns and skips capacity-based proactive compaction when no window is known; overflow recovery remains available. Native pre-step pressure checks use the latest durable routed envelope, so a model switch can first be reflected by the next ordinary request, with bounded overflow recovery protecting that request if the smaller window rejects it. The SDK/provider may apply its own output fallback when no limit is supplied. In particular, the installed Anthropic SDK falls back to 4096 tokens for unknown non-Claude model IDs; that is not authoritative model-capacity information.
+Model-specific `context_window` and `max_output_tokens` take precedence. When a capacity is omitted, Brain follows main's shared defaults of 262144 context tokens and 32768 output tokens, without model-limit environment variables. Removing a configured limit replaces any stale ordinary-request budget with the shared default. The adapter metadata, runtime request budget and both API routes read the same unified catalog. Native pre-step pressure checks use the latest durable routed envelope, so a model switch can first be reflected by the next ordinary request, with bounded overflow recovery protecting that request if the smaller window rejects it.
 
 ```mermaid
 flowchart LR
-    Routes[Existing tenant-scoped model_backends keys] --> Temporary[Temporary fixed backend model limits]
-    Temporary --> Context[session_context.model_configs]
+    Routes[Tenant-scoped provider model catalog] --> Context[session_context.models]
     Context --> Assignment[Brain assignment and request refresh]
     Assignment --> Adapter[Session-owned DSH adapter]
     Adapter --> Meter[Selected model window for DSH]
@@ -393,9 +390,11 @@ Brain sandbox startup forwards the server-resolved Git source URL, checkout ref 
 
 ## 模型 API backend
 
+统一模型配置使用 `session_context.models`，替换旧 `model_backends`。Server 与 Brain 必须成对更新：先停止接收新会话并等待现有任务结束，停止旧 Brain 与所有旧 Server，再执行数据库迁移并启动新版 Server、Brain。不能按混合版本滚动发布；旧 Brain 读取不到 `model_backends` 时可能按 Messages 路由，新 Brain 读取旧 Server 时同样可能回退。回滚也须同步恢复 Server、Brain 和数据库结构，迁移前需备份模型参数。
+
 Provider 的 `api_backend` 决定 Brain 模型适配器，当前支持 `messages` 和 `chat_completions`。
-`GET /v2/sessions/{id}` 为 claim transport 在 `session_context.model_backends` 返回当前 workspace 的
-模型 ID 到 backend 映射，不包含上游 URL 或 Key。映射构建失败返回 500 `api_error`，
+`GET /v2/sessions/{id}` 为 claim transport 在 `session_context.models` 返回当前 workspace 的
+模型路由索引，每项包含模型参数和 Provider 的 api_backend，不包含上游 URL 或 Key。映射构建失败返回 500 `api_error`，
 公开文案为 `Could not resolve model API backends`；MCP 配置构建失败保留独立的 MCP 错误文案。
 子 Agent 继承与覆盖模型、运行时切换模型均按实际
 请求 model 查表。旧服务端没有该字段时沿用 Messages；显式映射中缺少模型或 backend 不支持时失败。
@@ -452,9 +451,9 @@ OMA 侧只提供配置，由 `plugin.ts` 以 `providers: ["oma"]` 加载插件�
 - `model-provider.ts`：按会话取得 assignment 与实际模型的 backend，每次请求用当前 model token
   创建 provider，Messages 使用 `authToken`（Bearer），Chat 使用 `apiKey`（Bearer）。自定义 fetch
   只允许向对应 Go 代理路径发送 POST，删除 `x-api-key`，为子 Agent 设置
-  `X-Claude-Code-Agent-Id`，禁止重定向，总超时 300 秒。Messages 路由采用调用方或模型元数据提供的输出上限，
-  关闭 SDK 默认的 `eager_input_streaming`；Chat 未显式指定时不发送上限，并把 `max_tokens`
-  改名为 `max_completion_tokens`。
+  `X-Claude-Code-Agent-Id`，禁止重定向，流空闲超时 300 秒。两种协议均按调用方显式 `maxTokens`、模型
+  `max_output_tokens`、32768 的顺序选择输出上限。Messages 关闭 SDK 默认的
+  `eager_input_streaming`；Chat 把 `max_tokens` 改名为 `max_completion_tokens`，未配置时也发送默认上限。
 - `chat-reasoning.ts`：Chat 响应进入 AI SDK 前按与 Go 相同的规则规范化 reasoning 字段，
   只保留 `reasoning_content`，弥补 SDK 只识别 `reasoning_content ?? reasoning` 的差异。
   按完整 SSE 事件处理：多行 `data:` 先按规范拼接再解析，只有负载包含 `"reasoning` 的事件
@@ -480,7 +479,9 @@ HTTP 与流内错误、取消、工具分片、大参数线性耗时、用量尾
 
 ### 默认输出预算
 
-Messages 与 Chat Completions backend 均不设置固定输出预算。实际模型配置通过适配器元数据 `defaultMaxTokens` 注入，并供 DSH 预算计算和实际请求共用；调用方显式提供 maxTokens 时优先使用显式值。当前由后端临时固定配置经会话上下文、Brain assignment 和会话独立的适配器传递；模型切换及恢复后重新绑定当前模型条目。正式模型配置的数据存储与管理另行提交，本次不新增 DB 操作或环境变量。推理内容与最终正文共享输出预算。SDK/provider 自身的回退行为不能视为真实模型容量，截断结果也不能视为成功。
+Messages 和 Chat Completions 的默认输出预算均为 32768 token，与通用 DeepSeek Harness 默认值一致，不按具体模型名称猜测。模型配置的 `max_output_tokens` 覆盖默认值，调用方显式 `maxTokens` 优先级最高。Chat 请求始终携带选定的 `max_completion_tokens` 上限。推理内容与最终正文共享输出预算；预算只声明单次请求上限，不扩大上游能力，也不能将截断结果视为成功。
+
+升级影响：未配置逐模型上限时，Messages 的默认输出上限由 943718 降为 32768，Chat Completions 由省略上限改为默认发送 32768。需要保留更大输出预算的模型应显式配置 `max_output_tokens`。
 
 ## 懒加载沙箱的 Provider 过期恢复
 

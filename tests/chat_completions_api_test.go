@@ -147,23 +147,13 @@ func TestBrainChatCompletionsProxyLifecycle(t *testing.T) {
 	response = doSessionBearerRequest(t, app, http.MethodGet, "/v2/sessions/"+credential.CodeSessionID, nil, token, false)
 	var context struct {
 		SessionContext struct {
-			Backends map[string]string `json:"model_backends"`
-			Configs  map[string]struct {
-				ContextWindow int `json:"context_window"`
-				MaxTokens     int `json:"max_tokens"`
-			} `json:"model_configs"`
+			Models map[string]llmproviders.RuntimeModel `json:"models"`
 		} `json:"session_context"`
 	}
 	decodeJSON(t, response.Body, &context)
 	_ = response.Body.Close()
-	if context.SessionContext.Backends["chat-model"] != llmproviders.ChatCompletions || context.SessionContext.Backends["claude-opus-4-6"] != llmproviders.Messages {
-		t.Fatalf("backends=%v", context.SessionContext.Backends)
-	}
-	for _, model := range []string{"chat-model", llmproviders.QualifiedModelID(provider.Slug, "chat-model")} {
-		config := context.SessionContext.Configs[model]
-		if config.ContextWindow != 1000000 || config.MaxTokens != 256000 {
-			t.Fatalf("temporary model configs=%v", context.SessionContext.Configs)
-		}
+	if context.SessionContext.Models["chat-model"].APIBackend != llmproviders.ChatCompletions || context.SessionContext.Models["claude-opus-4-6"].APIBackend != llmproviders.Messages {
+		t.Fatalf("models=%v", context.SessionContext.Models)
 	}
 	code, found, err := app.db.GetCodeSession(t.Context(), credential.CodeSessionID)
 	if err != nil || !found {

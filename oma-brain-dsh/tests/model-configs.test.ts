@@ -3,7 +3,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
-import { validateModelConfigs } from "../src/model-configs.ts";
+import { validateModels, type ModelConfig } from "../src/assignment.ts";
 import { Backend, textEvents, toolEvents } from "./backend.ts";
 import type { LlmCallConfig } from "@deepseek-ai/dsh-llm";
 
@@ -16,8 +16,8 @@ function trackModelBindings(session: ReturnType<typeof createOmaSession>, bindin
 
 test.each(["models", "permissions"] as const)("invalid refreshed %s reject the request without partially replacing session context", async invalid => {
   const backend = new Backend(); await backend.ready;
-  const initial = { "test-model": { context_window: 200000, max_tokens: 16000 } };
-  backend.a.launch.model_configs = structuredClone(initial);
+  const initial: Record<string, ModelConfig> = { "test-model": { id: "test-model", api_backend: "messages", context_window: 200000, max_output_tokens: 16000 } };
+  backend.a.launch.models = structuredClone(initial);
   backend.onModel = async () => textEvents("done");
   let corrupt = false;
   const api = new OmaApi(backend.url, (async (input, init) => {
@@ -25,7 +25,7 @@ test.each(["models", "permissions"] as const)("invalid refreshed %s reject the r
     const response = await backend.route(request);
     if (!corrupt || new URL(request.url).pathname !== `/v2/sessions/${backend.a.session_id}`) return response;
     const body = await response.json();
-    body.session_context.model_configs = { "test-model": { context_window: 300000, max_tokens: invalid === "models" ? -1 : 32000 } };
+    body.session_context.models = { "test-model": { id: "test-model", api_backend: "messages", context_window: 300000, max_output_tokens: invalid === "models" ? -1 : 32000 } };
     body.session_context.runtime_tool_permissions = { bash: invalid === "permissions" ? "invalid" : "deny" };
     return Response.json(body);
   }) as typeof fetch);
@@ -38,7 +38,7 @@ test.each(["models", "permissions"] as const)("invalid refreshed %s reject the r
     await session.receive("invalid-context", { content: "hello" });
     expect([...backend.publicLog.values()].some(event => event.type === "result" && event.is_error)).toBe(true);
     expect(backend.requests).toHaveLength(0);
-    expect(backend.a.launch.model_configs).toEqual(initial);
+    expect(backend.a.launch.models).toEqual(initial);
     expect(session.runtime.config.toolPermissions).toEqual(backend.a.launch.tool_permissions ?? {});
     corrupt = false;
     await session.receive("valid-context", { content: "try again" });
@@ -49,7 +49,7 @@ test.each(["models", "permissions"] as const)("invalid refreshed %s reject the r
 
 test("model budgets bind exactly once after selection for live and restored requests", async () => {
   const backend = new Backend(); await backend.ready;
-  backend.a.launch.model_configs = { "test-model": { context_window: 200000, max_tokens: 16000 }, "other-model": { context_window: 300000, max_tokens: 32000 } };
+  backend.a.launch.models = { "test-model": { id: "test-model", api_backend: "messages", context_window: 200000, max_output_tokens: 16000 }, "other-model": { id: "other-model", api_backend: "messages", context_window: 300000, max_output_tokens: 32000 } };
   backend.onModel = async () => textEvents("done");
   const api = new OmaApi(backend.url);
   let ctx = new Context();
@@ -76,10 +76,11 @@ test("model budgets bind exactly once after selection for live and restored requ
   } finally { await ctx.fiber.dispose(); backend.stop(); }
 });
 
-for (const value of [null, [], { model: null }, { model: { max_tokens: 0 } }, { model: { context_window: -1 } },
-  { model: { context_window: 10, max_tokens: 10 } }, { model: { max_tokens: 1.5 } }, { model: { max_tokens: Number.MAX_SAFE_INTEGER + 1 } },
-  { model: { contextWindow: 200000 } }]) {
-  test(`reject invalid model configs ${JSON.stringify(value)}`, () => expect(() => validateModelConfigs(value)).toThrow());
+for (const value of [null, [], { model: null }, ...[
+  { max_output_tokens: 0 }, { context_window: -1 }, { api_backend: "invalid" },
+  { max_output_tokens: 1.5 }, { max_output_tokens: Number.MAX_SAFE_INTEGER + 1 }, { input_modalities: [] },
+].map(config => ({ model: { id: "model", api_backend: "messages", ...config } }))]) {
+  test(`reject invalid model configs ${JSON.stringify(value)}`, () => expect(() => validateModels(value)).toThrow());
 }
 
 test("session-scoped model configs isolate shared model IDs and follow selection and updates", async () => {
@@ -87,8 +88,8 @@ test("session-scoped model configs isolate shared model IDs and follow selection
   await Promise.all([firstBackend.ready, secondBackend.ready]);
   firstBackend.a.model_token = "first-model"; secondBackend.a.model_token = "second-model";
   firstBackend.a.ingress_token = "first-ingress"; secondBackend.a.ingress_token = "second-ingress";
-  firstBackend.a.launch.model_configs = { "test-model": { context_window: 200000, max_tokens: 16000 }, "other-model": { context_window: 400000, max_tokens: 64000 } };
-  secondBackend.a.launch.model_configs = { "test-model": { context_window: 300000, max_tokens: 32000 } };
+  firstBackend.a.launch.models = { "test-model": { id: "test-model", api_backend: "messages", context_window: 200000, max_output_tokens: 16000 }, "other-model": { id: "other-model", api_backend: "messages", context_window: 400000, max_output_tokens: 64000 } };
+  secondBackend.a.launch.models = { "test-model": { id: "test-model", api_backend: "messages", context_window: 300000, max_output_tokens: 32000 } };
   firstBackend.onModel = secondBackend.onModel = async () => textEvents("done");
   const api = new OmaApi("http://model-configs.test", (async (input, init) => {
     const request = new Request(input, init);
@@ -113,21 +114,21 @@ test("session-scoped model configs isolate shared model IDs and follow selection
     await first.receive("switched", { content: "continue" });
     expect(firstBackend.requests.at(-1)).toMatchObject({ model: "other-model", max_tokens: 64000 });
     expect(first.runtime.agent.session.requestHeader()?.config.maxTokens).toBe(64000);
-    firstBackend.a.launch.model_configs["other-model"] = { context_window: 250000, max_tokens: 24000 };
+    firstBackend.a.launch.models["other-model"] = { id: "other-model", api_backend: "messages", context_window: 250000, max_output_tokens: 24000 };
     await first.receive("updated", { content: "continue" });
     expect(firstBackend.requests.at(-1)!.max_tokens).toBe(24000);
     expect((await ctx.llm.resolveModelInfo(first.config.provider, "other-model")).context?.contextWindow).toBe(250000);
-    delete firstBackend.a.launch.model_configs["other-model"];
+    firstBackend.a.launch.models["other-model"] = { id: "other-model", api_backend: "messages" };
     await first.receive("removed", { content: "continue" });
-    expect(first.runtime.agent.session.requestHeader()?.config.maxTokens).toBeUndefined();
-    expect((await ctx.llm.resolveModelInfo(first.config.provider, "other-model")).context).toBeUndefined();
+    expect(first.runtime.agent.session.requestHeader()?.config.maxTokens).toBe(32768);
+    expect((await ctx.llm.resolveModelInfo(first.config.provider, "other-model")).context?.contextWindow).toBe(262144);
     await Promise.all([first.close(), second.close()]);
   } finally { await ctx.fiber.dispose(); firstBackend.stop(); secondBackend.stop(); }
 });
 
 test("child requests and restored sessions use their selected model config", async () => {
   const backend = new Backend(); await backend.ready;
-  backend.a.launch.model_configs = { "test-model": { context_window: 200000, max_tokens: 32000 }, "child-model": { context_window: 128000, max_tokens: 8000 } };
+  backend.a.launch.models = { "test-model": { id: "test-model", api_backend: "messages", context_window: 200000, max_output_tokens: 32000 }, "child-model": { id: "child-model", api_backend: "messages", context_window: 128000, max_output_tokens: 8000 } };
   backend.a.launch.subagents = { inlineAgents: false, agents: [{ name: "specialist", description: "Specialist", systemPrompt: "Help", model: "child-model", tools: [] }] };
   let parentCalls = 0;
   backend.onModel = async request => {
@@ -152,7 +153,7 @@ test("child requests and restored sessions use their selected model config", asy
     expect(backend.requests.filter(request => request.model === "child-model").map(request => request.max_tokens)).toEqual([8000]);
     expect(bindings).toEqual(backend.requests.map(request => request.model));
     await session.close(); await ctx.fiber.dispose();
-    backend.a.launch.model_configs["test-model"] = { context_window: 300000, max_tokens: 16000 };
+    backend.a.launch.models["test-model"] = { id: "test-model", api_backend: "messages", context_window: 300000, max_output_tokens: 16000 };
     ctx = new Context(); await mountOma(ctx, api);
     const resumed = createOmaSession(ctx, api, backend.a); await resumed.open();
     trackModelBindings(resumed, bindings);

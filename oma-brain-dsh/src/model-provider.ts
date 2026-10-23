@@ -3,6 +3,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { LlmError, type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { OmaApi } from "./api.ts";
 import type { Assignment } from "./assignment.ts";
+import { DEFAULT_MAX_OUTPUT_TOKENS } from "./model-defaults.ts";
 import { normalizeChatReasoning } from "./chat-reasoning.ts";
 import type { AiSdkRoute } from "./llm-ai-sdk/index.ts";
 
@@ -18,22 +19,23 @@ export function modelSessionID(options: GenerateOptions): string {
 export function omaRoute(api: OmaApi, options: GenerateOptions): AiSdkRoute {
   const sessionId = modelSessionID(options);
   const assignment = api.assignment(api.modelSessions.get(sessionId) ?? sessionId);
+  const output = assignment.launch.models?.[options.model]?.max_output_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
   const backend = modelBackend(assignment, options.model);
   const root = `${api.base.replace(/\/$/, "")}/v1`;
   const agentID = sessionId === assignment.session_id ? undefined : sessionId;
   if (backend === "messages") {
     const fetcher = proxyFetch(api, `${root}/messages`, agentID);
     return { model: createAnthropic({ baseURL: root, authToken: assignment.model_token, fetch: fetcher })(options.model),
-      replayFormat: "oma-messages-v1", signedReasoning: true,
+      replayFormat: "oma-messages-v1", signedReasoning: true, maxOutputTokens: output,
       providerOptions: { anthropic: { toolStreaming: false } } };
   }
   const fetcher = proxyFetch(api, `${root}/chat/completions`, agentID, normalizeChatReasoning);
   return { model: createOpenAICompatible({ name: "oma", baseURL: root, apiKey: assignment.model_token, includeUsage: true,
-    fetch: fetcher, transformRequestBody: chatRequestBody })(options.model), replayFormat: "oma-chat-completions-v1" };
+    fetch: fetcher, transformRequestBody: chatRequestBody })(options.model), maxOutputTokens: output, replayFormat: "oma-chat-completions-v1" };
 }
 
 function modelBackend(assignment: Assignment, model: string): ModelBackend {
-  const backend = assignment.launch.model_backends ? assignment.launch.model_backends[model] : "messages";
+  const backend = assignment.launch.models ? assignment.launch.models[model]?.api_backend : "messages";
   if (backend !== "messages" && backend !== "chat_completions")
     throw new LlmError("Model API backend is unavailable; reload the session configuration", "INVALID_ARGS");
   return backend;

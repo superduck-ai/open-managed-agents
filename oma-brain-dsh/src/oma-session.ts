@@ -2,12 +2,12 @@ import type { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "./api.ts";
 import { externalMcpFetch } from "./external-mcp/proxy.ts";
 import * as OmaSandboxProvider from "./oma-sandbox/index.ts";
-import { validateAssignment, validateToolPermissions, type Assignment } from "./assignment.ts";
+import { validateAssignment, validateToolPermissions, validateModels, type Assignment } from "./assignment.ts";
 import type { CcrSession } from "./ccrv2/index.ts";
 import { childSystemPrompt, rootSystemPrompt } from "./prompt/assemble.ts";
 import * as LlmAiSdk from "./llm-ai-sdk/index.ts";
 import { omaModelOptions } from "./model.ts";
-import { configureOmaModel, omaModelInfo, validateModelConfigs } from "./model-configs.ts";
+import { configureOmaModel } from "./model-configs.ts";
 import { WebClient } from "./web-tools/client.ts";
 import * as WebTools from "./web-tools/index.ts";
 
@@ -41,18 +41,18 @@ export function createOmaSession(
     refreshSessionContext: async (signal, threadId) => {
       const response = await api.request(`/v2/sessions/${encodeURIComponent(assignment.session_id)}`,
         assignment.ingress_token, "GET", undefined, threadId ? { "X-OMA-Session-Thread-ID": threadId } : undefined, signal);
-      const modelConfigs = response.session_context?.model_configs;
-      validateModelConfigs(modelConfigs);
+      const models = response.session_context?.models;
+      validateModels(models);
       const permissions = response.session_context?.runtime_tool_permissions;
       validateToolPermissions(permissions);
-      assignment.launch.model_configs = modelConfigs;
+      assignment.launch.models = models;
       return { toolPermissions: permissions };
     },
     systemPrompt: rootSystemPrompt(assignment.launch),
     subagentSystemPrompt: (thread) => childSystemPrompt(assignment.launch, thread),
     setup: async (scope) => {
       await scope.plugin(LlmAiSdk, { providers: [provider],
-        adapter: omaModelOptions(api, scope.get("attachments"), (route, model) => omaModelInfo(assignment, route, model)) });
+        adapter: omaModelOptions(api, scope.get("attachments"), () => assignment.session_id) });
       await scope.plugin(OmaSandboxProvider, { api, sessionId: assignment.session_id });
     },
     setupTools: async (scope, bridge, tools, threadId, permissions) =>
@@ -75,5 +75,7 @@ async function omaToolContext(api: OmaApi, sessionId: string, threadId?: string,
     || !Array.isArray(context.runtime_tools) || context.runtime_tools.some((tool: unknown) => typeof tool !== "string")
     || !context.mcp_config || typeof context.mcp_config !== "object" || Array.isArray(context.mcp_config))
     throw new Error("Invalid current session tool context");
+  validateModels(context.models);
+  api.assignment(sessionId).launch.models = context.models;
   return context;
 }

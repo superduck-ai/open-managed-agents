@@ -17,8 +17,8 @@ export function omaModelOptions(api: OmaApi, attachments?: AttachmentStore, curr
     modelInfo: (provider, model) => {
       const id = currentSession?.();
       const assignment = id === undefined ? undefined : api.assignment(api.modelSessions.get(id) ?? id);
-      const config = assignment?.launch.model_options?.[model];
-      const window = assignment?.launch.model_context_windows?.[model] ?? DEFAULT_CONTEXT_WINDOW;
+      const config = assignment?.launch.models?.[model];
+      const window = config?.context_window ?? DEFAULT_CONTEXT_WINDOW;
       return {
         provider, id: model, name: model,
         inputModalities: config?.input_modalities ?? ["text"],

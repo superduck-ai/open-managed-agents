@@ -279,9 +279,9 @@ test("model context lookup isolates concurrent sessions and child sessions", asy
   const api = new OmaApi("http://model.test");
   const first = assignment();
   const second = assignment();
-  first.launch.model_options = { "test-model": { max_output_tokens: 128000, input_modalities: ["text", "image"] } };
-  first.launch.model_context_windows = { "test-model": 1000000 };
-  second.launch.model_context_windows = { "test-model": 256000 };
+  first.launch.models = {"test-model": { ...first.launch.models!["test-model"]!,  max_output_tokens: 128000, input_modalities: ["text", "image"]  }};
+  first.launch.models!["test-model"]!.context_window = 1000000;
+  second.launch.models!["test-model"]!.context_window = 256000;
   api.assignments.set(first.session_id, first);
   api.assignments.set(second.session_id, second);
   api.modelSessions.set("child-context", first.session_id);
@@ -309,22 +309,22 @@ test("configured output tokens reach both model API protocols and refresh betwee
           );
     }) as typeof fetch);
     const a = assignment();
-    a.launch.model_backends = { "test-model": backend };
+    a.launch.models = { "test-model": { id: "test-model", api_backend: backend } };
     api.assignments.set(a.session_id, a);
     const adapter = new AiSdkAdapter(omaModelOptions(api));
     const key = backend === "messages" ? "max_tokens" : "max_completion_tokens";
     expect((await collect(adapter.stream(options(a.session_id)))).at(-1)?.type).toBe("finish");
     expect(requests[0][key]).toBe(32768);
-    a.launch.model_options = { "test-model": { max_output_tokens: 128000 } };
+    a.launch.models = {"test-model": { ...a.launch.models!["test-model"]!,  max_output_tokens: 128000  }};
     expect((await collect(adapter.stream(options(a.session_id)))).at(-1)?.type).toBe("finish");
     expect(requests[1][key]).toBe(128000);
     const explicit = { ...options(a.session_id), maxTokens: 4096 };
     expect((await collect(adapter.stream(explicit))).at(-1)?.type).toBe("finish");
     expect(requests[2][key]).toBe(4096);
-    delete a.launch.model_options;
+    delete a.launch.models!["test-model"]!.max_output_tokens;
     expect((await collect(adapter.stream(options(a.session_id)))).at(-1)?.type).toBe("finish");
     expect(requests[3][key]).toBe(32768);
-    a.launch.model_options = { "test-model": { max_output_tokens: 8000 } };
+    a.launch.models = {"test-model": { ...a.launch.models!["test-model"]!,  max_output_tokens: 8000  }};
     expect((await collect(adapter.stream(options(a.session_id)))).at(-1)?.type).toBe("finish");
     expect(requests[4][key]).toBe(8000);
   }
@@ -339,6 +339,6 @@ test("unconfigured model capabilities use DeepSeek fallbacks without declaring a
   expect(info.context?.contextWindow).toBe(262144);
   expect(info.inputModalities).toEqual(["text"]);
   expect(info.defaultMaxTokens).toBeUndefined();
-  expect(a.launch.model_context_windows).toBeUndefined();
-  expect(a.launch.model_options).toBeUndefined();
+  expect(a.launch.models!["test-model"]!.context_window).toBeUndefined();
+  expect(a.launch.models!["test-model"]!.max_output_tokens).toBeUndefined();
 });

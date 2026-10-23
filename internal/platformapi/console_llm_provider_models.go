@@ -21,7 +21,8 @@ type previewLLMProviderModelsRequest struct {
 }
 
 type previewLLMProviderModelsResponse struct {
-	ModelIDs []string `json:"model_ids"`
+	Models   db.LLMModels `json:"models"`
+	ModelIDs []string     `json:"model_ids"`
 }
 
 func previewConsoleLLMProviderModels(database *db.DB, client *http.Client) http.HandlerFunc {
@@ -75,9 +76,7 @@ func previewProviderModels(w http.ResponseWriter, r *http.Request, client *http.
 		writeLLMProviderError(w, http.StatusBadGateway, llmProviderCodeUpstreamUnavailable, "failed to list models from provider")
 		return
 	}
-	writeJSON(w, http.StatusOK, previewLLMProviderModelsResponse{
-		ModelIDs: llmproviders.MergeModelIDs(nil, modelIDs, maxLLMProviderModels),
-	})
+	writeJSON(w, http.StatusOK, formatPreviewModels(llmproviders.MergeModelIDs(nil, modelIDs, maxLLMProviderModels)))
 }
 
 func syncConsoleLLMProviderModels(database *db.DB, secretService *secrets.Service, client *http.Client, persist bool) http.HandlerFunc {
@@ -125,15 +124,15 @@ func syncProviderFromUpstream(w http.ResponseWriter, r *http.Request, database *
 		return
 	}
 	if !persist {
-		writeJSON(w, http.StatusOK, previewLLMProviderModelsResponse{ModelIDs: llmproviders.MergeModelIDs(nil, liveIDs, maxLLMProviderModels)})
+		writeJSON(w, http.StatusOK, formatPreviewModels(llmproviders.MergeModelIDs(nil, liveIDs, maxLLMProviderModels)))
 		return
 	}
-	modelIDs := llmproviders.MergeModelIDs(provider.ModelIDs, liveIDs, maxLLMProviderModels)
-	if slices.Equal(provider.ModelIDs, modelIDs) {
+	modelIDs := llmproviders.MergeModelIDs(provider.Models.IDs(), liveIDs, maxLLMProviderModels)
+	if slices.Equal(provider.Models.IDs(), modelIDs) {
 		writeJSON(w, http.StatusOK, formatSyncedLLMProvider(provider))
 		return
 	}
-	provider.ModelIDs = modelIDs
+	provider.Models = provider.Models.WithIDs(modelIDs)
 	provider.UpdatedAt = time.Now().UTC()
 	updated, err := database.UpdateLLMProvider(r.Context(), provider)
 	if err != nil {
@@ -148,4 +147,8 @@ func formatSyncedLLMProvider(provider db.LLMProvider) llmProviderResponse {
 		return formatOrganizationLLMProvider(provider)
 	}
 	return formatLLMProvider(provider)
+}
+
+func formatPreviewModels(ids []string) previewLLMProviderModelsResponse {
+	return previewLLMProviderModelsResponse{Models: db.LLMModels{}.WithIDs(ids), ModelIDs: ids}
 }

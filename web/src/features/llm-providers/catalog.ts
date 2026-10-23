@@ -3,10 +3,6 @@ import type { LLMProvider } from './api';
 type MessageFormatter = (id: string, defaultMessage: string, values?: Record<string, string>) => string;
 
 const PROVIDER_ERROR_MESSAGES: Record<string, { id: string; defaultMessage: string }> = {
-  model_context_window_invalid: {
-    id: 'llmModels.contextWindowInvalid',
-    defaultMessage: 'Context window must be a positive integer; K and M suffixes are supported.',
-  },
   api_key_required: {
     id: 'llmModels.errorApiKeyRequired',
     defaultMessage: 'API key is required.',
@@ -95,7 +91,7 @@ export function isValidSlug(slug: string): boolean {
 
 export function catalogModels(providers: LLMProvider[]): CatalogModel[] {
   return providers.flatMap((provider) =>
-    provider.model_ids.map((modelId) => ({
+    provider.models.map(({ id: modelId }) => ({
       id: modelId,
       qualifiedId: qualifiedModelId(provider.slug, modelId),
       providerId: provider.id,
@@ -188,13 +184,7 @@ export function providerInput(provider: LLMProvider, modelIds: string[]) {
     slug: provider.slug,
     api_backend: provider.api_backend,
     base_url: provider.base_url,
-    model_ids: modelIds,
-    model_options: Object.fromEntries(
-      Object.entries(provider.model_options ?? {}).filter(([id]) => modelIds.includes(id)),
-    ),
-    model_context_windows: Object.fromEntries(
-      Object.entries(provider.model_context_windows ?? {}).filter(([id]) => modelIds.includes(id)),
-    ),
+    models: modelIds.map((id) => provider.models.find((model) => model.id === id) ?? { id }),
   };
 }
 

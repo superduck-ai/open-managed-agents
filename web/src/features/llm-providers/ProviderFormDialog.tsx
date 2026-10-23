@@ -42,12 +42,12 @@ function providerForm(provider: LLMProvider | null): ProviderForm {
         baseUrl: provider.base_url,
         apiKey: '',
         models:
-          provider.model_ids.length > 0
-            ? provider.model_ids.map((id) => ({
-                ...newModelDraft(id),
-                maxOutputTokens: String(provider.model_options?.[id]?.max_output_tokens ?? ''),
-                inputModalities: provider.model_options?.[id]?.input_modalities ?? ['text'],
-                contextWindow: String(provider.model_context_windows?.[id] ?? ''),
+          provider.models.length > 0
+            ? provider.models.map((model) => ({
+                id: model.id,
+                maxOutputTokens: String(model.max_output_tokens ?? ''),
+                inputModalities: model.input_modalities ?? ['text'],
+                contextWindow: String(model.context_window ?? ''),
               }))
             : [newModelDraft()],
       }
@@ -109,23 +109,14 @@ function providerFormInput(
     name: form.name.trim(),
     slug,
     base_url: form.baseUrl.trim(),
-    model_ids: form.models.map((model) => model.id).filter((id) => id !== ''),
-    model_options: Object.fromEntries(
-      form.models
-        .filter((model) => model.id)
-        .map((model) => [
-          model.id,
-          {
-            input_modalities: model.inputModalities,
-            ...(model.maxOutputTokens.trim() ? { max_output_tokens: parseContextWindow(model.maxOutputTokens)! } : {}),
-          },
-        ]),
-    ),
-    model_context_windows: Object.fromEntries(
-      form.models
-        .filter((model) => model.id && model.contextWindow.trim())
-        .map((model) => [model.id, parseContextWindow(model.contextWindow)!]),
-    ),
+    models: form.models
+      .filter((model) => model.id)
+      .map((model) => ({
+        id: model.id,
+        ...(model.contextWindow.trim() ? { context_window: parseContextWindow(model.contextWindow)! } : {}),
+        ...(model.maxOutputTokens.trim() ? { max_output_tokens: parseContextWindow(model.maxOutputTokens)! } : {}),
+        input_modalities: model.inputModalities,
+      })),
   };
   if (form.apiKey.trim()) {
     input.api_key = form.apiKey.trim();

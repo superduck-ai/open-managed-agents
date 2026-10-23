@@ -55,18 +55,18 @@ function toolsWithText(text: string, ...calls: string[]): Payload[] {
 describe("original dsh loop over CCRv2", () => {
   test("configured context windows reach the native request context and refresh on the next turn", async () => {
     const b = backend();
-    b.a.launch.model_context_windows = { "test-model": 1000000 };
-    b.a.launch.model_options = { "test-model": { max_output_tokens: 128000 } };
+    b.a.launch.models!["test-model"]!.context_window = 1000000;
+    b.a.launch.models = {"test-model": { ...b.a.launch.models!["test-model"]!,  max_output_tokens: 128000  }};
     b.modelScript = [textEvents("first"), textEvents("second"), textEvents("cleared")];
     const { session } = await open(b);
     await session.receive("context_first", { content: "hello" });
     expect(session.handle!.agent.session.requestContext()?.contextWindow).toBe(1000000);
     expect(b.requests[0]!.max_tokens).toBe(128000);
-    b.a.launch.model_context_windows = { "test-model": 256000 };
+    b.a.launch.models!["test-model"]!.context_window = 256000;
     await session.receive("context_second", { content: "continue" });
     expect(session.handle!.agent.session.requestContext()?.contextWindow).toBe(256000);
-    delete b.a.launch.model_context_windows;
-    delete b.a.launch.model_options;
+    delete b.a.launch.models!["test-model"]!.context_window;
+    delete b.a.launch.models!["test-model"]!.max_output_tokens;
     await session.receive("context_cleared", { content: "continue with defaults" });
     expect(session.handle!.agent.session.requestContext()?.contextWindow).toBe(262144);
     expect(b.requests[2]!.max_tokens).toBe(32768);
@@ -112,7 +112,7 @@ describe("original dsh loop over CCRv2", () => {
         (block: Payload) => block.type === "image",
       ),
     ).toBe(false);
-    b.a.launch.model_options = { "test-model": { input_modalities: ["text", "image"], max_output_tokens: 128000 } };
+    b.a.launch.models = {"test-model": { ...b.a.launch.models!["test-model"]!,  input_modalities: ["text", "image"], max_output_tokens: 128000  }};
     await session.receive("image-enabled", { content });
     expect(
       b.requests[1]!.messages.flatMap((message: Payload) => message.content).some(
@@ -124,7 +124,7 @@ describe("original dsh loop over CCRv2", () => {
 
   test("mixed image input reaches the model in order and survives a second turn", async () => {
     const b = backend();
-    b.a.launch.model_options = {"test-model":{input_modalities:["text","image"]}};
+    b.a.launch.models = {"test-model": { ...b.a.launch.models!["test-model"]!, input_modalities:["text","image"] }};
     b.modelScript = [textEvents("image read"), textEvents("remembered")];
     const { session } = await open(b);
     const content = [

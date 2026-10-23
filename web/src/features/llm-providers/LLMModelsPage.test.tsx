@@ -52,12 +52,9 @@ describe('LLM models page', () => {
     fireEvent.change(within(dialog).getByLabelText('Context window 1'), { target: { value: '1M' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(api.requests.findLast((request) => request.method === 'PUT')?.body?.model_context_windows).toEqual({
-      'shared-model': 1000000,
-    });
-    expect(api.requests.findLast((request) => request.method === 'PUT')?.body?.model_options).toEqual({
-      'shared-model': { max_output_tokens: 128000, input_modalities: ['text', 'image'] },
-    });
+    expect(api.requests.findLast((request) => request.method === 'PUT')?.body?.models).toEqual([
+      { id: 'shared-model', context_window: 1000000, max_output_tokens: 128000, input_modalities: ['text', 'image'] },
+    ]);
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     dialog = screen.getByRole('dialog', { name: 'Edit provider' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Model parameters 1' }));
@@ -184,8 +181,7 @@ describe('LLM models page', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     const body = api.requests.findLast((request) => request.method === 'PUT')?.body;
-    expect(body?.model_context_windows).toEqual({});
-    expect(body?.model_options).toEqual({ 'shared-model': { input_modalities: ['text'] } });
+    expect(body?.models).toEqual([{ id: 'shared-model', input_modalities: ['text'] }]);
     fireEvent.click(screen.getByRole('button', { name: 'Edit', exact: true }));
     dialog = screen.getByRole('dialog', { name: 'Edit provider' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Model parameters 1' }));
@@ -223,7 +219,7 @@ describe('LLM models page', () => {
           slug: 'workspace',
           base_url: 'https://workspace.example.com',
           api_key: 'test-key',
-          model_ids: ['local-model'],
+          models: [{ id: 'local-model' }],
         }),
       ],
       organizationProvider: organizationProvider(),
@@ -486,7 +482,7 @@ describe('LLM models page', () => {
           base_url: 'https://llm.example.com',
           has_api_key: true,
           api_key_last4: '1234',
-          model_ids: ['model-one', 'model-two'],
+          models: [{ id: 'model-one' }, { id: 'model-two' }],
           created_at: '',
           updated_at: '',
         },
@@ -1083,24 +1079,24 @@ function mockProvidersApi(
       return new Response(null, { status: 204 });
     }
     if (url.endsWith('/llm_provider/models/sync') && method === 'POST' && organization) {
-      organization = { ...organization, model_ids: [...new Set([...organization.model_ids, ...liveModelIds])] };
+      organization = { ...organization, models: mergeTestModels(organization.models, liveModelIds) };
       return jsonResponse(organization);
     }
     if ((url.endsWith('/preview_models') || url.endsWith('/models/preview')) && method === 'POST') {
       if (options.previewStatus && options.previewStatus >= 400) {
         return jsonResponse(providerError(options.previewCode, options.previewMessage), options.previewStatus);
       }
-      return jsonResponse({ model_ids: liveModelIds });
+      return jsonResponse({ models: liveModelIds.map((id) => ({ id })) });
     }
     if (url.includes('/models/sync') && method === 'POST') {
       const providerID = url.match(/\/llm_providers\/([^/?]+)\/models\/sync$/)?.[1];
       const existing = providers.find((provider) => provider.id === providerID);
       if (!existing) return jsonResponse({ error: { message: 'not found' } }, 404);
-      const modelIds = [...existing.model_ids];
+      const modelIds = existing.models.map((model) => model.id);
       for (const modelId of liveModelIds) {
         if (!modelIds.includes(modelId)) modelIds.push(modelId);
       }
-      const updated = { ...existing, model_ids: modelIds };
+      const updated = { ...existing, models: mergeTestModels(existing.models, modelIds) };
       providers = providers.map((provider) => (provider.id === providerID ? updated : provider));
       return jsonResponse(updated);
     }
@@ -1148,11 +1144,7 @@ function providerFromBody(id: string, body?: Record<string, unknown>, existingLa
     base_url: String(body?.base_url ?? ''),
     has_api_key: Boolean(apiKey || existingLast4),
     api_key_last4: apiKey ? apiKey.slice(-4) : existingLast4,
-    model_ids: Array.isArray(body?.model_ids) ? body.model_ids.map(String) : [],
-    model_options: body?.model_options as LLMProvider['model_options'],
-    model_context_windows: Object.fromEntries(
-      Object.entries(body?.model_context_windows ?? {}).map(([id, value]) => [id, Number(value)]),
-    ),
+    models: Array.isArray(body?.models) ? (body.models as LLMProvider['models']) : [],
     created_at: '2026-08-20T00:00:00Z',
     updated_at: '2026-08-20T00:00:00Z',
   };
@@ -1183,8 +1175,12 @@ function organizationProvider(): LLMProvider {
       slug: 'organization',
       base_url: 'https://models.example.com',
       api_key: 'organization-key',
-      model_ids: ['shared-model'],
+      models: [{ id: 'shared-model' }],
     }),
     scope: 'organization',
   };
+}
+
+function mergeTestModels(existing: LLMProvider['models'], ids: string[]) {
+  return [...existing, ...ids.filter((id) => !existing.some((model) => model.id === id)).map((id) => ({ id }))];
 }

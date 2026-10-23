@@ -19,7 +19,7 @@ export function modelSessionID(options: GenerateOptions): string {
 export function omaRoute(api: OmaApi, options: GenerateOptions): AiSdkRoute {
   const sessionId = modelSessionID(options);
   const assignment = api.assignment(api.modelSessions.get(sessionId) ?? sessionId);
-  const output = assignment.launch.model_options?.[options.model]?.max_output_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+  const output = assignment.launch.models?.[options.model]?.max_output_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
   const backend = modelBackend(assignment, options.model);
   const root = `${api.base.replace(/\/$/, "")}/v1`;
   const agentID = sessionId === assignment.session_id ? undefined : sessionId;
@@ -35,7 +35,7 @@ export function omaRoute(api: OmaApi, options: GenerateOptions): AiSdkRoute {
 }
 
 function modelBackend(assignment: Assignment, model: string): ModelBackend {
-  const backend = assignment.launch.model_backends ? assignment.launch.model_backends[model] : "messages";
+  const backend = assignment.launch.models ? assignment.launch.models[model]?.api_backend : "messages";
   if (backend !== "messages" && backend !== "chat_completions")
     throw new LlmError("Model API backend is unavailable; reload the session configuration", "INVALID_ARGS");
   return backend;

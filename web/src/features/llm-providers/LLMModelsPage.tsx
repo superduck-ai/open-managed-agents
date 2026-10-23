@@ -110,13 +110,15 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
         throw new Error(msg('llmModels.noOrganization', 'No organization is available.'));
       }
       if (!apiKey && provider)
-        return (await previewSavedProviderModels(orgUuid, workspaceId, provider, csrfToken)).model_ids;
+        return (await previewSavedProviderModels(orgUuid, workspaceId, provider, csrfToken)).models.map(
+          (model) => model.id,
+        );
       const input = { base_url: baseUrl, api_key: apiKey, api_backend: apiBackend };
       const preview =
         scope === 'organization'
           ? await previewOrganizationProviderModels(orgUuid, input, csrfToken)
           : await previewProviderModels(orgUuid, workspaceId, input, csrfToken);
-      return preview.model_ids ?? [];
+      return preview.models.map((model) => model.id);
     },
     [csrfToken, msg, orgUuid, scope, workspaceId],
   );
@@ -213,7 +215,7 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
   };
 
   const addModel = (provider: LLMProvider, modelId: string) => {
-    updateModelsMutation.mutate({ provider, modelIds: [...provider.model_ids, modelId] });
+    updateModelsMutation.mutate({ provider, modelIds: [...provider.models.map((model) => model.id), modelId] });
   };
 
   const refreshCatalog = async () => {

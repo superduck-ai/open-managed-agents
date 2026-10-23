@@ -126,9 +126,7 @@ describe('LLM model catalog helpers', () => {
       slug: 'dashscope',
       api_backend: dashScope.api_backend,
       base_url: dashScope.base_url,
-      model_ids: ['kimi-k2.5'],
-      model_context_windows: {},
-      model_options: {},
+      models: [{ id: 'kimi-k2.5' }],
     });
     expect(readableError({ code: 'llm_provider_name_conflict', message: 'wording changed' }, englishMessage)).toBe(
       'A provider with this name already exists.',
@@ -161,7 +159,7 @@ function provider(id: string, name: string, slug: string, modelIds: string[]): L
     base_url: `https://${name.toLowerCase()}.example.com/anthropic`,
     has_api_key: true,
     api_key_last4: '1111',
-    model_ids: modelIds,
+    models: modelIds.map((id) => ({ id })),
     created_at: '2026-08-20T00:00:00Z',
     updated_at: '2026-08-20T00:00:00Z',
   };

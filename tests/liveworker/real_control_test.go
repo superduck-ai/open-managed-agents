@@ -506,7 +506,7 @@ func ensureRealWorkerProvider(t *testing.T, e *liveEnv, cfg config.Config) {
 	service, err := secretservice.New(cfg.Vault.MasterKey)
 	requireOK(t, err)
 	now := time.Now().UTC()
-	provider := db.LLMProvider{UUID: uuid.NewString(), ExternalID: "llmprov_probe_" + uuid.NewString(), OrganizationUUID: org, WorkspaceUUID: workspace, Name: "isolated worker model metadata", Slug: llmproviders.DefaultSlug, BaseURL: "http://127.0.0.1:9", APIKeyLast4: "fake", ModelIDs: []string{"claude-opus-4-6", "claude-sonnet-4-6"}, CreatedAt: now, UpdatedAt: now}
+	provider := db.LLMProvider{UUID: uuid.NewString(), ExternalID: "llmprov_probe_" + uuid.NewString(), OrganizationUUID: org, WorkspaceUUID: workspace, Name: "isolated worker model metadata", Slug: llmproviders.DefaultSlug, BaseURL: "http://127.0.0.1:9", APIKeyLast4: "fake", Models: db.LLMModels{{ID: "claude-opus-4-6"}, {ID: "claude-sonnet-4-6"}}, CreatedAt: now, UpdatedAt: now}
 	envelope, err := service.Seal(t.Context(), llmproviders.SecretBinding(provider), []byte("isolated-fake"))
 	requireOK(t, err)
 	provider.SecretEnvelope = &envelope

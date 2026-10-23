@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
@@ -23,27 +22,51 @@ const (
 	llmProvidersOrganizationDefaultConstraint = "llm_providers_organization_default_key"
 )
 
-type ModelOptions struct {
+type LLMModel struct {
+	ID              string   `json:"id"`
+	ContextWindow   *int     `json:"context_window,omitzero"`
 	MaxOutputTokens *int     `json:"max_output_tokens,omitzero"`
 	InputModalities []string `json:"input_modalities,omitempty"`
 }
 
+type LLMModels []LLMModel
+
+func (models LLMModels) IDs() []string {
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		ids = append(ids, model.ID)
+	}
+	return ids
+}
+
+func (models LLMModels) WithIDs(ids []string) LLMModels {
+	existing := make(map[string]LLMModel, len(models))
+	for _, model := range models {
+		existing[model.ID] = model
+	}
+	result := make(LLMModels, 0, len(ids))
+	for _, id := range ids {
+		model := existing[id]
+		model.ID = id
+		result = append(result, model)
+	}
+	return result
+}
+
 type LLMProvider struct {
-	ModelOptions        map[string]ModelOptions
-	UUID                string
-	ExternalID          string
-	OrganizationUUID    string
-	WorkspaceUUID       string
-	Name                string
-	Slug                string
-	APIBackend          string
-	BaseURL             string
-	APIKeyLast4         string
-	ModelContextWindows map[string]int
-	ModelIDs            []string
-	SecretEnvelope      *secrets.Envelope
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	Models           LLMModels
+	UUID             string
+	ExternalID       string
+	OrganizationUUID string
+	WorkspaceUUID    string
+	Name             string
+	Slug             string
+	APIBackend       string
+	BaseURL          string
+	APIKeyLast4      string
+	SecretEnvelope   *secrets.Envelope
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 func (d *DB) CreateLLMProvider(ctx context.Context, provider LLMProvider) (LLMProvider, error) {
@@ -134,77 +157,49 @@ func llmProviderParams(provider LLMProvider) (llmProviderWriteParams, error) {
 	if err := requireLLMProviderEnvelope(provider.SecretEnvelope); err != nil {
 		return llmProviderWriteParams{}, err
 	}
-	modelIDsValue := provider.ModelIDs
-	if modelIDsValue == nil {
-		modelIDsValue = []string{}
-	}
-	modelIDs, err := json.Marshal(modelIDsValue)
+	models, err := jsonv2.Marshal(provider.Models)
 	if err != nil {
-		return llmProviderWriteParams{}, fmt.Errorf("encode LLM provider model IDs: %w", err)
-	}
-	encodedWindows, err := jsonv2.Marshal(provider.ModelContextWindows)
-	if err != nil {
-		return llmProviderWriteParams{}, fmt.Errorf("encode model context windows: %w", err)
-	}
-	encodedOptions, err := jsonv2.Marshal(provider.ModelOptions)
-	if err != nil {
-		return llmProviderWriteParams{}, fmt.Errorf("encode model options: %w", err)
+		return llmProviderWriteParams{}, fmt.Errorf("encode provider models: %w", err)
 	}
 	envelope := provider.SecretEnvelope
 	return llmProviderWriteParams{
-		UUID:                provider.UUID,
-		ExternalID:          provider.ExternalID,
-		OrganizationUUID:    provider.OrganizationUUID,
-		WorkspaceUUID:       nullableString(provider.WorkspaceUUID),
-		Name:                provider.Name,
-		Slug:                provider.Slug,
-		APIBackend:          provider.APIBackend,
-		BaseURL:             provider.BaseURL,
-		APIKeyLast4:         provider.APIKeyLast4,
-		ModelIDs:            modelIDs,
-		ModelContextWindows: encodedWindows,
-		ModelOptions:        encodedOptions,
-		Ciphertext:          envelope.Ciphertext,
-		Nonce:               envelope.Nonce,
-		WrappedDEK:          envelope.WrappedDEK,
-		FormatVersion:       envelope.FormatVersion,
-		KeyProvider:         envelope.KeyProvider,
-		KeyVersion:          envelope.KeyVersion,
-		CreatedAt:           provider.CreatedAt,
-		UpdatedAt:           provider.UpdatedAt,
+		Models:           models,
+		UUID:             provider.UUID,
+		ExternalID:       provider.ExternalID,
+		OrganizationUUID: provider.OrganizationUUID,
+		WorkspaceUUID:    nullableString(provider.WorkspaceUUID),
+		Name:             provider.Name,
+		Slug:             provider.Slug,
+		APIBackend:       provider.APIBackend,
+		BaseURL:          provider.BaseURL,
+		APIKeyLast4:      provider.APIKeyLast4,
+		Ciphertext:       envelope.Ciphertext,
+		Nonce:            envelope.Nonce,
+		WrappedDEK:       envelope.WrappedDEK,
+		FormatVersion:    envelope.FormatVersion,
+		KeyProvider:      envelope.KeyProvider,
+		KeyVersion:       envelope.KeyVersion,
+		CreatedAt:        provider.CreatedAt,
+		UpdatedAt:        provider.UpdatedAt,
 	}, nil
 }
 
 func (r llmProviderRow) provider() (LLMProvider, error) {
-	modelIDs := make([]string, 0)
-	if err := json.Unmarshal(r.ModelIDs, &modelIDs); err != nil {
-		return LLMProvider{}, fmt.Errorf("decode LLM provider model IDs: %w", err)
-	}
-	contextWindows := map[string]int{}
-	if len(r.ModelContextWindows) > 0 {
-		if err := jsonv2.Unmarshal(r.ModelContextWindows, &contextWindows); err != nil {
-			return LLMProvider{}, fmt.Errorf("decode model context windows: %w", err)
-		}
-	}
-	options := map[string]ModelOptions{}
-	if len(r.ModelOptions) > 0 {
-		if err := jsonv2.Unmarshal(r.ModelOptions, &options); err != nil {
-			return LLMProvider{}, fmt.Errorf("decode model options: %w", err)
-		}
+	models := LLMModels{}
+	if err := jsonv2.Unmarshal(r.Models, &models); err != nil {
+		return LLMProvider{}, fmt.Errorf("decode provider models: %w", err)
 	}
 	return LLMProvider{
-		ModelOptions:        options,
-		ModelContextWindows: contextWindows,
-		UUID:                r.UUID,
-		ExternalID:          r.ExternalID,
-		OrganizationUUID:    r.OrganizationUUID,
-		WorkspaceUUID:       stringFromNullable(r.WorkspaceUUID),
-		Name:                r.Name,
-		Slug:                r.Slug,
-		APIBackend:          r.APIBackend,
-		BaseURL:             r.BaseURL,
-		APIKeyLast4:         r.APIKeyLast4,
-		ModelIDs:            modelIDs,
+		Models:           models,
+		UUID:             r.UUID,
+		ExternalID:       r.ExternalID,
+		OrganizationUUID: r.OrganizationUUID,
+		WorkspaceUUID:    stringFromNullable(r.WorkspaceUUID),
+		Name:             r.Name,
+		Slug:             r.Slug,
+		APIBackend:       r.APIBackend,
+		BaseURL:          r.BaseURL,
+		APIKeyLast4:      r.APIKeyLast4,
 		SecretEnvelope: &secrets.Envelope{
 			Ciphertext:    r.Ciphertext,
 			Nonce:         r.Nonce,

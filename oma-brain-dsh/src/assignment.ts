@@ -3,7 +3,13 @@ import { sandboxToolDefinitions } from "./sandbox-tools/definitions.ts";
 import { sandboxEndpoint } from "./oma-sandbox/config.ts";
 import { webToolDefinitions } from "./web-tools/definitions.ts";
 
-export type ModelOptions = { max_output_tokens?: number; input_modalities?: ("text" | "image")[] };
+export type ModelConfig = {
+  id: string;
+  api_backend: "messages" | "chat_completions";
+  context_window?: number;
+  max_output_tokens?: number;
+  input_modalities?: ("text" | "image")[];
+};
 
 export interface Assignment {
   session_id: string;
@@ -15,9 +21,7 @@ export interface Assignment {
   launch: {
     version: number;
     model: string;
-    model_options?: Record<string, ModelOptions>;
-    model_context_windows?: Record<string, number>;
-    model_backends?: Record<string, "messages" | "chat_completions">;
+    models?: Record<string, ModelConfig>;
     work_dir: string;
     system: string;
     tools: string[];
@@ -49,11 +53,7 @@ export function validateAssignment(a: Assignment): void {
     throw new Error("Unsupported launch version");
   if (!a.launch.model || !a.launch.work_dir.startsWith("/"))
     throw new Error("Invalid launch model or work directory");
-  if (a.launch.model_backends !== undefined && (!a.launch.model_backends || typeof a.launch.model_backends !== "object"
-    || Array.isArray(a.launch.model_backends) || Object.values(a.launch.model_backends).some((value) => value !== "messages" && value !== "chat_completions")))
-    throw new Error("Invalid model API backends");
-  validateModelContextWindows(a.launch.model_context_windows);
-  validateModelOptions(a.launch.model_options);
+  validateModels(a.launch.models);
   const tools = new Set([...sandboxToolDefinitions(), ...webToolDefinitions()].map((tool) => tool.name));
   tools.add("ask_user_question");
   if (!Array.isArray(a.launch.tools)
@@ -87,22 +87,25 @@ export function validateToolPermissions(permissions: unknown): asserts permissio
     throw new Error("Invalid launch tool permissions");
 }
 
-export function validateModelContextWindows(value: unknown): asserts value is Record<string, number> | undefined {
+export function validateModels(value: unknown): asserts value is Record<string, ModelConfig> | undefined {
   if (value === undefined) return;
-  if (!value || typeof value !== "object" || Array.isArray(value)
-    || Object.entries(value).some(([id, window]) => !id || typeof window !== "number" || !Number.isSafeInteger(window) || window <= 0))
-    throw new Error("Invalid model context windows");
-}
-
-export function validateModelOptions(value: unknown): asserts value is Record<string, ModelOptions> | undefined {
-  if (value === undefined) return;
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid model options");
-  for (const [id, options] of Object.entries(value)) {
-    if (!id || !options || typeof options !== "object" || Array.isArray(options))
-      throw new Error("Invalid model options");
-    const { max_output_tokens: output, input_modalities: inputs } = options;
-    if (output !== undefined && (!Number.isSafeInteger(output) || output <= 0))
-      throw new Error("Invalid model output tokens");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid model catalog");
+  for (const [key, model] of Object.entries(value)) {
+    if (
+      !key ||
+      !model ||
+      typeof model !== "object" ||
+      Array.isArray(model) ||
+      typeof model.id !== "string" ||
+      !model.id ||
+      !["messages", "chat_completions"].includes(model.api_backend)
+    )
+      throw new Error("Invalid model catalog");
+    for (const capacity of [model.context_window, model.max_output_tokens]) {
+      if (capacity !== undefined && (!Number.isSafeInteger(capacity) || capacity <= 0))
+        throw new Error("Invalid model capacity");
+    }
+    const inputs = model.input_modalities;
     if (
       inputs !== undefined &&
       (!Array.isArray(inputs) ||

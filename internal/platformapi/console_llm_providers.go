@@ -21,31 +21,29 @@ import (
 const maxLLMProviderModels = 100
 
 type llmProviderRequest struct {
-	ModelOptions        map[string]db.ModelOptions `json:"model_options"`
-	ModelContextWindows map[string]int             `json:"model_context_windows"`
-	APIBackend          *string                    `json:"api_backend"`
-	Name                string                     `json:"name"`
-	Slug                *string                    `json:"slug"`
-	BaseURL             string                     `json:"base_url"`
-	APIKey              *string                    `json:"api_key"`
-	ModelIDs            []string                   `json:"model_ids"`
+	Models     db.LLMModels `json:"models"`
+	APIBackend *string      `json:"api_backend"`
+	Name       string       `json:"name"`
+	Slug       *string      `json:"slug"`
+	BaseURL    string       `json:"base_url"`
+	APIKey     *string      `json:"api_key"`
+	ModelIDs   []string     `json:"model_ids"`
 }
 
 type llmProviderResponse struct {
-	ModelOptions        map[string]db.ModelOptions `json:"model_options,omitempty"`
-	ModelContextWindows map[string]int             `json:"model_context_windows,omitempty"`
-	APIBackend          string                     `json:"api_backend"`
-	Type                string                     `json:"type"`
-	ID                  string                     `json:"id"`
-	Name                string                     `json:"name"`
-	Slug                string                     `json:"slug"`
-	BaseURL             string                     `json:"base_url"`
-	HasAPIKey           bool                       `json:"has_api_key"`
-	APIKeyLast4         string                     `json:"api_key_last4"`
-	ModelIDs            []string                   `json:"model_ids"`
-	CreatedAt           string                     `json:"created_at"`
-	UpdatedAt           string                     `json:"updated_at"`
-	Scope               string                     `json:"scope,omitempty"`
+	Models      db.LLMModels `json:"models"`
+	APIBackend  string       `json:"api_backend"`
+	Type        string       `json:"type"`
+	ID          string       `json:"id"`
+	Name        string       `json:"name"`
+	Slug        string       `json:"slug"`
+	BaseURL     string       `json:"base_url"`
+	HasAPIKey   bool         `json:"has_api_key"`
+	APIKeyLast4 string       `json:"api_key_last4"`
+	ModelIDs    []string     `json:"model_ids"`
+	CreatedAt   string       `json:"created_at"`
+	UpdatedAt   string       `json:"updated_at"`
+	Scope       string       `json:"scope,omitempty"`
 }
 
 func RegisterConsoleLLMProviderRoutes(r chi.Router, database *db.DB, secretService *secrets.Service) {
@@ -103,7 +101,7 @@ func createConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 			return
 		}
 		apiKey := strings.TrimSpace(*body.APIKey)
-		name, baseURL, modelIDs, ok := validateLLMProviderInput(w, body)
+		name, baseURL, models, ok := validateLLMProviderInput(w, body)
 		if !ok {
 			return
 		}
@@ -118,20 +116,18 @@ func createConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 		}
 		now := time.Now().UTC()
 		provider := db.LLMProvider{
-			UUID:                uuid.NewString(),
-			ExternalID:          externalID,
-			OrganizationUUID:    orgUUID,
-			WorkspaceUUID:       scope.UUID,
-			APIBackend:          llmProviderBackend(body.APIBackend, llmproviders.Messages),
-			Name:                name,
-			Slug:                slug,
-			BaseURL:             baseURL,
-			APIKeyLast4:         lastFour(apiKey),
-			ModelIDs:            modelIDs,
-			ModelContextWindows: body.ModelContextWindows,
-			ModelOptions:        body.ModelOptions,
-			CreatedAt:           now,
-			UpdatedAt:           now,
+			UUID:             uuid.NewString(),
+			ExternalID:       externalID,
+			OrganizationUUID: orgUUID,
+			WorkspaceUUID:    scope.UUID,
+			APIBackend:       llmProviderBackend(body.APIBackend, llmproviders.Messages),
+			Name:             name,
+			Slug:             slug,
+			BaseURL:          baseURL,
+			APIKeyLast4:      lastFour(apiKey),
+			Models:           models,
+			CreatedAt:        now,
+			UpdatedAt:        now,
 		}
 		if !sealLLMProviderAPIKey(w, r, secretService, &provider, apiKey) {
 			return
@@ -173,7 +169,7 @@ func updateConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 		if !ok {
 			return
 		}
-		name, baseURL, modelIDs, ok := validateLLMProviderInput(w, body)
+		name, baseURL, models, ok := validateLLMProviderInput(w, body)
 		if !ok {
 			return
 		}
@@ -184,9 +180,10 @@ func updateConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 		current.APIBackend = llmProviderBackend(body.APIBackend, current.APIBackend)
 		current.Name = name
 		current.BaseURL = baseURL
-		current.ModelContextWindows = providerModelValues(modelIDs, body.ModelContextWindows, current.ModelContextWindows)
-		current.ModelOptions = providerModelValues(modelIDs, body.ModelOptions, current.ModelOptions)
-		current.ModelIDs = modelIDs
+		if body.Models == nil {
+			models = current.Models.WithIDs(body.ModelIDs)
+		}
+		current.Models = models
 		current.UpdatedAt = time.Now().UTC()
 		if body.APIKey != nil && strings.TrimSpace(*body.APIKey) != "" {
 			apiKey := strings.TrimSpace(*body.APIKey)
@@ -268,22 +265,26 @@ func decodeLLMProviderRequest(w http.ResponseWriter, r *http.Request) (llmProvid
 		writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "request body must match LLM provider configuration")
 		return llmProviderRequest{}, false
 	}
-	for modelID, window := range body.ModelContextWindows {
-		if !slices.Contains(body.ModelIDs, modelID) || window <= 0 || window > 9007199254740991 {
-			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeContextWindowInvalid, "context windows must name configured models and contain positive safe integers")
-			return llmProviderRequest{}, false
-		}
+	if body.Models != nil && body.ModelIDs != nil {
+		writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "use models or model_ids, not both")
+		return llmProviderRequest{}, false
 	}
-	for id, options := range body.ModelOptions {
-		if !slices.Contains(body.ModelIDs, id) || (options.MaxOutputTokens != nil && (*options.MaxOutputTokens <= 0 || *options.MaxOutputTokens > 9007199254740991)) || !validModelModalities(options.InputModalities) {
-			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "model options must name configured models and contain a positive output limit and text/image inputs")
+	for _, model := range body.Models {
+		for _, value := range []*int{model.ContextWindow, model.MaxOutputTokens} {
+			if value != nil && (*value <= 0 || *value > 9007199254740991) {
+				writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "model capacities must be positive safe integers")
+				return llmProviderRequest{}, false
+			}
+		}
+		if !validModelModalities(model.InputModalities) {
+			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "model inputs must be a nonempty set of text/image")
 			return llmProviderRequest{}, false
 		}
 	}
 	return body, true
 }
 
-func validateLLMProviderInput(w http.ResponseWriter, body llmProviderRequest) (string, string, []string, bool) {
+func validateLLMProviderInput(w http.ResponseWriter, body llmProviderRequest) (string, string, db.LLMModels, bool) {
 	if body.APIBackend != nil && !llmproviders.ValidBackend(*body.APIBackend) {
 		writeLLMProviderBackendError(w)
 		return "", "", nil, false
@@ -302,7 +303,11 @@ func validateLLMProviderInput(w http.ResponseWriter, body llmProviderRequest) (s
 		writeLLMProviderError(w, http.StatusBadRequest, code, err.Error())
 		return "", "", nil, false
 	}
-	modelIDs, err := normalizeLLMModelIDs(body.ModelIDs)
+	models := body.Models
+	if models == nil {
+		models = db.LLMModels{}.WithIDs(body.ModelIDs)
+	}
+	err = validateLLMModelIDs(models.IDs())
 	if err != nil {
 		inputErr, ok := errors.AsType[*llmProviderInputError](err)
 		if !ok {
@@ -312,26 +317,24 @@ func validateLLMProviderInput(w http.ResponseWriter, body llmProviderRequest) (s
 		writeLLMProviderError(w, http.StatusBadRequest, inputErr.code, inputErr.Error())
 		return "", "", nil, false
 	}
-	return name, baseURL, modelIDs, true
+	return name, baseURL, models, true
 }
 
-func normalizeLLMModelIDs(values []string) ([]string, error) {
+func validateLLMModelIDs(values []string) error {
 	if len(values) > maxLLMProviderModels {
-		return nil, newLLMProviderInputError(llmProviderCodeModelIDsLimit, "model_ids must contain at most 100 model IDs")
+		return newLLMProviderInputError(llmProviderCodeModelIDsLimit, "model_ids must contain at most 100 model IDs")
 	}
 	seen := make(map[string]struct{}, len(values))
-	modelIDs := make([]string, 0, len(values))
 	for _, value := range values {
 		if value == "" || value != strings.TrimSpace(value) || utf8.RuneCountInString(value) > 255 {
-			return nil, newLLMProviderInputError(llmProviderCodeModelIDInvalid, "each model_id must contain 1 to 255 characters")
+			return newLLMProviderInputError(llmProviderCodeModelIDInvalid, "each model_id must contain 1 to 255 characters")
 		}
 		if _, exists := seen[value]; exists {
-			return nil, newLLMProviderInputError(llmProviderCodeModelIDsDuplicate, "model_ids must not contain duplicates")
+			return newLLMProviderInputError(llmProviderCodeModelIDsDuplicate, "model_ids must not contain duplicates")
 		}
 		seen[value] = struct{}{}
-		modelIDs = append(modelIDs, value)
 	}
-	return modelIDs, nil
+	return nil
 }
 
 func newLLMProviderSlug(
@@ -383,19 +386,18 @@ func sealLLMProviderAPIKey(w http.ResponseWriter, r *http.Request, secretService
 
 func formatLLMProvider(provider db.LLMProvider) llmProviderResponse {
 	return llmProviderResponse{
-		APIBackend:          provider.APIBackend,
-		Type:                "llm_provider",
-		ID:                  provider.ExternalID,
-		Name:                provider.Name,
-		Slug:                provider.Slug,
-		BaseURL:             provider.BaseURL,
-		HasAPIKey:           true,
-		APIKeyLast4:         provider.APIKeyLast4,
-		ModelIDs:            provider.ModelIDs,
-		ModelContextWindows: provider.ModelContextWindows,
-		ModelOptions:        provider.ModelOptions,
-		CreatedAt:           provider.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt:           provider.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		APIBackend:  provider.APIBackend,
+		Type:        "llm_provider",
+		ID:          provider.ExternalID,
+		Name:        provider.Name,
+		Slug:        provider.Slug,
+		BaseURL:     provider.BaseURL,
+		HasAPIKey:   true,
+		APIKeyLast4: provider.APIKeyLast4,
+		Models:      provider.Models,
+		ModelIDs:    provider.Models.IDs(),
+		CreatedAt:   provider.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:   provider.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 }
 
@@ -412,19 +414,6 @@ func llmProviderBackend(value *string, fallback string) string {
 		return *value
 	}
 	return fallback
-}
-
-func providerModelValues[T any](modelIDs []string, supplied, previous map[string]T) map[string]T {
-	if supplied == nil {
-		supplied = previous
-	}
-	windows := make(map[string]T)
-	for _, id := range modelIDs {
-		if value, ok := supplied[id]; ok {
-			windows[id] = value
-		}
-	}
-	return windows
 }
 
 func validModelModalities(values []string) bool {

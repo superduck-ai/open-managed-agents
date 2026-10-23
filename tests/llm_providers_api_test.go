@@ -45,7 +45,7 @@ func TestWorkspaceLLMProviderSlugIsUniqueUnderConcurrentCreates(t *testing.T) {
 			Slug:             "shared",
 			BaseURL:          fmt.Sprintf("https://concurrent-%d.example.com", index),
 			APIKeyLast4:      fmt.Sprintf("key%d", index),
-			ModelIDs:         []string{"shared-model"},
+			Models:           db.LLMModels{{ID: "shared-model"}},
 			CreatedAt:        now,
 			UpdatedAt:        now,
 		}
@@ -507,8 +507,8 @@ func TestWorkspaceLLMProviderModelDiscovery(t *testing.T) {
 			t.Fatalf("preview: %#v", availableBody)
 		}
 		saved, err := app.db.GetLLMProvider(t.Context(), orgUUID, getDefaultDBIDs(t, app.pool).WorkspaceUUID, providerID)
-		if err != nil || !slices.Equal(saved.ModelIDs, []string{"kimi-k2.5"}) {
-			t.Fatalf("preview changed model IDs: %v %v", saved.ModelIDs, err)
+		if err != nil || !slices.Equal(saved.Models.IDs(), []string{"kimi-k2.5"}) {
+			t.Fatalf("preview changed model IDs: %v %v", saved.Models.IDs(), err)
 		}
 		before := requests.Load()
 		resp := app.platformRequest(t, http.MethodPost, path+"/"+providerID+"/models/sync", nil, cookies)
@@ -811,7 +811,7 @@ func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {
 		APIBackend:       llmproviders.Messages,
 		BaseURL:          "https://second.example.com",
 		APIKeyLast4:      "cond",
-		ModelIDs:         []string{"second-model"},
+		Models:           db.LLMModels{{ID: "second-model"}},
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
@@ -896,8 +896,8 @@ func TestOrganizationLLMProviderPreviewAndSync(t *testing.T) {
 		t.Fatalf("preview: %#v", availableBody)
 	}
 	saved, err := app.db.GetOrganizationLLMProvider(t.Context(), orgUUID)
-	if err != nil || !slices.Equal(saved.ModelIDs, []string{"manual-model"}) {
-		t.Fatalf("preview changed model IDs: %v %v", saved.ModelIDs, err)
+	if err != nil || !slices.Equal(saved.Models.IDs(), []string{"manual-model"}) {
+		t.Fatalf("preview changed model IDs: %v %v", saved.Models.IDs(), err)
 	}
 
 	synced := app.platformRequest(t, http.MethodPost, path+"/models/sync", nil, cookies)
@@ -912,8 +912,8 @@ func TestOrganizationLLMProviderPreviewAndSync(t *testing.T) {
 		t.Fatalf("sync scope = %#v", syncBody)
 	}
 	provider, err := app.db.GetOrganizationLLMProvider(t.Context(), orgUUID)
-	if err != nil || !slices.Equal(provider.ModelIDs, []string{"manual-model", "discovered-model"}) {
-		t.Fatalf("synced provider models = %v, %v", provider.ModelIDs, err)
+	if err != nil || !slices.Equal(provider.Models.IDs(), []string{"manual-model", "discovered-model"}) {
+		t.Fatalf("synced provider models = %v, %v", provider.Models.IDs(), err)
 	}
 	if _, err := app.pool.Exec(t.Context(), `UPDATE users SET role='user' WHERE organization_uuid=$1 AND email='organization-preview@example.com'`, orgUUID); err != nil {
 		t.Fatal(err)

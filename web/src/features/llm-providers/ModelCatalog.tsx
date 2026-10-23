@@ -154,7 +154,7 @@ function ProviderRail({
           key={provider.id}
           label={provider.name}
           detail={providerHost(provider.base_url)}
-          count={provider.model_ids.length}
+          count={provider.models.length}
           selected={selectedProviderId === provider.id}
           onClick={() => onSelectProvider(provider.id)}
         />
@@ -322,7 +322,7 @@ function ProviderModelGroup({
           >
             <ProviderIdentity
               provider={provider}
-              modelCount={provider.model_ids.length}
+              modelCount={provider.models.length}
               organizationReadOnly={!organizationEditable}
             />
           </AccordionTrigger>

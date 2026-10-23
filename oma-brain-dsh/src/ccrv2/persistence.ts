@@ -1,4 +1,6 @@
-import type { Context } from "@deepseek-ai/cordis";
+import { Context } from "@deepseek-ai/cordis";
+import JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
+import { join } from "node:path";
 import {
   SessionPersistence,
   SessionPersistenceRevision,
@@ -24,18 +26,8 @@ import {
   type SessionHeader,
   SessionId,
 } from "@deepseek-ai/dsh-session";
+import { sameJson } from "./json-equality.ts";
 import type { CcrBackend } from "./contracts.ts";
-
-function canonicalJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalJson);
-  if (!value || typeof value !== "object") return value;
-  const entries = Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return Object.fromEntries(entries.map(([key, item]) => [key, canonicalJson(item)]));
-}
-
-function sameJson(left: unknown, right: unknown): boolean {
-  return JSON.stringify(canonicalJson(left)) === JSON.stringify(canonicalJson(right));
-}
 
 interface Stored {
   header: SessionHeader;
@@ -49,13 +41,17 @@ class RemoteHandle implements SessionHandle {
   private chain: Promise<unknown> = Promise.resolve();
   private buffered: SessionEvent[] = [];
   private closing?: Promise<void>;
+  private localEventCount: number;
+  private readonly localPending = new Map<number, SessionEvent>();
   constructor(
     readonly store: CcrPersistence,
     readonly id: SessionId,
     readonly access: SessionAccess,
     readonly record: Stored,
+    private readonly local?: SessionHandle,
   ) {
     this.inheritedEventCount = SessionLogOffset(record.inherited);
+    this.localEventCount = record.events.length;
   }
   get header() {
     return this.record.header;
@@ -67,7 +63,9 @@ class RemoteHandle implements SessionHandle {
   }
   enqueue(event: SessionEvent) {
     this.check(true);
-    this.buffered.push(structuredClone(event));
+    const snapshot = structuredClone(event);
+    this.buffered.push(snapshot);
+    if (this.local) void this.serialize(() => this.appendLocal([snapshot])).catch(() => {});
   }
   async read(
     offset = 0,
@@ -102,11 +100,13 @@ class RemoteHandle implements SessionHandle {
       options?.signal?.throwIfAborted();
       assertContiguous(this.id, batch, this.record.events.length);
       if (!batch.length) return;
+      await this.appendLocal(batch);
       await this.store.persist(this.id, {
         header: this.header,
         inherited: this.record.inherited,
         events: batch,
       });
+      for (const event of batch) this.localPending.delete(event.seq);
       this.record.events.push(...structuredClone(batch));
     });
   }
@@ -117,14 +117,34 @@ class RemoteHandle implements SessionHandle {
       const batch = this.buffered.slice();
       if (!batch.length) return;
       assertContiguous(this.id, batch, this.record.events.length);
+      await this.appendLocal(batch);
       await this.store.persist(this.id, {
         header: this.header,
         inherited: this.record.inherited,
         events: batch,
       });
+      for (const event of batch) this.localPending.delete(event.seq);
       this.record.events.push(...structuredClone(batch));
       this.buffered.splice(0, batch.length);
     });
+  }
+  private async appendLocal(events: readonly SessionEvent[]): Promise<void> {
+    if (!this.local) return;
+    const batch: SessionEvent[] = [];
+    for (const event of events) {
+      if (event.seq < this.localEventCount) {
+        if (!sameJson(this.localPending.get(event.seq), event))
+          throw new Error("Conflicting local transcript retry");
+      } else {
+        batch.push(event);
+      }
+    }
+    if (batch.length) {
+      await this.local.append(batch);
+      for (const event of batch) this.localPending.set(event.seq, structuredClone(event));
+      this.localEventCount += batch.length;
+    }
+    await this.local.flush();
   }
   close() {
     return (this.closing ??= (async () => {
@@ -134,6 +154,7 @@ class RemoteHandle implements SessionHandle {
         this.closed = true;
         if (this.store.writers.get(this.id) === this)
           this.store.writers.delete(this.id);
+        if (this.local) await this.store.closeLocal(this.id);
       }
     })());
   }
@@ -144,6 +165,8 @@ class RemoteHandle implements SessionHandle {
 
 export class CcrPersistence extends SessionPersistence {
   readonly writers = new Map<SessionId, RemoteHandle>();
+  private readonly opening = new Set<SessionId>();
+  private readonly localContexts = new Map<SessionId, Context>();
   private readonly records = new Map<SessionId, Stored>();
   readonly backend: CcrBackend;
   private readonly parents = new Map<SessionId, SessionId>();
@@ -156,7 +179,7 @@ export class CcrPersistence extends SessionPersistence {
     const parent = this.parents.get(id);
     return this.backend.persist(parent ?? id, "dsh_log", data, parent ? id : undefined);
   }
-  constructor(ctx: Context, config: { backend: CcrBackend }) {
+  constructor(ctx: Context, readonly config: { backend: CcrBackend; localRoot?: string }) {
     super(ctx);
     this.backend = config.backend;
     ctx.on("session/event", (session, event) => {
@@ -164,7 +187,9 @@ export class CcrPersistence extends SessionPersistence {
     });
     ctx.on("session/flush", (session) => this.writers.get(session.id)?.flush());
     ctx.effect(() => async () => {
-      await this.flush();
+      const results = await Promise.allSettled([...this.writers.values()].map((handle) => handle.close()));
+      const errors = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+      if (errors.length) throw new AggregateError(errors, "Session persistence close failed");
     });
   }
   async load(id: SessionId): Promise<Stored | undefined> {
@@ -208,14 +233,17 @@ export class CcrPersistence extends SessionPersistence {
     if (record) this.records.set(id, record);
     return record;
   }
+
+  // 创建新会话，并取得它的独占写入权。返回的 handle 可以读取、追加事件和 flush，调用者负责关闭它。
   async create(
     header: SessionHeader,
     options?: SessionPersistenceCreateOptions,
   ): Promise<SessionHandle> {
+    return this.withOwnership(header.id, () => this.createHandle(header, options));
+  }
+  private async createHandle(header: SessionHeader, options?: SessionPersistenceCreateOptions): Promise<SessionHandle> {
     options?.signal?.throwIfAborted();
     assertVersion(header);
-    if (this.writers.has(header.id))
-      throw new SessionAlreadyOwnedError(header.id);
     if (await this.load(header.id))
       throw new SessionAlreadyExistsError(header.id);
     if (header.isSeeded || options?.inheritedEventCount)
@@ -225,8 +253,9 @@ export class CcrPersistence extends SessionPersistence {
       inherited: 0,
       events: [],
     };
+    const local = await this.createLocal(record);
+    const handle = new RemoteHandle(this, header.id, "write", record, local);
     this.records.set(header.id, record);
-    const handle = new RemoteHandle(this, header.id, "write", record);
     this.writers.set(header.id, handle);
     try {
       await this.persist(header.id, { header: record.header, inherited: 0, events: [] });
@@ -234,6 +263,7 @@ export class CcrPersistence extends SessionPersistence {
     } catch (error) {
       this.writers.delete(header.id);
       this.records.delete(header.id);
+      await this.closeLocal(header.id);
       throw error;
     }
     return handle;
@@ -243,14 +273,49 @@ export class CcrPersistence extends SessionPersistence {
     access: SessionAccess,
     options?: { signal?: AbortSignal },
   ): Promise<SessionHandle> {
+    if (access === "write") return this.withOwnership(id, () => this.openHandle(id, access, options));
+    return this.openHandle(id, access, options);
+  }
+  private async openHandle(id: SessionId, access: SessionAccess, options?: { signal?: AbortSignal }): Promise<SessionHandle> {
     options?.signal?.throwIfAborted();
-    if (access === "write" && this.writers.has(id))
-      throw new SessionAlreadyOwnedError(id);
     const record = await this.load(id);
     if (!record) throw new SessionPersistenceNotFoundError(id);
-    const handle = new RemoteHandle(this, id, access, record);
+    const local = access === "write" ? await this.createLocal(record) : undefined;
+    const handle = new RemoteHandle(this, id, access, record, local);
     if (access === "write") this.writers.set(id, handle);
     return handle;
+  }
+  private async createLocal(record: Stored): Promise<SessionHandle | undefined> {
+    if (!this.config.localRoot) return undefined;
+    const ctx = new Context();
+    try {
+      await ctx.plugin(JsonlPersistence, {
+        root: join(this.config.localRoot, crypto.randomUUID()),
+        compression: "none",
+      });
+      const handle = await ctx.sessionPersistence.create(record.header);
+      await handle.append(record.events);
+      await handle.flush();
+      this.localContexts.set(record.header.id, ctx);
+      return handle;
+    } catch (error) {
+      await ctx.fiber.dispose();
+      throw error;
+    }
+  }
+  async closeLocal(id: SessionId): Promise<void> {
+    const ctx = this.localContexts.get(id);
+    this.localContexts.delete(id);
+    await ctx?.fiber.dispose();
+  }
+  private async withOwnership(id: SessionId, job: () => Promise<SessionHandle>): Promise<SessionHandle> {
+    if (this.writers.has(id) || this.opening.has(id)) throw new SessionAlreadyOwnedError(id);
+    this.opening.add(id);
+    try {
+      return await job();
+    } finally {
+      this.opening.delete(id);
+    }
   }
   async flush() {
     await Promise.all([...this.writers.values()].map((h) => h.flush()));

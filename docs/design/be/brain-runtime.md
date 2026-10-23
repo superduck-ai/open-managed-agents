@@ -30,6 +30,16 @@ Runner 在 brain 模式下把 `metadata.config.worker_transport` 写为 `claim`�
 
 Brain 会话收到新输入时不再通过 sandbox 续期路径延长 worker 租约或安排 Work 恢复；沙箱由惰性沙箱网关按需准备。
 
+### Brain 本地 transcript 副本
+
+Brain 的组合 `CcrPersistence` 同时保存 CCRv2 与 dsh 原生 JSONL。生产入口默认写入 `~/.oma/brain/transcripts`，可通过 `OMA_BRAIN_TRANSCRIPT_DIR` 修改；可复用 bridge 通过 `localRoot` 显式启用。JSONL 使用与当前 dsh 相同版本的 `@deepseek-ai/dsh-session-persistence-jsonl`，编码选择 `none`，保留原生 project/session 目录、版本化文件名、header 与事件格式。`CcrPersistence` 直接管理原生 JSONL 后端 Context，组合 handle 持有原生 JSONL handle 与本地重试状态，无独立的本地持久化包装类。该后端安装在独立 Cordis Context，父 Context 仅注册组合持久化，避免两个后端竞争 `sessionPersistence`。
+
+CCRv2 仍是恢复依据。每次获取主会话或子线程的写 handle 时，先在新的 UUID 副本目录中补齐该线程全部远程日志，再返回 handle 并继续追加。尚未打开的历史子线程仍保存在 CCRv2，打开时才生成本地副本。旧副本和未获远程确认的尾部均保留在原文件中，不覆盖、不拼接、不上传，也不在远程读取失败时作为恢复降级。旧格式文件未来若需导入，必须单独验证格式版本与会话归属。当前没有自动清理策略，磁盘保留由运维管理。
+
+实时事件进入本地追加队列；append/flush 先等待本地持久化，再等待 CCRv2 确认。本地重试按序号与内容去重，远程失败仍阻止执行推进，本地 I/O 失败同样使屏障失败。关闭时即使远程 flush 失败也释放本地 handle；Context dispose 关闭全部 writer，保留所有本地文件。该副本不改变现有工具执行检查点、Brain 状态和跨实例恢复合同。
+
+普通回归入口为 `oma-brain-dsh/tests/local-transcript.test.ts` 与 `tests/chat-runtime.test.ts`，覆盖远程读写失败、本地创建失败、重试去重、并发写所有权、主会话与子线程补齐、未确认尾部隔离，以及工具结果历史恢复。这些测试使用临时本地文件和进程内/本地 HTTP fixture，不代表真实后端与 Worker 集成验收。
+
 ## 活跃会话输入
 
 遵循 CMA 的输入队列契约：正常 running/rescheduling 时接收 `user.message`，不再返回忙时 409；同一请求也可以提交多条消息。输入在已有 `session_events` 中持久化，排队期间 `processed_at` 为 null。迁移 80 恢复该列可空，不增加表。

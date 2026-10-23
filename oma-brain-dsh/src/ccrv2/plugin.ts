@@ -10,6 +10,7 @@ import type { CcrActivityOptions } from "./activity.ts";
 export const name = "ccrv2-bridge";
 export interface Config {
   backend: CcrBackend;
+  localRoot?: string;
   keepAlive?: CcrActivityOptions;
   heartbeat?: CcrHeartbeatOptions & {
     bind(id: string): CcrLeaseCheck;
@@ -68,6 +69,6 @@ export class CcrBridge extends Service {
 }
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
-  await ctx.plugin(CcrPersistence, { backend: config.backend });
+  await ctx.plugin(CcrPersistence, { backend: config.backend, localRoot: config.localRoot });
   await ctx.plugin(CcrBridge, config);
 }

@@ -84,6 +84,7 @@ The application reads these optional deployment settings at startup. Unset value
 | --- | --- | --- |
 | `OMA_BRAIN_CLAIM_TOKEN` | required | Shared fleet token matching the backend `code_session.brain_claim_token_file` |
 | `OMA_BRAIN_CLAIM_CONCURRENCY` | `4` | Concurrent claim long polls, from 1 through 32 |
+| `OMA_BRAIN_TRANSCRIPT_DIR` | `~/.oma/brain/transcripts` | Local native dsh JSONL replicas, retained across takeover and shutdown |
 | `OMA_BRAIN_MAX_SESSIONS` | `8` | Positive session capacity |
 | `OMA_BRAIN_SHUTDOWN_DRAIN_MS` | `20000` | Integer from 0 through 600000; how long shutdown waits for dispatched tool calls before interrupting them |
 | `OMA_CCR_HEARTBEAT_INTERVAL_MS` | `6000` | Positive integer interval in milliseconds |
@@ -367,6 +368,12 @@ use the real dsh loop with a controlled gateway and model; this change has not
 been verified against a production gateway's thread-event validation.
 
 ## Persistence and recovery
+
+`CcrPersistence` combines CCRv2 with `@deepseek-ai/dsh-session-persistence-jsonl` at the same version as the dsh runtime. The production host enables local transcripts under `OMA_BRAIN_TRANSCRIPT_DIR`, defaulting to `~/.oma/brain/transcripts`. The reusable bridge accepts `localRoot`; hosts that omit it keep remote-only persistence. The composite owns the JSONL backend Context directly, and its session handles hold native JSONL handles and the local retry state. The JSONL backend runs in an independent Cordis Context, so only the composite registers `sessionPersistence` in the Brain Context. Physical encoding is native uncompressed JSONL, including dsh's project/session directories and versioned header and event records.
+
+Each write acquisition creates a UUID replica directory and hydrates its entire foreground or child history from CCRv2 before returning the handle. Local files from previous acquisitions remain untouched, including unconfirmed tails and old-format artifacts. They are never merged into remote history or used as an offline recovery source. Each acquired thread gets its own replica; unopened historical threads remain in CCRv2 until opened. Existing local logs require explicit format and ownership validation before any future import. Replicas have no automatic retention cleanup, so operators must manage disk usage.
+
+Live events queue local appends. Append and flush wait for local durability before remote confirmation; local retry tracking avoids duplicate events if a remote write fails. Remote confirmation remains mandatory for execution checkpoints and recovery. A local I/O failure also rejects the barrier. Closing releases both handles even when the remote flush fails, and Context disposal closes every active writer while retaining all transcript files. `tests/local-transcript.test.ts` covers write/read failures, retry, ownership, foreground and child hydration, retained unconfirmed tails and disposal; `tests/chat-runtime.test.ts` exercises native logs through a tool round trip and restoration.
 
 `CcrPersistence` implements dsh's SessionPersistence interface. Current-format headers and contiguous log batches are stored as CCRv2 private `system` events with subtype `dsh_log`. Input state, completed input IDs, approved arguments, confirmed tool outputs and the public-event outbox use subtype `dsh_brain_state`. The envelopes have schema version 1. Repeated writes retain the same content-derived UUID, allowing the backend to deduplicate a request whose HTTP confirmation was lost. Restoration compares each batch's header and any repeated event sequence by JSON value, ignoring object key order: the backend returns small payloads from PostgreSQL `jsonb`, which reorders keys, and payloads above 32 KiB byte-for-byte from object storage, so batches of one log can come back with different key orders.
 

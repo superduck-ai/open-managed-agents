@@ -7,6 +7,7 @@ import { Checkbox } from '../../shared/ui/checkbox';
 import { Input } from '../../shared/ui/input';
 
 export type ProviderModelDraft = {
+  key: string;
   id: string;
   contextWindow: string;
   maxOutputTokens: string;
@@ -14,7 +15,7 @@ export type ProviderModelDraft = {
 };
 
 export function newModelDraft(id = ''): ProviderModelDraft {
-  return { id, contextWindow: '', maxOutputTokens: '', inputModalities: ['text'] };
+  return { key: crypto.randomUUID(), id, contextWindow: '', maxOutputTokens: '', inputModalities: ['text'] };
 }
 
 export function parseContextWindow(text: string): number | undefined {
@@ -57,7 +58,7 @@ export function ProviderModelsEditor({
       </div>
       <div className="space-y-2">
         {models.map((model, index) => (
-          <Collapsible key={index} className="rounded-lg border border-border p-2">
+          <Collapsible key={model.key} className="rounded-lg border border-border p-2">
             <div className="flex items-center gap-2">
               <Input
                 value={model.id}

@@ -4,9 +4,12 @@ package db
 
 import (
 	jsonv2 "encoding/json/v2"
+	"errors"
 	"os"
 	"reflect"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestUnifiedLLMModelsMigrationPreservesModelIDsAndOrder(t *testing.T) {
@@ -48,12 +51,24 @@ func TestUnifiedLLMModelsMigrationPreservesModelIDsAndOrder(t *testing.T) {
 		}
 	}
 	assertModels()
+	assertArrayConstraint := func(column, constraint string) {
+		t.Helper()
+		for _, value := range []string{`{}`, `"model"`, `1`, `null`} {
+			_, err := database.ExecContext(ctx, "UPDATE llm_providers SET "+column+"=$1::jsonb WHERE external_id='llmprov_models'", value)
+			pgError, ok := errors.AsType[*pgconn.PgError](err)
+			if !ok || pgError.Code != "23514" || pgError.ConstraintName != constraint {
+				t.Fatalf("%s accepted invalid model array %s or returned wrong error: %v", column, value, err)
+			}
+		}
+	}
+	assertArrayConstraint("models", "llm_providers_models_array")
 	for _, column := range []string{"model_ids", "model_context_windows", "model_options"} {
 		assertMigrationColumnExists(t, ctx, database, "llm_providers", column, false)
 	}
 	if _, err := provider.Down(ctx); err != nil {
 		t.Fatal(err)
 	}
+	assertArrayConstraint("model_ids", "llm_providers_model_ids_array")
 	var restored bool
 	if err := database.QueryRowContext(ctx, `SELECT model_ids='["second","first","default"]'::jsonb FROM llm_providers WHERE external_id='llmprov_models'`).Scan(&restored); err != nil || !restored {
 		t.Fatalf("rollback: %t %v", restored, err)

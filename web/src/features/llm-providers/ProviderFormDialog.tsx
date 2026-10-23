@@ -44,7 +44,7 @@ function providerForm(provider: LLMProvider | null): ProviderForm {
         models:
           provider.models.length > 0
             ? provider.models.map((model) => ({
-                id: model.id,
+                ...newModelDraft(model.id),
                 maxOutputTokens: String(model.max_output_tokens ?? ''),
                 inputModalities: model.input_modalities ?? ['text'],
                 contextWindow: String(model.context_window ?? ''),

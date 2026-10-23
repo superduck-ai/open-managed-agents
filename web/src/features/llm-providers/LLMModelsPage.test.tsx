@@ -32,6 +32,28 @@ afterEach(() => {
 });
 
 describe('LLM models page', () => {
+  test('preserves expanded model parameters when removing an earlier row and editing the model ID', async () => {
+    resetTestDom('https://oma.duck.ai/settings/llm');
+    const provider = organizationProvider();
+    provider.models = [{ id: 'first' }, { id: 'second', context_window: 1000000 }];
+    mockProvidersApi([], { organizationProvider: provider });
+    renderPage('en', 'admin', 'organization');
+    fireEvent.click(await screen.findByRole('button', { name: provider.name, exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit provider' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Model parameters 2' }));
+    fireEvent.click(within(dialog).getAllByRole('button', { name: 'Remove model' })[0]!);
+    expect(within(dialog).getByLabelText('Model ID 1').getAttribute('value')).toBe('second');
+    expect(within(dialog).getByRole('button', { name: 'Model parameters 1' }).getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+    expect(within(dialog).getByLabelText('Context window 1').getAttribute('value')).toBe('1000000');
+    fireEvent.change(within(dialog).getByLabelText('Model ID 1'), { target: { value: 'renamed' } });
+    expect(within(dialog).getByRole('button', { name: 'Model parameters 1' }).getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+  });
+
   test('edits and reloads the context window for an individual organization model', async () => {
     resetTestDom('https://oma.duck.ai/settings/llm');
     const api = mockProvidersApi([], { organizationProvider: organizationProvider() });

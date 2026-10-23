@@ -6,7 +6,7 @@ LLM 模型页是工作区的模型目录，而不是 Provider 卡片墙。
 
 工作区页面请求 `GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers` 和组织默认 `GET /api/console/organizations/{orgUuid}/llm_provider`。Provider 配置及其 `models` 是目录的唯一数据源，页面不再额外请求 `/v1/models`，避免同一页面出现两份模型集合和无法归属 Provider 的模型。
 
-填写 Provider 的 Base URL 和 API Key 后，可在表单里点「获取模型列表」，请求 `POST .../llm_providers/preview_models`，用上游 `{base_url}/v1/models` 填入模型 ID。获取结果与表单内已有的非空模型 ID 合并、去重，不覆盖手工输入；上游返回空数组时只提示，不清空表单。编辑 Provider 时，读取接口不会返回旧 Key，编辑时可直接使用已保存的凭证获取可用模型。
+填写 Provider 的 Base URL 和 API Key 后，可在表单里点「获取可用模型」，请求 `POST .../llm_providers/preview_models`，用上游 `{base_url}/v1/models` 填入模型 ID。获取结果与表单内已有的非空模型 ID 合并、去重，不覆盖手工输入；上游返回空数组时只提示，不清空表单。编辑 Provider 时，读取接口不会返回旧 Key，编辑时可直接使用已保存的凭证获取可用模型。
 
 保存提交表单中的模型 ID 和逐模型参数；点击页面刷新时才请求 `POST .../llm_providers/{id}/models/sync`，把上游模型合并进该 Provider 的 `models`，随后重拉 Provider 列表。不同 Provider 可以配置同名模型，同步不会跳过其他 Provider 已有的模型。模型 ID 可以为空：Provider 仍保留在轨道和目录中，`/v1/models` 返回空数组，页面显示明确的“尚未配置模型”状态。获取上游列表或刷新失败时，用可关闭、数秒后自动消失的 toast 提示，不挡住目录和表单。
 
@@ -32,9 +32,9 @@ flowchart LR
 
 - 模型配置只允许当前组织的 `admin` 管理。工作区用户可从侧栏进入并查看当前工作区全部模型、搜索及筛选供应商；只读用户不显示新增、编辑、删除及添加模型入口，刷新仅重新读取目录，不调用上游同步。Provider 列表读取校验当前工作区访问权限，新增、更新、删除、预览与同步仍要求组织管理员。目录读取返回 403（无权访问、手改工作区地址或空间已归档）时展示无权限空状态，说明工作区成员可以只读查看、只有组织管理员可以管理供应商；其他读取失败仍使用本地化错误提示。管理写入被拒绝时继续提示需要组织管理员。Workbench、Quickstart 和 Agent 创建页缺少模型时，管理员看到「配置模型」，非管理员只看到「请联系组织管理员配置模型」。前端判断只用于避免无效入口，后端 RBAC 仍是最终权限边界。
 - 搜索没有精确模型 ID 命中且已选中 Provider 时，可以把当前输入作为新的上游模型 ID 追加到该 Provider；精确命中只在当前选中 Provider 内判断，因此其他 Provider 已有同名模型时仍显示添加入口。即使已有模糊匹配也仍显示添加入口。
-- Provider 表单在名称下方提供 `Slug` 字段。创建时在用户手动修改前随名称自动生成（小写，非法字符替换为 `-`，最长 32 字符；中文等无法转换的名称得到空值），留空时由服务端分配 `default`/`default-N`；提交前按 `^[a-z0-9][a-z0-9._-]{0,31}$` 本地校验。编辑时只读展示，局部更新仍回传原 slug。
+- 创建 Provider 时先展示「Provider ID」，再展示「显示名称」。Provider ID 须手动填写，不随显示名称生成，提交前按 `^[a-z0-9][a-z0-9._-]{0,31}$` 本地校验；编辑时隐藏并保持原值，显示名称可独立修改。Provider ID 对应 API 的 `slug`，局部更新仍回传原值。
 - 添加模型的请求进行中时禁用添加按钮，防止重复提交。
-- 添加、编辑、删除 Provider 仍走原有 Dialog；编辑时留空 API Key 表示保留原密钥，且不会使用不可见的旧 Key 发起模型发现。
+- 添加、编辑、删除 Provider 仍走原有 Dialog；编辑时留空 API Key 表示保留原密钥，未修改地址或协议时可使用已保存凭证获取可用模型；修改地址或协议后须填写对应的新 Key。
 - Provider API 的稳定校验错误在前端映射为中英文文案，动态模型 ID 作为插值保留；未知或网络错误使用本地化的通用失败提示，不直接展示后端英文原文。
 - 模型 ID 是可选配置；从 Provider 移除全部模型后，Provider 和加密 Key 仍保留，可通过获取列表、搜索添加或再次编辑恢复模型。
 - 没有 Provider 时展示精简空状态：隐藏无意义的模型数 `0` 和顶部重复操作，只保留中央的「添加 Provider」入口。
@@ -76,7 +76,7 @@ Base URL 仍填写 API 根地址，允许路径前缀，不重复填写 `/v1`。
 
 `models` 是完整替换语义：空数组清空模型，删除一项同时删除其参数，省略某项参数恢复默认行为。ID 须唯一、非空且不超过 255 字符，最多 100 项。容量须为正的 JavaScript 安全整数；输入类型只允许 text/image，不得重复或为空。旧 `model_ids` 只保留在 HTTP/config 边界：响应从模型数组派生 ID，旧写请求按 ID 保留仍在列表中的参数。请求同时提供 `models` 与 `model_ids` 时拒绝，防止双写冲突。
 
-本 PR 仅新增迁移 00095：按原 ID 顺序将 `model_ids` 转为 `models`，保留组织/工作区归属与空目录，再删除旧列。容量与输入类型不写入默认值。Down 可恢复模型 ID 与顺序，但旧结构无法保存新增的模型参数，回滚前应备份。Mapper 仅绑定和读取 `models` JSONB，生成代码不手工维护。
+本 PR 仅新增迁移 00095：按原 ID 顺序将 `model_ids` 转为 `models`，保留组织/工作区归属与空目录，再删除旧列。新列保留 JSON 数组类型约束，Down 同样恢复原 `model_ids` 数组约束。容量与输入类型不写入默认值。Down 可恢复模型 ID 与顺序，但旧结构无法保存新增的模型参数，回滚前应备份。Mapper 仅绑定和读取 `models` JSONB，生成代码不手工维护。
 
 ## 模型编辑与默认值
 

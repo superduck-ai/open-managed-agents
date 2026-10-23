@@ -1,5 +1,6 @@
 -- +goose Up
-ALTER TABLE llm_providers ADD COLUMN models jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE llm_providers ADD COLUMN models jsonb NOT NULL DEFAULT '[]'::jsonb
+    CONSTRAINT llm_providers_models_array CHECK (jsonb_typeof(models) = 'array');
 
 UPDATE llm_providers AS provider
 SET models = (
@@ -11,7 +12,8 @@ SET models = (
 ALTER TABLE llm_providers DROP COLUMN model_ids;
 
 -- +goose Down
-ALTER TABLE llm_providers ADD COLUMN model_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE llm_providers ADD COLUMN model_ids jsonb NOT NULL DEFAULT '[]'::jsonb
+    CONSTRAINT llm_providers_model_ids_array CHECK (jsonb_typeof(model_ids) = 'array');
 
 UPDATE llm_providers AS provider
 SET model_ids = (

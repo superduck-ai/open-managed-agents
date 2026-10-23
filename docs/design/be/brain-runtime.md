@@ -436,6 +436,8 @@ HTTP 与流内错误、取消、工具分片、大参数线性耗时、用量尾
 
 Messages 和 Chat Completions 的默认输出预算均为 32768 token，与通用 DeepSeek Harness 默认值一致，不按具体模型名称猜测。模型配置的 `max_output_tokens` 覆盖默认值，调用方显式 `maxTokens` 优先级最高。Chat 请求始终携带选定的 `max_completion_tokens` 上限。推理内容与最终正文共享输出预算；预算只声明单次请求上限，不扩大上游能力，也不能将截断结果视为成功。
 
+升级影响：未配置逐模型上限时，Messages 的默认输出上限由 943718 降为 32768，Chat Completions 由省略上限改为默认发送 32768。需要保留更大输出预算的模型应显式配置 `max_output_tokens`。
+
 ## 懒加载沙箱的 Provider 过期恢复
 
 Brain 保持运行而沙箱已被 Provider 删除时，下一次 MCP 调用先连接原沙箱。可恢复的 paused 沙箱继续复用；明确的 Provider 404 映射为 `sandboxruntime.ErrSandboxNotFound`。Runner 只把该错误对应的原沙箱记录标记为 failed，并沿用当前 Work 和 Code Session 创建 replacement，重新准备挂载和环境管理器。临时网络错误、鉴权错误或服务端错误保留原记录并返回错误，不据此销毁或替换沙箱。

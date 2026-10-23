@@ -1,0 +1,2 @@
+export const DEFAULT_CONTEXT_WINDOW = 262_144;
+export const DEFAULT_MAX_OUTPUT_TOKENS = 32_768;

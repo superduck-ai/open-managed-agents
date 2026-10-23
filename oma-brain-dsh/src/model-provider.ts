@@ -3,13 +3,13 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { LlmError, type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { OmaApi } from "./api.ts";
 import type { Assignment } from "./assignment.ts";
+import { DEFAULT_MAX_OUTPUT_TOKENS } from "./model-defaults.ts";
 import { normalizeChatReasoning } from "./chat-reasoning.ts";
 import type { AiSdkRoute } from "./llm-ai-sdk/index.ts";
 
 type ModelBackend = "messages" | "chat_completions";
 
 const MODEL_IDLE_TIMEOUT_MS = 300_000;
-const MESSAGES_DEFAULT_MAX_TOKENS = 943718;
 
 export function modelSessionID(options: GenerateOptions): string {
   if (!options.sessionId) throw new LlmError("Model request has no session identity", "INVALID_ARGS");
@@ -19,18 +19,19 @@ export function modelSessionID(options: GenerateOptions): string {
 export function omaRoute(api: OmaApi, options: GenerateOptions): AiSdkRoute {
   const sessionId = modelSessionID(options);
   const assignment = api.assignment(api.modelSessions.get(sessionId) ?? sessionId);
+  const output = assignment.launch.model_options?.[options.model]?.max_output_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
   const backend = modelBackend(assignment, options.model);
   const root = `${api.base.replace(/\/$/, "")}/v1`;
   const agentID = sessionId === assignment.session_id ? undefined : sessionId;
   if (backend === "messages") {
     const fetcher = proxyFetch(api, `${root}/messages`, agentID);
     return { model: createAnthropic({ baseURL: root, authToken: assignment.model_token, fetch: fetcher })(options.model),
-      replayFormat: "oma-messages-v1", signedReasoning: true, maxOutputTokens: MESSAGES_DEFAULT_MAX_TOKENS,
+      replayFormat: "oma-messages-v1", signedReasoning: true, maxOutputTokens: output,
       providerOptions: { anthropic: { toolStreaming: false } } };
   }
   const fetcher = proxyFetch(api, `${root}/chat/completions`, agentID, normalizeChatReasoning);
   return { model: createOpenAICompatible({ name: "oma", baseURL: root, apiKey: assignment.model_token, includeUsage: true,
-    fetch: fetcher, transformRequestBody: chatRequestBody })(options.model), replayFormat: "oma-chat-completions-v1" };
+    fetch: fetcher, transformRequestBody: chatRequestBody })(options.model), maxOutputTokens: output, replayFormat: "oma-chat-completions-v1" };
 }
 
 function modelBackend(assignment: Assignment, model: string): ModelBackend {

@@ -3,6 +3,10 @@ import type { LLMProvider } from './api';
 type MessageFormatter = (id: string, defaultMessage: string, values?: Record<string, string>) => string;
 
 const PROVIDER_ERROR_MESSAGES: Record<string, { id: string; defaultMessage: string }> = {
+  model_context_window_invalid: {
+    id: 'llmModels.contextWindowInvalid',
+    defaultMessage: 'Context window must be a positive integer; K and M suffixes are supported.',
+  },
   api_key_required: {
     id: 'llmModels.errorApiKeyRequired',
     defaultMessage: 'API key is required.',
@@ -37,20 +41,20 @@ const PROVIDER_ERROR_MESSAGES: Record<string, { id: string; defaultMessage: stri
   },
   llm_provider_name_invalid: {
     id: 'llmModels.errorNameLength',
-    defaultMessage: 'Provider name must contain 1 to 100 characters.',
+    defaultMessage: 'Display name must contain 1 to 100 characters.',
   },
   llm_provider_slug_invalid: {
     id: 'llmModels.errorSlugInvalid',
     defaultMessage:
-      'Slug must contain 1 to 32 lowercase letters, digits, ".", "_" or "-" and start with a letter or digit.',
+      'Provider ID must contain 1 to 32 lowercase letters, digits, ".", "_" or "-" and start with a letter or digit.',
   },
   llm_provider_slug_conflict: {
     id: 'llmModels.errorSlugExists',
-    defaultMessage: 'A provider with this slug already exists.',
+    defaultMessage: 'A provider with this ID already exists.',
   },
   llm_provider_slug_immutable: {
     id: 'llmModels.errorSlugImmutable',
-    defaultMessage: 'The slug cannot be changed after the provider is created.',
+    defaultMessage: 'Provider ID cannot be changed after creation.',
   },
   llm_provider_name_conflict: {
     id: 'llmModels.errorProviderNameExists',
@@ -87,15 +91,6 @@ export function qualifiedModelId(slug: string, modelId: string): string {
 
 export function isValidSlug(slug: string): boolean {
   return SLUG_PATTERN.test(slug);
-}
-
-export function slugFromName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/^[^a-z0-9]+/, '')
-    .slice(0, 32)
-    .replace(/[-._]+$/, '');
 }
 
 export function catalogModels(providers: LLMProvider[]): CatalogModel[] {
@@ -194,6 +189,12 @@ export function providerInput(provider: LLMProvider, modelIds: string[]) {
     api_backend: provider.api_backend,
     base_url: provider.base_url,
     model_ids: modelIds,
+    model_options: Object.fromEntries(
+      Object.entries(provider.model_options ?? {}).filter(([id]) => modelIds.includes(id)),
+    ),
+    model_context_windows: Object.fromEntries(
+      Object.entries(provider.model_context_windows ?? {}).filter(([id]) => modelIds.includes(id)),
+    ),
   };
 }
 

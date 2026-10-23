@@ -3,6 +3,8 @@ import { sandboxToolDefinitions } from "./sandbox-tools/definitions.ts";
 import { sandboxEndpoint } from "./oma-sandbox/config.ts";
 import { webToolDefinitions } from "./web-tools/definitions.ts";
 
+export type ModelOptions = { max_output_tokens?: number; input_modalities?: ("text" | "image")[] };
+
 export interface Assignment {
   session_id: string;
   worker_epoch: number;
@@ -13,6 +15,8 @@ export interface Assignment {
   launch: {
     version: number;
     model: string;
+    model_options?: Record<string, ModelOptions>;
+    model_context_windows?: Record<string, number>;
     model_backends?: Record<string, "messages" | "chat_completions">;
     work_dir: string;
     system: string;
@@ -48,6 +52,8 @@ export function validateAssignment(a: Assignment): void {
   if (a.launch.model_backends !== undefined && (!a.launch.model_backends || typeof a.launch.model_backends !== "object"
     || Array.isArray(a.launch.model_backends) || Object.values(a.launch.model_backends).some((value) => value !== "messages" && value !== "chat_completions")))
     throw new Error("Invalid model API backends");
+  validateModelContextWindows(a.launch.model_context_windows);
+  validateModelOptions(a.launch.model_options);
   const tools = new Set([...sandboxToolDefinitions(), ...webToolDefinitions()].map((tool) => tool.name));
   tools.add("ask_user_question");
   if (!Array.isArray(a.launch.tools)
@@ -79,4 +85,32 @@ export function validateToolPermissions(permissions: unknown): asserts permissio
   if (permissions !== undefined && (!permissions || typeof permissions !== "object" || Array.isArray(permissions)
     || Object.values(permissions).some((policy) => !["allow", "ask", "deny"].includes(policy))))
     throw new Error("Invalid launch tool permissions");
+}
+
+export function validateModelContextWindows(value: unknown): asserts value is Record<string, number> | undefined {
+  if (value === undefined) return;
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || Object.entries(value).some(([id, window]) => !id || typeof window !== "number" || !Number.isSafeInteger(window) || window <= 0))
+    throw new Error("Invalid model context windows");
+}
+
+export function validateModelOptions(value: unknown): asserts value is Record<string, ModelOptions> | undefined {
+  if (value === undefined) return;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid model options");
+  for (const [id, options] of Object.entries(value)) {
+    if (!id || !options || typeof options !== "object" || Array.isArray(options))
+      throw new Error("Invalid model options");
+    const { max_output_tokens: output, input_modalities: inputs } = options;
+    if (output !== undefined && (!Number.isSafeInteger(output) || output <= 0))
+      throw new Error("Invalid model output tokens");
+    if (
+      inputs !== undefined &&
+      (!Array.isArray(inputs) ||
+        inputs.length === 0 ||
+        inputs.length > 2 ||
+        new Set(inputs).size !== inputs.length ||
+        inputs.some((input) => input !== "text" && input !== "image"))
+    )
+      throw new Error("Invalid model input modalities");
+  }
 }

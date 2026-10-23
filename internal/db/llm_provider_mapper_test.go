@@ -27,7 +27,7 @@ func TestLLMProviderMapperTenantScope(t *testing.T) {
 			bound:                      buildLLMProviderMapperInsert(yourbatis.DialectPostgres, params),
 			wantID:                     "LLMProviderMapper.Insert",
 			wantKind:                   yourbatis.StatementInsert,
-			wantArgumentNames:          []string{"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID", "params.Name", "params.Slug", "params.APIBackend", "params.BaseURL", "params.APIKeyLast4", "params.ModelIDs", "params.Ciphertext", "params.Nonce", "params.WrappedDEK", "params.FormatVersion", "params.KeyProvider", "params.KeyVersion", "params.CreatedAt", "params.UpdatedAt"},
+			wantArgumentNames:          []string{"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID", "params.Name", "params.Slug", "params.APIBackend", "params.BaseURL", "params.APIKeyLast4", "params.ModelIDs", "params.Ciphertext", "params.Nonce", "params.WrappedDEK", "params.FormatVersion", "params.KeyProvider", "params.KeyVersion", "params.CreatedAt", "params.UpdatedAt", "params.ModelContextWindows", "params.ModelOptions"},
 			wantSensitiveArgumentNames: []string{"params.Ciphertext", "params.Nonce", "params.WrappedDEK"},
 			wantSQLFragments:           []string{"name, slug, api_backend, base_url", "$5, $6, $7, $8", "RETURNING"},
 		}},
@@ -55,11 +55,11 @@ func TestLLMProviderMapperTenantScope(t *testing.T) {
 			wantArgumentNames: []string{
 				"params.Name", "params.APIBackend", "params.BaseURL", "params.APIKeyLast4", "params.ModelIDs",
 				"params.Ciphertext", "params.Nonce", "params.WrappedDEK", "params.FormatVersion",
-				"params.KeyProvider", "params.KeyVersion", "params.UpdatedAt", "params.OrganizationUUID",
+				"params.KeyProvider", "params.KeyVersion", "params.UpdatedAt", "params.ModelContextWindows", "params.ModelOptions", "params.OrganizationUUID",
 				"params.WorkspaceUUID", "params.ExternalID",
 			},
 			wantSensitiveArgumentNames: []string{"params.Ciphertext", "params.Nonce", "params.WrappedDEK"},
-			wantSQLFragments:           []string{"organization_uuid = $13", "workspace_uuid = $14", "external_id = $15"},
+			wantSQLFragments:           []string{"organization_uuid = $15", "workspace_uuid = $16", "external_id = $17"},
 		}},
 		{"find organization default", mapperBuilderContract{
 			statement:         lLMProviderMapperFindOrganizationDefaultStatement,
@@ -77,11 +77,11 @@ func TestLLMProviderMapperTenantScope(t *testing.T) {
 			wantArgumentNames: []string{
 				"params.Name", "params.APIBackend", "params.BaseURL", "params.APIKeyLast4", "params.ModelIDs",
 				"params.Ciphertext", "params.Nonce", "params.WrappedDEK", "params.FormatVersion",
-				"params.KeyProvider", "params.KeyVersion", "params.UpdatedAt", "params.OrganizationUUID",
+				"params.KeyProvider", "params.KeyVersion", "params.UpdatedAt", "params.ModelContextWindows", "params.ModelOptions", "params.OrganizationUUID",
 				"params.ExternalID",
 			},
 			wantSensitiveArgumentNames: []string{"params.Ciphertext", "params.Nonce", "params.WrappedDEK"},
-			wantSQLFragments:           []string{"organization_uuid = $13", "workspace_uuid IS NULL", "external_id = $14"},
+			wantSQLFragments:           []string{"organization_uuid = $15", "workspace_uuid IS NULL", "external_id = $16"},
 		}},
 		{"delete", mapperBuilderContract{
 			statement:         lLMProviderMapperDeleteByExternalIDStatement,

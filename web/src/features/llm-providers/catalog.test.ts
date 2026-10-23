@@ -11,7 +11,6 @@ import {
   providerInput,
   readableError,
   resolvedProviderSelection,
-  slugFromName,
 } from './catalog';
 import type { LLMProvider } from './api';
 
@@ -63,11 +62,7 @@ describe('LLM model catalog helpers', () => {
     expect(fromProviders).toEqual([kimiRow, glmRow, moonshotRow]);
   });
 
-  test('derives provider slugs from names', () => {
-    expect(slugFromName('DashScope CN')).toBe('dashscope-cn');
-    expect(slugFromName('  --Open AI.  ')).toBe('open-ai');
-    expect(slugFromName('阿里云')).toBe('');
-    expect(slugFromName('a'.repeat(40))).toBe('a'.repeat(32));
+  test('validates provider IDs', () => {
     expect(isValidSlug('dashscope-cn')).toBe(true);
     expect(isValidSlug('default-2')).toBe(true);
     expect(isValidSlug('Dash/Scope')).toBe(false);
@@ -132,12 +127,14 @@ describe('LLM model catalog helpers', () => {
       api_backend: dashScope.api_backend,
       base_url: dashScope.base_url,
       model_ids: ['kimi-k2.5'],
+      model_context_windows: {},
+      model_options: {},
     });
     expect(readableError({ code: 'llm_provider_name_conflict', message: 'wording changed' }, englishMessage)).toBe(
       'A provider with this name already exists.',
     );
     expect(readableError({ code: 'llm_provider_slug_conflict', message: 'wording changed' }, englishMessage)).toBe(
-      'A provider with this slug already exists.',
+      'A provider with this ID already exists.',
     );
     expect(readableError({ code: 'model_conflict', message: 'wording changed' }, englishMessage)).toBe(
       'Request failed. Please try again.',

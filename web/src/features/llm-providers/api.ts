@@ -12,6 +12,8 @@ export type LLMProvider = {
   has_api_key: boolean;
   api_key_last4: string;
   model_ids: string[];
+  model_options?: Record<string, { max_output_tokens?: number; input_modalities?: ('text' | 'image')[] }>;
+  model_context_windows?: Record<string, number>;
   scope?: 'organization';
   created_at: string;
   updated_at: string;
@@ -24,6 +26,8 @@ export type LLMProviderInput = {
   base_url: string;
   api_key?: string;
   model_ids: string[];
+  model_options?: Record<string, { max_output_tokens?: number; input_modalities?: ('text' | 'image')[] }>;
+  model_context_windows?: Record<string, number>;
 };
 
 function providersPath(orgUuid: string, workspaceId: string) {
@@ -148,4 +152,17 @@ export function previewOrganizationProviderModels(
     body: JSON.stringify(input),
     csrfToken,
   });
+}
+
+export function previewSavedProviderModels(
+  orgUuid: string,
+  workspaceId: string,
+  provider: LLMProvider,
+  csrfToken?: string,
+) {
+  const path =
+    provider.scope === 'organization'
+      ? organizationLLMProviderPath(orgUuid)
+      : `${providersPath(orgUuid, workspaceId)}/${encodeURIComponent(provider.id)}`;
+  return consoleApi<{ model_ids: string[] }>(`${path}/models/preview`, { method: 'POST', csrfToken });
 }

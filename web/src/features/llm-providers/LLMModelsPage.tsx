@@ -21,6 +21,7 @@ import {
   getOrganizationLLMProvider,
   persistLLMProvider,
   previewOrganizationProviderModels,
+  previewSavedProviderModels,
   syncOrganizationLLMProvider,
   upsertOrganizationLLMProvider,
   deleteLLMProvider,
@@ -104,10 +105,12 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
   };
 
   const discoverModels = useCallback(
-    async (baseUrl: string, apiKey: string, apiBackend: APIBackend) => {
+    async (baseUrl: string, apiKey: string, apiBackend: APIBackend, provider?: LLMProvider) => {
       if (!orgUuid) {
         throw new Error(msg('llmModels.noOrganization', 'No organization is available.'));
       }
+      if (!apiKey && provider)
+        return (await previewSavedProviderModels(orgUuid, workspaceId, provider, csrfToken)).model_ids;
       const input = { base_url: baseUrl, api_key: apiKey, api_backend: apiBackend };
       const preview =
         scope === 'organization'

@@ -85,17 +85,19 @@ func createConsoleOrganizationLLMProvider(
 	}
 	now := time.Now().UTC()
 	provider := db.LLMProvider{
-		UUID:             uuid.New().String(),
-		ExternalID:       externalID,
-		OrganizationUUID: orgUUID,
-		Name:             name,
-		Slug:             llmproviders.OrganizationSlug,
-		APIBackend:       llmProviderBackend(body.APIBackend, llmproviders.Messages),
-		BaseURL:          baseURL,
-		APIKeyLast4:      lastFour(apiKey),
-		ModelIDs:         modelIDs,
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		UUID:                uuid.New().String(),
+		ExternalID:          externalID,
+		OrganizationUUID:    orgUUID,
+		Name:                name,
+		Slug:                llmproviders.OrganizationSlug,
+		APIBackend:          llmProviderBackend(body.APIBackend, llmproviders.Messages),
+		BaseURL:             baseURL,
+		APIKeyLast4:         lastFour(apiKey),
+		ModelIDs:            modelIDs,
+		ModelContextWindows: body.ModelContextWindows,
+		ModelOptions:        body.ModelOptions,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 	if !sealLLMProviderAPIKey(w, r, secretService, &provider, apiKey) {
 		return
@@ -125,6 +127,8 @@ func updateConsoleOrganizationLLMProvider(
 	current.APIBackend = llmProviderBackend(body.APIBackend, current.APIBackend)
 	current.Name = name
 	current.BaseURL = baseURL
+	current.ModelContextWindows = providerModelValues(modelIDs, body.ModelContextWindows, current.ModelContextWindows)
+	current.ModelOptions = providerModelValues(modelIDs, body.ModelOptions, current.ModelOptions)
 	current.ModelIDs = modelIDs
 	current.UpdatedAt = time.Now().UTC()
 	if body.APIKey != nil && strings.TrimSpace(*body.APIKey) != "" {
@@ -174,7 +178,7 @@ func deleteConsoleOrganizationLLMProvider(database *db.DB) http.HandlerFunc {
 	}
 }
 
-func syncConsoleOrganizationLLMProviderModels(database *db.DB, secretService *secrets.Service, client *http.Client) http.HandlerFunc {
+func syncConsoleOrganizationLLMProviderModels(database *db.DB, secretService *secrets.Service, client *http.Client, persist bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgUUID, ok := llmProviderOrganization(w, r, database)
 		if !ok {
@@ -189,7 +193,7 @@ func syncConsoleOrganizationLLMProviderModels(database *db.DB, secretService *se
 			internalError(w, "failed to load LLM provider")
 			return
 		}
-		syncProviderFromUpstream(w, r, database, secretService, client, provider)
+		syncProviderFromUpstream(w, r, database, secretService, client, provider, persist)
 	}
 }
 

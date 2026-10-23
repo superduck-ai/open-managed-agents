@@ -32,6 +32,247 @@ afterEach(() => {
 });
 
 describe('LLM models page', () => {
+  test('edits and reloads the context window for an individual organization model', async () => {
+    resetTestDom('https://oma.duck.ai/settings/llm');
+    const api = mockProvidersApi([], { organizationProvider: organizationProvider() });
+    renderPage('en', 'admin', 'organization');
+    fireEvent.click(await screen.findByRole('button', { name: 'Organization default' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    let dialog = screen.getByRole('dialog', { name: 'Edit provider' });
+    expect(within(dialog).queryByLabelText('Provider ID')).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Model parameters 1' }));
+    expect(within(dialog).getByRole('checkbox', { name: 'Text' }).getAttribute('aria-checked')).toBe('true');
+    expect(within(dialog).getByRole('checkbox', { name: 'Text' }).getAttribute('aria-disabled') === 'true').toBe(true);
+    expect(within(dialog).getByRole('checkbox', { name: 'Image' }).getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Image' }));
+    await waitFor(() =>
+      expect(within(dialog).getByRole('checkbox', { name: 'Image' }).getAttribute('aria-checked')).toBe('true'),
+    );
+    fireEvent.change(within(dialog).getByLabelText('Maximum output tokens 1'), { target: { value: '128K' } });
+    fireEvent.change(within(dialog).getByLabelText('Context window 1'), { target: { value: '1M' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(api.requests.findLast((request) => request.method === 'PUT')?.body?.model_context_windows).toEqual({
+      'shared-model': 1000000,
+    });
+    expect(api.requests.findLast((request) => request.method === 'PUT')?.body?.model_options).toEqual({
+      'shared-model': { max_output_tokens: 128000, input_modalities: ['text', 'image'] },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    dialog = screen.getByRole('dialog', { name: 'Edit provider' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Model parameters 1' }));
+    expect((within(dialog).getByLabelText('Context window 1') as HTMLInputElement).value).toBe('1000000');
+    expect((within(dialog).getByLabelText('Maximum output tokens 1') as HTMLInputElement).value).toBe('128000');
+    expect(within(dialog).getByRole('checkbox', { name: 'Image' }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Text' }));
+    await waitFor(() =>
+      expect(within(dialog).getByRole('checkbox', { name: 'Image' }).getAttribute('aria-disabled') === 'true').toBe(
+        true,
+      ),
+    );
+    fireEvent.change(within(dialog).getByLabelText('Context window 1'), { target: { value: '-1' } });
+    const writes = api.requests.filter((request) => request.method === 'PUT').length;
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(
+      await within(dialog).findByText('Token limits must be positive integers; K and M suffixes are supported.'),
+    ).toBeTruthy();
+    expect(api.requests.filter((request) => request.method === 'PUT')).toHaveLength(writes);
+  });
+
+  test.each(['organization', 'workspace'] as const)(
+    'fetches available models using saved %s credentials without saving the draft',
+    async (scope) => {
+      resetTestDom(
+        scope === 'organization'
+          ? 'https://oma.duck.ai/settings/llm'
+          : 'https://oma.duck.ai/workspaces/default/llm-models',
+      );
+      const provider = organizationProvider();
+      if (scope === 'workspace') {
+        provider.scope = undefined;
+        provider.id = 'workspace-provider';
+        provider.name = 'Workspace gateway';
+        provider.slug = 'gateway';
+      }
+      const api = mockProvidersApi(
+        ['shared-model', 'new-model'],
+        scope === 'organization' ? { organizationProvider: provider } : { initialProviders: [provider] },
+      );
+      renderPage('en', 'admin', scope);
+      fireEvent.click(await screen.findByRole('button', { name: provider.name, exact: true }));
+      fireEvent.click(screen.getByRole('button', { name: 'Edit', exact: true }));
+      const dialog = screen.getByRole('dialog', { name: 'Edit provider' });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Model parameters 1' }));
+      fireEvent.change(within(dialog).getByLabelText('Context window 1'), { target: { value: '1M' } });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Get available models' }));
+      await waitFor(() =>
+        expect(
+          within(dialog)
+            .getAllByRole('textbox')
+            .some((input) => (input as HTMLInputElement).value === 'new-model'),
+        ).toBe(true),
+      );
+      expect((within(dialog).getByLabelText('Context window 1') as HTMLInputElement).value).toBe('1M');
+      expect(
+        api.requests.some(
+          (request) =>
+            request.url.endsWith('/models/preview') && request.method === 'POST' && request.body === undefined,
+        ),
+      ).toBe(true);
+      expect(api.requests.some((request) => request.method === 'PUT' || request.url.endsWith('/models/sync'))).toBe(
+        false,
+      );
+      const fetches = api.requests.filter((request) => request.url.endsWith('/models/preview')).length;
+      fireEvent.change(within(dialog).getByLabelText('Base URL'), { target: { value: 'https://changed.example.com' } });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Get available models' }));
+      expect(
+        await within(dialog).findByText('Enter an API key to fetch models after changing the endpoint or protocol.'),
+      ).toBeTruthy();
+      expect(api.requests.filter((request) => request.url.endsWith('/models/preview')).length).toBe(fetches);
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Edit', exact: true }));
+      expect(
+        within(screen.getByRole('dialog'))
+          .getAllByRole('textbox')
+          .some((input) => (input as HTMLInputElement).value === 'new-model'),
+      ).toBe(false);
+    },
+  );
+
+  test('keeps Provider ID independent from the display name and requires it on creation', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
+    const api = mockProvidersApi();
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add provider' });
+    const inputs = within(dialog).getAllByRole('textbox');
+    expect(inputs[0]).toBe(within(dialog).getByLabelText('Provider ID'));
+    expect(inputs[1]).toBe(within(dialog).getByLabelText('Display name'));
+    fireEvent.change(within(dialog).getByLabelText('Display name'), { target: { value: 'Gateway' } });
+    fireEvent.change(within(dialog).getByLabelText('Base URL'), { target: { value: 'https://models.example.com' } });
+    fireEvent.change(within(dialog).getByLabelText('API key'), { target: { value: 'test-key' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(await within(dialog).findByText('Provider ID is required.')).toBeTruthy();
+    expect(api.requests.every((request) => request.method === 'GET')).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText('Provider ID'), { target: { value: 'acme-gateway' } });
+    fireEvent.change(within(dialog).getByLabelText('Display name'), { target: { value: 'My gateway' } });
+    expect((within(dialog).getByLabelText('Provider ID') as HTMLInputElement).value).toBe('acme-gateway');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(api.requests.findLast((request) => request.method === 'POST')?.body).toMatchObject({
+      slug: 'acme-gateway',
+      name: 'My gateway',
+    });
+  });
+
+  test('shows capacity hints without saving implicit defaults', async () => {
+    resetTestDom('https://oma.duck.ai/settings/llm');
+    const api = mockProvidersApi([], { organizationProvider: organizationProvider() });
+    renderPage('en', 'admin', 'organization');
+    fireEvent.click(await screen.findByRole('button', { name: 'Organization default', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit', exact: true }));
+    let dialog = screen.getByRole('dialog', { name: 'Edit provider' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Model parameters 1' }));
+    for (const [name, hint] of [
+      ['Context window 1', '256K'],
+      ['Maximum output tokens 1', '32K'],
+    ]) {
+      const input = within(dialog).getByLabelText(name!) as HTMLInputElement;
+      expect(input.value).toBe('');
+      expect(input.placeholder).toBe(hint!);
+    }
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const body = api.requests.findLast((request) => request.method === 'PUT')?.body;
+    expect(body?.model_context_windows).toEqual({});
+    expect(body?.model_options).toEqual({ 'shared-model': { input_modalities: ['text'] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit', exact: true }));
+    dialog = screen.getByRole('dialog', { name: 'Edit provider' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Model parameters 1' }));
+    expect((within(dialog).getByLabelText('Context window 1') as HTMLInputElement).value).toBe('');
+    expect((within(dialog).getByLabelText('Maximum output tokens 1') as HTMLInputElement).value).toBe('');
+  });
+
+  test('starts with collapsed directories in both provider views without writing configuration', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
+    const api = mockProvidersApi([], { organizationProvider: organizationProvider() });
+    renderPage();
+    const trigger = await screen.findByRole('button', { name: 'Organization default models' });
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('organization/shared-model')).toBeNull();
+    expect(screen.getByText('https://models.example.com')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Organization default' }));
+    expect(screen.getByRole('button', { name: 'Organization default models' }).getAttribute('aria-expanded')).toBe(
+      'false',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Organization default models' }));
+    expect(await screen.findByText('organization/shared-model')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'All providers' }));
+    expect(screen.getByRole('button', { name: 'Organization default models' }).getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+    expect(api.requests.every((request) => request.method === 'GET')).toBe(true);
+  });
+
+  test('search opens matches temporarily and preserves hidden provider expansion across view changes', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
+    mockProvidersApi([], {
+      initialProviders: [
+        providerFromBody('workspace', {
+          name: 'Workspace gateway',
+          slug: 'workspace',
+          base_url: 'https://workspace.example.com',
+          api_key: 'test-key',
+          model_ids: ['local-model'],
+        }),
+      ],
+      organizationProvider: organizationProvider(),
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace gateway models' }));
+    const search = screen.getByLabelText('Add or search model');
+    fireEvent.change(search, { target: { value: 'shared' } });
+    expect(screen.getByRole('button', { name: 'Organization default models' }).getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+    expect(screen.getByText('organization/shared-model')).toBeTruthy();
+    fireEvent.change(search, { target: { value: '' } });
+    expect(screen.getByRole('button', { name: 'Organization default models' }).getAttribute('aria-expanded')).toBe(
+      'false',
+    );
+    expect(screen.getByRole('button', { name: 'Workspace gateway models' }).getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Organization default' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Organization default models' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Organization default models' }));
+    fireEvent.click(screen.getByRole('button', { name: 'All providers' }));
+    expect(screen.getByRole('button', { name: 'Workspace gateway models' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Organization default models' }).getAttribute('aria-expanded')).toBe(
+      'false',
+    );
+  });
+
+  test('keeps directory expansion after refresh and provider edits without toggling on edit', async () => {
+    resetTestDom('https://oma.duck.ai/settings/llm');
+    mockProvidersApi(['new-model'], { organizationProvider: organizationProvider() });
+    renderPage('en', 'admin', 'organization');
+    fireEvent.click(await screen.findByRole('button', { name: 'Organization default' }));
+    const trigger = () => screen.getByRole('button', { name: 'Organization default models', hidden: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(trigger().getAttribute('aria-expanded')).toBe('false');
+    const dialog = screen.getByRole('dialog', { name: 'Edit provider' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(trigger().getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(trigger());
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh model list' }));
+    expect(await screen.findByText('organization/new-model')).toBeTruthy();
+    expect(trigger().getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(trigger().getAttribute('aria-expanded')).toBe('true');
+  });
+
   test('workspace all-provider groups identify inherited organization models as read-only', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
     mockProvidersApi([], { organizationProvider: organizationProvider() });
@@ -48,18 +289,18 @@ describe('LLM models page', () => {
     {
       locale: 'en' as const,
       title: 'Add provider',
-      name: 'Provider name',
+      name: 'Display name',
       key: 'API key',
       save: 'Save',
-      error: 'The slug "organization" is reserved for the organization default provider.',
+      error: 'Provider ID "organization" is reserved for the organization default provider.',
     },
     {
       locale: 'zh-CN' as const,
       title: '添加 Provider',
-      name: 'Provider 名称',
+      name: '显示名称',
       key: 'API Key',
       save: '保存',
-      error: 'slug“organization”保留给组织默认 Provider，工作区 Provider 请使用其他名称。',
+      error: 'Provider ID“organization”保留给组织默认 Provider。',
     },
   ])(
     'rejects the reserved workspace slug before submitting in $locale',
@@ -69,6 +310,7 @@ describe('LLM models page', () => {
       renderPage(locale);
       fireEvent.click(await screen.findByRole('button', { name: title }));
       const dialog = screen.getByRole('dialog', { name: title });
+      fireEvent.change(within(dialog).getByLabelText('Provider ID'), { target: { value: 'organization' } });
       fireEvent.change(within(dialog).getByLabelText(name), { target: { value: 'Organization' } });
       fireEvent.change(within(dialog).getByLabelText('Base URL'), {
         target: { value: 'https://workspace.example.com' },
@@ -107,6 +349,7 @@ describe('LLM models page', () => {
     resetTestDom('https://oma.duck.ai/settings/llm');
     const api = mockProvidersApi([], { organizationProvider: organizationProvider() });
     renderPage('en', 'user', 'organization');
+    fireEvent.click(await screen.findByRole('button', { name: 'Organization default models' }));
     expect(await screen.findByText('organization/shared-model')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Organization default' }));
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
@@ -121,6 +364,7 @@ describe('LLM models page', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
     mockProvidersApi([], { organizationProvider: organizationProvider() });
     renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Organization default models' }));
     expect(await screen.findByText('organization/shared-model')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Organization default' }));
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
@@ -136,14 +380,14 @@ describe('LLM models page', () => {
     await screen.findByText('No providers yet');
     fireEvent.click(screen.getByRole('button', { name: 'Add provider' }));
     const dialog = screen.getByRole('dialog', { name: 'Add provider' });
-    const slug = within(dialog).getByLabelText('Slug') as HTMLInputElement;
+    const slug = within(dialog).getByLabelText('Provider ID') as HTMLInputElement;
     expect(slug.value).toBe('organization');
     expect(slug.readOnly).toBe(true);
     expect(within(dialog).queryByText('Quick configure AI gateway')).toBeNull();
-    fireEvent.change(within(dialog).getByLabelText('Provider name'), { target: { value: 'Organization default' } });
+    fireEvent.change(within(dialog).getByLabelText('Display name'), { target: { value: 'Organization default' } });
     fireEvent.change(within(dialog).getByLabelText('Base URL'), { target: { value: 'https://models.example.com' } });
     fireEvent.change(within(dialog).getByLabelText('API key'), { target: { value: 'organization-key' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Fetch model list' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Get available models' }));
     await waitFor(() =>
       expect(api.requests.some((request) => request.url.endsWith('/llm_provider/preview_models'))).toBe(true),
     );
@@ -153,6 +397,7 @@ describe('LLM models page', () => {
       ),
     );
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Organization default models' }));
     expect(await screen.findByText('organization/shared-model')).toBeTruthy();
     expect(api.requests.find((request) => request.method === 'PUT')?.body?.slug).toBe('organization');
     expect(api.requests.every((request) => !request.url.includes('/workspaces/'))).toBe(true);
@@ -248,6 +493,7 @@ describe('LLM models page', () => {
       ],
     });
     renderPage('en', 'user');
+    fireEvent.click(await screen.findByRole('button', { name: 'Read gateway models' }));
     await screen.findByText('readonly/model-one');
     expect(screen.getByText('readonly/model-two')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Read gateway' }));
@@ -279,10 +525,11 @@ describe('LLM models page', () => {
     expect(within(dialog).getByText('/v1/chat/completions')).toBeTruthy();
     expect(within(dialog).getByText('Chat Completions is supported in brain mode only.')).toBeTruthy();
     expect(screen.queryByRole('option', { name: 'Responses' })).toBeNull();
-    fireEvent.change(within(dialog).getByLabelText('Provider name'), { target: { value: 'Chat Gateway' } });
+    fireEvent.change(within(dialog).getByLabelText('Provider ID'), { target: { value: 'chat-gateway' } });
+    fireEvent.change(within(dialog).getByLabelText('Display name'), { target: { value: 'Chat Gateway' } });
     fireEvent.change(within(dialog).getByLabelText('Base URL'), { target: { value: 'https://chat.example.com' } });
     fireEvent.change(within(dialog).getByLabelText('API key'), { target: { value: 'chat-key' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Fetch model list' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Get available models' }));
     await waitFor(() =>
       expect((within(dialog).getByRole('textbox', { name: 'Model ID 1' }) as HTMLInputElement).value).toBe(
         'chat-model',
@@ -330,16 +577,17 @@ describe('LLM models page', () => {
     await screen.findByText('No providers yet');
     fireEvent.click(screen.getAllByRole('button', { name: 'Add provider' })[0]);
     const createDialog = screen.getByRole('dialog', { name: 'Add provider' });
-    fireEvent.change(within(createDialog).getByLabelText('Provider name'), { target: { value: 'Empty Gateway' } });
+    fireEvent.change(within(createDialog).getByLabelText('Provider ID'), { target: { value: 'empty-gateway' } });
+    fireEvent.change(within(createDialog).getByLabelText('Display name'), { target: { value: 'Empty Gateway' } });
     fireEvent.change(within(createDialog).getByLabelText('Base URL'), {
       target: { value: 'https://empty.example.com/anthropic' },
     });
     fireEvent.change(within(createDialog).getByLabelText('API key'), { target: { value: 'empty-test-key' } });
-    fireEvent.click(within(createDialog).getByRole('button', { name: 'Fetch model list' }));
+    fireEvent.click(within(createDialog).getByRole('button', { name: 'Get available models' }));
     expect(await screen.findByText('The provider returned no models. You can add model IDs later.')).toBeTruthy();
     fireEvent.click(within(createDialog).getByRole('button', { name: 'Save' }));
 
-    expect(await screen.findByRole('button', { name: 'Empty Gateway models' })).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: 'Empty Gateway models' }));
     expect(screen.getByText('No models configured for this provider.')).toBeTruthy();
     expect(screen.queryAllByTestId('llm-model-row')).toHaveLength(0);
 
@@ -403,22 +651,22 @@ describe('LLM models page', () => {
     const selectedDashScope = screen.getByTestId('llm-provider-group-provider_1');
     expect(within(selectedDashScope).getByText('https://dashscope.example.com/anthropic')).toBeTruthy();
     expect(within(selectedDashScope).getByText('•••• 1111')).toBeTruthy();
+    expect(within(selectedDashScope).queryAllByTestId('llm-model-row')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'DashScope models' }));
     expect(within(selectedDashScope).getAllByTestId('llm-model-row')).toHaveLength(2);
     expect(screen.queryByText('test-secret-1111')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     const editDialog = screen.getByRole('dialog', { name: 'Edit provider' });
-    const editSlug = within(editDialog).getByLabelText('Slug') as HTMLInputElement;
-    expect(editSlug.value).toBe('dashscope');
-    expect(editSlug.readOnly).toBe(true);
+    expect(within(editDialog).queryByLabelText('Provider ID')).toBeNull();
     const editApiKey = within(editDialog).getByLabelText('API key') as HTMLInputElement;
     expect(editApiKey.value).toBe('');
-    expect(within(editDialog).queryByRole('button', { name: 'Fetch model list' })).toBeNull();
+    expect(within(editDialog).getByRole('button', { name: 'Get available models' })).toBeTruthy();
     fireEvent.change(editApiKey, { target: { value: 'replacement-key' } });
-    expect(within(editDialog).getByRole('button', { name: 'Fetch model list' })).toBeTruthy();
+    expect(within(editDialog).getByRole('button', { name: 'Get available models' })).toBeTruthy();
     fireEvent.change(editApiKey, { target: { value: '' } });
-    expect(within(editDialog).queryByRole('button', { name: 'Fetch model list' })).toBeNull();
-    fireEvent.change(within(editDialog).getByLabelText('Provider name'), {
+    expect(within(editDialog).getByRole('button', { name: 'Get available models' })).toBeTruthy();
+    fireEvent.change(within(editDialog).getByLabelText('Display name'), {
       target: { value: 'DashScope updated' },
     });
     fireEvent.click(within(editDialog).getByRole('button', { name: 'Save' }));
@@ -518,18 +766,20 @@ describe('LLM models page', () => {
     expect(await screen.findByText('No providers yet')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: 'Add provider' })[0]);
     const dialog = screen.getByRole('dialog', { name: 'Add provider' });
-    fireEvent.change(within(dialog).getByLabelText('Provider name'), { target: { value: 'DashScope' } });
+    fireEvent.change(within(dialog).getByLabelText('Provider ID'), { target: { value: 'dashscope' } });
+    fireEvent.change(within(dialog).getByLabelText('Display name'), { target: { value: 'DashScope' } });
     fireEvent.change(within(dialog).getByLabelText('Base URL'), {
       target: { value: 'https://dashscope.example.com/anthropic' },
     });
     fireEvent.change(within(dialog).getByLabelText('API key'), { target: { value: 'test-secret-1111' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Fetch model list' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Get available models' }));
 
     expect(await within(dialog).findByDisplayValue('glm-4.7', {}, { timeout: 2000 })).toBeTruthy();
     expect(within(dialog).getByDisplayValue('kimi-k2.5')).toBeTruthy();
     expect(api.requests.some((request) => request.url.endsWith('/preview_models'))).toBe(true);
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'DashScope models' }));
     expect(await screen.findByText('dashscope/glm-4.7', {}, { timeout: 2000 })).toBeTruthy();
     expect(api.requests.some((request) => request.url.includes('/models/sync'))).toBe(false);
 
@@ -559,7 +809,7 @@ describe('LLM models page', () => {
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Model ID 1' }), {
       target: { value: 'manual-model' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Fetch model list' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Get available models' }));
 
     expect(await within(dialog).findByDisplayValue('manual-model')).toBeTruthy();
     expect(within(dialog).getByDisplayValue('glm-4.7')).toBeTruthy();
@@ -581,7 +831,7 @@ describe('LLM models page', () => {
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Model ID 1' }), {
       target: { value: 'manual-model' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Fetch model list' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Get available models' }));
 
     expect(await screen.findByText('The provider returned no models. You can add model IDs later.')).toBeTruthy();
     expect(within(dialog).getByDisplayValue('manual-model')).toBeTruthy();
@@ -635,9 +885,9 @@ describe('LLM models page', () => {
     expect(await screen.findByText('No providers yet')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: 'Add provider' })[0]);
     const dialog = screen.getByRole('dialog', { name: 'Add provider' });
-    fireEvent.change(within(dialog).getByLabelText('Provider name'), { target: { value: 'DashScope CN' } });
-    expect((within(dialog).getByLabelText('Slug') as HTMLInputElement).value).toBe('dashscope-cn');
-    fireEvent.change(within(dialog).getByLabelText('Slug'), { target: { value: 'Dash/Scope' } });
+    fireEvent.change(within(dialog).getByLabelText('Display name'), { target: { value: 'DashScope CN' } });
+    expect((within(dialog).getByLabelText('Provider ID') as HTMLInputElement).value).toBe('');
+    fireEvent.change(within(dialog).getByLabelText('Provider ID'), { target: { value: 'Dash/Scope' } });
     fireEvent.change(within(dialog).getByLabelText('Base URL'), {
       target: { value: 'https://dashscope.example.com/anthropic' },
     });
@@ -646,7 +896,7 @@ describe('LLM models page', () => {
 
     expect(
       await within(dialog).findByText(
-        'Slug must contain 1 to 32 lowercase letters, digits, ".", "_" or "-" and start with a letter or digit.',
+        'Provider ID must contain 1 to 32 lowercase letters, digits, ".", "_" or "-" and start with a letter or digit.',
       ),
     ).toBeTruthy();
     expect(api.requests.some((request) => request.method === 'POST' && request.url.endsWith('/llm_providers'))).toBe(
@@ -666,12 +916,13 @@ describe('LLM models page', () => {
     expect(await screen.findByText('No providers yet')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: 'Add provider' })[0]);
     const dialog = screen.getByRole('dialog', { name: 'Add provider' });
-    fireEvent.change(within(dialog).getByLabelText('Provider name'), { target: { value: 'DashScope' } });
+    fireEvent.change(within(dialog).getByLabelText('Provider ID'), { target: { value: 'dashscope' } });
+    fireEvent.change(within(dialog).getByLabelText('Display name'), { target: { value: 'DashScope' } });
     fireEvent.change(within(dialog).getByLabelText('Base URL'), {
       target: { value: 'https://dashscope.example.com/anthropic' },
     });
     fireEvent.change(within(dialog).getByLabelText('API key'), { target: { value: 'test-secret-1111' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Fetch model list' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Get available models' }));
 
     const toastTitle = await screen.findByText('Could not list models from this provider.', {}, { timeout: 2000 });
     const toastElement = toastTitle.closest('[data-sonner-toast]');
@@ -698,7 +949,8 @@ describe('LLM models page', () => {
     expect(await screen.findByText('尚未配置 Provider')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: '添加 Provider' })[0]);
     const dialog = screen.getByRole('dialog', { name: '添加 Provider' });
-    fireEvent.change(within(dialog).getByLabelText('Provider 名称'), { target: { value: '阿里云' } });
+    fireEvent.change(within(dialog).getByLabelText('Provider ID'), { target: { value: 'aliyun' } });
+    fireEvent.change(within(dialog).getByLabelText('显示名称'), { target: { value: '阿里云' } });
     fireEvent.change(within(dialog).getByLabelText('Base URL'), {
       target: { value: 'https://dashscope.example.com/anthropic' },
     });
@@ -708,16 +960,17 @@ describe('LLM models page', () => {
     });
     fireEvent.click(within(dialog).getByRole('button', { name: '保存' }));
 
-    expect(await within(dialog).findByText('已存在使用该 slug 的 Provider。')).toBeTruthy();
+    expect(await within(dialog).findByText('该 Provider ID 已存在。')).toBeTruthy();
     expect(within(dialog).queryByText('wording changed')).toBeNull();
-    expect(api.requests.find((request) => request.method === 'POST')?.body).not.toHaveProperty('slug');
+    expect(api.requests.find((request) => request.method === 'POST')?.body?.slug).toBe('aliyun');
   });
 });
 
 async function createProvider(name: string, baseUrl: string, apiKey: string, modelIDs: string[]) {
   fireEvent.click(screen.getAllByRole('button', { name: 'Add provider' })[0]);
   const dialog = screen.getByRole('dialog', { name: 'Add provider' });
-  fireEvent.change(within(dialog).getByLabelText('Provider name'), { target: { value: name } });
+  fireEvent.change(within(dialog).getByLabelText('Provider ID'), { target: { value: name.toLowerCase() } });
+  fireEvent.change(within(dialog).getByLabelText('Display name'), { target: { value: name } });
   fireEvent.change(within(dialog).getByLabelText('Base URL'), { target: { value: baseUrl } });
   fireEvent.change(within(dialog).getByLabelText('API key'), { target: { value: apiKey } });
   fireEvent.change(within(dialog).getByRole('textbox', { name: 'Model ID 1' }), {
@@ -731,6 +984,7 @@ async function createProvider(name: string, baseUrl: string, apiKey: string, mod
   }
   fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
   await screen.findByRole('button', { name }, { timeout: 2000 });
+  fireEvent.click(await screen.findByRole('button', { name: `${name} models` }));
 }
 
 const rootRoute = createRootRoute();
@@ -832,7 +1086,7 @@ function mockProvidersApi(
       organization = { ...organization, model_ids: [...new Set([...organization.model_ids, ...liveModelIds])] };
       return jsonResponse(organization);
     }
-    if (url.endsWith('/preview_models') && method === 'POST') {
+    if ((url.endsWith('/preview_models') || url.endsWith('/models/preview')) && method === 'POST') {
       if (options.previewStatus && options.previewStatus >= 400) {
         return jsonResponse(providerError(options.previewCode, options.previewMessage), options.previewStatus);
       }
@@ -895,6 +1149,10 @@ function providerFromBody(id: string, body?: Record<string, unknown>, existingLa
     has_api_key: Boolean(apiKey || existingLast4),
     api_key_last4: apiKey ? apiKey.slice(-4) : existingLast4,
     model_ids: Array.isArray(body?.model_ids) ? body.model_ids.map(String) : [],
+    model_options: body?.model_options as LLMProvider['model_options'],
+    model_context_windows: Object.fromEntries(
+      Object.entries(body?.model_context_windows ?? {}).map(([id, value]) => [id, Number(value)]),
+    ),
     created_at: '2026-08-20T00:00:00Z',
     updated_at: '2026-08-20T00:00:00Z',
   };

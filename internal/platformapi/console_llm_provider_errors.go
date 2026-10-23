@@ -5,6 +5,7 @@ import (
 )
 
 const (
+	llmProviderCodeContextWindowInvalid = "model_context_window_invalid"
 	llmProviderCodeAPIKeyRequired       = "api_key_required"
 	llmProviderCodeBaseURLInvalid       = "base_url_invalid"
 	llmProviderCodeBaseURLUnsafe        = "base_url_unsafe"

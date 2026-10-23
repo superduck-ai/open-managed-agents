@@ -494,6 +494,22 @@ func TestWorkspaceLLMProviderModelDiscovery(t *testing.T) {
 			"model_ids":["kimi-k2.5"]
 		}`)
 		providerID, _ := created["id"].(string)
+
+		available := app.platformRequest(t, http.MethodPost, path+"/"+providerID+"/models/preview", nil, cookies)
+		if available.StatusCode != http.StatusOK {
+			t.Fatalf("saved preview: %d %s", available.StatusCode, readAll(t, available.Body))
+		}
+		var availableBody map[string]any
+		decodeJSON(t, available.Body, &availableBody)
+		available.Body.Close()
+		assertJSONDoesNotContain(t, availableBody, liveKey)
+		if ids, ok := availableBody["model_ids"].([]any); !ok || len(ids) != 2 {
+			t.Fatalf("preview: %#v", availableBody)
+		}
+		saved, err := app.db.GetLLMProvider(t.Context(), orgUUID, getDefaultDBIDs(t, app.pool).WorkspaceUUID, providerID)
+		if err != nil || !slices.Equal(saved.ModelIDs, []string{"kimi-k2.5"}) {
+			t.Fatalf("preview changed model IDs: %v %v", saved.ModelIDs, err)
+		}
 		before := requests.Load()
 		resp := app.platformRequest(t, http.MethodPost, path+"/"+providerID+"/models/sync", nil, cookies)
 		defer resp.Body.Close()
@@ -868,6 +884,22 @@ func TestOrganizationLLMProviderPreviewAndSync(t *testing.T) {
 	if created.StatusCode != http.StatusCreated {
 		t.Fatalf("create status = %d", created.StatusCode)
 	}
+	available := app.platformRequest(t, http.MethodPost, path+"/models/preview", nil, cookies)
+	if available.StatusCode != http.StatusOK {
+		t.Fatalf("saved preview: %d %s", available.StatusCode, readAll(t, available.Body))
+	}
+	var availableBody map[string]any
+	decodeJSON(t, available.Body, &availableBody)
+	available.Body.Close()
+	assertJSONDoesNotContain(t, availableBody, "organization-preview-key")
+	if ids, ok := availableBody["model_ids"].([]any); !ok || len(ids) != 1 || ids[0] != "discovered-model" {
+		t.Fatalf("preview: %#v", availableBody)
+	}
+	saved, err := app.db.GetOrganizationLLMProvider(t.Context(), orgUUID)
+	if err != nil || !slices.Equal(saved.ModelIDs, []string{"manual-model"}) {
+		t.Fatalf("preview changed model IDs: %v %v", saved.ModelIDs, err)
+	}
+
 	synced := app.platformRequest(t, http.MethodPost, path+"/models/sync", nil, cookies)
 	if synced.StatusCode != http.StatusOK {
 		t.Fatalf("sync status = %d: %s", synced.StatusCode, readAll(t, synced.Body))
@@ -886,7 +918,7 @@ func TestOrganizationLLMProviderPreviewAndSync(t *testing.T) {
 	if _, err := app.pool.Exec(t.Context(), `UPDATE users SET role='user' WHERE organization_uuid=$1 AND email='organization-preview@example.com'`, orgUUID); err != nil {
 		t.Fatal(err)
 	}
-	for _, operation := range []struct{ method, suffix string }{{http.MethodPost, "/preview_models"}, {http.MethodPost, "/models/sync"}, {http.MethodDelete, ""}} {
+	for _, operation := range []struct{ method, suffix string }{{http.MethodPost, "/preview_models"}, {http.MethodPost, "/models/preview"}, {http.MethodPost, "/models/sync"}, {http.MethodDelete, ""}} {
 		response := app.platformRequest(t, operation.method, path+operation.suffix, strings.NewReader(`{}`), cookies)
 		response.Body.Close()
 		if response.StatusCode != http.StatusForbidden {

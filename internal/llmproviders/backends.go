@@ -1,6 +1,7 @@
 package llmproviders
 
 import (
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"net/http"
 	"slices"
 )
@@ -62,4 +63,40 @@ func (c Catalog) Backends() (map[string]string, error) {
 		}
 	}
 	return backends, nil
+}
+
+func (c Catalog) modelSelections() map[string]CatalogModel {
+	ids := c.ModelIDs()
+	for _, id := range slices.Clone(ids) {
+		if selected, err := c.Lookup(id); err == nil {
+			ids = append(ids, selected.UpstreamModelID)
+		}
+	}
+	selectedModels := make(map[string]CatalogModel)
+	for _, id := range ids {
+		if selected, err := c.Lookup(id); err == nil {
+			selectedModels[id] = selected
+		}
+	}
+	return selectedModels
+}
+
+func (c Catalog) ContextWindows() map[string]int {
+	windows := make(map[string]int)
+	for id, selected := range c.modelSelections() {
+		if value := selected.Provider.ModelContextWindows[selected.UpstreamModelID]; value > 0 {
+			windows[id] = value
+		}
+	}
+	return windows
+}
+
+func (c Catalog) ModelOptions() map[string]db.ModelOptions {
+	options := make(map[string]db.ModelOptions)
+	for id, selected := range c.modelSelections() {
+		if value, ok := selected.Provider.ModelOptions[selected.UpstreamModelID]; ok {
+			options[id] = value
+		}
+	}
+	return options
 }

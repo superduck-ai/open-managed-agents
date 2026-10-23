@@ -20,6 +20,11 @@ func (h *Handler) WithSandboxReclaimer(reclaimer sandboxReclaimer) *Handler {
 	return h
 }
 
+func (h *Handler) WithSessionEventObserver(observer SessionEventObserver) *Handler {
+	h.sessionEvents = observer
+	return h
+}
+
 // NewHandler 要求显式注入与 environment runner 和 code-session HTTP Handler 共用的 Service，
 // 并把自身注册为公开事件 sink；这样 worker 输出会进入同一 session stream，而不会落到另一份 Service 状态。
 func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesessions.Service, webhookEvents webhookEnqueuer, eventBus sessionfanout.EventBus, secretService *secrets.Service, logger *slog.Logger) *Handler {

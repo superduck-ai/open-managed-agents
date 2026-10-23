@@ -13,6 +13,28 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 )
 
+type recordingSessionObserver struct {
+	events []db.SessionEvent
+}
+
+func (o *recordingSessionObserver) ObserveSessionEvents(_ context.Context, events []db.SessionEvent) {
+	o.events = append(o.events, events...)
+}
+
+func TestPublishSessionEventsNotifiesObserver(t *testing.T) {
+	observer := &recordingSessionObserver{}
+	handler := &Handler{
+		eventBus:      &recordingEventBus{},
+		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		sessionEvents: observer,
+	}
+	event := db.SessionEvent{SessionExternalID: "session-a", ExternalID: "event-a", EventType: "session.status_idle"}
+	handler.publishSessionEvents(context.Background(), []db.SessionEvent{event})
+	if len(observer.events) != 1 || observer.events[0].ExternalID != "event-a" {
+		t.Fatalf("observed = %#v", observer.events)
+	}
+}
+
 func TestPublishSessionEventsGroupsEnvelopesBySession(t *testing.T) {
 	bus := &recordingEventBus{}
 	handler := &Handler{

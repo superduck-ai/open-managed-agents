@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EvaluationEvaluatorMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        name,
+        description,
+        created_by_user_uuid,
+        created_at,
+        updated_at,
+        archived_at
+    </sql>
+
+    <sql id="page_columns">
+        d.uuid,
+        d.external_id,
+        d.organization_uuid,
+        d.workspace_uuid,
+        d.name,
+        d.description,
+        d.created_by_user_uuid,
+        d.created_at,
+        d.updated_at,
+        d.archived_at,
+        v.uuid AS version_uuid,
+        v.external_id AS version_external_id,
+        v.version AS version_number,
+        v.evaluator_type,
+        v.model,
+        v.agent_id,
+        v.prompt_template,
+        CAST(v.variables AS text) AS variables_json,
+        v.created_at AS version_created_at
+    </sql>
+
+    <sql id="latest_version_join">
+        FROM evaluation_evaluators AS d
+        JOIN evaluation_evaluator_versions AS v
+            ON v.evaluator_uuid = d.uuid
+            AND v.organization_uuid = d.organization_uuid
+            AND v.workspace_uuid = d.workspace_uuid
+            AND v.version = (
+                SELECT MAX(latest.version)
+                FROM evaluation_evaluator_versions AS latest
+                WHERE latest.evaluator_uuid = d.uuid
+                AND latest.organization_uuid = d.organization_uuid
+                AND latest.workspace_uuid = d.workspace_uuid
+            )
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="evaluationEvaluatorRow">
+        INSERT INTO evaluation_evaluators (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            name,
+            description,
+            created_by_user_uuid,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.Name},
+            #{params.Description},
+            #{params.CreatedByUserUUID},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="evaluationEvaluatorPageRow">
+        SELECT
+        <include refid="page_columns"/>
+        <include refid="latest_version_join"/>
+        WHERE d.organization_uuid = #{organizationUUID}
+        AND d.workspace_uuid = #{workspaceUUID}
+        AND d.external_id = #{externalID}
+        AND d.archived_at IS NULL
+    </select>
+
+    <select id="FindForUpdate" resultType="evaluationEvaluatorRow">
+        SELECT
+        <include refid="columns"/>
+        FROM evaluation_evaluators
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND archived_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <select id="ListPage" resultType="evaluationEvaluatorPageRow">
+        SELECT
+        <include refid="page_columns"/>
+        <include refid="latest_version_join"/>
+        <where>
+            d.organization_uuid = #{params.OrganizationUUID}
+            AND d.workspace_uuid = #{params.WorkspaceUUID}
+            AND d.archived_at IS NULL
+            <if test="params.Cursor != nil">
+                AND (d.created_at, d.uuid) &lt; (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
+            </if>
+        </where>
+        ORDER BY d.created_at DESC, d.uuid DESC
+        LIMIT #{params.FetchLimit}
+    </select>
+</mapper>

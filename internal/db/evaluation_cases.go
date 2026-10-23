@@ -1,0 +1,324 @@
+package db
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"time"
+
+	"github.com/superduck-ai/yourbatis"
+)
+
+var ErrEvaluationCaseMissing = errors.New("evaluation case missing")
+
+type EvaluationCase struct {
+	UUID              string
+	ExternalID        string
+	OrganizationUUID  string
+	WorkspaceUUID     string
+	DatasetUUID       string
+	DatasetExternalID string
+	VersionUUID       string
+	VersionExternalID string
+	Position          int
+	Name              string
+	Description       string
+	Turns             []string
+	Checkpoints       json.RawMessage
+	InputFiles        json.RawMessage
+	ReferenceFiles    json.RawMessage
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type EvaluationCaseWrite struct {
+	UUID           string
+	ExternalID     string
+	Name           string
+	Description    string
+	Turns          []string
+	Checkpoints    json.RawMessage
+	InputFiles     json.RawMessage
+	ReferenceFiles json.RawMessage
+}
+
+type EvaluationCasePageCursor struct {
+	Position int
+	UUID     string
+}
+
+type ListEvaluationCasesPageParams struct {
+	OrganizationUUID  string
+	WorkspaceUUID     string
+	DatasetExternalID string
+	Limit             int
+	Cursor            *EvaluationCasePageCursor
+}
+
+func (d *DB) ListEvaluationCasesPage(ctx context.Context, params ListEvaluationCasesPageParams) ([]EvaluationCase, bool, error) {
+	dataset, err := d.GetEvaluationDataset(ctx, params.OrganizationUUID, params.WorkspaceUUID, params.DatasetExternalID)
+	if err != nil {
+		return nil, false, err
+	}
+	limit := params.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := NewEvaluationCaseMapper(d.mapperDB).ListPage(ctx, evaluationCasePageParams{
+		OrganizationUUID: params.OrganizationUUID,
+		WorkspaceUUID:    params.WorkspaceUUID,
+		VersionUUID:      dataset.Version.UUID,
+		FetchLimit:       limit + 1,
+		Cursor:           params.Cursor,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	cases := make([]EvaluationCase, 0, len(rows))
+	for _, row := range rows {
+		item, decodeErr := row.evaluationCase(dataset.ExternalID, dataset.Version.ExternalID)
+		if decodeErr != nil {
+			return nil, false, decodeErr
+		}
+		cases = append(cases, item)
+	}
+	hasMore := len(cases) > limit
+	if hasMore {
+		cases = cases[:limit]
+	}
+	return cases, hasMore, nil
+}
+
+func (d *DB) ListEvaluationCasesByVersion(ctx context.Context, organizationUUID, workspaceUUID, versionUUID string) ([]EvaluationCase, error) {
+	rows, err := NewEvaluationCaseMapper(d.mapperDB).ListByVersion(ctx, organizationUUID, workspaceUUID, versionUUID)
+	if err != nil {
+		return nil, err
+	}
+	cases := make([]EvaluationCase, 0, len(rows))
+	for _, row := range rows {
+		item, decodeErr := row.evaluationCase("", "")
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		cases = append(cases, item)
+	}
+	return cases, nil
+}
+
+func (d *DB) CreateEvaluationCases(ctx context.Context, organizationUUID, workspaceUUID, datasetExternalID string, writes []EvaluationCaseWrite, now time.Time) ([]EvaluationCase, error) {
+	if len(writes) == 0 {
+		return nil, ErrNotFound
+	}
+	var created []EvaluationCase
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		dataset, lockErr := lockEvaluationDataset(ctx, executor, organizationUUID, workspaceUUID, datasetExternalID)
+		if lockErr != nil {
+			return lockErr
+		}
+		version, versionErr := NewEvaluationDatasetVersionMapper(executor).FindLatest(ctx, organizationUUID, workspaceUUID, dataset.UUID)
+		if versionErr != nil {
+			return mapNoRows(versionErr)
+		}
+		cases := NewEvaluationCaseMapper(executor)
+		position, positionErr := cases.MaxPosition(ctx, organizationUUID, workspaceUUID, version.UUID)
+		if positionErr != nil {
+			return positionErr
+		}
+		inserted, insertErr := insertEvaluationCaseWrites(ctx, cases, evaluationCaseInsertTarget{
+			OrganizationUUID:  organizationUUID,
+			WorkspaceUUID:     workspaceUUID,
+			DatasetUUID:       dataset.UUID,
+			DatasetExternalID: dataset.ExternalID,
+			VersionUUID:       version.UUID,
+			VersionExternalID: version.ExternalID,
+		}, writes, position, now)
+		if insertErr != nil {
+			return insertErr
+		}
+		created = inserted
+		return nil
+	})
+	if isUniqueViolation(err) {
+		return nil, ErrDuplicate
+	}
+	return created, err
+}
+
+func (d *DB) UpdateEvaluationCase(ctx context.Context, organizationUUID, workspaceUUID, datasetExternalID, caseExternalID string, write EvaluationCaseWrite, now time.Time) (EvaluationCase, error) {
+	turnsJSON, err := encodeEvaluationTurns(write.Turns)
+	if err != nil {
+		return EvaluationCase{}, err
+	}
+	var updated EvaluationCase
+	err = d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		dataset, lockErr := lockEvaluationDataset(ctx, executor, organizationUUID, workspaceUUID, datasetExternalID)
+		if lockErr != nil {
+			return lockErr
+		}
+		version, versionErr := NewEvaluationDatasetVersionMapper(executor).FindLatest(ctx, organizationUUID, workspaceUUID, dataset.UUID)
+		if versionErr != nil {
+			return mapNoRows(versionErr)
+		}
+		row, updateErr := NewEvaluationCaseMapper(executor).Update(ctx, evaluationCaseUpdateParams{
+			OrganizationUUID:   organizationUUID,
+			WorkspaceUUID:      workspaceUUID,
+			VersionUUID:        version.UUID,
+			ExternalID:         caseExternalID,
+			Name:               write.Name,
+			Description:        write.Description,
+			TurnsJSON:          turnsJSON,
+			CheckpointsJSON:    encodeOptionalJSON(write.Checkpoints),
+			InputFilesJSON:     encodeOptionalJSON(write.InputFiles),
+			ReferenceFilesJSON: encodeOptionalJSON(write.ReferenceFiles),
+			UpdatedAt:          now,
+		})
+		if updateErr != nil {
+			return mapMissingEvaluationCase(updateErr)
+		}
+		item, decodeErr := row.evaluationCase(dataset.ExternalID, version.ExternalID)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		updated = item
+		return nil
+	})
+	return updated, err
+}
+
+func (d *DB) DeleteEvaluationCase(ctx context.Context, organizationUUID, workspaceUUID, datasetExternalID, caseExternalID string) (EvaluationCase, error) {
+	var deleted EvaluationCase
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		dataset, lockErr := lockEvaluationDataset(ctx, executor, organizationUUID, workspaceUUID, datasetExternalID)
+		if lockErr != nil {
+			return lockErr
+		}
+		version, versionErr := NewEvaluationDatasetVersionMapper(executor).FindLatest(ctx, organizationUUID, workspaceUUID, dataset.UUID)
+		if versionErr != nil {
+			return mapNoRows(versionErr)
+		}
+		row, deleteErr := NewEvaluationCaseMapper(executor).Delete(ctx, organizationUUID, workspaceUUID, version.UUID, caseExternalID)
+		if deleteErr != nil {
+			return mapMissingEvaluationCase(deleteErr)
+		}
+		item, decodeErr := row.evaluationCase(dataset.ExternalID, version.ExternalID)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		deleted = item
+		return nil
+	})
+	return deleted, err
+}
+
+func mapMissingEvaluationCase(err error) error {
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(mapNoRows(err), ErrNotFound) {
+		return ErrEvaluationCaseMissing
+	}
+	return err
+}
+
+type evaluationCaseInsertTarget struct {
+	OrganizationUUID  string
+	WorkspaceUUID     string
+	DatasetUUID       string
+	DatasetExternalID string
+	VersionUUID       string
+	VersionExternalID string
+}
+
+func insertEvaluationCaseWrites(ctx context.Context, cases EvaluationCaseMapper, target evaluationCaseInsertTarget, writes []EvaluationCaseWrite, position int, now time.Time) ([]EvaluationCase, error) {
+	created := make([]EvaluationCase, 0, len(writes))
+	for _, write := range writes {
+		position++
+		turnsJSON, err := encodeEvaluationTurns(write.Turns)
+		if err != nil {
+			return nil, err
+		}
+		row, err := cases.Insert(ctx, evaluationCaseWriteParams{
+			UUID:               write.UUID,
+			ExternalID:         write.ExternalID,
+			OrganizationUUID:   target.OrganizationUUID,
+			WorkspaceUUID:      target.WorkspaceUUID,
+			DatasetUUID:        target.DatasetUUID,
+			VersionUUID:        target.VersionUUID,
+			Position:           position,
+			Name:               write.Name,
+			Description:        write.Description,
+			TurnsJSON:          turnsJSON,
+			CheckpointsJSON:    encodeOptionalJSON(write.Checkpoints),
+			InputFilesJSON:     encodeOptionalJSON(write.InputFiles),
+			ReferenceFilesJSON: encodeOptionalJSON(write.ReferenceFiles),
+			CreatedAt:          now,
+		})
+		if err != nil {
+			return nil, err
+		}
+		item, err := row.evaluationCase(target.DatasetExternalID, target.VersionExternalID)
+		if err != nil {
+			return nil, err
+		}
+		created = append(created, item)
+	}
+	return created, nil
+}
+
+func (row evaluationCaseRow) evaluationCase(datasetExternalID, versionExternalID string) (EvaluationCase, error) {
+	turns, err := decodeEvaluationTurns(row.TurnsJSON)
+	if err != nil {
+		return EvaluationCase{}, err
+	}
+	return EvaluationCase{
+		UUID:              row.UUID,
+		ExternalID:        row.ExternalID,
+		OrganizationUUID:  row.OrganizationUUID,
+		WorkspaceUUID:     row.WorkspaceUUID,
+		DatasetUUID:       row.DatasetUUID,
+		DatasetExternalID: datasetExternalID,
+		VersionUUID:       row.VersionUUID,
+		VersionExternalID: versionExternalID,
+		Position:          row.Position,
+		Name:              row.Name,
+		Description:       row.Description,
+		Turns:             turns,
+		Checkpoints:       decodeOptionalJSON(row.CheckpointsJSON),
+		InputFiles:        decodeOptionalJSON(row.InputFilesJSON),
+		ReferenceFiles:    decodeOptionalJSON(row.ReferenceFilesJSON),
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
+	}, nil
+}
+
+func encodeEvaluationTurns(turns []string) (string, error) {
+	payload, err := json.Marshal(turns)
+	if err != nil {
+		return "", err
+	}
+	return string(payload), nil
+}
+
+func decodeEvaluationTurns(raw string) ([]string, error) {
+	var turns []string
+	if err := json.Unmarshal([]byte(raw), &turns); err != nil {
+		return nil, err
+	}
+	if turns == nil {
+		turns = []string{}
+	}
+	return turns, nil
+}
+
+func encodeOptionalJSON(raw json.RawMessage) *string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	encoded := string(raw)
+	return &encoded
+}
+
+func decodeOptionalJSON(raw *string) json.RawMessage {
+	if raw == nil || *raw == "" || *raw == "null" {
+		return nil
+	}
+	return json.RawMessage(*raw)
+}

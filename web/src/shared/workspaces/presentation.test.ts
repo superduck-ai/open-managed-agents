@@ -1,22 +1,59 @@
 import { expect, test } from 'bun:test';
 import { workspaceSwitchPath } from './presentation';
 
-test.each(['agents', 'sessions', 'deployments', 'environments', 'vaults', 'memory-stores', 'skills', 'mcp-servers'])(
-  '切换 %s 详情时不保留旧资源与筛选条件',
-  (section) => {
-    expect(workspaceSwitchPath(`/workspaces/default/${section}/old-resource/details?agent=old#tab`, 'other')).toBe(
-      `/workspaces/other/${section}`,
-    );
-  },
-);
+test.each([
+  'agents',
+  'sessions',
+  'evaluations',
+  'deployments',
+  'environments',
+  'vaults',
+  'memory-stores',
+  'skills',
+  'mcp-servers',
+])('切换 %s 详情时不保留旧资源与筛选条件', (section) => {
+  expect(workspaceSwitchPath(`/workspaces/default/${section}/old-resource/details?agent=old#tab`, 'other')).toBe(
+    `/workspaces/other/${section}`,
+  );
+});
 
-test.each(['files', 'batches', 'llm-models', 'playground', 'observability', 'dreams', 'cost', 'logs', 'mcp-servers'])(
-  '切换 %s 列表进入目标工作区',
-  (section) => {
-    expect(workspaceSwitchPath(`/workspaces/default/${section}`, 'other')).toBe(`/workspaces/other/${section}`);
-    expect(workspaceSwitchPath(`/${section}`, 'other')).toBe(`/workspaces/other/${section}`);
-  },
-);
+test.each([
+  'files',
+  'batches',
+  'llm-models',
+  'playground',
+  'evaluations',
+  'observability',
+  'dreams',
+  'cost',
+  'logs',
+  'mcp-servers',
+])('切换 %s 列表进入目标工作区', (section) => {
+  expect(workspaceSwitchPath(`/workspaces/default/${section}`, 'other')).toBe(`/workspaces/other/${section}`);
+  expect(workspaceSwitchPath(`/${section}`, 'other')).toBe(`/workspaces/other/${section}`);
+});
+
+test('切换评估器列表时留在评估器', () => {
+  expect(workspaceSwitchPath('/workspaces/default/evaluations/evaluators', 'other')).toBe(
+    '/workspaces/other/evaluations/evaluators',
+  );
+  expect(workspaceSwitchPath('/evaluations/evaluators', 'other')).toBe('/workspaces/other/evaluations/evaluators');
+});
+
+test('切换实验列表、新建和对比时留在实验', () => {
+  expect(workspaceSwitchPath('/workspaces/default/evaluations/experiments', 'other')).toBe(
+    '/workspaces/other/evaluations/experiments',
+  );
+  expect(workspaceSwitchPath('/evaluations/experiments/new', 'other')).toBe(
+    '/workspaces/other/evaluations/experiments/new',
+  );
+  expect(workspaceSwitchPath('/workspaces/default/evaluations/experiments/compare', 'other')).toBe(
+    '/workspaces/other/evaluations/experiments/compare',
+  );
+  expect(workspaceSwitchPath('/workspaces/default/evaluations/experiments/evalexp_old', 'other')).toBe(
+    '/workspaces/other/evaluations/experiments',
+  );
+});
 
 test('组织设置保持原路由，工作区设置使用新作用域', () => {
   expect(workspaceSwitchPath('/settings/members', 'other')).toBe('/settings/members');

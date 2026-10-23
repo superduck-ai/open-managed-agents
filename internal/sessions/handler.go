@@ -34,6 +34,11 @@ type Handler struct {
 	streams         *streamHub
 	eventBus        sessionfanout.EventBus
 	previews        *workerPreviewConverter
+	sessionEvents   SessionEventObserver
+}
+
+type SessionEventObserver interface {
+	ObserveSessionEvents(context.Context, []db.SessionEvent)
 }
 
 type sandboxReclaimer interface {

@@ -725,7 +725,7 @@ describe('ConsoleShell', () => {
     expect(getWorkspaceMenuButton(/foo/i)).toBeTruthy();
   });
 
-  test.each(['agents', 'sessions', 'environments', 'vaults', 'memory-stores', 'skills', 'mcp-servers'])(
+  test.each(['agents', 'sessions', 'evaluations', 'environments', 'vaults', 'memory-stores', 'skills', 'mcp-servers'])(
     '从 %s 详情切换工作区后导航到列表',
     async (section) => {
       const path = `/workspaces/default/${section}/old-resource`;

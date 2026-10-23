@@ -284,6 +284,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 
 	// provider.Create 返回的 ID 是 E2B 的真实 Sandbox ID，与上面的 envsbx_ ID
 	// 分属远端 Provider 和本服务两个命名空间。
+	resolution = applySessionSandboxLaunch(resolution, work.Metadata)
 	sandbox, err := r.provider.Create(ctx, env, work, resolution)
 	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, "", err)
@@ -805,6 +806,9 @@ func (r *Runner) startManagedAgentSessionFilesystem(ctx context.Context, sandbox
 	if err := r.runSandboxCommand(ctx, sandboxID, sessionOutputsAliasCommand(rcloneOutputsDestination, sessionOutputsPath), rcloneCommandGraceTimeout); err != nil {
 		return r.logManagedAgentRuntimeStageFailure(ctx, "outputs_alias", errOutputsAliasCreate, err)
 	}
+	if err := r.prepareAgentScoreContractAliases(ctx, sandboxID, launch); err != nil {
+		return err
+	}
 	if err := r.startRcloneFilestore(ctx, sandboxID, launch); err != nil {
 		return err
 	}
@@ -816,6 +820,18 @@ func (r *Runner) startManagedAgentSessionFilesystem(ctx context.Context, sandbox
 	}
 	if err := r.runSandboxCommand(ctx, sandboxID, memoryRootReadonlyCommand(), rcloneCommandGraceTimeout); err != nil {
 		return r.logManagedAgentRuntimeStageFailure(ctx, "memory_root_protect", errMemoryRootProtect, err)
+	}
+	return nil
+}
+
+func (r *Runner) prepareAgentScoreContractAliases(ctx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {
+	if !launch.ScoreContractAliases {
+		return nil
+	}
+	for _, command := range agentScoreContractAliasCommands() {
+		if err := r.runSandboxCommand(ctx, sandboxID, command, rcloneCommandGraceTimeout); err != nil {
+			return r.logManagedAgentRuntimeStageFailure(ctx, "score_contract_alias", errScoreContractAliasCreate, err)
+		}
 	}
 	return nil
 }

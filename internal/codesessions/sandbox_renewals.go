@@ -1,8 +1,11 @@
 package codesessions
 
 import (
+	"encoding/json"
 	"sync"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 type sandboxRenewals struct {
@@ -33,4 +36,11 @@ func (r *sandboxRenewals) record(sandboxID string, now time.Time, window time.Du
 
 func sandboxRenewalWindow(timeout time.Duration) time.Duration {
 	return timeout / 3
+}
+
+func sandboxLifetime(configured time.Duration, metadata json.RawMessage) time.Duration {
+	if timeout := sessioncontract.SandboxTimeout(metadata); timeout > 0 {
+		return timeout
+	}
+	return configured
 }

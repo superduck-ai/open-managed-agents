@@ -6,8 +6,10 @@ import (
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
@@ -15,6 +17,7 @@ import (
 
 // ModelRequest owns one proxy attempt. Each worker retry gets a new span.
 type ModelRequest struct {
+	calculator    *billing.Calculator
 	StartID       string
 	CodeSessionID string
 	ThreadID      string
@@ -25,11 +28,17 @@ type ModelRequest struct {
 
 // ModelRequestUsage is cumulative within one provider response, never a turn total.
 type ModelRequestUsage struct {
-	CacheCreation            *ModelRequestCacheUsage `json:"cache_creation,omitzero"`
-	InputTokens              *int64                  `json:"input_tokens,omitzero"`
-	OutputTokens             *int64                  `json:"output_tokens,omitzero"`
-	CacheCreationInputTokens *int64                  `json:"cache_creation_input_tokens,omitzero"`
-	CacheReadInputTokens     *int64                  `json:"cache_read_input_tokens,omitzero"`
+	ServerToolUse            *ModelRequestServerToolUsage `json:"server_tool_use,omitzero"`
+	CacheCreation            *ModelRequestCacheUsage      `json:"cache_creation,omitzero"`
+	InputTokens              *int64                       `json:"input_tokens,omitzero"`
+	OutputTokens             *int64                       `json:"output_tokens,omitzero"`
+	CacheCreationInputTokens *int64                       `json:"cache_creation_input_tokens,omitzero"`
+	CacheReadInputTokens     *int64                       `json:"cache_read_input_tokens,omitzero"`
+}
+
+type ModelRequestServerToolUsage struct {
+	WebSearchRequests *int64 `json:"web_search_requests,omitzero"`
+	WebFetchRequests  *int64 `json:"web_fetch_requests,omitzero"`
 }
 
 type ModelRequestCacheUsage struct {
@@ -69,20 +78,22 @@ type ModelRequestContent struct {
 }
 
 type modelRequestEvent struct {
-	IsError           *bool              `json:"is_error,omitzero"`
-	ToolUseIDs        []string           `json:"tool_use_ids,omitempty"`
-	ID                string             `json:"id"`
-	Type              string             `json:"type"`
-	OwnerThreadID     string             `json:"_owner_session_thread_id,omitempty"`
-	Model             string             `json:"model"`
-	RequestID         string             `json:"request_id"`
-	CreatedAt         time.Time          `json:"created_at"`
-	ProcessedAt       time.Time          `json:"processed_at"`
-	StartID           string             `json:"model_request_start_id,omitempty"`
-	Usage             *ModelRequestUsage `json:"model_usage,omitzero"`
-	EventIDs          []string           `json:"event_ids,omitempty"`
-	UpstreamRequestID string             `json:"upstream_request_id,omitempty"`
-	Error             *modelRequestError `json:"error,omitzero"`
+	PriceSnapshot     *billing.ModelPrice `json:"_model_price,omitzero"`
+	Billing           map[string]string   `json:"billing,omitempty"`
+	IsError           *bool               `json:"is_error,omitzero"`
+	ToolUseIDs        []string            `json:"tool_use_ids,omitempty"`
+	ID                string              `json:"id"`
+	Type              string              `json:"type"`
+	OwnerThreadID     string              `json:"_owner_session_thread_id,omitempty"`
+	Model             string              `json:"model"`
+	RequestID         string              `json:"request_id"`
+	CreatedAt         time.Time           `json:"created_at"`
+	ProcessedAt       time.Time           `json:"processed_at"`
+	StartID           string              `json:"model_request_start_id,omitempty"`
+	Usage             *ModelRequestUsage  `json:"model_usage,omitzero"`
+	EventIDs          []string            `json:"event_ids,omitempty"`
+	UpstreamRequestID string              `json:"upstream_request_id,omitempty"`
+	Error             *modelRequestError  `json:"error,omitzero"`
 }
 
 type modelRequestError struct {
@@ -105,7 +116,11 @@ func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID,
 	if err != nil {
 		return nil, err
 	}
-	request := &ModelRequest{StartID: startID, CodeSessionID: codeSessionID, ThreadID: threadID, Model: model, codeSession: codeSession}
+	calculator, err := s.billing.Scope(ctx, codeSession.OrganizationUUID, codeSession.WorkspaceUUID, model)
+	if err != nil {
+		return nil, err
+	}
+	request := &ModelRequest{calculator: calculator, StartID: startID, CodeSessionID: codeSessionID, ThreadID: threadID, Model: model, codeSession: codeSession}
 	if agentID != "" {
 		request.toolThreadID = threadID
 	}
@@ -159,6 +174,8 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 	if result.ErrorType != "" {
 		event.Error = &modelRequestError{Type: result.ErrorType}
 	}
+	event.Billing = modelRequestBilling(request.calculator, request.Model, result.Usage)
+	event.PriceSnapshot = request.calculator.PriceSnapshot(request.Model)
 	tools, err := s.modelToolUsePayloads(ctx, request, modelRequestPublicTools(result), result.EndedAt)
 	if err != nil {
 		return err
@@ -262,4 +279,28 @@ func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.Cod
 		}
 		params.Cursor = &db.SessionEventPageCursor{ExternalID: events[len(events)-1].ExternalID}
 	}
+}
+
+func modelRequestBilling(calculator *billing.Calculator, model string, usage ModelRequestUsage) map[string]string {
+	counters := billing.TokenUsage{}
+	for _, field := range []struct{ target, value *int64 }{
+		{&counters.InputTokens, usage.InputTokens}, {&counters.OutputTokens, usage.OutputTokens},
+		{&counters.CacheReadInputTokens, usage.CacheReadInputTokens}, {&counters.CacheCreationInputTokens, usage.CacheCreationInputTokens},
+	} {
+		if field.value != nil {
+			*field.target = *field.value
+		}
+	}
+	if usage.CacheCreation != nil {
+		counters.CacheWrite5mTokens = billing.UsageCount(usage.CacheCreation.Ephemeral5mInputTokens)
+		counters.CacheWrite1hTokens = billing.UsageCount(usage.CacheCreation.Ephemeral1hInputTokens)
+		if usage.CacheCreationInputTokens == nil {
+			counters.CacheCreationInputTokens = counters.CacheWrite5mTokens + counters.CacheWrite1hTokens
+		}
+	}
+	cents, priced := calculator.BudgetRequestCents(model, counters)
+	if !priced {
+		return nil
+	}
+	return map[string]string{"list_cost": strconv.FormatInt(cents, 10), "currency": "USD"}
 }

@@ -58,7 +58,7 @@ func TestDeploymentCommandsAndEvidence(t *testing.T) {
 		}
 	}
 	fakeDocker(t)
-	result, err := doctor(t.Context(), directory, "", "deployment.restart")
+	result, err := doctor(t.Context(), directory, "", "deployment.restart", 0)
 	if err != nil || len(result.Images) != 4 || result.PublicSandboxChecked {
 		t.Fatalf("unexpected prerequisites: %+v %v", result, err)
 	}

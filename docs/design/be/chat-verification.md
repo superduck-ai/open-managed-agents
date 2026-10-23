@@ -43,7 +43,7 @@ sequenceDiagram
 ## 隔离与生命周期
 
 CLI 不读取开发配置。每轮创建唯一 Compose project，依赖端口由 Docker 分配，后端固定绑定
-`127.0.0.1:18080`。端口占用时阻止运行，不调用会终止既有监听进程的 restart 脚本。
+`127.0.0.1:18080`（可通过全局参数 `--api-port` 选择其他端口）。预检、端口锁、服务配置和 Worker 使用同一端口。端口占用时阻止运行，不调用会终止既有监听进程的 restart 脚本。
 NATS 每节点显式配置 16 GB store 上限，支持当前默认 256 MiB 三副本 stream，也支持旧基准提交的 10 GiB 配置。
 所有镜像必须预先存在，报告记录解析出的 image ID，实际启动也使用这些不可变 ID；CLI 不自动拉取镜像。
 同一主机上的 CLI 使用文件锁串行占用固定 E2E 端口，不删除活跃锁文件。
@@ -201,7 +201,7 @@ runner 上以当前负载分别测试 PR 基准提交和候选后端，比较性
 
 ## 验证器的可靠性边界
 
-`chat doctor [SCENARIO]` 检查 Go、Docker、Compose、Bash、git、tar、本地镜像及 18080 端口，
+`chat doctor [SCENARIO]` 检查 Go、Docker、Compose、Bash、git、tar、本地镜像及所选 API 端口（默认 18080），
 并创建短期探针检查 Docker 数据卷至少有 1 GiB 可用空间。此值是小型固定负载的最低余量，
 不是容量保证；三个 NATS 节点的 16 GB 配置是各自上限，不代表必须预留 48 GB。
 `chat doctor public` 和 `chat doctor upstream-errors` 还用实际 Worker 镜像打开 `/dev/fuse` 并执行 tmpfs mount/unmount，
@@ -247,3 +247,5 @@ CI 进一步要求该提交等于 PR base SHA。编排单测覆盖配置隔离�
 `go test -json` 的 stdout 单独保存为 `tests.jsonl` 并严格解析；stderr 保存到
 `tests.stderr.log`。Go 在冷缓存下载模块时会向 stderr 写普通文本，不允许它混入 JSON
 证据流。stderr 仅用于本地诊断，不加入 CI 上传产物，也不替代测试退出码与阶段断言。
+
+基线夹具的 Go overlay 仅替换对应 Mapper 中基线已有的 SQL builder 与行扫描函数，保留当前生成接口实现及新增方法。这样旧数据库沿用原 SQL，当前夹具仍可编译；不能整文件替换生成 Mapper，否则新增接口方法（例如 `SetBudgetReached`）会造成基线在编译阶段失败。overlay 不修改基线源码、迁移或被测二进制，也不放宽负载断言与性能阈值。

@@ -67,16 +67,8 @@ export class CcrSession {
   ) {
     this.defaultModel = config.model;
     this.assistantStream = new CcrAssistantStream(config.id, config.modelMessageID);
-    this.runtime = new SessionRuntime(ctx, { ...config, setup: async (scope) => {
-      await config.setup?.(scope);
-      // Resumed dsh requests can use a logged model. Apply the CCR override
-      // through the public request hook, without rewriting the durable log.
-      scope.on("agent/request", async (_request, next) => {
-        const call = await next();
-        const selected = this.modelOverride ? { ...call, model: this.modelOverride } : call;
-        return config.configureModel?.(selected) ?? selected;
-      });
-    } }, {
+    this.runtime = new SessionRuntime(ctx, { ...config }, {
+      selectModel: model => this.modelOverride ?? model,
       onExternalMcpConnectionFailure: (serverName) => this.backend.events(this.id, [{
         type: "session.error", uuid: crypto.randomUUID(), processed_at: new Date().toISOString(),
         error: { type: "mcp_connection_failed_error", mcp_server_name: serverName,

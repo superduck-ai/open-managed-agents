@@ -210,8 +210,8 @@ export class Subagents {
     child = new SessionRuntime(this.parent.ctx, {
       ...config, id: thread.id, model: thread.model, tools: thread.tools,
       toolPermissions: { ...config.toolPermissions },
-      refreshToolPermissions: config.refreshToolPermissions
-        ? (signal) => config.refreshToolPermissions!(signal, thread.id) : undefined,
+      refreshSessionContext: config.refreshSessionContext
+        ? (signal) => config.refreshSessionContext!(signal, thread.id) : undefined,
       externalMcpConfig: mcp ? mcp.config : config.externalMcpConfig,
       externalMcpFetch: mcp?.fetcher ?? config.externalMcpFetch,
       subagents: undefined, bindThread: undefined, setup: undefined,

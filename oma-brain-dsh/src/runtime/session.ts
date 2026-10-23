@@ -129,8 +129,8 @@ export class SessionRuntime {
       });
       scope.on("agent/request", async ({ signal }, next) => {
         signal.throwIfAborted();
-        if (this.config.refreshToolPermissions) {
-          const permissions = await this.config.refreshToolPermissions(signal);
+        if (this.config.refreshSessionContext) {
+          const { toolPermissions: permissions } = await this.config.refreshSessionContext(signal);
           for (const name of Object.keys(toolPermissions)) delete toolPermissions[name];
           Object.assign(toolPermissions, permissions);
         }
@@ -138,7 +138,9 @@ export class SessionRuntime {
         await this.hooks.beforeRequest();
         signal.throwIfAborted();
         const call = await next();
-        return this.config.configureModel?.(call) ?? call;
+        const model = this.hooks.selectModel?.(call.model) ?? call.model;
+        const selected = model === call.model ? call : { ...call, model };
+        return this.config.configureModel?.(selected) ?? selected;
       });
       scope.on("agent/request-error", async ({ failure, turn, step, signal }, next) => {
         signal.throwIfAborted();

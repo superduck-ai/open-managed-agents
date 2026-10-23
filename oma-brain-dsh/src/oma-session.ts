@@ -38,15 +38,15 @@ export function createOmaSession(
       return { tools: context.runtime_tools, externalMcpConfig: context.mcp_config };
     },
     toolPermissions: { ...assignment.launch.tool_permissions },
-    refreshToolPermissions: async (signal, threadId) => {
+    refreshSessionContext: async (signal, threadId) => {
       const response = await api.request(`/v2/sessions/${encodeURIComponent(assignment.session_id)}`,
         assignment.ingress_token, "GET", undefined, threadId ? { "X-OMA-Session-Thread-ID": threadId } : undefined, signal);
       const modelConfigs = response.session_context?.model_configs;
       validateModelConfigs(modelConfigs);
-      assignment.launch.model_configs = modelConfigs;
       const permissions = response.session_context?.runtime_tool_permissions;
       validateToolPermissions(permissions);
-      return permissions;
+      assignment.launch.model_configs = modelConfigs;
+      return { toolPermissions: permissions };
     },
     systemPrompt: rootSystemPrompt(assignment.launch),
     subagentSystemPrompt: (thread) => childSystemPrompt(assignment.launch, thread),

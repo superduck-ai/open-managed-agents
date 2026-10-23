@@ -122,7 +122,7 @@ export interface SessionRuntimeConfig {
   subagentSystemPrompt?(thread: SubagentThread): string;
   tools?: string[];
   toolPermissions?: ToolPermissions;
-  refreshToolPermissions?(signal: AbortSignal, threadId?: string): Promise<ToolPermissions | undefined>;
+  refreshSessionContext?(signal: AbortSignal, threadId?: string): Promise<{ toolPermissions?: ToolPermissions }>;
   subagents?: SubagentConfig;
   /** Host binds a child model identity to the parent's credentials. */
   bindThread?(id: string): () => void;
@@ -175,6 +175,7 @@ export interface ToolExecutionBridge {
 }
 
 export interface SessionRuntimeHooks {
+  selectModel?(model: string): string;
   contextCompactionSequence?(): number | undefined;
   onContextCompacted?(tokens: number | undefined, sequence: number): Promise<void>;
   onExternalMcpConnectionFailure?(serverName: string): Promise<void>;

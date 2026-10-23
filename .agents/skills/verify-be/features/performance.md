@@ -12,7 +12,7 @@ just verify-be chat performance --diagnostics
 
 `--backend-ref` exports a local Git commit into the run's private temporary directory and builds that backend; the current checkout supplies the test harness. It never checks out or modifies the working tree. Use the printed report path as the baseline. The gate requires a passing, cleaned, non-diagnostic report with twenty valid samples, matching workload source hash, workload version, host class, tool versions and image IDs. It blocks incompatible comparisons instead of treating them as passes.
 
-Session cleanup calls that backend's public DELETE API so a current harness does not require new database tables in an older comparison backend.
+Session cleanup calls that backend's public DELETE API so a current harness does not require new database tables in an older comparison backend. Isolated Provider setup and model endpoint changes use the Console API with its existing `model_ids` contract, so the current harness can also measure a backend whose Provider storage predates `models`. Provider setup runs before the timed workload; it does not migrate or alter the reference database schema.
 
 The initial policy fails when either P50 or P95 of any metric exceeds `baseline × 1.25 + 25 ms`. This is an explicit initial tolerance, not an empirically established production SLO. The CLI never updates a baseline automatically. On regression, retain the evidence, investigate, and fix or revert the candidate. Baseline updates require review of the measured behavior; changing thresholds to make a regression green is not a fix.
 

@@ -321,7 +321,7 @@ func TestChatReliability(t *testing.T) {
 	requireOK(t, err)
 	f.token = recovered.SessionIngressToken
 	f.modelToken = recovered.OAuthAccessToken
-	e.request(t, "POST", f.path("/worker/events/delivery"), oldToken, map[string]any{"worker_epoch": "1", "updates": []any{}}, 401)
+	e.request(t, "POST", f.path("/worker/events/delivery"), oldToken, map[string]any{"worker_epoch": "1", "updates": []any{}}, 409)
 	e.request(t, "POST", f.path("/worker/register"), f.token, map[string]string{"session_id": f.code.ExternalID}, 200)
 	third := submitChat(t, f, "第三条，重启后回复。")
 	events, closeAfterRestart := connectChatStream(t, ctx, f)

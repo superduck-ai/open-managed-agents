@@ -14,6 +14,7 @@ export function assignment(): Assignment {
     launch: {
       version: 2,
       model: "test-model",
+      models: {"test-model":{id:"test-model",api_backend:"messages"}},
       work_dir: "/workspace",
       system: "You are a test agent.",
       tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
@@ -105,7 +106,7 @@ export class Backend {
   connections = 0;
   sandboxCount = 0;
   modelScript: Payload[][] = [textEvents("hello")];
-  onModel?: (request: Payload) => Promise<Payload[]>;
+  onModel?: (request: Payload) => Promise<Payload[] | Response>;
   onCancel?: (params: Payload) => Promise<void>;
   onTool?: (params: Payload) => Promise<Payload>;
   onApproval?: (payload: Payload) => Promise<void>;
@@ -210,6 +211,7 @@ export class Backend {
       cwd: this.a.launch.work_dir, model: this.a.launch.model, system_prompt: this.a.launch.system,
       append_system_prompt: this.a.launch.environment_prompt, memory_catalog_prompt: this.a.launch.memory_catalog_prompt, runtime_skills: this.a.launch.skills, subagents: this.a.launch.subagents,
       runtime_tool_permissions: this.a.launch.tool_permissions,
+      models: this.a.launch.models,
     }});
     if (path === "/v1/messages") {
       expect(request.headers.get("Authorization")).toBe(
@@ -220,6 +222,7 @@ export class Backend {
       this.timeline.push({ type: "model.request" });
       const script = this.onModel ? await this.onModel(body) : this.modelScript.shift();
       if (!script) return json({ error: "model script exhausted" }, 500);
+      if (script instanceof Response) return script;
       return new Response(
         script
           .map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`)

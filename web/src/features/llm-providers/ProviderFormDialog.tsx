@@ -1,5 +1,4 @@
 import { useState, type FormEvent } from 'react';
-import { Download, Loader2, Plus, X } from 'lucide-react';
 import { useI18n } from '../../shared/i18n';
 import { Button } from '../../shared/ui/button';
 import {
@@ -14,17 +13,22 @@ import { Field, FieldDescription, FieldError, FieldLabel } from '../../shared/ui
 import { Input } from '../../shared/ui/input';
 import { toast } from '../../shared/ui/sonner';
 import type { APIBackend, LLMProvider, LLMProviderInput } from './api';
+import {
+  ProviderModelsEditor,
+  newModelDraft,
+  parseContextWindow,
+  type ProviderModelDraft,
+} from './ProviderModelsEditor';
 import { ProviderBackendField } from './ProviderBackendField';
-import { isValidSlug, readableError, slugFromName } from './catalog';
+import { isValidSlug, readableError } from './catalog';
 
 type ProviderForm = {
   apiBackend: APIBackend;
   name: string;
   slug: string;
-  slugEdited: boolean;
   baseUrl: string;
   apiKey: string;
-  modelIds: string[];
+  models: ProviderModelDraft[];
 };
 
 type MessageFormatter = ReturnType<typeof useI18n>['msg'];
@@ -35,40 +39,85 @@ function providerForm(provider: LLMProvider | null): ProviderForm {
         apiBackend: provider.api_backend,
         name: provider.name,
         slug: provider.slug,
-        slugEdited: true,
         baseUrl: provider.base_url,
         apiKey: '',
-        modelIds: provider.model_ids.length > 0 ? [...provider.model_ids] : [''],
+        models:
+          provider.models.length > 0
+            ? provider.models.map((model) => ({
+                ...newModelDraft(model.id),
+                maxOutputTokens: String(model.max_output_tokens ?? ''),
+                inputModalities: model.input_modalities ?? ['text'],
+                contextWindow: String(model.context_window ?? ''),
+              }))
+            : [newModelDraft()],
       }
-    : { apiBackend: 'messages', name: '', slug: '', slugEdited: false, baseUrl: '', apiKey: '', modelIds: [''] };
+    : {
+        apiBackend: 'messages',
+        name: '',
+        slug: '',
+        baseUrl: '',
+        apiKey: '',
+        models: [newModelDraft()],
+      };
 }
 
 function providerFormInput(
   form: ProviderForm,
   provider: LLMProvider | null,
+  organization: boolean,
   msg: MessageFormatter,
 ): { input: LLMProviderInput } | { error: string } {
   if (!form.name.trim() || !form.baseUrl.trim() || (!provider && !form.apiKey.trim())) {
-    return { error: msg('llmModels.required', 'Name, base URL, and API key are required.') };
+    return { error: msg('llmModels.required', 'Display name, base URL, and API key are required.') };
   }
   const slug = form.slug.trim();
-  if (slug && !isValidSlug(slug)) {
+  if (!slug) return { error: msg('llmModels.providerIdRequired', 'Provider ID is required.') };
+  if (!organization && slug === 'organization') {
+    return {
+      error: msg(
+        'llmModels.errorSlugReserved',
+        'Provider ID "organization" is reserved for the organization default provider.',
+      ),
+    };
+  }
+  if (!isValidSlug(slug)) {
     return {
       error: msg(
         'llmModels.errorSlugInvalid',
-        'Slug must contain 1 to 32 lowercase letters, digits, ".", "_" or "-" and start with a letter or digit.',
+        'Provider ID must contain 1 to 32 lowercase letters, digits, ".", "_" or "-" and start with a letter or digit.',
+      ),
+    };
+  }
+  if (
+    form.models.some(
+      (model) =>
+        model.id &&
+        [model.contextWindow, model.maxOutputTokens].some(
+          (value) => !Number.isSafeInteger(parseContextWindow(value) ?? 1),
+        ),
+    )
+  ) {
+    return {
+      error: msg(
+        'llmModels.contextWindowInvalid',
+        'Token limits must be positive integers; K and M suffixes are supported.',
       ),
     };
   }
   const input: LLMProviderInput = {
     api_backend: form.apiBackend,
     name: form.name.trim(),
+    slug,
     base_url: form.baseUrl.trim(),
-    model_ids: form.modelIds.filter((modelId) => modelId !== ''),
+    models: form.models
+      .filter((model) => model.id)
+      .map((model) => ({
+        id: model.id,
+        ...(model.contextWindow.trim() ? { context_window: parseContextWindow(model.contextWindow)! } : {}),
+        ...(model.maxOutputTokens.trim() ? { max_output_tokens: parseContextWindow(model.maxOutputTokens)! } : {}),
+        input_modalities: model.inputModalities,
+      })),
   };
-  if (slug) {
-    input.slug = slug;
-  }
   if (form.apiKey.trim()) {
     input.api_key = form.apiKey.trim();
   }
@@ -77,6 +126,7 @@ function providerFormInput(
 
 export function ProviderFormDialog({
   provider,
+  organization = false,
   error,
   isPending,
   onClose,
@@ -84,35 +134,53 @@ export function ProviderFormDialog({
   onDiscoverModels,
 }: {
   provider: LLMProvider | null;
+  organization?: boolean;
   error: string;
   isPending: boolean;
   onClose: () => void;
   onSubmit: (input: LLMProviderInput) => Promise<void>;
-  onDiscoverModels: (baseUrl: string, apiKey: string, apiBackend: APIBackend) => Promise<string[]>;
+  onDiscoverModels: (
+    baseUrl: string,
+    apiKey: string,
+    apiBackend: APIBackend,
+    provider?: LLMProvider,
+  ) => Promise<string[]>;
 }) {
   const { msg } = useI18n();
-  const [form, setForm] = useState<ProviderForm>(() => providerForm(provider));
+  const [form, setForm] = useState<ProviderForm>(() => ({
+    ...providerForm(provider),
+    ...(organization ? { slug: 'organization' } : {}),
+  }));
   const [formError, setFormError] = useState('');
   const [discovering, setDiscovering] = useState(false);
 
   const fetchModels = async () => {
     const baseUrl = form.baseUrl.trim();
     const apiKey = form.apiKey.trim();
-    if (!baseUrl || !apiKey) {
+    if (!baseUrl || (!apiKey && !provider)) {
       setFormError(msg('llmModels.fetchModelsNeedCredentials', 'Enter a base URL and API key first.'));
+      return;
+    }
+    if (provider && !apiKey && (baseUrl !== provider.base_url || form.apiBackend !== provider.api_backend)) {
+      setFormError(
+        msg(
+          'llmModels.fetchChangedEndpoint',
+          'Enter an API key to fetch models after changing the endpoint or protocol.',
+        ),
+      );
       return;
     }
     setFormError('');
     setDiscovering(true);
     try {
-      const modelIds = await onDiscoverModels(baseUrl, apiKey, form.apiBackend);
+      const modelIds = await onDiscoverModels(baseUrl, apiKey, form.apiBackend, provider ?? undefined);
       if (modelIds.length === 0) {
         toast.info(msg('llmModels.discoverEmpty', 'The provider returned no models. You can add model IDs later.'), {
           id: 'llm-models-discover',
         });
         return;
       }
-      setForm((current) => ({ ...current, modelIds: mergeModelIds(current.modelIds, modelIds) }));
+      setForm((current) => ({ ...current, models: mergeModels(current.models, modelIds) }));
     } catch (error) {
       toast.error(readableError(error, msg), { id: 'llm-models-discover' });
     } finally {
@@ -122,7 +190,7 @@ export function ProviderFormDialog({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    const result = providerFormInput(form, provider, msg);
+    const result = providerFormInput(form, provider, organization, msg);
     if ('error' in result) {
       setFormError(result.error);
       return;
@@ -151,27 +219,23 @@ export function ProviderFormDialog({
               {msg('llmModels.formDescription', 'Configure a model API endpoint and its exact model IDs.')}
             </DialogDescription>
           </DialogHeader>
+          {!provider ? (
+            <ProviderIdField
+              slug={form.slug}
+              readOnly={organization}
+              onChange={(slug) => setForm((value) => ({ ...value, slug }))}
+            />
+          ) : null}
           <Field>
-            <FieldLabel htmlFor="llm-provider-name">{msg('llmModels.name', 'Provider name')}</FieldLabel>
+            <FieldLabel htmlFor="llm-provider-name">{msg('llmModels.name', 'Display name')}</FieldLabel>
             <Input
               id="llm-provider-name"
               value={form.name}
-              onChange={(event) =>
-                setForm((value) => ({
-                  ...value,
-                  name: event.target.value,
-                  slug: value.slugEdited ? value.slug : slugFromName(event.target.value),
-                }))
-              }
-              placeholder="DashScope"
+              onChange={(event) => setForm((value) => ({ ...value, name: event.target.value }))}
+              placeholder={msg('llmModels.name', 'Display name')}
               autoComplete="off"
             />
           </Field>
-          <ProviderSlugField
-            slug={form.slug}
-            readOnly={Boolean(provider)}
-            onChange={(slug) => setForm((value) => ({ ...value, slug, slugEdited: true }))}
-          />
           <ProviderBackendField
             value={form.apiBackend}
             onChange={(apiBackend) => setForm((value) => ({ ...value, apiBackend }))}
@@ -205,11 +269,10 @@ export function ProviderFormDialog({
               autoComplete="new-password"
             />
           </Field>
-          <ModelIdFields
-            modelIds={form.modelIds}
+          <ProviderModelsEditor
+            models={form.models}
             discovering={discovering}
-            showFetch={!provider || Boolean(form.apiKey.trim())}
-            onChange={(modelIds) => setForm((value) => ({ ...value, modelIds }))}
+            onChange={(models) => setForm((value) => ({ ...value, models }))}
             onFetch={() => void fetchModels()}
           />
           {formError || error ? <FieldError>{formError || error}</FieldError> : null}
@@ -227,7 +290,7 @@ export function ProviderFormDialog({
   );
 }
 
-function ProviderSlugField({
+function ProviderIdField({
   slug,
   readOnly,
   onChange,
@@ -239,101 +302,32 @@ function ProviderSlugField({
   const { msg } = useI18n();
   return (
     <Field>
-      <FieldLabel htmlFor="llm-provider-slug">{msg('llmModels.slug', 'Slug')}</FieldLabel>
+      <FieldLabel htmlFor="llm-provider-slug">{msg('llmModels.slug', 'Provider ID')}</FieldLabel>
       <Input
         id="llm-provider-slug"
         value={slug}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="default"
+        placeholder="acme-gateway"
         autoComplete="off"
         readOnly={readOnly}
         aria-readonly={readOnly}
-        className="font-mono"
+        className="font-mono read-only:bg-muted read-only:text-muted-foreground"
       />
       <FieldDescription>
         {readOnly
-          ? msg('llmModels.slugReadOnlyHint', 'Models are referenced as {modelId}. The slug cannot be changed.', {
+          ? msg('llmModels.slugReadOnlyHint', 'Used in {modelId}. Provider ID cannot be changed.', {
               modelId: `${slug}/<model-id>`,
             })
-          : msg(
-              'llmModels.slugHint',
-              'Models are referenced as {modelId}. Leave blank to use default. The slug cannot be changed later.',
-              { modelId: `${slug || 'default'}/<model-id>` },
-            )}
+          : msg('llmModels.slugHint', 'Used in {modelId}. Provider ID cannot be changed after creation.', {
+              modelId: `${slug || 'acme-gateway'}/<model-id>`,
+            })}
       </FieldDescription>
     </Field>
   );
 }
 
-function ModelIdFields({
-  modelIds,
-  discovering,
-  showFetch,
-  onChange,
-  onFetch,
-}: {
-  modelIds: string[];
-  discovering: boolean;
-  showFetch: boolean;
-  onChange: (modelIds: string[]) => void;
-  onFetch: () => void;
-}) {
-  const { msg } = useI18n();
-  return (
-    <Field>
-      <div className="flex items-center justify-between gap-2">
-        <FieldLabel>{msg('llmModels.modelIds', 'Model IDs')}</FieldLabel>
-        {showFetch ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            aria-busy={discovering}
-            disabled={discovering}
-            className="active:not-aria-[haspopup]:translate-y-0 disabled:opacity-100"
-            onClick={onFetch}
-          >
-            {discovering ? <Loader2 className="animate-spin" aria-hidden /> : <Download aria-hidden />}
-            {msg('llmModels.fetchModels', 'Fetch model list')}
-          </Button>
-        ) : null}
-      </div>
-      <div className="space-y-2">
-        {modelIds.map((modelId, index) => (
-          <div key={index} className="flex gap-2">
-            <Input
-              value={modelId}
-              onChange={(event) =>
-                onChange(modelIds.map((item, itemIndex) => (itemIndex === index ? event.target.value : item)))
-              }
-              placeholder="kimi-k2.5"
-              autoComplete="off"
-              aria-label={`${msg('llmModels.modelId', 'Model ID')} ${index + 1}`}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              aria-label={msg('llmModels.removeModel', 'Remove model')}
-              disabled={modelIds.length === 1}
-              onClick={() => onChange(modelIds.filter((_, itemIndex) => itemIndex !== index))}
-            >
-              <X aria-hidden />
-            </Button>
-          </div>
-        ))}
-      </div>
-      <FieldDescription>
-        {msg('llmModels.modelIdsHint', 'Optional. Fetch from the provider or add exact model IDs manually.')}
-      </FieldDescription>
-      <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => onChange([...modelIds, ''])}>
-        <Plus aria-hidden /> {msg('llmModels.addModel', 'Add model')}
-      </Button>
-    </Field>
-  );
-}
-
-function mergeModelIds(existing: string[], discovered: string[]) {
-  const merged = [...existing, ...discovered].filter((modelId) => modelId !== '');
-  return [...new Set(merged)];
+function mergeModels(existing: ProviderModelDraft[], discovered: string[]) {
+  const models = existing.filter((model) => model.id !== '');
+  const known = new Set(models.map((model) => model.id));
+  return [...models, ...discovered.filter((id) => !known.has(id)).map((id) => newModelDraft(id))];
 }

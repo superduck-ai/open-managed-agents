@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"strconv"
 
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
@@ -27,22 +28,29 @@ func insertSessionUsageRecord(ctx context.Context, executor yourbatis.Executor, 
 	if event.EventType != "span.model_request_end" {
 		return nil
 	}
-	record := sessionUsageRecord(event)
+	record, err := sessionUsageRecord(event)
+	if err != nil {
+		return err
+	}
 	return NewUsageRecordMapper(executor).Insert(ctx, record)
 }
 
-func sessionUsageRecord(event SessionEvent) UsageRecord {
+func sessionUsageRecord(event SessionEvent) (UsageRecord, error) {
 	record := UsageRecord{Finalized: true, OrganizationUUID: event.OrganizationUUID, WorkspaceUUID: event.WorkspaceUUID,
 		AttemptID: event.ExternalID, Source: "managed_agents", SessionUUID: new(event.SessionUUID),
 		SessionExternalID: event.SessionExternalID, StartedAt: event.CreatedAt, EndedAt: event.CreatedAt,
 		Version: "request_cents_v1"}
 	var payload sessionUsageEvent
-	if json.Unmarshal(event.Payload, &payload) != nil {
-		return record
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return UsageRecord{}, fmt.Errorf("decode session usage event: %w", err)
 	}
 	record.Model = payload.Model
 	if payload.PriceSnapshot != nil {
-		record.PriceSnapshot, _ = json.Marshal(payload.PriceSnapshot)
+		var err error
+		record.PriceSnapshot, err = json.Marshal(payload.PriceSnapshot)
+		if err != nil {
+			return UsageRecord{}, fmt.Errorf("encode session usage price: %w", err)
+		}
 	}
 	usage := payload.Usage
 	if usage == nil {
@@ -52,13 +60,20 @@ func sessionUsageRecord(event SessionEvent) UsageRecord {
 		ApplyUsage(&record, *usage)
 		record.Complete = usage.Complete() && !payload.IsError
 	}
-	if payload.Billing != nil && payload.Billing.Currency == "USD" {
+	if payload.PriceSnapshot != nil {
+		calculator := billing.NewCalculator(map[string]billing.ModelPrice{record.Model: *payload.PriceSnapshot})
+		if usage != nil && usage.InputTokens != nil {
+			if cents, ok := calculator.ModelRequestCents(record.Model, usage.Tokens()); ok {
+				record.ModelCents = new(cents)
+			}
+		}
+	} else if payload.Billing != nil && payload.Billing.Currency == "USD" {
 		cents, err := strconv.ParseInt(payload.Billing.ListCost, 10, 64)
 		if err == nil && cents >= 0 {
 			record.ModelCents = new(cents)
 		}
 	}
-	return record
+	return record, nil
 }
 
 func ApplyUsage(record *UsageRecord, usage billing.Usage) {

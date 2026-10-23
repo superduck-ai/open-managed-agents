@@ -126,7 +126,7 @@ func TestTeardownRejectsCopiedBinding(t *testing.T) {
 }
 
 func TestComposeUpFailuresExhaustRetries(t *testing.T) {
-	root := t.TempDir()
+	root := sandboxConfigTestRepo(t)
 	deploy := filepath.Join(root, "deploy", "docker-compose")
 	if err := os.MkdirAll(deploy, 0o700); err != nil {
 		t.Fatal(err)
@@ -136,7 +136,7 @@ func TestComposeUpFailuresExhaustRetries(t *testing.T) {
 	}
 	bin := t.TempDir()
 	calls := filepath.Join(root, "attempts")
-	script := fmt.Sprintf("#!/bin/sh\ncase \" $* \" in\n*' up --detach '*) echo attempt >> %q; echo 'port is already allocated' >&2; exit 1;;\n*) exit 0;;\nesac\n", calls)
+	script := fmt.Sprintf("#!/bin/sh\ncase \" $* \" in\n*' image inspect '*) echo arm64;;\n*' up --detach '*) echo attempt >> %q; echo 'port is already allocated' >&2; exit 1;;\n*) exit 0;;\nesac\n", calls)
 	if err := os.WriteFile(calls, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}

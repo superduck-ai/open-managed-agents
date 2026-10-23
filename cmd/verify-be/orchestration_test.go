@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
 func fakeDocker(t *testing.T) string {
@@ -86,7 +88,7 @@ func TestEnvironmentCleanupOwnershipAndFailure(t *testing.T) {
 				t.Setenv("CLEANUP_FAIL", "1")
 			}
 			directory := t.TempDir()
-			for _, file := range []string{"config.json", "jwt.pem", "brain-claim-token", "server", "server.pid", "report.md"} {
+			for _, file := range []string{"config.json", "jwt.pem", "proxy-ca.pem", "brain-claim-token", "server", "server.pid", "report.md"} {
 				if err := os.WriteFile(filepath.Join(directory, file), []byte("private"), 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -105,7 +107,7 @@ func TestEnvironmentCleanupOwnershipAndFailure(t *testing.T) {
 			if workerIndex < 0 || downIndex <= workerIndex || !strings.Contains(string(data), "label=com.docker.compose.project=test-owned-run") {
 				t.Fatalf("unsafe cleanup sequence: %s", data)
 			}
-			for _, file := range []string{"config.json", "jwt.pem", "brain-claim-token", "server", "server.pid"} {
+			for _, file := range []string{"config.json", "jwt.pem", "proxy-ca.pem", "brain-claim-token", "server", "server.pid"} {
 				if _, err := os.Stat(filepath.Join(directory, file)); !os.IsNotExist(err) {
 					t.Fatalf("secret remains %s: %v", file, err)
 				}
@@ -345,5 +347,27 @@ func TestEnvironmentConfigWritesBrainClaimTokenOnlyForBrainScenarios(t *testing.
 				}
 			}
 		})
+	}
+}
+
+func TestEnvironmentConfigProvidesDefaultMITMKey(t *testing.T) {
+	fakeDocker(t)
+	directory := t.TempDir()
+	env := newEnvironment(directory, directory, "test-default-mitm")
+	defer env.close()
+	if err := env.writeConfig(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", filepath.Join(directory, "config.json"))
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.CodeSession.UpstreamProxyMITMEnabled || cfg.CodeSession.UpstreamProxyCAKeyFile != filepath.Join(directory, "proxy-ca.pem") {
+		t.Fatal("verification configuration must provide the default MITM CA key")
+	}
+	info, err := os.Stat(cfg.CodeSession.UpstreamProxyCAKeyFile)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatal("verification CA key must be private")
 	}
 }

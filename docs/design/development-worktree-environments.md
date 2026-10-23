@@ -19,7 +19,7 @@
 回收失败时保留 worktree 和环境登记，修复后重试；手动通过 Git 创建或删除
 worktree 时仍需显式执行对应命令。`.codex/` 下的其他本地文件继续忽略。
 
-本环境配置统一使用 `.run/`，LLM provider 配置和凭证常驻本机 `~/.oma-dev/`，
+本环境配置统一使用 `.run/`，镜像前缀、LLM provider 配置和凭证常驻本机 `~/.oma-dev/`，
 各 worktree 的初始化文件显式引用同一份 provider 定义。`config/` 中的配置文件
 仅作为模板，开发初始化与重启不再读取旧的 `config/config.yaml`。
 
@@ -186,6 +186,34 @@ flowchart TD
 
 `tunnel.public_base_url` 可以使用生成的本地地址，但远端 sandbox 或容器需要访问时，必须显式配置其可达地址。不能对所有运行模式强制使用 `127.0.0.1`。
 
+## 本机镜像前缀
+
+`~/.oma-dev/images.yaml` 是所有 worktree 共用的本机镜像配置，权限为 `0600`。默认入口从 `config/images.example.yaml` 补齐缺失文件，已有内容不覆盖，包括已经准备好 `.run/` 的环境。
+
+```yaml
+prefix: ghcr.io/superduck-ai
+```
+
+`prefix` 是 registry 与可选 namespace，不包含协议、凭据、镜像名或 tag。首尾空白及末尾 `/` 在读取边界规范化，空值或文件缺失时使用公开默认前缀。非法输入、未知字段、符号链接和多份 YAML 文档会被拒绝。
+
+Compose 的 init-envd 与 e2b-local 使用生成的 `stack.env` 中的 `OMA_E2B_LOCAL_IMAGE=<prefix>/e2b-local:latest`。默认沙箱模板使用 `<prefix>/managed-agent-sandbox:latest`。空模板、`managed-agent-sandbox`、旧的 `oma/managed-agent-sandbox:latest` 与公开默认镜像会按本机前缀解析；显式自定义模板保持原值。PostgreSQL、Redis、NATS、MinIO 等基础设施镜像不受这个应用镜像前缀影响。
+
+私有镜像地址只写入本机 `images.yaml`、忽略的 `.run/generated/` 及对应数据库资源，不进入源码、测试或文档。前缀变更后执行 `just dev-init --update`：既有默认模板会迁移到新配置，生成状态记录上次管理的默认模板引用，只有数据库值仍与该引用一致或仍为已知旧默认模板时才更新；页面设置的自定义模板保留。镜像需要预先构建或拉取；初始化不自动推送镜像。复用健康栈时也检查生成的 stack.env，镜像引用变更会重建当前环境的网关；失败时恢复原网关配置与 stack.env，允许重试。
+
+普通单测覆盖公开默认值、私有前缀映射、自定义模板保留、输入校验、配置权限与重复准备，以及只变更镜像引用时的网关刷新与失败重试。
+
+## 本地沙箱配置
+
+绑定环境的生成配置统一连接本环境 e2b-local，并启用 `e2b.local_port_lookup`。`e2b.local_service_host` 固定为 `127.0.0.1`，使后端通过宿主机回环地址访问 Docker 发布端口，不依赖网关返回的虚拟机或局域网 IP。空 `e2b.api_key` 使用符合 SDK `e2b_` 加十六进制格式要求的本地占位值 `e2b_0000000000000000000000000000000000000000`，用于通过 SDK 创建请求前的凭据校验；显式 API key 保留。空模板或云端默认模板 `managed-agent-sandbox` 映射为本机镜像前缀下的 `managed-agent-sandbox:latest`，自定义镜像引用保留。初始化前应构建或拉取该镜像。
+
+`code_session.sandbox_api_base_url` 生成为 `http://host.docker.internal:<当前 API 端口>`，每次重启后随动态端口更新。该地址用于本地容器回调宿主机 OMA，需要 Docker 提供 host.docker.internal 解析。
+
+生成 e2b-local 配置时读取沙箱镜像的 Docker architecture，选择对应的 `envd-linux-amd64` 或 `envd-linux-arm64`。镜像不存在或架构不支持时初始化报错。init-envd 逐个补齐缺失的 envd 文件。复用健康栈时仍重新生成配置，配置变化则重建本环境的 e2b-local 并等待健康状态。
+
+已有 workspace 的默认环境可能仍保存旧的 `managed-agent-sandbox` 模板。运行 `just dev-init --update` 会在 Yourbatis 事务中锁定已登记的默认环境，将仍使用已知默认模板且没有 build job 的 E2B 环境更新为当前本地模板。普通重复初始化和自定义模板保持原值。
+
+普通单测覆盖生成配置中的凭据、模板、端口解析开关和回调地址，以及 envd 架构替换；生成凭据通过真实 SDK 创建入口请求进程内 HTTP 服务，防止仅检查非空却遗漏 SDK key 格式限制。真实沙箱创建与回调需要单独进行集成验收。
+
 ## 初始化后的开发数据
 
 每个 workspace 初始化一个名为 `default` 的云端执行环境，使用当前 E2B 模板、空软件包列表与 `networking.type: unrestricted`，允许不受限的外网访问。环境 UUID 和 external ID 在创建前写入恢复状态；失败重试复用相同身份。已有 worktree 再运行 `just dev-init` 也会补齐该环境。重复初始化不覆盖页面修改，已登记环境被删除或归档时报错，不静默恢复。
@@ -298,6 +326,8 @@ providers:
 现有 HTTP handler 中的校验和密钥封装应整理到共享业务层，由页面操作和初始化共同调用，避免维护两套业务规则。
 
 ## 固定 JWT 与上游代理 CA 密钥
+
+MITM 默认开启。`just dev-init` 首次生成 `.run/config.yaml` 时显式写入 `code_session.upstream_proxy_mitm_enabled: true` 并绑定 `.run/secrets/upstream-proxy-ca-key.pem`，生成配置沿用该开关并指向 `.run/generated/secrets/` 中的稳定私钥副本。已有人工配置不会覆盖；显式 `false` 保持关闭，省略开关的旧配置升级后默认开启，因此必须保留有效 CA 私钥。SSRF 防护仍默认开启，不随 MITM 默认值变化。此前在透传模式启动的存活沙箱持有临时 CA，切换到稳定 CA 后应刷新其公开 CA bundle，或重启 Manager 重新下载公开 CA，避免出现证书不受信任。
 
 默认 `just dev-init` 在首次缺少输入时准备 `.run/secrets/` 中的 JWT 与 CA 私钥；已有文件不覆盖。需要复用固定私钥时，首次初始化前将原有 `upstream-proxy-ca-key.pem` 和 `code-session-jwt-ed25519.pem` 放到该目录，或通过自定义初始化文件的 `fixed_secrets_dir` 指定来源。已绑定环境缺少输入时要求恢复原文件，不生成替代密钥。
 

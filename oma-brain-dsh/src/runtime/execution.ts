@@ -6,6 +6,7 @@ import { approveToolCall } from "./tool-approvals.ts";
 import { toolText } from "./tools.ts";
 import {
   ToolNotForwardedError,
+  isShutdownCancel,
   type ApprovalDecision,
   type RemoteTool,
   type SandboxExecutor,
@@ -54,14 +55,17 @@ export class ToolExecution {
       result = decision.externalResult ?? (readOnly ? await this.callWithRetry(tool, effective, exec.signal) : await this.sandbox.call(tool, effective, exec.signal));
     } catch (error) {
       const userInterrupted = exec.signal.aborted && exec.signal.reason?.kind === "user";
+      const shutdownInterrupted = exec.signal.aborted && isShutdownCancel(exec.signal.reason);
       if (readOnly && !userInterrupted || error instanceof ToolNotForwardedError) {
         const failure = error instanceof ToolNotForwardedError ? error.message
           : exec.signal.aborted ? "Read-only tool call was cancelled" : "Read-only tool outcome is unknown";
         await this.bridge.recordResult({ ...call, text: failure, failed: true });
         throw new Error(failure);
       }
-      if (userInterrupted) {
-        result = { isError: true, content: [{ type: "text", text: "Tool call interrupted." }] };
+      if (userInterrupted || shutdownInterrupted) {
+        const text = userInterrupted ? "Tool call interrupted."
+          : "Tool call interrupted because the Brain worker shut down; its outcome is unknown.";
+        result = { isError: true, content: [{ type: "text", text }] };
         remoteOutcome = "unknown";
       } else {
         try { await this.bridge.recordUnknown(exec.callId); }

@@ -21,7 +21,7 @@ func (e *environment) baselineFixtureOverlay(selected scenario) (string, error) 
 		return "", nil
 	}
 	overlay := fixtureOverlay{Replace: make(map[string]string)}
-	for _, name := range []string{"session_mapper", "session_thread_mapper", "session_resource_file_mapper", "llm_provider_mapper"} {
+	for _, name := range []string{"session_mapper", "session_thread_mapper", "session_resource_file_mapper"} {
 		filename := name + ".sqlmap.gen.go"
 		reference := filepath.Join(e.directory, "backend-source", "internal", "db", filename)
 		info, err := os.Stat(reference)

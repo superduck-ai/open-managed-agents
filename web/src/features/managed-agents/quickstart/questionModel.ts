@@ -24,9 +24,10 @@ export function parseQuestionInput(input: Record<string, unknown>): QuickstartQu
             .filter((option): option is { label: string; description: string } => Boolean(option))
         : [];
       return {
+        ...(typeof question.id === 'string' && question.id ? { id: question.id } : {}),
         header: typeof question.header === 'string' ? question.header : 'Question',
         question: typeof question.question === 'string' ? question.question : 'Choose an option.',
-        multiSelect: question.multiSelect === true,
+        multiSelect: typeof question.multi_select === 'boolean' ? question.multi_select : question.multiSelect === true,
         options,
       };
     })

@@ -34,7 +34,7 @@ func TestBaselineFixtureOverlayOnlyAppliesToChatBaseline(t *testing.T) {
 func TestBaselineFixtureOverlayPreservesCurrentSource(t *testing.T) {
 	env := newEnvironment(t.TempDir(), t.TempDir(), "fixture-overlay-test")
 	env.backendCommit = "reference-commit"
-	for _, name := range []string{"session_mapper", "session_thread_mapper", "session_resource_file_mapper", "llm_provider_mapper"} {
+	for _, name := range []string{"session_mapper", "session_thread_mapper", "session_resource_file_mapper"} {
 		for _, root := range []string{env.root, filepath.Join(env.directory, "backend-source")} {
 			path := filepath.Join(root, "internal", "db", name+".sqlmap.gen.go")
 			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -61,8 +61,11 @@ func TestBaselineFixtureOverlayPreservesCurrentSource(t *testing.T) {
 	if err := json.Unmarshal(data, &overlay); err != nil {
 		t.Fatal(err)
 	}
-	if len(overlay.Replace) != 4 {
+	if len(overlay.Replace) != 3 {
 		t.Fatalf("unexpected fixture scope: %v", overlay.Replace)
+	}
+	if _, exists := overlay.Replace[filepath.Join(env.root, "internal", "db", "llm_provider_mapper.sqlmap.gen.go")]; exists {
+		t.Fatal("Provider setup must use the public API instead of a baseline database interface")
 	}
 	for current, reference := range overlay.Replace {
 		before, err := os.ReadFile(current)

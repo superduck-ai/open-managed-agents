@@ -43,13 +43,15 @@ func TestBudgetMigrationsUpgradeFromMainPostgres(t *testing.T) {
 		t.Fatalf("初始化 main 数据库：%v", err)
 	}
 	var version, historyCount int64
-	if err := database.QueryRowContext(ctx, `SELECT max(version_id), count(*) FROM goose_db_version WHERE is_applied`).Scan(&version, &historyCount); err != nil || version != 91 {
-		t.Fatalf("main 迁移版本=%d，预期 91：%v", version, err)
+	if err := database.QueryRowContext(ctx, `SELECT max(version_id), count(*) FROM goose_db_version WHERE is_applied`).Scan(&version, &historyCount); err != nil || version != 95 {
+		t.Fatalf("main 迁移版本=%d，预期 95：%v", version, err)
 	}
 	var budgetColumns int
 	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='sessions' AND column_name='budget'`).Scan(&budgetColumns); err != nil || budgetColumns != 0 {
 		t.Fatalf("main 基线不应包含预算字段：%d/%v", budgetColumns, err)
 	}
+	assertMigrationColumnNullable(t, ctx, database, "llm_providers", "models", "NO")
+	assertMigrationColumnNullable(t, ctx, database, "llm_providers", "workspace_uuid", "YES")
 	seedEnvironmentWorkMigrationSessions(t, ctx, database)
 	for range 2 {
 		if err := runGooseMigrations(ctx, database); err != nil {
@@ -57,8 +59,8 @@ func TestBudgetMigrationsUpgradeFromMainPostgres(t *testing.T) {
 		}
 	}
 	var finalVersion, finalCount int64
-	if err := database.QueryRowContext(ctx, `SELECT max(version_id), count(*) FROM goose_db_version WHERE is_applied`).Scan(&finalVersion, &finalCount); err != nil || finalVersion != 95 || finalCount != historyCount+4 {
-		t.Fatalf("升级历史=%d/%d，预期 95/%d：%v", finalVersion, finalCount, historyCount+4, err)
+	if err := database.QueryRowContext(ctx, `SELECT max(version_id), count(*) FROM goose_db_version WHERE is_applied`).Scan(&finalVersion, &finalCount); err != nil || finalVersion != 99 || finalCount != historyCount+4 {
+		t.Fatalf("升级历史=%d/%d，预期 99/%d：%v", finalVersion, finalCount, historyCount+4, err)
 	}
 	for _, column := range []string{"budget", "budget_reached_at", "budget_removed_at"} {
 		assertMigrationColumnNullable(t, ctx, database, "sessions", column, "YES")
@@ -67,6 +69,9 @@ func TestBudgetMigrationsUpgradeFromMainPostgres(t *testing.T) {
 	assertMigrationColumnNullable(t, ctx, database, "code_sessions", "worker_claim_requested_at", "YES")
 	assertMigrationColumnNullable(t, ctx, database, "llm_providers", "api_backend", "NO")
 	assertMigrationColumnNullable(t, ctx, database, "llm_providers", "slug", "NO")
+	assertMigrationColumnNullable(t, ctx, database, "llm_providers", "models", "NO")
+	assertMigrationColumnNullable(t, ctx, database, "llm_providers", "workspace_uuid", "YES")
+	assertMigrationColumnExists(t, ctx, database, "llm_providers", "model_ids", false)
 	for _, table := range []string{"usage_records", "llm_model_prices", "model_price_catalog"} {
 		var exists bool
 		if err := database.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil || !exists {

@@ -8,7 +8,7 @@ import * as LlmAiSdk from "./llm-ai-sdk/index.ts";
 import { omaModelOptions } from "./model.ts";
 import { startWorkers } from "./worker.ts";
 import { BrainClaimClient } from "./claim.ts";
-import { required, readBrainClaimOptions, readCcrHeartbeatOptions } from "./config.ts";
+import { required, readBrainClaimOptions, readCcrHeartbeatOptions, readShutdownDrainMs } from "./config.ts";
 
 export const name = "oma-brain";
 
@@ -28,7 +28,8 @@ export async function mountOma(
       onHealth: logOmaHeartbeatHealth,
     },
   });
-  await ctx.plugin(LlmAiSdk, { providers: ["oma"], adapter: omaModelOptions(api, ctx.get("attachments")) });
+  const agents = ctx.get("agents")!;
+  await ctx.plugin(LlmAiSdk, { providers: ["oma"], adapter: omaModelOptions(api, ctx.get("attachments"), () => agents.currentInitiator()?.session.id) });
   return client;
 }
 
@@ -39,11 +40,12 @@ export async function apply(ctx: Context): Promise<void> {
   if (!Number.isSafeInteger(maxSessions) || maxSessions < 1)
     throw new Error("OMA_BRAIN_MAX_SESSIONS must be positive");
   const claim = readBrainClaimOptions();
+  const shutdownDrainMs = readShutdownDrainMs();
   const api = new OmaApi(base.replace(/\/$/, ""));
   const client = await mountOma(ctx, api, heartbeat);
   const claims = new BrainClaimClient(api, claim.token, crypto.randomUUID());
   await ctx.plugin({
     inject: ["ccrv2"],
-    apply: (scope: Context) => startWorkers(scope, api, client, claims, { maxSessions, claimConcurrency: claim.concurrency }),
+    apply: (scope: Context) => startWorkers(scope, api, client, claims, { maxSessions, claimConcurrency: claim.concurrency, shutdownDrainMs }),
   });
 }

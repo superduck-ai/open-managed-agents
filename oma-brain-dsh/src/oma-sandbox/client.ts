@@ -2,7 +2,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { OmaApi } from "../api.ts";
 import { object, type Payload } from "../json.ts";
 import { sandboxEndpoint } from "./config.ts";
-import { ToolNotForwardedError, type SandboxExecutor, type RemoteTool } from "../runtime/contracts.ts";
+import { ToolNotForwardedError, isConnectFailure, notForwardedDetail, type SandboxExecutor, type RemoteTool } from "../runtime/contracts.ts";
 import { workerDiagnostic } from "../ccrv2/diagnostics.ts";
 
 /** Use the same MCP SDK as DSH, with initialization gated by the approval checkpoint. */
@@ -10,7 +10,7 @@ export class SandboxMcp implements SandboxExecutor {
   private readonly client = new Client({ name: "oma-brain-dsh", version: "0.1.0" }, { versionNegotiation: { mode: "auto" } });
   private readonly transport: StreamableHTTPClientTransport;
   private initialization?: Promise<void>;
-  private readonly calls = new Map<string, { signal: AbortSignal; threadId?: string; cleanup?: () => void; rejection?: string }>();
+  private readonly calls = new Map<string, { signal: AbortSignal; timeoutMs: number; threadId?: string; cleanup?: () => void; rejection?: string }>();
 
   constructor(readonly api: OmaApi, readonly sessionId: string) {
     const endpoint = sandboxEndpoint(api.assignment(sessionId).mcp_config, api.base);
@@ -33,9 +33,17 @@ export class SandboxMcp implements SandboxExecutor {
             }
             delete body.params._meta.progressToken;
             if (!Object.keys(body.params._meta).length) delete body.params._meta;
-            const response = await api.fetcher(new Request(request, { body: JSON.stringify(body) }));
+            let response: Response;
+            try {
+              const deadline = AbortSignal.timeout(call.timeoutMs + CALL_DEADLINE_MARGIN_MS);
+              response = await api.fetcher(new Request(request, { body: JSON.stringify(body) }),
+                { timeout: false, signal: AbortSignal.any([request.signal, deadline]) });
+            } catch (error) {
+              if (isConnectFailure(error)) call.rejection = "Sandbox tool call was not executed: OMA sandbox gateway is unreachable";
+              throw error;
+            }
             if (response.headers.get("X-Oma-Sandbox-Not-Forwarded") === "true")
-              call.rejection = await rejectionMessage(response.clone());
+              call.rejection = `Sandbox tool call was not executed: ${await notForwardedDetail(response.clone())}`;
             return response;
           }
         }
@@ -59,12 +67,13 @@ export class SandboxMcp implements SandboxExecutor {
     await this.provision(signal);
     const start = Date.now();
     const token = crypto.randomUUID();
-    const call = { signal, threadId, cleanup: undefined as (() => void) | undefined, rejection: undefined as string | undefined };
+    const timeoutMs = sandboxCallTimeoutMs(tool, args);
+    const call = { signal, timeoutMs, threadId, cleanup: undefined as (() => void) | undefined, rejection: undefined as string | undefined };
     this.calls.set(token, call);
     let result: Payload;
     try {
       result = object(await this.client.callTool({ name: tool.remoteName, arguments: args, _meta: { progressToken: token } },
-        { timeout: 185_000, ...(this.transport.protocolVersion === "2026-07-28" ? { signal } : {}) }));
+        { timeout: timeoutMs, ...(this.transport.protocolVersion === "2026-07-28" ? { signal } : {}) }));
     } catch (error) {
       if (call.rejection !== undefined) throw new ToolNotForwardedError(call.rejection);
       throw error;
@@ -81,11 +90,15 @@ export class SandboxMcp implements SandboxExecutor {
   async close(): Promise<void> { await this.client.close(); }
 }
 
-async function rejectionMessage(response: Response): Promise<string> {
-  let detail = `HTTP ${response.status}`;
-  try {
-    const message = (await response.json())?.error?.message;
-    if (typeof message === "string" && message) detail = message.slice(0, 500);
-  } catch { /* Non-JSON gateway rejection. */ }
-  return `Sandbox tool call was not executed: ${detail}`;
+const SANDBOX_CALL_TIMEOUT_MS = 185_000;
+const CALL_DEADLINE_MARGIN_MS = 15_000;
+const BASH_DEFAULT_TIMEOUT_SECONDS = 120;
+const BASH_MAX_TIMEOUT_SECONDS = 600;
+const BASH_RESPONSE_MARGIN_MS = 65_000;
+
+export function sandboxCallTimeoutMs(tool: RemoteTool, args: Payload): number {
+  if (tool.remoteName !== "bash") return SANDBOX_CALL_TIMEOUT_MS;
+  const requested = Number.isFinite(args.timeout) && args.timeout > 0 ? args.timeout : BASH_DEFAULT_TIMEOUT_SECONDS;
+  const seconds = Math.min(requested, BASH_MAX_TIMEOUT_SECONDS);
+  return Math.max(SANDBOX_CALL_TIMEOUT_MS, seconds * 1000 + BASH_RESPONSE_MARGIN_MS);
 }

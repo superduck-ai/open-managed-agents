@@ -1297,7 +1297,7 @@ func seedTestLLMProviderForWorkspace(
 		Slug:             llmproviders.NextDefaultSlug(slugs),
 		BaseURL:          baseURL,
 		APIKeyLast4:      apiKey[len(apiKey)-4:],
-		ModelIDs:         append([]string(nil), modelIDs...),
+		Models:           db.LLMModels{}.WithIDs(modelIDs),
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
@@ -1328,6 +1328,16 @@ func clearTestLLMProviders(t *testing.T, app *testApp) {
 		); err != nil {
 			t.Fatalf("delete test LLM provider %s: %v", provider.ExternalID, err)
 		}
+	}
+	organization, err := app.db.GetOrganizationLLMProvider(context.Background(), ids.OrganizationUUID)
+	if errors.Is(err, db.ErrNotFound) {
+		return
+	}
+	if err != nil {
+		t.Fatalf("load organization LLM provider: %v", err)
+	}
+	if err := app.db.DeleteLLMProvider(context.Background(), ids.OrganizationUUID, "", organization.ExternalID); err != nil {
+		t.Fatalf("delete organization LLM provider: %v", err)
 	}
 }
 

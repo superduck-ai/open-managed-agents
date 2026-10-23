@@ -9,11 +9,11 @@ import (
 )
 
 func TestManagedRuntimePromptAndSkills(t *testing.T) {
-	if _, err := managedAgentSessionConfig(db.Session{AgentSnapshot: json.RawMessage(`invalid`)}, managedAgentRuntimeResources{}, nil); err == nil {
+	if _, err := managedAgentSessionConfig(db.Session{AgentSnapshot: json.RawMessage(`invalid`)}, managedAgentRuntimeResources{}, nil, ""); err == nil {
 		t.Fatal("invalid snapshot accepted")
 	}
 	runtimeSkills := []skillsapi.RuntimeSkill{{Name: "PDF", Description: "Read PDF", Directory: "pdf", Version: "v1"}}
-	raw, err := managedAgentSessionConfig(db.Session{AgentSnapshot: json.RawMessage(`{"system":"literal ${{ instructions }}"}`)}, managedAgentRuntimeResources{runtimeSkills: runtimeSkills}, runtimeSkills)
+	raw, err := managedAgentSessionConfig(db.Session{AgentSnapshot: json.RawMessage(`{"system":"literal ${{ instructions }}"}`)}, managedAgentRuntimeResources{runtimeSkills: runtimeSkills}, runtimeSkills, "")
 	if err != nil {
 		t.Fatal(err)
 	}

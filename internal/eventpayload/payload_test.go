@@ -100,7 +100,7 @@ func TestNonStringModelRequestStartIDDoesNotRejectPayload(t *testing.T) {
 }
 
 func TestSummaryCarriesBillingMetadata(t *testing.T) {
-	payload := []byte(`{"type":"span.model_request_end","model":"claude","billing":{"list_cost":"900","currency":"USD"},"usage":{"input_tokens":10},"model_request_start_id":"sevt_start"}`)
+	payload := []byte(`{"type":"span.model_request_end","model":"claude","is_error":true,"_model_price":{"rates":{"input":"3","output":"15"}},"billing":{"list_cost":"900","currency":"USD"},"usage":{"input_tokens":10},"model_request_start_id":"sevt_start"}`)
 	summary, _, err := Summarize(payload, "span.model_request_end")
 	if err != nil {
 		t.Fatalf("summarize: %v", err)
@@ -122,6 +122,9 @@ func TestSummaryCarriesBillingMetadata(t *testing.T) {
 	billing, ok := back["billing"].(map[string]any)
 	if !ok || billing["list_cost"] != "900" {
 		t.Fatalf("summary json missing billing: %s", encoded)
+	}
+	if back["model"] != "claude" || back["is_error"] != true || back["_model_price"] == nil {
+		t.Fatalf("summary lost ledger metadata: %s", encoded)
 	}
 	if _, has := back["usage"]; !has {
 		t.Fatalf("summary json missing usage: %s", encoded)

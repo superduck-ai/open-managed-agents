@@ -5,7 +5,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { mountKernel } from "../src/kernel.ts";
 import * as CcrBridge from "../src/ccrv2/index.ts";
-import type { CcrBackend } from "../src/ccrv2/index.ts";
+import type { CcrBackend, CcrPersistArgs } from "../src/ccrv2/index.ts";
 import type { SandboxExecutor } from "../src/runtime/contracts.ts";
 import type { Payload } from "../src/ccrv2/protocol.ts";
 import { emptyState } from "../src/ccrv2/protocol.ts";
@@ -29,7 +29,7 @@ class MemoryBackend implements CcrBackend {
     return structuredClone((this.logs.get(id) ?? []).filter((event) =>
       options?.subagents ? !!event.agent_id : !event.agent_id));
   }
-  async persist(id: string, subtype: string, data: unknown, agentId?: string) {
+  async persist(id: string, ...[subtype, data, agentId]: CcrPersistArgs) {
     const log = this.logs.get(id) ?? [];
     log.push(structuredClone({ subtype, schema_version: 1, data, ...(agentId ? { agent_id: agentId } : {}) }));
     this.logs.set(id, log);
@@ -106,8 +106,9 @@ test("session previews enter one stream window and terminal publication still wa
     await events(id, payloads);
   };
   const persist = backend.persist.bind(backend);
-  backend.persist = async (id, subtype, data, agentId) => {
-    await persist(id, subtype, data, agentId);
+  backend.persist = async (id, ...args) => {
+    await persist(id, ...args);
+    const [subtype, data] = args;
     if (subtype === "dsh_brain_state" && data && typeof data === "object" && "phase" in data && data.phase === "completed")
       completed.resolve();
   };
@@ -195,9 +196,9 @@ test("startup clears task_summary after recovery persistence and before status o
     const started = Promise.withResolvers<void>();
     const confirmed = Promise.withResolvers<void>();
     const persist = backend.persist.bind(backend);
-    backend.persist = async (...args) => { order.push(`persist:${args[1]}`); await persist(...args); };
+    backend.persist = async (id, ...args) => { order.push(`persist:${args[0]}`); await persist(id, ...args); };
     backend.reportMetadata = async (_id, patch) => {
-      expect(patch).toEqual({ task_summary: null, pending_action: null, model: "text" });
+      expect(patch).toEqual({ task_summary: null, pending_action: null, model: "text", unknown_tool_outcomes: null });
       order.push("metadata"); started.resolve(); await confirmed.promise;
     };
     backend.setStatus = async (_id, status) => { order.push(`status:${status}`); };
@@ -854,4 +855,93 @@ test.each([false, true])("context overflow compacts and replays without duplicat
       async () => {}, async () => { published = true; })).toBe(false);
     await session.close();
   } finally { await ctx.fiber.dispose(); }
+});
+
+test("operator reconciliation unblocks only acknowledged unknown outcomes without replay", async () => {
+  const backend = new MemoryBackend();
+  let executions = 0;
+  const executor: SandboxExecutor = {
+    provision: async () => {},
+    call: async () => { executions++; throw new Error("response lost"); },
+  };
+  const config = {
+    id: "reconcile-session", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "",
+    setup: async (scope: Context) => {
+      await scope.plugin({ name: "reconcile-sandbox", apply(ctx: Context) { ctx.provide("sandboxExecutor", executor); } });
+    },
+  };
+  const toolTurn = (model: TextModel) => {
+    const stream = model.stream.bind(model);
+    model.stream = async function* (options: GenerateOptions): AsyncIterable<StreamChunk> {
+      if (this.requests.length) { yield* stream(options); return; }
+      this.requests.push(options);
+      yield { type: "block-start", index: 0, blockType: "tool-call" };
+      yield { type: "block-end", index: 0, block: {
+        type: "tool-call", id: ToolCallId("lost-call"), name: "Bash", arguments: JSON.stringify({ command: "deploy" }),
+      } };
+      yield { type: "finish", reason: { kind: "tool-calls" } };
+    };
+    return model;
+  };
+  const mount = async (model: TextModel) => {
+    const ctx = new Context();
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], model);
+    const session = ctx.ccrv2.createSession(config);
+    const events = backend.events.bind(backend);
+    backend.events = async (id, payloads) => {
+      await events(id, payloads);
+      for (const payload of payloads) if (payload.type === "control_request" && payload.request.subtype === "can_use_tool")
+        await session.control({ type: "control_response", response: {
+          subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
+        } });
+    };
+    return { ctx, session, restore: () => { backend.events = events; } };
+  };
+
+  let mounted = await mount(toolTurn(new TextModel()));
+  try {
+    await mounted.session.open();
+    await mounted.session.receive("first", { content: "Deploy" }).catch(() => {});
+    expect(mounted.session.blocked()).toBe(true);
+    expect(executions).toBe(1);
+    expect(backend.metadata.get(config.id)?.unknown_tool_outcomes).toEqual([{ tool_use_id: "lost-call", tool_name: "Bash" }]);
+  } finally { mounted.restore(); await mounted.ctx.fiber.dispose(); }
+
+  backend.metadata.set(config.id, { ...backend.metadata.get(config.id), tool_outcome_reconciliation: { tool_use_ids: ["other-call"] } });
+  mounted = await mount(new TextModel());
+  try {
+    await mounted.session.open();
+    expect(mounted.session.blocked()).toBe(true);
+    expect(backend.metadata.get(config.id)).not.toHaveProperty("tool_outcome_reconciliation");
+    expect(backend.metadata.get(config.id)?.unknown_tool_outcomes).toEqual([{ tool_use_id: "lost-call", tool_name: "Bash" }]);
+  } finally { mounted.restore(); await mounted.ctx.fiber.dispose(); }
+
+  backend.metadata.set(config.id, { ...backend.metadata.get(config.id), tool_outcome_reconciliation: { tool_use_ids: ["lost-call"] } });
+  const resumed = new TextModel();
+  mounted = await mount(resumed);
+  try {
+    await mounted.session.open();
+    expect(mounted.session.blocked()).toBe(false);
+    expect(mounted.session.state.executions![config.id]!.toolOutcomes["lost-call"]).toMatchObject({ failed: true, remoteOutcome: "unknown" });
+    expect(backend.metadata.get(config.id)).not.toHaveProperty("tool_outcome_reconciliation");
+    expect(backend.metadata.get(config.id)).not.toHaveProperty("unknown_tool_outcomes");
+    expect(JSON.stringify(backend.output.get(config.id))).toContain("Unknown tool outcomes were acknowledged by an operator");
+    await mounted.session.receive("after-reconcile", { content: "Check the deployment" });
+    expect(resumed.requests).toHaveLength(1);
+    expect(JSON.stringify(resumed.requests[0]!.messages)).toContain("An operator acknowledged that the outcomes of these earlier tool calls are unknown: Bash (lost-call)");
+    expect(executions).toBe(1);
+    const results = backend.output.get(config.id)!.filter((event) => event.type === "result");
+    expect(results.at(-1)).toMatchObject({ uuid: "after-reconcile_result", is_error: false });
+  } finally { mounted.restore(); await mounted.ctx.fiber.dispose(); }
+
+  mounted = await mount(new TextModel());
+  try {
+    await mounted.session.open();
+    expect(mounted.session.blocked()).toBe(false);
+    const notices = backend.output.get(config.id)!.filter((event) => event.type === "system.message"
+      && JSON.stringify(event).includes("acknowledged by an operator"));
+    expect(notices).toHaveLength(1);
+  } finally { mounted.restore(); await mounted.ctx.fiber.dispose(); }
 });

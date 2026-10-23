@@ -72,7 +72,7 @@ func createProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.
 		Slug:             spec.Slug,
 		APIBackend:       spec.APIBackend,
 		BaseURL:          spec.BaseURL,
-		ModelIDs:         spec.ModelIDs,
+		Models:           db.LLMModels{}.WithIDs(spec.ModelIDs),
 	}
 	envelope, err := vaultSecrets.Seal(ctx, llmproviders.SecretBinding(provider), []byte(spec.APIKey))
 	if err != nil {
@@ -90,7 +90,7 @@ func updateProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.
 	if spec.Slug != "" && spec.Slug != existing.Slug {
 		return ProviderState{}, fmt.Errorf("provider slug %q differs from registered slug %q; slug is immutable", spec.Slug, existing.Slug)
 	}
-	changed := existing.BaseURL != spec.BaseURL || existing.APIBackend != spec.APIBackend || !equalStrings(existing.ModelIDs, spec.ModelIDs)
+	changed := existing.BaseURL != spec.BaseURL || existing.APIBackend != spec.APIBackend || !equalStrings(existing.Models.IDs(), spec.ModelIDs)
 	keyChanged, err := providerKeyChanged(ctx, vaultSecrets, existing, spec.APIKey)
 	if err != nil {
 		return ProviderState{}, err
@@ -104,7 +104,7 @@ func updateProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.
 	}
 	existing.BaseURL = spec.BaseURL
 	existing.APIBackend = spec.APIBackend
-	existing.ModelIDs = spec.ModelIDs
+	existing.Models = existing.Models.WithIDs(spec.ModelIDs)
 	if keyChanged {
 		envelope, err := vaultSecrets.Seal(ctx, llmproviders.SecretBinding(existing), []byte(spec.APIKey))
 		if err != nil {

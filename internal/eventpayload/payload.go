@@ -40,6 +40,9 @@ type Summary struct {
 	// Billing / usage counters and the model_request_start_id link are carried
 	// through so budget aggregation over span.model_request_end events keeps
 	// working when the full payload is externalized past the inline threshold.
+	Model               *string         `json:"model,omitempty"`
+	PriceSnapshot       json.RawMessage `json:"_model_price,omitempty"`
+	IsError             json.RawMessage `json:"is_error,omitempty"`
 	Billing             json.RawMessage `json:"billing,omitempty"`
 	Usage               json.RawMessage `json:"usage,omitempty"`
 	ModelUsage          json.RawMessage `json:"model_usage,omitempty"`
@@ -47,6 +50,9 @@ type Summary struct {
 }
 
 type payloadMetadata struct {
+	Model               json.RawMessage `json:"model"`
+	PriceSnapshot       json.RawMessage `json:"_model_price"`
+	IsError             json.RawMessage `json:"is_error"`
 	Name                json.RawMessage `json:"name"`
 	ToolUseID           json.RawMessage `json:"tool_use_id"`
 	MCPToolUseID        json.RawMessage `json:"mcp_tool_use_id"`
@@ -101,6 +107,9 @@ func Summarize(payload []byte, eventType string) (Summary, *string, error) {
 		Name:                metadataString(metadata.Name),
 		Size:                int64(len(payload)),
 		Preview:             Preview(payload),
+		Model:               metadataString(metadata.Model),
+		PriceSnapshot:       metadata.PriceSnapshot,
+		IsError:             metadata.IsError,
 		Billing:             metadata.Billing,
 		Usage:               metadata.Usage,
 		ModelUsage:          metadata.ModelUsage,

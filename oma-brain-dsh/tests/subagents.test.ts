@@ -134,6 +134,7 @@ test("delegates with isolated history, no nested delegation, shared approvals, a
 test("predefined specialist uses its own prompt, model and restricted tools", async () => {
   const b = new Backend();
   cleanups.push(async () => b.stop());
+  b.a.launch.models!["review-model"] = { id: "review-model", api_backend: "messages" };
   const agentSnapshot = {
     type: "agent", id: "agent_reviewer", version: 3, name: "reviewer", system: "Review only", model: "review-model",
     tools: [{ type: "agent_toolset_20260401", default_config: { enabled: false }, configs: [
@@ -179,7 +180,7 @@ test.each(["user.interrupt", "control_request"])("%s interrupting the whole sess
   const f = await fixture();
   f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate"), toolEvents("pwd", "child_tool")];
   const turn = f.session.receive("interrupt", { content: "Delegate" }).catch(() => {});
-  await eventually(() => f.session.approvals.size === 1);
+  await eventually(() => f.session.state.threads?.length === 1 && f.session.approvals.size === 1);
   await f.session.control({ type, ...(type === "control_request" ? { request_id: "global", request: { subtype: "interrupt" } } : {}) });
   await turn;
   expect(f.session.approvals.size).toBe(0);
@@ -187,7 +188,7 @@ test.each(["user.interrupt", "control_request"])("%s interrupting the whole sess
   expect(f.session.state.threads![0]!.status).toBe("idle");
 });
 
-test("lost child tool outcome blocks parent recovery and never replays the command", async () => {
+test("lost child tool outcome blocks parent recovery until new input and never replays the command", async () => {
   const f = await fixture();
   const lostResponse = Promise.withResolvers<Payload>();
   f.b.onTool = () => lostResponse.promise;
@@ -209,15 +210,20 @@ test("lost child tool outcome blocks parent recovery and never replays the comma
   f.b.onCancel = undefined;
   const restored = await fixture(f.b);
   expect(restored.session.blocked()).toBe(true);
-  await expect(restored.session.receive("retry", { content: "try again" })).rejects.toThrow("reconciliation");
+  const requests = f.b.requests.length;
+  f.b.modelScript = [textEvents("checked the child state")];
+  await restored.session.receive("retry", { content: "try again" });
+  expect(restored.session.blocked()).toBe(false);
   expect(f.b.executions).toHaveLength(1);
+  expect(f.b.requests).toHaveLength(requests + 1);
+  expect(JSON.stringify(f.b.requests.at(-1)!.messages)).toContain("(child_tool)");
 });
 
 test.each(["user.interrupt", "control_request"])("%s targeted child interruption leaves parent quiet until user input while primary interruption stops the turn", async (type) => {
   const f = await fixture();
   f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate"), toolEvents("pwd", "child_tool"), textEvents("RESUMED")];
   const turn = f.session.receive("target", { content: "Delegate" });
-  await eventually(() => f.session.approvals.size === 1);
+  await eventually(() => f.session.state.threads?.length === 1 && f.session.approvals.size === 1);
   const thread = f.session.state.threads![0]!;
   await f.session.control({ type, session_thread_id: thread.id, ...(type === "control_request" ? { request_id: "child", request: { subtype: "interrupt" } } : {}) });
   await turn;
@@ -238,6 +244,8 @@ test.each(["user.interrupt", "control_request"])("%s targeted child interruption
 test("backend launch roster is listed and delegated by agent_name without inline fallback", async () => {
   const b = new Backend();
   cleanups.push(async () => b.stop());
+  b.a.launch.models!["fast-model"] = { id: "fast-model", api_backend: "messages" };
+  b.a.launch.models!["slow-model"] = { id: "slow-model", api_backend: "messages" };
   b.a.launch.subagents = JSON.parse(`{
     "inlineAgents": false,
     "agents": [

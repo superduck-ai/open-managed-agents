@@ -13,6 +13,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
 )
 
 func (r *Runner) startExternalWorker(ctx context.Context, env db.Environment, work *db.EnvironmentWork) error {
@@ -55,7 +56,15 @@ func (r *Runner) EnsureSessionSandbox(ctx context.Context, code db.CodeSession) 
 		return "", db.EnvironmentSandbox{}, db.ErrInvalidState
 	}
 	if sandbox, err := r.db.GetResumableEnvironmentSandboxForCodeSession(ctx, code.ExternalID); err == nil && sandbox.ProviderSandboxID != nil {
-		return r.sessionSandboxEndpoint(ctx, sandbox)
+		endpoint, _, err := r.sessionSandboxEndpoint(ctx, sandbox)
+		if !errors.Is(err, sandboxruntime.ErrSandboxNotFound) {
+			return endpoint, sandbox, err
+		}
+		now := time.Now().UTC()
+		message := "provider sandbox not found"
+		if err := r.db.UpdateEnvironmentSandboxState(ctx, sandbox.WorkspaceUUID, sandbox.ExternalID, "failed", sandbox.ProviderSandboxID, &message, &now); err != nil {
+			return "", db.EnvironmentSandbox{}, err
+		}
 	} else if err != nil && !errors.Is(err, db.ErrNotFound) {
 		return "", db.EnvironmentSandbox{}, err
 	}

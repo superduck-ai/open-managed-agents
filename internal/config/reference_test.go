@@ -15,6 +15,9 @@ func TestConfigExampleContainsOnlyCommonFields(t *testing.T) {
 	examplePath := repositoryFilePath(t, "config", "config.example.yaml")
 	got := configDocumentPaths(t, examplePath)
 	want := []string{
+		"code_session",
+		"code_session.upstream_proxy_ca_key_file",
+		"code_session.upstream_proxy_mitm_enabled",
 		"database",
 		"database.url",
 		"e2b",

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
@@ -88,7 +90,7 @@ func (e *environment) writeConfig(ctx context.Context) error {
 		"tunnel":       map[string]string{"public_base_url": "http://" + e.apiAddress()},
 		"storage":      map[string]any{"type": "s3", "s3": map[string]any{"endpoint": "http://127.0.0.1:" + ports["minio"], "bucket": "verify-be", "region": "us-east-1", "access_key_id": "verifychat", "secret_access_key": "verifychat-local-only", "force_path_style": true}},
 		"vault":        map[string]any{"master_key": map[string]any{"version": 1, "kek": base64.StdEncoding.EncodeToString(kek)}},
-		"code_session": map[string]string{"jwt_signing_private_key_file": filepath.Join(e.directory, "jwt.pem")},
+		"code_session": map[string]string{"jwt_signing_private_key_file": filepath.Join(e.directory, "jwt.pem"), "upstream_proxy_ca_key_file": filepath.Join(e.directory, "proxy-ca.pem")},
 	}
 	if e.brain {
 		if err := e.writeBrainClaimToken(); err != nil {
@@ -126,11 +128,20 @@ func (e *environment) writeConfig(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	encoded, err := x509.MarshalPKCS8PrivateKey(key)
+	proxyKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(e.directory, "jwt.pem"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: encoded}), 0o600)
+	for name, signingKey := range map[string]any{"jwt.pem": key, "proxy-ca.pem": proxyKey} {
+		encoded, err := x509.MarshalPKCS8PrivateKey(signingKey)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(e.directory, name), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: encoded}), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (e *environment) writeBrainClaimToken() error {
 	token := make([]byte, 32)
@@ -268,7 +279,7 @@ func (e *environment) close() []string {
 			failures = append(failures, "could not confirm container cleanup: "+filter)
 		}
 	}
-	for _, name := range []string{"config.json", "jwt.pem", "brain-claim-token", "server", "server.pid"} {
+	for _, name := range []string{"config.json", "jwt.pem", "proxy-ca.pem", "brain-claim-token", "server", "server.pid"} {
 		if err := os.Remove(filepath.Join(e.directory, name)); err != nil && !os.IsNotExist(err) {
 			failures = append(failures, "could not remove "+name)
 		}

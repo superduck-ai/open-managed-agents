@@ -1,5 +1,5 @@
 import { Check, Copy, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { copyText } from '@/shared/lib/clipboard';
 import { cn } from '@/shared/lib/utils';
 import { useI18n } from '../../shared/i18n';
@@ -22,6 +22,7 @@ import {
 
 type ModelCatalogProps = {
   canManage: boolean;
+  organizationEditable: boolean;
   providers: LLMProvider[];
   models: CatalogModel[];
   selectedProviderId: string;
@@ -38,6 +39,7 @@ type ModelCatalogProps = {
 
 export function ModelCatalog({
   canManage,
+  organizationEditable,
   providers,
   models,
   selectedProviderId,
@@ -52,8 +54,10 @@ export function ModelCatalog({
   onAddModel,
 }: ModelCatalogProps) {
   const { msg } = useI18n();
+  const [openProviders, setOpenProviders] = useState<string[]>([]);
   const selected = providers.find((provider) => provider.id === selectedProviderId);
   const visibleModels = modelsForProvider(filterCatalogModels(models, query), selectedProviderId);
+  const canEditSelected = canManage && (organizationEditable || selected?.scope !== 'organization');
   const candidateId = addableModelId(query, modelsForProvider(models, selectedProviderId));
 
   return (
@@ -89,28 +93,23 @@ export function ModelCatalog({
           </Button>
         </div>
 
-        {selected ? (
-          <ProviderSection
-            canManage={canManage}
-            provider={selected}
-            models={visibleModels}
-            emptyMessage={
-              query.trim()
-                ? msg('llmModels.noSearchResults', 'No models match this search.')
-                : msg('llmModels.emptyModels', 'No models configured for this provider.')
-            }
-            onEdit={() => onEditProvider(selected)}
-            onDelete={() => onDeleteProvider(selected)}
-          />
-        ) : (
-          <ProviderModelGroups
-            groups={groupCatalogModels(visibleModels, providers, !query.trim())}
-            providers={providers}
-            query={query}
-          />
-        )}
+        <ProviderModelGroups
+          organizationEditable={organizationEditable}
+          groups={groupCatalogModels(
+            visibleModels,
+            selected ? [selected] : providers,
+            Boolean(selected) || !query.trim(),
+          )}
+          providers={providers}
+          query={query}
+          openProviders={openProviders}
+          onOpenChange={setOpenProviders}
+          editableProviderId={canEditSelected ? selected?.id : undefined}
+          onEditProvider={onEditProvider}
+          onDeleteProvider={onDeleteProvider}
+        />
 
-        {canManage ? (
+        {canEditSelected ? (
           <AddModelHint
             candidateId={candidateId}
             query={query}
@@ -155,7 +154,7 @@ function ProviderRail({
           key={provider.id}
           label={provider.name}
           detail={providerHost(provider.base_url)}
-          count={provider.model_ids.length}
+          count={provider.models.length}
           selected={selectedProviderId === provider.id}
           onClick={() => onSelectProvider(provider.id)}
         />
@@ -200,28 +199,136 @@ function ProviderRailButton({
   );
 }
 
-function ProviderSection({
-  canManage,
+function ProviderIdentity({
   provider,
-  models,
-  emptyMessage,
+  modelCount,
+  organizationReadOnly,
+}: {
+  provider: LLMProvider;
+  modelCount: number;
+  organizationReadOnly: boolean;
+}) {
+  const { msg } = useI18n();
+  return (
+    <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+      <div className="min-w-0">
+        <p className="flex flex-wrap items-center gap-2 break-words text-sm font-semibold text-foreground">
+          {provider.name}
+          <Badge variant="outline" className="font-mono font-normal">
+            {provider.slug}
+          </Badge>
+        </p>
+        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-normal text-muted-foreground">
+          <span className="min-w-0 break-all">{provider.base_url}</span>
+          <span className="flex shrink-0 items-center gap-1.5">
+            <KeyRound className="size-3.5" aria-hidden />
+            •••• {provider.api_key_last4}
+          </span>
+        </div>
+        {provider.scope === 'organization' && organizationReadOnly ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {msg(
+              'llmModels.organizationReadOnly',
+              'Organization models are read-only here. Manage them in organization LLM configuration.',
+            )}
+          </p>
+        ) : null}
+      </div>
+      <Badge variant="secondary" className="h-6 min-w-6 shrink-0 justify-center px-1.5 font-normal tabular-nums">
+        {modelCount}
+      </Badge>
+    </div>
+  );
+}
+
+function ProviderModelGroups({
+  organizationEditable,
+  groups,
+  providers,
+  query,
+  openProviders,
+  onOpenChange,
+  editableProviderId,
+  onEditProvider,
+  onDeleteProvider,
+}: {
+  organizationEditable: boolean;
+  groups: CatalogGroup[];
+  providers: LLMProvider[];
+  query: string;
+  openProviders: string[];
+  onOpenChange: (ids: string[]) => void;
+  editableProviderId?: string;
+  onEditProvider: (provider: LLMProvider) => void;
+  onDeleteProvider: (provider: LLMProvider) => void;
+}) {
+  const groupValues = groups.map((group) => group.providerId);
+  const searching = Boolean(query.trim());
+  if (groups.length === 0) return null;
+
+  return (
+    <Accordion
+      multiple
+      value={searching ? groupValues : openProviders}
+      onValueChange={(next) => {
+        if (!searching)
+          onOpenChange([...new Set([...openProviders.filter((id) => !groupValues.includes(id)), ...next])]);
+      }}
+    >
+      {groups.map((group) => {
+        const provider = providers.find((item) => item.id === group.providerId);
+        return provider ? (
+          <ProviderModelGroup
+            key={group.providerId}
+            group={group}
+            provider={provider}
+            query={query}
+            organizationEditable={organizationEditable}
+            canManage={provider.id === editableProviderId}
+            onEdit={() => onEditProvider(provider)}
+            onDelete={() => onDeleteProvider(provider)}
+          />
+        ) : null;
+      })}
+    </Accordion>
+  );
+}
+
+function ProviderModelGroup({
+  group,
+  provider,
+  query,
+  organizationEditable,
+  canManage,
   onEdit,
   onDelete,
 }: {
+  group: CatalogGroup;
   provider: LLMProvider;
-  models: CatalogModel[];
-  emptyMessage: string;
+  query: string;
+  organizationEditable: boolean;
   canManage: boolean;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const { msg } = useI18n();
   return (
-    <section data-testid={`llm-provider-group-${provider.id}`}>
-      <div className="flex items-center gap-3 bg-muted/40 px-4 py-3">
-        <ProviderIdentity provider={provider} modelCount={models.length} />
+    <AccordionItem value={group.providerId} data-testid={`llm-provider-group-${group.providerId}`}>
+      <div className="flex items-center bg-muted/40">
+        <div className="min-w-0 flex-1">
+          <AccordionTrigger
+            aria-label={msg('llmModels.providerGroup', '{provider} models', { provider: group.providerName })}
+            className="min-h-16 gap-3 rounded-none px-4 py-3 hover:bg-muted/60 hover:no-underline"
+          >
+            <ProviderIdentity
+              provider={provider}
+              modelCount={provider.models.length}
+              organizationReadOnly={!organizationEditable}
+            />
+          </AccordionTrigger>
+        </div>
         {canManage ? (
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1 pr-3">
             <Button
               type="button"
               variant="ghost"
@@ -243,78 +350,6 @@ function ProviderSection({
           </div>
         ) : null}
       </div>
-      <ModelRows models={models} emptyMessage={emptyMessage} />
-    </section>
-  );
-}
-
-function ProviderIdentity({ provider, modelCount }: { provider: LLMProvider; modelCount: number }) {
-  return (
-    <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
-      <div className="min-w-0">
-        <p className="flex flex-wrap items-center gap-2 break-words text-sm font-semibold text-foreground">
-          {provider.name}
-          <Badge variant="outline" className="font-mono font-normal">
-            {provider.slug}
-          </Badge>
-        </p>
-        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-normal text-muted-foreground">
-          <span className="min-w-0 break-all">{provider.base_url}</span>
-          <span className="flex shrink-0 items-center gap-1.5">
-            <KeyRound className="size-3.5" aria-hidden />
-            •••• {provider.api_key_last4}
-          </span>
-        </div>
-      </div>
-      <Badge variant="secondary" className="h-6 min-w-6 shrink-0 justify-center px-1.5 font-normal tabular-nums">
-        {modelCount}
-      </Badge>
-    </div>
-  );
-}
-
-function ProviderModelGroups({
-  groups,
-  providers,
-  query,
-}: {
-  groups: CatalogGroup[];
-  providers: LLMProvider[];
-  query: string;
-}) {
-  const groupValues = useMemo(() => groups.map((group) => group.providerId), [groups]);
-  const searching = Boolean(query.trim());
-  const [openValues, setOpenValues] = useState<string[] | null>(null);
-  if (groups.length === 0) return null;
-
-  return (
-    <Accordion
-      multiple
-      value={searching || openValues === null ? groupValues : openValues}
-      onValueChange={(next) => {
-        if (!searching) setOpenValues(next);
-      }}
-    >
-      {groups.map((group) => {
-        const provider = providers.find((item) => item.id === group.providerId);
-        return provider ? (
-          <ProviderModelGroup key={group.providerId} group={group} provider={provider} query={query} />
-        ) : null;
-      })}
-    </Accordion>
-  );
-}
-
-function ProviderModelGroup({ group, provider, query }: { group: CatalogGroup; provider: LLMProvider; query: string }) {
-  const { msg } = useI18n();
-  return (
-    <AccordionItem value={group.providerId} data-testid={`llm-provider-group-${group.providerId}`}>
-      <AccordionTrigger
-        aria-label={msg('llmModels.providerGroup', '{provider} models', { provider: group.providerName })}
-        className="min-h-16 gap-3 rounded-none bg-muted/40 px-4 py-3 hover:bg-muted/60 hover:no-underline"
-      >
-        <ProviderIdentity provider={provider} modelCount={group.models.length} />
-      </AccordionTrigger>
       <AccordionContent className="pb-0">
         <ModelRows
           models={group.models}

@@ -256,17 +256,13 @@ func (s *Service) managedAgentRuntimeConfig(ctx context.Context, session db.Sess
 	return config.encode()
 }
 
-func (s *Service) SandboxIngressToken(ctx context.Context, session db.Session, codeSessionID string) (string, error) {
+func (s *Service) SandboxIngressToken(ctx context.Context, session db.Session, codeSessionID, sandboxUUID string) (string, error) {
 	credentials, err := s.db.GetCodeSessionCredentialContextForIssue(ctx, session.OrganizationUUID, session.WorkspaceUUID, codeSessionID)
 	if err != nil {
 		return "", err
 	}
-	code, found, err := s.db.GetCodeSession(ctx, codeSessionID)
-	if err != nil {
+	if err := s.db.ValidateCodeSessionSandbox(ctx, session.OrganizationUUID, session.WorkspaceUUID, codeSessionID, sandboxUUID); err != nil {
 		return "", err
 	}
-	if !found {
-		return "", db.ErrNotFound
-	}
-	return s.issueSessionIngressToken(credentials, code.CurrentWorkerEpoch)
+	return s.credentials.IssueSandbox(sessionCredentialIdentity(credentials, 0), sandboxUUID)
 }

@@ -1,3 +1,4 @@
+import type { CcrPersistArgs } from "./persistence-contracts.ts";
 import type { Payload } from "./protocol.ts";
 import type { DeliveryUpdate, RequiresActionDetails, SessionState, SessionExternalMetadata, WorkerStateReadResult } from "./wire.ts";
 
@@ -11,7 +12,7 @@ export interface CcrBackend {
   getWorkerState(id: string, workerEpoch?: number, signal?: AbortSignal): Promise<WorkerStateReadResult>;
   isToolConfirmationPending(id: string, requestId: string, signal?: AbortSignal): Promise<boolean>;
   privateEvents(id: string, options?: { subagents?: boolean; signal?: AbortSignal }): Promise<Payload[]>;
-  persist(id: string, subtype: string, data: unknown, agentId?: string): Promise<void>;
+  persist(id: string, ...args: CcrPersistArgs): Promise<void>;
   /** Honour cancellation for activity keepalives; durable callers omit signal. */
   events(id: string, payloads: Payload[], signal?: AbortSignal): Promise<void>;
   acknowledge(id: string, inputId: string, signal?: AbortSignal): Promise<void>;

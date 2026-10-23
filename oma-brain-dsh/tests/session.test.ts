@@ -13,10 +13,10 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function open(backend: Backend) {
+async function open(backend: Backend, fetcher?: typeof fetch) {
   await backend.ready;
   const ctx = new Context();
-  const api = new OmaApi(backend.url);
+  const api = new OmaApi(backend.url, fetcher);
   const client = await mountOma(ctx, api);
   let session!: ReturnType<typeof createOmaSession>;
   await ctx.plugin({
@@ -53,6 +53,25 @@ function toolsWithText(text: string, ...calls: string[]): Payload[] {
 }
 
 describe("original dsh loop over CCRv2", () => {
+  test("configured context windows reach the native request context and refresh on the next turn", async () => {
+    const b = backend();
+    b.a.launch.models!["test-model"]!.context_window = 1000000;
+    b.a.launch.models = {"test-model": { ...b.a.launch.models!["test-model"]!,  max_output_tokens: 128000  }};
+    b.modelScript = [textEvents("first"), textEvents("second"), textEvents("cleared")];
+    const { session } = await open(b);
+    await session.receive("context_first", { content: "hello" });
+    expect(session.handle!.agent.session.requestContext()?.contextWindow).toBe(1000000);
+    expect(b.requests[0]!.max_tokens).toBe(128000);
+    b.a.launch.models!["test-model"]!.context_window = 256000;
+    await session.receive("context_second", { content: "continue" });
+    expect(session.handle!.agent.session.requestContext()?.contextWindow).toBe(256000);
+    delete b.a.launch.models!["test-model"]!.context_window;
+    delete b.a.launch.models!["test-model"]!.max_output_tokens;
+    await session.receive("context_cleared", { content: "continue with defaults" });
+    expect(session.handle!.agent.session.requestContext()?.contextWindow).toBe(262144);
+    expect(b.requests[2]!.max_tokens).toBe(32768);
+  });
+
   test("invalid mixed input publishes a failed terminal result without model work and allows the next turn", async () => {
     for (const invalid of [
       { type: "image", source: { type: "base64", media_type: "image/png", data: "not an image" } },
@@ -72,8 +91,40 @@ describe("original dsh loop over CCRv2", () => {
     }
   });
 
+  test("text-only default projects images until image input is enabled on the next turn", async () => {
+    const b = backend();
+    b.modelScript = [textEvents("text only"), textEvents("image enabled")];
+    const { session } = await open(b);
+    const content = [
+      { type: "text", text: "look" },
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/png",
+          data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC",
+        },
+      },
+    ];
+    await session.receive("text-default", { content });
+    expect(
+      b.requests[0]!.messages.flatMap((message: Payload) => message.content).some(
+        (block: Payload) => block.type === "image",
+      ),
+    ).toBe(false);
+    b.a.launch.models = {"test-model": { ...b.a.launch.models!["test-model"]!,  input_modalities: ["text", "image"], max_output_tokens: 128000  }};
+    await session.receive("image-enabled", { content });
+    expect(
+      b.requests[1]!.messages.flatMap((message: Payload) => message.content).some(
+        (block: Payload) => block.type === "image",
+      ),
+    ).toBe(true);
+    expect(b.requests[1]!.max_tokens).toBe(128000);
+  });
+
   test("mixed image input reaches the model in order and survives a second turn", async () => {
     const b = backend();
+    b.a.launch.models = {"test-model": { ...b.a.launch.models!["test-model"]!, input_modalities:["text","image"] }};
     b.modelScript = [textEvents("image read"), textEvents("remembered")];
     const { session } = await open(b);
     const content = [
@@ -84,7 +135,8 @@ describe("original dsh loop over CCRv2", () => {
     ];
     await session.receive("image_input", { content });
     const first = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
-    expect(first.map((block: Payload) => block.type)).toEqual(["text", "image", "text"]);
+    expect(first.map((block: Payload) => block.type)).toEqual(["text", "image", "text", "text"]);
+    expect(first[3].text).toStartWith("Time sampled while preparing turn");
     expect(first[0]).toEqual(content[0]);
     expect(first[2]).toEqual(content[2]);
     expect(first[1].source.type).toBe("base64");
@@ -104,7 +156,9 @@ describe("original dsh loop over CCRv2", () => {
     ];
     await session.receive("image_refs", { content });
     const requestContent = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
-    expect(requestContent.map((block: Payload) => ({ type: block.type, source: block.source }))).toEqual(content);
+    expect(requestContent).toHaveLength(content.length + 1);
+    expect(requestContent.slice(0, content.length).map((block: Payload) => ({ type: block.type, source: block.source }))).toEqual(content);
+    expect(requestContent.at(-1).text).toStartWith("Time sampled while preparing turn");
     expect(JSON.stringify([...b.privateLog.values()])).not.toContain("base64");
     expect(b.publicLog.get("image_refs_result")?.is_error).toBe(false);
   });
@@ -204,6 +258,80 @@ describe("original dsh loop over CCRv2", () => {
     expect(published?.message.content[0]).toEqual({ type: "tool_result", tool_use_id: "call_1", tool_name: "Bash", content: [{ type: "text", text: "exact stdout\n" }], is_error: false });
     expect(result).not.toHaveProperty("tool_name");
     expect(b.publicLog.get("stdout_result")?.is_error).toBe(false);
+  });
+
+  test("an unreachable sandbox gateway records a known Bash failure without blocking the session", async () => {
+    const b = backend();
+    b.modelScript = [toolEvents(), textEvents("gateway unavailable"), textEvents("next turn")];
+    const { session } = await open(b, (async (input, init) => {
+      const request = new Request(input, init);
+      if (request.method === "POST" && new URL(request.url).pathname.endsWith("/sandbox/mcp")
+        && ((await request.clone().json()) as Payload).method === "tools/call")
+        return fetch("http://127.0.0.1:1/mcp", { method: "POST", body: "{}" });
+      return fetch(request);
+    }) as typeof fetch);
+    b.onApproval = async (p) => {
+      await session.control({ type: "control_response", response: {
+        subtype: "success", request_id: p.request_id, response: { behavior: "allow" },
+      } });
+    };
+    await session.receive("gateway_down", { message: { content: "run" } });
+    expect(session.blocked()).toBe(false);
+    expect(b.executions).toHaveLength(0);
+    const result = b.requests[1]!.messages.flatMap((m: Payload) => m.content)
+      .find((block: Payload) => block.type === "tool_result");
+    expect(result.is_error).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("OMA sandbox gateway is unreachable");
+    await session.receive("after_gateway_down", { message: { content: "continue" } });
+    expect(b.requests).toHaveLength(3);
+  });
+
+  test("a draining worker refuses new side-effecting dispatches without blocking the session", async () => {
+    const b = backend();
+    b.modelScript = [toolEvents(), textEvents("not executed")];
+    const { session } = await open(b);
+    b.onApproval = async (p) => {
+      await session.control({ type: "control_response", response: {
+        subtype: "success", request_id: p.request_id, response: { behavior: "allow" },
+      } });
+    };
+    expect(await session.drain(0)).toBe(true);
+    await session.receive("draining", { message: { content: "run" } });
+    expect(b.executions).toHaveLength(0);
+    expect(session.blocked()).toBe(false);
+    expect(session.dispatching()).toBe(false);
+    const result = b.requests[1]!.messages.flatMap((m: Payload) => m.content)
+      .find((block: Payload) => block.type === "tool_result");
+    expect(result.is_error).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("shutting down");
+  });
+
+  test("drain waits for an in-flight dispatch to record its result", async () => {
+    const b = backend();
+    b.modelScript = [toolEvents(), textEvents("done")];
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    b.onTool = async () => {
+      started.resolve();
+      await release.promise;
+      return { content: [{ type: "text", text: "drained\n" }] };
+    };
+    const { session } = await open(b);
+    b.onApproval = async (p) => {
+      await session.control({ type: "control_response", response: {
+        subtype: "success", request_id: p.request_id, response: { behavior: "allow" },
+      } });
+    };
+    const turn = session.receive("in_flight", { message: { content: "run" } });
+    await started.promise;
+    expect(session.dispatching()).toBe(true);
+    expect(await session.drain(50)).toBe(false);
+    const draining = session.drain(5_000);
+    release.resolve();
+    expect(await draining).toBe(true);
+    await turn;
+    expect(session.state.toolOutcomes.call_1).toEqual({ text: "drained\n", failed: false });
+    expect(session.blocked()).toBe(false);
   });
 
   test("provider HTTP 402 publishes a safe quota error before ACK and a later turn can recover", async () => {

@@ -129,7 +129,7 @@ toolStreamDrained:
 		return state.CurrentWorkerEpoch > before.CurrentWorkerEpoch
 	})
 	endpointPath := "/v2/ccr-sessions/" + scope.ExternalID + "/sandbox/mcp"
-	e.request(t, "POST", endpointPath, previousToken, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, http.StatusUnauthorized)
+	e.request(t, "POST", endpointPath, previousToken, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, http.StatusConflict)
 	receiveChatAnswer(t, ctx, events, func() { previewSeen <- struct{}{} })
 	waitChatIdle(t, f, 3)
 	if calls.Load() != 2 {
@@ -252,12 +252,16 @@ func verifyBrainTaskFencing(t *testing.T, f *liveSession) {
 	requireOK(t, err)
 	e.request(t, "POST", claimPath, staleToken, worker, http.StatusConflict)
 	e.request(t, "POST", "/v2/ccr-sessions/"+f.code.ExternalID+"/sandbox/mcp", staleToken,
-		map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, http.StatusUnauthorized)
+		map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, http.StatusConflict)
 }
 
 var toolModelCalls atomic.Int32
 
 func brainToolModel(t *testing.T) *httptest.Server {
+	return brainToolCallModel(t, "Write", `{"file_path":"/tmp/oma-brain-proof.txt","content":"native grok loop"}`, nil)
+}
+
+func brainToolCallModel(t *testing.T, toolName, arguments string, checkResult func(json.RawMessage)) *httptest.Server {
 	t.Helper()
 	toolModelCalls.Store(0)
 	messagePrefix := "msg_brain_" + uuid.NewString()
@@ -300,8 +304,8 @@ func brainToolModel(t *testing.T) *httptest.Server {
 				t.Errorf("unexpected Brain model tools: %v", names)
 			}
 
-			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "tool_use", "id": "call_brain_write", "name": "Write", "input": map[string]any{}}})
-			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": `{"file_path":"/tmp/oma-brain-proof.txt","content":"native grok loop"}`}})
+			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "tool_use", "id": "call_brain_write", "name": toolName, "input": map[string]any{}}})
+			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": arguments}})
 			stop = "tool_use"
 		} else {
 			if step != 2 {
@@ -309,6 +313,9 @@ func brainToolModel(t *testing.T) *httptest.Server {
 			}
 			if !bytes.Contains(request.Messages[len(request.Messages)-1].Content, []byte("tool_result")) {
 				t.Error("native next model request lost tool result")
+			}
+			if checkResult != nil {
+				checkResult(request.Messages[len(request.Messages)-1].Content)
 			}
 			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "text", "text": ""}})
 			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "text_delta", "text": "done"}})

@@ -497,6 +497,10 @@ func serveRealWorkerFixture(t *testing.T, handler http.Handler) string {
 // providers are never modified; only the row created here is cleaned up.
 func ensureRealWorkerProvider(t *testing.T, e *liveEnv, cfg config.Config) {
 	t.Helper()
+	if os.Getenv("VERIFY_BE_RUN_ID") != "" {
+		ensureIsolatedWorkerProvider(t, e, cfg)
+		return
+	}
 	org, workspace := e.key.OrganizationUUID.String(), e.key.WorkspaceUUID.String()
 	providers, err := e.database.ListLLMProviders(t.Context(), org, workspace)
 	requireOK(t, err)

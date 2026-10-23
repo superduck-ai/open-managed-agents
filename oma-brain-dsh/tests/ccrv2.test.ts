@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { Context } from "@deepseek-ai/cordis";
-import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { createUserMessage, LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { mountKernel } from "../src/kernel.ts";
 import * as CcrBridge from "../src/ccrv2/index.ts";
 import type { CcrBackend, CcrPersistArgs } from "../src/ccrv2/index.ts";
@@ -763,6 +763,41 @@ test("user interrupts settle the tool locally, finish successfully and survive r
     }
   }
 }, 15_000);
+
+test("repeated clean runtime flushes perform no backend writes after a large journal and dirty flushes send only new events", async () => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], new TextModel());
+    const session = ctx.ccrv2.createSession({ id: "clean-flush", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", tools: [], setup });
+    await session.open();
+    const writes = spyOn(backend, "persist");
+    const native = session.runtime.agent.session;
+    for (let index = 0; index < 256; index++) native.append("user/message", createUserMessage({
+      source: { kind: "user" }, content: [{ type: "text", text: `${index}:` + "x".repeat(16384) }],
+    }), { surfaceOp: "append" });
+    await session.runtime.flushLog();
+    expect(writes).toHaveBeenCalledTimes(1);
+    const firstWrite = writes.mock.calls[0]!;
+    expect(firstWrite[1]).toBe("dsh_log");
+    if (firstWrite[1] !== "dsh_log") throw new Error("Expected journal write");
+    expect(firstWrite[2].events).toHaveLength(256);
+    writes.mockClear();
+    for (let index = 0; index < 100; index++) await session.runtime.flushLog();
+    expect(writes).not.toHaveBeenCalled();
+    const event = native.append("user/message", createUserMessage({
+      source: { kind: "user" }, content: [{ type: "text", text: "next delta" }],
+    }), { surfaceOp: "append" });
+    await session.runtime.flushLog();
+    expect(writes).toHaveBeenCalledTimes(1);
+    const delta = writes.mock.calls[0]!;
+    expect(delta[1]).toBe("dsh_log");
+    if (delta[1] !== "dsh_log") throw new Error("Expected journal delta");
+    expect(delta[2].events).toEqual([event]);
+  } finally { await ctx.fiber.dispose(); }
+});
 
 test("native compaction waits for journal persistence before notification and next request", async () => {
   const backend = new MemoryBackend();

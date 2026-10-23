@@ -41,6 +41,7 @@ import {
   sessionTokenUsageTitle,
   truncateLaneLabel,
 } from './sessionDetailModel';
+import { hasWallClockMs } from './sessionTraceModel';
 import { outcomeStatusChipClass, outcomeStatusLabel } from './sessionTraceRows';
 
 export const SESSION_MAIN_LANE_ID = '';
@@ -1656,7 +1657,7 @@ export function MetaStrip({
 }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
-  const absoluteTime = processedAtMs
+  const absoluteTime = hasWallClockMs(processedAtMs)
     ? formatters.date(processedAtMs, {
         month: '2-digit',
         day: '2-digit',

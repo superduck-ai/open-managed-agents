@@ -1,6 +1,19 @@
+import type { SessionRuntimeConfig, SubagentConfig, SubagentDefinition } from "../runtime/contracts.ts";
 import type { CcrPersistArgs } from "./persistence-contracts.ts";
 import type { Payload } from "./protocol.ts";
 import type { DeliveryUpdate, RequiresActionDetails, SessionState, SessionExternalMetadata, WorkerStateReadResult } from "./wire.ts";
+
+export interface CcrSubagentDefinition extends SubagentDefinition {
+  agentSnapshot?: Payload;
+}
+
+export interface CcrSubagentConfig extends SubagentConfig {
+  agents?: CcrSubagentDefinition[];
+}
+
+export interface CcrSessionConfig extends SessionRuntimeConfig {
+  subagents?: CcrSubagentConfig;
+}
 
 /**
  * CCRv2 operations. persist resolves only after durable confirmation; events

@@ -1,8 +1,8 @@
+import { CompactionId } from "@deepseek-ai/dsh-compaction";
 import { expect, spyOn, test } from "bun:test";
-import { ContextRecovery } from "../src/runtime/compaction.ts";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { Context } from "@deepseek-ai/cordis";
-import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { createUserMessage, LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { mountKernel } from "../src/kernel.ts";
 import * as CcrBridge from "../src/ccrv2/index.ts";
 import type { CcrBackend, CcrPersistArgs } from "../src/ccrv2/index.ts";
@@ -765,94 +765,368 @@ test("user interrupts settle the tool locally, finish successfully and survive r
   }
 }, 15_000);
 
-test.each([false, true])("context overflow compacts and replays without duplicate results (child=%s)", async child => {
+test("repeated clean runtime flushes perform no backend writes after a large journal and dirty flushes send only new events", async () => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], new TextModel());
+    const session = ctx.ccrv2.createSession({ id: "clean-flush", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", tools: [], setup });
+    await session.open();
+    const writes = spyOn(backend, "persist");
+    const native = session.runtime.agent.session;
+    for (let index = 0; index < 256; index++) native.append("user/message", createUserMessage({
+      source: { kind: "user" }, content: [{ type: "text", text: `${index}:` + "x".repeat(16384) }],
+    }), { surfaceOp: "append" });
+    await session.runtime.flushLog();
+    expect(writes).toHaveBeenCalledTimes(1);
+    const firstWrite = writes.mock.calls[0]!;
+    expect(firstWrite[1]).toBe("dsh_log");
+    if (firstWrite[1] !== "dsh_log") throw new Error("Expected journal write");
+    expect(firstWrite[2].events).toHaveLength(256);
+    writes.mockClear();
+    for (let index = 0; index < 100; index++) await session.runtime.flushLog();
+    expect(writes).not.toHaveBeenCalled();
+    const event = native.append("user/message", createUserMessage({
+      source: { kind: "user" }, content: [{ type: "text", text: "next delta" }],
+    }), { surfaceOp: "append" });
+    await session.runtime.flushLog();
+    expect(writes).toHaveBeenCalledTimes(1);
+    const delta = writes.mock.calls[0]!;
+    expect(delta[1]).toBe("dsh_log");
+    if (delta[1] !== "dsh_log") throw new Error("Expected journal delta");
+    expect(delta[2].events).toEqual([event]);
+  } finally { await ctx.fiber.dispose(); }
+});
+
+test("native compaction waits for journal persistence before notification and next request", async () => {
   const backend = new MemoryBackend();
   const ctx = new Context();
   const model = new TextModel();
   let requests = 0;
-  let replayWellFormed = false;
-  const sizes: number[] = [];
-  let parentRequests = 0;
-  model.stream = async function* (options: GenerateOptions): AsyncIterable<StreamChunk> {
-    if (options.model === "parent") {
-      parentRequests++;
-      if (parentRequests === 1) {
-        yield { type: "block-start", index: 0, blockType: "tool-call" };
-        yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId("delegate-read"),
-          name: "send_to_agent", arguments: JSON.stringify({ agent_name: "reader", message: "remember FACT-REAL" }) } };
-        yield { type: "finish", reason: { kind: "tool-calls" } };
-      } else {
-        yield { type: "block-start", index: 0, blockType: "text" };
-        yield { type: "block-end", index: 0, block: { type: "text", text: "done" } };
-        yield { type: "finish", reason: { kind: "stop" } };
-      }
-      return;
-    }
-    sizes.push(JSON.stringify(options.messages).length);
-    requests++;
-    if (requests <= 4) {
-      yield { type: "block-start", index: 0, blockType: "tool-call" };
-      yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId(`read-${requests}`),
-        name: "Read", arguments: JSON.stringify({ file_path: `/tmp/part-${requests}` }) } };
-      yield { type: "finish", reason: { kind: "tool-calls" } };
-    } else if (requests === 5) {
-      yield { type: "finish", reason: { kind: "error", failure: { code: "CONTEXT_WINDOW_EXCEEDED", status: 400,
-        message: "Maximum context length exceeded (90000 in the messages, 8192 in the completion)." } } };
-    } else {
-      expect(JSON.stringify(options.messages)).toContain("remember FACT-REAL");
-      expect(sizes.at(-1)!).toBeLessThan(sizes[4]! - 50000);
-      const tools = options.messages.filter(message => message.role === "tool");
-      expect(tools).toHaveLength(4);
-      replayWellFormed = tools.every(message => message.content.every(block => block.type !== "text" || block.text.isWellFormed()));
-      expect(new Set(tools.map(message => message.toolCallId)).size).toBe(4);
-      yield { type: "block-start", index: 0, blockType: "text" };
-      yield { type: "block-end", index: 0, block: { type: "text", text: "FACT-REAL" } };
-      yield { type: "finish", reason: { kind: "stop" } };
-    }
+  let failPersistence = true;
+  const persist = backend.persist.bind(backend);
+  backend.persist = async (id, ...args) => {
+    if (failPersistence && args[0] === "dsh_log" && args[1].events.some((event) => event.type === "compaction/end"))
+      throw new Error("compaction persistence unavailable");
+    await persist(id, ...args);
+  };
+  model.resolveModel = async (provider, id) => ({ provider, id, name: id, context: { contextWindow: 128000 }, defaultMaxTokens: 8192 });
+  model.stream = async function* (options): AsyncIterable<StreamChunk> {
+    if (options.purpose !== "compaction") requests++;
+    yield { type: "block-end", index: 0, block: { type: "text", text: options.purpose === "compaction" ? "Previous task details." : "a".repeat(150000) } };
+    yield { type: "finish", reason: { kind: "stop" } };
   };
   try {
     await mountKernel(ctx);
     await ctx.plugin(CcrBridge, { backend });
     ctx.llm.registerAdapter(["test"], model);
-    const session = ctx.ccrv2.createSession({ id: "compaction", provider: "test", model: child ? "parent" : "text",
-      subagents: child ? { inlineAgents: false, agents: [{ name: "reader", description: "Reader", systemPrompt: "Read", model: "text", tools: ["Read"] }] } : undefined,
-      workDir: "/workspace", systemPrompt: "", tools: ["Read"], setup: async scope => {
-        await scope.plugin({ name: "read-sandbox", apply(scope: Context) { scope.provide("sandboxExecutor", {
-          async provision() {}, async call() { return { content: [{ type: "text", text: "original-file-data:" + "\u{100000}".repeat(30000) + ":tail" }] }; },
+    const session = ctx.ccrv2.createSession({ id: "durable-compaction", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", tools: [], setup });
+    await session.open();
+    await session.receive("first", { content: "u".repeat(150000) });
+    await expect(session.receive("second", { content: "continue" })).rejects.toThrow("compaction persistence unavailable");
+    expect(requests).toBe(1);
+    expect(backend.output.get(session.id)!.filter(event => event.type === "agent.thread_context_compacted")).toHaveLength(0);
+    failPersistence = false;
+    await session.runtime.flushLog();
+    expect(backend.output.get(session.id)!.filter(event => event.type === "agent.thread_context_compacted")).toHaveLength(1);
+    await session.close();
+  } finally { failPersistence = false; await ctx.fiber.dispose(); }
+});
+
+async function compactedSessionFixture() {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  const model = new TextModel();
+  model.stream = async function* (options): AsyncIterable<StreamChunk> {
+    yield { type: "block-end", index: 0, block: { type: "text", text: options.purpose === "compaction" ? "Previous task details." : "a".repeat(12000) } };
+    yield { type: "finish", reason: { kind: "stop" } };
+  };
+  await mountKernel(ctx);
+  await ctx.plugin(CcrBridge, { backend });
+  ctx.llm.registerAdapter(["test"], model);
+  const config = { id: "compaction-notification", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", tools: [], setup };
+  const session = ctx.ccrv2.createSession(config);
+  await session.open();
+  await session.receive("first", { content: "u".repeat(12000) });
+  expect(await ctx.compaction.compactNow(session.runtime.agent, new AbortController().signal)).not.toBeNull();
+  return { backend, ctx, model, config, session };
+}
+
+test.each([false, true])("compaction end clears pressure after an episode (failed=%s)", async failed => {
+  const { backend, ctx, session } = await compactedSessionFixture();
+  try {
+    await session.runtime.flushLog();
+    const native = session.runtime.agent.session;
+    const first = { compactionId: CompactionId("first"), turn: null };
+    native.append("compaction/start", first);
+    native.append("compaction/end", { ...first, ...(failed ? { error: "failed" } : {}) });
+    await session.runtime.flushLog();
+    native.append("user/message", createUserMessage({ source: { kind: "user" }, content: [{ type: "text", text: "new pressure".repeat(2000) }] }), { surfaceOp: "append" });
+    const currentTokens = ctx.tokenMeter.measure(native).totalTokens;
+    native.append("compaction/end", { compactionId: CompactionId("unpaired"), turn: null });
+    await session.runtime.flushLog();
+    const notifications = backend.output.get(session.id)!.filter(event => event.type === "agent.thread_context_compacted");
+    expect(notifications.at(-1)!.pre_compaction_tokens).toBe(currentTokens);
+    await session.close();
+  } finally { await ctx.fiber.dispose(); }
+});
+
+test("coalesced compaction reports pre-batch pressure and advances the dedup cursor", async () => {
+  const { backend, ctx, session } = await compactedSessionFixture();
+  try {
+    await session.runtime.flushLog();
+    const native = session.runtime.agent.session;
+    const initialTokens = ctx.tokenMeter.measure(native).totalTokens;
+    const first = native.snapshotEvents()[0]!.seq;
+    native.append("compaction/prune", { shadowedRange: { start: first, end: first }, shadowedSeqs: [first], shadowedTokenCount: 100 });
+    native.append("user/message", createUserMessage({ source: { kind: "user" }, content: [{ type: "text", text: "later pressure".repeat(2000) }] }), { surfaceOp: "append" });
+    expect(ctx.tokenMeter.measure(native).totalTokens).not.toBe(initialTokens);
+    const episode = { compactionId: CompactionId("coalesced"), turn: null };
+    native.append("compaction/start", episode);
+    const end = native.append("compaction/end", episode);
+    await session.runtime.flushLog();
+    const notifications = backend.output.get(session.id)!.filter(event => event.type === "agent.thread_context_compacted");
+    expect(notifications).toHaveLength(2);
+    expect(notifications.at(-1)!.pre_compaction_tokens).toBe(initialTokens);
+    expect(session.state.compactionSequences?.[session.id]).toBe(end.seq);
+    await session.close();
+  } finally { await ctx.fiber.dispose(); }
+});
+
+test.each(["state", "publication", "callback"] as const)("compaction notification retries after failed %s without duplicate enqueue", async failure => {
+  const { backend, ctx, session } = await compactedSessionFixture();
+  const persist = backend.persist.bind(backend);
+  const events = backend.events.bind(backend);
+  const notify = session.contextCompacted.bind(session);
+  let failing = true;
+  let deliveredId: string | undefined;
+  backend.persist = async (id, ...args) => {
+    if (failing && failure === "state" && args[0] === "dsh_brain_state") throw new Error("notification unavailable");
+    await persist(id, ...args);
+  };
+  backend.events = async (id, payloads) => {
+    const notification = payloads.find(event => event.type === "agent.thread_context_compacted");
+    if (notification) deliveredId = notification.uuid;
+    if (failing && failure === "publication") throw new Error("notification unavailable");
+    await events(id, payloads);
+  };
+  session.contextCompacted = async (...args) => {
+    if (failing && failure === "callback") throw new Error("notification unavailable");
+    await notify(...args);
+  };
+  try {
+    await expect(session.runtime.flushLog()).rejects.toThrow("notification unavailable");
+    const queuedId = session.state.outbox.find(event => event.type === "agent.thread_context_compacted")?.uuid;
+    const attemptedId = deliveredId;
+    failing = false;
+    await session.runtime.flushLog();
+    const notifications = backend.output.get(session.id)!.filter(event => event.type === "agent.thread_context_compacted");
+    expect(notifications).toHaveLength(1);
+    if (queuedId ?? attemptedId) expect(notifications[0]!.uuid).toBe(queuedId ?? attemptedId);
+    await session.runtime.flushLog();
+    expect(backend.output.get(session.id)!.filter(event => event.type === "agent.thread_context_compacted")).toHaveLength(1);
+  } finally { failing = false; await ctx.fiber.dispose(); }
+});
+
+test("restart recovers a compaction notification when its journal is durable but its outbox checkpoint failed", async () => {
+  const { backend, ctx, session, model, config } = await compactedSessionFixture();
+  const resumedContext = new Context();
+  const persist = backend.persist.bind(backend);
+  backend.persist = async (id, ...args) => {
+    if (args[0] === "dsh_brain_state") throw new Error("notification checkpoint unavailable");
+    await persist(id, ...args);
+  };
+  try {
+    await expect(session.runtime.flushLog()).rejects.toThrow("notification checkpoint unavailable");
+    const queuedId = session.state.outbox.find(event => event.type === "agent.thread_context_compacted")!.uuid;
+    const recovered = new MemoryBackend();
+    for (const [id, logs] of backend.logs) recovered.logs.set(id, structuredClone(logs));
+    for (const [id, output] of backend.output) recovered.output.set(id, structuredClone(output));
+    await mountKernel(resumedContext);
+    await resumedContext.plugin(CcrBridge, { backend: recovered });
+    resumedContext.llm.registerAdapter(["test"], model);
+    const resumed = resumedContext.ccrv2.createSession(config);
+    await resumed.open();
+    expect(recovered.output.get(config.id)!.filter(event => event.type === "agent.thread_context_compacted")).toEqual([
+      expect.objectContaining({ uuid: queuedId }),
+    ]);
+    expect(resumed.runtime.agent.session.deriveMessages()).toEqual(session.runtime.agent.session.deriveMessages());
+  } finally { backend.persist = persist; await resumedContext.fiber.dispose(); await ctx.fiber.dispose(); }
+});
+
+test("native overflow recovery stops after one unsuccessful retry", async () => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  const model = new TextModel();
+  let requests = 0;
+  let summaries = 0;
+  model.stream = async function* (options): AsyncIterable<StreamChunk> {
+    if (options.purpose === "compaction") {
+      summaries++;
+      yield { type: "block-end", index: 0, block: { type: "text", text: "A prior request needs continuation." } };
+      yield { type: "finish", reason: { kind: "stop" } };
+      return;
+    }
+    requests++;
+    if (requests === 1) {
+      yield { type: "block-end", index: 0, block: { type: "text", text: "previous response " + "z".repeat(10000) } };
+      yield { type: "finish", reason: { kind: "stop" } };
+    } else yield { type: "finish", reason: { kind: "error", failure: { code: "CONTEXT_WINDOW_EXCEEDED", message: "too large" } } };
+  };
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], model);
+    const session = ctx.ccrv2.createSession({ id: "bounded-overflow", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", tools: [], setup });
+    await session.open();
+    await session.receive("first", { content: "previous request" });
+    await session.receive("second", { content: "continue" });
+    expect(requests).toBe(3);
+    expect(summaries).toBe(1);
+    expect(backend.output.get(session.id)!.filter(event => event.type === "result").at(-1)?.is_error).toBe(true);
+    await session.close();
+  } finally { await ctx.fiber.dispose(); }
+});
+
+test.each([true, false])("native pressure compaction handles summary failure and text history (failure=%s)", async summaryFailure => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  let requests = 0;
+  let summaries = 0;
+  const model = new TextModel();
+  model.resolveModel = async (provider, id) => ({ provider, id, name: id, context: { contextWindow: 128000 }, defaultMaxTokens: 8192 });
+  model.stream = async function* (options): AsyncIterable<StreamChunk> {
+    if (options.purpose === "compaction") {
+      summaries++;
+      if (summaryFailure) throw new Error("summary unavailable");
+      expect(options.maxTokens).toBe(65536);
+      yield { type: "block-end", index: 0, block: { type: "text", text: "Remember FACT-REAL and continue the task." } };
+      yield { type: "finish", reason: { kind: "stop" } };
+      return;
+    }
+    requests++;
+    expect(options.maxTokens).toBe(8192);
+    if (requests === 2 && !summaryFailure) {
+      expect(JSON.stringify(options.messages)).toContain("<compacted-summary>");
+      expect(backend.output.get("native-pressure")?.filter(event => event.type === "agent.thread_context_compacted")).toHaveLength(1);
+      const persisted = backend.logs.get("native-pressure") ?? [];
+      expect(persisted.some(log => log.data.events?.some((event: Payload) => event.type === "compaction/end"))).toBe(true);
+    }
+    yield { type: "block-end", index: 0, block: { type: "text", text: requests === 1 ? "a".repeat(150000) : "done" } };
+    yield { type: "finish", reason: { kind: "stop" } };
+  };
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], model);
+    const config = { id: "native-pressure", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "stable system", tools: [], setup };
+    const session = ctx.ccrv2.createSession(config);
+    await session.open();
+    await session.receive("first", { content: "remember FACT-REAL " + "u".repeat(150000) });
+    await session.receive("second", { content: "continue" });
+    expect(requests).toBe(2);
+    expect(summaries).toBe(1);
+    const events = session.runtime.agent.session.snapshotEvents();
+    const endings = events.filter(event => event.type === "compaction/end");
+    expect(endings).toHaveLength(1);
+    expect(endings[0]!.data.error !== undefined).toBe(summaryFailure);
+    const notifications = backend.output.get(config.id)!.filter(event => event.type === "agent.thread_context_compacted");
+    expect(notifications).toHaveLength(summaryFailure ? 0 : 1);
+    if (!summaryFailure) {
+      const derived = session.runtime.agent.session.deriveMessages();
+      expect(JSON.stringify(derived).length).toBeLessThan(200000);
+      await session.close();
+      const resumedContext = new Context();
+      try {
+        await mountKernel(resumedContext);
+        await resumedContext.plugin(CcrBridge, { backend });
+        resumedContext.llm.registerAdapter(["test"], model);
+        const resumed = resumedContext.ccrv2.createSession(config);
+        await resumed.open();
+        expect(resumed.runtime.agent.session.deriveMessages()).toEqual(derived);
+        await resumed.receive("third", { content: "continue after restart" });
+        expect(summaries).toBe(1);
+        expect(backend.output.get(config.id)!.filter(event => event.type === "agent.thread_context_compacted")).toHaveLength(1);
+        await resumed.close();
+      } finally { await resumedContext.fiber.dispose(); }
+    } else await session.close();
+  } finally { await ctx.fiber.dispose(); }
+});
+
+test.each([false, true])("native compaction recovers overflow and preserves root/child history (child=%s)", async child => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  const model = new TextModel();
+  let requests = 0;
+  let parentRequests = 0;
+  let summaries = 0;
+  model.stream = async function* (options: GenerateOptions): AsyncIterable<StreamChunk> {
+    if (options.purpose === "compaction") {
+      summaries++;
+      expect(options.maxTokens).toBe(65536);
+      expect(JSON.stringify(options.messages)).toContain("remember FACT-REAL");
+      yield { type: "block-end", index: 0, block: { type: "text", text: "User requested remember FACT-REAL. Four Bash calls completed." } };
+      yield { type: "finish", reason: { kind: "stop" } };
+      return;
+    }
+    if (options.model === "parent" && parentRequests++ === 0) {
+      yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId("delegate"),
+        name: "send_to_agent", arguments: JSON.stringify({ agent_name: "reader", message: "remember FACT-REAL" }) } };
+      yield { type: "finish", reason: { kind: "tool-calls" } };
+      return;
+    }
+    if (options.model !== "parent") {
+      requests++;
+      if (requests <= 4) {
+        yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId(`bash-${requests}`),
+          name: "Bash", arguments: JSON.stringify({ command: `cat part-${requests}` }) } };
+        yield { type: "finish", reason: { kind: "tool-calls" } };
+        return;
+      }
+      if (requests === 5) {
+        yield { type: "finish", reason: { kind: "error", failure: { code: "CONTEXT_WINDOW_EXCEEDED", status: 400,
+          message: "Maximum context length exceeded" } } };
+        return;
+      }
+      expect(JSON.stringify(options.messages)).toContain("<compacted-summary>");
+      const logs = backend.logs.get("native-compaction") ?? [];
+      expect(logs.some(log => log.data.events?.some((event: Payload) => event.type === "compaction/end"))).toBe(true);
+    }
+    yield { type: "block-end", index: 0, block: { type: "text", text: "FACT-REAL" } };
+    yield { type: "finish", reason: { kind: "stop" } };
+  };
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], model);
+    const session = ctx.ccrv2.createSession({ id: "native-compaction", provider: "test", model: child ? "parent" : "text",
+      subagents: child ? { inlineAgents: false, agents: [{ name: "reader", description: "Reader", systemPrompt: "Read", model: "text", tools: ["Bash"] }] } : undefined,
+      workDir: "/workspace", systemPrompt: "", tools: ["Bash"], setup: async scope => {
+        await scope.plugin({ name: "compaction-sandbox", apply(scope: Context) { scope.provide("sandboxExecutor", {
+          async provision() {}, async call() { return { content: [{ type: "text", text: "original:" + "x".repeat(60000) + ":tail" }] }; },
         }); } });
       } });
     await session.open();
     spyOn(session, "approve").mockResolvedValue({ allowed: true });
     await session.receive("pressure", { content: "remember FACT-REAL" });
     expect(requests).toBe(6);
-    expect(replayWellFormed).toBe(true);
+    expect(summaries).toBe(1);
     const output = backend.output.get(session.id)!;
-    expect(output.filter(event => event.type === "agent.thread_context_compacted")).toEqual([
-      expect.objectContaining({ pre_compaction_tokens: 90000, ...(child ? { session_thread_id: session.state.threads![0]!.id } : {}) }),
-    ]);
-    const results = output.flatMap(event => event.message?.content ?? []).filter(block => block.type === "tool_result" && block.tool_use_id.startsWith("read-"));
+    const notifications = output.filter(event => event.type === "agent.thread_context_compacted");
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]!.pre_compaction_tokens).toBeGreaterThan(0);
+    if (child) expect(notifications[0]!.session_thread_id).toBe(session.state.threads![0]!.id);
+    const results = output.flatMap(event => event.message?.content ?? []).filter(block => block.type === "tool_result" && block.tool_use_id.startsWith("bash-"));
     expect(results).toHaveLength(4);
-    expect(results.every(block => JSON.stringify(block).includes("original-file-data"))).toBe(true);
+    expect(results.every(block => JSON.stringify(block).includes("original:"))).toBe(true);
     const native = child ? ctx.sessions.get(SessionId(session.state.threads![0]!.id))! : session.runtime.agent.session;
-    if (child) expect(session.runtime.agent.session.snapshotEvents().some(event => event.type === "tool/result" && event.surfaceOp !== "append")).toBe(false);
-    const replacements = native.snapshotEvents().filter(event => event.type === "tool/result" && event.surfaceOp !== "append");
-    expect(replacements).toHaveLength(2);
+    expect(native.snapshotEvents().filter(event => event.type === "compaction/prune")).toHaveLength(4);
+    expect(native.snapshotEvents().filter(event => event.type === "compaction/summary")).toHaveLength(1);
     const replay = ctx.sessions.create(undefined, { seed: native.snapshotEvents() });
     expect(replay.deriveMessages()).toEqual(native.deriveMessages());
     expect(native.snapshotEvents().filter(event => event.type === "tool/result" && event.surfaceOp === "append")).toHaveLength(4);
-    const failure = { code: "CONTEXT_WINDOW_EXCEEDED", message: "context too long" };
-    let published = false;
-    const original = ctx.sessions.create(undefined, { seed: native.snapshotEvents().slice(0, replacements[0]!.seq) });
-    const recovery = new ContextRecovery();
-    expect(await recovery.recover(original, { code: "HTTP_ERROR", message: "network" }, 1, 1,
-      async () => {}, async () => { published = true; })).toBe(false);
-    await expect(recovery.recover(original, failure, 1, 1,
-      async () => { throw new Error("Not durable"); }, async () => { published = true; })).rejects.toThrow("Not durable");
-    expect(published).toBe(false);
-    expect(await recovery.recover(original, failure, 1, 1,
-      async () => {}, async () => { published = true; })).toBe(false);
-    expect(await new ContextRecovery().recover(replay, failure, 1, 1,
-      async () => {}, async () => { published = true; })).toBe(false);
     await session.close();
   } finally { await ctx.fiber.dispose(); }
 });

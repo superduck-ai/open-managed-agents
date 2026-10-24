@@ -1,4 +1,5 @@
 {
+  "llmModels.modelIdRequired": "Model ID is required when model parameters are configured.",
   "llmModels.modelParameters": "Model parameters",
   "llmModels.contextWindow": "Context window",
   "llmModels.contextWindowInvalid": "Token limits must be positive integers; K and M suffixes are supported.",

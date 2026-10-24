@@ -310,3 +310,9 @@ Console API（相对 `/api/console/organizations/{orgUuid}`）：
 迁移 `00094_organization_llm_provider.sql` 从主干版本 91 追加升级，不修改已有迁移。已有工作区 slug `organization` 改为当前空间中第一个未占用的 `organization-N`，同步改写 `agents.model`、`agent_versions.model`，以及 `sessions`、`session_threads`、`deployments`、`deployment_runs` 的 `agent_snapshot` 顶层模型；同时改写 Agent、版本的 `multiagent` 列与上述快照中的 `multiagent.advisor.model`，并递归处理展开 roster（`multiagent.agents`、`multiagent.subagents.predefined_agents`、`multiagent.workflows.predefined_agents`）内嵌的模型引用。Code Session 模型与恢复元数据、queued / in_flight Batch 的对应完整引用也同步改写。改写仅作用于发生 slug 变更的组织和工作区，支持字符串及对象模型，保留模型的其他字段、roster 顺序和其他 JSON 内容；`metadata.model`、无关引用、其他租户数据与已完成 Batch 不改写。外部调用方若使用旧 `organization/{model}`，需改用迁移后的工作区 slug。Down 删除组织 Provider 及索引并恢复 workspace 非空，不回退已经改名的工作区 slug 和引用；回退前需备份组织配置。
 
 组织 Provider 的通用 API 和配置不包含任何公司网关预设、公司控制台链接或专属域名。
+
+## Brain 压缩摘要请求
+
+已认证 Worker 可用内部 header `X-OMA-Model-Purpose: compaction` 标记辅助摘要请求。Messages 和 Chat Completions 都继续执行模型路由、权限/epoch 校验、请求 span 和 usage 记账，但不把摘要输出映射成公开 assistant、thinking 或 tool 事件，也不向 span 添加这些公开事件 ID。普通请求保持原有投影行为；内部 header 不转发给上游。实际压缩结果仍由 DSH 私有日志和 CCRv2 的 `agent.thread_context_compacted` 通知表达。
+
+`TestCompactionObservationKeepsUsageWithoutPublicAssistantEvents` 覆盖两种协议的辅助/普通响应与 usage，`TestCompactionPurposeHeaderDoesNotReachUpstream` 覆盖 header 清理。`chat brain-compaction` 在真实代理链路中要求普通回复计数准确，从而拒绝摘要正文混入公开历史。

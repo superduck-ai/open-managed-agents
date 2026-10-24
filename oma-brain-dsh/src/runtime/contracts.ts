@@ -1,13 +1,13 @@
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
-import type { SessionEvent } from "@deepseek-ai/dsh-session";
+import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
 import type { ToolDefinition } from "@deepseek-ai/dsh-tools";
 import type { Payload } from "../json.ts";
+import type { LlmCallConfig, LlmFailure } from "@deepseek-ai/dsh-llm";
 import type { Context, Fiber } from "@deepseek-ai/cordis";
 
 export const MAX_LIVE_SUBAGENT_THREADS = 25;
 
 export interface SubagentDefinition {
-  agentSnapshot?: Payload;
   name: string;
   description: string;
   systemPrompt: string;
@@ -21,7 +21,6 @@ export interface SubagentConfig {
 }
 
 export interface SubagentThread {
-  agentSnapshot?: Payload;
   id: string;
   inline?: boolean;
   name: string;
@@ -41,12 +40,15 @@ export type SubagentEvent =
 export interface SubagentBridge {
   validateThread?(threadId: string, signal: AbortSignal): Promise<void>;
   archivedThreads?(threadIds: string[], signal: AbortSignal): Promise<string[]>;
+  createThreadId?(): string;
   threads(): SubagentThread[];
   bindPersistence(threadId: string): void;
   emit(event: SubagentEvent): Promise<void>;
   beforeRequest(): Promise<void>;
-  onContextCompacted?(threadId: string, tokens?: number): Promise<void>;
-  onEvent(threadId: string, event: SessionEvent): void;
+  onOpen?(session: Session): Promise<void>;
+  afterFlushLog?(session: Session): Promise<void>;
+  onDiagnostic?(threadId: string, diagnostic: RuntimeDiagnostic): void;
+  onEvent(threadId: string, event: SessionEvent, session: Session): void;
   onStream(threadId: string, frame: AssistantStreamFrame): void;
   toolExecution(threadId: string): ToolExecutionBridge;
 }
@@ -72,24 +74,6 @@ export function isShutdownCancel(reason: unknown): boolean {
     && "reason" in reason && reason.reason === SHUTDOWN_CANCEL.reason;
 }
 
-const CONNECT_FAILURE_CODES = new Set(["ConnectionRefused", "ECONNREFUSED", "FailedToOpenSocket", "ENOTFOUND", "EAI_AGAIN"]);
-
-export function isConnectFailure(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error
-    && CONNECT_FAILURE_CODES.has(String(error.code));
-}
-
-export async function notForwardedDetail(response: Response): Promise<string> {
-  let detail = `HTTP ${response.status}`;
-  try {
-    const message = (await response.json())?.error?.message;
-    if (typeof message === "string" && message) detail = message.slice(0, 500);
-  } catch {
-    return detail;
-  }
-  return detail;
-}
-
 /** Host-provided sandbox readiness and execution. Resource creation belongs to the provider service. */
 export interface SandboxExecutor {
   provision?(signal: AbortSignal): Promise<void>;
@@ -104,6 +88,7 @@ declare module "@deepseek-ai/cordis" {
 }
 
 export interface SessionRuntimeConfig {
+  configureModel?(call: LlmCallConfig): LlmCallConfig;
   refreshTools?(signal: AbortSignal): Promise<{ tools: string[]; externalMcpConfig: unknown }>;
   threadMcpContext?(threadId: string): Promise<{ config: unknown; fetcher: typeof fetch }>;
   externalMcpConfig?: unknown;
@@ -119,7 +104,7 @@ export interface SessionRuntimeConfig {
   subagentSystemPrompt?(thread: SubagentThread): string;
   tools?: string[];
   toolPermissions?: ToolPermissions;
-  refreshToolPermissions?(signal: AbortSignal, threadId?: string): Promise<ToolPermissions | undefined>;
+  refreshSessionContext?(signal: AbortSignal, threadId?: string): Promise<{ toolPermissions?: ToolPermissions }>;
   subagents?: SubagentConfig;
   /** Host binds a child model identity to the parent's credentials. */
   bindThread?(id: string): () => void;
@@ -171,13 +156,20 @@ export interface ToolExecutionBridge {
   stop(): void;
 }
 
+export type RuntimeDiagnostic =
+  | { kind: "model-retry"; failure: LlmFailure; attempt: number; delayMs: number }
+  | { kind: "input-failed"; error: unknown };
+
 export interface SessionRuntimeHooks {
-  onContextCompacted?(tokens?: number): Promise<void>;
+  onDiagnostic?(diagnostic: RuntimeDiagnostic): void;
+  selectModel?(model: string): string;
+  onOpen?(session: Session): Promise<void>;
+  afterFlushLog?(session: Session): Promise<void>;
   onExternalMcpConnectionFailure?(serverName: string): Promise<void>;
   onExternalMcpAuthenticationFailure?(serverName: string, phase?: "discovery" | "tool_call"): Promise<void>;
   setupTools?(scope: Context): void;
   beforeRequest(): Promise<void>;
-  onEvent(event: SessionEvent): void;
+  onEvent(event: SessionEvent, session: Session): void;
   onStream(frame: AssistantStreamFrame): void;
   stop(): void;
 }

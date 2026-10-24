@@ -21,6 +21,8 @@ func TestUnifiedLLMModelsMigrationPreservesModelIDsAndOrder(t *testing.T) {
 	if _, err := provider.UpTo(ctx, 94); err != nil {
 		t.Fatal(err)
 	}
+	assertMigrationColumnExists(t, ctx, database, "llm_providers", "model_ids", true)
+	assertMigrationColumnExists(t, ctx, database, "llm_providers", "models", false)
 	if _, err := database.ExecContext(ctx, `
  INSERT INTO llm_providers (external_id,organization_uuid,workspace_uuid,name,slug,base_url,api_key_last4,model_ids,ciphertext,nonce,wrapped_dek,format_version,key_provider,key_version) VALUES
  ('llmprov_models','bb000000-0000-4000-8000-000000000001','bb000000-0000-4000-8000-000000000002','Workspace','workspace','https://models.example.com','0001','["second","first","default"]','x','x','x',1,'local',1),
@@ -62,12 +64,13 @@ func TestUnifiedLLMModelsMigrationPreservesModelIDsAndOrder(t *testing.T) {
 		}
 	}
 	assertArrayConstraint("models", "llm_providers_models_array")
-	for _, column := range []string{"model_ids", "model_context_windows", "model_options"} {
-		assertMigrationColumnExists(t, ctx, database, "llm_providers", column, false)
-	}
+	assertMigrationColumnExists(t, ctx, database, "llm_providers", "model_ids", false)
+	assertMigrationColumnExists(t, ctx, database, "llm_providers", "models", true)
 	if _, err := provider.Down(ctx); err != nil {
 		t.Fatal(err)
 	}
+	assertMigrationColumnExists(t, ctx, database, "llm_providers", "model_ids", true)
+	assertMigrationColumnExists(t, ctx, database, "llm_providers", "models", false)
 	assertArrayConstraint("model_ids", "llm_providers_model_ids_array")
 	var restored bool
 	if err := database.QueryRowContext(ctx, `SELECT model_ids='["second","first","default"]'::jsonb FROM llm_providers WHERE external_id='llmprov_models'`).Scan(&restored); err != nil || !restored {
@@ -76,5 +79,7 @@ func TestUnifiedLLMModelsMigrationPreservesModelIDsAndOrder(t *testing.T) {
 	if _, err := provider.UpTo(ctx, 95); err != nil {
 		t.Fatal(err)
 	}
+	assertMigrationColumnExists(t, ctx, database, "llm_providers", "model_ids", false)
+	assertMigrationColumnExists(t, ctx, database, "llm_providers", "models", true)
 	assertModels()
 }

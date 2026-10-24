@@ -13,6 +13,10 @@ export interface ThreadExecutionState {
   toolOutcomes: BrainState["toolOutcomes"];
 }
 
+export interface CcrSubagentThread extends SubagentThread {
+  agentSnapshot?: Payload;
+}
+
 export interface BrainState {
   version: 1;
   revision: number;
@@ -21,12 +25,13 @@ export interface BrainState {
   completed: string[];
   turnInputs?: string[];
   outbox: Payload[];
+  compactionSequences?: Record<string, number>;
   approvedCalls: Record<
     string,
     { name: string; original: Payload; effective: Payload }
   >;
   toolOutcomes: Record<string, { text: string; failed: boolean; remoteOutcome?: "unknown" }>;
-  threads?: SubagentThread[];
+  threads?: CcrSubagentThread[];
   /** Optional for compatibility with existing schema-version-1 journals. */
   executions?: Record<string, ThreadExecutionState>;
 }

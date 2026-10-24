@@ -126,7 +126,7 @@ func (c *chatObservation) observeDelta(o *responseObservation, delta chatDelta) 
 		if o.thinkingPublished == nil {
 			o.thinkingPublished = make(map[int]bool)
 		}
-		if o.publishThinking != nil && !o.thinkingPublished[c.blockIndices["thinking"]] {
+		if !o.auxiliary && o.publishThinking != nil && !o.thinkingPublished[c.blockIndices["thinking"]] {
 			o.thinkingPublished[c.blockIndices["thinking"]] = o.publishThinking(o.messageID, c.blockIndices["thinking"])
 		}
 		o.contentBytes += len(reasoning)

@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "./api.ts";
@@ -45,7 +44,7 @@ export async function apply(ctx: Context): Promise<void> {
   const claim = readBrainClaimOptions();
   const shutdownDrainMs = readShutdownDrainMs();
   const api = new OmaApi(base.replace(/\/$/, ""));
-  const client = await mountOma(ctx, api, heartbeat, process.env.OMA_BRAIN_TRANSCRIPT_DIR?.trim() || join(homedir(), ".oma", "brain", "transcripts"));
+  const client = await mountOma(ctx, api, heartbeat, process.env.OMA_BRAIN_TRANSCRIPT_DIR?.trim() || join(process.cwd(), ".dsh", "transcripts"));
   const claims = new BrainClaimClient(api, claim.token, crypto.randomUUID());
   await ctx.plugin({
     inject: ["ccrv2"],

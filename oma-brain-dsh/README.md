@@ -351,7 +351,7 @@ worker events to expose separate thread views. The tests
 use the real dsh loop with a controlled gateway and model; this change has not
 been verified against a production gateway's thread-event validation.
 
-DSH local data uses `.dsh/` below the process working directory. Kernel initialization sets `DSH_HOME` to this path, overriding an inherited value. The restart script runs from this checkout's `oma-brain-dsh` directory, so each worktree keeps its own ignored `.dsh/`. Existing global files are not migrated. Conversation logs use native JSONL at `~/.oma/brain/transcripts`, configurable with `OMA_BRAIN_TRANSCRIPT_DIR`. Preserve this directory across restarts.
+DSH local data uses `.dsh/` below the process working directory. Kernel initialization sets `DSH_HOME` to this path, overriding an inherited value. The restart script runs from this checkout's `oma-brain-dsh` directory, so each worktree keeps its own ignored `.dsh/`. Existing global files are not migrated. Conversation logs use native JSONL at `.dsh/transcripts/` below the process working directory, configurable with `OMA_BRAIN_TRANSCRIPT_DIR`. The restart script therefore stores logs in this checkout's `oma-brain-dsh/.dsh/transcripts/`. Preserve this directory across restarts.
 
 ## Persistence and recovery
 

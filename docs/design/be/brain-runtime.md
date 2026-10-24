@@ -4,7 +4,7 @@
 
 本地在仓库根目录运行 `just restart-brain`，复用 `oma-brain-dsh/scripts/restart.sh`，先构建，再停止当前 Brain 目录启动的 Bun 入口进程，并在前台启动新进程。构建失败时保留旧进程，旧进程未能在 30 秒内退出时取消重启。
 
-DSH 内核初始化时将当前进程的 `DSH_HOME` 固定为运行工作目录下的 `.dsh`，不使用全局 `~/.dsh` 或继承的 `DSH_HOME`。重启脚本先切换到当前 checkout 的 `oma-brain-dsh` 目录，因此本地数据位于 `oma-brain-dsh/.dsh/`；直接启动源码或可执行文件时按启动工作目录定位。该目录已被 Git 忽略。附件与缓存使用该目录，已有全局数据不自动迁移。会话主存储由直接注册的 `JsonlPersistence` 管理，生产路径默认 `~/.oma/brain/transcripts`，可用 `OMA_BRAIN_TRANSCRIPT_DIR` 覆盖；嵌入 bridge 可传 `localRoot`，未指定时使用隔离临时目录。
+DSH 内核初始化时将当前进程的 `DSH_HOME` 固定为运行工作目录下的 `.dsh`，不使用全局 `~/.dsh` 或继承的 `DSH_HOME`。重启脚本先切换到当前 checkout 的 `oma-brain-dsh` 目录，因此本地数据位于 `oma-brain-dsh/.dsh/`；直接启动源码或可执行文件时按启动工作目录定位。该目录已被 Git 忽略。附件与缓存使用该目录，已有全局数据不自动迁移。会话主存储由直接注册的 `JsonlPersistence` 管理，生产路径默认当前工作目录的 `.dsh/transcripts/`，通过重启脚本启动时位于当前 checkout 的 `oma-brain-dsh/.dsh/transcripts/`，可用 `OMA_BRAIN_TRANSCRIPT_DIR` 覆盖；嵌入 bridge 可传 `localRoot`，未指定时使用隔离临时目录。
 
 ## 私有持久化写入类型
 

@@ -9,17 +9,15 @@ export interface ThreadExecutionState {
   inputId: string;
   phase: "idle" | "accepted" | "approved" | "dispatch" | "result" | "completed" | "interrupted" | "blocked";
   callPhases?: Record<string, "approved" | "dispatch" | "result" | "blocked" | "interrupted">;
-  approvedCalls: BrainState["approvedCalls"];
-  toolOutcomes: BrainState["toolOutcomes"];
+  approvedCalls: SessionProjection["approvedCalls"];
+  toolOutcomes: SessionProjection["toolOutcomes"];
 }
 
-export interface BrainState {
-  version: 1;
-  revision: number;
+export interface SessionProjection {
+  checkpointRevision: number;
   inputId: string;
   phase: "idle" | "accepted" | "dispatch" | "result" | "completed" | "blocked";
   completed: string[];
-  turnInputs?: string[];
   outbox: Payload[];
   approvedCalls: Record<
     string,
@@ -27,13 +25,11 @@ export interface BrainState {
   >;
   toolOutcomes: Record<string, { text: string; failed: boolean; remoteOutcome?: "unknown" }>;
   threads?: SubagentThread[];
-  /** Optional for compatibility with existing schema-version-1 journals. */
   executions?: Record<string, ThreadExecutionState>;
 }
 
-export const emptyState = (): BrainState => ({
-  version: 1,
-  revision: 0,
+export const emptyProjection = (): SessionProjection => ({
+  checkpointRevision: 0,
   inputId: "",
   phase: "idle",
   completed: [],

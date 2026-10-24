@@ -202,10 +202,10 @@ test("the plugin sends during real model and tool work, stops for approval and k
     expect(clock.pending.size).toBe(0);
     const turn = session.receive("active", { content: "run tool" });
     await eventually(() => backend.requests.length === 1);
-    const revision = session.state.revision;
+    const revision = session.state.checkpointRevision;
     clock.fire();
     await eventually(() => [...backend.publicLog.values()].filter((event) => event.type === "keep_alive").length === 1);
-    expect(session.state.revision).toBe(revision);
+    expect(session.state.checkpointRevision).toBe(revision);
     expect(JSON.stringify([...backend.privateLog.values()])).not.toContain('"keep_alive"');
     model.resolve();
     await eventually(() => session.approvals.size === 1 && backend.statuses.at(-1) === "requires_action");

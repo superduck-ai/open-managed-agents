@@ -7,7 +7,7 @@ import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import type { CcrSession } from "../src/ccrv2/index.ts";
-import { Backend, eventually, toolEvents, textEvents } from "./backend.ts";
+import { Backend, eventually, toolEvents, textEvents, persistedState, receiptPayloads } from "./backend.ts";
 
 test("SIGKILL during sandbox execution restores logs, never replays and continues on new input", async () => {
   const backend = new Backend();
@@ -64,9 +64,9 @@ test("SIGKILL during sandbox execution restores logs, never replays and continue
     backend.modelScript = [textEvents("checked state")];
     await resumed.receive("new_input", { message: { content: "what happened?" } });
     expect(resumed.blocked()).toBe(false);
-    const settled = [...backend.privateLog.values()].filter((p) => p.subtype === "dsh_brain_state")
-      .some((p) => p.data.toolOutcomes?.call_1?.remoteOutcome === "unknown" && p.data.phase === "completed");
-    expect(settled).toBe(true);
+    const receipts = [...backend.privateLog.values()].flatMap(receiptPayloads);
+    expect(receipts.some((receipt) => receipt.type === "tool/settled" && receipt.callId === "call_1")).toBe(true);
+    expect(persistedState(backend).phase).toBe("completed");
     expect(backend.executions).toHaveLength(1);
     expect(backend.requests).toHaveLength(2);
     expect(JSON.stringify(backend.requests[1]!.messages)).toContain("They were not replayed and may or may not have taken effect");
@@ -135,7 +135,7 @@ for (const duringDispatch of [true, false]) {
     let ctx: Context | undefined;
     let resumed: CcrSession | undefined;
     try {
-      const latest = () => [...backend.privateLog.values()].filter((entry) => entry.subtype === "dsh_brain_state").at(-1)?.data;
+      const latest = () => persistedState(backend);
       if (duringDispatch) await eventually(() => {
         const snapshot = latest();
         const beta = snapshot?.threads?.find((thread: { name: string }) => thread.name === "beta");
@@ -143,12 +143,12 @@ for (const duringDispatch of [true, false]) {
       });
       else await eventually(() => approvals.length === 2);
       const snapshot = latest()!;
-      const alphaId = snapshot.threads.find((thread: { name: string }) => thread.name === "alpha").id;
-      const betaId = snapshot.threads.find((thread: { name: string }) => thread.name === "beta").id;
+      const alphaId = snapshot.threads!.find((thread) => thread.name === "alpha")!.id;
+      const betaId = snapshot.threads!.find((thread) => thread.name === "beta")!.id;
       if (duringDispatch) {
-        expect(snapshot.executions[alphaId].phase).toBe("dispatch");
-        expect(snapshot.executions[betaId].phase).toBe("completed");
-        expect(snapshot.executions[betaId].toolOutcomes.same_call_id.text).toBe("confirmed beta output");
+        expect(snapshot.executions![alphaId]!.phase).toBe("dispatch");
+        expect(snapshot.executions![betaId]!.phase).toBe("completed");
+        expect(snapshot.executions![betaId]!.toolOutcomes.same_call_id.text).toBe("confirmed beta output");
       }
       child.kill("SIGKILL"); await exited;
       backend.a.worker_epoch++;

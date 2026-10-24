@@ -1,6 +1,8 @@
 import { expect, spyOn, test } from "bun:test";
 import { ContextRecovery } from "../src/runtime/compaction.ts";
-import { SessionId } from "@deepseek-ai/dsh-session";
+import { SessionId, Session, appendPluginRecord } from "@deepseek-ai/dsh-session";
+import { eventually } from "./backend.ts";
+import { receiptOf } from "../src/ccrv2/receipts.ts";
 import { Context } from "@deepseek-ai/cordis";
 import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { mountKernel } from "../src/kernel.ts";
@@ -8,7 +10,6 @@ import * as CcrBridge from "../src/ccrv2/index.ts";
 import type { CcrBackend } from "../src/ccrv2/index.ts";
 import type { SandboxExecutor } from "../src/runtime/contracts.ts";
 import type { Payload } from "../src/ccrv2/protocol.ts";
-import { emptyState } from "../src/ccrv2/protocol.ts";
 import type { ClientEvent, SessionState, RequiresActionDetails } from "../src/ccrv2/wire.ts";
 import type { CcrLeaseResult, CcrLeaseFailure } from "../src/ccrv2/index.ts";
 
@@ -108,7 +109,7 @@ test("session previews enter one stream window and terminal publication still wa
   const persist = backend.persist.bind(backend);
   backend.persist = async (id, subtype, data, agentId) => {
     await persist(id, subtype, data, agentId);
-    if (subtype === "dsh_brain_state" && data && typeof data === "object" && "phase" in data && data.phase === "completed")
+    if (subtype === "dsh_log" && (data as { events: import("@deepseek-ai/dsh-session").SessionEvent[] }).events.some(event => receiptOf(event)?.type === "input/completed"))
       completed.resolve();
   };
   const model = new TextModel();
@@ -129,6 +130,7 @@ test("session previews enter one stream window and terminal publication still wa
     session = ctx.ccrv2.createSession({ id: "buffered", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup });
     await session.open();
     turn = session.receive("input", { content: "hello" });
+    await eventually(() => previewCalls === 2);
     await completed.promise;
     expect(previewCalls).toBe(2);
     expect(timers.size).toBe(1);
@@ -167,11 +169,9 @@ test("failed final persistence releases the session writer and permits replaceme
         id: "replaced", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup,
       });
       await session.open();
-      const writers = (ctx.sessionPersistence as unknown as {
-        writers: Map<string, { enqueue(event: unknown): void; record: { events: unknown[] } }>;
-      }).writers;
-      const writer = writers.get(session.id)!;
-      writer.enqueue({ seq: writer.record.events.length, type: "test/pending", data: {} });
+      appendPluginRecord(session.agent.session, "plugin:oma/receipt", {
+        version: 1, receipt: { type: "public/sent", uuids: [] },
+      });
       backend.persist = async () => { throw new Error("Lease expired"); };
       await expect(session.close()).rejects.toThrow();
       expect(() => ctx.ccrv2.forget(session.id)).not.toThrow();
@@ -185,19 +185,22 @@ test("failed final persistence releases the session writer and permits replaceme
 test("startup clears task_summary after recovery persistence and before status or publication, including blocked recovery", async () => {
   for (const phase of ["idle", "dispatch"] as const) {
     const backend = new MemoryBackend();
-    const state = emptyState();
-    state.phase = phase;
-    state.revision = 1;
-    state.inputId = phase === "dispatch" ? "interrupted-input" : "";
-    state.outbox = [{ type: "system.message", uuid: "pending-message" }];
-    backend.logs.set("recovery", [{ subtype: "dsh_brain_state", schema_version: 1, data: state }]);
+    const log = Session.create(SessionId("recovery"));
+    if (phase === "dispatch") {
+      appendPluginRecord(log, "plugin:oma/receipt", { version: 1, receipt: { type: "input/accepted", inputId: "interrupted-input" } });
+      appendPluginRecord(log, "plugin:oma/receipt", { version: 1, receipt: { type: "tool/dispatched", threadId: "recovery", call: {
+        callId: "interrupted-call", name: "Bash", original: {}, effective: {}, readOnly: false,
+      } } });
+    }
+    appendPluginRecord(log, "plugin:oma/receipt", { version: 1, receipt: { type: "public/queued", payloads: [{ type: "system.message", uuid: "pending-message" }] } });
+    backend.logs.set("recovery", [{ subtype: "dsh_log", schema_version: 1, data: { header: log.header, inherited: 0, events: log.snapshotEvents() } }]);
     const order: string[] = [];
     const started = Promise.withResolvers<void>();
     const confirmed = Promise.withResolvers<void>();
     const persist = backend.persist.bind(backend);
     backend.persist = async (...args) => { order.push(`persist:${args[1]}`); await persist(...args); };
     backend.reportMetadata = async (_id, patch) => {
-      expect(patch).toEqual({ task_summary: null, pending_action: null, model: "text", unknown_tool_outcomes: null });
+      expect(patch).toEqual({ task_summary: null, pending_action: null, model: "text", unknown_tool_outcomes: phase === "dispatch" ? [{ tool_use_id: "interrupted-call", tool_name: "Bash" }] : null });
       order.push("metadata"); started.resolve(); await confirmed.promise;
     };
     backend.setStatus = async (_id, status) => { order.push(`status:${status}`); };
@@ -213,7 +216,7 @@ test("startup clears task_summary after recovery persistence and before status o
       await started.promise;
       expect(order.at(-1)).toBe("metadata");
       expect(order.some((step) => step.startsWith("status:") || step === "publish")).toBe(false);
-      if (phase === "dispatch") expect(order).toContain("persist:dsh_brain_state");
+      if (phase === "dispatch") expect(order).toContain("persist:dsh_log");
       confirmed.resolve();
       await opening;
       expect(session.blocked()).toBe(phase === "dispatch");
@@ -263,6 +266,7 @@ test("worker metadata restores the model across logged history and set_model wai
       release.resolve();
       await changing;
     } finally { release.resolve(); backend.reportMetadata = patch; }
+    await eventually(() => backend.acknowledged.includes("model-session:change"));
     expect(backend.acknowledged).toContain("model-session:change");
     await first.session.receive("second", { content: "continue" });
     expect(first.model.requests[1]!.model).toBe("changed-model");
@@ -594,12 +598,15 @@ test("flushes without new log events do not write empty dsh_log batches", async 
   const { ctx, session } = await mountMediaKernel(backend);
   try {
     await session.receive("first", { content: "hello" });
+    const previous = (backend.logs.get("a") ?? []).filter((event) => event.subtype === "dsh_log");
+    expect(previous.length).toBeGreaterThan(0);
     await session.flushEvents();
     await session.flushEvents();
     const logs = (backend.logs.get("a") ?? []).filter((event) => event.subtype === "dsh_log");
+    expect(logs).toEqual(previous);
     const empty = logs.filter((event) => !event.data.events.length);
-    expect(empty).toHaveLength(1);
-    expect(logs.indexOf(empty[0]!)).toBe(0);
+    expect(empty.length).toBeLessThanOrEqual(1);
+    if (empty.length) expect(logs.indexOf(empty[0]!)).toBe(0);
   } finally {
     await ctx.fiber.dispose();
   }
@@ -612,7 +619,7 @@ test("a redelivered control input is acknowledged without repeating its effect",
     const request = { type: "control_request", request_id: "req-1", request: { subtype: "set_model", model: "other" } };
     await session.receive("control-1", request);
     await session.receive("control-1", request);
-    await Bun.sleep(0);
+    await eventually(() => backend.acknowledged.length === 2);
     const responses = (backend.output.get("a") ?? []).filter((event) => event.type === "control_response");
     expect(responses).toHaveLength(1);
     expect(backend.acknowledged).toEqual(["a:control-1", "a:control-1"]);

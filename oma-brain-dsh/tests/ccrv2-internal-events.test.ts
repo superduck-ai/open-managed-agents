@@ -30,7 +30,7 @@ test("successful internal-events cleanup failures confirm batches without retrie
       const data = [{ log: "first" }, { revision: 2 }, { log: "child" }];
       const results = await Promise.allSettled([
         client.persist("s", "dsh_log", data[0]),
-        client.persist("s", "dsh_brain_state", data[1]),
+        client.persist("s", "test_record", data[1]),
         client.persist("s", "dsh_log", data[2], "child"),
       ]);
       for (const result of results) expect(result).toEqual({ status: "fulfilled", value: undefined });
@@ -38,7 +38,7 @@ test("successful internal-events cleanup failures confirm batches without retrie
       expect(requests.flatMap((request) => (request.body as Body).events.map((event) => event.payload.data))).toEqual(data);
       expect(cleanups).toBe(2);
       expect(waits).toEqual([]);
-      await client.persist("s", "dsh_brain_state", { revision: 3 });
+      await client.persist("s", "test_record", { revision: 3 });
       expect(requests).toHaveLength(3);
     }
     expect(warn).not.toHaveBeenCalled();
@@ -58,7 +58,7 @@ test("session cancellation during successful internal-events cleanup still rejec
   const detach = client.bindLease("s").subscribe!(() => {});
   const completion = Promise.allSettled([
     client.persist("s", "dsh_log", { first: true }),
-    client.persist("s", "dsh_brain_state", { revision: 2 }),
+    client.persist("s", "test_record", { revision: 2 }),
   ]);
   try {
     await cleaning.promise;
@@ -99,7 +99,7 @@ test("internal logs, state and child logs share a FIFO queue and confirm only th
   });
   const data = Array.from({ length: 302 }, (_, index) => ({ index }));
   const pending = Promise.allSettled(data.map((value, index) => client.persist("s",
-    index % 3 === 1 ? "dsh_brain_state" : "dsh_log", value, index % 3 === 2 ? "child" : undefined,
+    index % 3 === 1 ? "test_record" : "dsh_log", value, index % 3 === 2 ? "child" : undefined,
   ).then(() => { confirmed.push(index); })));
   try {
     expect(requests).toHaveLength(1);
@@ -120,7 +120,7 @@ test("internal logs, state and child logs share a FIFO queue and confirm only th
       expect(event.agent_id).toBe(index % 3 === 2 ? "child" : undefined);
       expect(event.is_compaction).toBe(false);
       expect(event.payload).toMatchObject({ type: "system", schema_version: 1,
-        subtype: index % 3 === 1 ? "dsh_brain_state" : "dsh_log" });
+        subtype: index % 3 === 1 ? "test_record" : "dsh_log" });
     });
     for (const request of requests) {
       expect(request).toMatchObject({ method: "POST", path: "/v1/code/sessions/s/worker/internal-events", timeout: 10_000 });
@@ -189,7 +189,7 @@ test("a retried internal batch retains UUIDs and queued snapshots while refreshi
   let confirmed = false;
   const pending = Promise.allSettled([
     client.persist("s", "dsh_log", { seed: true }),
-    client.persist("s", "dsh_brain_state", data).then(() => { confirmed = true; }),
+    client.persist("s", "test_record", data).then(() => { confirmed = true; }),
     client.persist("s", "dsh_log", { child: true }, "child"),
   ]);
   try {
@@ -258,7 +258,7 @@ test("a terminal internal batch failure rejects its backlog instead of sending l
     let attempts = 0;
     const { client } = fixture(async () => { attempts++; return new Response(null, { status }); });
     const results = await Promise.allSettled(Array.from({ length: 240 }, (_, index) =>
-      client.persist("s", "dsh_brain_state", { revision: index })));
+      client.persist("s", "test_record", { revision: index })));
     expect(results.every((result) => result.status === "rejected")).toBe(true);
     expect(attempts).toBe(status === 503 ? 3 : 1);
   }

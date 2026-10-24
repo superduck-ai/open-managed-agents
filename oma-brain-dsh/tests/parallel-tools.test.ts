@@ -5,7 +5,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
-import { Backend, eventually, textEvents, toolEvents } from "./backend.ts";
+import { Backend, eventually, textEvents, toolEvents, receiptPayloads } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -164,9 +164,9 @@ test("a new input after an unknown call settles it as unknown without replay and
   expect(b.publicLog.get("continued-followup_unknown_outcomes")?.type).toBe("system.message");
   expect(b.publicLog.get("continued-followup_result")?.is_error).toBe(false);
   expect(b.executions).toEqual([]);
-  const settled = [...b.privateLog.values()].filter((p) => p.subtype === "dsh_brain_state")
-    .find((p) => p.data.executions?.[session.id]?.callPhases?.["uncertain-call"] === "result");
-  expect(settled?.data.executions[session.id].toolOutcomes["uncertain-call"]).toMatchObject({ failed: true, remoteOutcome: "unknown" });
+  const settled = [...b.privateLog.values()].flatMap(receiptPayloads)
+    .find(receipt => receipt.type === "tool/settled" && receipt.callId === "uncertain-call");
+  expect(settled).toMatchObject({ threadId: session.id, text: expect.stringContaining("unknown") });
 });
 
 test("a busy session rejects new input without settling unknown calls", async () => {

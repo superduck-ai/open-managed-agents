@@ -3,6 +3,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { expect } from "bun:test";
 import type { Assignment } from "../src/assignment.ts";
 import type { Payload } from "../src/json.ts";
+import type { SessionEvent } from "@deepseek-ai/dsh-session";
+import { restoreReceipts } from "../src/ccrv2/receipts.ts";
 
 export function assignment(): Assignment {
   return {
@@ -254,11 +256,9 @@ export class Backend {
           }
           this.executions.push(body.params);
           this.timeline.push({ type: "tool.dispatch", ...body.params });
-          const states = [...this.privateLog.values()].filter(
-            (p) => p.subtype === "dsh_brain_state",
-          );
+          const state = persistedState(this);
           if (!["read", "glob", "grep"].includes(body.params.name))
-            expect(states.at(-1)!.data.phase).toBe("dispatch");
+            expect(state.phase).toBe("dispatch");
           if (this.hangTool) return await new Promise<Response>(() => {});
           result = this.onTool ? await this.onTool(body.params) : { content: [{ type: "text", text: "actual stdout\n" }] };
         } else
@@ -313,6 +313,7 @@ export class Backend {
           });
         if (this.failWrites) { this.failedCcrWrites++; return json({}, 503); }
         for (const event of body.events) {
+          expect(event.payload.subtype).toBe("dsh_log");
           const old = this.privateLog.get(event.payload.uuid);
           if (old) expect(event.payload).toEqual(old);
           this.privateLog.set(event.payload.uuid, event.payload);
@@ -393,4 +394,19 @@ export async function eventually(
       throw new Error("Condition did not become true");
     await delay(10);
   }
+}
+
+export function receiptPayloads(payload: Payload): Payload[] {
+  if (payload.subtype !== "dsh_log") return [];
+  return payload.data.events.filter((event: Payload) => event.type === "plugin:oma/receipt")
+    .map((event: Payload) => event.data.receipt);
+}
+
+export function persistedState(backend: Backend) {
+  const events = new Map<number, SessionEvent>();
+  for (const payload of backend.privateLog.values()) {
+    if (payload.subtype !== "dsh_log" || payload.data.header.id !== backend.a.session_id) continue;
+    for (const event of payload.data.events) events.set(event.seq, event);
+  }
+  return restoreReceipts([...events.values()].sort((left, right) => left.seq - right.seq), backend.a.session_id);
 }

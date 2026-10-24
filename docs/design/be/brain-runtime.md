@@ -19,7 +19,8 @@ sequenceDiagram
     C-->>D: session ID、新 epoch、ingress token、model token
     D->>C: worker/register
     D->>C: GET /v2/sessions/{id}
-    D->>C: 恢复私有事件并连接输入流
+    D->>D: 打开本地 JSONL；缺失时从 CCRv2 补齐
+    D->>C: 连接输入流
 ```
 
 Runner 在 brain 模式下把 `metadata.config.worker_transport` 写为 `claim`，创建或恢复 Code Session 后调用 `DispatchWorker`，只置位领取请求，不下发凭据。DSH 以部署级 fleet token（`code_session.brain_claim_token_file`，brain 模式必填）长轮询领取；一次领取在同一事务内锁定一行、推进 epoch、替换模型凭据 hash 并写入领取者与 30 秒领取期限，提交后签发带 epoch 的 ingress JWT。JWT 验证只检查签名、claims 和请求路径绑定，不因 owner 切换导致 epoch 变化而判定 token 无效。资源读取校验会话与租户归属；注册、心跳、状态与事件写入、工具调用、代理和流订阅在执行授权阶段检查当前 epoch，旧 owner 返回 `409 conflict_error`。写入携带的 epoch 必须匹配签名 claims，数据库事务继续执行 epoch fence。凭据只出现在这一个 HTTPS 响应里，因此同一 epoch 只有一个持有方，不再依赖消息中间件的投递语义。
@@ -30,21 +31,47 @@ Runner 在 brain 模式下把 `metadata.config.worker_transport` 写为 `claim`�
 
 Brain 会话收到新输入时不再通过 sandbox 续期路径延长 worker 租约或安排 Work 恢复；沙箱由惰性沙箱网关按需准备。
 
-### Brain 本地 transcript 副本
+### 本地 JSONL 与 CCRv2 复制
 
-Brain 的组合 `CcrPersistence` 同时保存 CCRv2 与 dsh 原生 JSONL。生产入口默认写入 `~/.oma/brain/transcripts`，可通过 `OMA_BRAIN_TRANSCRIPT_DIR` 修改；可复用 bridge 通过 `localRoot` 显式启用。JSONL 使用与当前 dsh 相同版本的 `@deepseek-ai/dsh-session-persistence-jsonl`，编码选择 `none`，保留原生 project/session 目录、版本化文件名、header 与事件格式。`CcrPersistence` 直接管理原生 JSONL 后端 Context，组合 handle 持有原生 JSONL handle 与本地重试状态，无独立的本地持久化包装类。该后端安装在独立 Cordis Context，父 Context 仅注册组合持久化，避免两个后端竞争 `sessionPersistence`。
+`JsonlPersistence` 直接注册 dsh 的 `sessionPersistence`，负责主会话与子线程的加载、追加、flush 和原生 `session.lock`。使用与运行时相同版本的 `@deepseek-ai/dsh-session-persistence-jsonl`，编码为 `none`，当前固定 native format 4。文件沿用固定的 project/session 路径，下次打开复用同一文件。生产入口默认根目录为 `~/.oma/brain/transcripts`，`OMA_BRAIN_TRANSCRIPT_DIR` 可覆盖；可复用 bridge 接受 `localRoot`，未指定时创建独立临时根目录，适合隔离嵌入和测试，但不能跨进程复用。生产部署必须保留稳定根目录。
 
-CCRv2 仍是恢复依据。每次获取主会话或子线程的写 handle 时，先在新的 UUID 副本目录中补齐该线程全部远程日志，再返回 handle 并继续追加。尚未打开的历史子线程仍保存在 CCRv2，打开时才生成本地副本。旧副本和未获远程确认的尾部均保留在原文件中，不覆盖、不拼接、不上传，也不在远程读取失败时作为恢复降级。旧格式文件未来若需导入，必须单独验证格式版本与会话归属。当前没有自动清理策略，磁盘保留由运维管理。
+`CcrReplication` 是独立服务，监听原生事件与 flush 通知，串行上传并在后台重试。普通 dsh 本地读取、追加和 flush 不等待远程；本地 I/O 错误仍向调用方返回。仅在本地缺少会话时，才从 CCRv2 拉取对应主会话或子线程并补齐文件后打开。本地存在时不重新下载和覆盖；检查点对账时，本地领先则上传缺失尾部，远程领先或相同序号内容分叉则拒绝推进，保留本地文件。没有本地盘的新实例只能恢复远程已确认前缀，尚未复制的普通尾部可能随旧实例磁盘丢失，不能据此重放工具。
 
-实时事件进入本地追加队列；append/flush 先等待本地持久化，再等待 CCRv2 确认。本地重试按序号与内容去重，远程失败仍阻止执行推进，本地 I/O 失败同样使屏障失败。关闭时即使远程 flush 失败也释放本地 handle；Context dispose 关闭全部 writer，保留所有本地文件。该副本不改变现有工具执行检查点、Brain 状态和跨实例恢复合同。
+远程仅使用 schema version 1 的 `dsh_log` 私有事件，保存原生 header、inherited count 和连续事件。子线程仍写入父 worker endpoint，并携带外层 `agent_id`；读取子线程每页使用 `subagents=true`，按原生 header ID 与序号核对。内容派生 UUID 使丢失 HTTP 确认后的重传幂等；header 与重复序号按 JSON 值比较，允许 PostgreSQL `jsonb` 改变 key 顺序。
 
-普通回归入口为 `oma-brain-dsh/tests/local-transcript.test.ts` 与 `tests/chat-runtime.test.ts`，覆盖远程读写失败、本地创建失败、重试去重、并发写所有权、主会话与子线程补齐、未确认尾部隔离，以及工具结果历史恢复。这些测试使用临时本地文件和进程内/本地 HTTP fixture，不代表真实后端与 Worker 集成验收。
+不引入或继续写入 `dsh_brain_state` 聚合快照。`plugin:oma/receipt` 与消息、工具事件一起进入同一本地 JSONL，并随 `dsh_log` 复制。receipt schema version 1 记录输入 accepted/completed、工具 approved/dispatched/outcome/unknown/settled、子线程配置与状态，以及公开事件 queued/sent。重放这些语义事件得到内存中的 `SessionProjection`，包含已完成输入、原始/批准参数、逐线程执行阶段、结果和 outbox；`checkpointRevision` 只用于进程内检查点，不是远程快照版本。公开 payload 的稳定 UUID 在恢复后保留，重发不重新执行工具。
+
+这里参考 Superduck 的本地 transcript 与后台 uploader 分工，但普通消息与工具结果不足以证明副作用是否已 dispatch、批准后的参数是什么、输入是否完成或公开结果是否仍待发送。较小的语义 receipt 在原生日志中保存这些事实，保留现有执行安全合同。未知 receipt schema 或非法内容拒绝恢复。未来迁移 native format 时必须保留 receipt 及顺序；原生格式虽允许通用 reader 忽略插件记录，Brain 的安全恢复不能忽略它们。旧 Grok 历史、旧 `dsh_brain_state` 快照和不匹配格式的本地文件需要显式迁移与会话归属检查，不自动导入或拼接。
+
+```mermaid
+sequenceDiagram
+    participant D as DSH runtime
+    participant L as Native JSONL
+    participant R as CcrReplication
+    participant C as CCRv2
+    D->>L: Append native events and receipts
+    L-->>D: Local completion
+    L-->>R: Native event / flush notification
+    R->>C: Background batch upload and retry
+    D->>R: Checkpoint before dispatch / publication / ACK
+    R->>L: Flush and read contiguous history
+    R->>C: Confirm matching prefix and upload tail
+    C-->>R: HTTP confirmation
+    R-->>D: Checkpoint confirmed
+    D->>D: Advance execution
+```
+
+工具执行前、工具结果进入下一次模型请求前、公开事件发布前，以及输入 ACK 前，必须等待相关本地日志与 receipt 的远程确认；普通复制失败不阻塞本地原生读写，检查点失败则阻止执行推进。本地已有但未确认的尾部可在后续检查点补推。lease 失效、epoch 冲突或认证终止必须停止并 fence 主会话与全部子线程，不能按普通后台失败继续上传，也不能让旧任务采用新一代凭据。关闭先完成 native 日志与 receipt 的 flush、复制确认及队列 drain，再 release/forget；已取消或终止失败的写入不得报告为成功。停机排空同时等待工具结果复制确认，不能仅凭内存 dispatch 阶段结束便释放租约。
+
+主会话、子线程、未确认尾部和旧文件均保留，本次没有自动清理策略。未来清理必须另行定义已确认追平、会话关闭与保留期限条件，不能静默删除未复制数据。
+
+普通回归入口为 `oma-brain-dsh/tests/local-transcript.test.ts`、`tests/receipts.test.ts`、`tests/session.test.ts`、`tests/crash.test.ts`、`tests/claim-process.test.ts` 与 `tests/chat-runtime.test.ts`，覆盖直接注册原生 JSONL、固定文件复用、缺失时补齐、异步重试、尾部补推、远程分叉拒绝、generation fence、schema 校验、批准参数、未知结果恢复、公开事件/ACK 顺序及停机确认。这些测试使用临时本地文件和受控本地服务，不代表真实后端与 Worker 集成验收。
 
 ## 活跃会话输入
 
 遵循 CMA 的输入队列契约：正常 running/rescheduling 时接收 `user.message`，不再返回忙时 409；同一请求也可以提交多条消息。输入在已有 `session_events` 中持久化，排队期间 `processed_at` 为 null。迁移 80 恢复该列可空，不增加表。
 
-投递复用 CCRv2 和 JetStream。两个 consumer 均不显式设置 `MaxAckPending`，使用 NATS 服务端默认值；当前 NATS 2.14.6 默认为 1000。保持按序逐条拉取，控制回复通道仍单独投递。不能再以 `MaxAckPending: 1` 把追加输入阻塞到当前 turn 完成。每次接纳输入后，只将本次收到的事件通过既有 CCRv2 投递路径发布到 NATS，复用稳定事件 ID 去重；不扫描或补投数据库中其他尚未处理的消息。同一批输入保留请求顺序，跨请求按 NATS 实际接收顺序交付。数据库提交与 NATS 发布之间仍无 outbox，不新增发布失败的恢复机制。DSH 将普通输入接到现有 `consumeInbound` 的串行任务链，每条输入分别调用 `receive` 并启动独立 turn；当前 turn 的工具调用、文本回复、持久化、结果发布与投递确认完成后，才开始下一条输入。不再提前调用 steering，也不让下一条输入进入当前 turn 的工具后续请求。控制输入保留独立任务链，因此排队不会阻塞 `user.interrupt` 或工具审批。Worker 收到消息即报告 `received`，轮到该消息执行时才报告 `processing`；每个 turn 只保存并确认自己的输入完成状态。已有 pending 映射合并队列内的重复投递，完成记录防止重投再次执行。未完成投递继续由 JetStream 保留，异常恢复沿用当前 turn 的不重放策略。旧 Worker journal 中的 `turnInputs` 仅在恢复旧回合时读取并收束，新回合不再写入该字段。
+投递复用 CCRv2 和 JetStream。两个 consumer 均不显式设置 `MaxAckPending`，使用 NATS 服务端默认值；当前 NATS 2.14.6 默认为 1000。保持按序逐条拉取，控制回复通道仍单独投递。不能再以 `MaxAckPending: 1` 把追加输入阻塞到当前 turn 完成。每次接纳输入后，只将本次收到的事件通过既有 CCRv2 投递路径发布到 NATS，复用稳定事件 ID 去重；不扫描或补投数据库中其他尚未处理的消息。同一批输入保留请求顺序，跨请求按 NATS 实际接收顺序交付。数据库提交与 NATS 发布之间仍无 outbox，不新增发布失败的恢复机制。DSH 将普通输入接到现有 `consumeInbound` 的串行任务链，每条输入分别调用 `receive` 并启动独立 turn；当前 turn 的工具调用、文本回复、持久化、结果发布与投递确认完成后，才开始下一条输入。不再提前调用 steering，也不让下一条输入进入当前 turn 的工具后续请求。控制输入保留独立任务链，因此排队不会阻塞 `user.interrupt` 或工具审批。Worker 收到消息即报告 `received`，轮到该消息执行时才报告 `processing`；每个 turn 只保存并确认自己的输入完成状态。已有 pending 映射合并队列内的重复投递，完成记录防止重投再次执行。未完成投递继续由 JetStream 保留，异常恢复沿用当前 turn 的不重放策略。每条输入的完成与重投去重通过原生日志中的语义 receipt 恢复，不读取旧聚合快照的 `turnInputs`。
 
 ```mermaid
 sequenceDiagram
@@ -196,13 +223,13 @@ DSH 将等待后端权限判定与等待用户确认分开：发送 `can_use_too
 
 权限更新回归由 `tests/brain_tool_permission_updates_test.go` 覆盖同一会话的更新 API、最新上下文和网关拒绝，DSH 的 `tests/parallel-tools.test.ts` 覆盖 `allow` 改为 `ask` 后等待审批、改为 `deny` 后不再执行、刷新失败时停止模型请求，以及缺失权限表时回退审批；`tests/parallel-subagents.test.ts` 对保留的子 Agent 线程验证相同的策略更新。每次模型请求增加一次上下文读取，工具调用仍跳过 `allow` 的审批与状态写入。
 
-DSH 的工具执行持久化屏障如下：审批前先刷新 dsh 日志、保存含 outbox 的 Brain 状态并发布 outbox；发布后清空 outbox 的状态不单独保存，由下一次状态保存（dispatch 或 turn 结束）带上，崩溃后重发的 outbox 事件按稳定 UUID 幂等去重。turn 结束与恢复路径仍在 ACK 前保存清空后的 outbox。有副作用的工具（Bash、Write、Edit）审批通过只更新内存中的 `approved` 阶段，与 `dispatch` 合并为一次保存，并在沙箱准备之后、工具转发之前写入；崩溃恢复语义不变：未写入 `dispatch` 的调用按 interrupted 处理，已写入的按 blocked 处理。只读工具（Read、Glob、Grep）不进入 `callPhases`，不做 dispatch 预写和执行前日志 flush，结果只更新内存状态（审批改写参数时仍立即保存），由下一次模型请求前的 flush 一并持久化。只读调用失败时在未中断的前提下重试一次，仍失败则记为失败结果并以 `is_error` 返回模型，不调用 `recordUnknown`、不停止会话；中断时直接记为失败结果。进程在只读调用期间崩溃时，恢复按普通未完成 turn 处理为 interrupted，不进入 blocked，也不重放。dsh 日志 flush 在缓冲为空时一律跳过，新建会话在创建时直接持久化一次只含 header 的 batch。控制输入的重投去重只在同一 Brain 进程内生效，已处理的控制输入 ID 不跨重启持久化。
+DSH 的工具执行持久化屏障如下：审批前先刷新原生日志，把待发布 outbox 追加为 `public/queued` receipt 并等待 CCRv2 确认，再发布；发送成功后记录 `public/sent`，下一个检查点确认这些记录，终止路径在 ACK 前完成确认。公开消息、结果及重试保持稳定 UUID。有副作用的 Bash、Write、Edit 和外部 MCP 调用保存原始与有效批准参数、`tool/dispatched` receipt，并在沙箱准备之后、工具转发之前确认复制；恢复时只批准而未 dispatch 的调用成为 interrupted，已 dispatch 且无确认结果的调用成为 blocked。只读工具不写 dispatch 检查点，结果进入原生日志与 outcome receipt，由下一次模型请求或发布前的检查点统一确认；失败可在未中断时重试一次，仍失败则返回 `is_error`，不产生 unknown/blocked，也不自动重放。空 flush 不产生额外事件。已完成输入及公开 outbox 均由 receipt 恢复；控制输入的重复投递去重仍只在当前进程内生效。
 
 ### 未知工具结果的处理
 
 已 dispatch 却没有确认结果的 Bash、Write、Edit 或外部 MCP 调用会把所在线程记为 `blocked`：当前 turn 停止，同一 turn 内不再 dispatch 新调用，也不会重放这些调用。会话在两种情况下恢复可用：用户发送新输入，或运维事先确认。
 
-用户新输入到达仍为 `blocked` 的会话时，DSH 先在同一输入的处理路径上把所有 `blocked` 调用（含子线程）记为 `result`，工具结果为 `failed: true`、`remoteOutcome: unknown`；没有逐调用阶段的旧版状态只解除线程与会话的 blocked。随后在主线程私有历史中追加 `oma-reconciliation` 用户上下文，说明这些调用结果未知、未重放、可能已生效、需先核实状态再依赖或重复；发布 UUID 为 `<input_id>_unknown_outcomes` 的 `system.message`；刷新日志、保存 Brain 状态并用 `null` 清除 `unknown_tool_outcomes`，然后按普通输入执行这一轮。处理前崩溃时输入会被重投，处理是幂等的。这一语义与用户主动中断一致：只在用户明确继续对话时放行，由模型和用户核实副作用，系统不自动重放。
+用户新输入到达仍为 `blocked` 的会话时，DSH 先在同一输入的处理路径上把所有 `blocked` 调用（含子线程）记为 `result`，工具结果为 `failed: true`、`remoteOutcome: unknown`。随后在主线程私有历史中追加 `oma-reconciliation` 用户上下文，说明这些调用结果未知、未重放、可能已生效、需先核实状态再依赖或重复；发布 UUID 为 `<input_id>_unknown_outcomes` 的 `system.message`；刷新日志并确认相关 receipt 已复制，再用 `null` 清除 `unknown_tool_outcomes`，然后按普通输入执行这一轮。处理前崩溃时输入会被重投，处理是幂等的。这一语义与用户主动中断一致：只在用户明确继续对话时放行，由模型和用户核实副作用，系统不自动重放。
 
 DSH 在记录 unknown 时以及每次打开会话时，把仍为 `blocked` 的调用写入 worker external_metadata 的 `unknown_tool_outcomes`（`tool_use_id`、`tool_name`，子线程另带 `session_thread_id`），没有时写 `null` 删除该键。运维可在用户继续之前使用 `cmd/tool-outcome-reconcile` 查看并确认：
 
@@ -222,7 +249,7 @@ CONFIG_FILE=/path/to/config.yaml go run ./cmd/tool-outcome-reconcile \
 
 命令按组织、workspace 和公开 Session ID 定位最新 Code Session，只接受当前 `unknown_tool_outcomes` 中列出的 call ID，然后在行锁内把 `tool_outcome_reconciliation: {tool_use_ids, requested_at, session_thread_id?}` 合并进 worker external_metadata，不改动其他键，Code Session 非 active 时拒绝。若已有尚未被 Brain 应用的请求：线程范围相同则合并 call ID 并更新 `requested_at`；线程范围不同则拒绝并给出旧请求时间，运维需等会话下次收到输入、Brain 应用后再确认，避免覆盖导致前一次确认被静默丢弃。该命令不调用 Brain，也不让会话立即被领取；确认在会话下次收到输入、Brain 打开会话时生效。
 
-DSH 打开会话、完成崩溃恢复后读取该请求。请求中仍为 `blocked` 的调用改为 `result`，记录 `failed: true`、`remoteOutcome: unknown` 的工具结果；线程不再有 blocked 调用时转为 `interrupted`，所有线程都不再 blocked 时会话恢复可用。随后 DSH 在主线程私有历史中追加 `oma-reconciliation` 用户上下文，说明这些调用结果未知、未重放、需要先核实状态，并发布一条稳定 UUID 的 `system.message`；先刷新日志、保存 Brain 状态，再用 `null` 清除 `tool_outcome_reconciliation` 并刷新 `unknown_tool_outcomes`。请求中不属于当前 blocked 调用的 ID 被忽略；清除请求前崩溃时，下次打开会话重复处理是幂等的。确认针对具体 call ID，旧请求不会解锁之后新出现的 unknown 调用。早于 `executions` 结构的旧版 Brain 状态没有逐调用阶段，不在 `unknown_tool_outcomes` 中列出，也无法用该命令确认。
+DSH 打开会话、完成崩溃恢复后读取该请求。请求中仍为 `blocked` 的调用改为 `result`，记录 `failed: true`、`remoteOutcome: unknown` 的工具结果；线程不再有 blocked 调用时转为 `interrupted`，所有线程都不再 blocked 时会话恢复可用。随后 DSH 在主线程私有历史中追加 `oma-reconciliation` 用户上下文，说明这些调用结果未知、未重放、需要先核实状态，并发布一条稳定 UUID 的 `system.message`；先刷新日志并确认相关 receipt 已复制，再用 `null` 清除 `tool_outcome_reconciliation` 并刷新 `unknown_tool_outcomes`。请求中不属于当前 blocked 调用的 ID 被忽略；清除请求前崩溃时，下次打开会话重复处理是幂等的。确认针对具体 call ID，旧请求不会解锁之后新出现的 unknown 调用。旧聚合状态需要显式迁移，不能直接使用该命令代替历史迁移。
 
 ```mermaid
 sequenceDiagram
@@ -327,7 +354,7 @@ Self-hosted 的允许调用不得在模型输出预览阶段成为可执行事�
 
 New self-hosted session Work items with attached Memory Stores carry a URL-safe base64 JSON secret containing a random per-Work `sessions_token`. The token is not a workspace API key. Authentication compares the stored Work secret and rechecks the live Work lease and unarchived session. It permits only that session read/event stream/event submission and that Work heartbeat/stop. Attached Memory Store reads are allowed; memory mutations additionally require a live `read_write` attachment. Store management, unrelated sessions/work/stores, Files, Vaults and Messages are denied. Stop, archive, deletion, lease expiry or attachment removal revoke the corresponding access. Raw secret payloads and tokens must never enter runtime logs.
 
-工具结果持久化诊断仅记录 code-session/thread/call 标识的 SHA-256 关联摘要、阶段 start/confirmed、UTF-16 长度及是否含 NUL。confirmed 仅在状态保存得到确认后发出；HTTP 批量写入失败记录同一 code-session 标识的 SHA-256 关联摘要，避免把不同会话的错误混淆。诊断不记录工具正文、输入、认证信息或任意异常文本，也不改变写入确认、重试、工具结果或恢复语义。
+工具结果持久化诊断仅记录 code-session/thread/call 标识的 SHA-256 关联摘要、阶段 start/confirmed、UTF-16 长度及是否含 NUL。confirmed 仅在原生日志与 outcome receipt 的远程复制得到确认后发出；HTTP 批量写入失败记录同一 code-session 标识的 SHA-256 关联摘要，避免把不同会话的错误混淆。诊断不记录工具正文、输入、认证信息或任意异常文本，也不改变写入确认、重试、工具结果或恢复语义。
 
 ### Model request retries
 

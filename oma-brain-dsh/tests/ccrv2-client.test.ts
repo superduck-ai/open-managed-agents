@@ -27,12 +27,12 @@ test("lost persistence confirmation retries the same durable envelope with curre
       return new Response(null, { status: 204 });
     },
   });
-  await client.persist("session/a", "dsh_brain_state", { revision: 1 });
+  await client.persist("session/a", "test_record", { revision: 1 });
   expect(requests).toHaveLength(3);
   const envelope = {
     type: "system",
-    uuid: "614f1799a27f00337ff2132dd1d42f9b2d87cd2d1192042469f9798010311bab",
-    subtype: "dsh_brain_state",
+    uuid: "6e4c09e49c8b5c7f627988cba5dbd600eb9a259c9beda0edeee56c9f03c687f4",
+    subtype: "test_record",
     schema_version: 1,
     data: { revision: 1 },
   };

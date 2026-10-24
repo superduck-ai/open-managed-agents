@@ -42,7 +42,7 @@ test("claimed writes keep waiting beyond three failures, reuse payloads and refr
     });
     const data = { revision: 1 };
     const payloads = [{ type: "agent.message", uuid: "fixed", data }];
-    const writing = operation === "persist" ? client.persist("a", "dsh_brain_state", data)
+    const writing = operation === "persist" ? client.persist("a", "test_record", data)
       : operation === "events" ? client.events("a", payloads)
       : operation === "status" ? client.setStatus("a", "running") : client.acknowledge("a", "input");
     let confirmed = false;
@@ -81,7 +81,7 @@ test("claimed writes fail without retrying permanent request errors or losing th
       const { client, lost } = claimed({
         request: async (request) => { requests.push(request); return new Response(null, { status }); },
       });
-      const writing = operation === "persist" ? client.persist("a", "dsh_brain_state", { revision: 1 })
+      const writing = operation === "persist" ? client.persist("a", "test_record", { revision: 1 })
         : operation === "events" ? client.events("a", [{ type: "agent.message", uuid: "fixed" }])
         : operation === "status" ? client.setStatus("a", "running") : client.acknowledge("a", "input");
       await expect(writing).rejects.toThrow(String(status));

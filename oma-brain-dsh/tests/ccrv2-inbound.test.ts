@@ -4,7 +4,7 @@ import { CcrClient, consumeInbound, type CcrHttpRequest } from "../src/ccrv2/ind
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
-import { Backend, eventually, textEvents, toolEvents } from "./backend.ts";
+import { Backend, eventually, textEvents, toolEvents, receiptPayloads } from "./backend.ts";
 import { sse } from "../src/sse.ts";
 
 function client(request: (request: CcrHttpRequest) => Promise<Response>) {
@@ -290,12 +290,12 @@ test("delivery processing gates model work without blocking controls", async () 
     expect(b.timeline.filter((entry) => entry.type === "input.delivery" && entry.inputId === "input")
       .map((entry) => entry.status)).toEqual(["received", "processing", "processed"]);
     const completed = b.timeline.findIndex((entry) => entry.type === "private.persist"
-      && entry.payload.subtype === "dsh_brain_state" && entry.payload.data.phase === "completed"
-      && entry.payload.data.outbox.length > 0);
+      && receiptPayloads(entry.payload).some((receipt) => receipt.type === "public/queued"
+        && receipt.payloads.some((payload: { type: string }) => payload.type === "result")));
     const published = b.timeline.findIndex((entry) => entry.type === "result");
     const cleared = b.timeline.findIndex((entry) => entry.type === "private.persist"
-      && entry.payload.subtype === "dsh_brain_state" && entry.payload.data.phase === "completed"
-      && entry.payload.data.outbox.length === 0);
+      && receiptPayloads(entry.payload).some((receipt) => receipt.type === "public/sent"
+        && receipt.uuids.includes("input_result")));
     const acknowledged = b.timeline.findIndex((entry) => entry.type === "input.ack" && entry.inputId === "input");
     expect(completed).toBeGreaterThan(-1);
     expect(published).toBeGreaterThan(completed);
@@ -462,7 +462,7 @@ test("active input waits for its own turn and duplicate delivery cannot overtake
     expect(firstHistory).not.toContain("second user");
     expect(firstHistory).not.toContain("third user");
     processing.resolve();
-    await eventually(() => b.processed.includes("third"));
+    await eventually(() => b.processed.includes("third") && !session.busy);
     const secondHistory = JSON.stringify(b.requests[2]!.messages);
     expect(secondHistory).toContain("first answer");
     expect(secondHistory).toContain("second user");

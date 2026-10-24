@@ -179,7 +179,8 @@ test.each(["user.interrupt", "control_request"])("%s interrupting the whole sess
   const f = await fixture();
   f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate"), toolEvents("pwd", "child_tool")];
   const turn = f.session.receive("interrupt", { content: "Delegate" }).catch(() => {});
-  await eventually(() => f.session.approvals.size === 1);
+  await eventually(() => f.session.state.threads?.length === 1
+    && [...f.session.approvals.values()].some(approval => approval.threadId === f.session.state.threads![0]!.id));
   await f.session.control({ type, ...(type === "control_request" ? { request_id: "global", request: { subtype: "interrupt" } } : {}) });
   await turn;
   expect(f.session.approvals.size).toBe(0);

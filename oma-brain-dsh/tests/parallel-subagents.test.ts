@@ -1,3 +1,7 @@
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SessionId } from "@deepseek-ai/dsh-session";
 import { modelSystemText } from "./backend.ts";
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
@@ -208,27 +212,42 @@ test("an unknown child tool outcome blocks the session and cancels sibling appro
   } finally { f.session.stop(); await settled; }
 });
 
-test("legacy version-1 state migrates conservatively without replaying an unknown dispatch", async () => {
-  const f = await fixture();
-  f.session.state.inputId = "legacy";
-  f.session.state.phase = "dispatch";
-  f.session.state.approvedCalls.legacy_call = { name: "Bash", original: { command: "write" }, effective: { command: "write" } };
-  delete f.session.state.executions;
-  await f.session.save();
-  await f.close();
-  const api = new OmaApi(f.b.url);
+test("legacy remote state requires explicit migration before missing-local resume", async () => {
+  const b = new Backend();
+  await b.ready;
+  const localRoot = await mkdtemp(join(tmpdir(), "oma-legacy-transcript-"));
+  const retainedPath = join(localRoot, "retained-legacy.jsonl");
+  const retainedContent = '{"legacy":"preserve this transcript"}\n';
+  await writeFile(retainedPath, retainedContent);
+  const legacy = {
+    uuid: "legacy-state", subtype: "dsh_brain_state", schema_version: 1,
+    data: { version: 1, revision: 1, inputId: "legacy", phase: "dispatch", completed: [], outbox: [],
+      approvedCalls: { legacy_call: { name: "Bash", original: { command: "write" }, effective: { command: "write" } } },
+      toolOutcomes: {} },
+  };
+  b.privateLog.set(legacy.uuid, structuredClone(legacy));
+  const api = new OmaApi(b.url);
   const fresh = new Context();
+  let resumed: ReturnType<typeof createOmaSession> | undefined;
   try {
-    await mountOma(fresh, api);
-    const resumed = createOmaSession(fresh, api, f.b.a);
-    await resumed.open();
-    expect(resumed.blocked()).toBe(true);
-    expect(resumed.state.executions![resumed.id]!.phase).toBe("blocked");
-    expect(resumed.state.executions![resumed.id]!.approvedCalls.legacy_call!.effective).toEqual({ command: "write" });
-    expect(f.b.requests).toHaveLength(0);
-    expect(f.b.executions).toHaveLength(0);
-    await resumed.close();
-  } finally { await fresh.fiber.dispose(); }
+    await mountOma(fresh, api, {}, localRoot);
+    expect(await fresh.sessionPersistence.stat(SessionId(b.a.session_id))).toBeUndefined();
+    resumed = createOmaSession(fresh, api, b.a);
+    await expect(resumed.open()).rejects.toThrow("requires migration");
+    expect(b.requests).toHaveLength(0);
+    expect(b.executions).toHaveLength(0);
+    expect(b.processed).toHaveLength(0);
+    expect(await fresh.sessionPersistence.stat(SessionId(b.a.session_id))).toBeUndefined();
+    expect(b.privateLog.get(legacy.uuid)).toEqual(legacy);
+    expect(await readFile(retainedPath, "utf8")).toBe(retainedContent);
+  } finally {
+    try { await resumed?.close(); }
+    finally {
+      await fresh.fiber.dispose();
+      b.stop();
+      await rm(localRoot, { recursive: true, force: true });
+    }
+  }
 });
 
 for (const mode of ["unique", "ambiguous", "scoped"] as const) {

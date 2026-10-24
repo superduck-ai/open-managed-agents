@@ -56,11 +56,11 @@ test("native Brain runs a Chat tool round-trip and restores its protocol history
     await session.open();
     await session.receive("chat_restored_turn", { content: "continue" });
     const replicas = await readdir(localRoot);
-    expect(replicas).toHaveLength(2);
-    for (const replica of replicas) {
+    expect(replicas).toHaveLength(1);
+    {
       const local = new Context();
       try {
-        await local.plugin(JsonlPersistence, { root: join(localRoot, replica), compression: "none" });
+        await local.plugin(JsonlPersistence, { root: localRoot, compression: "none" });
         const snapshots = await local.sessionPersistence.list();
         expect(snapshots).toHaveLength(1);
         const log = await local.sessionPersistence.open(snapshots[0]!.header.id, "read");

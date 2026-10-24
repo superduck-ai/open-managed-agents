@@ -5,7 +5,7 @@ import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import * as CcrBridge from "../src/ccrv2/index.ts";
-import { Backend, eventually, toolEvents, textEvents, modelSystemText } from "./backend.ts";
+import { Backend, eventually, toolEvents, textEvents, modelSystemText, receiptPayloads } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -311,8 +311,8 @@ describe("original dsh loop over CCRv2", () => {
       expect(session.state.outbox).toEqual([]);
       const published = b.timeline.findIndex((entry) => entry.type === "result");
       const saved = b.timeline.findIndex((entry) => entry.type === "private.persist"
-        && entry.payload.subtype === "dsh_brain_state"
-        && entry.payload.data.outbox.some((event: Payload) => event.type === "result"));
+        && receiptPayloads(entry.payload).some((receipt) => receipt.type === "public/queued"
+          && receipt.payloads.some((event: Payload) => event.type === "result")));
       const ack = b.timeline.findIndex((entry) => entry.type === "input.ack");
       expect(saved).toBeGreaterThanOrEqual(0);
       expect(published).toBeGreaterThan(saved);
@@ -399,8 +399,8 @@ describe("original dsh loop over CCRv2", () => {
         const body = JSON.stringify(options.body);
         const matches = stage === "publication"
           ? options.path.endsWith("/events") && body.includes('"type":"tool_result"')
-          : options.path.endsWith("/internal-events") && body.includes('"subtype":"dsh_brain_state"') &&
-            body.includes(`"phase":"${stage}"`);
+          : options.path.endsWith("/internal-events") && body.includes('"subtype":"dsh_log"') &&
+            body.includes(`"type":"${{ accepted: "input/accepted", dispatch: "tool/dispatched", result: "tool/outcome" }[stage]}"`);
         if (matches && failures < 4) {
           failures++;
           return new Response(null, { status: stage === "accepted" ? 401 : 503 });
@@ -478,11 +478,10 @@ describe("original dsh loop over CCRv2", () => {
       expect(index).toBeGreaterThan(-1);
       return index;
     };
-    const state = (predicate: (data: Payload) => boolean) => first(
-      (event) => event.type === "private.persist" &&
-        event.payload.subtype === "dsh_brain_state" && predicate(event.payload.data),
+    const receipt = (predicate: (data: Payload) => boolean) => first(
+      (event) => event.type === "private.persist" && receiptPayloads(event.payload).some(predicate),
     );
-    const accepted = state((s) => s.inputId === "durable_order" && s.phase === "accepted");
+    const accepted = receipt((entry) => entry.type === "input/accepted" && entry.inputId === "durable_order");
     const ack = first((e) => e.type === "input.ack" && e.inputId === "durable_order");
     const processing = first((e) => e.type === "input.delivery" && e.inputId === "durable_order" && e.status === "processing");
     const model = first((e) => e.type === "model.request");
@@ -492,28 +491,24 @@ describe("original dsh loop over CCRv2", () => {
     expect(b.timeline.slice(model, approval).some(
       (e) => e.type === "private.persist" && e.payload.subtype === "dsh_log",
     )).toBe(true);
-    const approved = state((s) => s.approvedCalls.call_1?.effective.command === "approved");
+    const approved = receipt((entry) => entry.type === "tool/dispatched" && entry.call.effective.command === "approved");
     const sandbox = first((e) => e.type === "sandbox.prepare");
-    const dispatch = state((s) => s.phase === "dispatch");
+    const dispatch = receipt((entry) => entry.type === "tool/dispatched");
     const execution = first((e) => e.type === "tool.dispatch");
     expect(approval).toBeLessThan(sandbox);
     expect(sandbox).toBeLessThan(dispatch);
     expect(approved).toBe(dispatch);
     expect(dispatch).toBeLessThan(execution);
-    const stateSaves = (from: number, to: number) => b.timeline.slice(from, to).filter(
-      (e) => e.type === "private.persist" && e.payload.subtype === "dsh_brain_state",
-    ).length;
-    expect(stateSaves(model, approval)).toBe(1);
-    expect(stateSaves(approval, execution)).toBe(1);
-    expect(b.timeline.filter((e) => e.type === "private.persist" && e.payload.subtype === "dsh_log"
-      && e.payload.data.events.length === 0)).toHaveLength(1);
-    const result = state((s) => s.phase === "result" && !!s.toolOutcomes.call_1);
+    expect(b.timeline.filter((event) => event.type === "private.persist")
+      .flatMap((event) => receiptPayloads(event.payload))
+      .filter((entry) => entry.type === "tool/dispatched")).toHaveLength(1);
+    const result = receipt((entry) => entry.type === "tool/outcome" && entry.outcome.callId === "call_1");
     const nextModel = b.timeline.findIndex((e, i) => i > execution && e.type === "model.request");
     expect(nextModel).toBeGreaterThan(result);
-    const completed = state((s) => s.phase === "completed" && s.outbox.length > 0);
+    const completed = receipt((entry) => entry.type === "public/queued" && entry.payloads.some((payload: Payload) => payload.type === "result"));
     const idle = b.timeline.findIndex((e, i) => i > completed && e.type === "worker.status" && e.status === "idle");
     const published = first((e) => e.type === "result");
-    const cleared = state((s) => s.phase === "completed" && s.outbox.length === 0);
+    const cleared = receipt((entry) => entry.type === "public/sent" && entry.uuids.includes("durable_order_result"));
     expect(idle).toBeGreaterThan(completed);
     expect(cleared).toBeLessThan(idle);
     expect(published).toBeLessThan(cleared);

@@ -159,6 +159,7 @@ export class SessionRuntime {
       parentAgent: this.parent?.agent,
       signal: this.abort.signal,
     };
+    await this.ctx.get("ccrReplication")?.ensure(this.config.id);
     this.handle = (await this.ctx.sessionPersistence.stat(SessionId(this.config.id)))
       ? await this.ctx.agents.resume({ resumeSessionId: SessionId(this.config.id), ...options })
       : await this.ctx.agents.create({

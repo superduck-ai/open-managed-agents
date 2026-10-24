@@ -1,5 +1,4 @@
 import type { SubagentBridge, SubagentEvent, SubagentThread, ToolExecutionBridge } from "../runtime/contracts.ts";
-import { CcrPersistence } from "./persistence.ts";
 import type { CcrSession } from "./session.ts";
 import type { Payload } from "../json.ts";
 import type { SessionEvent } from "@deepseek-ai/dsh-session";
@@ -31,10 +30,11 @@ export class CcrSubagentBridge implements SubagentBridge {
   }
   threads(): SubagentThread[] { return this.session.state.threads ??= []; }
   bindPersistence(threadId: string): void {
-    (this.session.ctx.sessionPersistence as CcrPersistence).bindThread(threadId, this.session.id);
+    this.session.ctx.ccrReplication.bindThread(threadId, this.session.id);
   }
   async emit(event: SubagentEvent): Promise<void> {
     const { thread } = event;
+    this.session.note({ type: "thread/updated", thread });
     let fields: Payload;
     switch (event.kind) {
       case "created":

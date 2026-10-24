@@ -2,13 +2,12 @@ import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
 import type { ToolDefinition } from "@deepseek-ai/dsh-tools";
 import type { Payload } from "../json.ts";
-import type { LlmCallConfig } from "@deepseek-ai/dsh-llm";
+import type { LlmCallConfig, LlmFailure } from "@deepseek-ai/dsh-llm";
 import type { Context, Fiber } from "@deepseek-ai/cordis";
 
 export const MAX_LIVE_SUBAGENT_THREADS = 25;
 
 export interface SubagentDefinition {
-  agentSnapshot?: Payload;
   name: string;
   description: string;
   systemPrompt: string;
@@ -22,7 +21,6 @@ export interface SubagentConfig {
 }
 
 export interface SubagentThread {
-  agentSnapshot?: Payload;
   id: string;
   inline?: boolean;
   name: string;
@@ -42,12 +40,14 @@ export type SubagentEvent =
 export interface SubagentBridge {
   validateThread?(threadId: string, signal: AbortSignal): Promise<void>;
   archivedThreads?(threadIds: string[], signal: AbortSignal): Promise<string[]>;
+  createThreadId?(): string;
   threads(): SubagentThread[];
   bindPersistence(threadId: string): void;
   emit(event: SubagentEvent): Promise<void>;
   beforeRequest(): Promise<void>;
   onOpen?(session: Session): Promise<void>;
   afterFlushLog?(session: Session): Promise<void>;
+  onDiagnostic?(threadId: string, diagnostic: RuntimeDiagnostic): void;
   onEvent(threadId: string, event: SessionEvent, session: Session): void;
   onStream(threadId: string, frame: AssistantStreamFrame): void;
   toolExecution(threadId: string): ToolExecutionBridge;
@@ -72,24 +72,6 @@ export const SHUTDOWN_CANCEL = { kind: "hook", reason: "oma-worker-shutdown" } a
 export function isShutdownCancel(reason: unknown): boolean {
   return typeof reason === "object" && reason !== null && "kind" in reason && reason.kind === SHUTDOWN_CANCEL.kind
     && "reason" in reason && reason.reason === SHUTDOWN_CANCEL.reason;
-}
-
-const CONNECT_FAILURE_CODES = new Set(["ConnectionRefused", "ECONNREFUSED", "FailedToOpenSocket", "ENOTFOUND", "EAI_AGAIN"]);
-
-export function isConnectFailure(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error
-    && CONNECT_FAILURE_CODES.has(String(error.code));
-}
-
-export async function notForwardedDetail(response: Response): Promise<string> {
-  let detail = `HTTP ${response.status}`;
-  try {
-    const message = (await response.json())?.error?.message;
-    if (typeof message === "string" && message) detail = message.slice(0, 500);
-  } catch {
-    return detail;
-  }
-  return detail;
 }
 
 /** Host-provided sandbox readiness and execution. Resource creation belongs to the provider service. */
@@ -174,7 +156,12 @@ export interface ToolExecutionBridge {
   stop(): void;
 }
 
+export type RuntimeDiagnostic =
+  | { kind: "model-retry"; failure: LlmFailure; attempt: number; delayMs: number }
+  | { kind: "input-failed"; error: unknown };
+
 export interface SessionRuntimeHooks {
+  onDiagnostic?(diagnostic: RuntimeDiagnostic): void;
   selectModel?(model: string): string;
   onOpen?(session: Session): Promise<void>;
   afterFlushLog?(session: Session): Promise<void>;

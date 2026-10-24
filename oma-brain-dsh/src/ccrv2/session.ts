@@ -1,3 +1,4 @@
+import { recordRuntimeDiagnostic, recordRuntimeEvent } from "./runtime-diagnostics.ts";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { Context } from "@deepseek-ai/cordis";
@@ -6,15 +7,14 @@ import type { SessionEvent } from "@deepseek-ai/dsh-session";
 import { ACCOUNT_QUOTA_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { SessionRuntime } from "../runtime/session.ts";
 import { Subagents } from "../runtime/subagents.ts";
-import { CcrSubagentBridge } from "./subagents.ts";
+import { CcrSubagentBridge, runtimeSubagentConfig } from "./subagents.ts";
 import type {
-  SessionRuntimeConfig,
   ToolApproval,
   ApprovalDecision,
   ApprovedToolCall,
   ToolOutcome,
 } from "../runtime/contracts.ts";
-import type { CcrBackend } from "./contracts.ts";
+import type { CcrBackend, CcrSessionConfig } from "./contracts.ts";
 import { CcrHeartbeat, type CcrHeartbeatConfig } from "./heartbeat.ts";
 import { CcrActivity, type CcrActivityOptions } from "./activity.ts";
 import { emptyState, isControlInput, object, type BrainState, type ThreadExecutionState, type Payload } from "./protocol.ts";
@@ -63,7 +63,7 @@ export class CcrSession {
   constructor(
     readonly ctx: Context,
     readonly backend: CcrBackend,
-    readonly config: SessionRuntimeConfig,
+    readonly config: CcrSessionConfig,
     heartbeat?: CcrHeartbeatConfig,
     keepAlive?: CcrActivityOptions,
   ) {
@@ -72,7 +72,8 @@ export class CcrSession {
       (id, tokens, sequence) => this.contextCompacted(tokens, sequence, id === this.id ? undefined : id));
     this.defaultModel = config.model;
     this.assistantStream = new CcrAssistantStream(config.id, config.modelMessageID);
-    this.runtime = new SessionRuntime(ctx, { ...config, setup: async scope => { await config.setup?.(scope); } }, {
+    this.runtime = new SessionRuntime(ctx, { ...config, subagents: runtimeSubagentConfig(config.subagents), setup: async scope => { await config.setup?.(scope); } }, {
+      onDiagnostic: diagnostic => recordRuntimeDiagnostic(this.id, diagnostic),
       selectModel: model => this.modelOverride ?? model,
       onExternalMcpConnectionFailure: (serverName) => this.backend.events(this.id, [{
         type: "session.error", uuid: crypto.randomUUID(), processed_at: new Date().toISOString(),
@@ -92,7 +93,7 @@ export class CcrSession {
       beforeRequest: () => this.beforePrimaryRequest(),
       onOpen: session => this.compaction.restore(session),
       afterFlushLog: session => this.compaction.flush(session),
-      onEvent: (event, session) => { this.compaction.record(session, event); this.record(event); },
+      onEvent: (event, session) => { recordRuntimeEvent(session, event); this.compaction.record(session, event); this.record(event); },
       onStream: (frame) => this.stream(frame),
       stop: () => this.stop(),
     }, {

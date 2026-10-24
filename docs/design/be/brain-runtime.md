@@ -329,7 +329,19 @@ New self-hosted session Work items with attached Memory Stores carry a URL-safe 
 
 模型请求只对 `RATE_LIMIT`、`SERVER`、`TIMEOUT`、`TRANSPORT` 和 `EMPTY_RESPONSE` 重试。HTTP 408 映射为 `TIMEOUT`，429 映射为 `RATE_LIMIT`，5xx 映射为 `SERVER`；其他 4xx 为非重试错误，认证、额度和上下文窗口错误优先按专属分类处理。每个失败步骤最多重试四次，单次等待包含抖动在内不超过 30 秒。`tests/model-retry.test.ts` 通过完整 Brain 会话覆盖永久 4xx 仅请求一次和 408/429/5xx 恢复，并用确定性随机源验证实际等待上限。
 
-### Native DSH context compaction
+### Runtime 与协议适配边界
+
+`runtime/` 负责 DSH Agent 生命周期、原生事件转发、工具执行顺序、审批协调、取消、上下文刷新和有界重试。它不直接导入 `ccrv2/`；runtime contracts 不声明后端 Agent 快照、HTTP 错误 DTO 或公开事件 envelope。对照 Harness 的 `dsh-agent-loop`，原生 Session/Event 和 `agent/request-error` 保持为执行层接口；本次不改变重试策略、审批检查点或工具未知结果的恢复策略。
+
+- `ccrv2/runtime-diagnostics.ts` 把通用 `model-retry` / `input-failed` 事实和原生 Session/Event 映射成现有 Worker 日志字段。根会话与子 Agent 分别使用自己的 session ID；错误正文、模型响应及输入内容不进入运行日志，日志 sink 失败不改变执行结果。
+- `ccrv2/tool-transport.ts` 解析 OMA 网关未转发响应和连接失败。runtime 仅接收 `ToolNotForwardedError` 这个执行事实，不解析 HTTP Response。
+- `ccrv2/subagents.ts` 生成 `sthr_` ID，把预定义 Agent 快照复制到 CCRv2 持久化线程和创建事件。传给 runtime 的子 Agent 配置只包含名称、说明、提示词、模型和工具；恢复继续读取原有 schema-version-1 线程快照。
+- `oma-sandbox/output.ts` 在沙箱 MCP 边界投影成功 Bash 的结构化 stdout；失败、stderr、截断或不一致元数据保留完整诊断文本。runtime 只做通用 MCP 文本提取。投影不修改原始响应；格式异常仍交给工具结果校验，避免被误判成远端执行结果未知。
+- 已有 MCP 连接与鉴权通知由 CCRv2 回调构造公开 `session.error`。runtime 保留发现失败的事实回调，以等待适配层完成处理，不构造协议字段。
+
+回归覆盖日志白名单与 sink 失败、协议 ID 和快照兼容、runtime 配置不携带快照，以及 Bash 投影后模型上下文与公开工具结果保持相同文本。真实 Worker、后端持久化服务和模型调用仍需单独集成验证。
+
+## Native DSH context compaction
 
 Brain mounts the pinned `@deepseek-ai/dsh-token-meter`, `dsh-compaction-basic`, `dsh-compaction-tool-result-pruner` and `dsh-compaction-image-offload` plugins. `dsh-compaction` and `dsh-commands` satisfy package/API dependencies; automatic compaction does not require a commands service or a `/compact` product entry. The Read-specific recovery implementation is removed. Ordinary model retries remain separate and do not retry context overflow themselves.
 

@@ -124,7 +124,7 @@ export class Subagents {
         throw new Error("Predefined agents cannot override name or system prompt");
       if (!definition && (config.inlineAgents === false || !args.name || typeof args.system_prompt !== "string"))
         throw new Error("Inline agents require name and system_prompt and must be enabled");
-      thread = { id: `sthr_${crypto.randomUUID()}`, inline: !definition, agentSnapshot: definition?.agentSnapshot ? structuredClone(definition.agentSnapshot) : undefined,
+      thread = { id: this.bridge.createThreadId?.() ?? crypto.randomUUID(), inline: !definition,
         name: definition?.name ?? args.name,
         systemPrompt: definition?.systemPrompt ?? args.system_prompt,
         model: definition?.model ?? this.parent.config.model,
@@ -220,6 +220,7 @@ export class Subagents {
     }, {
       onExternalMcpAuthenticationFailure: (serverName, phase) => this.parent.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase) ?? Promise.resolve(),
       beforeRequest: async () => { await child.flushLog(); await this.bridge.beforeRequest(); },
+      onDiagnostic: diagnostic => this.bridge.onDiagnostic?.(thread.id, diagnostic),
       onOpen: session => this.bridge.onOpen?.(session) ?? Promise.resolve(),
       afterFlushLog: session => this.bridge.afterFlushLog?.(session) ?? Promise.resolve(),
       onEvent: (event, session) => this.bridge.onEvent(thread.id, event, session),

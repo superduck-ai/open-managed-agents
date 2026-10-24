@@ -487,3 +487,5 @@ output persistence and Read path, with a bounded preview. Web content remains
 untrusted and responses carry source URLs for citations. There is no extra
 summarization model call. See [the design](../docs/design/be/brain-web-tools.md)
 for supported configuration, limits and acceptance coverage.
+
+Runtime keeps native execution and emits lifecycle/diagnostic facts. CCRv2 owns Worker log fields, backend thread IDs and Agent snapshots, compaction notifications, and gateway rejection decoding. Bash-specific structured stdout projection runs in the OMA sandbox adapter before generic tool execution consumes the result; error diagnostics and public tool text retain their existing behavior.

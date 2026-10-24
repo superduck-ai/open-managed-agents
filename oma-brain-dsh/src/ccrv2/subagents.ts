@@ -1,9 +1,19 @@
-import type { SubagentBridge, SubagentEvent, SubagentThread, ToolExecutionBridge } from "../runtime/contracts.ts";
+import type { CcrSubagentConfig } from "./contracts.ts";
+import { recordRuntimeDiagnostic, recordRuntimeEvent } from "./runtime-diagnostics.ts";
+import type { SubagentBridge, SubagentEvent, SubagentThread, ToolExecutionBridge, RuntimeDiagnostic, SubagentConfig } from "../runtime/contracts.ts";
 import { CcrPersistence } from "./persistence.ts";
 import type { CcrSession } from "./session.ts";
 import type { Payload } from "../json.ts";
 import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
+
+export function runtimeSubagentConfig(config?: CcrSubagentConfig): SubagentConfig | undefined {
+  if (!config) return undefined;
+  return {
+    inlineAgents: config.inlineAgents,
+    agents: config.agents?.map(({ name, description, systemPrompt, model, tools }) => ({ name, description, systemPrompt, model, tools })),
+  };
+}
 
 /** Protocol mapping and durable per-thread execution adapters. */
 export class CcrSubagentBridge implements SubagentBridge {
@@ -29,6 +39,7 @@ export class CcrSubagentBridge implements SubagentBridge {
     }
     return archived;
   }
+  createThreadId(): string { return `sthr_${crypto.randomUUID()}`; }
   threads(): SubagentThread[] { return this.session.state.threads ??= []; }
   bindPersistence(threadId: string): void {
     (this.session.ctx.sessionPersistence as CcrPersistence).bindThread(threadId, this.session.id);
@@ -40,7 +51,12 @@ export class CcrSubagentBridge implements SubagentBridge {
       case "created":
         fields = { type: "session.thread_created", parent_thread_id: this.session.id };
         if (thread.inline) fields.agent = { type: "inline", name: thread.name, system: thread.systemPrompt };
-        else if (thread.agentSnapshot) fields.agent = thread.agentSnapshot;
+        else {
+          const stored = this.session.state.threads?.find(entry => entry.id === thread.id);
+          const snapshot = this.session.config.subagents?.agents?.find(agent => agent.name === thread.name)?.agentSnapshot;
+          if (stored && snapshot) stored.agentSnapshot = structuredClone(snapshot);
+          if (stored?.agentSnapshot) fields.agent = stored.agentSnapshot;
+        }
         break;
       case "running":
         this.session.beginThread(thread.id);
@@ -61,10 +77,12 @@ export class CcrSubagentBridge implements SubagentBridge {
     await this.session.flushEvents();
     await this.session.updateStatus();
   }
+  onDiagnostic(threadId: string, diagnostic: RuntimeDiagnostic): void { recordRuntimeDiagnostic(threadId, diagnostic); }
   onOpen(session: Session): Promise<void> { return this.session.compaction.restore(session); }
   afterFlushLog(session: Session): Promise<void> { return this.session.compaction.flush(session); }
   beforeRequest(): Promise<void> { return this.session.flushEvents(); }
   onEvent(threadId: string, event: SessionEvent, session: Session): void {
+    recordRuntimeEvent(session, event);
     this.session.compaction.record(session, event);
     this.session.record(event, threadId);
   }

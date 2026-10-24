@@ -5,7 +5,6 @@ import { SessionId } from "@deepseek-ai/dsh-session";
 import { ModelRetry } from "./model-retry.ts";
 import { ExternalMcp } from "../external-mcp/index.ts";
 import * as SandboxTools from "../sandbox-tools/index.ts";
-import { failureDiagnostic, workerDiagnostic } from "../ccrv2/diagnostics.ts";
 import { approveToolCall, releaseToolApproval, clearToolApprovals, prefetchMcpApprovals } from "./tool-approvals.ts";
 import * as UserQuestions from "../user-questions/index.ts";
 import { SHUTDOWN_CANCEL } from "./contracts.ts";
@@ -104,13 +103,6 @@ export class SessionRuntime {
       });
       scope.on("session/event", (session, event) => {
         if (session.id !== this.config.id) return;
-        if (process.env.OMA_DEBUG_TIMING === "1" && ["assistant/message", "tool/result", "turn/end"].includes(event.type)) {
-          const data = event.data as { message?: { content?: { type: string }[] }; reason?: { kind: string } };
-          workerDiagnostic("info", "oma_runtime_event", {
-            session_id: session.id, event_type: event.type, timestamp: new Date().toISOString(),
-            block_types: data.message?.content?.map(block => block.type), reason: data.reason?.kind,
-          });
-        }
         if (event.type === "assistant/message")
           this.toolCalls = event.data.message.content.filter((block): block is ToolCallBlock => block.type === "tool-call");
         this.hooks.onEvent(event, session);
@@ -139,10 +131,7 @@ export class SessionRuntime {
       scope.on("agent/request-error", async ({ failure, turn, step, signal }, next) => {
         signal.throwIfAborted();
         const retried = await this.modelRetry.retry(failure, turn, step, signal, (attempt, delayMs) => {
-          workerDiagnostic("warn", "oma_model_request_retry", {
-            session_id: this.config.id, failure_code: failure.code, http_status: failure.status,
-            attempt, delay_ms: delayMs,
-          });
+          this.hooks.onDiagnostic?.({ kind: "model-retry", failure, attempt, delayMs });
         });
         return retried ? { kind: "retry" } : next();
       });
@@ -206,7 +195,7 @@ export class SessionRuntime {
       try {
         content = typeof input === "string" ? [{ type: "text", text: input }] : await input();
       } catch (error) {
-        workerDiagnostic("error", "oma_runtime_input_failed", { session_id: this.config.id, ...failureDiagnostic(error) });
+        this.hooks.onDiagnostic?.({ kind: "input-failed", error });
         await hooks.afterRun(false);
         return;
       }

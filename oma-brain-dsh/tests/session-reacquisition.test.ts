@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
@@ -114,7 +114,7 @@ test("remote extension on reacquisition discovers a child created by the other B
   expect(backend.requests).toHaveLength(requests);
 });
 
-test("divergent reacquisition quarantines A's original transcript before using B's remote history", async () => {
+test("divergent reacquisition rejects without changing A's original transcript", async () => {
   const { backend, rootA, rootB } = await fixture();
   const first = await mount(backend, rootA);
   backend.modelScript = [textEvents("initial reply")];
@@ -127,12 +127,12 @@ test("divergent reacquisition quarantines A's original transcript before using B
   await second.close();
   const requests = backend.requests.length;
   const publicEvents = [...backend.publicLog.values()];
-  const third = await mount(backend, rootA);
-  expect(third.session.delivery.completed).toContain("input-b");
-  expect(third.session.agent.session.snapshotEvents().some(event => String(event.type) === "plugin:oma/test-local-tail")).toBe(false);
-  const quarantine = (await files(`${rootA}.quarantine`)).filter(path => path.endsWith(".jsonl"));
-  expect(quarantine).toHaveLength(1);
-  expect(await readFile(quarantine[0]!)).toEqual(original);
+  const before = await files(rootA);
+  await expect(mount(backend, rootA)).rejects.toThrow("Local and remote log histories diverged");
+  expect(await files(rootA)).toEqual(before);
+  const transcript = before.find(path => path.endsWith(".jsonl"))!;
+  expect(await readFile(transcript)).toEqual(original);
+  await expect(access(`${rootA}.quarantine`)).rejects.toThrow();
   expect(backend.requests).toHaveLength(requests);
   expect([...backend.publicLog.values()]).toEqual(publicEvents);
 });

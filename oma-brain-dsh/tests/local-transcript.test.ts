@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
-import { SESSION_FORMAT_VERSION, Session, SessionId, SessionSeq, type SessionEvent, type SessionHeader } from "@deepseek-ai/dsh-session";
+import SessionStore, { SESSION_FORMAT_VERSION, Session, SessionId, SessionSeq, type SessionEvent, type SessionHeader } from "@deepseek-ai/dsh-session";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,10 +56,11 @@ function remoteEvents(entries: Payload[]): SessionEvent[] {
 
 async function setup(store = backend().store, localRoot?: string) {
   const root = localRoot ?? await mkdtemp(join(tmpdir(), "brain-transcript-"));
-  if (!localRoot) cleanups.push(async () => { await rm(root, { recursive: true, force: true }); await rm(`${root}.quarantine`, { recursive: true, force: true }); });
+  if (!localRoot) cleanups.push(async () => { await rm(root, { recursive: true, force: true }); });
   const ctx = new Context();
   cleanups.push(() => ctx.fiber.dispose());
   await ctx.plugin(JsonlPersistence, { root, compression: "none" });
+  await ctx.plugin(SessionStore);
   await ctx.plugin(CcrReplication, { backend: store });
   return { ctx, root, persistence: ctx.sessionPersistence, replication: ctx.ccrReplication };
 }
@@ -162,12 +163,13 @@ test("native session events replicate asynchronously and retry without local dup
     await persist(...args);
   };
   const { ctx, persistence } = await setup(store);
-  const handle = await persistence.create(header());
-  ctx.emit("session/event", { id: handle.id } as never, event());
+  const live = ctx.sessions.create(SessionId("main"), { meta: header() });
+  const handle = await persistence.create(live.header);
+  live.append("turn/start", { turn: 1 });
   await new Promise(resolve => setTimeout(resolve, 250));
   expect(attempts).toBeGreaterThanOrEqual(2);
-  expect((await handle.read()).events).toEqual([event()]);
-  expect(remoteEvents(await store.privateEvents(handle.id))).toEqual([event()]);
+  expect((await handle.read()).events).toEqual([...live.snapshotEvents()]);
+  expect(remoteEvents(await store.privateEvents(handle.id))).toEqual([...live.snapshotEvents()]);
   await handle.close();
 });
 
@@ -391,7 +393,7 @@ test("reacquisition preserves a longer local prefix and uploads only its unconfi
   expect(logs.get("main")!.at(-1)!.data).toEqual(event(1));
 });
 
-test("divergent acquisition retains the original directory and native ownership protects the replacement", async () => {
+test("divergent acquisition preserves the original directory and releases native ownership", async () => {
   const { store, logs } = backend();
   logs.set("main", nativeRecords(header(), [{ ...event(), time: 99 }]));
   const { persistence, replication, root } = await setup(store);
@@ -400,12 +402,11 @@ test("divergent acquisition retains the original directory and native ownership 
   await original.close();
   const old = (await transcripts(root))[0]!;
   const originalBytes = await readFile(old.path);
-  expect(await replication.ensure("main")).toBe(true);
-  const preserved = await transcripts(`${root}.quarantine`);
-  expect(preserved).toHaveLength(1);
-  expect(await readFile(preserved[0]!.path)).toEqual(originalBytes);
+  await expect(replication.ensure("main")).rejects.toThrow("Local and remote log histories diverged");
+  expect((await transcripts(root)).map(entry => entry.path)).toEqual([old.path]);
+  expect(await readFile(old.path)).toEqual(originalBytes);
   const writer = await persistence.open(SessionId("main"), "write");
-  expect((await writer.read()).events).toEqual([{ ...event(), time: 99 }]);
+  expect((await writer.read()).events).toEqual([event()]);
   const other = await setup(store, root);
   await expect(other.persistence.open(SessionId("main"), "write")).rejects.toThrow("already");
   await writer.close();
@@ -428,25 +429,22 @@ test("a late created session cannot restore an obsolete live cache after forget"
 test("a local durability failure prevents uploading captured live events", async () => {
   const { store, logs } = backend();
   const { ctx, persistence, replication } = await setup(store);
-  const writer = await persistence.create(header());
-  await writer.append([event()]);
-  const live = Session.create(SessionId("main"), [event()], header());
-  await writer.append(live.snapshotEvents().slice(1));
-  ctx.emit("session/created", live);
-  const next = live.append("turn/end", { turn: 1, reason: { kind: "completed" } });
-  ctx.emit("session/event", live, next);
-  const flush = persistence.flush.bind(persistence);
-  persistence.flush = async () => { throw new Error("local disk unavailable"); };
+  const live = ctx.sessions.create(SessionId("main"), { seed: [event()], meta: header() });
+  const writer = await persistence.create(live.header);
+  await writer.append(live.snapshotEvents());
+  live.append("turn/end", { turn: 1, reason: { kind: "completed" } });
+  const flush = writer.flush.bind(writer);
+  writer.flush = async () => { throw new Error("local disk unavailable"); };
   try {
     await expect(replication.flush("main")).rejects.toThrow("local disk unavailable");
     expect(logs.size).toBe(0);
-  } finally { persistence.flush = flush; }
+  } finally { writer.flush = flush; }
   await replication.flush("main");
   expect(remoteEvents(await store.privateEvents("main"))).toEqual([...live.snapshotEvents()]);
   await writer.close();
 });
 
-test.each(["ahead", "divergent"] as const)("invalid %s remote lifecycle cannot modify or quarantine a valid local transcript", async mode => {
+test.each(["ahead", "divergent"] as const)("invalid %s remote lifecycle cannot modify a valid local transcript", async mode => {
   const { store, logs } = backend();
   const invalid: SessionEvent[] = mode === "ahead"
     ? [event(), { ...event(1), data: { turn: 2, reason: { kind: "completed" } } } as SessionEvent]

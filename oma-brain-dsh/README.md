@@ -364,9 +364,10 @@ The independent `CcrReplication` service uploads the local tail asynchronously a
 retries failures. Local reads and writes do not wait for CCRv2. The first open in
 each claim generation reconciles local and remote history under the native write
 lock. Missing files are hydrated, remote-ahead tails are appended before resume,
-and local-ahead tails are retained for upload. Conflicting session directories
-move intact to `<transcript-root>.quarantine/<session-id>-<UUID>/` before rebuilding
-from validated remote history. Cold validation writes and rereads a temporary
+and local-ahead tails are retained for upload. Incompatible headers or histories
+that are not prefixes of each other fail resume and preserve the original local
+paths and log bytes. No automatic move or rebuilding is performed.
+Cold validation writes and rereads a temporary
 native JSONL instance before local mutation, including cross-event lifecycle
 checks. Failed remote reads or invalid histories block resume and preserve local
 files.
@@ -377,6 +378,12 @@ UUIDs use the parent session, native session and seq or header identity. The
 transport retains agent_id. Invalid remote history fails closed and preserves
 local files. Known old envelopes, Brain receipts and standalone delivery snapshots
 require explicit migration.
+
+Checkpoint and background replication barriers flush only the target native Session,
+plus its child sessions for a root checkpoint. An unrelated writer failure cannot
+block their replication. The target session must still pass its own local durability
+barrier before any captured events are uploaded. Raw native handle appends are
+already durable and use revision-based reads.
 
 Input deduplication, log cursors and pending public output use incremental version 2
 `plugin:oma/delivery` records in the same JSONL. Completed input IDs are stored once;

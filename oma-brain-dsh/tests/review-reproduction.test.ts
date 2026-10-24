@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
-import { SESSION_FORMAT_VERSION, SessionId, SessionSeq, appendPluginRecord, pluginRecordOf, type SessionEvent, type SessionHeader } from "@deepseek-ai/dsh-session";
+import SessionStore, { SESSION_FORMAT_VERSION, SessionId, SessionSeq, appendPluginRecord, pluginRecordOf, type SessionEvent, type SessionHeader } from "@deepseek-ai/dsh-session";
 import { LlmAttemptId } from "@deepseek-ai/dsh-llm";
 import JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -42,12 +42,12 @@ async function instance(backend: CcrBackend, root?: string) {
     const directory = root;
     cleanups.push(async () => {
       await rm(directory, { recursive: true, force: true });
-      await rm(`${directory}.quarantine`, { recursive: true, force: true });
     });
   }
   const ctx = new Context();
   cleanups.push(() => ctx.fiber.dispose());
   await ctx.plugin(JsonlPersistence, { root, compression: "none" });
+  await ctx.plugin(SessionStore);
   await ctx.plugin(CcrReplication, { backend });
   return { ctx, root, local: ctx.sessionPersistence, replication: ctx.ccrReplication };
 }
@@ -173,7 +173,7 @@ test("delivery journal stores completed inputs once and skips unchanged checkpoi
   expect(session.agent.session.snapshotEvents()).toHaveLength(count);
 });
 
-test("existing divergent local history is reconciled before it can be resumed", async () => {
+test("existing divergent local history rejects resume and preserves both histories", async () => {
   const { backend, records } = remoteStore();
   const remote = await instance(backend);
   const writer = await remote.local.create(header);
@@ -186,10 +186,89 @@ test("existing divergent local history is reconciled before it can be resumed", 
   const local = await stale.local.create(header);
   await local.append([fork]);
   await local.close();
-  expect(await stale.replication.ensure(id)).toBe(true);
+  await expect(stale.replication.ensure(id)).rejects.toThrow("Local and remote log histories diverged");
   const reader = await stale.local.open(id, "read");
-  expect((await reader.read()).events).toEqual([started]);
+  expect((await reader.read()).events).toEqual([fork]);
   await reader.close();
-  await stale.replication.flush(id);
   expect(records.filter(record => "seq" in record)).toEqual([started]);
+});
+
+
+async function liveFixture() {
+  const backend = new Backend();
+  cleanups.push(async () => { backend.stop(); });
+  await backend.ready;
+  const ctx = new Context();
+  cleanups.push(() => ctx.fiber.dispose());
+  const api = new OmaApi(backend.url);
+  await mountOma(ctx, api);
+  const session = createOmaSession(ctx, api, backend.a);
+  cleanups.push(() => session.close());
+  await session.open();
+  return { backend, ctx, session };
+}
+
+test.each(["checkpoint", "background"])("%s replication survives another session's failed native writer", async mode => {
+  const { backend, ctx, session } = await liveFixture();
+  const broken = await ctx.sessionPersistence.create({ ...header, id: SessionId("broken-unrelated") });
+  await broken.flush();
+  const flush = broken.flush.bind(broken);
+  broken.flush = async () => { throw new Error("unrelated disk failure"); };
+  try {
+    await expect(ctx.sessionPersistence.flush()).rejects.toThrow("flush failed");
+    appendPluginRecord(session.agent.session, "plugin:oma/delivery", {
+      version: 1, delivery: { ...session.delivery, revision: 1 },
+    });
+    const last = session.agent.session.snapshotEvents().at(-1)!;
+    if (mode === "checkpoint") await session.checkpoint();
+    await eventually(() => [...backend.privateLog.values()].some(payload => {
+      const data = payload.data as { seq?: number };
+      return payload.type === "dsh_log" && data.seq === last.seq;
+    }));
+    expect(session.abort.signal.aborted).toBe(false);
+  } finally {
+    broken.flush = flush;
+    await broken.close();
+  }
+});
+
+test("a session's own durability failure blocks background replication and checkpoints until recovery", async () => {
+  const { backend, ctx, session } = await liveFixture();
+  const dispose = ctx.on("session/flush", live => {
+    if (live.id === session.agent.session.id) throw new Error("own disk failure");
+  });
+  appendPluginRecord(session.agent.session, "plugin:oma/delivery", {
+    version: 1, delivery: { ...session.delivery, revision: 1 },
+  });
+  const last = session.agent.session.snapshotEvents().at(-1)!;
+  const replicated = () => [...backend.privateLog.values()].some(payload => {
+    const data = payload.data as { seq?: number };
+    return payload.type === "dsh_log" && data.seq === last.seq;
+  });
+  await expect(session.checkpoint()).rejects.toThrow("own disk failure");
+  await new Promise(resolve => setTimeout(resolve, 150));
+  expect(replicated()).toBe(false);
+  dispose();
+  await session.checkpoint();
+  expect(replicated()).toBe(true);
+});
+
+
+test("root checkpoints await related child durability and preserve the child's confirmation barrier", async () => {
+  const { backend, ctx, session } = await liveFixture();
+  const child = ctx.sessions.create(SessionId("related-child"), { meta: { cwd: "/workspace" } });
+  ctx.ccrReplication.bindThread(child.id, session.id);
+  const writer = await ctx.sessionPersistence.create(child.header);
+  const flush = writer.flush.bind(writer);
+  writer.flush = async () => { throw new Error("child disk failure"); };
+  try {
+    appendPluginRecord(child, "plugin:oma/delivery", {
+      version: 1, delivery: { ...session.delivery, revision: 1 },
+    });
+    await expect(session.checkpoint()).rejects.toThrow("child disk failure");
+    expect([...backend.privateLog.values()].some(payload => backend.privateAgentIds.get(payload.uuid) === child.id)).toBe(false);
+  } finally { writer.flush = flush; }
+  await session.checkpoint();
+  expect([...backend.privateLog.values()].some(payload => backend.privateAgentIds.get(payload.uuid) === child.id && "seq" in payload.data)).toBe(true);
+  await writer.close();
 });

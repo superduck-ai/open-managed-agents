@@ -24,11 +24,11 @@ ccrv2-client.test.ts 覆盖原生对象直存、单事件身份、跨页子线�
 
 ## 本地主存储与异步复制
 
-`JsonlPersistence` 直接拥有 sessionPersistence 服务、固定 session 路径和原生 session.lock。每次领取后的首次打开都先读取并校验远程历史，再获取本地原生写锁对账，同一领取代内不重复对账。本地缺失则补齐 Header/Event；本地是远程前缀时追加远程尾部，再交给 agents.resume；本地领先时保留本地尾部并异步上传。历史或 Header 分叉时，将整个旧 session 目录原子移到 `<transcript-root>.quarantine/<session-id>-<随机UUID>/`，同步目录元数据并释放旧锁，再以已校验远程记录重建标准路径。隔离文件保持原样，既不自动拼接也不自动清理。远程缺失时保留并上传已有本地日志；远程读取失败、记录损坏或本地锁冲突时不恢复执行，保留本地文件。没有本地盘的新实例只能恢复远程已确认前缀，未复制的普通尾部依赖保留原磁盘。
+`JsonlPersistence` 直接拥有 sessionPersistence 服务、固定 session 路径和原生 session.lock。每次领取后的首次打开都先读取并校验远程历史，再获取本地原生写锁对账，同一领取代内不重复对账。本地缺失则补齐 Header/Event；本地是远程前缀时追加远程尾部，再交给 agents.resume；本地领先时保留本地尾部并异步上传。历史或 Header 不一致且互不为前缀时直接报错并停止恢复，保留原 session 路径和日志内容，不自动移动、覆盖、拼接或重建。远程缺失时保留并上传已有本地日志；远程读取失败、记录损坏或本地锁冲突时不恢复执行，保留本地文件。没有本地盘的新实例只能恢复远程已确认前缀，未复制的普通尾部依赖保留原磁盘。
 
-冷恢复会把候选远程记录写入独立临时原生 JSONL 实例，关闭 writer 后用新 reader 回读，完整校验跨事件生命周期关系，通过后才修改本地文件。临时文件始终释放并清理；序号连续但回合关系非法的远程历史同样不能触发本地隔离或追加。
+冷恢复会把候选远程记录写入独立临时原生 JSONL 实例，关闭 writer 后用新 reader 回读，完整校验跨事件生命周期关系，通过后才修改本地文件。临时文件始终释放并清理；序号连续但回合关系非法的远程历史同样不能触发本地修改或追加。
 
-复制器首次校验前缀后维护已确认 seq，通过 session/created、session/event 更新活动 Session 的增量视图。检查点先固定本次事件边界，再等待原生 flush，只上传该边界内的新尾部，不能把 flush 期间追加但未确认落盘的事件提前上传。不重复打开或扫描 JSONL，也不再比较或深拷贝已确认前缀。无变化的预览帧只等待已有确认。直接操作原生 handle 而没有 Session 事件时，按 revision 检测变化再读取未缓存后缀。缓存随 forget/关闭清理。
+复制器首次校验前缀后维护已确认 seq，通过 session/created、session/event 更新活动 Session 的增量视图。检查点先固定本次事件边界，再逐个等待本会话及其子线程的原生 `sessions.flush(session)`，只上传该边界内的新尾部，不能把 flush 期间追加但未确认落盘的事件提前上传。不重复打开或扫描 JSONL，也不再比较或深拷贝已确认前缀。无变化的预览帧只等待已有确认。直接操作原生 handle 而没有 Session 事件时，按 revision 检测变化再读取未缓存后缀。缓存随 forget/关闭清理。后台复制同样只等待目标 Session 的持久化屏障，不调用服务级全局 flush；本会话的落盘失败仍阻止其上传和远程确认，其他会话的失败不阻塞本会话。复制器自身触发的 flush 不重复安排后台任务。直接操作原生 handle 的 append 已经完成耐久写入，复制器按落盘 revision 读取，不替调用方刷新其他 writer。
 
 lease/epoch/认证终止会 fence 主线程及所有子线程，旧任务不能采用新一代凭据。关闭等待原生结果复制确认及队列 drain，再释放领取。没有自动保留期限或清理任务，磁盘回收由部署管理；旧格式与旧 Brain receipt 需要显式迁移，不能拼接。
 
@@ -235,7 +235,7 @@ DSH 的工具执行屏障直接建立在原生日志上：在工具体执行前�
 
 logOffsets 记录本次输入在主线程及各子线程的原生日志起点，用于补发已持久化但尚未公开的消息，不描述工具执行阶段。普通输入先保存接纳记录，再报告 processing；同一输入的重投只重试公开事件和 ACK，不重跑模型或工具。控制输入仍只在进程内去重。已知旧 subtype envelope、旧 Brain/Grok checkpoint、独立远程交付快照和批量 dsh_log 显式拒绝，不迁移、不静默创建空历史。子线程私有流与原生持久化读取使用同一旧格式拒绝规则。
 
-`tests/session-reacquisition.test.ts` 覆盖 A→B→A 接管、远程新增子线程、分叉原样隔离及损坏历史时保留本地文件；`tests/review-reproduction.test.ts` 覆盖预览与原生事件不重复全量读取、完成输入增量和无变化检查点；`tests/delivery-journal.test.ts` 覆盖 v1/v2 兼容、连续性校验和追加重试。
+`tests/session-reacquisition.test.ts` 覆盖 A→B→A 接管、远程新增子线程、历史不一致时报错并原路径保留日志，以及损坏历史时保留本地文件；`tests/review-reproduction.test.ts` 覆盖预览与原生事件不重复全量读取、完成输入增量、无变化检查点、会话 writer 故障隔离及本会话持久化屏障失败时禁止上传；`tests/delivery-journal.test.ts` 覆盖 v1/v2 兼容、连续性校验和追加重试。
 
 ```mermaid
 sequenceDiagram

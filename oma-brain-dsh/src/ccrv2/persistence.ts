@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, open, rename, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { assertPersistenceFormat } from "./recovery.ts";
 import { workerDiagnostic } from "./diagnostics.ts";
@@ -41,6 +41,7 @@ interface Replication {
   confirmed: number;
   headerConfirmed: boolean;
   captureError?: Error;
+  flushing?: boolean;
 }
 
 declare module "@deepseek-ai/cordis" {
@@ -50,7 +51,7 @@ declare module "@deepseek-ai/cordis" {
 }
 
 export class CcrReplication extends Service {
-  static inject = ["sessionPersistence"];
+  static inject = ["sessionPersistence", "sessions"];
   private readonly parents = new Map<SessionId, SessionId>();
   private readonly records = new Map<SessionId, Stored | undefined>();
   private readonly jobs = new Map<SessionId, Replication>();
@@ -86,7 +87,9 @@ export class CcrReplication extends Service {
         owner.revision = undefined;
       }
     });
-    ctx.on("session/flush", session => { this.schedule(session.id); });
+    ctx.on("session/flush", session => {
+      if (!this.jobs.get(session.id)?.flushing) this.schedule(session.id);
+    });
     ctx.effect(() => async () => {
       this.stopped = true;
       for (const job of this.jobs.values()) if (job.timer) clearTimeout(job.timer);
@@ -119,20 +122,15 @@ export class CcrReplication extends Service {
         const handle = await this.ctx.sessionPersistence.open(id, "write");
         try {
           const local = await this.readLocal(handle);
-          if (remote && !this.isPrefix(local, remote) && !this.isPrefix(remote, local)) {
-            await this.quarantine(id, owner);
-            await handle.close();
-            await this.hydrate(id, remote, owner);
+          if (remote && !this.isPrefix(local, remote) && !this.isPrefix(remote, local))
+            throw new Error("Local and remote log histories diverged");
+          if (remote && remote.events.length > local.events.length) {
+            await handle.append(remote.events.slice(local.events.length));
+            await handle.flush();
+            for (const event of remote.events.slice(local.events.length)) local.events.push(event);
             hydrated = true;
-          } else {
-            if (remote && remote.events.length > local.events.length) {
-              await handle.append(remote.events.slice(local.events.length));
-              await handle.flush();
-              for (const event of remote.events.slice(local.events.length)) local.events.push(event);
-              hydrated = true;
-            }
-            owner.local = local;
           }
+          owner.local = local;
         } finally { await handle.close(); }
       }
       this.assertCurrent(id, owner);
@@ -165,24 +163,11 @@ export class CcrReplication extends Service {
     } finally { await handle.close(); }
   }
 
-  private async quarantine(id: SessionId, owner: Replication): Promise<void> {
-    this.assertCurrent(id, owner);
-    const persistence = this.ctx.sessionPersistence;
-    if (!(persistence instanceof JsonlPersistence)) throw new Error("Transcript quarantine requires native JSONL persistence");
-    const path = await persistence.resolveCurrentLog(id);
-    if (!path) throw new Error("Cannot locate divergent transcript");
-    const source = dirname(path);
-    const quarantine = `${resolve(persistence.config.root)}.quarantine`;
-    await mkdir(quarantine, { recursive: true, mode: 0o700 });
-    this.assertCurrent(id, owner);
-    const destination = join(quarantine, `${encodeURIComponent(id)}-${crypto.randomUUID()}`);
-    await rename(source, destination);
-    if (process.platform !== "win32") {
-      for (const directory of [dirname(source), quarantine, dirname(quarantine)]) {
-        const handle = await open(directory, "r");
-        try { await handle.sync(); } finally { await handle.close(); }
-      }
-    }
+  private async flushLocal(owner: Replication): Promise<void> {
+    if (!owner.live) return;
+    owner.flushing = true;
+    try { await this.ctx.sessions.flush(owner.live); }
+    finally { owner.flushing = false; }
   }
 
   async flush(value: string): Promise<void> {
@@ -192,8 +177,10 @@ export class CcrReplication extends Service {
     this.assertCurrent(id, this.job(id));
     const ids = [id, ...[...this.parents].filter(([, parent]) => parent === id).map(([child]) => child)];
     const targets = new Map(ids.map(key => [key, this.jobs.get(key)?.live ? this.jobs.get(key)?.local?.events.length : undefined]));
-    await this.ctx.sessionPersistence.flush();
-    for (const key of ids) await this.serialize(key, owner => this.synchronize(key, owner, targets.get(key)));
+    for (const key of ids) await this.serialize(key, async owner => {
+      await this.flushLocal(owner);
+      await this.synchronize(key, owner, targets.get(key));
+    });
   }
 
   async drain(value: string): Promise<void> {
@@ -279,7 +266,7 @@ export class CcrReplication extends Service {
       job.timer = undefined;
       void this.serialize(id, async owner => {
         const through = owner.live ? owner.local?.events.length : undefined;
-        await this.ctx.sessionPersistence.flush();
+        await this.flushLocal(owner);
         await this.synchronize(id, owner, through);
       }, job).then(() => {
         job.failures = 0;

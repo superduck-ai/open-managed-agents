@@ -357,21 +357,35 @@ DSH local data uses `.dsh/` below the process working directory. Kernel initiali
 
 `JsonlPersistence` directly owns local session loading, appending, flush and locks.
 The independent `CcrReplication` service uploads the local tail asynchronously and
-retries failures. Local reads and writes do not wait for CCRv2. A missing local
-session is hydrated from remote history once; existing files are reused.
+retries failures. Local reads and writes do not wait for CCRv2. The first open in
+each claim generation reconciles local and remote history under the native write
+lock. Missing files are hydrated, remote-ahead tails are appended before resume,
+and local-ahead tails are retained for upload. Conflicting session directories
+move intact to `<transcript-root>.quarantine/<session-id>-<UUID>/` before rebuilding
+from validated remote history. Cold validation writes and rereads a temporary
+native JSONL instance before local mutation, including cross-event lifecycle
+checks. Failed remote reads or invalid histories block resume and preserve local
+files.
 
 Remote `type: "dsh_log"` records contain unchanged native SessionHeader or single
 SessionEvent values in `data`, without subtype, schema_version or batch wrappers.
 UUIDs use the parent session, native session and seq or header identity. The
-transport retains agent_id. A remote prefix conflict fails closed and preserves
+transport retains agent_id. Invalid remote history fails closed and preserves
 local files. Known old envelopes, Brain receipts and standalone delivery snapshots
 require explicit migration.
 
-Input deduplication, log cursors and pending public output are stored as a versioned
-`plugin:oma/delivery` record in the same native JSONL and replicated as an ordinary
-native event. It contains no execution phases, approved-call maps, tool-result
+Input deduplication, log cursors and pending public output use incremental version 2
+`plugin:oma/delivery` records in the same JSONL. Completed input IDs are stored once;
+outbox changes record additions and sent UUIDs. Unchanged checkpoints append nothing.
+Version 1 snapshots remain readable. These records replicate as ordinary native
+events. They contain no execution phases, approved-call maps, tool-result
 copies or child configuration. Native `agents.resume()` repairs interrupted calls
 without replaying side effects. Subagents restore their native descriptors.
+
+After initial prefix validation, native Session events feed an incremental cache
+with a confirmed seq cursor. Active checkpoints upload only new events; previews
+do not reopen or scan full JSONL files. Raw handle access uses a revision-based
+suffix-read fallback. The cache is cleared on forget/close.
 
 Tool execution, public publication, subsequent model requests and input ACK await
 remote confirmation. Shutdown waits for results to be confirmed before releasing

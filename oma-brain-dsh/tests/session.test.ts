@@ -555,7 +555,7 @@ describe("original dsh loop over CCRv2", () => {
     const completed = state((s) => s.completed.includes("durable_order") && s.outbox.length > 0);
     const idle = b.timeline.findIndex((e, i) => i > completed && e.type === "worker.status" && e.status === "idle");
     const published = first((e) => e.type === "result");
-    const cleared = state((s) => s.completed.includes("durable_order") && s.outbox.length === 0);
+    const cleared = state((s) => s.sent.includes("durable_order_result"));
     expect(idle).toBeGreaterThan(completed);
     expect(cleared).toBeLessThan(idle);
     expect(published).toBeLessThan(cleared);

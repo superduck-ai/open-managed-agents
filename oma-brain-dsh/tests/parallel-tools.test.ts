@@ -6,7 +6,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
-import { Backend, eventually, textEvents, toolEvents } from "./backend.ts";
+import { Backend, eventually, modelSystemText, textEvents, toolEvents } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -111,7 +111,13 @@ test("drain waits for every active tool and rejects new work without a persisten
   const { session, b } = await fixture();
   const first = Promise.withResolvers<string>();
   const second = Promise.withResolvers<string>();
-  b.modelScript = [toolEvents("first", "first"), toolEvents("second", "second"), textEvents("first done"), textEvents("second done")];
+  const started = new Set<string>();
+  b.onModel = async request => {
+    const name = modelSystemText(request).includes("alpha") ? "first" : "second";
+    if (started.has(name)) return textEvents(`${name} done`);
+    started.add(name);
+    return toolEvents(name, name);
+  };
   b.onTool = async (params) => result(await (params.arguments.command === "first" ? first.promise : second.promise));
   const calls = ["alpha", "beta"].map((name) => session.subagents.send({
     name, system_prompt: name, message: "Run a command",

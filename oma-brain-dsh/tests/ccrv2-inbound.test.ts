@@ -295,8 +295,7 @@ test("delivery processing gates model work without blocking controls", async () 
       && deliveryOf(entry.payload)!.outbox.length > 0);
     const published = b.timeline.findIndex((entry) => entry.type === "result");
     const cleared = b.timeline.findIndex((entry) => entry.type === "private.persist"
-      && !!deliveryOf(entry.payload) && deliveryOf(entry.payload)!.completed.includes("input")
-      && deliveryOf(entry.payload)!.outbox.length === 0);
+      && !!deliveryOf(entry.payload) && deliveryOf(entry.payload)!.sent.includes("input_result"));
     const acknowledged = b.timeline.findIndex((entry) => entry.type === "input.ack" && entry.inputId === "input");
     expect(completed).toBeGreaterThan(-1);
     expect(published).toBeGreaterThan(completed);

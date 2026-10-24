@@ -1,5 +1,5 @@
 import { nativeOutcomes } from "./session-log.ts";
-import { eventually } from "./backend.ts";
+import { deliveryOf, eventually } from "./backend.ts";
 import { expect, spyOn, test } from "bun:test";
 import { ContextRecovery } from "../src/runtime/compaction.ts";
 import { appendPluginRecord, pluginRecordOf, SESSION_FORMAT_VERSION, SessionId, SessionSeq } from "@deepseek-ai/dsh-session";
@@ -228,7 +228,7 @@ test("session previews enter one stream window and terminal publication still wa
     if ("seq" in data) {
       const record = pluginRecordOf(data);
       if (record?.type === "plugin:oma/delivery") {
-        const delivery = (record.data as { delivery: ReturnType<typeof emptyDelivery> }).delivery;
+        const delivery = deliveryOf({ type: "dsh_log", data })!;
         if (delivery.completed.includes(delivery.inputId)) completed.resolve();
       }
     }

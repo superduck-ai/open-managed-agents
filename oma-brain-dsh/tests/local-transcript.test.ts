@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
-import { SESSION_FORMAT_VERSION, SessionId, SessionSeq, type SessionEvent, type SessionHeader } from "@deepseek-ai/dsh-session";
+import { SESSION_FORMAT_VERSION, Session, SessionId, SessionSeq, type SessionEvent, type SessionHeader } from "@deepseek-ai/dsh-session";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,7 +56,7 @@ function remoteEvents(entries: Payload[]): SessionEvent[] {
 
 async function setup(store = backend().store, localRoot?: string) {
   const root = localRoot ?? await mkdtemp(join(tmpdir(), "brain-transcript-"));
-  if (!localRoot) cleanups.push(() => rm(root, { recursive: true, force: true }));
+  if (!localRoot) cleanups.push(async () => { await rm(root, { recursive: true, force: true }); await rm(`${root}.quarantine`, { recursive: true, force: true }); });
   const ctx = new Context();
   cleanups.push(() => ctx.fiber.dispose());
   await ctx.plugin(JsonlPersistence, { root, compression: "none" });
@@ -106,7 +106,7 @@ test("divergent history refuses confirmation without altering the local file", a
   await handle.close();
 });
 
-test("existing local history resumes despite remote read failure at the same path", async () => {
+test("remote reconciliation failure preserves the existing local transcript at its path", async () => {
   const { store } = backend();
   const { persistence, replication, root } = await setup(store);
   const handle = await persistence.create(header());
@@ -115,7 +115,7 @@ test("existing local history resumes despite remote read failure at the same pat
   const original = (await transcripts(root))[0]!.path;
   replication.forget(handle.id);
   store.privateEvents = async () => { throw new Error("remote read failed"); };
-  await replication.ensure(handle.id);
+  await expect(replication.ensure(handle.id)).rejects.toThrow("remote read failed");
   const reopened = await persistence.open(handle.id, "write");
   expect((await reopened.read()).events).toEqual([event()]);
   await reopened.append([event(1)]);
@@ -357,4 +357,128 @@ test("native hydration scopes each child header and event independently from sib
   expect((await reader.read()).events).toEqual([event()]);
   await reader.close();
   expect(await persistence.stat(SessionId("sibling"))).toBeUndefined();
+});
+
+test("reacquisition refuses to repair a transcript while a native writer owns it", async () => {
+  const { store, logs } = backend();
+  logs.set("main", nativeRecords(header(), [event(), event(1)]));
+  const { persistence, replication } = await setup(store);
+  const writer = await persistence.create(header());
+  await writer.append([event()]);
+  await expect(replication.ensure("main")).rejects.toThrow("already");
+  expect((await writer.read()).events).toEqual([event()]);
+  await writer.close();
+  expect(await replication.ensure("main")).toBe(true);
+  const reader = await persistence.open(SessionId("main"), "read");
+  expect((await reader.read()).events).toEqual([event(), event(1)]);
+  await reader.close();
+});
+
+test("reacquisition preserves a longer local prefix and uploads only its unconfirmed tail", async () => {
+  const { store, logs } = backend();
+  logs.set("main", nativeRecords(header(), [event()]));
+  const { persistence, replication, root } = await setup(store);
+  const writer = await persistence.create(header());
+  await writer.append([event(), event(1)]);
+  await writer.close();
+  const path = (await transcripts(root))[0]!.path;
+  const before = await readFile(path);
+  expect(await replication.ensure("main")).toBe(false);
+  expect(await replication.ensure("main")).toBe(false);
+  expect(await readFile(path)).toEqual(before);
+  await replication.flush("main");
+  expect(logs.get("main")).toHaveLength(3);
+  expect(logs.get("main")!.at(-1)!.data).toEqual(event(1));
+});
+
+test("divergent acquisition retains the original directory and native ownership protects the replacement", async () => {
+  const { store, logs } = backend();
+  logs.set("main", nativeRecords(header(), [{ ...event(), time: 99 }]));
+  const { persistence, replication, root } = await setup(store);
+  const original = await persistence.create(header());
+  await original.append([event()]);
+  await original.close();
+  const old = (await transcripts(root))[0]!;
+  const originalBytes = await readFile(old.path);
+  expect(await replication.ensure("main")).toBe(true);
+  const preserved = await transcripts(`${root}.quarantine`);
+  expect(preserved).toHaveLength(1);
+  expect(await readFile(preserved[0]!.path)).toEqual(originalBytes);
+  const writer = await persistence.open(SessionId("main"), "write");
+  expect((await writer.read()).events).toEqual([{ ...event(), time: 99 }]);
+  const other = await setup(store, root);
+  await expect(other.persistence.open(SessionId("main"), "write")).rejects.toThrow("already");
+  await writer.close();
+  await (await other.persistence.open(SessionId("main"), "write")).close();
+});
+
+test("a late created session cannot restore an obsolete live cache after forget", async () => {
+  const { store } = backend();
+  const { ctx, persistence, replication } = await setup(store);
+  const writer = await persistence.create(header());
+  await writer.append([event()]);
+  await writer.close();
+  replication.forget("main");
+  const obsolete = Session.create(SessionId("main"), [{ ...event(), time: 99 }], header());
+  ctx.emit("session/created", obsolete);
+  await replication.flush("main");
+  expect(remoteEvents(await store.privateEvents("main"))).toEqual([event()]);
+});
+
+test("a local durability failure prevents uploading captured live events", async () => {
+  const { store, logs } = backend();
+  const { ctx, persistence, replication } = await setup(store);
+  const writer = await persistence.create(header());
+  await writer.append([event()]);
+  const live = Session.create(SessionId("main"), [event()], header());
+  await writer.append(live.snapshotEvents().slice(1));
+  ctx.emit("session/created", live);
+  const next = live.append("turn/end", { turn: 1, reason: { kind: "completed" } });
+  ctx.emit("session/event", live, next);
+  const flush = persistence.flush.bind(persistence);
+  persistence.flush = async () => { throw new Error("local disk unavailable"); };
+  try {
+    await expect(replication.flush("main")).rejects.toThrow("local disk unavailable");
+    expect(logs.size).toBe(0);
+  } finally { persistence.flush = flush; }
+  await replication.flush("main");
+  expect(remoteEvents(await store.privateEvents("main"))).toEqual([...live.snapshotEvents()]);
+  await writer.close();
+});
+
+test.each(["ahead", "divergent"] as const)("invalid %s remote lifecycle cannot modify or quarantine a valid local transcript", async mode => {
+  const { store, logs } = backend();
+  const invalid: SessionEvent[] = mode === "ahead"
+    ? [event(), { ...event(1), data: { turn: 2, reason: { kind: "completed" } } } as SessionEvent]
+    : [{ ...event(), data: { turn: 2 } } as SessionEvent];
+  logs.set("main", nativeRecords(header(), invalid));
+  const { persistence, replication, root } = await setup(store);
+  const writer = await persistence.create(header());
+  await writer.append([event()]);
+  await writer.close();
+  const path = (await transcripts(root))[0]!.path;
+  const before = await readFile(path);
+  await expect(replication.ensure("main")).rejects.toThrow();
+  expect(await readFile(path)).toEqual(before);
+  await expect(readdir(`${root}.quarantine`)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test("any terminal event rejection stops a batch even when an earlier event reports a transport error", async () => {
+  const { store } = backend();
+  const persist = store.persist;
+  const terminal = new CcrHttpError(409);
+  let attempts = 0;
+  store.persist = async (...args) => {
+    attempts++;
+    if ("seq" in args[2]) throw args[2].seq === 0 ? new Error("response lost") : terminal;
+    await persist(...args);
+  };
+  const { persistence, replication } = await setup(store);
+  const writer = await persistence.create(header());
+  await writer.append([event(), event(1)]);
+  await expect(replication.flush("main")).rejects.toThrow("response lost");
+  const stopped = attempts;
+  await expect(replication.flush("main")).rejects.toBe(terminal);
+  expect(attempts).toBe(stopped);
+  await writer.close();
 });

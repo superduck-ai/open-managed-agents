@@ -398,5 +398,8 @@ export async function eventually(
 export function deliveryOf(payload: Payload): Payload | undefined {
   if (payload.type !== "dsh_log" || !("seq" in payload.data)) return;
   const record = pluginRecordOf(payload.data as SessionEvent);
-  if (record?.type === "plugin:oma/delivery") return (record.data as Payload).delivery;
+  if (record?.type !== "plugin:oma/delivery") return;
+  const data = record.data as Payload;
+  return data.version === 1 ? { ...data.delivery, sent: [] }
+    : { ...data, completed: data.completedAdded, outbox: data.queued };
 }

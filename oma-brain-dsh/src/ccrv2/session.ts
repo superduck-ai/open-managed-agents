@@ -1,6 +1,6 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
-import { SessionId, appendPluginRecord, pluginRecordOf, type SessionEvent } from "@deepseek-ai/dsh-session";
+import { SessionId, pluginRecordOf, type SessionEvent } from "@deepseek-ai/dsh-session";
 import { ACCOUNT_QUOTA_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { ToolNotForwardedError } from "../runtime/contracts.ts";
 import { SessionRuntime } from "../runtime/session.ts";
@@ -17,7 +17,7 @@ import { CcrActivity, type CcrActivityOptions } from "./activity.ts";
 import { emptyDelivery, isControlInput, object, type DeliveryState, type Payload } from "./protocol.ts";
 import { startDeliveryProgress } from "./delivery-progress.ts";
 import { failureDiagnostic, workerDiagnostic } from "./diagnostics.ts";
-import { readDelivery } from "./recovery.ts";
+import { DeliveryJournal } from "./delivery-journal.ts";
 import { CcrToolResults } from "./tool-results.ts";
 import { assistantMessages, CcrAssistantStream } from "./assistant.ts";
 import { userInputContent } from "./user-content.ts";
@@ -29,14 +29,10 @@ declare module "@deepseek-ai/dsh-llm" {
   }
 }
 
-declare module "@deepseek-ai/dsh-session" {
-  interface PluginRecordMap {
-    "plugin:oma/delivery": { version: 1; delivery: DeliveryState };
-  }
-}
 
 export class CcrSession {
   delivery: DeliveryState = emptyDelivery();
+  private readonly deliveryJournal: DeliveryJournal;
   restoredFromRemote = false;
   readonly restoredThreadIds = new Set<string>();
   private closing?: Promise<void>;
@@ -74,6 +70,7 @@ export class CcrSession {
     keepAlive?: CcrActivityOptions,
   ) {
     this.defaultModel = config.model;
+    this.deliveryJournal = new DeliveryJournal(config.id);
     this.assistantStream = new CcrAssistantStream(config.id, config.modelMessageID);
     this.runtime = new SessionRuntime(ctx, { ...config, setup: async (scope) => {
       await config.setup?.(scope);
@@ -180,15 +177,8 @@ export class CcrSession {
           const record = pluginRecordOf(event);
           if (record?.type === "plugin:oma/receipt") throw new Error("Legacy Brain receipts require explicit migration");
           if (record?.type !== "plugin:oma/delivery") continue;
-          const data = object(record.data);
-          if (data.version !== 1) throw new Error("Unsupported CCRv2 delivery record");
-          const delivery = readDelivery(data.delivery, this.id);
-          for (const payload of delivery.outbox) {
-            if (payload.type !== "session.thread_created") continue;
-            if (typeof payload.session_thread_id !== "string" || !payload.session_thread_id) throw new Error("Invalid retained subagent identity");
-            this.restoredThreadIds.add(payload.session_thread_id);
-          }
-          if (delivery.revision > this.delivery.revision) this.delivery = delivery;
+          this.delivery = this.deliveryJournal.restore(record.data);
+          for (const id of this.deliveryJournal.restoredThreadIds) this.restoredThreadIds.add(id);
         }
       } finally { await handle.close(); }
     }
@@ -261,8 +251,7 @@ export class CcrSession {
 
   saveDelivery(): Promise<void> {
     const promise = this.saves.then(async () => {
-      const snapshot = readDelivery(JSON.parse(JSON.stringify({ ...this.delivery, revision: ++this.delivery.revision })), this.id);
-      appendPluginRecord(this.agent.session, "plugin:oma/delivery", { version: 1, delivery: snapshot });
+      this.deliveryJournal.append(this.agent.session, this.delivery);
       await this.checkpoint();
     });
     this.saves = promise.catch(() => {});

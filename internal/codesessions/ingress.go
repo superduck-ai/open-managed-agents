@@ -1397,11 +1397,11 @@ func decodeCodeSessionWorkerInternalEvent(codeSessionID string, raw json.RawMess
 	if err != nil {
 		return db.AppendCodeSessionInternalEventInput{}, errors.New("event payload must be a json object")
 	}
-	if eventType := strings.TrimSpace(payloadSchema.Type); !isCodeSessionTranscriptPayloadType(eventType) {
+	if eventType := strings.TrimSpace(payloadSchema.Type); !isCodeSessionInternalPayloadType(eventType) {
 		if eventType == "" {
 			return db.AppendCodeSessionInternalEventInput{}, errors.New("event payload type is required")
 		}
-		return db.AppendCodeSessionInternalEventInput{}, errors.New("event payload type must be user, assistant, attachment, or system")
+		return db.AppendCodeSessionInternalEventInput{}, errors.New("unsupported internal event payload type")
 	}
 	payloadUUID := strings.TrimSpace(payloadSchema.UUID)
 	if payloadUUID == "" {
@@ -1447,9 +1447,9 @@ func decodeCodeSessionWorkerInternalEvent(codeSessionID string, raw json.RawMess
 	}, nil
 }
 
-func isCodeSessionTranscriptPayloadType(eventType string) bool {
+func isCodeSessionInternalPayloadType(eventType string) bool {
 	switch eventType {
-	case "user", "assistant", "attachment", "system":
+	case "user", "assistant", "attachment", "system", "dsh_log":
 		return true
 	default:
 		return false

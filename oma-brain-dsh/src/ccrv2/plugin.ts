@@ -1,6 +1,9 @@
 import { Context, Service } from "@deepseek-ai/cordis";
-import { SessionId } from "@deepseek-ai/dsh-session";
-import { CcrPersistence } from "./persistence.ts";
+import JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { CcrReplication } from "./persistence.ts";
 import { CcrSession } from "./session.ts";
 import type { CcrBackend } from "./contracts.ts";
 import type { SessionRuntimeConfig } from "../runtime/contracts.ts";
@@ -10,6 +13,7 @@ import type { CcrActivityOptions } from "./activity.ts";
 export const name = "ccrv2-bridge";
 export interface Config {
   backend: CcrBackend;
+  localRoot?: string;
   keepAlive?: CcrActivityOptions;
   heartbeat?: CcrHeartbeatOptions & {
     bind(id: string): CcrLeaseCheck;
@@ -31,6 +35,7 @@ export class CcrBridge extends Service {
     "llm",
     "sessions",
     "sessionPersistence",
+    "ccrReplication",
     "agents",
     "agentLoop",
     "tools",
@@ -62,12 +67,13 @@ export class CcrBridge extends Service {
 
   /** Call after closing the bridge and releasing the host's worker lease. */
   forget(id: string): void {
-    (this.ctx.sessionPersistence as CcrPersistence).forget(SessionId(id));
+    this.ctx.ccrReplication.forget(id);
     this.sessions.delete(id);
   }
 }
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
-  await ctx.plugin(CcrPersistence, { backend: config.backend });
+  await ctx.plugin(JsonlPersistence, { root: config.localRoot ?? await mkdtemp(join(tmpdir(), "oma-brain-jsonl-")), compression: "none" });
+  await ctx.plugin(CcrReplication, { backend: config.backend });
   await ctx.plugin(CcrBridge, config);
 }

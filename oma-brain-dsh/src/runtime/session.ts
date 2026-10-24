@@ -117,8 +117,11 @@ export class SessionRuntime {
           this.toolCalls = event.data.message.content.filter((block): block is ToolCallBlock => block.type === "tool-call");
         if (event.type === "compaction/start") this.compactionTokens = this.ctx.tokenMeter.measure(session).totalTokens;
         if (event.type === "compaction/prune") this.queueCompaction(event.seq, this.ctx.tokenMeter.measure(session).totalTokens);
-        if (event.type === "compaction/end" && event.data.error === undefined)
-          this.queueCompaction(event.seq, this.compactionTokens ?? this.ctx.tokenMeter.measure(session).totalTokens);
+        if (event.type === "compaction/end") {
+          if (event.data.error === undefined)
+            this.queueCompaction(event.seq, this.compactionTokens ?? this.ctx.tokenMeter.measure(session).totalTokens);
+          this.compactionTokens = undefined;
+        }
         this.hooks.onEvent(event);
         if (event.type === "tool/result") releaseToolApproval(this.bridge, event.data.message.toolCallId);
         if (event.type === "turn/end") {

@@ -32,6 +32,46 @@ afterEach(() => {
 });
 
 describe('LLM models page', () => {
+  test.each(['context', 'output', 'image', 'whitespace'])(
+    'rejects a model row with %s settings and no Model ID',
+    async (setting) => {
+      resetTestDom('https://oma.duck.ai/settings/llm');
+      const api = mockProvidersApi([], { organizationProvider: organizationProvider() });
+      renderPage('en', 'admin', 'organization');
+      fireEvent.click(await screen.findByRole('button', { name: 'Organization default' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+      const dialog = screen.getByRole('dialog', { name: 'Edit provider' });
+      fireEvent.change(within(dialog).getByLabelText('Model ID 1'), {
+        target: { value: setting === 'whitespace' ? '   ' : '' },
+      });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Model parameters 1' }));
+      if (setting === 'image') fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Image' }));
+      else
+        fireEvent.change(
+          within(dialog).getByLabelText(setting === 'output' ? 'Maximum output tokens 1' : 'Context window 1'),
+          { target: { value: '32K' } },
+        );
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+      expect(within(dialog).getByText('Model ID is required when model parameters are configured.')).toBeTruthy();
+      expect(api.requests.filter((request) => request.method === 'PUT')).toHaveLength(0);
+    },
+  );
+
+  test('allows an untouched empty model placeholder', async () => {
+    resetTestDom('https://oma.duck.ai/settings/llm');
+    const provider = organizationProvider();
+    provider.models = [];
+    const api = mockProvidersApi([], { organizationProvider: provider });
+    renderPage('en', 'admin', 'organization');
+    fireEvent.click(await screen.findByRole('button', { name: 'Organization default' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit provider' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add model' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(api.requests.findLast((request) => request.method === 'PUT')?.body?.models).toEqual([]);
+  });
+
   test('preserves expanded model parameters when removing an earlier row and editing the model ID', async () => {
     resetTestDom('https://oma.duck.ai/settings/llm');
     const provider = organizationProvider();

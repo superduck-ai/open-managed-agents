@@ -3,6 +3,7 @@ package db
 import (
 	"testing"
 
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -121,6 +122,27 @@ func TestLLMProviderMapperBackendBinding(t *testing.T) {
 		}
 		if !found {
 			t.Fatal("backend was not bound")
+		}
+	}
+}
+
+func TestLLMProviderEmptyModelsRoundTrip(t *testing.T) {
+	for _, models := range []LLMModels{nil, {}} {
+		params, err := llmProviderParams(LLMProvider{Models: models, SecretEnvelope: &secrets.Envelope{
+			Ciphertext: []byte("x"), Nonce: []byte("x"), WrappedDEK: []byte("x"), FormatVersion: 1, KeyProvider: "local", KeyVersion: 1,
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(params.Models) != "[]" {
+			t.Fatalf("models encoded as %s", params.Models)
+		}
+		provider, err := (llmProviderRow{Models: params.Models}).provider()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if provider.Models == nil || len(provider.Models) != 0 {
+			t.Fatalf("decoded models: %#v", provider.Models)
 		}
 	}
 }

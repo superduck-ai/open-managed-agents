@@ -61,6 +61,15 @@ function providerForm(provider: LLMProvider | null): ProviderForm {
       };
 }
 
+function hasModelParameters(model: ProviderModelDraft): boolean {
+  return Boolean(
+    model.contextWindow.trim() ||
+    model.maxOutputTokens.trim() ||
+    model.inputModalities.length !== 1 ||
+    model.inputModalities[0] !== 'text',
+  );
+}
+
 function providerFormInput(
   form: ProviderForm,
   provider: LLMProvider | null,
@@ -86,6 +95,11 @@ function providerFormInput(
         'llmModels.errorSlugInvalid',
         'Provider ID must contain 1 to 32 lowercase letters, digits, ".", "_" or "-" and start with a letter or digit.',
       ),
+    };
+  }
+  if (form.models.some((model) => !model.id.trim() && hasModelParameters(model))) {
+    return {
+      error: msg('llmModels.modelIdRequired', 'Model ID is required when model parameters are configured.'),
     };
   }
   if (

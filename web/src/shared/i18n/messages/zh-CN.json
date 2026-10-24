@@ -1,4 +1,5 @@
 {
+  "llmModels.modelIdRequired": "配置模型参数时必须填写模型 ID。",
   "llmModels.modelParameters": "模型参数",
   "llmModels.contextWindow": "上下文窗口",
   "llmModels.contextWindowInvalid": "Token 数必须是正整数，支持 K、M 后缀。",

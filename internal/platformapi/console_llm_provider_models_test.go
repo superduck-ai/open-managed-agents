@@ -1,6 +1,8 @@
 package platformapi
 
 import (
+	"encoding/json"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,5 +35,30 @@ func TestProviderModelsValidation(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"models":[],"model_ids":[]}`))
 	if _, ok := decodeLLMProviderRequest(httptest.NewRecorder(), request); ok {
 		t.Fatal("accepted two writable sources")
+	}
+}
+
+func TestProviderEmptyModelsResponse(t *testing.T) {
+	for _, fields := range []string{"", `,"models":null`, `,"models":[]`, `,"model_ids":[]`} {
+		request := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"name":"Provider","base_url":"https://models.example.com"`+fields+`}`))
+		response := httptest.NewRecorder()
+		body, ok := decodeLLMProviderRequest(response, request)
+		if !ok {
+			t.Fatal(response.Body.String())
+		}
+		_, _, models, ok := validateLLMProviderInput(response, body)
+		if !ok {
+			t.Fatal(response.Body.String())
+		}
+		writeJSON(response, http.StatusOK, formatLLMProvider(db.LLMProvider{Models: models}))
+		var encoded struct {
+			Models json.RawMessage `json:"models"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &encoded); err != nil {
+			t.Fatal(err)
+		}
+		if string(encoded.Models) != "[]" {
+			t.Fatalf("models response: %s", encoded.Models)
+		}
 	}
 }

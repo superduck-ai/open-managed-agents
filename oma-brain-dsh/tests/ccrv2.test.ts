@@ -1,3 +1,4 @@
+import { CompactionId } from "@deepseek-ai/dsh-compaction";
 import { expect, spyOn, test } from "bun:test";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { Context } from "@deepseek-ai/cordis";
@@ -852,6 +853,47 @@ async function compactedSessionFixture() {
   expect(await ctx.compaction.compactNow(session.runtime.agent, new AbortController().signal)).not.toBeNull();
   return { backend, ctx, model, config, session };
 }
+
+test.each([false, true])("compaction end clears pressure after an episode (failed=%s)", async failed => {
+  const { backend, ctx, session } = await compactedSessionFixture();
+  try {
+    await session.runtime.flushLog();
+    const native = session.runtime.agent.session;
+    const first = { compactionId: CompactionId("first"), turn: null };
+    native.append("compaction/start", first);
+    native.append("compaction/end", { ...first, ...(failed ? { error: "failed" } : {}) });
+    await session.runtime.flushLog();
+    native.append("user/message", createUserMessage({ source: { kind: "user" }, content: [{ type: "text", text: "new pressure".repeat(2000) }] }), { surfaceOp: "append" });
+    const currentTokens = ctx.tokenMeter.measure(native).totalTokens;
+    native.append("compaction/end", { compactionId: CompactionId("unpaired"), turn: null });
+    await session.runtime.flushLog();
+    const notifications = backend.output.get(session.id)!.filter(event => event.type === "agent.thread_context_compacted");
+    expect(notifications.at(-1)!.pre_compaction_tokens).toBe(currentTokens);
+    await session.close();
+  } finally { await ctx.fiber.dispose(); }
+});
+
+test("coalesced compaction reports pre-batch pressure and advances the dedup cursor", async () => {
+  const { backend, ctx, session } = await compactedSessionFixture();
+  try {
+    await session.runtime.flushLog();
+    const native = session.runtime.agent.session;
+    const initialTokens = ctx.tokenMeter.measure(native).totalTokens;
+    const first = native.snapshotEvents()[0]!.seq;
+    native.append("compaction/prune", { shadowedRange: { start: first, end: first }, shadowedSeqs: [first], shadowedTokenCount: 100 });
+    native.append("user/message", createUserMessage({ source: { kind: "user" }, content: [{ type: "text", text: "later pressure".repeat(2000) }] }), { surfaceOp: "append" });
+    expect(ctx.tokenMeter.measure(native).totalTokens).not.toBe(initialTokens);
+    const episode = { compactionId: CompactionId("coalesced"), turn: null };
+    native.append("compaction/start", episode);
+    const end = native.append("compaction/end", episode);
+    await session.runtime.flushLog();
+    const notifications = backend.output.get(session.id)!.filter(event => event.type === "agent.thread_context_compacted");
+    expect(notifications).toHaveLength(2);
+    expect(notifications.at(-1)!.pre_compaction_tokens).toBe(initialTokens);
+    expect(session.state.compactionSequences?.[session.id]).toBe(end.seq);
+    await session.close();
+  } finally { await ctx.fiber.dispose(); }
+});
 
 test.each(["state", "publication", "callback"] as const)("compaction notification retries after failed %s without duplicate enqueue", async failure => {
   const { backend, ctx, session } = await compactedSessionFixture();

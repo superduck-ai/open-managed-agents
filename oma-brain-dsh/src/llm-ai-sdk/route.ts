@@ -7,11 +7,11 @@ export interface AiSdkRoute {
   replayFormat: string;
   signedReasoning?: boolean;
   maxOutputTokens?: number;
+  maxOutputTokensLimit?: number;
   providerOptions?: SharedV4ProviderOptions;
 }
 
 export interface AiSdkAdapterOptions {
-  modelInfo?(provider: string, model: string): LlmResolvedModelInfo;
   attachments?: AttachmentStore;
   route(options: GenerateOptions): AiSdkRoute;
   modelInfo?(provider: string, model: string): LlmResolvedModelInfo;

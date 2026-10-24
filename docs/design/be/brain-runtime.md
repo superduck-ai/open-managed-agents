@@ -349,7 +349,7 @@ flowchart TD
     Notify --> Request[Next model request]
 ```
 
-Summary requests use the same authenticated OMA model route with `purpose=compaction`, the native structured checkpoint instruction and a default 65536-token generation cap. They reuse the conversation prefix and tool schemas. They do not replace the business model-response ID or publish an assistant response to CCRv2. Native `compaction/start`, `compaction/summary`, `compaction/end`, `compaction/prune` and replacement events remain in the private append-only DSH journal; summaries replace the model-visible surface through a checkpoint user message. Original user, assistant and tool events remain available for history and replay. This reduces model context, not stored transcript size.
+Summary requests use the same authenticated OMA model route with `purpose=compaction` and the native structured checkpoint instruction. The native requested generation budget defaults to 65536 tokens. OMA sets a route output ceiling for compaction requests from the selected model's `max_output_tokens`, or 32768 when omitted. Before invoking the AI SDK, the request converter takes the smaller of the requested budget and this ceiling; a smaller explicit summary budget stays unchanged. The route resolves the actual request session and model, including child sessions and the legacy `oma` provider, rather than applying a process-wide model limit. This rule applies to both Messages and Chat Completions and does not change ordinary calls' explicit-budget precedence. The native pressure headroom remains 65536 tokens, and its journal records the requested summary budget while the adapter enforces the wire-level ceiling. Summaries reuse the conversation prefix and tool schemas. They do not replace the business model-response ID or publish an assistant response to CCRv2. Native `compaction/start`, `compaction/summary`, `compaction/end`, `compaction/prune` and replacement events remain in the private append-only DSH journal; summaries replace the model-visible surface through a checkpoint user message. Original user, assistant and tool events remain available for history and replay. This reduces model context, not stored transcript size.
 
 The runtime coalesces successful summary and prune changes until its next log flush. It flushes the owning root or child journal before publishing `agent.thread_context_compacted`, including the token-meter's estimated pre-compaction pressure, and before the next ordinary model request. Failed summary attempts alone do not publish success. Replacement tool results stay private so each real execution still has exactly one public tool result. Failed persistence prevents the next model request and success notification.
 
@@ -363,7 +363,7 @@ The per-request callback is `refreshSessionContext`, shared by root and child re
 
 Each root session registers a DSH adapter under the internal provider route `oma:<session_id>`. Its model-info callback reads that session's assignment by the exact requested model ID, returning the selected catalog entry's context window, output limit and input modalities. Children use the same session-owned provider route and select their own model entry. This keeps identical model names in different tenants from sharing limits through the process-wide DSH adapter registry. The registration belongs to the root's plugin scope and is released with that scope. The model token, HTTP backend and upstream model string continue to use the existing OMA proxy route.
 
-Ordinary agent request configuration binds the session-owned provider and replaces any logged previous-model output budget with the currently selected model's `max_output_tokens`, or the shared default when omitted. The root's CCR model override is applied before the final binding; children use their own configured model. Thus set_model, configuration refresh and session restoration do not reuse a previous model's cap. Adapter metadata and the actual Messages/Chat Completions request use the same source. Auxiliary compaction requests retain their native explicit summary-generation budget. The generic AI SDK adapter still supports caller-specified request caps.
+Ordinary agent request configuration binds the session-owned provider and replaces any logged previous-model output budget with the currently selected model's `max_output_tokens`, or the shared default when omitted. The root's CCR model override is applied before the final binding; children use their own configured model. Thus set_model, configuration refresh and session restoration do not reuse a previous model's cap. Adapter metadata and the actual Messages/Chat Completions request use the same source. Auxiliary compaction requests bypass this hook and receive their output ceiling from the OMA route before SDK serialization. The generic AI SDK adapter still supports caller-specified request caps, with an optional route ceiling taking precedence when supplied.
 
 `SessionRuntime` owns the single final `configureModel` call for each ordinary request. The order is session-context refresh, journal flush, protocol `beforeRequest`, native request-config resolution, optional root `selectModel` override, then `configureModel`. CCR supplies only the root model selector; it does not bind the budget again. Children use the same runtime binding path without inheriting the root selector. Regression tests count one binding per model request across root calls, children, model switching and restoration, and verify invalid refreshes leave the previous context unchanged without sending a model request.
 
@@ -380,7 +380,7 @@ flowchart LR
 
 Image-offload recovery follows the native `IMAGE_OFFLOAD_REQUIRED` contract. Previously offloaded native image references serialize as DSH text placeholders without loading bytes. Mounting the plugin does not introduce an OMA image-byte quota, a remote file-upload adapter, or offload semantics for opaque `oma-image`/`oma-document` blocks. A huge uncompressible system prompt, tool schema, document or indivisible message can still exceed the upstream window.
 
-Regression coverage uses in-process fake models and persistence. It covers pressure-triggered conversation summaries, summary failure, one bounded overflow retry, root/child Bash-result pruning, journal durability before retry and notification, public result uniqueness, replay and process restart, request-budget parity for both backends, auxiliary-response identity and offloaded-image placeholders. It does not establish real-provider summary quality, billing, image-budget behavior or production performance; verify-be remains an explicitly requested acceptance path.
+Regression coverage uses in-process fake models and persistence. It covers pressure-triggered conversation summaries, summary failure, one bounded overflow retry, root/child Bash-result pruning, journal durability before retry and notification, public result uniqueness, replay and process restart, request-budget parity for both backends, auxiliary-response identity and offloaded-image placeholders. Compaction-budget tests exercise real AI SDK serialization with an in-process upstream that rejects budgets above configured limits, including native summary execution, root/child routes, missing limits, smaller explicit budgets and ordinary-call precedence. They do not establish real-provider summary quality, billing, image-budget behavior or production performance; verify-be remains an explicitly requested acceptance path.
 
 ### Repository sources in Brain sandbox startup
 
@@ -451,7 +451,7 @@ OMA 侧只提供配置，由 `plugin.ts` 以 `providers: ["oma"]` 加载插件�
 - `model-provider.ts`：按会话取得 assignment 与实际模型的 backend，每次请求用当前 model token
   创建 provider，Messages 使用 `authToken`（Bearer），Chat 使用 `apiKey`（Bearer）。自定义 fetch
   只允许向对应 Go 代理路径发送 POST，删除 `x-api-key`，为子 Agent 设置
-  `X-Claude-Code-Agent-Id`，禁止重定向，流空闲超时 300 秒。两种协议均按调用方显式 `maxTokens`、模型
+  `X-Claude-Code-Agent-Id`，禁止重定向，流空闲超时 300 秒。两种协议的普通请求均按调用方显式 `maxTokens`、模型
   `max_output_tokens`、32768 的顺序选择输出上限。Messages 关闭 SDK 默认的
   `eager_input_streaming`；Chat 把 `max_tokens` 改名为 `max_completion_tokens`，未配置时也发送默认上限。
 - `chat-reasoning.ts`：Chat 响应进入 AI SDK 前按与 Go 相同的规则规范化 reasoning 字段，
@@ -479,7 +479,7 @@ HTTP 与流内错误、取消、工具分片、大参数线性耗时、用量尾
 
 ### 默认输出预算
 
-Messages 和 Chat Completions 的默认输出预算均为 32768 token，与通用 DeepSeek Harness 默认值一致，不按具体模型名称猜测。模型配置的 `max_output_tokens` 覆盖默认值，调用方显式 `maxTokens` 优先级最高。Chat 请求始终携带选定的 `max_completion_tokens` 上限。推理内容与最终正文共享输出预算；预算只声明单次请求上限，不扩大上游能力，也不能将截断结果视为成功。
+Messages 和 Chat Completions 的默认输出预算均为 32768 token，与通用 DeepSeek Harness 默认值一致，不按具体模型名称猜测。模型配置的 `max_output_tokens` 覆盖默认值，普通调用方显式 `maxTokens` 优先级最高。`purpose=compaction` 的摘要请求额外受当前模型输出上限约束，实际预算为显式请求值与模型上限的较小值，模型未配置上限时使用 32768。Chat 请求始终携带选定的 `max_completion_tokens` 上限。推理内容与最终正文共享输出预算；预算只声明单次请求上限，不扩大上游能力，也不能将截断结果视为成功。
 
 升级影响：未配置逐模型上限时，Messages 的默认输出上限由 943718 降为 32768，Chat Completions 由省略上限改为默认发送 32768。需要保留更大输出预算的模型应显式配置 `max_output_tokens`。
 

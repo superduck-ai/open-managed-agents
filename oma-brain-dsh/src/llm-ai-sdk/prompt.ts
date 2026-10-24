@@ -18,7 +18,9 @@ interface SignedReasoning {
 }
 
 export async function callOptions(options: GenerateOptions, route: AiSdkRoute, attachments?: AttachmentStore): Promise<LanguageModelV4CallOptions> {
-  const maxOutputTokens = options.maxTokens ?? route.maxOutputTokens;
+  const requestedMaxOutputTokens = options.maxTokens ?? route.maxOutputTokens;
+  const maxOutputTokens = route.maxOutputTokensLimit === undefined ? requestedMaxOutputTokens
+    : Math.min(requestedMaxOutputTokens ?? route.maxOutputTokensLimit, route.maxOutputTokensLimit);
   return {
     prompt: await prompt(options, route, attachments),
     headers: attributionHeaders(),

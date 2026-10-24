@@ -135,39 +135,57 @@ func TestNATSBrokerAppliesCommandStreamLimits(t *testing.T) {
 	}
 }
 
-func TestNATSBrokerUpdatesExistingCommandStream(t *testing.T) {
+func TestNATSBrokerRestartUpdatesExistingStream(t *testing.T) {
 	srv := startTunnelNATS(t, server.Options{})
-	connection := connectTunnelNATS(t, srv.ClientURL())
-	js, err := jetstream.New(connection)
-	if err != nil {
-		t.Fatal(err)
-	}
+	bindings := testRequestBindings(t)
 	cfg := brokerTestConfig()
 	cfg.CommandStream = config.TunnelCommandStreamConfig{MaxBytes: 4 << 20, MaxMsgs: 10}
-	_, err = js.CreateStream(t.Context(), jetstream.StreamConfig{
-		Name: commandStreamName, Subjects: []string{commandSubjectPrefix + ">"},
-		Storage: jetstream.FileStorage, Replicas: 1, Retention: jetstream.WorkQueuePolicy,
-		Discard: jetstream.DiscardNew, MaxAge: cfg.RequestTimeout, MaxMsgs: -1,
-		MaxBytes: 8 << 20, MaxMsgSize: maxBrokerValueBytes, MaxConsumers: maxCommandConsumers,
-		Duplicates: cfg.RequestTimeout,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := js.Publish(t.Context(), commandSubject("tunnel", "main"), []byte("pending")); err != nil {
-		t.Fatal(err)
-	}
-	broker, err := newBroker(t.Context(), connection, cfg, 1, testRequestBindings(t))
+	broker, err := newBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), cfg, 1, bindings)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(broker.Close)
+	channels := []ChannelDeclaration{{Name: "main"}}
+	if _, err := broker.Poll(t.Context(), "tunnel", testTokenHash(), channels, 1, 0); err != nil {
+		t.Fatal(err)
+	}
 	info, err := broker.commands.Info(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Config.MaxBytes != cfg.CommandStream.MaxBytes || info.Config.MaxMsgs != cfg.CommandStream.MaxMsgs || info.State.Msgs != 1 {
-		t.Fatalf("stream after update: max_bytes=%d max_msgs=%d messages=%d", info.Config.MaxBytes, info.Config.MaxMsgs, info.State.Msgs)
+	previous := info.Config
+	previous.MaxBytes = 2 * cfg.CommandStream.MaxBytes
+	previous.MaxMsgSize = 2 * maxBrokerValueBytes
+	previous.MaxMsgs = 4096
+	previous.MaxAge = 2 * cfg.RequestTimeout
+	previous.Duplicates = 2 * cfg.RequestTimeout
+	if _, err := broker.js.UpdateStream(t.Context(), previous); err != nil {
+		t.Fatal(err)
+	}
+	command := testQueuedCommand("before-restart")
+	if err := broker.Enqueue(t.Context(), "tunnel", "tunnel", command); err != nil {
+		t.Fatal(err)
+	}
+	broker.Close()
+
+	restarted, err := newBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), cfg, 1, bindings)
+	if err != nil {
+		t.Fatalf("restart with existing stream: %v", err)
+	}
+	t.Cleanup(restarted.Close)
+	info, err = restarted.commands.Info(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Config.MaxBytes != cfg.CommandStream.MaxBytes || info.Config.MaxMsgSize != maxBrokerValueBytes || info.Config.MaxMsgs != cfg.CommandStream.MaxMsgs || info.Config.MaxAge != cfg.RequestTimeout || info.Config.Duplicates != cfg.RequestTimeout {
+		t.Fatalf("stream configuration after restart = %+v", info.Config)
+	}
+	if info.State.Msgs != 1 || info.State.Consumers != 1 {
+		t.Fatalf("stream state after restart = %+v", info.State)
+	}
+	commands := pollTestCommands(t, restarted, channels, 1)
+	if len(commands) != 1 || commands[0].RequestID != command.RequestID {
+		t.Fatalf("pending command after restart = %+v", commands)
 	}
 }
 

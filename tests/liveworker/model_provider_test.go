@@ -11,11 +11,14 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
+
+var isolatedProviderFixtures sync.Map
 
 const isolatedProviderName = "isolated worker model metadata"
 
@@ -36,14 +39,21 @@ func ensureIsolatedWorkerProvider(t *testing.T, e *liveEnv, cfg config.Config) {
 	}
 	e.cookies = response.Cookies()
 	providers := isolatedWorkerProviders(t, e)
+	ownerKey := e.url + isolatedProviderPath(e)
 	if len(providers) != 0 {
+		owned, ok := isolatedProviderFixtures.Load(ownerKey)
+		if ok && len(providers) == 1 && providers[0].ID == owned && providers[0].Name == isolatedProviderName {
+			return
+		}
 		t.Fatal("worker verification requires an empty isolated workspace before creating its fixture provider")
 	}
 	var created struct {
 		ID string `json:"id"`
 	}
 	requireOK(t, jsonv2.Unmarshal(e.request(t, http.MethodPost, isolatedProviderPath(e), "", isolatedProviderInput("http://127.0.0.1:9"), http.StatusCreated, e.cookies...), &created))
+	isolatedProviderFixtures.Store(ownerKey, created.ID)
 	t.Cleanup(func() {
+		defer isolatedProviderFixtures.Delete(ownerKey)
 		e.requestContext(context.Background(), t, http.MethodDelete, isolatedProviderPath(e)+"/"+created.ID, "", nil, http.StatusNoContent, e.cookies...)
 	})
 }
@@ -117,6 +127,7 @@ func TestIsolatedWorkerProviderRejectsExistingCatalog(t *testing.T) {
 
 func TestIsolatedWorkerProviderCreatesAndCleansOwnCatalog(t *testing.T) {
 	var methods []string
+	var created bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/auth/verify_magic_link" {
@@ -126,8 +137,13 @@ func TestIsolatedWorkerProviderCreatesAndCleansOwnCatalog(t *testing.T) {
 		methods = append(methods, r.Method)
 		switch r.Method {
 		case http.MethodGet:
-			_, _ = w.Write([]byte(`[]`))
+			if created {
+				_, _ = w.Write([]byte(`[{"id":"llmprov_created","name":"isolated worker model metadata"}]`))
+			} else {
+				_, _ = w.Write([]byte(`[]`))
+			}
 		case http.MethodPost:
+			created = true
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"llmprov_created"}`))
 		case http.MethodDelete:
@@ -142,8 +158,9 @@ func TestIsolatedWorkerProviderCreatesAndCleansOwnCatalog(t *testing.T) {
 	defer server.Close()
 	t.Run("fixture", func(t *testing.T) {
 		ensureIsolatedWorkerProvider(t, &liveEnv{url: server.URL}, config.Config{})
+		ensureIsolatedWorkerProvider(t, &liveEnv{url: server.URL}, config.Config{})
 	})
-	if strings.Join(methods, ",") != "GET,POST,DELETE" {
+	if strings.Join(methods, ",") != "GET,POST,GET,DELETE" {
 		t.Fatalf("fixture requests: %v", methods)
 	}
 }

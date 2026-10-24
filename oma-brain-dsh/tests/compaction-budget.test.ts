@@ -54,6 +54,7 @@ for (const backend of ["messages", "chat_completions"] as const) {
       const bodies: Payload[] = [];
       const api = new OmaApi("http://budget.test", (async (input, init) => {
         const request = new Request(input, init);
+        expect(request.headers.get("X-OMA-Model-Purpose")).toBe("compaction");
         expect(new URL(request.url).pathname).toBe(backend === "messages" ? "/v1/messages" : "/v1/chat/completions");
         expect(request.headers.get("X-Claude-Code-Agent-Id")).toBe(child ? sessionId : null);
         const body = await request.json();
@@ -87,6 +88,7 @@ for (const backend of ["messages", "chat_completions"] as const) {
     };
     const bodies: Payload[] = [];
     const api = new OmaApi("http://budget.test", (async (_input, init) => {
+      expect(new Headers(init!.headers).has("X-OMA-Model-Purpose")).toBe(false);
       bodies.push(JSON.parse(String(init!.body)));
       return modelResponse(backend, "ordinary reply");
     }) as typeof fetch);

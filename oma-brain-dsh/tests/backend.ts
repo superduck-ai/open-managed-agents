@@ -254,11 +254,7 @@ export class Backend {
           }
           this.executions.push(body.params);
           this.timeline.push({ type: "tool.dispatch", ...body.params });
-          const states = [...this.privateLog.values()].filter(
-            (p) => p.subtype === "dsh_brain_state",
-          );
-          if (!["read", "glob", "grep"].includes(body.params.name))
-            expect(states.at(-1)!.data.phase).toBe("dispatch");
+
           if (this.hangTool) return await new Promise<Response>(() => {});
           result = this.onTool ? await this.onTool(body.params) : { content: [{ type: "text", text: "actual stdout\n" }] };
         } else

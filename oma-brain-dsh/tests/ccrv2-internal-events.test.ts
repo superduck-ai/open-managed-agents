@@ -1,5 +1,5 @@
 import type { CcrPersistArgs } from "../src/ccrv2/persistence-contracts.ts";
-import { logData, stateData } from "./persistence-fixtures.ts";
+import { logData, deliveryData } from "./persistence-fixtures.ts";
 import { expect, spyOn, test } from "bun:test";
 import { CcrBatchUploader } from "../src/ccrv2/batch-uploader.ts";
 import { CcrClient, type CcrHttpRequest } from "../src/ccrv2/client.ts";
@@ -29,10 +29,10 @@ test("successful internal-events cleanup failures confirm batches without retrie
         }), { status }) : new Response(null, { status: 204 });
       });
       client.config.sleep = async (ms) => { waits.push(ms); };
-      const data = [logData({ log: "first" }), stateData({ revision: 2 }), logData({ log: "child" })] satisfies [unknown, unknown, unknown];
+      const data = [logData({ log: "first" }), deliveryData({ revision: 2 }), logData({ log: "child" })] satisfies [unknown, unknown, unknown];
       const results = await Promise.allSettled([
         client.persist("s", "dsh_log", data[0]),
-        client.persist("s", "dsh_brain_state", data[1]),
+        client.persist("s", "ccrv2_delivery", data[1]),
         client.persist("s", "dsh_log", data[2], "child"),
       ]);
       for (const result of results) expect(result).toEqual({ status: "fulfilled", value: undefined });
@@ -40,7 +40,7 @@ test("successful internal-events cleanup failures confirm batches without retrie
       expect(requests.flatMap((request) => (request.body as Body).events.map((event) => event.payload.data))).toEqual(data);
       expect(cleanups).toBe(2);
       expect(waits).toEqual([]);
-      await client.persist("s", "dsh_brain_state", stateData({ revision: 3 }));
+      await client.persist("s", "ccrv2_delivery", deliveryData({ revision: 3 }));
       expect(requests).toHaveLength(3);
     }
     expect(warn).not.toHaveBeenCalled();
@@ -60,7 +60,7 @@ test("session cancellation during successful internal-events cleanup still rejec
   const detach = client.bindLease("s").subscribe!(() => {});
   const completion = Promise.allSettled([
     client.persist("s", "dsh_log", logData({ first: true })),
-    client.persist("s", "dsh_brain_state", stateData({ revision: 2 })),
+    client.persist("s", "ccrv2_delivery", deliveryData({ revision: 2 })),
   ]);
   try {
     await cleaning.promise;
@@ -100,7 +100,7 @@ test("internal logs, state and child logs share a FIFO queue and confirm only th
     } finally { active--; }
   });
   const writes = Array.from({ length: 302 }, (_, index): CcrPersistArgs => index % 3 === 1
-    ? ["dsh_brain_state", stateData({ revision: index })]
+    ? ["ccrv2_delivery", deliveryData({ revision: index })]
     : ["dsh_log", logData({ index }), index % 3 === 2 ? "child" : undefined]);
   const data = writes.map(([, value]) => value);
   const pending = Promise.allSettled(writes.map((args, index) => client.persist("s", ...args)
@@ -121,10 +121,10 @@ test("internal logs, state and child logs share a FIFO queue and confirm only th
     expect(events.map((event) => event.payload.data)).toEqual(data);
     expect(confirmed).toEqual(data.map((_, index) => index));
     events.forEach((event, index) => {
+      expect(event.payload).not.toHaveProperty("schema_version");
       expect(event.agent_id).toBe(index % 3 === 2 ? "child" : undefined);
       expect(event.is_compaction).toBe(false);
-      expect(event.payload).toMatchObject({ type: "system", schema_version: 1,
-        subtype: index % 3 === 1 ? "dsh_brain_state" : "dsh_log" });
+      expect(event.payload).toMatchObject({ type: index % 3 === 1 ? "ccrv2_delivery" : "dsh_log" });
     });
     for (const request of requests) {
       expect(request).toMatchObject({ method: "POST", path: "/v1/code/sessions/s/worker/internal-events", timeout: 10_000 });
@@ -189,11 +189,11 @@ test("a retried internal batch retains UUIDs and queued snapshots while refreshi
     waits.push(ms);
     if (waits.length === 2) { waiting.resolve(); await resume.promise; }
   };
-  const data = stateData({ revision: 1 });
+  const data = deliveryData({ revision: 1 });
   let confirmed = false;
   const pending = Promise.allSettled([
     client.persist("s", "dsh_log", logData({ seed: true })),
-    client.persist("s", "dsh_brain_state", data).then(() => { confirmed = true; }),
+    client.persist("s", "ccrv2_delivery", data).then(() => { confirmed = true; }),
     client.persist("s", "dsh_log", logData({ child: true }), "child"),
   ]);
   try {
@@ -207,7 +207,7 @@ test("a retried internal batch retains UUIDs and queued snapshots while refreshi
     expect(requests).toHaveLength(4);
     expect(requests[2]!.body).toEqual(requests[1]!.body);
     expect(requests[3]!.body).toEqual(requests[1]!.body);
-    expect((requests[1]!.body as Body).events[0]!.payload.data).toEqual(stateData({ revision: 1 }));
+    expect((requests[1]!.body as Body).events[0]!.payload.data).toEqual(deliveryData({ revision: 1 }));
     expect(requests.map((request) => request.token)).toEqual(["token-7", "token-8", "token-9", "token-10"]);
     expect(waits).toEqual([500, 1000]);
   } finally { first.resolve(); resume.resolve(); detach(); await pending; }
@@ -262,7 +262,7 @@ test("a terminal internal batch failure rejects its backlog instead of sending l
     let attempts = 0;
     const { client } = fixture(async () => { attempts++; return new Response(null, { status }); });
     const results = await Promise.allSettled(Array.from({ length: 240 }, (_, index) =>
-      client.persist("s", "dsh_brain_state", stateData({ revision: index }))));
+      client.persist("s", "ccrv2_delivery", deliveryData({ revision: index }))));
     expect(results.every((result) => result.status === "rejected")).toBe(true);
     expect(attempts).toBe(status === 503 ? 3 : 1);
   }

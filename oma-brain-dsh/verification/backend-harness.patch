@@ -64,7 +64,7 @@ index 6475d17..feecebb 100644
 +proxy; it does not script upstream responses. It checks public allow approval and
 +sandbox bytes, SIGKILL plus natural lease expiration and retained model history,
 +CCRv2 `updatedInput` over real JetStream, and an inflight Bash side effect followed
-+by SIGKILL with blocked recovery and no replay. The public `updated_input` field is
++by SIGKILL with native recovery and no replay. The public `updated_input` field is
 +asserted to return HTTP 400, so replacement input is a wire-level Brain test and
 +does not certify a public approval editor. The private turn and deliveries settle,
 +but the public approval remains pending; the test checks this limitation explicitly
@@ -82,7 +82,7 @@ index 4c92a14..d5a6c75 100644
 +proxy. Credentials stay outside evidence. It runs Bun Brain processes, checks
 +public approval, sandbox bytes, history and worker epoch takeover after SIGKILL,
 +then kills a process during Bash execution and verifies unknown tool results
-+remain blocked without replay. The CCRv2 replacement-input check injects a reply
++become native failure results without replay. The CCRv2 replacement-input check injects a reply
 +through JetStream; public `user.tool_confirmation.updated_input` remains rejected.
 +After that injection the private turn completes but the public approval stays
 +pending. The test asserts this limitation before terminating that session; it does

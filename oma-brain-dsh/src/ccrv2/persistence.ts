@@ -1,4 +1,6 @@
-import type { DshLogData } from "./persistence-contracts.ts";
+import { createHash } from "node:crypto";
+import { assertPersistenceFormat } from "./recovery.ts";
+import { workerDiagnostic } from "./diagnostics.ts";
 import type { Context } from "@deepseek-ai/cordis";
 import {
   SessionPersistence,
@@ -103,11 +105,7 @@ class RemoteHandle implements SessionHandle {
       options?.signal?.throwIfAborted();
       assertContiguous(this.id, batch, this.record.events.length);
       if (!batch.length) return;
-      await this.store.persist(this.id, {
-        header: this.header,
-        inherited: this.record.inherited,
-        events: batch,
-      });
+      await this.store.persist(this.id, batch);
       this.record.events.push(...structuredClone(batch));
     });
   }
@@ -118,11 +116,7 @@ class RemoteHandle implements SessionHandle {
       const batch = this.buffered.slice();
       if (!batch.length) return;
       assertContiguous(this.id, batch, this.record.events.length);
-      await this.store.persist(this.id, {
-        header: this.header,
-        inherited: this.record.inherited,
-        events: batch,
-      });
+      await this.store.persist(this.id, batch);
       this.record.events.push(...structuredClone(batch));
       this.buffered.splice(0, batch.length);
     });
@@ -153,9 +147,23 @@ export class CcrPersistence extends SessionPersistence {
     if (previous && previous !== parent) throw new Error("Thread belongs to another session");
     this.parents.set(SessionId(id), SessionId(parent));
   }
-  persist(id: SessionId, data: DshLogData): Promise<void> {
+  async persist(id: SessionId, events: readonly SessionEvent[]): Promise<void> {
     const parent = this.parents.get(id);
-    return this.backend.persist(parent ?? id, "dsh_log", data, parent ? id : undefined);
+    const results = await Promise.allSettled(events.map(async (event) => {
+      const message = event.type === "tool/result" ? event.data.message : undefined;
+      const text = message?.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
+      const diagnostic = message && text !== undefined ? {
+        session_ref: createHash("sha256").update(parent ?? id).digest("hex"),
+        session_thread_ref: createHash("sha256").update(id).digest("hex"),
+        call_ref: createHash("sha256").update(message.toolCallId).digest("hex"),
+        text_utf16_units: text.length, has_nul: text.includes(String.fromCharCode(0)),
+      } : undefined;
+      if (diagnostic) workerDiagnostic("info", "ccrv2_tool_result_durability", { ...diagnostic, phase: "start" });
+      await this.backend.persist(parent ?? id, "dsh_log", event, parent ? id : undefined);
+      if (diagnostic) workerDiagnostic("info", "ccrv2_tool_result_durability", { ...diagnostic, phase: "confirmed" });
+    }));
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
   }
   constructor(ctx: Context, config: { backend: CcrBackend }) {
     super(ctx);
@@ -171,39 +179,28 @@ export class CcrPersistence extends SessionPersistence {
   async load(id: SessionId): Promise<Stored | undefined> {
     if (this.records.has(id)) return this.records.get(id);
     const parent = this.parents.get(id);
-    // Older versions stored child logs in the foreground stream. Read that
-    // prefix first, then the separately scoped child stream used by CCRv2.
-    const payloads = await this.backend.privateEvents(parent ?? id);
-    if (parent) payloads.push(...await this.backend.privateEvents(parent, { subagents: true }));
+    const payloads = await this.backend.privateEvents(parent ?? id, { agentId: parent ? id : undefined });
     let record: Stored | undefined;
     for (const payload of payloads) {
-      if (payload.subtype !== "dsh_log") continue;
-      if (payload.schema_version !== 1)
-        throw new Error("Unsupported dsh log envelope");
+      assertPersistenceFormat(payload, parent ?? id);
+      if (payload.type !== "dsh_log") continue;
       const data = payload.data;
-      if (data.header?.id !== id) continue;
-      assertStoredId(id, data.header);
-      assertVersion(data.header);
-      record ??= {
-        header: materializeCreateHeader(data.header),
-        inherited: data.inherited,
-        events: [],
-      };
-      if (!sameJson(record.header, data.header))
-        throw new Error("Log header changed");
-      if (!Array.isArray(data.events)) throw new Error("Invalid dsh log batch");
-      const batch = validateStoredEvents(
-        record.header,
-        structuredClone(data.events),
-      );
-      for (const event of batch) {
-        if (event.seq < record.events.length) {
-          if (!sameJson(record.events[event.seq], event))
-            throw new Error("Conflicting dsh log event");
-        } else {
-          assertContiguous(id, [event], record.events.length);
-          record.events.push(event);
-        }
+      if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid dsh log record");
+      if (!("seq" in data)) {
+        assertStoredId(id, data);
+        assertVersion(data);
+        if (data.isSeeded) throw new Error("Forked sessions are not enabled");
+        if (record && !sameJson(record.header, data)) throw new Error("Log header changed");
+        record ??= { header: materializeCreateHeader(data), inherited: 0, events: [] };
+        continue;
+      }
+      if (!record) throw new Error("Missing dsh log header");
+      const [event] = validateStoredEvents(record.header, [structuredClone(data)]);
+      if (event.seq < record.events.length) {
+        if (!sameJson(record.events[event.seq], event)) throw new Error("Conflicting dsh log event");
+      } else {
+        assertContiguous(id, [event], record.events.length);
+        record.events.push(event);
       }
     }
     if (record) this.records.set(id, record);
@@ -230,7 +227,8 @@ export class CcrPersistence extends SessionPersistence {
     const handle = new RemoteHandle(this, header.id, "write", record);
     this.writers.set(header.id, handle);
     try {
-      await this.persist(header.id, { header: record.header, inherited: 0, events: [] });
+      const parent = this.parents.get(header.id);
+      await this.backend.persist(parent ?? header.id, "dsh_log", record.header, parent ? header.id : undefined);
       await handle.flush();
     } catch (error) {
       this.writers.delete(header.id);

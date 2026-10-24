@@ -1,3 +1,4 @@
+import type { CcrPersistence } from "../src/ccrv2/persistence.ts";
 import { expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
 import { ToolCallId } from "@deepseek-ai/dsh-llm";
@@ -209,11 +210,14 @@ test("root close keeps the provider alive until a child's tool result checkpoint
   try {
     await f.session.open();
     const provider = f.providers()[0]!;
-    const result = f.session.recordResult.bind(f.session);
-    f.session.recordResult = async (...args) => {
-      writing.resolve();
-      await confirmed.promise;
-      return result(...args);
+    const persistence = f.ctx.sessionPersistence as CcrPersistence;
+    const persist = persistence.persist.bind(persistence);
+    persistence.persist = async (id, events) => {
+      if (events.some((event) => event.type === "tool/result")) {
+        writing.resolve();
+        await confirmed.promise;
+      }
+      await persist(id, events);
     };
     f.b.modelScript = [toolEvents("child", "draining_call"), textEvents("done")];
     settled = f.session.subagents.send({ name: "child", system_prompt: "Test", message: "Run" },
@@ -269,7 +273,7 @@ test.each(["user.interrupt", "control_request"])("confirmed %s ends as end_turn 
       ? { type, request_id: "interrupt_request", request: { subtype: "interrupt" } }
       : { type });
     await turn;
-    expect(f.session.blocked()).toBe(false);
+    expect(f.session.abort.signal.aborted).toBe(false);
     expect([...f.b.publicLog.values()].some((event) => event.type === "result" && event.is_error === true)).toBe(false);
     expect([...f.b.publicLog.values()].filter((event) => event.type === "result").map((event) => event.is_error)).toEqual([false]);
     expect([...f.b.publicLog.values()].some((event) => event.type === "agent.message")).toBe(false);

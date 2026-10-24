@@ -1,6 +1,7 @@
 # Live verification
 
 `testdata/chat_brain_dsh_test.go` is a historical source template that runs inside the existing OMA Go `verify-be` harness.
+Its assertions now read native logs and minimal CCRv2 delivery state. The template still targets the historical backend harness APIs and is not a current-run result.
 It needs a backend revision with Brain gateway support. It uses a real backend,
 NATS cluster, database, MCP server and model.
 
@@ -44,8 +45,8 @@ processes. Its stages check:
   Only the approved path and content are written; both argument versions persist.
   The private turn completes and deliveries drain, while the public approval
   remains pending. The test asserts that limitation, then terminates the session.
-- SIGKILL during a real Bash call leaves a durable dispatch record. Takeover
-  marks the session blocked, emits a recovery error and does not repeat the effect.
+- SIGKILL during a real Bash call leaves a native tool/call record. Takeover
+  appends a native unknown-result error, closes the input delivery and does not repeat the effect.
 
 Parameter replacement is verified at the Brain's CCRv2 input boundary. A public
 approval editor still requires backend support. The Brain gateway is inherited

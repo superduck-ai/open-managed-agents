@@ -1,3 +1,4 @@
+import { nativeOutcomes } from "./session-log.ts";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
 import { SessionId } from "@deepseek-ai/dsh-session";
@@ -65,7 +66,7 @@ describe("original dsh loop over CCRv2", () => {
       expect(b.requests).toHaveLength(0);
       expect(b.publicLog.get("invalid_input_failed_result")?.is_error).toBe(true);
       expect(b.statuses.at(-1)).toBe("idle");
-      expect(session.state.completed).toContain("invalid_input");
+      expect(session.delivery.completed).toContain("invalid_input");
       await session.receive("valid_followup", { content: "continue" });
       expect(b.requests).toHaveLength(1);
       expect(b.publicLog.get("valid_followup_result")?.is_error).toBe(false);
@@ -148,7 +149,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(messages.map((event) => event.content)).toEqual([
       [{ type: "text", text: "" }], undefined, [{ type: "text", text: "你好" }],
     ]);
-    const replay = session.state.outbox;
+    const replay = session.delivery.outbox;
     expect(replay).toEqual([]);
     expect(b.timeline.filter((event) => event.type === "event_start" && event.event.id === messages[0]!.id)).toHaveLength(0);
     for (const message of messages.slice(1)) {
@@ -225,7 +226,7 @@ describe("original dsh loop over CCRv2", () => {
       } });
     };
     await session.receive("gateway_down", { message: { content: "run" } });
-    expect(session.blocked()).toBe(false);
+    expect(session.abort.signal.aborted).toBe(false);
     expect(b.executions).toHaveLength(0);
     const result = b.requests[1]!.messages.flatMap((m: Payload) => m.content)
       .find((block: Payload) => block.type === "tool_result");
@@ -247,7 +248,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(await session.drain(0)).toBe(true);
     await session.receive("draining", { message: { content: "run" } });
     expect(b.executions).toHaveLength(0);
-    expect(session.blocked()).toBe(false);
+    expect(session.abort.signal.aborted).toBe(false);
     expect(session.dispatching()).toBe(false);
     const result = b.requests[1]!.messages.flatMap((m: Payload) => m.content)
       .find((block: Payload) => block.type === "tool_result");
@@ -279,8 +280,8 @@ describe("original dsh loop over CCRv2", () => {
     release.resolve();
     expect(await draining).toBe(true);
     await turn;
-    expect(session.state.toolOutcomes.call_1).toEqual({ text: "drained\n", failed: false });
-    expect(session.blocked()).toBe(false);
+    expect(nativeOutcomes(session).call_1).toEqual({ text: "drained\n", failed: false });
+    expect(session.abort.signal.aborted).toBe(false);
   });
 
   test("provider HTTP 402 publishes a safe quota error before ACK and a later turn can recover", async () => {
@@ -307,11 +308,11 @@ describe("original dsh loop over CCRv2", () => {
       expect(JSON.stringify([...b.publicLog.values()])).not.toContain("sk-test-private");
       expect(diagnostics.some((line) => line.includes('"failure_reason":"model_quota_exhausted"'))).toBe(true);
       expect(diagnostics.join("\n")).not.toContain("sk-test-private");
-      expect(session.state.completed).toContain("quota_failure");
-      expect(session.state.outbox).toEqual([]);
+      expect(session.delivery.completed).toContain("quota_failure");
+      expect(session.delivery.outbox).toEqual([]);
       const published = b.timeline.findIndex((entry) => entry.type === "result");
       const saved = b.timeline.findIndex((entry) => entry.type === "private.persist"
-        && entry.payload.subtype === "dsh_brain_state"
+        && entry.payload.type === "ccrv2_delivery"
         && entry.payload.data.outbox.some((event: Payload) => event.type === "result"));
       const ack = b.timeline.findIndex((entry) => entry.type === "input.ack");
       expect(saved).toBeGreaterThanOrEqual(0);
@@ -353,8 +354,8 @@ describe("original dsh loop over CCRv2", () => {
     await processing.promise;
     await terminal.promise;
     expect(confirmed).toBe(false);
-    expect(session.state.completed).toContain("cancel_delivery");
-    expect(session.state.outbox).toEqual([]);
+    expect(session.delivery.completed).toContain("cancel_delivery");
+    expect(session.delivery.outbox).toEqual([]);
     expect(b.publicLog.has("cancel_delivery_result")).toBe(true);
     expect(b.processed).toEqual([]);
     session.stop();
@@ -399,8 +400,9 @@ describe("original dsh loop over CCRv2", () => {
         const body = JSON.stringify(options.body);
         const matches = stage === "publication"
           ? options.path.endsWith("/events") && body.includes('"type":"tool_result"')
-          : options.path.endsWith("/internal-events") && body.includes('"subtype":"dsh_brain_state"') &&
-            body.includes(`"phase":"${stage}"`);
+          : options.path.endsWith("/internal-events") && (stage === "accepted"
+            ? body.includes('"type":"ccrv2_delivery"')
+            : body.includes(`"type":"tool/${stage === "dispatch" ? "call" : "result"}"`));
         if (matches && failures < 4) {
           failures++;
           return new Response(null, { status: stage === "accepted" ? 401 : 503 });
@@ -424,7 +426,7 @@ describe("original dsh loop over CCRv2", () => {
         expect(b.requests).toHaveLength(2);
         expect(b.executions).toHaveLength(1);
         expect(b.processed).toEqual([`retry_${stage}`]);
-        expect(session.state.outbox).toEqual([]);
+        expect(session.delivery.outbox).toEqual([]);
       } finally { resume.resolve(); session.stop(); await turn.catch(() => {}); }
     }
   });
@@ -480,9 +482,9 @@ describe("original dsh loop over CCRv2", () => {
     };
     const state = (predicate: (data: Payload) => boolean) => first(
       (event) => event.type === "private.persist" &&
-        event.payload.subtype === "dsh_brain_state" && predicate(event.payload.data),
+        event.payload.type === "ccrv2_delivery" && predicate(event.payload.data),
     );
-    const accepted = state((s) => s.inputId === "durable_order" && s.phase === "accepted");
+    const accepted = state((s) => s.inputId === "durable_order" && !s.completed.includes("durable_order"));
     const ack = first((e) => e.type === "input.ack" && e.inputId === "durable_order");
     const processing = first((e) => e.type === "input.delivery" && e.inputId === "durable_order" && e.status === "processing");
     const model = first((e) => e.type === "model.request");
@@ -490,30 +492,19 @@ describe("original dsh loop over CCRv2", () => {
     expect(processing).toBeLessThan(model);
     const approval = first((e) => e.type === "control_request");
     expect(b.timeline.slice(model, approval).some(
-      (e) => e.type === "private.persist" && e.payload.subtype === "dsh_log",
+      (e) => e.type === "private.persist" && e.payload.type === "dsh_log",
     )).toBe(true);
-    const approved = state((s) => s.approvedCalls.call_1?.effective.command === "approved");
-    const sandbox = first((e) => e.type === "sandbox.prepare");
-    const dispatch = state((s) => s.phase === "dispatch");
     const execution = first((e) => e.type === "tool.dispatch");
-    expect(approval).toBeLessThan(sandbox);
-    expect(sandbox).toBeLessThan(dispatch);
-    expect(approved).toBe(dispatch);
-    expect(dispatch).toBeLessThan(execution);
-    const stateSaves = (from: number, to: number) => b.timeline.slice(from, to).filter(
-      (e) => e.type === "private.persist" && e.payload.subtype === "dsh_brain_state",
-    ).length;
-    expect(stateSaves(model, approval)).toBe(1);
-    expect(stateSaves(approval, execution)).toBe(1);
-    expect(b.timeline.filter((e) => e.type === "private.persist" && e.payload.subtype === "dsh_log"
-      && e.payload.data.events.length === 0)).toHaveLength(1);
-    const result = state((s) => s.phase === "result" && !!s.toolOutcomes.call_1);
+    const call = first((e) => e.type === "private.persist" && e.payload.type === "dsh_log" && e.payload.data.type === "tool/call");
+    const result = first((e) => e.type === "private.persist" && e.payload.type === "dsh_log" && e.payload.data.type === "tool/result");
+    expect(call).toBeLessThan(execution);
+    expect(result).toBeGreaterThan(execution);
     const nextModel = b.timeline.findIndex((e, i) => i > execution && e.type === "model.request");
     expect(nextModel).toBeGreaterThan(result);
-    const completed = state((s) => s.phase === "completed" && s.outbox.length > 0);
+    const completed = state((s) => s.completed.includes("durable_order") && s.outbox.length > 0);
     const idle = b.timeline.findIndex((e, i) => i > completed && e.type === "worker.status" && e.status === "idle");
     const published = first((e) => e.type === "result");
-    const cleared = state((s) => s.phase === "completed" && s.outbox.length === 0);
+    const cleared = state((s) => s.completed.includes("durable_order") && s.outbox.length === 0);
     expect(idle).toBeGreaterThan(completed);
     expect(cleared).toBeLessThan(idle);
     expect(published).toBeLessThan(cleared);
@@ -543,7 +534,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(b.requests).toHaveLength(1);
     expect(b.executions).toHaveLength(1);
     expect(
-      first.session.state.outbox.some((event) => event.type === "user"),
+      first.session.delivery.outbox.some((event) => event.type === "user"),
     ).toBe(true);
     await first.session.close();
     b.failPublicType = undefined;
@@ -558,7 +549,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(results[0]!.message.content[0].tool_use_id).toBe("call_1");
     expect(b.requests).toHaveLength(1);
     expect(b.executions).toHaveLength(1);
-    expect(second.session.state.outbox).toEqual([]);
+    expect(second.session.delivery.outbox).toEqual([]);
   });
 
   test("messages and tool results precede the next tool or model request", async () => {
@@ -664,11 +655,11 @@ describe("original dsh loop over CCRv2", () => {
     b.failPublicEvents = true;
     const turn = first.session.receive("unpublished", { message: { content: "hello" } });
     turn.catch(() => {});
-    await eventually(() => first.session.state.completed.includes("unpublished") && b.failedCcrWrites > 0);
+    await eventually(() => first.session.delivery.completed.includes("unpublished") && b.failedCcrWrites > 0);
     first.session.stop();
     await expect(turn).rejects.toThrow();
-    expect(first.session.state.completed).toContain("unpublished");
-    expect(first.session.state.outbox.length).toBeGreaterThan(0);
+    expect(first.session.delivery.completed).toContain("unpublished");
+    expect(first.session.delivery.outbox.length).toBeGreaterThan(0);
     await first.session.close();
     b.failPublicEvents = false;
     const second = await open(b);
@@ -679,7 +670,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(
       [...b.publicLog.values()].filter((p) => p.type === "result"),
     ).toHaveLength(1);
-    expect(second.session.state.outbox).toEqual([]);
+    expect(second.session.delivery.outbox).toEqual([]);
   });
   test("unconfirmed input checkpoint is not acknowledged or sent to the model", async () => {
     const b = backend();
@@ -696,28 +687,20 @@ describe("original dsh loop over CCRv2", () => {
     b.failWrites = false;
   });
 
-  test("an epoch rejection at the dispatch checkpoint prevents tool execution", async () => {
+  test("an epoch rejection at the native tool-call checkpoint prevents execution", async () => {
     const b = backend();
     b.modelScript = [toolEvents()];
-    const { session } = await open(b);
-    b.onApproval = async (p) => {
-      b.a.worker_epoch++;
-      await session.control({
-        type: "control_response",
-        response: {
-          subtype: "success",
-          request_id: p.request_id,
-          response: { behavior: "allow" },
-        },
-      });
-    };
-    await expect(
-      session.receive("lost_lease", { message: { content: "run" } }),
-    ).rejects.toThrow("409");
-    expect(b.sandboxCount).toBe(1);
-    expect(b.executions).toEqual([]);
-    expect(b.requests).toHaveLength(1);
-    b.a.worker_epoch--;
+    const { session, client } = await open(b);
+    const request = client.config.request;
+    client.config.request = async (options) => options.path.endsWith("/internal-events")
+      && JSON.stringify(options.body).includes('"type":"tool/call"')
+      ? new Response(null, { status: 409 }) : request(options);
+    try {
+      await expect(session.receive("lost_lease", { content: "run" })).rejects.toThrow("409");
+      expect(b.sandboxCount).toBe(0);
+      expect(b.executions).toEqual([]);
+      expect(b.requests).toHaveLength(1);
+    } finally { client.config.request = request; }
   });
   test("denied tool allocates no sandbox and continues the model turn", async () => {
     const b = backend();
@@ -788,7 +771,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(
       [...b.publicLog.values()].filter((p) => p.type === "result"),
     ).toHaveLength(1);
-    expect(session.state.phase).toBe("completed");
+    expect(session.delivery.completed).toContain(session.delivery.inputId);
     expect(b.sandboxCount).toBe(0);
   });
 
@@ -813,11 +796,6 @@ describe("original dsh loop over CCRv2", () => {
     expect(b.executions).toEqual([
       { name: "bash", arguments: { command: "approved" } },
     ]);
-    expect(session.state.approvedCalls.call_1).toEqual({
-      name: "Bash",
-      original: { command: "original" },
-      effective: { command: "approved" },
-    });
     expect(b.mcpMethods).toEqual(["initialize", "notifications/initialized", "tools/call"]);
     expect(JSON.stringify(b.requests[1]!.messages)).toContain("approved");
     expect([...b.publicLog.values()].filter((event) => event.type === "system.message"))
@@ -835,7 +813,7 @@ describe("original dsh loop over CCRv2", () => {
       arguments: '{"command":"original"}',
     });
     await stored.close();
-    expect(session.state.phase).toBe("completed");
+    expect(session.delivery.completed).toContain(session.delivery.inputId);
   });
 
   test("approval key order changes do not publish argument notices or add model context", async () => {
@@ -858,10 +836,9 @@ describe("original dsh loop over CCRv2", () => {
     };
     await session.receive("input_write", { message: { content: "write" } });
     expect(b.executions).toEqual([{ name: "write", arguments: effective }]);
-    expect(session.state.approvedCalls.call_1).toEqual({ name: "Write", original, effective });
     expect([...b.publicLog.values()].filter((event) => event.type === "system.message")).toEqual([]);
     expect(JSON.stringify(b.requests[1]!.messages)).not.toContain("OMA approval changed");
-    expect(session.state.phase).toBe("completed");
+    expect(session.delivery.completed).toContain(session.delivery.inputId);
   });
 
   test("signed thinking survives the tool loop and fresh-host history restoration", async () => {
@@ -965,7 +942,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(history).toContain("first user");
     expect(history).toContain("hello");
     expect(history).toContain("second user");
-    expect(second.session.state.completed).toEqual(["first", "second"]);
+    expect(second.session.delivery.completed).toEqual(["first", "second"]);
   });
 
   test("a new plugin host resumes logs whose stored key order differs between batches", async () => {
@@ -981,7 +958,7 @@ describe("original dsh loop over CCRv2", () => {
       message: { content: "first user " + "x".repeat(40_000) },
     });
     await first.session.close();
-    const logs = [...b.privateLog.entries()].filter(([, payload]) => payload.subtype === "dsh_log");
+    const logs = [...b.privateLog.entries()].filter(([, payload]) => payload.type === "dsh_log");
     expect(logs.some(([, payload]) => JSON.stringify(payload).length > 32_768)).toBe(true);
     for (const [uuid, payload] of logs)
       if (JSON.stringify(payload).length <= 32_768) b.privateLog.set(uuid, jsonbOrder(payload) as Payload);
@@ -995,7 +972,7 @@ describe("original dsh loop over CCRv2", () => {
     const history = JSON.stringify(b.requests[1]!.messages);
     expect(history).toContain("first user");
     expect(history).toContain("second user");
-    expect(second.session.state.completed).toEqual(["first", "second"]);
+    expect(second.session.delivery.completed).toEqual(["first", "second"]);
   });
 });
 

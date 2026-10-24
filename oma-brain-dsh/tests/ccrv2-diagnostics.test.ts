@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { CcrClient, CcrHttpError } from "../src/ccrv2/client.ts";
+import { CcrRecoveryError } from "../src/ccrv2/recovery.ts";
 import { failureDiagnostic } from "../src/ccrv2/diagnostics.ts";
 
 test("registration failures identify the request and response without logging credentials or response bodies", async () => {
@@ -76,4 +77,12 @@ test("logging failures cannot alter registration success or its original failure
     client.config.request = async () => { throw failure; };
     await expect(client.register("session", "token")).rejects.toBe(failure);
   } finally { info.mockRestore(); errorLog.mockRestore(); }
+});
+
+test("recovery diagnostics identify the invalid field without copying persisted contents", () => {
+  for (const reason of ["invalid_delivery", "unsupported_persistence_format"] as const) {
+    expect(failureDiagnostic(new CcrRecoveryError("session", reason, "outbox"))).toEqual({
+      failure_reason: reason, persistence_field: "outbox",
+    });
+  }
 });

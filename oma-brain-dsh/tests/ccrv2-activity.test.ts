@@ -203,10 +203,10 @@ test("the plugin sends during real model and tool work, stops for approval and k
     expect(clock.pending.size).toBe(0);
     const turn = session.receive("active", { content: "run tool" });
     await eventually(() => backend.requests.length === 1);
-    const revision = session.state.revision;
+    const revision = session.delivery.revision;
     clock.fire();
     await eventually(() => [...backend.publicLog.values()].filter((event) => event.type === "keep_alive").length === 1);
-    expect(session.state.revision).toBe(revision);
+    expect(session.delivery.revision).toBe(revision);
     expect(JSON.stringify([...backend.privateLog.values()])).not.toContain('"keep_alive"');
     model.resolve();
     await eventually(() => session.approvals.size === 1 && backend.statuses.at(-1) === "requires_action");
@@ -223,7 +223,7 @@ test("the plugin sends during real model and tool work, stops for approval and k
     expect(clock.pending.size).toBe(0);
     expect(backend.processed).toEqual(["active"]);
     expect(backend.executions).toHaveLength(1);
-    expect(session.state.completed).toContain("active");
+    expect(session.delivery.completed).toContain("active");
     expect(JSON.stringify([...backend.privateLog.values()])).not.toContain('"keep_alive"');
   } finally { model.resolve(); tool.resolve(); await ctx.fiber.dispose(); backend.stop(); }
 });
@@ -260,6 +260,6 @@ test("a pending keepalive cannot delay a model result or terminal publication", 
     expect(clock.pending.size).toBe(0);
     expect(session.abort.signal.aborted).toBe(false);
     expect([...backend.publicLog.values()].some((event) => event.type === "result")).toBe(true);
-    expect(session.state.outbox).toEqual([]);
+    expect(session.delivery.outbox).toEqual([]);
   } finally { model.resolve(); await ctx.fiber.dispose(); backend.stop(); }
 });

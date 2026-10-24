@@ -26,16 +26,18 @@ type dshLiveConfig struct {
 }
 type dshCall struct {
 	Name      string
-	Original  map[string]any
-	Effective map[string]any
+	Arguments string
 }
-type dshState struct {
-	Revision      int
-	Phase         string
-	InputID       string
-	Completed     []string
-	ApprovedCalls map[string]dshCall
-	Outbox        []json.RawMessage
+type dshDelivery struct {
+	Revision  int
+	InputID   string
+	Completed []string
+	Outbox    []json.RawMessage
+}
+type dshProbe struct {
+	dshDelivery
+	Calls          []dshCall
+	UnknownResults int
 }
 
 func TestChatBrainDshLive(t *testing.T) {
@@ -69,7 +71,7 @@ func TestChatBrainDshLive(t *testing.T) {
 	waitDshTurn(t, f, input)
 	assertDshFile(t, container, "/tmp/oma-dsh-live.txt", marker, true)
 	state := readDshState(t, e, f)
-	if state.Phase != "completed" || len(dshWriteCalls(state)) != 1 {
+	if len(state.Completed) != 1 || len(dshWriteCalls(state)) != 1 {
 		t.Fatal("real model tool turn did not settle exactly once")
 	}
 	chatProof(t, started, "dsh_live_approved_tool")
@@ -105,9 +107,25 @@ func TestChatBrainDshLive(t *testing.T) {
 		t.Fatal("edited approval did not execute exactly one Write")
 	}
 	for _, call := range dshWriteCalls(editedState) {
-		if call.Original["file_path"] != "/tmp/oma-dsh-original.txt" || call.Effective["file_path"] != "/tmp/oma-dsh-approved.txt" {
-			t.Fatal("durable approval lost original or replacement")
+		var original map[string]any
+		requireOK(t, json.Unmarshal([]byte(call.Arguments), &original))
+		if original["file_path"] != "/tmp/oma-dsh-original.txt" {
+			t.Fatal("native call lost original arguments")
 		}
+	}
+	changedNotice := false
+	for _, event := range chatHistory(t, edited) {
+		if event.Type != "system.message" {
+			continue
+		}
+		for _, block := range event.Content {
+			if strings.HasPrefix(block.Text, "Approved Write arguments: ") && strings.Contains(block.Text, "/tmp/oma-dsh-approved.txt") {
+				changedNotice = true
+			}
+		}
+	}
+	if !changedNotice {
+		t.Fatal("changed approval notice was not delivered")
 	}
 	requireOK(t, e.service.TerminateManagedAgentCodeSession(t.Context(), edited.session, edited.code.ExternalID))
 	chatProof(t, started, "dsh_live_ccr_modified_input")
@@ -118,13 +136,13 @@ func TestChatBrainDshLive(t *testing.T) {
 		return err == nil && string(output) == "once\n"
 	}, 90*time.Second)
 	dispatched := readDshState(t, e, crash)
-	if dispatched.Phase != "dispatch" || dispatched.InputID == "" {
+	if len(dispatched.Calls) != 1 || dispatched.InputID == "" {
 		t.Fatal("Bash dispatch not durably recorded before effect")
 	}
 	replacement.stop(t)
 	waitDshLease(t, e, crash)
 	startBrainNode(t, e, cfg, "dsh-live-crash-replacement")
-	waitRealWorker(t, "unknown dispatch remains blocked after takeover", func() bool { return readDshState(t, e, crash).Phase == "blocked" }, 30*time.Second)
+	waitRealWorker(t, "native recovery records the unknown tool result", func() bool { return readDshState(t, e, crash).UnknownResults == 1 }, 30*time.Second)
 	waitRealWorker(t, "recovery error reaches public history", func() bool {
 		for _, event := range chatHistory(t, crash) {
 			if event.Type == "session.error" {
@@ -140,7 +158,7 @@ func TestChatBrainDshLive(t *testing.T) {
 	}
 	assertDshInputProcessed(t, crash, crashInput)
 	chatProof(t, started, "dsh_live_inflight_no_replay")
-	evidence := map[string]any{"model": live.Model, "model_base": live.Base, "runtime": "Bun embedded dsh", "public_session": f.session.ExternalID, "approval_session": edited.session.ExternalID, "crash_session": crash.session.ExternalID, "epoch_before": before.Epoch, "epoch_after": after.Epoch, "restored_answer": answer, "modified_file_content": marker + "_EDITED", "public_updated_input": "rejected HTTP 400; CCRv2 response injected via real JetStream; public approval remains pending until session termination", "crash_phase": recovered.Phase, "crash_side_effect_count": 1}
+	evidence := map[string]any{"model": live.Model, "model_base": live.Base, "runtime": "Bun embedded dsh", "public_session": f.session.ExternalID, "approval_session": edited.session.ExternalID, "crash_session": crash.session.ExternalID, "epoch_before": before.Epoch, "epoch_after": after.Epoch, "restored_answer": answer, "modified_file_content": marker + "_EDITED", "public_updated_input": "rejected HTTP 400; CCRv2 response injected via real JetStream; public approval remains pending until session termination", "native_unknown_results": recovered.UnknownResults, "crash_side_effect_count": 1}
 	encoded, err := json.MarshalIndent(evidence, "", "  ")
 	requireOK(t, err)
 	requireOK(t, os.WriteFile(filepath.Join(filepath.Dir(os.Getenv("CONFIG_FILE")), "dsh-live-evidence.json"), encoded, 0600))
@@ -177,9 +195,9 @@ func waitDshWritePermission(t *testing.T, f *liveSession, client *anthropic.Clie
 	return ""
 }
 
-func dshWriteCalls(state dshState) []dshCall {
+func dshWriteCalls(state dshProbe) []dshCall {
 	var calls []dshCall
-	for _, call := range state.ApprovedCalls {
+	for _, call := range state.Calls {
 		if strings.EqualFold(call.Name, "Write") {
 			calls = append(calls, call)
 		}
@@ -191,7 +209,7 @@ func waitDshEditedTurn(t *testing.T, e *liveEnv, f *liveSession, client *anthrop
 	t.Helper()
 	waitRealWorker(t, "modified CCR approval completes the private turn and drains delivery", func() bool {
 		state := readDshState(t, e, f)
-		if state.InputID == "" || state.Phase != "completed" || len(state.Outbox) != 0 || len(state.Completed) != 1 || state.Completed[0] != state.InputID {
+		if state.InputID == "" || len(state.Outbox) != 0 || len(state.Completed) != 1 || state.Completed[0] != state.InputID {
 			return false
 		}
 		task, reply := f.consumer(t), realWorkerReplyConsumer(t, f)
@@ -298,19 +316,40 @@ func waitDshTurn(t *testing.T, f *liveSession, input string) string {
 	return answer
 }
 
-func readDshState(t *testing.T, e *liveEnv, f *liveSession) dshState {
+func readDshState(t *testing.T, e *liveEnv, f *liveSession) dshProbe {
 	t.Helper()
 	events, _, err := e.service.EventPayloadStore().ListCodeSessionInternalEventsPage(t.Context(), db.ListCodeSessionInternalEventsPageParams{WorkspaceUUID: f.code.WorkspaceUUID, CodeSessionExternalID: f.code.ExternalID, Limit: 500})
 	requireOK(t, err)
-	var state dshState
+	var state dshProbe
 	for _, event := range events {
 		var payload struct {
-			Subtype string
-			Data    dshState
+			Type string
+			Data json.RawMessage
 		}
 		requireOK(t, json.Unmarshal(event.Payload, &payload))
-		if payload.Subtype == "dsh_brain_state" && payload.Data.Revision > state.Revision {
-			state = payload.Data
+		switch payload.Type {
+		case "ccrv2_delivery":
+			var delivery dshDelivery
+			requireOK(t, json.Unmarshal(payload.Data, &delivery))
+			if delivery.Revision > state.Revision {
+				state.dshDelivery = delivery
+			}
+		case "dsh_log":
+			var native struct {
+				Type string
+				Data struct {
+					Name      string
+					Arguments string
+					Error     struct{ Code string }
+				}
+			}
+			requireOK(t, json.Unmarshal(payload.Data, &native))
+			if native.Type == "tool/call" {
+				state.Calls = append(state.Calls, dshCall{Name: native.Data.Name, Arguments: native.Data.Arguments})
+			}
+			if native.Type == "tool/result" && native.Data.Error.Code == "TOOL_OUTCOME_UNKNOWN" {
+				state.UnknownResults++
+			}
 		}
 	}
 	return state

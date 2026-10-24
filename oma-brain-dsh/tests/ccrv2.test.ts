@@ -1,6 +1,7 @@
+import { nativeOutcomes } from "./session-log.ts";
 import { expect, spyOn, test } from "bun:test";
 import { ContextRecovery } from "../src/runtime/compaction.ts";
-import { SessionId } from "@deepseek-ai/dsh-session";
+import { SESSION_FORMAT_VERSION, SessionId, SessionSeq } from "@deepseek-ai/dsh-session";
 import { Context } from "@deepseek-ai/cordis";
 import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { mountKernel } from "../src/kernel.ts";
@@ -8,7 +9,7 @@ import * as CcrBridge from "../src/ccrv2/index.ts";
 import type { CcrBackend, CcrPersistArgs } from "../src/ccrv2/index.ts";
 import type { SandboxExecutor } from "../src/runtime/contracts.ts";
 import type { Payload } from "../src/ccrv2/protocol.ts";
-import { emptyState } from "../src/ccrv2/protocol.ts";
+import { emptyDelivery } from "../src/ccrv2/protocol.ts";
 import type { ClientEvent, SessionState, RequiresActionDetails } from "../src/ccrv2/wire.ts";
 import type { CcrLeaseResult, CcrLeaseFailure } from "../src/ccrv2/index.ts";
 
@@ -25,13 +26,13 @@ class MemoryBackend implements CcrBackend {
     return {id: threadId, status: archived ? "terminated" : "idle", archived};
   }
   async isToolConfirmationPending(_id: string, _requestId: string, _signal?: AbortSignal) { return false; }
-  async privateEvents(id: string, options?: { subagents?: boolean }) {
+  async privateEvents(id: string, options?: { subagents?: boolean; agentId?: string }) {
     return structuredClone((this.logs.get(id) ?? []).filter((event) =>
-      options?.subagents ? !!event.agent_id : !event.agent_id));
+      options?.agentId !== undefined ? event.agent_id === options.agentId : options?.subagents ? !!event.agent_id : !event.agent_id));
   }
-  async persist(id: string, ...[subtype, data, agentId]: CcrPersistArgs) {
+  async persist(id: string, ...[type, data, agentId]: CcrPersistArgs) {
     const log = this.logs.get(id) ?? [];
-    log.push(structuredClone({ subtype, schema_version: 1, data, ...(agentId ? { agent_id: agentId } : {}) }));
+    log.push(structuredClone({ type, data, ...(agentId ? { agent_id: agentId } : {}) }));
     this.logs.set(id, log);
   }
   async events(id: string, payloads: Payload[]) {
@@ -77,6 +78,110 @@ async function setup(scope: Context): Promise<void> {
   });
 }
 
+test("log recovery rejects unsupported headers, missing headers, gaps and conflicting events", async () => {
+  const header = { version: SESSION_FORMAT_VERSION, id: SessionId("invalid"), createdAt: 0, isSeeded: false } as const;
+  const event = { type: "turn/start" as const, seq: SessionSeq(0), time: 0, data: { turn: 1 } };
+  const storedHeader = { type: "dsh_log", data: header };
+  const storedEvent = { type: "dsh_log", data: event };
+  const cases: [Payload[], string][] = [
+    [[{ ...storedHeader, data: { ...header, version: 999 } }], "v999"],
+    [[storedEvent], "Missing dsh log header"],
+    [[storedHeader, { ...storedEvent, data: { ...event, seq: SessionSeq(1) } }], ""],
+    [[storedHeader, storedEvent, { ...storedEvent, data: { ...event, time: 1 } }], "Conflicting dsh log event"],
+  ];
+  for (const [payloads, error] of cases) {
+    const backend = new MemoryBackend();
+    backend.logs.set("invalid", payloads);
+    const ctx = new Context();
+    try {
+      await mountKernel(ctx);
+      await ctx.plugin(CcrBridge, { backend });
+      await expect(ctx.sessionPersistence.open(SessionId("invalid"), "read")).rejects.toThrow(error);
+    } finally {
+      await ctx.fiber.dispose();
+    }
+  }
+});
+
+test("startup rejects malformed delivery records before opening a native session", async () => {
+  const valid = { ...emptyDelivery(), revision: 1 };
+  const cases = [
+    null, {}, { revision: 2 }, { ...valid, revision: "2" }, { ...valid, revision: -1 },
+    { ...valid, revision: 1.5 }, { ...valid, revision: Number.MAX_SAFE_INTEGER + 1 },
+    { ...valid, inputId: null }, { ...valid, logOffsets: null }, { ...valid, logOffsets: [] },
+    { ...valid, logOffsets: { child: -1 } }, { ...valid, logOffsets: { child: "0" } },
+    { ...valid, completed: {} }, { ...valid, completed: [7] },
+    { ...valid, outbox: {} }, { ...valid, outbox: [null] },
+    { ...valid, outbox: [{ type: "result" }] }, { ...valid, outbox: [{ uuid: "id" }] },
+  ];
+  for (const data of cases) {
+    const backend = new MemoryBackend();
+    backend.logs.set("malformed", [{ type: "ccrv2_delivery", data }]);
+    const ctx = new Context();
+    try {
+      await mountKernel(ctx);
+      await ctx.plugin(CcrBridge, { backend });
+      const session = ctx.ccrv2.createSession({ id: "malformed", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup });
+      await expect(session.open()).rejects.toThrow("Invalid CCRv2 delivery for session malformed");
+      expect(backend.logs.get("malformed")).toHaveLength(1);
+      expect(backend.output.size).toBe(0);
+      expect(backend.acknowledged).toEqual([]);
+    } finally { await ctx.fiber.dispose(); }
+  }
+});
+
+test("startup explicitly rejects legacy persistence instead of creating blank history", async () => {
+  const payloads: Payload[] = [
+    ...["dsh_log", "dsh_header", "dsh_brain_state", "ccrv2_delivery", "grok_checkpoint"].map((subtype) => ({ type: "system", subtype, data: {} })),
+    { type: "dsh_log", data: { header: {}, events: [] } },
+    { type: "grok_checkpoint", data: {} },
+  ];
+  for (const payload of payloads) {
+    const backend = new MemoryBackend();
+    backend.logs.set("legacy", [payload]);
+    const ctx = new Context();
+    try {
+      await mountKernel(ctx);
+      await ctx.plugin(CcrBridge, { backend });
+      const session = ctx.ccrv2.createSession({ id: "legacy", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup });
+      await expect(session.open()).rejects.toThrow("Unsupported persistence format for session legacy");
+      expect(backend.logs.get("legacy")).toHaveLength(1);
+    } finally { await ctx.fiber.dispose(); }
+  }
+});
+
+test("persistence stores a separate header and individual events and restores duplicate seqs once", async () => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  const header = { version: SESSION_FORMAT_VERSION, id: SessionId("event-log"), createdAt: 0, isSeeded: false } as const;
+  const events = [0, 1].map((seq) => ({ type: "turn/start" as const, seq: SessionSeq(seq), time: 0, data: { turn: seq + 1 } }));
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    const handle = await ctx.sessionPersistence.create(header);
+    await handle.append(events);
+    await handle.close();
+    const logs = backend.logs.get("event-log")!;
+    expect(logs.map((payload) => payload.type)).toEqual(["dsh_log", "dsh_log", "dsh_log"]);
+    expect(logs[0]!.data).toEqual(header);
+    expect(logs.slice(1).map((payload) => payload.data)).toEqual(events);
+    logs.push(structuredClone(logs[1]!));
+  } finally {
+    await ctx.fiber.dispose();
+  }
+  const restored = new Context();
+  try {
+    await mountKernel(restored);
+    await restored.plugin(CcrBridge, { backend });
+    const handle = await restored.sessionPersistence.open(header.id, "read");
+    expect(handle.header).toEqual(header);
+    expect((await handle.read()).events).toEqual(events);
+    await handle.close();
+  } finally {
+    await restored.fiber.dispose();
+  }
+});
+
 test("session previews enter one stream window and terminal publication still waits for their HTTP confirmation", async () => {
   const backend = new MemoryBackend();
   const ctx = new Context();
@@ -108,8 +213,8 @@ test("session previews enter one stream window and terminal publication still wa
   const persist = backend.persist.bind(backend);
   backend.persist = async (id, ...args) => {
     await persist(id, ...args);
-    const [subtype, data] = args;
-    if (subtype === "dsh_brain_state" && data && typeof data === "object" && "phase" in data && data.phase === "completed")
+    const [type, data] = args;
+    if (type === "ccrv2_delivery" && data && typeof data === "object" && "completed" in data && data.completed.includes(data.inputId))
       completed.resolve();
   };
   const model = new TextModel();
@@ -134,7 +239,7 @@ test("session previews enter one stream window and terminal publication still wa
     expect(previewCalls).toBe(2);
     expect(timers.size).toBe(1);
     expect(batches.flat().filter((event) => event.ephemeral)).toEqual([]);
-    expect(session.state.outbox.length).toBeGreaterThan(0);
+    expect(session.delivery.outbox.length).toBeGreaterThan(0);
     expect(backend.acknowledged).toEqual([]);
     [...timers][0]!();
     await sending.promise;
@@ -142,10 +247,10 @@ test("session previews enter one stream window and terminal publication still wa
     expect(previews.map((event) => event.payload.type)).toEqual(["event_start", "event_delta", "event_delta"]);
     expect(previews.filter((event) => event.payload.type === "event_delta").map((event) => event.payload.delta))
       .toEqual(["A", "B"].map((text) => ({ type: "content_delta", index: 0, content: { type: "text", text } })));
-    expect(session.state.outbox.length).toBeGreaterThan(0);
+    expect(session.delivery.outbox.length).toBeGreaterThan(0);
     expect(backend.acknowledged).toEqual([]);
     response.resolve(); await turn;
-    expect(session.state.outbox).toEqual([]);
+    expect(session.delivery.outbox).toEqual([]);
     expect(backend.acknowledged).toEqual(["buffered:input"]);
     expect(timers.size).toBe(0);
   } finally {
@@ -183,22 +288,21 @@ test("failed final persistence releases the session writer and permits replaceme
   }
 });
 
-test("startup clears task_summary after recovery persistence and before status or publication, including blocked recovery", async () => {
-  for (const phase of ["idle", "dispatch"] as const) {
+test("startup clears task_summary after recovery persistence and before status or publication, including interrupted inputs", async () => {
+  for (const interrupted of [false, true]) {
     const backend = new MemoryBackend();
-    const state = emptyState();
-    state.phase = phase;
+    const state = emptyDelivery();
     state.revision = 1;
-    state.inputId = phase === "dispatch" ? "interrupted-input" : "";
+    state.inputId = interrupted ? "interrupted-input" : "";
     state.outbox = [{ type: "system.message", uuid: "pending-message" }];
-    backend.logs.set("recovery", [{ subtype: "dsh_brain_state", schema_version: 1, data: state }]);
+    backend.logs.set("recovery", [{ type: "ccrv2_delivery", data: state }]);
     const order: string[] = [];
     const started = Promise.withResolvers<void>();
     const confirmed = Promise.withResolvers<void>();
     const persist = backend.persist.bind(backend);
     backend.persist = async (id, ...args) => { order.push(`persist:${args[0]}`); await persist(id, ...args); };
     backend.reportMetadata = async (_id, patch) => {
-      expect(patch).toEqual({ task_summary: null, pending_action: null, model: "text", unknown_tool_outcomes: null });
+      expect(patch).toEqual({ task_summary: null, pending_action: null, model: "text" });
       order.push("metadata"); started.resolve(); await confirmed.promise;
     };
     backend.setStatus = async (_id, status) => { order.push(`status:${status}`); };
@@ -214,13 +318,12 @@ test("startup clears task_summary after recovery persistence and before status o
       await started.promise;
       expect(order.at(-1)).toBe("metadata");
       expect(order.some((step) => step.startsWith("status:") || step === "publish")).toBe(false);
-      if (phase === "dispatch") expect(order).toContain("persist:dsh_brain_state");
+      if (interrupted) expect(order).toContain("persist:ccrv2_delivery");
       confirmed.resolve();
       await opening;
-      expect(session.blocked()).toBe(phase === "dispatch");
+      expect(session.abort.signal.aborted).toBe(false);
       expect(order.indexOf("publish")).toBeGreaterThan(order.indexOf("metadata"));
-      if (phase === "idle") expect(order.indexOf("status:idle")).toBeGreaterThan(order.indexOf("metadata"));
-      else expect(order.some((step) => step.startsWith("status:"))).toBe(false);
+      expect(order.indexOf("status:idle")).toBeGreaterThan(order.indexOf("metadata"));
     } finally { confirmed.resolve(); await ctx.fiber.dispose(); }
   }
 });
@@ -459,60 +562,56 @@ test("automatic approval stays running while the backend evaluates permission", 
       callId: "call", toolName: "Bash", input: { command: "original" },
     }, new AbortController().signal);
     expect(decision).toEqual({ allowed: true, input: { command: "approved" } });
-    expect(states.map((state) => state.status)).toEqual(["idle", "running", "running"]);
+    expect(states.map((state) => state.status)).toEqual(["idle", "running", "idle"]);
     expect(session.approvals.size).toBe(0);
   } finally {
     await ctx.fiber.dispose();
   }
 });
 
-test("child history resumes across scoped and legacy foreground logs", async () => {
-  for (const legacy of [false, true]) {
-    const backend = new MemoryBackend();
-    const mount = async () => {
-      const ctx = new Context();
-      await mountKernel(ctx);
-      const model = new TextModel();
-      await ctx.plugin({ inject: ["llm"], apply(scope: Context) { scope.llm.registerAdapter(["memory"], model); } });
-      await ctx.plugin(CcrBridge, { backend });
-      const session = ctx.ccrv2.createSession({
-        id: "parent", provider: "memory", model: "text", workDir: "/workspace",
-        systemPrompt: "Parent instructions", setup, subagents: {},
-      });
-      await session.open();
-      return { ctx, model, session };
-    };
-    const first = await mount();
-    let threadId: string;
-    try {
-      await first.session.receive("root", { content: "parent task" });
-      const report = JSON.parse(await first.session.subagents.send({
-        name: "child", system_prompt: "Child instructions", message: "original child task",
-      }, first.session.abort.signal));
-      threadId = report.thread_id;
-      expect(typeof threadId).toBe("string");
-    } finally { await first.ctx.fiber.dispose(); }
-    const logs = backend.logs.get("parent")!;
-    expect(logs.some((event) => event.agent_id === threadId! && event.subtype === "dsh_log")).toBe(true);
-    if (legacy) for (const event of logs) delete event.agent_id;
-    const second = await mount();
-    try {
-      await second.session.subagents.send({ thread_id: threadId!, message: "child follow-up" }, second.session.abort.signal);
-      const history = JSON.stringify(second.model.requests[0]!.messages);
-      expect(history).toContain("original child task");
-      expect(history).toContain("child follow-up");
-      expect(history).not.toContain("parent task");
-    } finally { await second.ctx.fiber.dispose(); }
-    // A third host also merges the old foreground prefix with new scoped suffixes.
-    const third = await mount();
-    try {
-      await third.session.subagents.send({ thread_id: threadId!, message: "third child task" }, third.session.abort.signal);
-      const history = JSON.stringify(third.model.requests[0]!.messages);
-      expect(history).toContain("original child task");
-      expect(history).toContain("child follow-up");
-      expect(history).toContain("third child task");
-    } finally { await third.ctx.fiber.dispose(); }
-  }
+test("child history resumes from individually persisted scoped events", async () => {
+  const backend = new MemoryBackend();
+  const mount = async () => {
+    const ctx = new Context();
+    await mountKernel(ctx);
+    const model = new TextModel();
+    await ctx.plugin({ inject: ["llm"], apply(scope: Context) { scope.llm.registerAdapter(["memory"], model); } });
+    await ctx.plugin(CcrBridge, { backend });
+    const session = ctx.ccrv2.createSession({
+      id: "parent", provider: "memory", model: "text", workDir: "/workspace",
+      systemPrompt: "Parent instructions", setup, subagents: {},
+    });
+    await session.open();
+    return { ctx, model, session };
+  };
+  const first = await mount();
+  let threadId: string;
+  try {
+    await first.session.receive("root", { content: "parent task" });
+    const report = JSON.parse(await first.session.subagents.send({
+      name: "child", system_prompt: "Child instructions", message: "original child task",
+    }, first.session.abort.signal));
+    threadId = report.thread_id;
+    expect(typeof threadId).toBe("string");
+  } finally { await first.ctx.fiber.dispose(); }
+  const logs = backend.logs.get("parent")!;
+  expect(logs.some((event) => event.agent_id === threadId! && event.type === "dsh_log")).toBe(true);
+  const second = await mount();
+  try {
+    await second.session.subagents.send({ thread_id: threadId!, message: "child follow-up" }, second.session.abort.signal);
+    const history = JSON.stringify(second.model.requests[0]!.messages);
+    expect(history).toContain("original child task");
+    expect(history).toContain("child follow-up");
+    expect(history).not.toContain("parent task");
+  } finally { await second.ctx.fiber.dispose(); }
+  const third = await mount();
+  try {
+    await third.session.subagents.send({ thread_id: threadId!, message: "third child task" }, third.session.abort.signal);
+    const history = JSON.stringify(third.model.requests[0]!.messages);
+    expect(history).toContain("original child task");
+    expect(history).toContain("child follow-up");
+    expect(history).toContain("third child task");
+  } finally { await third.ctx.fiber.dispose(); }
 });
 
 test("CCRv2 plugin runs isolated sessions and restores history without OMA", async () => {
@@ -544,12 +643,12 @@ test("CCRv2 plugin runs isolated sessions and restores history without OMA", asy
     }
     expect(backend.acknowledged).toEqual([]);
     expect(first.model.requests).toHaveLength(0);
-    expect(a.state.phase).toBe("idle");
+    expect(a.delivery.inputId).toBe("");
     await a.receive("input_a", { content: "first session" });
     await b.receive("input_b", { content: "second session" });
     expect(backend.acknowledged).toEqual(["a:input_a", "b:input_b"]);
-    expect(a.state.completed).toEqual(["input_a"]);
-    expect(b.state.completed).toEqual(["input_b"]);
+    expect(a.delivery.completed).toEqual(["input_a"]);
+    expect(b.delivery.completed).toEqual(["input_b"]);
     expect(JSON.stringify(first.model.requests[0]!.messages)).toContain("Standalone test instructions");
     expect(first.model.requests[1]!.messages.some((m) => JSON.stringify(m).includes("first session"))).toBe(false);
     expect(backend.output.get("a")!.some((e) => e.type === "result")).toBe(true);
@@ -567,7 +666,7 @@ test("CCRv2 plugin runs isolated sessions and restores history without OMA", asy
     expect(restored.model.requests[0]!.messages.some(
       (m) => m.role === "assistant" && JSON.stringify(m).includes("standalone reply"),
     )).toBe(true);
-    expect(a.state.outbox).toEqual([]);
+    expect(a.delivery.outbox).toEqual([]);
   } finally {
     await restored.ctx.fiber.dispose();
   }
@@ -590,17 +689,21 @@ async function mountMediaKernel(backend: MemoryBackend) {
   return { ctx, model, session };
 }
 
-test("flushes without new log events do not write empty dsh_log batches", async () => {
+test("flushes without new log events do not write headers or events", async () => {
   const backend = new MemoryBackend();
   const { ctx, session } = await mountMediaKernel(backend);
   try {
     await session.receive("first", { content: "hello" });
     await session.flushEvents();
     await session.flushEvents();
-    const logs = (backend.logs.get("a") ?? []).filter((event) => event.subtype === "dsh_log");
-    const empty = logs.filter((event) => !event.data.events.length);
-    expect(empty).toHaveLength(1);
-    expect(logs.indexOf(empty[0]!)).toBe(0);
+    const logRecords = () => (backend.logs.get("a") ?? []).filter((event) => event.type === "dsh_log");
+    const logs = logRecords();
+    expect(logs.filter((event) => "version" in event.data)).toHaveLength(1);
+    expect(logs[0]!.data).toHaveProperty("version", SESSION_FORMAT_VERSION);
+    expect(logs.slice(1).every((payload) => "seq" in payload.data)).toBe(true);
+    const count = logs.length;
+    await session.flushEvents();
+    expect(logRecords()).toHaveLength(count);
   } finally {
     await ctx.fiber.dispose();
   }
@@ -668,7 +771,7 @@ test("only backend-confirmed user approvals pause the worker and late lookups ca
       lookup.resolve(true);
       await session.updateStatus();
       expect(states.includes("requires_action")).toBe(mode === "confirmation");
-      expect(states.at(-1)).toBe("running");
+      expect(states.at(-1)).toBe("idle");
       expect(lookupSignal?.aborted).toBe(true);
       expect(session.approvals.size).toBe(0);
     } finally { await ctx.fiber.dispose(); }
@@ -729,10 +832,10 @@ test("user interrupts settle the tool locally, finish successfully and survive r
       await started.promise;
       await session.receive("interrupt", control);
       await turn;
-      expect(session.blocked()).toBe(false);
       expect(session.abort.signal.aborted).toBe(false);
-      expect(session.state.phase).toBe("completed");
-      expect(session.state.toolOutcomes["cancelled-call"]).toMatchObject({ failed: true, remoteOutcome: "unknown" });
+      expect(session.abort.signal.aborted).toBe(false);
+      expect(session.delivery.completed).toContain(session.delivery.inputId);
+      expect(nativeOutcomes(session)["cancelled-call"]).toMatchObject({ failed: true });
       expect(backend.output.get(config.id)!.filter((event) => event.type === "result"))
         .toEqual([{ type: "result", uuid: "first_result", subtype: "success", is_error: false }]);
       expect(JSON.stringify(backend.output.get(config.id))).not.toContain("Remote tool outcome is unknown");
@@ -740,8 +843,6 @@ test("user interrupts settle the tool locally, finish successfully and survive r
         .filter((block: Payload) => block.type === "tool_result");
       expect(results).toHaveLength(1);
       expect(results[0]).toMatchObject({ tool_use_id: "cancelled-call", is_error: true });
-      await expect(session.recordApproved({ callId: "cancelled-call", name: "Bash", original: {}, effective: {}, readOnly: false }))
-        .rejects.toThrow("duplicate");
       await ctx.fiber.dispose();
       ctx = new Context();
       await mountKernel(ctx);
@@ -750,8 +851,8 @@ test("user interrupts settle the tool locally, finish successfully and survive r
       ctx.llm.registerAdapter(["test"], resumed);
       session = ctx.ccrv2.createSession(config);
       await session.open();
-      expect(session.blocked()).toBe(false);
-      expect(session.state.toolOutcomes["cancelled-call"]?.remoteOutcome).toBe("unknown");
+      expect(session.abort.signal.aborted).toBe(false);
+      expect(nativeOutcomes(session)["cancelled-call"]?.failed).toBe(true);
       await session.receive("first", { content: "Duplicate delivery" });
       expect(resumed.requests).toHaveLength(0);
       await session.receive("next", { content: "Continue" });
@@ -828,12 +929,12 @@ test.each([false, true])("context overflow compacts and replays without duplicat
     expect(replayWellFormed).toBe(true);
     const output = backend.output.get(session.id)!;
     expect(output.filter(event => event.type === "agent.thread_context_compacted")).toEqual([
-      expect.objectContaining({ pre_compaction_tokens: 90000, ...(child ? { session_thread_id: session.state.threads![0]!.id } : {}) }),
+      expect.objectContaining({ pre_compaction_tokens: 90000, ...(child ? { session_thread_id: session.subagents.threads![0]!.id } : {}) }),
     ]);
     const results = output.flatMap(event => event.message?.content ?? []).filter(block => block.type === "tool_result" && block.tool_use_id.startsWith("read-"));
     expect(results).toHaveLength(4);
     expect(results.every(block => JSON.stringify(block).includes("original-file-data"))).toBe(true);
-    const native = child ? ctx.sessions.get(SessionId(session.state.threads![0]!.id))! : session.runtime.agent.session;
+    const native = child ? ctx.sessions.get(SessionId(session.subagents.threads![0]!.id))! : session.runtime.agent.session;
     if (child) expect(session.runtime.agent.session.snapshotEvents().some(event => event.type === "tool/result" && event.surfaceOp !== "append")).toBe(false);
     const replacements = native.snapshotEvents().filter(event => event.type === "tool/result" && event.surfaceOp !== "append");
     expect(replacements).toHaveLength(2);
@@ -857,7 +958,7 @@ test.each([false, true])("context overflow compacts and replays without duplicat
   } finally { await ctx.fiber.dispose(); }
 });
 
-test("operator reconciliation unblocks only acknowledged unknown outcomes without replay", async () => {
+test("native tool errors remain resumable without operator reconciliation", async () => {
   const backend = new MemoryBackend();
   let executions = 0;
   const executor: SandboxExecutor = {
@@ -900,48 +1001,25 @@ test("operator reconciliation unblocks only acknowledged unknown outcomes withou
     return { ctx, session, restore: () => { backend.events = events; } };
   };
 
-  let mounted = await mount(toolTurn(new TextModel()));
+  const first = await mount(toolTurn(new TextModel()));
   try {
-    await mounted.session.open();
-    await mounted.session.receive("first", { content: "Deploy" }).catch(() => {});
-    expect(mounted.session.blocked()).toBe(true);
+    await first.session.open();
+    await first.session.receive("first", { content: "Deploy" });
     expect(executions).toBe(1);
-    expect(backend.metadata.get(config.id)?.unknown_tool_outcomes).toEqual([{ tool_use_id: "lost-call", tool_name: "Bash" }]);
-  } finally { mounted.restore(); await mounted.ctx.fiber.dispose(); }
-
-  backend.metadata.set(config.id, { ...backend.metadata.get(config.id), tool_outcome_reconciliation: { tool_use_ids: ["other-call"] } });
-  mounted = await mount(new TextModel());
+    expect(nativeOutcomes(first.session)["lost-call"]?.text).toContain("Do not retry blindly");
+    expect(first.session.abort.signal.aborted).toBe(false);
+    expect(first.session.delivery).not.toHaveProperty("executions");
+  } finally { first.restore(); await first.ctx.fiber.dispose(); }
+  const model = new TextModel();
+  const resumed = await mount(model);
   try {
-    await mounted.session.open();
-    expect(mounted.session.blocked()).toBe(true);
-    expect(backend.metadata.get(config.id)).not.toHaveProperty("tool_outcome_reconciliation");
-    expect(backend.metadata.get(config.id)?.unknown_tool_outcomes).toEqual([{ tool_use_id: "lost-call", tool_name: "Bash" }]);
-  } finally { mounted.restore(); await mounted.ctx.fiber.dispose(); }
-
-  backend.metadata.set(config.id, { ...backend.metadata.get(config.id), tool_outcome_reconciliation: { tool_use_ids: ["lost-call"] } });
-  const resumed = new TextModel();
-  mounted = await mount(resumed);
-  try {
-    await mounted.session.open();
-    expect(mounted.session.blocked()).toBe(false);
-    expect(mounted.session.state.executions![config.id]!.toolOutcomes["lost-call"]).toMatchObject({ failed: true, remoteOutcome: "unknown" });
-    expect(backend.metadata.get(config.id)).not.toHaveProperty("tool_outcome_reconciliation");
+    await resumed.session.open();
+    await resumed.session.receive("first", { content: "Duplicate" });
+    expect(model.requests).toHaveLength(0);
+    await resumed.session.receive("next", { content: "Check the deployment" });
+    expect(model.requests).toHaveLength(1);
+    expect(JSON.stringify(model.requests[0]!.messages)).toContain("Do not retry blindly");
+    expect(executions).toBe(1);
     expect(backend.metadata.get(config.id)).not.toHaveProperty("unknown_tool_outcomes");
-    expect(JSON.stringify(backend.output.get(config.id))).toContain("Unknown tool outcomes were acknowledged by an operator");
-    await mounted.session.receive("after-reconcile", { content: "Check the deployment" });
-    expect(resumed.requests).toHaveLength(1);
-    expect(JSON.stringify(resumed.requests[0]!.messages)).toContain("An operator acknowledged that the outcomes of these earlier tool calls are unknown: Bash (lost-call)");
-    expect(executions).toBe(1);
-    const results = backend.output.get(config.id)!.filter((event) => event.type === "result");
-    expect(results.at(-1)).toMatchObject({ uuid: "after-reconcile_result", is_error: false });
-  } finally { mounted.restore(); await mounted.ctx.fiber.dispose(); }
-
-  mounted = await mount(new TextModel());
-  try {
-    await mounted.session.open();
-    expect(mounted.session.blocked()).toBe(false);
-    const notices = backend.output.get(config.id)!.filter((event) => event.type === "system.message"
-      && JSON.stringify(event).includes("acknowledged by an operator"));
-    expect(notices).toHaveLength(1);
-  } finally { mounted.restore(); await mounted.ctx.fiber.dispose(); }
+  } finally { resumed.restore(); await resumed.ctx.fiber.dispose(); }
 });

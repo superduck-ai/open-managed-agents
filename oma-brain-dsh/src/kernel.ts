@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 import LlmRuntime from "@deepseek-ai/dsh-llm";
 import SessionStore from "@deepseek-ai/dsh-session";
@@ -11,6 +12,7 @@ import LocalAttachmentStore from "@deepseek-ai/dsh-attachment-local";
 
 /** Native dsh runtime only. Persistence and platform adapters are installed by the host. */
 export async function mountKernel(ctx: Context): Promise<void> {
+  process.env.DSH_HOME = resolve(process.cwd(), ".dsh");
   await ctx.plugin(LocalAttachmentStore);
   await ctx.plugin(LlmRuntime);
   await ctx.plugin(SessionStore);

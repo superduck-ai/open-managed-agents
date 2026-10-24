@@ -1,13 +1,54 @@
+import { foldSubagentDescriptor } from "@deepseek-ai/dsh-subagent";
+import { SessionId, interruptedTurnClosers } from "@deepseek-ai/dsh-session";
 import type { SubagentBridge, SubagentEvent, SubagentThread, ToolExecutionBridge } from "../runtime/contracts.ts";
+import { CcrHttpError } from "./client.ts";
+import { assertPersistenceFormat } from "./recovery.ts";
 import { CcrPersistence } from "./persistence.ts";
 import type { CcrSession } from "./session.ts";
 import type { Payload } from "../json.ts";
 import type { SessionEvent } from "@deepseek-ai/dsh-session";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 
-/** Protocol mapping and durable per-thread execution adapters. */
 export class CcrSubagentBridge implements SubagentBridge {
+  private readonly retained: SubagentThread[] = [];
   constructor(readonly session: CcrSession) {}
+  async restoreThreads(): Promise<void> {
+    const payloads = await this.session.backend.privateEvents(this.session.id, { subagents: true, signal: this.session.abort.signal });
+    const ids = new Set<string>();
+    for (const payload of payloads) {
+      assertPersistenceFormat(payload, this.session.id);
+      if (payload.type === "dsh_log" && payload.data?.origin === "subagent" && payload.data.parentSession === this.session.id)
+        ids.add(payload.data.id);
+    }
+    for (const id of ids) {
+      this.bindPersistence(id);
+      const handle = await this.session.ctx.sessionPersistence.open(SessionId(id), "read");
+      let descriptor;
+      let interrupted: boolean;
+      let hasTurns: boolean;
+      try {
+        const { events } = await handle.read();
+        hasTurns = events.some((event) => event.type === "turn/start");
+        descriptor = foldSubagentDescriptor(events);
+        interrupted = interruptedTurnClosers(events).length > 0;
+      }
+      finally { await handle.close(); }
+      if (!this.session.backend.getSubagentThread) throw new Error("Authoritative subagent thread state is unavailable");
+      let state;
+      try { state = await this.session.backend.getSubagentThread(this.session.id, id, this.session.abort.signal); }
+      catch (error) {
+        if (!hasTurns && error instanceof CcrHttpError && error.status === 404) continue;
+        throw error;
+      }
+      if (!descriptor || descriptor.mode !== "continuable") throw new Error("Subagent is missing its native descriptor");
+      this.retained.push({
+        id, name: descriptor.label, inline: descriptor.provider === "oma-inline",
+        systemPrompt: descriptor.persona ?? "", model: descriptor.agentModel ?? this.session.config.model,
+        tools: descriptor.toolFilter?.allow ? [...descriptor.toolFilter.allow] : undefined,
+        status: state.archived || state.status === "terminated" ? "terminated" : state.status === "idle" && !interrupted ? "idle" : "running",
+      });
+    }
+  }
   async validateThread(threadId: string, signal: AbortSignal): Promise<void> {
     if (!this.session.backend.getSubagentThread) throw new Error("Authoritative subagent thread state is unavailable");
     const state = await this.session.backend.getSubagentThread(this.session.id, threadId, signal);
@@ -29,7 +70,7 @@ export class CcrSubagentBridge implements SubagentBridge {
     }
     return archived;
   }
-  threads(): SubagentThread[] { return this.session.state.threads ??= []; }
+  threads(): SubagentThread[] { return this.retained; }
   bindPersistence(threadId: string): void {
     (this.session.ctx.sessionPersistence as CcrPersistence).bindThread(threadId, this.session.id);
   }
@@ -43,11 +84,9 @@ export class CcrSubagentBridge implements SubagentBridge {
         else if (thread.agentSnapshot) fields.agent = thread.agentSnapshot;
         break;
       case "running":
-        this.session.beginThread(thread.id);
         fields = { type: "session.thread_status_running" }; break;
       case "terminated": fields = { type: "session.thread_status_terminated" }; break;
       case "idle":
-        this.session.endThread(thread.id, event.completed);
         fields = { type: "session.thread_status_idle", stop_reason: { type: this.session.consumeInterruptedApproval(thread.id) || event.completed ? "end_turn" : "interrupted" } }; break;
       case "message-sent":
         fields = { type: "agent.thread_message_sent", to_session_thread_id: thread.id,
@@ -57,26 +96,24 @@ export class CcrSubagentBridge implements SubagentBridge {
         fields = { type: "agent.thread_message_received", from_session_thread_id: thread.id,
           from_agent_name: thread.name, content: [{ type: "text", text: event.text }] }; break;
     }
-    this.session.state.outbox.push({ ...fields, uuid: crypto.randomUUID(), session_thread_id: thread.id, agent_name: thread.name });
+    this.session.delivery.outbox.push({ ...fields, uuid: crypto.randomUUID(), session_thread_id: thread.id, agent_name: thread.name });
     await this.session.flushEvents();
     await this.session.updateStatus();
   }
   onContextCompacted(threadId: string, tokens?: number): Promise<void> {
     return this.session.contextCompacted(tokens, threadId);
   }
+  beforeThreadInput(threadId: string, logOffset: number): void {
+    this.session.delivery.logOffsets[threadId] ??= logOffset;
+  }
   beforeRequest(): Promise<void> { return this.session.flushEvents(); }
   onEvent(threadId: string, event: SessionEvent): void { this.session.record(event, threadId); }
   onStream(threadId: string, frame: AssistantStreamFrame): void { this.session.stream(frame, threadId); }
   toolExecution(threadId: string): ToolExecutionBridge {
     return {
-      blocked: () => this.session.blocked(),
       approve: (request, signal) => this.session.approve(request, signal, threadId),
-      recordApproved: (call) => this.session.recordApproved(call, threadId),
-      flushLog: () => this.session.runtime.flushLog(),
-      recordDispatch: (callId) => this.session.recordDispatch(callId, threadId),
-      recordUnknown: (callId) => this.session.recordUnknown(callId, threadId),
-      recordResult: (outcome) => this.session.recordResult(outcome, threadId),
-      stop: () => this.session.stop(),
+      runTool: (callId, execute, readOnly) => this.session.runTool(threadId, callId, execute, readOnly),
+      approvalChanged: (name, callId, effective) => this.session.approvalChanged(threadId, name, callId, effective),
     };
   }
 }

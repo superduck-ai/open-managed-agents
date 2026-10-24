@@ -168,8 +168,10 @@ async function runShutdownDuringBash(drainMs: string, onTool: (backend: Backend,
     env: { ...process.env, OMA_API_URL: backend.url, OMA_BRAIN_CLAIM_TOKEN: backend.claimToken, OMA_BRAIN_SHUTDOWN_DRAIN_MS: drainMs },
     stdin: "ignore", stdout: "pipe", stderr: "pipe",
   });
-  const brainState = () => [...backend.privateLog.values()].filter((p) => p.subtype === "dsh_brain_state").at(-1)!.data;
-  return { backend, child, toolStarted: toolStarted.promise, brainState };
+  const nativeResults = () => [...backend.privateLog.values()]
+    .filter((p) => p.type === "dsh_log" && p.data.type === "tool/result")
+    .map((p) => p.data.data.message);
+  return { backend, child, toolStarted: toolStarted.promise, nativeResults };
 }
 
 test("shutdown drains an in-flight Bash dispatch before handing the session back", async () => {
@@ -189,9 +191,9 @@ test("shutdown drains an in-flight Bash dispatch before handing the session back
     expect(run.child.exitCode).toBeNull();
     release.resolve();
     expect(await run.child.exited).toBe(0);
-    const state = run.brainState();
-    expect(state.phase).not.toBe("blocked");
-    expect(state.executions[run.backend.a.session_id].toolOutcomes.call_1).toEqual({ text: "drained stdout\n", failed: false });
+    expect(run.nativeResults()).toHaveLength(1);
+    expect(run.nativeResults()[0]).toMatchObject({ toolCallId: "call_1", isError: false,
+      content: [{ type: "text", text: "drained stdout\n" }] });
     expect(run.backend.executions).toHaveLength(1);
     expect(run.backend.releases).toHaveLength(1);
     expect(["idle", "shutdown"]).toContain(run.backend.releases[0]!.reason);
@@ -216,10 +218,8 @@ test("shutdown past the drain deadline interrupts Bash without blocking the sess
     await run.toolStarted;
     run.child.kill("SIGTERM");
     expect(await run.child.exited).toBe(0);
-    const state = run.brainState();
-    expect(state.phase).not.toBe("blocked");
-    expect(Object.values(state.executions[run.backend.a.session_id].callPhases)).toEqual(["result"]);
-    expect(state.executions[run.backend.a.session_id].toolOutcomes.call_1).toMatchObject({ failed: true });
+    expect(run.nativeResults()).toHaveLength(1);
+    expect(run.nativeResults()[0]).toMatchObject({ toolCallId: "call_1", isError: true });
     const published = [...run.backend.publicLog.values()];
     expect(published.some((p) => p.type === "result" && p.is_error === true)).toBe(true);
     expect(JSON.stringify(published)).toContain("The Brain worker shut down during this turn");

@@ -73,7 +73,7 @@ test("real dsh loop approves search and fetch through OMA, journals results, and
     expect(JSON.stringify(backend.requests[1])).toContain(result.url);
     expect(JSON.stringify(backend.requests[2])).toContain(page.content);
     expect(backend.sandboxCount).toBe(0);
-    expect(session.state.phase).toBe("completed");
+    expect(session.delivery.completed).toContain(session.delivery.inputId);
     expect(calls).toHaveLength(2);
     expect(await calls[0]!.json()).toEqual({ query: "example" });
     expect(await calls[1]!.json()).toEqual({ url: result.url });
@@ -101,7 +101,7 @@ test("denied web tools make no OMA web requests", async () => {
     await session.receive("web-denied", { content: "Research example" });
     expect(backend.sandboxCount).toBe(0);
     expect([...backend.publicLog.values()].filter((event) => event.type === "user").flatMap((event) => event.message.content).some((block: Payload) => block.type === "tool_result" && block.is_error)).toBe(true);
-    expect(session.state.phase).toBe("completed");
+    expect(session.delivery.completed).toContain(session.delivery.inputId);
     session.stop();
     await session.close();
   } finally { await ctx.fiber.dispose(); await backend.stop(); }

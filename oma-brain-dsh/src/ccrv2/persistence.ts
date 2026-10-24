@@ -144,7 +144,10 @@ export class CcrReplication extends Service {
   }
 
   private async readLocal(handle: SessionHandle): Promise<Stored> {
-    return { header: handle.header, inherited: handle.inheritedEventCount, events: [...(await handle.read()).events] };
+    const events = [...(await handle.read()).events];
+    if (events.some(event => ["plugin:oma/delivery", "plugin:oma/receipt"].includes(String(event.type))))
+      throw new Error("Legacy Brain delivery records require explicit migration");
+    return { header: handle.header, inherited: handle.inheritedEventCount, events };
   }
 
   private isPrefix(prefix: Stored, log: Stored): boolean {
@@ -380,6 +383,8 @@ export class CcrReplication extends Service {
         continue;
       }
       if (!record) throw new Error("Missing dsh log header");
+      if (data.type === "plugin:oma/delivery" || data.type === "plugin:oma/receipt")
+        throw new Error("Legacy Brain delivery records require explicit migration");
       const [event] = validateStoredEvents(record.header, [structuredClone(data)]);
       if (event.seq < record.events.length) {
         if (!sameJson(record.events[event.seq], event)) throw new Error("Conflicting dsh log event");

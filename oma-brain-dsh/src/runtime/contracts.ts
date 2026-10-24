@@ -47,7 +47,6 @@ export interface SubagentBridge {
   bindPersistence(threadId: string): void;
   emit(event: SubagentEvent): Promise<void>;
   beforeRequest(): Promise<void>;
-  beforeThreadInput?(threadId: string, logOffset: number): void;
   onContextCompacted?(threadId: string, tokens?: number): Promise<void>;
   onEvent(threadId: string, event: SessionEvent): void;
   onStream(threadId: string, frame: AssistantStreamFrame): void;
@@ -167,6 +166,7 @@ export interface SessionRuntimeHooks {
 }
 
 export interface TurnHooks {
+  messageId?: string;
   beforeRun(): Promise<void | boolean>;
   afterRun(completed: boolean): Promise<void>;
 }

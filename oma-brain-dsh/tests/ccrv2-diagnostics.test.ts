@@ -80,7 +80,7 @@ test("logging failures cannot alter registration success or its original failure
 });
 
 test("recovery diagnostics identify the invalid field without copying persisted contents", () => {
-  for (const reason of ["invalid_delivery", "unsupported_persistence_format"] as const) {
+  for (const reason of ["unsupported_persistence_format"] as const) {
     expect(failureDiagnostic(new CcrRecoveryError("session", reason, "outbox"))).toEqual({
       failure_reason: reason, persistence_field: "outbox",
     });

@@ -1,3 +1,4 @@
+import { completedInputs } from "./session-log.ts";
 import { afterEach, expect, test } from "bun:test";
 import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -88,7 +89,7 @@ test("A to B to A reacquisition restores B's confirmed input receipt before rede
   await second.close();
   const requests = backend.requests.length;
   const third = await mount(backend, rootA);
-  expect(third.session.delivery.completed).toContain("input-b");
+  expect(completedInputs(third.session)).toContain("input-b");
   expect(third.session.restoredFromRemote).toBe(true);
   await third.session.receive("input-b", { content: "Second input" });
   expect(backend.requests).toHaveLength(requests);
@@ -105,7 +106,7 @@ test("remote extension on reacquisition discovers a child created by the other B
   backend.modelScript = [textEvents("child reply on B")];
   await second.session.subagents.send({ name: "remote-specialist", system_prompt: "Inspect remote work", message: "Inspect files" }, new AbortController().signal);
   const childId = second.session.subagents.threads[0]!.id;
-  await second.session.saveDelivery();
+  await second.session.checkpoint();
   await second.close();
   const requests = backend.requests.length;
   const third = await mount(backend, rootA);

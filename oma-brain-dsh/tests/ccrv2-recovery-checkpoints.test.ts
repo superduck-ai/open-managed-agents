@@ -1,6 +1,7 @@
+import { completedInputs } from "./session-log.ts";
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
-import { createMessage, ToolCallId } from "@deepseek-ai/dsh-llm";
+import { createMessage, freezeMessage, MessageId, ToolCallId } from "@deepseek-ai/dsh-llm";
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
@@ -37,11 +38,11 @@ for (const phase of ["requested", "dispatch"] as const) {
     const first = await mount(backend);
     const native = first.session.agent.session;
     const callId = ToolCallId("interrupted-call");
-    first.session.delivery.inputId = "interrupted-input";
-    first.session.delivery.logOffsets = { [first.session.id]: native.seq };
-    await first.session.saveDelivery();
+    first.session.inputId = "interrupted-input";
+    await first.session.checkpoint();
     native.append("turn/start", { turn: 1 });
     native.append("step/start", { turn: 1, step: 1 });
+    native.append("user/message", freezeMessage({ id: MessageId("interrupted-input"), role: "user", source: { kind: "user" }, content: [{ type: "text", text: "Interrupted input" }] }), { surfaceOp: "append" });
     native.append("assistant/message", {
       turn: 1, step: 1, stream: [],
       message: createMessage({ role: "assistant", source: { kind: "model", provider: "oma", model: "test-model" },
@@ -54,7 +55,7 @@ for (const phase of ["requested", "dispatch"] as const) {
     const results = recovered.session.agent.session.snapshotEvents().filter(event => event.type === "tool/result");
     expect(results).toHaveLength(1);
     expect(results[0]?.data.error?.code).toBe(phase === "dispatch" ? "TOOL_OUTCOME_UNKNOWN" : "TOOL_NOT_STARTED");
-    expect(recovered.session.delivery.completed).toContain("interrupted-input");
+    expect(completedInputs(recovered.session)).toContain("interrupted-input");
     const publicResult = [...backend.publicLog.values()].flatMap(event => event.message?.content ?? [])
       .find(block => block.type === "tool_result" && block.tool_use_id === callId);
     expect(publicResult?.tool_name).toBe("Bash");
@@ -76,9 +77,9 @@ test("publication leaves events arriving during its checkpoint for the next conf
   const { session } = await mount(backend);
   const started = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();
-  const save = session.saveDelivery.bind(session);
+  const save = session.checkpoint.bind(session);
   let first = true;
-  session.saveDelivery = async () => {
+  session.checkpoint = async () => {
     if (first) {
       first = false;
       started.resolve();
@@ -86,25 +87,25 @@ test("publication leaves events arriving during its checkpoint for the next conf
     }
     await save();
   };
-  session.delivery.outbox.push({ type: "system.message", uuid: "before-checkpoint", content: [{ type: "text", text: "first" }] });
+  session.pendingEvents.push({ type: "system.message", uuid: "before-checkpoint", content: [{ type: "text", text: "first" }] });
   const publishing = session.publish();
   try {
     await started.promise;
-    session.delivery.outbox.push({ type: "system.message", uuid: "during-checkpoint", content: [{ type: "text", text: "second" }] });
+    session.pendingEvents.push({ type: "system.message", uuid: "during-checkpoint", content: [{ type: "text", text: "second" }] });
     expect(backend.publicLog.has("before-checkpoint")).toBe(false);
     expect(backend.publicLog.has("during-checkpoint")).toBe(false);
     release.resolve();
     await publishing;
     expect(backend.publicLog.has("before-checkpoint")).toBe(true);
     expect(backend.publicLog.has("during-checkpoint")).toBe(false);
-    expect(session.delivery.outbox.map(payload => payload.uuid)).toEqual(["during-checkpoint"]);
+    expect(session.pendingEvents.map(payload => payload.uuid)).toEqual(["during-checkpoint"]);
     await session.publish();
     expect(backend.publicLog.has("during-checkpoint")).toBe(true);
-    expect(session.delivery.outbox).toEqual([]);
+    expect(session.pendingEvents).toEqual([]);
   } finally {
     release.resolve();
     await publishing;
-    session.saveDelivery = save;
+    session.checkpoint = save;
   }
 });
 
@@ -115,7 +116,7 @@ test("completed native child history repairs a stale running status with end_tur
   backend.modelScript = [textEvents("child completed")];
   await first.session.subagents.send({ name: "specialist", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal);
   const childId = first.session.subagents.threads[0]!.id;
-  await first.session.saveDelivery();
+  await first.session.checkpoint();
   await first.close();
   const route = backend.route.bind(backend);
   backend.route = async request => {
@@ -132,26 +133,26 @@ test("completed native child history repairs a stale running status with end_tur
   expect(backend.requests).toHaveLength(requests);
 });
 
-test("a queued archive restores the retained child as terminated before publishing", async () => {
+test("an unconfirmed in-memory archive does not override authoritative child state after restart", async () => {
   const backend = new Backend();
   cleanups.push(async () => { backend.stop(); });
   const first = await mount(backend);
   backend.modelScript = [textEvents("child completed")];
   await first.session.subagents.send({ name: "specialist", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal);
   const childId = first.session.subagents.threads[0]!.id;
-  first.session.delivery.outbox.push({ type: "session.thread_status_terminated", uuid: "pending-child-archive", session_thread_id: childId });
-  await first.session.saveDelivery();
+  first.session.pendingEvents.push({ type: "session.thread_status_terminated", uuid: "pending-child-archive", session_thread_id: childId });
+  await first.session.checkpoint();
   await first.close();
   expect(backend.publicLog.has("pending-child-archive")).toBe(false);
   const restored = await mount(backend);
-  expect(backend.publicLog.has("pending-child-archive")).toBe(true);
-  expect(restored.session.subagents.threads[0]?.status).toBe("terminated");
-  const requests = backend.requests.length;
-  await expect(restored.session.subagents.send({ thread_id: childId, message: "Do more work" }, new AbortController().signal)).rejects.toThrow("archived");
-  expect(backend.requests).toHaveLength(requests);
+  expect(backend.publicLog.has("pending-child-archive")).toBe(false);
+  expect(restored.session.subagents.threads[0]?.status).toBe("idle");
+  backend.modelScript = [textEvents("follow-up")];
+  await restored.session.subagents.send({ thread_id: childId, message: "Do more work" }, new AbortController().signal);
+  expect(restored.session.subagents.threads[0]?.status).toBe("idle");
 });
 
-test("warm child discovery reads native local headers without a remote inventory request", async () => {
+test("child discovery rejects incomplete remote inventory instead of trusting only local headers", async () => {
   const backend = new Backend();
   cleanups.push(async () => { backend.stop(); });
   const { session } = await mount(backend);
@@ -169,9 +170,9 @@ test("warm child discovery reads native local headers without a remote inventory
   };
   try {
     const bridge = new CcrSubagentBridge(session);
-    await bridge.restoreThreads();
-    expect(bridge.threads().map(thread => thread.id)).toEqual([childId]);
-    expect(bridge.threads()[0]?.name).toBe("specialist");
-    expect(inventoryRequests).toBe(0);
+    await expect(bridge.restoreThreads()).rejects.toThrow("Remote inventory unavailable");
+    expect(bridge.threads()).toEqual([]);
+    expect(session.subagents.threads[0]?.id).toBe(childId);
+    expect(inventoryRequests).toBe(1);
   } finally { session.backend.privateEvents = privateEvents; }
 });

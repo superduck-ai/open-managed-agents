@@ -1,4 +1,4 @@
-import { nativeOutcomes } from "./session-log.ts";
+import { nativeOutcomes, completedInputs } from "./session-log.ts";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
 import { SessionId } from "@deepseek-ai/dsh-session";
@@ -6,7 +6,7 @@ import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import * as CcrBridge from "../src/ccrv2/index.ts";
-import { Backend, eventually, toolEvents, textEvents, modelSystemText, deliveryOf } from "./backend.ts";
+import { Backend, eventually, toolEvents, textEvents, modelSystemText } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -85,7 +85,7 @@ describe("original dsh loop over CCRv2", () => {
       expect(b.requests).toHaveLength(0);
       expect(b.publicLog.get("invalid_input_failed_result")?.is_error).toBe(true);
       expect(b.statuses.at(-1)).toBe("idle");
-      expect(session.delivery.completed).toContain("invalid_input");
+      expect(session.receivedInputIds.has("invalid_input")).toBe(true);
       await session.receive("valid_followup", { content: "continue" });
       expect(b.requests).toHaveLength(1);
       expect(b.publicLog.get("valid_followup_result")?.is_error).toBe(false);
@@ -200,7 +200,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(messages.map((event) => event.content)).toEqual([
       [{ type: "text", text: "" }], undefined, [{ type: "text", text: "你好" }],
     ]);
-    const replay = session.delivery.outbox;
+    const replay = session.pendingEvents;
     expect(replay).toEqual([]);
     expect(b.timeline.filter((event) => event.type === "event_start" && event.event.id === messages[0]!.id)).toHaveLength(0);
     for (const message of messages.slice(1)) {
@@ -359,12 +359,11 @@ describe("original dsh loop over CCRv2", () => {
       expect(JSON.stringify([...b.publicLog.values()])).not.toContain("sk-test-private");
       expect(diagnostics.some((line) => line.includes('"failure_reason":"model_quota_exhausted"'))).toBe(true);
       expect(diagnostics.join("\n")).not.toContain("sk-test-private");
-      expect(session.delivery.completed).toContain("quota_failure");
-      expect(session.delivery.outbox).toEqual([]);
+      expect(completedInputs(session)).toContain("quota_failure");
+      expect(session.pendingEvents).toEqual([]);
       const published = b.timeline.findIndex((entry) => entry.type === "result");
       const saved = b.timeline.findIndex((entry) => entry.type === "private.persist"
-        && !!deliveryOf(entry.payload)
-        && deliveryOf(entry.payload)!.outbox.some((event: Payload) => event.type === "result"));
+        && entry.payload.data?.type === "turn/end");
       const ack = b.timeline.findIndex((entry) => entry.type === "input.ack");
       expect(saved).toBeGreaterThanOrEqual(0);
       expect(published).toBeGreaterThan(saved);
@@ -405,8 +404,8 @@ describe("original dsh loop over CCRv2", () => {
     await processing.promise;
     await terminal.promise;
     expect(confirmed).toBe(false);
-    expect(session.delivery.completed).toContain("cancel_delivery");
-    expect(session.delivery.outbox).toEqual([]);
+    expect(completedInputs(session)).toContain("cancel_delivery");
+    expect(session.pendingEvents).toEqual([]);
     expect(b.publicLog.has("cancel_delivery_result")).toBe(true);
     expect(b.processed).toEqual([]);
     session.stop();
@@ -452,7 +451,7 @@ describe("original dsh loop over CCRv2", () => {
         const matches = stage === "publication"
           ? options.path.endsWith("/events") && body.includes('"type":"tool_result"')
           : options.path.endsWith("/internal-events") && (stage === "accepted"
-            ? body.includes('"type":"plugin:oma/delivery"')
+            ? body.includes('"type":"user/message"')
             : body.includes(`"type":"tool/${stage === "dispatch" ? "call" : "result"}"`));
         if (matches && failures < 4) {
           failures++;
@@ -477,7 +476,7 @@ describe("original dsh loop over CCRv2", () => {
         expect(b.requests).toHaveLength(2);
         expect(b.executions).toHaveLength(1);
         expect(b.processed).toEqual([`retry_${stage}`]);
-        expect(session.delivery.outbox).toEqual([]);
+        expect(session.pendingEvents).toEqual([]);
       } finally { resume.resolve(); session.stop(); await turn.catch(() => {}); }
     }
   });
@@ -531,15 +530,11 @@ describe("original dsh loop over CCRv2", () => {
       expect(index).toBeGreaterThan(-1);
       return index;
     };
-    const state = (predicate: (data: Payload) => boolean) => first(
-      (event) => event.type === "private.persist" &&
-        !!deliveryOf(event.payload) && predicate(deliveryOf(event.payload)!),
-    );
-    const accepted = state((s) => s.inputId === "durable_order" && !s.completed.includes("durable_order"));
+    const accepted = first(e => e.type === "private.persist" && e.payload.data?.type === "user/message" && e.payload.data.data?.id === "durable_order");
     const ack = first((e) => e.type === "input.ack" && e.inputId === "durable_order");
     const processing = first((e) => e.type === "input.delivery" && e.inputId === "durable_order" && e.status === "processing");
     const model = first((e) => e.type === "model.request");
-    expect(accepted).toBeLessThan(processing);
+    expect(accepted).toBeLessThan(model);
     expect(processing).toBeLessThan(model);
     const approval = first((e) => e.type === "control_request");
     expect(b.timeline.slice(model, approval).some(
@@ -552,14 +547,13 @@ describe("original dsh loop over CCRv2", () => {
     expect(result).toBeGreaterThan(execution);
     const nextModel = b.timeline.findIndex((e, i) => i > execution && e.type === "model.request");
     expect(nextModel).toBeGreaterThan(result);
-    const completed = state((s) => s.completed.includes("durable_order") && s.outbox.length > 0);
+    const completed = first(e => e.type === "private.persist" && e.payload.data?.type === "turn/end");
     const idle = b.timeline.findIndex((e, i) => i > completed && e.type === "worker.status" && e.status === "idle");
     const published = first((e) => e.type === "result");
-    const cleared = state((s) => s.sent.includes("durable_order_result"));
     expect(idle).toBeGreaterThan(completed);
-    expect(cleared).toBeLessThan(idle);
-    expect(published).toBeLessThan(cleared);
-    expect(cleared).toBeLessThan(ack);
+    expect(published).toBeLessThan(idle);
+    expect(published).toBeLessThan(ack);
+    expect(completed).toBeLessThan(published);
   });
 
   test("a failed tool-result publication stops the next model request and survives restart", async () => {
@@ -585,7 +579,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(b.requests).toHaveLength(1);
     expect(b.executions).toHaveLength(1);
     expect(
-      first.session.delivery.outbox.some((event) => event.type === "user"),
+      first.session.pendingEvents.some((event) => event.type === "user"),
     ).toBe(true);
     await first.session.close();
     b.failPublicType = undefined;
@@ -600,7 +594,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(results[0]!.message.content[0].tool_use_id).toBe("call_1");
     expect(b.requests).toHaveLength(1);
     expect(b.executions).toHaveLength(1);
-    expect(second.session.delivery.outbox).toEqual([]);
+    expect(second.session.pendingEvents).toEqual([]);
   });
 
   test("messages and tool results precede the next tool or model request", async () => {
@@ -706,11 +700,11 @@ describe("original dsh loop over CCRv2", () => {
     b.failPublicEvents = true;
     const turn = first.session.receive("unpublished", { message: { content: "hello" } });
     turn.catch(() => {});
-    await eventually(() => first.session.delivery.completed.includes("unpublished") && b.failedCcrWrites > 0);
+    await eventually(() => completedInputs(first.session).includes("unpublished") && b.failedCcrWrites > 0);
     first.session.stop();
     await expect(turn).rejects.toThrow();
-    expect(first.session.delivery.completed).toContain("unpublished");
-    expect(first.session.delivery.outbox.length).toBeGreaterThan(0);
+    expect(completedInputs(first.session)).toContain("unpublished");
+    expect(first.session.pendingEvents.length).toBeGreaterThan(0);
     await first.session.close();
     b.failPublicEvents = false;
     const second = await open(b);
@@ -721,7 +715,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(
       [...b.publicLog.values()].filter((p) => p.type === "result"),
     ).toHaveLength(1);
-    expect(second.session.delivery.outbox).toEqual([]);
+    expect(second.session.pendingEvents).toEqual([]);
   });
   test("unconfirmed input checkpoint is not acknowledged or sent to the model", async () => {
     const b = backend();
@@ -822,7 +816,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(
       [...b.publicLog.values()].filter((p) => p.type === "result"),
     ).toHaveLength(1);
-    expect(session.delivery.completed).toContain(session.delivery.inputId);
+    expect(completedInputs(session)).toContain(session.inputId);
     expect(b.sandboxCount).toBe(0);
   });
 
@@ -864,7 +858,7 @@ describe("original dsh loop over CCRv2", () => {
       arguments: '{"command":"original"}',
     });
     await stored.close();
-    expect(session.delivery.completed).toContain(session.delivery.inputId);
+    expect(completedInputs(session)).toContain(session.inputId);
   });
 
   test("approval key order changes do not publish argument notices or add model context", async () => {
@@ -889,7 +883,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(b.executions).toEqual([{ name: "write", arguments: effective }]);
     expect([...b.publicLog.values()].filter((event) => event.type === "system.message")).toEqual([]);
     expect(JSON.stringify(b.requests[1]!.messages)).not.toContain("OMA approval changed");
-    expect(session.delivery.completed).toContain(session.delivery.inputId);
+    expect(completedInputs(session)).toContain(session.inputId);
   });
 
   test("signed thinking survives the tool loop and fresh-host history restoration", async () => {
@@ -993,7 +987,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(history).toContain("first user");
     expect(history).toContain("hello");
     expect(history).toContain("second user");
-    expect(second.session.delivery.completed).toEqual(["first", "second"]);
+    expect(completedInputs(second.session)).toEqual(["first", "second"]);
   });
 
   test("a new plugin host resumes logs whose stored key order differs between batches", async () => {
@@ -1023,7 +1017,7 @@ describe("original dsh loop over CCRv2", () => {
     const history = JSON.stringify(b.requests[1]!.messages);
     expect(history).toContain("first user");
     expect(history).toContain("second user");
-    expect(second.session.delivery.completed).toEqual(["first", "second"]);
+    expect(completedInputs(second.session)).toEqual(["first", "second"]);
   });
 });
 

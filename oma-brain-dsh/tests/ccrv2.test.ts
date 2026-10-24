@@ -1,16 +1,15 @@
-import { nativeOutcomes } from "./session-log.ts";
-import { deliveryOf, eventually } from "./backend.ts";
+import { nativeOutcomes, completedInputs } from "./session-log.ts";
+import { eventually } from "./backend.ts";
 import { expect, spyOn, test } from "bun:test";
 import { ContextRecovery } from "../src/runtime/compaction.ts";
-import { appendPluginRecord, pluginRecordOf, SESSION_FORMAT_VERSION, SessionId, SessionSeq } from "@deepseek-ai/dsh-session";
+import { SESSION_FORMAT_VERSION, SessionId, SessionSeq } from "@deepseek-ai/dsh-session";
 import { Context } from "@deepseek-ai/cordis";
-import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { freezeMessage, MessageId, createUserMessage, LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { mountKernel } from "../src/kernel.ts";
 import * as CcrBridge from "../src/ccrv2/index.ts";
 import type { CcrBackend, CcrPersistArgs } from "../src/ccrv2/index.ts";
 import type { SandboxExecutor } from "../src/runtime/contracts.ts";
 import type { Payload } from "../src/ccrv2/protocol.ts";
-import { emptyDelivery } from "../src/ccrv2/protocol.ts";
 import type { ClientEvent, SessionState, RequiresActionDetails } from "../src/ccrv2/wire.ts";
 import type { CcrLeaseResult, CcrLeaseFailure } from "../src/ccrv2/index.ts";
 
@@ -104,8 +103,8 @@ test("log recovery rejects unsupported headers, missing headers, gaps and confli
   }
 });
 
-test("startup rejects malformed delivery records before opening a native session", async () => {
-  const valid = { ...emptyDelivery(), revision: 1 };
+test("startup rejects legacy delivery records before opening a native session", async () => {
+  const valid = { revision: 1, inputId: "", logOffsets: {}, completed: [], outbox: [] };
   const cases = [
     null, {}, { revision: 2 }, { ...valid, revision: "2" }, { ...valid, revision: -1 },
     { ...valid, revision: 1.5 }, { ...valid, revision: Number.MAX_SAFE_INTEGER + 1 },
@@ -128,7 +127,7 @@ test("startup rejects malformed delivery records before opening a native session
       await mountKernel(ctx);
       await ctx.plugin(CcrBridge, { backend });
       const session = ctx.ccrv2.createSession({ id: "malformed", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup });
-      await expect(session.open()).rejects.toThrow("Invalid CCRv2 delivery for session malformed");
+      await expect(session.open()).rejects.toThrow("Legacy Brain delivery records require explicit migration");
       expect(backend.logs.get("malformed")).toHaveLength(2);
       expect(backend.output.size).toBe(0);
       expect(backend.acknowledged).toEqual([]);
@@ -225,13 +224,7 @@ test("session previews enter one stream window and terminal publication still wa
   backend.persist = async (id, ...args) => {
     await persist(id, ...args);
     const [, data] = args;
-    if ("seq" in data) {
-      const record = pluginRecordOf(data);
-      if (record?.type === "plugin:oma/delivery") {
-        const delivery = deliveryOf({ type: "dsh_log", data })!;
-        if (delivery.completed.includes(delivery.inputId)) completed.resolve();
-      }
-    }
+    if ("seq" in data && data.type === "turn/end") completed.resolve();
   };
   const model = new TextModel();
   model.stream = async function* (options: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -256,7 +249,7 @@ test("session previews enter one stream window and terminal publication still wa
     expect(previewCalls).toBe(2);
     expect(timers.size).toBe(1);
     expect(batches.flat().filter((event) => event.ephemeral)).toEqual([]);
-    expect(session.delivery.outbox.length).toBeGreaterThan(0);
+    expect(session.pendingEvents.length).toBeGreaterThan(0);
     expect(backend.acknowledged).toEqual([]);
     [...timers][0]!();
     await sending.promise;
@@ -264,10 +257,10 @@ test("session previews enter one stream window and terminal publication still wa
     expect(previews.map((event) => event.payload.type)).toEqual(["event_start", "event_delta", "event_delta"]);
     expect(previews.filter((event) => event.payload.type === "event_delta").map((event) => event.payload.delta))
       .toEqual(["A", "B"].map((text) => ({ type: "content_delta", index: 0, content: { type: "text", text } })));
-    expect(session.delivery.outbox.length).toBeGreaterThan(0);
+    expect(session.pendingEvents.length).toBeGreaterThan(0);
     expect(backend.acknowledged).toEqual([]);
     response.resolve(); await turn;
-    expect(session.delivery.outbox).toEqual([]);
+    expect(session.pendingEvents).toEqual([]);
     expect(backend.acknowledged).toEqual(["buffered:input"]);
     expect(timers.size).toBe(0);
   } finally {
@@ -290,9 +283,7 @@ test("failed final persistence releases the session writer and permits replaceme
         id: "replaced", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup,
       });
       await session.open();
-      appendPluginRecord(session.agent.session, "plugin:oma/delivery", {
-        version: 1, delivery: { ...emptyDelivery(), revision: i + 1 },
-      });
+      session.agent.session.append("user/message", createUserMessage({ source: { kind: "user" }, content: [{ type: "text", text: "Native event" }] }), { surfaceOp: "append" });
       backend.persist = async () => { throw new Error("Lease expired"); };
       await expect(session.close()).rejects.toThrow();
       expect(() => ctx.ccrv2.forget(session.id)).not.toThrow();
@@ -306,14 +297,14 @@ test("failed final persistence releases the session writer and permits replaceme
 test("startup clears task_summary after recovery persistence and before status or publication, including interrupted inputs", async () => {
   for (const interrupted of [false, true]) {
     const backend = new MemoryBackend();
-    const state = emptyDelivery();
-    state.revision = 1;
-    state.inputId = interrupted ? "interrupted-input" : "";
-    state.outbox = [{ type: "system.message", uuid: "pending-message" }];
+    const events: Payload[] = [
+      { type: "turn/start", seq: 0, time: 0, data: { turn: 1 } },
+      { type: "user/message", seq: 1, time: 1, surfaceOp: "append", data: freezeMessage({ id: MessageId("interrupted-input"), role: "user", source: { kind: "user" }, content: [{ type: "text", text: "Native input" }] }) },
+      ...interrupted ? [] : [{ type: "turn/end", seq: 2, time: 2, data: { turn: 1, reason: { kind: "completed" } } }],
+    ];
     backend.logs.set("recovery", [
       { type: "dsh_log", data: { version: SESSION_FORMAT_VERSION, id: "recovery", createdAt: 0, isSeeded: false } },
-      { type: "dsh_log", data: { type: "plugin:oma/delivery", seq: 0, time: 0, ignorable: true,
-        data: { version: 1, delivery: state } } },
+      ...events.map(data => ({ type: "dsh_log", data })),
     ]);
     const order: string[] = [];
     const started = Promise.withResolvers<void>();
@@ -663,12 +654,12 @@ test("CCRv2 plugin runs isolated sessions and restores history without OMA", asy
     }
     expect(backend.acknowledged).toEqual([]);
     expect(first.model.requests).toHaveLength(0);
-    expect(a.delivery.inputId).toBe("");
+    expect(a.inputId).toBe("");
     await a.receive("input_a", { content: "first session" });
     await b.receive("input_b", { content: "second session" });
     expect(backend.acknowledged).toEqual(["a:input_a", "b:input_b"]);
-    expect(a.delivery.completed).toEqual(["input_a"]);
-    expect(b.delivery.completed).toEqual(["input_b"]);
+    expect(completedInputs(a)).toEqual(["input_a"]);
+    expect(completedInputs(b)).toEqual(["input_b"]);
     expect(JSON.stringify(first.model.requests[0]!.messages)).toContain("Standalone test instructions");
     expect(first.model.requests[1]!.messages.some((m) => JSON.stringify(m).includes("first session"))).toBe(false);
     expect(backend.output.get("a")!.some((e) => e.type === "result")).toBe(true);
@@ -686,7 +677,7 @@ test("CCRv2 plugin runs isolated sessions and restores history without OMA", asy
     expect(restored.model.requests[0]!.messages.some(
       (m) => m.role === "assistant" && JSON.stringify(m).includes("standalone reply"),
     )).toBe(true);
-    expect(a.delivery.outbox).toEqual([]);
+    expect(a.pendingEvents).toEqual([]);
   } finally {
     await restored.ctx.fiber.dispose();
   }
@@ -856,7 +847,7 @@ test("user interrupts settle the tool locally, finish successfully and survive r
       await turn;
       expect(session.abort.signal.aborted).toBe(false);
       expect(session.abort.signal.aborted).toBe(false);
-      expect(session.delivery.completed).toContain(session.delivery.inputId);
+      expect(completedInputs(session)).toContain(session.inputId);
       expect(nativeOutcomes(session)["cancelled-call"]).toMatchObject({ failed: true });
       expect(backend.output.get(config.id)!.filter((event) => event.type === "result"))
         .toEqual([{ type: "result", uuid: "first_result", subtype: "success", is_error: false }]);
@@ -1030,7 +1021,7 @@ test("native tool errors remain resumable without operator reconciliation", asyn
     expect(executions).toBe(1);
     expect(nativeOutcomes(first.session)["lost-call"]?.text).toContain("Do not retry blindly");
     expect(first.session.abort.signal.aborted).toBe(false);
-    expect(first.session.delivery).not.toHaveProperty("executions");
+    expect(first.session).not.toHaveProperty("delivery");
   } finally { first.restore(); await first.ctx.fiber.dispose(); }
   const model = new TextModel();
   const resumed = await mount(model);

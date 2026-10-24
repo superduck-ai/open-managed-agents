@@ -1,4 +1,4 @@
-import { nativeOutcomes } from "./session-log.ts";
+import { nativeOutcomes, completedInputs } from "./session-log.ts";
 import { modelSystemText } from "./backend.ts";
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
@@ -120,7 +120,7 @@ test("native tool batch starts two children concurrently, isolates identical cal
     expect(f.b.statuses.at(-1)).toBe("running");
     alphaResult.resolve({ content: [{ type: "text", text: "alpha output" }] });
     await turn;
-    expect(f.session.delivery.completed).toContain(f.session.delivery.inputId);
+    expect(completedInputs(f.session)).toContain(f.session.inputId);
     expect(f.b.statuses.at(-1)).toBe("idle");
     const synthesis = f.b.requests.at(-1)!;
     expect(JSON.stringify(synthesis.messages)).toContain("alpha report");

@@ -517,7 +517,7 @@ test("children use independent external discovery with their own approval and re
     f.a.launch.subagents = { inlineAgents: true };
     f.session.config.subagents = f.a.launch.subagents;
     await f.session.open();
-    f.session.delivery.inputId = "parent_input";
+    f.session.inputId = "parent_input";
     f.b.modelScript = [mcpEvents("child_mcp"), textEvents("child fetched")];
     const report = JSON.parse(
       await f.session.subagents.send(

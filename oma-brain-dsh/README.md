@@ -138,7 +138,7 @@ The sandbox provider uses the same official `@modelcontextprotocol/client` SDK a
 
 The `SandboxTools` entry is `src/sandbox-tools/index.ts`. It injects the existing `sandboxExecutor` and binds a separate execution bridge for each agent. It registers built-in Bash, Read, Write, Edit, Grep and Glob definitions from `definitions.ts`, with a fresh schema copy for every plugin instance. Each definition delegates execution to `ToolExecution`. The plugin preserves the inherited-tool restriction and per-thread concurrency policy, and its registrations are removed when its fiber or agent is disposed. Archiving a child leaves the shared provider available to the root and other children. Updating the sandbox wire contract requires updating the built-in definitions; startup does not call `tools/list`. `tests/sandbox-contract.test.ts` compares these definitions with a real sandbox server's `tools/list` when `OMA_RUST_MCP_URL` is set.
 
-`ToolExecution` reads a shared permission table keyed by sandbox MCP tool name. Before every primary or child model request, `SessionRuntime` refreshes that table from the current `session_context`. The Go endpoint computes permissions from the latest public Session Agent snapshot, so idle-session policy updates take effect on the next turn. Refresh or validation failure prevents the model request; a missing table clears previous grants and falls back to CCRv2 approval. The sandbox gateway independently checks the latest snapshot for denied tools. Tools whose policy is `allow` skip the `can_use_tool` request and never report `requires_action`; `ask`, `deny` and tools without a policy keep the CCRv2 approval request. Read, Glob and Grep are marked `readOnly`: they retry a failed sandbox call once, and on a second failure return a failed native tool result to the model. A sandbox or external MCP `tools/call` is recorded as a failed result, not an unknown outcome, when the OMA gateway marks the response with `X-Oma-Sandbox-Not-Forwarded` or `X-Oma-Mcp-Not-Forwarded`, or when connecting to the OMA gateway itself fails (`ConnectionRefused`, `ENOTFOUND` and similar). Sandbox MCP calls wait up to 185 seconds; Bash waits for its requested `timeout` (default 120 seconds, counted up to 600) plus a 65-second margin, never less than 185 seconds, so a long command is not reported as an unknown outcome while it is still running. Bun drops a fetch connection after five idle minutes, and a running command usually writes nothing to the response, so each sandbox `tools/call` fetch passes `timeout: false` and is bounded instead by an abort deadline of that wait plus 15 seconds. Bun before 1.4 ignores positive `timeout` values; `false` works on both 1.3 and 1.4. `CcrSession` implements that bridge contract. It translates `can_use_tool` responses into a neutral approval decision, tracks active calls in memory for shutdown, and manages CCRv2 event mapping and outbox publication. Changed approval arguments are durably recorded for public delivery before execution. `SessionRuntime` delegates execution and recovery to DSH, flushing native calls before tool bodies and native results before subsequent model requests.
+`ToolExecution` reads a shared permission table keyed by sandbox MCP tool name. Before every primary or child model request, `SessionRuntime` refreshes that table from the current `session_context`. The Go endpoint computes permissions from the latest public Session Agent snapshot, so idle-session policy updates take effect on the next turn. Refresh or validation failure prevents the model request; a missing table clears previous grants and falls back to CCRv2 approval. The sandbox gateway independently checks the latest snapshot for denied tools. Tools whose policy is `allow` skip the `can_use_tool` request and never report `requires_action`; `ask`, `deny` and tools without a policy keep the CCRv2 approval request. Read, Glob and Grep are marked `readOnly`: they retry a failed sandbox call once, and on a second failure return a failed native tool result to the model. A sandbox or external MCP `tools/call` is recorded as a failed result, not an unknown outcome, when the OMA gateway marks the response with `X-Oma-Sandbox-Not-Forwarded` or `X-Oma-Mcp-Not-Forwarded`, or when connecting to the OMA gateway itself fails (`ConnectionRefused`, `ENOTFOUND` and similar). Sandbox MCP calls wait up to 185 seconds; Bash waits for its requested `timeout` (default 120 seconds, counted up to 600) plus a 65-second margin, never less than 185 seconds, so a long command is not reported as an unknown outcome while it is still running. Bun drops a fetch connection after five idle minutes, and a running command usually writes nothing to the response, so each sandbox `tools/call` fetch passes `timeout: false` and is bounded instead by an abort deadline of that wait plus 15 seconds. Bun before 1.4 ignores positive `timeout` values; `false` works on both 1.3 and 1.4. `CcrSession` implements that bridge contract. It translates `can_use_tool` responses into a neutral approval decision, tracks active calls in memory for shutdown, and manages CCRv2 event mapping and publication from an in-memory queue. Changed approval arguments are publicly confirmed before execution. `SessionRuntime` delegates execution and recovery to DSH, flushing native calls before tool bodies and native results before subsequent model requests.
 
 `CcrClient` in `src/ccrv2/client.ts` implements the HTTP backend contract. It owns worker registration, SSE parsing and reconnection, worker paths, epoch fields, private event pagination, durable envelopes and their session/sequence-derived IDs, retries, ephemeral event flags, delivery confirmation, status updates and heartbeat requests. Its config supplies a generic HTTP transport returning raw `Response` objects, current credentials and session IDs. Tokens are resolved again for every retry; each write retains its original worker epoch. Protocol structures in `src/ccrv2/wire.ts` are copied from the local `superduck-code` implementation using `unknown` for opaque fields.
 
@@ -385,20 +385,32 @@ block their replication. The target session must still pass its own local durabi
 barrier before any captured events are uploaded. Raw native handle appends are
 already durable and use revision-based reads.
 
-Input deduplication, log cursors and pending public output use incremental version 2
-`plugin:oma/delivery` records in the same JSONL. Completed input IDs are stored once;
-outbox changes record additions and sent UUIDs. Unchanged checkpoints append nothing.
-Version 1 snapshots remain readable. These records replicate as ordinary native
-events. They contain no execution phases, approved-call maps, tool-result
-copies or child configuration. Native `agents.resume()` repairs interrupted calls
-without replaying side effects. Subagents restore their native descriptors.
+No delivery journal, durable completed list, publication cursor or separate outbox
+file is maintained. Native Header/Event objects retain the dsh format unchanged;
+no `plugin:oma/delivery` records or OMA interruption source messages are appended.
+Existing external input identity uses the native message `id` through the public
+`freezeMessage` API. Restart recovery indexes the first user-source message in each
+native turn, without treating later approval context as a new input. Accepted
+inputs are not rerun. Invalid inputs and cancellations before native admission rely
+on the server's confirmed delivery status.
+
+Public messages, tool results and turn outcomes are regenerated from native logs
+on resume and republished with stable UUIDs. The backend deduplicates repeated
+publication. Related child logs use their own native identities. In-process output
+queues retain failed batches and consume only the captured prefix on success.
+Transient protocol notifications not derivable from native history are retried in
+memory and have no additional crash-recovery storage. Native `agents.resume()`
+repairs interrupted calls without replaying side effects. Child discovery combines
+local native headers with remote inventory; missing inventory blocks recovery.
+Historical OMA delivery/receipt records require explicit migration.
 
 After initial prefix validation, native Session events feed an incremental cache
 with a confirmed seq cursor. Active checkpoints upload only new events; previews
 do not reopen or scan full JSONL files. Raw handle access uses a revision-based
 suffix-read fallback. The cache is cleared on forget/close.
 
-Tool execution, public publication, subsequent model requests and input ACK await
+The native `llm/stream` hook confirms admitted input and request records before
+starting the actual model stream. Tool execution, public publication and input ACK await
 remote confirmation. Shutdown waits for results to be confirmed before releasing
 the claim. These checkpoints do not form a cross-system exactly-once transaction.
 A host without the original disk recovers only the remotely confirmed prefix.

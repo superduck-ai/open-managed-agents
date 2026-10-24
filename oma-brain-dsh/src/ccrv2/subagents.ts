@@ -16,15 +16,11 @@ export class CcrSubagentBridge implements SubagentBridge {
     const ids = new Set((await this.session.ctx.sessionPersistence.list())
       .filter(({ header }) => header.origin === "subagent" && header.parentSession === this.session.id)
       .map(({ header }) => header.id));
-    for (const id of [...this.session.restoredThreadIds, ...Object.keys(this.session.delivery.logOffsets)])
-      if (id !== this.session.id) ids.add(SessionId(id));
-    if (this.session.restoredFromRemote) {
-      const payloads = await this.session.backend.privateEvents(this.session.id, { subagents: true, signal: this.session.abort.signal });
-      for (const payload of payloads) {
-        assertPersistenceFormat(payload, this.session.id);
-        if (payload.type === "dsh_log" && payload.data?.origin === "subagent" && payload.data.parentSession === this.session.id)
-          ids.add(SessionId(payload.data.id));
-      }
+    const payloads = await this.session.backend.privateEvents(this.session.id, { subagents: true, signal: this.session.abort.signal });
+    for (const payload of payloads) {
+      assertPersistenceFormat(payload, this.session.id);
+      if (payload.type === "dsh_log" && payload.data?.origin === "subagent" && payload.data.parentSession === this.session.id)
+        ids.add(SessionId(payload.data.id));
     }
     for (const id of ids) {
       this.bindPersistence(id);
@@ -50,12 +46,6 @@ export class CcrSubagentBridge implements SubagentBridge {
         throw error;
       }
       if (state.id !== id) throw new Error("Invalid authoritative subagent thread identity");
-      for (const event of this.session.delivery.outbox) {
-        if (event.session_thread_id !== id) continue;
-        if (event.type === "session.thread_status_terminated") state = { ...state, status: "terminated", archived: true };
-        else if (event.type === "session.thread_status_idle") state = { ...state, status: "idle" };
-        else if (event.type === "session.thread_status_running") state = { ...state, status: "running" };
-      }
       if (!descriptor || descriptor.mode !== "continuable") throw new Error("Subagent is missing its native descriptor");
       this.retained.push({
         id, name: descriptor.label, inline: descriptor.provider === "oma-inline",
@@ -116,15 +106,12 @@ export class CcrSubagentBridge implements SubagentBridge {
         fields = { type: "agent.thread_message_received", from_session_thread_id: thread.id,
           from_agent_name: thread.name, content: [{ type: "text", text: event.text }] }; break;
     }
-    this.session.delivery.outbox.push({ ...fields, uuid: crypto.randomUUID(), session_thread_id: thread.id, agent_name: thread.name });
+    this.session.pendingEvents.push({ ...fields, uuid: event.kind === "created" ? `${thread.id}_created` : crypto.randomUUID(), session_thread_id: thread.id, agent_name: thread.name });
     await this.session.flushEvents();
     await this.session.updateStatus();
   }
   onContextCompacted(threadId: string, tokens?: number): Promise<void> {
     return this.session.contextCompacted(tokens, threadId);
-  }
-  beforeThreadInput(threadId: string, logOffset: number): void {
-    this.session.delivery.logOffsets[threadId] ??= logOffset;
   }
   beforeRequest(): Promise<void> { return this.session.flushEvents(); }
   onEvent(threadId: string, event: SessionEvent): void { this.session.record(event, threadId); }

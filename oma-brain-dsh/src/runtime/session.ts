@@ -1,6 +1,6 @@
 import type { Context, Fiber } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
-import { createUserMessage, type ContentBlock, type ToolCallBlock } from "@deepseek-ai/dsh-llm";
+import { freezeMessage, MessageId, createUserMessage, type ContentBlock, type ToolCallBlock } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { ContextRecovery } from "./compaction.ts";
 import { ModelRetry } from "./model-retry.ts";
@@ -139,6 +139,17 @@ export class SessionRuntime {
         signal.throwIfAborted();
         return next();
       });
+      scope.on("llm/stream", (request, next) => {
+        const runtime = this;
+        return (async function* () {
+          if (request.sessionId === runtime.config.id) {
+            await runtime.flushLog();
+            await runtime.ctx.get("ccrReplication")?.flush(runtime.config.id);
+            request.signal?.throwIfAborted();
+          }
+          yield* next();
+        })();
+      });
       scope.on("agent/request-error", async ({ agent, failure, turn, step, signal }, next) => {
         signal.throwIfAborted();
         const recovered = await this.contextRecovery.recover(agent.session, failure, turn, step,
@@ -224,10 +235,10 @@ export class SessionRuntime {
         await hooks.afterRun(false);
         return;
       }
-      this.agent.followup(createUserMessage({
-        source: { kind: "user" },
-        content,
-      }));
+      const message = hooks.messageId === undefined
+        ? createUserMessage({ source: { kind: "user" }, content })
+        : freezeMessage({ id: MessageId(hooks.messageId), role: "user", source: { kind: "user" }, content });
+      this.agent.followup(message);
       await this.agent.whenIdle();
       await this.flushLog();
       await hooks.afterRun(this.turnCompleted);

@@ -1,3 +1,4 @@
+import { completedInputs } from "./session-log.ts";
 import type { CcrPersistArgs } from "../src/ccrv2/persistence-contracts.ts";
 import { test, expect } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
@@ -9,7 +10,7 @@ import { omaModelOptions } from "../src/model.ts";
 import { AiSdkAdapter } from "../src/llm-ai-sdk/index.ts";
 import { OmaApi } from "../src/api.ts";
 
-test.each(["event", "control"])("%s interruption context survives recovery in native requests without fabricated public messages", async (entry) => {
+test.each(["event", "control"])("%s interruption uses native cancellation and recovery without OMA source records", async (entry) => {
   const interrupt = entry === "event" ? { type: "user.interrupt" } : { type: "control_request", request_id: "control", request: { subtype: "interrupt" } };
   const first = Promise.withResolvers<void>();
   const second = Promise.withResolvers<void>();
@@ -59,13 +60,13 @@ test.each(["event", "control"])("%s interruption context survives recovery in na
     let session = await createSession(ctx);
     await session.open();
     await session.receive("idle-interrupt", interrupt);
-    expect(session.agent.session.deriveMessages().filter(message => message.source.kind === "oma-interruption")).toHaveLength(0);
+    expect(session.agent.session.deriveMessages().filter(message => String(message.source.kind) === "oma-interruption")).toHaveLength(0);
     const old = session.receive("old", { content: "仅调用一次Bash原样执行：sleep 3; printf '%s\\n' 'INT001-CAPTURE-A'。执行完成后仅回复INT001-CAPTURE-A。不得后台运行。" });
     await first.promise;
     await session.receive("interrupt", interrupt);
     await old;
-    const completedAfterInterrupt = session.delivery.completed.includes("old");
-    expect(JSON.stringify(logs.get(id))).toContain("oma-interruption");
+    const completedAfterInterrupt = completedInputs(session).includes("old");
+    expect(JSON.stringify(logs.get(id))).not.toContain("oma-interruption");
     await session.receive("old", { content: "Duplicate delivery must not become another model request" });
     expect(captures).toHaveLength(1);
     await ctx.fiber.dispose();
@@ -83,15 +84,9 @@ test.each(["event", "control"])("%s interruption context survives recovery in na
     const texts = secondRequest.messages.flatMap(message => message.content).filter(block => block.type === "text").map(block => block.text ?? "");
     expect(texts[0]).toContain("INT001-CAPTURE-A");
     expect(texts.at(-1)).toBe("仅回复INT001-CAPTURE-RESUME-0");
-    const contexts = nativeMessages.filter(message => message.source.kind === "oma-interruption");
-    expect(contexts).toHaveLength(1);
-    expect(contexts[0]!.source).toMatchObject({ inputId: "old" });
-    const contextText = contexts[0]!.content.filter(block => block.type === "text").map(block => block.text).join("\n");
-    expect(contextText).toContain("interrupted");
-    expect(contextText).toContain("cancelled");
-    expect(texts.indexOf(contextText)).toBeGreaterThan(0);
-    expect(texts.indexOf(contextText)).toBeLessThan(texts.length - 1);
-    expect(JSON.stringify(published)).not.toContain(contextText);
+    const contexts = nativeMessages.filter(message => String(message.source.kind) === "oma-interruption");
+    expect(contexts).toHaveLength(0);
+    expect(JSON.stringify(published)).not.toContain("oma-interruption");
   } finally { clearTimeout(timeout); await ctx.fiber.dispose(); }
 
 }, 15_000);

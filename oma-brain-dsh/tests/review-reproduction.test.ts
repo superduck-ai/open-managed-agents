@@ -1,7 +1,8 @@
+import { completedInputs } from "./session-log.ts";
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
-import SessionStore, { SESSION_FORMAT_VERSION, SessionId, SessionSeq, appendPluginRecord, pluginRecordOf, type SessionEvent, type SessionHeader } from "@deepseek-ai/dsh-session";
-import { LlmAttemptId } from "@deepseek-ai/dsh-llm";
+import SessionStore, { SESSION_FORMAT_VERSION, SessionId, SessionSeq, type SessionEvent, type SessionHeader } from "@deepseek-ai/dsh-session";
+import { createUserMessage, LlmAttemptId } from "@deepseek-ai/dsh-llm";
 import JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -97,11 +98,9 @@ test.each([20, 200])("preview and background replication avoid full reads with %
   const session = createOmaSession(ctx, api, backend.a);
   cleanups.push(() => session.close());
   await session.open();
-  session.delivery.inputId = "preview-input";
+  session.inputId = "preview-input";
   for (let index = 0; index < extraEvents; index++) {
-    appendPluginRecord(session.agent.session, "plugin:oma/delivery", {
-      version: 1, delivery: { ...session.delivery, revision: index + 1 },
-    });
+    session.agent.session.append("user/message", createUserMessage({ source: { kind: "user" }, content: [{ type: "text", text: "Native event" }] }), { surfaceOp: "append" });
   }
   await session.checkpoint();
   await new Promise(resolve => setTimeout(resolve, 50));
@@ -130,9 +129,7 @@ test.each([20, 200])("preview and background replication avoid full reads with %
   try {
     session.stream({ type: "start", attemptId: LlmAttemptId("review-preview"), revision: 1, turn: 1, step: 1 });
     for (let index = 0; index < 3; index++) {
-      appendPluginRecord(session.agent.session, "plugin:oma/delivery", {
-        version: 1, delivery: { ...session.delivery, revision: extraEvents + index + 1 },
-      });
+      session.agent.session.append("user/message", createUserMessage({ source: { kind: "user" }, content: [{ type: "text", text: "Native event" }] }), { surfaceOp: "append" });
       session.stream({ type: "chunk", attemptId: LlmAttemptId("review-preview"), revision: 1, index, time: index,
         chunk: { type: "text-delta", index: 0, text: "piece" } });
       await eventually(() => previewFrames === index + 1);
@@ -143,34 +140,6 @@ test.each([20, 200])("preview and background replication avoid full reads with %
   } finally {
     ctx.sessionPersistence.open = open;
   }
-});
-
-test("delivery journal stores completed inputs once and skips unchanged checkpoints", async () => {
-  const backend = new Backend();
-  cleanups.push(async () => { backend.stop(); });
-  await backend.ready;
-  const ctx = new Context();
-  cleanups.push(() => ctx.fiber.dispose());
-  const api = new OmaApi(backend.url);
-  await mountOma(ctx, api);
-  const session = createOmaSession(ctx, api, backend.a);
-  cleanups.push(() => session.close());
-  await session.open();
-  for (let index = 0; index < 10; index++) {
-    session.delivery.completed.push(`input-${index}`);
-    await session.saveDelivery();
-  }
-  const lengths = session.agent.session.snapshotEvents().flatMap(event => {
-    const record = pluginRecordOf(event);
-    if (record?.type !== "plugin:oma/delivery") return [];
-    const data = record.data as { version: number; completedAdded: string[] };
-    expect(data.version).toBe(2);
-    return [data.completedAdded.length];
-  });
-  expect(lengths).toEqual(Array(10).fill(1));
-  const count = session.agent.session.snapshotEvents().length;
-  for (let index = 0; index < 10; index++) await session.saveDelivery();
-  expect(session.agent.session.snapshotEvents()).toHaveLength(count);
 });
 
 test("existing divergent local history rejects resume and preserves both histories", async () => {
@@ -216,9 +185,7 @@ test.each(["checkpoint", "background"])("%s replication survives another session
   broken.flush = async () => { throw new Error("unrelated disk failure"); };
   try {
     await expect(ctx.sessionPersistence.flush()).rejects.toThrow("flush failed");
-    appendPluginRecord(session.agent.session, "plugin:oma/delivery", {
-      version: 1, delivery: { ...session.delivery, revision: 1 },
-    });
+    session.agent.session.append("user/message", createUserMessage({ source: { kind: "user" }, content: [{ type: "text", text: "Native event" }] }), { surfaceOp: "append" });
     const last = session.agent.session.snapshotEvents().at(-1)!;
     if (mode === "checkpoint") await session.checkpoint();
     await eventually(() => [...backend.privateLog.values()].some(payload => {
@@ -237,9 +204,7 @@ test("a session's own durability failure blocks background replication and check
   const dispose = ctx.on("session/flush", live => {
     if (live.id === session.agent.session.id) throw new Error("own disk failure");
   });
-  appendPluginRecord(session.agent.session, "plugin:oma/delivery", {
-    version: 1, delivery: { ...session.delivery, revision: 1 },
-  });
+  session.agent.session.append("user/message", createUserMessage({ source: { kind: "user" }, content: [{ type: "text", text: "Native event" }] }), { surfaceOp: "append" });
   const last = session.agent.session.snapshotEvents().at(-1)!;
   const replicated = () => [...backend.privateLog.values()].some(payload => {
     const data = payload.data as { seq?: number };
@@ -262,9 +227,7 @@ test("root checkpoints await related child durability and preserve the child's c
   const flush = writer.flush.bind(writer);
   writer.flush = async () => { throw new Error("child disk failure"); };
   try {
-    appendPluginRecord(child, "plugin:oma/delivery", {
-      version: 1, delivery: { ...session.delivery, revision: 1 },
-    });
+    child.append("user/message", createUserMessage({ source: { kind: "user" }, content: [{ type: "text", text: "Native event" }] }), { surfaceOp: "append" });
     await expect(session.checkpoint()).rejects.toThrow("child disk failure");
     expect([...backend.privateLog.values()].some(payload => backend.privateAgentIds.get(payload.uuid) === child.id)).toBe(false);
   } finally { writer.flush = flush; }

@@ -41,9 +41,8 @@ test("restart between root and child hydration recovers children from native del
   backend.modelScript = [textEvents("child completed")];
   await first.session.subagents.send({ name: "specialist", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal);
   const childId = first.session.subagents.threads[0]!.id;
-  first.session.delivery.logOffsets = {};
-  await first.session.saveDelivery();
-  expect(first.session.delivery.outbox).toEqual([]);
+  await first.session.checkpoint();
+  expect(first.session.pendingEvents).toEqual([]);
   await first.close();
 
   const partialCtx = new Context();
@@ -61,17 +60,16 @@ test("restart between root and child hydration recovers children from native del
   resumed.client.privateEvents = async (id, options) => {
     if (options?.subagents && options.agentId === undefined) {
       inventoryRequests++;
-      throw new Error("Remote inventory unavailable");
+
     }
     return privateEvents(id, options);
   };
   const requests = backend.requests.length;
   await resumed.session.open();
   expect(resumed.session.restoredFromRemote).toBe(false);
-  expect(resumed.session.restoredThreadIds.has(childId)).toBe(true);
   expect(resumed.session.subagents.threads.map(thread => ({ id: thread.id, name: thread.name, status: thread.status })))
     .toEqual([{ id: childId, name: "specialist", status: "idle" }]);
   expect(await resumed.ctx.sessionPersistence.stat(SessionId(childId))).toBeDefined();
   expect(backend.requests).toHaveLength(requests);
-  expect(inventoryRequests).toBe(0);
+  expect(inventoryRequests).toBe(1);
 });

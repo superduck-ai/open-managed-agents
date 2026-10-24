@@ -176,7 +176,6 @@ export class Subagents {
       signal.throwIfAborted();
       await child.run(args.message, {
         beforeRun: async () => {
-          this.bridge.beforeThreadInput?.(thread.id, child.agent.session.snapshotEvents().length);
           thread.status = "running";
           await this.bridge.emit({ kind: "message-sent", thread, text: args.message });
           await this.bridge.emit({ kind: "running", thread });

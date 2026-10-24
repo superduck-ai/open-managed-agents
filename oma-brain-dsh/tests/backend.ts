@@ -1,7 +1,6 @@
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { expect } from "bun:test";
-import { pluginRecordOf, type SessionEvent } from "@deepseek-ai/dsh-session";
 import type { Assignment } from "../src/assignment.ts";
 import type { Payload } from "../src/json.ts";
 
@@ -393,13 +392,4 @@ export async function eventually(
       throw new Error("Condition did not become true");
     await delay(10);
   }
-}
-
-export function deliveryOf(payload: Payload): Payload | undefined {
-  if (payload.type !== "dsh_log" || !("seq" in payload.data)) return;
-  const record = pluginRecordOf(payload.data as SessionEvent);
-  if (record?.type !== "plugin:oma/delivery") return;
-  const data = record.data as Payload;
-  return data.version === 1 ? { ...data.delivery, sent: [] }
-    : { ...data, completed: data.completedAdded, outbox: data.queued };
 }

@@ -3,7 +3,7 @@ import type { CcrBackend } from "../src/ccrv2/contracts.ts";
 import type { CcrClient } from "../src/ccrv2/client.ts";
 import type { SessionEvent, SessionHeader } from "@deepseek-ai/dsh-session";
 import type { DshLogData } from "../src/ccrv2/persistence-contracts.ts";
-import type { DeliveryState } from "../src/ccrv2/protocol.ts";
+type DeliveryState = { inputId: string; completed: string[]; outbox: unknown[] };
 
 type Accepts<Args extends unknown[]> = Args extends Parameters<CcrBackend["persist"]> ? true : false;
 

@@ -1,3 +1,4 @@
+import { completedInputs } from "./session-log.ts";
 import { modelSystemText } from "./backend.ts";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -50,7 +51,7 @@ test("SIGKILL during sandbox execution restores logs, never replays and continue
     await mountOma(ctx, api);
     resumed = createOmaSession(ctx, api, backend.a);
     await resumed.open();
-    expect(resumed.delivery.completed).toContain("crash_input");
+    expect(completedInputs(resumed)).toContain("crash_input");
     await resumed.receive("crash_input", {
       message: { content: "execute a command" },
     });
@@ -142,7 +143,7 @@ for (const duringDispatch of [true, false]) {
       const requestCount = backend.requests.length;
       await resumed.open();
       expect(backend.requests).toHaveLength(requestCount);
-      expect(resumed.delivery.completed).toContain("crash_input");
+      expect(completedInputs(resumed)).toContain("crash_input");
       expect(resumed.subagents.threads!.every((thread) => thread.status === "idle")).toBe(true);
       expect(resumed.abort.signal.aborted).toBe(false);
       const native = (threadId: string) => [...backend.privateLog.values()].filter((entry) => entry.type === "dsh_log"
@@ -155,7 +156,7 @@ for (const duringDispatch of [true, false]) {
       await resumed.receive("fresh", { content: "new independent task" });
       expect(backend.requests).toHaveLength(requestCount + 1);
       expect(backend.executions).toHaveLength(duringDispatch ? 2 : 0);
-      expect(resumed.delivery).not.toHaveProperty("executions");
+      expect(resumed).not.toHaveProperty("delivery");
     } finally {
       child.kill("SIGKILL"); await exited;
       await resumed?.close(); await ctx?.fiber.dispose(); backend.stop();

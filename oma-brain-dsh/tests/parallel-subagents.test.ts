@@ -142,7 +142,8 @@ test.each(["user.interrupt", "control_request"])("%s targeted interruption cance
   const turn = f.session.receive("interrupt-one", { content: "Delegate" });
   const settled = turn.catch(() => {});
   try {
-    await eventually(() => requests.length === 2);
+    await eventually(() => requests.length === 2
+      && [...f.session.approvals.values()].filter(approval => approval.phase === "confirmation").length === 2);
     const alpha = f.session.subagents.threads!.find((thread) => thread.name === "alpha")!;
     await f.session.control({ type, session_thread_id: alpha.id, ...(type === "control_request" ? { request_id: "targeted", request: { subtype: "interrupt" } } : {}) });
     await eventually(() => f.session.approvals.size === 1 && alpha.status === "idle"

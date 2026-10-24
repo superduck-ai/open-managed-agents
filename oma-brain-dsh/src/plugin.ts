@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "./api.ts";
 import { createOmaCcrClient, logOmaHeartbeatHealth, stopOmaSessionOnLeaseLoss } from "./oma-ccrv2.ts";
@@ -10,6 +9,7 @@ import { omaModelOptions } from "./model.ts";
 import { startWorkers } from "./worker.ts";
 import { BrainClaimClient } from "./claim.ts";
 import { required, readBrainClaimOptions, readCcrHeartbeatOptions, readShutdownDrainMs } from "./config.ts";
+import { checkWritableDirectory, resolveTranscriptRoot } from "./storage.ts";
 
 export const name = "oma-brain";
 
@@ -19,6 +19,7 @@ export async function mountOma(
 ): Promise<CcrClient> {
   const heartbeatOptions = CcrBridge.resolveHeartbeatOptions(heartbeat);
   await mountKernel(ctx);
+  if (localRoot !== undefined) await checkWritableDirectory(localRoot, "OMA_BRAIN_TRANSCRIPT_DIR");
   const client = createOmaCcrClient(api);
   await ctx.plugin(CcrBridge, {
     backend: client,
@@ -44,7 +45,7 @@ export async function apply(ctx: Context): Promise<void> {
   const claim = readBrainClaimOptions();
   const shutdownDrainMs = readShutdownDrainMs();
   const api = new OmaApi(base.replace(/\/$/, ""));
-  const client = await mountOma(ctx, api, heartbeat, process.env.OMA_BRAIN_TRANSCRIPT_DIR?.trim() || join(process.cwd(), ".dsh", "transcripts"));
+  const client = await mountOma(ctx, api, heartbeat, resolveTranscriptRoot());
   const claims = new BrainClaimClient(api, claim.token, crypto.randomUUID());
   await ctx.plugin({
     inject: ["ccrv2"],

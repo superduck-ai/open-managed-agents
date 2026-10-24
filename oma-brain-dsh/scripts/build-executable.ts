@@ -34,6 +34,7 @@ const result = await Bun.build({
   entrypoints: [join(root, "src/main.ts")],
   target: "bun",
   packages: "bundle",
+  define: { OMA_BRAIN_STANDALONE: "true" },
   // Keep deployment configuration in the runtime environment, outside the binary.
   env: "disable",
   compile: {

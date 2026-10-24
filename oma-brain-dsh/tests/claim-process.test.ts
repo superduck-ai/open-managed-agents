@@ -1,9 +1,9 @@
 import { afterAll, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { Backend, eventually, toolEvents, textEvents } from "./backend.ts";
 
 const transcriptRoot = await mkdtemp(join(tmpdir(), "oma-brain-claim-transcripts-"));
@@ -47,14 +47,15 @@ test("claimed sessions register the Bun host and SSE drives user input and appro
   backend.modelScript = [toolEvents(), textEvents("claim completed")];
   const binary = process.env.BRAIN_TEST_BINARY;
   const runtimeDirectory = binary ? await mkdtemp(join(tmpdir(), "oma-brain-dsh-binary-")) : undefined;
-  const standalone = runtimeDirectory && binary ? join(runtimeDirectory, basename(binary)) : undefined;
+  const standalone = runtimeDirectory && binary ? join(runtimeDirectory, "bin", basename(binary)) : undefined;
   if (standalone) {
+    await mkdir(dirname(standalone), { recursive: true });
     await copyFile(binary!, standalone);
     await chmod(standalone, 0o755);
     // Exercise runtime .env loading without source files, node_modules or Bun on PATH.
     await writeFile(
       join(runtimeDirectory!, ".env"),
-      `OMA_API_URL=${backend.url}\nOMA_BRAIN_CLAIM_TOKEN=${backend.claimToken}\nOMA_BRAIN_TRANSCRIPT_DIR=${transcriptRoot}\n`,
+      `OMA_API_URL=${backend.url}\nOMA_BRAIN_CLAIM_TOKEN=${backend.claimToken}\n`,
     );
   }
   const child = spawn(
@@ -110,6 +111,11 @@ test("claimed sessions register the Bun host and SSE drives user input and appro
     expect(backend.registrations).toBe(1);
     expect([...backend.publicLog.values()].filter((p) => p.type === "result")).toHaveLength(1);
     expect(backend.releases).toEqual([]);
+    if (standalone) {
+      const files = await readdir(join(dirname(standalone), ".dsh", "transcripts"), { recursive: true });
+      expect(files.some(file => file.endsWith("session.v4.jsonl") && file.includes(backend.a.session_id))).toBe(true);
+      await expect(readdir(join(runtimeDirectory!, ".dsh"))).rejects.toMatchObject({ code: "ENOENT" });
+    }
     child.kill("SIGTERM");
     const [code] = await exited;
     expect(code).toBe(0);

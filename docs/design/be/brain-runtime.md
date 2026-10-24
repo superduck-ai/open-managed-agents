@@ -4,7 +4,11 @@
 
 本地在仓库根目录运行 `just restart-brain`，复用 `oma-brain-dsh/scripts/restart.sh`，先构建，再停止当前 Brain 目录启动的 Bun 入口进程，并在前台启动新进程。构建失败时保留旧进程，旧进程未能在 30 秒内退出时取消重启。
 
-DSH 内核初始化时将当前进程的 `DSH_HOME` 固定为运行工作目录下的 `.dsh`，不使用全局 `~/.dsh` 或继承的 `DSH_HOME`。重启脚本先切换到当前 checkout 的 `oma-brain-dsh` 目录，因此本地数据位于 `oma-brain-dsh/.dsh/`；直接启动源码或可执行文件时按启动工作目录定位。该目录已被 Git 忽略。附件与缓存使用该目录，已有全局数据不自动迁移。会话主存储由直接注册的 `JsonlPersistence` 管理，生产路径默认当前工作目录的 `.dsh/transcripts/`，通过重启脚本启动时位于当前 checkout 的 `oma-brain-dsh/.dsh/transcripts/`，可用 `OMA_BRAIN_TRANSCRIPT_DIR` 覆盖；嵌入 bridge 可传 `localRoot`，未指定时使用隔离临时目录。
+DSH 内核尊重显式设置的 `DSH_HOME`，并将配置路径归一为绝对路径；未设置或为空时，源码与模块构建默认使用当前应用目录的 `.dsh`，即 `oma-brain-dsh/.dsh/`，不依赖启动 cwd。独立二进制默认使用实际可执行文件所在目录的 `.dsh`，不使用构建机器路径或 Bun 虚拟文件系统路径。显式相对路径按启动 cwd 解析，支持 `~` 家目录前缀。附件与缓存使用该 home，已有数据不自动迁移。
+
+会话主存储由直接注册的 `JsonlPersistence` 管理。路径优先级为 `OMA_BRAIN_TRANSCRIPT_DIR`、已解析 `DSH_HOME` 下的 `transcripts/`、应用默认 `.dsh/transcripts/`。通过重启脚本启动且未覆盖配置时，仍位于当前 checkout 的 `oma-brain-dsh/.dsh/transcripts/`。嵌入 bridge 可传 `localRoot`，未指定时使用隔离临时目录。
+
+启动领取器前创建并探测 DSH_HOME、附件目录和 transcript 根目录。探测实际创建独占临时文件，写入并 fsync、重命名后清理，不只依赖 access 权限位。探测不创建可能被 JSONL 枚举误认为项目目录的临时目录。非法路径、只读或其他 I/O 失败以带设置名、解析路径和错误码的 ConfigurationError 拒绝启动，不发出领取或注册请求；已有目录权限不被修改。测试覆盖不同 cwd、显式 home、只读/非目录路径、探测清理，以及从不同 cwd 启动的独立二进制。
 
 ## 私有持久化写入类型
 

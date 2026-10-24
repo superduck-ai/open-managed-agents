@@ -85,6 +85,8 @@ The application reads these optional deployment settings at startup. Unset value
 | `OMA_BRAIN_CLAIM_TOKEN` | required | Shared fleet token matching the backend `code_session.brain_claim_token_file` |
 | `OMA_BRAIN_CLAIM_CONCURRENCY` | `4` | Concurrent claim long polls, from 1 through 32 |
 | `OMA_BRAIN_MAX_SESSIONS` | `8` | Positive session capacity |
+| `DSH_HOME` | Application-local `.dsh/` | Home for local attachments/cache; explicit paths are respected |
+| `OMA_BRAIN_TRANSCRIPT_DIR` | `DSH_HOME/transcripts/` | Native JSONL primary storage root |
 | `OMA_BRAIN_SHUTDOWN_DRAIN_MS` | `20000` | Integer from 0 through 600000; how long shutdown waits for dispatched tool calls before interrupting them |
 | `OMA_CCR_HEARTBEAT_INTERVAL_MS` | `6000` | Positive integer interval in milliseconds |
 | `OMA_CCR_HEARTBEAT_TIMEOUT_MS` | `5000` | Positive integer request deadline in milliseconds |
@@ -351,7 +353,9 @@ worker events to expose separate thread views. The tests
 use the real dsh loop with a controlled gateway and model; this change has not
 been verified against a production gateway's thread-event validation.
 
-DSH local data uses `.dsh/` below the process working directory. Kernel initialization sets `DSH_HOME` to this path, overriding an inherited value. The restart script runs from this checkout's `oma-brain-dsh` directory, so each worktree keeps its own ignored `.dsh/`. Existing global files are not migrated. Conversation logs use native JSONL at `.dsh/transcripts/` below the process working directory, configurable with `OMA_BRAIN_TRANSCRIPT_DIR`. The restart script therefore stores logs in this checkout's `oma-brain-dsh/.dsh/transcripts/`. Preserve this directory across restarts.
+Explicit `DSH_HOME` settings are respected. Without one, source and module builds use `oma-brain-dsh/.dsh/` relative to the application files, independently of cwd. Standalone executables use `.dsh/` beside the actual binary. Explicit paths are normalized to absolute paths and support `~`; relative overrides resolve against the launch cwd. Conversation logs default to `DSH_HOME/transcripts/`, with `OMA_BRAIN_TRANSCRIPT_DIR` taking precedence. The restart script retains `oma-brain-dsh/.dsh/transcripts/` by default. Existing data is not moved automatically; preserve storage across restarts.
+
+Before claiming tasks, startup probes the home, attachment directory and transcript root by creating, writing, syncing, renaming and removing temporary files. Invalid or unwritable directories fail startup with the setting name, resolved path and I/O code, before any claim or registration request. Probe files are cleaned up and existing directory permissions are retained.
 
 ## Persistence and recovery
 

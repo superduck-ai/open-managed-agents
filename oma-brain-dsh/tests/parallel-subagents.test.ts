@@ -98,7 +98,8 @@ test("native tool batch starts two children concurrently, isolates identical cal
   const turn = f.session.receive("parallel", { content: "Delegate independent tasks" });
   const settled = turn.catch(() => {});
   try {
-    await eventually(() => requests.length === 2);
+    await eventually(() => requests.length === 2
+      && f.b.timeline.filter(event => event.type === "worker.status").at(-1)?.external_metadata?.pending_action?.pending_actions?.length === 2);
     expect(f.session.approvals.size).toBe(2);
     const alpha = f.session.state.threads!.find((thread) => thread.name === "alpha")!;
     const beta = f.session.state.threads!.find((thread) => thread.name === "beta")!;

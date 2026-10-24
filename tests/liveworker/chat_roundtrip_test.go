@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -111,6 +112,10 @@ func TestChatRoundtrip(t *testing.T) {
 
 func configureChatModel(t *testing.T, e *liveEnv, modelURL string) {
 	t.Helper()
+	if e.cookies != nil {
+		configureIsolatedChatModel(t, e, modelURL)
+		return
+	}
 	providers, err := e.database.ListLLMProviders(t.Context(), e.key.OrganizationUUID.String(), e.key.WorkspaceUUID.String())
 	requireOK(t, err)
 	if len(providers) != 1 || !strings.HasPrefix(providers[0].ExternalID, "llmprov_probe_") {
@@ -208,6 +213,11 @@ func receiveChatAnswer(t *testing.T, ctx context.Context, events <-chan chatEven
 
 func verifyChatHistory(t *testing.T, f *liveSession, inputID string, final chatEvent) {
 	t.Helper()
+	waitRealWorker(t, "persisted model request end", func() bool {
+		return slices.ContainsFunc(chatHistory(t, f), func(event chatEvent) bool {
+			return event.Type == "span.model_request_end"
+		})
+	})
 	for _, scope := range []string{"", "/threads/" + final.ThreadID} {
 		verifyChatHistoryScope(t, f, scope, inputID, final)
 	}

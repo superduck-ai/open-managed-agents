@@ -7,7 +7,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { mountKernel } from "../src/kernel.ts";
 import * as CcrBridge from "../src/ccrv2/index.ts";
-import type { CcrBackend } from "../src/ccrv2/index.ts";
+import type { CcrBackend, CcrPersistArgs } from "../src/ccrv2/index.ts";
 import type { SandboxExecutor } from "../src/runtime/contracts.ts";
 import type { Payload } from "../src/ccrv2/protocol.ts";
 import type { ClientEvent, SessionState, RequiresActionDetails } from "../src/ccrv2/wire.ts";
@@ -30,7 +30,7 @@ class MemoryBackend implements CcrBackend {
     return structuredClone((this.logs.get(id) ?? []).filter((event) =>
       options?.subagents ? !!event.agent_id : !event.agent_id));
   }
-  async persist(id: string, subtype: string, data: unknown, agentId?: string) {
+  async persist(id: string, ...[subtype, data, agentId]: CcrPersistArgs) {
     const log = this.logs.get(id) ?? [];
     log.push(structuredClone({ subtype, schema_version: 1, data, ...(agentId ? { agent_id: agentId } : {}) }));
     this.logs.set(id, log);
@@ -107,9 +107,10 @@ test("session previews enter one stream window and terminal publication still wa
     await events(id, payloads);
   };
   const persist = backend.persist.bind(backend);
-  backend.persist = async (id, subtype, data, agentId) => {
-    await persist(id, subtype, data, agentId);
-    if (subtype === "dsh_log" && (data as { events: import("@deepseek-ai/dsh-session").SessionEvent[] }).events.some(event => receiptOf(event)?.type === "input/completed"))
+  backend.persist = async (id, ...args) => {
+    await persist(id, ...args);
+    const [subtype, data] = args;
+    if (subtype === "dsh_log" && data.events.some(event => receiptOf(event)?.type === "input/completed"))
       completed.resolve();
   };
   const model = new TextModel();
@@ -198,7 +199,7 @@ test("startup clears task_summary after recovery persistence and before status o
     const started = Promise.withResolvers<void>();
     const confirmed = Promise.withResolvers<void>();
     const persist = backend.persist.bind(backend);
-    backend.persist = async (...args) => { order.push(`persist:${args[1]}`); await persist(...args); };
+    backend.persist = async (id, ...args) => { order.push(`persist:${args[0]}`); await persist(id, ...args); };
     backend.reportMetadata = async (_id, patch) => {
       expect(patch).toEqual({ task_summary: null, pending_action: null, model: "text", unknown_tool_outcomes: phase === "dispatch" ? [{ tool_use_id: "interrupted-call", tool_name: "Bash" }] : null });
       order.push("metadata"); started.resolve(); await confirmed.promise;

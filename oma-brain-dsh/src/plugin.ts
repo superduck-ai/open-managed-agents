@@ -31,7 +31,8 @@ export async function mountOma(
       onHealth: logOmaHeartbeatHealth,
     },
   });
-  await ctx.plugin(LlmAiSdk, { providers: ["oma"], adapter: omaModelOptions(api, ctx.get("attachments")) });
+  const agents = ctx.get("agents")!;
+  await ctx.plugin(LlmAiSdk, { providers: ["oma"], adapter: omaModelOptions(api, ctx.get("attachments"), () => agents.currentInitiator()?.session.id) });
   return client;
 }
 

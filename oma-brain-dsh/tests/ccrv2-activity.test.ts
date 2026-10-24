@@ -1,3 +1,4 @@
+import { logData } from "./persistence-fixtures.ts";
 import { expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
 import { CcrActivity, isEnvTruthy, type CcrActivityClock } from "../src/ccrv2/activity.ts";
@@ -152,7 +153,7 @@ test("keepalive retries cancel on idle without stopping other writes, with or wi
       activity.endThread("a");
       await activity.close();
       expect(requests[0]?.signal?.aborted).toBe(true);
-      await client.persist("a", "dsh_log", {});
+      await client.persist("a", "dsh_log", logData({}));
       expect(requests).toHaveLength(2);
     } finally { await Promise.all([activity.close(), heartbeat?.close()]); }
   }

@@ -33,7 +33,7 @@ just build
 The executable includes Bun and its dependencies. Deploy `dist/oma-brain-dsh`
 without Bun or `node_modules`; on Windows the filename ends in `.exe`. It reads
 `.env` from the working directory at startup, or uses process environment variables.
-Build-time environment values are not embedded. It still needs the OMA backend. Build on the same OS and architecture as the deployment machine.
+Build-time environment values are not embedded. It still needs the OMA backend. Build on the same OS, architecture and Linux libc as the deployment machine.
 
 `just verify` builds the bundled entry and the executable, then runs the test
 suite against them. Its process test copies the executable into a temporary
@@ -43,9 +43,9 @@ modified approval arguments without source files, `node_modules` or Bun on
 
 Without just, use `bun install --frozen-lockfile` followed by
 `bun run build:executable` or `bun run verify:executable`. The build adapter makes
-`dsh-llm`'s version metadata a static import in memory so Bun can bundle it;
-installed dsh files remain unchanged. A changed upstream lookup fails the build
-until the adapter is reviewed.
+`dsh-llm`'s version metadata and the native JSONL flock binding visible to Bun
+in memory so both are bundled. Installed dsh files remain unchanged. A changed
+upstream lookup fails the build until the adapter is reviewed.
 
 `bin/oma-brain-dsh` remains a Bun launcher for `dist/main.js`, requiring Bun and
 `node_modules`. The restart command below uses that module build.
@@ -131,7 +131,7 @@ The root session's `setup(scope)` callback mounts host service plugins before to
 
 The `OmaSandboxProvider` entry is `src/oma-sandbox/index.ts`. The OMA host loads it through that setup callback with the root session ID and API transport. It owns one `SandboxMcp` instance, shared by the root and its children. Loading the provider performs no network requests. The first MCP handshake happens only after approved arguments have been persisted. The configured server endpoint waits for sandbox readiness during initialization; the Brain sends no resource-creation request. Closing a protocol session drains child runtimes before disposing the root agent and its provider; failed agent setup rolls back the provider.
 
-Model requests use the Vercel AI SDK provider layer only: `@ai-sdk/anthropic` for Anthropic Messages and `@ai-sdk/openai-compatible` for OpenAI Chat Completions, both pinned and called through `doStream`. The protocol translation lives in `src/llm-ai-sdk/`, a DSH plugin (`name`, `inject: ["llm"]`, `apply`) that depends only on `@ai-sdk/*` and `@deepseek-ai/*`: it converts DSH history into the SDK prompt, maps SDK stream parts to DSH chunks, classifies errors and adds DSH attribution headers. OMA loads it with `providers: ["oma"]` and supplies `omaModelOptions` (`src/model.ts`, `src/model-provider.ts`), which selects the backend, binds the root or child session's model token, restricts HTTP requests to the Go proxy, maintains CCRv2 response identity and converts legacy pi-ai replay signatures. The SDK owns SSE parsing, protocol encoding and streamed tool-argument accumulation in linear time. No SDK retries run, ambient provider credentials are unused, and Provider keys remain in Go. Histories keep the `oma-messages-v1` and `oma-chat-completions-v1` replay formats. Messages 默认输出上限为 943718 token； Chat sends a cap only when one is requested.
+Model requests use the Vercel AI SDK provider layer only: `@ai-sdk/anthropic` for Anthropic Messages and `@ai-sdk/openai-compatible` for OpenAI Chat Completions, both pinned and called through `doStream`. The protocol translation lives in `src/llm-ai-sdk/`, a DSH plugin (`name`, `inject: ["llm"]`, `apply`) that depends only on `@ai-sdk/*` and `@deepseek-ai/*`: it converts DSH history into the SDK prompt, maps SDK stream parts to DSH chunks, classifies errors and adds DSH attribution headers. OMA loads it with `providers: ["oma"]` and supplies `omaModelOptions` (`src/model.ts`, `src/model-provider.ts`), which selects the backend, binds the root or child session's model token, restricts HTTP requests to the Go proxy, maintains CCRv2 response identity and converts legacy pi-ai replay signatures. The SDK owns SSE parsing, protocol encoding and streamed tool-argument accumulation in linear time. No SDK retries run, ambient provider credentials are unused, and Provider keys remain in Go. Histories keep the `oma-messages-v1` and `oma-chat-completions-v1` replay formats. Both backends default to 32768 output tokens. Per-model `max_output_tokens` overrides this default, and an explicit per-call `maxTokens` takes precedence. Chat also sends the selected `max_completion_tokens` cap when no explicit limit is configured.
 
 The sandbox provider uses the same official `@modelcontextprotocol/client` SDK as `dsh-mcp-client` for initialization, protocol negotiation, request IDs, session headers, JSON/SSE responses, cancellation and stream cleanup. The complete DSH MCP plugin cannot replace this provider directly: it connects and discovers/registers tools on activation, while this host initializes only after tool approval and exposes its fixed sandbox tools through `ToolExecution`. One SDK connection belongs to each root provider, is shared by its children, and closes when that provider is disposed. `src/sse.ts` parses worker SSE streams; the AI SDK providers and MCP SDK own their respective SSE parsing.
 

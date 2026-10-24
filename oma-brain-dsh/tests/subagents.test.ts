@@ -134,6 +134,7 @@ test("delegates with isolated history, no nested delegation, shared approvals, a
 test("predefined specialist uses its own prompt, model and restricted tools", async () => {
   const b = new Backend();
   cleanups.push(async () => b.stop());
+  b.a.launch.models!["review-model"] = { id: "review-model", api_backend: "messages" };
   const agentSnapshot = {
     type: "agent", id: "agent_reviewer", version: 3, name: "reviewer", system: "Review only", model: "review-model",
     tools: [{ type: "agent_toolset_20260401", default_config: { enabled: false }, configs: [
@@ -244,6 +245,8 @@ test.each(["user.interrupt", "control_request"])("%s targeted child interruption
 test("backend launch roster is listed and delegated by agent_name without inline fallback", async () => {
   const b = new Backend();
   cleanups.push(async () => b.stop());
+  b.a.launch.models!["fast-model"] = { id: "fast-model", api_backend: "messages" };
+  b.a.launch.models!["slow-model"] = { id: "slow-model", api_backend: "messages" };
   b.a.launch.subagents = JSON.parse(`{
     "inlineAgents": false,
     "agents": [

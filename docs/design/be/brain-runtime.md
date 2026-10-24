@@ -4,6 +4,12 @@
 
 本地在仓库根目录运行 `just restart-brain`，复用 `oma-brain-dsh/scripts/restart.sh`，先构建，再停止当前 Brain 目录启动的 Bun 入口进程，并在前台启动新进程。构建失败时保留旧进程，旧进程未能在 30 秒内退出时取消重启。
 
+## 私有持久化写入类型
+
+DSH 的 CCRv2 `persist` 通过 `CcrPersistArgs` 将 subtype 与 data 关联：`dsh_log` 必须携带 `SessionHeader`、`inherited` 和只读 `SessionEvent` 数组；`dsh_brain_state` 必须携带完整 `BrainState`。该约束由客户端、后端接口和日志持久化适配器共用，拒绝未知 subtype、缺失字段及 subtype/data 错配。类型回归由 `oma-brain-dsh/tests/ccrv2-persistence-types.test.ts` 配合 `bun run typecheck` 验证。
+
+这是 TypeScript 写入边界约束，不新增运行时校验。HTTP envelope、`schema_version: 1`、稳定 UUID 的计算、入队前 JSON 快照、确认与恢复行为保持不变。
+
 ## 启动与多节点恢复
 
 ```mermaid
@@ -39,7 +45,7 @@ Brain 会话收到新输入时不再通过 sandbox 续期路径延长 worker 租
 
 远程仅使用 schema version 1 的 `dsh_log` 私有事件，保存原生 header、inherited count 和连续事件。子线程仍写入父 worker endpoint，并携带外层 `agent_id`；读取子线程每页使用 `subagents=true`，按原生 header ID 与序号核对。内容派生 UUID 使丢失 HTTP 确认后的重传幂等；header 与重复序号按 JSON 值比较，允许 PostgreSQL `jsonb` 改变 key 顺序。
 
-不引入或继续写入 `dsh_brain_state` 聚合快照。`plugin:oma/receipt` 与消息、工具事件一起进入同一本地 JSONL，并随 `dsh_log` 复制。receipt schema version 1 记录输入 accepted/completed、工具 approved/dispatched/outcome/unknown/settled、子线程配置与状态，以及公开事件 queued/sent。重放这些语义事件得到内存中的 `SessionProjection`，包含已完成输入、原始/批准参数、逐线程执行阶段、结果和 outbox；`checkpointRevision` 只用于进程内检查点，不是远程快照版本。公开 payload 的稳定 UUID 在恢复后保留，重发不重新执行工具。
+不引入或继续写入 `dsh_brain_state` 聚合快照。`plugin:oma/receipt` 与消息、工具事件一起进入同一本地 JSONL，并随 `dsh_log` 复制。receipt schema version 1 记录输入 accepted/completed、工具 approved/dispatched/outcome/unknown/interrupted/settled、子线程配置与状态，以及公开事件 queued/sent。重放这些语义事件得到内存中的 `SessionProjection`，包含已完成输入、原始/批准参数、逐线程执行阶段、结果和 outbox；`checkpointRevision` 只用于进程内检查点，不是远程快照版本。公开 payload 的稳定 UUID 在恢复后保留，重发不重新执行工具。
 
 这里参考 Superduck 的本地 transcript 与后台 uploader 分工，但普通消息与工具结果不足以证明副作用是否已 dispatch、批准后的参数是什么、输入是否完成或公开结果是否仍待发送。较小的语义 receipt 在原生日志中保存这些事实，保留现有执行安全合同。未知 receipt schema 或非法内容拒绝恢复。未来迁移 native format 时必须保留 receipt 及顺序；原生格式虽允许通用 reader 忽略插件记录，Brain 的安全恢复不能忽略它们。旧 Grok 历史、旧 `dsh_brain_state` 快照和不匹配格式的本地文件需要显式迁移与会话归属检查，不自动导入或拼接。
 
@@ -376,9 +382,11 @@ Brain sandbox startup forwards the server-resolved Git source URL, checkout ref 
 
 ## 模型 API backend
 
+统一模型配置使用 `session_context.models`，替换旧 `model_backends`。Server 与 Brain 必须成对更新：先停止接收新会话并等待现有任务结束，停止旧 Brain 与所有旧 Server，再执行数据库迁移并启动新版 Server、Brain。不能按混合版本滚动发布；旧 Brain 读取不到 `model_backends` 时可能按 Messages 路由，新 Brain 读取旧 Server 时同样可能回退。回滚也须同步恢复 Server、Brain 和数据库结构，迁移前需备份模型参数。
+
 Provider 的 `api_backend` 决定 Brain 模型适配器，当前支持 `messages` 和 `chat_completions`。
-`GET /v2/sessions/{id}` 为 claim transport 在 `session_context.model_backends` 返回当前 workspace 的
-模型 ID 到 backend 映射，不包含上游 URL 或 Key。映射构建失败返回 500 `api_error`，
+`GET /v2/sessions/{id}` 为 claim transport 在 `session_context.models` 返回当前 workspace 的
+模型路由索引，每项包含模型参数和 Provider 的 api_backend，不包含上游 URL 或 Key。映射构建失败返回 500 `api_error`，
 公开文案为 `Could not resolve model API backends`；MCP 配置构建失败保留独立的 MCP 错误文案。
 子 Agent 继承与覆盖模型、运行时切换模型均按实际
 请求 model 查表。旧服务端没有该字段时沿用 Messages；显式映射中缺少模型或 backend 不支持时失败。
@@ -435,9 +443,9 @@ OMA 侧只提供配置，由 `plugin.ts` 以 `providers: ["oma"]` 加载插件�
 - `model-provider.ts`：按会话取得 assignment 与实际模型的 backend，每次请求用当前 model token
   创建 provider，Messages 使用 `authToken`（Bearer），Chat 使用 `apiKey`（Bearer）。自定义 fetch
   只允许向对应 Go 代理路径发送 POST，删除 `x-api-key`，为子 Agent 设置
-  `X-Claude-Code-Agent-Id`，禁止重定向，总超时 300 秒。Messages 路由默认输出上限 943718，
-  关闭 SDK 默认的 `eager_input_streaming`；Chat 未显式指定时不发送上限，并把 `max_tokens`
-  改名为 `max_completion_tokens`。
+  `X-Claude-Code-Agent-Id`，禁止重定向，流空闲超时 300 秒。两种协议均按调用方显式 `maxTokens`、模型
+  `max_output_tokens`、32768 的顺序选择输出上限。Messages 关闭 SDK 默认的
+  `eager_input_streaming`；Chat 把 `max_tokens` 改名为 `max_completion_tokens`，未配置时也发送默认上限。
 - `chat-reasoning.ts`：Chat 响应进入 AI SDK 前按与 Go 相同的规则规范化 reasoning 字段，
   只保留 `reasoning_content`，弥补 SDK 只识别 `reasoning_content ?? reasoning` 的差异。
   按完整 SSE 事件处理：多行 `data:` 先按规范拼接再解析，只有负载包含 `"reasoning` 的事件
@@ -463,7 +471,9 @@ HTTP 与流内错误、取消、工具分片、大参数线性耗时、用量尾
 
 ### 默认输出预算
 
-Messages backend 的默认输出预算为 943718 token（依据 2026-10-22 OpenRouter `/api/v1/models` 中精确型号 `deepseek/deepseek-v4.1-flash` 的 `top_provider.max_completion_tokens`），调用方显式提供 maxTokens 时仍优先使用显式值。推理模型的推理内容与最终正文共享输出预算；原先固定 8192 token 会使长资料抽取和全量事实复核在正文完成前终止。预算扩大只提高单次上限，不强制消耗完整额度，也不能将截断结果视为成功；仍须正常结束回合。该变更需发布 Brain 后才影响正式站。
+Messages 和 Chat Completions 的默认输出预算均为 32768 token，与通用 DeepSeek Harness 默认值一致，不按具体模型名称猜测。模型配置的 `max_output_tokens` 覆盖默认值，调用方显式 `maxTokens` 优先级最高。Chat 请求始终携带选定的 `max_completion_tokens` 上限。推理内容与最终正文共享输出预算；预算只声明单次请求上限，不扩大上游能力，也不能将截断结果视为成功。
+
+升级影响：未配置逐模型上限时，Messages 的默认输出上限由 943718 降为 32768，Chat Completions 由省略上限改为默认发送 32768。需要保留更大输出预算的模型应显式配置 `max_output_tokens`。
 
 ## 懒加载沙箱的 Provider 过期恢复
 

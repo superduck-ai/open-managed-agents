@@ -56,8 +56,8 @@ func TestNextDefaultSlugFillsFirstFreeSuffix(t *testing.T) {
 
 func TestCatalogLookupFailures(t *testing.T) {
 	catalog := NewCatalog([]db.LLMProvider{
-		{Slug: "oma", ModelIDs: []string{"kimi-k2.5"}},
-		{Slug: "default", ModelIDs: []string{"kimi-k2.5"}},
+		{Slug: "oma", Models: db.LLMModels{{ID: "kimi-k2.5"}}},
+		{Slug: "default", Models: db.LLMModels{{ID: "kimi-k2.5"}}},
 	})
 	for _, modelID := range []string{"glm-5", "missing/kimi-k2.5", "oma/glm-5"} {
 		if _, err := catalog.Lookup(modelID); !errors.Is(err, ErrModelNotConfigured) {
@@ -74,9 +74,9 @@ func TestCatalogLookupFailures(t *testing.T) {
 
 func TestCatalogLookupResolvesQualifiedAndLegacyModelIDs(t *testing.T) {
 	catalog := NewCatalog([]db.LLMProvider{
-		{Slug: "oma", ModelIDs: []string{"kimi-k2.5", "deepseek-ai/deepseek-v4.1-flash"}},
-		{Slug: "default", ModelIDs: []string{"kimi-k2.5", "glm-5"}},
-		{Slug: "deepseek-ai", ModelIDs: []string{"deepseek-v4.1-flash"}},
+		{Slug: "oma", Models: db.LLMModels{{ID: "kimi-k2.5"}, {ID: "deepseek-ai/deepseek-v4.1-flash"}}},
+		{Slug: "default", Models: db.LLMModels{{ID: "kimi-k2.5"}, {ID: "glm-5"}}},
+		{Slug: "deepseek-ai", Models: db.LLMModels{{ID: "deepseek-v4.1-flash"}}},
 	})
 	tests := []struct {
 		modelID      string

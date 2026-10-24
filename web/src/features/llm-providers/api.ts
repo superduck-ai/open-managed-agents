@@ -2,6 +2,13 @@ import { consoleApi, type ApiError } from '../../shared/api/client';
 
 export type APIBackend = 'messages' | 'chat_completions';
 
+export type LLMModel = {
+  id: string;
+  context_window?: number;
+  max_output_tokens?: number;
+  input_modalities?: ('text' | 'image')[];
+};
+
 export type LLMProvider = {
   api_backend: APIBackend;
   type: 'llm_provider';
@@ -11,7 +18,7 @@ export type LLMProvider = {
   base_url: string;
   has_api_key: boolean;
   api_key_last4: string;
-  model_ids: string[];
+  models: LLMModel[];
   scope?: 'organization';
   created_at: string;
   updated_at: string;
@@ -23,7 +30,7 @@ export type LLMProviderInput = {
   slug?: string;
   base_url: string;
   api_key?: string;
-  model_ids: string[];
+  models: LLMModel[];
 };
 
 function providersPath(orgUuid: string, workspaceId: string) {
@@ -121,7 +128,7 @@ export function previewProviderModels(
   input: { base_url: string; api_key: string; api_backend: APIBackend },
   csrfToken?: string,
 ) {
-  return consoleApi<{ model_ids: string[] }>(`${providersPath(orgUuid, workspaceId)}/preview_models`, {
+  return consoleApi<{ models: LLMModel[] }>(`${providersPath(orgUuid, workspaceId)}/preview_models`, {
     method: 'POST',
     body: JSON.stringify(input),
     csrfToken,
@@ -143,9 +150,22 @@ export function previewOrganizationProviderModels(
   input: { base_url: string; api_key: string; api_backend: APIBackend },
   csrfToken?: string,
 ) {
-  return consoleApi<{ model_ids: string[] }>(`${organizationLLMProviderPath(orgUuid)}/preview_models`, {
+  return consoleApi<{ models: LLMModel[] }>(`${organizationLLMProviderPath(orgUuid)}/preview_models`, {
     method: 'POST',
     body: JSON.stringify(input),
     csrfToken,
   });
+}
+
+export function previewSavedProviderModels(
+  orgUuid: string,
+  workspaceId: string,
+  provider: LLMProvider,
+  csrfToken?: string,
+) {
+  const path =
+    provider.scope === 'organization'
+      ? organizationLLMProviderPath(orgUuid)
+      : `${providersPath(orgUuid, workspaceId)}/${encodeURIComponent(provider.id)}`;
+  return consoleApi<{ models: LLMModel[] }>(`${path}/models/preview`, { method: 'POST', csrfToken });
 }

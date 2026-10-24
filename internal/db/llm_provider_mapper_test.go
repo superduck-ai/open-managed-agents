@@ -27,7 +27,7 @@ func TestLLMProviderMapperTenantScope(t *testing.T) {
 			bound:                      buildLLMProviderMapperInsert(yourbatis.DialectPostgres, params),
 			wantID:                     "LLMProviderMapper.Insert",
 			wantKind:                   yourbatis.StatementInsert,
-			wantArgumentNames:          []string{"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID", "params.Name", "params.Slug", "params.APIBackend", "params.BaseURL", "params.APIKeyLast4", "params.ModelIDs", "params.Ciphertext", "params.Nonce", "params.WrappedDEK", "params.FormatVersion", "params.KeyProvider", "params.KeyVersion", "params.CreatedAt", "params.UpdatedAt"},
+			wantArgumentNames:          []string{"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID", "params.Name", "params.Slug", "params.APIBackend", "params.BaseURL", "params.APIKeyLast4", "params.Models", "params.Ciphertext", "params.Nonce", "params.WrappedDEK", "params.FormatVersion", "params.KeyProvider", "params.KeyVersion", "params.CreatedAt", "params.UpdatedAt"},
 			wantSensitiveArgumentNames: []string{"params.Ciphertext", "params.Nonce", "params.WrappedDEK"},
 			wantSQLFragments:           []string{"name, slug, api_backend, base_url", "$5, $6, $7, $8", "RETURNING"},
 		}},
@@ -53,7 +53,7 @@ func TestLLMProviderMapperTenantScope(t *testing.T) {
 			wantID:    "LLMProviderMapper.UpdateByExternalID",
 			wantKind:  yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
-				"params.Name", "params.APIBackend", "params.BaseURL", "params.APIKeyLast4", "params.ModelIDs",
+				"params.Name", "params.APIBackend", "params.BaseURL", "params.APIKeyLast4", "params.Models",
 				"params.Ciphertext", "params.Nonce", "params.WrappedDEK", "params.FormatVersion",
 				"params.KeyProvider", "params.KeyVersion", "params.UpdatedAt", "params.OrganizationUUID",
 				"params.WorkspaceUUID", "params.ExternalID",
@@ -75,7 +75,7 @@ func TestLLMProviderMapperTenantScope(t *testing.T) {
 			wantID:    "LLMProviderMapper.UpdateOrganizationDefault",
 			wantKind:  yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
-				"params.Name", "params.APIBackend", "params.BaseURL", "params.APIKeyLast4", "params.ModelIDs",
+				"params.Name", "params.APIBackend", "params.BaseURL", "params.APIKeyLast4", "params.Models",
 				"params.Ciphertext", "params.Nonce", "params.WrappedDEK", "params.FormatVersion",
 				"params.KeyProvider", "params.KeyVersion", "params.UpdatedAt", "params.OrganizationUUID",
 				"params.ExternalID",

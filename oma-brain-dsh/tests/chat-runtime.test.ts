@@ -21,7 +21,7 @@ function completion(index: number, tool: boolean) {
 test("native Brain runs a Chat tool round-trip and restores its protocol history", async () => {
   const backend = new Backend();
   await backend.ready;
-  backend.a.launch.model_backends = { "test-model": "chat_completions" };
+  backend.a.launch.models = { "test-model": { id: "test-model", api_backend: "chat_completions" } };
   const original = backend.route.bind(backend);
   const requests: Payload[] = [];
   backend.route = async (request) => {

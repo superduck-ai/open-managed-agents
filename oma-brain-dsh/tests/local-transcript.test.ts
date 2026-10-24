@@ -21,10 +21,10 @@ function backend() {
     async getWorkerState() { return { metadata: null, durationMs: 0 }; },
     async isToolConfirmationPending() { return false; },
     async privateEvents(id, options) {
-      return structuredClone((logs.get(id) ?? []).filter((entry) => !!entry.agent_id === !!options?.subagents));
+      return structuredClone((logs.get(id) ?? []).filter(entry => options?.agentId !== undefined ? entry.agent_id === options.agentId : options?.subagents || !entry.agent_id));
     },
-    async persist(id, subtype, data, agentId) {
-      logs.set(id, [...(logs.get(id) ?? []), structuredClone({ subtype, schema_version: 1, data, agent_id: agentId })]);
+    async persist(id, type, data, agentId) {
+      logs.set(id, [...(logs.get(id) ?? []), structuredClone({ type, data, agent_id: agentId })]);
     },
     async events() {},
     async acknowledge() {},
@@ -44,6 +44,14 @@ function event(seq = 0): SessionEvent {
   return seq === 0
     ? { type: "turn/start", seq: SessionSeq(seq), time: 2, data: { turn: 1 } }
     : { type: "turn/end", seq: SessionSeq(seq), time: 3, data: { turn: 1, reason: { kind: "completed" } } };
+}
+
+function nativeRecords(header: SessionHeader, events: SessionEvent[]): Payload[] {
+  return [header, ...events].map(data => ({ type: "dsh_log", data }));
+}
+
+function remoteEvents(entries: Payload[]): SessionEvent[] {
+  return entries.filter(entry => entry.type === "dsh_log" && "seq" in entry.data).map(entry => entry.data);
 }
 
 async function setup(store = backend().store, localRoot?: string) {
@@ -82,21 +90,19 @@ test("remote failures do not block native writes but reject confirmation", async
   store.persist = persist;
   await replication.flush(handle.id);
   await replication.flush(handle.id);
-  expect(await store.privateEvents(handle.id)).toHaveLength(1);
+  expect(await store.privateEvents(handle.id)).toHaveLength(2);
   await handle.close();
 });
 
 test("divergent history refuses confirmation without altering the local file", async () => {
   const { store, logs } = backend();
-  logs.set("main", [{ subtype: "dsh_log", schema_version: 1, data: {
-    header: header(), inherited: 0, events: [{ ...event(), time: 99 }],
-  } }]);
+  logs.set("main", nativeRecords(header(), [{ ...event(), time: 99 }]));
   const { persistence, replication, root } = await setup(store);
   const handle = await persistence.create(header());
   await handle.append([event()]);
   await expect(replication.flush(handle.id)).rejects.toThrow("diverged");
   expect((await transcripts(root))[0]!.lines.slice(1)).toEqual([event()]);
-  expect(logs.get("main")).toHaveLength(1);
+  expect(logs.get("main")).toHaveLength(2);
   await handle.close();
 });
 
@@ -123,7 +129,7 @@ test("failed local append never uploads the rejected event", async () => {
   const handle = await persistence.create(header());
   await expect(handle.append([event(1)])).rejects.toThrow();
   await replication.flush(handle.id);
-  expect(logs.get("main")!.flatMap(entry => entry.data.events)).toEqual([]);
+  expect(remoteEvents(logs.get("main")!)).toEqual([]);
   await handle.close();
 });
 
@@ -161,7 +167,7 @@ test("native session events replicate asynchronously and retry without local dup
   await new Promise(resolve => setTimeout(resolve, 250));
   expect(attempts).toBeGreaterThanOrEqual(2);
   expect((await handle.read()).events).toEqual([event()]);
-  expect((await store.privateEvents(handle.id)).flatMap(entry => entry.data.events)).toEqual([event()]);
+  expect(remoteEvents(await store.privateEvents(handle.id))).toEqual([event()]);
   await handle.close();
 });
 
@@ -178,8 +184,8 @@ test("missing local foreground and child logs hydrate only once and replicate ch
   const second = await setup(store);
   second.replication.bindThread("child", "main");
   for (const id of ["main", "child"]) {
-    await second.replication.ensure(id);
-    await second.replication.ensure(id);
+    expect(await second.replication.ensure(id)).toBe(true);
+    expect(await second.replication.ensure(id)).toBe(false);
     const handle = await second.persistence.open(SessionId(id), "write");
     expect((await handle.read()).events).toEqual([event()]);
     await handle.append([event(1)]);
@@ -187,19 +193,17 @@ test("missing local foreground and child logs hydrate only once and replicate ch
   }
   await second.replication.flush("main");
   expect(await transcripts(second.root)).toHaveLength(2);
-  expect(logs.get("main")!.filter(entry => entry.agent_id === "child").at(-1)!.data.events).toEqual([event(1)]);
+  expect(logs.get("main")!.filter(entry => entry.agent_id === "child").at(-1)!.data).toEqual(event(1));
 });
 
 test("remote prefix comparison ignores object property order", async () => {
   const { store, logs } = backend();
-  logs.set("main", [{ subtype: "dsh_log", schema_version: 1, data: {
-    header: header(), inherited: 0, events: [{ data: { turn: 1 }, time: 2, seq: 0, type: "turn/start" }],
-  } }]);
+  logs.set("main", nativeRecords(header(), [{ data: { turn: 1 }, time: 2, seq: SessionSeq(0), type: "turn/start" }]));
   const { persistence, replication } = await setup(store);
   const handle = await persistence.create(header());
   await handle.append([event()]);
   await replication.flush(handle.id);
-  expect(logs.get("main")).toHaveLength(1);
+  expect(logs.get("main")).toHaveLength(2);
   await handle.close();
 });
 
@@ -207,7 +211,7 @@ test("legacy remote state requires migration before hydration", async () => {
   const { store, logs } = backend();
   logs.set("main", [{ subtype: "dsh_brain_state", schema_version: 1, data: {} }]);
   const { persistence, replication } = await setup(store);
-  await expect(replication.ensure("main")).rejects.toThrow("requires migration");
+  await expect(replication.ensure("main")).rejects.toThrow("Unsupported persistence format");
   expect(await persistence.stat(SessionId("main"))).toBeUndefined();
 });
 
@@ -255,7 +259,7 @@ test.each([
   replication.forget(handle.id);
   store.persist = persist;
   await replication.flush(handle.id);
-  expect((await store.privateEvents(handle.id)).flatMap(entry => entry.data.events)).toEqual([event()]);
+  expect(remoteEvents(await store.privateEvents(handle.id))).toEqual([event()]);
 });
 
 test("forget fences queued work before its remote write and cannot resurrect its retry", async () => {
@@ -300,4 +304,57 @@ test("drain waits for an already sent remote write and blocks later retries", as
   await new Promise(resolve => setTimeout(resolve, 150));
   expect(attempts).toBe(1);
   await handle.close();
+});
+
+test.each([
+  { type: "dsh_log", data: { header: header(), inherited: 0, events: [] } },
+  { subtype: "dsh_log", schema_version: 1, data: header() },
+  { type: "grok_checkpoint", data: {} },
+])("native hydration rejects older envelope forms: %j", async payload => {
+  const { store, logs } = backend();
+  logs.set("main", [payload]);
+  const { persistence, replication } = await setup(store);
+  await expect(replication.ensure("main")).rejects.toThrow("Unsupported persistence format");
+  expect(await persistence.stat(SessionId("main"))).toBeUndefined();
+});
+
+test("native event retry survives an ambiguous confirmation and preserves an extended local tail", async () => {
+  const { store } = backend();
+  const persist = store.persist;
+  let failed = false;
+  store.persist = async (...args) => {
+    await persist(...args);
+    if (!failed && "seq" in args[2]) {
+      failed = true;
+      throw new Error("confirmation lost");
+    }
+  };
+  const first = await setup(store);
+  const handle = await first.persistence.create(header());
+  await handle.append([event()]);
+  await expect(first.replication.flush(handle.id)).rejects.toThrow("confirmation lost");
+  await handle.append([event(1)]);
+  await first.replication.flush(handle.id);
+  await handle.close();
+  const recovered = await setup(store);
+  expect(await recovered.replication.ensure(handle.id)).toBe(true);
+  const reader = await recovered.persistence.open(handle.id, "read");
+  expect((await reader.read()).events).toEqual([event(), event(1)]);
+  await reader.close();
+});
+
+test("native hydration scopes each child header and event independently from siblings", async () => {
+  const { store, logs } = backend();
+  logs.set("main", [
+    ...nativeRecords(header("main"), [event()]),
+    ...nativeRecords(header("child"), [event()]).map(entry => ({ ...entry, agent_id: "child" })),
+    ...nativeRecords(header("sibling"), [event(), event(1)]).map(entry => ({ ...entry, agent_id: "sibling" })),
+  ]);
+  const { persistence, replication } = await setup(store);
+  replication.bindThread("child", "main");
+  expect(await replication.ensure("child")).toBe(true);
+  const reader = await persistence.open(SessionId("child"), "read");
+  expect((await reader.read()).events).toEqual([event()]);
+  await reader.close();
+  expect(await persistence.stat(SessionId("sibling"))).toBeUndefined();
 });

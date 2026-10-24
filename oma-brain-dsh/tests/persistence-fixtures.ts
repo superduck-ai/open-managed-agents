@@ -1,11 +1,14 @@
-import { SESSION_FORMAT_VERSION, SessionId } from "@deepseek-ai/dsh-session";
-import type { DshLogData } from "../src/ccrv2/persistence-contracts.ts";
+import { SessionSeq } from "@deepseek-ai/dsh-session";
+import type { SessionEvent } from "@deepseek-ai/dsh-session";
+import { emptyDelivery, type DeliveryState } from "../src/ccrv2/protocol.ts";
 
-export function logData<Fields extends object>(fields: Fields, id = "s"): DshLogData & Fields {
+export function logData<Fields extends object>(fields: Fields): SessionEvent & Fields {
   return {
-    header: { version: SESSION_FORMAT_VERSION, id: SessionId(id), createdAt: 0, isSeeded: false },
-    inherited: 0,
-    events: [],
+    type: "turn/start", seq: SessionSeq(0), time: 0, data: { turn: 1 },
     ...fields,
   };
+}
+
+export function deliveryData(fields: Partial<DeliveryState>): DeliveryState {
+  return { ...emptyDelivery(), ...fields };
 }

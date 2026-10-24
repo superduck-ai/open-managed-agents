@@ -4,7 +4,7 @@ import { CcrClient, consumeInbound, type CcrHttpRequest } from "../src/ccrv2/ind
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
-import { Backend, eventually, textEvents, toolEvents, receiptPayloads } from "./backend.ts";
+import { Backend, eventually, textEvents, toolEvents, deliveryOf } from "./backend.ts";
 import { sse } from "../src/sse.ts";
 
 function client(request: (request: CcrHttpRequest) => Promise<Response>) {
@@ -274,28 +274,29 @@ test("delivery processing gates model work without blocking controls", async () 
       subtype: "success", request_id: approvalId,
       response: { behavior: "allow", updatedInput: { command: "approved" } },
     } });
-    await eventually(() => session.state.completed.includes("input") && session.state.outbox.length === 0);
+    await eventually(() => session.delivery.completed.includes("input") && session.delivery.outbox.length === 0);
     expect(b.executions).toEqual([{ name: "bash", arguments: { command: "approved" } }]);
     b.deliver("interrupt", { type: "interrupt" });
     await eventually(() => cancel!.mock.calls.length > 0);
     release.resolve();
     await eventually(() => ["input", "orphan", "decision", "interrupt"].every((id) => b.processed.includes(id)));
-    expect(deliveries[1]!.body).toMatchObject({ updates: expect.arrayContaining([
-      { event_id: "input", status: "received" },
-      { event_id: "input", status: "processing" },
-    ]) });
+    expect(deliveries.slice(1).flatMap((delivery) => (delivery.body as { updates: unknown[] }).updates))
+      .toEqual(expect.arrayContaining([
+        { event_id: "input", status: "received" },
+        { event_id: "input", status: "processing" },
+      ]));
     for (const inputId of ["orphan", "decision", "interrupt"])
       expect(b.timeline.filter((entry) => entry.type === "input.delivery" && entry.inputId === inputId)
         .map((entry) => entry.status)).toEqual(["received", "processed"]);
     expect(b.timeline.filter((entry) => entry.type === "input.delivery" && entry.inputId === "input")
       .map((entry) => entry.status)).toEqual(["received", "processing", "processed"]);
     const completed = b.timeline.findIndex((entry) => entry.type === "private.persist"
-      && receiptPayloads(entry.payload).some((receipt) => receipt.type === "public/queued"
-        && receipt.payloads.some((payload: { type: string }) => payload.type === "result")));
+      && !!deliveryOf(entry.payload) && deliveryOf(entry.payload)!.completed.includes("input")
+      && deliveryOf(entry.payload)!.outbox.length > 0);
     const published = b.timeline.findIndex((entry) => entry.type === "result");
     const cleared = b.timeline.findIndex((entry) => entry.type === "private.persist"
-      && receiptPayloads(entry.payload).some((receipt) => receipt.type === "public/sent"
-        && receipt.uuids.includes("input_result")));
+      && !!deliveryOf(entry.payload) && deliveryOf(entry.payload)!.completed.includes("input")
+      && deliveryOf(entry.payload)!.outbox.length === 0);
     const acknowledged = b.timeline.findIndex((entry) => entry.type === "input.ack" && entry.inputId === "input");
     expect(completed).toBeGreaterThan(-1);
     expect(published).toBeGreaterThan(completed);
@@ -333,7 +334,7 @@ test("SSE reconnect services approvals during an active turn and preserves journ
       subtype: "success", request_id: approval.request_id,
       response: { behavior: "allow", updatedInput: { command: "approved" } },
     } });
-    await eventually(() => session.state.completed.includes("input") && b.processed.includes("input"));
+    await eventually(() => session.delivery.completed.includes("input") && b.processed.includes("input"));
     expect(b.registrations).toBe(1);
     expect(b.executions).toEqual([{ name: "bash", arguments: { command: "approved" } }]);
     expect(b.processed).toContain("decision");
@@ -386,14 +387,14 @@ test("queued input waits for the current turn while interrupt bypasses a pending
     const cancel = spyOn(session.agent, "cancel");
     b.deliver("cancel-first", { type: "interrupt" });
     await eventually(() => cancel.mock.calls.length > 0);
-    expect(session.state.inputId).toBe("first");
+    expect(session.delivery.inputId).toBe("first");
     expect(b.requests).toHaveLength(0);
     expect(b.processed).not.toContain("second");
     release.resolve();
     await eventually(() => b.processed.includes("first") && b.processed.filter((id) => id === "second").length === 2);
     await Promise.all(receive.mock.results.map((result) => result.value));
-    expect(session.state.completed).toContain("first");
-    expect(session.state.completed).toContain("second");
+    expect(session.delivery.completed).toContain("first");
+    expect(session.delivery.completed).toContain("second");
     expect(b.requests).toHaveLength(1);
     expect(b.timeline.filter((entry) => entry.type === "input.delivery" && entry.status === "processing")
       .map((entry) => entry.inputId)).toEqual(["first", "second"]);
@@ -450,13 +451,13 @@ test("active input waits for its own turn and duplicate delivery cannot overtake
     await eventually(() => b.timeline.some((entry) => entry.type === "input.delivery"
       && entry.inputId === "third" && entry.status === "received"));
     expect(waiting).toBe(false);
-    expect(session.state.inputId).toBe("first");
+    expect(session.delivery.inputId).toBe("first");
     expect(b.requests).toHaveLength(1);
     tool.resolve();
     await eventually(() => waiting);
     expect(b.processed).toContain("first");
     expect(b.processed).not.toContain("second");
-    expect(session.state.completed).toEqual(["first"]);
+    expect(session.delivery.completed).toEqual(["first"]);
     expect(b.requests).toHaveLength(2);
     const firstHistory = JSON.stringify(b.requests[1]!.messages);
     expect(firstHistory).not.toContain("second user");
@@ -472,7 +473,7 @@ test("active input waits for its own turn and duplicate delivery cannot overtake
     expect(thirdHistory.split("second user")).toHaveLength(2);
     expect(b.requests).toHaveLength(4);
     expect(b.executions).toHaveLength(1);
-    expect(session.state.completed).toEqual(["first", "second", "third"]);
+    expect(session.delivery.completed).toEqual(["first", "second", "third"]);
     expect(b.processed.filter((id) => id === "second")).toHaveLength(2);
     expect(b.timeline.filter((e) => e.type === "result")).toHaveLength(3);
     expect(b.timeline.filter((e) => e.type === "input.delivery" && e.status === "processing")

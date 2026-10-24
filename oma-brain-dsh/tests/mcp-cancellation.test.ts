@@ -86,23 +86,15 @@ test.skipIf(!binary)("lost MCP server rejects the tool outcome instead of report
 for (const user of [false, true]) test.skipIf(!binary)(`ordinary ${user ? "user interruption" : "cancellation"} stops Bash without replay`, async () => {
   const f = await sandbox();
   const abort = new AbortController();
-  let blocked = false;
   const events: string[] = [];
-  const calls = new Set<string>();
-  let remoteOutcome: string | undefined;
   const bridge: ToolExecutionBridge = {
-    blocked: () => blocked,
     approve: async () => ({ allowed: true }),
-    recordApproved: async (call) => {
-      if (calls.has(call.callId)) throw new Error("Duplicate tool call");
-      calls.add(call.callId);
-      events.push("approved");
+    async runTool(_id, execute) {
+      events.push("dispatched");
+      try { return await execute(); }
+      finally { events.push("finished"); }
     },
-    flushLog: async () => {},
-    recordDispatch: async () => { events.push("dispatched"); },
-    recordUnknown: async () => { blocked = true; events.push("unknown"); },
-    recordResult: async (outcome) => { remoteOutcome = outcome.remoteOutcome; events.push("result"); },
-    stop: () => { events.push("stop"); },
+    approvalChanged() {},
   };
   const execution = new ToolExecution({ provision: async () => {}, call: f.client.call.bind(f.client) }, bridge);
   const command = { command: "echo $$ > pid; printf started > started; sleep 120; touch forbidden" };
@@ -114,9 +106,7 @@ for (const user of [false, true]) test.skipIf(!binary)(`ordinary ${user ? "user 
     const error = await running;
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain(user ? "Tool call interrupted." : "outcome is unknown");
-    expect(events).toEqual(["approved", "dispatched", ...(user ? ["result"] : ["unknown", "stop"])]);
-    expect(blocked).toBe(!user);
-    if (user) expect(remoteOutcome).toBe("unknown");
+    expect(events).toEqual(["dispatched", "finished"]);
     const pid = Number(await readFile(join(f.workdir, "pid"), "utf8"));
     const deadline = Date.now() + 5_000;
     while (true) {
@@ -125,18 +115,7 @@ for (const user of [false, true]) test.skipIf(!binary)(`ordinary ${user ? "user 
       await Bun.sleep(10);
     }
     expect(await Bun.file(join(f.workdir, "forbidden")).exists()).toBe(false);
-    await expect(execution.execute(tool, command, {
-      callId: ToolCallId("cancelled-call"), signal: new AbortController().signal, deferContext: () => {},
-    })).rejects.toThrow(user ? "Duplicate tool call" : "requires tool outcome reconciliation");
-    expect(f.methods.filter((method) => method === "tools/call")).toHaveLength(1);
-    if (user) {
-      const next = await execution.execute(tool, { command: "printf NEXT" }, {
-        callId: ToolCallId("next-call"), signal: new AbortController().signal, deferContext: () => {},
-      });
-      expect(next).toBe("NEXT");
-      expect(f.methods.filter((method) => method === "tools/call")).toHaveLength(2);
-    }
-    expect(f.methods.some((method) => method.startsWith("tasks/"))).toBe(false);
+
   } finally {
     abort.abort();
     await running;

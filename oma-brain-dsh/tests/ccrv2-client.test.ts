@@ -1,3 +1,4 @@
+import { SESSION_FORMAT_VERSION, SessionId, SessionSeq } from "@deepseek-ai/dsh-session";
 import { logData } from "./persistence-fixtures.ts";
 import { expect, test } from "bun:test";
 import { CcrClient, CcrHttpError, type CcrHttpRequest } from "../src/ccrv2/index.ts";
@@ -11,6 +12,41 @@ function clientWith(request: (request: CcrHttpRequest) => Promise<Response>) {
     random: () => 0,
   });
 }
+
+test("persistence identifies individual events by session and seq and retains transport agent IDs", async () => {
+  const events: { payload: Record<string, unknown>; agent_id?: string }[] = [];
+  const client = clientWith(async (request) => {
+    const body = request.body as { events: typeof events };
+    events.push(...body.events);
+    return new Response(null, { status: 204 });
+  });
+  await client.persist("s", "dsh_log", {
+    version: SESSION_FORMAT_VERSION, id: SessionId("child"), createdAt: 0, isSeeded: false,
+  }, "child");
+  const event = (seq: number, turn = 1) => ({ type: "turn/start" as const, seq: SessionSeq(seq), time: 0, data: { turn } });
+  await client.persist("s", "dsh_log", event(0));
+  await client.persist("s", "dsh_log", event(0, 2));
+  await client.persist("s", "dsh_log", event(1));
+  await client.persist("s", "dsh_log", event(0), "child");
+  await client.persist("other", "dsh_log", event(0));
+  await client.persist("s", "dsh_log", event(2));
+  await client.persist("s", "dsh_log", event(2, 3));
+  await client.persist("s", "dsh_log", event(3));
+  expect(events.map(({ payload }) => payload.uuid)).toEqual([
+    "dsh_log:s:child:header", "dsh_log:s:s:0", "dsh_log:s:s:0", "dsh_log:s:s:1", "dsh_log:s:child:0", "dsh_log:other:other:0",
+    "dsh_log:s:s:2", "dsh_log:s:s:2", "dsh_log:s:s:3",
+  ]);
+  expect(events[4]!.agent_id).toBe("child");
+  for (const { payload } of events) {
+    expect(payload).not.toHaveProperty("schema_version");
+    expect(payload).not.toHaveProperty("subtype");
+    if (payload.type === "dsh_log") {
+      expect(payload.data).not.toHaveProperty("events");
+      expect(payload.data).not.toHaveProperty("event");
+      expect(payload.data).not.toHaveProperty("sessionId");
+    }
+  }
+});
 
 test("lost persistence confirmation retries the same durable envelope with current credentials", async () => {
   const requests: CcrHttpRequest[] = [];
@@ -31,10 +67,8 @@ test("lost persistence confirmation retries the same durable envelope with curre
   await client.persist("session/a", "dsh_log", logData({ revision: 1 }));
   expect(requests).toHaveLength(3);
   const envelope = {
-    type: "system",
-    uuid: "b10d92b2eb4a455f01c8c6e6ed9cf63cce368f471973c65b2c13702a307c79e2",
-    subtype: "dsh_log",
-    schema_version: 1,
+    type: "dsh_log",
+    uuid: "dsh_log:session%2Fa:session%2Fa:0",
     data: logData({ revision: 1 }),
   };
   for (const [index, request] of requests.entries()) {
@@ -104,11 +138,27 @@ test("subagent history keeps its scope on every page and writes agent_id outside
   expect(await client.privateEvents("session/a", { subagents: true })).toEqual([{ sequence: 1 }, { sequence: 2 }]);
   expect(requests[0]!.path).toEndWith("/internal-events?subagents=true");
   expect(requests[1]!.path).toEndWith("/internal-events?subagents=true&cursor=501");
-  await client.persist("session/a", "dsh_log", logData({}, "child"), "child");
+  await client.persist("session/a", "dsh_log", logData({}), "child");
   const body = requests[2]!.body as { events: { agent_id: string; payload: Record<string, unknown>; is_compaction: boolean }[] };
   expect(body.events[0]!.agent_id).toBe("child");
   expect(body.events[0]!.payload.agent_id).toBeUndefined();
   expect(body.events[0]!.is_compaction).toBe(false);
+});
+
+test("subagent history filters transport agent_id before returning untouched payloads", async () => {
+  const payload = { type: "dsh_log", data: { seq: 0, type: "turn/start", time: 0, data: { turn: 1 } } };
+  const paths: string[] = [];
+  const client = clientWith(async (request) => {
+    paths.push(request.path);
+    return Response.json(paths.length === 1 ? {
+      data: [{ agent_id: "other", payload: { ...payload, uuid: "other" } }, { agent_id: "child", payload }], next_cursor: "next",
+    } : { data: [{ agent_id: "other", payload }, { agent_id: "child", payload }], next_cursor: null });
+  });
+  expect(await client.privateEvents("parent", { agentId: "child" })).toEqual([payload, payload]);
+  expect(paths).toEqual([
+    "/v1/code/sessions/parent/worker/internal-events?subagents=true",
+    "/v1/code/sessions/parent/worker/internal-events?subagents=true&cursor=next",
+  ]);
 });
 
 test("internal event readers preserve envelopes and retry each page independently", async () => {

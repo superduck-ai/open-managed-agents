@@ -121,10 +121,10 @@ test("internal logs, state and child logs share a FIFO queue and confirm only th
     expect(events.map((event) => event.payload.data)).toEqual(data);
     expect(confirmed).toEqual(data.map((_, index) => index));
     events.forEach((event, index) => {
+      expect(event.payload).not.toHaveProperty("schema_version");
       expect(event.agent_id).toBe(index % 3 === 2 ? "child" : undefined);
       expect(event.is_compaction).toBe(false);
-      expect(event.payload).toMatchObject({ type: "system", schema_version: 1,
-        subtype: "dsh_log" });
+      expect(event.payload).toMatchObject({ type: "dsh_log" });
     });
     for (const request of requests) {
       expect(request).toMatchObject({ method: "POST", path: "/v1/code/sessions/s/worker/internal-events", timeout: 10_000 });

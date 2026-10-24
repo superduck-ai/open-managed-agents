@@ -94,6 +94,11 @@ export class SessionRuntime {
         return approval.allowed ? decision : { kind: "deny", reason: approval.reason || "Tool use denied by OMA" };
       });
       scope.on("tools/execute", async (exec, next) => {
+        if (exec.agent) {
+          await this.ctx.sessions.flush(exec.agent.session);
+          await this.ctx.get("ccrReplication")?.flush(exec.agent.session.id);
+        }
+        exec.signal.throwIfAborted();
         if (exec.name === "AskUserQuestion") return next();
         if (!exec.name.startsWith("mcp__") && toolPermissions[exec.name.toLowerCase()] === "allow") return next();
         prefetchMcpApprovals(this.bridge, this.toolCalls, exec.callId,
@@ -171,6 +176,10 @@ export class SessionRuntime {
           } : {}) },
           ...options,
         });
+    if (this.config.descriptor && !this.agent.session.snapshotEvents().some((event) => event.type === "subagent/descriptor")) {
+      this.agent.session.append("subagent/descriptor", this.config.descriptor);
+      await this.flushLog();
+    }
   }
 
   async refreshTools(): Promise<void> {

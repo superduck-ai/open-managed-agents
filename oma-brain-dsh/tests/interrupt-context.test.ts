@@ -33,7 +33,7 @@ test.each(["event", "control"])("%s interruption context survives recovery in na
     async getWorkerState() { return { metadata: null, durationMs: 0 }; },
     async isToolConfirmationPending() { return false; },
     async privateEvents(id) { return structuredClone(logs.get(id) ?? []); },
-    async persist(id: string, ...[subtype, data]: CcrPersistArgs) { logs.set(id, [...(logs.get(id) ?? []), { subtype, schema_version: 1, data }]); },
+    async persist(id: string, ...[type, data]: CcrPersistArgs) { logs.set(id, [...(logs.get(id) ?? []), { type, data }]); },
     async events(_id: string, events: unknown[]) { published.push(...events); }, async acknowledge() {}, async reportDelivery() {}, async reportMetadata() {}, async setStatus() {},
     sessionIds() { return logs.keys(); },
   };
@@ -64,7 +64,7 @@ test.each(["event", "control"])("%s interruption context survives recovery in na
     await first.promise;
     await session.receive("interrupt", interrupt);
     await old;
-    const completedAfterInterrupt = session.state.completed.includes("old");
+    const completedAfterInterrupt = session.delivery.completed.includes("old");
     expect(JSON.stringify(logs.get(id))).toContain("oma-interruption");
     await session.receive("old", { content: "Duplicate delivery must not become another model request" });
     expect(captures).toHaveLength(1);

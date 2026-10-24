@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { assertPersistenceFormat } from "./recovery.ts";
+import { workerDiagnostic } from "./diagnostics.ts";
+import type { DshLogData } from "./persistence-contracts.ts";
 import { Context, Service } from "@deepseek-ai/cordis";
 import {
   assertContiguous,
@@ -56,9 +60,10 @@ export class CcrReplication extends Service {
     this.parents.set(SessionId(id), SessionId(parent));
   }
 
-  async ensure(value: string): Promise<void> {
+  async ensure(value: string): Promise<boolean> {
     const id = SessionId(value);
     this.forgotten.delete(id);
+    let hydrated = false;
     await this.serialize(id, async owner => {
       const local = await this.ctx.sessionPersistence.stat(id);
       if (local?.formatStatus === "migration-required") throw new Error("Local transcript format requires explicit migration");
@@ -72,10 +77,12 @@ export class CcrReplication extends Service {
       try {
         await handle.append(record.events);
         await handle.flush();
+        hydrated = true;
       } finally {
         await handle.close();
       }
     });
+    return hydrated;
   }
 
   async flush(value: string): Promise<void> {
@@ -203,51 +210,60 @@ export class CcrReplication extends Service {
       throw new Error("Local and remote log headers diverged");
     if (remote && (remote.events.length > local.events.length || remote.events.some((event, index) => !sameJson(event, local.events[index]))))
       throw new Error("Local and remote log histories diverged");
+    if (local.header.isSeeded || local.inherited) throw new Error("Forked sessions are not enabled");
+    if (!remote) await this.persistRecord(id, local.header, owner);
     const events = local.events.slice(remote?.events.length ?? 0);
-    if (remote && !events.length) return;
+    const results = await Promise.allSettled(events.map(event => this.persistRecord(id, event, owner)));
+    const failure = results.find(result => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+    if (this.jobs.get(id) === owner) this.records.set(id, structuredClone(local));
+  }
+
+  private async persistRecord(id: SessionId, data: DshLogData, owner: Replication): Promise<void> {
     this.assertCurrent(id, owner);
     const parent = this.parents.get(id);
-    await this.config.backend.persist(parent ?? id, "dsh_log", {
-      header: local.header,
-      inherited: local.inherited,
-      events,
-    }, parent ? id : undefined);
-    if (owner && this.jobs.get(id) === owner) this.records.set(id, structuredClone(local));
+    const message = "seq" in data && data.type === "tool/result" ? data.data.message : undefined;
+    const text = message?.content.filter(block => block.type === "text").map(block => block.text).join("\n");
+    const diagnostic = message && text !== undefined ? {
+      session_ref: createHash("sha256").update(parent ?? id).digest("hex"),
+      session_thread_ref: createHash("sha256").update(id).digest("hex"),
+      call_ref: createHash("sha256").update(message.toolCallId).digest("hex"),
+      text_utf16_units: text.length, has_nul: text.includes(String.fromCharCode(0)),
+    } : undefined;
+    if (diagnostic) workerDiagnostic("info", "ccrv2_tool_result_durability", { ...diagnostic, phase: "start" });
+    await this.config.backend.persist(parent ?? id, "dsh_log", data, parent ? id : undefined);
+    if (diagnostic) workerDiagnostic("info", "ccrv2_tool_result_durability", { ...diagnostic, phase: "confirmed" });
   }
 
   private async load(id: SessionId, owner: Replication): Promise<Stored | undefined> {
     if (this.records.has(id)) return this.records.get(id);
     const parent = this.parents.get(id);
-    const payloads = await this.config.backend.privateEvents(parent ?? id);
-    this.assertCurrent(id, owner);
-    if (parent) payloads.push(...await this.config.backend.privateEvents(parent, { subagents: true }));
+    const payloads = await this.config.backend.privateEvents(parent ?? id, { agentId: parent ? id : undefined });
     this.assertCurrent(id, owner);
     let record: Stored | undefined;
     for (const payload of payloads) {
-      if (payload.subtype === "dsh_brain_state" || payload.subtype === "grok_checkpoint")
-        throw new Error("Legacy CCRv2 state requires migration before resume");
-      if (payload.subtype !== "dsh_log") continue;
-      if (payload.schema_version !== 1) throw new Error("Unsupported dsh log envelope");
+      assertPersistenceFormat(payload, parent ?? id);
+      if (payload.type !== "dsh_log") continue;
       const data = payload.data;
-      if (data.header?.id !== id) continue;
-      assertStoredId(id, data.header);
-      assertVersion(data.header);
-      if (!Number.isSafeInteger(data.inherited) || data.inherited < 0) throw new Error("Invalid inherited log length");
-      const header = materializeCreateHeader({ ...data.header, delegationDepth: data.header.delegationDepth ?? 0 });
-      record ??= { header, inherited: data.inherited, events: [] };
-      if (!sameJson(record.header, header) || record.inherited !== data.inherited) throw new Error("Log header changed");
-      if (!Array.isArray(data.events)) throw new Error("Invalid dsh log batch");
-      const batch = validateStoredEvents(record.header, structuredClone(data.events));
-      for (const event of batch) {
-        if (event.seq < record.events.length) {
-          if (!sameJson(record.events[event.seq], event)) throw new Error("Conflicting dsh log event");
-        } else {
-          assertContiguous(id, [event], record.events.length);
-          record.events.push(event);
-        }
+      if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid dsh log record");
+      if (!("seq" in data)) {
+        assertStoredId(id, data);
+        assertVersion(data);
+        if (data.isSeeded) throw new Error("Forked sessions are not enabled");
+        const header = materializeCreateHeader({ ...data, delegationDepth: data.delegationDepth ?? 0 });
+        if (record && !sameJson(record.header, header)) throw new Error("Log header changed");
+        record ??= { header, inherited: 0, events: [] };
+        continue;
+      }
+      if (!record) throw new Error("Missing dsh log header");
+      const [event] = validateStoredEvents(record.header, [structuredClone(data)]);
+      if (event.seq < record.events.length) {
+        if (!sameJson(record.events[event.seq], event)) throw new Error("Conflicting dsh log event");
+      } else {
+        assertContiguous(id, [event], record.events.length);
+        record.events.push(event);
       }
     }
-    if (record && record.inherited > record.events.length) throw new Error("Incomplete inherited log prefix");
     if (owner && this.jobs.get(id) === owner) this.records.set(id, record);
     return record;
   }

@@ -899,7 +899,7 @@ test.each(["state", "publication", "callback"] as const)("compaction notificatio
   const { backend, ctx, session } = await compactedSessionFixture();
   const persist = backend.persist.bind(backend);
   const events = backend.events.bind(backend);
-  const notify = session.runtime.hooks.onContextCompacted!;
+  const notify = session.contextCompacted.bind(session);
   let failing = true;
   let deliveredId: string | undefined;
   backend.persist = async (id, ...args) => {
@@ -912,7 +912,7 @@ test.each(["state", "publication", "callback"] as const)("compaction notificatio
     if (failing && failure === "publication") throw new Error("notification unavailable");
     await events(id, payloads);
   };
-  session.runtime.hooks.onContextCompacted = async (...args) => {
+  session.contextCompacted = async (...args) => {
     if (failing && failure === "callback") throw new Error("notification unavailable");
     await notify(...args);
   };

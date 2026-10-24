@@ -1,5 +1,5 @@
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
-import type { SessionEvent } from "@deepseek-ai/dsh-session";
+import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
 import type { ToolDefinition } from "@deepseek-ai/dsh-tools";
 import type { Payload } from "../json.ts";
 import type { LlmCallConfig } from "@deepseek-ai/dsh-llm";
@@ -46,9 +46,9 @@ export interface SubagentBridge {
   bindPersistence(threadId: string): void;
   emit(event: SubagentEvent): Promise<void>;
   beforeRequest(): Promise<void>;
-  contextCompactionSequence?(threadId: string): number | undefined;
-  onContextCompacted?(threadId: string, tokens: number | undefined, sequence: number): Promise<void>;
-  onEvent(threadId: string, event: SessionEvent): void;
+  onOpen?(session: Session): Promise<void>;
+  afterFlushLog?(session: Session): Promise<void>;
+  onEvent(threadId: string, event: SessionEvent, session: Session): void;
   onStream(threadId: string, frame: AssistantStreamFrame): void;
   toolExecution(threadId: string): ToolExecutionBridge;
 }
@@ -176,13 +176,13 @@ export interface ToolExecutionBridge {
 
 export interface SessionRuntimeHooks {
   selectModel?(model: string): string;
-  contextCompactionSequence?(): number | undefined;
-  onContextCompacted?(tokens: number | undefined, sequence: number): Promise<void>;
+  onOpen?(session: Session): Promise<void>;
+  afterFlushLog?(session: Session): Promise<void>;
   onExternalMcpConnectionFailure?(serverName: string): Promise<void>;
   onExternalMcpAuthenticationFailure?(serverName: string, phase?: "discovery" | "tool_call"): Promise<void>;
   setupTools?(scope: Context): void;
   beforeRequest(): Promise<void>;
-  onEvent(event: SessionEvent): void;
+  onEvent(event: SessionEvent, session: Session): void;
   onStream(frame: AssistantStreamFrame): void;
   stop(): void;
 }

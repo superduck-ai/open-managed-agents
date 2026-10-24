@@ -2,7 +2,7 @@ import type { SubagentBridge, SubagentEvent, SubagentThread, ToolExecutionBridge
 import { CcrPersistence } from "./persistence.ts";
 import type { CcrSession } from "./session.ts";
 import type { Payload } from "../json.ts";
-import type { SessionEvent } from "@deepseek-ai/dsh-session";
+import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 
 /** Protocol mapping and durable per-thread execution adapters. */
@@ -61,14 +61,13 @@ export class CcrSubagentBridge implements SubagentBridge {
     await this.session.flushEvents();
     await this.session.updateStatus();
   }
-  contextCompactionSequence(threadId: string): number | undefined {
-    return this.session.state.compactionSequences?.[threadId];
-  }
-  onContextCompacted(threadId: string, tokens: number | undefined, sequence: number): Promise<void> {
-    return this.session.contextCompacted(tokens, sequence, threadId);
-  }
+  onOpen(session: Session): Promise<void> { return this.session.compaction.restore(session); }
+  afterFlushLog(session: Session): Promise<void> { return this.session.compaction.flush(session); }
   beforeRequest(): Promise<void> { return this.session.flushEvents(); }
-  onEvent(threadId: string, event: SessionEvent): void { this.session.record(event, threadId); }
+  onEvent(threadId: string, event: SessionEvent, session: Session): void {
+    this.session.compaction.record(session, event);
+    this.session.record(event, threadId);
+  }
   onStream(threadId: string, frame: AssistantStreamFrame): void { this.session.stream(frame, threadId); }
   toolExecution(threadId: string): ToolExecutionBridge {
     return {

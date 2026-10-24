@@ -20,6 +20,7 @@ import { CcrActivity, type CcrActivityOptions } from "./activity.ts";
 import { emptyState, isControlInput, object, type BrainState, type ThreadExecutionState, type Payload } from "./protocol.ts";
 import { startDeliveryProgress } from "./delivery-progress.ts";
 import { failureDiagnostic, workerDiagnostic } from "./diagnostics.ts";
+import { CcrCompaction } from "./compaction.ts";
 import { CcrToolResults } from "./tool-results.ts";
 import { assistantMessages, CcrAssistantStream } from "./assistant.ts";
 import { userInputContent } from "./user-content.ts";
@@ -52,6 +53,7 @@ export class CcrSession {
     string,
     { phase: "policy" | "confirmation" | "resolved"; resolve: (decision: Payload) => void; reject: (error: Error) => void; threadId: string; details: import("./wire.ts").RequiresActionDetails }
   >();
+  readonly compaction: CcrCompaction;
   readonly runtime: SessionRuntime;
   readonly subagents: Subagents;
   private readonly heartbeat?: CcrHeartbeat;
@@ -65,6 +67,9 @@ export class CcrSession {
     heartbeat?: CcrHeartbeatConfig,
     keepAlive?: CcrActivityOptions,
   ) {
+    this.compaction = new CcrCompaction(ctx,
+      id => this.state.compactionSequences?.[id],
+      (id, tokens, sequence) => this.contextCompacted(tokens, sequence, id === this.id ? undefined : id));
     this.defaultModel = config.model;
     this.assistantStream = new CcrAssistantStream(config.id, config.modelMessageID);
     this.runtime = new SessionRuntime(ctx, { ...config, setup: async scope => { await config.setup?.(scope); } }, {
@@ -85,9 +90,9 @@ export class CcrSession {
       }]),
       setupTools: (scope) => this.subagents.register(scope),
       beforeRequest: () => this.beforePrimaryRequest(),
-      contextCompactionSequence: () => this.state.compactionSequences?.[this.id],
-      onContextCompacted: (tokens, sequence) => this.contextCompacted(tokens, sequence),
-      onEvent: (event) => this.record(event),
+      onOpen: session => this.compaction.restore(session),
+      afterFlushLog: session => this.compaction.flush(session),
+      onEvent: (event, session) => { this.compaction.record(session, event); this.record(event); },
       onStream: (frame) => this.stream(frame),
       stop: () => this.stop(),
     }, {

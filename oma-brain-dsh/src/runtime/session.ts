@@ -24,8 +24,6 @@ export class SessionRuntime {
   busy = false;
   lastIdle = Date.now();
   private turnCompleted = false;
-  private compactionTokens?: number;
-  private pendingCompaction?: { tokens?: number; sequence: number };
   private readonly modelRetry = new ModelRetry();
   private toolCalls: ToolCallBlock[] = [];
   appendedSystem = "";
@@ -115,14 +113,7 @@ export class SessionRuntime {
         }
         if (event.type === "assistant/message")
           this.toolCalls = event.data.message.content.filter((block): block is ToolCallBlock => block.type === "tool-call");
-        if (event.type === "compaction/start") this.compactionTokens = this.ctx.tokenMeter.measure(session).totalTokens;
-        if (event.type === "compaction/prune") this.queueCompaction(event.seq, this.ctx.tokenMeter.measure(session).totalTokens);
-        if (event.type === "compaction/end") {
-          if (event.data.error === undefined)
-            this.queueCompaction(event.seq, this.compactionTokens ?? this.ctx.tokenMeter.measure(session).totalTokens);
-          this.compactionTokens = undefined;
-        }
-        this.hooks.onEvent(event);
+        this.hooks.onEvent(event, session);
         if (event.type === "tool/result") releaseToolApproval(this.bridge, event.data.message.toolCallId);
         if (event.type === "turn/end") {
           this.toolCalls = [];
@@ -174,17 +165,7 @@ export class SessionRuntime {
           } : {}) },
           ...options,
         });
-    const notifiedSequence = this.hooks.contextCompactionSequence?.() ?? -1;
-    for (const event of this.agent.session.snapshotEvents()) {
-      if (event.seq <= notifiedSequence) continue;
-      if (event.type === "compaction/prune" || (event.type === "compaction/end" && event.data.error === undefined))
-        this.queueCompaction(event.seq);
-    }
-    if (this.pendingCompaction) await this.flushLog();
-  }
-
-  private queueCompaction(sequence: number, tokens?: number): void {
-    this.pendingCompaction = { sequence, tokens: this.pendingCompaction?.tokens ?? tokens };
+    await this.hooks.onOpen?.(this.agent.session);
   }
 
   async refreshTools(): Promise<void> {
@@ -248,11 +229,7 @@ export class SessionRuntime {
 
   async flushLog(): Promise<void> {
     await this.ctx.sessions.flush(this.agent.session);
-    const pending = this.pendingCompaction;
-    if (pending) {
-      await this.hooks.onContextCompacted?.(pending.tokens, pending.sequence);
-      if (this.pendingCompaction === pending) this.pendingCompaction = undefined;
-    }
+    await this.hooks.afterFlushLog?.(this.agent.session);
   }
 
   cancelForShutdown(): void {

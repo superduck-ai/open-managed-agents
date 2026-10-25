@@ -1205,7 +1205,13 @@ export function mergeSessionDeltaFrame(
     const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
     const completed = queryClient
       .getQueryData<SessionDetailEventCache>(cacheKey)
-      ?.events.some((cached) => sessionStableEventId(cached) === id && sessionFinalAgentEventId(cached) !== null);
+      ?.events.some(
+        (cached) =>
+          (sessionStableEventId(cached) === id && sessionFinalAgentEventId(cached) !== null) ||
+          (sessionEventType(cached) === 'span.model_request_end' &&
+            Array.isArray(cached.event_ids) &&
+            cached.event_ids.includes(id)),
+      );
     if (completed) {
       return;
     }

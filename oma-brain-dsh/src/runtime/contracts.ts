@@ -1,3 +1,4 @@
+import type { ContinuableSubagentDescriptorData } from "@deepseek-ai/dsh-subagent";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import type { SessionEvent } from "@deepseek-ai/dsh-session";
 import type { ToolDefinition } from "@deepseek-ai/dsh-tools";
@@ -42,9 +43,9 @@ export interface SubagentBridge {
   validateThread?(threadId: string, signal: AbortSignal): Promise<void>;
   archivedThreads?(threadIds: string[], signal: AbortSignal): Promise<string[]>;
   threads(): SubagentThread[];
+  restoreThreads?(): Promise<void>;
   bindPersistence(threadId: string): void;
   emit(event: SubagentEvent): Promise<void>;
-  beforeRequest(): Promise<void>;
   onContextCompacted?(threadId: string, tokens?: number): Promise<void>;
   onEvent(threadId: string, event: SessionEvent): void;
   onStream(threadId: string, frame: AssistantStreamFrame): void;
@@ -109,6 +110,7 @@ export interface SessionRuntimeConfig {
   externalMcpConfig?: unknown;
   externalMcpFetch?: typeof fetch;
   id: string;
+  descriptor?: ContinuableSubagentDescriptorData;
   provider: string;
   model: string;
   workDir: string;
@@ -145,30 +147,10 @@ export interface ApprovalDecision {
   reason?: string;
 }
 
-export interface ApprovedToolCall {
-  callId: string;
-  name: string;
-  original: Payload;
-  effective: Payload;
-  readOnly: boolean;
-}
-
-export interface ToolOutcome extends ApprovedToolCall {
-  remoteOutcome?: "unknown";
-  text: string;
-  failed: boolean;
-}
-
-/** Awaited policy and durability barriers, independent of any wire protocol. */
 export interface ToolExecutionBridge {
-  blocked(): boolean;
   approve(request: ToolApproval, signal: AbortSignal): Promise<ApprovalDecision>;
-  recordApproved(call: ApprovedToolCall): Promise<void>;
-  flushLog(): Promise<void>;
-  recordDispatch(callId: string): Promise<void>;
-  recordUnknown(callId: string): Promise<void>;
-  recordResult(outcome: ToolOutcome): Promise<void>;
-  stop(): void;
+  runTool<T>(callId: string, execute: () => Promise<T>, readOnly: boolean): Promise<T>;
+  approvalChanged(name: string, callId: string, effective: Payload): void | Promise<void>;
 }
 
 export interface SessionRuntimeHooks {
@@ -176,13 +158,14 @@ export interface SessionRuntimeHooks {
   onExternalMcpConnectionFailure?(serverName: string): Promise<void>;
   onExternalMcpAuthenticationFailure?(serverName: string, phase?: "discovery" | "tool_call"): Promise<void>;
   setupTools?(scope: Context): void;
-  beforeRequest(): Promise<void>;
+  beforeRequest?(): Promise<void>;
   onEvent(event: SessionEvent): void;
   onStream(frame: AssistantStreamFrame): void;
   stop(): void;
 }
 
 export interface TurnHooks {
+  messageId?: string;
   beforeRun(): Promise<void | boolean>;
   afterRun(completed: boolean): Promise<void>;
 }

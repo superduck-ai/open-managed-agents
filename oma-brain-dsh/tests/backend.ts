@@ -256,11 +256,7 @@ export class Backend {
           }
           this.executions.push(body.params);
           this.timeline.push({ type: "tool.dispatch", ...body.params });
-          const states = [...this.privateLog.values()].filter(
-            (p) => p.subtype === "dsh_brain_state",
-          );
-          if (!["read", "glob", "grep"].includes(body.params.name))
-            expect(states.at(-1)!.data.phase).toBe("dispatch");
+
           if (this.hangTool) return await new Promise<Response>(() => {});
           result = this.onTool ? await this.onTool(body.params) : { content: [{ type: "text", text: "actual stdout\n" }] };
         } else
@@ -315,6 +311,7 @@ export class Backend {
           });
         if (this.failWrites) { this.failedCcrWrites++; return json({}, 503); }
         for (const event of body.events) {
+          expect(event.payload.type).toBe("dsh_log");
           const old = this.privateLog.get(event.payload.uuid);
           if (old) expect(event.payload).toEqual(old);
           this.privateLog.set(event.payload.uuid, event.payload);

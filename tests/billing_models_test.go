@@ -3,7 +3,6 @@
 package tests
 
 import (
- "context"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -91,8 +90,8 @@ func TestModelPriceReconciliation(t *testing.T) {
 				t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
 					store := &billingRecordedStore{database: app.db}
 					transport := &metering.Transport{Base: http.DefaultTransport, Store: store, Calculator: llmproviders.BillingCalculator(func(ctx context.Context, org, workspace string) (llmproviders.Catalog, error) {
- return llmproviders.LoadCatalog(ctx, app.db, org, workspace)
-}, app.prices), Source: "api"}
+						return llmproviders.LoadCatalog(ctx, app.db, org, workspace)
+					}, app.prices), Source: "api"}
 					ctx := auth.WithPrincipal(t.Context(), auth.Principal{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUID: provider.WorkspaceUUID})
 					request, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s?stream=%t", upstream.URL, stream), strings.NewReader(fmt.Sprintf(`{"model":%q}`, tc.Model)))
 					if err != nil {

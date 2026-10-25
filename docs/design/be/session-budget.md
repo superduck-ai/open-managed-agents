@@ -12,7 +12,7 @@
 
 ## 数据库升级与旧分支开发库
 
-从 main 升级可直接执行正常启动迁移，不需要允许乱序迁移或修改 Goose 历史。`TestBudgetMigrationsUpgradeFromMainPostgres` 在隔离 PostgreSQL schema 中执行不含本 PR 四个迁移的 main 历史至版本 95，再调用生产迁移入口两次，验证五个迁移仅执行一次、预算字段与历史计费表齐全、当前目录表已删除、原会话保留，以及主分支的 Worker Claims、Provider Backend 和 Provider Slug、组织级 Provider 和统一 `models` 字段仍然存在。
+从 main 升级可直接执行正常启动迁移，不需要允许乱序迁移或修改 Goose 历史。`TestBudgetMigrationsUpgradeFromMainPostgres` 在隔离 PostgreSQL schema 中分别准备版本 95 与当前 main 版本 99 的基线，再调用生产迁移入口两次，验证各自缺少的迁移仅执行一次并升级至版本 100、预算字段与历史计费表齐全、当前目录表已删除、原会话保留，以及主分支的 Worker Claims、Provider Backend 和 Provider Slug、组织级 Provider 和统一 `models` 字段仍然存在。
 
 曾运行本 PR 旧版本的开发数据库不属于这条升级路径：旧预算与计费迁移曾使用 77–79，价格目录曾使用 80、83 或 84，随后又占用过与 main 冲突的 87–90。Goose 只记录版本号，不识别文件改名；这类库可能重复建表，也可能因旧编号占用了主分支版本而跳过线程指标、活动投影、文件实例或 Provider Slug 等迁移。仅为建表增加 `IF NOT EXISTS` 不能修复迁移历史。
 

@@ -56,5 +56,13 @@ func writeSnapshot(path string, data []byte) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(file.Name(), path)
+	directory, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	if err := os.Rename(file.Name(), path); err != nil {
+		return err
+	}
+	return directory.Sync()
 }

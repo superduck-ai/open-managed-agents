@@ -486,6 +486,8 @@ Brain 保持运行而沙箱已被 Provider 删除时，下一次 MCP 调用先�
 
 ## 运行时标价与预算
 
+关闭会话时，先停止并等待子 Agent，再确认根会话及子线程的原生日志复制队列，之后才销毁根 Agent 和共享沙箱 Provider；根 Agent 销毁后再次刷新并排空复制队列，保留关闭期间产生的最终事件。复制失败仍完成资源清理并返回错误，不能在工具结果尚未确认时提前销毁共享 Provider。
+
 `GET /v2/sessions/{id}` 在已有 ingress 和线程权限校验后返回 `session_context.billing`。Brain 注册时保存到 `assignment.launch.billing`，每次请求前与工具权限一起刷新。字段包含共享会话预算、累计费用、剩余金额、触顶状态，以及主模型和配置子模型的价格快照；未知价格为 null，不向 Worker 暴露完整目录或凭据。
 
 模型 API 的 `session_budget_reached` 和 `model_price_unavailable` 错误映射为不可自动重试的 DSH 错误。预算触顶结束当前轮并确认输入，不额外发布通用失败／成功结果；公开预算暂停由后端维护。提高或移除预算后，下次输入重新读取当前状态。价格恢复后可重新发起输入。子线程共用会话预算，不在 Brain 内重复扣减。费用最终以服务端请求快照为准。

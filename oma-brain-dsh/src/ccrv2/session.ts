@@ -607,6 +607,7 @@ export class CcrSession {
     this.stop();
     // Drain children before disposing the root agent and its shared providers.
     const results = await Promise.allSettled([this.subagents.close(), this.heartbeat?.close(), this.activity.close()]);
+    results.push(...await Promise.allSettled([this.ctx.ccrReplication.flush(this.id)]));
     results.push(...await Promise.allSettled([this.runtime.close()]));
     results.push(...await Promise.allSettled([this.ctx.ccrReplication.flush(this.id)]));
     await this.ctx.ccrReplication.drain(this.id);

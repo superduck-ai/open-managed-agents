@@ -35,9 +35,9 @@ function textChunk(text = "answer", finish: string | null = "stop"): Payload {
 }
 
 test("Chat adapter reports HTTP errors without retrying the OMA model request", async () => {
-  for (const [status, code] of [[401, "AUTH"], [403, "AUTH"], [429, "RATE_LIMIT"], [503, "SERVER"]] as const) {
+  for (const [status, code] of [[401, "AUTH"], [403, "AUTH"], [429, "RATE_LIMIT"], [503, "SERVER"], [400, "SESSION_BUDGET_REACHED"], [503, "MODEL_PRICE_UNAVAILABLE"]] as const) {
     let requests = 0;
-    const api = new OmaApi("http://model.test", (async (_input, _init) => { requests++; return Response.json({ error: { message: "denied" } }, { status }); }) as typeof fetch);
+    const api = new OmaApi("http://model.test", (async (_input, _init) => { requests++; return Response.json({ error: { code: code.toLowerCase(), message: "denied" } }, { status }); }) as typeof fetch);
     const a = assignment(); a.launch.models = { "chat-model": { id: "chat-model", api_backend: "chat_completions" } }; api.assignments.set(a.session_id, a);
     await expect(collect(new AiSdkAdapter(omaModelOptions(api)).stream(options(a.session_id)))).rejects.toMatchObject({ code, message: "denied" });
     expect(requests).toBe(1);

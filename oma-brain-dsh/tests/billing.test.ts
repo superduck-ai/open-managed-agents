@@ -2,6 +2,7 @@ import { billingError } from "../src/llm-ai-sdk/stream.ts";
 import { describe, expect, test } from "bun:test";
 import { LlmError } from "@deepseek-ai/dsh-llm";
 import { checkSessionBudget, sessionBilling } from "../src/billing.ts";
+import { terminalOutput } from "../src/ccrv2/native-output.ts";
 
 const amount = (value: string) => ({ amount: value, currency: "USD" });
 const context = () => ({ budget: { type: "limit", max_list_cost: amount("100") }, usage: amount("25"),
@@ -9,6 +10,13 @@ const context = () => ({ budget: { type: "limit", max_list_cost: amount("100") }
   calculation_policy: "server_authoritative" });
 
 describe("会话预算与价格", () => {
+  test("原生终止输出及恢复重放保留预算暂停与缺价原因", () => {
+    expect(terminalOutput("paused", { kind: "error", error: new LlmError("budget", "SESSION_BUDGET_REACHED") })).toEqual([]);
+    expect(terminalOutput("unpriced", { kind: "error", error: new LlmError("pricing", "MODEL_PRICE_UNAVAILABLE") }))
+      .toContainEqual(expect.objectContaining({ type: "system.message", content: [{ type: "text", text: "Model pricing is unavailable. Retry after pricing recovers." }] }));
+    expect(terminalOutput("completed", { kind: "completed" }))
+      .toContainEqual(expect.objectContaining({ type: "result", is_error: false }));
+  });
   test("拒绝错误金额和损坏价格", () => {
     expect(() => sessionBilling({ ...context(), usage: amount("-1") })).toThrow();
     expect(() => sessionBilling({ ...context(), pricing: { model: {} } })).toThrow();

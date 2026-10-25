@@ -2,7 +2,7 @@
 
 状态：已实现，验收结果见关联 PR 评论。日期：2026-10-22。
 
-基线为 [PR #384](https://github.com/superduck-ai/open-managed-agents/pull/384) 的 `b6d92f5019155f2cf30fb8b2a51a75ff3a24d6d7`，本次在其上增量实现。
+原始基线为 [PR #384](https://github.com/superduck-ai/open-managed-agents/pull/384)。现已同步包含该 PR 的 main `00f1601adf7ba3ae68a113397df0dd5000873231`，使用统一的 Provider `Models`，并保留工作区优先、组织默认兜底及同名歧义规则。
 
 ## 现状与结论
 
@@ -65,7 +65,7 @@ flowchart LR
 
 ## 二、文件格式与部署约束
 
-配置 `pricing.snapshot_file` 指向持久目录下的 `model-prices.json`，默认 `./data/model-prices.json`，相对路径以配置文件所在目录为基准。它是整个部署的一份当前目录，内含各来源；生产目录不提交 Git，也不包含供应商密钥。
+配置 `pricing.snapshot_file` 指向持久目录下的 `model-prices.json`，默认 `./data/model-prices.json`，相对路径以配置文件所在目录为基准。Docker 镜像预建由 `oma` 用户持有的 `/etc/open-managed-agents/data`，Compose 将该目录挂载到 `pricingdata` 持久卷，使默认路径可写并在容器重建后保留价格。它是整个部署的一份当前目录，内含各来源；生产目录不提交 Git，也不包含供应商密钥。
 
 `sources.openrouter` 保存 OpenRouter 规则，`sources.narrows` 保存 Narrows 规则。Narrows 保留原币 CNY、现有固定汇率 `1 USD = 7.2 CNY`、分档边界与规则顺序；先按原币有理数计算，再换算为 USD 并执行原有舍入。无法区分的思考、图像输出及隐式缓存仍标为未知，迁移存储不改变计价语义。
 
@@ -133,7 +133,7 @@ Brain 在注册后读取初始值，并在现有每次模型调用前读取会�
 
 1. Brain 读到当前触顶状态后停止调度新的模型请求，保留已开始请求和必要工具结算。
 2. 价格／预算读取与请求开始之间可能发生变化，所以后端在开始事件事务中继续做最终门禁。Brain 缓存仅用于提前感知，不能作为放行凭据。
-3. 后端拒绝使用稳定的机器可读错误码区分 `session_budget_reached` 和 `model_price_unavailable`，保留既有 HTTP 400 预算语义及禁止自动重试信号；Brain 识别预算触顶后停止该轮，不发送通用失败或成功结果覆盖后端暂停；缺价则显示可恢复的明确错误，不把预算触顶当成普通传输故障重试。
+3. 后端拒绝使用稳定的机器可读错误码区分 `session_budget_reached` 和 `model_price_unavailable`，保留既有 HTTP 400 预算语义及禁止自动重试信号；Brain 识别预算触顶后停止该轮，原生 DSH 终止事件的实时输出与恢复重放均不发送通用失败或成功结果覆盖后端暂停；缺价则显示可恢复的明确错误，不把预算触顶当成普通传输故障重试。
 4. 预算提高或移除后重新读取权威状态，允许后续输入启动新一轮；不能把旧的本地触顶状态永久缓存。
 5. 主线程和子线程共用一个会话预算，不能各自在 Brain 内减一份余额。已经开始的并发请求仍可能让最终消费超过限额，这次不改成预扣款或严格额度预约。
 

@@ -115,7 +115,17 @@ test("native tool batch starts two children concurrently, isolates identical cal
     await decide(f.session, aRequest, true, "approved-alpha");
     await eventually(() => f.b.executions.length === 2);
     betaResult.resolve({ content: [{ type: "text", text: "beta output" }] });
-    await eventually(() => beta.status === "idle");
+    await eventually(() => beta.status === "idle" && [...f.b.publicLog.values()]
+      .some(event => event.type === "session.thread_status_idle" && event.session_thread_id === beta.id));
+    const betaPublished = [...f.b.publicLog.values()].filter(event => event.session_thread_id === beta.id);
+    const betaResultIndex = betaPublished.findIndex(event => event.type === "user" && event.message?.content?.some((block: Payload) => block.type === "tool_result"));
+    const betaReportIndex = betaPublished.findIndex(event => event.type === "agent.thread_message_received");
+    const betaIdleIndex = betaPublished.findIndex(event => event.type === "session.thread_status_idle");
+    expect(betaResultIndex).toBeGreaterThan(-1);
+    expect(betaReportIndex).toBeGreaterThan(betaResultIndex);
+    expect(betaIdleIndex).toBeGreaterThan(betaReportIndex);
+    expect(alpha.status).toBe("running");
+    expect(f.b.processed).toEqual([]);
     expect(f.session.dispatching()).toBe(true);
     expect(f.b.statuses.at(-1)).toBe("running");
     alphaResult.resolve({ content: [{ type: "text", text: "alpha output" }] });

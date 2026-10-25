@@ -106,6 +106,7 @@ export class CcrSession {
     );
     if (heartbeat) this.heartbeat = new CcrHeartbeat(heartbeat, this.abort.signal);
   }
+  get restoring(): boolean { return this.opening; }
   get id() {
     return this.config.id;
   }
@@ -167,20 +168,22 @@ export class CcrSession {
     await this.runtime.open();
     setStage("subagents_restore");
     await this.subagents.restore();
-    this.opening = false;
+    const recoveryEvents = this.pendingEvents.splice(0);
     this.replay(this.agent.session.snapshotEvents());
     for (const thread of this.subagents.threads) {
       const handle = await this.ctx.sessionPersistence.open(SessionId(thread.id), "read");
       try { this.replay((await handle.read()).events, thread.id); }
       finally { await handle.close(); }
     }
+    this.pendingEvents.push(...recoveryEvents);
+    this.opening = false;
     await this.checkpoint();
     setStage("report_metadata");
     await this.backend.reportMetadata(this.id, { task_summary: null, pending_action: null, model: this.config.model });
-    setStage("update_status");
-    await this.updateStatus();
     setStage("publish");
     await this.publish();
+    setStage("update_status");
+    await this.updateStatus();
   }
 
   stream(frame: AssistantStreamFrame, threadId?: string): void {
@@ -544,7 +547,9 @@ export class CcrSession {
       const through = this.pendingEvents.length;
       const pending = [...new Map(this.pendingEvents.slice(0, through).map((event) => [event.uuid, event])).values()];
       if (!pending.length) return;
+      const previews = this.previews;
       await this.checkpoint();
+      await previews;
       await this.backend.events(this.id, pending);
       this.pendingEvents.splice(0, through);
     });

@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
+import { LlmAttemptId } from "@deepseek-ai/dsh-llm";
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
@@ -151,5 +152,46 @@ test("completed tools publish confirmed results while the next model request is 
     releaseModel.resolve(textEvents("done"));
     await turn;
     session.backend.persist = persist;
+  }
+});
+
+
+test("durable publication cannot overtake an earlier unconfirmed stream preview", async () => {
+  const { session } = await fixture();
+  const release = Promise.withResolvers<void>();
+  const checkpointed = Promise.withResolvers<void>();
+  const events = session.backend.events.bind(session.backend);
+  const checkpoint = session.checkpoint.bind(session);
+  const order: string[] = [];
+  let held = false;
+  session.backend.events = async (...args) => {
+    const preview = args[1].some(event => event.type === "event_start");
+    if (preview) { held = true; await release.promise; }
+    else order.push("durable");
+    await events(...args);
+    if (preview) order.push("preview");
+  };
+  session.inputId = "preview-order";
+  const attemptId = LlmAttemptId("preview-order");
+  session.stream({ type: "start", attemptId, revision: 1, turn: 1, step: 1 });
+  session.stream({ type: "chunk", attemptId, revision: 1, index: 0, time: 0,
+    chunk: { type: "text-delta", index: 0, text: "partial" } });
+  await eventually(() => held);
+  session.checkpoint = async () => { await checkpoint(); checkpointed.resolve(); };
+  session.pendingEvents.push({ type: "agent.message", uuid: "durable-after-preview", content: [{ type: "text", text: "partial" }] });
+  const publication = session.publish();
+  publication.catch(() => {});
+  try {
+    await checkpointed.promise;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(order).toEqual([]);
+    release.resolve();
+    await publication;
+    expect(order).toEqual(["preview", "durable"]);
+  } finally {
+    release.resolve();
+    await publication;
+    session.backend.events = events;
+    session.checkpoint = checkpoint;
   }
 });

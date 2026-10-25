@@ -141,7 +141,16 @@ for (const duringDispatch of [true, false]) {
       await mountOma(ctx, api);
       resumed = createOmaSession(ctx, api, backend.a);
       const requestCount = backend.requests.length;
+      const recoveryStart = backend.timeline.length;
       await resumed.open();
+      const recovery = backend.timeline.slice(recoveryStart);
+      const recoveredResult = recovery.findIndex(event => event.type === "user" && event.session_thread_id === alphaId
+        && event.message?.content?.some((block: { type: string }) => block.type === "tool_result"));
+      const recoveredIdle = recovery.findIndex(event => event.type === "session.thread_status_idle" && event.session_thread_id === alphaId);
+      expect(recoveredResult).toBeGreaterThan(-1);
+      expect(recoveredIdle).toBeGreaterThan(recoveredResult);
+      const recoveredWorkerIdle = recovery.findIndex(event => event.type === "worker.status" && event.status === "idle");
+      expect(recoveredWorkerIdle).toBeGreaterThan(recoveredIdle);
       expect(backend.requests).toHaveLength(requestCount);
       expect(completedInputs(resumed)).toContain("crash_input");
       expect(resumed.subagents.threads!.every((thread) => thread.status === "idle")).toBe(true);

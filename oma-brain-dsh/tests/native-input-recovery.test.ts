@@ -79,7 +79,6 @@ test("native history regenerates stable public events after response loss withou
   await second.session.receive("durable-input", { content: "Redelivery" });
   expect(b.requests).toHaveLength(1);
   expect([...b.publicLog.values()].filter(payload => ["agent.message", "result"].includes(payload.type))).toEqual(original);
-  expect([...b.privateLog.values()].some(payload => payload.data?.type === "plugin:oma/delivery")).toBe(false);
 });
 
 

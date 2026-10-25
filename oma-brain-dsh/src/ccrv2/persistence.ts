@@ -145,8 +145,6 @@ export class CcrReplication extends Service {
 
   private async readLocal(handle: SessionHandle): Promise<Stored> {
     const events = [...(await handle.read()).events];
-    if (events.some(event => ["plugin:oma/delivery", "plugin:oma/receipt"].includes(String(event.type))))
-      throw new Error("Legacy Brain delivery records require explicit migration");
     return { header: handle.header, inherited: handle.inheritedEventCount, events };
   }
 
@@ -344,7 +342,7 @@ export class CcrReplication extends Service {
     if (diagnostic) workerDiagnostic("info", "ccrv2_tool_result_durability", { ...diagnostic, phase: "confirmed" });
   }
 
-  private async validateRemote(record: Stored): Promise<void> {
+  private async validateRemote(record: Stored): Promise<Stored> {
     const root = await mkdtemp(join(tmpdir(), "oma-brain-remote-validation-"));
     const ctx = new Context();
     try {
@@ -355,7 +353,10 @@ export class CcrReplication extends Service {
         await handle.flush();
       } finally { await handle.close(); }
       const reader = await ctx.sessionPersistence.open(record.header.id, "read");
-      try { await reader.read(); } finally { await reader.close(); }
+      try {
+        const { events } = await reader.read();
+        return { header: reader.header, inherited: reader.inheritedEventCount, events: [...events] };
+      } finally { await reader.close(); }
     } finally {
       try { await ctx.fiber.dispose(); }
       finally { await rm(root, { recursive: true, force: true }); }
@@ -377,14 +378,12 @@ export class CcrReplication extends Service {
         assertStoredId(id, data);
         assertVersion(data);
         if (data.isSeeded) throw new Error("Forked sessions are not enabled");
-        const header = materializeCreateHeader({ ...data, delegationDepth: data.delegationDepth ?? 0 });
+        const header = materializeCreateHeader(data);
         if (record && !sameJson(record.header, header)) throw new Error("Log header changed");
         record ??= { header, inherited: 0, events: [] };
         continue;
       }
       if (!record) throw new Error("Missing dsh log header");
-      if (data.type === "plugin:oma/delivery" || data.type === "plugin:oma/receipt")
-        throw new Error("Legacy Brain delivery records require explicit migration");
       const [event] = validateStoredEvents(record.header, [structuredClone(data)]);
       if (event.seq < record.events.length) {
         if (!sameJson(record.events[event.seq], event)) throw new Error("Conflicting dsh log event");
@@ -393,7 +392,7 @@ export class CcrReplication extends Service {
         record.events.push(event);
       }
     }
-    if (record) await this.validateRemote(record);
+    if (record) record = await this.validateRemote(record);
     this.assertCurrent(id, owner);
     if (this.jobs.get(id) === owner) this.records.set(id, record);
     return record;

@@ -480,3 +480,48 @@ test("any terminal event rejection stops a batch even when an earlier event repo
   expect(attempts).toBe(stopped);
   await writer.close();
 });
+
+test("native validation rejects an unknown required event before hydration", async () => {
+  const { store, logs } = backend();
+  logs.set("main", [
+    { type: "dsh_log", data: header() },
+    { type: "dsh_log", data: { type: "plugin:fixture/annotation", seq: 0, time: 2, data: { marker: "opaque" } } },
+  ]);
+  const { persistence, replication } = await setup(store);
+  await expect(replication.ensure("main")).rejects.toThrow("not marked ignorable");
+  expect(await persistence.stat(SessionId("main"))).toBeUndefined();
+});
+
+test("native hydration uses native header normalization and preserves opaque ignorable extensions", async () => {
+  const { store, logs } = backend();
+  const originalHeader = header();
+  const extension = { type: "plugin:fixture/annotation", seq: 0, time: 2, ignorable: true, data: { marker: "opaque", nested: { unchanged: true } } };
+  logs.set("main", [
+    { type: "dsh_log", data: originalHeader },
+    { type: "dsh_log", data: extension },
+  ]);
+  const reference = await setup();
+  const writer = await reference.persistence.create(originalHeader);
+  await writer.flush();
+  await writer.close();
+  const nativeReader = await reference.persistence.open(SessionId("main"), "read");
+  const nativeHeader = nativeReader.header;
+  await nativeReader.close();
+  const { ctx, persistence, replication, root } = await setup(store);
+  expect(await replication.ensure("main")).toBe(true);
+  const reader = await persistence.open(SessionId("main"), "read");
+  try {
+    expect(reader.header).toEqual(nativeHeader);
+    expect((await reader.read()).events).toMatchObject([extension]);
+  } finally { await reader.close(); }
+  const file = (await transcripts(root))[0]!;
+  expect(file.lines[1]).toEqual(extension);
+  const originalBytes = await readFile(file.path);
+  replication.forget("main");
+  expect(await replication.ensure("main")).toBe(false);
+  expect(await readFile(file.path)).toEqual(originalBytes);
+  await replication.flush("main");
+  expect(logs.get("main")).toHaveLength(2);
+  expect(logs.get("main")![0]!.data).toEqual(originalHeader);
+  await ctx.fiber.dispose();
+});

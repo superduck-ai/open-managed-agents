@@ -36,7 +36,7 @@ func TestInternalPayloadPreservesNativeRecords(t *testing.T) {
 	}{
 		{"header", "dsh_log", `{ "version":1,"id":"child","createdAt":0,"isSeeded":false,"future":{"precise":9007199254740993} }`},
 		{"event", "dsh_log", `{ "type":"tool/result","seq":12,"time":0,"data":{"message":{"content":[{"type":"text","text":"result\\n"}]},"future":1.234567890123456789} }`},
-		{"delivery plugin", "dsh_log", `{ "type":"plugin:oma/delivery","seq":13,"time":0,"ignorable":true,"data":{"version":1,"delivery":{"revision":1,"inputId":"input","logOffsets":{"child":2},"completed":[],"outbox":[],"future":true}} }`},
+		{"ignorable extension", "dsh_log", `{ "type":"plugin:fixture/annotation","seq":13,"time":0,"ignorable":true,"data":{"marker":"opaque","future":true} }`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

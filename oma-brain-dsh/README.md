@@ -387,7 +387,7 @@ already durable and use revision-based reads.
 
 No delivery journal, durable completed list, publication cursor or separate outbox
 file is maintained. Native Header/Event objects retain the dsh format unchanged;
-no `plugin:oma/delivery` records or OMA interruption source messages are appended.
+no platform-specific log records or OMA interruption source messages are appended.
 Existing external input identity uses the native message `id` through the public
 `freezeMessage` API. Restart recovery indexes the first user-source message in each
 native turn, without treating later approval context as a new input. Accepted
@@ -402,7 +402,11 @@ Transient protocol notifications not derivable from native history are retried i
 memory and have no additional crash-recovery storage. Native `agents.resume()`
 repairs interrupted calls without replaying side effects. Child discovery combines
 local native headers with remote inventory; missing inventory blocks recovery.
-Historical OMA delivery/receipt records require explicit migration.
+Native Header/Event validation, including ignorable extensions and required event
+types, is delegated to dsh. The bridge does not reject native events by platform
+record names or manually add Header fields; normalization comes from the native
+JSONL reader. Legacy CCRv2 transport envelopes remain
+a separate protocol compatibility boundary.
 
 After initial prefix validation, native Session events feed an incremental cache
 with a confirmed seq cursor. Active checkpoints upload only new events; previews

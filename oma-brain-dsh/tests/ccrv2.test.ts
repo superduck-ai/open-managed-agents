@@ -103,38 +103,6 @@ test("log recovery rejects unsupported headers, missing headers, gaps and confli
   }
 });
 
-test("startup rejects legacy delivery records before opening a native session", async () => {
-  const valid = { revision: 1, inputId: "", logOffsets: {}, completed: [], outbox: [] };
-  const cases = [
-    null, {}, { revision: 2 }, { ...valid, revision: "2" }, { ...valid, revision: -1 },
-    { ...valid, revision: 1.5 }, { ...valid, revision: Number.MAX_SAFE_INTEGER + 1 },
-    { ...valid, inputId: null }, { ...valid, logOffsets: null }, { ...valid, logOffsets: [] },
-    { ...valid, logOffsets: { child: -1 } }, { ...valid, logOffsets: { child: "0" } },
-    { ...valid, completed: {} }, { ...valid, completed: [7] },
-    { ...valid, outbox: {} }, { ...valid, outbox: [null] },
-    { ...valid, outbox: [{ type: "result" }] }, { ...valid, outbox: [{ uuid: "id" }] },
-  ];
-  for (const data of cases) {
-    const backend = new MemoryBackend();
-    const header = { version: SESSION_FORMAT_VERSION, id: "malformed", createdAt: 0, isSeeded: false };
-    backend.logs.set("malformed", [
-      { type: "dsh_log", data: header },
-      { type: "dsh_log", data: { type: "plugin:oma/delivery", seq: 0, time: 0, ignorable: true,
-        data: { version: 1, delivery: data } } },
-    ]);
-    const ctx = new Context();
-    try {
-      await mountKernel(ctx);
-      await ctx.plugin(CcrBridge, { backend });
-      const session = ctx.ccrv2.createSession({ id: "malformed", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup });
-      await expect(session.open()).rejects.toThrow("Legacy Brain delivery records require explicit migration");
-      expect(backend.logs.get("malformed")).toHaveLength(2);
-      expect(backend.output.size).toBe(0);
-      expect(backend.acknowledged).toEqual([]);
-    } finally { await ctx.fiber.dispose(); }
-  }
-});
-
 test("startup explicitly rejects legacy persistence instead of creating blank history", async () => {
   const payloads: Payload[] = [
     ...["dsh_log", "dsh_header", "dsh_brain_state", "ccrv2_delivery", "grok_checkpoint"].map((subtype) => ({ type: "system", subtype, data: {} })),

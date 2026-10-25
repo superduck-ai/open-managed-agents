@@ -92,8 +92,8 @@ func TestBrainMCPFailureDoesNotBlockCCRv2(t *testing.T) {
 				t.Fatalf("MCP failure blocked heartbeat: %v", err)
 			}
 			_, err := app.db.AppendCodeSessionInternalEvents(t.Context(), worker.ExternalID, epoch, []db.AppendCodeSessionInternalEventInput{{
-				ExternalID: "csie_recovery", EventType: "system", PayloadUUID: "recovery", IsCompaction: true, IdempotencyKey: "recovery",
-				Payload: json.RawMessage(`{"type":"system","uuid":"recovery","subtype":"dsh_brain_state","schema_version":1,"data":{"phase":"blocked"}}`),
+				ExternalID: "csie_recovery", EventType: "ccrv2_delivery", PayloadUUID: "recovery", IsCompaction: true, IdempotencyKey: "recovery",
+				Payload: json.RawMessage(`{"type":"ccrv2_delivery","uuid":"recovery","data":{"revision":1,"inputId":"input","logOffsets":{},"completed":[],"outbox":[]}}`),
 			}})
 			if err != nil {
 				t.Fatalf("MCP failure blocked Brain recovery checkpoint: %v", err)

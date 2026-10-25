@@ -1,6 +1,6 @@
 import type { Context, Fiber } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
-import { createUserMessage, type ContentBlock, type ToolCallBlock } from "@deepseek-ai/dsh-llm";
+import { freezeMessage, MessageId, createUserMessage, type ContentBlock, type ToolCallBlock } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { ModelRetry } from "./model-retry.ts";
 import { ExternalMcp } from "../external-mcp/index.ts";
@@ -91,6 +91,11 @@ export class SessionRuntime {
         return approval.allowed ? decision : { kind: "deny", reason: approval.reason || "Tool use denied by OMA" };
       });
       scope.on("tools/execute", async (exec, next) => {
+        if (exec.agent) {
+          await this.ctx.sessions.flush(exec.agent.session);
+          await this.ctx.get("ccrReplication")?.flush(exec.agent.session.id);
+        }
+        exec.signal.throwIfAborted();
         if (exec.name === "AskUserQuestion") return next();
         if (!exec.name.startsWith("mcp__") && toolPermissions[exec.name.toLowerCase()] === "allow") return next();
         prefetchMcpApprovals(this.bridge, this.toolCalls, exec.callId,
@@ -121,7 +126,7 @@ export class SessionRuntime {
           Object.assign(toolPermissions, permissions);
         }
         await this.flushLog();
-        await this.hooks.beforeRequest();
+        await this.hooks.beforeRequest?.();
         signal.throwIfAborted();
         const call = await next();
         const model = this.hooks.selectModel?.(call.model) ?? call.model;
@@ -143,6 +148,7 @@ export class SessionRuntime {
       parentAgent: this.parent?.agent,
       signal: this.abort.signal,
     };
+    await this.ctx.get("ccrReplication")?.ensure(this.config.id);
     this.handle = (await this.ctx.sessionPersistence.stat(SessionId(this.config.id)))
       ? await this.ctx.agents.resume({ resumeSessionId: SessionId(this.config.id), ...options })
       : await this.ctx.agents.create({
@@ -155,6 +161,10 @@ export class SessionRuntime {
           ...options,
         });
     await this.hooks.onOpen?.(this.agent.session);
+    if (this.config.descriptor && !this.agent.session.snapshotEvents().some((event) => event.type === "subagent/descriptor")) {
+      this.agent.session.append("subagent/descriptor", this.config.descriptor);
+      await this.flushLog();
+    }
   }
 
   async refreshTools(): Promise<void> {
@@ -199,10 +209,10 @@ export class SessionRuntime {
         await hooks.afterRun(false);
         return;
       }
-      this.agent.followup(createUserMessage({
-        source: { kind: "user" },
-        content,
-      }));
+      const message = hooks.messageId === undefined
+        ? createUserMessage({ source: { kind: "user" }, content })
+        : freezeMessage({ id: MessageId(hooks.messageId), role: "user", source: { kind: "user" }, content });
+      this.agent.followup(message);
       await this.agent.whenIdle();
       await this.flushLog();
       await hooks.afterRun(this.turnCompleted);

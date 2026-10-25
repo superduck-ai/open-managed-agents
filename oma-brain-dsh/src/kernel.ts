@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 import LlmRuntime from "@deepseek-ai/dsh-llm";
 import SessionStore from "@deepseek-ai/dsh-session";
@@ -12,9 +13,14 @@ import TokenMeter from "@deepseek-ai/dsh-token-meter";
 import BasicCompaction from "@deepseek-ai/dsh-compaction-basic";
 import * as ImageOffload from "@deepseek-ai/dsh-compaction-image-offload";
 import ToolResultPruner from "@deepseek-ai/dsh-compaction-tool-result-pruner";
+import { checkWritableDirectory, resolveBrainHome } from "./storage.ts";
 
 /** Native dsh runtime only. Persistence and platform adapters are installed by the host. */
 export async function mountKernel(ctx: Context): Promise<void> {
+  const home = resolveBrainHome();
+  await checkWritableDirectory(home, "DSH_HOME");
+  await checkWritableDirectory(join(home, "attachments", "v1"), "DSH_HOME");
+  process.env.DSH_HOME = home;
   await ctx.plugin(LocalAttachmentStore);
   await ctx.plugin(LlmRuntime);
   await ctx.plugin(SessionStore);

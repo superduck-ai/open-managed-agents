@@ -164,10 +164,18 @@ Brain 在调用前读到的价格是当前参考快照，不保证和随后请�
 
 ## 源码依据
 
-- [启动同步与刷新入口](https://github.com/superduck-ai/open-managed-agents/blob/b6d92f5019155f2cf30fb8b2a51a75ff3a24d6d7/main.go)
-- [OpenRouter 解析与下载](https://github.com/superduck-ai/open-managed-agents/blob/b6d92f5019155f2cf30fb8b2a51a75ff3a24d6d7/internal/pricing/openrouter.go)
-- [目录持久化与供应商价格匹配](https://github.com/superduck-ai/open-managed-agents/blob/b6d92f5019155f2cf30fb8b2a51a75ff3a24d6d7/internal/db/model_prices.go)
-- [模型请求快照与结算](https://github.com/superduck-ai/open-managed-agents/blob/b6d92f5019155f2cf30fb8b2a51a75ff3a24d6d7/internal/codesessions/model_requests.go)
-- [请求开始时的预算门禁](https://github.com/superduck-ai/open-managed-agents/blob/b6d92f5019155f2cf30fb8b2a51a75ff3a24d6d7/internal/db/session_events.go)
-- [Brain 模型信息适配器](https://github.com/superduck-ai/open-managed-agents/blob/b6d92f5019155f2cf30fb8b2a51a75ff3a24d6d7/oma-brain-dsh/src/llm-ai-sdk/adapter.ts)
-- [Brain 模型错误转换](https://github.com/superduck-ai/open-managed-agents/blob/b6d92f5019155f2cf30fb8b2a51a75ff3a24d6d7/oma-brain-dsh/src/llm-ai-sdk/stream.ts)
+以下链接指向本次实现；前文对旧数据库目录的描述仅用于说明迁移前的基线。
+
+- [启动加载与后台刷新入口](../../../main.go)
+- [文件持久化与热加载](../../../internal/pricing/file.go)
+- [不可变价格快照与索引](../../../internal/pricing/store.go)
+- [两来源刷新与退避](../../../internal/pricing/refresh.go)
+- [OpenRouter 解析](../../../internal/pricing/openrouter.go)
+- [Narrows 解析](../../../internal/pricing/narrows.go)
+- [供应商价格匹配与计费器组装](../../../internal/llmproviders/pricing.go)
+- [模型请求快照与结算](../../../internal/codesessions/model_requests.go)
+- [请求开始时的预算门禁](../../../internal/db/session_events.go)
+- [Brain 计费上下文](../../../internal/codesessions/billing_context.go)
+- [Brain 模型信息适配器](../../../oma-brain-dsh/src/llm-ai-sdk/adapter.ts)
+- [Brain 模型错误转换](../../../oma-brain-dsh/src/llm-ai-sdk/stream.ts)
+- [Brain 原生终止事件输出](../../../oma-brain-dsh/src/ccrv2/native-output.ts)

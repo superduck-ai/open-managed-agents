@@ -3,10 +3,12 @@ package llmproviders
 import (
 	"context"
 	"errors"
+	"net/url"
 	"slices"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/pricing"
 )
 
@@ -32,12 +34,13 @@ func providerPrices(catalog Catalog, prices *pricing.Store, requested []string) 
 		providers = append(slices.Clone(providers), *catalog.organization)
 	}
 	for _, provider := range providers {
+		source := priceSource(provider)
 		for _, model := range provider.Models.IDs() {
 			qualified := QualifiedModelID(provider.Slug, model)
 			if len(requested) > 0 && !slices.Contains(requested, qualified) && !slices.Contains(requested, model) {
 				continue
 			}
-			price := prices.Lookup(priceSource(provider.Slug), model)
+			price := prices.Lookup(source, model)
 			if price == nil {
 				continue
 			}
@@ -62,9 +65,15 @@ func providerPrices(catalog Catalog, prices *pricing.Store, requested []string) 
 	return models
 }
 
-func priceSource(slug string) string {
-	if slug == NarrowsSlug || slug == DefaultSlug {
+func priceSource(provider db.LLMProvider) string {
+	if provider.Slug == NarrowsSlug || provider.Slug == DefaultSlug {
 		return "narrows"
+	}
+	if provider.Slug == OrganizationSlug {
+		endpoint, err := url.Parse(provider.BaseURL)
+		if err == nil && endpoint.Hostname() == "narrows-gateway.test.seewo.com" {
+			return "narrows"
+		}
 	}
 	return "openrouter"
 }

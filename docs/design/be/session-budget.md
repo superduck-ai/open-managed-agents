@@ -48,6 +48,6 @@
 
 回归覆盖 main 版本 95 到 100 及 99 到 100 的正常升级与重复启动、组织模型与工作区优先级、跨组织价格隔离，以及缓存缺价、免费、已知单价下预算和分析账本的不同语义。
 
-Brain 从 `session_context.billing` 读取共享会话预算和当前模型价格；`narrows` 与兼容 slug `default` 读取 Narrows 源，其他 slug 使用 OpenRouter 参考价。有预算且缺价的请求在上游调用前拒绝，预算触顶仍由开始事件事务做最终门禁。协议和文件部署说明见 [标价文件缓存](model-price-file-cache.md)。
+Brain 从 `session_context.billing` 读取共享会话预算和当前模型价格；`narrows` 与兼容 slug `default` 读取 Narrows 源，工作区其他 slug 使用 OpenRouter 参考价。固定 slug 为 `organization` 的组织 Provider，仅在 BaseURL 主机名精确等于 `narrows-gateway.test.seewo.com` 时兼容使用 Narrows；其余组织 Provider 使用 OpenRouter。Narrows 缺价不跨来源回退。有预算且缺价的请求在上游调用前拒绝，预算触顶仍由开始事件事务做最终门禁。协议和文件部署说明见 [标价文件缓存](model-price-file-cache.md)。
 
 预算触顶后，状态写入事务忽略迟到的会话／主线程 running、rescheduling 和非 budget_reached 的 idle，避免 Worker 报告覆盖公开暂停原因。子线程状态、在途请求结算以及终止／删除仍允许写入。提高或移除预算清除触顶标记后，普通运行与结束状态恢复接收。

@@ -5,14 +5,17 @@ import { assistantMessages } from "./assistant.ts";
 import type { Payload } from "./protocol.ts";
 
 export function terminalOutput(inputId: string, reason: Extract<SessionEvent, { type: "turn/end" }>["data"]["reason"]): Payload[] {
+  if (reason.kind === "error" && reason.error.code === "SESSION_BUDGET_REACHED") return [];
   if (reason.kind === "completed" || (reason.kind === "aborted" && reason.reason.kind === "user"))
     return [{ type: "result", uuid: `${inputId}_result`, subtype: "success", is_error: false }];
   const recovery = reason.kind === "interrupted";
   const quota = reason.kind === "error" && [QUOTA_EXCEEDED_CODE, ACCOUNT_QUOTA_EXCEEDED_CODE].includes(reason.error.code);
+  const unpriced = reason.kind === "error" && reason.error.code === "MODEL_PRICE_UNAVAILABLE";
   const shutdown = reason.kind === "aborted" && isShutdownCancel(reason.reason);
   const text = shutdown ? "The Brain worker shut down during this turn. Unfinished tool calls were interrupted and their outcomes are unknown."
     : recovery ? "Previous turn was interrupted and was not replayed. See the recovered tool results before retrying operations."
     : quota ? "Model provider balance or quota is exhausted. Top up the provider account or switch model credentials."
+    : unpriced ? "Model pricing is unavailable. Retry after pricing recovers."
     : "The turn stopped before successful completion.";
   return failedOutput(inputId, text, recovery ? "recovery" : "failed");
 }

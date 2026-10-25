@@ -335,6 +335,59 @@ describe("original dsh loop over CCRv2", () => {
     expect(session.abort.signal.aborted).toBe(false);
   });
 
+  test("上下文提前暂停且提高或移除预算后恢复", async () => {
+    for (const remove of [false, true]) {
+      const b = backend();
+      const route = b.route.bind(b);
+      let reached = true;
+      const money = (amount: string) => ({ amount, currency: "USD" });
+      b.route = async (request) => {
+        const response = await route(request);
+        if (new URL(request.url).pathname !== `/v2/sessions/${b.a.session_id}`) return response;
+        const body = await response.json() as Payload;
+        body.session_context.billing = {
+          budget: !reached && remove ? null : { type: "limit", max_list_cost: money(reached ? "1" : "100") },
+          usage: money("1"), remaining: !reached && remove ? null : money(reached ? "0" : "99"),
+          budget_reached: reached, observed_at: new Date().toISOString(), pricing: {}, calculation_policy: "server_authoritative",
+        };
+        return Response.json(body);
+      };
+      const { session, api } = await open(b);
+      await session.receive("preflight_pause", { message: { content: "hi" } });
+      expect(b.requests).toHaveLength(0);
+      expect(b.publicLog.has("preflight_pause_failed_result")).toBe(false);
+      expect(api.assignment(b.a.session_id).launch.billing?.budget_reached).toBe(true);
+      reached = false;
+      await session.receive("preflight_resume", { message: { content: "continue" } });
+      expect(b.requests).toHaveLength(1);
+      expect(b.publicLog.get("preflight_resume_result")?.is_error).toBe(false);
+      expect(api.assignment(b.a.session_id).launch.billing?.budget_reached).toBe(false);
+    }
+  });
+
+  test("预算门禁不重试、不发布失败结果，恢复后接受新输入", async () => {
+    const b = backend();
+    const route = b.route.bind(b);
+    let paused = true;
+    let attempts = 0;
+    b.route = async (request) => {
+      if (new URL(request.url).pathname === "/v1/messages" && paused) {
+        attempts++;
+        return Response.json({ error: { type: "invalid_request_error", code: "session_budget_reached", message: "budget reached" } }, { status: 400 });
+      }
+      return route(request);
+    };
+    const { session } = await open(b);
+    await session.receive("budget_pause", { message: { content: "hi" } });
+    expect(attempts).toBe(1);
+    expect(b.publicLog.has("budget_pause_failed_result")).toBe(false);
+    expect(b.publicLog.has("budget_pause_result")).toBe(false);
+    expect(session.receivedInputIds.has("budget_pause")).toBe(true);
+    paused = false;
+    await session.receive("budget_resume", { message: { content: "continue" } });
+    expect(b.publicLog.get("budget_resume_result")?.is_error).toBe(false);
+  });
+
   test("provider HTTP 402 publishes a safe quota error before ACK and a later turn can recover", async () => {
     const b = backend();
     const route = b.route.bind(b);

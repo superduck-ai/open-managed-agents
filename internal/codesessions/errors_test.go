@@ -39,20 +39,31 @@ func TestMapCodeSessionLoadError(t *testing.T) {
 	}
 }
 
-func TestSessionModelBackendsFailure(t *testing.T) {
-	cause := errors.New("private provider failure")
-	mapped := sessionModelBackendsFailure(cause)
-	if !errors.Is(mapped, cause) {
-		t.Fatal("model backend error lost its cause")
-	}
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/v2/sessions/cse_test", nil)
-	httpapi.NewErrorAdapter(nil).Write(response, request, mapped)
-	if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), "Could not resolve model API backends") {
-		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
-	}
-	if strings.Contains(response.Body.String(), "MCP") || strings.Contains(response.Body.String(), cause.Error()) {
-		t.Fatalf("unexpected error detail: %s", response.Body.String())
+func TestSessionContextFailures(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		build   func(error) error
+		message string
+	}{
+		{"model backends", sessionModelBackendsFailure, "Could not resolve model API backends"},
+		{"billing", sessionBillingContextFailure, "Could not build session billing context"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cause := errors.New("private provider failure")
+			mapped := test.build(cause)
+			if !errors.Is(mapped, cause) {
+				t.Fatal("session context error lost its cause")
+			}
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/v2/sessions/cse_test", nil)
+			httpapi.NewErrorAdapter(nil).Write(response, request, mapped)
+			if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), test.message) {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), "MCP") || strings.Contains(response.Body.String(), cause.Error()) {
+				t.Fatalf("unexpected error detail: %s", response.Body.String())
+			}
+		})
 	}
 }
 

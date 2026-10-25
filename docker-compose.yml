@@ -259,6 +259,9 @@ services:
     environment:
       CONFIG_FILE: /etc/open-managed-agents/config.yaml
     volumes:
+      - type: volume
+        source: pricingdata
+        target: /etc/open-managed-agents/data
       - type: bind
         source: ./deploy/docker-compose/oma-server.local.yaml
         target: /etc/open-managed-agents/config.yaml
@@ -304,3 +307,4 @@ volumes:
   miniodata:
   openobservedata:
   webdist:
+  pricingdata:

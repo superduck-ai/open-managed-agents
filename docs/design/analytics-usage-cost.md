@@ -193,11 +193,11 @@ flowchart LR
 
 成本页工作区路径仅提供初始筛选，允许在页面切换其他授权工作区或全部工作区；显式 URL 工作区参数优先于路径，空值表示全部，刷新后保持选择。切换工作区清除模型、API Key 与会话下钻条件。用量图纵轴使用本地化紧凑数字并预留刻度宽度，悬浮提示保留完整精度，避免长数字被裁切。
 
-## 数据库来源标价与缓存 TTL
+## 文件来源标价与缓存 TTL
 
-价格由服务端从 OpenRouter `https://openrouter.ai/api/v1/models` 获取，启动时同步到全局公开价格目录 `model_price_catalog`。Narrows 网关（`narrows-gateway.test.seewo.com`）使用独立的 `https://narrows.seewo.com/pricing/api/rules` 目录，固定以 1 USD = 7.2 CNY 换算；缺失 Narrows 价格时不回退至 OpenRouter。用户无需填写、选择或保存价格；原手工标价弹窗、参考价接口、YAML 导入接口均已移除。旧 `llm_model_prices` 表保留历史数据，但不参与新请求计费。
+价格由服务端从 OpenRouter `https://openrouter.ai/api/v1/models` 获取，由后台周期刷新到 `pricing.snapshot_file` 指定的 JSON 文件，热路径读取内存快照。Provider slug 为 `narrows` 的 AI 网关（`default` 暂时兼容映射到同一价格源）使用独立的 `https://narrows.seewo.com/pricing/api/rules` 目录，固定以 1 USD = 7.2 CNY 换算；组织默认 Provider 固定使用 `organization` slug，BaseURL 主机名精确等于 `narrows-gateway.test.seewo.com` 时也使用 Narrows；端口和路径不影响匹配。其余组织 Provider 使用 OpenRouter。缺失 Narrows 价格时不回退至 OpenRouter。用户无需填写、选择或保存价格；原手工标价弹窗、参考价接口、YAML 导入接口均已移除。旧 `llm_model_prices` 表保留历史数据，但不参与新请求计费。
 
-同步保留原始 pricing JSON、转换后的 USD/百万 Token 价格及价格内容摘要版本。HTTP 超时 15 秒、响应最多 8 MiB；成功解析后事务替换目录。同步失败保留上次成功数据并记录告警，不把未知价当成零，不回退到 YAML 或手工标价。当前在服务启动时更新，不增加定时任务或管理页面。
+刷新保留原始 pricing JSON、每百万 Token 原币单价及价格内容摘要版本；Narrows 结算时按固定汇率换算为 USD。HTTP 超时 15 秒、响应最多 8 MiB；成功解析及校验后原子替换 JSON 文件，再切换内存快照。刷新失败保留上次成功数据并记录告警，不把未知价当成零，不回退到 YAML 或手工标价。两个来源独立周期刷新，不阻塞 HTTP 启动，不增加管理页面。
 
 运行时计费只读数据库；各工作区只为已配置的供应商模型匹配价格。完整模型 ID 优先；无厂商前缀的短 ID 仅在目录中唯一匹配时使用，忽略 `~` 路由别名作为短名称候选。不同日期、版本、batch/free 变体不做模糊映射。缺价模型不能创建预算会话；无预算请求仍记录用量并标为未定价。
 
@@ -225,7 +225,7 @@ flowchart LR
 
 ### Narrows 价格与换汇
 
-启动时分别同步两个来源，任一来源失败均保留该来源的旧目录。Narrows 仅精确匹配模型 ID；当前已接入的网关域名使用 Narrows 价格，其他现有 Provider 保持 OpenRouter 参考价策略。OpenRouter 也可作为模型调用供应商，但获取价格目录不等于配置了调用凭据。
+后台分别周期刷新两个来源，任一来源失败均保留该来源的旧目录。Narrows 仅精确匹配模型 ID；工作区按 `narrows` / `default` slug 选择 Narrows，组织默认 Provider 按上述精确主机名兼容规则选择，其余 Provider 保持 OpenRouter 参考价策略。OpenRouter 也可作为模型调用供应商，但获取价格目录不等于配置了调用凭据。
 
 价格快照保存原币每百万 Token 单价、`source_currency=CNY`、`exchange_rate=7.2`、来源模型及包含汇率的版本摘要。所有用量项先按原币有理数求和，再除以汇率，最后一次四舍五入为美元美分；不先舍入换算后的单价。历史金额与在途快照不重新计价。
 
@@ -246,3 +246,5 @@ Chat Completions 当前仅允许 Brain 模型凭据及流式调用，由现有 `
 模型筛选目录同时包含工作区与组织 Provider 的限定模型 ID。计费匹配遵循实际路由的优先级：工作区裸名优先、工作区同名歧义不回退、组织默认只在工作区没有对应模型时生效。
 
 Managed Agents 的预算事件允许对缺失的缓存单价兜底，但分析账本使用请求快照严格计价，与普通 API、Workbench 保持一致；缺单价仍计入未定价请求。大事件外置后的摘要必须保留模型身份、价格快照和错误标记，供事务内账本写入使用。旧事件缺少价格快照时保留其已记录金额，不按当前价格重算。
+
+当前价格目录不再写入数据库，迁移 00100 删除旧目录表；账本与请求价格快照保留。多实例文件共享、失败退避及 Brain 读取协议见 [标价文件缓存](be/model-price-file-cache.md)。

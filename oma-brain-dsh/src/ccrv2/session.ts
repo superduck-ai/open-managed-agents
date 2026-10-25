@@ -41,6 +41,7 @@ export class CcrSession {
   private readonly assistantStream: CcrAssistantStream;
   private readonly toolResults = new CcrToolResults();
   private turnErrorMessage?: string;
+  private budgetPaused = false;
   private interrupted = false;
   private draining = false;
   private readonly dispatchWaiters = new Set<() => void>();
@@ -251,6 +252,9 @@ export class CcrSession {
       if (!threadId) this.inputFinished = true;
       this.activity.endThread(threadId ?? this.id);
       const reason = event.data.reason;
+      if (reason?.kind === "error" && reason.error.code === "SESSION_BUDGET_REACHED") this.budgetPaused = true;
+      if (!threadId && reason?.kind === "error" && reason.error.code === "MODEL_PRICE_UNAVAILABLE")
+        this.turnErrorMessage = "Model pricing is unavailable. Retry after pricing recovers.";
       if (!threadId && reason?.kind === "error"
         && [QUOTA_EXCEEDED_CODE, ACCOUNT_QUOTA_EXCEEDED_CODE].includes(reason.error.code)) {
         this.turnErrorMessage = "Model provider balance or quota is exhausted. Top up the provider account or switch model credentials.";
@@ -272,7 +276,8 @@ export class CcrSession {
       });
       this.outcomeConfirmations.add(confirmation);
     }
-    this.pendingEvents.push(...nativeOutput(this.id, this.inputId, event, toolName, threadId));
+    if (threadId || event.type !== "turn/end" || !this.budgetPaused)
+      this.pendingEvents.push(...nativeOutput(this.id, this.inputId, event, toolName, threadId));
   }
 
   async approve(request: ToolApproval, signal: AbortSignal, threadId?: string): Promise<ApprovalDecision> {
@@ -494,6 +499,7 @@ export class CcrSession {
         beforeRun: async () => {
           this.inputFinished = false;
           this.turnErrorMessage = undefined;
+          this.budgetPaused = false;
           this.interrupted = false;
           this.waitingOnInterruptedChild = false;
           this.inputId = inputId;
@@ -508,7 +514,7 @@ export class CcrSession {
         },
         afterRun: async () => {
           this.inputFinished = true;
-          if (!this.receivedInputIds.has(inputId)) {
+          if (!this.receivedInputIds.has(inputId) && !this.budgetPaused) {
             if (this.interrupted) this.pendingEvents.push({ type: "result", uuid: `${inputId}_result`, subtype: "success", is_error: false });
             else this.addError(this.turnErrorMessage ?? "The turn stopped before successful completion.", "failed");
           }
@@ -601,6 +607,7 @@ export class CcrSession {
     this.stop();
     // Drain children before disposing the root agent and its shared providers.
     const results = await Promise.allSettled([this.subagents.close(), this.heartbeat?.close(), this.activity.close()]);
+    results.push(...await Promise.allSettled([this.ctx.ccrReplication.flush(this.id)]));
     results.push(...await Promise.allSettled([this.runtime.close()]));
     results.push(...await Promise.allSettled([this.ctx.ccrReplication.flush(this.id)]));
     await this.ctx.ccrReplication.drain(this.id);

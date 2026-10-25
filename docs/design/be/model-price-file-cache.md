@@ -12,9 +12,9 @@ PR 中 `main.go` 在数据库初始化后、HTTP 服务启动前同步执行价�
 
 最新提交还包含 Narrows 价格源，尽管 PR 描述仍写着不接 Narrows。按已确认范围，OpenRouter 和 Narrows 的当前标价目录一起迁移到同一份 JSON 文件，均停止读写价格目录表，采用旁路刷新和内存读取。保留 Narrows 独立匹配、汇率和禁止跨来源回退的行为。
 
-价格来源统一按实际模型路由解析得到的 Provider slug 选择：约定 Narrows Provider 使用 `narrows`，对应文件中的 `sources.narrows`；`default` 暂时兼容映射到 Narrows；其他 Provider 沿用 OpenRouter 参考价策略，对应 `sources.openrouter`。删除按网关域名选择来源的逻辑，不新增供应商类型字段。Narrows 价格获取地址仍为 `https://narrows.seewo.com/pricing/api/rules`。
+工作区 Provider 的价格来源按实际模型路由解析得到的 slug 选择：约定 Narrows Provider 使用 `narrows`，对应文件中的 `sources.narrows`；`default` 暂时兼容映射到 Narrows；其他 Provider 沿用 OpenRouter 参考价策略，对应 `sources.openrouter`。组织默认 Provider 的 slug 固定为 `organization`，为兼容既有配置，仅当其 BaseURL 解析后的主机名精确等于 `narrows-gateway.test.seewo.com` 时选择 Narrows（允许端口和路径）；其他组织 Provider 使用 OpenRouter。不新增供应商类型字段。Narrows 价格获取地址仍为 `https://narrows.seewo.com/pricing/api/rules`。
 
-AI 网关统一约定使用 `narrows`。已有 `default` 暂时路由到 Narrows 标价源，`default-2` 等不在兼容范围内。该映射只选择价格源，不修改模型上游地址；不自动改写现有 Provider slug、模型引用或历史账本身份。新建 AI 网关时在现有 Provider 表单显式填写 `narrows`。
+工作区 AI 网关统一约定使用 `narrows`。已有 `default` 暂时路由到 Narrows 标价源，`default-2` 等不在兼容范围内。该映射只选择价格源，不修改模型上游地址；不自动改写现有 Provider slug、模型引用或历史账本身份。新建 AI 网关时在现有 Provider 表单显式填写 `narrows`。
 
 Brain 的现状：
 
@@ -106,7 +106,7 @@ flowchart LR
 | 更新时有在途请求 | 在途请求使用开始时快照，新请求读取新快照 |
 | 磁盘不可写或空间不足 | 本次更新失败，保留旧文件和旧内存版本 |
 
-保留 `provider-slug/upstream-model` 业务身份；先通过现有路由解析实际 Provider，再按其 slug 选择价格源，匹配来源目录时使用上游模型 ID。不能直接截取未经解析的请求模型字符串来判定供应商。OpenRouter 完整 ID 优先，短名仅在完整目录内唯一时可用；Narrows 仅精确匹配。工作区未限定供应商的模型名仍须唯一。Narrows 缺价不回退到 OpenRouter。
+保留 `provider-slug/upstream-model` 业务身份；先通过现有路由解析实际 Provider，再按其 slug 及上述组织网关兼容规则选择价格源，匹配来源目录时使用上游模型 ID。不能直接截取未经解析的请求模型字符串来判定供应商。OpenRouter 完整 ID 优先，短名仅在完整目录内唯一时可用；Narrows 仅精确匹配。工作区未限定供应商的模型名仍须唯一。Narrows 缺价不回退到 OpenRouter。
 
 “不再存数据库”限定为可重新获取的当前标价目录。会话预算、消费记录、已结算金额、每次请求所用的最小规则快照仍属于业务事实，继续保存在数据库。否则覆盖一个价格文件后，历史金额将失去解释依据，进程重启也不能恢复预算。只保留版本号而不保留规则，同时又不维护历史文件，不足以审计。
 
@@ -155,7 +155,7 @@ Brain 在调用前读到的价格是当前参考快照，不保证和随后请�
 - 缺文件、损坏文件、无效金额、重复模型、空目录、超大响应、磁盘满和中断写入均保持明确状态，不制造免费价或半份目录。
 - 并发读与替换、多个只读实例热加载、关闭刷新任务均可验证；记录最终一致性的时间边界。
 - 完整 ID、唯一短名、跨供应商同名、Narrows 精确匹配及来源隔离、固定汇率、分档、免费／未知、缓存 TTL 和条件价格保持原规则；同一用量在迁移前后金额相同。
-- slug 为 `narrows` 时选择 Narrows 价格，变更网关地址不改变价格来源；其他 slug 沿用 OpenRouter 策略。覆盖未限定模型经路由解析、跨工作区相同 slug 的隔离，以及既有限定模型引用迁移；历史账本不改写。
+- slug 为 `narrows` 时选择 Narrows 价格，变更网关地址不改变价格来源；工作区 `default` 兼容选择 Narrows，其余 slug 沿用 OpenRouter 策略；组织 Provider 按上述精确主机名兼容规则选择。覆盖组织 Narrows 独有模型、同名模型价格、端口与路径、相似域名不误匹配、缺价不跨来源回退，以及未限定模型经路由解析、跨工作区相同 slug 的隔离和既有限定模型引用迁移；历史账本不改写。
 - 请求开始后更新价格，结算仍使用原规则；历史账本与预算金额不因刷新变化。
 - 无价格时预算请求拒绝，无预算请求记录未定价；价格恢复后预算会话可继续。
 - Brain 主线程与子线程能读取已授权模型价格；跨会话和过期 worker 凭据被拒绝。

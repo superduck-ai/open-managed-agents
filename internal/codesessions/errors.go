@@ -93,6 +93,10 @@ func sessionModelBackendsFailure(cause error) error {
 	return internalError("Could not resolve model API backends", cause)
 }
 
+func sessionBillingContextFailure(cause error) error {
+	return internalError("Could not build session billing context", cause)
+}
+
 func sessionMCPConfigFailure(cause error) error {
 	return internalError("Could not build session MCP configuration", cause)
 }

@@ -714,7 +714,7 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 	}
 	billingContext, err := h.service.billingContext(r.Context(), record)
 	if err != nil {
-		h.errorAdapter.Write(w, r, sessionModelBackendsFailure(err))
+		h.errorAdapter.Write(w, r, sessionBillingContextFailure(err))
 		return
 	}
 	sessionContext["billing"] = billingContext

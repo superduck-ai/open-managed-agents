@@ -1,0 +1,67 @@
+name: Pricing validation
+
+on:
+  pull_request:
+    paths:
+      - 'internal/**'
+      - 'oma-brain-dsh/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - '.github/workflows/pricing-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pricing-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  brain:
+    name: Brain tests and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: oma-brain-dsh
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test --timeout 15000
+      - run: bun run build
+
+  migrations:
+    name: Pricing migration upgrades
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pricing
+          POSTGRES_PASSWORD: pricing-ci
+          POSTGRES_DB: pricing
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pricing -d pricing"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_MIGRATION_DATABASE_URL: postgresql://pricing:pricing-ci@127.0.0.1:5432/pricing?sslmode=disable
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: ./scripts/generate-go.sh
+      - name: Verify upgrades from schema versions 95 and 99
+        run: go test -tags=integration ./internal/db -run '^TestBudgetMigrationsUpgradeFromMainPostgres$' -count=1 -v

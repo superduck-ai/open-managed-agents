@@ -9,6 +9,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
@@ -87,6 +88,9 @@ func managedAgentSessionConfig(
 	}
 	if len(session.VaultIDs) > 0 {
 		body["vault_ids"] = session.VaultIDs
+	}
+	if env := sessioncontract.SandboxEnv(session.Metadata); len(env) > 0 {
+		body["environment_variables"] = env
 	}
 	return json.Marshal(body)
 }

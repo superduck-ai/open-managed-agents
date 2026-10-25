@@ -5,6 +5,16 @@ import (
 	"time"
 )
 
+func TestSandboxLifetimeUsesSessionMetadata(t *testing.T) {
+	configured := 30 * time.Second
+	if sandboxLifetime(configured, nil) != configured {
+		t.Fatal("missing metadata dropped the platform timeout")
+	}
+	if sandboxLifetime(configured, []byte(`{"timeout_seconds":60}`)) != time.Minute {
+		t.Fatal("session timeout was not used")
+	}
+}
+
 func TestSandboxRenewalsRequireRenewalOutsideWindow(t *testing.T) {
 	var renewals sandboxRenewals
 	now := time.Unix(1_700_000_000, 0)

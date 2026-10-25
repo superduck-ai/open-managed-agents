@@ -55,6 +55,9 @@ func (h *Handler) publishSessionEvents(ctx context.Context, events []db.SessionE
 			h.logger.WarnContext(ctx, "publish session events fanout", "session_id", sessionID, "event_count", len(payload.Events), "error", err)
 		}
 	}
+	if h.sessionEvents != nil {
+		h.sessionEvents.ObserveSessionEvents(ctx, events)
+	}
 }
 
 func (h *Handler) PublishCodeSessionStreamEvent(ctx context.Context, route codesessions.CodeSessionStreamRoute, workerEpoch int64, streamPayload json.RawMessage) error {

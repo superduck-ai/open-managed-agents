@@ -18,6 +18,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	deploymentsapi "github.com/superduck-ai/open-managed-agents/internal/deployments"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
+	evaluationsapi "github.com/superduck-ai/open-managed-agents/internal/evaluations"
 	"github.com/superduck-ai/open-managed-agents/internal/files"
 	filestoreapi "github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -144,6 +145,7 @@ func NewServer(deps ServerDeps) *Server {
 	workbenchLogger := componentLogger("workbench")
 	mcpCatalogHandler := mcpcatalogs.NewHandler(deps.DB, componentLogger("mcp_catalogs"))
 	mcpServerHandler := mcpservers.NewHandler(deps.DB, componentLogger("mcp_servers"))
+	evaluationHandler := evaluationsapi.NewHandler(deps.DB, componentLogger("evaluations"))
 	filestoreService := deps.FilestoreService
 	if filestoreService == nil {
 		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.DB, deps.ObjectStore)
@@ -188,6 +190,13 @@ func NewServer(deps ServerDeps) *Server {
 	if deps.SandboxLifecycle != nil {
 		s.sessions.WithSandboxReclaimer(deps.SandboxLifecycle)
 	}
+	evaluationHandler.WithSessionStarter(evaluationCaseSessionStarter{sessions: s.sessions})
+	evaluationHandler.WithEvaluatorModel(evaluationsapi.NewLLMEvaluatorModel(deps.DB, deps.VaultSecrets))
+	evaluationHandler.WithAgentScoreSandbox(newEvaluationAgentScoreSandbox(s.sessions, deps.DB, filestoreService, componentLogger("evaluations")))
+	if copier := evaluationsapi.NewWorkspaceFileCopier(deps.DB, deps.ObjectStore, deps.Config.Storage.MaxFileBytes, deps.Config.Storage.WorkspaceLimitBytes); copier != nil {
+		evaluationHandler.WithCaseFileCopier(copier)
+	}
+	s.sessions.WithSessionEventObserver(evaluationHandler)
 	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
@@ -206,7 +215,7 @@ func NewServer(deps ServerDeps) *Server {
 	}
 	router.Get("/.well-known/oauth-protected-resource/v2/ccr-sessions/{code_session_id}/mcp/*", s.codeSessions.HandleMCPProtectedResource)
 	s.registerVersionedAPIRoutes(router)
-	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler, mcpServerHandler)
+	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler, mcpServerHandler, evaluationHandler)
 	s.router = router
 	return s
 }
@@ -288,6 +297,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 	workbenchLogger *slog.Logger,
 	mcpCatalogHandler *mcpcatalogs.Handler,
 	mcpServerHandler *mcpservers.Handler,
+	evaluationHandler *evaluationsapi.Handler,
 ) {
 	router.Group(func(r chi.Router) {
 		r.Use(s.platformIdentityMiddleware)
@@ -337,6 +347,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterConsoleWorkspaceMemberRoutes(r, s.db)
 			mcpCatalogHandler.RegisterRoutes(r)
 			mcpServerHandler.RegisterRoutes(r)
+			evaluationHandler.RegisterRoutes(r)
 			if s.consoleTunnels != nil {
 				r.Mount("/workspaces/{workspaceId}/mcp_tunnels", s.consoleTunnels)
 			}

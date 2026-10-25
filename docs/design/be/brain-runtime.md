@@ -289,37 +289,34 @@ DSH Brain 源码作为主仓库的 `oma-brain-dsh/` 普通目录维护，使用�
 Session 创建在解析实际 Agent 版本快照和 Environment 后、生成 Session/Thread/Work 或资源前，校验声明的全部 MCP URL。limited 网络且 allow_mcp_servers 未开启时，每个主机和端口必须匹配 allowed_hosts，复用 networkpolicy 的规范化及通配符规则，否则公开 API 返回400且不持久化 Session。allow_package_managers 不豁免 MCP 主机检查。unrestricted 或 allow_mcp_servers=true 跳过此创建阶段主机限制。此校验不访问 DNS、不握手也不校验凭据；运行时连接、代理策略和审计仍各自生效。公开合同见 https://platform.claude.com/docs/en/managed-agents/mcp-connector#provide-authentication-at-session-creation 。
 
 
-### Thinking 状态事件
+### Brain 公开回复与 Thinking 状态
 
-每个 thinking 或 redacted thinking 内容块开始时，模型代理立即持久化并发布一次 `agent.thinking`，在向 Worker 转发该起始帧前完成发布。事件只包含稳定 ID、线程、请求关联和处理时间，不包含 thinking 正文、签名或脱敏数据。代理不再累积 thinking 正文，只保留输入大小计数和原有上限。公开事件边界同时清除旧 Worker 完整回传中的 thinking 内容，并丢弃 thinking 内容 delta。
+DSH Brain 是 `agent.message`、`agent.thinking` 及其流式预览的唯一来源。模型代理按服务端已保存的 `metadata.config.worker_transport=claim` 识别 Brain，会记录原有鉴权、模型请求 start/end、usage、上游 request ID 和工具关联，但不生成普通回复、thinking 或对应的 span `event_ids`。无需模型请求用途 header；原生摘要和标题等内部调用不会因为代理观察到模型文本就成为公开回复。Claude Code 的代理发布路径保持原行为；工具权限、审批和代理已有的工具调用投影不随回复职责迁移而删除。
 
-DSH Worker 在 `block-start` 且块类型为 reasoning 时创建 `event_start`，空 thinking 也会创建。后续 reasoning delta 不生成公开预览，`block-end` 仅发送同一 ID 的 `event_stop`。每次模型请求内保留已创建的块索引，重复起始帧和结束后的重复帧不会重新创建预览。完整 assistant 回传也只包含无正文 thinking 状态。
+Brain 在 reasoning `block-start` 生成无正文 `event_start`，忽略 reasoning 正文 delta；普通文本使用 `event_start` 和 `event_delta`。块身份由 code session ID、上游 message ID、原生 block index 和事件类型派生，最终回复与恢复补发使用相同 ID。内部签名推理及原始模型响应仍用于续聊，公开边界继续清除 thinking 正文。
 
-代理、DSH 预览、完整回传和旧 Claude Worker 映射统一以 code session ID、上游 message ID、原生 block index、事件类型生成 `StableAssistantEventID`。后端已在起始帧成功发布的 thinking 不再放入请求结束批次，span 的 `event_ids` 仍保留该 ID。Worker 回传和发布重试通过相同 ID 幂等去重，不改变首次事件位置和处理时间。起始发布失败时记录错误，请求结束时以同一 ID 回补无正文状态。非流式响应在解析完整内容时生成无正文状态。
+预览先经过串行的持久化检查点，再按原始帧顺序加入 CCRv2 上传队列。检查点串行保证较晚 delta 不会越过等待日志确认的起始帧；入队后不逐帧等待 HTTP 确认，因此仍可复用 100ms 批处理。最终回复在原生 assistant 日志远端确认且先前预览发送完成后发布，输入 processed 确认继续等待公开事件写入成功。子线程使用自己的日志及公开线程身份。
 
 ```mermaid
 sequenceDiagram
     participant Upstream as 模型上游
     participant Proxy as 模型代理
-    participant Events as 公开事件存储
-    participant Worker as Worker
-    participant UI as 会话页面
-    Upstream->>Proxy: thinking content_block_start
-    Proxy->>Events: agent.thinking，稳定 ID，无正文
-    Events->>UI: thinking 状态
-    Proxy->>Worker: 原始起始帧
-    Worker->>UI: event_start，同一 ID
-    Upstream->>Proxy: thinking delta
-    Proxy->>Worker: 原始 delta，供内部续聊
-    Upstream->>Proxy: text 和 message_stop
-    Proxy->>Events: agent.message，span.model_request_end
-    Worker->>Events: 完整回传，同一 thinking ID
-    Events->>Events: 按 ID 去重
+    participant Brain as DSH Brain
+    participant Log as 原生日志与远端复制
+    participant Events as 公开事件服务
+    Upstream->>Proxy: 模型响应
+    Proxy->>Brain: 原始 SSE，保留 Request-Id
+    Proxy->>Events: 模型 span 与 usage，保留工具事件链路
+    Brain->>Log: 保存并确认检查点
+    Brain->>Events: 按序上传 event_start / event_delta
+    Brain->>Log: 保存 assistant/message 并远端确认
+    Brain->>Events: 预览确认后发布最终回复
+    Note over Brain,Events: 若复制完成后崩溃，新节点从日志以同一 ID 补发
 ```
 
-模型内部的推理正文、签名和恢复日志仍按模型协议保留，公开状态简化不改写发给 Worker 的上游响应，也不改变后续模型请求的推理上下文。此次不重写历史事件。
+恢复仅从原生日志重建回复，不再次调用模型。若日志已复制但公开回复未确认，replacement 发布同一稳定 ID；后端去重已接收但确认丢失的回复。预览尚未确认不能充当最终回复的持久化事实，恢复以已保存的原生 assistant 事件为准。模型 span 结束可先于 Brain 最终回复，客户端不能将 span end 当成消息已发布或用户回合已完成。
 
-回归入口：`TestThinkingStatus*`、`TestModelThinkingStartHasStableIdentityAndNoContent`、`TestThinkingIdentitySharedWithWorker`、`TestWorkerPreviewConverterEmitsThinkingStatusOnly` 及 Worker 的 `assistant-thinking.test.ts`。共享身份向量位于 `internal/managedagentsevents/testdata/thinking-identity.json`。HTTP 回归在收到答案前检查 thinking 已落库，并重复注入 Worker 回传，核对顺序、单条记录和首次时间；Worker 回归核对空块、重复起始帧、无正文预览以及内部带签名推理的续聊恢复。
+回归入口为 `TestModelReplyPublicationOwnership`、`TestBrainModelThinkingIsPublishedOnlyByWorker`、`TestModelThinkingStartHasStableIdentityAndNoContent`，以及 `model-replication.test.ts`、`crash.test.ts`。覆盖非 Brain 发布行为保持、Brain 模型 usage 与工具关联保留、预览检查点乱序、根/子回复复制屏障、公开事件确认屏障，以及 SIGKILL 后从远端日志补发唯一回复且不重调模型。真实服务验收需另行明确运行，普通单测不代替该验收。
 
 
 ## Vault environment placeholders in Brain sandboxes
@@ -390,7 +387,7 @@ flowchart TD
     Notify --> Request[Next model request]
 ```
 
-Summary requests use the same authenticated OMA model route with `purpose=compaction` and the native structured checkpoint instruction. The native requested generation budget defaults to 65536 tokens. OMA sets a route output ceiling for compaction requests from the selected model's `max_output_tokens`, or 32768 when omitted. Before invoking the AI SDK, the request converter takes the smaller of the requested budget and this ceiling; a smaller explicit summary budget stays unchanged. The route resolves the actual request session and model, including child sessions and the legacy `oma` provider, rather than applying a process-wide model limit. This rule applies to both Messages and Chat Completions and does not change ordinary calls' explicit-budget precedence. The native pressure headroom remains 65536 tokens, and its journal records the requested summary budget while the adapter enforces the wire-level ceiling. Compaction calls carry the internal `X-OMA-Model-Purpose: compaction` header through the authenticated model proxy. The proxy still validates the worker, records request spans and accounts usage, but suppresses public assistant/thinking/tool projections for these auxiliary calls; it removes the internal header before forwarding upstream. Summaries reuse the conversation prefix and tool schemas. They do not replace the business model-response ID or publish an assistant response to CCRv2. Native `compaction/start`, `compaction/summary`, `compaction/end`, `compaction/prune` and replacement events remain in the private append-only DSH journal; summaries replace the model-visible surface through a checkpoint user message. Original user, assistant and tool events remain available for history and replay. This reduces model context, not stored transcript size.
+Summary requests use the same authenticated OMA model route with `purpose=compaction` and the native structured checkpoint instruction. The native requested generation budget defaults to 65536 tokens. OMA sets a route output ceiling for compaction requests from the selected model's `max_output_tokens`, or 32768 when omitted. Before invoking the AI SDK, the request converter takes the smaller of the requested budget and this ceiling; a smaller explicit summary budget stays unchanged. The route resolves the actual request session and model, including child sessions and the legacy `oma` provider, rather than applying a process-wide model limit. This rule applies to both Messages and Chat Completions and does not change ordinary calls' explicit-budget precedence. The native pressure headroom remains 65536 tokens, and its journal records the requested summary budget while the adapter enforces the wire-level ceiling. Compaction calls need no transport-purpose header. Brain owns public replies for all DSH model requests, so the proxy records request spans and usage without projecting model text or thinking into public replies. Existing tool permission and tool-event handling remains at the backend boundary. Summaries reuse the conversation prefix and tool schemas. They do not replace the business model-response ID or publish an assistant response to CCRv2. Native `compaction/start`, `compaction/summary`, `compaction/end`, `compaction/prune` and replacement events remain in the private append-only DSH journal; summaries replace the model-visible surface through a checkpoint user message. Original user, assistant and tool events remain available for history and replay. This reduces model context, not stored transcript size.
 
 The CCRv2 adapter in `src/ccrv2/compaction.ts` owns compaction notification state and coalesces successful summary and prune changes until the next log flush. The runtime only forwards native session events and invokes generic `onOpen` and `afterFlushLog` adapter hooks; it does not inspect compaction events, measure pressure, track notification sequences or scan recovery history. The event hook includes the owning native session, and child bridges forward the same lifecycle hooks. Each native session has independent transient state. After the runtime flushes the owning root or child journal, the adapter publishes `agent.thread_context_compacted` with the token-meter's estimated pre-compaction pressure, before the next ordinary model request. A coalesced notification reports the first available pre-compaction measurement in the pending batch; the latest journal sequence is only its deduplication cursor and is not exposed as a public pressure timestamp. Each summary end clears the transient start measurement, including failed attempts, so an end without a matching live start measures current pressure rather than reusing an earlier episode. Failed summary attempts alone do not publish success. Replacement tool results stay private so each real execution still has exactly one public tool result. Failed persistence prevents the next model request and success notification.
 

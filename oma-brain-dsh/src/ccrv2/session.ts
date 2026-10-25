@@ -38,6 +38,7 @@ export class CcrSession {
   private statuses: Promise<unknown> = Promise.resolve();
   private publications: Promise<unknown> = Promise.resolve();
   private previews: Promise<unknown> = Promise.resolve();
+  private previewCheckpoints: Promise<void> = Promise.resolve();
   private readonly controlReceipts = new Set<Promise<void>>();
   private readonly handledControls = new Set<string>();
   private readonly assistantStream: CcrAssistantStream;
@@ -210,7 +211,9 @@ export class CcrSession {
   }
 
   private async publishPreview(payloads: Payload[]): Promise<void> {
-    try { await this.checkpoint(); await this.backend.events(this.id, payloads); }
+    const checkpoint = this.previewCheckpoints.then(() => this.checkpoint());
+    this.previewCheckpoints = checkpoint.catch(() => {});
+    try { await checkpoint; await this.backend.events(this.id, payloads); }
     catch { this.stop(); }
   }
 

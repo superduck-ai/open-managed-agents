@@ -34,7 +34,6 @@ var requestHeadersToRemove = map[string]struct{}{
 	"Upgrade":             {},
 	"X-Api-Key":           {},
 	"X-Organization-Uuid": {},
-	"X-Oma-Model-Purpose": {},
 	"X-Workspace-Id":      {},
 }
 

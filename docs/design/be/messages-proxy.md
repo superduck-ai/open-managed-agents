@@ -311,8 +311,8 @@ Console API（相对 `/api/console/organizations/{orgUuid}`）：
 
 组织 Provider 的通用 API 和配置不包含任何公司网关预设、公司控制台链接或专属域名。
 
-## Brain 压缩摘要请求
+## DSH 公开回复来源
 
-已认证 Worker 可用内部 header `X-OMA-Model-Purpose: compaction` 标记辅助摘要请求。Messages 和 Chat Completions 都继续执行模型路由、权限/epoch 校验、请求 span 和 usage 记账，但不把摘要输出映射成公开 assistant、thinking 或 tool 事件，也不向 span 添加这些公开事件 ID。普通请求保持原有投影行为；内部 header 不转发给上游。实际压缩结果仍由 DSH 私有日志和 CCRv2 的 `agent.thread_context_compacted` 通知表达。
+DSH 的公开回复由 Brain 独占发布。后端按已保存的 `metadata.config.worker_transport=claim` 识别该执行路径，Messages 和 Chat Completions 继续执行模型路由、权限/epoch 校验、请求 span、usage 和工具关联，但代理不发布 `agent.message`、`agent.thinking` 或 thinking 起始预览，也不在 span 的 `event_ids` 中宣称这些回复已发布。判断不依赖客户端用途 header；压缩请求与普通请求均遵守同一来源规则。Brain 在原生日志复制确认后发布回复，恢复可用稳定 ID 补发；压缩摘要保留在私有日志，并用 CCRv2 的 `agent.thread_context_compacted` 表达结果。Claude Code 路径与原有工具权限、审批、工具调用事件处理保持不变。
 
-`TestCompactionObservationKeepsUsageWithoutPublicAssistantEvents` 覆盖两种协议的辅助/普通响应与 usage，`TestCompactionPurposeHeaderDoesNotReachUpstream` 覆盖 header 清理。`chat brain-compaction` 在真实代理链路中要求普通回复计数准确，从而拒绝摘要正文混入公开历史。
+`TestModelReplyPublicationOwnership` 覆盖 Brain 与非 Brain 的发布职责、请求关联、usage 和工具 ID 保留，`TestBrainModelThinkingIsPublishedOnlyByWorker` 覆盖无代理 thinking 预览。Brain 单测覆盖无用途 header 的摘要预算、流式顺序、日志复制屏障和 SIGKILL 后回复补发。真实代理链路通过显式运行 `chat brain-compaction` 与 `chat brain` 验收，本次普通测试不代表真实服务集成已通过。

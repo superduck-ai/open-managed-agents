@@ -22,7 +22,6 @@ import (
 )
 
 type responseObservation struct {
-	auxiliary         bool
 	chat              *chatObservation
 	publishThinking   func(string, int) bool
 	thinkingPublished map[int]bool
@@ -76,7 +75,7 @@ func (h *Handler) beginModelRequest(r *http.Request, principal auth.Principal, m
 }
 
 func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Request, request *codesessions.ModelRequest) {
-	observation := &responseObservation{request: request, auxiliary: r.Header.Get("X-OMA-Model-Purpose") == "compaction"}
+	observation := &responseObservation{request: request}
 	if r.URL.Path == "/v1/chat/completions" {
 		observation.chat = &chatObservation{}
 	}
@@ -235,7 +234,7 @@ func (o *responseObservation) observeFrame(data []byte) {
 		block.Thinking = ""
 		o.blocks[event.Index] = &block
 		o.addEventID(event.Index, block.Type)
-		if (block.Type == "thinking" || block.Type == "redacted_thinking") && !o.auxiliary && o.publishThinking != nil {
+		if (block.Type == "thinking" || block.Type == "redacted_thinking") && o.publishThinking != nil {
 			o.thinkingPublished[event.Index] = o.publishThinking(o.messageID, event.Index)
 		}
 		if event.ContentBlock.Type == "tool_use" && event.ContentBlock.ID != "" {
@@ -305,14 +304,6 @@ func (o *responseObservation) addEventID(index int, blockType string) {
 }
 
 func (o *responseObservation) finish() {
-	defer func() {
-		if o.auxiliary {
-			o.result.Messages = nil
-			o.result.EventIDs = nil
-			o.result.ToolUseIDs = nil
-			o.result.ToolUses = nil
-		}
-	}()
 	if o.chat != nil && !o.complete && !o.malformed && o.result.ErrorType == "" && o.chat.finishReason != "" {
 		o.chat.complete(o)
 	}

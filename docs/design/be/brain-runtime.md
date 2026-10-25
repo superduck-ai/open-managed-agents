@@ -235,11 +235,11 @@ DSH 的工具执行屏障直接建立在原生日志上：在工具体执行前�
 
 普通输入先报告 processing。`agent/request` 钩子早于原生消息接纳，仅用于权限更新和必要的取消检查；不拦截 `llm/stream`，主线程和子线程均不在模型请求前无条件等待复制或排空公开输出。原生日志后台复制，工具执行、公开事件发布和 ACK 仍等待确认；确认前崩溃可能需要重新请求模型。已在原生日志中的输入重投不重新执行模型或工具，待原生结果及公开输出确认后再次 ACK。运行中的同一输入重投不提前 ACK，由原执行路径完成确认。
 
-公开消息、工具结果和回合终态直接从原生 Header/Event 重建。每次恢复补发可重建历史，保持同一公开 UUID，依赖服务端幂等去重；不保存 sent 标记。主线程消息身份使用输入 ID 与原生 turn/step，子线程使用原生 turn/step 和事件 seq，不依赖重启时的主输入。发送失败保留进程内队列并重试，成功后仅消费本批捕获的队列前缀，保留等待期间新产生的事件。工具名按同一线程的原生 assistant/message 和 tool/call 推导。控制响应、进度、压缩提示及未写入原生模型日志的临时通知依赖服务端已接收事件和当前进程重试，不承诺在进程崩溃后重建。
+公开消息、工具结果和回合终态直接从原生 Header/Event 重建。每次恢复补发可重建历史，保持同一公开 UUID，依赖服务端幂等去重；不保存 sent 标记。主线程消息身份使用输入 ID 与原生 turn/step，子线程使用原生 turn/step 和事件 seq，不依赖重启时的主输入。工具结果产生后主动异步发布待发队列，发布仍先等待原生日志远程确认，不等待下一次模型请求或整轮结束，因此模型继续生成时界面也能看到工具完成。发送失败保留进程内队列并重试，成功后仅消费本批捕获的队列前缀，保留等待期间新产生的事件。工具名按同一线程的原生 assistant/message 和 tool/call 推导。控制响应、进度、压缩提示及未写入原生模型日志的临时通知依赖服务端已接收事件和当前进程重试，不承诺在进程崩溃后重建。
 
 CCRv2 传输层的旧 subtype envelope、Brain/Grok checkpoint、独立交付快照和批量 dsh_log 仍由协议适配层拒绝，不自动迁移。原生 JSONL 内的 Header 和 Event 则统一交给 dsh 原生格式校验：保留可忽略的未知扩展，拒绝原生不支持的必需事件，不按平台专属类型名称增设判断。Header 的缺省值和规范化直接采用原生 JSONL 回读结果，Brain 不手工补字段。主线程、子线程和已有本地日志遵循同一原生规则。
 
-`tests/model-replication.test.ts` 覆盖主线程及子线程在复制延迟时继续请求模型、工具执行前确认和公开结果确认前禁止 ACK。`tests/native-input-recovery.test.ts` 覆盖原生身份去重、同内容不同输入、重启补发稳定身份、无额外交付记录及原生本地/远程事件一致性。`tests/session-reacquisition.test.ts` 覆盖 A→B→A 接管、远程新增子线程、历史不一致时保留原路径及损坏历史拒绝。`tests/review-reproduction.test.ts` 覆盖预览增量读取、会话 writer 故障隔离和原生持久化屏障。
+`tests/model-replication.test.ts` 覆盖主线程及子线程在复制延迟时继续请求模型、工具执行前确认、工具结果确认后在下一模型请求期间发布，以及公开结果确认前禁止 ACK。`tests/native-input-recovery.test.ts` 覆盖原生身份去重、同内容不同输入、重启补发稳定身份、无额外交付记录及原生本地/远程事件一致性。`tests/session-reacquisition.test.ts` 覆盖 A→B→A 接管、远程新增子线程、历史不一致时保留原路径及损坏历史拒绝。`tests/review-reproduction.test.ts` 覆盖预览增量读取、会话 writer 故障隔离和原生持久化屏障。
 
 ```mermaid
 sequenceDiagram

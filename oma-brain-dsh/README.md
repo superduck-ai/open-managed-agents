@@ -414,6 +414,8 @@ do not reopen or scan full JSONL files. Raw handle access uses a revision-based
 suffix-read fallback. The cache is cleared on forget/close.
 
 Model requests use the native dsh flow without a remote replication barrier.
+Tool results trigger background publication as soon as they are recorded, so a completed tool
+does not stay running in the UI while the next model request is in progress.
 Native records replicate asynchronously; tool execution, public publication and input ACK await
 remote confirmation. A crash before confirmation can require repeating a model request. Shutdown waits for results to be confirmed before releasing
 the claim. These checkpoints do not form a cross-system exactly-once transaction.

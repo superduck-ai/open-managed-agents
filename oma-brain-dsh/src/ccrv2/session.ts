@@ -260,7 +260,7 @@ export class CcrSession {
       const owner = threadId ?? this.id;
       const callId = data.message.toolCallId;
       this.activity.end(owner, "tool_exec", callId);
-      const confirmation = Promise.resolve().then(() => this.checkpoint()).catch(() => { this.stop(); }).finally(() => {
+      const confirmation = Promise.resolve().then(() => this.publish()).catch(() => { this.stop(); }).finally(() => {
         this.outcomeConfirmations.delete(confirmation);
         const calls = this.activeDispatches.get(owner);
         calls?.delete(callId);

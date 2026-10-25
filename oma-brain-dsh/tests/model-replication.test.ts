@@ -118,3 +118,38 @@ test("input ACK still waits for public event confirmation", async () => {
     expect(backend.processed).toEqual(["publication-barrier"]);
   } finally { release.resolve(); await turn.catch(() => {}); session.backend.events = events; }
 });
+
+test("completed tools publish confirmed results while the next model request is still running", async () => {
+  const { backend, session } = await fixture();
+  const releaseModel = Promise.withResolvers<ReturnType<typeof textEvents>>();
+  const releaseResult = Promise.withResolvers<void>();
+  const persist = session.backend.persist.bind(session.backend);
+  let held = false;
+  session.backend.persist = async (...args) => {
+    const data = args[2];
+    if ("seq" in data && data.type === "tool/result") { held = true; await releaseResult.promise; }
+    await persist(...args);
+  };
+  backend.onModel = async () => backend.requests.length === 1 ? toolEvents() : releaseModel.promise;
+  backend.onApproval = payload => session.control({ type: "control_response", response: {
+    subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
+  } }).then(() => {});
+  const publishedResult = () => [...backend.publicLog.values()].some(event => event.type === "user"
+    && event.message?.content?.some((block: { type: string; tool_use_id?: string }) => block.type === "tool_result" && block.tool_use_id === "call_1"));
+  const turn = session.receive("live-tool-result", { content: "Run a tool and explain" });
+  turn.catch(() => {});
+  try {
+    await eventually(() => held && backend.requests.length === 2);
+    expect(backend.executions).toHaveLength(1);
+    expect(publishedResult()).toBe(false);
+    releaseResult.resolve();
+    await eventually(publishedResult);
+    expect(backend.processed).toEqual([]);
+    expect([...backend.publicLog.values()].some(event => event.type === "result")).toBe(false);
+  } finally {
+    releaseResult.resolve();
+    releaseModel.resolve(textEvents("done"));
+    await turn;
+    session.backend.persist = persist;
+  }
+});

@@ -135,20 +135,9 @@ export class SessionRuntime {
           for (const name of Object.keys(toolPermissions)) delete toolPermissions[name];
           Object.assign(toolPermissions, permissions);
         }
-        await this.hooks.beforeRequest();
+        await this.hooks.beforeRequest?.();
         signal.throwIfAborted();
         return next();
-      });
-      scope.on("llm/stream", (request, next) => {
-        const runtime = this;
-        return (async function* () {
-          if (request.sessionId === runtime.config.id) {
-            await runtime.flushLog();
-            await runtime.ctx.get("ccrReplication")?.flush(runtime.config.id);
-            request.signal?.throwIfAborted();
-          }
-          yield* next();
-        })();
       });
       scope.on("agent/request-error", async ({ agent, failure, turn, step, signal }, next) => {
         signal.throwIfAborted();

@@ -76,7 +76,6 @@ test("runtime accepts an independent event sink and a class-based execution brid
     threads: () => threads,
     bindPersistence: (id) => storage.bindPersistence(id),
     emit: async (event) => { events.push(structuredClone(event)); await runtime.flush(); },
-    beforeRequest: () => storage.beforeRequest(),
     onEvent: () => {},
     onStream: () => {},
     toolExecution: (id) => new Execution(storage.toolExecution(id)),

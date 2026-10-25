@@ -227,19 +227,19 @@ DSH 将等待后端权限判定与等待用户确认分开：发送 `can_use_too
 
 权限更新回归由 `tests/brain_tool_permission_updates_test.go` 覆盖同一会话的更新 API、最新上下文和网关拒绝，DSH 的 `tests/parallel-tools.test.ts` 覆盖 `allow` 改为 `ask` 后等待审批、改为 `deny` 后不再执行、刷新失败时停止模型请求，以及缺失权限表时回退审批；`tests/parallel-subagents.test.ts` 对保留的子 Agent 线程验证相同的策略更新。每次模型请求增加一次上下文读取，工具调用仍跳过 `allow` 的审批与状态写入。
 
-DSH 的工具执行屏障直接建立在原生日志上：在工具体执行前刷新本地日志并等待远程复制确认，任一失败时不执行工具体。模型请求前确认先前的工具结果；完成 turn 后确认原生终态日志，再发布由其生成的公开结果，最后 ACK。审批参数变化时先确认公开参数提示，并保留原有模型上下文，不再保存 approvedCalls 或工具结果副本。只读失败仍最多重试一次；其他调用不自动重试。排空使用进程内活动副作用调用和结果确认队列，结果已到达但复制未确认时不能提前释放领取；这些集合不作为恢复日志。
+DSH 的工具执行屏障直接建立在原生日志上：在工具体执行前刷新本地日志并等待远程复制确认，任一失败时不执行工具体。模型请求沿用 dsh 原生流程，日志异步复制，不无条件等待远程确认；完成 turn 后确认原生终态日志，再发布由其生成的公开结果，最后 ACK。审批参数变化时先确认公开参数提示，并保留原有模型上下文，不再保存 approvedCalls 或工具结果副本。只读失败仍最多重试一次；其他调用不自动重试。排空使用进程内活动副作用调用和结果确认队列，结果已到达但复制未确认时不能提前释放领取；这些集合不作为恢复日志。
 
 ### 原生日志恢复与协议输出
 
 不保存额外交付快照、完成列表、发布游标或独立 outbox 文件，也不新增平台专属日志类型。dsh 原生日志格式、Header 和已产生的事件保持原样。外部普通输入已有的身份通过原生 `MessageId` 和 `freezeMessage` 公开 API 构造用户消息，使用原生 `id` 字段，不添加 inputId 字段或自定义 source。进程内维护已接纳输入的索引及待发队列，关闭后不单独保存。重启时从每个原生 turn 的首条 user-source 消息恢复输入身份，避免把审批参数上下文误认成新输入；原生回合终态用于生成完成或中断结果。无效输入和在原生接纳前被取消的输入，依赖服务端已确认的 processed 状态，不额外写占位日志。
 
-普通输入先报告 processing。`agent/request` 钩子早于原生消息接纳，仅用于权限更新和前序输出排空；最终模型屏障使用公开的 `llm/stream` 钩子，在实际模型流开始前刷新目标 Session 的原生消息及请求记录，并等待 CCRv2 确认。已在原生日志中的输入重投不重新执行模型或工具，待原生结果及公开输出确认后再次 ACK。运行中的同一输入重投不提前 ACK，由原执行路径完成确认。
+普通输入先报告 processing。`agent/request` 钩子早于原生消息接纳，仅用于权限更新和必要的取消检查；不拦截 `llm/stream`，主线程和子线程均不在模型请求前无条件等待复制或排空公开输出。原生日志后台复制，工具执行、公开事件发布和 ACK 仍等待确认；确认前崩溃可能需要重新请求模型。已在原生日志中的输入重投不重新执行模型或工具，待原生结果及公开输出确认后再次 ACK。运行中的同一输入重投不提前 ACK，由原执行路径完成确认。
 
 公开消息、工具结果和回合终态直接从原生 Header/Event 重建。每次恢复补发可重建历史，保持同一公开 UUID，依赖服务端幂等去重；不保存 sent 标记。主线程消息身份使用输入 ID 与原生 turn/step，子线程使用原生 turn/step 和事件 seq，不依赖重启时的主输入。发送失败保留进程内队列并重试，成功后仅消费本批捕获的队列前缀，保留等待期间新产生的事件。工具名按同一线程的原生 assistant/message 和 tool/call 推导。控制响应、进度、压缩提示及未写入原生模型日志的临时通知依赖服务端已接收事件和当前进程重试，不承诺在进程崩溃后重建。
 
 CCRv2 传输层的旧 subtype envelope、Brain/Grok checkpoint、独立交付快照和批量 dsh_log 仍由协议适配层拒绝，不自动迁移。原生 JSONL 内的 Header 和 Event 则统一交给 dsh 原生格式校验：保留可忽略的未知扩展，拒绝原生不支持的必需事件，不按平台专属类型名称增设判断。Header 的缺省值和规范化直接采用原生 JSONL 回读结果，Brain 不手工补字段。主线程、子线程和已有本地日志遵循同一原生规则。
 
-`tests/native-input-recovery.test.ts` 覆盖原生身份去重、同内容不同输入、重启补发稳定身份、无额外交付记录及原生本地/远程事件一致性。`tests/session-reacquisition.test.ts` 覆盖 A→B→A 接管、远程新增子线程、历史不一致时保留原路径及损坏历史拒绝。`tests/review-reproduction.test.ts` 覆盖预览增量读取、会话 writer 故障隔离和原生持久化屏障。
+`tests/model-replication.test.ts` 覆盖主线程及子线程在复制延迟时继续请求模型、工具执行前确认和公开结果确认前禁止 ACK。`tests/native-input-recovery.test.ts` 覆盖原生身份去重、同内容不同输入、重启补发稳定身份、无额外交付记录及原生本地/远程事件一致性。`tests/session-reacquisition.test.ts` 覆盖 A→B→A 接管、远程新增子线程、历史不一致时保留原路径及损坏历史拒绝。`tests/review-reproduction.test.ts` 覆盖预览增量读取、会话 writer 故障隔离和原生持久化屏障。
 
 ```mermaid
 sequenceDiagram
@@ -248,9 +248,10 @@ sequenceDiagram
     participant D as DSH JSONL
     CCR->>B: Deliver input ID
     B->>D: Native user message with existing identity
-    D-->>B: Flush native events
+    B->>B: Execute model through native dsh flow
+    D-->>B: Flush native tool call
     B->>CCR: Confirm native replication
-    B->>B: Execute model and tools
+    B->>B: Execute tool
     D-->>B: Native messages, tool results and turn end
     B->>CCR: Confirm native replication
     B->>CCR: Publish derived events with stable UUIDs

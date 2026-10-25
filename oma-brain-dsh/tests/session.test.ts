@@ -429,7 +429,7 @@ describe("original dsh loop over CCRv2", () => {
     await expect(turn).rejects.toThrow();
     expect(session.abort.signal.aborted).toBe(true);
     expect(b.processed).toEqual([]);
-    expect(b.requests).toEqual([]);
+    expect(b.requests).toHaveLength(1);
   });
 
   test("retries hold checkpoint and publication barriers until confirmation, then resume without replay", async () => {
@@ -469,7 +469,7 @@ describe("original dsh loop over CCRv2", () => {
         expect(finished).toBe(false);
         expect(session.abort.signal.aborted).toBe(false);
         expect(b.processed).toEqual([]);
-        expect(b.requests).toHaveLength(stage === "accepted" ? 0 : 1);
+        expect(b.requests).toHaveLength(stage === "accepted" || stage === "dispatch" ? 1 : 2);
         expect(b.executions).toHaveLength(stage === "accepted" || stage === "dispatch" ? 0 : 1);
         resume.resolve();
         await turn;
@@ -534,7 +534,7 @@ describe("original dsh loop over CCRv2", () => {
     const ack = first((e) => e.type === "input.ack" && e.inputId === "durable_order");
     const processing = first((e) => e.type === "input.delivery" && e.inputId === "durable_order" && e.status === "processing");
     const model = first((e) => e.type === "model.request");
-    expect(accepted).toBeLessThan(model);
+    expect(accepted).toBeLessThan(ack);
     expect(processing).toBeLessThan(model);
     const approval = first((e) => e.type === "control_request");
     expect(b.timeline.slice(model, approval).some(
@@ -546,7 +546,8 @@ describe("original dsh loop over CCRv2", () => {
     expect(call).toBeLessThan(execution);
     expect(result).toBeGreaterThan(execution);
     const nextModel = b.timeline.findIndex((e, i) => i > execution && e.type === "model.request");
-    expect(nextModel).toBeGreaterThan(result);
+    expect(nextModel).toBeGreaterThan(execution);
+    expect(result).toBeLessThan(ack);
     const completed = first(e => e.type === "private.persist" && e.payload.data?.type === "turn/end");
     const idle = b.timeline.findIndex((e, i) => i > completed && e.type === "worker.status" && e.status === "idle");
     const published = first((e) => e.type === "result");
@@ -556,9 +557,9 @@ describe("original dsh loop over CCRv2", () => {
     expect(completed).toBeLessThan(published);
   });
 
-  test("a failed tool-result publication stops the next model request and survives restart", async () => {
+  test("a failed tool-result publication holds ACK without blocking the next model request and survives restart", async () => {
     const b = backend();
-    b.modelScript = [toolEvents(), textEvents("must not be requested")];
+    b.modelScript = [toolEvents(), textEvents("continued model response")];
     b.failPublicType = "user";
     const first = await open(b);
     b.onApproval = async (payload) => {
@@ -576,7 +577,7 @@ describe("original dsh loop over CCRv2", () => {
     await eventually(() => b.failedCcrWrites > 0);
     first.session.stop();
     await expect(turn).rejects.toThrow();
-    expect(b.requests).toHaveLength(1);
+    expect(b.requests).toHaveLength(2);
     expect(b.executions).toHaveLength(1);
     expect(
       first.session.pendingEvents.some((event) => event.type === "user"),
@@ -592,12 +593,12 @@ describe("original dsh loop over CCRv2", () => {
     );
     expect(results).toHaveLength(1);
     expect(results[0]!.message.content[0].tool_use_id).toBe("call_1");
-    expect(b.requests).toHaveLength(1);
+    expect(b.requests).toHaveLength(2);
     expect(b.executions).toHaveLength(1);
     expect(second.session.pendingEvents).toEqual([]);
   });
 
-  test("messages and tool results precede the next tool or model request", async () => {
+  test("messages and tool results retain publication order without gating model requests", async () => {
     const b = backend();
     b.modelScript = [
       toolsWithText("before tools", "call_first", "call_second"),
@@ -634,18 +635,15 @@ describe("original dsh loop over CCRv2", () => {
           return [];
       }
     });
-    expect(order).toEqual([
-      "model",
+    expect(order.filter(event => event !== "model")).toEqual([
       "before tools",
       "call:call_first",
       "result:call_first",
       "call:call_second",
       "result:call_second",
-      "model",
       "after two tools",
       "call:call_third",
       "result:call_third",
-      "model",
       "done",
       "idle",
     ]);
@@ -717,7 +715,7 @@ describe("original dsh loop over CCRv2", () => {
     ).toHaveLength(1);
     expect(second.session.pendingEvents).toEqual([]);
   });
-  test("unconfirmed input checkpoint is not acknowledged or sent to the model", async () => {
+  test("unconfirmed native input allows model work but cannot execute tools or be acknowledged", async () => {
     const b = backend();
     const { session } = await open(b);
     b.failWrites = true;
@@ -727,7 +725,7 @@ describe("original dsh loop over CCRv2", () => {
     session.stop();
     await expect(turn).rejects.toThrow();
     expect(b.processed).toEqual([]);
-    expect(b.requests).toEqual([]);
+    expect(b.requests).toHaveLength(1);
     expect(b.executions).toEqual([]);
     b.failWrites = false;
   });
@@ -772,7 +770,7 @@ describe("original dsh loop over CCRv2", () => {
     const resultIndex = b.timeline.findIndex((event) => event.type === "user");
     expect(resultIndex).toBeGreaterThan(-1);
     expect(resultIndex).toBeLessThan(
-      b.timeline.findLastIndex((event) => event.type === "model.request"),
+      b.timeline.findLastIndex((event) => event.type === "input.ack"),
     );
     expect(
       b.requests[1]!.messages.some((m: any) =>

@@ -386,7 +386,6 @@ export class CcrSession {
       this.interrupted = true;
       this.agent.cancel({ kind: "user" });
     }
-    await this.flushEvents();
   }
 
   wakeParentFromChildReport(): void {
@@ -495,7 +494,6 @@ export class CcrSession {
           this.interrupted = false;
           this.waitingOnInterruptedChild = false;
           this.inputId = inputId;
-          await this.checkpoint();
           await this.backend.reportDelivery(this.id, inputId, "processing", this.abort.signal);
           stopProgress = startDeliveryProgress(
             () => this.backend.reportDelivery(this.id, inputId, "processing", this.abort.signal),

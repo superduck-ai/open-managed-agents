@@ -46,7 +46,6 @@ export interface SubagentBridge {
   restoreThreads?(): Promise<void>;
   bindPersistence(threadId: string): void;
   emit(event: SubagentEvent): Promise<void>;
-  beforeRequest(): Promise<void>;
   onContextCompacted?(threadId: string, tokens?: number): Promise<void>;
   onEvent(threadId: string, event: SessionEvent): void;
   onStream(threadId: string, frame: AssistantStreamFrame): void;
@@ -159,7 +158,7 @@ export interface SessionRuntimeHooks {
   onExternalMcpConnectionFailure?(serverName: string): Promise<void>;
   onExternalMcpAuthenticationFailure?(serverName: string, phase?: "discovery" | "tool_call"): Promise<void>;
   setupTools?(scope: Context): void;
-  beforeRequest(): Promise<void>;
+  beforeRequest?(): Promise<void>;
   onEvent(event: SessionEvent): void;
   onStream(frame: AssistantStreamFrame): void;
   stop(): void;

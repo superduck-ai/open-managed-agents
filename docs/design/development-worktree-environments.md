@@ -22,6 +22,7 @@ worktree 时仍需显式执行对应命令。`.codex/` 下的其他本地文件�
 本环境配置统一使用 `.run/`，镜像前缀、LLM provider 配置和凭证常驻本机 `~/.oma-dev/`，
 各 worktree 的初始化文件显式引用同一份 provider 定义。`config/` 中的配置文件
 仅作为模板，开发初始化与重启不再读取旧的 `config/config.yaml`。
+开发模板将 `code_session.upstream_proxy_disable_ssrf_protection` 设为 `true`；首次初始化复制该值，已有 `.run/config.yaml` 不会被覆盖。
 
 ```text
 .run/

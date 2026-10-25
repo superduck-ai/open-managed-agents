@@ -17,6 +17,7 @@ func TestConfigExampleContainsOnlyCommonFields(t *testing.T) {
 	want := []string{
 		"code_session",
 		"code_session.upstream_proxy_ca_key_file",
+		"code_session.upstream_proxy_disable_ssrf_protection",
 		"code_session.upstream_proxy_mitm_enabled",
 		"database",
 		"database.url",

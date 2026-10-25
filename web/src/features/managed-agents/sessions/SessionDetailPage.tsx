@@ -1,3 +1,5 @@
+import { budgetErrorMessage } from '../resources/budget-errors';
+import { useSessionBudgetSync } from './useSessionBudgetSync';
 import { FollowSentSessionMessage } from './FollowSentSessionMessage';
 import { useQueryClient } from '@tanstack/react-query';
 import { useFormatters, useI18n } from '../../../shared/i18n';
@@ -27,6 +29,7 @@ import {
   postSessionToolConfirmation,
   retrieveSessionDetailSession,
   SESSION_DETAIL_CHILD_REFETCH_INTERVAL_MS,
+  updateSessionBudget,
   sessionThreadListSignature,
 } from '../api';
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
@@ -34,6 +37,8 @@ import { ResourceIdButton } from '../components/ResourceIdButton';
 import { ResourceNotFound, useResourceMissingCopy } from '../components/resource-not-found';
 import { ConfirmEntityDialog, ManagedErrorAlert, ManagedWarningAlert } from '../components/common';
 import { resourceTitle } from '../labels';
+import { budgetWireBody, parseBudgetUsdInput, type SessionBudgetState } from '../resources/budget';
+import { SessionBudgetBanner } from './SessionBudgetBanner';
 import {
   type EventsTabProps,
   type QuickstartSessionEvent,
@@ -138,6 +143,60 @@ function sessionPendingAction(
       threadLabel={threadNameById.get(threadId) ?? (threadId === SESSION_MAIN_LANE_ID ? mainLabel : threadId)}
     />
   );
+}
+
+interface BudgetChangeDeps {
+  workspaceId: string;
+  onUpdated: (next: SessionApiResponse) => void;
+  onError: (message: string | null) => void;
+  onBusyChange: (busy: boolean) => void;
+  toastFor: (cents: number | null) => string;
+}
+
+async function applyBudgetChange(
+  session: SessionApiResponse,
+  usd: string | null,
+  deps: BudgetChangeDeps,
+): Promise<void> {
+  const parsed = usd === null ? { ok: true as const, cents: null } : parseBudgetUsdInput(usd);
+  if (!parsed.ok) return;
+  deps.onBusyChange(true);
+  deps.onError(null);
+  try {
+    deps.onUpdated(
+      await updateSessionBudget(
+        session.id,
+        parsed.cents === null ? null : budgetWireBody(parsed.cents),
+        deps.workspaceId,
+      ),
+    );
+    toast.success(deps.toastFor(parsed.cents));
+  } catch (error) {
+    deps.onError(errorMessage(error));
+  } finally {
+    deps.onBusyChange(false);
+  }
+}
+
+function budgetToastMessage(cents: number | null, msg: (key: string, fallback: string) => string): string {
+  return cents === null
+    ? msg('managedAgents.budget.removedToast', 'Budget removed — you can continue messaging')
+    : msg('managedAgents.budget.updatedToast', 'Budget updated — you can continue messaging');
+}
+
+function SessionBudgetBannerSection({
+  budget,
+  archived,
+  busy,
+  onChangeBudget,
+}: {
+  budget: SessionBudgetState | null;
+  archived: boolean;
+  busy: boolean;
+  onChangeBudget: (usd: string | null) => Promise<void>;
+}) {
+  if (!budget || archived) return null;
+  return <SessionBudgetBanner state={budget} busy={busy} onChangeBudget={onChangeBudget} />;
 }
 
 function SessionNotFound({
@@ -356,6 +415,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     refreshKey: refreshKey + eventRefreshKey,
   });
   const events = eventData.events;
+  const { budget, budgetReached } = useSessionBudgetSync(session, events, activeWorkspaceId, mutationError, setSession);
   const eventsLoading = eventData.loading || eventData.childLoading;
   const eventError = eventData.error;
 
@@ -621,6 +681,16 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       setBusyAction(null);
     }
   };
+  const handleBudgetChange = async (usd: string | null) => {
+    if (!session) return;
+    await applyBudgetChange(session, usd, {
+      workspaceId: activeWorkspaceId,
+      onUpdated: setSession,
+      onError: setMutationError,
+      onBusyChange: (busy) => setBusyAction(busy ? 'budget' : null),
+      toastFor: (cents) => budgetToastMessage(cents, msg),
+    });
+  };
   if (loading) {
     return (
       <section className="@container min-h-[calc(100vh-48px)] text-foreground">
@@ -639,7 +709,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   }
 
   const archived = Boolean(session.archived_at);
-  const conversationState = sessionConversationState(session, events);
+  const conversationState = sessionConversationState(session, events, budgetReached);
   const warningError = [resourceRefreshError, metadataError, eventError].find(Boolean);
 
   return (
@@ -755,7 +825,16 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
           />
         </header>
 
-        <SessionDetailAlerts mutationError={mutationError} warningError={warningError} />
+        <SessionDetailAlerts
+          mutationError={budgetErrorMessage(mutationError, msg, budgetReached)}
+          warningError={warningError}
+        />
+        <SessionBudgetBannerSection
+          budget={budget}
+          archived={archived}
+          busy={busyAction === 'budget'}
+          onChangeBudget={handleBudgetChange}
+        />
 
         <div className="min-h-0 flex-1 overflow-hidden pt-1" data-testid="session-viewer">
           <SessionDetailDeltaFramesContext.Provider value={eventData.deltaFrames}>
@@ -768,7 +847,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                   key={`${activeWorkspaceId}:${session.id}`}
                   acceptingMessages={conversationState.acceptingMessages}
                   awaitingAction={requiresActionEventIDs.size > 0}
-                  disabled={conversationState.disabled}
+                  disabled={conversationState.composerDisabled}
                   live={conversationState.live}
                   onError={setMutationError}
                   onResourcesChanged={() => {
@@ -927,15 +1006,20 @@ function sessionSummaryRefreshInterval(session: SessionApiResponse | null) {
   return session && sessionStatusIsLive(session.status) && !session.archived_at ? 1_000 : 60_000;
 }
 
-function sessionConversationState(session: SessionApiResponse, events: QuickstartSessionEvent[]) {
+function sessionConversationState(
+  session: SessionApiResponse,
+  events: QuickstartSessionEvent[],
+  budgetReached: boolean,
+) {
   const archived = Boolean(session.archived_at);
   const status = session.status.toLowerCase();
   const idleState = latestSessionIdlePresentationState(events);
+  const disabled = archived || status === 'deleted' || status === 'terminated';
   return {
     acceptingMessages:
-      !archived &&
-      (status === 'queued' || (status === 'idle' && idleState !== 'budget_reached' && idleState !== 'awaiting_action')),
-    disabled: archived || status === 'deleted' || status === 'terminated',
+      !archived && !budgetReached && (status === 'queued' || (status === 'idle' && idleState !== 'awaiting_action')),
+    disabled,
+    composerDisabled: disabled || budgetReached,
     live: !archived && sessionStatusIsLive(status),
   };
 }

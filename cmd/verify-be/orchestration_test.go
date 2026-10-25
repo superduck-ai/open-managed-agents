@@ -271,7 +271,7 @@ func TestGoToolStderrDoesNotCorruptTestEvidence(t *testing.T) {
 
 func TestFilesDoctorDoesNotInspectWorker(t *testing.T) {
 	calls := fakeDocker(t)
-	result, err := doctor(t.Context(), t.TempDir(), "", "files.lifecycle")
+	result, err := doctor(t.Context(), t.TempDir(), "", "files.lifecycle", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

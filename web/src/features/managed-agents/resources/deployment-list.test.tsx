@@ -26,21 +26,21 @@ function deployment(schedule: unknown): DeploymentApiResponse {
 test('blank schedule expressions stay on the manual trigger path', () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/deployments');
   const { rerender } = render(
-    <I18nProvider>
+    <I18nProvider initialLocale="en">
       <DeploymentTriggerCell deployment={deployment({})} />
     </I18nProvider>,
   );
   expect(screen.getByText('Manual')).toBeTruthy();
 
   rerender(
-    <I18nProvider>
+    <I18nProvider initialLocale="en">
       <DeploymentTriggerCell deployment={deployment({ type: 'cron', expression: '  ' })} />
     </I18nProvider>,
   );
   expect(screen.getByText('Manual')).toBeTruthy();
 
   rerender(
-    <I18nProvider>
+    <I18nProvider initialLocale="en">
       <DeploymentTriggerCell deployment={deployment({ type: 'cron', expression: '0 9 * * *', timezone: 'UTC' })} />
     </I18nProvider>,
   );

@@ -78,7 +78,7 @@ func TestBrainWebToolsRejectInvalidIngressAndRetiredEpoch(t *testing.T) {
 	if _, err := app.db.RotateManagedAgentCodeSessionCredentials(t.Context(), public, worker.ExternalID, "replacement"); err != nil {
 		t.Fatal(err)
 	}
-	if status := request(token); status != 401 && status != 409 {
+	if status := request(token); status != 409 {
 		t.Errorf("stale epoch=%d", status)
 	}
 	if calls.Load() != 0 {

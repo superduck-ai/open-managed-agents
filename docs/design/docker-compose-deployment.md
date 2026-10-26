@@ -28,6 +28,8 @@ caddy ──→ oma-server ──→ postgres / redis / nats cluster / minio
                                        └──→ sandbox 容器 (managed-agent-sandbox 镜像)
 ```
 
+MITM 默认开启。`just init-compose-config` 同时准备 `config/secrets/upstream-proxy-ca-key.pem`，已有私钥保持不变；Compose 将该文件只读挂载到 API server。已有本地配置升级时需补充模板中的 CA 路径，或者显式配置 `upstream_proxy_mitm_enabled: false` 保留透传。
+
 ## 2. 镜像策略
 
 | 服务        | 镜像来源                                      | 说明                          |

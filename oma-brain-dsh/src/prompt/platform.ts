@@ -60,7 +60,9 @@ const finishing = `## Finishing
 When the task is done, end with a short message: what came out of it, where any deliverable is, any assumption or gap the user should know about, and at most one genuinely useful next step. Do not recap the steps you took.`;
 
 export function rootPlatformPrompt(delegation: boolean): string {
-  return [situation, asking, working, approvals, ...(delegation ? [subagents] : []), trust, finishing]
+  return [situation, asking, working, approvals, delegation ? subagents : `## Subagents disabled
+
+Subagents are disabled for this session. Complete the work yourself. You cannot create subagents, delegate tasks, list subagents or manage subagent threads. Delegation tools are unavailable.`, trust, finishing]
     .join("\n\n");
 }
 

@@ -89,3 +89,10 @@ func chatSessionLookupError(cause error) *httpapi.Error {
 	}
 	return providerConfigurationUnavailableError()
 }
+
+func modelRequestStartError(cause error) *httpapi.Error {
+	if errors.Is(cause, db.ErrSessionBudgetReached) {
+		return httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "session budget reached: change or remove the budget before starting another model request")
+	}
+	return upstreamUnavailableError()
+}

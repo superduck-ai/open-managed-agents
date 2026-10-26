@@ -7,6 +7,8 @@ type Launch = Assignment["launch"];
 export function rootSystemPrompt(launch: Launch): string {
   return layers([
     rootPlatformPrompt(launch.subagents !== undefined),
+    launch.subagents?.inlineAgents === false
+      ? "Only the configured predefined agents may be used. You cannot define inline agents. Use agent_name for a new specialist or thread_id to follow up on an existing thread." : undefined,
     launch.environment_prompt,
     skillsPrompt(launch.skills),
     instructionsPrompt("Agent instructions", launch.system),

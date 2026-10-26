@@ -35,7 +35,14 @@ func (h *Handler) threadMessageCopySpecs(ctx context.Context, session db.Session
 		return nil, err
 	}
 	childCopy := childThreadMessageCopy(codeSessionID, eventType, eventID, payload, childID, primary.ExternalID, agent.Name)
-	return append(primaryOnly, childCopy), nil
+	return []sessionEventCopySpec{primaryThreadMessageCopy(eventID, payload, primary.ExternalID), childCopy}, nil
+}
+
+func primaryThreadMessageCopy(eventID string, payload map[string]any, primaryID string) sessionEventCopySpec {
+	primary := copySessionEventPayload(payload)
+	primary["session_thread_id"] = primaryID
+	delete(primary, "agent_name")
+	return newSessionEventCopySpec(eventID, primary, nil, false)
 }
 
 func childThreadMessageCopy(codeSessionID, eventType, eventID string, payload map[string]any, childID, primaryID, primaryName string) sessionEventCopySpec {

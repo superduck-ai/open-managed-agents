@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<mapper namespace="ModelPriceCatalogMapper">
+<select id="Find" result="many" resultType="modelPriceCatalogRow">
+ SELECT model,price FROM model_price_catalog WHERE source=#{source} AND (
+ model IN <foreach collection="models" item="model" open="(" separator="," close=")">#{model}</foreach>
+ OR (model NOT LIKE '~%' AND position('/' in model) > 0 AND substring(model from position('/' in model) + 1) IN <foreach collection="models" item="model" open="(" separator="," close=")">#{model}</foreach>)
+ ) ORDER BY model
+</select>
+<insert id="Save">
+ INSERT INTO model_price_catalog(source,model,price,original) VALUES (#{p.Source},#{p.Model},CAST(#{p.Price} AS jsonb),CAST(#{p.Original} AS jsonb))
+</insert>
+<delete id="DeleteSource">
+ DELETE FROM model_price_catalog WHERE source=#{source}
+</delete>
+</mapper>

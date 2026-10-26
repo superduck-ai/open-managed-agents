@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 
 	"github.com/go-chi/chi/v5"
@@ -33,12 +34,17 @@ type signCommitResponse struct {
 
 func (h *Handler) handleSignCommit(w http.ResponseWriter, r *http.Request) error {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	claims, err := h.sessionIngressClaims(r, codeSessionID)
+	claims, err := h.service.authenticateRuntimeCredential(r.Context(), auth.ExtractAPIKey(r), codeSessionID)
 	if err != nil {
-		return err
+		return sessionIngressTokenInvalid(err)
 	}
-	if claims.WorkerEpoch <= 0 {
+	if claims.WorkerEpoch <= 0 && claims.SandboxUUID == "" {
 		return sessionIngressTokenInvalid(errors.New("commit signing requires a managed code-session credential"))
+	}
+	if claims.Role == "worker" {
+		if err := h.service.authorizeWorkerClaims(r.Context(), claims); err != nil {
+			return workerIngressAuthorizationFailure(err)
+		}
 	}
 
 	request, err := httpapi.DecodeObjectBodyAs[signCommitRequest](w, r, maxIngressBodySize)

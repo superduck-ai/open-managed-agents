@@ -12,14 +12,9 @@ test("sandbox tools are built in, isolated per agent and removed with their plug
   const calls: string[] = [];
   const plugins = new Map<string, Fiber>();
   const bridge: ToolExecutionBridge = {
-    blocked: () => false,
     async approve() { return { allowed: true }; },
-    async recordApproved() {},
-    async flushLog() {},
-    async recordDispatch() {},
-    async recordUnknown() {},
-    async recordResult() {},
-    stop() {},
+    runTool: (_id, execute) => execute(),
+    approvalChanged() {},
   };
   const create = (id: string) => ctx.agents.create({
     sessionId: SessionId(id),

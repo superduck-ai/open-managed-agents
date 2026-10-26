@@ -149,6 +149,7 @@ export function buildSessionDetailLaneState(
   threads.forEach((thread) => {
     if (!sessionThreadIsChild(thread)) {
       laneIdByThreadId.set(thread.id, SESSION_MAIN_LANE_ID);
+      threadNameById.set(thread.id, lanes[0].label);
     }
   });
 
@@ -188,11 +189,22 @@ export function uniqueSessionThreadLabels(threads: SessionThreadApiResponse[], m
 export function buildSessionTimeline(
   lanes: SessionDetailLane[],
   entriesByLaneId: Map<string, SessionEventListEntry[]>,
+  laneIdByThreadId = new Map<string, string>(),
 ): SessionTimelineLane[] {
   return lanes.map((lane) => ({
     ...lane,
     items: (entriesByLaneId.get(lane.id) ?? [])
-      .map(sessionTimelineItemFromEntry)
+      .map((entry) => {
+        const item = sessionTimelineItemFromEntry(entry);
+        if (!item?.threadMessage) return item;
+        return {
+          ...item,
+          threadMessage: {
+            ...item.threadMessage,
+            laneId: laneIdByThreadId.get(item.threadMessage.laneId) ?? item.threadMessage.laneId,
+          },
+        };
+      })
       .filter((item): item is SessionTimelineItem => Boolean(item)),
   }));
 }

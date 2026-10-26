@@ -168,3 +168,5 @@ flowchart LR
     Fixture --> HTTP[相同的计时 HTTP 请求]
     HTTP --> Binary
 ```
+
+验证配置沿用默认开启的 HTTPS MITM。每个隔离运行生成独立的 ECDSA P-256 CA 私钥并通过 `code_session.upstream_proxy_ca_key_file` 提供，权限为 `0600`；清理与 JWT 私钥一并删除，报告不包含私钥。

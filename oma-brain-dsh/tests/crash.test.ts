@@ -1,3 +1,4 @@
+import { completedInputs } from "./session-log.ts";
 import { modelSystemText } from "./backend.ts";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -8,6 +9,51 @@ import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import type { CcrSession } from "../src/ccrv2/index.ts";
 import { Backend, eventually, toolEvents, textEvents } from "./backend.ts";
+
+test("SIGKILL after reply replication recovers the unpublished reply once without another model call", async () => {
+  const backend = new Backend();
+  backend.onModel = async () => new Response(textEvents("reply saved before publication")
+    .map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""),
+    { headers: { "Content-Type": "text/event-stream", "Request-Id": "sevt_reply_request" } });
+  backend.failPublicType = "agent.message";
+  await backend.ready;
+  const child = spawn(process.execPath, ["tests/crash-worker.ts"], {
+    env: { ...process.env, TEST_API_URL: backend.url, TEST_ASSIGNMENT: JSON.stringify(backend.a) },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const exited = once(child, "exit");
+  let ctx: Context | undefined;
+  let resumed: CcrSession | undefined;
+  try {
+    await eventually(() => backend.failedCcrWrites > 0 && [...backend.privateLog.values()]
+      .some(event => event.type === "dsh_log" && event.data.type === "assistant/message"));
+    expect([...backend.publicLog.values()].filter(event => event.type === "agent.message")).toHaveLength(0);
+    expect(backend.processed).toEqual([]);
+    child.kill("SIGKILL");
+    await exited;
+    backend.failPublicType = undefined;
+    backend.a.worker_epoch++;
+    ctx = new Context();
+    const api = new OmaApi(backend.url);
+    await mountOma(ctx, api);
+    resumed = createOmaSession(ctx, api, backend.a);
+    await resumed.open();
+    const replies = [...backend.publicLog.values()].filter(event => event.type === "agent.message");
+    expect(replies).toHaveLength(1);
+    expect(JSON.stringify(replies[0]!.content)).toContain("reply saved before publication");
+    expect(replies[0]!.model_request_start_id).toBeTruthy();
+    await resumed.receive("crash_input", { message: { content: "execute a command" } });
+    expect(backend.requests).toHaveLength(1);
+    expect([...backend.publicLog.values()].filter(event => event.type === "agent.message").map(event => event.uuid)).toEqual([replies[0]!.uuid]);
+  } finally {
+    child.kill("SIGKILL");
+    await exited;
+    backend.failPublicType = undefined;
+    await resumed?.close();
+    await ctx?.fiber.dispose();
+    backend.stop();
+  }
+});
 
 test("SIGKILL during sandbox execution restores logs, never replays and continues on new input", async () => {
   const backend = new Backend();
@@ -50,34 +96,26 @@ test("SIGKILL during sandbox execution restores logs, never replays and continue
     await mountOma(ctx, api);
     resumed = createOmaSession(ctx, api, backend.a);
     await resumed.open();
-    expect(resumed.state.phase).toBe("blocked");
-    expect(resumed.state.completed).toContain("crash_input");
-    expect(resumed.state.approvedCalls.call_1!.effective).toEqual({
-      command: "approved-before-crash",
-    });
+    expect(completedInputs(resumed)).toContain("crash_input");
     await resumed.receive("crash_input", {
       message: { content: "execute a command" },
     });
-    expect(resumed.blocked()).toBe(true);
+    expect(resumed.abort.signal.aborted).toBe(false);
     expect(backend.requests).toHaveLength(1);
     backend.hangTool = false;
     backend.modelScript = [textEvents("checked state")];
     await resumed.receive("new_input", { message: { content: "what happened?" } });
-    expect(resumed.blocked()).toBe(false);
-    const settled = [...backend.privateLog.values()].filter((p) => p.subtype === "dsh_brain_state")
-      .some((p) => p.data.toolOutcomes?.call_1?.remoteOutcome === "unknown" && p.data.phase === "completed");
-    expect(settled).toBe(true);
+    expect(resumed.abort.signal.aborted).toBe(false);
     expect(backend.executions).toHaveLength(1);
     expect(backend.requests).toHaveLength(2);
-    expect(JSON.stringify(backend.requests[1]!.messages)).toContain("They were not replayed and may or may not have taken effect");
-    expect(backend.publicLog.get("new_input_unknown_outcomes")?.type).toBe("system.message");
+    expect(JSON.stringify(backend.requests[1]!.messages)).toContain("Do not retry blindly");
     expect(backend.publicLog.get("new_input_result")?.is_error).toBe(false);
     expect(
       [...backend.publicLog.values()].some((p) => p.type === "result" && p.is_error === true),
     ).toBe(true);
     const closers = [...backend.privateLog.values()]
-      .filter((p) => p.subtype === "dsh_log")
-      .flatMap((p) => p.data.events);
+      .filter((p) => p.type === "dsh_log" && "seq" in p.data)
+      .map((p) => p.data);
     expect(
       closers.some((e) => e.type === "tool/result" && e.data.message.isError),
     ).toBe(true);
@@ -100,7 +138,7 @@ function delegates(): import("../src/json.ts").Payload[] {
 }
 
 for (const duringDispatch of [true, false]) {
-  test(`SIGKILL with parallel children ${duringDispatch ? "keeps an unknown dispatch blocked alongside a confirmed sibling" : "repairs approval waits without replay and allows a fresh input"}`, async () => {
+  test(`SIGKILL with parallel children ${duringDispatch ? "repairs an unknown call alongside a confirmed sibling" : "repairs approval waits without replay and allows a fresh input"}`, async () => {
     const backend = new Backend();
     const counts = new Map<string, number>();
     backend.onModel = async (request) => {
@@ -135,21 +173,12 @@ for (const duringDispatch of [true, false]) {
     let ctx: Context | undefined;
     let resumed: CcrSession | undefined;
     try {
-      const latest = () => [...backend.privateLog.values()].filter((entry) => entry.subtype === "dsh_brain_state").at(-1)?.data;
-      if (duringDispatch) await eventually(() => {
-        const snapshot = latest();
-        const beta = snapshot?.threads?.find((thread: { name: string }) => thread.name === "beta");
-        return beta?.status === "idle" && backend.executions.length === 2;
-      });
+      const created = () => [...backend.publicLog.values()].filter((event) => event.type === "session.thread_created");
+      if (duringDispatch) await eventually(() => backend.executions.length === 2 && [...backend.publicLog.values()]
+        .some((event) => event.type === "agent.thread_message_received" && event.from_agent_name === "beta"));
       else await eventually(() => approvals.length === 2);
-      const snapshot = latest()!;
-      const alphaId = snapshot.threads.find((thread: { name: string }) => thread.name === "alpha").id;
-      const betaId = snapshot.threads.find((thread: { name: string }) => thread.name === "beta").id;
-      if (duringDispatch) {
-        expect(snapshot.executions[alphaId].phase).toBe("dispatch");
-        expect(snapshot.executions[betaId].phase).toBe("completed");
-        expect(snapshot.executions[betaId].toolOutcomes.same_call_id.text).toBe("confirmed beta output");
-      }
+      const alphaId = created().find((event) => event.agent_name === "alpha")!.session_thread_id;
+      const betaId = created().find((event) => event.agent_name === "beta")!.session_thread_id;
       child.kill("SIGKILL"); await exited;
       backend.a.worker_epoch++;
       ctx = new Context();
@@ -157,43 +186,31 @@ for (const duringDispatch of [true, false]) {
       await mountOma(ctx, api);
       resumed = createOmaSession(ctx, api, backend.a);
       const requestCount = backend.requests.length;
+      const recoveryStart = backend.timeline.length;
       await resumed.open();
+      const recovery = backend.timeline.slice(recoveryStart);
+      const recoveredResult = recovery.findIndex(event => event.type === "user" && event.session_thread_id === alphaId
+        && event.message?.content?.some((block: { type: string }) => block.type === "tool_result"));
+      const recoveredIdle = recovery.findIndex(event => event.type === "session.thread_status_idle" && event.session_thread_id === alphaId);
+      expect(recoveredResult).toBeGreaterThan(-1);
+      expect(recoveredIdle).toBeGreaterThan(recoveredResult);
+      const recoveredWorkerIdle = recovery.findIndex(event => event.type === "worker.status" && event.status === "idle");
+      expect(recoveredWorkerIdle).toBeGreaterThan(recoveredIdle);
       expect(backend.requests).toHaveLength(requestCount);
-      expect(resumed.state.completed).toContain("crash_input");
-      expect(resumed.state.threads!.every((thread) => thread.status === "idle")).toBe(true);
-      if (duringDispatch) {
-        expect(resumed.blocked()).toBe(true);
-        expect(resumed.state.executions![alphaId]!.phase).toBe("blocked");
-        expect(resumed.state.executions![betaId]!.phase).toBe("completed");
-        const repairs = [...backend.privateLog.values()].filter((entry) => entry.subtype === "dsh_log" && entry.data.header.id === alphaId).flatMap((entry) => entry.data.events);
-        expect(repairs.some((event) => event.type === "tool/result" && event.data.message.isError)).toBe(true);
-        expect(backend.executions).toHaveLength(2);
-        expect(backend.workerMetadata.unknown_tool_outcomes).toEqual([{ tool_use_id: "same_call_id", tool_name: "Bash", session_thread_id: alphaId }]);
-        backend.workerMetadata.tool_outcome_reconciliation = { tool_use_ids: ["same_call_id"] };
-        await resumed.close(); await ctx.fiber.dispose();
-        backend.a.worker_epoch++;
-        ctx = new Context();
-        const reconciledApi = new OmaApi(backend.url);
-        await mountOma(ctx, reconciledApi);
-        resumed = createOmaSession(ctx, reconciledApi, backend.a);
-        await resumed.open();
-        expect(resumed.blocked()).toBe(false);
-        expect(resumed.state.executions![alphaId]!.phase).toBe("interrupted");
-        expect(resumed.state.executions![alphaId]!.toolOutcomes.same_call_id).toMatchObject({ failed: true, remoteOutcome: "unknown" });
-        expect(resumed.state.executions![betaId]!.toolOutcomes.same_call_id.text).toBe("confirmed beta output");
-        expect(backend.workerMetadata).not.toHaveProperty("unknown_tool_outcomes");
-        expect(backend.workerMetadata).not.toHaveProperty("tool_outcome_reconciliation");
-        await resumed.receive("after_reconcile", { content: "new independent task" });
-        expect(backend.requests).toHaveLength(requestCount + 1);
-        expect(backend.executions).toHaveLength(2);
-      } else {
-        expect(resumed.blocked()).toBe(false);
-        expect(resumed.state.executions![alphaId]!.phase).toBe("interrupted");
-        expect(resumed.state.executions![betaId]!.phase).toBe("interrupted");
-        await resumed.receive("fresh", { content: "new independent task" });
-        expect(backend.requests).toHaveLength(requestCount + 1);
-        expect(backend.executions).toHaveLength(0);
-      }
+      expect(completedInputs(resumed)).toContain("crash_input");
+      expect(resumed.subagents.threads!.every((thread) => thread.status === "idle")).toBe(true);
+      expect(resumed.abort.signal.aborted).toBe(false);
+      const native = (threadId: string) => [...backend.privateLog.values()].filter((entry) => entry.type === "dsh_log"
+        && backend.privateAgentIds.get(entry.uuid) === threadId && "seq" in entry.data).map((entry) => entry.data);
+      const alpha = native(alphaId);
+      expect(alpha.some((event) => event.type === "tool/result" && event.data.message.isError)).toBe(true);
+      expect(alpha.some((event) => event.type === "turn/end" && event.data.reason.kind === "interrupted")).toBe(true);
+      if (duringDispatch) expect(native(betaId).some((event) => event.type === "tool/result"
+        && JSON.stringify(event.data.message).includes("confirmed beta output"))).toBe(true);
+      await resumed.receive("fresh", { content: "new independent task" });
+      expect(backend.requests).toHaveLength(requestCount + 1);
+      expect(backend.executions).toHaveLength(duringDispatch ? 2 : 0);
+      expect(resumed).not.toHaveProperty("delivery");
     } finally {
       child.kill("SIGKILL"); await exited;
       await resumed?.close(); await ctx?.fiber.dispose(); backend.stop();

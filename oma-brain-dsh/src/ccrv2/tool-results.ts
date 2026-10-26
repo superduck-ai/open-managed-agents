@@ -8,6 +8,11 @@ export class CcrToolResults {
       this.names.delete(owner);
       return;
     }
+    if (event.type === "assistant/message") {
+      let calls = this.names.get(owner);
+      if (!calls) this.names.set(owner, (calls = new Map()));
+      for (const block of event.data.message.content) if (block.type === "tool-call") calls.set(block.id, block.name);
+    }
     if (event.type === "tool/call") {
       let calls = this.names.get(owner);
       if (!calls) this.names.set(owner, (calls = new Map()));

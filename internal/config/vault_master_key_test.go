@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -167,7 +168,7 @@ func loadMasterKeyTestYAML(t *testing.T, body string) (Config, error) {
 	prepareLoadTest(t)
 	prefix, _, _ := strings.Cut(requiredConfigTestYAML, "vault:")
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	writeConfigTestContents(t, path, prefix+"vault:\n  master_key: "+body+"\n")
+	writeConfigTestContents(t, path, prefix+"code_session:\n  upstream_proxy_ca_key_file: "+fmt.Sprintf("%q", writeConfigTestFile(t, filepath.Join(t.TempDir(), "ca.pem")))+"\nvault:\n  master_key: "+body+"\n")
 	t.Setenv(configFileEnv, path)
 	return Load()
 }

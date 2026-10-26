@@ -3,6 +3,7 @@ package devinit
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -26,7 +27,7 @@ func TestLoadBaseConfigResolvesPathsFromRun(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	data := minimalBaseConfig + "\ncode_session:\n  brain_claim_token_file: ./generated/secrets/brain-claim-token\n"
+	data := strings.Replace(minimalBaseConfig, "code_session:\n", "code_session:\n  brain_claim_token_file: ./generated/secrets/brain-claim-token\n", 1)
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -412,6 +412,10 @@ minimap seek 流程：
 
 ### 6.6 跨线程跳转
 
+消息行首先按 `session_thread_id` 分配所属 lane，方向始终相对于该 lane。`to_session_thread_id` / `from_session_thread_id` 只用于对端标签、连线和跳转，不作为该消息的 owner。主线程和子线程的 sent/received 副本分别保留，不能按内容、传输 UUID 或 original_event_id 合并删除。
+
+父线程下发任务时，主 lane 显示 sent → 子线程，子 lane 显示 received ← Orchestrator；子线程回报时，子 lane 显示 sent → Orchestrator，主 lane 显示 received ← 子线程。时间线将对端线程 ID 通过 laneIdByThreadId 映射为 lane ID，包括主 lane 的空字符串 ID。点击子 lane 中指向主线程的标签时，空字符串是合法 lane，不能因 falsy 判断拒绝跳转。界面中的主线程对端统一显示 Orchestrator，事件 payload 保留 Agent 实际名称。
+
 `agent.thread_message_sent` / `agent.thread_message_received` 行内标签点击时：
 
 1. 从 `to_session_thread_id` 或 `from_session_thread_id` 找目标 thread。

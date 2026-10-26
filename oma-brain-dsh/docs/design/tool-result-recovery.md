@@ -25,8 +25,9 @@ A sandbox gateway response marked `X-Oma-Sandbox-Not-Forwarded: true` proves
 the call never reached the sandbox. DSH records it as a failed tool result with
 the gateway's error message instead of an unknown outcome. A completed call
 whose content cannot be converted to text is also a failed result, not an
-unknown outcome. Only calls whose sandbox outcome is genuinely unknown block
-the session.
+unknown outcome. Unknown transport outcomes become native tool errors with conservative retry guidance.
+Crashes are repaired by DSH `agents.resume()`; OMA does not maintain a second
+execution journal or a session-wide blocked state.
 
 MCP text conversion belongs to the neutral tool execution boundary. For Bash,
 a structured completed execution with zero exit code, empty stderr, false timeout,
@@ -35,7 +36,7 @@ stdout. Its first text block must equal stdout, except that empty stdout accepts
 `(no output)`. A second block is accepted only when its parsed JSON equals the
 structured result. Otherwise all diagnostic text is retained. Other tools do not
 use Bash normalization. Conversion does not alter the result's failure flag.
-The confirmed journal, model feedback and public CCRv2 event receive the same
+The native persisted tool result, model feedback and public CCRv2 event receive the same
 text, including empty strings and trailing newlines.
 
 `tests/session.test.ts` checks malformed JSON recovery, correlation, public

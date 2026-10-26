@@ -17,7 +17,7 @@ flowchart TB
 
 | 层 | 来源 | 内容 |
 |---|---|---|
-| L0 | `oma-brain-dsh/src/prompt/platform.ts` | 运行环境说明、提问与直接执行的取舍、工作习惯与完成前验证、审批、子 Agent 委派（仅配置了 `subagents` 时出现）、指令信任与优先级、收尾格式 |
+| L0 | `oma-brain-dsh/src/prompt/platform.ts` | 运行环境说明、提问与直接执行的取舍、工作习惯与完成前验证、审批、子 Agent 委派（开启时描述可用工具，关闭时明确禁止委派）、指令信任与优先级、收尾格式 |
 | L1 | `internal/environments/environment_prompt.tmpl`，经 `append_system_prompt` 下发 | 沙箱系统信息、uploads/outputs 路径规则、沙箱持久化语义、Environment `networking` 和 `packages` |
 | L2 | `runtime_skills` | 每个 Skill 一行：名称、描述、`SKILL.md` 路径；不包含版本号 |
 | L3 | Agent `system`，或子 Agent 的 specialist 指令 | 原样插入，不做变量插值 |
@@ -37,6 +37,8 @@ Brain 在 `oma-brain-dsh/src/kernel.ts` 挂载与其他 DSH 包同版本的 `@de
 
 - 主 Agent：L0 主规则 → L1 → L2 → `# Agent instructions` → L4。
 - 子 Agent：L0 子规则 → L1 → L2 → `# Specialist instructions` → L4。子规则以 `# Subagent rules` 和 `You are subagent <name>.` 开头，`## Execution mode` 列出不能继续委派、不能直接询问用户、只向父 Agent 汇报以及报告必须包含的内容项，并且不包含 `list_agents`/`send_to_agent` 说明。
+- DSH 未提供 subagents 配置时，主提示词包含 `Subagents are disabled for this session.`，明确不能创建、委派或管理子线程。`createOmaSession` 原样传递缺失配置，不用空对象开启委派；模型工具列表不注册 list_agents、send_to_agent、archive_agent，直接委派入口同样拒绝调用。
+- subagents.inlineAgents 为 false 时，主提示词明确只允许已配置的预定义 Agent，不能临时定义 Agent；执行层继续拒绝 inline 调用。
 - Agent 或 specialist 指令为空时省略对应标题。
 
 ## 身份与托管 Agent 指令

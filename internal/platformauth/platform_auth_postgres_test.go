@@ -63,7 +63,7 @@ func TestVerifiedEmailWithPendingInviteCreatesHomePostgres(t *testing.T) {
 		t.Fatalf("首次成员仅自建组织: %+v, %v", orgs, err)
 	}
 	if err := store.WithPlatformAuthTx(ctx, func(tx db.PlatformAuthTxStore) error {
-		_, err := tx.InsertUser(ctx, db.PlatformAuthUserInput{UUID: uuid.NewV4().String(), ExternalID: "user_home_other_admin", OrganizationUUID: home, Email: "other@example.com", Name: "Other admin", Role: "admin"})
+		_, err := tx.InsertUser(ctx, db.PlatformAuthUserInput{UUID: uuid.NewV4().String(), ExternalID: "user_home_successor", OrganizationUUID: home, Email: "successor@example.com", Name: "继任管理员", Role: "admin"})
 		return err
 	}); err != nil {
 		t.Fatal(err)

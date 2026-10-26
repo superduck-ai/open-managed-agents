@@ -1,17 +1,20 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { Backend, eventually, toolEvents, textEvents } from "./backend.ts";
+
+const transcriptRoot = await mkdtemp(join(tmpdir(), "oma-brain-claim-transcripts-"));
+afterAll(() => rm(transcriptRoot, { recursive: true, force: true }));
 
 test("startup explains a rejected brain claim token", async () => {
   const backend = new Backend();
   await backend.ready;
   try {
     const child = Bun.spawn([process.execPath, process.env.BRAIN_TEST_ENTRY ?? "src/main.ts"], {
-      env: { ...process.env, OMA_API_URL: backend.url, OMA_BRAIN_CLAIM_TOKEN: "wrong-claim-token" },
+      env: { ...process.env, OMA_BRAIN_TRANSCRIPT_DIR: transcriptRoot, OMA_API_URL: backend.url, OMA_BRAIN_CLAIM_TOKEN: "wrong-claim-token" },
       stdin: "ignore", stdout: "pipe", stderr: "pipe",
     });
     const [code, stdout, stderr] = await Promise.all([
@@ -30,7 +33,7 @@ test("startup explains a rejected brain claim token", async () => {
 
 test("startup requires a brain claim token", async () => {
   const child = Bun.spawn([process.execPath, process.env.BRAIN_TEST_ENTRY ?? "src/main.ts"], {
-    env: { ...process.env, OMA_API_URL: "http://127.0.0.1:1", OMA_BRAIN_CLAIM_TOKEN: "" },
+    env: { ...process.env, OMA_BRAIN_TRANSCRIPT_DIR: transcriptRoot, OMA_API_URL: "http://127.0.0.1:1", OMA_BRAIN_CLAIM_TOKEN: "" },
     stdin: "ignore", stdout: "pipe", stderr: "pipe",
   });
   const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
@@ -44,8 +47,9 @@ test("claimed sessions register the Bun host and SSE drives user input and appro
   backend.modelScript = [toolEvents(), textEvents("claim completed")];
   const binary = process.env.BRAIN_TEST_BINARY;
   const runtimeDirectory = binary ? await mkdtemp(join(tmpdir(), "oma-brain-dsh-binary-")) : undefined;
-  const standalone = runtimeDirectory && binary ? join(runtimeDirectory, basename(binary)) : undefined;
+  const standalone = runtimeDirectory && binary ? join(runtimeDirectory, "bin", basename(binary)) : undefined;
   if (standalone) {
+    await mkdir(dirname(standalone), { recursive: true });
     await copyFile(binary!, standalone);
     await chmod(standalone, 0o755);
     // Exercise runtime .env loading without source files, node_modules or Bun on PATH.
@@ -61,7 +65,7 @@ test("claimed sessions register the Bun host and SSE drives user input and appro
       cwd: runtimeDirectory,
       env: standalone
         ? { PATH: runtimeDirectory, SYSTEMROOT: process.env.SYSTEMROOT }
-        : { ...process.env, OMA_API_URL: backend.url, OMA_BRAIN_CLAIM_TOKEN: backend.claimToken },
+        : { ...process.env, OMA_BRAIN_TRANSCRIPT_DIR: transcriptRoot, OMA_API_URL: backend.url, OMA_BRAIN_CLAIM_TOKEN: backend.claimToken },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -107,6 +111,11 @@ test("claimed sessions register the Bun host and SSE drives user input and appro
     expect(backend.registrations).toBe(1);
     expect([...backend.publicLog.values()].filter((p) => p.type === "result")).toHaveLength(1);
     expect(backend.releases).toEqual([]);
+    if (standalone) {
+      const files = await readdir(join(dirname(standalone), ".dsh", "transcripts"), { recursive: true });
+      expect(files.some(file => file.endsWith("session.v4.jsonl") && file.includes(backend.a.session_id))).toBe(true);
+      await expect(readdir(join(runtimeDirectory!, ".dsh"))).rejects.toMatchObject({ code: "ENOENT" });
+    }
     child.kill("SIGTERM");
     const [code] = await exited;
     expect(code).toBe(0);
@@ -133,7 +142,7 @@ test("shutdown hands busy claimed sessions back to the backend", async () => {
     return await new Promise<never>(() => {});
   };
   const child = Bun.spawn([process.execPath, process.env.BRAIN_TEST_ENTRY ?? "src/main.ts"], {
-    env: { ...process.env, OMA_API_URL: backend.url, OMA_BRAIN_CLAIM_TOKEN: backend.claimToken },
+    env: { ...process.env, OMA_BRAIN_TRANSCRIPT_DIR: transcriptRoot, OMA_API_URL: backend.url, OMA_BRAIN_CLAIM_TOKEN: backend.claimToken },
     stdin: "ignore", stdout: "pipe", stderr: "pipe",
   });
   try {
@@ -165,11 +174,13 @@ async function runShutdownDuringBash(drainMs: string, onTool: (backend: Backend,
     } });
   };
   const child = Bun.spawn([process.execPath, process.env.BRAIN_TEST_ENTRY ?? "src/main.ts"], {
-    env: { ...process.env, OMA_API_URL: backend.url, OMA_BRAIN_CLAIM_TOKEN: backend.claimToken, OMA_BRAIN_SHUTDOWN_DRAIN_MS: drainMs },
+    env: { ...process.env, OMA_BRAIN_TRANSCRIPT_DIR: transcriptRoot, OMA_API_URL: backend.url, OMA_BRAIN_CLAIM_TOKEN: backend.claimToken, OMA_BRAIN_SHUTDOWN_DRAIN_MS: drainMs },
     stdin: "ignore", stdout: "pipe", stderr: "pipe",
   });
-  const brainState = () => [...backend.privateLog.values()].filter((p) => p.subtype === "dsh_brain_state").at(-1)!.data;
-  return { backend, child, toolStarted: toolStarted.promise, brainState };
+  const nativeResults = () => [...backend.privateLog.values()]
+    .filter((p) => p.type === "dsh_log" && p.data.type === "tool/result")
+    .map((p) => p.data.data.message);
+  return { backend, child, toolStarted: toolStarted.promise, nativeResults };
 }
 
 test("shutdown drains an in-flight Bash dispatch before handing the session back", async () => {
@@ -189,9 +200,9 @@ test("shutdown drains an in-flight Bash dispatch before handing the session back
     expect(run.child.exitCode).toBeNull();
     release.resolve();
     expect(await run.child.exited).toBe(0);
-    const state = run.brainState();
-    expect(state.phase).not.toBe("blocked");
-    expect(state.executions[run.backend.a.session_id].toolOutcomes.call_1).toEqual({ text: "drained stdout\n", failed: false });
+    expect(run.nativeResults()).toHaveLength(1);
+    expect(run.nativeResults()[0]).toMatchObject({ toolCallId: "call_1", isError: false,
+      content: [{ type: "text", text: "drained stdout\n" }] });
     expect(run.backend.executions).toHaveLength(1);
     expect(run.backend.releases).toHaveLength(1);
     expect(["idle", "shutdown"]).toContain(run.backend.releases[0]!.reason);
@@ -216,10 +227,8 @@ test("shutdown past the drain deadline interrupts Bash without blocking the sess
     await run.toolStarted;
     run.child.kill("SIGTERM");
     expect(await run.child.exited).toBe(0);
-    const state = run.brainState();
-    expect(state.phase).not.toBe("blocked");
-    expect(Object.values(state.executions[run.backend.a.session_id].callPhases)).toEqual(["result"]);
-    expect(state.executions[run.backend.a.session_id].toolOutcomes.call_1).toMatchObject({ failed: true });
+    expect(run.nativeResults()).toHaveLength(1);
+    expect(run.nativeResults()[0]).toMatchObject({ toolCallId: "call_1", isError: true });
     const published = [...run.backend.publicLog.values()];
     expect(published.some((p) => p.type === "result" && p.is_error === true)).toBe(true);
     expect(JSON.stringify(published)).toContain("The Brain worker shut down during this turn");

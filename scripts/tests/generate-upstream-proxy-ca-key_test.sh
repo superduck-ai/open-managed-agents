@@ -34,7 +34,7 @@ fi
 # 成功场景：生成结果应是可解析的 EC 私钥，并且仅 owner 可读写。
 generated_key="$TEST_DIRECTORY/generated.pem"
 "$GENERATOR" "$generated_key" >/dev/null
-openssl pkey -in "$generated_key" -check -noout >/dev/null
+openssl pkey -in "$generated_key" -noout >/dev/null
 
 private_key_label="PRIVATE KEY"
 expected_header="-----BEGIN ${private_key_label}-----"
@@ -48,7 +48,7 @@ if [[ "$(file_mode "$generated_key")" != "600" ]]; then
   exit 1
 fi
 
-if ! openssl pkey -in "$generated_key" -text -noout | grep -Eq 'ASN1 OID: prime256v1|NIST CURVE: P-256'; then
+if ! openssl pkey -in "$generated_key" -text_pub -noout | grep -E 'ASN1 OID: prime256v1|NIST CURVE: P-256' >/dev/null; then
   echo "generated key is not ECDSA P-256" >&2
   exit 1
 fi

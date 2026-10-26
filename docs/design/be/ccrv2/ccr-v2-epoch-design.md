@@ -41,8 +41,8 @@ legacy register 锁定 Code Session 行，把当前值加一，同时更新 leas
 
 managed-agent 创建时把初始 epoch 设为 1，并在 Session Ingress JWT 中写入 1。相同 JWT 的 register
 只确认和刷新该 epoch，不再次递增。Sandbox 恢复时凭证轮换在一个数据库更新中替换 OAuth hash、
-递增 epoch、清空旧 lease，再签发绑定新 epoch 的 JWT。旧 JWT 通常先在鉴权入口被拒绝；即使请求
-在轮换前通过了解析，事务内 epoch 条件仍阻止它重新获得所有权。
+递增 epoch、清空旧 lease，再签发绑定新 epoch 的 JWT。旧 JWT 的签名身份验证继续成功，执行授权阶段返回 409 epoch 冲突；即使请求
+在轮换前通过了执行授权，事务内 epoch 条件仍阻止它重新获得所有权。
 
 成功响应：
 

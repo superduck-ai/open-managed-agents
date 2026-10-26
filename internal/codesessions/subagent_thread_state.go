@@ -22,7 +22,7 @@ func scopedSubagentThreadState(record db.CodeSession, thread db.SessionThread) (
 
 func (h *Handler) handleGetCodeSessionSubagentThread(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "code_session_id")
-	if !h.authorizeSessionIngress(w, r, id) {
+	if _, ok := h.sessionIngressAccessClaims(w, r, id, false); !ok {
 		return
 	}
 	if _, _, ok := h.validateOptionalWorkerEpochRequest(w, r, id); !ok {

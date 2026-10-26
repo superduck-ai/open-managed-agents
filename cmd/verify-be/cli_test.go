@@ -11,7 +11,7 @@ import (
 
 func TestCLIRejectsInvalidArguments(t *testing.T) {
 	for _, args := range [][]string{
-		{}, {"unknown"}, {"run", "chat.roundtrip"}, {"chat"}, {"files"}, {"files", "chat.roundtrip"},
+		{"test", "--api-port=0"}, {"doctor", "--api-port=65536"}, {}, {"unknown"}, {"run", "chat.roundtrip"}, {"chat"}, {"files"}, {"files", "chat.roundtrip"},
 		{"doctor", "files"}, {"files", "doctor", "public"}, {"chat", "doctor", "unknown"},
 		{"chat", "tools", "extra"}, {"chat", "unknown", "--help"}, {"files", "lifecycle", "extra", "--help"},
 		{"files", "lifecycle", "--worker-image", "private:test"}, {"files", "doctor", "--worker-image", "private:test"},
@@ -49,6 +49,7 @@ func TestCLIParsesCommandsAndOptionPositions(t *testing.T) {
 		{[]string{"files", "cloud-storage", "--cloud-config=private.yaml"}, cliOptions{Command: "run", Scenario: "files.cloud-storage", CloudConfig: "private.yaml"}},
 		{[]string{"chat", "cloud-renewal", "--cloud-config=private.yaml"}, cliOptions{Command: "run", Scenario: "chat.cloud-renewal", CloudConfig: "private.yaml"}},
 	} {
+		tc.want.APIPort = 18080
 		got, err := parseCLI(tc.args, &bytes.Buffer{})
 		if err != nil || got != tc.want {
 			t.Fatalf("args=%v options=%+v err=%v", tc.args, got, err)
@@ -125,5 +126,23 @@ func requireFile(t *testing.T, path string, data []byte) {
 	t.Helper()
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCustomAPIPort(t *testing.T) {
+	options, err := parseCLI([]string{"chat", "roundtrip", "--api-port=18081"}, &bytes.Buffer{})
+	if err != nil || options.APIPort != 18081 {
+		t.Fatalf("options=%+v err=%v", options, err)
+	}
+	env := newEnvironment(t.TempDir(), t.TempDir(), "port-test")
+	env.apiPort = options.APIPort
+	values := strings.Join(env.env(), "\n")
+	for _, key := range []string{"LIVE_WORKER_API_URL", "VERIFY_BE_API_URL"} {
+		if !strings.Contains(values, key+"=http://127.0.0.1:18081") {
+			t.Fatalf("missing custom %s", key)
+		}
+	}
+	if env.apiAddress() != "127.0.0.1:18081" {
+		t.Fatal(env.apiAddress())
 	}
 }

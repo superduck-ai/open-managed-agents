@@ -125,7 +125,7 @@ func validateBaseline(current, baseline report) error {
 
 func performanceWorkloadHash(root, selected string) (string, error) {
 	hash := sha256.New()
-	names := []string{"go.mod", "go.sum", "tests/liveworker/harness_test.go", "tests/liveworker/real_control_test.go", "tests/liveworker/chat_roundtrip_test.go", "tests/liveworker/chat_reliability_test.go", "tests/liveworker/chat_performance_test.go", "cmd/verify-be/fixture_overlay.go"}
+	names := []string{"go.mod", "go.sum", "tests/liveworker/harness_test.go", "tests/liveworker/real_control_test.go", "tests/liveworker/model_provider_test.go", "tests/liveworker/chat_roundtrip_test.go", "tests/liveworker/chat_reliability_test.go", "tests/liveworker/chat_performance_test.go", "cmd/verify-be/fixture_overlay.go"}
 	if selected == "files.performance" {
 		names = []string{"go.mod", "go.sum", "tests/livefiles/harness_test.go", "tests/livefiles/lifecycle_test.go", "tests/livefiles/performance_test.go", "cmd/verify-be/storage_fault.go", "cmd/verify-be/environment.go"}
 	}

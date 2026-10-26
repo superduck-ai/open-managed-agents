@@ -36,3 +36,12 @@ func TestChatSessionLookupError(t *testing.T) {
 		})
 	}
 }
+
+func TestModelRequestStartBudgetError(t *testing.T) {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	httpapi.WriteError(response, request, modelRequestStartError(fmt.Errorf("persist start: %w", db.ErrSessionBudgetReached)))
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "session budget reached:") {
+		t.Fatalf("预算拒绝被当成上游故障：status=%d body=%s", response.Code, response.Body.String())
+	}
+}

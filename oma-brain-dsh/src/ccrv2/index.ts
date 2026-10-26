@@ -15,3 +15,4 @@ export {
   type CcrHttpRequest,
   type CcrLeaseStatus,
 } from "./client.ts";
+export type { CcrPersistArgs, CcrPersistenceData, DshLogData } from "./persistence-contracts.ts";

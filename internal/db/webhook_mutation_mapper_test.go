@@ -40,9 +40,9 @@ func TestWebhookMutationMapperContracts(t *testing.T) {
 		{statement: sessionMapperUpdateByExternalIDStatement,
 			bound:  buildSessionMapperUpdateByExternalID(yourbatis.DialectPostgres, sessionUpdateParams{WorkspaceUUID: "workspace", ExternalID: "session", AgentSnapshot: []byte(`{}`), Metadata: []byte(`{}`)}),
 			wantID: "SessionMapper.UpdateByExternalID", wantKind: yourbatis.StatementUpdate,
-			wantArgumentNames:          []string{"params.AgentSnapshot", "params.Title", "params.Metadata", "params.UpdatedAt", "params.WorkspaceUUID", "params.ExternalID", "params.Title", "params.AgentSnapshot", "params.Metadata"},
-			wantSensitiveArgumentNames: []string{"params.AgentSnapshot", "params.Metadata", "params.AgentSnapshot", "params.Metadata"},
-			wantSQLFragments:           []string{"workspace_uuid = $5", "external_id = $6", "title IS DISTINCT FROM $7", "agent_snapshot IS DISTINCT FROM CAST($8 AS jsonb)", "(metadata - '_oma_runtime_user_uuid') IS DISTINCT FROM"}},
+			wantArgumentNames:          []string{"params.AgentSnapshot", "params.Title", "params.Metadata", "params.Budget", "params.BudgetReachedAt", "params.BudgetRemovedAt", "params.UpdatedAt", "params.WorkspaceUUID", "params.ExternalID", "params.Title", "params.Budget", "params.BudgetReachedAt", "params.BudgetRemovedAt", "params.AgentSnapshot", "params.Metadata"},
+			wantSensitiveArgumentNames: []string{"params.AgentSnapshot", "params.Metadata", "params.Budget", "params.Budget", "params.AgentSnapshot", "params.Metadata"},
+			wantSQLFragments:           []string{"workspace_uuid = $8", "external_id = $9", "title IS DISTINCT FROM $10", "budget IS DISTINCT FROM CAST($11 AS jsonb)", "budget_reached_at IS DISTINCT FROM $12", "budget_removed_at IS DISTINCT FROM $13", "agent_snapshot IS DISTINCT FROM CAST($14 AS jsonb)", "(metadata - '_oma_runtime_user_uuid') IS DISTINCT FROM"}},
 	} {
 		t.Run(tc.wantID, func(t *testing.T) { assertMapperBuilderContract(t, tc) })
 	}

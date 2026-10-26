@@ -8,7 +8,7 @@ export class AiSdkAdapter extends LlmAdapter {
   constructor(private readonly options: AiSdkAdapterOptions) { super(); }
 
   async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
-    return { provider, id: model, name: model };
+    return this.options.modelInfo?.(provider, model) ?? { provider, id: model, name: model };
   }
 
   async *stream(request: GenerateOptions): AsyncIterable<StreamChunk> {

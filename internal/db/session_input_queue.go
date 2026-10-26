@@ -21,7 +21,7 @@ func rejectPausedSessionInput(ctx context.Context, executor yourbatis.Executor, 
 	if err := json.Unmarshal(status.Payload, &payload); err != nil {
 		return err
 	}
-	if payload.StopReason != nil && (payload.StopReason.Type == "requires_action" || payload.StopReason.Type == "budget_reached") {
+	if payload.StopReason != nil && (payload.StopReason.Type == "requires_action" || payload.StopReason.Type == "budget_reached" && session.BudgetReachedAt != nil) {
 		return ErrSessionInputPaused
 	}
 	return nil

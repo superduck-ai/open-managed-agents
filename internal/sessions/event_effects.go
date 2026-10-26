@@ -23,6 +23,9 @@ func changedSessionFields(before, after db.Session) map[string]any {
 	if !agentsnapshot.SameRawJSON(before.AgentSnapshot, after.AgentSnapshot) {
 		fields["agent"] = agentsnapshot.RawJSONValue(after.AgentSnapshot, nil)
 	}
+	if !agentsnapshot.SameRawJSON(before.Budget, after.Budget) {
+		fields["budget"] = agentsnapshot.RawJSONValue(after.Budget, nil)
+	}
 	return fields
 }
 

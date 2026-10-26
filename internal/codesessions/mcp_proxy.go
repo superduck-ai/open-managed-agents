@@ -35,7 +35,7 @@ type mcpProxyTransportWrapper func(context.Context, SessionCredentialClaims, *ur
 func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(mcpNotForwardedHeader, "true")
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	claims, _, ok := h.authenticateRuntimeSession(w, r)
+	claims, _, ok := h.authorizeRuntimeSession(w, r)
 	if !ok {
 		return
 	}

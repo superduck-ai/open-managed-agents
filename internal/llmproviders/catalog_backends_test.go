@@ -9,7 +9,7 @@ import (
 )
 
 func TestModelBackendsRejectUnsupportedBackend(t *testing.T) {
-	_, err := NewCatalog([]db.LLMProvider{{Slug: "oma", APIBackend: "responses", ModelIDs: []string{"kimi-k2.5"}}}).Backends()
+	_, err := NewCatalog([]db.LLMProvider{{Slug: "oma", APIBackend: "responses", Models: db.LLMModels{{ID: "kimi-k2.5"}}}}).RuntimeModels()
 	if !errors.Is(err, ErrBackendMismatch) {
 		t.Fatalf("err = %v, want ErrBackendMismatch", err)
 	}
@@ -17,9 +17,9 @@ func TestModelBackendsRejectUnsupportedBackend(t *testing.T) {
 
 func TestModelBackendsKeyQualifiedAndUnambiguousLegacyIDs(t *testing.T) {
 	backends, err := NewCatalog([]db.LLMProvider{
-		{Slug: "oma", APIBackend: ChatCompletions, ModelIDs: []string{"kimi-k2.5", "deepseek-ai/deepseek-v4.1-flash"}},
-		{Slug: "default", APIBackend: Messages, ModelIDs: []string{"kimi-k2.5", "glm-5"}},
-	}).Backends()
+		{Slug: "oma", APIBackend: ChatCompletions, Models: db.LLMModels{{ID: "kimi-k2.5"}, {ID: "deepseek-ai/deepseek-v4.1-flash"}}},
+		{Slug: "default", APIBackend: Messages, Models: db.LLMModels{{ID: "kimi-k2.5"}, {ID: "glm-5"}}},
+	}).RuntimeModels()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,15 @@ func TestModelBackendsKeyQualifiedAndUnambiguousLegacyIDs(t *testing.T) {
 		"default/glm-5":                       Messages,
 		"glm-5":                               Messages,
 	}
-	if !maps.Equal(backends, want) {
+	if !maps.Equal(runtimeBackends(backends), want) {
 		t.Fatalf("backends = %#v, want %#v", backends, want)
 	}
+}
+
+func runtimeBackends(models map[string]RuntimeModel) map[string]string {
+	result := make(map[string]string)
+	for id, model := range models {
+		result[id] = model.APIBackend
+	}
+	return result
 }

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
@@ -25,6 +27,7 @@ import (
 )
 
 type environment struct {
+	apiPort                                    int
 	backendRef, backendCommit, diagnosticsAddr string
 	diagnostics                                bool
 	files                                      bool
@@ -42,10 +45,10 @@ type environment struct {
 }
 
 func newEnvironment(root, directory, runID string) *environment {
-	return &environment{root: root, directory: directory, runID: runID, compose: []string{"docker", "compose", "-p", runID, "-f", filepath.Join(directory, "compose.json")}}
+	return &environment{apiPort: 18080, root: root, directory: directory, runID: runID, compose: []string{"docker", "compose", "-p", runID, "-f", filepath.Join(directory, "compose.json")}}
 }
 func (e *environment) env() []string {
-	values := append(isolatedModelEnvironment(os.Environ()), "CONFIG_FILE="+filepath.Join(e.directory, "config.json"), "LIVE_WORKER_API_URL=http://127.0.0.1:18080", "LIVE_WORKER_REAL_CLAUDE=1", "TEST_API_KEY=sk-ant-local-default", "VERIFY_BE_SERVER="+filepath.Join(e.directory, "server"), "VERIFY_BE_PROFILE_READY="+filepath.Join(e.directory, "profile.ready"), "VERIFY_BE_RUN_ID="+e.runID, "VERIFY_BE_API_URL=http://127.0.0.1:18080")
+	values := append(isolatedModelEnvironment(os.Environ()), "CONFIG_FILE="+filepath.Join(e.directory, "config.json"), "LIVE_WORKER_API_URL=http://"+e.apiAddress(), "LIVE_WORKER_REAL_CLAUDE=1", "TEST_API_KEY=sk-ant-local-default", "VERIFY_BE_SERVER="+filepath.Join(e.directory, "server"), "VERIFY_BE_PROFILE_READY="+filepath.Join(e.directory, "profile.ready"), "VERIFY_BE_RUN_ID="+e.runID, "VERIFY_BE_API_URL=http://"+e.apiAddress())
 	if e.storageFault != nil {
 		values = append(values, "VERIFY_BE_STORAGE_CONTROL="+e.storageFault.control.URL)
 	}
@@ -80,14 +83,14 @@ func (e *environment) writeConfig(ctx context.Context) error {
 	}
 	config := map[string]any{
 		"environment_runner": map[string]bool{"enabled": false},
-		"env":                "dev", "server": map[string]string{"addr": "127.0.0.1:18080"},
+		"env":                "dev", "server": map[string]string{"addr": e.apiAddress()},
 		"database":     map[string]string{"url": "postgresql://verify:verify@127.0.0.1:" + ports["postgres"] + "/verify?sslmode=disable"},
 		"redis":        map[string]string{"url": "redis://127.0.0.1:" + ports["redis"]},
 		"nats":         map[string]string{"url": fmt.Sprintf("nats://127.0.0.1:%s,nats://127.0.0.1:%s,nats://127.0.0.1:%s", ports["nats1"], ports["nats2"], ports["nats3"])},
-		"tunnel":       map[string]string{"public_base_url": "http://127.0.0.1:18080"},
+		"tunnel":       map[string]string{"public_base_url": "http://" + e.apiAddress()},
 		"storage":      map[string]any{"type": "s3", "s3": map[string]any{"endpoint": "http://127.0.0.1:" + ports["minio"], "bucket": "verify-be", "region": "us-east-1", "access_key_id": "verifychat", "secret_access_key": "verifychat-local-only", "force_path_style": true}},
 		"vault":        map[string]any{"master_key": map[string]any{"version": 1, "kek": base64.StdEncoding.EncodeToString(kek)}},
-		"code_session": map[string]string{"jwt_signing_private_key_file": filepath.Join(e.directory, "jwt.pem")},
+		"code_session": map[string]string{"jwt_signing_private_key_file": filepath.Join(e.directory, "jwt.pem"), "upstream_proxy_ca_key_file": filepath.Join(e.directory, "proxy-ca.pem")},
 	}
 	if e.brain {
 		if err := e.writeBrainClaimToken(); err != nil {
@@ -116,7 +119,7 @@ func (e *environment) writeConfig(ctx context.Context) error {
 			return err
 		}
 		e.diagnosticsAddr, e.diagnosticsFile = addr, file
-		config["server"] = map[string]string{"addr": "127.0.0.1:18080", "diagnostics_addr": e.diagnosticsAddr}
+		config["server"] = map[string]string{"addr": e.apiAddress(), "diagnostics_addr": e.diagnosticsAddr}
 	}
 	if err := writeJSON(filepath.Join(e.directory, "config.json"), config); err != nil {
 		return err
@@ -125,11 +128,20 @@ func (e *environment) writeConfig(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	encoded, err := x509.MarshalPKCS8PrivateKey(key)
+	proxyKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(e.directory, "jwt.pem"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: encoded}), 0o600)
+	for name, signingKey := range map[string]any{"jwt.pem": key, "proxy-ca.pem": proxyKey} {
+		encoded, err := x509.MarshalPKCS8PrivateKey(signingKey)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(e.directory, name), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: encoded}), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (e *environment) writeBrainClaimToken() error {
 	token := make([]byte, 32)
@@ -205,7 +217,7 @@ func (e *environment) ready(ctx context.Context) error {
 		case <-e.serverDone:
 			return errors.New("backend exited before readiness; see server.log")
 		case <-tick.C:
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:18080/readyz", nil)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+e.apiAddress()+"/readyz", nil)
 			if err != nil {
 				return err
 			}
@@ -267,7 +279,7 @@ func (e *environment) close() []string {
 			failures = append(failures, "could not confirm container cleanup: "+filter)
 		}
 	}
-	for _, name := range []string{"config.json", "jwt.pem", "brain-claim-token", "server", "server.pid"} {
+	for _, name := range []string{"config.json", "jwt.pem", "proxy-ca.pem", "brain-claim-token", "server", "server.pid"} {
 		if err := os.Remove(filepath.Join(e.directory, name)); err != nil && !os.IsNotExist(err) {
 			failures = append(failures, "could not remove "+name)
 		}
@@ -278,4 +290,8 @@ func (e *environment) close() []string {
 		}
 	}
 	return failures
+}
+
+func (e *environment) apiAddress() string {
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(e.apiPort))
 }

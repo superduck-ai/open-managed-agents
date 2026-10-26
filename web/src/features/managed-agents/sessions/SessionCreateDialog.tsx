@@ -15,6 +15,9 @@ import { Input } from '../../../shared/ui/input';
 import { Label } from '../../../shared/ui/label';
 import { AgentSelectField } from '../agents/AgentSelectField';
 import { LockedAgentReferenceField, ManagedSelectField } from '../components/common';
+import { BudgetField } from '../resources/budget-field';
+import { entityBudgetUsdInput } from '../resources/budget';
+import { budgetErrorMessage } from '../resources/budget-errors';
 import { ManagedResourceFields } from '../resources/ManagedResourceFields';
 import { managedEntityDialogCanSubmit } from '../resources/entity-dialog-ready';
 import { initialFormValues } from '../resources/model';
@@ -169,6 +172,7 @@ export function SessionCreateDialog({
                 workspaceId={workspaceId}
                 memoryStores={references.memoryStores}
               />
+              {!entity || entityBudgetUsdInput(entity) ? <BudgetField values={values} onChange={patch} /> : null}
             </fieldset>
             {references.error ? (
               <Alert variant="destructive">
@@ -182,7 +186,7 @@ export function SessionCreateDialog({
             ) : null}
             {submitError ? (
               <Alert variant="destructive">
-                <AlertDescription>{submitError}</AlertDescription>
+                <AlertDescription>{budgetErrorMessage(submitError, msg)}</AlertDescription>
               </Alert>
             ) : null}
           </div>

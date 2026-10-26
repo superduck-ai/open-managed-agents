@@ -1,19 +1,9 @@
-import {
-  BarChart3,
-  CheckCircle2,
-  ChevronDown,
-  CircleDollarSign,
-  Clock3,
-  ExternalLink,
-  Gauge,
-  Info,
-  Logs,
-  RefreshCw,
-  Search,
-  Server,
-  SlidersHorizontal,
-} from 'lucide-react';
-import { type ComponentType, type ReactNode, useState } from 'react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
+import { ExternalLink } from 'lucide-react';
+export { UsagePage, CostPage } from './MeteredAnalyticsPage';
+import { AnalyticsPageRoot, FilterBar, FilterControl, MetricPanel } from './analytics-chrome';
+import { ChevronDown, Clock3, Gauge, Logs, RefreshCw, Search, Server, SlidersHorizontal } from 'lucide-react';
+import { useState } from 'react';
 import { cn } from '@/shared/lib/utils';
 import { Button, ButtonLink } from '@/shared/ui/button';
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card';
@@ -29,13 +19,11 @@ import {
 } from '@/shared/ui/dropdown-menu';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/shared/ui/empty';
 import { Input } from '@/shared/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 import { useI18n } from '../../shared/i18n';
 import { defaultWorkspace } from '../../shared/workspaces/api';
 import { useWorkspace } from '../../shared/workspaces/context';
 
-type IconComponent = ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
 type FilterOption = { value: string; label: string };
 
 const modelRows = [
@@ -49,111 +37,12 @@ const analyticsModelOptions = modelRows.map((row) => ({
   label: row.name,
 }));
 
-const usageMonthOptions: FilterOption[] = [
-  { value: '2026-06', label: 'June 2026' },
-  { value: '2026-05', label: 'May 2026' },
-  { value: '2026-04', label: 'April 2026' },
-];
-
 const linesPerPageOptions: FilterOption[] = [
   { value: '10', label: '10' },
   { value: '25', label: '25' },
   { value: '50', label: '50' },
   { value: '100', label: '100' },
 ];
-
-export function UsagePage() {
-  const { msg } = useI18n();
-  const workspaceLabel = useWorkspaceLabel();
-  const workspaceOptions: FilterOption[] = [
-    { value: 'all', label: msg('common.all', 'All') },
-    { value: 'default', label: workspaceLabel },
-  ];
-  const viewByOptions: FilterOption[] = [
-    { value: 'month', label: msg('analytics.filter.month', 'Month') },
-    { value: 'week', label: msg('analytics.filter.week', 'Week') },
-    { value: 'day', label: msg('analytics.filter.day', 'Day') },
-  ];
-  const serviceAccountOptions: FilterOption[] = [
-    { value: 'all', label: msg('common.all', 'All') },
-    { value: 'batch-runner', label: 'Batch runner' },
-    { value: 'ops-bot', label: 'Ops bot' },
-  ];
-  const modelOptions: FilterOption[] = [{ value: 'all', label: msg('common.all', 'All') }, ...analyticsModelOptions];
-  const groupByOptions: FilterOption[] = [
-    { value: 'model', label: msg('analytics.table.model', 'Model') },
-    { value: 'workspace', label: msg('analytics.filter.workspace', 'Workspace') },
-    { value: 'service-account', label: msg('analytics.filter.serviceAccount', 'Service account') },
-  ];
-  const [filters, setFilters] = useState({
-    workspace: 'all',
-    viewBy: 'month',
-    month: '2026-06',
-    serviceAccount: 'all',
-    model: 'all',
-    groupBy: 'model',
-  });
-
-  return (
-    <AnalyticsPageRoot title={msg('analytics.usage.title', 'Usage')} icon={BarChart3}>
-      <FilterBar>
-        <FilterControl
-          label={msg('analytics.filter.workspace', 'Workspace')}
-          value={filters.workspace}
-          options={workspaceOptions}
-          onValueChange={(workspace) => setFilters((current) => ({ ...current, workspace }))}
-        />
-        <FilterControl
-          label={msg('analytics.filter.viewBy', 'View by')}
-          value={filters.viewBy}
-          options={viewByOptions}
-          onValueChange={(viewBy) => setFilters((current) => ({ ...current, viewBy }))}
-        />
-        <FilterControl
-          value={filters.month}
-          options={usageMonthOptions}
-          onValueChange={(month) => setFilters((current) => ({ ...current, month }))}
-        />
-        <FilterControl
-          label={msg('analytics.filter.serviceAccount', 'Service account')}
-          value={filters.serviceAccount}
-          options={serviceAccountOptions}
-          onValueChange={(serviceAccount) => setFilters((current) => ({ ...current, serviceAccount }))}
-        />
-        <FilterControl
-          label={msg('analytics.filter.model', 'Model')}
-          value={filters.model}
-          options={modelOptions}
-          onValueChange={(model) => setFilters((current) => ({ ...current, model }))}
-        />
-        <FilterControl
-          label={msg('analytics.filter.groupBy', 'Group by')}
-          value={filters.groupBy}
-          options={groupByOptions}
-          onValueChange={(groupBy) => setFilters((current) => ({ ...current, groupBy }))}
-        />
-      </FilterBar>
-
-      <div className="grid gap-3 md:grid-cols-3">
-        <MetricPanel title={msg('analytics.usage.totalTokensIn', 'Total tokens in')} value="0" />
-        <MetricPanel title={msg('analytics.usage.totalTokensOut', 'Total tokens out')} value="0" />
-        <MetricPanel title={msg('analytics.usage.totalWebSearches', 'Total web searches')} value="0" />
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
-        <ChartPanel title={msg('analytics.usage.tokenUsage', 'Token usage')}>
-          <EmptyChart label={msg('common.noData', 'No data')} />
-        </ChartPanel>
-        <SideNotice
-          title={msg('analytics.usage.noticeTitle', 'Rate limits now have a dedicated dashboard.')}
-          body={msg('analytics.usage.noticeBody', 'Track current usage against request and token limits by model.')}
-          href="/usage/limits"
-          linkLabel={msg('analytics.usage.noticeLink', 'View rate limits')}
-        />
-      </div>
-    </AnalyticsPageRoot>
-  );
-}
 
 export function CachingPage() {
   const { msg } = useI18n();
@@ -372,81 +261,6 @@ export function RateLimitsPage() {
   );
 }
 
-export function CostPage() {
-  const { msg } = useI18n();
-  const routeWorkspaceId = getWorkspaceIdFromPath();
-  const workspaceLabel = useWorkspaceLabel(routeWorkspaceId);
-  const allWorkspacesLabel = msg('workspace.all', 'All workspaces');
-  const workspaceOptions: FilterOption[] = routeWorkspaceId
-    ? [{ value: 'current', label: workspaceLabel }]
-    : [
-        { value: 'all-workspaces', label: allWorkspacesLabel },
-        { value: 'default', label: workspaceLabel },
-      ];
-  const groupByOptions: FilterOption[] = [
-    { value: 'model', label: msg('analytics.table.model', 'Model') },
-    { value: 'workspace', label: msg('analytics.filter.workspace', 'Workspace') },
-    { value: 'service-account', label: msg('analytics.filter.serviceAccount', 'Service account') },
-  ];
-  const modelOptions: FilterOption[] = [{ value: 'all', label: msg('common.all', 'All') }, ...analyticsModelOptions];
-  const rangeOptions: FilterOption[] = [
-    { value: 'last-7-days', label: msg('analytics.filter.last7Days', 'Last 7 days') },
-    { value: 'last-30-days', label: msg('analytics.filter.last30Days', 'Last 30 days') },
-    { value: 'month-to-date', label: msg('analytics.filter.monthToDate', 'Month to date') },
-  ];
-  const [filters, setFilters] = useState({
-    workspace: routeWorkspaceId ? 'current' : 'all-workspaces',
-    groupBy: 'model',
-    model: 'all',
-    range: 'month-to-date',
-  });
-
-  return (
-    <AnalyticsPageRoot title={msg('analytics.cost.title', 'Cost')} icon={CircleDollarSign}>
-      <FilterBar>
-        <FilterControl
-          label={msg('analytics.filter.workspace', 'Workspace')}
-          value={filters.workspace}
-          options={workspaceOptions}
-          disabled={Boolean(routeWorkspaceId)}
-          onValueChange={(workspace) => setFilters((current) => ({ ...current, workspace }))}
-        />
-        <FilterControl
-          label={msg('analytics.filter.groupBy', 'Group by')}
-          value={filters.groupBy}
-          options={groupByOptions}
-          onValueChange={(groupBy) => setFilters((current) => ({ ...current, groupBy }))}
-        />
-        <FilterControl
-          label={msg('analytics.filter.model', 'Model')}
-          value={filters.model}
-          options={modelOptions}
-          onValueChange={(model) => setFilters((current) => ({ ...current, model }))}
-        />
-        <FilterControl
-          label={msg('analytics.filter.range', 'Range')}
-          value={filters.range}
-          options={rangeOptions}
-          onValueChange={(range) => setFilters((current) => ({ ...current, range }))}
-        />
-      </FilterBar>
-
-      <div className="grid gap-3 xl:grid-cols-3">
-        <MetricPanel title={msg('analytics.cost.totalTokenCost', 'Total token cost')} value="USD 0.00" />
-        <MetricPanel title={msg('analytics.cost.totalWebSearchCost', 'Total web search cost')} value="USD 0.00" />
-        <MetricPanel
-          title={msg('analytics.cost.totalCodeExecutionCost', 'Total code execution cost')}
-          value="USD 0.00"
-        />
-      </div>
-
-      <ChartPanel title={msg('analytics.cost.dailyTokenCost', 'Daily token cost')}>
-        <EmptyChart label={msg('common.noData', 'No data')} />
-      </ChartPanel>
-    </AnalyticsPageRoot>
-  );
-}
-
 export function LogsPage() {
   const { msg } = useI18n();
   const routeWorkspaceId = getWorkspaceIdFromPath();
@@ -640,83 +454,6 @@ export function LogsPage() {
   );
 }
 
-function AnalyticsPageRoot({
-  title,
-  icon: Icon,
-  children,
-}: {
-  title: string;
-  icon: IconComponent;
-  children: ReactNode;
-}) {
-  return (
-    <section className="space-y-5" data-testid="analytics-page">
-      <div className="flex items-center gap-3">
-        <div className="grid size-9 place-items-center rounded-lg border border-border bg-secondary text-foreground">
-          <Icon className="size-4.5" aria-hidden />
-        </div>
-        <h1 className="text-[30px] font-semibold leading-tight text-foreground">{title}</h1>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function FilterBar({ children, compact = false }: { children: ReactNode; compact?: boolean }) {
-  return (
-    <div className={compact ? 'flex flex-wrap items-center gap-2' : 'flex flex-wrap items-center gap-2'}>
-      {children}
-    </div>
-  );
-}
-
-function FilterControl({
-  label,
-  value,
-  options,
-  disabled = false,
-  onValueChange,
-}: {
-  label?: string;
-  value: string;
-  options: FilterOption[];
-  disabled?: boolean;
-  onValueChange: (value: string) => void;
-}) {
-  const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
-  const ariaLabel = label ? `${label}: ${selectedLabel}` : selectedLabel;
-
-  return (
-    <Select<string>
-      value={value}
-      items={options}
-      disabled={disabled}
-      onValueChange={(nextValue) => {
-        if (nextValue !== null) {
-          onValueChange(nextValue);
-        }
-      }}
-    >
-      <SelectTrigger
-        aria-label={ariaLabel}
-        className="h-9 border-border bg-background px-2.5 text-foreground shadow-sm"
-      >
-        <SelectValue>
-          {label ? <span className="text-muted-foreground/70">{label}</span> : null}
-          <span>{selectedLabel}</span>
-        </SelectValue>
-      </SelectTrigger>
-      <SelectContent alignItemWithTrigger={false}>
-        {options.map((option) => (
-          <SelectItem key={option.value} value={option.value} label={option.label}>
-            {option.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
 function LogsFiltersMenu({
   requestTypeOptions,
   selectedRequestTypes,
@@ -818,88 +555,6 @@ function LogsFiltersMenu({
 
 function toggleMultiSelectFilterValue(selectedValues: string[], option: string, checked: boolean) {
   return checked ? selectedValues.filter((item) => item !== option) : [...selectedValues, option];
-}
-
-function MetricPanel({ title, value, detail }: { title: string; value: string; detail?: string }) {
-  return (
-    <Card role="article" className="min-h-[126px] gap-0 rounded-lg p-5">
-      <CardHeader className="p-0">
-        <CardTitle className="flex items-center gap-2 text-sm font-medium text-foreground">
-          {title}
-          <Info className="size-4 text-muted-foreground/70" aria-hidden />
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-0">
-        <div className="mt-6 text-[30px] font-semibold leading-none text-foreground">{value}</div>
-        {detail ? <div className="mt-3 text-sm text-muted-foreground">{detail}</div> : null}
-      </CardContent>
-    </Card>
-  );
-}
-
-function ChartPanel({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <Card className="gap-0 rounded-lg p-0">
-      <CardHeader className="border-b border-border px-5 py-4">
-        <CardTitle className="flex items-center gap-2 text-sm font-semibold text-foreground">
-          {title}
-          <Info className="size-4 text-muted-foreground/70" aria-hidden />
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-0">{children}</CardContent>
-    </Card>
-  );
-}
-
-function EmptyChart({ label }: { label: string }) {
-  return (
-    <div className="relative h-[360px] overflow-hidden px-5 py-5">
-      <div className="absolute inset-x-5 top-5 bottom-10 grid grid-rows-5">
-        {Array.from({ length: 5 }).map((_, index) => (
-          <div key={index} className="border-b border-border" />
-        ))}
-      </div>
-      <div className="absolute inset-x-5 bottom-10 h-px bg-border" />
-      <div className="absolute inset-0 grid place-items-center text-sm text-muted-foreground/70">{label}</div>
-      <div className="absolute bottom-4 left-5 right-5 flex justify-between text-xs text-muted-foreground/70">
-        <span>Jun 1</span>
-        <span>Jun 8</span>
-        <span>Jun 15</span>
-        <span>Jun 22</span>
-        <span>Jun 30</span>
-      </div>
-    </div>
-  );
-}
-
-function SideNotice({
-  title,
-  body,
-  href,
-  linkLabel,
-}: {
-  title: string;
-  body: string;
-  href: string;
-  linkLabel: string;
-}) {
-  return (
-    <Card role="note" className="rounded-lg p-5">
-      <div className="flex items-start gap-3">
-        <div className="grid size-8 shrink-0 place-items-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-          <CheckCircle2 className="size-4" aria-hidden />
-        </div>
-        <div>
-          <h2 className="text-sm font-semibold leading-5 text-foreground">{title}</h2>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">{body}</p>
-          <ButtonLink href={href} variant="link" className="mt-4 h-auto gap-1 p-0 font-medium">
-            {linkLabel}
-            <ExternalLink className="size-3.5" aria-hidden />
-          </ButtonLink>
-        </div>
-      </div>
-    </Card>
-  );
 }
 
 function LimitCell({ limit }: { limit: string }) {

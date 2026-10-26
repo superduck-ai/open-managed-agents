@@ -1,11 +1,7 @@
 import { z } from 'zod';
-import {
-  type AgentApiResponse,
-  type AgentModelInput,
-  type AgentMultiagentInput,
-  type AgentSkillInput,
-  type CreateAgentInput,
-} from '../types';
+import { multiagentSchema } from './subagents-model';
+export { selectedSubagentReferences, toggleSubagent } from './subagents-model';
+import { type AgentModelInput, type AgentSkillInput, type CreateAgentInput } from '../types';
 import { cloneJsonValue, toRecord } from '../utils';
 import {
   isHTTPMCPServerURL,
@@ -57,33 +53,6 @@ const modelSchema = z.union([
     })
     .strict(),
 ]);
-
-const agentReferenceSchema = z.union([
-  z
-    .object({
-      type: z.literal('agent'),
-      id: z.string().trim().min(1),
-      version: z.number().int().min(1),
-    })
-    .strict(),
-  z.object({ type: z.literal('self') }).strict(),
-]);
-
-const multiagentSchema = z
-  .object({
-    type: z.literal('coordinator'),
-    agents: z.array(agentReferenceSchema).min(1).max(20),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    const ids = value.agents.filter((agent) => agent.type === 'agent').map((agent) => agent.id);
-    if (new Set(ids).size !== ids.length) {
-      context.addIssue({ code: 'custom', message: 'Subagents must be unique.', path: ['agents'] });
-    }
-    if (value.agents.filter((agent) => agent.type === 'self').length > 1) {
-      context.addIssue({ code: 'custom', message: 'Self may only be referenced once.', path: ['agents'] });
-    }
-  });
 
 const skillSchema = z
   .object({
@@ -303,22 +272,6 @@ export function normalizeCreateAgentDraft(input: CreateAgentInput): CreateAgentI
 export function updateDraftModelID(model: AgentModelInput, id: string): AgentModelInput {
   const nextID = id.trim();
   return typeof model === 'string' ? nextID : { ...model, id: nextID };
-}
-
-export function selectedSubagentReferences(draft: CreateAgentInput): AgentMultiagentInput['agents'] {
-  return draft.multiagent?.agents ?? [];
-}
-
-export function toggleSubagent(draft: CreateAgentInput, agent: AgentApiResponse): CreateAgentInput {
-  const current = selectedSubagentReferences(draft);
-  const exists = current.some((reference) => reference.type === 'agent' && reference.id === agent.id);
-  if (!exists && current.length >= 20) {
-    return draft;
-  }
-  const agents = exists
-    ? current.filter((reference) => reference.type !== 'agent' || reference.id !== agent.id)
-    : [...current, { type: 'agent' as const, id: agent.id, version: agent.version }];
-  return { ...draft, multiagent: agents.length ? { type: 'coordinator', agents } : null };
 }
 
 export function selectedSkillReferences(draft: CreateAgentInput): AgentSkillInput[] {

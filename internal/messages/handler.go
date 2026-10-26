@@ -9,11 +9,13 @@ import (
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/metering"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
@@ -70,6 +72,11 @@ type flushingResponseWriter struct {
 func NewHandler(database *db.DB, secretService *secrets.Service, codeSessionService *codesessions.Service, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
 	return &Handler{codeSessions: codeSessionService, database: database, secrets: secretService, client: llmproviders.NewHTTPClient(0), logger: logger}
+}
+
+func (h *Handler) WithMetering(calculator *billing.Calculator) *Handler {
+	h.client.Transport = &metering.Transport{Base: h.client.Transport, Store: h.database, Calculator: calculator, Source: "api", Logger: h.logger}
+	return h
 }
 
 // Create 处理 canonical POST /v1/messages，并以有界内存完成请求校验和响应流式转发。
@@ -143,7 +150,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return
 	}
-	upstreamRequest, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, bytes.NewReader(body))
+	upstreamRequest, err := http.NewRequestWithContext(metering.WithModel(r.Context(), upstream.QualifiedModelID), http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "build messages upstream request", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
@@ -159,8 +166,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	}
 	request, err := h.beginModelRequest(r, principal, upstream.QualifiedModelID)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "start model request", "error", err)
-		httpapi.WriteError(w, r, upstreamUnavailableError())
+		if errors.Is(err, db.ErrSessionBudgetReached) {
+			w.Header().Set("X-Should-Retry", "false")
+		} else {
+			h.logger.ErrorContext(r.Context(), "start model request", "error", err)
+		}
+		httpapi.WriteError(w, r, modelRequestStartError(err))
 		return
 	}
 	h.proxyModelRequest(w, r, upstreamRequest, request)

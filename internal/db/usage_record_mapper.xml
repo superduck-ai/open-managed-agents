@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="UsageRecordMapper">
+ <insert id="Insert" result="exec">
+ INSERT INTO usage_records (price_snapshot, finalized, organization_uuid, workspace_uuid, attempt_id, source, session_uuid, session_external_id, api_key_uuid, user_uuid, model, started_at, ended_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cache_write_5m_tokens, cache_write_1h_tokens, search_requests, model_cents, search_cents, complete, version)
+ VALUES (#{record.PriceSnapshot}, #{record.Finalized}, #{record.OrganizationUUID}, #{record.WorkspaceUUID}, #{record.AttemptID}, #{record.Source}, #{record.SessionUUID}, #{record.SessionExternalID}, COALESCE(#{record.APIKeyUUID}, (SELECT s.created_by_api_key_uuid FROM sessions s WHERE s.organization_uuid = #{record.OrganizationUUID} AND s.workspace_uuid = #{record.WorkspaceUUID} AND s.uuid = #{record.SessionUUID})), #{record.UserUUID}, #{record.Model}, #{record.StartedAt}, #{record.EndedAt}, #{record.InputTokens}, #{record.OutputTokens}, #{record.CacheReadTokens}, #{record.CacheWriteTokens}, #{record.CacheWrite5mTokens}, #{record.CacheWrite1hTokens}, #{record.SearchRequests}, #{record.ModelCents}, #{record.SearchCents}, #{record.Complete}, #{record.Version})
+ ON CONFLICT (workspace_uuid, source, attempt_id) DO UPDATE SET model = EXCLUDED.model, ended_at = EXCLUDED.ended_at, input_tokens = EXCLUDED.input_tokens, output_tokens = EXCLUDED.output_tokens, cache_read_tokens = EXCLUDED.cache_read_tokens, cache_write_tokens = EXCLUDED.cache_write_tokens, cache_write_5m_tokens = EXCLUDED.cache_write_5m_tokens, cache_write_1h_tokens = EXCLUDED.cache_write_1h_tokens, search_requests = EXCLUDED.search_requests, model_cents = EXCLUDED.model_cents, search_cents = EXCLUDED.search_cents, complete = EXCLUDED.complete, finalized = EXCLUDED.finalized WHERE NOT usage_records.finalized
+ </insert>
+ <select id="Aggregate" resultType="usageAggregateRow">
+ SELECT to_char(ended_at AT TIME ZONE #{query.Timezone}, 'YYYY-MM-DD') AS day,
+ model, workspace_uuid, source, COALESCE(CAST(api_key_uuid AS text), '') AS api_key_uuid,
+ COUNT(*) AS requests,
+ CAST(COALESCE(SUM(input_tokens), 0) AS bigint) AS input_tokens,
+ CAST(COALESCE(SUM(output_tokens), 0) AS bigint) AS output_tokens,
+ CAST(COALESCE(SUM(cache_read_tokens), 0) AS bigint) AS cache_read_tokens,
+ CAST(COALESCE(SUM(cache_write_tokens), 0) AS bigint) AS cache_write_tokens,
+ CAST(COALESCE(SUM(cache_write_5m_tokens), 0) AS bigint) AS cache_write_5m_tokens,
+ CAST(COALESCE(SUM(cache_write_1h_tokens), 0) AS bigint) AS cache_write_1h_tokens,
+ CAST(COALESCE(SUM(search_requests), 0) AS bigint) AS search_requests,
+ CAST(COALESCE(SUM(model_cents), 0) AS bigint) AS model_cents,
+ CAST(COALESCE(SUM(search_cents), 0) AS bigint) AS search_cents,
+ COUNT(*) FILTER (WHERE model_cents IS NULL) AS unpriced,
+ COUNT(*) FILTER (WHERE NOT complete) AS incomplete
+ FROM usage_records
+ WHERE organization_uuid = #{query.OrganizationUUID}
+ AND workspace_uuid IN <foreach collection="query.WorkspaceUUIDs" item="workspace" open="(" separator="," close=")">#{workspace}</foreach>
+ AND ended_at >= #{query.Start} AND ended_at &lt; #{query.End}
+ AND recorded_at &lt;= #{query.AsOf}
+ AND finalized
+ <if test="query.Model != ''">AND model = #{query.Model}</if>
+ <if test="query.Source != ''">AND source = #{query.Source}</if>
+ <if test="query.SessionID != ''">AND session_external_id = #{query.SessionID}</if>
+ <if test="query.APIKeyUUID != ''">AND api_key_uuid = #{query.APIKeyUUID}</if>
+ GROUP BY 1, 2, 3, 4, 5
+ ORDER BY 1, 2, 3, 4, 5
+ </select>
+ <select id="ListUnmeteredSessionEvents" resultType="sessionEventRow">
+ SELECT e.uuid, e.external_id, e.organization_uuid, e.workspace_uuid, e.session_uuid,
+ e.session_external_id, e.thread_uuid, e.thread_external_id, e.event_type, e.payload,
+ e.payload_blob_uuid, e.tool_use_id, e.processed_at, e.created_at, e.deleted_at
+ FROM session_events e
+ WHERE e.event_type = 'span.model_request_end'
+ AND e.deleted_at IS NULL
+ AND NOT EXISTS (SELECT 1 FROM usage_records u WHERE u.organization_uuid = e.organization_uuid
+ AND u.workspace_uuid = e.workspace_uuid AND u.source = 'managed_agents' AND u.attempt_id = e.external_id)
+ ORDER BY e.created_at, e.uuid LIMIT #{limit}
+ </select>
+ <select id="Dimensions" resultType="usageDimensionRow">
+ SELECT model, COALESCE(CAST(api_key_uuid AS text), '') AS api_key_uuid, MIN(ended_at) AS first_seen
+ FROM usage_records
+ WHERE organization_uuid = #{query.OrganizationUUID}
+ AND workspace_uuid IN <foreach collection="query.WorkspaceUUIDs" item="workspace" open="(" separator="," close=")">#{workspace}</foreach>
+ AND finalized
+ GROUP BY model, api_key_uuid ORDER BY model, api_key_uuid
+ </select>
+</mapper>

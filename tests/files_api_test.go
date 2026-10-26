@@ -1297,7 +1297,7 @@ func seedTestLLMProviderForWorkspace(
 		Slug:             llmproviders.NextDefaultSlug(slugs),
 		BaseURL:          baseURL,
 		APIKeyLast4:      apiKey[len(apiKey)-4:],
-		ModelIDs:         append([]string(nil), modelIDs...),
+		Models:           db.LLMModels{}.WithIDs(modelIDs),
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}

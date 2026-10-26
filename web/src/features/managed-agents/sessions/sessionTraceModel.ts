@@ -1809,7 +1809,15 @@ export function sessionSubagentThreadId(event: QuickstartSessionEvent) {
   const metadata = toRecord(event.metadata);
   const sessionThread = toRecord(event.session_thread);
   const subagent = toRecord(event.subagent);
+  const type = sessionEventType(event);
+  const peerCandidates =
+    type === 'agent.thread_message_sent'
+      ? [event.to_session_thread_id, data?.to_session_thread_id, metadata?.to_session_thread_id]
+      : type === 'agent.thread_message_received'
+        ? [event.from_session_thread_id, data?.from_session_thread_id, metadata?.from_session_thread_id]
+        : [];
   const candidates = [
+    ...peerCandidates,
     event.session_thread_id,
     event.from_session_thread_id,
     event.to_session_thread_id,
@@ -1839,7 +1847,15 @@ export function sessionSubagentName(event: QuickstartSessionEvent) {
   const sessionThread = toRecord(event.session_thread);
   const subagent = toRecord(event.subagent);
   const agent = toRecord(event.agent);
+  const type = sessionEventType(event);
+  const peerCandidates =
+    type === 'agent.thread_message_sent'
+      ? [event.to_agent_name, data?.to_agent_name, metadata?.to_agent_name]
+      : type === 'agent.thread_message_received'
+        ? [event.from_agent_name, data?.from_agent_name, metadata?.from_agent_name]
+        : [];
   const candidates = [
+    ...peerCandidates,
     event.agent_name,
     event.from_agent_name,
     event.to_agent_name,

@@ -3,7 +3,7 @@ import { useMemo, type ReactNode } from 'react';
 import { defaultWorkspace, type Workspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
 import { resetTestDom } from '../../test/setup';
-import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from './AnalyticsPages';
+import { CachingPage, LogsPage, RateLimitsPage } from './AnalyticsPages';
 
 const testingLibrary = await import('@testing-library/react');
 const { cleanup, fireEvent, render, screen, waitFor } = testingLibrary;
@@ -22,47 +22,6 @@ function selectOption(name: string) {
 }
 
 describe('Analytics pages', () => {
-  test('renders the official usage analytics empty dashboard', () => {
-    resetTestDom('https://oma.duck.ai/usage');
-
-    renderWithWorkspace(<UsagePage />);
-
-    expect(screen.getByRole('heading', { name: 'Usage' })).toBeTruthy();
-    expect(screen.getByText('Workspace')).toBeTruthy();
-    expect(screen.getByText('June 2026')).toBeTruthy();
-    expect(screen.getByText('Total tokens in')).toBeTruthy();
-    expect(screen.getByText('Total tokens out')).toBeTruthy();
-    expect(screen.getByText('Total web searches')).toBeTruthy();
-    expect(screen.getByText('Token usage')).toBeTruthy();
-    expect(screen.getByText('Rate limits now have a dedicated dashboard.')).toBeTruthy();
-    const viewRateLimits = screen.getByRole('link', { name: /View rate limits/i });
-    expect(viewRateLimits.getAttribute('href')).toBe('/usage/limits');
-    expect(viewRateLimits.dataset.slot).toBe('button');
-    expect(screen.queryByText('Claude Console')).toBeNull();
-  });
-
-  test('uses shared interactive selects for usage filters', async () => {
-    resetTestDom('https://oma.duck.ai/usage');
-
-    renderWithWorkspace(<UsagePage />);
-
-    const workspaceSelect = screen.getByRole('combobox', { name: 'Workspace: All' }) as HTMLButtonElement;
-    expect(workspaceSelect.disabled).toBe(false);
-
-    fireEvent.click(workspaceSelect);
-    expect(screen.getByRole('listbox')).toBeTruthy();
-    selectOption('Default');
-
-    await waitFor(() =>
-      expect(screen.getByRole('combobox', { name: 'Workspace: Default' }).textContent).toContain('Default'),
-    );
-
-    fireEvent.click(screen.getByRole('combobox', { name: 'View by: Month' }));
-    selectOption('Week');
-
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'View by: Week' }).textContent).toContain('Week'));
-  });
-
   test('renders the prompt caching empty state at /usage/cache', () => {
     resetTestDom('https://oma.duck.ai/usage/cache');
 
@@ -102,21 +61,9 @@ describe('Analytics pages', () => {
     expect(screen.getByText('Updated just now.')).toBeTruthy();
 
     cleanup();
-    resetTestDom('https://oma.duck.ai/usage');
-
-    renderWithWorkspace(<UsagePage />);
-    expect(screen.getByTestId('analytics-page').querySelector('.surface-card')).toBeNull();
-
-    cleanup();
     resetTestDom('https://oma.duck.ai/usage/cache');
 
     renderWithWorkspace(<CachingPage />);
-    expect(screen.getByTestId('analytics-page').querySelector('.surface-card')).toBeNull();
-
-    cleanup();
-    resetTestDom('https://oma.duck.ai/cost');
-
-    renderWithWorkspace(<CostPage />);
     expect(screen.getByTestId('analytics-page').querySelector('.surface-card')).toBeNull();
 
     cleanup();
@@ -124,23 +71,6 @@ describe('Analytics pages', () => {
 
     renderWithWorkspace(<LogsPage />);
     expect(screen.getByTestId('analytics-page').querySelector('.surface-card')).toBeNull();
-  });
-
-  test('renders all-workspace and scoped cost dashboards', () => {
-    resetTestDom('https://oma.duck.ai/cost');
-
-    renderWithWorkspace(<CostPage />);
-
-    expect(screen.getByRole('heading', { name: 'Cost' })).toBeTruthy();
-    expect(screen.getByText('All workspaces')).toBeTruthy();
-    expect(screen.getByText('Total token cost')).toBeTruthy();
-    expect(screen.getAllByText('USD 0.00')).toHaveLength(3);
-    expect(screen.getByText('Daily token cost')).toBeTruthy();
-
-    cleanup();
-    resetTestDom('https://oma.duck.ai/workspaces/default/cost');
-    renderWithWorkspace(<CostPage />);
-    expect(screen.getByText('Default')).toBeTruthy();
   });
 
   test('lists all workspaces in the logs workspace filter on the non-scoped /logs route', () => {

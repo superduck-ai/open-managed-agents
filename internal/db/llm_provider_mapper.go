@@ -8,6 +8,7 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper LLMProviderMapper -sql ./llm_provider_mapper.xml -out ./llm_provider_mapper.sqlmap.gen.go -dialect postgres
 
 type llmProviderRow struct {
+	Models           []byte    `db:"models"`
 	UUID             string    `db:"uuid"`
 	ExternalID       string    `db:"external_id"`
 	OrganizationUUID string    `db:"organization_uuid"`
@@ -17,7 +18,6 @@ type llmProviderRow struct {
 	APIBackend       string    `db:"api_backend"`
 	BaseURL          string    `db:"base_url"`
 	APIKeyLast4      string    `db:"api_key_last4"`
-	ModelIDs         []byte    `db:"model_ids"`
 	Ciphertext       []byte    `db:"ciphertext"`
 	Nonce            []byte    `db:"nonce"`
 	WrappedDEK       []byte    `db:"wrapped_dek"`
@@ -29,6 +29,7 @@ type llmProviderRow struct {
 }
 
 type llmProviderWriteParams struct {
+	Models           []byte
 	UUID             string
 	ExternalID       string
 	OrganizationUUID string
@@ -38,7 +39,6 @@ type llmProviderWriteParams struct {
 	APIBackend       string
 	BaseURL          string
 	APIKeyLast4      string
-	ModelIDs         []byte
 	Ciphertext       []byte
 	Nonce            []byte
 	WrappedDEK       []byte

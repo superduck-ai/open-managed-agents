@@ -209,11 +209,14 @@ test("root close keeps the provider alive until a child's tool result checkpoint
   try {
     await f.session.open();
     const provider = f.providers()[0]!;
-    const result = f.session.recordResult.bind(f.session);
-    f.session.recordResult = async (...args) => {
-      writing.resolve();
-      await confirmed.promise;
-      return result(...args);
+    const persistence = f.ctx.ccrv2.config.backend;
+    const persist = persistence.persist.bind(persistence);
+    persistence.persist = async (id, ...args) => {
+      if ("type" in args[1] && args[1].type === "tool/result") {
+        writing.resolve();
+        await confirmed.promise;
+      }
+      await persist(id, ...args);
     };
     f.b.modelScript = [toolEvents("child", "draining_call"), textEvents("done")];
     settled = f.session.subagents.send({ name: "child", system_prompt: "Test", message: "Run" },
@@ -269,7 +272,7 @@ test.each(["user.interrupt", "control_request"])("confirmed %s ends as end_turn 
       ? { type, request_id: "interrupt_request", request: { subtype: "interrupt" } }
       : { type });
     await turn;
-    expect(f.session.blocked()).toBe(false);
+    expect(f.session.abort.signal.aborted).toBe(false);
     expect([...f.b.publicLog.values()].some((event) => event.type === "result" && event.is_error === true)).toBe(false);
     expect([...f.b.publicLog.values()].filter((event) => event.type === "result").map((event) => event.is_error)).toEqual([false]);
     expect([...f.b.publicLog.values()].some((event) => event.type === "agent.message")).toBe(false);
@@ -295,4 +298,26 @@ test("root model requests expose only the session's enabled sandbox tools", asyn
       expect(f.b.mcpMethods).toEqual([]);
     } finally { await f.close(); }
   }
+});
+
+test("sandbox Bash projection preserves model and public tool output", async () => {
+  const f = await fixture(["Bash"]);
+  const stdout = "exact stdout\n";
+  const metadata = { stdout, stderr: "", exit_code: 0, status: "completed", timed_out: false,
+    cancelled: false, stdout_truncated: false, stderr_truncated: false };
+  f.b.onTool = async () => ({ structuredContent: metadata, content: [
+    { type: "text", text: stdout }, { type: "text", text: JSON.stringify(metadata) },
+  ] });
+  try {
+    await f.session.open();
+    f.b.modelScript = [toolEvents("printf exact", "projected-bash"), textEvents("done")];
+    await f.session.receive("projection", { content: "Run Bash" });
+    const request = JSON.stringify(f.b.requests[1]!.messages);
+    expect(request).toContain("exact stdout");
+    expect(request).not.toContain("exit_code");
+    const results = [...f.b.publicLog.values()].flatMap(event => event.message?.content ?? [])
+      .filter(block => block.type === "tool_result" && block.tool_use_id === "projected-bash");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.content).toEqual([{ type: "text", text: stdout }]);
+  } finally { await f.close(); }
 });

@@ -10,11 +10,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-type UsageActivitiesResponse struct {
-	Usages      map[string]any `json:"usages"`
-	Granularity string         `json:"granularity"`
-}
-
 type APIKeysUsageResponse struct {
 	APIKeys    []any `json:"api_keys"`
 	CutoffDays int   `json:"cutoff_days"`
@@ -70,9 +65,6 @@ func RegisterOrganizationBillingRoutes(r chi.Router) {
 	}))
 	r.Get("/api_keys/usage", handleAPIKeysUsage)
 	r.Get("/workspaces/{workspaceId}/api_keys/usage", handleAPIKeysUsage)
-	r.Get("/usage_activities", handleUsageActivities)
-	r.Get("/usage_cost", handleUsageCost)
-	r.Get("/workspaces/{workspaceId}/usage_cost", handleUsageCost)
 	r.Get("/cache_analytics", handlePromptCacheAnalytics)
 }
 
@@ -107,31 +99,6 @@ func handleCurrentSpend(w http.ResponseWriter, _ *http.Request) {
 
 func nextMonthlyResetAt(now time.Time) string {
 	return time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)
-}
-
-func usageGranularity(r *http.Request) string {
-	granularity := strings.TrimSpace(r.URL.Query().Get("granularity"))
-	if granularity == "" {
-		granularity = "daily"
-	}
-	return granularity
-}
-
-func handleUsageActivities(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, UsageActivitiesResponse{
-		Usages:      map[string]any{},
-		Granularity: usageGranularity(r),
-	})
-}
-
-func handleUsageCost(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"costs":                map[string]any{},
-		"web_search_costs":     map[string]any{},
-		"code_execution_costs": map[string]any{},
-		"session_usage_costs":  map[string]any{},
-		"claude_code_savings":  map[string]any{},
-	})
 }
 
 func handleAPIKeysUsage(w http.ResponseWriter, r *http.Request) {

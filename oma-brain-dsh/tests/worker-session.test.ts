@@ -1,3 +1,4 @@
+import { seedInterruptedTool } from "./session-log.ts";
 import { expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "../src/api.ts";
@@ -6,7 +7,7 @@ import { createOmaSession } from "../src/oma-session.ts";
 import { openWorkerSession } from "../src/worker-session.ts";
 import { Backend, eventually } from "./backend.ts";
 
-test("production admission continues a restored blocked session on new input without replay", async () => {
+test("production admission uses native interrupted-turn recovery before accepting fresh input", async () => {
   const b = new Backend();
   await b.ready;
   const first = new Context();
@@ -14,11 +15,7 @@ test("production admission continues a restored blocked session on new input wit
   await mountOma(first, firstApi);
   const original = createOmaSession(first, firstApi, b.a);
   await original.open();
-  original.state.inputId = "original-uncertain";
-  const call = { callId: "uncertain", readOnly: false, name: "Read", original: { file_path: "/tmp/owned" }, effective: { file_path: "/tmp/owned" } };
-  await original.recordApproved(call);
-  await original.recordDispatch(call.callId);
-  await original.recordUnknown(call.callId);
+  await seedInterruptedTool(original, "original-uncertain");
   await original.close();
   await first.fiber.dispose();
   const ctx = new Context();
@@ -37,11 +34,10 @@ test("production admission continues a restored blocked session on new input wit
     expect(consuming).toBeDefined();
     await eventually(() => b.processed.includes("followup-while-blocked"));
     expect(b.delivered.has("followup-while-blocked")).toBe(false);
-    expect(b.publicLog.get("followup-while-blocked_unknown_outcomes")?.type).toBe("system.message");
     expect(b.publicLog.get("followup-while-blocked_result")?.is_error).toBe(false);
-    expect(restored.blocked()).toBe(false);
+    expect(restored.abort.signal.aborted).toBe(false);
     expect(b.requests).toHaveLength(1);
-    expect(JSON.stringify(b.requests[0]!.messages)).toContain("Read (uncertain)");
+    expect(JSON.stringify(b.requests[0]!.messages)).toContain("Do not retry blindly");
     expect(b.executions).toHaveLength(0);
   } finally {
     restored.stop();

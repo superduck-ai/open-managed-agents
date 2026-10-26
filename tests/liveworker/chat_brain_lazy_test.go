@@ -19,16 +19,22 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
+	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
 func (p *chatDockerProvider) ServiceEndpoint(ctx context.Context, sandbox string, port int, path string) (string, error) {
 	output, err := exec.CommandContext(ctx, "docker", "port", sandbox, strconv.Itoa(port)+"/tcp").Output()
 	if err != nil {
+		inspection, inspectErr := exec.CommandContext(ctx, "docker", "inspect", sandbox).CombinedOutput()
+		if inspectErr != nil && strings.Contains(string(inspection), "No such") {
+			return "", sandboxruntime.ErrSandboxNotFound
+		}
 		return "", err
 	}
 	return "http://" + strings.TrimSpace(string(output)) + path, nil
@@ -65,7 +71,7 @@ func verifyLazyBrain(t *testing.T, started time.Time) {
 	requireOK(t, err)
 	denied := createPublicChat(t, e)
 	sessions = append(sessions, denied.session.UUID)
-	deniedModel := brainToolModel(t)
+	deniedModel := brainToolCallModel(t, "Write", `{"file_path":"/tmp/oma-brain-proof.txt","content":"native grok loop"}`, nil, []string{"archive_agent", "list_agents", "send_to_agent"})
 	configureChatModel(t, e, deniedModel.URL)
 	submitChat(t, denied, "Try Write, then reply done even if denied.")
 	waitRealWorker(t, "denied tool finished without allocating a sandbox", func() bool {
@@ -125,6 +131,20 @@ func verifyLazyBrain(t *testing.T, started time.Time) {
 	if provider.created.Load() != 1 {
 		t.Fatal("warm tool created a second sandbox")
 	}
+	requireOK(t, provider.Kill(ctx, fmt.Sprintf("%s-1", provider.name)))
+	toolModel = brainToolModel(t)
+	configureChatModel(t, e, toolModel.URL)
+	submitChat(t, f, "Write the proof after sandbox expiry and reply done.")
+	waitRealWorker(t, "missing sandbox replaced", func() bool { return toolModelCalls.Load() == 2 })
+	waitChatIdle(t, f, 4)
+	if provider.created.Load() != 2 {
+		t.Fatalf("sandbox allocations after expiry=%d, want two", provider.created.Load())
+	}
+	output, err = exec.CommandContext(ctx, "docker", "exec", fmt.Sprintf("%s-2", provider.name), "cat", "/tmp/oma-brain-proof.txt").Output()
+	requireOK(t, err)
+	if string(output) != "native grok loop" {
+		t.Fatal("replacement sandbox tool side effect missing")
+	}
 	registerPublicSandboxCleanup(t, e, f)
 	chatProof(t, started, "brain_lazy_tool")
 }
@@ -140,7 +160,7 @@ func startLazyBrainRunner(t *testing.T, e *liveEnv, cfg config.Config) (*chatDoc
 	cfg.EnvironmentRunner.Concurrency = 2
 	credentials, err := filestore.NewTokenCredentials(cfg)
 	requireOK(t, err)
-	provider := &chatDockerProvider{name: "oma-public-" + os.Getenv("VERIFY_BE_RUN_ID") + "-brain", image: os.Getenv("OMA_WORKER_CONTROL_IMAGE"), t: t, publishMCP: true}
+	provider := &chatDockerProvider{name: "oma-public-" + os.Getenv("VERIFY_BE_RUN_ID") + "-brain-" + uuid.NewString()[:8], image: os.Getenv("OMA_WORKER_CONTROL_IMAGE"), t: t, publishMCP: true}
 	var stops []func()
 	var provisioner *environments.Runner
 	for range 2 {
@@ -167,6 +187,7 @@ func startLazyBrainRunner(t *testing.T, e *liveEnv, cfg config.Config) (*chatDoc
 	e.url = gateway.URL
 	return provider, func() {
 		e.url = originalURL
+		gateway.CloseClientConnections()
 		gateway.Close()
 		for _, stop := range stops {
 			stop()

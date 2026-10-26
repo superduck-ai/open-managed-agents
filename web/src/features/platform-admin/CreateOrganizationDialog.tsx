@@ -1,9 +1,17 @@
+import { useDialogDismissal } from '../../shared/hooks/use-dialog-dismissal';
 import { usePlatformAdminError } from './usePlatformAdminError';
 import { useI18n } from '../../shared/i18n';
-import { useRef, useState } from 'react';
+import { useRef, useState, type RefObject } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Button } from '../../shared/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '../../shared/ui/dialog';
 import { Input } from '../../shared/ui/input';
 import { Label } from '../../shared/ui/label';
 import { AccountPicker, type RegisteredAccount } from './AccountPicker';
@@ -13,14 +21,18 @@ import type { Organization } from './types';
 export function CreateOrganizationDialog({
   open,
   onClose,
+  finalFocus,
   onCreated,
 }: {
   open: boolean;
   onClose: () => void;
+  finalFocus?: RefObject<HTMLElement | null>;
   onCreated: (organization: Organization) => void;
 }) {
   const { msg } = useI18n();
   const errorMessage = usePlatformAdminError();
+  const [closing, setClosing] = useState(false);
+  const saved = useRef<Organization | null>(null);
 
   const { client } = usePlatformAdmin();
   const [name, setName] = useState('');
@@ -36,16 +48,22 @@ export function CreateOrganizationDialog({
       if (submission.current.body !== encoded) submission.current = { body: encoded, key: crypto.randomUUID() };
       return client.request<Organization>('/organizations', { method: 'POST', body, key: submission.current.key });
     },
-    onSuccess: onCreated,
+    onSuccess: (result) => {
+      saved.current = result;
+      setClosing(true);
+    },
   });
+  const dialogProps = useDialogDismissal(() => {
+    if (saved.current) onCreated(saved.current);
+    else onClose();
+  }, mutation.isPending);
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next && !mutation.isPending) onClose();
-      }}
-    >
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl" showCloseButton={!mutation.isPending}>
+    <Dialog {...dialogProps} open={open && dialogProps.open && !closing}>
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-xl"
+        finalFocus={finalFocus}
+        closeButtonDisabled={mutation.isPending}
+      >
         <DialogHeader>
           <DialogTitle>{msg('platformAdmin.createOrganization', 'Create organization')}</DialogTitle>
           <DialogDescription>
@@ -56,40 +74,42 @@ export function CreateOrganizationDialog({
           </DialogDescription>
         </DialogHeader>
         <form
-          className="space-y-5"
+          className="flex min-h-0 flex-col gap-5"
           onSubmit={(event) => {
             event.preventDefault();
             if (accounts.length && !mutation.isPending) mutation.mutate();
           }}
         >
-          <div className="space-y-2">
-            <Label htmlFor="platform-org-name">{msg('platformAdmin.organizationName', 'Organization name')}</Label>
-            <Input
-              id="platform-org-name"
-              required
-              maxLength={200}
-              value={name}
-              disabled={mutation.isPending}
-              onChange={(event) => setName(event.target.value)}
-            />
+          <div className="min-h-0 space-y-4 overflow-y-auto [overflow-wrap:anywhere]">
+            <div className="space-y-2">
+              <Label htmlFor="platform-org-name">{msg('platformAdmin.organizationName', 'Organization name')}</Label>
+              <Input
+                id="platform-org-name"
+                required
+                maxLength={200}
+                value={name}
+                disabled={mutation.isPending}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </div>
+            <fieldset className="space-y-2">
+              <legend className="mb-2 font-medium">
+                {msg('platformAdmin.initialAdministratorsCount20', 'Initial administrators ({count}/20)', {
+                  count: accounts.length,
+                })}
+              </legend>
+              <AccountPicker selected={accounts} onChange={setAccounts} disabled={mutation.isPending} />
+            </fieldset>
+            {mutation.isError && (
+              <p role="alert" className="text-destructive">
+                {errorMessage(mutation.error)}
+              </p>
+            )}
           </div>
-          <fieldset className="space-y-2">
-            <legend className="mb-2 font-medium">
-              {msg('platformAdmin.initialAdministratorsCount20', 'Initial administrators ({count}/20)', {
-                count: accounts.length,
-              })}
-            </legend>
-            <AccountPicker selected={accounts} onChange={setAccounts} disabled={mutation.isPending} />
-          </fieldset>
-          {mutation.isError && (
-            <p role="alert" className="text-destructive">
-              {errorMessage(mutation.error)}
-            </p>
-          )}
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" disabled={mutation.isPending} onClick={onClose}>
+            <DialogClose render={<Button type="button" variant="outline" disabled={mutation.isPending} />}>
               {msg('platformAdmin.cancel', 'Cancel')}
-            </Button>
+            </DialogClose>
             <Button type="submit" disabled={mutation.isPending || !accounts.length || !name.trim()}>
               {mutation.isPending
                 ? msg('platformAdmin.creating', 'Creating…')

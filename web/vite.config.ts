@@ -14,7 +14,7 @@ export default defineConfig({
     },
   },
   server: {
-    allowedHosts: ['oma.duck.ai'],
+    allowedHosts: ['oma.duck.ai', '.localhost'],
     proxy: {
       '/api': {
         target: backendTarget,

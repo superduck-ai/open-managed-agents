@@ -1,3 +1,4 @@
+import { useI18n } from '../../shared/i18n';
 import { AlertCircle, ChevronDown, Code2, Loader2, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import { ChangeEvent, Dispatch, SetStateAction, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
@@ -40,11 +41,12 @@ export function ResponsePreview({
   showCreatePrompt: boolean;
   onCreatePrompt: () => void | Promise<void>;
 }) {
+  const { msg } = useI18n();
   if (error) {
     return (
       <Alert variant="destructive">
         <AlertCircle aria-hidden />
-        <AlertTitle>Request failed</AlertTitle>
+        <AlertTitle>{msg('workbench.requestFailed', 'Request failed')}</AlertTitle>
         <AlertDescription className="whitespace-pre-wrap break-words leading-6">{error}</AlertDescription>
       </Alert>
     );
@@ -57,18 +59,14 @@ export function ResponsePreview({
       {isRunning ? (
         <span className="flex items-center gap-2">
           <Loader2 className="size-4 animate-spin" aria-hidden />
-          Running
+          {msg('workbench.running', 'Running')}
         </span>
       ) : (
         <span className="workbench-empty-response-content">
-          <span>
-            Run prompt to see assistant response from the
-            <br />
-            LLM provider
-          </span>
+          <span>{msg('workbench.responseEmpty', 'Run prompt to see assistant response from the LLM provider')}</span>
           {showCreatePrompt ? (
             <>
-              <span className="workbench-empty-response-or">or</span>
+              <span className="workbench-empty-response-or">{msg('workbench.or', 'or')}</span>
               <Button
                 type="button"
                 variant="outline"
@@ -76,7 +74,7 @@ export function ResponsePreview({
                 className="bg-secondary"
                 onClick={() => void onCreatePrompt()}
               >
-                Create New Prompt
+                {msg('workbench.createPrompt', 'Create New Prompt')}
               </Button>
             </>
           ) : null}
@@ -84,6 +82,67 @@ export function ResponsePreview({
       )}
     </div>
   );
+}
+
+function ComparisonVersionMenuItems({
+  loading,
+  failed,
+  revisions,
+  availableRevisions,
+  onRetry,
+  onSelect,
+}: {
+  loading: boolean;
+  failed: boolean;
+  revisions: WorkbenchRevision[];
+  availableRevisions: WorkbenchRevision[];
+  onRetry: () => void;
+  onSelect: (revision: WorkbenchRevision) => void;
+}) {
+  const { locale, msg } = useI18n();
+  if (loading)
+    return (
+      <div role="status" className="workbench-evaluate-comparison-empty">
+        {msg('workbench.loadingComparisonVersions', 'Loading versions')}
+      </div>
+    );
+  if (failed)
+    return (
+      <>
+        <div role="alert" className="flex items-center gap-2 px-2.5 py-[9px] text-xs leading-4 text-destructive">
+          <AlertCircle className="size-3.5 shrink-0" aria-hidden />
+          {msg('workbench.comparisonLoadFailed', 'Version list could not load')}
+        </div>
+        <DropdownMenuItem closeOnClick={false} onClick={onRetry}>
+          {msg('common.retry', 'Retry')}
+        </DropdownMenuItem>
+      </>
+    );
+  if (!availableRevisions.length)
+    return (
+      <div className="workbench-evaluate-comparison-empty">
+        {msg('workbench.noComparisonVersions', 'No saved versions to compare')}
+      </div>
+    );
+  return availableRevisions.map((revision) => {
+    const index = revisions.findIndex((item) => item.id === revision.id);
+    return (
+      <DropdownMenuItem
+        key={revision.id}
+        className="grid gap-0.5 px-2.5 py-[9px] text-left"
+        onClick={() => onSelect(revision)}
+      >
+        <span className="text-sm font-semibold leading-5">
+          {index >= 0
+            ? msg('workbench.comparisonVersion', 'Version {number}', {
+                number: revisions.length - index,
+              })
+            : msg('workbench.version', 'Version')}
+        </span>
+        <span className="text-xs leading-4 text-muted-foreground">{formatDate(revision.created_at, locale)}</span>
+      </DropdownMenuItem>
+    );
+  });
 }
 
 export function EvaluateView({
@@ -129,20 +188,34 @@ export function EvaluateView({
   onDeleteRow: (row: EvaluateTestCase) => Promise<void>;
   onGenerateTestCases: (count: number) => Promise<void>;
 }) {
+  const { msg } = useI18n();
   const [showPrompt, setShowPrompt] = useState(false);
   const [showIdealOutputs, setShowIdealOutputs] = useState(false);
   const [generateMenuOpen, setGenerateMenuOpen] = useState(false);
   const [comparisonMenuOpen, setComparisonMenuOpen] = useState(false);
   const [comparisonRevisions, setComparisonRevisions] = useState<WorkbenchRevision[]>([]);
   const [isLoadingComparisons, setIsLoadingComparisons] = useState(false);
+  const [comparisonLoadFailed, setComparisonLoadFailed] = useState(false);
+  const comparisonReadId = useRef(0);
   const [isGeneratingTestCases, setIsGeneratingTestCases] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const visibleVariables = variables.length ? variables : ['VARIABLE'];
-  const variableLabel = visibleVariables.length === 1 ? `{{${visibleVariables[0]}}}` : 'Variables';
+  const variableLabel =
+    visibleVariables.length === 1 ? `{{${visibleVariables[0]}}}` : msg('workbench.variables', 'Variables');
   const availableComparisonRevisions = comparisonRevisions.filter(
     (revision) =>
       revision.id !== currentRevisionId && !comparisons.some((comparison) => comparison.revisionId === revision.id),
   );
+  useEffect(() => {
+    comparisonReadId.current += 1;
+    setComparisonRevisions([]);
+    setComparisonMenuOpen(false);
+    setComparisonLoadFailed(false);
+    setIsLoadingComparisons(false);
+    return () => {
+      comparisonReadId.current += 1;
+    };
+  }, [orgUuid, promptId, currentRevisionId]);
   useEffect(() => {
     if (!isReadOnly) {
       return;
@@ -169,17 +242,18 @@ export function EvaluateView({
     if (!orgUuid || !promptId || comparisonRevisions.length || isLoadingComparisons) {
       return;
     }
+    const readId = ++comparisonReadId.current;
     setIsLoadingComparisons(true);
+    setComparisonLoadFailed(false);
     try {
-      setComparisonRevisions(
-        (await listWorkbenchRevisions(orgUuid, promptId, false)).map((revision) =>
-          normalizeRevision(revision, fallbackModelName),
-        ),
-      );
+      const revisions = await listWorkbenchRevisions(orgUuid, promptId, false);
+      if (readId === comparisonReadId.current) {
+        setComparisonRevisions(revisions.map((revision) => normalizeRevision(revision, fallbackModelName)));
+      }
     } catch {
-      setComparisonRevisions([]);
+      if (readId === comparisonReadId.current) setComparisonLoadFailed(true);
     } finally {
-      setIsLoadingComparisons(false);
+      if (readId === comparisonReadId.current) setIsLoadingComparisons(false);
     }
   };
   const addComparison = (revision: WorkbenchRevision) => {
@@ -190,7 +264,8 @@ export function EvaluateView({
     const comparison: EvaluateComparison = {
       id: revision.id,
       revisionId: revision.id,
-      label: revisionIndex >= 0 ? `v${comparisonRevisions.length - revisionIndex}` : 'Version',
+      label:
+        revisionIndex >= 0 ? `v${comparisonRevisions.length - revisionIndex}` : msg('workbench.version', 'Version'),
       revision,
     };
     setComparisons((current) =>
@@ -298,17 +373,17 @@ export function EvaluateView({
     <div className="workbench-evaluate-canvas">
       <div className="workbench-evaluate-controls">
         <div className="workbench-evaluate-toggle">
-          <span>Show Prompt</span>
+          <span>{msg('workbench.showPrompt', 'Show Prompt')}</span>
           <Switch
-            aria-label="Show Prompt"
+            aria-label={msg('workbench.showPrompt', 'Show Prompt')}
             checked={showPrompt}
             onCheckedChange={(nextChecked) => setShowPrompt(nextChecked)}
           />
         </div>
         <div className="workbench-evaluate-toggle">
-          <span>Show Ideal Outputs</span>
+          <span>{msg('workbench.showIdealOutputs', 'Show Ideal Outputs')}</span>
           <Switch
-            aria-label="Show Ideal Outputs"
+            aria-label={msg('workbench.showIdealOutputs', 'Show Ideal Outputs')}
             checked={showIdealOutputs}
             onCheckedChange={(nextChecked) => setShowIdealOutputs(nextChecked)}
           />
@@ -318,40 +393,44 @@ export function EvaluateView({
       {isReadOnly ? (
         <div className="workbench-evaluate-stale-card">
           <p>
-            Prompt has been updated, and the evaluation table below has become stale and is read-only. Create a new
-            revision with your changes to evaluate.
+            {msg(
+              'workbench.evaluationStale',
+              'Prompt has been updated, and the evaluation table below has become stale and is read-only. Create a new revision with your changes to evaluate.',
+            )}
           </p>
           <Button type="button" className="mx-auto mt-4" disabled={!canSaveRevision} onClick={onSaveRevision}>
-            Save Changes as {saveRevisionLabel}
+            {msg('workbench.saveAsVersion', 'Save Changes as {version}', { version: saveRevisionLabel })}
           </Button>
         </div>
       ) : null}
 
-      <div className="workbench-evaluate-table" aria-label="Evaluation results">
+      <div className="workbench-evaluate-table" aria-label={msg('workbench.evaluationResults', 'Evaluation results')}>
         <div
           className="workbench-evaluate-row workbench-evaluate-version-row"
           style={{ gridTemplateColumns: columnTemplate }}
         >
-          <div className="workbench-evaluate-row-label">Row</div>
+          <div className="workbench-evaluate-row-label">{msg('workbench.row', 'Row')}</div>
           {showPrompt ? <div /> : null}
           <div />
           <div>
             <span className="workbench-evaluate-version-chip">
-              <span>{promptTitle}</span>
-              <span>v1</span>
+              <span title={promptTitle}>{promptTitle}</span>
+              <span>{msg('workbench.currentVersion', 'Current version')}</span>
             </span>
           </div>
           {comparisons.map((comparison) => (
             <div key={comparison.id}>
               <span className="workbench-evaluate-version-chip">
-                <span>{promptTitle}</span>
+                <span title={promptTitle}>{promptTitle}</span>
                 <span>{comparison.label}</span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="size-8 rounded-none border-l border-border text-muted-foreground hover:bg-accent hover:text-foreground"
-                  aria-label={`Remove ${comparison.label} comparison`}
+                  className="size-8 rounded-none border-l-[0.5px] border-border text-muted-foreground hover:bg-accent hover:text-foreground"
+                  aria-label={msg('workbench.removeComparison', 'Remove {version} comparison', {
+                    version: comparison.label,
+                  })}
                   onClick={() => removeComparison(comparison.id)}
                 >
                   <X className="size-3.5" aria-hidden />
@@ -371,8 +450,8 @@ export function EvaluateView({
                     <Button
                       type="button"
                       variant="ghost"
-                      className="h-8 px-0 text-[13px] font-normal text-foreground hover:bg-transparent hover:text-foreground disabled:text-muted-foreground"
-                      aria-label="Add comparison"
+                      className="h-8 px-0 text-sm font-normal text-foreground hover:bg-transparent hover:text-foreground disabled:text-muted-foreground"
+                      aria-label={msg('workbench.addComparisonLabel', 'Add comparison')}
                       aria-expanded={comparisonMenuOpen}
                       disabled={isReadOnly || !orgUuid || !promptId}
                     />
@@ -383,32 +462,17 @@ export function EvaluateView({
                   ) : (
                     <Plus className="size-4" aria-hidden />
                   )}
-                  Add Comparison
+                  {msg('workbench.addComparison', 'Add Comparison')}
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" side="bottom" sideOffset={8} className="w-auto min-w-[238px]">
-                  {isLoadingComparisons ? (
-                    <div className="workbench-evaluate-comparison-empty">Loading versions</div>
-                  ) : availableComparisonRevisions.length ? (
-                    availableComparisonRevisions.map((revision) => {
-                      const index = comparisonRevisions.findIndex((item) => item.id === revision.id);
-                      return (
-                        <DropdownMenuItem
-                          key={revision.id}
-                          className="grid gap-0.5 px-2.5 py-[9px] text-left"
-                          onClick={() => addComparison(revision)}
-                        >
-                          <span className="text-[13px] font-semibold leading-[18px]">
-                            {index >= 0 ? `Version ${comparisonRevisions.length - index}` : 'Version'}
-                          </span>
-                          <span className="text-xs leading-4 text-muted-foreground">
-                            {formatDate(revision.created_at)}
-                          </span>
-                        </DropdownMenuItem>
-                      );
-                    })
-                  ) : (
-                    <div className="workbench-evaluate-comparison-empty">No saved versions to compare</div>
-                  )}
+                  <ComparisonVersionMenuItems
+                    loading={isLoadingComparisons}
+                    failed={comparisonLoadFailed}
+                    revisions={comparisonRevisions}
+                    availableRevisions={availableComparisonRevisions}
+                    onRetry={() => void handleComparisonMenuOpenChange(true)}
+                    onSelect={addComparison}
+                  />
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -416,14 +480,14 @@ export function EvaluateView({
         </div>
         <div className="workbench-evaluate-row workbench-evaluate-head" style={{ gridTemplateColumns: columnTemplate }}>
           <div />
-          {showPrompt ? <div>Prompt</div> : null}
+          {showPrompt ? <div>{msg('workbench.prompt', 'Prompt')}</div> : null}
           <div>{variableLabel}</div>
-          <div>Model output</div>
+          <div>{msg('workbench.modelOutput', 'Model output')}</div>
           {comparisons.map((comparison) => (
-            <div key={comparison.id}>Model output</div>
+            <div key={comparison.id}>{msg('workbench.modelOutput', 'Model output')}</div>
           ))}
-          {showIdealOutputs ? <div>Ideal output</div> : null}
-          <div>Actions</div>
+          {showIdealOutputs ? <div>{msg('workbench.idealOutput', 'Ideal output')}</div> : null}
+          <div>{msg('workbench.actions', 'Actions')}</div>
         </div>
         {rows.length ? (
           rows.map((row, rowIndex) => (
@@ -433,18 +497,20 @@ export function EvaluateView({
               style={{ gridTemplateColumns: columnTemplate }}
             >
               <div className="workbench-evaluate-row-label">{rowIndex + 1}</div>
-              {showPrompt ? <div className="workbench-evaluate-prompt-cell">{promptText || 'Prompt'}</div> : null}
+              {showPrompt ? (
+                <div className="workbench-evaluate-prompt-cell">{promptText || msg('workbench.prompt', 'Prompt')}</div>
+              ) : null}
               <div className="workbench-evaluate-variable-cell">
                 {visibleVariables.map((name) => (
                   <label key={name} className="workbench-evaluate-variable-field">
                     <span>{visibleVariables.length === 1 ? variableLabel : `{{${name}}}`}</span>
                     <Textarea
-                      aria-label={`${name} row ${rowIndex + 1}`}
+                      aria-label={msg('workbench.variableRow', '{name} row {row}', { name, row: rowIndex + 1 })}
                       value={row.values[name] ?? ''}
                       onChange={(event) => updateRowValue(row, name, event.currentTarget.value)}
-                      placeholder="Enter an example value..."
+                      placeholder={msg('workbench.exampleValuePlaceholder', 'Enter an example value...')}
                       disabled={isReadOnly}
-                      className="min-h-[58px] resize-y rounded-md bg-secondary px-2.5 py-2 text-[13px] leading-[18px] text-foreground disabled:bg-secondary disabled:text-muted-foreground disabled:opacity-100"
+                      className="min-h-[58px] resize-y rounded-md bg-secondary px-2.5 py-2 text-sm leading-5 text-foreground disabled:bg-secondary disabled:text-muted-foreground disabled:opacity-100"
                     />
                   </label>
                 ))}
@@ -464,11 +530,11 @@ export function EvaluateView({
               {showIdealOutputs ? (
                 <div>
                   <Textarea
-                    aria-label={`Ideal output row ${rowIndex + 1}`}
-                    className="min-h-[58px] resize-y rounded-md bg-secondary px-2.5 py-2 text-[13px] leading-[18px] text-foreground disabled:bg-secondary disabled:text-muted-foreground disabled:opacity-100"
+                    aria-label={msg('workbench.idealOutputRow', 'Ideal output row {row}', { row: rowIndex + 1 })}
+                    className="min-h-[58px] resize-y rounded-md bg-secondary px-2.5 py-2 text-sm leading-5 text-foreground disabled:bg-secondary disabled:text-muted-foreground disabled:opacity-100"
                     value={row.idealOutput}
                     onChange={(event) => updateIdealOutput(row, event.currentTarget.value)}
-                    placeholder="Enter ideal output..."
+                    placeholder={msg('workbench.idealOutputPlaceholder', 'Enter ideal output...')}
                     disabled={isReadOnly}
                   />
                 </div>
@@ -479,7 +545,7 @@ export function EvaluateView({
                   variant="ghost"
                   size="icon"
                   className="size-8 text-muted-foreground hover:bg-accent hover:text-foreground disabled:text-muted-foreground/70"
-                  aria-label={`Delete row ${rowIndex + 1}`}
+                  aria-label={msg('workbench.deleteRow', 'Delete row {row}', { row: rowIndex + 1 })}
                   disabled={isReadOnly}
                   onClick={() => removeRow(row)}
                 >
@@ -493,8 +559,7 @@ export function EvaluateView({
             <div className="workbench-evaluate-empty-icon" aria-hidden>
               <Code2 className="size-7" />
             </div>
-            <h2>No test cases</h2>
-            <p>Add, generate or import test cases using the buttons below to start evaluating prompts.</p>
+            <h2>{msg('workbench.testCasesEmpty', 'No test cases')}</h2>
           </div>
         )}
       </div>
@@ -502,7 +567,7 @@ export function EvaluateView({
       <div className="workbench-evaluate-actions">
         <Button type="button" variant="outline" disabled={isReadOnly} onClick={() => addRows(1)}>
           <Plus className="size-4" aria-hidden />
-          Add Row
+          {msg('workbench.addRow', 'Add Row')}
         </Button>
         <div className="workbench-evaluate-generate">
           <Button
@@ -517,7 +582,9 @@ export function EvaluateView({
             ) : (
               <Sparkles className="size-4" aria-hidden />
             )}
-            {isGeneratingTestCases ? 'Generating' : 'Generate Test Case'}
+            {isGeneratingTestCases
+              ? msg('workbench.generatingTestCases', 'Generating')
+              : msg('workbench.generateTestCase', 'Generate Test Case')}
           </Button>
           <DropdownMenu open={generateMenuOpen} onOpenChange={setGenerateMenuOpen}>
             <DropdownMenuTrigger
@@ -527,7 +594,7 @@ export function EvaluateView({
                   variant="outline"
                   size="icon"
                   className="size-8 rounded-l-none border-l-0 bg-card"
-                  aria-label="Generate test case options"
+                  aria-label={msg('workbench.generateTestCaseOptions', 'Generate test case options')}
                   aria-expanded={generateMenuOpen}
                   disabled={isReadOnly || isGeneratingTestCases}
                 />
@@ -537,16 +604,16 @@ export function EvaluateView({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" side="top" sideOffset={6} className="w-auto min-w-[180px]">
               <DropdownMenuItem className="px-2 py-1.5 text-sm" onClick={() => void generateRows(1)}>
-                Generate 1 test case
+                {msg('workbench.generateOneTestCase', 'Generate 1 test case')}
               </DropdownMenuItem>
               <DropdownMenuItem className="px-2 py-1.5 text-sm" onClick={() => void generateRows(5)}>
-                Generate 5 test cases
+                {msg('workbench.generateFiveTestCases', 'Generate 5 test cases')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
         <Button type="button" variant="outline" disabled={isReadOnly} onClick={() => importInputRef.current?.click()}>
-          Import Test Cases
+          {msg('workbench.importTestCases', 'Import Test Cases')}
         </Button>
         <input
           ref={importInputRef}
@@ -559,7 +626,7 @@ export function EvaluateView({
           onChange={(event) => void importRows(event)}
         />
         <Button type="button" variant="outline" disabled={!rows.length} onClick={exportRows}>
-          Export to CSV
+          {msg('workbench.exportCsv', 'Export to CSV')}
         </Button>
       </div>
     </div>
@@ -575,6 +642,7 @@ export function EvaluateOutputCell({
   error: string | null;
   isRunning: boolean;
 }) {
+  const { msg } = useI18n();
   return (
     <div
       className={clsx(
@@ -587,14 +655,14 @@ export function EvaluateOutputCell({
       {isRunning ? (
         <span>
           <Loader2 className="size-4 animate-spin" aria-hidden />
-          Running
+          {msg('workbench.running', 'Running')}
         </span>
       ) : error ? (
         error
       ) : output ? (
         output
       ) : (
-        'Run All to generate model output.'
+        msg('workbench.noModelOutput', 'No output')
       )}
     </div>
   );

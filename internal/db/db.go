@@ -392,7 +392,18 @@ func (d *DB) Migrate(ctx context.Context) error {
 	if err := runGooseMigrations(ctx, standardDB); err != nil {
 		return err
 	}
-	return dropForeignKeyConstraints(ctx, standardDB)
+	if err := dropForeignKeyConstraints(ctx, standardDB); err != nil {
+		return err
+	}
+	for {
+		count, err := d.BackfillUsageRecords(ctx, 500)
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return nil
+		}
+	}
 }
 
 func (d *DB) DropForeignKeyConstraints(ctx context.Context) error {
@@ -436,7 +447,7 @@ func dropForeignKeyConstraints(ctx context.Context, database *sql.DB) error {
 	return nil
 }
 
-func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
+func (d *DB) Seed(ctx context.Context, bootstrap config.BootstrapConfig) error {
 	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		organizationMapper := NewAdminOrganizationMapper(executor)
 		workspaceMapper := NewAdminWorkspaceMapper(executor)
@@ -446,20 +457,20 @@ func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
 		if _, err := organizationMapper.LockSeed(ctx); err != nil {
 			return err
 		}
-		organizationUUID, err := organizationMapper.SeedDefault(ctx, "workspace_default", "default")
+		organizationUUID, err := organizationMapper.SeedDefault(ctx, bootstrap.WorkspaceExternalID, bootstrap.OrganizationName)
 		if err != nil {
 			return err
 		}
-		workspaceUUID, err := workspaceMapper.SeedDefault(ctx, "workspace_default", organizationUUID, "default")
+		workspaceUUID, err := workspaceMapper.SeedDefault(ctx, bootstrap.WorkspaceExternalID, organizationUUID, bootstrap.WorkspaceName)
 		if err != nil {
 			return err
 		}
-		userUUID, err := userMapper.SeedDefault(ctx, "user_default", organizationUUID, "admin@example.local", "Local Admin")
+		userUUID, err := userMapper.SeedDefault(ctx, bootstrap.UserExternalID, organizationUUID, bootstrap.UserEmail, bootstrap.UserName)
 		if err != nil {
 			return err
 		}
 
-		for _, key := range seedAPIKeys {
+		for _, key := range bootstrap.SeedAPIKeys {
 			if strings.TrimSpace(key.ExternalID) == "" || key.Key == "" {
 				return errors.New("seed api keys must include external_id and key")
 			}

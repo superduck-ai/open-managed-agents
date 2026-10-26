@@ -78,10 +78,10 @@ for (const kind of ['create', 'resend', 'revoke'] as const) {
       fireEvent.change(screen.getByLabelText('受邀邮箱'), { target: { value: 'invited@example.com' } });
       const select = screen.getByRole('combobox', { name: '组织角色' });
       select.focus();
-      fireEvent.keyDown(select, { key: 'ArrowDown' });
+      fireEvent.click(select);
       const admin = await screen.findByRole('option', { name: /^管理员/ });
       expect(screen.getAllByRole('option')).toHaveLength(2);
-      fireEvent.keyDown(admin, { key: 'Enter' });
+      fireEvent.click(admin);
     } else {
       expect(screen.getByRole('combobox', { name: '组织角色' }).hasAttribute('disabled')).toBe(true);
     }

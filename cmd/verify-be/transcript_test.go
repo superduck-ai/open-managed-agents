@@ -42,7 +42,7 @@ func TestTranscriptDependenciesAndReportScope(t *testing.T) {
 		}
 	}
 	fakeDocker(t)
-	result, err := doctor(t.Context(), directory, "", "transcript.lifecycle")
+	result, err := doctor(t.Context(), directory, "", "transcript.lifecycle", 0)
 	if err != nil || len(result.Images) != 4 || result.PublicSandboxChecked {
 		t.Fatalf("transcript requires Worker/FUSE: %+v %v", result, err)
 	}

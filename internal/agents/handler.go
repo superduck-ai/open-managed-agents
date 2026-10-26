@@ -25,6 +25,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpnames"
+	"github.com/superduck-ai/open-managed-agents/internal/webtools"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -1043,10 +1044,8 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]an
 		}
 	}
 	allowed := map[string]struct{}{
-		"task": {}, "ask_user_question": {}, "bash": {}, "cron_create": {}, "cron_delete": {}, "cron_list": {},
-		"edit": {}, "enter_plan_mode": {}, "enter_worktree": {}, "exit_plan_mode": {}, "exit_worktree": {},
-		"glob": {}, "grep": {}, "notebook_edit": {}, "read": {}, "schedule_wakeup": {}, "skill": {},
-		"task_output": {}, "task_stop": {}, "todo_write": {}, "web_fetch": {}, "write": {},
+		"ask_user_question": {}, "bash": {}, "edit": {}, "glob": {}, "grep": {},
+		"read": {}, "web_fetch": {}, "web_search": {}, "write": {},
 	}
 	normalized := make([]map[string]any, 0, len(configs))
 	seen := map[string]struct{}{}
@@ -1067,7 +1066,22 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]an
 		if err != nil {
 			return nil, err
 		}
-		normalized = append(normalized, map[string]any{"enabled": enabled, "name": name, "permission_policy": policy})
+		entry := map[string]any{"enabled": enabled, "name": name, "permission_policy": policy}
+		if name == "web_search" || name == "web_fetch" {
+			raw, err := json.Marshal(config)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := webtools.ParseToolConfig(raw); err != nil {
+				return nil, err
+			}
+			for _, field := range []string{"allowed_domains", "blocked_domains", "max_content_tokens", "user_location"} {
+				if value, ok := config[field]; ok {
+					entry[field] = value
+				}
+			}
+		}
+		normalized = append(normalized, entry)
 	}
 	if _, configured := seen["ask_user_question"]; !configured {
 		normalized = append(normalized, map[string]any{

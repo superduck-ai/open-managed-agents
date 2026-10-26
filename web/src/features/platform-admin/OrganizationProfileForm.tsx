@@ -41,7 +41,7 @@ export function OrganizationProfileForm({
   });
   return (
     <form
-      className="max-w-xl space-y-4 rounded-lg border p-4"
+      className="max-w-xl space-y-4"
       onSubmit={(event) => {
         event.preventDefault();
         if (!mutation.isPending) mutation.mutate();

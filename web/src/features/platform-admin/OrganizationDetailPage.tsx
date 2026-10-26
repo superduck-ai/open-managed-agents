@@ -68,19 +68,20 @@ function OrganizationDetail({ organizationUuid, view }: { organizationUuid: stri
     <section className="space-y-8">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 space-y-3">
-          <h1 className="text-2xl font-semibold">{organization.name}</h1>
+          <h1 className="text-2xl font-semibold [overflow-wrap:anywhere]">{organization.name}</h1>
           <p className="break-all text-sm text-muted-foreground">{organization.uuid}</p>
-          <p className="text-sm">
-            {msg(
-              'platformAdmin.administratorsAdminsNumberMembersMembersNumberWorkspacesWorkspacesNumber',
-              'Administrators {admins, number} · Members {members, number} · Workspaces {workspaces, number}',
-              {
-                admins: organization.admin_count,
-                members: organization.member_count,
-                workspaces: organization.workspace_count,
-              },
-            )}
-          </p>
+          <dl className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
+            {[
+              [msg('platformAdmin.administrators', 'Administrators'), organization.admin_count],
+              [msg('platformAdmin.members', 'Members'), organization.member_count],
+              [msg('platformAdmin.workspaces', 'Workspaces'), organization.workspace_count],
+            ].map(([label, count]) => (
+              <div key={label} className="flex gap-2">
+                <dt className="text-muted-foreground">{label}</dt>
+                <dd>{count}</dd>
+              </div>
+            ))}
+          </dl>
         </div>
         {view === 'profile' && (
           <Button className="shrink-0" variant="outline" onClick={() => setEditing(true)} disabled={editing}>

@@ -1,6 +1,6 @@
 import { accountRoleLabel } from '../../shared/permissions/roles';
 import { useI18n } from '../../shared/i18n';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Button } from '../../shared/ui/button';
@@ -18,6 +18,7 @@ export function OrganizationMembers({
   const { msg } = useI18n();
 
   const queries = useQueryClient();
+  const finalFocus = useRef<HTMLElement | null>(null);
   const [action, setAction] = useState<AdministratorAction | null>(null);
   const columns: ColumnDef<Member>[] = [
     { accessorKey: 'name', header: msg('platformAdmin.name', 'Name') },
@@ -33,7 +34,14 @@ export function OrganizationMembers({
       cell: ({ row }) =>
         row.original.role === 'admin' ? (
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => setAction({ kind: 'transfer', member: row.original })}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={(event) => {
+                finalFocus.current = event.currentTarget;
+                setAction({ kind: 'transfer', member: row.original });
+              }}
+            >
               {msg('platformAdmin.transfer', 'Transfer')}
             </Button>
             <Button
@@ -48,7 +56,10 @@ export function OrganizationMembers({
                     )
                   : undefined
               }
-              onClick={() => setAction({ kind: 'change-role', member: row.original })}
+              onClick={(event) => {
+                finalFocus.current = event.currentTarget;
+                setAction({ kind: 'change-role', member: row.original });
+              }}
             >
               {msg('platformAdmin.changeRole', 'Change role')}
             </Button>
@@ -60,7 +71,13 @@ export function OrganizationMembers({
     <section className="space-y-3">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-lg font-semibold">{msg('platformAdmin.organizationMembers', 'Organization members')}</h2>
-        <Button variant="outline" onClick={() => setAction({ kind: 'grant' })}>
+        <Button
+          variant="outline"
+          onClick={(event) => {
+            finalFocus.current = event.currentTarget;
+            setAction({ kind: 'grant' });
+          }}
+        >
           {msg('platformAdmin.assignAdministrator', 'Assign administrator')}
         </Button>
       </div>
@@ -71,6 +88,7 @@ export function OrganizationMembers({
       />
       {action && (
         <AdministratorDialog
+          finalFocus={finalFocus}
           organization={organization}
           action={action}
           onClose={() => setAction(null)}

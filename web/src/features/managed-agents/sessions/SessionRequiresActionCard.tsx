@@ -204,24 +204,19 @@ export function SessionQuestionnaireActionCard({
     }
     setSubmitting(true);
     try {
-      const answers: Record<string, string | string[]> = {};
-      questions.forEach((question, index) => {
-        const itemKey = items[index]?.name ?? `question-${index}`;
-        const draft = drafts[itemKey];
-        const selectedOptions = draft?.options ?? [];
-        const customText = draft?.other?.trim() ?? '';
-        if (question.multiSelect) {
-          const combined = [...selectedOptions, ...(customText ? [customText] : [])];
-          answers[question.question] = combined;
-        } else {
-          answers[question.question] = customText || selectedOptions[0] || '';
-        }
+      const answers = questions.map((question, index) => {
+        const draft = drafts[items[index]?.name ?? `question-${index}`];
+        const custom = draft?.other.trim() ?? '';
+        return {
+          id: question.id,
+          selected: !question.multiSelect && custom ? [] : (draft?.options ?? []),
+          ...(custom ? { custom } : {}),
+        };
       });
-
       await onConfirm({
         toolUseId,
         result: 'allow',
-        answers,
+        answers: { answers },
         customTool: true,
         sessionThreadId,
       });
@@ -247,21 +242,19 @@ export function SessionQuestionnaireActionCard({
     }
   };
 
-  if (!questions.length) {
+  if (!questions.length || questions.some((question) => !question.id)) {
     return <SessionToolApprovalActionCard toolCall={toolCall} onConfirm={onConfirm} disabled={disabled} />;
   }
 
   return (
     <div
       data-testid="session-questionnaire-card"
-      className="w-full rounded-xl border border-border bg-card p-4 text-foreground shadow-xs"
+      className="w-full rounded-xl border-[0.5px] border-border bg-card p-4 text-foreground"
     >
-      <div className="mb-3 flex items-center justify-between border-b border-border pb-2.5">
+      <div className="mb-3 flex items-center justify-between border-b-[0.5px] border-border pb-2.5">
         <div className="flex items-center gap-2">
-          <div className="flex size-6 items-center justify-center rounded-md bg-primary/10 text-primary">
-            <HelpCircle className="size-3.5" aria-hidden />
-          </div>
-          <span className="text-xs font-semibold tracking-wide text-foreground">
+          <HelpCircle className="size-4 text-muted-foreground" aria-hidden />
+          <span className="text-xs font-medium text-foreground">
             {msg('managedAgents.sessions.detail.questionsPrompt', 'Agent asked questions')}
           </span>
         </div>
@@ -315,7 +308,7 @@ export function SessionQuestionnaireActionCard({
                     key={option.label}
                     value={option.label}
                     checked={currentDraft?.options.includes(option.label) ?? false}
-                    className="min-h-9 rounded-lg border border-input bg-transparent px-3 py-2 text-xs transition-colors hover:bg-muted/50 data-checked:border-primary data-checked:bg-primary/5 sm:text-sm"
+                    className="min-h-9 px-3 py-2 text-sm"
                     onChange={(event) => {
                       setDrafts((current) => {
                         const draft = current[itemName] ?? { options: [], other: '' };
@@ -332,7 +325,7 @@ export function SessionQuestionnaireActionCard({
                   >
                     <span className="font-medium">{option.label}</span>
                     {option.description ? (
-                      <QuestionnaireChoiceDescription className="text-[11px] text-muted-foreground sm:text-xs">
+                      <QuestionnaireChoiceDescription className="text-xs">
                         {option.description}
                       </QuestionnaireChoiceDescription>
                     ) : null}
@@ -342,7 +335,7 @@ export function SessionQuestionnaireActionCard({
                   aria-label={msg('managedAgents.quickstart.somethingElse', 'Something else')}
                   placeholder={msg('managedAgents.quickstart.somethingElse', 'Something else')}
                   value={currentDraft?.other ?? ''}
-                  className="h-8 min-h-8 rounded-lg px-2.5 py-1 text-xs sm:text-sm"
+                  className="h-8 min-h-8 text-sm"
                   onChange={(event) => {
                     setDrafts((current) => {
                       const draft = current[itemName] ?? { options: [], other: '' };

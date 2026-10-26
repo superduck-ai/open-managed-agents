@@ -265,6 +265,12 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      - type: bind
+        source: ./config/secrets/upstream-proxy-ca-key.pem
+        target: /etc/open-managed-agents/secrets/upstream-proxy-ca-key.pem
+        read_only: true
+        bind:
+          create_host_path: false
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

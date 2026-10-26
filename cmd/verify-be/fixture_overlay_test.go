@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -33,13 +34,17 @@ func TestBaselineFixtureOverlayOnlyAppliesToChatBaseline(t *testing.T) {
 func TestBaselineFixtureOverlayPreservesCurrentSource(t *testing.T) {
 	env := newEnvironment(t.TempDir(), t.TempDir(), "fixture-overlay-test")
 	env.backendCommit = "reference-commit"
-	for _, name := range []string{"session_mapper", "session_thread_mapper", "session_resource_file_mapper", "llm_provider_mapper"} {
+	for _, name := range []string{"session_mapper", "session_thread_mapper", "session_resource_file_mapper"} {
 		for _, root := range []string{env.root, filepath.Join(env.directory, "backend-source")} {
 			path := filepath.Join(root, "internal", "db", name+".sqlmap.gen.go")
 			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(path, []byte(root), 0o600); err != nil {
+			source := "package db\nfunc buildExisting() string { return \"reference\" }\n"
+			if root == env.root {
+				source = "package db\nfunc buildExisting() string { return \"candidate\" }\nfunc candidateBudgetMethod() {}\n"
+			}
+			if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -56,17 +61,24 @@ func TestBaselineFixtureOverlayPreservesCurrentSource(t *testing.T) {
 	if err := json.Unmarshal(data, &overlay); err != nil {
 		t.Fatal(err)
 	}
-	if len(overlay.Replace) != 4 {
+	if len(overlay.Replace) != 3 {
 		t.Fatalf("unexpected fixture scope: %v", overlay.Replace)
+	}
+	if _, exists := overlay.Replace[filepath.Join(env.root, "internal", "db", "llm_provider_mapper.sqlmap.gen.go")]; exists {
+		t.Fatal("Provider setup must use the public API instead of a baseline database interface")
 	}
 	for current, reference := range overlay.Replace {
 		before, err := os.ReadFile(current)
-		if err != nil || string(before) != env.root {
+		if err != nil || !strings.Contains(string(before), `return "candidate"`) {
 			t.Fatalf("current mapper changed: %v", err)
 		}
-		expected := filepath.Join(env.directory, "backend-source", "internal", "db", filepath.Base(current))
+		expected := filepath.Join(env.directory, "fixture-"+filepath.Base(current)+".overlay")
 		if reference != expected {
 			t.Fatalf("mapper reference = %s, want %s", reference, expected)
+		}
+		merged, err := os.ReadFile(reference)
+		if err != nil || !strings.Contains(string(merged), `return "reference"`) || !strings.Contains(string(merged), "func candidateBudgetMethod()") {
+			t.Fatalf("基线 SQL 或当前接口实现丢失：%s %v", merged, err)
 		}
 	}
 }

@@ -26,8 +26,6 @@ export function EnvironmentPackages({
       title={msg('managedAgents.environments.packages.title', 'Packages')}
       status={status}
       description={msg('environmentPage.packagesDescription', 'Installed into the container before sessions start.')}
-      anchor="#packages"
-      readOnly={readOnly}
     >
       <div className="space-y-4">
         {!active.length ? (
@@ -71,7 +69,7 @@ export function EnvironmentPackages({
               {values.packages.map((row, index) =>
                 row.manager === manager.id ? (
                   <div key={`${index}-${row.value}`}>
-                    <span className="inline-flex max-w-full items-center gap-1 rounded-md border border-border bg-muted/40 py-1 pl-2 pr-1 font-mono text-xs leading-5">
+                    <span className="inline-flex max-w-full items-center gap-1 rounded-md border-[0.5px] border-border bg-muted/40 py-1 pl-2 pr-1 font-mono text-xs leading-5">
                       <span className="min-w-0 break-all">{row.value}</span>
                       {!readOnly ? (
                         <Button
@@ -107,8 +105,8 @@ export function EnvironmentPackages({
                   key={manager.id}
                   type="button"
                   variant="outline"
-                  size="xs"
-                  className="h-8 gap-1.5 px-2 font-normal"
+                  size="default"
+                  className="gap-1.5 px-2 font-normal"
                   aria-label={msg('environmentPage.addManager', 'Add {name} {manager}', {
                     name: manager.name,
                     manager: manager.id,

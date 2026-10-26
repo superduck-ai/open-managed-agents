@@ -4,6 +4,7 @@ const keepAlive = setInterval(() => {}, 1_000);
 mock.module("@deepseek-ai/cordis", () => ({
   Context: class {
     async plugin() {}
+    async parallel() {}
     fiber = {
       async dispose() {
         console.log("disposing");

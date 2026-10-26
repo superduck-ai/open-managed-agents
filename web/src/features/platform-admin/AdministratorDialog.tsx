@@ -1,10 +1,18 @@
+import { useDialogDismissal } from '../../shared/hooks/use-dialog-dismissal';
 import { usePlatformAdminError } from './usePlatformAdminError';
 import { useI18n } from '../../shared/i18n';
-import { useState } from 'react';
+import { useRef, useState, type RefObject } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { ApiError } from '../../shared/api/client';
 import { Button } from '../../shared/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '../../shared/ui/dialog';
 import { Label } from '../../shared/ui/label';
 import { RoleSelect } from '../../shared/permissions/RoleSelect';
 import type { PlatformRole } from '../../shared/permissions/roles';
@@ -19,15 +27,19 @@ export function AdministratorDialog({
   organization,
   action,
   onClose,
+  finalFocus,
   onSaved,
 }: {
   organization: Organization;
   action: AdministratorAction;
   onClose: () => void;
+  finalFocus?: RefObject<HTMLElement | null>;
   onSaved: (organization: Organization) => void;
 }) {
   const { msg } = useI18n();
   const errorMessage = usePlatformAdminError();
+  const [closing, setClosing] = useState(false);
+  const saved = useRef<Organization | null>(null);
 
   const titles = {
     grant: msg('platformAdmin.assignOrganizationAdministrator', 'Assign organization administrator'),
@@ -61,7 +73,10 @@ export function AdministratorDialog({
         body: { ...change, account_uuid: accounts[0].uuid },
       });
     },
-    onSuccess: onSaved,
+    onSuccess: (result) => {
+      saved.current = result;
+      setClosing(true);
+    },
     onError: async (error) => {
       if ((error as unknown as ApiError).code === 'version_conflict') {
         await Promise.all([
@@ -74,14 +89,17 @@ export function AdministratorDialog({
     },
   });
   const valid = action.kind === 'change-role' ? role !== action.member.role && role !== 'admin' : accounts.length === 1;
+  const dialogProps = useDialogDismissal(() => {
+    if (saved.current) onSaved(saved.current);
+    else onClose();
+  }, mutation.isPending);
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open && !mutation.isPending) onClose();
-      }}
-    >
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl" showCloseButton={!mutation.isPending}>
+    <Dialog {...dialogProps} open={dialogProps.open && !closing}>
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-xl"
+        finalFocus={finalFocus}
+        closeButtonDisabled={mutation.isPending}
+      >
         <DialogHeader>
           <DialogTitle>{titles[action.kind]}</DialogTitle>
           <DialogDescription>
@@ -104,46 +122,48 @@ export function AdministratorDialog({
           </DialogDescription>
         </DialogHeader>
         <form
-          className="space-y-4"
+          className="flex min-h-0 flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault();
             if (valid && !mutation.isPending) mutation.mutate();
           }}
         >
-          {action.kind !== 'change-role' && (
-            <AccountPicker selected={accounts} onChange={setAccounts} limit={1} disabled={mutation.isPending} />
-          )}
-          {action.kind !== 'grant' && (
-            <div className="space-y-2">
-              <Label>
-                {action.kind === 'change-role'
-                  ? msg('platformAdmin.organizationRole', 'Organization role')
-                  : msg('platformAdmin.previousAdministratorSNewRole', 'Previous administrator’s new role')}
-              </Label>
-              <RoleSelect
-                className="w-full"
-                contentClassName="w-[min(26rem,calc(100vw-3rem))]"
-                value={role}
-                onChange={setRole}
-                disabled={mutation.isPending}
-                includeAdmin={action.kind === 'change-role'}
-                ariaLabel={
-                  action.kind === 'change-role'
+          <div className="min-h-0 space-y-4 overflow-y-auto [overflow-wrap:anywhere]">
+            {action.kind !== 'change-role' && (
+              <AccountPicker selected={accounts} onChange={setAccounts} limit={1} disabled={mutation.isPending} />
+            )}
+            {action.kind !== 'grant' && (
+              <div className="space-y-2">
+                <Label>
+                  {action.kind === 'change-role'
                     ? msg('platformAdmin.organizationRole', 'Organization role')
-                    : msg('platformAdmin.previousAdministratorSNewRole', 'Previous administrator’s new role')
-                }
-              />
-            </div>
-          )}
-          {mutation.isError && (
-            <p role="alert" className="text-destructive">
-              {errorMessage(mutation.error)}
-            </p>
-          )}
+                    : msg('platformAdmin.previousAdministratorSNewRole', 'Previous administrator’s new role')}
+                </Label>
+                <RoleSelect
+                  className="w-full"
+                  contentClassName="w-[min(26rem,calc(100vw-3rem))]"
+                  value={role}
+                  onChange={setRole}
+                  disabled={mutation.isPending}
+                  includeAdmin={action.kind === 'change-role'}
+                  ariaLabel={
+                    action.kind === 'change-role'
+                      ? msg('platformAdmin.organizationRole', 'Organization role')
+                      : msg('platformAdmin.previousAdministratorSNewRole', 'Previous administrator’s new role')
+                  }
+                />
+              </div>
+            )}
+            {mutation.isError && (
+              <p role="alert" className="text-destructive">
+                {errorMessage(mutation.error)}
+              </p>
+            )}
+          </div>
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={onClose} disabled={mutation.isPending}>
+            <DialogClose render={<Button type="button" variant="outline" disabled={mutation.isPending} />}>
               {msg('platformAdmin.cancel', 'Cancel')}
-            </Button>
+            </DialogClose>
             <Button type="submit" disabled={!valid || mutation.isPending}>
               {mutation.isPending
                 ? msg('platformAdmin.saving', 'Saving…')

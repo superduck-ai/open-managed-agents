@@ -9,6 +9,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+const NotForwardedHeader = "X-Oma-Mcp-Not-Forwarded"
+
 var (
 	errPayloadStorageUnavailable = errors.New("tunnels: payload storage unavailable")
 	errPayloadReferenceInvalid   = errors.New("tunnels: invalid payload reference")

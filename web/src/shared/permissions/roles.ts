@@ -37,3 +37,15 @@ export function platformRoleDescription(role: PlatformRole, msg: Translate) {
 export function accountRoleLabel(role: string | undefined, msg: Translate) {
   return platformRoleLabel(role === 'admin' || role === 'workspace_admin' ? 'admin' : 'user', msg);
 }
+
+export function membershipRoleForOrganization(
+  memberships: readonly { role?: string; organization?: { uuid?: string } }[] | undefined,
+  organizationUuid: string | undefined,
+) {
+  const matchedOrganizationUuid =
+    organizationUuid ?? memberships?.find((membership) => membership.organization?.uuid)?.organization?.uuid;
+  if (!matchedOrganizationUuid) {
+    return undefined;
+  }
+  return memberships?.find((membership) => membership.organization?.uuid === matchedOrganizationUuid)?.role;
+}

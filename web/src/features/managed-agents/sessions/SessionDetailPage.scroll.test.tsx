@@ -217,7 +217,11 @@ function mockOutputSession() {
 test('shows a budget pause and disables ordinary messages while retaining the draft', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
   const api = mockManagedResourceApi();
-  api.resources.sessions[0].status = 'idle';
+  Object.assign(api.resources.sessions[0], {
+    status: 'idle',
+    budget: { type: 'limit', max_list_cost: { amount: '1', currency: 'USD' } },
+    usage: { list_cost: { amount: '7', currency: 'USD' } },
+  });
   api.resources.sessionThreads.length = 0;
   api.resources.sessionEvents.length = 0;
   api.resources.sessionEvents.push({

@@ -10,24 +10,14 @@ import {
   LockedAgentReferenceField,
 } from '../components/common';
 import { type AgentApiResponse, type EntityOption, type ManagedEntityFormValues } from '../types';
+import { BudgetField } from './budget-field';
 import { DeploymentScheduleFields } from './deployment-schedule-fields';
 import { ManagedResourceFields } from './ManagedResourceFields';
 
-function DeploymentSection({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: string;
-  children: ReactNode;
-}) {
+function DeploymentSection({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="grid gap-5 border-b border-border py-7 first:pt-1 last:border-0 last:pb-1 md:grid-cols-[210px_minmax(0,1fr)] md:gap-10">
-      <div>
-        <h3 className="text-sm font-medium">{title}</h3>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
-      </div>
+    <section className="grid gap-5 border-b-[0.5px] border-border py-7 first:pt-1 last:border-0 last:pb-1 md:grid-cols-[180px_minmax(0,1fr)] md:gap-8">
+      <h3 className="text-sm font-medium">{title}</h3>
       <FieldGroup className="min-w-0">{children}</FieldGroup>
     </section>
   );
@@ -57,13 +47,7 @@ export function DeploymentFormFields({
   const { msg } = useI18n();
   return (
     <>
-      <DeploymentSection
-        title={msg('managedAgents.deployments.configuration', 'Configuration')}
-        description={msg(
-          'managedAgents.deployments.configurationHelp',
-          'Choose the agent, environment, and instructions for every run.',
-        )}
-      >
+      <DeploymentSection title={msg('managedAgents.deployments.configuration', 'Configuration')}>
         <DeploymentTextField
           label={msg('common.name', 'Name')}
           value={values.name}
@@ -94,6 +78,7 @@ export function DeploymentFormFields({
           manageLabel={msg('managedAgents.environments.manage', 'Manage environments')}
           onChange={(environmentId) => onChange({ environmentId })}
         />
+        <BudgetField values={values} onChange={onChange} />
         <DeploymentTextArea
           label={msg('managedAgents.deployments.initialMessage', 'Initial message')}
           value={values.initialMessage}
@@ -105,13 +90,7 @@ export function DeploymentFormFields({
           onChange={(initialMessage) => onChange({ initialMessage })}
         />
       </DeploymentSection>
-      <DeploymentSection
-        title={msg('managedAgents.deployments.resources', 'Resources')}
-        description={msg(
-          'managedAgents.deployments.resourcesHelp',
-          'Give the agent access to credentials, files, Git repositories, and persistent memory.',
-        )}
-      >
+      <DeploymentSection title={msg('managedAgents.deployments.resources', 'Resources')}>
         <DeploymentAddSelectField
           label={msg('managedAgents.credentialVaults.title', 'Credential vaults')}
           optional
@@ -131,13 +110,7 @@ export function DeploymentFormFields({
           onChange={(next) => onChange(next)}
         />
       </DeploymentSection>
-      <DeploymentSection
-        title={msg('managedAgents.common.trigger', 'Trigger')}
-        description={msg(
-          'managedAgents.deployments.triggerHelp',
-          'When a run starts: on demand, or automatically on a schedule.',
-        )}
-      >
+      <DeploymentSection title={msg('managedAgents.common.trigger', 'Trigger')}>
         <DeploymentScheduleFields values={values} onChange={onChange} />
       </DeploymentSection>
     </>

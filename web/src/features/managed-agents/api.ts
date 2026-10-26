@@ -13,6 +13,7 @@ import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/Agent
 import { credentialAuthBody, credentialDisplayName, normalizeMemoryFolderPath } from './resources/ManagedResources';
 import { sessionFileResourcePayload } from './sessions/file-resource-form';
 import { managedResourcesBody } from './resources/git-resource';
+import { budgetCreateBody, budgetUpdateBody } from './resources/budget';
 import { sessionEventType } from './sessions/sessionTraceModel';
 import {
   type AgentApiResponse,
@@ -453,6 +454,18 @@ export function createManagedEntity(
         workspaceId,
       ) as Promise<ManagedEntityApiResponse>;
   }
+}
+
+export function updateSessionBudget(
+  sessionId: string,
+  budget: { type: 'limit'; max_list_cost: { amount: string; currency: string } } | null,
+  workspaceId: string,
+) {
+  return anthropicBetaApi.sessions.update<SessionApiResponse>(
+    sessionId,
+    { budget },
+    workspaceId,
+  ) as Promise<SessionApiResponse>;
 }
 
 export function updateManagedEntity(
@@ -1205,7 +1218,13 @@ export function mergeSessionDeltaFrame(
     const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
     const completed = queryClient
       .getQueryData<SessionDetailEventCache>(cacheKey)
-      ?.events.some((cached) => sessionStableEventId(cached) === id && sessionFinalAgentEventId(cached) !== null);
+      ?.events.some(
+        (cached) =>
+          (sessionStableEventId(cached) === id && sessionFinalAgentEventId(cached) !== null) ||
+          (sessionEventType(cached) === 'span.model_request_end' &&
+            Array.isArray(cached.event_ids) &&
+            cached.event_ids.includes(id)),
+      );
     if (completed) {
       return;
     }
@@ -1674,6 +1693,7 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
         vault_ids: values.vaultIds,
         metadata: {},
         resources: managedResourcesBody(values, true),
+        ...(budgetCreateBody(values) ? { budget: budgetCreateBody(values) } : {}),
       };
     case 'deployments':
       return {
@@ -1686,6 +1706,7 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
         resources: managedResourcesBody(values, true),
         initial_events: deploymentInitialEvents(values.initialMessage),
         schedule: deploymentSchedule(values),
+        ...(budgetCreateBody(values) ? { budget: budgetCreateBody(values) } : {}),
       };
     case 'environments':
       return {
@@ -1723,6 +1744,7 @@ export function updateManagedEntityBody(section: ManagedEntitySection, values: M
         agent: values.agentId || undefined,
         environment_id: values.environmentId || undefined,
         vault_ids: values.vaultIds,
+        ...(budgetUpdateBody(values) !== undefined ? { budget: budgetUpdateBody(values) } : {}),
       };
     case 'deployments':
       return {
@@ -1734,6 +1756,7 @@ export function updateManagedEntityBody(section: ManagedEntitySection, values: M
         ...(values.resourcesChanged ? { resources: managedResourcesBody(values, true) } : {}),
         initial_events: deploymentInitialEvents(values.initialMessage),
         schedule: deploymentSchedule(values),
+        ...(budgetUpdateBody(values) !== undefined ? { budget: budgetUpdateBody(values) } : {}),
       };
     case 'environments':
       return { name, description };

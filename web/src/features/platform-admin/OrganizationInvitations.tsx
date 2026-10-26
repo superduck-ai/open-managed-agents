@@ -1,7 +1,7 @@
 import { accountRoleLabel } from '../../shared/permissions/roles';
 import { useFormatters } from '../../shared/i18n';
 import { useI18n } from '../../shared/i18n';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Button } from '../../shared/ui/button';
@@ -36,6 +36,7 @@ export function OrganizationInvitations({
   };
 
   const queries = useQueryClient();
+  const finalFocus = useRef<HTMLElement | null>(null);
   const [action, setAction] = useState<InviteAction | null>(null);
   const columns: ColumnDef<OrganizationInvitation>[] = [
     { accessorKey: 'email', header: msg('platformAdmin.inviteeEmail', 'Invitee email') },
@@ -65,10 +66,24 @@ export function OrganizationInvitations({
       cell: ({ row }) =>
         ['pending', 'expired'].includes(row.original.status) ? (
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => setAction({ kind: 'resend', invitation: row.original })}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={(event) => {
+                finalFocus.current = event.currentTarget;
+                setAction({ kind: 'resend', invitation: row.original });
+              }}
+            >
               {msg('platformAdmin.resend', 'Resend')}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setAction({ kind: 'revoke', invitation: row.original })}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={(event) => {
+                finalFocus.current = event.currentTarget;
+                setAction({ kind: 'revoke', invitation: row.original });
+              }}
+            >
               {msg('platformAdmin.revoke', 'Revoke')}
             </Button>
           </div>
@@ -90,7 +105,13 @@ export function OrganizationInvitations({
           >
             {msg('platformAdmin.refreshStatus', 'Refresh status')}
           </Button>
-          <Button variant="outline" onClick={() => setAction({ kind: 'create' })}>
+          <Button
+            variant="outline"
+            onClick={(event) => {
+              finalFocus.current = event.currentTarget;
+              setAction({ kind: 'create' });
+            }}
+          >
             {msg('platformAdmin.sendInvitation', 'Send invitation')}
           </Button>
         </div>
@@ -108,6 +129,7 @@ export function OrganizationInvitations({
       />
       {action && (
         <InvitationDialog
+          finalFocus={finalFocus}
           organization={organization}
           action={action}
           onClose={() => setAction(null)}

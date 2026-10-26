@@ -3,10 +3,12 @@ import { useFormatters, useI18n } from '../../../shared/i18n';
 import { cn } from '../../../shared/lib/utils';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
-import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
+import { ResourceListState } from '../../../shared/ui/resource-list-state';
+import { ResourceSearchField } from '../../../shared/ui/resource-list-controls';
 import {
   DataTableRow,
   DataTableCell,
+  CopyIdCell,
   MoreActionsButton,
   dataTableClassName,
   dataTableHeaderCellClassName,
@@ -19,8 +21,8 @@ import {
   DropdownMenuTrigger,
 } from '../../../shared/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
-import { AlertCircle, Archive, LockKeyhole, Pencil, Plus, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { AlertCircle, Archive, LockKeyhole, Pencil, X } from 'lucide-react';
+import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import {
   archiveVaultCredential,
   createVaultCredential,
@@ -34,8 +36,6 @@ import { type CredentialFormValues, type VaultApiResponse, type VaultCredentialA
 import { compactEntityId, errorMessage } from '../utils';
 import { CredentialDialog } from './dialogs';
 import { credentialAuthLabel } from './model';
-
-type CredentialStatusFilter = 'all' | 'active';
 
 function vaultCredentialDateLabel(
   value: string,
@@ -62,12 +62,14 @@ export function VaultCredentialsPanel({
   refreshKey,
   onRefresh,
   dialog: controlledDialog,
+  returnFocus,
   onDialogChange,
 }: {
   vault: VaultApiResponse;
   workspaceId: string;
   refreshKey: number;
   onRefresh: () => void;
+  returnFocus?: RefObject<HTMLElement | null>;
   dialog?: {
     mode: 'create' | 'edit';
     credential?: VaultCredentialApiResponse;
@@ -90,13 +92,12 @@ export function VaultCredentialsPanel({
     data: [],
   });
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<CredentialStatusFilter>('all');
-  const [openFilterMenu, setOpenFilterMenu] = useState<'status' | null>(null);
   const [internalDialog, setInternalDialog] = useState<{
     mode: 'create' | 'edit';
     credential?: VaultCredentialApiResponse;
     firstCredential?: boolean;
   } | null>(null);
+  const refreshAfterCloseRef = useRef(false);
   const dialog = onDialogChange ? (controlledDialog ?? null) : internalDialog;
   const setDialog = onDialogChange ?? setInternalDialog;
   const [confirmAction, setConfirmAction] = useState<{
@@ -134,19 +135,8 @@ export function VaultCredentialsPanel({
     };
   }, [refreshKey, vault.id, workspaceId]);
 
-  const statusOptions = useMemo(
-    () => [
-      { value: 'all' as const, label: msg('common.all', 'All') },
-      { value: 'active' as const, label: msg('common.active', 'Active') },
-    ],
-    [msg],
-  );
-  const statusValueLabel = statusOptions.find((option) => option.value === statusFilter)?.label ?? statusFilter;
-
   const visibleCredentials = useMemo(
-    () =>
-      // listVaultCredentials always uses include_archived: false, so All/Active are equivalent today.
-      state.data.filter((credential) => !credential.archived_at && credentialMatchesSearch(credential, search)),
+    () => state.data.filter((credential) => !credential.archived_at && credentialMatchesSearch(credential, search)),
     [search, state.data],
   );
 
@@ -157,8 +147,7 @@ export function VaultCredentialsPanel({
       ? await updateVaultCredential(vault.id, credential.id, values, workspaceId)
       : await createVaultCredential(vault.id, values, workspaceId);
     setState((current) => ({ ...current, data: [updated, ...current.data.filter((item) => item.id !== updated.id)] }));
-    setDialog(null);
-    onRefresh();
+    refreshAfterCloseRef.current = true;
   };
 
   const remove = async (credential: VaultCredentialApiResponse, action: 'archive' | 'delete') => {
@@ -201,175 +190,158 @@ export function VaultCredentialsPanel({
         />
       ) : null}
 
-      <div className="mb-7 flex flex-wrap items-center gap-2">
-        <ResourceSearchField
-          id="vault-credential-search"
-          value={search}
-          placeholder={msg('managedAgents.credentialVaults.credentials.searchPlaceholder', 'Find credential by ID')}
-          onChange={setSearch}
-        />
-        <ResourceFilterDropdown
-          label={msg('managedAgents.filters.status', 'Status')}
-          valueLabel={statusValueLabel}
-          options={statusOptions}
-          value={statusFilter}
-          menu="status"
-          open={openFilterMenu === 'status'}
-          menuWidthClass="w-[220px]"
-          onOpenChange={setOpenFilterMenu}
-          onSelect={(value) => {
-            setStatusFilter(value);
-            setOpenFilterMenu(null);
-          }}
-        />
-      </div>
+      {state.data.length > 0 ? (
+        <div className="mb-7 flex flex-wrap items-center gap-2">
+          <ResourceSearchField
+            id="vault-credential-search"
+            value={search}
+            placeholder={msg('managedAgents.credentialVaults.credentials.searchPlaceholder', 'Find credential by ID')}
+            onChange={setSearch}
+          />
+        </div>
+      ) : null}
 
       {state.error ? (
-        <Alert variant="destructive" className="mb-4 max-w-xl">
+        <Alert variant="destructive" className="mb-4 max-w-xl [overflow-wrap:anywhere]">
           <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <AlertDescription>{state.error}</AlertDescription>
+          <AlertDescription>
+            <p>{state.error}</p>
+            <Button type="button" variant="outline" size="sm" className="mt-2" onClick={onRefresh}>
+              {msg('common.retry', 'Retry')}
+            </Button>
+          </AlertDescription>
         </Alert>
       ) : null}
 
-      <Table className={cn(dataTableClassName, 'min-w-[1080px]')}>
-        <TableHeader>
-          <TableRow className={dataTableHeaderRowClassName}>
-            {columns.map((column) => (
-              <TableHead
-                key={column}
-                className={cn(
-                  dataTableHeaderCellClassName,
-                  column === managedColumnLabel('ID', msg) && 'w-[200px]',
-                  column === managedColumnLabel('Name', msg) && 'w-[220px]',
-                  column === managedColumnLabel('Auth', msg) && 'w-[180px]',
-                  column === managedColumnLabel('Status', msg) && 'w-[110px]',
-                  column === managedColumnLabel('Updated', msg) && 'w-[120px]',
-                )}
-              >
-                {column}
-              </TableHead>
-            ))}
-            <TableHead
-              className={cn(dataTableHeaderCellClassName, 'w-[48px] px-2')}
-              aria-label={managedColumnLabel('Actions', msg)}
-            />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {state.loading ? (
-            <TableRow className="border-0 hover:bg-transparent">
-              <TableCell colSpan={columns.length + 1} className="h-[280px] text-center text-sm text-muted-foreground">
-                {msg('common.loading', 'Loading...')}
-              </TableCell>
-            </TableRow>
-          ) : visibleCredentials.length === 0 ? (
-            <TableRow className="border-0 hover:bg-transparent">
-              <TableCell colSpan={columns.length + 1} className="h-[320px] p-0">
-                <div className="grid h-full place-items-center text-center">
-                  <div className="max-w-[360px] px-4 py-10">
-                    <LockKeyhole className="mx-auto mb-4 size-12 stroke-[1.3] text-foreground" aria-hidden />
-                    <div className="text-sm font-semibold text-foreground">
-                      {search.trim() || statusFilter !== 'all'
-                        ? msg(
-                            'managedAgents.credentialVaults.credentials.searchEmpty',
-                            'No credentials match your filters.',
-                          )
-                        : msg('managedAgents.credentialVaults.credentials.empty', 'No credentials yet')}
-                    </div>
-                    {!search.trim() && statusFilter === 'all' ? (
-                      <>
-                        <p className="mt-3 text-sm leading-5 text-muted-foreground">
-                          {msg(
-                            'managedAgents.credentialVaults.credentials.emptyBody',
-                            'Add a credential to give agents access through this vault.',
-                          )}
-                        </p>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="mt-4"
-                          onClick={() => setDialog({ mode: 'create' })}
-                        >
-                          <Plus className="size-4" aria-hidden />
-                          {msg('managedAgents.credentialVaults.credentialDialog.add', 'Add credential')}
-                        </Button>
-                      </>
-                    ) : null}
-                  </div>
-                </div>
-              </TableCell>
-            </TableRow>
-          ) : (
-            visibleCredentials.map((credential) => (
-              <DataTableRow key={credential.id} className="[&>td]:h-11">
-                <DataTableCell edge="start" className="truncate font-mono text-xs font-medium">
-                  {compactEntityId(credential.id)}
-                </DataTableCell>
-                <DataTableCell className="h-11 truncate px-3">{credential.display_name}</DataTableCell>
-                <DataTableCell className="h-11 truncate px-3">
-                  {credentialAuthLabel(credential.auth, msg)}
-                </DataTableCell>
-                <DataTableCell className="h-11 px-3">
-                  <AgentStatusBadge archived={Boolean(credential.archived_at)} />
-                </DataTableCell>
-                <DataTableCell className="h-11 truncate px-3">
-                  {vaultCredentialDateLabel(credential.updated_at, formatters.date)}
-                </DataTableCell>
-                <DataTableCell edge="end" className="px-2">
-                  <div className="flex justify-end">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        render={
-                          <MoreActionsButton
-                            label={msg('managedAgents.common.moreActions', 'More actions')}
+      {state.loading || visibleCredentials.length > 0 ? (
+        <Table className={cn(dataTableClassName, state.loading ? 'min-w-full' : 'min-w-[900px]')}>
+          {!state.loading ? (
+            <TableHeader>
+              <TableRow className={dataTableHeaderRowClassName}>
+                {columns.map((column) => (
+                  <TableHead
+                    key={column}
+                    className={cn(
+                      dataTableHeaderCellClassName,
+                      column === managedColumnLabel('ID', msg) && 'w-[200px]',
+                      column === managedColumnLabel('Name', msg) && 'w-[220px]',
+                      column === managedColumnLabel('Auth', msg) && 'w-[180px]',
+                      column === managedColumnLabel('Status', msg) && 'w-[110px]',
+                      column === managedColumnLabel('Updated', msg) && 'w-[120px]',
+                    )}
+                  >
+                    {column}
+                  </TableHead>
+                ))}
+                <TableHead
+                  className={cn(dataTableHeaderCellClassName, 'w-[48px] px-2')}
+                  aria-label={managedColumnLabel('Actions', msg)}
+                />
+              </TableRow>
+            </TableHeader>
+          ) : null}
+          <TableBody>
+            {state.loading ? (
+              <TableRow className="border-0 hover:bg-transparent">
+                <TableCell colSpan={columns.length + 1} className="h-[280px] text-center text-sm text-muted-foreground">
+                  {msg('common.loading', 'Loading...')}
+                </TableCell>
+              </TableRow>
+            ) : (
+              visibleCredentials.map((credential) => (
+                <DataTableRow key={credential.id} className="[&>td]:h-11">
+                  <DataTableCell edge="start" title={credential.id}>
+                    <CopyIdCell
+                      value={credential.id}
+                      displayValue={compactEntityId(credential.id)}
+                      ariaLabel={msg('common.copyValue', 'Copy {value}', { value: credential.id })}
+                    />
+                  </DataTableCell>
+                  <DataTableCell className="h-11 truncate px-3" title={credential.display_name}>
+                    {credential.display_name}
+                  </DataTableCell>
+                  <DataTableCell className="h-11 truncate px-3">
+                    {credentialAuthLabel(credential.auth, msg)}
+                  </DataTableCell>
+                  <DataTableCell className="h-11 px-3">
+                    <AgentStatusBadge archived={Boolean(credential.archived_at)} />
+                  </DataTableCell>
+                  <DataTableCell className="h-11 truncate px-3">
+                    {vaultCredentialDateLabel(credential.updated_at, formatters.date)}
+                  </DataTableCell>
+                  <DataTableCell edge="end" className="px-2">
+                    <div className="flex justify-end">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={
+                            <MoreActionsButton
+                              label={msg('managedAgents.common.moreActions', 'More actions')}
+                              disabled={busyId === credential.id}
+                            />
+                          }
+                        />
+                        <DropdownMenuContent align="end" className="w-[164px]">
+                          <DropdownMenuItem className="h-9" onClick={() => setDialog({ mode: 'edit', credential })}>
+                            <Pencil className="size-4" aria-hidden />
+                            {msg('common.edit', 'Edit')}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="h-9"
+                            disabled={busyId === credential.id || Boolean(credential.archived_at)}
+                            onClick={() => setConfirmAction({ action: 'archive', credential })}
+                          >
+                            <Archive className="size-4" aria-hidden />
+                            {msg('common.archive', 'Archive')}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="h-9"
+                            variant="destructive"
                             disabled={busyId === credential.id}
-                          />
-                        }
-                      />
-                      <DropdownMenuContent align="end" className="w-[164px]">
-                        <DropdownMenuItem className="h-9" onClick={() => setDialog({ mode: 'edit', credential })}>
-                          <Pencil className="size-4" aria-hidden />
-                          {msg('common.edit', 'Edit')}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="h-9"
-                          disabled={busyId === credential.id || Boolean(credential.archived_at)}
-                          onClick={() => setConfirmAction({ action: 'archive', credential })}
-                        >
-                          <Archive className="size-4" aria-hidden />
-                          {msg('common.archive', 'Archive')}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="h-9"
-                          variant="destructive"
-                          disabled={busyId === credential.id}
-                          onClick={() => setConfirmAction({ action: 'delete', credential })}
-                        >
-                          <X className="size-4" aria-hidden />
-                          {msg('common.delete', 'Delete')}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </DataTableCell>
-              </DataTableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
+                            onClick={() => setConfirmAction({ action: 'delete', credential })}
+                          >
+                            <X className="size-4" aria-hidden />
+                            {msg('common.delete', 'Delete')}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </DataTableCell>
+                </DataTableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      ) : null}
+
+      {!state.loading && !state.error && visibleCredentials.length === 0 ? (
+        <ResourceListState
+          icon={LockKeyhole}
+          title={
+            search.trim()
+              ? msg('managedAgents.credentialVaults.credentials.searchEmpty', 'No credentials match your filters.')
+              : msg('managedAgents.credentialVaults.credentials.empty', 'No credentials yet')
+          }
+        />
+      ) : null}
 
       {dialog ? (
         <CredentialDialog
           credential={dialog.credential}
+          returnFocus={returnFocus}
           vaultId={vault.id}
           workspaceId={workspaceId}
           orgUuid={orgUuid}
           firstCredential={dialog.firstCredential}
-          onClose={() => setDialog(null)}
+          onClose={() => {
+            setDialog(null);
+            if (refreshAfterCloseRef.current) {
+              refreshAfterCloseRef.current = false;
+              onRefresh();
+            }
+          }}
           onSubmit={(values) => submit(values, dialog.credential)}
           onOAuthComplete={() => {
-            setDialog(null);
-            onRefresh();
+            refreshAfterCloseRef.current = true;
           }}
         />
       ) : null}

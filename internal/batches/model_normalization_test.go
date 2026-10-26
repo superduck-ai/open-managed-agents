@@ -11,8 +11,8 @@ import (
 
 func TestNormalizeBatchModelsRejectsInvalidReferences(t *testing.T) {
 	catalog := llmproviders.NewCatalog([]db.LLMProvider{
-		{Slug: "first", ModelIDs: []string{"shared"}},
-		{Slug: "second", ModelIDs: []string{"shared"}},
+		{Slug: "first", Models: db.LLMModels{{ID: "shared"}}},
+		{Slug: "second", Models: db.LLMModels{{ID: "shared"}}},
 	})
 	for _, model := range []string{"shared", "missing"} {
 		body := &createRequest{Requests: []createBatchRequest{{CustomID: "request", Params: json.RawMessage(`{"model":"` + model + `"}`)}}}
@@ -24,7 +24,7 @@ func TestNormalizeBatchModelsRejectsInvalidReferences(t *testing.T) {
 }
 
 func TestNormalizeBatchModelsPinsProviderBeforeCatalogChanges(t *testing.T) {
-	providers := []db.LLMProvider{{Slug: "first", ModelIDs: []string{"vendor/model"}}}
+	providers := []db.LLMProvider{{Slug: "first", Models: db.LLMModels{{ID: "vendor/model"}}}}
 	body := &createRequest{Requests: []createBatchRequest{
 		{CustomID: "legacy", Params: json.RawMessage(`{"model" : "vendor/model", "metadata":{"model":"opaque"}}`)},
 		{CustomID: "qualified", Params: json.RawMessage(`{"model":"first/vendor/model","max_tokens":10}`)},
@@ -35,7 +35,7 @@ func TestNormalizeBatchModelsPinsProviderBeforeCatalogChanges(t *testing.T) {
 	if got, want := string(body.Requests[0].Params), `{"model" : "first/vendor/model", "metadata":{"model":"opaque"}}`; got != want {
 		t.Fatalf("params = %s, want %s", got, want)
 	}
-	catalog := llmproviders.NewCatalog(append(providers, db.LLMProvider{Slug: "second", ModelIDs: []string{"vendor/model"}}))
+	catalog := llmproviders.NewCatalog(append(providers, db.LLMProvider{Slug: "second", Models: db.LLMModels{{ID: "vendor/model"}}}))
 	for _, request := range body.Requests {
 		model, err := llmproviders.MessageRequestModel(request.Params)
 		if err != nil {

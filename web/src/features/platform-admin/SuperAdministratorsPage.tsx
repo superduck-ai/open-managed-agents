@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useI18n } from '../../shared/i18n';
@@ -10,6 +10,7 @@ import { SuperAdministratorDialog } from './SuperAdministratorDialog';
 export function SuperAdministratorsPage() {
   const { msg } = useI18n();
   const queries = useQueryClient();
+  const finalFocus = useRef<HTMLElement | null>(null);
   const [action, setAction] = useState<{ account?: RegisteredAccount } | null>(null);
   const title = msg('platformAdmin.superAdministrators', 'Super administrators');
   const columns: ColumnDef<RegisteredAccount>[] = [
@@ -20,7 +21,14 @@ export function SuperAdministratorsPage() {
       id: 'actions',
       header: msg('platformAdmin.actions', 'Actions'),
       cell: ({ row }) => (
-        <Button variant="outline" size="sm" onClick={() => setAction({ account: row.original })}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={(event) => {
+            finalFocus.current = event.currentTarget;
+            setAction({ account: row.original });
+          }}
+        >
           {msg('platformAdmin.revokeSuperAdministrator', 'Revoke super administrator')}
         </Button>
       ),
@@ -38,13 +46,20 @@ export function SuperAdministratorsPage() {
             )}
           </p>
         </div>
-        <Button className="shrink-0" onClick={() => setAction({})}>
+        <Button
+          className="shrink-0"
+          onClick={(event) => {
+            finalFocus.current = event.currentTarget;
+            setAction({});
+          }}
+        >
           {msg('platformAdmin.addSuperAdministrator', 'Add super administrator')}
         </Button>
       </header>
       <DirectoryTable<RegisteredAccount> path="/administrators" columns={columns} label={title} />
       {action && (
         <SuperAdministratorDialog
+          finalFocus={finalFocus}
           account={action.account}
           onClose={() => setAction(null)}
           onSaved={async () => {

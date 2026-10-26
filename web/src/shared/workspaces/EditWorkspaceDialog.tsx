@@ -1,5 +1,5 @@
 import { AlertCircle } from 'lucide-react';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useI18n } from '../i18n';
 import { Alert, AlertDescription } from '../ui/alert';
 import { Button } from '../ui/button';
@@ -18,10 +18,16 @@ type EditWorkspaceDialogProps = {
 
 export function EditWorkspaceDialog({ open, workspace, onClose, onSave }: EditWorkspaceDialogProps) {
   const { msg } = useI18n();
+  const nameRef = useRef<HTMLInputElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   const [name, setName] = useState('');
   const [selectedColor, setSelectedColor] = useState<string>(workspaceColors[1].value);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (error) errorRef.current?.focus();
+  }, [error]);
 
   useEffect(() => {
     if (!open || !workspace) {
@@ -59,53 +65,74 @@ export function EditWorkspaceDialog({ open, workspace, onClose, onSave }: EditWo
   return (
     <Dialog
       open={open}
-      onOpenChange={(next) => {
-        if (!next && !submitting) onClose();
+      onOpenChange={(next, details) => {
+        if (!next && submitting) {
+          details.cancel();
+          return;
+        }
+        if (!next) onClose();
       }}
     >
-      <DialogContent className="sm:max-w-[520px]">
+      <DialogContent
+        className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden sm:max-w-[520px]"
+        initialFocus={nameRef}
+        closeButtonDisabled={submitting}
+      >
         <DialogHeader>
           <DialogTitle>{msg('workspace.edit.title', 'Edit workspace')}</DialogTitle>
         </DialogHeader>
 
-        <form className="space-y-5" onSubmit={handleSubmit}>
-          <Field className="gap-2">
-            <FieldLabel htmlFor="workspace-edit-name">{msg('common.name', 'Name')}</FieldLabel>
-            <Input id="workspace-edit-name" value={name} onChange={(event) => setName(event.target.value)} autoFocus />
-          </Field>
-
-          <Field className="gap-2">
-            <FieldLabel>{msg('common.color', 'Color')}</FieldLabel>
-            <RadioGroup
-              aria-label={msg('workspace.colorAria', 'Workspace color')}
-              value={selectedColor}
-              onValueChange={(nextValue) => {
-                if (nextValue) {
-                  setSelectedColor(nextValue);
-                }
-              }}
-              className="grid w-max grid-cols-5 gap-2"
-            >
-              {workspaceColors.map((color) => (
-                <RadioGroupItem
-                  key={color.name}
-                  value={color.value}
-                  aria-label={color.name}
-                  className="size-8 rounded-md border border-border bg-transparent p-0 after:hidden focus-visible:ring-2 focus-visible:ring-ring/50 [&>[data-slot=radio-group-indicator]]:hidden"
-                  style={{ backgroundColor: color.value }}
+        <form className="flex min-h-0 flex-col gap-5" onSubmit={handleSubmit}>
+          <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
+            <fieldset disabled={submitting} className="min-w-0 space-y-5">
+              <Field className="gap-2">
+                <FieldLabel htmlFor="workspace-edit-name">{msg('common.name', 'Name')}</FieldLabel>
+                <Input
+                  id="workspace-edit-name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  ref={nameRef}
                 />
-              ))}
-            </RadioGroup>
-          </Field>
+              </Field>
 
-          {error ? (
-            <Alert variant="destructive">
-              <AlertCircle className="size-4" aria-hidden />
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
+              <Field className="gap-2">
+                <FieldLabel>{msg('common.color', 'Color')}</FieldLabel>
+                <RadioGroup
+                  aria-label={msg('workspace.colorAria', 'Workspace color')}
+                  value={selectedColor}
+                  onValueChange={(nextValue) => {
+                    if (nextValue) {
+                      setSelectedColor(nextValue);
+                    }
+                  }}
+                  className="grid w-max max-w-max grid-cols-5 gap-2"
+                >
+                  {workspaceColors.map((color) => (
+                    <RadioGroupItem
+                      key={color.name}
+                      value={color.value}
+                      aria-label={msg(`workspace.color.${color.name.toLowerCase()}`, color.name)}
+                      className="size-8 rounded-md border-[0.5px] border-border bg-transparent p-0 after:hidden focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-foreground data-checked:outline-[0.5px] data-checked:outline-offset-2 data-checked:outline-foreground [&>[data-slot=radio-group-indicator]]:hidden"
+                      style={{ backgroundColor: color.displayValue }}
+                    />
+                  ))}
+                </RadioGroup>
+              </Field>
 
-          <DialogFooter>
+              {error ? (
+                <Alert
+                  ref={errorRef}
+                  tabIndex={-1}
+                  variant="destructive"
+                  className="outline-none [overflow-wrap:anywhere]"
+                >
+                  <AlertCircle className="size-4" aria-hidden />
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              ) : null}
+            </fieldset>
+          </div>
+          <DialogFooter className="shrink-0">
             <DialogClose render={<Button type="button" variant="outline" disabled={submitting} />}>
               {msg('common.cancel', 'Cancel')}
             </DialogClose>

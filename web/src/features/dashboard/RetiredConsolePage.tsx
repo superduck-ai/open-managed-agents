@@ -1,6 +1,6 @@
 import { useI18n } from '../../shared/i18n';
 import { ButtonLink } from '../../shared/ui/button';
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '../../shared/ui/empty';
+import { Empty, EmptyContent, EmptyHeader, EmptyTitle } from '../../shared/ui/empty';
 
 export function RetiredConsolePage({ organizationSettings = false }: { organizationSettings?: boolean }) {
   const { msg } = useI18n();
@@ -8,12 +8,6 @@ export function RetiredConsolePage({ organizationSettings = false }: { organizat
     <Empty>
       <EmptyHeader>
         <EmptyTitle>{msg('console.retired.title', 'This page has been retired')}</EmptyTitle>
-        <EmptyDescription>
-          {msg(
-            'console.retired.description',
-            'This page did not provide a connected service. Use the available console features to continue.',
-          )}
-        </EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
         <ButtonLink href={organizationSettings ? '/settings/organization' : '/dashboard'}>

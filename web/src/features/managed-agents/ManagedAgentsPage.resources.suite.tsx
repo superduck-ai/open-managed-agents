@@ -74,7 +74,7 @@ export function registerManagedAgentsResourceTests() {
 
     for (const [section, rowText] of sections) {
       cleanup();
-      render(<ManagedAgentsPage section={section} />);
+      renderManagedAgentsPage(section);
       expect(await screen.findByText(rowText)).toBeTruthy();
       expect(screen.queryByText('This local console mock keeps creation client-side for now.')).toBeNull();
       expect(screen.getByRole('button', { name: 'Previous page' }).className.includes('bg-secondary')).toBe(false);
@@ -166,6 +166,53 @@ export function registerManagedAgentsResourceTests() {
     const alert = await screen.findByRole('alert');
     expect(alert.dataset.slot).toBe('alert');
     expect(alert.textContent).toContain('environment list failed');
+  });
+
+  test.each([
+    ['deployments', 'deployments', 'No deployments yet'],
+    ['memory-stores', 'memory_stores', 'No memory stores yet'],
+  ] as const)('does not report an empty %s list after a failed request', async (section, resource, emptyTitle) => {
+    resetTestDom(`https://oma.duck.ai/workspaces/default/${section}`);
+    mockManagedResourceApi();
+    const fetchResource = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input).startsWith(`/v1/${resource}?`) && requestMethod(input, init) === 'GET') {
+        return Response.json({ error: { message: 'resource list unavailable' } }, { status: 500 });
+      }
+      return fetchResource(input, init);
+    }) as typeof fetch;
+    renderManagedAgentsPage(section);
+    expect((await screen.findByRole('alert')).textContent).toContain('resource list unavailable');
+    expect(screen.queryByText(emptyTitle)).toBeNull();
+  });
+
+  test('keeps credential load failures distinct from an empty vault', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/vaults/vlt_one123456');
+    mockManagedResourceApi();
+    const fetchResource = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input).includes('/credentials?')) {
+        return Response.json({ error: { message: 'Credentials unavailable' } }, { status: 503 });
+      }
+      return fetchResource(input, init);
+    });
+    renderManagedAgentsPage('credential-vaults');
+
+    expect(await screen.findByText('Credentials unavailable')).toBeTruthy();
+    expect(screen.queryByText('No credentials yet')).toBeNull();
+  });
+
+  test('keeps a single empty vault action outside the table', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/vaults/vlt_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.vaultCredentials.vlt_one123456 = [];
+    renderManagedAgentsPage('credential-vaults');
+
+    const empty = await screen.findByText('No credentials yet');
+    expect(empty.closest('[data-slot="table-container"]')).toBeNull();
+    const actions = screen.getAllByRole('button', { name: 'Add credential' });
+    expect(actions).toHaveLength(1);
+    expect(actions.every((button) => button.closest('[data-slot="table-container"]') === null)).toBe(true);
   });
 
   test('uses shared vault credential row actions with confirmation dialogs', async () => {
@@ -446,13 +493,13 @@ export function registerManagedAgentsResourceTests() {
     expect(within(toolBatchRow).getByText('Read')).toBeTruthy();
     expect(within(toolBatchRow).getByText('Glob')).toBeTruthy();
     expect(toolBatchRow?.textContent).not.toContain('2 tool calls');
-    expect(screen.getByText('1 queued message')).toBeTruthy();
     expect(screen.getByText('Queued warmup request')).toBeTruthy();
     const queuedRow = document.querySelector(
       '[data-event-id^="evt_user_queued-"][data-entry-kind="message"]',
     ) as HTMLElement;
     expect(queuedRow).toBeTruthy();
-    expect(queuedRow.querySelector('[data-cds="ShimmerText"]')?.textContent).toContain('Queued warmup request');
+    expect(within(queuedRow).getByText('Queued')).toBeTruthy();
+    expect(queuedRow.textContent).toContain('Queued warmup request');
     expect(within(queuedRow).queryByText('Generating')).toBeNull();
     expect(screen.getAllByTestId('session-meta-strip').length).toBeGreaterThan(0);
     expect(screen.getByText('unzip /mnt/session/uploads/orders.zip -d /workspace/data/')).toBeTruthy();
@@ -528,7 +575,12 @@ export function registerManagedAgentsResourceTests() {
     await waitFor(() =>
       expect(api.requests.some((request) => request.url === '/v1/sessions/sesn_one123456?beta=true')).toBe(true),
     );
-    expect(api.requests.some((request) => request.url.startsWith('/v1/files?'))).toBe(false);
+    const fileRequests = api.requests.filter((request) => request.url.startsWith('/v1/files?'));
+    expect(fileRequests.length).toBeGreaterThan(0);
+    for (const request of fileRequests) {
+      expect(new URL(request.url, 'https://oma.duck.ai').searchParams.get('scope_id')).toBe('sesn_one123456');
+      expect(request.headers['x-workspace-id']).toBe('default');
+    }
     expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/resources?'))).toBe(
       false,
     );
@@ -632,7 +684,12 @@ export function registerManagedAgentsResourceTests() {
     fireEvent.click(reporterEventRow() as HTMLElement);
     const debugDetail = await screen.findByTestId('session-trace-detail');
     expect(debugDetail.textContent).toContain('"type": "agent.message"');
-    expect(within(debugDetail).queryByText('Deltas')).toBeNull();
+    expect(within(debugDetail).getByRole('tab', { name: 'Deltas' }).getAttribute('aria-disabled')).toBe('true');
+    expect(
+      within(debugDetail).getByLabelText(
+        'Deltas are only captured for messages streamed live in this browser tab — they are not stored in history.',
+      ).tabIndex,
+    ).toBe(0);
     const debugSearchParams = new URL(window.location.href).searchParams;
     expect(debugSearchParams.get('segment')).toBeNull();
     expect(debugSearchParams.get('event')).toBe('evt_reporter');
@@ -643,7 +700,9 @@ export function registerManagedAgentsResourceTests() {
     expect(selectedReporterRow.querySelector('[data-transcript-message-body]')?.className).toContain(
       '!bg-session-selected',
     );
-    expect(selectedReporterRow.querySelector('[class*="ring-foreground"]')).toBeNull();
+    expect(
+      selectedReporterRow.querySelector('[data-transcript-message-body]')?.classList.contains('ring-foreground'),
+    ).toBe(false);
     expect(new URL(window.location.href).searchParams.get('event')).toBe('evt_reporter');
     fireEvent.click(within(debugDetail).getByRole('button', { name: 'Close detail panel' }));
     fireEvent.click(reporterEventRow() as HTMLElement);
@@ -837,7 +896,12 @@ export function registerManagedAgentsResourceTests() {
         (request) => request.url === '/v1/files/file_orders123456?beta=true' && request.method === 'GET',
       ),
     ).toBe(true);
-    expect(api.requests.some((request) => request.url.startsWith('/v1/files?'))).toBe(false);
+    const fileRequests = api.requests.filter((request) => request.url.startsWith('/v1/files?'));
+    expect(fileRequests.length).toBeGreaterThan(0);
+    for (const request of fileRequests) {
+      expect(new URL(request.url, 'https://oma.duck.ai').searchParams.get('scope_id')).toBe('sesn_one123456');
+      expect(request.headers['x-workspace-id']).toBe('default');
+    }
     expect(
       api.requests.some(
         (request) => request.url.startsWith('/v1/sessions/sesn_one123456/resources?') && request.method === 'GET',
@@ -864,10 +928,10 @@ export function registerManagedAgentsResourceTests() {
     expect(bashToolCells[1]?.textContent).toBe('Always ask');
     expect(bashToolCells[2]?.textContent).toBe('2');
     expect(bashToolCells[3]?.textContent).toBe('0');
-    expect(bashToolCells[4]?.textContent).toBe('1.0s');
-    expect(inspector.textContent).toContain('7 tools · 5 used · 6 calls');
+    expect(bashToolCells[4]?.textContent).toBe('4.0s');
+    expect(inspector.textContent).toContain('10 tools, 5 used, 6 calls');
     expect(within(inspector).getByText('Overview')).toBeTruthy();
-    expect(within(inspector).getByText('Time in tools · Total')).toBeTruthy();
+    expect(within(inspector).getByText('Total time in tools')).toBeTruthy();
 
     fireEvent.click(within(inspectorTabs).getByRole('tab', { name: 'Threads' }));
     expect(within(inspector).getByRole('columnheader', { name: 'Context' })).toBeTruthy();
@@ -895,7 +959,7 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.getByText('/mnt/memory/test')).toBeTruthy();
   });
 
-  test('refreshes session resources from Get Session only when the Resources tab is clicked', async () => {
+  test('refreshes session resources after sending and when the Resources tab is clicked', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi();
     api.resources.sessions[0].status = 'idle';
@@ -960,15 +1024,27 @@ export function registerManagedAgentsResourceTests() {
 
       await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe(''));
       expect(await screen.findByText('Render this message immediately.')).toBeTruthy();
-      expect(api.requests.filter((request) => request.url === sessionURL)).toHaveLength(initialSessionRequestCount);
+      await waitFor(() =>
+        expect(api.requests.filter((request) => request.url === sessionURL).length).toBeGreaterThan(
+          initialSessionRequestCount,
+        ),
+      );
+      const beforeResourcesRequestCount = api.requests.filter((request) => request.url === sessionURL).length;
       const inspector = screen.getByTestId('session-inspector');
       const inspectorTabs = within(inspector).getByRole('tablist', { name: 'Session inspector' });
       fireEvent.click(within(inspectorTabs).getByRole('tab', { name: 'Resources' }));
       expect(await screen.findByText('/outputs/report.csv')).toBeTruthy();
-      expect(api.requests.filter((request) => request.url === sessionURL).length).toBeGreaterThan(
-        initialSessionRequestCount,
+      await waitFor(() =>
+        expect(api.requests.filter((request) => request.url === sessionURL).length).toBeGreaterThan(
+          beforeResourcesRequestCount,
+        ),
       );
-      expect(api.requests.some((request) => request.url.startsWith('/v1/files?'))).toBe(false);
+      const fileRequests = api.requests.filter((request) => request.url.startsWith('/v1/files?'));
+      expect(fileRequests.length).toBeGreaterThan(0);
+      for (const request of fileRequests) {
+        expect(new URL(request.url, 'https://oma.duck.ai').searchParams.get('scope_id')).toBe('sesn_one123456');
+        expect(request.headers['x-workspace-id']).toBe('default');
+      }
     } finally {
       globalThis.fetch = fetchSessionEvents;
     }
@@ -1423,7 +1499,9 @@ export function registerManagedAgentsResourceTests() {
     });
     expect(reporterRow?.textContent).toContain('Paris');
     expect(reporterRow?.textContent).toContain('Denied');
-    expect(screen.getByTestId('session-tool-approval-card')).toBeTruthy();
+    expect(screen.queryByTestId('session-tool-approval-card')).toBeNull();
+    expect(screen.queryByTestId('tool-allow-button')).toBeNull();
+    expect(screen.queryByTestId('tool-deny-button')).toBeNull();
     expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
     expect(
       Array.from(document.querySelectorAll<HTMLElement>('[data-entry-kind="tool_call"]')).filter((row) =>
@@ -1448,6 +1526,9 @@ export function registerManagedAgentsResourceTests() {
     expect((await screen.findByTestId('session-trace-detail')).textContent).toContain(
       'Reporter cannot call external weather',
     );
+    fireEvent.click(screen.getByRole('tab', { name: 'Orchestrator' }));
+    expect((await screen.findByTestId('session-tool-approval-card')).textContent).toContain('/workspace/main.txt');
+    expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
   });
 
   test('allows approving and denying tool permissions from the transcript tool body and disables composer', async () => {
@@ -1511,7 +1592,7 @@ export function registerManagedAgentsResourceTests() {
     }
   });
 
-  test('renders AskUserQuestion questionnaire in session detail and sends answers with question keys', async () => {
+  test('renders AskUserQuestion questionnaire in session detail and sends answers with question ids', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi();
     api.resources.sessions[0].status = 'idle';
@@ -1531,13 +1612,14 @@ export function registerManagedAgentsResourceTests() {
         input: {
           questions: [
             {
+              id: 'color',
               header: 'Color',
               question: 'Which verification color should I use?',
               options: [
                 { label: 'Blue', description: 'Sky blue' },
                 { label: 'Green', description: 'Grass green' },
               ],
-              multiSelect: false,
+              multi_select: false,
             },
           ],
         },
@@ -1555,7 +1637,7 @@ export function registerManagedAgentsResourceTests() {
     expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
     const questionnaire = await screen.findByTestId('session-questionnaire-card');
     expect(questionnaire.closest('[data-slot="collapsible-content"]')).toBeNull();
-    expect(questionnaire.closest('[data-entry-kind="tool_call"]')).toBeTruthy();
+    expect(questionnaire.closest('[data-testid="session-pending-action"]')).toBeTruthy();
     expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
     expect(screen.getByText('Which verification color should I use?')).toBeTruthy();
     expect(screen.getByText('Blue')).toBeTruthy();
@@ -1577,7 +1659,7 @@ export function registerManagedAgentsResourceTests() {
       expect(resultEvent?.is_error).toBe(false);
       const content = objectRecord(Array.isArray(resultEvent?.content) ? resultEvent.content[0] : null);
       expect(JSON.parse(String(content.text))).toEqual({
-        'Which verification color should I use?': 'Blue',
+        answers: [{ id: 'color', selected: ['Blue'] }],
       });
     });
     await waitFor(() => expect(screen.queryByTestId('session-questionnaire-card')).toBeNull());
@@ -1888,7 +1970,7 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
     expect(screen.getByRole('link', { name: '会话' })).toBeTruthy();
-    expect(screen.getAllByText('运行中').length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('空闲')).length).toBeGreaterThan(0);
     const inspectorTabs = screen.getByRole('tablist', { name: '会话检查器' });
     expect(within(inspectorTabs).getByRole('tab', { name: '会话' })).toBeTruthy();
     expect(within(inspectorTabs).getByRole('tab', { name: '事件' })).toBeTruthy();
@@ -1917,6 +1999,7 @@ export function registerManagedAgentsResourceTests() {
     expect(await screen.findByRole('heading', { name: 'Vault one' })).toBeTruthy();
     expect(screen.getByRole('link', { name: '凭据保险库' })).toBeTruthy();
     expect(screen.getAllByRole('button', { name: '添加凭据' }).length).toBeGreaterThan(0);
+    await screen.findByText('Vault credential one');
     expect(screen.getByPlaceholderText('按 ID 查找凭据')).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '认证' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: '概览' })).toBeNull();
@@ -1934,8 +2017,9 @@ export function registerManagedAgentsResourceTests() {
     expect(within(header).getByText('vlt_one123456')).toBeTruthy();
     expect(within(header).getByRole('button', { name: 'Add credential' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Overview' })).toBeNull();
+    await screen.findByText('Vault credential one');
     expect(screen.getByPlaceholderText('Find credential by ID')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Status All' })).toBeTruthy();
+    expect(screen.queryByRole('combobox', { name: 'Status All' })).toBeNull();
     expect(screen.getByRole('columnheader', { name: 'Auth' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Updated' })).toBeTruthy();
     expect(await screen.findByText('Vault credential one')).toBeTruthy();
@@ -2468,7 +2552,8 @@ export function registerManagedAgentsResourceTests() {
     fireEvent.click(screen.getAllByRole('button', { name: 'Quick view' })[0]);
     const preview = await screen.findByRole('dialog', { name: 'Session one' });
     expect(window.location.pathname).toBe('/workspaces/default/sessions');
-    await within(preview).findByText('Recent activity (up to 20 events)');
+    expect(within(preview).getByRole('heading', { name: 'Conversation preview' })).toBeTruthy();
+    await within(preview).findByText('你好，世界');
     expect(within(preview).getByRole('button', { name: `Copy ${api.resources.sessions[0].id}` }).textContent).toContain(
       api.resources.sessions[0].id,
     );
@@ -2725,9 +2810,9 @@ export function registerManagedAgentsResourceTests() {
     expect(dialog.dataset.slot).toBe('dialog-content');
     expect(dialog.className.includes('bg-secondary')).toBe(false);
     expect(dialog.className.includes('bg-popover')).toBe(true);
-    expect(within(dialog).getByText('Deploy an agent with a trigger, environment, and credentials.')).toBeTruthy();
+    expect(within(dialog).queryByText('Deploy an agent with a trigger, environment, and credentials.')).toBeNull();
     expect(within(dialog).queryByLabelText('Description')).toBeNull();
-    expect(within(dialog).queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(false);
     expect(within(dialog).getByRole('link', { name: 'Manage agents (opens in new tab)' }).getAttribute('href')).toBe(
       '/workspaces/default/agents',
     );
@@ -2895,6 +2980,7 @@ export function registerManagedAgentsResourceTests() {
     const api = mockManagedResourceApi();
     api.resources.deployments[0] = {
       ...api.resources.deployments[0],
+      initial_events: [{ type: 'user.message', content: [{ type: 'text', text: 'Summarize updates.' }] }],
       resources: [
         {
           type: 'memory_store',
@@ -2911,7 +2997,10 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByRole('heading', { name: 'Deployment one' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit deployment' });
+    const save = within(dialog).getByRole('button', { name: 'Save changes' });
+    await waitFor(() => expect(save.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(save);
 
     await waitFor(() =>
       expect(
@@ -3020,8 +3109,8 @@ export function registerManagedAgentsResourceTests() {
       ),
     ).toBe(true);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Status All' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Paused' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status All' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Paused' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -3036,8 +3125,8 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.queryByText('Deployment one')).toBeNull();
     expect(screen.queryByText('Archived deployment')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Status Paused' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'All' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status Paused' }));
+    fireEvent.click(screen.getByRole('option', { name: 'All' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -3049,8 +3138,8 @@ export function registerManagedAgentsResourceTests() {
       expect(params.get('include_archived')).toBe('true');
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Agent All' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Server agent' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Agent All' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Server agent' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -3083,7 +3172,7 @@ export function registerManagedAgentsResourceTests() {
       updated_at: archivedAt,
     });
 
-    render(<ManagedAgentsPage section="environments" />);
+    renderManagedAgentsPage('environments');
 
     expect(await screen.findByText('Environment one')).toBeTruthy();
     expect(await screen.findByText('Archived environment')).toBeTruthy();
@@ -3096,15 +3185,13 @@ export function registerManagedAgentsResourceTests() {
       expect(params.get('include_archived')).toBe('true');
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Status All' }));
-    const statusMenu = screen
-      .getByRole('menuitemradio', { name: 'All' })
-      .closest('[data-slot="dropdown-menu-content"]');
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status All' }));
+    const statusMenu = screen.getByRole('option', { name: 'All' }).closest('[data-slot="select-content"]');
     expect(statusMenu?.className).toContain('bg-popover');
     expect(statusMenu?.className.includes('bg-secondary')).toBe(false);
-    expect(screen.getByRole('menuitemradio', { name: 'All' })).toBeTruthy();
-    expect(screen.getByRole('menuitemradio', { name: 'Active' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Active' }));
+    expect(screen.getByRole('option', { name: 'All' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Active' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('option', { name: 'Active' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -3126,10 +3213,8 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByText('Deployment one')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Status All' }));
-    const filterMenu = screen
-      .getByRole('menuitemradio', { name: 'All' })
-      .closest('[data-slot="dropdown-menu-content"]');
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status All' }));
+    const filterMenu = screen.getByRole('option', { name: 'All' }).closest('[data-slot="select-content"]');
     expect(filterMenu?.className).toContain('bg-popover');
     expect(filterMenu?.className.includes('bg-secondary')).toBe(false);
 
@@ -3161,10 +3246,10 @@ export function registerManagedAgentsResourceTests() {
     render(<ManagedAgentsPage section="sessions" />);
 
     expect(await screen.findByText('Session one')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Created All time' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Agent All' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /deployment All/i })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Status Active' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Created All time' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Agent All' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: /deployment All/i })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Status Active' })).toBeTruthy();
     await waitFor(() => {
       const latestRequest = api.requests
         .filter((request) => request.url.startsWith('/v1/sessions?') && request.method === 'GET')
@@ -3174,8 +3259,8 @@ export function registerManagedAgentsResourceTests() {
       expect(new URL(latestRequest!.url, 'https://oma.duck.ai').searchParams.get('include_archived')).toBe('false');
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Status Active' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Terminated' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status Active' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Terminated' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -3188,8 +3273,8 @@ export function registerManagedAgentsResourceTests() {
     expect(await screen.findByText('Server session')).toBeTruthy();
     expect(screen.queryByText('Session one')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Agent All' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Server agent' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Agent All' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Server agent' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -3201,8 +3286,8 @@ export function registerManagedAgentsResourceTests() {
       expect(params.get('include_archived')).toBe('true');
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /deployment All/i }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'dep_server123456' }));
+    fireEvent.click(screen.getByRole('combobox', { name: /deployment All/i }));
+    fireEvent.click(screen.getByRole('option', { name: 'dep_server123456' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -3213,8 +3298,8 @@ export function registerManagedAgentsResourceTests() {
       expect(params.get('deployment_id')).toBe('dep_server123456');
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Created All time' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Last 30 days' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Created All time' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Last 30 days' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -3231,12 +3316,13 @@ export function registerManagedAgentsResourceTests() {
   test('archives and deletes resources from row action menus', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments');
     const api = mockManagedResourceApi();
-    render(<ManagedAgentsPage section="environments" />);
+    renderManagedAgentsPage('environments');
 
     expect(await screen.findByText('Environment one')).toBeTruthy();
-    fireEvent.click(screen.getAllByRole('button', { name: 'More actions' })[0]);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive environment' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status All' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Active' }));
+    await waitFor(() => expect(screen.queryByRole('option', { name: 'Active' })).toBeNull());
+    await confirmFirstRowAction('Archive', 'Archive');
 
     await waitFor(() =>
       expect(api.requests.some((request) => request.url === '/v1/environments/env_one123456/archive?beta=true')).toBe(
@@ -3328,8 +3414,8 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByText('Deployment one')).toBeTruthy();
     expect(screen.queryByText('Deployment overflow')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Status All' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Active' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status All' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Active' }));
     expect(await screen.findByText('Deployment one')).toBeTruthy();
     expect(screen.queryByText('Deployment overflow')).toBeNull();
     await confirmFirstRowAction('Archive deployment', 'Archive');
@@ -3346,11 +3432,11 @@ export function registerManagedAgentsResourceTests() {
       id: `env_extra_${index}`,
       name: hidden ? 'Environment overflow' : `Environment extra ${index}`,
     }));
-    render(<ManagedAgentsPage section="environments" />);
+    renderManagedAgentsPage('environments');
 
     expect(await screen.findByText('Environment one')).toBeTruthy();
     expect(screen.queryByText('Environment overflow')).toBeNull();
-    await confirmFirstRowAction('Delete environment', 'Delete');
+    await confirmFirstRowAction('Delete', 'Delete');
 
     expect(await screen.findByText('Environment overflow')).toBeTruthy();
     expect(screen.queryByText('Environment one')).toBeNull();
@@ -3401,19 +3487,14 @@ export function registerManagedAgentsResourceTests() {
       'header',
     ) as HTMLElement;
     expect(within(detailHeader).getByText('Cloud')).toBeTruthy();
-    expect(within(detailHeader).getByText('Active').className).toContain('status-success');
+    expect(within(detailHeader).queryByText('Active')).toBeNull();
     const breadcrumb = screen.getByRole('navigation', { name: 'Breadcrumb' });
     expect(breadcrumb.dataset.slot).toBe('breadcrumb');
     expect(within(breadcrumb).getByRole('link', { name: 'Environments' }).getAttribute('href')).toBe(
       '/workspaces/default/environments',
     );
     expect(breadcrumb.querySelector('[data-slot="breadcrumb-page"]')?.textContent).toBe('Environment one');
-    const overviewSection = screen.getByRole('heading', { name: 'Overview' }).closest('section');
-    const overviewCard = overviewSection?.querySelector('[data-slot="card"]') as HTMLElement | null;
-    expect(overviewCard).toBeTruthy();
-    const overviewGrid = overviewCard?.querySelector('dl') as HTMLElement | null;
-    expect(overviewGrid?.className).toContain('bg-border');
-    expect(overviewGrid?.className.includes('bg-secondary')).toBe(false);
+    expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
     const detailActionMenu = screen
       .getByRole('menuitem', { name: 'Archive' })
@@ -3422,38 +3503,27 @@ export function registerManagedAgentsResourceTests() {
     expect(detailActionMenu?.className.includes('bg-secondary')).toBe(false);
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
 
-    const deleteDialog = await screen.findByRole('alertdialog', { name: /Delete environment/i });
-    expect(deleteDialog.textContent).toContain('Environment one will be permanently removed from this workspace.');
+    const deleteDialog = await screen.findByRole('alertdialog', { name: /Delete.*environment/i });
+    expect(deleteDialog.textContent).toContain(
+      'This will permanently delete the selected environments. This action cannot be undone.',
+    );
     fireEvent.click(within(deleteDialog).getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: /Delete environment/i })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: /Delete.*environment/i })).toBeNull());
   });
 
-  test('uses shared card chrome for environment inline editor sections', async () => {
+  test('groups environment inline editor sections without nested cards', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
     mockManagedResourceApi();
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-
-    const networkingSection = screen.getByRole('heading', { name: 'Networking' }).closest('section');
-    const packagesSection = screen.getByRole('heading', { name: 'Packages' }).closest('section');
-    const metadataSection = screen.getByRole('heading', { name: 'Metadata' }).closest('section');
-
-    const networkingCard = networkingSection?.querySelector('[data-slot="card"]') as HTMLElement | null;
-    const packagesCard = packagesSection?.querySelector('[data-slot="card"]') as HTMLElement | null;
-    const metadataCard = metadataSection?.querySelector('[data-slot="card"]') as HTMLElement | null;
-
-    expect(networkingCard).toBeTruthy();
-    expect(networkingCard?.className).toContain('bg-card');
-    expect(packagesCard).toBeTruthy();
-    expect(packagesCard?.className).toContain('bg-card');
-    expect(metadataCard).toBeTruthy();
-    expect(metadataCard?.className).toContain('bg-card');
-
-    expect(screen.getByRole('combobox', { name: 'Type' }).className).not.toContain('bg-secondary');
-    expect(screen.getByRole('combobox', { name: 'Package manager' }).className).not.toContain('bg-secondary');
-    expect(screen.getByRole('textbox', { name: 'Package value 1' }).className).not.toContain('bg-secondary');
+    for (const name of ['General', 'Networking', 'Packages', 'Metadata']) {
+      const section = screen.getByRole('heading', { name }).closest('section');
+      expect(section).toBeTruthy();
+      expect(section?.querySelector('[data-slot="card"]')).toBeNull();
+    }
+    expect(screen.getByRole('radiogroup', { name: 'Network access' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Remove httpx==1.0.0' })).toBeTruthy();
     expect(screen.getByRole('textbox', { name: 'Metadata key 1' }).className).not.toContain('bg-secondary');
     expect(screen.getByRole('textbox', { name: 'Metadata value 1' }).className).not.toContain('bg-secondary');
   });
@@ -3466,7 +3536,7 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
     expect(screen.getByRole('link', { name: '环境' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: '概览' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '基本信息' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '网络访问' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '软件包' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '元数据' })).toBeTruthy();
@@ -3495,13 +3565,15 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    const nameInput = screen.getByRole('textbox', { name: 'Environment name' });
+    const nameInput = screen.getByRole('textbox', { name: 'Name' });
     fireEvent.click(screen.getByRole('button', { name: 'Add metadata entry' }));
     fireEvent.change(nameInput, { target: { value: 'Environment Updated' } });
-    fireEvent.change(screen.getByRole('textbox', { name: 'Package value 1' }), {
-      target: { value: 'httpx==2.0.0' },
-    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add Python packages' }));
+    const packageInput = screen.getByRole('textbox', { name: 'Python packages to add' });
+    fireEvent.change(packageInput, { target: { value: 'httpx==2.0.0' } });
+    fireEvent.keyDown(packageInput, { key: 'Enter', code: 'Enter' });
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Python packages to add' })).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Remove httpx==1.0.0' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), { target: { value: 'Team' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 2' }), { target: { value: 'Runtime' } });
     const addMetadataButton = screen.getByRole('button', { name: 'Add metadata entry' });
@@ -3510,9 +3582,9 @@ export function registerManagedAgentsResourceTests() {
     }
     expect((addMetadataButton as HTMLButtonElement).disabled).toBe(true);
 
-    const form = screen.getByRole('button', { name: 'Save changes' }).closest('form') as HTMLFormElement;
+    const form = screen.getByRole('button', { name: 'Save' }).closest('form') as HTMLFormElement;
     fireEvent.submit(form);
-    expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Discard' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.submit(form);
     expect(await screen.findByRole('heading', { name: 'Environment Updated' })).toBeTruthy();
     const updateRequests = api.requests.filter(
@@ -3525,7 +3597,7 @@ export function registerManagedAgentsResourceTests() {
       networking: { type: 'unrestricted' },
       packages: { pip: ['httpx==2.0.0'] },
     });
-    expect(screen.getAllByText('Environment updated')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
     expect(window.dispatchEvent(new window.Event('beforeunload', { cancelable: true }))).toBe(true);
   });
 
@@ -3535,12 +3607,11 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     fireEvent.click(screen.getByRole('button', { name: 'Add metadata entry' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), { target: { value: 'Team' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 2' }), { target: { value: 'Runtime' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Remove metadata row 1' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Owner' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByRole('heading', { name: 'Metadata' })).toBeTruthy();
     const updateRequest = api.requests.find(
@@ -3548,8 +3619,14 @@ export function registerManagedAgentsResourceTests() {
     );
     expect(updateRequest?.body?.metadata).toEqual({ Owner: null, Team: 'Runtime' });
     const metadataSection = screen.getByRole('heading', { name: 'Metadata' }).closest('section');
-    expect(metadataSection?.textContent).toContain('Team');
-    expect(metadataSection?.textContent).toContain('Runtime');
+    expect(
+      (within(metadataSection as HTMLElement).getByRole('textbox', { name: 'Metadata key 1' }) as HTMLInputElement)
+        .value,
+    ).toBe('Team');
+    expect(
+      (within(metadataSection as HTMLElement).getByRole('textbox', { name: 'Metadata value 1' }) as HTMLInputElement)
+        .value,
+    ).toBe('Runtime');
     expect(metadataSection?.textContent).not.toContain('Owner');
     expect(metadataSection?.textContent).not.toContain('Platform');
   });
@@ -3564,11 +3641,10 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), {
       target: { value: 'Environment with flag' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByRole('heading', { name: 'Environment with flag' })).toBeTruthy();
     const updateRequest = api.requests.find(
@@ -3577,7 +3653,10 @@ export function registerManagedAgentsResourceTests() {
     expect(updateRequest?.body?.metadata).toEqual({});
     expect(api.resources.environments[0]?.metadata).toEqual({ Flag: '', Owner: 'Platform' });
     const metadataSection = screen.getByRole('heading', { name: 'Metadata' }).closest('section');
-    expect(metadataSection?.textContent).toContain('Flag');
+    expect(
+      (within(metadataSection as HTMLElement).getByRole('textbox', { name: 'Metadata key 1' }) as HTMLInputElement)
+        .value,
+    ).toBe('Flag');
   });
 
   test('preserves Metadata key whitespace as part of PATCH identity', async () => {
@@ -3590,12 +3669,11 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 1' }), { target: { value: 'updated' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add metadata entry' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), { target: { value: 'FOO' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 2' }), { target: { value: 'right' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByRole('heading', { name: 'Metadata' })).toBeTruthy();
     const updateRequest = api.requests.find(
@@ -3605,24 +3683,20 @@ export function registerManagedAgentsResourceTests() {
     expect(api.resources.environments[0]?.metadata).toEqual({ ' FOO': 'updated', FOO: 'right' });
   });
 
-  test('allows payload-equivalent Environment edits to close without confirmation', async () => {
+  test('allows payload-equivalent Environment edits to navigate without confirmation', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
     mockManagedResourceApi();
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    const packageInput = screen.getByRole('textbox', { name: 'Package value 1' }) as HTMLInputElement;
-    fireEvent.change(packageInput, { target: { value: `  ${packageInput.value}  ` } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add package' }));
+    const nameInput = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: `  ${nameInput.value}  ` } });
     fireEvent.click(screen.getByRole('button', { name: 'Add metadata entry' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+    fireEvent.click(screen.getByRole('link', { name: 'Environments' }));
+    await waitFor(() => expect(window.location.pathname).toBe('/workspaces/default/environments'));
     expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull();
+    expect(await screen.findByText('Environment one')).toBeTruthy();
   });
 
   test('exits environment editing after archiving from the detail page', async () => {
@@ -3631,8 +3705,7 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), {
       target: { value: 'Environment changed' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
@@ -3649,8 +3722,8 @@ export function registerManagedAgentsResourceTests() {
         'This environment is read-only. Its configuration and work queue remain available for reference.',
       ),
     ).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Edit' }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+    expect((screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement).readOnly).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
   });
 
   test('renders archived environments as localized read-only details', async () => {
@@ -3664,7 +3737,7 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('environments', 'zh-CN');
 
     expect(await screen.findByText('此环境为只读状态。其配置和工作队列仍可供查看。')).toBeTruthy();
-    expect((screen.getByRole('button', { name: '编辑' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('textbox', { name: '名称' }) as HTMLInputElement).readOnly).toBe(true);
     expect(screen.getByRole('heading', { name: '网络访问' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '软件包' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '元数据' })).toBeTruthy();
@@ -3676,7 +3749,7 @@ export function registerManagedAgentsResourceTests() {
       'true',
     );
     fireEvent.click(screen.getByRole('menuitem', { name: '删除' }));
-    const deleteDialog = await screen.findByRole('alertdialog', { name: /删除环境/ });
+    const deleteDialog = await screen.findByRole('alertdialog', { name: /删除.*环境/ });
     fireEvent.click(within(deleteDialog).getByRole('button', { name: '删除' }));
     await waitFor(() =>
       expect(
@@ -3687,39 +3760,39 @@ export function registerManagedAgentsResourceTests() {
     );
   });
 
-  test('closes an environment creation dialog without confirmation for payload-equivalent description whitespace', async () => {
+  test('leaves environment creation without confirmation for payload-equivalent description whitespace', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments');
     mockManagedResourceApi();
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByText('Environment one')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Create environment' }));
-    const dialog = screen.getByRole('dialog', { name: 'Create environment' });
-    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Description' }), { target: { value: '   ' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Create environment' }));
+    await screen.findByRole('heading', { name: 'Create environment' });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Description (optional)' }), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
+    await waitFor(() => expect(window.location.pathname).toBe('/workspaces/default/environments'));
     expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull();
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create environment' })).toBeNull());
+    expect(await screen.findByText('Environment one')).toBeTruthy();
   });
 
-  test('keeps environment creation fields and default payload unchanged in Chinese', async () => {
+  test('localizes environment creation and submits its default network policy only once', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments');
     const api = mockManagedResourceApi();
     renderManagedAgentsPage('environments', 'zh-CN');
 
     expect(await screen.findByText('Environment one')).toBeTruthy();
     expect(screen.getAllByText('云端').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('活跃').length).toBeGreaterThan(0);
-    expect(document.body.textContent).toContain('现在');
-    fireEvent.click(screen.getByRole('button', { name: '创建环境' }));
-    const dialog = screen.getByRole('dialog', { name: '创建环境' });
-    expect(within(dialog).getByText('创建可供 Agent 工具复用的云端容器模板。')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '更新时间' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('link', { name: '创建环境' }));
+    await screen.findByRole('heading', { name: '创建环境' });
+    const dialog = screen.getByRole('button', { name: '创建环境' }).closest('form') as HTMLFormElement;
     fireEvent.change(within(dialog).getByRole('textbox', { name: '名称' }), { target: { value: '中文环境' } });
-    fireEvent.change(within(dialog).getByRole('textbox', { name: '描述' }), { target: { value: '用于测试' } });
-    expect(within(dialog).getByRole('textbox', { name: '托管类型' })).toBeTruthy();
-    expect(within(dialog).queryByText('网络访问')).toBeNull();
-    expect(within(dialog).queryByText('软件包')).toBeNull();
-    expect(within(dialog).queryByText('元数据')).toBeNull();
+    fireEvent.change(within(dialog).getByRole('textbox', { name: '描述 （可选）' }), { target: { value: '用于测试' } });
+    expect(within(dialog).getByText('云端')).toBeTruthy();
+    expect(within(dialog).getByRole('heading', { name: '网络访问' })).toBeTruthy();
+    expect(within(dialog).getByRole('heading', { name: '软件包' })).toBeTruthy();
+    expect(within(dialog).getByRole('heading', { name: '元数据' })).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
     const discardDialog = await screen.findByRole('alertdialog', { name: '放弃未保存的更改？' });
     fireEvent.click(within(discardDialog).getByRole('button', { name: '继续编辑' }));
@@ -3736,11 +3809,10 @@ export function registerManagedAgentsResourceTests() {
     expect(request?.body).toMatchObject({
       name: '中文环境',
       description: '用于测试',
-      scope: 'organization',
       metadata: {},
       config: {
         type: 'cloud',
-        networking: { type: 'unrestricted' },
+        networking: { type: 'limited', allow_mcp_servers: false, allow_package_managers: false, allowed_hosts: [] },
         packages: { type: 'packages', apt: [], cargo: [], gem: [], go: [], npm: [], pip: [] },
       },
     });
@@ -3780,11 +3852,13 @@ export function registerManagedAgentsResourceTests() {
     expect(within(row).getAllByRole('cell')[2].textContent).toBe('Scheduled');
   });
 
-  test('renders the dreaming loading panel', () => {
+  test('shows dreaming as unavailable without a permanent loading claim', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/dreams');
     render(<ManagedAgentsPage section="dreams" />);
 
     expect(screen.getByRole('heading', { name: 'Dreaming' })).toBeTruthy();
-    expect(screen.getByText('Captured Dreaming assets are loading.')).toBeTruthy();
+    expect(screen.getByText('Dreaming is not connected.')).toBeTruthy();
+    expect(screen.queryByText('Captured Dreaming assets are loading.')).toBeNull();
+    expect(screen.queryByRole('progressbar')).toBeNull();
   });
 }

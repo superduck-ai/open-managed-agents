@@ -65,8 +65,8 @@ test('修改角色提交目标组织、成员及版本，服务端拒绝后保�
   expect(screen.getByRole('button', { name: '确认变更' }).hasAttribute('disabled')).toBe(true);
   const select = screen.getByRole('combobox', { name: '组织角色' });
   select.focus();
-  fireEvent.keyDown(select, { key: 'ArrowDown' });
-  fireEvent.keyDown(await screen.findByRole('option', { name: /^用户/ }), { key: 'Enter' });
+  fireEvent.click(select);
+  fireEvent.click(await screen.findByRole('option', { name: /^用户/ }));
   fireEvent.click(screen.getByRole('button', { name: '确认变更' }));
   expect((await screen.findByRole('alert')).textContent).toContain('必须保留至少一位组织管理员');
   expect(path).toBe('/api/platform-admin/organizations/target-organization/administrators/target-member');

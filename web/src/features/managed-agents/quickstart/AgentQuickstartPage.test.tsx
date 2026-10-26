@@ -632,16 +632,6 @@ test.each([
     decision: 'Approve',
     accepted: { type: 'user.tool_confirmation', tool_use_id: 'sevt_pending_tool', result: 'allow' },
   },
-  {
-    toolType: 'agent.custom_tool_use',
-    decision: 'Deny',
-    accepted: { type: 'user.custom_tool_result', custom_tool_use_id: 'sevt_pending_tool', is_error: true },
-  },
-  {
-    toolType: 'agent.custom_tool_use',
-    decision: 'Approve',
-    accepted: { type: 'user.custom_tool_result', custom_tool_use_id: 'sevt_pending_tool', is_error: false },
-  },
 ])('tools wait for a new status (%j); refresh resets progress', async ({ toolType, decision, accepted }) => {
   resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
   mockAgentsApi([]);
@@ -687,6 +677,55 @@ test.each([
   expect(await screen.findByRole('button', { name: 'Start configuring' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Stop', exact: true })).toBeNull();
   expect(runtime.sent).toHaveLength(4);
+});
+
+test.each([true, false])('custom tools await an external result (is_error=%s) without approval', async (isError) => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  mockAgentsApi([]);
+  const runtime = installSessionRuntime();
+  renderManagedAgentsPage('quickstart');
+  await startAgentConfiguration();
+  fireEvent.click(screen.getByRole('button', { name: 'Create and continue' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Use existing and continue' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+  await waitFor(() => expect(runtime.sent).toHaveLength(1));
+  await act(async () => {
+    runtime.emit('agent.custom_tool_use', {
+      id: 'sevt_pending_tool',
+      name: 'ComputeReport',
+      input: { report: 'orders' },
+    });
+    runtime.emit('session.status_idle', {
+      stop_reason: { type: 'requires_action', event_ids: ['sevt_pending_tool'] },
+    });
+  });
+  expect(await screen.findByText('Waiting for ComputeReport to return its result.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Approve', exact: true })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Deny', exact: true })).toBeNull();
+  fireEvent.change(screen.getByLabelText('Test message'), { target: { value: 'Wait for the external result' } });
+  await act(async () => fireEvent.keyDown(screen.getByLabelText('Test message'), { key: 'Enter' }));
+  expect(runtime.sent).toHaveLength(1);
+  await act(async () => {
+    runtime.emit('user.custom_tool_result', {
+      custom_tool_use_id: 'sevt_pending_tool',
+      is_error: isError,
+      content: isError ? 'Report failed' : 'Report ready',
+    });
+    runtime.emit('session.status_running', {});
+    runtime.reply('External result processed');
+  });
+  expect(await screen.findByText('External result processed')).toBeTruthy();
+  expect(screen.queryByText('Waiting for ComputeReport to return its result.')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+  await waitFor(() => expect(runtime.sent).toHaveLength(2));
+  expect(runtime.sent[1]).toMatchObject({
+    type: 'user.message',
+    content: [{ type: 'text', text: 'Wait for the external result' }],
+  });
+  cleanup();
+  renderManagedAgentsPage('quickstart');
+  expect(await screen.findByRole('button', { name: 'Start configuring' })).toBeTruthy();
+  expect(runtime.sent).toHaveLength(2);
 });
 
 test('Thinking followed by idle is not reported as a completed first reply', async () => {

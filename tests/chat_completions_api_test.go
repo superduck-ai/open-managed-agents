@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
-	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 func TestLLMProviderAPIBackendConfiguration(t *testing.T) {
@@ -88,10 +87,11 @@ func TestBrainChatCompletionsProxyLifecycle(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("X-Request-Id", "upstream-chat-request")
-		_, _ = fmt.Fprintf(w, "data: {\"id\":\"chat_%d\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\n", index)
 		if r.Header.Get("X-Chat-Test") == "incomplete_response" {
+			_, _ = fmt.Fprintf(w, "data: {\"id\":\"chat_%d\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"}}]}\n\n", index)
 			return
 		}
+		_, _ = fmt.Fprintf(w, "data: {\"id\":\"chat_%d\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\n", index)
 		_, _ = io.WriteString(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":5,\"prompt_tokens_details\":{\"cached_tokens\":12}}}\n\ndata: [DONE]\n\n")
 	}))
 	defer upstream.Close()
@@ -146,13 +146,13 @@ func TestBrainChatCompletionsProxyLifecycle(t *testing.T) {
 	response = doSessionBearerRequest(t, app, http.MethodGet, "/v2/sessions/"+credential.CodeSessionID, nil, token, false)
 	var context struct {
 		SessionContext struct {
-			Backends map[string]string `json:"model_backends"`
+			Models map[string]llmproviders.RuntimeModel `json:"models"`
 		} `json:"session_context"`
 	}
 	decodeJSON(t, response.Body, &context)
 	_ = response.Body.Close()
-	if context.SessionContext.Backends["chat-model"] != llmproviders.ChatCompletions || context.SessionContext.Backends["claude-opus-4-6"] != llmproviders.Messages {
-		t.Fatalf("backends=%v", context.SessionContext.Backends)
+	if context.SessionContext.Models["chat-model"].APIBackend != llmproviders.ChatCompletions || context.SessionContext.Models["claude-opus-4-6"].APIBackend != llmproviders.Messages {
+		t.Fatalf("models=%v", context.SessionContext.Models)
 	}
 	code, found, err := app.db.GetCodeSession(t.Context(), credential.CodeSessionID)
 	if err != nil || !found {
@@ -201,15 +201,14 @@ func TestBrainChatCompletionsProxyLifecycle(t *testing.T) {
 				t.Fatalf("end=%+v", end)
 			}
 			history := listSessionEvents(t, app, code.SessionExternalID, "order=asc&limit=100", defaultTestKey)
-			expected := maevents.StableAssistantEventID(code.ExternalID, "chat_3", 0, "agent.message")
 			count := 0
 			for _, event := range history.Data {
-				if sessionEventStringField(t, event, "id") == expected {
+				if kind := sessionEventStringField(t, event, "type"); kind == "agent.message" || kind == "agent.thinking" {
 					count++
 				}
 			}
-			if count != 1 {
-				t.Fatalf("stable assistant count=%d", count)
+			if count != 0 {
+				t.Fatalf("proxy published Brain replies=%d", count)
 			}
 		}
 	}

@@ -378,6 +378,7 @@ channel 名称 JSON 列表。鉴权及格式校验成功的 Poll 用 Redis 8 [`H
 - connector 的 Poll HTTP 连接断开时，停止发起新拉取，排空本轮有限拉取并终止已收但无法交付的消息，不后台预取、不重投；SDK 网络等待有界，收尾不依赖 ACK 的服务端回执；
 - OMA 不设置实例级活动 Poll 名额。consumer 的 `MaxAckPending=32`、`MaxWaiting=128` 继续作为每路由的 NATS 资源约束；
 - limit 省略时为 25，显式值为正整数，不再设置服务端 25 条上限；timeout 默认及最大值为 30 秒。`timeout_ms=0` 只读当前可用命令。正常空轮询返回 204，没有可交付命令且发生基础设施故障返回 503；
+- Poll 剩余期限已耗尽时，等待 context 的取消信号后返回其实际错误，避免定时器尚未执行时把正常空轮询超时误报为基础设施故障。`TestPollRoundWaitsForDeadlineCancellation` 显式控制截止时间与取消信号的先后顺序，覆盖该竞态；Redis 绑定失败仍按故障返回。
 - MCP 默认总 deadline 为 2 分钟，可配置范围为 1 秒到 10 分钟；
 - OAuth protected-resource metadata 与其他 Tunnel command 共用上述 `tunnel.request_timeout` 统一 deadline；
 - `response_timeout` 是统一 deadline 的剩余时间，不启动新的计时窗口；HTTP 编码前再次检查，跳过收束期间已经过期的命令；

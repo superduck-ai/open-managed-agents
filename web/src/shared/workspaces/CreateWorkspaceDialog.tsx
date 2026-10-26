@@ -1,5 +1,5 @@
 import { AlertCircle } from 'lucide-react';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useI18n } from '../i18n';
 import { Alert, AlertDescription } from '../ui/alert';
 import { Button } from '../ui/button';
@@ -7,7 +7,6 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -27,21 +26,17 @@ type CreateWorkspaceDialogProps = {
 
 export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger }: CreateWorkspaceDialogProps) {
   const { msg } = useI18n();
+  const nameRef = useRef<HTMLInputElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   const [name, setName] = useState('');
   const [selectedColor, setSelectedColor] = useState(workspaceColors[1].value);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const canCreate = name.trim().length > 0 && !submitting;
 
   useEffect(() => {
-    if (open) {
-      return;
-    }
-    setName('');
-    setSelectedColor(workspaceColors[1].value);
-    setSubmitting(false);
-    setError('');
-  }, [open]);
+    if (error) errorRef.current?.focus();
+  }, [error]);
+  const canCreate = name.trim().length > 0 && !submitting;
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -74,72 +69,98 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger }:
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next, details) => {
+        if (!next && submitting) {
+          details.cancel();
+          return;
+        }
+        onOpenChange(next);
+      }}
+      onOpenChangeComplete={(next) => {
+        if (!next) {
+          setName('');
+          setSelectedColor(workspaceColors[1].value);
+          setSubmitting(false);
+          setError('');
+        }
+      }}
+    >
       {trigger ? <DialogTrigger render={trigger} /> : null}
-      <DialogContent className="sm:max-w-[520px]">
+      <DialogContent
+        className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden sm:max-w-[520px]"
+        initialFocus={nameRef}
+        closeButtonDisabled={submitting}
+      >
         <DialogHeader>
           <DialogTitle>{msg('workspace.create.title', 'Create workspace')}</DialogTitle>
-          <DialogDescription className="max-w-[430px]">
-            {msg('workspace.create.body', 'Workspaces allow you to separate API Keys and configurations by use case.')}
-          </DialogDescription>
         </DialogHeader>
 
-        <form className="space-y-5" onSubmit={handleSubmit}>
-          <Field className="gap-2">
-            <FieldLabel htmlFor="workspace-name">{msg('common.name', 'Name')}</FieldLabel>
-            <Input
-              id="workspace-name"
-              value={name}
-              placeholder={msg('workspace.create.namePlaceholder', 'Enter a name for your workspace')}
-              onChange={(event) => setName(event.target.value)}
-              autoFocus
-            />
-          </Field>
-
-          <Field className="gap-2">
-            <FieldLabel>{msg('common.color', 'Color')}</FieldLabel>
-            <RadioGroup
-              aria-label={msg('workspace.colorAria', 'Workspace color')}
-              value={selectedColor}
-              onValueChange={(nextValue) => {
-                if (nextValue) {
-                  setSelectedColor(nextValue);
-                }
-              }}
-              className="grid w-max grid-cols-5 gap-2"
-            >
-              {workspaceColors.map((color) => (
-                <RadioGroupItem
-                  key={color.name}
-                  value={color.value}
-                  aria-label={color.name}
-                  className="size-8 rounded-md border border-border bg-transparent p-0 after:hidden focus-visible:ring-2 focus-visible:ring-ring/50 data-checked:border-primary data-checked:ring-2 data-checked:ring-ring/60 [&>[data-slot=radio-group-indicator]]:hidden"
-                  style={{ backgroundColor: color.value }}
+        <form className="flex min-h-0 flex-col gap-5" onSubmit={handleSubmit}>
+          <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
+            <fieldset disabled={submitting} className="min-w-0 space-y-5">
+              <Field className="gap-2">
+                <FieldLabel htmlFor="workspace-name">{msg('common.name', 'Name')}</FieldLabel>
+                <Input
+                  id="workspace-name"
+                  value={name}
+                  placeholder={msg('workspace.create.namePlaceholder', 'Enter a name for your workspace')}
+                  onChange={(event) => setName(event.target.value)}
+                  ref={nameRef}
                 />
-              ))}
-            </RadioGroup>
-          </Field>
+              </Field>
 
-          <Field className="gap-2">
-            <FieldLabel htmlFor="workspace-geo">{msg('workspace.geo', 'Workspace geo')}</FieldLabel>
-            <Input id="workspace-geo" value="US" readOnly aria-readonly="true" />
-            <FieldDescription>
-              {msg(
-                'workspace.geoHelp',
-                "Control where your workspace data, including files, conversation history, and workspace artifacts, is stored. This can't be changed after creation.",
-              )}
-            </FieldDescription>
-          </Field>
+              <Field className="gap-2">
+                <FieldLabel>{msg('common.color', 'Color')}</FieldLabel>
+                <RadioGroup
+                  aria-label={msg('workspace.colorAria', 'Workspace color')}
+                  value={selectedColor}
+                  onValueChange={(nextValue) => {
+                    if (nextValue) {
+                      setSelectedColor(nextValue);
+                    }
+                  }}
+                  className="grid w-max max-w-max grid-cols-5 gap-2"
+                >
+                  {workspaceColors.map((color) => (
+                    <RadioGroupItem
+                      key={color.name}
+                      value={color.value}
+                      aria-label={msg(`workspace.color.${color.name.toLowerCase()}`, color.name)}
+                      className="size-8 rounded-md border-[0.5px] border-border bg-transparent p-0 after:hidden focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-foreground data-checked:border-primary data-checked:outline-[0.5px] data-checked:outline-offset-2 data-checked:outline-foreground [&>[data-slot=radio-group-indicator]]:hidden"
+                      style={{ backgroundColor: color.displayValue }}
+                    />
+                  ))}
+                </RadioGroup>
+              </Field>
 
-          {error ? (
-            <Alert variant="destructive">
-              <AlertCircle className="size-4" aria-hidden />
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
+              <Field className="gap-2">
+                <FieldLabel htmlFor="workspace-geo">{msg('workspace.geo', 'Workspace geo')}</FieldLabel>
+                <Input id="workspace-geo" value="US" readOnly aria-readonly="true" />
+                <FieldDescription>
+                  {msg(
+                    'workspace.geoHelp',
+                    "Control where your workspace data, including files, conversation history, and workspace artifacts, is stored. This can't be changed after creation.",
+                  )}
+                </FieldDescription>
+              </Field>
 
-          <DialogFooter>
-            <DialogClose render={<Button type="button" variant="outline" />}>
+              {error ? (
+                <Alert
+                  ref={errorRef}
+                  tabIndex={-1}
+                  variant="destructive"
+                  className="outline-none [overflow-wrap:anywhere]"
+                >
+                  <AlertCircle className="size-4" aria-hidden />
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              ) : null}
+            </fieldset>
+          </div>
+          <DialogFooter className="shrink-0">
+            <DialogClose render={<Button type="button" variant="outline" disabled={submitting} />}>
               {msg('common.cancel', 'Cancel')}
             </DialogClose>
             <Button type="submit" disabled={!canCreate}>

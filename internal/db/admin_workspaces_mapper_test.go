@@ -69,6 +69,7 @@ func TestAdminWorkspaceMapperInsert(t *testing.T) {
 				params.ExternalID,
 				params.OrganizationUUID,
 				params.Name,
+				params.IsDefault,
 				params.CreatedAt,
 				params.CreatedAt,
 				params.CompartmentID,
@@ -77,8 +78,8 @@ func TestAdminWorkspaceMapperInsert(t *testing.T) {
 				params.ExternalKeyID,
 				params.Tags,
 			},
-			"CAST($9 AS jsonb)",
-			"CAST($11 AS jsonb)",
+			"CAST($10 AS jsonb)",
+			"CAST($12 AS jsonb)",
 			"RETURNING",
 		)
 	})

@@ -23,16 +23,13 @@ export function CreateDialogConfigEditor({
 
   return (
     <div className="mt-5 flex min-h-0 flex-1 basis-[304px] flex-col">
-      <div className="text-sm font-semibold leading-5 text-foreground">
-        {msg('managedAgents.agents.createDialog.agentConfig', 'Agent config')}
-      </div>
-      <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/70 bg-popover shadow-sm">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border-[0.5px] border-border/70 bg-popover shadow-sm has-[.cm-focused]:border-ring">
         <Tabs
           value={format}
           onValueChange={(nextValue) => nextValue && onFormatChange(nextValue as CodeFormat)}
           className="h-full gap-0"
         >
-          <div className="flex h-11 items-center justify-between border-b border-border/60 px-3">
+          <div className="flex h-11 items-center justify-between border-b-[0.5px] border-border/60 px-3">
             <TabsList
               aria-label={msg('managedAgents.agents.createDialog.configFormat', 'Config format')}
               className="h-8"

@@ -1,3 +1,4 @@
+import { nativeOutcomes, completedInputs } from "./session-log.ts";
 import { modelSystemText } from "./backend.ts";
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
@@ -60,7 +61,7 @@ for (const policy of ["ask", "deny"] as const) {
     f.b.modelScript = [parallelDelegations(["alpha"]), toolEvents("echo first"), textEvents("child done"), textEvents("parent done")];
     await f.session.receive("first-turn", { content: "Delegate first" });
     expect(f.b.executions).toHaveLength(1);
-    const threadId = f.session.state.threads![0]!.id;
+    const threadId = f.session.subagents.threads![0]!.id;
     f.b.a.launch.tool_permissions = { bash: policy };
     const followup = parallelDelegations(["alpha"]);
     const delta = followup.find((event) => event.type === "content_block_delta")!;
@@ -78,7 +79,7 @@ for (const policy of ["ask", "deny"] as const) {
       await decide(f.session, approvals[0]!, policy === "ask");
       await turn;
       expect(f.b.executions).toHaveLength(policy === "ask" ? 2 : 1);
-      expect(f.session.blocked()).toBe(false);
+      expect(f.session.abort.signal.aborted).toBe(false);
     } finally { f.session.stop(); await settled; }
   });
 }
@@ -94,10 +95,11 @@ test("native tool batch starts two children concurrently, isolates identical cal
   const turn = f.session.receive("parallel", { content: "Delegate independent tasks" });
   const settled = turn.catch(() => {});
   try {
-    await eventually(() => requests.length === 2);
+    await eventually(() => requests.length === 2
+      && f.b.timeline.filter(event => event.type === "worker.status").at(-1)?.external_metadata?.pending_action?.pending_actions?.length === 2);
     expect(f.session.approvals.size).toBe(2);
-    const alpha = f.session.state.threads!.find((thread) => thread.name === "alpha")!;
-    const beta = f.session.state.threads!.find((thread) => thread.name === "beta")!;
+    const alpha = f.session.subagents.threads!.find((thread) => thread.name === "alpha")!;
+    const beta = f.session.subagents.threads!.find((thread) => thread.name === "beta")!;
     expect(alpha.status).toBe("running"); expect(beta.status).toBe("running");
     expect(f.b.statuses.at(-1)).toBe("requires_action");
     const status = f.b.timeline.filter((event) => event.type === "worker.status").at(-1)!;
@@ -110,21 +112,26 @@ test("native tool batch starts two children concurrently, isolates identical cal
     await eventually(() => f.b.executions.length === 1);
     expect(f.b.statuses.at(-1)).toBe("running");
     expect(f.session.approvals.size).toBe(1);
-    expect(f.session.state.executions![beta.id]!.phase).toBe("dispatch");
     await decide(f.session, aRequest, true, "approved-alpha");
     await eventually(() => f.b.executions.length === 2);
-    expect(f.session.state.executions![alpha.id]!.phase).toBe("dispatch");
     betaResult.resolve({ content: [{ type: "text", text: "beta output" }] });
-    await eventually(() => beta.status === "idle");
-    expect(f.session.state.phase).toBe("dispatch");
+    await eventually(() => beta.status === "idle" && [...f.b.publicLog.values()]
+      .some(event => event.type === "session.thread_status_idle" && event.session_thread_id === beta.id));
+    const betaPublished = [...f.b.publicLog.values()].filter(event => event.session_thread_id === beta.id || event.from_session_thread_id === beta.id);
+    const betaResultIndex = betaPublished.findIndex(event => event.type === "user" && event.message?.content?.some((block: Payload) => block.type === "tool_result"));
+    const betaReportIndex = betaPublished.findIndex(event => event.type === "agent.thread_message_received");
+    const betaIdleIndex = betaPublished.findIndex(event => event.type === "session.thread_status_idle");
+    expect(betaResultIndex).toBeGreaterThan(-1);
+    expect(betaReportIndex).toBeGreaterThan(betaResultIndex);
+    expect(betaIdleIndex).toBeGreaterThan(betaReportIndex);
+    expect(alpha.status).toBe("running");
+    expect(f.b.processed).toEqual([]);
+    expect(f.session.dispatching()).toBe(true);
     expect(f.b.statuses.at(-1)).toBe("running");
-    expect(f.session.state.executions![beta.id]!.toolOutcomes.same_call_id!.text).toBe("beta output");
     alphaResult.resolve({ content: [{ type: "text", text: "alpha output" }] });
     await turn;
-    expect(f.session.state.phase).toBe("completed");
+    expect(completedInputs(f.session)).toContain(f.session.inputId);
     expect(f.b.statuses.at(-1)).toBe("idle");
-    expect(f.session.state.executions![alpha.id]!.toolOutcomes.same_call_id!.text).toBe("alpha output");
-    expect(f.session.state.executions![beta.id]!.approvedCalls.same_call_id!.effective).toEqual({ command: "approved-beta" });
     const synthesis = f.b.requests.at(-1)!;
     expect(JSON.stringify(synthesis.messages)).toContain("alpha report");
     expect(JSON.stringify(synthesis.messages)).toContain("beta report");
@@ -145,8 +152,9 @@ test.each(["user.interrupt", "control_request"])("%s targeted interruption cance
   const turn = f.session.receive("interrupt-one", { content: "Delegate" });
   const settled = turn.catch(() => {});
   try {
-    await eventually(() => requests.length === 2);
-    const alpha = f.session.state.threads!.find((thread) => thread.name === "alpha")!;
+    await eventually(() => requests.length === 2
+      && [...f.session.approvals.values()].filter(approval => approval.phase === "confirmation").length === 2);
+    const alpha = f.session.subagents.threads!.find((thread) => thread.name === "alpha")!;
     await f.session.control({ type, session_thread_id: alpha.id, ...(type === "control_request" ? { request_id: "targeted", request: { subtype: "interrupt" } } : {}) });
     await eventually(() => f.session.approvals.size === 1 && alpha.status === "idle"
       && f.b.statuses.at(-1) === "requires_action");
@@ -159,7 +167,6 @@ test.each(["user.interrupt", "control_request"])("%s targeted interruption cance
     await decide(f.session, betaRequest, false);
     await turn;
     expect(f.b.executions).toHaveLength(0);
-    expect(f.session.state.executions![alpha.id]!.phase).toBe("interrupted");
     expect(f.b.statuses.at(-1)).toBe("idle");
     expect(JSON.stringify(f.b.requests.at(-1)!.messages)).toContain("beta report");
   } finally { f.session.stop(); await settled; }
@@ -173,21 +180,21 @@ test("a retained thread rejects simultaneous follow-ups before creating a second
   const settled = first.catch(() => {});
   try {
     await eventually(() => f.b.requests.length === 1);
-    const id = f.session.state.threads![0]!.id;
+    const id = f.session.subagents.threads![0]!.id;
     await expect(f.session.subagents.send({ thread_id: id, message: "second" }, new AbortController().signal)).rejects.toThrow("running");
     expect(f.b.requests).toHaveLength(1);
     response.resolve(); await first;
   } finally { response.resolve(); f.session.stop(); await settled; }
 });
 
-test("an unknown child tool outcome blocks the session and cancels sibling approvals", async () => {
+test("an unknown child outcome stays in the native log while a sibling can finish", async () => {
   const f = await fixture();
   scriptedChildren(f.b);
   const requests: Payload[] = [];
   f.b.onApproval = async (request) => { requests.push(request); };
   const baseRoute = f.b.route.bind(f.b);
   f.b.route = async (request) => {
-    if (new URL(request.url).pathname.endsWith("/mcp")) {
+    if (request.method === "POST" && new URL(request.url).pathname.endsWith("/mcp")) {
       const body = await request.clone().json();
       if (body.method === "tools/call") return new Response(null, { status: 500 });
     }
@@ -197,36 +204,15 @@ test("an unknown child tool outcome blocks the session and cancels sibling appro
   const settled = turn.catch(() => {});
   try {
     await eventually(() => requests.length === 2);
-    const alpha = f.session.state.threads!.find((thread) => thread.name === "alpha")!;
+    const alpha = f.session.subagents.threads!.find((thread) => thread.name === "alpha")!;
     await decide(f.session, requests.find((request) => request.session_thread_id === alpha.id)!, true);
-    await settled;
-    expect(f.session.blocked()).toBe(true);
-    expect(f.session.state.executions![alpha.id]!.phase).toBe("blocked");
+    await eventually(() => f.session.approvals.size === 1);
+    await decide(f.session, requests.find((request) => request.session_thread_id !== alpha.id)!, false);
+    await turn;
+    expect(f.session.abort.signal.aborted).toBe(false);
+    expect(nativeOutcomes(f.session, alpha.id).same_call_id?.text).toContain("Do not retry blindly");
     expect(f.session.approvals.size).toBe(0);
-    expect(f.session.abort.signal.aborted).toBe(true);
-    expect(f.b.requests).toHaveLength(3);
+    expect(f.session.abort.signal.aborted).toBe(false);
+    expect(f.b.requests.length).toBeGreaterThanOrEqual(5);
   } finally { f.session.stop(); await settled; }
-});
-
-test("legacy version-1 state migrates conservatively without replaying an unknown dispatch", async () => {
-  const f = await fixture();
-  f.session.state.inputId = "legacy";
-  f.session.state.phase = "dispatch";
-  f.session.state.approvedCalls.legacy_call = { name: "Bash", original: { command: "write" }, effective: { command: "write" } };
-  delete f.session.state.executions;
-  await f.session.save();
-  await f.close();
-  const api = new OmaApi(f.b.url);
-  const fresh = new Context();
-  try {
-    await mountOma(fresh, api);
-    const resumed = createOmaSession(fresh, api, f.b.a);
-    await resumed.open();
-    expect(resumed.blocked()).toBe(true);
-    expect(resumed.state.executions![resumed.id]!.phase).toBe("blocked");
-    expect(resumed.state.executions![resumed.id]!.approvedCalls.legacy_call!.effective).toEqual({ command: "write" });
-    expect(f.b.requests).toHaveLength(0);
-    expect(f.b.executions).toHaveLength(0);
-    await resumed.close();
-  } finally { await fresh.fiber.dispose(); }
 });

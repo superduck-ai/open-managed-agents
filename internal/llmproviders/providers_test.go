@@ -5,7 +5,23 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
+
+func TestOrganizationProviderSecretBindingUsesStableWorkspace(t *testing.T) {
+	binding := SecretBinding(db.LLMProvider{OrganizationUUID: "org", ExternalID: "llmprov_org"})
+	if binding.WorkspaceUUID != db.OrganizationLLMProviderSecretWorkspace || binding.VaultExternalID != secretScope {
+		t.Fatalf("organization binding = %#v", binding)
+	}
+	if binding.CredentialExternalID != "llmprov_org" || binding.OrganizationUUID != "org" {
+		t.Fatalf("organization binding identity = %#v", binding)
+	}
+	workspace := SecretBinding(db.LLMProvider{OrganizationUUID: "org", WorkspaceUUID: "workspace", ExternalID: "llmprov_ws"})
+	if workspace.WorkspaceUUID != "workspace" {
+		t.Fatalf("workspace binding = %#v", workspace)
+	}
+}
 
 func TestValidateBaseURL(t *testing.T) {
 	valid, err := ValidateBaseURL("https://dashscope.example.com/apps/anthropic/")

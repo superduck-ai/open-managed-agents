@@ -16,7 +16,7 @@ func TestInvitationDeliveryMigration(t *testing.T) {
 		t.Skip("需要隔离 PostgreSQL，跳过不能视为验收通过")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := provider.UpTo(ctx, 93); err != nil {
+	if _, err := provider.UpTo(ctx, 101); err != nil {
 		t.Fatal(err)
 	}
 	invitation, org, old, latest := uuid.NewV4().String(), uuid.NewV4().String(), uuid.NewV4().String(), uuid.NewV4().String()
@@ -62,14 +62,14 @@ func TestInvitationDeliveryMigration(t *testing.T) {
 			t.Fatalf("改写了其他任务：%v %v", untouched, err)
 		}
 	}
-	if _, err := provider.UpTo(ctx, 94); err != nil {
+	if _, err := provider.UpTo(ctx, 102); err != nil {
 		t.Fatal(err)
 	}
 	verify()
 	if _, err := provider.Down(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 94); err != nil {
+	if _, err := provider.UpTo(ctx, 102); err != nil {
 		t.Fatal(err)
 	}
 	verify()

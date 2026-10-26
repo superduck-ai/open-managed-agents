@@ -25,11 +25,11 @@ Sessions 列表点击「创建会话」并提交成功后，直接进入刚创�
 
 ## 页面结构
 
-宽屏标题区将名称、状态、Agent、Environment、Vault、耗时、费用和更新时间放在同一摘要行；除状态外，摘要使用点分隔的轻量文本元信息，不使用连续描边 Badge。操作菜单位于右侧。较窄宽度按下述降级规则换成标题行与元信息行。摘要下方依次是转录搜索、线程时间轴和 Viewer；主栏固定展示转录，不提供事件类型筛选或 Debug 视图切换。
+宽屏标题区将名称、状态、Agent、Environment、Vault、耗时、费用和更新时间放在同一摘要行；除状态外，摘要使用图标与间距组织轻量文本元信息，不使用中点分隔，不使用连续描边 Badge。操作菜单位于右侧。较窄宽度按下述降级规则换成标题行与元信息行。摘要下方依次是转录搜索、线程时间轴和 Viewer；主栏固定展示转录，不提供事件类型筛选或 Debug 视图切换。
 
 Session 画布占满 `SidebarInset` 的全部剩余宽度，不设置页面级 `max-width`，Shell 也不再额外占用横向 padding，避免超宽屏出现与 Viewer 无关的对称空白。Breadcrumb、标题摘要和筛选工具条共用由 Session 画布容器宽度驱动的响应式内部内容轨：窄屏 `16px`、中等宽度 `24px`、桌面 `32px`；Claude 的 Minimap 例外地固定使用 `32px` 外层 gutter。Viewer 与它们共享同一画布边界但不额外添加左右边框。Transcript 正文、Action Card 和 Composer 继续由各自的 `720px` 内容轨限制阅读宽度；Inspector 继续使用独立宽度规则。顶部 Header 按 Claude 的层级分成两行：Breadcrumb 与 Actions 共用第一条 utility row，标题、状态和摘要位于第二行；容器小于 `768px` 时 Actions 才移至 Breadcrumb 下方。`1280px` 后显示 Created/Tokens，`1536px` 后标题与摘要横排并显示 Environment/Resources/Vaults。标题与状态优先保持单行；空间不足时摘要元信息移至标题下方，并按语义优先保留 Agent、Cost 和 Duration。操作按钮保持独立，不得覆盖标题或元信息。
 
-转录工具条保持单行，桌面高度约 `44px`。左侧只保留 Search，搜索框由 Viewer 容器宽度响应：容器小于 `640px` 时为 `176px`，达到 `640px` 后固定为 `224px`；右侧 Copy/Inspector 操作固定可见，单一搜索控件不创建横向滚动轨道。`Copy all` 始终复制当前 Lane 的完整转录，不受搜索结果过滤影响。原始事件浏览统一放在 Inspector 的 Events 页签；主 Transcript 不展示 `All events`、事件类型或 Debug 控件。Inspector Events 无条件挂载 Claude 的 FilterCombobox 触发器：初始显示 `All events` 且 popup 关闭，点击后提供搜索、`Transcript events` 和 wire event types 多选；没有 wire event type 时也不禁用入口。Minimap 内部使用 Claude 的 `8px` 顶部、约 `28px` 主/活动 Lane、`20px` 非活动 Lane、`6px` Lane 间距和 `4px` 底部节奏；多 Lane 布局始终预留一个展开子 Lane 的高度，切换活动 Lane 只能改变内部行高分配，不得改变 viewport 高度或向下挤压 Viewer。viewport 用 `-3px` inline margin 配合 `3px` padding 保护 tick outline，并在多 Lane 纵向滚动时使用 `16px` 底部渐隐。初次加载事件时先显示同尺寸的 shadcn Skeleton，加载完成后原位替换 Minimap；没有可展示事件时不保留空白轨道。`1×` 时只允许纵向滚动并隐藏横向 overflow，轨道使用默认光标；放大后才启用双向滚动，并以 grab/grabbing 光标提示可按住鼠标水平平移。拖动只改变 Minimap viewport 的 `scrollLeft`，不触发事件 seek；位移小于 `4px` 的 pointer 手势仍按点击事件处理。触控板/滚轮横向滚动与鼠标拖动必须共存，两种状态都隐藏原生 scrollbar。Minimap 支持 `1×–4×`、每步 `0.25×` 的缩放；内容足够高时可在 `100px` 最小高度与 `min(内容高度, 60vh)` 最大高度之间纵向调整，默认不超过 `280px`，键盘 ArrowUp/ArrowDown 每次调整 `16px`。所有 Lane 共用同一条时间映射，同一时间发生的跨 Lane 事件必须横向对齐；该几何映射不得改变后端事件数组或转录展示顺序。短事件绘制宽度至少为 `3px`。多 Lane 左侧使用可淡出的 sticky Lane 名称；sent/received 可以可靠配对时使用两端事件位置绘制贝塞尔连接线，尚未收到对应事件时只在已知目标 Lane 上绘制临时连接，目标 Lane 缺失时不猜测。连续至少 `30s` 的 idle 区间使用约 `11px` 固定宽度参与共享时间映射，并以 Lane 背景 window 表达，不再渲染斜纹 idle tick；长时间空闲不得挤压下一轮 turn 的可见宽度。时间线支持 Left/`k`、Right/`j`、Home、End 定位。Minimap hover 详情通过 `document.body` portal 使用 fixed 定位，避免被 viewport 的纵向 overflow 裁剪。进行中的 model bracket 从 `span.model_request_start` 起标记为 open tick，并按当前时间每 `250ms` 增长；时间轴至少保留 `10s` 的可视时间域。open tick 使用约 `2s` 周期的轻量透明度脉冲，并在 `prefers-reduced-motion: reduce` 下禁用。收到 `span.model_request_end` 后使用精确 inference duration，若结束 span 尚未进入 SSE 缓存，则先用紧邻的 idle/status 边界冻结临时时长，历史事件补齐后不得产生宽度跳变。
+转录工具条保持单行，桌面高度约 `44px`。左侧只保留 Search，搜索框由 Viewer 容器宽度响应：容器小于 `640px` 时为 `176px`，达到 `640px` 后固定为 `224px`；右侧 Copy/Inspector 操作固定可见，单一搜索控件不创建横向滚动轨道。`Copy all` 始终复制当前 Lane 的完整转录，不受搜索结果过滤影响。原始事件浏览统一放在 Inspector 的 Events 页签；主 Transcript 不展示 `All events`、事件类型或 Debug 控件。Inspector Events 无条件挂载共享 Base UI Combobox 触发器：初始显示 `All events` 且 popup 关闭，点击后提供搜索、`Transcript events` 和 wire event types 多选；没有 wire event type 时也不禁用入口。Minimap 内部使用 Claude 的 `8px` 顶部、约 `28px` 主/活动 Lane、`20px` 非活动 Lane、`6px` Lane 间距和 `4px` 底部节奏；多 Lane 布局始终预留一个展开子 Lane 的高度，切换活动 Lane 只能改变内部行高分配，不得改变 viewport 高度或向下挤压 Viewer。viewport 用 `-3px` inline margin 配合 `3px` padding 保护 tick outline，并在多 Lane 纵向滚动时使用 `16px` 底部渐隐。初次加载事件时先显示同尺寸的 shadcn Skeleton，加载完成后原位替换 Minimap；没有可展示事件时不保留空白轨道。`1×` 时只允许纵向滚动并隐藏横向 overflow，轨道使用默认光标；放大后才启用双向滚动，并以 grab/grabbing 光标提示可按住鼠标水平平移。拖动只改变 Minimap viewport 的 `scrollLeft`，不触发事件 seek；位移小于 `4px` 的 pointer 手势仍按点击事件处理。触控板/滚轮横向滚动与鼠标拖动必须共存，两种状态都隐藏原生 scrollbar。Minimap 支持 `1×–4×`、每步 `0.25×` 的缩放；内容足够高时可在 `100px` 最小高度与 `min(内容高度, 60vh)` 最大高度之间纵向调整，默认不超过 `280px`，键盘 ArrowUp/ArrowDown 每次调整 `16px`。所有 Lane 共用同一条时间映射，同一时间发生的跨 Lane 事件必须横向对齐；该几何映射不得改变后端事件数组或转录展示顺序。短事件绘制宽度至少为 `3px`。多 Lane 左侧使用可淡出的 sticky Lane 名称；sent/received 可以可靠配对时使用两端事件位置绘制贝塞尔连接线，尚未收到对应事件时只在已知目标 Lane 上绘制临时连接，目标 Lane 缺失时不猜测。连续至少 `30s` 的 idle 区间使用约 `11px` 固定宽度参与共享时间映射，并以 Lane 背景 window 表达，不再渲染斜纹 idle tick；长时间空闲不得挤压下一轮 turn 的可见宽度。时间线支持 Left/`k`、Right/`j`、Home、End 定位。Minimap hover 详情通过 `document.body` portal 使用 fixed 定位，避免被 viewport 的纵向 overflow 裁剪。进行中的 model bracket 从 `span.model_request_start` 起标记为 open tick，并按当前时间每 `250ms` 增长；时间轴至少保留 `10s` 的可视时间域。open tick 使用约 `2s` 周期的轻量透明度脉冲，并在 `prefers-reduced-motion: reduce` 下禁用。收到 `span.model_request_end` 后使用精确 inference duration，若结束 span 尚未进入 SSE 缓存，则先用紧邻的 idle/status 边界冻结临时时长，历史事件补齐后不得产生宽度跳变。
 
 Viewer 包含两个区域：
 
@@ -55,7 +55,7 @@ Viewer 包含两个区域：
 - 工具调用保持 `24–28px` 的单行结构，展示工具名、截断输入摘要、执行状态和耗时；点击后在 Inspector 的 Events 页签查看原始事件。
 - Transcript 耗时统一优先使用对应语义的明确上报值（包括 `0`），仅在缺失时使用时间差计算。Thinking 优先使用事件上报耗时，缺失时使用请求开始至 Thinking 事件的时间差，与 `Thought for {duration}` 摘要共用取值；Agent 正文优先使用上报的模型请求耗时，其次使用事件上报耗时，均缺失时使用模型请求总时间差。没有模型请求记录的独立 Agent 消息仍在标题行展示已知耗时。事件执行耗时在解析时拒绝负数及非有限值，保留有效的零值。工具优先使用有效的结果事件上报耗时，其次使用有效的调用事件上报耗时，均缺失或无效时根据确认（若有）或调用事件至结果事件的 `processed_at` 时间差计算，不含确认前的等待时间。Inspector 工具调用表格与详情也区分明确的零值和未知值。并行工具分组展示已知执行耗时的最大值。缺失耗时保留为未知并隐藏标签，明确上报的 `0` 仍显示为零；进行中的模型内容不显示伪造的零耗时。耗时悬浮提示与可见数字使用同一数值。
 - Markdown 的交互链接不能嵌套在事件选择按钮中；正文链接保持自身语义，事件选择使用独立可访问控件。
-- 原始事件审计统一位于 Inspector Events，固定使用 `Event / Preview / Time` 三列，并对事件 namespace 做轻量着色。前端由 `event_start` 生成的未完成流式占位（`is_streaming: true` 且无 `processed_at`）只参与 Transcript 实时渲染，不列为独立审计事件；正式消息到达后按服务端事件展示，避免占位与正式消息同时出现为两条 `agent.message`。实际未处理的输入事件仍显示 `queued`。
+- 原始事件审计统一位于 Inspector Events，固定使用 `Event / Preview / Time` 三列，并对事件 namespace 做轻量着色。前端按线程作用域处理流式生命周期；已收到最终消息或 `span.model_request_end.event_ids` 包含该 ID 时，忽略迟到的 `event_start`，后续无占位的 delta 也不再创建消息，避免失败请求在结束后重新显示执行中；其他线程和新请求的预览仍正常接收。前端由 `event_start` 生成的未完成流式占位（`is_streaming: true` 且无 `processed_at`）只参与 Transcript 实时渲染，不列为独立审计事件；正式消息到达后按服务端事件展示，避免占位与正式消息同时出现为两条 `agent.message`。实际未处理的输入事件仍显示本地化的 Queued 状态。
 
 ## 滚动与高度
 
@@ -72,16 +72,26 @@ Inspector 的默认宽度为 `480px`，最小宽度为 `360px`，最大不超过
 
 Inspector header 与 tab 控件共用 `32px` 总高度。外壳始终使用 panel surface 和 `overflow-hidden`；普通页签各自只使用一个 Base UI ScrollArea。Tab list 可以在极窄宽度下横向移动，隐藏原生 scrollbar，并将活动 tab 自动滚入视图。每个 tab 使用带 `inspector` query 的真实链接：普通点击只切换 Base UI tab，modifier click 保留浏览器新窗口/新标签行为，刷新后恢复合法页签。关闭 Inspector 时，若焦点原本位于 Inspector 内，则转移到重新打开入口；从该入口打开后焦点转移到关闭按钮。Inspector header 只保留页签和关闭按钮，不提供额外的 Full height/More 状态。
 
+检查器的受控字体、语义颜色、结构边界与键盘焦点遵循[前端设计规范](../design-system.md)，保留原有圆角与必要动效。工具统计与图表提示按当前语言显示，不使用中点分隔；耗时指标使用“工具总耗时 / 执行耗时 / 等待确认”表达时长。结果环与图例使用相同的成功、警告、失败令牌。状态标签提升至可读尺寸，运行/停止中的图标保留旋转，并在减少动态效果时静止。
+
+事件筛选菜单使用 Combobox 的函数子项渲染已过滤集合，由 Base UI 管理搜索、选中标记、键盘、清除与关闭。搜索匹配 wire type 与本地化的“转录事件”名称；输入搜索仅缩小菜单选项，选择后才按已有交集语义筛选事件。多选后保留菜单，清除选择恢复原事件列表；无匹配时仅显示无结果状态。不得在传入 `items` 后继续手动映射未过滤的完整列表。
+
+工具列表有记录时保留可读列宽，由共享 Table 内部横向滚动；空表格不强制数据列最小宽度。调用状态列为完整标签保留空间，线程状态列可容纳中文重新调度状态。成本与上下文 SVG 根据实际容器宽度更新绘图区，刻度文字不再通过固定桌面 viewBox 缩小；窄区域减少中间时间刻度。图表网格使用规范细线，数据线及选中事件联动保持原有语义。
+
 六个页签的职责如下：
 
 1. **Session**：ID、状态、创建/更新时间、Agent、Environment、Vault、Deployment 和 Cost。关联实体名称可导航到 OMA 对应详情页；metadata 请求失败时继续用原始 ID 提供同一链接，不能降级成不可点击文本或数量。
 2. **Events**：按后端返回顺序排列原始事件，直接使用 `Event / Preview / Time` 粘性表头、`192px` 事件列和 `24px` 紧凑行。FilterCombobox 的 `Transcript events` 与 wire type 使用交集语义；筛选只隐藏行，不重新排序，也不清除仍存在但暂时不可见的已选 detail。Time 列只展示时间，不影响顺序；持久事件的 `processed_at` 非空；尚未完成的实时预览可以没有处理时间，不回退到 `created_at`。选择事件后使用 Claude 的纵向 list/detail split：列表至少保留 `120px`，详情默认 `360px` 并可拖动；为满足 OMA 已确认的交互要求，详情在首次出现或切换事件时播放 `180ms ease-out` 的 `translateY(8px) + opacity` 上浮动画，并以顶部 hairline 和轻量向上阴影表达层级；它仍是 Inspector 内的普通分栏，不改成 drawer 或脱离滚动模型的 overlay。`prefers-reduced-motion` 下禁用动画。Agent message/thinking 详情默认展示 Raw JSON；当前浏览器标签页实时捕获到增量帧时可切换 Deltas 紧凑表格，历史事件不伪造增量，也不维护字符缺失/重复比对算法。详情由唯一的 viewport 统一滚动。
-3. **Tools**：展示 Name、Permission、Calls、Failed、p50，并提供工具搜索和 `All threads / Current agent / Current thread` Scope；`Current agent` 只按 Lane 的既有 `group` 归属筛选，不按名称猜测。配置工具按 Built-in、Custom 和 MCP Server 分组，未出现在当前 Agent 配置中的实际调用单列为 `Called, not configured`；只有主 Agent 配置可用时才展示其 `Configured on`。默认 detail 是带 `64×64` CSS conic-gradient 结果环的 Overview；Failed 非零时同时展示失败率，Failed/Denied 为零时使用国际化 `none`，Completed 始终保留数字。选择工具后展示调用表，调用行与转录的选择和悬浮状态联动，清除选择后回到 Overview。调用表仅在存在审批时展示 Waited，仅在当前 Scope 跨多个线程时展示 Thread。p50 仅统计已完成或失败的调用，优先使用有效的执行耗时（包括明确的 `0`），缺失或无效时才使用确认（若有）或调用至结果事件的时间差，与调用表保持一致。Time in tools、Executing 和 Waiting 对同一线程内重叠的调用区间做并集合并，不重复累计同一 Tool Batch 中的并行墙钟时间；不同线程分别累计。
+3. **Tools**：展示 Name、Permission、Calls、Failed、p50，并提供工具搜索和 `All threads / Current agent / Current thread` Scope；`Current agent` 只按 Lane 的既有 `group` 归属筛选，不按名称猜测。配置工具按 Built-in、Custom 和 MCP Server 分组，未出现在当前 Agent 配置中的实际调用单列为 `Called, not configured`；只有主 Agent 配置可用时才展示其 `Configured on`。默认 detail 是带 `64×64` CSS conic-gradient 结果环的 Overview；Failed 非零时同时展示失败率，Failed/Denied 为零时使用国际化 `none`，Completed 始终保留数字。选择工具后展示调用表，调用行与转录的选择和悬浮状态联动，清除选择后回到 Overview。调用表仅在存在审批时展示 Waited，仅在当前 Scope 跨多个线程时展示 Thread。p50 仅统计已完成或失败的调用，优先使用有效的执行耗时（包括明确的 `0`），缺失或无效时才使用确认（若有）或调用至结果事件的时间差，与调用表保持一致。Total time in tools、Execution time 和 Waiting for approval 对同一线程内重叠的调用区间做并集合并，不重复累计同一 Tool Batch 中的并行墙钟时间；不同线程分别累计。
 4. **Resources**：提供常驻资源筛选，按 Path/Size 展示 Session 挂载资源（File 用挂载路径与文件元数据；Memory Store 用快照 `name`/`memory_store_id`，Size 为 `—`）。可通过 `+ Resource → File` 挂载已有文件；Memory Store 在创建 Session/Deployment 表单中挂载，Inspector 只读展示。当前产品不展示 GitHub Repository 入口。
 5. **Threads**：展示有真实数据来源的 Thread、Status、Context；在后端提供线程级费用前不展示 Cost 占位列。detail 始终绑定 active thread，不提供本地关闭态。detail 显示 Agent、Model、Effort 和 `140px`、step-after area 的 Context usage 图；图上 model-request point hover 与 Transcript/Events 使用同一个 event ID 联动。单时间点只显示一个 X 轴标签，短会话显示秒，避免重复时间标签叠加。
 6. **Traces**：仅在 `observability.enabled=true` 时查询当前 Session 的 OpenObserve traces。选中 trace 后使用 `trace_id` 查询参数保存详情状态；返回列表或切换到其他 Inspector 页签时删除该参数。observability 路由返回 404 时展示 “Observability is not enabled”，不使用通用加载错误。
 
-Events、Tools、Threads 共用 list 最小 `120px`、detail 默认 `360px` 的纵向 split。拖拽条使用 `7px` 命中带和居中的 `1px` hairline，并在 hover、键盘焦点和拖动时显示语义强调色。用户调整后的 detail 高度按页签在当前 Session Viewer 生命周期内分别记忆；不写入浏览器存储，也不跨 Session 恢复。三者关闭语义不同：Events 清除 event 选择；Tools 清除 tool 选择并回到 Overview；Threads 始终绑定 active thread。只有由消息/事件选择触发的 Events detail 播放上述轻量上浮动画；分栏尺寸、滚动所有权和关闭语义保持不变。
+事件详情标题栏按“事件类型与标题”和“ID、相对时间与关闭操作”两组组织，空间不足时自然换行；为标题保留可读宽度，常见事件类型不做多余截断，长类型通过原有提示提供全值。复制按钮的可访问名称包含完整事件ID并按当前语言显示，视觉摘要不改变复制值。标题栏、消息时间及状态标签遵循规范最小字号，中点分隔改由间距组织。Raw/Deltas 在中文显示为“原始数据 / 增量帧”，缺少当前标签页实时帧时继续禁用增量视图，并以本地化提示说明；不从历史伪造帧。event_start 的预览只展示内部原始事件类型，不重复起始前缀。
+
+工具输入、结果、错误和批量调用详情保留既有圆角、原始内容及Highlight.js渲染，长代码行自然换行；结果ID和小节标题允许按宽度换行，不撑宽页面。主详情ScrollArea继续拥有滚动，内部代码不增加第三层滚动。思考区保留展开/收起和箭头旋转；时间线保留现有宽度/透明度过渡与open请求反馈，仅在减少动态效果时简化。迷你时间线的焦点、选中轮廓与结构分隔采用规范细线，提示内按类型、耗时和相对时间分组。线程标签条由用户主动滚动时仍平滑移动，减少动态效果时立即定位。
+
+Events、Tools、Threads 共用 list 最小 `120px`、detail 默认 `360px` 的纵向 split。拖拽条使用 `7px` 命中带和居中的 `0.5px` hairline，并在 hover、键盘焦点和拖动时显示语义强调色。用户调整后的 detail 高度按页签在当前 Session Viewer 生命周期内分别记忆；不写入浏览器存储，也不跨 Session 恢复。三者关闭语义不同：Events 清除 event 选择；Tools 清除 tool 选择并回到 Overview；Threads 始终绑定 active thread。只有由消息/事件选择触发的 Events detail 播放上述轻量上浮动画；分栏尺寸、滚动所有权和关闭语义保持不变。
 
 ## 数据来源
 
@@ -124,7 +134,7 @@ flowchart LR
 - `user.interrupt` 是控制事件，在用户消息命名空间分类之前归为状态，不生成 User 气泡或原始 JSON 正文。对话中的中断提示在请求未处理或本轮尚未回到 idle 时显示「正在停止」，已处理且观察到同一执行范围的 idle 后显示中性的方形图标、「已停止」与「已由用户停止」。停止请求成功仅表示已提交中断，Composer 保持停止按钮禁用，直到服务端确认 Session 不再运行；请求失败恢复重试，草稿不清空。
 - 模型请求取消与执行失败分开：以 `model_request_start_id` 关联请求，用同一轮、同一线程中已处理的 `user.interrupt` 确认 `cancelled`，转录展示「已中断」，不显示红色错误标记。全局中断覆盖当前各线程，指定线程中断只影响该线程。完整 Session 事件来自主线程和子线程缓存的分段合并；按事件时间排序并计算中断请求集合后，将同一只读集合传给各 lane，不能在 lane 局部数组中重新判定全局停止，也不向子 lane 复制全局停止展示行；未处理的停止请求、没有匹配请求、仅有 `end_turn`、其他线程或下一轮的中断不能消除错误。真实 `session.error` 和非取消的模型失败继续展示；模型失败不再标为「模型请求完成」。展示状态独立于原始事件，Debug/复制 JSON 保留 `is_error` 与 `error` 字段。
 - 工具结果严格识别 Claude 的两种明确中断文案与 `is_error=true`，展示中性的「已中断」而非失败。普通错误仍为失败；权限拒绝为「已拒绝」，审批尚未处理时继续等待，普通工具显示「等待审批」，自定义工具显示「等待结果」。普通自定义工具的等待卡片仅提示等待结果，不提供错误的审批按钮；AskUserQuestion 继续使用问卷。转录、工具详情、Inspector 表格复用状态 Badge；Inspector 将中断计入独立结果类别，不计入失败或进行中，并保留其执行耗时。
-- 普通消息 `processed_at` 为空时显示「排队中」，保留消息正文。`requires_action` 与 `budget_reached` 显示「等待操作」／「已达到预算」及对应状态行，不伪装成执行错误；这两种 idle 状态禁止发送普通消息并保留草稿，恢复 running 后清除旧的 idle 原因。重排队、运行、完成与终止均使用独立中英文状态。正常 `end_turn` 仍作为 idle 边界，不额外制造停止事件。
+- 普通消息 `processed_at` 为空时显示「排队中」，保留消息正文。`requires_action` 通过工具行与 Action Card 表达待处理操作，`budget_reached` 显示「已达到预算」及对应状态行，不伪装成执行错误；这两种 idle 状态禁止发送普通消息并保留草稿，恢复 running 后清除旧的 idle 原因。重排队、运行、完成与终止均使用独立中英文状态。正常 `end_turn` 仍作为 idle 边界，不额外制造停止事件。
 - 2026-10-14 提供的 `session.har` 包含 Claude 控制台脚本：`1eg5tx4iwbzta.js` 将 interrupt 操作映射为 `{type:"user.interrupt"}`，`0uh2z7eexsgkn.js` 的 `getEventContent` 对该类型返回 null，并通过 `isInterruptedResult` 识别两种明确的工具中断结果。这份 HAR 没有实际停止请求或本地 Session 的错误事件，不能据此确认截图中执行失败的后端原因；原 HAR 与解出的脚本不纳入仓库。
 - Claude 官方 [事件与流式处理](https://platform.claude.com/docs/en/managed-agents/events-and-streaming) 明确区分中断排队、已处理与回到 idle，且 `end_turn` 同时表示自然结束与中断；[线程文档](https://platform.claude.com/docs/en/managed-agents/session-threads) 描述工具中断结果与线程作用域。HAR 的文案目录分别包含 Stopped、Failed、Denied、Needs approval；没有停止后的详情页，不能据此声称此处文案、图标或位置与 Claude 界面逐项一致。本实现复用可核实的状态语义和项目自身的 shadcn 组件。
 
@@ -143,7 +153,9 @@ stateDiagram-v2
 
 - 已处理的 `user.interrupt` 关闭当前执行指示；随后落盘的部分消息仍通过显式 `model_request_start_id` 关联原请求。对已确认中断的请求，思考和部分正文使用同一模型请求分组。模型结束先于部分正文到达时，在本次只读构建内保留已结束请求的关联和结束元数据；迟到正文凭显式请求引用回到原分组，并保持已结束状态及用量、耗时，不重新开启执行指示。对话把停止提示放在该执行范围的收尾内容之后、下一条已处理用户消息／新请求／running／rescheduled 之前；idle 先于模型结束到达时也允许收尾事件归位。当前 lane 已有停止提示时，匹配的模型取消行不再重复展示；子 lane 没有全局停止展示行时继续保留其中的模型中断状态。原始事件数组、Debug、Inspector 与时间线的时间戳及顺序不变；真实错误继续保留。工具行和单条／批量详情的同一生命周期只显示一个状态标识。
 - 验收使用 `sessionExecutionState.test.ts`、Session Transcript/Composer/Inspector 及详情页测试覆盖跨轮、跨线程、pending 中断；详情页测试通过分开的 Session/Thread 历史接口加载事件并切换实际 lane，验证全局／指定线程停止、pending 停止、非取消错误和停止后的新请求，避免仅使用扁平数组的误绿。另覆盖无 trailing idle 的停止括号关闭、工具状态去重、取消与真实失败、工具各终态和预算暂停。浏览器模拟 API 事件，点击实际 Stop 按钮，检查浅色／深色／窄屏、停止后继续发送和各状态展示；截图与脚本放在仓库外，不提交 Git。
+- 工具审批暂停不额外生成转录中的「等待操作」状态行；待处理状态由对应工具行的「等待审批」／「等待结果」和 Action Card 表达，避免审批已允许、拒绝或执行完成后留下历史等待提示。Debug 保留原始 `session.status_idle` 事件，预算暂停等其他状态行不受影响。提供的 `session.har` 中，前端 `getEventContent` 对 `session.status_idle` 返回 null，`isTurnEnd` 明确排除 `requires_action`；据此对齐审批暂停不作为独立对话正文的处理。HAR 与提取脚本仅用于本地检查，不纳入仓库。
 - 最新 `session.status_idle.stop_reason` 为 `requires_action` 时，在转录与输入框之间展示 Action Card。普通工具审批发送 `user.tool_confirmation`，AskUserQuestion 答案发送 `user.custom_tool_result`；等待期间禁用普通消息输入框。
+- 主线程可汇总待处理工具；切换子线程后，Action Card 仅展示该线程的待处理工具，不能显示其他线程的审批入口。主线程仍有待处理操作时，子线程的普通消息输入保持禁用；切回主线程后保留原审批入口。普通自定义工具处于等待外部结果状态，只展示等待提示，不提供 Approve/Deny；收到成功或失败的 `user.custom_tool_result` 后按后续运行与 idle 事件恢复会话。AskUserQuestion 继续使用专用问卷。
 - 用户离开列表底部后停止自动跟随并显示“回到最新事件”；位于底部时继续跟随流式正文增长。发送新消息成功后重新跟随底部，即使随后重连补入更早的历史事件，也应保持最新回复可见；主动上滚阅读历史时不强制拉回底部。
 - Session 最终状态以 SSE/后端响应为准；前端临时状态只用于交互反馈。
 
@@ -187,3 +199,45 @@ stateDiagram-v2
 现有 Files API 没有 message/turn 归属字段，以上时间区间归属是控制台推断，不是服务端持久化关系；删除或覆盖文件后不能通过该投影还原历史版本。Session resources 的输出投影存在数量上限，超出投影的文件仍按时间展示，但没有真实路径时不提供正文路径映射。后续如需永久、精确的消息附件及版本快照，需要服务端显式的消息与文件版本关系。
 
 `SessionTranscriptView.test.tsx` 验证两轮之间文件留存、流式时隐藏以及结束后归位；`SessionOutputFiles.test.tsx` 验证最新优先与展开/收起；`sessionOutputModel.test.ts` 和 `SessionTranscriptContent.test.tsx` 验证同名路径隔离、编码路径、别名及正文链接下载。
+
+
+### 短视口与浏览器缩放
+
+当视口高度不超过600px时，会话工作区外壳允许纵向滚动，内部保留640px的最小布局高度，避免页头、时间线及检查器挤压消息输入区。正常高度继续保持事件区独立滚动。验收应使用Chrome原生100%和200%缩放，核对输入框及发送按钮完整可达，不能仅用DPR或窄视口替代。
+
+## 会话列表列宽与页头
+
+会话列表保留 ID、名称、状态、智能体、费用、输入 / 输出 Token、创建时间和行操作。1280px 视口且侧栏展开时，表格应落在 960px 内容区域内：ID 152px、状态 112px、智能体 120px、费用 80px、Token 128px、创建时间 124px、操作 80px，名称使用剩余空间。保留完整 ID 复制和资源链接，长文本在单元格内截断；窄屏由表格自身横向滚动，不使整个页面横向溢出。页头只保留会话标题、创建入口及搜索筛选，不重复解释页面用途。
+
+## 快速查看页头
+
+会话快速查看页头保留会话标题和完整 ID，重复说明“无需离开列表”的内容仅供辅助技术读取，不占用可见页头空间。关闭、退出过渡及焦点恢复仍由现有 Sheet 生命周期控制。
+
+
+## 快速查看与详情的状态文案一致性
+
+快速查看的顶部状态复用 `buildSessionDetailSummary`，将最近已加载事件中的执行结果与接口状态一并呈现，保持与完整详情页相同的判断；归档状态继续优先显示。预览中的执行状态复用 `sessionExecutionStateLabel`，例如 `retries_exhausted` 对应“失败”，不再仅按底层 `session.status_idle` 显示“Idle”。共享事件标签按当前语言呈现，未知事件类型仍保留原类型；服务端错误、工具名称和用户内容不作机器翻译。
+
+本轮实页核对保留原有配色、圆角、布局和动效，修改前后截图在独立目录 `session-preview-review-2026-10-26/`。覆盖桌面深色两组对照、桌面浅色和390px浅/深色补充样本；窄屏面板宽390px、页面宽390px，Escape关闭后焦点返回快速查看入口。此处不代表其他会话状态或所有检查器页签均已完成验收。
+
+## Git资源授权弹窗的视觉与退出
+
+已有Git仓库资源的授权入口保持原有接口与权限规则；归档会话禁用编辑，资源列表保留仓库、挂载路径和checkout信息。授权弹窗标题与操作固定，仓库地址最多两行并以title保留完整目标，避免长地址占满短屏；错误在正文内完整换行、滚动并在失败后获得焦点。密码字段保留遮蔽，首次焦点到字段，关闭后回到该仓库的打开按钮。
+
+提交中禁用字段、保存、取消与关闭，并拒绝Escape；失败保留输入与目标，允许显式重试。成功立即更新原有本地状态并关闭，取消/成功都保留目标与输入完成Base UI退场，退出完成后才清空；没有定时器或接口延迟。空输入继续表示清除授权，接口路径和payload不变。session-git-review-2026-10-26使用实际完整SessionInspector及冻结前后Git组件，网络为隔离响应；不代表真实授权变更或后端验收。
+
+## 资源添加和输出失败的视觉状态
+
+Inspector单次仅添加一个文件时，复用SessionFileResourcesField的plain展示：不重复资源标题、说明和外层卡片，不显示移除唯一字段的入口；集合编辑继续使用默认cards展示及原有移除能力。选文件、挂载路径校验与后端payload不变。提交中由非滚动fieldset禁用字段，禁止重复提交、取消、关闭和Escape；失败错误留在正文内换行滚动并获焦点，标题与操作固定，关闭回到Resource菜单按钮。
+
+资源筛选无匹配显示“没有匹配的资源”，区别于真正未挂载；没有文件/记忆行时不显示空表头，Git资源继续独立展示。输出文件刷新失败时保留已有卡片，长错误必须受会话正文宽度约束，重试仅重新读取列表。输出展开高度沿用220ms，箭头200ms；减少动态效果关闭二者。共享Combobox尾部按钮区域不使用会撑出输入框的负外边距，保留原视觉对齐与搜索行为。
+
+session-resource-states-review-2026-10-26记录15组实际组件隔离前后和2张恢复/成功观察，覆盖空资源、筛选、Git-only、添加表单和输出列表。文件/挂载均为本地内存样本，不代表真实写入或下载验收。
+
+## 线程、工具和事件详情的内容约束
+
+Inspector详情正文和ScrollArea内容均受面板宽度约束，长事件JSON与事实值可断词完整换行；工具表格仍允许局部横向滚动。线程名称、Agent名称保留完整title，版本标记不压缩；模型、部署及配置来源等元信息最多两行并提供完整提示，避免连续标识符占满短屏。工具为空与筛选无匹配使用不同文案，工具和事件无数据时隐藏空表头。
+
+上下文用量图仅有一个数据点时直接显示标记，不能依赖悬停才能看见已有用量；继续使用真实事件时间，不补造时间跨度。多点路径、悬停联动和事件选择合同保持。session-inspector-details-review-2026-10-26记录15组隔离样本；单点补充修复后4组线程截图已重采，事件JSON已滚动到末尾，整页仍待联合验收。
+
+Inspector内嵌Traces时，外层ScrollArea内容宽度约束在面板内，不能由稠密表格的最小宽度撑开。筛选、时间范围和刷新在面板内换行，表格保留局部横向滚动；节点详情继续复用共享TraceDetailView与SpanDetailPanel，不创建独立版本。session-traces-joined-review-2026-10-26记录8组完整Inspector隔离对比及节点/末列观察；状态搜索、Escape焦点恢复、详情关闭与返回列表已复核。样本仅使用模拟GET，不证明真实链路采集或后端验收。

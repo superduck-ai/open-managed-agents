@@ -10,6 +10,7 @@ const thread: SubagentThread = {
 function launch() {
   return {
     ...assignment().launch,
+    subagents: undefined,
     system: "Literal {{ agent }} instructions.",
     environment_prompt: "# Managed-agent environment\n\nEnvironment rules.",
     memory_catalog_prompt: "\n\nUse the attached memory stores.\n<attached_memory_stores/>",
@@ -27,6 +28,7 @@ function order(prompt: string, markers: string[]): number[] {
 
 test("root prompt omits delegation guidance without subagents", () => {
   const prompt = rootSystemPrompt(launch());
+  expect(prompt).toContain("Subagents are disabled for this session.");
   expect(prompt).not.toContain("send_to_agent");
   expect(prompt).not.toContain("Delegating to subagents");
 });
@@ -124,4 +126,11 @@ test("empty configured instructions are omitted", () => {
   expect(child).not.toContain("# Specialist instructions");
   expect(root).toContain("# Skills");
   expect(root).toContain("# This session");
+});
+
+
+test("predefined-only prompt prohibits inline agents", () => {
+  const prompt = rootSystemPrompt({ ...launch(), subagents: { inlineAgents: false } });
+  expect(prompt).toContain("You cannot define inline agents");
+  expect(prompt).toContain("agent_name");
 });

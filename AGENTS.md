@@ -3,9 +3,17 @@
 ## 本地重启脚本
 
 - 在仓库根目录使用 `just restart-server` 重启本地后端服务，地址为 `127.0.0.1:38080`。
-- `just restart-server` 会调用 `./scripts/restart-server.sh`，杀掉所有监听 `PORT`（默认 `38080`）的进程，等待端口释放，必要时升级为 `kill -9`，然后以前台方式执行 `go run .`；监听地址由 `config/config.yaml` 的 `server.addr` 决定。
+- `just restart-server` 会调用 `./scripts/restart-server.sh`；未绑定环境时按 `PORT`（默认 `38080`）停止旧监听进程，并使用 `.run/config.yaml`。绑定环境使用下节的归属检查、动态端口和生成配置规则，最后以前台方式运行服务；绑定环境先构建二进制，再在机器级锁内完成端口分配和开始监听，未绑定环境继续执行 `go run .`。
 - 仅在 `server.addr` 已改为其他端口时，才使用 `PORT=... just restart-server` 指定需要释放的对应端口。
 - 如果修改了 `web/` 下的前端代码，在使用浏览器或 SuperDuck 验证前，也要从仓库根目录执行 `just restart-web` 重启前端开发服务器。该命令会调用 `./scripts/restart-web.sh`，只停止当前仓库路径启动的 Vite 监听进程；如果目标端口被其他路径的进程占用，则保留该进程并自动选择后续可用端口以前台方式启动前端。
+
+## 多 worktree 开发环境
+
+- 使用 `just dev-init` 统一准备依赖、hook、生成文件和当前 worktree 的开发环境，默认读取 `.run/dev-init.yaml`，也支持显式指定路径；默认入口自动补齐首次缺失的配置与本地密钥，已有配置和密钥不覆盖，已绑定环境缺少输入时报错。人工配置位于 `.run/config.yaml`、`.run/dev-init.yaml` 与 `.run/secrets/`；LLM provider 配置和凭证在本机 `~/.oma-dev/model-providers.yaml` 共享，凭证直接填写 `api_key`，文件权限为 `0600`，由各 worktree 的初始化文件显式引用，`config/` 只提供模板。环境身份是 worktree 派生的名字（`.run/env.json`），不是编号；`--update` 显式更新已登记资源的可修改配置；`just slot-info [-json]` 查看绑定、地址与初始化状态（`-json` 供自动化读取）；`just dev-teardown --yes` 显式回收本环境，仅删除绑定和 `.run/generated/`，保留人工配置、本地密钥与共享 LLM 配置；`--orphans` 回收已删除 worktree 留下的资源。设计见 `docs/design/development-worktree-environments.md`。
+- 使用 `just dev-recycle --yes` 依次停止三个本地服务、删除本环境 Compose 容器和 volume、清理 alias、登记与生成状态；可从同一 clone 的其他 checkout 使用 `--worktree /absolute/path` 指定目标。保留 worktree 目录、Git 登记、源码改动、人工配置、本地私钥和共享 LLM 配置，允许主 checkout、锁定或有未提交改动的 worktree。外部流程仅在命令成功后删除 worktree；服务停止或 Compose 清理失败时保留环境登记供重试。不要并发初始化、重启与回收。
+- 绑定后 `.run/env.json` 与 `.run/generated/` 生效：`just restart-server`、`just restart-web` 与 `just restart-brain` 只读取生成的 `.run/generated/config.yaml`；监听端口每次启动动态探测（写入 `state.json` 的 runtime），重启脚本先停旧实例再探测新端口；基础设施为每环境一个 compose 栈（`docker compose -p oma-<name> -f deploy/docker-compose/dev-env.yaml`，含 pg/redis/nats/minio/e2b-local；e2b-local 需 OrbStack 或 Linux host 网络，`set-runtime` 自动复用健康栈或重建）；三个入口拒绝使用未完成初始化的环境。
+- 对外访问统一走 portless（`--no-tls` 纯 HTTP，首次需 `sudo portless proxy start --no-tls`）：重启入口自动注册 `oma-<name>-api` / `oma-<name>-web` 静态 alias，浏览器和服务间使用 `http://oma-<name>-{api,web}.localhost`（Vite 代理目标直连后端 loopback 端口避免二次经过代理触发 loop guard；DSH `OMA_API_URL` 按名字解析）；未安装 portless 时绑定环境拒绝启动，未绑定 worktree 保持原端口语义。
+- 绑定后端口被其他 worktree 或进程占用时报错，不会停止对方服务；未绑定的 worktree 保持原有重启语义。
 
 ## GitHub PR 提交身份
 

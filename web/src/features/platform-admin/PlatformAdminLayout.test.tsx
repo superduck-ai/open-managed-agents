@@ -136,23 +136,23 @@ test('组织菜单每次只加载对应列表，直达与返回保留当前菜�
   }) as unknown as typeof fetch;
   const router = mount('/platform-admin/organizations/target?view=members');
   expect(await screen.findByRole('heading', { name: '组织成员' })).toBeTruthy();
-  expect(await screen.findByRole('table')).toBeTruthy();
-  expect(screen.getAllByRole('table')).toHaveLength(1);
+  expect(await screen.findByText('暂无组织成员。')).toBeTruthy();
+  expect(screen.queryByRole('table')).toBeNull();
   expect(screen.getByRole('link', { name: '组织成员' }).getAttribute('aria-current')).toBe('page');
   expect(requests.some((path) => path.includes('/workspaces') || path.includes('/invitations'))).toBe(false);
 
   fireEvent.click(screen.getByRole('link', { name: '工作区' }));
   expect(await screen.findByRole('heading', { name: '工作区目录' })).toBeTruthy();
-  expect(await screen.findByRole('table')).toBeTruthy();
-  expect(screen.getAllByRole('table')).toHaveLength(1);
+  expect(await screen.findByText('暂无工作区。')).toBeTruthy();
+  expect(screen.queryByRole('table')).toBeNull();
   expect(screen.queryByRole('heading', { name: '组织成员' })).toBeNull();
   expect(screen.getByRole('link', { name: '工作区' }).getAttribute('aria-current')).toBe('page');
   expect(router.state.location.search).toEqual({ view: 'workspaces' });
 
   fireEvent.click(screen.getByRole('link', { name: '成员邀请' }));
   expect(await screen.findByRole('heading', { name: '成员邀请' })).toBeTruthy();
-  expect(await screen.findByRole('table')).toBeTruthy();
-  expect(screen.getAllByRole('table')).toHaveLength(1);
+  expect(await screen.findByText('暂无成员邀请。')).toBeTruthy();
+  expect(screen.queryByRole('table')).toBeNull();
   expect(screen.queryByRole('heading', { name: '工作区目录' })).toBeNull();
 
   router.history.back();

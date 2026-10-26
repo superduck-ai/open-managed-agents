@@ -83,7 +83,8 @@ func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID
 		return err
 	}
 	external = external && identity.Kind == "agent_toolset"
-	if permission == resolvedToolPermissionAsk || (external && permission == resolvedToolPermissionAllow) {
+	waitForResult := external || request.EventType == "agent.custom_tool_use"
+	if permission == resolvedToolPermissionAsk || (waitForResult && permission == resolvedToolPermissionAllow) {
 		if err := s.persistToolPermissionRequest(ctx, codeSessionID, workerEpoch, request); err != nil {
 			if errors.Is(err, db.ErrInvalidState) {
 				return s.respondToToolPermissionRequest(ctx, codeSessionID, workerEpoch, request, resolvedToolPermissionDeny, "terminated-thread", "Subagent thread has terminated.", "", "")
@@ -91,7 +92,7 @@ func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID
 			return err
 		}
 	}
-	if external && permission == resolvedToolPermissionAllow {
+	if waitForResult && permission == resolvedToolPermissionAllow {
 		pending, err := toolRequiresActionPayload(codeSessionID, request, time.Now().UTC())
 		if err != nil {
 			return err
@@ -103,7 +104,7 @@ func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID
 	}
 	switch permission {
 	case resolvedToolPermissionAllow:
-		if external {
+		if waitForResult {
 			return nil
 		}
 		return s.respondToToolPermissionRequest(ctx, codeSessionID, workerEpoch, request, permission, "auto-approve", "", "", "")
@@ -250,28 +251,12 @@ func parseClaudeToolIdentity(toolName string) toolIdentity {
 
 func managedAgentToolName(claudeToolName string) string {
 	switch strings.ToLower(strings.TrimSpace(claudeToolName)) {
-	case "task", "agent":
-		return "task"
 	case "askuserquestion", "ask_user_question":
 		return "ask_user_question"
 	case "bash":
 		return "bash"
-	case "croncreate", "cron_create":
-		return "cron_create"
-	case "crondelete", "cron_delete":
-		return "cron_delete"
-	case "cronlist", "cron_list":
-		return "cron_list"
 	case "edit", "multiedit":
 		return "edit"
-	case "enterplanmode", "enter_plan_mode":
-		return "enter_plan_mode"
-	case "enterworktree", "enter_worktree":
-		return "enter_worktree"
-	case "exitplanmode", "exit_plan_mode":
-		return "exit_plan_mode"
-	case "exitworktree", "exit_worktree":
-		return "exit_worktree"
 	case "read":
 		return "read"
 	case "write":
@@ -280,20 +265,10 @@ func managedAgentToolName(claudeToolName string) string {
 		return "glob"
 	case "grep":
 		return "grep"
-	case "notebookedit", "notebook_edit":
-		return "notebook_edit"
-	case "schedulewakeup", "schedule_wakeup":
-		return "schedule_wakeup"
-	case "skill":
-		return "skill"
-	case "taskoutput", "task_output":
-		return "task_output"
-	case "taskstop", "task_stop":
-		return "task_stop"
-	case "todowrite", "todo_write":
-		return "todo_write"
 	case "webfetch", "web_fetch":
 		return "web_fetch"
+	case "websearch", "web_search":
+		return "web_search"
 	default:
 		return ""
 	}
@@ -512,13 +487,10 @@ func toolPermissionRequestFromMetadata(raw json.RawMessage, codeSessionID, publi
 }
 
 type userCustomToolResultPayload struct {
-	CustomToolUseID string `json:"custom_tool_use_id"`
-	Content         []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"content"`
-	IsError         bool   `json:"is_error"`
-	SessionThreadID string `json:"session_thread_id"`
+	CustomToolUseID string                  `json:"custom_tool_use_id"`
+	Content         []selfHostedToolContent `json:"content"`
+	IsError         bool                    `json:"is_error"`
+	SessionThreadID string                  `json:"session_thread_id"`
 }
 
 func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, codeSession db.CodeSession, event db.SessionEvent) (bool, error) {
@@ -536,46 +508,13 @@ func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, c
 	if request.EventType != "agent.custom_tool_use" {
 		return false, nil
 	}
-	behavior := resolvedToolPermissionAllow
-	denyMessage := ""
-	if payload.IsError {
-		behavior = resolvedToolPermissionDeny
-		denyMessage = customToolResultText(payload)
-	} else {
-		answers, err := customToolResultAnswers(payload)
-		if err != nil {
-			return false, err
-		}
-		request.Input = cloneStringAnyMap(request.Input)
-		request.Input["answers"] = answers
+	if payload.IsError && len(payload.Content) == 0 {
+		payload.Content = []selfHostedToolContent{{Type: "text", Text: "User declined to answer."}}
 	}
-	sessionThreadID := firstNonEmpty(payload.SessionThreadID, request.SessionThreadID)
-	if err := s.respondToToolPermissionRequest(ctx, codeSession.ExternalID, codeSession.CurrentWorkerEpoch, request, behavior, "custom-tool-result", denyMessage, sessionThreadID, event.ExternalID); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func customToolResultAnswers(payload userCustomToolResultPayload) (map[string]any, error) {
-	text := customToolResultText(payload)
-	if text == "" {
-		return map[string]any{}, nil
-	}
-	var answers map[string]any
-	if err := json.Unmarshal([]byte(text), &answers); err != nil || answers == nil {
-		return nil, ErrProtocol
-	}
-	return answers, nil
-}
-
-func customToolResultText(payload userCustomToolResultPayload) string {
-	parts := make([]string, 0, len(payload.Content))
-	for _, block := range payload.Content {
-		if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
-			parts = append(parts, block.Text)
-		}
-	}
-	return strings.TrimSpace(strings.Join(parts, "\n"))
+	return true, s.sendToolDecision(ctx, codeSession.ExternalID, codeSession.CurrentWorkerEpoch, request, map[string]any{
+		"behavior":       "allow",
+		"externalResult": map[string]any{"content": payload.Content, "isError": payload.IsError},
+	}, "custom-tool-result", firstNonEmpty(payload.SessionThreadID, request.SessionThreadID), event.ExternalID)
 }
 
 func cloneStringAnyMap(value map[string]any) map[string]any {
@@ -732,7 +671,7 @@ func toolCallPublicPayload(codeSessionID string, request toolPermissionRequest, 
 }
 
 func toolPermissionPublicIdentity(toolName string, identity toolIdentity) (string, string) {
-	if strings.EqualFold(toolName, "AskUserQuestion") {
+	if identity.Kind == "agent_toolset" && identity.ToolName == "ask_user_question" {
 		return "agent.custom_tool_use", "AskUserQuestion"
 	}
 	if identity.Kind == "mcp" {

@@ -11,6 +11,7 @@ import (
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -19,6 +20,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
+	"github.com/superduck-ai/open-managed-agents/internal/webtools"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -37,9 +39,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	if err := rejectUnpricedSessionBudget(body.Budget, agent.Model); err != nil {
-		return invalidRequest(err)
-	}
 	environmentID, err := parseRequiredRawString(body.EnvironmentID, "environment_id")
 	if err != nil {
 		return invalidRequest(err)
@@ -53,6 +52,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	}
 	if env.ArchivedAt != nil {
 		return invalidRequest(errors.New("environment must not be archived"))
+	}
+	if err := webtools.ValidateSession(env.Config, snapshot); err != nil {
+		return invalidRequest(err)
 	}
 	if err := networkpolicy.ValidateSessionMCPHosts(env.Config, snapshot); err != nil {
 		return invalidRequest(err)
@@ -68,6 +70,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	vaultIDs, err := h.normalizeVaultIDs(r, principal, rawOrDefault(body.VaultIDs, `[]`))
 	if err != nil {
 		return mapVaultBindingError(err)
+	}
+	sessionBudgetRaw, err := h.prepareCreateBudget(r.Context(), principal, snapshot, body.Budget)
+	if err != nil {
+		return err
 	}
 
 	sessionID, err := ids.New("sesn_")
@@ -120,6 +126,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 			Metadata:              metadata,
 			VaultIDs:              vaultIDs,
 			Status:                "idle",
+			Budget:                sessionBudgetRaw,
 			Usage:                 json.RawMessage(`{}`),
 			Stats:                 json.RawMessage(`{}`),
 			OutcomeEvaluations:    json.RawMessage(`[]`),
@@ -175,7 +182,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		h.publishSessionEvents(r.Context(), persisted)
 		h.enqueueWebhooksForSessionEvents(r.Context(), created.WorkspaceUUID, created.ExternalID, persisted)
 	}
-	response, err := h.responseFromSession(r, created)
+	response, err := h.responseFromSession(r, created, true)
 	if err != nil {
 		return internalError("Could not create session", fmt.Errorf("load session %q response: %w", sessionID, err))
 	}
@@ -249,7 +256,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	}
 	data := make([]sessionResponse, 0, len(records))
 	for _, record := range records {
-		response, err := h.responseFromSession(r, record)
+		response, err := h.responseFromSession(r, record, false)
 		if err != nil {
 			return internalError("Could not list sessions", fmt.Errorf("load session %q response: %w", record.ExternalID, err))
 		}
@@ -271,7 +278,7 @@ func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	response, err := h.responseFromSession(r, session)
+	response, err := h.responseFromSession(r, session, true)
 	if err != nil {
 		return internalError("Could not retrieve session", fmt.Errorf("load session %q response: %w", sessionID, err))
 	}
@@ -300,9 +307,6 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	if len(body.Budget) > 0 && string(body.Budget) != "null" {
-		return invalidRequest(errors.New("a budget cannot be added to a session created without one"))
-	}
 	if len(body.VaultIDs) > 0 {
 		return invalidRequest(errors.New("vault_ids updates are not supported"))
 	}
@@ -324,6 +328,29 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return invalidRequest(err)
 		}
+		env, err := h.db.GetEnvironment(r.Context(), current.WorkspaceUUID, current.EnvironmentExternalID)
+		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				return environmentNotFound(current.EnvironmentExternalID, err)
+			}
+			return internalError("Could not update session", fmt.Errorf("get environment: %w", err))
+		}
+		if err := webtools.ValidateSession(env.Config, next.AgentSnapshot); err != nil {
+			return invalidRequest(err)
+		}
+	}
+	if len(body.Budget) > 0 {
+		if err := h.applyBudgetUpdate(r, &next, body.Budget); err != nil {
+			return err
+		}
+	}
+	// An agent-only patch must not smuggle an unpriced model into a session
+	// that still carries a budget: unpriced requests accrue no cost, so the
+	// budget would silently never trigger.
+	if len(body.Agent) > 0 && len(next.Budget) > 0 {
+		if err := h.codeSessions.Billing().ValidateSnapshot(r.Context(), next.OrganizationUUID, next.WorkspaceUUID, next.AgentSnapshot); err != nil {
+			return invalidRequest(err)
+		}
 	}
 	updated := current
 	var changed bool
@@ -343,11 +370,62 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 	if changed {
 		h.enqueuePrincipalWebhook(r.Context(), principal, "session.updated", updated.ExternalID, nil, updated.UpdatedAt)
 	}
-	response, err := h.responseFromSession(r, updated)
+	response, err := h.responseFromSession(r, updated, true)
 	if err != nil {
 		return internalError("Could not update session", fmt.Errorf("load updated session %q response: %w", sessionID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, response)
+	return nil
+}
+
+// applyBudgetUpdate mutates next per the session budget update contract: a
+// JSON null removes the cap (one-way), an object replaces it with a value that
+// must be strictly greater than the session's consumed list cost. Accepted
+// updates automatically re-arm enforcement (clear budget_reached_at).
+func (h *Handler) applyBudgetUpdate(r *http.Request, next *db.Session, raw json.RawMessage) error {
+	budget, removed, err := ParseBudgetInput(raw)
+	if err != nil {
+		return invalidRequest(err)
+	}
+	if removed {
+		if len(next.Budget) == 0 {
+			return invalidRequest(errors.New("session has no budget to remove"))
+		}
+		next.Budget = nil
+		next.BudgetReachedAt = nil
+		removedAt := time.Now().UTC()
+		next.BudgetRemovedAt = &removedAt
+		return nil
+	}
+	if budget == nil {
+		return nil
+	}
+	if len(next.Budget) == 0 {
+		return invalidRequest(errors.New("budgets can only be attached when creating a session"))
+	}
+	if next.BudgetRemovedAt != nil {
+		return invalidRequest(errors.New("a removed budget cannot be added again"))
+	}
+	// Validate the final agent snapshot: a same-request agent patch could
+	// otherwise introduce an unpriced model that silently accrues no cost.
+	if err := h.codeSessions.Billing().ValidateSnapshot(r.Context(), next.OrganizationUUID, next.WorkspaceUUID, next.AgentSnapshot); err != nil {
+		return invalidRequest(err)
+	}
+	totals, err := h.db.SumSessionUsageTotals(r.Context(), next.WorkspaceUUID, next.ExternalID)
+	if err != nil {
+		return internalError("Could not update session", fmt.Errorf("sum session usage: %w", err))
+	}
+	spent := billing.TotalListCostCents(totals.ListCostCents, totals.WebSearchRequests, totals.ActiveSeconds)
+	if budget.MaxListCost.Amount <= spent {
+		return invalidRequest(errors.New("budget.max_list_cost must be greater than the session's consumed list cost"))
+	}
+	encoded, err := httpapi.MarshalRaw(budget)
+	if err != nil {
+		return invalidRequest(err)
+	}
+	next.Budget = encoded
+	next.BudgetReachedAt = nil
+	next.BudgetRemovedAt = nil
 	return nil
 }
 
@@ -367,7 +445,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 		h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_terminated", archived.ExternalID, nil, *archived.ArchivedAt)
 	}
 	h.enqueueSessionSandboxReclaims(r.Context(), archived)
-	response, err := h.responseFromSession(r, archived)
+	response, err := h.responseFromSession(r, archived, true)
 	if err != nil {
 		return internalError("Could not archive session", fmt.Errorf("load archived session %q response: %w", sessionID, err))
 	}
@@ -558,6 +636,16 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	session, err := h.authorizeSession(r, sessionID, sessionAccessEventsSend)
 	if err != nil {
 		return err
+	}
+	if session.BudgetReachedAt != nil {
+		inputs, err = filterEventsAtBudgetCap(inputs)
+		if err != nil {
+			return err
+		}
+		if len(inputs) == 0 {
+			httpapi.WriteJSON(w, http.StatusOK, sendEventsResponse{Data: []json.RawMessage{}})
+			return nil
+		}
 	}
 	now := time.Now().UTC()
 	events := make([]db.SessionEvent, 0, len(inputs))
@@ -784,6 +872,7 @@ func (h *Handler) listThreadsRoute(w http.ResponseWriter, r *http.Request) error
 	}
 	data := make([]threadResponse, 0, len(records))
 	for _, thread := range records {
+		// Stored usage projection, no per-row aggregation on the list path.
 		data = append(data, responseFromThread(thread))
 	}
 	var nextPage *string
@@ -807,7 +896,11 @@ func (h *Handler) retrieveThreadRoute(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return mapThreadLoadError(err, threadID)
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromThread(thread))
+	response, err := h.responseFromThreadWithUsage(r.Context(), session.WorkspaceUUID, session.ExternalID, thread)
+	if err != nil {
+		return internalError("Could not retrieve thread", fmt.Errorf("load thread %q response: %w", threadID, err))
+	}
+	httpapi.WriteJSON(w, http.StatusOK, response)
 	return nil
 }
 

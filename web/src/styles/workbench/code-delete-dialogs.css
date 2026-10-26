@@ -1,10 +1,11 @@
 .workbench-code-dialog {
+  grid-template-rows: 60px minmax(0, 1fr);
   width: min(1152px, calc(100vw - 32px));
   height: min(644px, calc(100dvh - 32px));
   max-height: calc(100dvh - 32px) !important;
-  border: 0 !important;
+  border: 0.5px solid var(--border) !important;
   border-radius: 12px !important;
-  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.58) !important;
+  box-shadow: var(--shadow-popover) !important;
 }
 
 .workbench-code-dialog-header {
@@ -19,8 +20,8 @@
 }
 
 .workbench-code-dialog-title {
-  font-size: 22px !important;
-  font-weight: 540 !important;
+  font-size: 20px !important;
+  font-weight: 600 !important;
   line-height: 26px !important;
 }
 
@@ -33,31 +34,17 @@
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: rgba(244, 241, 234, 0.82);
-}
-
-.workbench-code-dialog-close:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--foreground);
-}
-
-/*
- * Theme-aware overrides scoped to the Get Code modal. The shared
- * .workbench-code-dialog-close class is also applied to the rename, share,
- * generate and attachment-URL dialogs (see web/src/features/workbench/dialogs.tsx),
- * so the theme variables must not leak into those variants.
- */
-.workbench-code-dialog .workbench-code-dialog-close {
   color: var(--muted-foreground);
 }
 
-.workbench-code-dialog .workbench-code-dialog-close:hover {
+.workbench-code-dialog-close:hover {
   background: var(--accent);
   color: var(--foreground);
 }
 
 .workbench-code-dialog-body {
-  height: calc(100% - 60px);
+  height: 100%;
+  min-height: 0;
   max-height: none !important;
   overflow: hidden !important;
   padding: 0 24px 24px !important;
@@ -82,6 +69,7 @@
   min-height: 0;
   flex: 1 1 auto;
   overflow: hidden;
+  padding-top: 44px;
   border: 0.5px solid var(--border);
   border-radius: 8px;
   background: var(--card);
@@ -108,7 +96,7 @@
 }
 
 .workbench-code-pre .hljs-keyword {
-  color: rgb(204, 123, 244);
+  color: var(--syntax-keyword);
 }
 
 .workbench-code-line {
@@ -127,4 +115,23 @@
 .workbench-code-line-content {
   min-width: 0;
   padding-left: 12px;
+}
+
+.workbench-code-copy-button {
+  opacity: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .workbench-code-frame {
+    padding-top: 0;
+  }
+
+  .workbench-code-copy-button {
+    opacity: 0;
+  }
+
+  .workbench-code-frame:hover .workbench-code-copy-button,
+  .workbench-code-copy-button:focus-visible {
+    opacity: 1;
+  }
 }

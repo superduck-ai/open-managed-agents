@@ -6,7 +6,7 @@ func runtimeBuiltinTools(tools []toolPermissionToolset) []string {
 		if toolset.Type != "agent_toolset_20260401" {
 			continue
 		}
-		for _, name := range []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob"} {
+		for _, name := range sandboxToolNames {
 			if resolveAgentToolPermission(tools, managedAgentToolName(name)) != resolvedToolPermissionDeny {
 				result = append(result, name)
 			}

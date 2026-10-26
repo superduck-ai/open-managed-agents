@@ -1,5 +1,5 @@
 import { useI18n } from '../../shared/i18n';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CreateOrganizationDialog } from './CreateOrganizationDialog';
@@ -36,6 +36,7 @@ export function OrganizationsPage() {
   const { client } = usePlatformAdmin();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const createButton = useRef<HTMLButtonElement | null>(null);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<Organization | null>(null);
   const [search, setSearch] = useState('');
@@ -62,7 +63,7 @@ export function OrganizationsPage() {
             )}
           </p>
         </div>
-        <Button className="shrink-0" onClick={() => setCreating(true)}>
+        <Button ref={createButton} className="shrink-0" onClick={() => setCreating(true)}>
           {msg('platformAdmin.createOrganization', 'Create organization')}
         </Button>
       </header>
@@ -76,6 +77,7 @@ export function OrganizationsPage() {
       )}
       {creating && (
         <CreateOrganizationDialog
+          finalFocus={createButton}
           open
           onClose={() => setCreating(false)}
           onCreated={(organization) => {

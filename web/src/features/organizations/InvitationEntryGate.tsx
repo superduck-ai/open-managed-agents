@@ -1,3 +1,4 @@
+import { useI18n } from '../../shared/i18n';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
@@ -19,6 +20,7 @@ export function InvitationEntryGate() {
 }
 
 function AuthenticatedInvitationEntry({ accountUuid, children }: { accountUuid: string; children: ReactNode }) {
+  const { msg } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
   const [checked, setChecked] = useState(location.pathname === '/invites');
@@ -61,24 +63,24 @@ function AuthenticatedInvitationEntry({ accountUuid, children }: { accountUuid: 
     return (
       <main className="grid min-h-screen place-items-center bg-background p-6 text-foreground">
         <div role="alert" className="space-y-4 text-center">
-          <p>组织邀请检查失败。</p>
+          <p>{msg('invitations.checkFailed', 'Organization invitations could not be checked.')}</p>
           <Button
             onClick={() => {
               setNavigationError(false);
               void invitations.refetch();
             }}
           >
-            重试
+            {msg('common.retry', 'Retry')}
           </Button>
           <Button variant="ghost" onClick={() => setChecked(true)}>
-            继续控制台
+            {msg('invitations.continueToConsole', 'Continue to console')}
           </Button>
         </div>
       </main>
     );
   return (
     <main role="status" className="grid min-h-screen place-items-center bg-background text-foreground">
-      正在检查组织邀请…
+      {msg('invitations.checking', 'Checking organization invitations…')}
     </main>
   );
 }

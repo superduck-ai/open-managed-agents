@@ -142,3 +142,47 @@ func waitPollCondition(t *testing.T, condition func() bool) {
 	}
 	t.Fatal("poll condition did not become true")
 }
+
+type delayedDeadlineContext struct {
+	context.Context
+	waiting chan struct{}
+}
+
+func (c delayedDeadlineContext) Deadline() (time.Time, bool) {
+	return time.Unix(1, 0), true
+}
+
+func (c delayedDeadlineContext) Done() <-chan struct{} {
+	select {
+	case c.waiting <- struct{}{}:
+	default:
+	}
+	return c.Context.Done()
+}
+
+func TestPollRoundWaitsForDeadlineCancellation(t *testing.T) {
+	parent, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	ctx := delayedDeadlineContext{Context: parent, waiting: make(chan struct{}, 1)}
+	result := make(chan pollResult, 1)
+	go func() {
+		var broker *Broker
+		result <- broker.pollRound(ctx, nil, 0, 0, "", testTokenHash())
+	}()
+	select {
+	case got := <-result:
+		t.Fatalf("returned before context cancellation: %v", got.err)
+	case <-ctx.waiting:
+	case <-time.After(time.Second):
+		t.Fatal("did not observe the expired deadline")
+	}
+	cancel()
+	select {
+	case got := <-result:
+		if !errors.Is(got.err, context.Canceled) || len(got.commands) != 0 {
+			t.Fatalf("result after cancellation: %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("did not return after context cancellation")
+	}
+}

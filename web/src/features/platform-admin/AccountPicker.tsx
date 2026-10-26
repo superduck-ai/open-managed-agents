@@ -64,8 +64,9 @@ export function AccountPicker({
         <ul aria-label={msg('platformAdmin.selectedAdministrators', 'Selected administrators')} className="space-y-1">
           {selected.map((account) => (
             <li key={account.uuid} className="flex items-center justify-between gap-2 rounded-md bg-muted px-3 py-1">
-              <span className="truncate">
-                {account.name || account.email} · {account.email}
+              <span className="min-w-0" title={[account.name, account.email].filter(Boolean).join(' ')}>
+                {account.name && <span className="block truncate">{account.name}</span>}
+                <span className="block truncate text-muted-foreground">{account.email}</span>
               </span>
               <Button
                 type="button"
@@ -93,8 +94,8 @@ export function AccountPicker({
           </Button>
         </p>
       )}
-      {query.data && (
-        <div className="max-h-48 overflow-auto rounded-md border p-3">
+      {query.data && !query.isError && (
+        <div className="max-h-48 overflow-auto rounded-md border-[0.5px] p-3">
           {!query.data.data.length && (
             <p className="text-muted-foreground">
               {msg(
@@ -114,7 +115,8 @@ export function AccountPicker({
                   onCheckedChange={(value) => select(account, value)}
                 />
                 <span className="min-w-0 break-all">
-                  {account.name || msg('platformAdmin.noNameSet', 'No name set')} · {account.email}
+                  <span className="block">{account.name || msg('platformAdmin.noNameSet', 'No name set')}</span>
+                  <span className="block text-muted-foreground">{account.email}</span>
                 </span>
               </div>
             );

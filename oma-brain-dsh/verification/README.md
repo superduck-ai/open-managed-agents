@@ -1,60 +1,29 @@
 # Live verification
 
-`testdata/chat_brain_dsh_test.go` is a historical source template that runs inside the existing OMA Go `verify-be` harness.
-It needs a backend revision with Brain gateway support. It uses a real backend,
-NATS cluster, database, MCP server and model.
+Use the registered backend scenarios from the repository root; no Go template
+or harness patch needs to be copied into `tests/liveworker`.
 
-Build this project with `just build`, then set `OMA_BRAIN_BINARY` to the
-absolute path of `dist/oma-brain-dsh`. This executable includes Bun and its
-dependencies. The build adapter bundles dsh's dynamic version metadata.
-The recorded results below predate this packaging change and used the Bun launcher.
-
-Copy the Go template from `testdata/` into a separate backend worktree at
-`tests/liveworker/chat_brain_dsh_test.go` and run `git apply --unidiff-zero /path/to/backend-harness.patch` there.
-The patch registers `chat brain-dsh-live` in the existing verifier and lets its
-standard Brain history assertion recognize native dsh logs. It does not change
-backend HTTP handlers or dsh packages. Keep source stable while tests run.
-
-Create a private mode-0600 JSON file with `base`, `model` and `key`, then set
-`OMA_DSH_LIVE_CONFIG` to its absolute path. It identifies the explicitly selected
-real OMA Messages endpoint and workspace API key. Never commit that file.
+Build the standalone Brain executable with `just build` in `oma-brain-dsh`,
+then point `OMA_BRAIN_BINARY` at the resulting `dist/oma-brain-dsh`:
 
 ```sh
 OMA_BRAIN_BINARY=/absolute/oma-brain-dsh/dist/oma-brain-dsh \
-OMA_DSH_LIVE_CONFIG=/absolute/private-live-model.json \
-.agents/skills/verify-be/scripts/verify-be chat doctor brain-dsh-live \
-  --worker-image oma/managed-agent-sandbox:latest
+.agents/skills/verify-be/scripts/verify-be chat doctor brain
 
 OMA_BRAIN_BINARY=/absolute/oma-brain-dsh/dist/oma-brain-dsh \
-OMA_DSH_LIVE_CONFIG=/absolute/private-live-model.json \
-.agents/skills/verify-be/scripts/verify-be chat brain-dsh-live \
-  --worker-image oma/managed-agent-sandbox:latest
+.agents/skills/verify-be/scripts/verify-be chat brain
 ```
 
-The verifier provisions isolated PostgreSQL, Redis, three NATS nodes and MinIO,
-starts the actual Go backend and Docker MCP server, and launches Bun Brain
-processes. Its stages check:
+Read the repository's [verification workflow](../../.agents/skills/verify-be/SKILL.md)
+for prerequisites, isolated resources, scenario selection and coverage limits.
+The registered Brain scenarios use a scripted upstream model; the historical
+real-model `chat brain-dsh-live` scenario below is not a current command.
 
-- A real model requests Write, public approval authorizes execution, and the
-  sandbox contains the exact requested bytes.
-- After SIGKILL and natural lease expiration, a replacement Brain restores
-  history, the model recalls earlier content, and the old epoch is denied.
-- The public API rejects `updated_input` with HTTP 400. A CCRv2 control response
-  with changed arguments is sent through the real JetStream reply lane.
-  Only the approved path and content are written; both argument versions persist.
-  The private turn completes and deliveries drain, while the public approval
-  remains pending. The test asserts that limitation, then terminates the session.
-- SIGKILL during a real Bash call leaves a durable dispatch record. Takeover
-  marks the session blocked, emits a recovery error and does not repeat the effect.
-
-Parameter replacement is verified at the Brain's CCRv2 input boundary. A public
-approval editor still requires backend support. The Brain gateway is inherited
-from the Rust service. These recorded runs predate HTTP worker claims; Brain
-processes now receive sessions from `POST /v1/code/brain/claims` instead of NATS.
-
-Read the final `report.json`, `report.md` and `dsh-live-evidence.json` after cleanup.
-Raw logs and private configurations are not copied into this project.
-Cancelled and failed attempts are not passes.
+The retired [Go template](https://github.com/superduck-ai/open-managed-agents/blob/9a2dc5dacd0351121eef23ddc23b7533651d5366/oma-brain-dsh/verification/testdata/chat_brain_dsh_test.go)
+and [harness patch](https://github.com/superduck-ai/open-managed-agents/blob/9a2dc5dacd0351121eef23ddc23b7533651d5366/oma-brain-dsh/verification/backend-harness.patch)
+remain available in Git history. They depend on removed Brain lease and secret
+APIs and cannot compile against the current backend. The reports and runtime
+fingerprints below are historical evidence, not acceptance of the current build.
 
 ## Recorded results, 2026-10-13
 

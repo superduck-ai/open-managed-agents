@@ -26,7 +26,7 @@ export function PlatformAdminShell({ email }: { email: string }) {
     <SidebarProvider open>
       <AdminSidebar email={email} />
       <SidebarInset className="min-h-screen min-w-0 text-foreground">
-        <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur-sm md:hidden">
+        <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b-[0.5px] bg-background/95 px-4 backdrop-blur-sm md:hidden">
           <SidebarTrigger aria-label={msg('platformAdmin.toggleAdministrationMenu', 'Toggle administration menu')} />
           <span className="text-sm font-semibold">
             {msg('platformAdmin.platformAdministration', 'Platform administration')}
@@ -50,10 +50,10 @@ function AdminSidebar({ email }: { email: string }) {
   const view = organizationSection(search.view);
   const closeMenu = () => setOpenMobile(false);
   return (
-    <Sidebar collapsible="offcanvas" className="border-r border-sidebar-border">
+    <Sidebar collapsible="offcanvas" className="border-r-[0.5px] border-sidebar-border">
       <SidebarHeader className="p-4">
         <Link to="/platform-admin" onClick={closeMenu} className="flex items-center gap-3 rounded-md text-sm">
-          <span className="grid size-8 shrink-0 place-items-center rounded-md border border-sidebar-border bg-sidebar-accent/40">
+          <span className="grid size-8 shrink-0 place-items-center rounded-md border-[0.5px] border-sidebar-border bg-sidebar-accent/40">
             <ShieldCheck className="size-4" aria-hidden />
           </span>
           <span className="font-semibold">
@@ -141,7 +141,7 @@ function AdminSidebar({ email }: { email: string }) {
           </SidebarGroup>
         )}
       </SidebarContent>
-      <SidebarFooter className="gap-3 border-t border-sidebar-border p-3">
+      <SidebarFooter className="gap-3 border-t-[0.5px] border-sidebar-border p-3">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton render={<Link to="/" />}>

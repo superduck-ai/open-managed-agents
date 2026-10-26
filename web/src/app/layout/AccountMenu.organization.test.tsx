@@ -62,7 +62,7 @@ function mount(initialAccount = account, collapsed = false) {
     </I18nProvider>,
   );
 }
-test('切换组织和刷新恢复后，左下角保留用户名，组织副标题与菜单选中项保持一致', async () => {
+test('切换组织和刷新恢复后保留用户名，角色工作区副标题与组织菜单保持一致', async () => {
   resetTestDom('https://oma.duck.ai/dashboard');
   globalThis.fetch = mock(async (input) => {
     const url = String(input);
@@ -80,29 +80,29 @@ test('切换组织和刷新恢复后，左下角保留用户名，组织副标�
   }) as typeof fetch;
   const view = mount();
   await waitFor(() => expect(screen.getByTestId('scope').textContent).toBe('ws-a'));
-  fireEvent.click(screen.getByRole('button', { name: 'guanpeixian 组织 A' }));
+  fireEvent.click(screen.getByRole('button', { name: 'guanpeixian 管理员 默认' }));
   expect(screen.getByText(account.email_address)).toBeTruthy();
-  const trigger = screen.getByRole('button', { name: 'guanpeixian 组织 A' });
+  const trigger = screen.getByRole('button', { name: 'guanpeixian 管理员 默认' });
   const title = trigger.querySelector('.text-sm');
   expect(title?.textContent).toBe('guanpeixian');
-  expect(title?.nextElementSibling?.textContent).toBe('组织 A');
+  expect(title?.nextElementSibling?.textContent).toBe('管理员默认');
   fireEvent.click(await screen.findByRole('menuitemradio', { name: '组织 B 用户' }));
   await waitFor(() => expect(screen.getByTestId('scope').textContent).toBe('ws-b'));
   expect(trigger.querySelector('.text-sm')?.textContent).toBe('guanpeixian');
-  expect(trigger.querySelector('.text-xs')?.textContent).toBe('组织 B');
+  expect(trigger.querySelector('.text-xs')?.textContent).toBe('用户默认');
   expect(screen.getByRole('menuitemradio', { name: '组织 B 用户' }).getAttribute('aria-checked')).toBe('true');
   view.unmount();
   mount();
   await waitFor(() => expect(screen.getByTestId('scope').textContent).toBe('ws-b'));
-  expect(screen.getByRole('button', { name: 'guanpeixian 组织 B' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'guanpeixian 用户 默认' })).toBeTruthy();
 });
-test('折叠菜单使用未命名组织 UUID，无组织时回退到账号名称', async () => {
+test('折叠菜单保持账号名称，不依赖当前组织是否命名或存在', async () => {
   resetTestDom('https://oma.duck.ai/dashboard');
   globalThis.fetch = mock(async () =>
     Response.json([{ id: 'ws-a', name: 'Default', is_default: true }]),
   ) as typeof fetch;
   const view = mount({ ...account, memberships: [{ organization: { uuid: 'a' }, role: 'admin' }] }, true);
-  expect(await screen.findByRole('button', { name: 'guanpeixian a', exact: true })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'guanpeixian', exact: true })).toBeTruthy();
   view.unmount();
   mount({ ...account, memberships: [] }, true);
   expect(await screen.findByRole('button', { name: 'guanpeixian', exact: true })).toBeTruthy();

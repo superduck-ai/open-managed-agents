@@ -65,7 +65,7 @@ export class ToolExecution {
     let text: string;
     let failed = !!result.isError;
     try {
-      text = toolText(result, tool.name);
+      text = toolText(result);
     } catch (error) {
       text = `Sandbox tool returned an unsupported result: ${(error as Error).message}`;
       failed = true;

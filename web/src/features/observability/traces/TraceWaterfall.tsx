@@ -57,7 +57,7 @@ export function TraceWaterfall({
     return filterCallTreeRows(flat, query);
   }, [collapsed, query, searching, tree]);
   const totalMs = waterfallTotalMs(rows);
-  const ticks = waterfallTickMs(totalMs);
+  const ticks = waterfallTickMs(totalMs, timelineWidth < 240 ? 2 : 5);
   // 配色按完整树分配（与 TraceDetailView 一致），折叠或搜索过滤时颜色不漂移。
   const colors = useMemo(() => serviceColorMap(flattenTraceTree(tree).map(spanColorKey)), [tree]);
 
@@ -74,7 +74,7 @@ export function TraceWaterfall({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="sticky top-0 z-10 flex h-[30px] shrink-0 items-center border-b border-border bg-muted/40 text-xs text-muted-foreground">
+      <div className="sticky top-0 z-10 flex h-[30px] shrink-0 items-center border-b-[0.5px] border-border bg-muted/40 text-xs text-muted-foreground">
         <div className="flex h-full items-center px-2" style={{ width: showTimeline ? leftWidth : '100%' }}>
           {msg('observability.trace.operation', 'Operation')}
         </div>
@@ -84,7 +84,7 @@ export function TraceWaterfall({
               <span
                 key={tick}
                 className={cn(
-                  'absolute top-1/2 -translate-y-1/2 text-[11px] tabular-nums',
+                  'absolute top-1/2 -translate-y-1/2 text-xs tabular-nums',
                   index === 0 ? 'left-3' : '',
                   index === ticks.length - 1 ? 'right-1' : '',
                   index > 0 && index < ticks.length - 1 ? '-translate-x-1/2' : '',
@@ -148,7 +148,7 @@ function WaterfallRow({
   return (
     <div
       className={cn(
-        'relative flex min-h-[30px] transition-colors duration-150',
+        'relative flex min-h-[30px] transition-colors duration-150 ease-out motion-reduce:transition-none',
         selected ? 'bg-accent' : 'hover:bg-muted',
       )}
       style={{ height: TRACE_ROW_HEIGHT }}
@@ -191,7 +191,7 @@ function OperationCell({
         <button
           type="button"
           className={cn(
-            'relative mr-1 flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-border px-1 text-[10px] font-semibold hover:bg-muted',
+            'relative mr-1 flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border-[0.5px] border-border px-1 text-xs font-semibold hover:bg-muted',
             PRESS_SCALE_CLASS,
           )}
           style={{ color }}
@@ -200,7 +200,7 @@ function OperationCell({
           onClick={onToggle}
         >
           {row.childCount}
-          {collapsed ? <span className="absolute -bottom-1.5 left-2 h-1.5 w-px bg-border" aria-hidden /> : null}
+          {collapsed ? <span className="absolute -bottom-1.5 left-2 h-1.5 w-[0.5px] bg-border" aria-hidden /> : null}
         </button>
       ) : (
         <span
@@ -223,7 +223,7 @@ function OperationCell({
         <span className="truncate text-sm font-medium text-foreground">{spanIdentity(row)}</span>
         <span className="min-w-0 truncate text-sm text-muted-foreground">{spanDisplayName(row)}</span>
         {tokens > 0 ? (
-          <span className="ml-auto shrink-0 pr-2 text-[11px] tabular-nums text-muted-foreground">
+          <span className="ml-auto shrink-0 pr-2 text-xs tabular-nums text-muted-foreground">
             {formatters.number(tokens, { notation: 'compact', maximumFractionDigits: 1 })}
           </span>
         ) : null}
@@ -266,7 +266,7 @@ function TimelineCell({
         <span className="h-full min-w-0.5 w-[calc(100%-0.375rem)] rounded-sm" style={{ backgroundColor: color }} />
       </span>
       <span
-        className="absolute text-[11px] leading-none tabular-nums text-muted-foreground"
+        className="absolute text-xs leading-none tabular-nums text-muted-foreground"
         style={{ top: label.top, left: label.left, right: label.right }}
       >
         {formatDurationMs(row.duration_ms, formatters)}
@@ -289,7 +289,7 @@ function TreeConnectors({ row }: { row: TraceTreeRow }) {
         return (
           <span
             key={visualDepth}
-            className="absolute top-0 border-l border-border"
+            className="absolute top-0 border-l-[0.5px] border-border"
             style={{
               left: connectorOffset(row.depth, visualDepth),
               height: connectorHeight(row.isLast, visualDepth),
@@ -298,7 +298,7 @@ function TreeConnectors({ row }: { row: TraceTreeRow }) {
         );
       })}
       <span
-        className="absolute top-1/2 border-t border-border"
+        className="absolute top-1/2 border-t-[0.5px] border-border"
         style={{
           left: treeIndentLeft(row.depth),
           width: row.childCount > 0 ? TRACE_TREE_GAP / 2 : TRACE_TREE_GAP + 5,

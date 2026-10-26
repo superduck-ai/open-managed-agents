@@ -74,7 +74,7 @@ export function ResourceListPagination({
       >
         <ChevronRight className="size-4" aria-hidden />
       </Button>
-      {updatingLabel ? <span className="ml-2 text-xs text-muted-foreground/70">{updatingLabel}</span> : null}
+      {updatingLabel ? <span className="ml-2 text-xs text-muted-foreground">{updatingLabel}</span> : null}
     </div>
   );
 }

@@ -51,7 +51,7 @@ export function IdleGapRow({ entry }: { entry: IdleGapEntry }) {
   const resumedTime = formatters.time(resumedAt, { hour12: false });
   const crossesDate = new Date(entry.createdAtMs).toDateString() !== new Date(resumedAt).toDateString();
   const resumedWhen = crossesDate
-    ? `${formatters.date(resumedAt, { month: 'short', day: 'numeric' })} · ${resumedTime}`
+    ? `${formatters.date(resumedAt, { month: 'short', day: 'numeric' })} ${resumedTime}`
     : resumedTime;
   return (
     <div
@@ -204,7 +204,7 @@ function TranscriptMessageRow({
           <BubbleContent
             data-transcript-message-body
             className={clsx(
-              '!w-full !max-w-full !overflow-visible !rounded-md !border-0 !bg-transparent !px-1.5 !py-0.5 text-sm leading-5 whitespace-pre-wrap text-foreground transition-colors group-hover/event:!bg-session-hover',
+              '!w-full !max-w-full !overflow-visible !rounded-md !border-0 !bg-transparent !px-1.5 !py-0.5 text-sm leading-5 whitespace-pre-wrap text-foreground transition-colors duration-150 ease-out motion-reduce:transition-none group-hover/event:!bg-session-hover',
               selected && '!bg-session-selected',
               entry.isError && 'text-destructive',
             )}
@@ -221,7 +221,7 @@ function TranscriptMessageRow({
           <BubbleContent
             data-transcript-message-body
             className={clsx(
-              'max-w-full !rounded-[10px] !px-[11px] !py-[6px] text-sm leading-5 whitespace-pre-wrap text-foreground shadow-none transition-colors',
+              'max-w-full !rounded-[10px] !px-[11px] !py-[6px] text-sm leading-5 whitespace-pre-wrap text-foreground shadow-none transition-colors duration-150 ease-out motion-reduce:transition-none',
               speaker === 'user'
                 ? '!border-[0.5px] !border-session-border !bg-session-speaker-user/10 group-hover/event:!bg-session-hover'
                 : '!w-full !border-0 !bg-transparent !px-1.5 !py-0.5 group-hover/event:!bg-session-hover',
@@ -292,14 +292,14 @@ export function TranscriptSpeakerHeader({
         aria-pressed={selected}
         aria-label={msg('managedAgents.sessions.trace.selectEvent', 'Select {label} event', { label })}
         className={clsx(
-          'h-auto min-w-0 gap-2 rounded-sm border-transparent px-0 py-0 font-semibold hover:bg-transparent focus-visible:ring-1 focus-visible:ring-ring/35',
+          'h-auto min-w-0 gap-2 rounded-sm border-transparent px-0 py-0 font-semibold hover:bg-transparent focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-foreground',
           speaker === 'agent' ? 'text-session-speaker-agent' : 'text-session-speaker-user',
         )}
         onClick={onSelect}
       >
         <span className="truncate">{label}</span>
       </Button>
-      <time className="shrink-0 font-mono text-[11px] font-normal text-muted-foreground">{time}</time>
+      <time className="shrink-0 font-mono text-xs font-normal text-muted-foreground">{time}</time>
       {queued ? <SessionExecutionStateBadge state="queued" /> : null}
       {durationMs !== undefined ? (
         <span className="ml-auto inline-flex items-center gap-1 font-mono">
@@ -358,12 +358,15 @@ function TranscriptThinkingRow({
             data-transcript-thinking-row
             aria-pressed={selected}
             className={clsx(
-              'group flex items-center gap-1 h-auto min-h-6 w-full justify-start rounded-md border-transparent px-1.5 py-0.5 text-left text-sm leading-5 font-normal italic text-muted-foreground transition-colors hover:bg-session-hover hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/30',
+              'group flex items-center gap-1 h-auto min-h-6 w-full justify-start rounded-md border-transparent px-1.5 py-0.5 text-left text-sm leading-5 font-normal italic text-muted-foreground transition-colors duration-150 ease-out motion-reduce:transition-none hover:bg-session-hover hover:text-foreground focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-foreground',
               selected && 'bg-session-selected text-foreground',
             )}
             onClick={onSelect}
           >
-            <ChevronRight aria-hidden className="size-3 shrink-0 transition-transform group-aria-expanded:rotate-90" />
+            <ChevronRight
+              aria-hidden
+              className="size-3 shrink-0 transition-transform duration-220 ease-out motion-reduce:transition-none group-aria-expanded:rotate-90"
+            />
             {inProgress ? (
               <SynchronizedShimmerText className="min-w-0 flex-1 truncate">{label}</SynchronizedShimmerText>
             ) : (
@@ -410,7 +413,7 @@ export function ToolCallRow({
         data-transcript-header
         aria-pressed={selected}
         className={clsx(
-          'flex h-6 w-full min-w-0 items-center justify-start gap-1.5 rounded-md border-0 bg-transparent px-1.5 py-0.5 text-left text-sm leading-5 font-normal text-foreground outline-none hover:bg-session-hover focus-visible:ring-1 focus-visible:ring-ring/30',
+          'flex h-6 w-full min-w-0 items-center justify-start gap-1.5 rounded-md border-0 bg-transparent px-1.5 py-0.5 text-left text-sm leading-5 font-normal text-foreground outline-none hover:bg-session-hover focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-foreground',
           selected && 'bg-session-selected',
           entry.isError && 'text-destructive',
         )}
@@ -838,7 +841,7 @@ export function DebugListHeader() {
   return (
     <div
       aria-hidden
-      className="sticky top-0 z-10 -mx-1 flex h-7 items-center gap-1.5 border-b border-border/60 bg-card px-1 text-[11px] font-medium text-muted-foreground"
+      className="sticky top-0 z-10 -mx-1 flex h-7 items-center gap-1.5 border-b-[0.5px] border-border/60 bg-card px-1 text-xs font-medium text-muted-foreground"
     >
       <span className="min-w-48 shrink-0">{msg('managedAgents.sessions.trace.eventColumn', 'Event')}</span>
       <span className="min-w-0 flex-1">{msg('managedAgents.sessions.trace.previewColumn', 'Preview')}</span>

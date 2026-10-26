@@ -141,6 +141,7 @@ func connectChatThreadStream(t *testing.T, ctx context.Context, f *liveSession, 
 	req, err := http.NewRequestWithContext(ctx, "GET", path, nil)
 	requireOK(t, err)
 	req.Header.Set("Authorization", "Bearer "+f.env.apiKey)
+	req.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
 	response, err := http.DefaultClient.Do(req)
 	if err != nil {
 		cancel()

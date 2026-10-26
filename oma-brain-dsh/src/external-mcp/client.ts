@@ -1,3 +1,4 @@
+import { isConnectFailure, notForwardedDetail } from "../ccrv2/tool-transport.ts";
 import { isDeepStrictEqual } from "node:util";
 import {
   Client,
@@ -8,7 +9,7 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { object, type Payload } from "../json.ts";
-import { isConnectFailure, notForwardedDetail, type RemoteTool } from "../runtime/contracts.ts";
+import { type RemoteTool } from "../runtime/contracts.ts";
 import type { ExternalServer } from "./config.ts";
 
 export class ExternalMcpClient {

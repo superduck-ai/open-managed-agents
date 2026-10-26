@@ -137,7 +137,9 @@ describe("original dsh loop over CCRv2", () => {
     await session.receive("image_input", { content });
     const first = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
     expect(first.map((block: Payload) => block.type)).toEqual(["text", "image", "text", "text"]);
-    expect(first[3].text).toStartWith("Time sampled while preparing turn");
+    expect(first[3].text).toStartWith("\n\n<system-reminder>\n");
+    expect(first[3].text).toContain("Time sampled while preparing turn");
+    expect(first[3].text).toEndWith("\n</system-reminder>\n\n");
     expect(first[0]).toEqual(content[0]);
     expect(first[2]).toEqual(content[2]);
     expect(first[1].source.type).toBe("base64");
@@ -159,7 +161,9 @@ describe("original dsh loop over CCRv2", () => {
     const requestContent = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
     expect(requestContent).toHaveLength(content.length + 1);
     expect(requestContent.slice(0, content.length).map((block: Payload) => ({ type: block.type, source: block.source }))).toEqual(content);
-    expect(requestContent.at(-1).text).toStartWith("Time sampled while preparing turn");
+    expect(requestContent[content.length].text).toStartWith("\n\n<system-reminder>\n");
+    expect(requestContent[content.length].text).toContain("Time sampled while preparing turn");
+    expect(requestContent.at(-1).text).toEndWith("\n</system-reminder>\n\n");
     expect(JSON.stringify([...b.privateLog.values()])).not.toContain("base64");
     expect(b.publicLog.get("image_refs_result")?.is_error).toBe(false);
   });
@@ -469,7 +473,7 @@ describe("original dsh loop over CCRv2", () => {
         expect(finished).toBe(false);
         expect(session.abort.signal.aborted).toBe(false);
         expect(b.processed).toEqual([]);
-        expect(b.requests).toHaveLength(stage === "accepted" || stage === "dispatch" ? 1 : 2);
+        expect(b.requests).toHaveLength(1);
         expect(b.executions).toHaveLength(stage === "accepted" || stage === "dispatch" ? 0 : 1);
         resume.resolve();
         await turn;
@@ -557,7 +561,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(completed).toBeLessThan(published);
   });
 
-  test("a failed tool-result publication holds ACK without blocking the next model request and survives restart", async () => {
+  test("a failed tool-result publication blocks the next model request and ACK and survives restart", async () => {
     const b = backend();
     b.modelScript = [toolEvents(), textEvents("continued model response")];
     b.failPublicType = "user";
@@ -577,7 +581,7 @@ describe("original dsh loop over CCRv2", () => {
     await eventually(() => b.failedCcrWrites > 0);
     first.session.stop();
     await expect(turn).rejects.toThrow();
-    expect(b.requests).toHaveLength(2);
+    expect(b.requests).toHaveLength(1);
     expect(b.executions).toHaveLength(1);
     expect(
       first.session.pendingEvents.some((event) => event.type === "user"),
@@ -593,12 +597,15 @@ describe("original dsh loop over CCRv2", () => {
     );
     expect(results).toHaveLength(1);
     expect(results[0]!.message.content[0].tool_use_id).toBe("call_1");
-    expect(b.requests).toHaveLength(2);
+    expect(b.requests).toHaveLength(1);
     expect(b.executions).toHaveLength(1);
     expect(second.session.pendingEvents).toEqual([]);
+    await second.session.receive("after_recovery", { content: "Continue" });
+    expect(b.requests).toHaveLength(2);
+    expect(b.executions).toHaveLength(1);
   });
 
-  test("messages and tool results retain publication order without gating model requests", async () => {
+  test("messages and tool results publish before subsequent model requests", async () => {
     const b = backend();
     b.modelScript = [
       toolsWithText("before tools", "call_first", "call_second"),
@@ -717,17 +724,22 @@ describe("original dsh loop over CCRv2", () => {
   });
   test("unconfirmed native input allows model work but cannot execute tools or be acknowledged", async () => {
     const b = backend();
+    const releaseModel = Promise.withResolvers<ReturnType<typeof textEvents>>();
+    b.onModel = () => releaseModel.promise;
     const { session } = await open(b);
     b.failWrites = true;
     const turn = session.receive("failed_commit", { message: { content: "run" } });
     turn.catch(() => {});
-    await eventually(() => b.failedCcrWrites > 0);
-    session.stop();
-    await expect(turn).rejects.toThrow();
-    expect(b.processed).toEqual([]);
-    expect(b.requests).toHaveLength(1);
-    expect(b.executions).toEqual([]);
-    b.failWrites = false;
+    try {
+      await eventually(() => b.failedCcrWrites > 0 && b.requests.length === 1);
+      session.stop();
+      b.failWrites = false;
+      releaseModel.resolve(textEvents("cancelled response"));
+      await expect(turn).rejects.toThrow();
+      expect(b.processed).toEqual([]);
+      expect(b.requests).toHaveLength(1);
+      expect(b.executions).toEqual([]);
+    } finally { b.failWrites = false; releaseModel.resolve(textEvents("cancelled response")); session.stop(); await turn.catch(() => {}); }
   });
 
   test("an epoch rejection at the native tool-call checkpoint prevents execution", async () => {

@@ -628,10 +628,24 @@ export type SelfAgentReferenceInput = {
   type: 'self';
 };
 
-export type AgentMultiagentInput = {
-  type: 'coordinator';
-  agents: Array<AgentReferenceInput | SelfAgentReferenceInput>;
-};
+export type SubagentReference = AgentReferenceInput | SelfAgentReferenceInput;
+
+export type AgentDelegationInput =
+  | { type: 'disabled' }
+  | {
+      type: 'enabled';
+      inline_agents?: { type: 'enabled' | 'disabled' };
+      predefined_agents?: SubagentReference[];
+    };
+
+export type AgentMultiagentInput =
+  | { type: 'coordinator'; agents: SubagentReference[] }
+  | {
+      type: 'multiagent_20261001';
+      subagents?: AgentDelegationInput;
+      workflows?: AgentDelegationInput;
+      advisor?: { type: 'disabled' } | { type: 'enabled'; model: string };
+    };
 
 export type AgentSkillInput = {
   type: 'anthropic' | 'custom';

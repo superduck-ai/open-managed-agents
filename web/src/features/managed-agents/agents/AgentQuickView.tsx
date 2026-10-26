@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { ArrowUpRight, Bot, ChevronDown, ChevronUp, Play, X } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { useI18n } from '@/shared/i18n';
 import { Badge } from '@/shared/ui/badge';
 import { Button, ButtonLink } from '@/shared/ui/button';
@@ -16,6 +16,7 @@ import { hasConfiguredAgentTools } from './tools/model';
 
 export function AgentQuickView({
   agentId,
+  version,
   agentIds,
   workspaceId,
   orgUuid,
@@ -23,30 +24,33 @@ export function AgentQuickView({
   onClose,
   onStartSession,
 }: {
+  version?: number;
   agentId: string;
   agentIds: string[];
   workspaceId: string;
   orgUuid: string;
   onSelect: (agentId: string) => void;
   onClose: () => void;
-  onStartSession: (agent: AgentApiResponse) => void;
+  onStartSession?: (agent: AgentApiResponse) => void;
 }) {
   const { msg } = useI18n();
+  const [open, setOpen] = useState(true);
+  useEffect(() => setOpen(true), [agentId]);
   const index = agentIds.indexOf(agentId);
   const query = useQuery({
-    queryKey: ['agent-quick-view', orgUuid, workspaceId, agentId],
-    queryFn: () => retrieveAgent(agentId, workspaceId),
+    queryKey: ['agent-quick-view', orgUuid, workspaceId, agentId, version],
+    queryFn: () => retrieveAgent(agentId, workspaceId, version),
     staleTime: 0,
     retry: false,
   });
   return (
-    <Sheet open modal={false} onOpenChange={(open) => !open && onClose()}>
+    <Sheet open={open} modal={false} onOpenChange={setOpen} onOpenChangeComplete={(nextOpen) => !nextOpen && onClose()}>
       <SheetContent
         showOverlay={false}
         showCloseButton={false}
-        className="gap-0 sm:inset-y-2 sm:right-2 sm:h-auto sm:max-w-[480px] sm:rounded-xl sm:border"
+        className="gap-0 sm:inset-y-2 sm:right-2 sm:h-auto sm:max-w-[480px] sm:rounded-xl sm:border-[0.5px]"
       >
-        <SheetHeader className="flex-row items-center gap-2 border-b px-4 py-3">
+        <SheetHeader className="flex-row items-center gap-2 border-b-[0.5px] px-4 py-3">
           <div className="min-w-0 flex-1">
             <SheetTitle className="text-xs text-muted-foreground">
               {msg('managedAgents.agents.kindTitle', 'Agent')}
@@ -121,7 +125,7 @@ function AgentQuickViewContent({
   agent: AgentApiResponse;
   workspaceId: string;
   orgUuid: string;
-  onStartSession: (agent: AgentApiResponse) => void;
+  onStartSession?: (agent: AgentApiResponse) => void;
 }) {
   const { msg, locale } = useI18n();
   const href = agentDetailHref(workspaceId, agent.id);
@@ -185,10 +189,12 @@ function AgentQuickViewContent({
           </p>
         )}
       </QuickViewSection>
-      <Button className="w-full" disabled={Boolean(agent.archived_at)} onClick={() => onStartSession(agent)}>
-        <Play aria-hidden />
-        {msg('managedAgents.agents.startConversation', 'Start conversation')}
-      </Button>
+      {onStartSession ? (
+        <Button className="w-full" disabled={Boolean(agent.archived_at)} onClick={() => onStartSession(agent)}>
+          <Play aria-hidden />
+          {msg('managedAgents.agents.startConversation', 'Start conversation')}
+        </Button>
+      ) : null}
     </div>
   );
 }

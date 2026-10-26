@@ -37,6 +37,7 @@ describe('CredentialMcpServerField', () => {
     render(<Harness />);
 
     fireEvent.click(screen.getByRole('combobox', { name: 'MCP server' }));
+    expect(screen.getByRole('combobox', { name: 'Search MCP directory...' })).toBeTruthy();
     const listbox = await screen.findByRole('listbox');
     fireEvent.click(within(listbox).getByText('GitHub'));
 

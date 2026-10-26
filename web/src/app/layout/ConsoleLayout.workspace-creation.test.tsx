@@ -1,5 +1,5 @@
 import { afterEach, expect, mock, test } from 'bun:test';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { resetTestDom } from '../../test/setup';
 import { AuthContext, type AuthContextValue } from '../../shared/auth/context';
@@ -44,14 +44,13 @@ function mount(dirty = false) {
   const shellNavigation = mock(async (_href: string) => {});
   function Page() {
     const [path, setPath] = useState('/workspaces/ws-a/environments/env-old');
+    const navigateScope = useCallback(async (id: string) => {
+      await scopeNavigation(id);
+      setPath(`/workspaces/${id}/environments`);
+    }, []);
     useScopeUnsavedChanges(dirty);
     return (
-      <WorkspaceProvider
-        navigateScope={async (id) => {
-          await scopeNavigation(id);
-          setPath(`/workspaces/${id}/environments`);
-        }}
-      >
+      <WorkspaceProvider navigateScope={navigateScope}>
         <ConsoleShell
           account={auth.account}
           currentPath={path}
@@ -88,7 +87,7 @@ test('创建工作区前确认未保存内容，取消保持草稿且不创建�
   await openCreate();
   expect(screen.getByRole('alertdialog')).toBeTruthy();
   expect(screen.queryByLabelText('Name')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: '继续编辑' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
   await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
   expect(screen.getByLabelText('Draft').getAttribute('value')).toBe('unsaved draft');
   expect(createRequest).not.toHaveBeenCalled();
@@ -99,7 +98,7 @@ test('创建工作区前确认未保存内容，取消保持草稿且不创建�
 test.each([false, true])('创建成功只导航一次并移除旧详情ID，未保存内容：%s', async (dirty) => {
   const { createRequest, scopeNavigation, shellNavigation } = mount(dirty);
   await openCreate();
-  if (dirty) fireEvent.click(screen.getByRole('button', { name: '放弃更改并切换' }));
+  if (dirty) fireEvent.click(screen.getByRole('button', { name: 'Discard and switch' }));
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'new' } });
   fireEvent.click(screen.getByRole('button', { name: 'Create', exact: true }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'new', exact: true })).toBeTruthy());
@@ -116,7 +115,7 @@ test('创建失败保留当前工作区和草稿，重试成功后只导航一�
     Response.json({ error: { message: 'create unavailable' } }, { status: 503 }),
   );
   await openCreate();
-  fireEvent.click(screen.getByRole('button', { name: '放弃更改并切换' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Discard and switch' }));
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'new' } });
   fireEvent.click(screen.getByRole('button', { name: 'Create', exact: true }));
   await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('create unavailable'));

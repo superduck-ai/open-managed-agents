@@ -59,7 +59,7 @@ export function PanelCard({
   return (
     <Card size="sm" className={cn('relative h-full min-h-0', viewed && VIEWED_PANEL_FRAME)}>
       <CardHeader className="gap-1 has-data-[slot=card-action]:grid-cols-1">
-        <CardTitle className="flex min-w-0 items-center gap-1">
+        <CardTitle className={cn('flex min-w-0 items-center gap-1', onToggleView ? 'pr-12' : 'pr-6')}>
           <span className="truncate">{title}</span>
           {help ? (
             <Tooltip>
@@ -83,7 +83,7 @@ export function PanelCard({
         <CardAction
           className={cn(
             'absolute top-(--card-spacing) right-(--card-spacing) z-10 flex items-center gap-0.5 rounded-md bg-card/90',
-            'transition-[opacity] duration-150 ease-out',
+            'transition-[opacity] duration-150 ease-out motion-reduce:transition-none',
             actionsVisible
               ? 'opacity-100'
               : 'pointer-events-none opacity-0 group-hover/card:pointer-events-auto group-hover/card:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100',

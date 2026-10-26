@@ -5,6 +5,9 @@ import * as OmaSandboxProvider from "./oma-sandbox/index.ts";
 import { validateAssignment, validateToolPermissions, validateModels, type Assignment } from "./assignment.ts";
 import type { CcrSession } from "./ccrv2/index.ts";
 import { childSystemPrompt, rootSystemPrompt } from "./prompt/assemble.ts";
+import * as LlmAiSdk from "./llm-ai-sdk/index.ts";
+import { omaModelOptions } from "./model.ts";
+import { configureOmaModel } from "./model-configs.ts";
 import { WebClient } from "./web-tools/client.ts";
 import * as WebTools from "./web-tools/index.ts";
 
@@ -16,9 +19,11 @@ export function createOmaSession(
 ): CcrSession {
   validateAssignment(assignment);
   api.assignments.set(assignment.session_id, assignment);
+  const provider = `oma:${assignment.session_id}`;
   return ctx.ccrv2.createSession({
     id: assignment.session_id,
-    provider: "oma",
+    provider,
+    configureModel: call => configureOmaModel(assignment, provider, call),
     model: assignment.launch.model,
     workDir: assignment.launch.work_dir,
     tools: assignment.launch.tools,
@@ -33,23 +38,26 @@ export function createOmaSession(
       return { tools: context.runtime_tools, externalMcpConfig: context.mcp_config };
     },
     toolPermissions: { ...assignment.launch.tool_permissions },
-    refreshToolPermissions: async (signal, threadId) => {
+    refreshSessionContext: async (signal, threadId) => {
       const response = await api.request(`/v2/sessions/${encodeURIComponent(assignment.session_id)}`,
         assignment.ingress_token, "GET", undefined, threadId ? { "X-OMA-Session-Thread-ID": threadId } : undefined, signal);
-      validateModels(response.session_context?.models);
-      assignment.launch.models = response.session_context?.models;
+      const models = response.session_context?.models;
+      validateModels(models);
       const permissions = response.session_context?.runtime_tool_permissions;
       validateToolPermissions(permissions);
-      return permissions;
+      assignment.launch.models = models;
+      return { toolPermissions: permissions };
     },
     systemPrompt: rootSystemPrompt(assignment.launch),
     subagentSystemPrompt: (thread) => childSystemPrompt(assignment.launch, thread),
     setup: async (scope) => {
+      await scope.plugin(LlmAiSdk, { providers: [provider],
+        adapter: omaModelOptions(api, scope.get("attachments"), () => assignment.session_id) });
       await scope.plugin(OmaSandboxProvider, { api, sessionId: assignment.session_id });
     },
     setupTools: async (scope, bridge, tools, threadId, permissions) =>
       scope.plugin(WebTools, { client: new WebClient(api, assignment.session_id, scope.get("sandboxExecutor"), threadId), bridge, tools, permissions }),
-    subagents: assignment.launch.subagents ?? {},
+    subagents: assignment.launch.subagents,
     modelMessageID: (id) => api.modelResponses.get(id),
     bindThread: (id) => {
       api.modelSessions.set(id, assignment.session_id);

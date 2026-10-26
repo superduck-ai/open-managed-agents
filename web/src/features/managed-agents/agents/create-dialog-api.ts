@@ -76,7 +76,7 @@ export async function searchCreateAgentSubagents(workspaceId: string, query: str
   }
   const response = normalizedQuery
     ? await searchAgentsByName(workspaceId, normalizedQuery, { created: 'all', status: 'active' })
-    : await listAgents(workspaceId, undefined, { created: 'all', status: 'active' });
+    : await listAgents(workspaceId, undefined, { created: 'all', status: 'active' }, 100);
   return response.data.filter((agent) => !agent.archived_at);
 }
 

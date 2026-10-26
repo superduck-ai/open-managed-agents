@@ -40,7 +40,7 @@ export function RequestPreview({ code, hint = true }: { code: string; hint?: boo
     <div className="min-w-0 space-y-3">
       <div className="flex items-center justify-between gap-3">
         <span className="text-xs font-medium text-muted-foreground">curl</span>
-        <Button type="button" variant="ghost" size="sm" onClick={() => void copy()}>
+        <Button type="button" variant="ghost" size="xs" onClick={() => void copy()}>
           <span>{copyState === 'copied' ? text.copied : text.copy}</span>
           {copyState === 'copied' ? <Check /> : <Copy />}
         </Button>

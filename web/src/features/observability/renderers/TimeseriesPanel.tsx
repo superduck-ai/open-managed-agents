@@ -427,7 +427,7 @@ function TimeseriesSeriesName({ parts }: { parts: ReturnType<typeof formatSeries
   return (
     <span className="flex min-w-0 items-center gap-1" title={parts.full}>
       <span className="min-w-0 truncate">{parts.base}</span>
-      <span className="shrink-0">· {parts.suffix}</span>
+      <span className="shrink-0">({parts.suffix})</span>
     </span>
   );
 }

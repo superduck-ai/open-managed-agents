@@ -53,3 +53,22 @@ func TestEventResponseHidesStoredThinkingContent(t *testing.T) {
 		t.Fatalf("agent.message response changed: %s", got)
 	}
 }
+
+func TestThreadMessageResponseUsesStoredOwnerAndPreservesPeer(t *testing.T) {
+	for _, eventType := range []string{"agent.thread_message_sent", "agent.thread_message_received"} {
+		for _, owner := range []string{"primary", "child"} {
+			payload := json.RawMessage(`{"id":"event","type":"` + eventType + `","session_thread_id":"wrong","to_session_thread_id":"peer","from_session_thread_id":"peer","original_event_id":"original","content":[{"type":"text","text":"literal"}]}`)
+			source := db.SessionEvent{Payload: payload, ThreadExternalID: &owner}
+			var got map[string]any
+			if err := json.Unmarshal(sessionEventPayloadForResponse(source, ""), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got["session_thread_id"] != owner || got["to_session_thread_id"] != "peer" || got["from_session_thread_id"] != "peer" || got["id"] != "event" || got["original_event_id"] != "original" {
+				t.Fatalf("owner or peer changed incorrectly: %#v", got)
+			}
+			if string(source.Payload) != string(payload) {
+				t.Fatal("stored event was mutated")
+			}
+		}
+	}
+}

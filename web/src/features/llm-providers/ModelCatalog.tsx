@@ -4,7 +4,6 @@ import { copyText } from '@/shared/lib/clipboard';
 import { cn } from '@/shared/lib/utils';
 import { useI18n } from '../../shared/i18n';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../../shared/ui/accordion';
-import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
 import { Card } from '../../shared/ui/card';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '../../shared/ui/input-group';
@@ -61,7 +60,7 @@ export function ModelCatalog({
   const candidateId = addableModelId(query, modelsForProvider(models, selectedProviderId));
 
   return (
-    <div className="grid items-start gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
+    <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
       <ProviderRail
         providers={providers}
         models={models}
@@ -69,21 +68,21 @@ export function ModelCatalog({
         onSelectProvider={onSelectProvider}
       />
       <Card className="min-w-0 gap-0 py-0">
-        <div className="flex items-center gap-2 border-b border-border bg-muted/20 p-3">
-          <InputGroup className="h-9 flex-1 bg-background shadow-none">
+        <div className="flex items-center gap-2 border-b-[0.5px] border-border p-3">
+          <InputGroup className="flex-1 shadow-none">
             <InputGroupAddon>
               <Search aria-hidden />
             </InputGroupAddon>
             <InputGroupInput
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
-              placeholder={msg('llmModels.searchPlaceholder', 'Add or search model')}
-              aria-label={msg('llmModels.searchPlaceholder', 'Add or search model')}
+              placeholder={msg('llmModels.searchPlaceholder', 'Search models')}
+              aria-label={msg('llmModels.searchPlaceholder', 'Search models')}
             />
           </InputGroup>
           <Button
             type="button"
-            size="icon-lg"
+            size="icon"
             variant="outline"
             aria-label={msg('llmModels.refreshModels', 'Refresh model list')}
             disabled={isRefreshing}
@@ -139,7 +138,7 @@ function ProviderRail({
   const { msg } = useI18n();
   return (
     <nav
-      className="flex gap-1 overflow-x-auto rounded-xl bg-muted/30 p-1 lg:flex-col lg:overflow-visible"
+      className="subtle-scrollbar flex min-w-0 gap-1 overflow-x-auto p-1 lg:flex-col lg:overflow-visible"
       data-testid="llm-provider-rail"
       aria-label={msg('llmModels.allProviders', 'All providers')}
     >
@@ -183,18 +182,19 @@ function ProviderRailButton({
       onClick={onClick}
       aria-label={label}
       aria-pressed={selected}
-      className="h-auto min-w-[180px] flex-col items-start gap-0.5 rounded-lg px-3 py-2.5 text-left whitespace-normal lg:w-full lg:min-w-0"
+      className="h-auto min-w-[180px] max-w-60 flex-col items-start gap-0.5 rounded-lg px-3 py-2.5 text-left whitespace-normal lg:w-full lg:min-w-0 lg:max-w-none"
     >
       <span className="flex w-full items-center justify-between gap-2">
-        <span className="truncate text-sm font-semibold">{label}</span>
-        <Badge
-          variant={selected ? 'default' : 'secondary'}
-          className="h-6 min-w-6 justify-center px-1.5 font-normal tabular-nums"
-        >
-          {count}
-        </Badge>
+        <span className="line-clamp-2 min-w-0 flex-1 text-sm font-medium [overflow-wrap:anywhere]" title={label}>
+          {label}
+        </span>
+        <span className="shrink-0 text-xs font-normal text-muted-foreground tabular-nums">{count}</span>
       </span>
-      {detail ? <span className="w-full truncate text-xs font-normal text-muted-foreground">{detail}</span> : null}
+      {detail ? (
+        <span className="w-full truncate text-xs font-normal text-muted-foreground" title={detail}>
+          {detail}
+        </span>
+      ) : null}
     </Button>
   );
 }
@@ -213,13 +213,15 @@ function ProviderIdentity({
     <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
       <div className="min-w-0">
         <p className="flex flex-wrap items-center gap-2 break-words text-sm font-semibold text-foreground">
-          {provider.name}
-          <Badge variant="outline" className="font-mono font-normal">
-            {provider.slug}
-          </Badge>
+          <span className="line-clamp-2 min-w-0 max-w-full [overflow-wrap:anywhere]" title={provider.name}>
+            {provider.name}
+          </span>
+          <code className="text-xs font-normal text-muted-foreground">{provider.slug}</code>
         </p>
         <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-normal text-muted-foreground">
-          <span className="min-w-0 break-all">{provider.base_url}</span>
+          <span className="min-w-0 max-w-full truncate" title={provider.base_url}>
+            {provider.base_url}
+          </span>
           <span className="flex shrink-0 items-center gap-1.5">
             <KeyRound className="size-3.5" aria-hidden />
             •••• {provider.api_key_last4}
@@ -234,9 +236,7 @@ function ProviderIdentity({
           </p>
         ) : null}
       </div>
-      <Badge variant="secondary" className="h-6 min-w-6 shrink-0 justify-center px-1.5 font-normal tabular-nums">
-        {modelCount}
-      </Badge>
+      <span className="shrink-0 text-xs font-normal text-muted-foreground tabular-nums">{modelCount}</span>
     </div>
   );
 }
@@ -262,9 +262,16 @@ function ProviderModelGroups({
   onEditProvider: (provider: LLMProvider) => void;
   onDeleteProvider: (provider: LLMProvider) => void;
 }) {
+  const { msg } = useI18n();
   const groupValues = groups.map((group) => group.providerId);
   const searching = Boolean(query.trim());
-  if (groups.length === 0) return null;
+  if (groups.length === 0) {
+    return (
+      <p className="px-4 py-5 text-sm text-muted-foreground">
+        {msg('llmModels.noSearchResults', 'No models match this search.')}
+      </p>
+    );
+  }
 
   return (
     <Accordion
@@ -314,11 +321,11 @@ function ProviderModelGroup({
   const { msg } = useI18n();
   return (
     <AccordionItem value={group.providerId} data-testid={`llm-provider-group-${group.providerId}`}>
-      <div className="flex items-center bg-muted/40">
+      <div className="mx-1 flex items-center rounded-lg">
         <div className="min-w-0 flex-1">
           <AccordionTrigger
             aria-label={msg('llmModels.providerGroup', '{provider} models', { provider: group.providerName })}
-            className="min-h-16 gap-3 rounded-none px-4 py-3 hover:bg-muted/60 hover:no-underline"
+            className="min-h-16 min-w-0 gap-3 rounded-lg px-3 py-3 hover:bg-accent hover:no-underline"
           >
             <ProviderIdentity
               provider={provider}
@@ -328,7 +335,7 @@ function ProviderModelGroup({
           </AccordionTrigger>
         </div>
         {canManage ? (
-          <div className="flex shrink-0 items-center gap-1 pr-3">
+          <div className="flex shrink-0 items-center gap-1 pr-2">
             <Button
               type="button"
               variant="ghost"
@@ -367,13 +374,13 @@ function ProviderModelGroup({
 function ModelRows({ models, emptyMessage }: { models: CatalogModel[]; emptyMessage: string }) {
   if (models.length === 0) {
     return (
-      <p className="px-4 py-5 text-sm text-muted-foreground sm:px-6" data-testid="llm-model-empty">
+      <p className="px-4 py-5 text-sm text-muted-foreground" data-testid="llm-model-empty">
         {emptyMessage}
       </p>
     );
   }
   return (
-    <ul className="divide-y divide-border bg-background">
+    <ul className="divide-y-[0.5px] divide-border">
       {models.map((model) => (
         <ModelRow key={`${model.providerId}:${model.id}`} model={model} />
       ))}
@@ -394,7 +401,7 @@ function ModelRow({ model }: { model: CatalogModel }) {
 
   return (
     <li
-      className="flex min-h-11 items-center justify-between gap-3 px-4 py-2 hover:bg-muted/40 sm:px-6"
+      className="flex min-h-11 items-center justify-between gap-3 px-4 py-2 hover:bg-accent"
       data-testid="llm-model-row"
     >
       <p className="min-w-0 flex-1 break-all font-mono text-sm text-foreground">{model.qualifiedId}</p>
@@ -426,22 +433,24 @@ function AddModelHint({
   onAdd: () => void;
 }) {
   const { msg } = useI18n();
-  if (!query.trim() || !candidateId) return null;
-  if (!provider) {
-    return (
-      <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-        {msg('llmModels.selectProviderToAdd', 'Select a provider to add {modelId}.', { modelId: candidateId })}
-      </p>
-    );
-  }
+  if (!provider || !query.trim() || !candidateId) return null;
+  const targetLabel = msg('llmModels.addModelToProvider', 'Add {modelId} to {provider}', {
+    modelId: candidateId,
+    provider: provider.name,
+  });
   return (
-    <div className="border-t border-border p-3">
-      <Button type="button" variant="outline" className="w-full justify-start" disabled={isAdding} onClick={onAdd}>
+    <div className="border-t-[0.5px] border-border p-3">
+      <Button
+        type="button"
+        variant="outline"
+        className="h-auto min-h-8 w-full justify-start text-left whitespace-normal"
+        aria-label={targetLabel}
+        title={targetLabel}
+        disabled={isAdding}
+        onClick={onAdd}
+      >
         <Plus aria-hidden />
-        {msg('llmModels.addModelToProvider', 'Add {modelId} to {provider}', {
-          modelId: candidateId,
-          provider: provider.name,
-        })}
+        {msg('llmModels.addModel', 'Add model')}
       </Button>
     </div>
   );

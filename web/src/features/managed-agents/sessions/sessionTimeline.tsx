@@ -152,9 +152,6 @@ export function SessionSummaryChip({
     <span
       className={clsx('flex min-w-0 max-w-52 shrink-0 items-center gap-2 text-sm text-muted-foreground', className)}
     >
-      <span aria-hidden className="text-border">
-        ·
-      </span>
       <span className="flex min-w-0 items-center gap-1.5">
         <Icon className="size-3.5 shrink-0" aria-hidden />
         <span className="truncate text-foreground/80">{children}</span>
@@ -668,10 +665,7 @@ export function EventsMinimap({
       >
         <Minus className="size-3" aria-hidden />
       </Button>
-      <span
-        className="min-w-10 text-center font-mono text-[11px] tabular-nums text-muted-foreground"
-        aria-live="polite"
-      >
+      <span className="min-w-10 text-center font-mono text-xs tabular-nums text-muted-foreground" aria-live="polite">
         {zoom.toFixed(2)}×
       </span>
       <Button
@@ -704,7 +698,7 @@ export function EventsMinimap({
         )
       ) : (
         <div
-          className="pointer-events-none absolute right-1 top-1 z-50 flex items-center gap-1 rounded-md bg-popover px-1.5 py-px opacity-0 transition-opacity duration-150 group-focus-within/mm:pointer-events-auto group-focus-within/mm:opacity-100 group-hover/mm:pointer-events-auto group-hover/mm:opacity-100"
+          className="pointer-events-none absolute right-1 top-1 z-50 flex items-center gap-1 rounded-md bg-popover px-1.5 py-px opacity-0 transition-opacity duration-150 ease-out motion-reduce:transition-none group-focus-within/mm:pointer-events-auto group-focus-within/mm:opacity-100 group-hover/mm:pointer-events-auto group-hover/mm:opacity-100"
           data-testid="session-minimap-zoom-controls"
         >
           {zoomControls}
@@ -738,10 +732,10 @@ export function EventsMinimap({
           aria-valuemin={0}
           aria-valuemax={Math.max(0, selectableActiveLaneTicks.length - 1)}
           aria-valuenow={Math.max(0, selectedTickIndex)}
-          aria-valuetext={selectedTick ? `${selectedTick.relativeTime} · ${selectedTick.label}` : undefined}
+          aria-valuetext={selectedTick ? `${selectedTick.relativeTime}, ${selectedTick.label}` : undefined}
           tabIndex={selectableActiveLaneTicks.length ? 0 : -1}
           className={clsx(
-            'relative flex touch-none select-none flex-col gap-1.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+            'relative flex touch-none select-none flex-col gap-1.5 focus-visible:outline-none focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-foreground',
             sessionMinimapCursorClassName(zoom > SESSION_TIMELINE_MIN_ZOOM, isDragging),
           )}
           style={sessionMinimapTrackStyle(minimapLayout.laneContentHeight, zoom)}
@@ -786,7 +780,7 @@ export function EventsMinimap({
                 ref={(node) => setSessionTimelineRowRef(rowRefs.current, lane.id, node)}
                 data-lane-index={index}
                 className={clsx(
-                  "group/lane relative flex shrink-0 items-center rounded transition-[background-color,opacity,height] duration-100 ease-out after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-1.5 after:h-1.5 after:content-['']",
+                  "group/lane relative flex shrink-0 items-center rounded transition-[background-color,opacity,height] duration-100 ease-out motion-reduce:transition-none after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-1.5 after:h-1.5 after:content-['']",
                   index === 0 || index === activeLaneIndex ? 'h-7' : 'h-5',
                   index === 0 && 'sticky top-0 z-20',
                   lane.id === activeLane
@@ -804,7 +798,7 @@ export function EventsMinimap({
                 onPointerLeave={(event) => handleLanePointerLeave(lane.id, event)}
               >
                 <SessionTimelineIdleWash laneId={lane.id} windows={idleWindows} />
-                <span className="pointer-events-none sticky left-0 z-10 ml-0.5 inline-flex h-4 max-w-[180px] items-center truncate rounded-sm bg-background/90 px-1 text-[10px] text-foreground shadow-sm transition-opacity duration-150 group-hover/lane:opacity-0">
+                <span className="pointer-events-none sticky left-0 z-10 ml-0.5 inline-flex h-4 max-w-[180px] items-center truncate rounded-sm bg-background/90 px-1 text-xs leading-4 text-foreground shadow-sm transition-opacity duration-150 ease-out motion-reduce:transition-none group-hover/lane:opacity-0">
                   {truncateLaneLabel(lane.label)}
                 </span>
                 {ticks
@@ -842,7 +836,7 @@ export function EventsMinimap({
           aria-valuemin={Math.round(minimapLayout.minHeight)}
           aria-valuemax={Math.round(minimapLayout.maxHeight)}
           tabIndex={0}
-          className="group/resize relative -mx-8 -mb-[3px] mt-[9px] h-2 touch-none cursor-row-resize outline-none after:absolute after:inset-x-0 after:top-1/2 after:h-px after:bg-border/60 after:transition-colors hover:after:bg-border focus-visible:after:bg-ring"
+          className="group/resize relative -mx-8 -mb-[3px] mt-[9px] h-2 touch-none cursor-row-resize outline-none after:absolute after:inset-x-0 after:top-1/2 after:h-[0.5px] after:bg-border/60 after:transition-colors after:duration-150 after:ease-out motion-reduce:after:transition-none hover:after:bg-border focus-visible:after:bg-ring"
           onKeyDown={handleResizeKeyDown}
           onPointerDown={handleResizePointerDown}
           onPointerMove={handleResizePointerMove}
@@ -852,7 +846,7 @@ export function EventsMinimap({
       ) : (
         <div
           aria-hidden
-          className="relative -mx-8 -mb-[3px] mt-[9px] h-2 after:absolute after:inset-x-0 after:top-1/2 after:h-px after:bg-border/60"
+          className="relative -mx-8 -mb-[3px] mt-[9px] h-2 after:absolute after:inset-x-0 after:top-1/2 after:h-[0.5px] after:bg-border/60"
         />
       )}
     </div>
@@ -865,7 +859,7 @@ export function EventsMinimapSkeleton() {
       <div style={{ paddingBottom: 4, paddingTop: 8 }}>
         <Skeleton className="h-7 rounded-sm" />
       </div>
-      <div className="relative -mx-8 -mb-[3px] mt-[9px] h-2 after:absolute after:inset-x-0 after:top-1/2 after:h-px after:bg-border/60" />
+      <div className="relative -mx-8 -mb-[3px] mt-[9px] h-2 after:absolute after:inset-x-0 after:top-1/2 after:h-[0.5px] after:bg-border/60" />
     </div>
   );
 }
@@ -1059,10 +1053,10 @@ export function SessionTimelineTickMark({
       data-timeline-tick-id={tick.id}
       data-timeline-tick-type={tick.type}
       className={clsx(
-        'pointer-events-none absolute bottom-0.5 top-0.5 rounded-sm transition-[left,width,opacity] duration-150',
+        'pointer-events-none absolute bottom-0.5 top-0.5 rounded-sm transition-[left,width,opacity] duration-150 ease-out motion-reduce:transition-none',
         sessionTimelineTickClass(tick.type),
-        selected && 'z-30 outline outline-[1.5px] outline-ring outline-offset-1',
-        !selected && hovered && 'z-30 outline outline-[1.5px] outline-ring/50 outline-offset-1',
+        selected && 'z-30 outline outline-[0.5px] outline-foreground outline-offset-1',
+        !selected && hovered && 'z-30 outline outline-[0.5px] outline-foreground/50 outline-offset-1',
         !selected && !hovered && 'opacity-90',
         tick.open && 'motion-safe:animate-pulse',
         hidden && '!opacity-0',
@@ -1102,17 +1096,12 @@ export function SessionTimelineTooltip({
       }}
     >
       <div className="flex items-baseline justify-between gap-2 whitespace-nowrap">
-        <span
-          className={clsx(
-            'inline-flex h-4 min-w-0 shrink rounded-sm px-1 text-[10px] font-semibold uppercase leading-4',
-            sessionTimelineTickClass(tick.type),
-          )}
-        >
+        <span className="min-w-0 truncate text-xs font-semibold text-foreground">
           {sessionTimelineTypeLabel(tick.type)}
         </span>
-        <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-          {duration ? `${duration} · ` : null}
-          {tick.relativeTime}
+        <span className="flex shrink-0 items-center gap-2 font-mono text-xs tabular-nums text-muted-foreground">
+          {duration ? <span>{duration}</span> : null}
+          <span>{tick.relativeTime}</span>
         </span>
       </div>
       {title ? <div className="truncate text-foreground">{title}</div> : null}
@@ -1334,7 +1323,7 @@ export function buildTimelineTicks(
 ): SessionTimelineTick[] {
   const flattened = lanes
     .flatMap((lane) => lane.items.map((item) => ({ ...item, lane })))
-    .filter((item) => Number.isFinite(item.processedAtMs));
+    .filter((item) => hasWallClockMs(item.processedAtMs));
   if (!flattened.length) {
     return [];
   }
@@ -1505,11 +1494,11 @@ export function LaneTabStrip({
     }
     scroller.scrollBy({
       left: direction === 'left' ? -Math.floor(scroller.clientWidth * 0.8) : Math.floor(scroller.clientWidth * 0.8),
-      behavior: 'smooth',
+      behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
     });
   };
   return (
-    <div className="flex items-center gap-2 border-b border-border px-4 py-2" data-testid="lane-tab-strip">
+    <div className="flex items-center gap-2 border-b-[0.5px] border-border px-4 py-2" data-testid="lane-tab-strip">
       {scrollState.canScroll ? (
         <Button
           type="button"
@@ -1531,7 +1520,7 @@ export function LaneTabStrip({
         className="scrollbar-none flex min-w-0 flex-1 gap-1 overflow-x-auto"
         style={{
           maskImage: scrollState.canScroll
-            ? 'linear-gradient(90deg, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%)'
+            ? 'linear-gradient(90deg, transparent 0, var(--foreground) 24px, var(--foreground) calc(100% - 24px), transparent 100%)'
             : undefined,
         }}
       >
@@ -1628,7 +1617,7 @@ export function HeaderRow({
       data-transcript-header
       pressed={isSelected}
       className={clsx(
-        'flex w-full cursor-pointer justify-start rounded-md border-0 bg-transparent text-left font-normal active:translate-y-0 focus-visible:border-transparent focus-visible:ring-1 focus-visible:ring-ring/30',
+        'flex w-full cursor-pointer justify-start rounded-md border-0 bg-transparent text-left font-normal active:translate-y-0 focus-visible:border-transparent focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-foreground',
         density === 'compact' ? 'h-6 gap-1.5 px-1 text-xs' : 'h-9 px-3',
         'hover:bg-session-hover',
         isSelected && 'bg-session-selected',
@@ -1713,7 +1702,7 @@ export function MetaStrip({
 export function ErrorStateBadge() {
   const { msg } = useI18n();
   return (
-    <span className="inline-flex items-center gap-1 rounded bg-destructive px-1.5 py-0.5 font-sans text-[10px] font-semibold text-background">
+    <span className="inline-flex items-center gap-1 rounded bg-destructive px-1.5 py-0.5 font-sans text-xs font-semibold text-destructive-foreground">
       <CircleX className="size-3" aria-hidden />
       {msg('managedAgents.sessions.trace.error', 'Error')}
     </span>
@@ -1727,7 +1716,7 @@ export function ApprovalChip({ lifecycle }: { lifecycle?: ToolLifecycle }) {
 export function InProgressChip({ label, tooltip }: { label: string; tooltip?: string }) {
   const indicator = (
     <span className="inline-flex shrink-0 items-center" role="status">
-      <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-hidden />
+      <Loader2 className="size-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden />
       <span className="sr-only">{label}</span>
     </span>
   );
@@ -1782,10 +1771,7 @@ export function OutcomeStatusChip({ status }: { status?: string }) {
   return (
     <Badge
       variant="secondary"
-      className={clsx(
-        'h-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold',
-        outcomeStatusChipClass(status),
-      )}
+      className={clsx('h-auto shrink-0 rounded px-1.5 py-0.5 text-xs font-semibold', outcomeStatusChipClass(status))}
     >
       {outcomeStatusLabel(status, msg)}
     </Badge>

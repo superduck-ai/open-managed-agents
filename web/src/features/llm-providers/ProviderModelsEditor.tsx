@@ -56,9 +56,9 @@ export function ProviderModelsEditor({
           {msg('llmModels.fetchModels', 'Get available models')}
         </Button>
       </div>
-      <div className="space-y-2">
+      <div className="space-y-4">
         {models.map((model, index) => (
-          <Collapsible key={model.key} className="rounded-lg border border-border p-2">
+          <Collapsible key={model.key} className="border-t-[0.5px] border-border pt-3 first:border-t-0 first:pt-0">
             <div className="flex items-center gap-2">
               <Input
                 value={model.id}
@@ -73,7 +73,7 @@ export function ProviderModelsEditor({
                 aria-label={`${msg('llmModels.modelParameters', 'Model parameters')} ${index + 1}`}
                 className="group"
               >
-                <ChevronDown className="transition-transform group-aria-expanded:rotate-180" aria-hidden />
+                <ChevronDown className="group-aria-expanded:rotate-180" aria-hidden />
               </CollapsibleTrigger>
               <Button
                 type="button"
@@ -87,7 +87,7 @@ export function ProviderModelsEditor({
               </Button>
             </div>
             <CollapsibleContent>
-              <div className="mt-3 grid grid-cols-2 gap-3">
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field>
                   <FieldLabel htmlFor={`model-context-window-${index}`} className="font-normal text-muted-foreground">
                     {msg('llmModels.contextWindow', 'Context window')}

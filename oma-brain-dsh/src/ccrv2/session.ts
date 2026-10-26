@@ -1,3 +1,5 @@
+import { recordRuntimeDiagnostic, recordRuntimeEvent } from "./runtime-diagnostics.ts";
+import { createHash } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import { SessionId, pluginRecordOf, type SessionEvent } from "@deepseek-ai/dsh-session";
@@ -5,18 +7,18 @@ import { ACCOUNT_QUOTA_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE } from "@deepseek-ai/d
 import { ToolNotForwardedError } from "../runtime/contracts.ts";
 import { SessionRuntime } from "../runtime/session.ts";
 import { Subagents } from "../runtime/subagents.ts";
-import { CcrSubagentBridge } from "./subagents.ts";
+import { CcrSubagentBridge, runtimeSubagentConfig } from "./subagents.ts";
 import type {
-  SessionRuntimeConfig,
   ToolApproval,
   ApprovalDecision,
 } from "../runtime/contracts.ts";
-import type { CcrBackend } from "./contracts.ts";
+import type { CcrBackend, CcrSessionConfig } from "./contracts.ts";
 import { CcrHeartbeat, type CcrHeartbeatConfig } from "./heartbeat.ts";
 import { CcrActivity, type CcrActivityOptions } from "./activity.ts";
 import { isControlInput, object, type Payload } from "./protocol.ts";
 import { startDeliveryProgress } from "./delivery-progress.ts";
 import { failureDiagnostic, workerDiagnostic } from "./diagnostics.ts";
+import { CcrCompaction } from "./compaction.ts";
 import { nativeOutput, failedOutput } from "./native-output.ts";
 import { CcrToolResults } from "./tool-results.ts";
 import { CcrAssistantStream } from "./assistant.ts";
@@ -36,6 +38,7 @@ export class CcrSession {
   private statuses: Promise<unknown> = Promise.resolve();
   private publications: Promise<unknown> = Promise.resolve();
   private previews: Promise<unknown> = Promise.resolve();
+  private previewCheckpoints: Promise<void> = Promise.resolve();
   private readonly controlReceipts = new Set<Promise<void>>();
   private readonly handledControls = new Set<string>();
   private readonly assistantStream: CcrAssistantStream;
@@ -50,6 +53,8 @@ export class CcrSession {
     string,
     { phase: "policy" | "confirmation" | "resolved"; resolve: (decision: Payload) => void; reject: (error: Error) => void; threadId: string; details: import("./wire.ts").RequiresActionDetails }
   >();
+  private readonly compactionSequences = new Map<string, number>();
+  readonly compaction: CcrCompaction;
   readonly runtime: SessionRuntime;
   readonly subagents: Subagents;
   private readonly heartbeat?: CcrHeartbeat;
@@ -59,21 +64,18 @@ export class CcrSession {
   constructor(
     readonly ctx: Context,
     readonly backend: CcrBackend,
-    readonly config: SessionRuntimeConfig,
+    readonly config: CcrSessionConfig,
     heartbeat?: CcrHeartbeatConfig,
     keepAlive?: CcrActivityOptions,
   ) {
+    this.compaction = new CcrCompaction(ctx,
+      id => this.compactionSequences.get(id),
+      (id, tokens, sequence) => this.contextCompacted(tokens, sequence, id === this.id ? undefined : id));
     this.defaultModel = config.model;
     this.assistantStream = new CcrAssistantStream(config.id, config.modelMessageID);
-    this.runtime = new SessionRuntime(ctx, { ...config, setup: async (scope) => {
-      await config.setup?.(scope);
-      // Resumed dsh requests can use a logged model. Apply the CCR override
-      // through the public request hook, without rewriting the durable log.
-      scope.on("agent/request", async (_request, next) => {
-        const call = await next();
-        return this.modelOverride ? { ...call, model: this.modelOverride } : call;
-      });
-    } }, {
+    this.runtime = new SessionRuntime(ctx, { ...config, subagents: runtimeSubagentConfig(config.subagents), setup: async scope => { await config.setup?.(scope); } }, {
+      onDiagnostic: diagnostic => recordRuntimeDiagnostic(this.id, diagnostic),
+      selectModel: model => this.modelOverride ?? model,
       onExternalMcpConnectionFailure: (serverName) => this.reportError({
         type: "session.error", uuid: crypto.randomUUID(), processed_at: new Date().toISOString(),
         error: { type: "mcp_connection_failed_error", mcp_server_name: serverName,
@@ -90,8 +92,9 @@ export class CcrSession {
       }),
       setupTools: (scope) => this.subagents.register(scope),
       beforeRequest: () => this.beforePrimaryRequest(),
-      onContextCompacted: tokens => this.contextCompacted(tokens),
-      onEvent: (event) => this.record(event),
+      onOpen: session => this.compaction.restore(session),
+      afterFlushLog: session => this.compaction.flush(session),
+      onEvent: (event, session) => { recordRuntimeEvent(session, event); this.compaction.record(session, event); this.record(event); },
       onStream: (frame) => this.stream(frame),
       stop: () => this.stop(),
     }, {
@@ -208,7 +211,9 @@ export class CcrSession {
   }
 
   private async publishPreview(payloads: Payload[]): Promise<void> {
-    try { await this.checkpoint(); await this.backend.events(this.id, payloads); }
+    const checkpoint = this.previewCheckpoints.then(() => this.checkpoint());
+    this.previewCheckpoints = checkpoint.catch(() => {});
+    try { await checkpoint; await this.backend.events(this.id, payloads); }
     catch { this.stop(); }
   }
 
@@ -233,11 +238,17 @@ export class CcrSession {
     }
   }
 
-  async contextCompacted(tokens?: number, threadId?: string): Promise<void> {
-    this.pendingEvents.push({ type: "agent.thread_context_compacted", uuid: crypto.randomUUID(),
-      ...(threadId ? { session_thread_id: threadId } : {}),
-      ...(tokens !== undefined ? { pre_compaction_tokens: tokens } : {}) });
-    await this.flushEvents();
+  async contextCompacted(tokens: number | undefined, sequence: number, threadId?: string): Promise<void> {
+    const owner = threadId ?? this.id;
+    await this.ctx.ccrReplication.flush(owner);
+    const sequences = this.compactionSequences;
+    if (sequence > (sequences.get(owner) ?? -1)) {
+      const uuid = createHash("sha256").update(JSON.stringify([this.id, owner, "context_compacted", sequence])).digest("hex");
+      this.pendingEvents.push({ type: "agent.thread_context_compacted", uuid,
+        ...(threadId ? { session_thread_id: threadId } : {}),
+        ...(tokens !== undefined ? { pre_compaction_tokens: tokens } : {}) });
+      sequences.set(owner, sequence);
+    }
   }
 
   record(event: SessionEvent, threadId?: string) {
@@ -385,10 +396,17 @@ export class CcrSession {
   }
 
   private async beforePrimaryRequest(): Promise<void> {
+    await this.beforeModelRequest(this.id);
     if (this.waitingOnInterruptedChild) {
       this.interrupted = true;
       this.agent.cancel({ kind: "user" });
     }
+  }
+
+  async beforeModelRequest(owner: string): Promise<void> {
+    if (!this.pendingEvents.length) return;
+    await this.ctx.ccrReplication.flush(owner);
+    await this.publish();
   }
 
   wakeParentFromChildReport(): void {

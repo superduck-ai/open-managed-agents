@@ -310,3 +310,9 @@ Console API（相对 `/api/console/organizations/{orgUuid}`）：
 迁移 `00094_organization_llm_provider.sql` 从主干版本 91 追加升级，不修改已有迁移。已有工作区 slug `organization` 改为当前空间中第一个未占用的 `organization-N`，同步改写 `agents.model`、`agent_versions.model`，以及 `sessions`、`session_threads`、`deployments`、`deployment_runs` 的 `agent_snapshot` 顶层模型；同时改写 Agent、版本的 `multiagent` 列与上述快照中的 `multiagent.advisor.model`，并递归处理展开 roster（`multiagent.agents`、`multiagent.subagents.predefined_agents`、`multiagent.workflows.predefined_agents`）内嵌的模型引用。Code Session 模型与恢复元数据、queued / in_flight Batch 的对应完整引用也同步改写。改写仅作用于发生 slug 变更的组织和工作区，支持字符串及对象模型，保留模型的其他字段、roster 顺序和其他 JSON 内容；`metadata.model`、无关引用、其他租户数据与已完成 Batch 不改写。外部调用方若使用旧 `organization/{model}`，需改用迁移后的工作区 slug。Down 删除组织 Provider 及索引并恢复 workspace 非空，不回退已经改名的工作区 slug 和引用；回退前需备份组织配置。
 
 组织 Provider 的通用 API 和配置不包含任何公司网关预设、公司控制台链接或专属域名。
+
+## DSH 公开回复来源
+
+DSH 的公开回复由 Brain 独占发布。后端按已保存的 `metadata.config.worker_transport=claim` 识别该执行路径，Messages 和 Chat Completions 继续执行模型路由、权限/epoch 校验、请求 span、usage 和工具关联，但代理不发布 `agent.message`、`agent.thinking` 或 thinking 起始预览，也不在 span 的 `event_ids` 中宣称这些回复已发布。判断不依赖客户端用途 header；压缩请求与普通请求均遵守同一来源规则。Brain 在原生日志复制确认后发布回复，恢复可用稳定 ID 补发；压缩摘要保留在私有日志，并用 CCRv2 的 `agent.thread_context_compacted` 表达结果。Claude Code 路径与原有工具权限、审批、工具调用事件处理保持不变。
+
+`TestModelReplyPublicationOwnership` 覆盖 Brain 与非 Brain 的发布职责、请求关联、usage 和工具 ID 保留，`TestBrainModelThinkingIsPublishedOnlyByWorker` 覆盖无代理 thinking 预览。Brain 单测覆盖无用途 header 的摘要预算、流式顺序、日志复制屏障和 SIGKILL 后回复补发。真实代理链路通过显式运行 `chat brain-compaction` 与 `chat brain` 验收，本次普通测试不代表真实服务集成已通过。

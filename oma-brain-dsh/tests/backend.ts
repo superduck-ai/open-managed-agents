@@ -13,6 +13,7 @@ export function assignment(): Assignment {
     mcp_config: { mcpServers: { sandbox: { type: "http", url: "http://sandbox.test/mcp", headers: { Authorization: "Bearer test-mcp" } } } },
     launch: {
       version: 2,
+      subagents: {},
       model: "test-model",
       models: {"test-model":{id:"test-model",api_backend:"messages"}},
       work_dir: "/workspace",

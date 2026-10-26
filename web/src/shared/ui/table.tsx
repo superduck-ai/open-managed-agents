@@ -4,7 +4,7 @@ import { cn } from '@/shared/lib/utils';
 
 function Table({ className, ...props }: React.ComponentProps<'table'>) {
   return (
-    <div data-slot="table-container" className="relative w-full overflow-x-auto">
+    <div data-slot="table-container" className="subtle-scrollbar relative w-full overflow-x-auto">
       <table data-slot="table" className={cn('w-full caption-bottom text-sm', className)} {...props} />
     </div>
   );
@@ -12,7 +12,11 @@ function Table({ className, ...props }: React.ComponentProps<'table'>) {
 
 function TableHeader({ className, ...props }: React.ComponentProps<'thead'>) {
   return (
-    <thead data-slot="table-header" className={cn('[&_tr]:border-b [&_tr]:border-border', className)} {...props} />
+    <thead
+      data-slot="table-header"
+      className={cn('[&_tr]:border-b-[0.5px] [&_tr]:border-border', className)}
+      {...props}
+    />
   );
 }
 
@@ -24,7 +28,7 @@ function TableFooter({ className, ...props }: React.ComponentProps<'tfoot'>) {
   return (
     <tfoot
       data-slot="table-footer"
-      className={cn('border-t border-border bg-muted/50 font-medium [&>tr]:last:border-b-0', className)}
+      className={cn('border-t-[0.5px] border-border bg-muted/50 font-medium [&>tr]:last:border-b-0', className)}
       {...props}
     />
   );
@@ -35,7 +39,7 @@ function TableRow({ className, ...props }: React.ComponentProps<'tr'>) {
     <tr
       data-slot="table-row"
       className={cn(
-        'border-b border-border transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted',
+        'border-b-[0.5px] border-border transition-colors duration-250 ease-out motion-reduce:transition-none hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted',
         className,
       )}
       {...props}

@@ -12,6 +12,22 @@ import { buildSessionEventsByLane, buildSessionTimeline } from './sessionDetailM
 import { buildSessionEventEntries, idleGapEntry } from './sessionTraceModel';
 
 describe('session timeline event order', () => {
+  test('excludes missing timestamps from timeline entries and ticks', () => {
+    const lane = { id: '', label: 'Main', isMain: true };
+    const entries = buildSessionEventEntries([
+      { id: 'untimed', type: 'user.message', content: 'queued', processed_at: null },
+      { id: 'timed', type: 'agent.message', content: 'answer', processed_at: '2026-10-27T00:00:00Z' },
+    ]);
+    const timeline = buildSessionTimeline([lane], new Map([[lane.id, entries]]));
+    expect(timeline[0].items).toHaveLength(1);
+    expect(timeline[0].items[0].processedAtMs).toBe(Date.parse('2026-10-27T00:00:00Z'));
+    expect(
+      buildTimelineTicks([{ ...lane, items: [timelineItem('untimed', 0), timelineItem('timed', 1000)] }]).map(
+        (tick) => tick.id,
+      ),
+    ).toEqual(['timed']);
+  });
+
   test('preserves item order while sharing timestamp geometry across lanes', () => {
     const lanes: SessionTimelineLane[] = [
       {

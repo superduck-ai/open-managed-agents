@@ -138,25 +138,7 @@ export class Subagents {
     if (args.thread_id && thread.status === "idle") await this.bridge.validateThread?.(thread.id, signal);
     if (thread.status !== "idle") throw new Error("Subagent thread is running or archived");
     thread.status = "running";
-    let runtime = this.runtimes.get(thread.id);
-    if (!runtime) {
-      const unbind = this.parent.config.bindThread?.(thread.id);
-      if (unbind) this.unbind.set(thread.id, unbind);
-      try {
-        if (!args.thread_id) await this.bridge.emit({ kind: "created", thread });
-        runtime = await this.createRuntime(thread);
-        this.runtimes.set(thread.id, runtime);
-        await runtime.open();
-      } catch (error) {
-        this.runtimes.delete(thread.id);
-        this.unbind.get(thread.id)?.();
-        this.unbind.delete(thread.id);
-        await runtime?.close();
-        thread.status = "idle";
-        throw error;
-      }
-    }
-    const child = runtime;
+    const child = this.runtimes.get(thread.id) ?? await this.openRuntime(thread, !args.thread_id);
     const cancel = () => child.agent.cancel({ kind: "user" });
     signal.addEventListener("abort", cancel, { once: true });
     let report = "";
@@ -193,6 +175,38 @@ export class Subagents {
       this.lastActivity = Date.now();
       await this.bridge.emit({ kind: "idle", thread, completed });
     }
+  }
+
+  private async openRuntime(thread: SubagentThread, created: boolean): Promise<SessionRuntime> {
+    let runtime: SessionRuntime | undefined;
+    try {
+      if (created) await this.bridge.emit({ kind: "created", thread });
+      const unbind = this.parent.config.bindThread?.(thread.id);
+      if (unbind) this.unbind.set(thread.id, unbind);
+      runtime = await this.createRuntime(thread);
+      this.runtimes.set(thread.id, runtime);
+      await runtime.open();
+      return runtime;
+    } catch (error) {
+      await this.failInitialization(thread, runtime, error);
+      throw error;
+    }
+  }
+
+  private async failInitialization(thread: SubagentThread, runtime: SessionRuntime | undefined, cause: unknown): Promise<void> {
+    thread.status = "terminated";
+    this.lastActivity = Date.now();
+    this.runtimes.delete(thread.id);
+    const unbind = this.unbind.get(thread.id);
+    this.unbind.delete(thread.id);
+    const failures: unknown[] = [];
+    try { await this.bridge.emit({ kind: "terminated", thread }); }
+    catch (error) { failures.push(error); }
+    try { await runtime?.close(); }
+    catch (error) { failures.push(error); }
+    try { unbind?.(); }
+    catch (error) { failures.push(error); }
+    if (failures.length) throw new AggregateError([cause, ...failures], "Subagent initialization failed and cleanup was incomplete", { cause });
   }
 
   private async createRuntime(thread: SubagentThread): Promise<SessionRuntime> {

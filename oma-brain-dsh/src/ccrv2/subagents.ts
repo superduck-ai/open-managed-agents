@@ -46,6 +46,7 @@ export class CcrSubagentBridge implements SubagentBridge {
         throw error;
       }
       if (state.id !== id) throw new Error("Invalid authoritative subagent thread identity");
+      if (!descriptor && !hasTurns && (state.archived || state.status === "terminated")) continue;
       if (!descriptor || descriptor.mode !== "continuable") throw new Error("Subagent is missing its native descriptor");
       this.retained.push({
         id, name: descriptor.label, inline: descriptor.provider === "oma-inline",

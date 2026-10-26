@@ -1,6 +1,6 @@
 import { nativeOutcomes } from "./session-log.ts";
 import { modelSystemText } from "./backend.ts";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
 import { SessionId, SESSION_FORMAT_VERSION } from "@deepseek-ai/dsh-session";
 import { OmaApi } from "../src/api.ts";
@@ -9,6 +9,7 @@ import { createOmaSession } from "../src/oma-session.ts";
 import { Backend, textEvents, toolEvents, eventually } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
 import { Subagents } from "../src/runtime/subagents.ts";
+import { SessionRuntime } from "../src/runtime/session.ts";
 import { CcrSubagentBridge } from "../src/ccrv2/subagents.ts";
 import type { SubagentEvent, SubagentThread, ToolApproval, ToolExecutionBridge } from "../src/runtime/contracts.ts";
 
@@ -52,6 +53,99 @@ test("disabled subagents are absent from the model tools and reject direct dispa
   expect(modelSystemText(request)).toContain("Subagents are disabled for this session.");
   expect(f.session.subagents.threads).toHaveLength(0);
 });
+
+for (const phase of ["create", "open"] as const) {
+  test(`failed child ${phase} terminates the published thread and permits a fresh retry`, async () => {
+    const f = await fixture();
+    const config = f.session.runtime.config;
+    const originalContext = config.threadMcpContext;
+    const originalSetup = config.setupTools;
+    const failure = new Error(`${phase} failed`);
+    if (phase === "create") config.threadMcpContext = async () => { throw failure; };
+    else config.setupTools = async () => { throw failure; };
+    const args = { name: "worker", system_prompt: "Inspect", message: "Inspect files" };
+    await expect(f.session.subagents.send(args, new AbortController().signal)).rejects.toBe(failure);
+    const failed = f.session.subagents.threads[0]!;
+    expect(failed.status).toBe("terminated");
+    expect(f.session.subagents.busy).toBe(false);
+    expect(f.api.modelSessions.has(failed.id)).toBe(false);
+    expect([...f.b.publicLog.values()].filter(event => event.session_thread_id === failed.id).map(event => event.type))
+      .toEqual(["session.thread_created", "session.thread_status_terminated"]);
+    await expect(f.session.subagents.send({ thread_id: failed.id, message: "Retry" }, new AbortController().signal)).rejects.toThrow("running or archived");
+    config.threadMcpContext = originalContext;
+    config.setupTools = originalSetup;
+    f.b.modelScript = [textEvents("retry report")];
+    const result = JSON.parse(await f.session.subagents.send(args, new AbortController().signal));
+    expect(result.thread_id).not.toBe(failed.id);
+    expect(result.report).toBe("retry report");
+    expect(f.session.subagents.threads.filter(thread => thread.status !== "terminated").map(thread => thread.id)).toEqual([result.thread_id]);
+  });
+}
+
+test("failed child cleanup still terminates and unbinds while preserving both errors", async () => {
+  const f = await fixture();
+  const initialization = new Error("child setup failed");
+  const cleanup = new Error("child close failed");
+  f.session.runtime.config.setupTools = async () => { throw initialization; };
+  const close = SessionRuntime.prototype.close;
+  const closing = spyOn(SessionRuntime.prototype, "close").mockImplementation(function(this: SessionRuntime) {
+    if (this.parent) return Promise.reject(cleanup);
+    return close.call(this);
+  });
+  try {
+    const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.errors).toEqual([initialization, cleanup]);
+    const failed = f.session.subagents.threads[0]!;
+    expect(failed.status).toBe("terminated");
+    expect(f.api.modelSessions.has(failed.id)).toBe(false);
+    expect([...f.b.publicLog.values()].some(event => event.type === "session.thread_status_terminated" && event.session_thread_id === failed.id)).toBe(true);
+  } finally { closing.mockRestore(); }
+});
+
+test("failed termination publication keeps the terminal event queued for retry", async () => {
+  const f = await fixture();
+  const initialization = new Error("child context failed");
+  const publication = new Error("terminal publication failed");
+  f.session.runtime.config.threadMcpContext = async () => { throw initialization; };
+  const publish = f.session.backend.events.bind(f.session.backend);
+  f.session.backend.events = async (id, events) => {
+    if (events.some(event => event.type === "session.thread_status_terminated")) throw publication;
+    return publish(id, events);
+  };
+  const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
+  expect(error).toBeInstanceOf(AggregateError);
+  expect(error.errors).toEqual([initialization, publication]);
+  const failed = f.session.subagents.threads[0]!;
+  expect(failed.status).toBe("terminated");
+  expect(f.api.modelSessions.has(failed.id)).toBe(false);
+  expect(f.session.pendingEvents.some(event => event.type === "session.thread_status_terminated" && event.session_thread_id === failed.id)).toBe(true);
+  f.session.backend.events = publish;
+  await f.session.flushEvents();
+  expect([...f.b.publicLog.values()].filter(event => event.type === "session.thread_status_terminated" && event.session_thread_id === failed.id)).toHaveLength(1);
+});
+
+for (const status of ["idle", "terminated"] as const) {
+  test(`restore handles an incomplete initialization header with ${status} authority`, async () => {
+    const f = await fixture();
+    const id = "sthr_failed_initialization";
+    await f.ctx.ccrv2.config.backend.persist(f.session.id, "dsh_log", {
+      version: SESSION_FORMAT_VERSION, id: SessionId(id), createdAt: 0, isSeeded: false,
+      origin: "subagent", parentSession: SessionId(f.session.id), delegationDepth: 1,
+    }, id);
+    expect([...f.b.privateLog.values()].some(payload => payload.data?.id === id)).toBe(true);
+    f.b.publicLog.set(`${id}_created`, { type: "session.thread_created", session_thread_id: id });
+    if (status === "terminated") f.b.publicLog.set(`${id}_terminated`, { type: "session.thread_status_terminated", session_thread_id: id });
+    const storage = new CcrSubagentBridge(f.session);
+    if (status === "idle") {
+      await expect(storage.restoreThreads()).rejects.toThrow("Subagent is missing its native descriptor");
+    } else {
+      await storage.restoreThreads();
+      expect(storage.threads()).toEqual([]);
+    }
+    expect(f.b.requests).toHaveLength(0);
+  });
+}
 
 test("publishes the child snapshot before requesting its scoped tool context", async () => {
   const f = await fixture();

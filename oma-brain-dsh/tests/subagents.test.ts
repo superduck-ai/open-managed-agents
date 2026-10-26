@@ -39,6 +39,40 @@ function call(name: string, args: Payload, id: string): Payload[] {
       ? { ...event, delta: { type: "input_json_delta", partial_json: JSON.stringify(args) } } : event);
 }
 
+test("disabled subagents are absent from the model tools and reject direct dispatch", async () => {
+  const b = new Backend();
+  delete b.a.launch.subagents;
+  const f = await fixture(b);
+  await expect(f.session.subagents.send({ name: "forbidden", system_prompt: "Inspect", message: "Work" }, new AbortController().signal)).rejects.toThrow("Subagents are disabled");
+  b.modelScript = [textEvents("done")];
+  await f.session.receive("disabled", { content: "Inspect locally" });
+  const request = b.requests[0]!;
+  const tools = request.tools.map((tool: Payload) => tool.name);
+  for (const name of ["list_agents", "send_to_agent", "archive_agent"]) expect(tools).not.toContain(name);
+  expect(modelSystemText(request)).toContain("Subagents are disabled for this session.");
+  expect(f.session.subagents.threads).toHaveLength(0);
+});
+
+test("publishes the child snapshot before requesting its scoped tool context", async () => {
+  const f = await fixture();
+  const route = f.b.route.bind(f.b);
+  const contexts: string[] = [];
+  f.b.route = async (request) => {
+    const id = request.headers.get("X-OMA-Session-Thread-ID");
+    if (id && new URL(request.url).pathname === `/v2/sessions/${f.b.a.session_id}`) {
+      contexts.push(id);
+      const created = [...f.b.publicLog.values()].some((event) => event.type === "session.thread_created" && event.session_thread_id === id);
+      if (!created) return Response.json({ error: "Thread snapshot does not exist" }, { status: 500 });
+    }
+    return route(request);
+  };
+  f.b.modelScript = [textEvents("child report")];
+  const result = JSON.parse(await f.session.subagents.send({ name: "python_agent", system_prompt: "Write Python", message: "Return hello world" }, new AbortController().signal));
+  expect(result.report).toBe("child report");
+  expect(contexts).toContain(result.thread_id);
+  expect(f.b.requests).toHaveLength(1);
+});
+
 test("restore ignores an unpublished child header left by interrupted initialization", async () => {
   const f = await fixture();
   const storage = new CcrSubagentBridge(f.session);
@@ -129,6 +163,15 @@ test("delegates with isolated history, no nested delegation, shared approvals, a
   expect(f.b.executions).toHaveLength(1);
   expect([...f.b.privateLog.values()].some((payload) => payload.type === "dsh_log" && f.b.privateAgentIds.get(payload.uuid) === thread.id && "seq" in payload.data)).toBe(true);
   expect([...f.b.publicLog.values()].some((payload) => payload.type === "agent.thread_message_received" && payload.from_session_thread_id === thread.id)).toBe(true);
+  const messages = [...f.b.publicLog.values()].filter((event) => event.type === "agent.thread_message_sent" || event.type === "agent.thread_message_received");
+  expect(messages).toHaveLength(2);
+  for (const event of messages) {
+    expect(event.session_thread_id).toBeUndefined();
+    expect(event.agent_name).toBeUndefined();
+  }
+  expect(messages[0]!.to_session_thread_id).toBe(thread.id);
+  expect(messages[1]!.from_session_thread_id).toBe(thread.id);
+
   expect([...f.b.publicLog.values()].find((payload) => payload.type === "agent.message" && payload.session_thread_id === thread.id)?.content[0].text).toBe("child report");
   await f.close();
   cleanups.pop();

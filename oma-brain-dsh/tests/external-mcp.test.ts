@@ -197,6 +197,7 @@ async function fixture(
             cwd: "/workspace",
             model: "test-model",
             runtime_tools: [],
+            subagents: b.a.launch.subagents,
             mcp_config: { mcpServers: { ...p.config.mcpServers, ...extraServers } },
           },
         })

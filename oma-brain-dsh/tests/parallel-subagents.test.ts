@@ -117,7 +117,7 @@ test("native tool batch starts two children concurrently, isolates identical cal
     betaResult.resolve({ content: [{ type: "text", text: "beta output" }] });
     await eventually(() => beta.status === "idle" && [...f.b.publicLog.values()]
       .some(event => event.type === "session.thread_status_idle" && event.session_thread_id === beta.id));
-    const betaPublished = [...f.b.publicLog.values()].filter(event => event.session_thread_id === beta.id);
+    const betaPublished = [...f.b.publicLog.values()].filter(event => event.session_thread_id === beta.id || event.from_session_thread_id === beta.id);
     const betaResultIndex = betaPublished.findIndex(event => event.type === "user" && event.message?.content?.some((block: Payload) => block.type === "tool_result"));
     const betaReportIndex = betaPublished.findIndex(event => event.type === "agent.thread_message_received");
     const betaIdleIndex = betaPublished.findIndex(event => event.type === "session.thread_status_idle");

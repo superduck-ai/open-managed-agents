@@ -28,11 +28,15 @@ flowchart LR
 
 ### Multiagent 与 Skills
 
-- Multiagent 最多包含 20 个引用（`self` 也计入上限）；Agent 引用不得重复，并以 `{type:"agent", id, version}` 固定引用选择时的当前版本。
-- Rendered 不主动提供 `self`，但能够展示、保留和移除合法 Raw 中的 `{type:"self"}`。
-- Agent 选择器初始加载当前工作区前 20 个候选；输入后以 300ms 防抖按名称调用服务端搜索，符合完整 Agent ID 规则时直接精确读取，不受首屏候选数量限制。
+- Multiagent 的 Rendered 表单仅显示 Subagents；Workflows 和 Advisor 隐藏。本期运行时只验收 DSH 子 Agent 委派，不新增其他模式的执行能力。
+- Subagents 主复选框控制委派能力；开启后显示 `Can define its own agents` 和 `Saved agents it can use`。首次开启允许临时定义 Agent，已保存列表为空；临时 Agent 只用于任务，不创建可复用 Agent 资源。
+- 表单写入 `multiagent.type = multiagent_20261001`，首次配置显式将 workflows、advisor 设为 disabled。已有新版配置中的隐藏字段保持原值，编辑 Subagents 不改写它们。旧 coordinator 配置继续回显，修改子 Agent 设置时转换为新版结构并保留原引用。
+- `subagents.predefined_agents` 最多包含 20 个引用，self 计入上限；Agent 不得重复，选择后保存 `{type:"agent", id, version}` 固定版本。已选项从候选中隐藏，到达上限后隐藏添加入口；标签可移除，并可打开固定版本的详情侧栏。
+- Rendered 不主动提供 self，但能够展示、保留和移除合法 Raw 中的 `{type:"self"}`。候选自身带 Multiagent 时显示不可用于此处的警告，由后端执行最终校验。
+- 关闭后重新开启恢复刚才的设置；Raw、模板整体替换不会恢复之前的临时缓冲。关闭临时定义且已保存列表为空时显示提示，Draft schema 拒绝提交，直至添加 Agent 或恢复临时定义；Raw 可以显示这份待修复草稿。
+- Agent 选择器开启 Subagents 后加载当前工作区前 100 个候选；输入后以 300ms 防抖按名称调用服务端搜索，符合完整 Agent ID 规则时直接精确读取，不受首屏候选数量限制。窗口重新获得焦点时刷新候选。
 - Skills 最多 20 个；新增选择写入 `{type, skill_id, version:"latest"}`，切换其他 Skill 时保留既有条目原始的可选 `version` 字段。
-- 新建 Agent 或 Skill 使用新标签页；原创建页保留 Draft，并在重新获得焦点时刷新候选项。
+- 新建 Skill 使用新标签页；原创建页保留 Draft，并在重新获得焦点时刷新候选项。
 
 ### MCP 与 Tools
 

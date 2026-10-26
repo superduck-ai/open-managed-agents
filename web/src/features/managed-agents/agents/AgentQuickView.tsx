@@ -16,6 +16,7 @@ import { hasConfiguredAgentTools } from './tools/model';
 
 export function AgentQuickView({
   agentId,
+  version,
   agentIds,
   workspaceId,
   orgUuid,
@@ -23,19 +24,20 @@ export function AgentQuickView({
   onClose,
   onStartSession,
 }: {
+  version?: number;
   agentId: string;
   agentIds: string[];
   workspaceId: string;
   orgUuid: string;
   onSelect: (agentId: string) => void;
   onClose: () => void;
-  onStartSession: (agent: AgentApiResponse) => void;
+  onStartSession?: (agent: AgentApiResponse) => void;
 }) {
   const { msg } = useI18n();
   const index = agentIds.indexOf(agentId);
   const query = useQuery({
-    queryKey: ['agent-quick-view', orgUuid, workspaceId, agentId],
-    queryFn: () => retrieveAgent(agentId, workspaceId),
+    queryKey: ['agent-quick-view', orgUuid, workspaceId, agentId, version],
+    queryFn: () => retrieveAgent(agentId, workspaceId, version),
     staleTime: 0,
     retry: false,
   });
@@ -121,7 +123,7 @@ function AgentQuickViewContent({
   agent: AgentApiResponse;
   workspaceId: string;
   orgUuid: string;
-  onStartSession: (agent: AgentApiResponse) => void;
+  onStartSession?: (agent: AgentApiResponse) => void;
 }) {
   const { msg, locale } = useI18n();
   const href = agentDetailHref(workspaceId, agent.id);
@@ -185,10 +187,12 @@ function AgentQuickViewContent({
           </p>
         )}
       </QuickViewSection>
-      <Button className="w-full" disabled={Boolean(agent.archived_at)} onClick={() => onStartSession(agent)}>
-        <Play aria-hidden />
-        {msg('managedAgents.agents.startConversation', 'Start conversation')}
-      </Button>
+      {onStartSession ? (
+        <Button className="w-full" disabled={Boolean(agent.archived_at)} onClick={() => onStartSession(agent)}>
+          <Play aria-hidden />
+          {msg('managedAgents.agents.startConversation', 'Start conversation')}
+        </Button>
+      ) : null}
     </div>
   );
 }

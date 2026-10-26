@@ -5,6 +5,31 @@ OMA 支持父智能体在同一会话中委派任务。
 控制台通过现有接口读取线程列表、历史事件和事件流。
 本次验证使用 Claude Code 2.1.251。
 
+## DSH 控制台配置
+
+Create Agent 的 Multiagent 区域只开放 Subagents，Workflows、Advisor 暂时隐藏。新配置使用 multiagent_20261001，分别通过 subagents.type、subagents.inline_agents.type 和 subagents.predefined_agents 控制整体委派、临时 Agent 和固定版本的专家名单。首次开启时其他两项显式关闭，允许临时 Agent 且名单为空；关闭临时 Agent 时必须至少提供一个预定义 Agent。已有 coordinator 配置继续兼容。
+
+DSH 入口必须保留缺失 subagents 的关闭语义，不能通过空对象回退重新开启。关闭时三个委派工具不注册，模型提示词明确禁止委派，直接调用 send 同样失败；服务端沿用 delegationToolPermission 对关闭状态的拒绝。开启且禁止临时定义时，只允许固定专家或已有线程的后续消息。本次不扩展 Claude Code 路径，不实现 Workflows 或 Advisor 的执行。
+
+DSH 新建子线程时，必须先发布并确认 session.thread_created，让后端持久化子线程及 Agent 快照，再通过 X-OMA-Session-Thread-ID 获取该线程的工具/MCP 上下文，最后打开子运行时并执行任务。工具上下文读取不能早于线程登记，即使 Agent 未配置 MCP 也要遵守此顺序。回归测试让进程内后端拒绝未登记线程的上下文请求，覆盖临时子 Agent 的完整初始化。
+
+回归覆盖前端开关、受限空名单、配置 Raw 往返和旧引用兼容，以及 DSH 模型请求的工具清单、禁用提示词和直接委派拒绝。普通单测使用进程内后端；真实 Runner/模型执行需另行显式运行 verify-be。
+
+## 线程消息的归属与对端
+
+消息方向相对于承载该事件的线程流。`session_thread_id` 表示消息事件的所属线程，`to_session_thread_id` / `from_session_thread_id` 表示消息对端；不能用对端 ID 给消息事件分组。
+
+| 动作 | 主线程流 | 子线程流 |
+| --- | --- | --- |
+| 下发任务 | sent，owner 为主线程，to 为子线程 | received，owner 为子线程，from 为主线程 |
+| 返回报告 | received，owner 为主线程，from 为子线程 | sent，owner 为子线程，to 为主线程 |
+
+DSH 发出的 sent/received 是主线程视角，不携带子线程 owner。资源边界将主副本的 owner 明确设为 primary，并生成方向相反的子线程副本。两个副本有独立稳定事件 ID，子副本以 original_event_id 关联原事件；共享传输 UUID 或内容不构成去重依据。
+
+读取历史和 SSE 时，线程消息的 owner 以数据库事件所属线程或线程路由为准，校正旧 payload 错把对端写进 session_thread_id 的情况；不修改历史存储、不删除副本、不改写消息内容与对端。该规则仅针对 thread_message_sent/received，生命周期事件的 session_thread_id 继续表示状态变化的目标线程，阻塞工具的跨投递行为保持原合同。
+
+对照资料为 Claude Session threads 的 Primary thread events 与 Session thread events。普通回归检查事件生成、主子副本身份、历史响应以及前端四条消息的分组和连线。
+
 ## 术语
 
 | 术语       | 含义                                                |

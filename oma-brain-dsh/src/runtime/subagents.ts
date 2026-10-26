@@ -143,10 +143,10 @@ export class Subagents {
       const unbind = this.parent.config.bindThread?.(thread.id);
       if (unbind) this.unbind.set(thread.id, unbind);
       try {
+        if (!args.thread_id) await this.bridge.emit({ kind: "created", thread });
         runtime = await this.createRuntime(thread);
         this.runtimes.set(thread.id, runtime);
         await runtime.open();
-        if (!args.thread_id) await this.bridge.emit({ kind: "created", thread });
       } catch (error) {
         this.runtimes.delete(thread.id);
         this.unbind.get(thread.id)?.();

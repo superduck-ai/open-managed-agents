@@ -106,7 +106,9 @@ export class CcrSubagentBridge implements SubagentBridge {
         fields = { type: "agent.thread_message_received", from_session_thread_id: thread.id,
           from_agent_name: thread.name, content: [{ type: "text", text: event.text }] }; break;
     }
-    this.session.pendingEvents.push({ ...fields, uuid: event.kind === "created" ? `${thread.id}_created` : crypto.randomUUID(), session_thread_id: thread.id, agent_name: thread.name });
+    const owner = event.kind === "message-sent" || event.kind === "report-received"
+      ? {} : { session_thread_id: thread.id, agent_name: thread.name };
+    this.session.pendingEvents.push({ ...fields, ...owner, uuid: event.kind === "created" ? `${thread.id}_created` : crypto.randomUUID() });
     if (this.session.restoring) return;
     await this.session.flushEvents();
     await this.session.updateStatus();

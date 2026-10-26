@@ -396,15 +396,17 @@ export class CcrSession {
   }
 
   private async beforePrimaryRequest(): Promise<void> {
-    await this.publishCompaction();
+    await this.beforeModelRequest(this.id);
     if (this.waitingOnInterruptedChild) {
       this.interrupted = true;
       this.agent.cancel({ kind: "user" });
     }
   }
 
-  async publishCompaction(): Promise<void> {
-    if (this.pendingEvents.some(event => event.type === "agent.thread_context_compacted")) await this.publish();
+  async beforeModelRequest(owner: string): Promise<void> {
+    if (!this.pendingEvents.length) return;
+    await this.ctx.ccrReplication.flush(owner);
+    await this.publish();
   }
 
   wakeParentFromChildReport(): void {

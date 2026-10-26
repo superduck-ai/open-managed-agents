@@ -196,7 +196,7 @@ test("input ACK still waits for public event confirmation", async () => {
   } finally { release.resolve(); await turn.catch(() => {}); session.backend.events = events; }
 });
 
-test("completed tools publish confirmed results while the next model request is still running", async () => {
+test("completed tools confirm persistence and publication before the next model request", async () => {
   const { backend, session } = await fixture();
   const releaseModel = Promise.withResolvers<ReturnType<typeof textEvents>>();
   const releaseResult = Promise.withResolvers<void>();
@@ -216,11 +216,12 @@ test("completed tools publish confirmed results while the next model request is 
   const turn = session.receive("live-tool-result", { content: "Run a tool and explain" });
   turn.catch(() => {});
   try {
-    await eventually(() => held && backend.requests.length === 2);
+    await eventually(() => held);
+    expect(backend.requests).toHaveLength(1);
     expect(backend.executions).toHaveLength(1);
     expect(publishedResult()).toBe(false);
     releaseResult.resolve();
-    await eventually(publishedResult);
+    await eventually(() => publishedResult() && backend.requests.length === 2);
     expect(backend.processed).toEqual([]);
     expect([...backend.publicLog.values()].some(event => event.type === "result")).toBe(false);
   } finally {

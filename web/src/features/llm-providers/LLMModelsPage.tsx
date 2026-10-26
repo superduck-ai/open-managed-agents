@@ -28,7 +28,6 @@ import {
   deleteLLMProvider,
   listLLMProviders,
   listProviderPresets,
-  saveProviderPresetModels,
   previewProviderModels,
   syncProviderModels,
   updateLLMProvider,
@@ -288,11 +287,6 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
           presetCatalog={presetsQuery.data}
           presetError={presetsQuery.error ? readableError(presetsQuery.error, msg) : undefined}
           onReloadPresets={() => void presetsQuery.refetch()}
-          onSaveDefaults={async (id, revision, input) => {
-            const catalog = await saveProviderPresetModels(orgUuid ?? '', id, revision, input.models, csrfToken);
-            queryClient.setQueryData(presetsKey, catalog);
-            return catalog;
-          }}
           provider={editing}
           organization={scope === 'organization'}
           error={formError}

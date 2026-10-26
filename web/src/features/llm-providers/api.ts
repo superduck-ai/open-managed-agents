@@ -188,23 +188,4 @@ export function listProviderPresets(orgUuid: string) {
 
 export type ProviderPresetCatalog = {
   providers: LLMProviderPreset[];
-  revision: string;
-  writable: boolean;
 };
-
-export function saveProviderPresetModels(
-  orgUuid: string,
-  presetId: string,
-  revision: string,
-  models: LLMModel[],
-  csrfToken?: string,
-) {
-  return consoleApi<ProviderPresetCatalog>(
-    `/api/console/organizations/${encodeURIComponent(orgUuid)}/llm_provider_presets/${encodeURIComponent(presetId)}/models`,
-    {
-      method: 'PUT',
-      body: JSON.stringify({ revision, models }),
-      csrfToken,
-    },
-  );
-}

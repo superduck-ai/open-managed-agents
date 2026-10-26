@@ -60,19 +60,6 @@ const PROVIDER_ERROR_MESSAGES: Record<string, { id: string; defaultMessage: stri
     id: 'llmModels.errorOrganizationProviderExists',
     defaultMessage: 'This organization already has a default provider.',
   },
-  llm_provider_presets_conflict: {
-    id: 'llmModels.defaultsConflict',
-    defaultMessage: 'Supplier defaults changed. Refresh and reselect the supplier before saving.',
-  },
-  llm_provider_presets_read_only: {
-    id: 'llmModels.defaultsReadOnly',
-    defaultMessage: 'To save defaults, configure a writable supplier JSON file.',
-  },
-  llm_provider_presets_write_failed: {
-    id: 'llmModels.defaultsWriteFailed',
-    defaultMessage:
-      'Could not write supplier defaults. Check model values and file permissions. Your draft is preserved.',
-  },
   llm_provider_configuration_invalid: {
     id: 'llmModels.errorInvalidConfiguration',
     defaultMessage: 'The provider configuration is invalid.',

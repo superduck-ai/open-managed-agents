@@ -1236,8 +1236,7 @@ function mockProvidersApi(
     const body = parseBody(init?.body);
     requests.push({ url, method, body });
 
-    if (url.endsWith('/llm_provider_presets') && method === 'GET')
-      return jsonResponse({ providers: [], revision: 'test', writable: false });
+    if (url.endsWith('/llm_provider_presets') && method === 'GET') return jsonResponse({ providers: [] });
     if (url.endsWith('/llm_provider') && method === 'GET')
       return organization ? jsonResponse(organization) : jsonResponse({}, 404);
     if (url.endsWith('/llm_provider') && method === 'PUT') {

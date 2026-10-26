@@ -56,11 +56,6 @@ export function ProviderPresetPicker({
           {msg('llmModels.noSuppliers', 'No suppliers configured. Use Custom model API.')}
         </p>
       ) : null}
-      {catalog && !catalog.writable ? (
-        <p className="text-sm text-muted-foreground">
-          {msg('llmModels.defaultsReadOnly', 'To save defaults, configure a writable supplier JSON file.')}
-        </p>
-      ) : null}
     </Field>
   );
 }

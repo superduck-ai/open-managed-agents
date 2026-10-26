@@ -2,21 +2,16 @@ package config
 
 import (
 	"cmp"
-	"crypto/sha256"
 	_ "embed"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"unicode/utf8"
-
-	"golang.org/x/sys/unix"
 )
 
 //go:embed model-provider-presets.json
@@ -135,13 +130,7 @@ func validateLLMPresetModel(model LLMPresetModel) error {
 
 type LLMProviderPresetCatalog struct {
 	Providers []LLMProviderPreset `json:"providers"`
-	Revision  string              `json:"revision"`
-	Writable  bool                `json:"writable"`
 }
-
-var ErrPresetConflict = errors.New("supplier defaults changed; reload before saving")
-var ErrPresetReadOnly = errors.New("configure llm_provider_presets_file with a writable JSON file to save defaults")
-var ErrPresetNotFound = errors.New("supplier preset not found")
 
 func ReadLLMProviderPresetCatalog(path string) (LLMProviderPresetCatalog, error) {
 	data := defaultLLMProviderPresets
@@ -156,73 +145,5 @@ func ReadLLMProviderPresetCatalog(path string) (LLMProviderPresetCatalog, error)
 	if err != nil {
 		return LLMProviderPresetCatalog{}, err
 	}
-	return LLMProviderPresetCatalog{Providers: providers, Revision: fmt.Sprintf("%x", sha256.Sum256(data)), Writable: path != ""}, nil
-}
-
-func SaveLLMProviderPresetModels(path, presetID, revision string, models []LLMPresetModel) (LLMProviderPresetCatalog, error) {
-	if path == "" {
-		return LLMProviderPresetCatalog{}, ErrPresetReadOnly
-	}
-	path, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return LLMProviderPresetCatalog{}, err
-	}
-	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return LLMProviderPresetCatalog{}, err
-	}
-	defer lock.Close()
-	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
-		return LLMProviderPresetCatalog{}, err
-	}
-	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
-	catalog, err := ReadLLMProviderPresetCatalog(path)
-	if err != nil {
-		return LLMProviderPresetCatalog{}, err
-	}
-	if revision == "" || revision != catalog.Revision {
-		return LLMProviderPresetCatalog{}, ErrPresetConflict
-	}
-	index := slices.IndexFunc(catalog.Providers, func(preset LLMProviderPreset) bool { return preset.ID == presetID })
-	if index < 0 {
-		return LLMProviderPresetCatalog{}, ErrPresetNotFound
-	}
-	catalog.Providers[index].Models = models
-	if err := normalizeLLMProviderPreset(&catalog.Providers[index]); err != nil {
-		return LLMProviderPresetCatalog{}, err
-	}
-	data, err := json.Marshal(llmProviderPresetsFile{Version: 1, Providers: catalog.Providers}, jsontext.WithIndent("  "))
-	if err != nil {
-		return LLMProviderPresetCatalog{}, err
-	}
-	if err := replaceLLMProviderPresetsFile(path, append(data, '\n')); err != nil {
-		return LLMProviderPresetCatalog{}, err
-	}
-	return ReadLLMProviderPresetCatalog(path)
-}
-
-func replaceLLMProviderPresetsFile(path string, data []byte) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".model-provider-presets-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	defer file.Close()
-	if err := file.Chmod(info.Mode().Perm()); err != nil {
-		return err
-	}
-	if _, err := file.Write(data); err != nil {
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
+	return LLMProviderPresetCatalog{Providers: providers}, nil
 }

@@ -7,8 +7,6 @@ const { cleanup, fireEvent, render, screen, within, waitFor } = await import('@t
 afterEach(cleanup);
 
 const catalog: ProviderPresetCatalog = {
-  revision: 'version-one',
-  writable: true,
   providers: [
     {
       id: 'gateway',
@@ -20,12 +18,7 @@ const catalog: ProviderPresetCatalog = {
   ],
 };
 
-function renderPreset(
-  saveDefaults = mock(async (_id: string, _revision: string, _input: LLMProviderInput) => ({
-    ...catalog,
-    revision: 'version-two',
-  })),
-) {
+function renderPreset() {
   const save = mock(async (_input: LLMProviderInput) => true);
   render(
     <I18nProvider initialLocale="en">
@@ -38,11 +31,10 @@ function renderPreset(
         onDiscoverModels={async () => ['second', 'first']}
         presetCatalog={catalog}
         onReloadPresets={() => {}}
-        onSaveDefaults={saveDefaults}
       />
     </I18nProvider>,
   );
-  return { save, saveDefaults };
+  return { save };
 }
 
 async function selectGateway() {
@@ -51,43 +43,15 @@ async function selectGateway() {
   fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'test-key' } });
 }
 
-test('preserves the provider draft when writing supplier defaults fails', async () => {
-  const calls = renderPreset(
-    mock(async () => {
-      throw { code: 'llm_provider_presets_write_failed' };
-    }),
-  );
-  await selectGateway();
-  fireEvent.click(screen.getByRole('checkbox', { name: /all organizations/ }));
-  await waitFor(() =>
-    expect(screen.getByRole('checkbox', { name: /all organizations/ }).getAttribute('aria-checked')).toBe('true'),
-  );
-  fireEvent.click(screen.getByRole('button', { name: 'Custom settings' }));
-  fireEvent.change(screen.getByLabelText('Model ID 1'), { target: { value: 'manual' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
-  expect(
-    await screen.findByText(
-      'Could not write supplier defaults. Check model values and file permissions. Your draft is preserved.',
-    ),
-  ).toBeTruthy();
-  expect(screen.getByLabelText('Model ID 1')).toHaveProperty('value', 'manual');
-  expect(screen.getByLabelText('API key')).toHaveProperty('value', 'test-key');
-  expect(calls.save).not.toHaveBeenCalled();
-});
-
-test('loads empty supplier models, selects fetched models, saves defaults before the connection', async () => {
+test('loads empty supplier models, selects fetched models, saves only the connection', async () => {
   const calls = renderPreset();
   await selectGateway();
   expect(screen.queryByLabelText('Base URL')).toBeNull();
-  fireEvent.click(screen.getByRole('checkbox', { name: /all organizations/ }));
-  await waitFor(() =>
-    expect(screen.getByRole('checkbox', { name: /all organizations/ }).getAttribute('aria-checked')).toBe('true'),
-  );
+  expect(screen.queryByRole('checkbox', { name: /all organizations/ })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Custom settings' }));
   expect(screen.getByLabelText('API key').getAttribute('placeholder')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Get available models' }));
   const candidates = await screen.findByRole('dialog', { name: 'Select models' });
-  expect(calls.saveDefaults).not.toHaveBeenCalled();
   fireEvent.click(within(candidates).getByRole('button', { name: 'Add selected models' }));
   expect(screen.getByLabelText('Model ID 1')).toHaveProperty('value', 'second');
   fireEvent.change(screen.getByLabelText('Display name 1'), { target: { value: 'Second model' } });
@@ -96,9 +60,7 @@ test('loads empty supplier models, selects fetched models, saves defaults before
   expect(screen.queryByRole('button', { name: 'Move model down 1' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
   await waitFor(() => expect(calls.save).toHaveBeenCalledTimes(1));
-  const [id, revision, input] = calls.saveDefaults.mock.calls[0];
-  expect(id).toBe('gateway');
-  expect(revision).toBe('version-one');
+  const input = calls.save.mock.calls[0][0];
   expect(input.models.map((model) => model.id)).toEqual(['second', 'first']);
   expect(input.models[0]).toEqual({
     id: 'second',
@@ -106,7 +68,6 @@ test('loads empty supplier models, selects fetched models, saves defaults before
     context_window: 128000,
     input_modalities: ['text'],
   });
-  expect(calls.save.mock.calls[0][0].models).toEqual(input.models);
 });
 
 test('can save an empty configured supplier without fetching any models', async () => {
@@ -114,7 +75,6 @@ test('can save an empty configured supplier without fetching any models', async 
   await selectGateway();
   fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
   await waitFor(() => expect(calls.save).toHaveBeenCalledTimes(1));
-  expect(calls.saveDefaults).not.toHaveBeenCalled();
   expect(calls.save.mock.calls[0][0].models).toEqual([]);
 });
 
@@ -159,14 +119,12 @@ test('groups advanced fields in the disclosure and preserves their draft when re
   expect(panel!.contains(screen.getByLabelText('Base URL'))).toBe(true);
   expect(panel!.contains(screen.getByRole('button', { name: 'Get available models' }))).toBe(true);
   expect(panel!.contains(screen.getByLabelText('API key'))).toBe(false);
-  const defaults = screen.getByRole('checkbox', { name: /all organizations/ });
-  expect(panel!.contains(defaults)).toBe(false);
-  expect(defaults.getAttribute('aria-checked')).toBe('false');
+  expect(screen.queryByRole('checkbox', { name: /all organizations/ })).toBeNull();
   fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://edited.example.test' } });
   fireEvent.click(trigger);
   expect(trigger.getAttribute('aria-expanded')).toBe('false');
   expect(screen.getByLabelText('API key')).toHaveProperty('value', 'test-key');
-  expect(screen.getByRole('checkbox', { name: /all organizations/ })).toBeTruthy();
+  expect(screen.queryByRole('checkbox', { name: /all organizations/ })).toBeNull();
   fireEvent.click(trigger);
   expect(screen.getByLabelText('Base URL')).toHaveProperty('value', 'https://edited.example.test');
 });

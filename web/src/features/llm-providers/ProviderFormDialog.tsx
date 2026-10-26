@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type SetStateAction } from 'react';
 import { useI18n } from '../../shared/i18n';
 import { Button } from '../../shared/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
@@ -14,13 +14,10 @@ import { ProviderPresetPicker } from './ProviderPresetPicker';
 import { ModelDiscoveryDialog } from './ModelDiscoveryDialog';
 import { Tabs, TabsList, TabsTrigger } from '../../shared/ui/tabs';
 import { ProviderAdvancedSettings } from './ProviderAdvancedSettings';
-import { Checkbox } from '../../shared/ui/checkbox';
 
 type ProviderDraft = {
   form: ProviderForm;
   presetId: string;
-  revision: string;
-  saveDefaults: boolean;
   advanced: boolean;
 };
 
@@ -35,12 +32,10 @@ export function ProviderFormDialog({
   presetCatalog,
   presetError,
   onReloadPresets,
-  onSaveDefaults,
 }: {
   presetCatalog?: ProviderPresetCatalog;
   presetError?: string;
   onReloadPresets?: () => void;
-  onSaveDefaults?: (id: string, revision: string, input: LLMProviderInput) => Promise<ProviderPresetCatalog>;
   provider: LLMProvider | null;
   organization?: boolean;
   error: string;
@@ -58,14 +53,11 @@ export function ProviderFormDialog({
   const [open, setOpen] = useState(true);
   const [mode, setMode] = useState(onReloadPresets ? 'preset' : 'custom');
   const [presetId, setPresetId] = useState('');
-  const [defaultsRevision, setDefaultsRevision] = useState('');
-  const [saveDefaults, setSaveDefaults] = useState(false);
-  const [savingDefaults, setSavingDefaults] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [candidates, setCandidates] = useState<string[] | null>(null);
   const discoveryVersion = useRef(0);
   const drafts = useRef<Record<string, ProviderDraft>>({});
-  const busy = isPending || savingDefaults;
+  const busy = isPending;
   const presetMode = mode === 'preset' && !provider;
 
   const [form, setForm] = useState<ProviderForm>(() => ({
@@ -151,25 +143,11 @@ export function ProviderFormDialog({
       setFormError(result.error);
       return;
     }
-    if (saveDefaults && presetId && onSaveDefaults) {
-      setSavingDefaults(true);
-      try {
-        const saved = await onSaveDefaults(presetId, defaultsRevision, result.input);
-        setDefaultsRevision(saved.revision);
-        toast.success(msg('llmModels.defaultsSaved', 'Supplier defaults saved.'));
-      } catch (error) {
-        setFormError(readableError(error, msg));
-        return;
-      } finally {
-        setSavingDefaults(false);
-      }
-    }
     if (await onSubmit(result.input)) setOpen(false);
   };
 
   const updateConnectionForm = (update: SetStateAction<ProviderForm>) => {
     const next = typeof update === 'function' ? update(form) : update;
-    if (next.baseUrl !== form.baseUrl || next.apiBackend !== form.apiBackend) setSaveDefaults(false);
     setFieldErrors((current) => {
       const remaining = { ...current };
       for (const key of ['name', 'slug', 'baseUrl', 'apiKey'] as const) {
@@ -225,12 +203,10 @@ export function ProviderFormDialog({
                 presetId={presetId}
                 onReload={onReloadPresets}
                 onModeChange={(value) => {
-                  drafts.current[mode] = { form, presetId, revision: defaultsRevision, saveDefaults, advanced };
+                  drafts.current[mode] = { form, presetId, advanced };
                   const next = drafts.current[value];
                   setMode(value);
                   setPresetId(next?.presetId ?? '');
-                  setDefaultsRevision(next?.revision ?? '');
-                  setSaveDefaults(next?.saveDefaults ?? false);
                   setAdvanced(next?.advanced ?? false);
                   setForm(next?.form ?? { ...providerForm(null), ...(organization ? { slug: 'organization' } : {}) });
                   setFormError('');
@@ -238,8 +214,6 @@ export function ProviderFormDialog({
                 }}
                 onPresetChange={(preset) => {
                   setPresetId(preset.id);
-                  setDefaultsRevision(presetCatalog?.revision ?? '');
-                  setSaveDefaults(false);
                   setFormError('');
                   setFieldErrors({});
                   setForm({
@@ -251,14 +225,6 @@ export function ProviderFormDialog({
               {mode !== 'preset' || provider || presetId ? (
                 <>
                   {presetMode ? apiKeyField : null}
-                  <ProviderDefaultsField
-                    visible={presetMode}
-                    catalog={presetCatalog}
-                    presetId={presetId}
-                    form={form}
-                    checked={saveDefaults}
-                    onChange={setSaveDefaults}
-                  />
                   <ProviderAdvancedSettings enabled={presetMode} open={advanced} onOpenChange={setAdvanced}>
                     <ProviderConnectionFields
                       form={form}
@@ -309,40 +275,6 @@ function mergeModels(existing: ProviderModelDraft[], discovered: string[]) {
   const models = existing.filter((model) => model.id !== '');
   const known = new Set(models.map((model) => model.id));
   return [...models, ...discovered.filter((id) => !known.has(id)).map((id) => newModelDraft(id))];
-}
-
-function ProviderDefaultsField({
-  visible,
-  catalog,
-  presetId,
-  form,
-  checked,
-  onChange,
-}: {
-  visible: boolean;
-  catalog?: ProviderPresetCatalog;
-  presetId: string;
-  form: ProviderForm;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  const { msg } = useI18n();
-  const checkboxId = useId();
-  if (!visible || !catalog?.writable) return null;
-  const preset = catalog.providers.find((item) => item.id === presetId);
-  return (
-    <div className="flex items-start gap-2 text-sm">
-      <Checkbox
-        id={checkboxId}
-        checked={checked}
-        onCheckedChange={onChange}
-        disabled={form.baseUrl !== preset?.base_url || form.apiBackend !== preset?.api_backend}
-      />
-      <label htmlFor={checkboxId}>
-        {msg('llmModels.saveDefaults', 'Save this model list as shared supplier defaults (all organizations).')}
-      </label>
-    </div>
-  );
 }
 
 function ProviderCreationFields({

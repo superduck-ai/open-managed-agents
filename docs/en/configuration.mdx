@@ -92,13 +92,11 @@ Set `llm_provider_presets_file: ./model-provider-presets.json` in the server YAM
 
 The JSON schema is `{"version":1,"providers":[{"id":"gateway","name":"Gateway","api_backend":"chat_completions","base_url":"https://gateway.example.com","models":[]}]}`. Supported backends are `messages` and `chat_completions`. Models may be empty and support `id`, optional `name`, `context_window`, `max_output_tokens`, and `input_modalities`. Array order is the default display order. Credentials and unknown fields are rejected.
 
-When adding a connection, organization administrators can discover and select models, reorder them, and save the list back to this file as defaults for subsequent connections and restarts. Saved connections retain independent database snapshots. The file and its directory must be writable for locking, temporary files, and atomic replacement. Container deployments need a persistent writable directory; replicas must share a filesystem supporting file locks and atomic rename. A missing or invalid explicit file fails startup. Omitting the path uses the read-only built-in catalog.
-
-Enabling a writable file permits organization administrators to maintain deployment-wide shared defaults; do not put organization-private data in this catalog. Saving updates the JSON first and the connection second. A failed connection save retains the updated defaults and the connection draft for retry. Revision conflicts do not overwrite another writer's changes.
+The Console only reads this deployment configuration. Discovered or edited models are saved to the current organization default connection or workspace connection; saving a connection never writes to the supplier JSON. Saved connections retain independent database snapshots. The catalog requires no write permission. A missing or invalid explicit file fails startup; omitting the path uses the built-in catalog. Do not put organization-private data in this shared deployment catalog.
 
 ### Initialize known suppliers
 
-Run `./scripts/init-model-provider-presets.sh --dry-run` to preview, then `./scripts/init-model-provider-presets.sh config/model-provider-presets.json` to initialize a writable catalog. Existing files and symlinks are preserved, including model lists discovered later. The initializer uses the same JSON as the embedded catalog and contains no credentials.
+Run `./scripts/init-model-provider-presets.sh --dry-run` to preview, then `./scripts/init-model-provider-presets.sh config/model-provider-presets.json` to initialize a catalog. Existing files and symlinks are preserved, including locally configured model lists. The initializer uses the same JSON as the embedded catalog and contains no credentials.
 
 Supplier `order` is a nonnegative safe integer, ascending, defaulting to zero. Equal priorities retain file order. Built-ins use 10, 20, 30 and so on; set an internal gateway to zero to place it first. This orders supplier choices, not individual model rows. Model display names are optional and fall back to IDs.
 

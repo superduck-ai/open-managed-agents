@@ -79,7 +79,9 @@ function resourceSummary(resources: EnvironmentResourceValues, msg: ReturnType<t
           resource.unit,
         )}`,
     );
-  return parts.length ? parts.join(' · ') : msg('environmentTemplate.resources.default', 'Default size');
+  return parts.length
+    ? parts.map((part) => <span key={part}>{part}</span>)
+    : msg('environmentTemplate.resources.default', 'Default size');
 }
 
 export function EnvironmentResources({ values, onChange, errors, readOnly }: EnvironmentFieldsProps) {
@@ -93,9 +95,9 @@ export function EnvironmentResources({ values, onChange, errors, readOnly }: Env
       description={msg('environmentTemplate.resources.description', 'Optional. Leave empty to use the default size.')}
     >
       <Collapsible open={expanded} onOpenChange={setOpen}>
-        <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-md py-1 text-left text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-md py-1 text-left text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-[0.5px] focus-visible:ring-ring">
           <ChevronRight className={cn('size-4 shrink-0 transition-transform', expanded && 'rotate-90')} aria-hidden />
-          <span className="min-w-0 truncate">{resourceSummary(values.resources, msg)}</span>
+          <span className="flex min-w-0 flex-wrap gap-x-4 gap-y-1">{resourceSummary(values.resources, msg)}</span>
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="grid gap-4 pt-4 sm:grid-cols-3">

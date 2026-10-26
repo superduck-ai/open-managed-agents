@@ -6,14 +6,12 @@ import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 
 export function SessionListHeader({
   title,
-  description,
   filters,
   loading,
   onCreate,
   onRefresh,
 }: {
   title: string;
-  description: string;
   filters: ReactNode;
   loading: boolean;
   onCreate: () => void;
@@ -24,7 +22,6 @@ export function SessionListHeader({
     <div className="mb-7" data-testid="session-list-header">
       <ResourcePageHeader
         title={title}
-        description={description}
         actions={
           <Button size="lg" onClick={onCreate}>
             <Plus className="size-4" aria-hidden />

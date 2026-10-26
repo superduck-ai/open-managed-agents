@@ -27,7 +27,7 @@ import {
 import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { Archive, Copy, Pencil, Play, Plus, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { agentDetailStatusValues } from '../agents/model';
 import {
   archiveManagedEntity,
@@ -86,6 +86,13 @@ import { managedEntityErrorMessage } from './environment-model';
 import { columnWidth, entityAgentId, entityAgentLabel, entityDisplayName, entityStatusLabel } from './model';
 
 type ManagedFilterMenu = 'agent' | 'created' | 'deployment' | 'status';
+const managedEntityTableWidths: Record<ManagedEntitySection, string> = {
+  sessions: 'min-w-[1080px]',
+  environments: 'min-w-[1080px]',
+  'credential-vaults': 'min-w-[760px]',
+  'memory-stores': 'min-w-[760px]',
+  deployments: 'min-w-[960px]',
+};
 type DeploymentStatusFilter = NonNullable<ManagedEntityListFilters['status']>;
 type ManagedEntityPageState = {
   workspaceId: string;
@@ -208,6 +215,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
   const title = resourceTitle(config, msg);
   const description = resourceDescription(config, msg);
   const createLabel = resourceCreateLabel(config, msg);
+  const createTriggerRef = useRef<HTMLButtonElement>(null);
   const searchPlaceholder = resourceSearchPlaceholder(config, msg);
   const managedEntityListFilters = useMemo<ManagedEntityListFilters | undefined>(() => {
     switch (config.section) {
@@ -899,7 +907,6 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       {config.section === 'sessions' ? (
         <SessionListHeader
           title={title}
-          description={description}
           loading={loading || sessionIdSearch.loading}
           filters={listFilters}
           onCreate={() => setDialogState({ mode: 'create' })}
@@ -909,10 +916,17 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         <>
           <ResourcePageHeader
             title={title}
-            description={description}
+            description={
+              ['credential-vaults', 'memory-stores', 'deployments'].includes(config.section) ? undefined : description
+            }
             actions={
               createLabel ? (
-                <Button type="button" size="lg" onClick={() => setDialogState({ mode: 'create' })}>
+                <Button
+                  ref={createTriggerRef}
+                  type="button"
+                  size="lg"
+                  onClick={() => setDialogState({ mode: 'create' })}
+                >
                   <Plus className="size-4" aria-hidden />
                   {createLabel}
                 </Button>
@@ -944,7 +958,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         />
       ) : (
         <div>
-          <Table className={cn(dataTableClassName, 'min-w-[1080px]')}>
+          <Table className={cn(dataTableClassName, managedEntityTableWidths[config.section])}>
             <TableHeader>
               <TableRow className={dataTableHeaderRowClassName}>
                 {config.columns.map((column) => (
@@ -1008,7 +1022,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
             </TableBody>
           </Table>
 
-          {!loading && !visibleEntities.length ? (
+          {!loading && !loadError && !visibleEntities.length ? (
             config.section === 'deployments' ? (
               <DeploymentEmptyState
                 filtered={Boolean(search || deploymentAgentFilter || deploymentStatusFilter !== 'all')}
@@ -1052,6 +1066,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
               : msg('managedAgents.common.editEntity', 'Edit {label}', { label: entityKindLabel(config.section, msg) })
           }
           entity={dialogState.entity}
+          returnFocus={() => (dialogState.mode === 'create' ? createTriggerRef.current : true)}
           workspaceId={activeWorkspaceId}
           onClose={() => setDialogState(null)}
           onSubmit={async (values) => {

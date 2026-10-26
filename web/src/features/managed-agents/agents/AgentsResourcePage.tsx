@@ -33,7 +33,6 @@ import {
   createdFilterOptionsFor,
   managedColumnLabel,
   resourceCreateLabel,
-  resourceDescription,
   resourceSearchPlaceholder,
   resourceTitle,
   statusFilterLabel,
@@ -208,7 +207,6 @@ export function AgentsResourcePage({
       ? visibleAgents.slice(agentLocalPage * consoleResourceListLimit, (agentLocalPage + 1) * consoleResourceListLimit)
       : visibleAgents;
   const title = resourceTitle(config, msg);
-  const description = resourceDescription(config, msg);
   const createLabel = resourceCreateLabel(config, msg);
   const searchPlaceholder = resourceSearchPlaceholder(config, msg);
   const createdOptions = createdFilterOptionsFor(msg);
@@ -591,7 +589,6 @@ export function AgentsResourcePage({
     <section className="min-h-[calc(100vh-48px)] text-foreground">
       <AgentListHeader
         title={title}
-        description={description}
         createLabel={createLabel}
         onCreate={() => {
           setCreateOpen(true);
@@ -674,7 +671,7 @@ export function AgentsResourcePage({
                     {column ? (
                       managedColumnLabel(column, msg)
                     ) : (
-                      <span className="block size-4 rounded border border-border" aria-hidden />
+                      <span className="block size-4 rounded border-[0.5px] border-border" aria-hidden />
                     )}
                   </TableHead>
                 ))}
@@ -688,7 +685,7 @@ export function AgentsResourcePage({
                       {column ? (
                         row[column]
                       ) : (
-                        <span className="block size-4 rounded border border-border" aria-hidden />
+                        <span className="block size-4 rounded border-[0.5px] border-border" aria-hidden />
                       )}
                     </TableCell>
                   ))}

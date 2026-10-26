@@ -1,3 +1,4 @@
+import { AppearanceMenuRow } from './AppearanceMenuRow';
 import { BrandLogo } from '@/shared/brand/BrandLogo';
 import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
 import { OrganizationMenu } from '../../features/organizations/OrganizationMenu';
@@ -11,6 +12,7 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
+  Cpu,
   Globe2,
   ListTree,
   LogOut,
@@ -34,6 +36,7 @@ import {
 import clsx from 'clsx';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
+import { Collapsible, CollapsibleContent } from '@/shared/ui/collapsible';
 import {
   Sidebar as AppSidebar,
   SidebarContent as AppSidebarContent,
@@ -106,7 +109,7 @@ type ShellLinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> & {
   href: string;
   onNavigate?: NavigateHandler;
 };
-const interactiveMotionClass = 'transition-colors duration-200 ease-snappy-out motion-reduce:transition-none';
+const interactiveMotionClass = 'transition-colors duration-150 ease-out motion-reduce:transition-none';
 
 const ShellLink = forwardRef<HTMLAnchorElement, ShellLinkProps>(function ShellLink(
   { href, onNavigate, onClick, target, children, ...props },
@@ -194,12 +197,12 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
           data-session-workspace-shell={isSessionWorkspace ? '' : undefined}
           className={clsx(
             isSessionWorkspace
-              ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:py-6 [&>[data-testid=session-detail-page]]:!h-full [&>[data-testid=session-detail-page]]:!min-h-0 [&>[data-testid=session-detail-page]]:!overflow-hidden'
+              ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:py-6 [@media(max-height:600px)]:overflow-y-auto [&>[data-testid=session-detail-page]]:!h-full [&>[data-testid=session-detail-page]]:!min-h-0 [@media(max-height:600px)]:[&>[data-testid=session-detail-page]]:!min-h-[640px] [&>[data-testid=session-detail-page]]:!overflow-hidden'
               : isQuickstart
                 ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-[clamp(0.75rem,2dvh,1.5rem)] sm:px-6 lg:px-8'
                 : isWide
                   ? 'min-w-0 px-6 py-6 lg:px-8'
-                  : 'mx-auto max-w-[928px] px-6 py-12 lg:px-0',
+                  : 'mx-auto min-w-0 w-full max-w-[928px] px-6 py-12 lg:px-0',
           )}
         >
           {children}
@@ -276,7 +279,7 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
   return (
     <AppSidebar
       collapsible="icon"
-      className="border-r border-sidebar-border"
+      className="border-r-[0.5px] border-sidebar-border"
       data-sidebar-state={collapsed ? 'collapsed' : 'expanded'}
     >
       <ShellSidebarHeader currentPath={currentPath} onNavigate={onNavigate} />
@@ -324,37 +327,41 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
                         {collapsed ? null : (
                           <>
                             <span className="flex-1 truncate">{msg(item.labelId, item.label)}</span>
-                            {isOpen ? (
-                              <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden />
-                            ) : (
-                              <ChevronRight className="size-3.5 text-muted-foreground" aria-hidden />
-                            )}
+                            <ChevronRight
+                              className={clsx(
+                                'size-3.5 text-muted-foreground transition-transform duration-[220ms] ease-out motion-reduce:transition-none',
+                                isOpen && 'rotate-90',
+                              )}
+                              aria-hidden
+                            />
                           </>
                         )}
                       </SidebarMenuButton>
-                      {!collapsed && isOpen ? (
-                        <SidebarMenuSub>
-                          {item.children.map((child) => (
-                            <SidebarMenuSubItem key={child.href}>
-                              <SidebarMenuSubButton
-                                render={
-                                  <ShellLink
-                                    href={navigationHref(child.href, activeWorkspaceId)}
-                                    onNavigate={onNavigate}
-                                  />
-                                }
-                                isActive={isActivePath(currentPath, child.href)}
-                                className={interactiveMotionClass}
-                              >
-                                <span className="flex-1 truncate">{msg(child.labelId, child.label)}</span>
-                                {child.badge ? (
-                                  <Badge>{child.badgeId ? msg(child.badgeId, child.badge) : child.badge}</Badge>
-                                ) : null}
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          ))}
-                        </SidebarMenuSub>
-                      ) : null}
+                      <Collapsible open={!collapsed && isOpen}>
+                        <CollapsibleContent>
+                          <SidebarMenuSub>
+                            {item.children.map((child) => (
+                              <SidebarMenuSubItem key={child.href}>
+                                <SidebarMenuSubButton
+                                  render={
+                                    <ShellLink
+                                      href={navigationHref(child.href, activeWorkspaceId)}
+                                      onNavigate={onNavigate}
+                                    />
+                                  }
+                                  isActive={isActivePath(currentPath, child.href)}
+                                  className={interactiveMotionClass}
+                                >
+                                  <span className="flex-1 truncate">{msg(child.labelId, child.label)}</span>
+                                  {child.badge ? (
+                                    <Badge>{child.badgeId ? msg(child.badgeId, child.badge) : child.badge}</Badge>
+                                  ) : null}
+                                </SidebarMenuSubButton>
+                              </SidebarMenuSubItem>
+                            ))}
+                          </SidebarMenuSub>
+                        </CollapsibleContent>
+                      </Collapsible>
                     </SidebarMenuItem>
                   );
                 })}
@@ -387,7 +394,7 @@ function SettingsSidebar({
   return (
     <AppSidebar
       collapsible="icon"
-      className="border-r border-sidebar-border"
+      className="border-r-[0.5px] border-sidebar-border"
       data-sidebar-state={collapsed ? 'collapsed' : 'expanded'}
     >
       <ShellSidebarHeader currentPath={currentPath} onNavigate={onNavigate} />
@@ -467,7 +474,7 @@ function ShellMobileBar({
   }
 
   return (
-    <div className="sticky top-0 z-20 flex shrink-0 items-center gap-3 border-b border-border bg-background/95 px-4 py-3 backdrop-blur-sm md:hidden">
+    <div className="sticky top-0 z-20 flex shrink-0 items-center gap-3 border-b-[0.5px] border-border bg-background/95 px-4 py-3 backdrop-blur-sm md:hidden">
       <Button
         type="button"
         variant="ghost"
@@ -504,7 +511,7 @@ function ShellSidebarHeader({ currentPath, onNavigate }: { currentPath: string; 
             href="/dashboard"
             onNavigate={onNavigate}
             aria-label="Open Managed Agents"
-            className="flex h-12 min-w-0 flex-1 items-center rounded-md px-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex h-12 min-w-0 flex-1 items-center rounded-md px-2 outline-none focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-ring"
           >
             <BrandLogo decorative className="h-7 w-[83px]" />
           </ShellLink>
@@ -577,7 +584,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
               />
             }
           >
-            <span className="grid aspect-square size-8 shrink-0 place-items-center rounded-lg border border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground">
+            <span className="grid aspect-square size-8 shrink-0 place-items-center rounded-lg border-[0.5px] border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground">
               <Box className="size-4" style={{ color: workspaceColor(activeWorkspace) }} aria-hidden />
             </span>
             {collapsed ? null : (
@@ -610,7 +617,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                     className="gap-2 p-2"
                     onClick={() => handleSelect(workspace)}
                   >
-                    <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background text-muted-foreground">
+                    <span className="grid size-6 shrink-0 place-items-center rounded-md border-[0.5px] bg-background text-muted-foreground">
                       <Box className="size-4" style={{ color: workspaceColor(workspace) }} aria-hidden />
                     </span>
                     <span className="min-w-0 flex-1 truncate">{localizedWorkspaceName(workspace.name, msg)}</span>
@@ -630,7 +637,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                     confirmation.request(() => setCreateOpen(true));
                   }}
                 >
-                  <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background">
+                  <span className="grid size-6 shrink-0 place-items-center rounded-md border-[0.5px] bg-background">
                     <Plus className="size-4" aria-hidden />
                   </span>
                   <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
@@ -642,7 +649,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                   render={<ShellLink href="/settings/workspaces" onNavigate={onNavigate} />}
                   onClick={() => setOpen(false)}
                 >
-                  <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background">
+                  <span className="grid size-6 shrink-0 place-items-center rounded-md border-[0.5px] bg-background">
                     <Settings className="size-4" aria-hidden />
                   </span>
                   <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
@@ -751,6 +758,9 @@ function SettingsNavigationIcon({ href }: { href: string }) {
   if (href === '/settings/members') {
     return <UsersRound className="size-4" aria-hidden />;
   }
+  if (href === '/settings/llm') {
+    return <Cpu className="size-4" aria-hidden />;
+  }
   if (href === '/settings/workspaces') {
     return <Box className="size-4" aria-hidden />;
   }
@@ -815,22 +825,22 @@ export function AccountMenu({
               />
             }
           >
-            <span className="grid size-8 place-items-center rounded-md border border-sidebar-border bg-sidebar-accent/40 text-sidebar-foreground">
+            <span className="grid size-8 place-items-center rounded-md border-[0.5px] border-sidebar-border bg-sidebar-accent/40 text-sidebar-foreground">
               <Building2 className="size-4" aria-hidden />
             </span>
             {collapsed ? null : (
               <>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-sidebar-foreground">{identity.name}</span>
-                  <span className="block truncate text-xs text-sidebar-foreground/70">
-                    {msg('account.subtitle', '{role} · {workspaceName}', {
-                      role: activeWorkspace.effective_role
+                  <span className="flex min-w-0 items-center gap-2 text-xs text-sidebar-foreground/70">
+                    <span className="shrink-0">
+                      {activeWorkspace.effective_role
                         ? accountRoleLabel(activeWorkspace.effective_role, msg)
                         : organizationRole
                           ? accountRoleLabel(organizationRole, msg)
-                          : msg('account.role.unknown', 'Member'),
-                      workspaceName: localizedWorkspaceName(activeWorkspace.name, msg),
-                    })}
+                          : msg('account.role.unknown', 'Member')}
+                    </span>
+                    <span className="truncate">{localizedWorkspaceName(activeWorkspace.name, msg)}</span>
                   </span>
                 </span>
                 <ChevronDown className="size-4 text-sidebar-foreground/70" aria-hidden />
@@ -862,16 +872,20 @@ export function AccountMenu({
               </span>
             </DropdownMenuItem>
 
-            {personalSettingsNavigation.map((item) => (
-              <DropdownMenuItem
-                key={item.href}
-                className="h-8 gap-3 px-3"
-                onClick={() => void handleMenuNavigation(item.href)}
-              >
-                <SettingsNavigationIcon href={item.href} />
-                <span className="min-w-0 flex-1 truncate">{msg(item.labelId, item.label)}</span>
-              </DropdownMenuItem>
-            ))}
+            {personalSettingsNavigation
+              .filter((item) => item.href !== '/settings/appearance')
+              .map((item) => (
+                <DropdownMenuItem
+                  key={item.href}
+                  className="h-8 gap-3 px-3"
+                  onClick={() => void handleMenuNavigation(item.href)}
+                >
+                  <SettingsNavigationIcon href={item.href} />
+                  <span className="min-w-0 flex-1 truncate">{msg(item.labelId, item.label)}</span>
+                </DropdownMenuItem>
+              ))}
+
+            <AppearanceMenuRow />
 
             <DropdownMenuSub>
               <DropdownMenuSubTrigger openOnHover className="h-8 gap-3 px-3">

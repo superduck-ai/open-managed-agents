@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ban } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../shared/i18n';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs';
 import { TooltipProvider } from '../../shared/ui/tooltip';
 import { useWorkspace } from '../../shared/workspaces/context';
@@ -132,9 +133,7 @@ export function ObservabilityPage({ scope }: { scope: ObservabilityScope }) {
         ) : (
           <>
             {scope.kind === 'workspace' ? (
-              <h1 className="mb-5 text-[28px] font-semibold leading-tight tracking-tight text-foreground">
-                {msg('observability.title', 'Observability')}
-              </h1>
+              <ResourcePageHeader title={msg('observability.title', 'Observability')} />
             ) : null}
             <div className="mb-6">
               <ObservabilityToolbar

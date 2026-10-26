@@ -37,7 +37,7 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 				"params.CreatedByAPIKeyUUID", "params.EnvironmentUUID", "params.EnvironmentExternalID",
 				"params.AgentUUID", "params.AgentExternalID", "params.AgentVersion", "params.AgentSnapshot",
 				"params.Name", "params.Description", "params.Metadata", "params.RuntimeUserUUID", "params.InitialEvents", "params.Resources",
-				"params.ResourceSecrets", "params.VaultIDs", "params.Schedule", "params.LastRunAt", "params.Status",
+				"params.ResourceSecrets", "params.VaultIDs", "params.Budget", "params.Schedule", "params.LastRunAt", "params.Status",
 				"params.PausedReason", "params.CreatedAt", "params.CreatedAt",
 			},
 			wantSensitiveArgumentNames: deploymentSensitiveArgumentNames(true),
@@ -69,11 +69,11 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{
 				"params.EnvironmentUUID", "params.EnvironmentExternalID", "params.AgentUUID", "params.AgentExternalID",
 				"params.AgentVersion", "params.AgentSnapshot", "params.Name", "params.Description", "params.Metadata",
-				"params.InitialEvents", "params.Resources", "params.ResourceSecrets", "params.VaultIDs", "params.Schedule",
+				"params.InitialEvents", "params.Resources", "params.ResourceSecrets", "params.VaultIDs", "params.Budget", "params.Schedule",
 				"params.UpdatedAt", "params.WorkspaceUUID", "params.ExternalID",
 			},
 			wantSensitiveArgumentNames: deploymentSensitiveArgumentNames(false),
-			wantSQLFragments:           []string{"UPDATE deployments", "schedule = CAST($14 AS jsonb)", "workspace_uuid = $16", "RETURNING"},
+			wantSQLFragments:           []string{"UPDATE deployments", "schedule = CAST($15 AS jsonb)", "workspace_uuid = $17", "RETURNING"},
 		}},
 		{"update without schedule change", mapperBuilderContract{
 			statement: deploymentMapperUpdateByExternalIDStatement,
@@ -82,14 +82,14 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{
 				"params.EnvironmentUUID", "params.EnvironmentExternalID", "params.AgentUUID", "params.AgentExternalID",
 				"params.AgentVersion", "params.AgentSnapshot", "params.Name", "params.Description", "params.Metadata",
-				"params.InitialEvents", "params.Resources", "params.ResourceSecrets", "params.VaultIDs", "params.UpdatedAt",
+				"params.InitialEvents", "params.Resources", "params.ResourceSecrets", "params.VaultIDs", "params.Budget", "params.UpdatedAt",
 				"params.WorkspaceUUID", "params.ExternalID",
 			},
 			wantSensitiveArgumentNames: []string{
 				"params.AgentSnapshot", "params.Metadata", "params.InitialEvents", "params.Resources",
-				"params.ResourceSecrets", "params.VaultIDs",
+				"params.ResourceSecrets", "params.VaultIDs", "params.Budget",
 			},
-			wantSQLFragments: []string{"UPDATE deployments", "workspace_uuid = $15", "RETURNING"},
+			wantSQLFragments: []string{"UPDATE deployments", "workspace_uuid = $16", "RETURNING"},
 		}},
 		{"archive", mapperBuilderContract{
 			statement: deploymentMapperArchiveByExternalIDStatement,
@@ -294,7 +294,7 @@ func deploymentMapperTestWriteParams(now time.Time) deploymentWriteParams {
 		EnvironmentUUID:     "00000000-0000-4000-8000-000000000005", EnvironmentExternalID: "env_test",
 		AgentUUID: "00000000-0000-4000-8000-000000000006", AgentExternalID: "agent_test", AgentVersion: 1,
 		AgentSnapshot: []byte(`{}`), Name: "test", Metadata: []byte(`{}`), InitialEvents: []byte(`[]`),
-		Resources: []byte(`[]`), ResourceSecrets: []byte(`[]`), VaultIDs: []byte(`[]`), Schedule: []byte(`{}`),
+		Resources: []byte(`[]`), ResourceSecrets: []byte(`[]`), VaultIDs: []byte(`[]`), Budget: []byte(`{}`), Schedule: []byte(`{}`),
 		Status: "active", PausedReason: []byte(`null`), CreatedAt: now, UpdatedAt: now,
 	}
 }
@@ -314,7 +314,7 @@ func deploymentRunMapperTestWriteParams(now time.Time) deploymentRunWriteParams 
 func deploymentSensitiveArgumentNames(includePausedReason bool) []string {
 	names := []string{
 		"params.AgentSnapshot", "params.Metadata", "params.InitialEvents", "params.Resources",
-		"params.ResourceSecrets", "params.VaultIDs", "params.Schedule",
+		"params.ResourceSecrets", "params.VaultIDs", "params.Budget", "params.Schedule",
 	}
 	if includePausedReason {
 		names = append(names, "params.PausedReason")
@@ -327,7 +327,7 @@ func deploymentMapperTestColumns() []string {
 		"uuid", "external_id", "organization_uuid", "workspace_uuid", "created_by_api_key_uuid",
 		"environment_uuid", "environment_external_id", "agent_uuid", "agent_external_id", "agent_version",
 		"agent_snapshot", "name", "description", "metadata", "runtime_user_uuid", "initial_events", "resources", "resource_secrets",
-		"vault_ids", "schedule", "last_run_at", "status", "paused_reason", "created_at", "updated_at", "archived_at", "deleted_at",
+		"vault_ids", "budget", "schedule", "last_run_at", "status", "paused_reason", "created_at", "updated_at", "archived_at", "deleted_at",
 	}
 }
 
@@ -338,7 +338,7 @@ func deploymentMapperTestRow() []driver.Value {
 		"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004",
 		"00000000-0000-4000-8000-000000000005", "env_test", "00000000-0000-4000-8000-000000000006",
 		"agent_test", int64(1), []byte(`{}`), "test", nil, []byte(`{}`), nil, []byte(`[]`), []byte(`[]`), []byte(`[]`),
-		[]byte(`[]`), []byte(`{}`), nil, "active", []byte(`null`), now, now, nil, nil,
+		[]byte(`[]`), []byte(`{}`), []byte(`{}`), nil, "active", []byte(`null`), now, now, nil, nil,
 	}
 }
 

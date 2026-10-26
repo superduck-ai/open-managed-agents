@@ -1,3 +1,4 @@
+import { logData } from "./persistence-fixtures.ts";
 import { expect, test } from "bun:test";
 import { CcrClient } from "../src/ccrv2/client.ts";
 import {
@@ -135,7 +136,7 @@ test("auth failures share all writes, reset on successful writes and survive oth
   try {
     // Every kind of successful POST/PUT clears the same auth counter.
     for (const write of [
-      () => client.persist("a", "dsh_log", {}),
+      () => client.persist("a", "dsh_log", logData({})),
       () => client.events("a", [{ type: "agent.message" }]),
       () => client.setStatus("a", "idle"),
       () => client.acknowledge("a", "input").catch(() => {}),
@@ -300,7 +301,7 @@ test("epoch and lease rejection on other writes stop the heartbeat without alter
       check: client.bindLease("a"), onLeaseLost: (failure) => { lost.push(failure); },
     }, new AbortController().signal, clock);
     try {
-      await expect(client.persist("a", "dsh_log", {})).rejects.toThrow(String(status));
+      await expect(client.persist("a", "dsh_log", logData({}))).rejects.toThrow(String(status));
       expect(lost).toHaveLength(1);
       expect(lost[0]?.httpStatus).toBe(status);
       expect(clock.pending.size).toBe(0);

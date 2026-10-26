@@ -33,7 +33,7 @@ export function EnvironmentPrebuildDialog({
           {msg('environmentPrebuild.dialogDescription', 'Preparation status and logs for the saved packages.')}
         </DialogDescription>
       </DialogHeader>
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-3">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t-[0.5px] border-border px-5 py-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
           <PrebuildLabel state={prebuild.state} />
           <span className="text-muted-foreground">
@@ -117,10 +117,10 @@ function PrebuildRun({
       ? msg('environmentPrebuild.image', 'Build image')
       : msg('environmentPrebuild.template', 'Build template');
   return (
-    <div className="flex min-h-0 flex-1 flex-col border-t border-border sm:flex-row">
+    <div className="flex min-h-0 flex-1 flex-col border-t-[0.5px] border-border sm:flex-row">
       <div
         aria-label={msg('environmentPrebuild.stages', 'Build stages')}
-        className="flex shrink-0 gap-1 border-b border-border p-2 sm:w-44 sm:flex-col sm:border-r sm:border-b-0"
+        className="flex shrink-0 gap-1 border-b-[0.5px] border-border p-2 sm:w-44 sm:flex-col sm:border-r-[0.5px] sm:border-b-0"
       >
         {(['image', 'template'] as const).map((value) => (
           <Button

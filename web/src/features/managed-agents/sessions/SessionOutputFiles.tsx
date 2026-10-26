@@ -40,9 +40,9 @@ function SessionOutputFilesContent({ session, workspaceId, refreshKey, children 
       }}
     >
       {error ? (
-        <div role="alert" className="my-2 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+        <div role="alert" className="my-2 flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
           <span>{msg('managedAgents.sessions.outputs.loadError', 'Output files could not be refreshed.')}</span>
-          <span className="break-words">{errorMessage(error)}</span>
+          <span className="min-w-0 [overflow-wrap:anywhere]">{errorMessage(error)}</span>
           <Button type="button" variant="link" size="xs" onClick={() => void refresh()}>
             {msg('common.retry', 'Retry')}
           </Button>
@@ -84,7 +84,7 @@ export function SessionOutputFileList({ files, workspaceId }: { files: SessionOu
               <span className="hidden group-data-[panel-open]:inline">
                 {msg('managedAgents.sessions.outputs.collapse', 'Collapse files')}
               </span>
-              <ChevronDown className="size-4 group-data-[panel-open]:rotate-180" />
+              <ChevronDown className="size-4 transition-transform duration-200 ease-out group-data-[panel-open]:rotate-180 motion-reduce:transition-none" />
             </CollapsibleTrigger>
           </>
         ) : null}
@@ -113,8 +113,9 @@ function SessionOutputFileCard({ file, workspaceId }: { file: SessionOutputFile;
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-sm font-medium text-foreground">{file.filename}</span>
         <span className="truncate text-xs text-muted-foreground">{file.path}</span>
-        <span className="truncate text-xs text-muted-foreground">
-          {typeLabel} · {formatters.bytes(file.size_bytes)}
+        <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+          <span className="min-w-0 truncate">{typeLabel}</span>
+          <span className="shrink-0">{formatters.bytes(file.size_bytes)}</span>
         </span>
       </span>
       {downloading ? (

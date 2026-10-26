@@ -46,7 +46,7 @@ sequenceDiagram
 - **降级**：物化时源文件已不存在、MIME 不再受支持、复制的文件头与 MIME 不一致、内容超过 `storage.max_file_bytes`，或进程未配置附件存储时，该块替换为一段说明附件不可用的 `text` 块，绝不回退为内联字节。超限对象不会被截断入库，暂存对象按孤儿清理流程回收。数据库或对象存储的瞬时失败会作为投递错误向上返回，由现有重试路径处理。
 - **覆盖面**：物化发生在公开事件转换为 worker 载荷的唯一入口（`QueuePublicSessionEvents` 与激活重放），因此 sessions API、Deployment `initial_events` 等所有来源一致生效。
 
-因此 internal-events（`dsh_log`、`dsh_brain_state` 以及 Claude Code transcript）不包含用户上传的附件原始内容。
+因此 internal-events（`dsh_log`、`ccrv2_delivery` 以及 Claude Code transcript）不包含用户上传的附件原始内容。
 
 ## Messages 代理展开
 

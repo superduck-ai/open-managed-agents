@@ -5,11 +5,19 @@ import { createOmaSession } from "./oma-session.ts";
 import { registerWorkerTask, validateBrainTask } from "./worker-registration.ts";
 import { claimTasks, releaseClaim, type ClaimClient, type TaskAdmissionStage } from "./claim.ts";
 import { SessionCapacity } from "./capacity.ts";
+import { SHUTDOWN_SETTLE_MS } from "./config.ts";
 import { openWorkerSession } from "./worker-session.ts";
+
+declare module "@deepseek-ai/cordis" {
+  interface Events {
+    "oma/shutdown-drain"(): Promise<void>;
+  }
+}
 
 export interface WorkerOptions {
   maxSessions: number;
   claimConcurrency: number;
+  shutdownDrainMs?: number;
 }
 
 export async function startWorkers(
@@ -105,6 +113,15 @@ export async function startWorkers(
       else if (!session.busy && Date.now() - session.lastIdle > 60_000) watch(retireIdle(session));
     }
   }, 3000);
+  let draining: Promise<void> | undefined;
+  const drainSessions = async () => {
+    abort.abort();
+    clearInterval(timer);
+    const active = [...sessions.values()].filter((session) => !session.abort.signal.aborted && !retiring.has(session.id));
+    const drained = await Promise.all(active.map((session) => session.drain(options.shutdownDrainMs ?? 0)));
+    await Promise.all(active.filter((_, index) => !drained[index]).map((session) => session.interruptForShutdown(SHUTDOWN_SETTLE_MS)));
+  };
+  ctx.on("oma/shutdown-drain", () => draining ??= drainSessions());
   ctx.effect(() => async () => {
     abort.abort();
     clearInterval(timer);

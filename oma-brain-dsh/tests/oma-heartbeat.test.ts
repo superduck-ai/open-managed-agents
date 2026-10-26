@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
-import { ConfigurationError, readBrainClaimOptions, readCcrHeartbeatOptions } from "../src/config.ts";
+import { ConfigurationError, readBrainClaimOptions, readCcrHeartbeatOptions, readShutdownDrainMs } from "../src/config.ts";
 import { mountOma } from "../src/plugin.ts";
 import { OmaApi } from "../src/api.ts";
 import { createOmaSession } from "../src/oma-session.ts";
@@ -63,6 +63,14 @@ test("brain claim configuration requires a token and bounds concurrency", () => 
     expect(() => readBrainClaimOptions({ OMA_BRAIN_CLAIM_TOKEN: "token", OMA_BRAIN_CLAIM_CONCURRENCY: value })).toThrow(ConfigurationError);
   expect(readBrainClaimOptions({ OMA_BRAIN_CLAIM_TOKEN: " token " })).toEqual({ token: "token", concurrency: 4 });
   expect(readBrainClaimOptions({ OMA_BRAIN_CLAIM_TOKEN: "token", OMA_BRAIN_CLAIM_CONCURRENCY: "8" })).toEqual({ token: "token", concurrency: 8 });
+});
+
+test("shutdown drain configuration rejects invalid values and defaults to twenty seconds", () => {
+  for (const value of ["-1", "1.5", " ", "soon", "600001"])
+    expect(() => readShutdownDrainMs({ OMA_BRAIN_SHUTDOWN_DRAIN_MS: value })).toThrow(ConfigurationError);
+  expect(readShutdownDrainMs({})).toBe(20_000);
+  expect(readShutdownDrainMs({ OMA_BRAIN_SHUTDOWN_DRAIN_MS: "0" })).toBe(0);
+  expect(readShutdownDrainMs({ OMA_BRAIN_SHUTDOWN_DRAIN_MS: " 45000 " })).toBe(45_000);
 });
 
 test("deployment heartbeat configuration matches the reference cadence and accepts explicit overrides", () => {

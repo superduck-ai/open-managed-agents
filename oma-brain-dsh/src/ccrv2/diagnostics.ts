@@ -3,6 +3,7 @@ export function workerDiagnostic(level: "info" | "warn" | "error", event: string
   try { console[level](JSON.stringify({ event, ...fields })); }
   catch { /* A log sink cannot alter protocol completion or retries. */ }
 }
+import { CcrRecoveryError } from "./recovery.ts";
 import { CcrHttpError } from "./client.ts";
 import { HttpError } from "../api.ts";
 
@@ -16,6 +17,8 @@ function errorLocations(error: Error): string[] {
 
 /** Classify known failures without logging arbitrary exception text or request data. */
 export function failureDiagnostic(error: unknown): Record<string, unknown> {
+  if (error instanceof CcrRecoveryError)
+    return { failure_reason: error.reason, persistence_field: error.field };
   if (error instanceof CcrHttpError || error instanceof HttpError)
     return { failure_reason: "http_error", http_status: error.status };
   const known = new Map([

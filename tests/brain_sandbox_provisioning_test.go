@@ -179,6 +179,7 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			if discoveries.Load() != 1 {
 				t.Fatalf("MCP discovery calls = %d, want one startup check", discoveries.Load())
 			}
+			assertBrainSandboxCredentialLifecycle(t, app, service.Service, code, providers)
 			response := doSessionRequest(t, app, http.MethodDelete, "/v1/sessions/"+session.ID, nil, defaultTestKey, true)
 			response.Body.Close()
 			if response.StatusCode != http.StatusOK {

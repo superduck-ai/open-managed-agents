@@ -1,3 +1,4 @@
+import { logData } from "./persistence-fixtures.ts";
 import { expect, spyOn, test } from "bun:test";
 import { CcrClient, type CcrHttpRequest } from "../src/ccrv2/client.ts";
 import { CcrHeartbeat } from "../src/ccrv2/heartbeat.ts";
@@ -29,9 +30,9 @@ test("internal-events logs each failed batch attempt with safe fields and preser
   const detach = client.bindLease("private-session").subscribe!(() => {});
   let confirmed = false;
   const pending = Promise.all([
-    client.persist("private-session", "private-subtype", { text: "private-seed" }),
-    client.persist("private-session", "private-subtype", { text: "private-body" }),
-    client.persist("private-session", "private-subtype", { text: "private-child-body" }, "private-agent"),
+    client.persist("private-session", "dsh_log", logData({ text: "private-seed" })),
+    client.persist("private-session", "dsh_log", logData({ text: "private-body" })),
+    client.persist("private-session", "dsh_log", logData({ text: "private-child-body" }), "private-agent"),
   ]).then(() => { confirmed = true; });
   try {
     expect(confirmed).toBe(false);
@@ -66,7 +67,7 @@ test("internal-events logs terminal HTTP failures before claim cancellation, inc
     const heartbeat = new CcrHeartbeat({ check: client.bindLease("s"), maxAuthFailures: 2,
       onLeaseLost: () => { losses++; owner.abort(); } }, owner.signal);
     try {
-      await expect(client.persist("s", "private-subtype", { text: "private-body" })).rejects.toMatchObject({ status });
+      await expect(client.persist("s", "dsh_log", logData({ text: "private-body" }))).rejects.toMatchObject({ status });
       expect(attempts).toBe(status === 403 ? 2 : 1);
       expect(losses).toBe(1);
       expect(logs).toHaveLength(attempts);
@@ -86,18 +87,18 @@ test("cancelled internal-events requests do not log late HTTP or network failure
     let attempts = 0;
     const { client } = fixture(async () => ++attempts === 1 ? response.promise : new Response(null, { status: 204 }));
     let detach = client.bindLease("s").subscribe!(() => {});
-    const pending = client.persist("s", "dsh_log", { old: true });
+    const pending = client.persist("s", "dsh_log", logData({ old: true }));
     const cancelled = pending.catch((error: unknown) => error);
     try {
       expect(attempts).toBe(1);
       detach();
       expect(await cancelled).toBeInstanceOf(Error);
       detach = client.bindLease("s").subscribe!(() => {});
-      await client.persist("s", "dsh_log", { replacement: true });
+      await client.persist("s", "dsh_log", logData({ replacement: true }));
       if (networkError) response.reject(Object.assign(new Error("private-error"), { code: "ECONNRESET" }));
       else response.resolve(new Response(null, { status: 409 }));
       await settle();
-      await client.persist("s", "dsh_log", { next: true });
+      await client.persist("s", "dsh_log", logData({ next: true }));
       expect(attempts).toBe(3);
       expect(logs).toEqual([]);
     } finally { response.resolve(new Response(null, { status: 204 })); detach(); warn.mockRestore(); }
@@ -110,16 +111,16 @@ test("internal-events validation and credential waits do not invent HTTP failure
     for (const changeEpoch of [false, true]) {
       let attempts = 0;
       const { client, credentials } = fixture(async () => { attempts++; return new Response(null, { status: 204 }); });
-      await expect(client.persist("s", "dsh_log", { invalid: 1n })).rejects.toThrow();
+      await expect(client.persist("s", "dsh_log", logData({ invalid: 1n }))).rejects.toThrow();
       credentials.token = "";
       client.config.sleep = async () => {
         credentials.token = "new-private-token";
         if (changeEpoch) credentials.workerEpoch++;
       };
-      const pending = client.persist("s", "dsh_log", {});
+      const pending = client.persist("s", "dsh_log", logData({}));
       if (changeEpoch) { await expect(pending).rejects.toThrow(); expect(attempts).toBe(0); }
       else { await pending; expect(attempts).toBe(1); }
-      await client.persist("s", "dsh_log", { next: true });
+      await client.persist("s", "dsh_log", logData({ next: true }));
     }
     expect(warn).not.toHaveBeenCalled();
   } finally { warn.mockRestore(); }
@@ -136,7 +137,7 @@ test("internal-events network diagnostics classify timeouts and omit untrusted e
     return new Response(null, { status: 204 });
   });
   try {
-    await client.persist("s", "dsh_log", {});
+    await client.persist("s", "dsh_log", logData({}));
     const fields = { event: "cli_worker_request_error", method: "post", path: "/worker/internal-events",
       session_ref: "043a718774c572bd8a25adbeb1bfcd5c0256ae11cecf9f9c3f925d0e52beaf89", worker_epoch: 7, batch_size: 1 };
     expect(logs.map((log) => JSON.parse(log))).toEqual([
@@ -159,9 +160,9 @@ test("internal-events logging failures cannot change retries or mask a terminal 
     cancel() { throw new Error("cleanup failed"); },
   }), { status: 409 }));
   try {
-    await client.persist("s", "dsh_log", {});
+    await client.persist("s", "dsh_log", logData({}));
     expect(attempts).toBe(3);
-    await expect(rejected.persist("s", "dsh_log", {})).rejects.toMatchObject({ status: 409 });
+    await expect(rejected.persist("s", "dsh_log", logData({}))).rejects.toMatchObject({ status: 409 });
     expect(warn).toHaveBeenCalledTimes(3);
   } finally { warn.mockRestore(); }
 });

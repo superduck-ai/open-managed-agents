@@ -1,15 +1,17 @@
+import { nativeOutcomes } from "./session-log.ts";
 import { modelSystemText } from "./backend.ts";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
+import { SessionId, SESSION_FORMAT_VERSION } from "@deepseek-ai/dsh-session";
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import { Backend, textEvents, toolEvents, eventually } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
 import { Subagents } from "../src/runtime/subagents.ts";
+import { SessionRuntime } from "../src/runtime/session.ts";
 import { CcrSubagentBridge } from "../src/ccrv2/subagents.ts";
-import type { SubagentEvent, SubagentThread, ToolApproval, ToolExecutionBridge,
-  ApprovedToolCall, ToolOutcome } from "../src/runtime/contracts.ts";
+import type { SubagentEvent, SubagentThread, ToolApproval, ToolExecutionBridge } from "../src/runtime/contracts.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -38,6 +40,210 @@ function call(name: string, args: Payload, id: string): Payload[] {
       ? { ...event, delta: { type: "input_json_delta", partial_json: JSON.stringify(args) } } : event);
 }
 
+test("disabled subagents are absent from the model tools and reject direct dispatch", async () => {
+  const b = new Backend();
+  delete b.a.launch.subagents;
+  const f = await fixture(b);
+  await expect(f.session.subagents.send({ name: "forbidden", system_prompt: "Inspect", message: "Work" }, new AbortController().signal)).rejects.toThrow("Subagents are disabled");
+  b.modelScript = [textEvents("done")];
+  await f.session.receive("disabled", { content: "Inspect locally" });
+  const request = b.requests[0]!;
+  const tools = request.tools.map((tool: Payload) => tool.name);
+  for (const name of ["list_agents", "send_to_agent", "archive_agent"]) expect(tools).not.toContain(name);
+  expect(modelSystemText(request)).toContain("Subagents are disabled for this session.");
+  expect(f.session.subagents.threads).toHaveLength(0);
+});
+
+for (const phase of ["create", "open"] as const) {
+  test(`failed child ${phase} terminates the published thread and permits a fresh retry`, async () => {
+    const f = await fixture();
+    const config = f.session.runtime.config;
+    const originalContext = config.threadMcpContext;
+    const originalSetup = config.setupTools;
+    const failure = new Error(`${phase} failed`);
+    if (phase === "create") config.threadMcpContext = async () => { throw failure; };
+    else config.setupTools = async () => { throw failure; };
+    const args = { name: "worker", system_prompt: "Inspect", message: "Inspect files" };
+    await expect(f.session.subagents.send(args, new AbortController().signal)).rejects.toBe(failure);
+    const failed = f.session.subagents.threads[0]!;
+    expect(failed.status).toBe("terminated");
+    expect(f.session.subagents.busy).toBe(false);
+    expect(f.api.modelSessions.has(failed.id)).toBe(false);
+    expect([...f.b.publicLog.values()].filter(event => event.session_thread_id === failed.id).map(event => event.type))
+      .toEqual(["session.thread_created", "session.thread_status_terminated"]);
+    await expect(f.session.subagents.send({ thread_id: failed.id, message: "Retry" }, new AbortController().signal)).rejects.toThrow("running or archived");
+    config.threadMcpContext = originalContext;
+    config.setupTools = originalSetup;
+    f.b.modelScript = [textEvents("retry report")];
+    const result = JSON.parse(await f.session.subagents.send(args, new AbortController().signal));
+    expect(result.thread_id).not.toBe(failed.id);
+    expect(result.report).toBe("retry report");
+    expect(f.session.subagents.threads.filter(thread => thread.status !== "terminated").map(thread => thread.id)).toEqual([result.thread_id]);
+  });
+}
+
+test("failed child cleanup still terminates and unbinds while preserving both errors", async () => {
+  const f = await fixture();
+  const initialization = new Error("child setup failed");
+  const cleanup = new Error("child close failed");
+  f.session.runtime.config.setupTools = async () => { throw initialization; };
+  const close = SessionRuntime.prototype.close;
+  const closing = spyOn(SessionRuntime.prototype, "close").mockImplementation(function(this: SessionRuntime) {
+    if (this.parent) return Promise.reject(cleanup);
+    return close.call(this);
+  });
+  try {
+    const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.errors).toEqual([initialization, cleanup]);
+    const failed = f.session.subagents.threads[0]!;
+    expect(failed.status).toBe("terminated");
+    expect(f.api.modelSessions.has(failed.id)).toBe(false);
+    expect([...f.b.publicLog.values()].some(event => event.type === "session.thread_status_terminated" && event.session_thread_id === failed.id)).toBe(true);
+  } finally { closing.mockRestore(); }
+});
+
+test("parent shutdown retries child runtime cleanup after initialization cleanup fails", async () => {
+  const f = await fixture();
+  const initialization = new Error("child setup failed");
+  const cleanup = new Error("first child close failed");
+  f.session.runtime.config.setupTools = async () => { throw initialization; };
+  const close = SessionRuntime.prototype.close;
+  let attempts = 0;
+  let child: SessionRuntime | undefined;
+  const closing = spyOn(SessionRuntime.prototype, "close").mockImplementation(function(this: SessionRuntime) {
+    if (this.parent) {
+      child = this;
+      attempts++;
+      if (attempts === 1) return Promise.reject(cleanup);
+    }
+    return close.call(this);
+  });
+  try {
+    const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.errors).toEqual([initialization, cleanup]);
+    expect(attempts).toBe(1);
+    expect(f.session.subagents.threads[0]!.status).toBe("terminated");
+    await f.session.close();
+    expect(attempts).toBe(2);
+  } finally {
+    closing.mockRestore();
+    if (child) await close.call(child);
+  }
+});
+
+test("parent shutdown retries thread unbinding after initialization cleanup fails", async () => {
+  const f = await fixture();
+  const initialization = new Error("child context failed");
+  const cleanup = new Error("first unbind failed");
+  const bindThread = f.session.runtime.config.bindThread;
+  let attempts = 0;
+  let unbind: (() => void) | undefined;
+  f.session.runtime.config.bindThread = id => {
+    unbind = bindThread?.(id);
+    return () => {
+      attempts++;
+      if (attempts === 1) throw cleanup;
+      unbind?.();
+    };
+  };
+  f.session.runtime.config.threadMcpContext = async () => { throw initialization; };
+  try {
+    const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.errors).toEqual([initialization, cleanup]);
+    const thread = f.session.subagents.threads[0]!;
+    expect(thread.status).toBe("terminated");
+    expect(f.api.modelSessions.has(thread.id)).toBe(true);
+    expect(attempts).toBe(1);
+    await f.session.close();
+    expect(f.api.modelSessions.has(thread.id)).toBe(false);
+    expect(attempts).toBe(2);
+  } finally { unbind?.(); }
+});
+
+test("failed termination publication keeps the terminal event queued for retry", async () => {
+  const f = await fixture();
+  const initialization = new Error("child context failed");
+  const publication = new Error("terminal publication failed");
+  f.session.runtime.config.threadMcpContext = async () => { throw initialization; };
+  const publish = f.session.backend.events.bind(f.session.backend);
+  f.session.backend.events = async (id, events) => {
+    if (events.some(event => event.type === "session.thread_status_terminated")) throw publication;
+    return publish(id, events);
+  };
+  const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
+  expect(error).toBeInstanceOf(AggregateError);
+  expect(error.errors).toEqual([initialization, publication]);
+  const failed = f.session.subagents.threads[0]!;
+  expect(failed.status).toBe("terminated");
+  expect(f.api.modelSessions.has(failed.id)).toBe(false);
+  expect(f.session.pendingEvents.some(event => event.type === "session.thread_status_terminated" && event.session_thread_id === failed.id)).toBe(true);
+  f.session.backend.events = publish;
+  await f.session.flushEvents();
+  expect([...f.b.publicLog.values()].filter(event => event.type === "session.thread_status_terminated" && event.session_thread_id === failed.id)).toHaveLength(1);
+});
+
+for (const status of ["idle", "terminated"] as const) {
+  test(`restore handles an incomplete initialization header with ${status} authority`, async () => {
+    const f = await fixture();
+    const id = "sthr_failed_initialization";
+    await f.ctx.ccrv2.config.backend.persist(f.session.id, "dsh_log", {
+      version: SESSION_FORMAT_VERSION, id: SessionId(id), createdAt: 0, isSeeded: false,
+      origin: "subagent", parentSession: SessionId(f.session.id), delegationDepth: 1,
+    }, id);
+    expect([...f.b.privateLog.values()].some(payload => payload.data?.id === id)).toBe(true);
+    f.b.publicLog.set(`${id}_created`, { type: "session.thread_created", session_thread_id: id });
+    if (status === "terminated") f.b.publicLog.set(`${id}_terminated`, { type: "session.thread_status_terminated", session_thread_id: id });
+    const storage = new CcrSubagentBridge(f.session);
+    if (status === "idle") {
+      await expect(storage.restoreThreads()).rejects.toThrow("Subagent is missing its native descriptor");
+    } else {
+      await storage.restoreThreads();
+      expect(storage.threads()).toEqual([]);
+    }
+    expect(f.b.requests).toHaveLength(0);
+  });
+}
+
+test("publishes the child snapshot before requesting its scoped tool context", async () => {
+  const f = await fixture();
+  const route = f.b.route.bind(f.b);
+  const contexts: string[] = [];
+  f.b.route = async (request) => {
+    const id = request.headers.get("X-OMA-Session-Thread-ID");
+    if (id && new URL(request.url).pathname === `/v2/sessions/${f.b.a.session_id}`) {
+      contexts.push(id);
+      const created = [...f.b.publicLog.values()].some((event) => event.type === "session.thread_created" && event.session_thread_id === id);
+      if (!created) return Response.json({ error: "Thread snapshot does not exist" }, { status: 500 });
+    }
+    return route(request);
+  };
+  f.b.modelScript = [textEvents("child report")];
+  const result = JSON.parse(await f.session.subagents.send({ name: "python_agent", system_prompt: "Write Python", message: "Return hello world" }, new AbortController().signal));
+  expect(result.report).toBe("child report");
+  expect(contexts).toContain(result.thread_id);
+  expect(f.b.requests).toHaveLength(1);
+});
+
+test("restore ignores an unpublished child header left by interrupted initialization", async () => {
+  const f = await fixture();
+  const storage = new CcrSubagentBridge(f.session);
+  const id = "sthr_unpublished";
+  storage.bindPersistence(id);
+  const handle = await f.ctx.sessionPersistence.create({
+    version: SESSION_FORMAT_VERSION, id: SessionId(id), createdAt: 0, isSeeded: false,
+    origin: "subagent", parentSession: SessionId(f.session.id), delegationDepth: 1,
+  });
+  await handle.close();
+  await f.close();
+  cleanups.pop();
+  const restored = await fixture(f.b);
+  expect(restored.session.subagents.threads).toEqual([]);
+  expect(restored.b.requests).toHaveLength(0);
+});
+
 test("runtime accepts an independent event sink and a class-based execution bridge", async () => {
   const f = await fixture();
   const storage = new CcrSubagentBridge(f.session);
@@ -47,23 +253,17 @@ test("runtime accepts an independent event sink and a class-based execution brid
   // Prototype methods and receiver state must survive runtime's flush wrapper.
   class Execution implements ToolExecutionBridge {
     constructor(readonly delegate: ToolExecutionBridge) {}
-    blocked() { return this.delegate.blocked(); }
     async approve(request: ToolApproval) {
       approvals.push(request.callId);
       return { allowed: true };
     }
-    recordApproved(call: ApprovedToolCall) { return this.delegate.recordApproved(call); }
-    flushLog() { return this.delegate.flushLog(); }
-    recordDispatch(callId: string) { return this.delegate.recordDispatch(callId); }
-    recordUnknown(callId: string) { return this.delegate.recordUnknown(callId); }
-    recordResult(outcome: ToolOutcome) { return this.delegate.recordResult(outcome); }
-    stop() { this.delegate.stop(); }
+    runTool<T>(callId: string, execute: () => Promise<T>, readOnly: boolean) { return this.delegate.runTool(callId, execute, readOnly); }
+    approvalChanged(name: string, callId: string, effective: Payload) { this.delegate.approvalChanged(name, callId, effective); }
   }
   const runtime = new Subagents(f.session.runtime, {
     threads: () => threads,
     bindPersistence: (id) => storage.bindPersistence(id),
     emit: async (event) => { events.push(structuredClone(event)); await runtime.flush(); },
-    beforeRequest: () => storage.beforeRequest(),
     onEvent: () => {},
     onStream: () => {},
     toolExecution: (id) => new Execution(storage.toolExecution(id)),
@@ -81,7 +281,7 @@ test("runtime accepts an independent event sink and a class-based execution brid
       "created", "message-sent", "running", "report-received", "idle",
     ]);
     expect([...f.b.publicLog.values()].some((event) => event.type.startsWith("session.thread_"))).toBe(false);
-    expect(f.session.state.threads ?? []).toHaveLength(0);
+    expect(f.session.subagents.threads ?? []).toHaveLength(0);
   } finally {
     runtime.stop();
     await runtime.close();
@@ -104,7 +304,7 @@ test("delegates with isolated history, no nested delegation, shared approvals, a
   expect(f.b.requests).toHaveLength(4);
   const created = [...f.b.publicLog.values()].find((event) => event.type === "session.thread_created");
   expect(created?.agent).toEqual({ type: "inline", name: "researcher", system: "Inspect files" });
-  expect(f.session.state.threads?.[0]?.inline).toBe(true);
+  expect(f.session.subagents.threads?.[0]?.inline).toBe(true);
   const parentTools = f.b.requests[0]!.tools.map((tool: Payload) => tool.name);
   expect(parentTools).toContain("send_to_agent");
   const childTools = f.b.requests[1]!.tools.map((tool: Payload) => tool.name);
@@ -112,11 +312,20 @@ test("delegates with isolated history, no nested delegation, shared approvals, a
   expect(childTools).not.toContain("send_to_agent");
   expect(JSON.stringify(f.b.requests[1]!.messages)).not.toContain("Delegate this work");
   expect(JSON.stringify(f.b.requests[3]!.messages)).toContain("child report");
-  const thread = f.session.state.threads![0]!;
+  const thread = f.session.subagents.threads![0]!;
   expect(thread.status).toBe("idle");
   expect(f.b.executions).toHaveLength(1);
-  expect([...f.b.privateLog.values()].some((payload) => payload.subtype === "dsh_log" && payload.data.header.id === thread.id)).toBe(true);
+  expect([...f.b.privateLog.values()].some((payload) => payload.type === "dsh_log" && f.b.privateAgentIds.get(payload.uuid) === thread.id && "seq" in payload.data)).toBe(true);
   expect([...f.b.publicLog.values()].some((payload) => payload.type === "agent.thread_message_received" && payload.from_session_thread_id === thread.id)).toBe(true);
+  const messages = [...f.b.publicLog.values()].filter((event) => event.type === "agent.thread_message_sent" || event.type === "agent.thread_message_received");
+  expect(messages).toHaveLength(2);
+  for (const event of messages) {
+    expect(event.session_thread_id).toBeUndefined();
+    expect(event.agent_name).toBeUndefined();
+  }
+  expect(messages[0]!.to_session_thread_id).toBe(thread.id);
+  expect(messages[1]!.from_session_thread_id).toBe(thread.id);
+
   expect([...f.b.publicLog.values()].find((payload) => payload.type === "agent.message" && payload.session_thread_id === thread.id)?.content[0].text).toBe("child report");
   await f.close();
   cleanups.pop();
@@ -128,12 +337,13 @@ test("delegates with isolated history, no nested delegation, shared approvals, a
   expect(JSON.stringify(childRequest.messages)).toContain("child report");
   expect(JSON.stringify(childRequest.messages)).toContain("Explain that fact");
   expect(JSON.stringify(childRequest.messages)).not.toContain("parent synthesis");
-  expect(restored.session.state.threads).toHaveLength(1);
+  expect(restored.session.subagents.threads).toHaveLength(1);
 });
 
 test("predefined specialist uses its own prompt, model and restricted tools", async () => {
   const b = new Backend();
   cleanups.push(async () => b.stop());
+  b.a.launch.models!["review-model"] = { id: "review-model", api_backend: "messages" };
   const agentSnapshot = {
     type: "agent", id: "agent_reviewer", version: 3, name: "reviewer", system: "Review only", model: "review-model",
     tools: [{ type: "agent_toolset_20260401", default_config: { enabled: false }, configs: [
@@ -148,12 +358,15 @@ test("predefined specialist uses its own prompt, model and restricted tools", as
   const f = await fixture(b);
   b.modelScript = [call("send_to_agent", { agent_name: "reviewer", message: "Review the code" }, "delegate"), textEvents("review report"), textEvents("done")];
   await f.session.receive("specialist", { content: "Review" });
+  expect(f.session.runtime.config.subagents?.agents).toEqual([{
+    name: "reviewer", description: "Read-only reviewer", systemPrompt: "Review only", model: "review-model", tools: ["Read", "Grep"],
+  }]);
+  expect(f.session.subagents.threads?.[0]?.id).toMatch(/^sthr_/);
   const child = b.requests[1]!;
   expect(child.model).toBe("review-model");
   const created = [...b.publicLog.values()].find((event) => event.type === "session.thread_created");
   expect(created?.agent).toEqual(agentSnapshot);
-  expect(f.session.state.threads?.[0]?.inline).toBe(false);
-  expect(f.session.state.threads?.[0]?.agentSnapshot?.id).toBe("agent_reviewer");
+  expect(f.session.subagents.threads?.[0]?.inline).toBe(false);
   expect(modelSystemText(child)).toContain("Review only");
   expect(child.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read"]);
   await expect(f.session.subagents.send({ name: "inline", system_prompt: "test", message: "test" }, new AbortController().signal)).rejects.toThrow("Inline agents");
@@ -161,33 +374,81 @@ test("predefined specialist uses its own prompt, model and restricted tools", as
 
 test("25 retained threads count toward capacity, archival frees capacity and refuses follow-up", async () => {
   const f = await fixture();
-  f.session.state.threads = Array.from({ length: 25 }, (_, index) => ({
+  f.session.subagents.threads.push(...Array.from({ length: 25 }, (_, index) => ({
     id: `sthr_test_${index}`, name: "test", systemPrompt: "test", model: "test-model", status: "idle" as const,
-  }));
-  for (const thread of f.session.state.threads) f.b.publicLog.set(thread.id, { type: "session.thread_created", session_thread_id: thread.id });
+  })));
+  for (const thread of f.session.subagents.threads) f.b.publicLog.set(thread.id, { type: "session.thread_created", session_thread_id: thread.id });
   await expect(f.session.subagents.send({ name: "new", system_prompt: "test", message: "test" }, new AbortController().signal)).rejects.toThrow("25");
   f.b.modelScript = [call("archive_agent", { thread_id: "sthr_test_0" }, "archive"), textEvents("archived")];
   await f.session.receive("archive", { content: "Archive a thread" });
-  expect(f.session.state.threads[0]!.status).toBe("terminated");
+  expect(f.session.subagents.threads[0]!.status).toBe("terminated");
   await expect(f.session.subagents.send({ thread_id: "sthr_test_0", message: "test" }, new AbortController().signal)).rejects.toThrow("archived");
   f.b.modelScript = [call("send_to_agent", { name: "new", system_prompt: "test", message: "test" }, "new"), textEvents("report"), textEvents("done")];
   await f.session.receive("replacement", { content: "Delegate" });
-  expect(f.session.state.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
+  expect(f.session.subagents.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
+});
+
+test("approval count alone can identify a parent delegation wait before the child exists", async () => {
+  const f = await fixture();
+  f.b.onApproval = async () => {};
+  f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate")];
+  const turn = f.session.receive("parent-wait", { content: "Delegate" });
+  const settled = turn.catch(() => {});
+  try {
+    await eventually(() => f.session.approvals.size === 1);
+    expect([...f.session.approvals.values()][0]!.threadId).toBe(f.session.id);
+    expect(f.session.subagents.threads).toHaveLength(0);
+    await f.session.control({ type: "user.interrupt" });
+    await turn;
+    expect(f.session.approvals.size).toBe(0);
+    expect(f.b.executions).toHaveLength(0);
+  } finally { f.session.stop(); await settled; }
 });
 
 test.each(["user.interrupt", "control_request"])("%s interrupting the whole session cancels child approval before sandbox dispatch", async (type) => {
   const f = await fixture();
   f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate"), toolEvents("pwd", "child_tool")];
-  const turn = f.session.receive("interrupt", { content: "Delegate" }).catch(() => {});
-  await eventually(() => f.session.approvals.size === 1);
-  await f.session.control({ type, ...(type === "control_request" ? { request_id: "global", request: { subtype: "interrupt" } } : {}) });
-  await turn;
-  expect(f.session.approvals.size).toBe(0);
-  expect(f.b.executions).toHaveLength(0);
-  expect(f.session.state.threads![0]!.status).toBe("idle");
+  const turn = f.session.receive("interrupt", { content: "Delegate" });
+  const settled = turn.catch(() => {});
+  try {
+    await eventually(() => [...f.session.approvals.values()].some((approval) =>
+      approval.threadId !== f.session.id && approval.details.tool_use_id === "child_tool"));
+    const thread = f.session.subagents.threads[0]!;
+    expect(thread.status).toBe("running");
+    expect([...f.session.approvals.values()].some((approval) => approval.threadId === thread.id)).toBe(true);
+    expect(f.b.executions).toHaveLength(0);
+    await f.session.control({ type, ...(type === "control_request" ? { request_id: "global", request: { subtype: "interrupt" } } : {}) });
+    await turn;
+    expect(f.session.approvals.size).toBe(0);
+    expect(f.b.executions).toHaveLength(0);
+    expect(thread.status).toBe("idle");
+  } finally { f.session.stop(); await settled; }
 });
 
-test("lost child tool outcome blocks parent recovery and never replays the command", async () => {
+test("a child read approved during drain still executes and persists its result", async () => {
+  const f = await fixture();
+  f.b.modelScript = [
+    call("send_to_agent", { name: "child", system_prompt: "test", message: "inspect" }, "delegate"),
+    call("Read", { file_path: "/tmp/read.txt" }, "child_read"), textEvents("child report"), textEvents("done"),
+  ];
+  const turn = f.session.receive("draining-child", { content: "Delegate" });
+  const settled = turn.catch(() => {});
+  try {
+    await eventually(() => [...f.session.approvals.values()].some((approval) => approval.details.tool_use_id === "child_read"));
+    expect(await f.session.drain(0)).toBe(true);
+    const request = [...f.session.approvals].find(([, approval]) => approval.details.tool_use_id === "child_read")!;
+    await f.session.control({ type: "control_response", response: {
+      subtype: "success", request_id: request[0], response: { behavior: "allow" },
+    } });
+    await turn;
+    expect(f.b.executions.map((execution) => execution.name)).toEqual(["read"]);
+    const thread = f.session.subagents.threads[0]!;
+    expect(nativeOutcomes(f.session, thread.id).child_read?.failed).toBe(false);
+    expect(thread.status).toBe("idle");
+  } finally { f.session.stop(); await settled; }
+});
+
+test("lost child tool outcome blocks parent recovery until new input and never replays the command", async () => {
   const f = await fixture();
   const lostResponse = Promise.withResolvers<Payload>();
   f.b.onTool = () => lostResponse.promise;
@@ -202,23 +463,28 @@ test("lost child tool outcome blocks parent recovery and never replays the comma
   await eventually(() => f.b.executions.length === 1);
   f.session.stop();
   await turn;
-  expect(f.session.state.phase).toBe("blocked");
+  expect(nativeOutcomes(f.session, f.session.subagents.threads[0]!.id).child_tool?.failed).toBe(true);
   await f.close();
   cleanups.pop();
   f.b.onTool = undefined;
   f.b.onCancel = undefined;
   const restored = await fixture(f.b);
-  expect(restored.session.blocked()).toBe(true);
-  await expect(restored.session.receive("retry", { content: "try again" })).rejects.toThrow("reconciliation");
+  expect(restored.session.abort.signal.aborted).toBe(false);
+  const requests = f.b.requests.length;
+  f.b.modelScript = [textEvents("checked the child state")];
+  await restored.session.receive("retry", { content: "try again" });
+  expect(restored.session.abort.signal.aborted).toBe(false);
   expect(f.b.executions).toHaveLength(1);
+  expect(f.b.requests).toHaveLength(requests + 1);
+  expect(JSON.stringify(f.b.requests.at(-1)!.messages)).toContain("delegate");
 });
 
 test.each(["user.interrupt", "control_request"])("%s targeted child interruption leaves parent quiet until user input while primary interruption stops the turn", async (type) => {
   const f = await fixture();
   f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate"), toolEvents("pwd", "child_tool"), textEvents("RESUMED")];
   const turn = f.session.receive("target", { content: "Delegate" });
-  await eventually(() => f.session.state.threads?.length === 1 && f.session.approvals.size === 1);
-  const thread = f.session.state.threads![0]!;
+  await eventually(() => f.session.subagents.threads?.length === 1 && f.session.approvals.size === 1);
+  const thread = f.session.subagents.threads![0]!;
   await f.session.control({ type, session_thread_id: thread.id, ...(type === "control_request" ? { request_id: "child", request: { subtype: "interrupt" } } : {}) });
   await turn;
   expect(f.b.executions).toHaveLength(0);
@@ -238,6 +504,8 @@ test.each(["user.interrupt", "control_request"])("%s targeted child interruption
 test("backend launch roster is listed and delegated by agent_name without inline fallback", async () => {
   const b = new Backend();
   cleanups.push(async () => b.stop());
+  b.a.launch.models!["fast-model"] = { id: "fast-model", api_backend: "messages" };
+  b.a.launch.models!["slow-model"] = { id: "slow-model", api_backend: "messages" };
   b.a.launch.subagents = JSON.parse(`{
     "inlineAgents": false,
     "agents": [
@@ -264,7 +532,7 @@ test("backend launch roster is listed and delegated by agent_name without inline
   expect(child.model).toBe("fast-model");
   expect(modelSystemText(child)).toContain("Pinned fast instructions");
   expect(child.tools ?? []).toEqual([]);
-  expect(f.session.state.threads!.map((thread) => thread.name)).toEqual(["fast_probe"]);
+  expect(f.session.subagents.threads!.map((thread) => thread.name)).toEqual(["fast_probe"]);
   await expect(f.session.subagents.send({ agent_name: "missing", message: "Run" }, new AbortController().signal))
     .rejects.toThrow("Unknown predefined agent");
 });
@@ -273,7 +541,7 @@ test("a retained followup checks authoritative archive before creating child wor
   const f = await fixture();
   f.b.modelScript = [call("send_to_agent", {name:"external_archive",system_prompt:"Reply READY",message:"Reply READY"}, "create_before_archive"),textEvents("READY"),textEvents("done")];
   await f.session.receive("before_external_archive",{content:"Delegate once"});
-  const child = f.session.state.threads![0]!;
+  const child = f.session.subagents.threads![0]!;
   expect(child.status).toBe("idle");
   const before = f.b.requests.length;
   const baseRoute = f.b.route.bind(f.b);
@@ -291,7 +559,7 @@ test("a retained followup checks authoritative archive before creating child wor
   await f.session.receive("after_external_archive",{content:"Attempt the same existing child once and report real error, do not create another."});
   expect(checks).toBe(1);
   expect(f.b.requests.length).toBe(before+2);
-  expect(f.session.state.threads).toHaveLength(1);
+  expect(f.session.subagents.threads).toHaveLength(1);
   expect(child.status).toBe("terminated");
   const error = [...f.b.publicLog.values()].filter((event) => event.type === "user").flatMap((event) => event.message.content).find((block:Payload) => block.type === "tool_result" && block.tool_use_id === "followup_after_external_archive");
   expect(error?.is_error).toBe(true);
@@ -327,9 +595,9 @@ test("predefined specialist tools are limited to the tools enabled for the paren
 
 test("public API archive releases exactly one retained capacity slot before new delegation", async () => {
   const f = await fixture();
-  f.session.state.threads = Array.from({ length: 25 }, (_, index) => ({
+  f.session.subagents.threads.push(...Array.from({ length: 25 }, (_, index) => ({
     id: `sthr_external_${index}`, name: "test", systemPrompt: "test", model: "test-model", status: "idle" as const,
-  }));
+  })));
   const originalRoute = f.b.route.bind(f.b);
   const checked: string[] = [];
   f.b.route = async (request) => {
@@ -345,29 +613,29 @@ test("public API archive releases exactly one retained capacity slot before new 
   const result = JSON.parse(await f.session.subagents.send({ name: "replacement", system_prompt: "test", message: "report" }, new AbortController().signal));
   expect(result.report).toBe("replacement report");
   expect(checked).toHaveLength(25);
-  expect(f.session.state.threads).toHaveLength(26);
-  expect(f.session.state.threads[0]!.status).toBe("terminated");
-  expect(f.session.state.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
+  expect(f.session.subagents.threads).toHaveLength(26);
+  expect(f.session.subagents.threads[0]!.status).toBe("terminated");
+  expect(f.session.subagents.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
   expect([...f.b.publicLog.values()].filter((event) => event.type === "session.thread_status_terminated")).toHaveLength(0);
 });
 
 
 test("capacity refresh rejects unknown authority without freeing an idle slot", async () => {
   const f = await fixture();
-  f.session.state.threads = Array.from({ length: 25 }, (_, index) => ({
+  f.session.subagents.threads.push(...Array.from({ length: 25 }, (_, index) => ({
     id: `sthr_unknown_${index}`, name: "test", systemPrompt: "test", model: "test-model", status: "idle" as const,
-  }));
+  })));
   const before = f.b.requests.length;
   await expect(f.session.subagents.send({ name: "new", system_prompt: "test", message: "test" }, new AbortController().signal)).rejects.toThrow();
   expect(f.b.requests.length).toBe(before);
-  expect(f.session.state.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
+  expect(f.session.subagents.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
 });
 
 test("capacity refresh shares admission and never creates two replacements for one archived slot", async () => {
   const f = await fixture();
-  f.session.state.threads = Array.from({ length: 25 }, (_, index) => ({
+  f.session.subagents.threads.push(...Array.from({ length: 25 }, (_, index) => ({
     id: `sthr_race_${index}`, name: "test", systemPrompt: "test", model: "test-model", status: "idle" as const,
-  }));
+  })));
   const originalRoute = f.b.route.bind(f.b);
   f.b.route = async (request) => {
     const path = new URL(request.url).pathname;
@@ -382,6 +650,6 @@ test("capacity refresh shares admission and never creates two replacements for o
   const results = await Promise.allSettled(["a", "b"].map((name) => f.session.subagents.send({name, system_prompt:"test", message:"report"}, new AbortController().signal)));
   expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
   expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
-  expect(f.session.state.threads).toHaveLength(26);
-  expect(f.session.state.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
+  expect(f.session.subagents.threads).toHaveLength(26);
+  expect(f.session.subagents.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
 });

@@ -109,7 +109,10 @@ export class AiSdkStream {
 
 export function modelError(error: unknown, signal?: AbortSignal): unknown {
   if (signal?.aborted || error instanceof LlmError) return error;
-  if (APICallError.isInstance(error)) return providerError(apiErrorMessage(error), error.statusCode);
+  if (APICallError.isInstance(error)) {
+    const message = apiErrorMessage(error);
+    return providerError(message, error.statusCode, retryAfterMs(error.responseHeaders), inputRangeOverflow(error, message));
+  }
   if (error instanceof Error) return providerError(error.message);
   const message = typeof error === "object" && error && "message" in error ? String(error.message) : String(error);
   return providerError(message);
@@ -123,12 +126,32 @@ function apiErrorMessage(error: APICallError): string {
   return error.message || `Model API HTTP ${error.statusCode ?? "error"}`;
 }
 
-function providerError(detail: string, status?: number): LlmError {
+export function retryAfterMs(headers?: Record<string, string>, now = Date.now()): number | undefined {
+  const value = Object.entries(headers ?? {}).find(([name]) => name.toLowerCase() === "retry-after")?.[1]?.trim();
+  if (!value) return undefined;
+  const delay = /^\d+(\.\d+)?$/.test(value) ? Number(value) * 1000 : Date.parse(value) - now;
+  return Number.isFinite(delay) && delay > 0 ? delay : undefined;
+}
+
+function inputRangeOverflow(error: APICallError, message: string): boolean {
+  if (error.statusCode !== 400 || !/^<400> InternalError\.Algo\.InvalidParameter: Range of input length should be \[1, [1-9]\d*\]$/.test(message)) return false;
+  const body: unknown = error.requestBodyValues;
+  if (!body || typeof body !== "object" || !("messages" in body) || !Array.isArray(body.messages)) return false;
+  return body.messages.some((value: unknown) => {
+    if (!value || typeof value !== "object" || !("content" in value)) return false;
+    if (typeof value.content === "string") return value.content.length > 0;
+    return Array.isArray(value.content) && value.content.some((block: unknown) =>
+      !!block && typeof block === "object" && "type" in block && block.type === "text" && "text" in block && typeof block.text === "string" && block.text.length > 0);
+  });
+}
+
+function providerError(detail: string, status?: number, providerRetryAfterMs?: number, contextOverflow = false): LlmError {
   const message = detail || "Model stream error";
-  const code = isContextWindowExceededError(message) ? "CONTEXT_WINDOW_EXCEEDED"
+  const code = contextOverflow || isContextWindowExceededError(message) ? "CONTEXT_WINDOW_EXCEEDED"
     : isQuotaExceededError(message) ? "QUOTA" : status === 429 ? "RATE_LIMIT"
-    : status === 401 || status === 403 ? "AUTH" : status && status >= 500 ? "SERVER" : "TRANSPORT";
-  return new LlmError(message, code, { status });
+    : status === 401 || status === 403 ? "AUTH" : status === 408 ? "TIMEOUT"
+    : status && status >= 500 ? "SERVER" : status && status >= 400 ? "HTTP_ERROR" : "TRANSPORT";
+  return new LlmError(message, code, { status, ...(providerRetryAfterMs !== undefined ? { providerRetryAfterMs } : {}) });
 }
 
 function finishReason(reason: LanguageModelV4FinishReason | undefined, hasTools: boolean): FinishReason | undefined {

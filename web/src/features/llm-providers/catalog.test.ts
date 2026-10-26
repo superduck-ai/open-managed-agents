@@ -11,7 +11,6 @@ import {
   providerInput,
   readableError,
   resolvedProviderSelection,
-  slugFromName,
 } from './catalog';
 import type { LLMProvider } from './api';
 
@@ -37,16 +36,33 @@ const moonshotRow = {
 };
 
 describe('LLM model catalog helpers', () => {
+  test('keeps organization and workspace models with the same raw ID separately addressable', () => {
+    const organization = provider('llmprov_org', 'Organization', 'organization', ['shared-model', 'org-only']);
+    organization.scope = 'organization';
+    const workspace = provider('llmprov_ws', 'Workspace', 'workspace', ['shared-model']);
+    expect(catalogModels([organization, workspace])).toEqual([
+      {
+        id: 'shared-model',
+        qualifiedId: 'organization/shared-model',
+        providerId: 'llmprov_org',
+        providerName: 'Organization',
+      },
+      { id: 'org-only', qualifiedId: 'organization/org-only', providerId: 'llmprov_org', providerName: 'Organization' },
+      {
+        id: 'shared-model',
+        qualifiedId: 'workspace/shared-model',
+        providerId: 'llmprov_ws',
+        providerName: 'Workspace',
+      },
+    ]);
+  });
+
   test('builds catalog rows from providers', () => {
     const fromProviders = catalogModels([dashScope, moonshot]);
     expect(fromProviders).toEqual([kimiRow, glmRow, moonshotRow]);
   });
 
-  test('derives provider slugs from names', () => {
-    expect(slugFromName('DashScope CN')).toBe('dashscope-cn');
-    expect(slugFromName('  --Open AI.  ')).toBe('open-ai');
-    expect(slugFromName('阿里云')).toBe('');
-    expect(slugFromName('a'.repeat(40))).toBe('a'.repeat(32));
+  test('validates provider IDs', () => {
     expect(isValidSlug('dashscope-cn')).toBe(true);
     expect(isValidSlug('default-2')).toBe(true);
     expect(isValidSlug('Dash/Scope')).toBe(false);
@@ -110,13 +126,13 @@ describe('LLM model catalog helpers', () => {
       slug: 'dashscope',
       api_backend: dashScope.api_backend,
       base_url: dashScope.base_url,
-      model_ids: ['kimi-k2.5'],
+      models: [{ id: 'kimi-k2.5' }],
     });
     expect(readableError({ code: 'llm_provider_name_conflict', message: 'wording changed' }, englishMessage)).toBe(
       'A provider with this name already exists.',
     );
     expect(readableError({ code: 'llm_provider_slug_conflict', message: 'wording changed' }, englishMessage)).toBe(
-      'A provider with this slug already exists.',
+      'A provider with this ID already exists.',
     );
     expect(readableError({ code: 'model_conflict', message: 'wording changed' }, englishMessage)).toBe(
       'Request failed. Please try again.',
@@ -143,7 +159,7 @@ function provider(id: string, name: string, slug: string, modelIds: string[]): L
     base_url: `https://${name.toLowerCase()}.example.com/anthropic`,
     has_api_key: true,
     api_key_last4: '1111',
-    model_ids: modelIds,
+    models: modelIds.map((id) => ({ id })),
     created_at: '2026-08-20T00:00:00Z',
     updated_at: '2026-08-20T00:00:00Z',
   };

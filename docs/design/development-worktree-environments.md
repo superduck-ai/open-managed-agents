@@ -22,6 +22,7 @@ worktree 时仍需显式执行对应命令。`.codex/` 下的其他本地文件�
 本环境配置统一使用 `.run/`，镜像前缀、LLM provider 配置和凭证常驻本机 `~/.oma-dev/`，
 各 worktree 的初始化文件显式引用同一份 provider 定义。`config/` 中的配置文件
 仅作为模板，开发初始化与重启不再读取旧的 `config/config.yaml`。
+开发模板将 `code_session.upstream_proxy_disable_ssrf_protection` 设为 `true`；首次初始化复制该值，已有 `.run/config.yaml` 不会被覆盖。
 
 ```text
 .run/
@@ -326,6 +327,8 @@ providers:
 现有 HTTP handler 中的校验和密钥封装应整理到共享业务层，由页面操作和初始化共同调用，避免维护两套业务规则。
 
 ## 固定 JWT 与上游代理 CA 密钥
+
+MITM 默认开启。`just dev-init` 首次生成 `.run/config.yaml` 时显式写入 `code_session.upstream_proxy_mitm_enabled: true` 并绑定 `.run/secrets/upstream-proxy-ca-key.pem`，生成配置沿用该开关并指向 `.run/generated/secrets/` 中的稳定私钥副本。已有人工配置不会覆盖；显式 `false` 保持关闭，省略开关的旧配置升级后默认开启，因此必须保留有效 CA 私钥。SSRF 防护仍默认开启，不随 MITM 默认值变化。此前在透传模式启动的存活沙箱持有临时 CA，切换到稳定 CA 后应刷新其公开 CA bundle，或重启 Manager 重新下载公开 CA，避免出现证书不受信任。
 
 默认 `just dev-init` 在首次缺少输入时准备 `.run/secrets/` 中的 JWT 与 CA 私钥；已有文件不覆盖。需要复用固定私钥时，首次初始化前将原有 `upstream-proxy-ca-key.pem` 和 `code-session-jwt-ed25519.pem` 放到该目录，或通过自定义初始化文件的 `fixed_secrets_dir` 指定来源。已绑定环境缺少输入时要求恢复原文件，不生成替代密钥。
 

@@ -33,7 +33,6 @@ import { consoleResourceListLimit } from '@/shared/console-list';
 import { ResourcePageHeader } from '@/shared/ui/resource-page-header';
 import { resourceListPageCount } from '@/shared/ui/resource-list-pagination';
 import { useI18n } from '../../shared/i18n';
-import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { CursorPagination, TableErrorRow, TableLoadingRow } from './frame';
 import {
   createSkillPackage,
@@ -88,8 +87,7 @@ type SkillFileSystemEntry = {
 export function SkillsPage({ initialCreateOpen = false, initialSkillId }: SkillsPageProps = {}) {
   const { msg } = useI18n();
   const queryClient = useQueryClient();
-  const { workspaceId, workspaceName: workspaceNameToken } = useDashboardWorkspaceScope();
-  const workspaceName = localizedWorkspaceName(workspaceNameToken, msg);
+  const { workspaceId } = useDashboardWorkspaceScope();
   const [selectedSkillId, setSelectedSkillId] = useSkillSearchParam(initialSkillId);
   const [createOpen, setCreateOpen] = useState(initialCreateOpen);
   const [updateSkillTarget, setUpdateSkillTarget] = useState<ConsoleSkill | null>(null);
@@ -197,10 +195,6 @@ export function SkillsPage({ initialCreateOpen = false, initialSkillId }: Skills
       <ResourcePageHeader
         contentGap="content"
         title={msg('skills.title', 'Skills')}
-        description={msg(
-          'skills.description',
-          'Skills are repeatable and customizable instructions that Open Managed Agents can follow.',
-        )}
         actions={
           <Button type="button" size="lg" onClick={() => setCreateOpen(true)}>
             <Plus className="size-4" aria-hidden />
@@ -211,7 +205,6 @@ export function SkillsPage({ initialCreateOpen = false, initialSkillId }: Skills
 
       <SkillsTable
         skills={skills}
-        workspaceName={workspaceName}
         selectedSkillId={selectedSkillId}
         isLoading={skillsQuery.isLoading}
         isFetching={skillsQuery.isFetching}
@@ -257,7 +250,6 @@ export function SkillsPage({ initialCreateOpen = false, initialSkillId }: Skills
       />
 
       <SkillUploadDialog
-        key={updateSkillTarget?.id ?? 'update-skill-dialog'}
         mode="update"
         open={Boolean(updateSkillTarget)}
         skill={updateSkillTarget ?? undefined}
@@ -268,7 +260,7 @@ export function SkillsPage({ initialCreateOpen = false, initialSkillId }: Skills
           }
         }}
         onUploaded={(resource) => {
-          const uploadedSkillId = 'skill_id' in resource ? resource.skill_id : updateSkillTarget?.id;
+          const uploadedSkillId = 'skill_id' in resource ? resource.skill_id : resource.id;
           if (uploadedSkillId) {
             handleVersionUploaded(uploadedSkillId);
           }
@@ -302,7 +294,6 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
 
 function SkillsTable({
   skills,
-  workspaceName,
   selectedSkillId,
   isLoading,
   isFetching,
@@ -313,7 +304,6 @@ function SkillsTable({
   onDeleteSkill,
 }: {
   skills: ConsoleSkill[];
-  workspaceName: string;
   selectedSkillId: string | null;
   isLoading: boolean;
   isFetching: boolean;
@@ -324,39 +314,46 @@ function SkillsTable({
   onDeleteSkill: (skill: ConsoleSkill) => void;
 }) {
   const { locale, msg } = useI18n();
+  const hasRows = !isLoading && !error && skills.length > 0;
 
   return (
     <section aria-label={msg('skills.listAria', 'Skills list')} className="min-w-0">
-      <Table className={dataTableClassName}>
-        <colgroup>
-          <col className="w-[16%]" />
-          <col className="w-[43%]" />
-          <col className="w-[12%]" />
-          <col className="w-[14%]" />
-          <col className="w-[11%]" />
-          <col className="w-[4%]" />
-        </colgroup>
-        <TableHeader>
-          <TableRow className={dataTableHeaderRowClassName}>
-            <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
-              {msg('skills.table.id', 'ID')}
-            </TableHead>
-            <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>{msg('common.name', 'Name')}</TableHead>
-            <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
-              {msg('skills.table.source', 'Source')}
-            </TableHead>
-            <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
-              {msg('skills.table.latest', 'Latest version')}
-            </TableHead>
-            <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
-              {msg('common.updated', 'Updated')}
-            </TableHead>
-            <TableHead
-              className={cn(dataTableHeaderCellClassName, 'truncate')}
-              aria-label={msg('common.actions', 'Actions')}
-            />
-          </TableRow>
-        </TableHeader>
+      <Table className={cn(dataTableClassName, hasRows ? 'min-w-[880px]' : 'min-w-full')}>
+        {hasRows ? (
+          <>
+            <colgroup>
+              <col className="w-[16%]" />
+              <col className="w-[40%]" />
+              <col className="w-[12%]" />
+              <col className="w-[144px]" />
+              <col className="w-[96px]" />
+              <col className="w-[56px]" />
+            </colgroup>
+            <TableHeader>
+              <TableRow className={dataTableHeaderRowClassName}>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
+                  {msg('skills.table.id', 'ID')}
+                </TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
+                  {msg('common.name', 'Name')}
+                </TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
+                  {msg('skills.table.source', 'Source')}
+                </TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
+                  {msg('skills.table.latest', 'Latest version')}
+                </TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
+                  {msg('common.updated', 'Updated')}
+                </TableHead>
+                <TableHead
+                  className={cn(dataTableHeaderCellClassName, 'truncate')}
+                  aria-label={msg('common.actions', 'Actions')}
+                />
+              </TableRow>
+            </TableHeader>
+          </>
+        ) : null}
         <TableBody>
           {isLoading ? (
             <TableLoadingRow colSpan={6} label={msg('skills.loading', 'Loading skills...')} />
@@ -379,18 +376,20 @@ function SkillsTable({
                 <DataTableCell edge="start" className="min-w-0">
                   <CopyIdCell
                     value={skill.id}
-                    displayValue={formatSkillId(skill.id)}
                     ariaLabel={msg('skills.copyAria', 'Copy {skillId}', { skillId: skill.id })}
                     stopPropagation
                   />
                 </DataTableCell>
-                <DataTableCell className="truncate font-medium" title={skill.display_title || skill.id}>
+                <DataTableCell
+                  className="break-words whitespace-normal font-medium"
+                  title={skill.display_title || skill.id}
+                >
                   {skill.display_title || skill.id}
                 </DataTableCell>
                 <DataTableCell className="truncate">
                   <SkillSourceBadge source={skill.source} />
                 </DataTableCell>
-                <DataTableCell className="truncate text-muted-foreground">
+                <DataTableCell className="truncate text-muted-foreground" title={skill.latest_version}>
                   {formatSkillVersionDate(skill.latest_version, locale)}
                 </DataTableCell>
                 <DataTableCell className="truncate text-muted-foreground">
@@ -407,16 +406,63 @@ function SkillsTable({
         </TableBody>
       </Table>
       {!isLoading && !error && skills.length === 0 ? (
-        <ResourceListState
-          icon={FileArchive}
-          title={msg('skills.emptyTitle', 'No skills yet')}
-          body={msg('skills.empty', 'Create a skill in the {workspaceName} workspace to reuse it across agents.', {
-            workspaceName,
-          })}
-        />
+        <ResourceListState icon={FileArchive} title={msg('skills.emptyTitle', 'No skills yet')} />
       ) : null}
       {isFetching && !isLoading ? <span className="sr-only">{msg('common.updating', 'Updating...')}</span> : null}
     </section>
+  );
+}
+
+function SkillDrawerHeader({
+  skill,
+  latestVersion,
+  onClose,
+  onUpdateSkill,
+  onDeleteSkill,
+}: {
+  skill?: ConsoleSkill;
+  latestVersion?: ConsoleSkillVersion;
+  onClose: () => void;
+  onUpdateSkill: (skill: ConsoleSkill) => void;
+  onDeleteSkill: (skill: ConsoleSkill) => void;
+}) {
+  const { locale, msg } = useI18n();
+  const title = skill
+    ? skill.display_title || latestVersion?.name || skill.id
+    : msg('skills.detail.title', 'Skill details');
+  return (
+    <SheetHeader className="shrink-0 border-b-[0.5px] border-border px-4 py-4 pr-24">
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <SheetTitle className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]" title={title}>
+              {title}
+            </SheetTitle>
+            {skill ? <SkillSourceBadge source={skill.source} /> : null}
+          </div>
+          {skill ? (
+            <SheetDescription className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+              <span>{formatSkillUpdatedAt(skill.updated_at || skill.created_at, locale, msg)}</span>
+              <span className="font-mono">{formatSkillId(skill.id)}</span>
+            </SheetDescription>
+          ) : null}
+        </div>
+        <div className="absolute right-4 top-4 flex items-center gap-1">
+          {skill?.source === 'custom' ? (
+            <SkillActionsMenu skill={skill} onUpdateSkill={onUpdateSkill} onDeleteSkill={onDeleteSkill} />
+          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={msg('common.close', 'Close')}
+            onClick={onClose}
+          >
+            <X className="size-4" aria-hidden />
+          </Button>
+        </div>
+      </div>
+    </SheetHeader>
   );
 }
 
@@ -436,6 +482,8 @@ function SkillDrawer({
   onVersionChanged: (skillId: string) => Promise<void>;
 }) {
   const { locale, msg } = useI18n();
+  const [open, setOpen] = useState(Boolean(skillId));
+  useEffect(() => setOpen(Boolean(skillId)), [skillId]);
   const [versionToDelete, setVersionToDelete] = useState<ConsoleSkillVersion | null>(null);
   const [deletingVersion, setDeletingVersion] = useState(false);
   const [deleteVersionError, setDeleteVersionError] = useState<string | null>(null);
@@ -479,16 +527,28 @@ function SkillDrawer({
 
   return (
     <>
-      <Sheet open={Boolean(skillId)} onOpenChange={(open) => !open && onClose()}>
-        <SheetContent showCloseButton={false} showOverlay={false} side="right" className="gap-0 p-0 sm:!max-w-md">
+      <Sheet open={open} onOpenChange={setOpen} onOpenChangeComplete={(nextOpen) => !nextOpen && onClose()}>
+        <SheetContent
+          showCloseButton={false}
+          showOverlay={false}
+          side="right"
+          className="min-h-0 gap-0 overflow-hidden p-0 sm:!max-w-md"
+        >
+          <SkillDrawerHeader
+            skill={skill}
+            latestVersion={latestVersion}
+            onClose={() => setOpen(false)}
+            onUpdateSkill={onUpdateSkill}
+            onDeleteSkill={onDeleteSkill}
+          />
           {skillQuery.isLoading ? (
             <div className="p-4 text-sm text-muted-foreground">
               <RefreshCw className="mr-2 inline size-4 animate-spin" aria-hidden />
               {msg('skills.detail.loading', 'Loading skill...')}
             </div>
           ) : skillQuery.error || !skill ? (
-            <div className="p-4">
-              <Alert variant="destructive">
+            <div className="subtle-scrollbar min-h-0 overflow-y-auto p-4">
+              <Alert variant="destructive" className="[overflow-wrap:anywhere]">
                 <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
                 <AlertTitle>{msg('skills.detail.error', 'Skill could not be loaded.')}</AlertTitle>
                 <AlertDescription>
@@ -508,49 +568,17 @@ function SkillDrawer({
             </div>
           ) : (
             <>
-              <SheetHeader className="border-b border-border px-4 py-4 pr-12">
-                <div className="flex min-w-0 items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <SheetTitle className="truncate">
-                        {skill.display_title || latestVersion?.name || skill.id}
-                      </SheetTitle>
-                      <SkillSourceBadge source={skill.source} />
-                    </div>
-                    <SheetDescription className="mt-1 font-mono">
-                      {formatSkillUpdatedAt(skill.updated_at || skill.created_at, locale, msg)}
-                      <span className="mx-2 font-sans" aria-hidden>
-                        ·
-                      </span>
-                      {formatSkillId(skill.id)}
-                    </SheetDescription>
-                  </div>
-                  <div className="absolute right-4 top-4 flex items-center gap-1">
-                    {skill.source === 'custom' ? (
-                      <SkillActionsMenu skill={skill} onUpdateSkill={onUpdateSkill} onDeleteSkill={onDeleteSkill} />
-                    ) : null}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={msg('common.close', 'Close')}
-                      onClick={onClose}
-                    >
-                      <X className="size-4" aria-hidden />
-                    </Button>
-                  </div>
-                </div>
-              </SheetHeader>
+              <div className="subtle-scrollbar min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4">
+                {latestVersion ? (
+                  <section className="space-y-2">
+                    <h2 className="text-sm font-medium text-foreground">{msg('common.description', 'Description')}</h2>
+                    <p className="text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+                      {latestVersion?.description || msg('common.noDescription', 'No description provided.')}
+                    </p>
+                  </section>
+                ) : null}
 
-              <div className="subtle-scrollbar flex-1 space-y-5 overflow-y-auto px-4 py-4">
-                <section className="space-y-2">
-                  <h2 className="text-sm font-medium text-foreground">{msg('common.description', 'Description')}</h2>
-                  <p className="text-sm leading-6 text-muted-foreground">
-                    {latestVersion?.description || msg('common.noDescription', 'No description provided.')}
-                  </p>
-                </section>
-
-                <section className="space-y-3 border-t border-border pt-4">
+                <section className="space-y-3 border-t-[0.5px] border-border pt-4">
                   <h2 className="text-sm font-medium text-foreground">{msg('skills.versions.title', 'Versions')}</h2>
                   {versionsQuery.isLoading ? (
                     <div className="text-sm text-muted-foreground">
@@ -558,23 +586,37 @@ function SkillDrawer({
                       {msg('skills.versions.loading', 'Loading versions...')}
                     </div>
                   ) : versionsQuery.error ? (
-                    <Alert variant="destructive">
+                    <Alert variant="destructive" className="[overflow-wrap:anywhere]">
                       <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
                       <AlertTitle>{msg('skills.versions.error', 'Versions could not be loaded.')}</AlertTitle>
-                      <AlertDescription>{errorMessage(versionsQuery.error)}</AlertDescription>
+                      <AlertDescription>
+                        <p>{errorMessage(versionsQuery.error)}</p>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="mt-3"
+                          disabled={versionsQuery.isFetching}
+                          onClick={() => void versionsQuery.refetch()}
+                        >
+                          {msg('common.retry', 'Retry')}
+                        </Button>
+                      </AlertDescription>
                     </Alert>
+                  ) : versions.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      {msg('skills.versions.empty', 'No versions have been created for this skill.')}
+                    </p>
                   ) : (
                     <div className="space-y-2">
                       {versions.map((version) => (
-                        <div key={version.version} className="flex min-w-0 items-center gap-2">
-                          <Badge variant="secondary" className="max-w-[180px] rounded-md font-mono">
-                            <span className="truncate">{version.version}</span>
-                          </Badge>
-                          <span className="text-sm text-muted-foreground">
+                        <div key={version.version} className="flex min-w-0 flex-wrap items-center gap-2">
+                          <code className="min-w-0 break-all text-xs">{version.version}</code>
+                          <span className="text-xs text-muted-foreground">
                             {formatSkillUpdatedAt(version.created_at, locale, msg)}
                           </span>
                           {version.version === skill.latest_version ? (
-                            <Badge className="rounded-md bg-primary/20 text-primary">
+                            <Badge variant="secondary" className="rounded-md">
                               {msg('skills.versions.latest', 'Latest')}
                             </Badge>
                           ) : null}
@@ -606,54 +648,105 @@ function SkillDrawer({
         </SheetContent>
       </Sheet>
 
-      <AlertDialog
-        open={Boolean(versionToDelete)}
-        onOpenChange={(open) => {
-          if (!open && !deletingVersion) {
-            setVersionToDelete(null);
-            setDeleteVersionError(null);
-          }
+      <SkillVersionDeleteDialog
+        versionToDelete={versionToDelete}
+        deletingVersion={deletingVersion}
+        deleteVersionError={deleteVersionError}
+        onCancel={() => {
+          setVersionToDelete(null);
+          setDeleteVersionError(null);
         }}
+        onConfirm={() => void handleDeleteVersion()}
+      />
+    </>
+  );
+}
+
+function SkillVersionDeleteDialog({
+  versionToDelete,
+  deletingVersion,
+  deleteVersionError,
+  onCancel,
+  onConfirm,
+}: {
+  versionToDelete: ConsoleSkillVersion | null;
+  deletingVersion: boolean;
+  deleteVersionError: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const { msg } = useI18n();
+  const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (deleteVersionError) errorRef.current?.focus();
+  }, [deleteVersionError]);
+  const [deleteVersionContent, setDeleteVersionContent] = useState<{
+    version: ConsoleSkillVersion;
+    error: string | null;
+  } | null>(null);
+  if (
+    versionToDelete &&
+    (versionToDelete !== deleteVersionContent?.version || deleteVersionError !== deleteVersionContent.error)
+  ) {
+    setDeleteVersionContent({ version: versionToDelete, error: deleteVersionError });
+  }
+  return (
+    <AlertDialog
+      open={Boolean(versionToDelete)}
+      onOpenChange={(open, details) => {
+        if (!open && deletingVersion) {
+          details.cancel();
+          return;
+        }
+        if (!open) {
+          onCancel();
+        }
+      }}
+    >
+      <AlertDialogContent
+        size="default"
+        className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden"
       >
-        <AlertDialogContent size="default">
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {msg('skills.deleteVersion.title', 'Confirm deleting version {version}', {
-                version: versionToDelete?.version ?? '',
-              })}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{msg('skills.deleteVersion.heading', 'Delete version?')}</AlertDialogTitle>
+        </AlertDialogHeader>
+        <div className="subtle-scrollbar min-h-0 space-y-4 overflow-y-auto">
+          <AlertDialogDescription className="space-y-3 [overflow-wrap:anywhere]">
+            <code className="block font-mono text-xs text-foreground">
+              {deleteVersionContent?.version.version ?? ''}
+            </code>
+            <span className="block">
               {msg(
                 'skills.deleteVersion.description',
                 'This version will no longer be available. This action is permanent and cannot be undone.',
               )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {deleteVersionError ? (
-            <Alert variant="destructive">
+            </span>
+          </AlertDialogDescription>
+          {deleteVersionContent?.error ? (
+            <Alert ref={errorRef} tabIndex={-1} variant="destructive" className="outline-none [overflow-wrap:anywhere]">
               <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
               <AlertTitle>{msg('skills.deleteVersion.error', 'Version could not be deleted.')}</AlertTitle>
-              <AlertDescription>{deleteVersionError}</AlertDescription>
+              <AlertDescription>{deleteVersionContent.error}</AlertDescription>
             </Alert>
           ) : null}
-          <AlertDialogFooter>
-            <AlertDialogCancel variant="secondary" disabled={deletingVersion}>
-              {msg('common.cancel', 'Cancel')}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={deletingVersion}
-              onClick={(event) => {
-                event.preventDefault();
-                void handleDeleteVersion();
-              }}
-            >
-              {deletingVersion ? msg('common.deleting', 'Deleting...') : msg('common.delete', 'Delete')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel variant="secondary" disabled={deletingVersion}>
+            {msg('common.cancel', 'Cancel')}
+          </AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={deletingVersion}
+            onClick={(event) => {
+              event.preventDefault();
+              onConfirm();
+            }}
+          >
+            {deletingVersion ? msg('common.deleting', 'Deleting...') : msg('common.delete', 'Delete')}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -673,6 +766,8 @@ function SkillUploadDialog({
   onUploaded: (resource: ConsoleSkill | ConsoleSkillVersion) => void;
 }) {
   const { msg } = useI18n();
+  const uploadedResourceRef = useRef<ConsoleSkill | ConsoleSkillVersion | null>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const directoryInputRef = useRef<HTMLInputElement | null>(null);
   const [selection, setSelection] = useState<UploadSelection | null>(null);
@@ -680,20 +775,25 @@ function SkillUploadDialog({
   const [isDragging, setIsDragging] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (!open) {
-      setSelection(null);
-      setError(null);
-      setIsDragging(false);
-      setIsSubmitting(false);
-      if (inputRef.current) {
-        inputRef.current.value = '';
-      }
-      if (directoryInputRef.current) {
-        directoryInputRef.current.value = '';
-      }
+  const resetUpload = useCallback(() => {
+    setSelection(null);
+    setError(null);
+    setIsDragging(false);
+    setIsSubmitting(false);
+    if (inputRef.current) {
+      inputRef.current.value = '';
     }
-  }, [open]);
+    if (directoryInputRef.current) {
+      directoryInputRef.current.value = '';
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open) resetUpload();
+  }, [open, skill?.id, resetUpload]);
+  useEffect(() => {
+    if (error) errorRef.current?.focus();
+  }, [error]);
 
   useEffect(() => {
     directoryInputRef.current?.setAttribute('webkitdirectory', '');
@@ -714,13 +814,15 @@ function SkillUploadDialog({
   };
 
   const handleSubmit = async () => {
-    if (!selection || error || isSubmitting) {
+    if (!selection || isSubmitting) {
       return;
     }
+    setError(null);
     setIsSubmitting(true);
     try {
       const resource = await createSkillPackage(skill?.id, selection.files, workspaceId, selection.displayTitle);
-      onUploaded(resource);
+      uploadedResourceRef.current = resource;
+      onOpenChange(false);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -731,10 +833,31 @@ function SkillUploadDialog({
   const title = mode === 'create' ? msg('skills.create', 'Create skill') : msg('skills.update.title', 'Update Skill');
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]" showCloseButton>
-        <DialogHeader>
-          <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">{title}</DialogTitle>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen, details) => {
+        if (!nextOpen && isSubmitting) {
+          details.cancel();
+          return;
+        }
+        onOpenChange(nextOpen);
+      }}
+      onOpenChangeComplete={(nextOpen) => {
+        if (!nextOpen) {
+          const resource = uploadedResourceRef.current;
+          uploadedResourceRef.current = null;
+          resetUpload();
+          if (resource) onUploaded(resource);
+        }
+      }}
+    >
+      <DialogContent
+        closeButtonDisabled={isSubmitting}
+        className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden sm:max-w-[425px]"
+        showCloseButton
+      >
+        <DialogHeader className="shrink-0">
+          <DialogTitle>{title}</DialogTitle>
           {mode === 'update' ? (
             <DialogDescription>
               {msg(
@@ -760,133 +883,120 @@ function SkillUploadDialog({
           onChange={(event) => void selectFiles(Array.from(event.currentTarget.files ?? []))}
         />
 
-        {selection ? (
-          <div className="rounded-lg border border-border bg-background p-3">
-            <div className="flex items-center gap-3">
-              <span className="grid size-10 shrink-0 place-items-center rounded-md bg-secondary">
-                <FileArchive className="size-5 text-muted-foreground" aria-hidden />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="truncate text-sm font-medium text-primary">{selection.label}</span>
-                  <Check className="size-4 shrink-0 text-primary" aria-hidden />
+        <div className="subtle-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+          {selection ? (
+            <div className="rounded-lg border-[0.5px] border-border bg-background p-3">
+              <div className="flex items-center gap-3">
+                <span className="grid size-10 shrink-0 place-items-center rounded-md bg-secondary">
+                  <FileArchive className="size-5 text-muted-foreground" aria-hidden />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-sm font-medium text-primary" title={selection.label}>
+                      {selection.label}
+                    </span>
+                    <Check className="size-4 shrink-0 text-primary" aria-hidden />
+                  </div>
+                  <p className="mt-1 flex flex-wrap gap-x-3 text-xs leading-tight text-muted-foreground">
+                    {msg('skills.upload.summary', '{count, plural, one {# file} other {# files}}', {
+                      count: selection.fileCount,
+                    })}
+                    <span>{formatBytes(selection.size)}</span>
+                  </p>
                 </div>
-                <p className="mt-1 text-xs leading-tight text-muted-foreground">
-                  {msg('skills.upload.summary', '{count, plural, one {# file} other {# files}}', {
-                    count: selection.fileCount,
-                  })}
-                  <span className="mx-2" aria-hidden>
-                    •
-                  </span>
-                  {formatBytes(selection.size)}
-                </p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-lg"
+                  aria-label={msg('skills.upload.remove', 'Remove upload')}
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    setSelection(null);
+                    setError(null);
+                    if (inputRef.current) {
+                      inputRef.current.value = '';
+                    }
+                    if (directoryInputRef.current) {
+                      directoryInputRef.current.value = '';
+                    }
+                  }}
+                >
+                  <Trash2 className="size-4" aria-hidden />
+                </Button>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-lg"
-                aria-label={msg('skills.upload.remove', 'Remove upload')}
-                onClick={() => {
-                  setSelection(null);
-                  setError(null);
-                  if (inputRef.current) {
-                    inputRef.current.value = '';
-                  }
-                  if (directoryInputRef.current) {
-                    directoryInputRef.current.value = '';
-                  }
-                }}
-              >
-                <Trash2 className="size-4" aria-hidden />
-              </Button>
             </div>
-          </div>
-        ) : (
-          <div
-            role="button"
-            tabIndex={0}
-            className={cn(
-              'grid min-h-32 cursor-pointer place-items-center rounded-lg border border-dashed border-border bg-background/30 p-4 text-center outline-none transition hover:bg-secondary/40 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/40',
-              isDragging && 'border-primary bg-primary/5',
-            )}
-            onClick={() => inputRef.current?.click()}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
+          ) : (
+            <div
+              role="group"
+              aria-label={msg('skills.upload.dropzone', 'Drag and drop a .zip, .skill file, or directory to upload')}
+              className={cn(
+                'grid min-h-32 place-items-center rounded-lg border-[0.5px] border-dashed border-border p-4 text-center',
+                isDragging && 'border-muted-foreground bg-accent',
+              )}
+              onDragEnter={(event) => {
                 event.preventDefault();
-                inputRef.current?.click();
-              }
-            }}
-            onDragEnter={(event) => {
-              event.preventDefault();
-              setIsDragging(true);
-            }}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setIsDragging(true);
-            }}
-            onDragLeave={() => setIsDragging(false)}
-            onDrop={(event) => void handleDrop(event)}
-          >
-            <div className="space-y-3 text-muted-foreground">
-              <FolderPlus className="mx-auto size-8" aria-hidden />
-              <p className="text-sm leading-5">
-                {msg('skills.upload.dropzone', 'Drag and drop a .zip, .skill file, or directory to upload')}
-              </p>
-              <div className="flex justify-center gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    inputRef.current?.click();
-                  }}
-                >
-                  {msg('skills.upload.chooseFile', 'Choose file')}
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    directoryInputRef.current?.click();
-                  }}
-                >
-                  {msg('skills.upload.chooseDirectory', 'Choose directory')}
-                </Button>
+                setIsDragging(true);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setIsDragging(true);
+              }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={(event) => void handleDrop(event)}
+            >
+              <div className="space-y-3 text-muted-foreground">
+                <FolderPlus className="mx-auto size-8" aria-hidden />
+                <p className="text-sm leading-5">
+                  {msg('skills.upload.dropzone', 'Drag and drop a .zip, .skill file, or directory to upload')}
+                </p>
+                <div className="flex justify-center gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      inputRef.current?.click();
+                    }}
+                  >
+                    {msg('skills.upload.chooseFile', 'Choose file')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      directoryInputRef.current?.click();
+                    }}
+                  >
+                    {msg('skills.upload.chooseDirectory', 'Choose directory')}
+                  </Button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {error ? (
-          <Alert variant="destructive">
-            <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-            <AlertTitle>{msg('skills.upload.error', 'Upload could not continue.')}</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
+          {error ? (
+            <Alert ref={errorRef} tabIndex={-1} variant="destructive" className="outline-none [overflow-wrap:anywhere]">
+              <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <AlertTitle>{msg('skills.upload.error', 'Upload could not continue.')}</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
 
-        <p className="text-xs leading-5 text-muted-foreground">
-          {msg('skills.upload.limit', 'Total file size limit: 8MB.')}{' '}
-          <a href="https://docs.anthropic.com/" className="underline underline-offset-4">
-            {msg('skills.upload.fileFormat', 'File format')}
-          </a>
-          {' · '}
-          <a href="https://docs.anthropic.com/" className="underline underline-offset-4">
-            {msg('skills.upload.example', 'download an example.')}
-          </a>
-        </p>
-        <DialogFooter className="sm:justify-end">
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+          <p className="text-xs leading-5 text-muted-foreground">
+            {msg('skills.upload.limit', 'Total file size limit: 8MB.')}{' '}
+            <a href="https://docs.anthropic.com/" className="underline underline-offset-4">
+              {msg('skills.upload.fileFormat', 'File format')}
+            </a>
+          </p>
+        </div>
+        <DialogFooter className="shrink-0 sm:justify-end">
+          <Button type="button" variant="outline" disabled={isSubmitting} onClick={() => onOpenChange(false)}>
             {msg('common.cancel', 'Cancel')}
           </Button>
-          <Button
-            type="button"
-            disabled={!selection || Boolean(error) || isSubmitting}
-            onClick={() => void handleSubmit()}
-          >
+          <Button type="button" disabled={!selection || isSubmitting} onClick={() => void handleSubmit()}>
             {isSubmitting
               ? msg('skills.upload.uploading', 'Uploading...')
               : mode === 'create'
@@ -955,27 +1065,49 @@ function DeleteSkillDialog({
   onConfirm: () => void;
 }) {
   const { msg } = useI18n();
-  const name = skill?.display_title || skill?.id || '';
+  const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error) errorRef.current?.focus();
+  }, [error]);
+  const [content, setContent] = useState({ skill, error });
+  if (skill && (skill !== content.skill || error !== content.error)) setContent({ skill, error });
+  const name = content.skill?.display_title || content.skill?.id || '';
   return (
-    <AlertDialog open={Boolean(skill)} onOpenChange={onOpenChange}>
-      <AlertDialogContent size="default">
+    <AlertDialog
+      open={Boolean(skill)}
+      onOpenChange={(nextOpen, details) => {
+        if (!nextOpen && isDeleting) {
+          details.cancel();
+          return;
+        }
+        onOpenChange(nextOpen);
+      }}
+    >
+      <AlertDialogContent
+        size="default"
+        className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden"
+      >
         <AlertDialogHeader>
-          <AlertDialogTitle>{msg('skills.delete.title', 'Confirm deleting {name}', { name })}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {msg(
-              'skills.delete.description',
-              'Are you sure you want to delete {name} skill? Existing code references will break immediately. This action is permanent and cannot be undone.',
-              { name },
-            )}
-          </AlertDialogDescription>
+          <AlertDialogTitle>{msg('skills.delete.heading', 'Delete skill?')}</AlertDialogTitle>
         </AlertDialogHeader>
-        {error ? (
-          <Alert variant="destructive">
-            <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-            <AlertTitle>{msg('skills.delete.error', 'Skill could not be deleted.')}</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
+        <div className="subtle-scrollbar min-h-0 space-y-4 overflow-y-auto">
+          <AlertDialogDescription className="space-y-3 [overflow-wrap:anywhere]">
+            <span className="block font-medium text-foreground">{name}</span>
+            <span className="block">
+              {msg(
+                'skills.delete.warning',
+                'Existing code references will stop working immediately. This action is permanent and cannot be undone.',
+              )}
+            </span>
+          </AlertDialogDescription>
+          {content.error ? (
+            <Alert ref={errorRef} tabIndex={-1} variant="destructive" className="outline-none [overflow-wrap:anywhere]">
+              <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <AlertTitle>{msg('skills.delete.error', 'Skill could not be deleted.')}</AlertTitle>
+              <AlertDescription>{content.error}</AlertDescription>
+            </Alert>
+          ) : null}
+        </div>
         <AlertDialogFooter>
           <AlertDialogCancel variant="secondary" disabled={isDeleting}>
             {msg('common.cancel', 'Cancel')}
@@ -999,12 +1131,8 @@ function DeleteSkillDialog({
 function SkillSourceBadge({ source }: { source: string }) {
   const { msg } = useI18n();
   const label = formatSkillSource(source, msg);
-  const anthropic = source.trim().toLowerCase() === 'anthropic';
   return (
-    <Badge
-      variant="secondary"
-      className={cn('rounded-md', anthropic ? 'bg-blue-500/20 text-blue-300' : 'bg-secondary text-muted-foreground')}
-    >
+    <Badge variant="secondary" className="rounded-md text-muted-foreground">
       {label}
     </Badge>
   );

@@ -19,7 +19,7 @@ func TestSessionBudgetWithoutConfiguredListPrice(t *testing.T) {
 	response := doSessionRequest(t, app, http.MethodPost, "/v1/sessions", strings.NewReader(body), defaultTestKey, true)
 	defer response.Body.Close()
 	data := readAll(t, response.Body)
-	if response.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), "model_not_budgetable") {
+	if response.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), "no list price configured") {
 		t.Fatalf("budget must not be silently ignored: status=%d body=%s", response.StatusCode, data)
 	}
 	session := createSession(t, app, fmt.Sprintf(`{"agent":%q,"environment_id":%q}`, agent.ID, env.ID))

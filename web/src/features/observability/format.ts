@@ -197,7 +197,7 @@ export function formatSeriesParts(name: string, msg: (id: string, fallback: stri
   }
   const base = panelNamedLabel('series', compound.base, msg);
   const suffix = panelNamedLabel('series', compound.suffix, msg);
-  return { full: `${base}${COMPOUND_SERIES_SEPARATOR}${suffix}`, base, suffix };
+  return { full: `${base} (${suffix})`, base, suffix };
 }
 
 export function panelSeriesLabel(name: string, msg: (id: string, fallback: string) => string) {

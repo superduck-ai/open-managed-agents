@@ -58,7 +58,7 @@ export function EnvironmentKeyValueRows({
             {!readOnly ? (
               <Button
                 variant="ghost"
-                size="icon"
+                size="icon-lg"
                 aria-label={labels.remove(row.key || msg('environmentPage.emptyEntry', 'empty entry'))}
                 onClick={() => onRowsChange(rows.filter((_, position) => index !== position))}
               >

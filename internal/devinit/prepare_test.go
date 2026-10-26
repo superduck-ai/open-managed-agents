@@ -114,6 +114,9 @@ func TestPrepareLocalCreatesBrainConfigAndStableKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !cfg.CodeSession.UpstreamProxyMITMEnabled || cfg.CodeSession.UpstreamProxyCAKeyFile != filepath.Join(root, ".run", "secrets", "upstream-proxy-ca-key.pem") {
+		t.Fatal("fresh config must enable MITM with its generated stable CA key")
+	}
 	if cfg.EnvironmentRunner.AgentMode != "brain" || cfg.Vault.MasterKey.Local.Kek != "" {
 		t.Fatal("fresh config must use Brain and a generated local KEK")
 	}
@@ -197,5 +200,31 @@ func TestPrepareLocalSharesProviderInputsAcrossWorktrees(t *testing.T) {
 	data, err := os.ReadFile(providerFile)
 	if err != nil || string(data) != "existing shared provider" {
 		t.Fatal("shared provider file was overwritten")
+	}
+}
+
+func TestPrepareLocalPreservesExplicitMITMDisable(t *testing.T) {
+	root, shared := prepareTestRepo(t), t.TempDir()
+	if err := prepareLocal(root, shared); err != nil {
+		t.Fatal(err)
+	}
+	path := baseConfigPath(root)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := strings.Replace(string(data), "upstream_proxy_mitm_enabled: true", "upstream_proxy_mitm_enabled: false", 1)
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareLocal(root, shared); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadBaseConfigWithImages(root, imagesConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CodeSession.UpstreamProxyMITMEnabled {
+		t.Fatal("existing explicit MITM disable must be preserved")
 	}
 }

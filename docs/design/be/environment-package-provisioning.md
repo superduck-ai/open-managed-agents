@@ -166,7 +166,7 @@ flowchart LR
 
 ### 配置与服务商合同
 
-完整配置见 [`docs/configuration-reference.yaml`](../../configuration-reference.yaml) 的 `environment_prebuilds` 部分。`image.base_image` 支持 tag 或 digest，但必须显式写出 registry 主机名；构建产物固定写入同一镜像仓库，去掉基础镜像的 tag 和 digest，使用环境 UUID 与 River job ID 组成的新 tag。`image.flow` 保存流水线地址与 token。
+完整配置见 [`docs/configuration-reference.yaml`](../../configuration-reference.yaml) 的 `environment_prebuilds` 部分。`image.base_image` 支持 tag 或 digest，但必须显式写出 registry 主机名；构建产物固定写入同一镜像仓库，去掉基础镜像的 tag 和 digest，使用环境 UUID 与 River job ID 组成的新 tag。`image.flow` 保存流水线地址与 token。启用 `init_script` 时，`image.base_image` 必须包含 Bash，因为预构建直接使用 `bash -eo pipefail -c` 执行脚本。
 
 `image.base_image` 的 registry 主机名判定与 Docker 的 `splitDockerDomain` 一致：首个路径段包含 `.` 或 `:`、等于 `localhost`（忽略大小写），或不是全小写时才是 registry 主机名。省略主机名的引用（如 `team/base:stable`）以及带协议的引用（如 `https://registry.example.com/team/base`）在配置校验阶段即被拒绝，因为 Docker 会把前者的首段当作默认 registry（docker.io）上的命名空间、直接拒绝后者，两者都会让预构建推送到运维从未配置的仓库，并在流水线的远端日志或 CubeSandbox 的拉取阶段以无法定位的形式失败。
 

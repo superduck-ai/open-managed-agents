@@ -41,11 +41,7 @@ describe('Workspace webhooks page', () => {
           </Profiler>
         </WorkspaceWebhooksHarness>,
       );
-      await screen.findByText(
-        hasEndpoints
-          ? 'Prod events'
-          : 'Create a webhook endpoint for the Default workspace to receive event notifications.',
-      );
+      await screen.findByText(hasEndpoints ? 'Prod events' : 'No webhook endpoints yet');
       fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
       const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
       fireEvent.change(within(dialog).getByLabelText('Endpoint URL'), {
@@ -81,12 +77,14 @@ describe('Workspace webhooks page', () => {
       </I18nProvider>,
     );
     const emptyState = await screen.findByTestId('webhooks-empty-state');
-    expect(screen.getAllByRole('button', { name: '添加 Webhook 端点' })).toHaveLength(2);
-    fireEvent.click(within(emptyState).getByRole('button', { name: '添加 Webhook 端点' }));
+    expect(screen.getAllByRole('button', { name: '添加 Webhook 端点' })).toHaveLength(1);
+    expect(within(emptyState).queryByRole('button')).toBeNull();
+    expect(screen.queryByRole('table')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '添加 Webhook 端点' }));
     const dialog = screen.getByRole('dialog', { name: '创建 Webhook 端点' });
     expect(within(dialog).getByText('会话生命周期')).toBeTruthy();
     expect(within(dialog).getByText('运行已开始')).toBeTruthy();
-    expect(screen.getByRole('textbox', { name: '按 ID 查找 Webhook', hidden: true })).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: '按 ID 查找 Webhook', hidden: true })).toBeNull();
     expect(within(dialog).getByRole('checkbox', { name: '全选' })).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: '创建' })).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: '复制 session.updated' })).toBeTruthy();
@@ -101,6 +99,50 @@ describe('Workspace webhooks page', () => {
     ).toBe('true');
   });
 
+  test('keeps pending creation open and resets the draft only after cancellation completes', async () => {
+    resetTestDom('https://oma.duck.ai/settings/workspaces/default/webhooks');
+    mockWebhooks([]);
+    const mockedFetch = globalThis.fetch;
+    let finishCreate: (response: Response) => void = () => {};
+    globalThis.fetch = (input, init) =>
+      init?.method === 'POST'
+        ? new Promise<Response>((resolve) => {
+            finishCreate = resolve;
+          })
+        : mockedFetch(input, init);
+    render(
+      <WorkspaceWebhooksHarness>
+        <WorkspaceWebhooksContent />
+      </WorkspaceWebhooksHarness>,
+    );
+    await screen.findByTestId('webhooks-empty-state');
+    fireEvent.click(screen.getByRole('button', { name: 'Add webhook endpoint' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
+    fireEvent.change(within(dialog).getByLabelText('Endpoint URL'), { target: { value: 'https://example.com/hooks' } });
+    await toggleCheckbox(within(dialog).getByRole('checkbox', { name: 'session.updated' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create', exact: true }));
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: 'Close' }).hasAttribute('disabled')).toBe(true),
+    );
+    expect(within(dialog).getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+    expect(screen.getByRole('dialog')).toBe(dialog);
+    finishCreate(Response.json({ error: { message: 'Sample create failure' } }, { status: 500 }));
+    await within(dialog).findByText('Sample create failure');
+    expect((within(dialog).getByLabelText('Endpoint URL') as HTMLInputElement).value).toBe('https://example.com/hooks');
+    expect(within(dialog).getByRole('checkbox', { name: 'session.updated' }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect((within(dialog).getByLabelText('Endpoint URL') as HTMLInputElement).value).toBe('https://example.com/hooks');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Add webhook endpoint' }));
+    const reopened = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
+    expect((within(reopened).getByLabelText('Endpoint URL') as HTMLInputElement).value).toBe('');
+    expect(within(reopened).getByRole('checkbox', { name: 'session.updated' }).getAttribute('aria-checked')).toBe(
+      'false',
+    );
+    expect(within(reopened).queryByText('Sample create failure')).toBeNull();
+  });
+
   test('requires a valid HTTPS URL and an explicit event selection', async () => {
     resetTestDom('https://oma.duck.ai/settings/workspaces/default/webhooks');
     const api = mockWebhooks([]);
@@ -109,7 +151,7 @@ describe('Workspace webhooks page', () => {
         <WorkspaceWebhooksContent />
       </WorkspaceWebhooksHarness>,
     );
-    await screen.findByText('Create a webhook endpoint for the Default workspace to receive event notifications.');
+    await screen.findByText('No webhook endpoints yet');
     fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
     const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
     const submit = within(dialog).getByRole('button', { name: 'Create' });
@@ -158,7 +200,7 @@ describe('Workspace webhooks page', () => {
         <WorkspaceWebhooksContent />
       </WorkspaceWebhooksHarness>,
     );
-    await screen.findByText('Create a webhook endpoint for the Default workspace to receive event notifications.');
+    await screen.findByText('No webhook endpoints yet');
     fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
     fireEvent.change(screen.getByLabelText('Endpoint URL'), { target: { value: 'https://example.com/hooks' } });
     await toggleCheckbox(screen.getByRole('checkbox', { name: 'session.updated' }));
@@ -203,7 +245,8 @@ describe('Workspace webhooks page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(api.lastUpdateFor('wh_enabled')?.name).toBe(''));
     expect(api.lastUpdateFor('wh_enabled')?.enabled_events).toEqual([`${prefix}.${initial}`, `${prefix}.${change}`]);
-    expect(await screen.findByText(`${initial === 'started' ? 'Started' : 'Created'} · ${label}`)).toBeTruthy();
+    expect(await screen.findByText(initial === 'started' ? 'Started' : 'Created')).toBeTruthy();
+    expect(screen.getByText(label)).toBeTruthy();
   });
 
   test('edits the reserved Budget group without dropping its subscription', async () => {
@@ -271,15 +314,11 @@ describe('Workspace webhooks page', () => {
     ).toBe(true);
     expect(screen.getByRole('heading', { name: 'Webhooks' })).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]).toBeTruthy();
-    expect(
-      screen.getByText('Webhook endpoints receive event notifications when things happen in your workspace.'),
-    ).toBeTruthy();
+    await screen.findByText('Deploy events');
     expect(screen.getByText('ID')).toBeTruthy();
     expect(screen.getByText('Name')).toBeTruthy();
     expect(screen.getByText('Status')).toBeTruthy();
     expect(screen.getByText('Created at')).toBeTruthy();
-
-    await screen.findByText('Deploy events');
     expect(screen.getByText('https://example.com/webhooks')).toBeTruthy();
     const disabledStatus = screen.getByText('Disabled');
     expect(disabledStatus).toBeTruthy();
@@ -301,7 +340,7 @@ describe('Workspace webhooks page', () => {
       </WorkspaceWebhooksHarness>,
     );
 
-    await screen.findByText('Create a webhook endpoint for the Default workspace to receive event notifications.');
+    await screen.findByText('No webhook endpoints yet');
     fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
 
     const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
@@ -327,7 +366,7 @@ describe('Workspace webhooks page', () => {
       </WorkspaceWebhooksHarness>,
     );
 
-    await screen.findByText('Create a webhook endpoint for the Default workspace to receive event notifications.');
+    await screen.findByText('No webhook endpoints yet');
     fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
 
     const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
@@ -340,7 +379,7 @@ describe('Workspace webhooks page', () => {
     // Layout regression for #122: the header/footer stay pinned while only the form
     // body scrolls, driven by grid rows instead of hardcoded pixel budgets.
     expect(dialog.className).toContain('grid-rows-[auto_minmax(0,1fr)]');
-    expect(dialog.className).toContain('overflow-hidden');
+    expect(dialog.className).toContain('overflow-clip');
     const scrollArea = dialog.querySelector('.subtle-scrollbar-auto') as HTMLElement | null;
     expect(scrollArea?.className).toContain('min-h-0');
     expect(scrollArea?.className).toContain('overflow-y-auto');
@@ -420,7 +459,7 @@ describe('Workspace webhooks page', () => {
       </WorkspaceWebhooksHarness>,
     );
 
-    await screen.findByText('Create a webhook endpoint for the Default workspace to receive event notifications.');
+    await screen.findByText('No webhook endpoints yet');
     fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
     const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
 
@@ -505,7 +544,6 @@ describe('Workspace webhooks page', () => {
     expect(screen.getByTestId('webhook-detail-inspector').className).toContain('fixed');
     expect(screen.getByTestId('webhook-detail-inspector').className).toContain('right-0');
     expect(within(inspector).getByText('Endpoint')).toBeTruthy();
-    expect(within(inspector).getByText('Events are delivered to this URL via HTTPS POST.')).toBeTruthy();
     const endpointText = within(inspector).getByText('https://www.baidu.com');
     expect(endpointText).toBeTruthy();
     const endpointCard = endpointText.closest('[data-slot="card"]') as HTMLElement | null;
@@ -517,9 +555,12 @@ describe('Workspace webhooks page', () => {
     expect(eventCount).toBeTruthy();
     expect(eventCount.closest('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
     expect(within(inspector).getByText('Session lifecycle')).toBeTruthy();
-    expect(within(inspector).getByText('Run started · Rescheduled · Idled · Terminated')).toBeTruthy();
+    for (const label of ['Run started', 'Rescheduled', 'Idled', 'Terminated']) {
+      expect(within(inspector).getByText(label)).toBeTruthy();
+    }
     expect(within(inspector).getByText('Session record')).toBeTruthy();
-    expect(within(inspector).getByText('Updated · Deleted')).toBeTruthy();
+    expect(within(inspector).getByText('Updated')).toBeTruthy();
+    expect(within(inspector).getByText('Deleted')).toBeTruthy();
     expect(within(inspector).getByText('Credential lifecycle')).toBeTruthy();
     expect(within(inspector).getByText('Refresh failed')).toBeTruthy();
 
@@ -570,7 +611,9 @@ describe('Workspace webhooks page', () => {
 
     const updatedInspector = await screen.findByRole('dialog', { name: 'Prod deliveries' });
     expect(within(updatedInspector).getByText('Vault lifecycle')).toBeTruthy();
-    expect(within(updatedInspector).getByText('Created · Archived · Deleted')).toBeTruthy();
+    for (const label of ['Created', 'Archived', 'Deleted']) {
+      expect(within(updatedInspector).getByText(label)).toBeTruthy();
+    }
     expect(screen.getAllByText('Prod deliveries').length).toBe(2);
   });
 

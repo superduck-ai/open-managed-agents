@@ -46,7 +46,7 @@ export function SpanDetailPanel({
 
   return (
     <aside className="flex h-full min-h-0 w-full min-w-0 flex-col bg-background">
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-border px-3">
+      <div className="flex h-8 shrink-0 items-center gap-2 border-b-[0.5px] border-border px-3">
         <p className="min-w-0 flex-1 truncate text-sm font-medium">{spanDisplayName(span)}</p>
         <Button
           type="button"
@@ -58,7 +58,7 @@ export function SpanDetailPanel({
           <X className="size-3.5" aria-hidden />
         </Button>
       </div>
-      <div className="flex shrink-0 items-center gap-x-4 gap-y-1 overflow-x-auto border-b border-border px-3 py-1.5">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b-[0.5px] border-border px-3 py-1.5">
         <MetricChip
           icon={<span className="size-2.5 rounded-sm" style={{ backgroundColor: color }} />}
           label={msg('observability.column.agent', 'Agent')}
@@ -77,7 +77,7 @@ export function SpanDetailPanel({
         <button
           type="button"
           className={cn(
-            'inline-flex h-[22px] shrink-0 items-center gap-1 rounded-md px-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground',
+            'inline-flex h-[22px] shrink-0 items-center gap-1 rounded-md px-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground',
             PRESS_SCALE_CLASS,
           )}
           title={span.span_id}
@@ -92,13 +92,13 @@ export function SpanDetailPanel({
         <TraceIOPanels
           input={preview.input}
           output={preview.output}
-          className="shrink-0 grid-cols-1 border-b border-border px-3 py-2"
+          className="shrink-0 grid-cols-1 border-b-[0.5px] border-border px-3 py-2"
           contentClassName="max-h-32"
         />
       ) : null}
       <Tabs defaultValue="attributes" className="flex min-h-0 flex-1 flex-col gap-0">
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3">
-          <TabsList variant="line" className="h-9">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b-[0.5px] border-border px-3">
+          <TabsList variant="line" className="h-9 max-w-full">
             <TabsTrigger value="attributes">{msg('observability.trace.attributes', 'Attributes')}</TabsTrigger>
             {events.length ? (
               <TabsTrigger value="events">{msg('observability.trace.events', 'Events')}</TabsTrigger>
@@ -135,8 +135,8 @@ function SpanEventView({ event, view }: { event: ObservabilitySpanEvent; view: '
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-baseline justify-between gap-2">
-        <p className="truncate font-mono text-[11px] font-semibold">{event.name}</p>
-        <p className="shrink-0 font-mono text-[10px] text-muted-foreground">{event.timestamp}</p>
+        <p className="truncate font-mono text-xs font-semibold">{event.name}</p>
+        <p className="shrink-0 font-mono text-xs text-muted-foreground">{event.timestamp}</p>
       </div>
       <AttributeView view={view} entries={entries} />
     </div>
@@ -145,7 +145,7 @@ function SpanEventView({ event, view }: { event: ObservabilitySpanEvent; view: '
 
 function MetricChip({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
   return (
-    <span className="inline-flex h-[22px] max-w-56 shrink-0 items-center gap-1 text-[11px]" title={`${label} ${value}`}>
+    <span className="inline-flex h-[22px] max-w-56 shrink-0 items-center gap-1 text-xs" title={`${label} ${value}`}>
       {icon}
       <span className="text-muted-foreground">{label}</span>
       <span className="truncate font-medium tabular-nums">{value}</span>
@@ -156,11 +156,12 @@ function MetricChip({ icon, label, value }: { icon: ReactNode; label: string; va
 function ViewToggle({ view, onChange }: { view: 'json' | 'table'; onChange: (next: 'json' | 'table') => void }) {
   const { msg } = useI18n();
   return (
-    <div className="flex rounded-lg border border-border p-0.5">
+    <div className="flex rounded-lg border-[0.5px] border-border p-0.5">
       <Button
         type="button"
         size="xs"
         variant={view === 'json' ? 'secondary' : 'ghost'}
+        aria-pressed={view === 'json'}
         onClick={() => onChange('json')}
       >
         {msg('observability.trace.json', 'JSON')}
@@ -169,6 +170,7 @@ function ViewToggle({ view, onChange }: { view: 'json' | 'table'; onChange: (nex
         type="button"
         size="xs"
         variant={view === 'table' ? 'secondary' : 'ghost'}
+        aria-pressed={view === 'table'}
         onClick={() => onChange('table')}
       >
         {msg('observability.trace.table', 'Table')}
@@ -183,23 +185,26 @@ function AttributeView({ view, entries }: { view: 'json' | 'table'; entries: Arr
       return <p className="text-xs text-muted-foreground">—</p>;
     }
     return (
-      <dl className="border border-border">
+      <dl className="border-[0.5px] border-border">
         {entries.map(([key, value]) => (
           <div
             key={key}
-            className="grid grid-cols-[minmax(0,38%)_minmax(0,62%)] border-b border-border last:border-b-0"
+            className="grid grid-cols-[minmax(0,38%)_minmax(0,62%)] border-b-[0.5px] border-border last:border-b-0"
           >
-            <dt className="truncate border-r border-border px-2 py-1 font-mono text-[11px] text-muted-foreground">
+            <dt
+              title={key}
+              className="truncate border-r-[0.5px] border-border px-2 py-1 font-mono text-xs text-muted-foreground"
+            >
               {key}
             </dt>
-            <dd className="break-all px-2 py-1 font-mono text-[11px]">{value}</dd>
+            <dd className="break-words px-2 py-1 font-mono text-xs">{value}</dd>
           </div>
         ))}
       </dl>
     );
   }
   return (
-    <pre className="max-w-full min-w-0 whitespace-pre-wrap break-all rounded-md bg-muted/40 p-3 font-mono text-[11px] leading-5">
+    <pre className="max-w-full min-w-0 whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 font-mono text-xs leading-5">
       <span className="text-muted-foreground">{'{'}</span>
       {entries.map(([key, value], index) => (
         <span key={key}>

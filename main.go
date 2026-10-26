@@ -29,6 +29,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/natsclient"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/pricing"
 	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
 	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
@@ -87,6 +88,7 @@ func run(logger *slog.Logger) error {
 	if err := database.Seed(ctx, cfg.Bootstrap); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
+	syncModelPrices(ctx, database, logger)
 	redisClient, err := redisclient.Open(ctx, cfg.Redis.URL)
 	if err != nil {
 		return fmt.Errorf("open redis client: %w", err)
@@ -296,6 +298,15 @@ func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) er
 		}
 	}
 	return nil
+}
+
+func syncModelPrices(ctx context.Context, database *db.DB, logger *slog.Logger) {
+	if err := pricing.Sync(ctx, database); err != nil {
+		logger.Warn("sync model prices", "source", "openrouter", "error", err)
+	}
+	if err := pricing.SyncNarrows(ctx, database); err != nil {
+		logger.Warn("sync model prices", "source", "narrows", "error", err)
+	}
 }
 
 func shutdownHTTP(ctx context.Context, server *http.Server) error {

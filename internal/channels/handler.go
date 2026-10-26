@@ -47,6 +47,16 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	if !ok || p.WorkspaceUUID == "" || p.OrganizationUUID == "" {
 		return unauthenticated()
 	}
+	if p.CredentialType == auth.CredentialTypePlatformSession {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+		default:
+			sessionKey := auth.ExtractPlatformSessionKey(r)
+			if sessionKey == "" || !auth.ValidatePlatformCSRFToken(sessionKey, r.Header.Get("X-CSRF-Token")) {
+				return csrfRejected()
+			}
+		}
+	}
 	agentID := chi.URLParam(r, "agent_id")
 	agent, err := h.store.GetAgent(r.Context(), p.WorkspaceUUID, agentID)
 	if errors.Is(err, db.ErrNotFound) {

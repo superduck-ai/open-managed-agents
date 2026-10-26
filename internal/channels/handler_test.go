@@ -85,3 +85,43 @@ func TestChannelScopeAndProxy(t *testing.T) {
 		})
 	}
 }
+
+func TestChannelPlatformSessionCSRF(t *testing.T) {
+	for _, test := range []struct {
+		name, method, credential, cookie, csrf, workspace string
+		want                                              int
+	}{
+		{name: "平台变更缺少令牌", method: http.MethodPost, credential: auth.CredentialTypePlatformSession, cookie: "channel-session", workspace: "workspace-a", want: http.StatusForbidden},
+		{name: "平台变更错误令牌", method: http.MethodPost, credential: auth.CredentialTypePlatformSession, cookie: "channel-session", csrf: "wrong", workspace: "workspace-a", want: http.StatusForbidden},
+		{name: "平台变更缺少会话Cookie", method: http.MethodPost, credential: auth.CredentialTypePlatformSession, csrf: auth.PlatformCSRFToken(""), workspace: "workspace-a", want: http.StatusForbidden},
+		{name: "平台变更合法令牌", method: http.MethodPost, credential: auth.CredentialTypePlatformSession, cookie: "channel-session", csrf: auth.PlatformCSRFToken("channel-session"), workspace: "workspace-a", want: http.StatusOK},
+		{name: "平台读取无需令牌", method: http.MethodGet, credential: auth.CredentialTypePlatformSession, cookie: "channel-session", workspace: "workspace-a", want: http.StatusOK},
+		{name: "API密钥变更无需令牌", method: http.MethodPost, credential: auth.CredentialTypeAPIKey, workspace: "workspace-a", want: http.StatusOK},
+		{name: "合法令牌不绕过工作区", method: http.MethodPost, credential: auth.CredentialTypePlatformSession, cookie: "channel-session", csrf: auth.PlatformCSRFToken("channel-session"), workspace: "workspace-b", want: http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls++
+				_, _ = w.Write([]byte(`{"data":[]}`))
+			}))
+			defer upstream.Close()
+			router := chi.NewRouter()
+			router.Mount("/agents/{agent_id}/channels", NewHandler(config.ChannelBridgeConfig{URL: upstream.URL, Token: "bridge-token"}, scopedStore{}, slog.New(slog.NewTextHandler(io.Discard, nil))))
+			request := httptest.NewRequestWithContext(t.Context(), test.method, "/agents/agent-a/channels", strings.NewReader(`{}`))
+			if test.cookie != "" {
+				request.AddCookie(&http.Cookie{Name: "sessionKey", Value: test.cookie})
+			}
+			request.Header.Set("X-CSRF-Token", test.csrf)
+			request = request.WithContext(auth.WithPrincipal(request.Context(), auth.Principal{OrganizationUUID: "organization-a", WorkspaceUUID: test.workspace, CredentialType: test.credential}))
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.want, response.Body.String())
+			}
+			if (test.want == http.StatusOK) != (calls == 1) {
+				t.Fatalf("upstream calls = %d", calls)
+			}
+		})
+	}
+}

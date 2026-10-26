@@ -17,3 +17,7 @@ func agentNotFound() error {
 func archivedAgent() error {
 	return apperr.New(apperr.Conflict, "已归档 Agent 无法修改渠道", nil)
 }
+
+func csrfRejected() error {
+	return apperr.New(apperr.PermissionDenied, "Invalid CSRF token", nil)
+}

@@ -3812,7 +3812,7 @@ export function registerManagedAgentsResourceTests() {
       metadata: {},
       config: {
         type: 'cloud',
-        networking: { type: 'limited', allow_mcp_servers: false, allow_package_managers: false, allowed_hosts: [] },
+        networking: { type: 'unrestricted' },
         packages: { type: 'packages', apt: [], cargo: [], gem: [], go: [], npm: [], pip: [] },
       },
     });

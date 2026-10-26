@@ -33,6 +33,7 @@ import {
 import { Bot, Clock3, Cloud, LockKeyhole, ReceiptText, Timer } from 'lucide-react';
 import { SESSION_ARCHIVED_LANES_STORAGE_KEY, SESSION_MAIN_LANE_ID } from './sessionTimeline';
 import {
+  hasWallClockMs,
   sessionEventSummary,
   sessionEventTimestamp,
   sessionEventType,
@@ -222,7 +223,7 @@ export function sessionTimelineItemFromEntry(entry: SessionEventListEntry): Sess
       durationMs: entry.durationMs,
     };
   }
-  if (!Number.isFinite(entry.processedAtMs)) {
+  if (!hasWallClockMs(entry.processedAtMs)) {
     return null;
   }
   if (entry.kind === 'passthrough' && entry.displayEvent.isStreaming) {

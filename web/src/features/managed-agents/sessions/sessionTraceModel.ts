@@ -1402,7 +1402,7 @@ export function sessionTraceEntryFromEvent(
   msg?: I18nMsg,
 ): SessionTraceEntry {
   const type = sessionEventType(event);
-  const createdAtMs = sessionEventTimestamp(event) || index;
+  const createdAtMs = sessionEventTimestamp(event);
   const displayText = sessionEventIsThinking(event)
     ? ''
     : sessionEventTranscriptText(event) ||
@@ -2556,6 +2556,10 @@ export function sessionTimestampMs(value: unknown) {
   if (!Number.isFinite(parsed)) return 0;
   const subMillisecond = /\.\d{3}(\d+)/.exec(value)?.[1];
   return subMillisecond ? parsed + Number(`0.${subMillisecond}`) : parsed;
+}
+
+export function hasWallClockMs(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
 export function sessionEventElapsedTime(event: QuickstartSessionEvent, traceStartMs: number) {

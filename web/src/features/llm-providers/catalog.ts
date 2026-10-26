@@ -76,6 +76,7 @@ const SLUG_PATTERN = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 
 export type CatalogModel = {
   id: string;
+  name?: string;
   qualifiedId: string;
   providerId: string;
   providerName: string;
@@ -91,7 +92,8 @@ export function isValidSlug(slug: string): boolean {
 
 export function catalogModels(providers: LLMProvider[]): CatalogModel[] {
   return providers.flatMap((provider) =>
-    provider.models.map(({ id: modelId }) => ({
+    provider.models.map(({ id: modelId, name }) => ({
+      ...(name ? { name } : {}),
       id: modelId,
       qualifiedId: qualifiedModelId(provider.slug, modelId),
       providerId: provider.id,
@@ -106,7 +108,10 @@ export function filterCatalogModels(models: CatalogModel[], query: string): Cata
     return models;
   }
   return models.filter(
-    (model) => model.qualifiedId.toLowerCase().includes(needle) || model.providerName.toLowerCase().includes(needle),
+    (model) =>
+      model.qualifiedId.toLowerCase().includes(needle) ||
+      model.providerName.toLowerCase().includes(needle) ||
+      Boolean(model.name?.toLowerCase().includes(needle)),
   );
 }
 

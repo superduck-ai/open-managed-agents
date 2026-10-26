@@ -23,6 +23,7 @@ const (
 )
 
 type LLMModel struct {
+	Name            string   `json:"name,omitempty"`
 	ID              string   `json:"id"`
 	ContextWindow   *int     `json:"context_window,omitzero"`
 	MaxOutputTokens *int     `json:"max_output_tokens,omitzero"`

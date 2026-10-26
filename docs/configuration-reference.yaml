@@ -1,3 +1,5 @@
+llm_provider_presets_file: ""
+
 # Open Managed Agents complete process-configuration reference.
 #
 # This file documents every YAML field accepted by internal/config.Config. It is
@@ -324,6 +326,17 @@ environment_prebuilds:
     registry_auth:
       username: ""
       password: ""
+    # TCP ports exposed by prebuilt templates. Include envd (49983) and
+    # environment_runner.sandbox_mcp_port so the runner can reach the sandbox.
+    exposed_ports: [3001, 49983]
+    # Template readiness probe port; must be listed in exposed_ports.
+    probe_port: 49983
+    # Upper bounds for Environment config.resources. 0 keeps that resource at the
+    # deployment default above and rejects per-environment overrides.
+    max_resources:
+      cpu: 0 # Millicores, e.g. 8000.
+      memory: 0 # MiB, e.g. 16384.
+      disk: 0 # GiB, e.g. 100.
 
 # Private transcript archives reuse storage.s3.bucket. No fixed object TTL on this prefix.
 transcript_archive:

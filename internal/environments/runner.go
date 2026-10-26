@@ -240,8 +240,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 		r.failWorkBeforeSandbox(ctx, *work)
 		return true, err
 	}
-	preinstalled := hasPrebuiltTemplate(env)
-	resolution, err := r.provider.Resolve(env, work)
+	resolution, preinstalled, err := r.resolveEnvironmentSandbox(env, work)
 	if err != nil {
 		r.failWorkBeforeSandbox(ctx, *work)
 		return true, err
@@ -317,6 +316,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
 	}
+	r.persistPackageSources(ctx, providerSandboxID, preinstalled)
 	if provision && !preinstalled {
 		proceed, err := r.provisionCreatedSandboxPackages(ctx, record, work, providerSandboxID, manifest)
 		if err != nil {

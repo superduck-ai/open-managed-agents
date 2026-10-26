@@ -27,6 +27,7 @@ import {
   upsertOrganizationLLMProvider,
   deleteLLMProvider,
   listLLMProviders,
+  listProviderPresets,
   previewProviderModels,
   syncProviderModels,
   updateLLMProvider,
@@ -87,6 +88,13 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
     queryKey: organizationKey,
     queryFn: () => getOrganizationLLMProvider(orgUuid ?? ''),
     enabled: Boolean(orgUuid),
+    retry: false,
+  });
+  const presetsKey = ['console', 'llm-provider-presets', orgUuid];
+  const presetsQuery = useQuery({
+    queryKey: presetsKey,
+    queryFn: () => listProviderPresets(orgUuid ?? ''),
+    enabled: canManage && formOpen && !editing,
     retry: false,
   });
   const organizationProvider = organizationQuery.data;
@@ -276,6 +284,9 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
 
       {formOpen ? (
         <ProviderFormDialog
+          presetCatalog={presetsQuery.data}
+          presetError={presetsQuery.error ? readableError(presetsQuery.error, msg) : undefined}
+          onReloadPresets={() => void presetsQuery.refetch()}
           provider={editing}
           organization={scope === 'organization'}
           error={formError}

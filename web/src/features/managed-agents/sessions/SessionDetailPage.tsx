@@ -97,6 +97,7 @@ import {
 } from './sessionTimeline';
 import {
   buildSessionEventEntries,
+  hasWallClockMs,
   sessionCanonicalDisplayEvent,
   sessionEventTimestamp,
   sessionEventType,
@@ -620,7 +621,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     const laneEntries = (entriesByLaneId.get(laneId) ?? []).filter(
       (entry): entry is Extract<SessionEventListEntry, { event: QuickstartSessionEvent }> => 'event' in entry,
     );
-    const timedEntries = laneEntries.filter((entry) => Number.isFinite(entry.processedAtMs));
+    const timedEntries = laneEntries.filter((entry) => hasWallClockMs(entry.processedAtMs));
     const matchingEntries = timedEntries.filter(
       (entry) => sessionEventType(entry.event) === eventType && Math.abs(entry.processedAtMs - processedAtMs) <= 2000,
     );

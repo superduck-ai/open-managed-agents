@@ -41,6 +41,7 @@ import {
   sessionTokenUsageTitle,
   truncateLaneLabel,
 } from './sessionDetailModel';
+import { hasWallClockMs } from './sessionTraceModel';
 import { outcomeStatusChipClass, outcomeStatusLabel } from './sessionTraceRows';
 
 export const SESSION_MAIN_LANE_ID = '';
@@ -1322,7 +1323,7 @@ export function buildTimelineTicks(
 ): SessionTimelineTick[] {
   const flattened = lanes
     .flatMap((lane) => lane.items.map((item) => ({ ...item, lane })))
-    .filter((item) => Number.isFinite(item.processedAtMs));
+    .filter((item) => hasWallClockMs(item.processedAtMs));
   if (!flattened.length) {
     return [];
   }
@@ -1645,7 +1646,7 @@ export function MetaStrip({
 }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
-  const absoluteTime = processedAtMs
+  const absoluteTime = hasWallClockMs(processedAtMs)
     ? formatters.date(processedAtMs, {
         month: '2-digit',
         day: '2-digit',

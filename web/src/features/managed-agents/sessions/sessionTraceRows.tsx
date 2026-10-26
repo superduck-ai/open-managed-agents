@@ -23,6 +23,7 @@ import { formatSessionDuration } from './sessionDetailModel';
 import { sessionTranscriptEntryDurationMs } from './sessionTranscriptModel';
 import { HeaderRow, InProgressChip, MetaStrip, OutcomeStatusChip, SynchronizedShimmerText } from './sessionTimeline';
 import {
+  hasWallClockMs,
   sessionEventFamily,
   sessionEventIsThinking,
   sessionEventLabel,
@@ -277,7 +278,7 @@ export function TranscriptSpeakerHeader({
 }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
-  const time = processedAtMs
+  const time = hasWallClockMs(processedAtMs)
     ? formatters.date(processedAtMs, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     : relativeTime;
   return (

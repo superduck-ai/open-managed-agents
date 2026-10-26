@@ -190,10 +190,18 @@ describe('create agent draft model', () => {
     } as AgentApiResponse;
     const withAgent = toggleSubagent(baseDraft, agent);
     expect(withAgent.multiagent).toEqual({
-      type: 'coordinator',
-      agents: [{ type: 'agent', id: 'agent_helper', version: 3 }],
+      type: 'multiagent_20261001',
+      workflows: { type: 'disabled' },
+      advisor: { type: 'disabled' },
+      subagents: {
+        type: 'enabled',
+        inline_agents: { type: 'enabled' },
+        predefined_agents: [{ type: 'agent', id: 'agent_helper', version: 3 }],
+      },
     });
-    expect(toggleSubagent(withAgent, agent).multiagent).toBeNull();
+    expect(toggleSubagent(withAgent, agent).multiagent).toMatchObject({
+      subagents: { type: 'enabled', predefined_agents: [] },
+    });
 
     const withSkill = toggleSkill(baseDraft, {
       id: 'skill_report',

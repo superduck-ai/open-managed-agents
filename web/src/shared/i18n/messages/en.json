@@ -532,7 +532,7 @@
   "managedAgents.agents.createDialog.mcpDirectoryTab": "Directory",
   "managedAgents.agents.createDialog.mcpServerLimit": "An agent can use at most 20 MCP servers.",
   "managedAgents.agents.createDialog.multiagent": "Multiagent",
-  "managedAgents.agents.createDialog.multiagentDescription": "Subagents this agent can spawn and delegate work to.",
+  "managedAgents.agents.createDialog.multiagentDescription": "Subagents this agent can hand work to.",
   "managedAgents.agents.createDialog.mcpDirectory": "MCP directory",
   "managedAgents.agents.createDialog.mcpTunnelChannelPending": "Finish choosing a Tunnel channel before continuing.",
   "managedAgents.agents.createDialog.noAgents": "No agents yet.",
@@ -547,7 +547,7 @@
   "managedAgents.agents.createDialog.privateTunnels": "Private tunnels",
   "managedAgents.agents.createDialog.raw": "Raw",
   "managedAgents.agents.createDialog.rendered": "Rendered",
-  "managedAgents.agents.createDialog.searchAgents": "Search agents...",
+  "managedAgents.agents.createDialog.searchAgents": "Search agents by name or exact ID",
   "managedAgents.agents.createDialog.searchMcpServers": "Search MCP servers...",
   "managedAgents.agents.createDialog.searchModels": "Search models...",
   "managedAgents.agents.createDialog.searchSkills": "Search skills...",
@@ -2615,5 +2615,14 @@
   "analytics.real.usageDescription": "Your organization’s token usage over time. All dates are in UTC.",
   "analytics.cost.totalCost": "Total cost",
   "analytics.cost.totalSessionRuntimeCost": "Total session runtime cost",
-  "analytics.real.costFailed": "Could not load costs. Check your access and retry."
+  "analytics.real.costFailed": "Could not load costs. Check your access and retry.",
+  "managedAgents.agents.createDialog.subagents": "Subagents",
+  "managedAgents.agents.createDialog.subagentsDescription": "Hands tasks to other agents, each in a thread of its own.",
+  "managedAgents.agents.createDialog.inlineAgents": "Can define its own agents",
+  "managedAgents.agents.createDialog.inlineAgentsDescription": "Agents it writes for one task. They aren’t saved.",
+  "managedAgents.agents.createDialog.savedAgents": "Saved agents it can use",
+  "managedAgents.agents.createDialog.addAgent": "Add agent",
+  "managedAgents.agents.createDialog.emptySubagents": "Add a saved agent, or let it define its own.",
+  "managedAgents.agents.createDialog.subagentsOn": "Subagents on",
+  "managedAgents.agents.createDialog.nestedSubagent": "{agent} has multiagent settings of its own, so it can’t be used here."
 }

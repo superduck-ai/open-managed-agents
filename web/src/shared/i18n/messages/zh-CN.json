@@ -532,7 +532,7 @@
   "managedAgents.agents.createDialog.mcpDirectoryTab": "目录",
   "managedAgents.agents.createDialog.mcpServerLimit": "每个 Agent 最多可使用 20 个 MCP 服务器。",
   "managedAgents.agents.createDialog.multiagent": "多智能体",
-  "managedAgents.agents.createDialog.multiagentDescription": "此 Agent 可以启动并委派工作的子 Agent。",
+  "managedAgents.agents.createDialog.multiagentDescription": "此 Agent 可以将工作交给的子 Agent。",
   "managedAgents.agents.createDialog.mcpDirectory": "MCP 目录",
   "managedAgents.agents.createDialog.mcpTunnelChannelPending": "请先完成隧道通道选择，再继续。",
   "managedAgents.agents.createDialog.noAgents": "暂无 Agent。",
@@ -547,7 +547,7 @@
   "managedAgents.agents.createDialog.privateTunnels": "私有隧道",
   "managedAgents.agents.createDialog.raw": "原始内容",
   "managedAgents.agents.createDialog.rendered": "已渲染",
-  "managedAgents.agents.createDialog.searchAgents": "搜索 Agent...",
+  "managedAgents.agents.createDialog.searchAgents": "按名称或完整 ID 搜索 Agent",
   "managedAgents.agents.createDialog.searchMcpServers": "搜索 MCP 服务器...",
   "managedAgents.agents.createDialog.searchModels": "搜索模型...",
   "managedAgents.agents.createDialog.searchSkills": "搜索技能...",
@@ -2615,5 +2615,14 @@
   "analytics.real.usageDescription": "您所在组织随时间变化的 Token 用量。所有日期均为 UTC 时间。",
   "analytics.cost.totalCost": "总费用",
   "analytics.cost.totalSessionRuntimeCost": "会话运行总成本",
-  "analytics.real.costFailed": "无法加载成本，请检查访问权限后重试。"
+  "analytics.real.costFailed": "无法加载成本，请检查访问权限后重试。",
+  "managedAgents.agents.createDialog.subagents": "子 Agent",
+  "managedAgents.agents.createDialog.subagentsDescription": "将任务交给其他 Agent，每个 Agent 在独立线程中工作。",
+  "managedAgents.agents.createDialog.inlineAgents": "允许自行定义 Agent",
+  "managedAgents.agents.createDialog.inlineAgentsDescription": "为单个任务临时定义 Agent，这些 Agent 不会保存。",
+  "managedAgents.agents.createDialog.savedAgents": "可使用的已保存 Agent",
+  "managedAgents.agents.createDialog.addAgent": "添加 Agent",
+  "managedAgents.agents.createDialog.emptySubagents": "请添加已保存的 Agent，或允许自行定义 Agent。",
+  "managedAgents.agents.createDialog.subagentsOn": "已开启子 Agent",
+  "managedAgents.agents.createDialog.nestedSubagent": "{agent} 已配置多智能体能力，无法在此使用。"
 }

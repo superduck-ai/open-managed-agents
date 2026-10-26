@@ -521,9 +521,10 @@ export function registerManagedAgentsAgentsTests() {
     expandAgentCreateSections(dialog);
     fireEvent.change(within(dialog).getByDisplayValue('Untitled agent'), { target: { value: 'Rendered agent' } });
 
-    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add subagent' }));
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Subagents' }));
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: 'Add agent' }));
     fireEvent.click(await screen.findByRole('option', { name: /Helper agent/ }));
-    expect(within(dialog).getByText('Helper agent')).toBeTruthy();
+    expect(await within(dialog).findByText('Helper agent')).toBeTruthy();
 
     fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add skill' }));
     fireEvent.click(await screen.findByRole('option', { name: /Reporting skill/ }));
@@ -568,8 +569,14 @@ export function registerManagedAgentsAgentsTests() {
     );
     expect(request?.body?.name).toBe('Rendered agent');
     expect(request?.body?.multiagent).toEqual({
-      type: 'coordinator',
-      agents: [{ type: 'agent', id: 'agent_helper123456', version: 3 }],
+      type: 'multiagent_20261001',
+      workflows: { type: 'disabled' },
+      advisor: { type: 'disabled' },
+      subagents: {
+        type: 'enabled',
+        inline_agents: { type: 'enabled' },
+        predefined_agents: [{ type: 'agent', id: 'agent_helper123456', version: 3 }],
+      },
     });
     expect(request?.body?.skills).toEqual([{ type: 'custom', skill_id: 'skill_reporting', version: 'latest' }]);
     expect(request?.body?.mcp_servers).toEqual([
@@ -990,10 +997,10 @@ export function registerManagedAgentsAgentsTests() {
     );
   });
 
-  test('searches subagents on the server beyond the initial 20 candidates', async () => {
+  test('searches subagents on the server beyond the initial 100 candidates', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
     const api = mockAgentsApi([
-      ...Array.from({ length: 20 }, (_, index) => ({
+      ...Array.from({ length: 100 }, (_, index) => ({
         id: `agent_candidate_${index}`,
         name: `Candidate ${index}`,
         version: 1,
@@ -1005,10 +1012,13 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
     const dialog = screen.getByRole('main', { name: 'Create agent' });
     expandAgentCreateSections(dialog);
-    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add subagent' }));
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Subagents' }));
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: 'Add agent' }));
     expect(screen.queryByRole('option', { name: /Remote helper/ })).toBeNull();
 
-    fireEvent.change(screen.getByPlaceholderText('Search agents...'), { target: { value: 'Remote helper' } });
+    fireEvent.change(screen.getByPlaceholderText('Search agents by name or exact ID'), {
+      target: { value: 'Remote helper' },
+    });
 
     const remoteHelper = await screen.findByRole('option', { name: /Remote helper/ });
     expect(

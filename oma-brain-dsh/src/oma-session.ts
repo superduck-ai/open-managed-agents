@@ -57,7 +57,7 @@ export function createOmaSession(
     },
     setupTools: async (scope, bridge, tools, threadId, permissions) =>
       scope.plugin(WebTools, { client: new WebClient(api, assignment.session_id, scope.get("sandboxExecutor"), threadId), bridge, tools, permissions }),
-    subagents: assignment.launch.subagents ?? {},
+    subagents: assignment.launch.subagents,
     modelMessageID: (id) => api.modelResponses.get(id),
     bindThread: (id) => {
       api.modelSessions.set(id, assignment.session_id);

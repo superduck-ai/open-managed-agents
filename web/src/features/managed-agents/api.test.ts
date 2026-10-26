@@ -20,11 +20,13 @@ import {
   sessionThreadListSignature,
   syncSessionEventHistory,
 } from './api';
-import { sessionEventUpdateTimestamp } from './sessions/sessionDetailModel';
+import { sessionEventUpdateTimestamp, sessionEventLaneId } from './sessions/sessionDetailModel';
 import {
   buildSessionEventEntries,
   sessionCanonicalDisplayEvent,
   sessionEventTimestamp,
+  sessionSubagentThreadId,
+  sessionSubagentName,
 } from './sessions/sessionTraceModel';
 
 const originalFetch = globalThis.fetch;
@@ -1191,3 +1193,73 @@ function memoryStore(index: number) {
     updated_at: '2026-08-24T00:00:00Z',
   };
 }
+
+test('keeps both thread message perspectives and separates owner from peer', () => {
+  const queryClient = new QueryClient();
+  const primary = [
+    {
+      id: 'task-primary',
+      uuid: 'task',
+      type: 'agent.thread_message_sent',
+      session_thread_id: 'primary',
+      to_session_thread_id: 'child',
+      to_agent_name: 'worker',
+      agent_name: 'lead',
+      content: [],
+    },
+    {
+      id: 'report-primary',
+      uuid: 'report',
+      type: 'agent.thread_message_received',
+      session_thread_id: 'primary',
+      from_session_thread_id: 'child',
+      from_agent_name: 'worker',
+      agent_name: 'lead',
+      content: [],
+    },
+  ];
+  const child = [
+    {
+      id: 'task-child',
+      uuid: 'task',
+      original_event_id: 'task-primary',
+      type: 'agent.thread_message_received',
+      session_thread_id: 'child',
+      from_session_thread_id: 'primary',
+      from_agent_name: 'lead',
+      agent_name: 'worker',
+      content: [],
+    },
+    {
+      id: 'report-child',
+      uuid: 'report',
+      original_event_id: 'report-primary',
+      type: 'agent.thread_message_sent',
+      session_thread_id: 'child',
+      to_session_thread_id: 'primary',
+      to_agent_name: 'lead',
+      agent_name: 'worker',
+      content: [],
+    },
+  ];
+  for (const [threadId, events] of [
+    ['', primary],
+    ['child', child],
+  ] as const) {
+    queryClient.setQueryData(
+      sessionDetailEventCacheKey('workspace', 'session', threadId),
+      mergeSessionEventCache(undefined, [...events]),
+    );
+  }
+  const events = sessionDetailScopeEvents(queryClient, 'workspace', 'session', ['', 'child']);
+  expect(events.map((event) => event.id)).toEqual(['task-primary', 'report-primary', 'task-child', 'report-child']);
+  expect(events.map((event) => event.session_thread_id)).toEqual(['primary', 'primary', 'child', 'child']);
+  expect(events.map(sessionSubagentThreadId)).toEqual(['child', 'child', 'primary', 'primary']);
+  expect(events.map(sessionSubagentName)).toEqual(['worker', 'worker', 'lead', 'lead']);
+  const lanes = new Map([
+    ['primary', 'main'],
+    ['child', 'child'],
+  ]);
+  expect(events.map((event) => sessionEventLaneId(event, lanes))).toEqual(['main', 'main', 'child', 'child']);
+  queryClient.clear();
+});

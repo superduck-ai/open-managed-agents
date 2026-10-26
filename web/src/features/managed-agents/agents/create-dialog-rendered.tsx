@@ -21,19 +21,13 @@ import { Separator } from '../../../shared/ui/separator';
 import { Textarea } from '../../../shared/ui/textarea';
 import { type CreateAgentInput } from '../types';
 import { listMcpTunnels, probeMcpTunnel } from '../../mcp-tunnels/api';
-import { listCreateAgentSkills, loadMcpDirectoryServers, searchCreateAgentSubagents } from './create-dialog-api';
-import {
-  type AgentModelOption,
-  selectedSkillReferences,
-  selectedSubagentReferences,
-  toggleSkill,
-  toggleSubagent,
-  updateDraftModelID,
-} from './create-dialog-model';
+import { listCreateAgentSkills, loadMcpDirectoryServers } from './create-dialog-api';
+import { type AgentModelOption, selectedSkillReferences, toggleSkill, updateDraftModelID } from './create-dialog-model';
 import { CreateDialogPicker } from './create-dialog-picker';
 import { CreateDialogToolsEditor } from './create-dialog-tools-editor';
 import { CreatePageSection } from './create-page-section';
-import { agentCreateHref } from './creation-route';
+import { SubagentsEditor } from './subagents-editor';
+import { subagentSettings } from './subagents-model';
 
 export function AgentConfigRenderedEditor({
   orgUuid,
@@ -57,17 +51,6 @@ export function AgentConfigRenderedEditor({
   const { msg } = useI18n();
   const presentation = renderedEditorPresentation(compact === true);
   const csrfToken = useContext(AuthContext)?.csrfToken;
-  const [agentSearch, setAgentSearch] = useState('');
-  const [debouncedAgentSearch, setDebouncedAgentSearch] = useState('');
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedAgentSearch(agentSearch), 300);
-    return () => window.clearTimeout(timer);
-  }, [agentSearch]);
-  const agentsQuery = useQuery({
-    queryKey: ['agent-config', 'subagents', workspaceId, debouncedAgentSearch.trim()],
-    queryFn: () => searchCreateAgentSubagents(workspaceId, debouncedAgentSearch),
-    retry: false,
-  });
   const skillsQuery = useQuery({
     queryKey: ['skills', workspaceId, 'agent-config-picker'],
     queryFn: () => listCreateAgentSkills(workspaceId),
@@ -90,33 +73,20 @@ export function AgentConfigRenderedEditor({
     enabled: Boolean(orgUuid && workspaceId),
     retry: false,
   });
-  const refetchAgents = agentsQuery.refetch;
   const refetchSkills = skillsQuery.refetch;
   const refetchWorkspaceServers = workspaceServersQuery.refetch;
 
   useEffect(() => {
     const refresh = () => {
-      void refetchAgents();
       void refetchSkills();
       void refetchWorkspaceServers();
     };
     window.addEventListener('focus', refresh);
     return () => window.removeEventListener('focus', refresh);
-  }, [refetchAgents, refetchSkills, refetchWorkspaceServers]);
+  }, [refetchSkills, refetchWorkspaceServers]);
 
-  const selectedSubagents = selectedSubagentReferences(draft);
-  const selectedSubagentIds = selectedSubagents
-    .filter((reference) => reference.type === 'agent')
-    .map((reference) => reference.id);
   const selectedSkills = selectedSkillReferences(draft);
   const skillOptions = skillsQuery.data ?? [];
-  const agents = agentsQuery.data ?? [];
-  const agentOptions = agents.map((agent) => ({
-    id: agent.id,
-    label: agent.name,
-    description: `${agent.id} · v${agent.version}`,
-    disabled: selectedSubagents.length >= 20 && !selectedSubagentIds.includes(agent.id),
-  }));
   const skillPickerOptions = skillOptions.map((skill) => ({
     id: skill.id,
     label: skill.displayTitle,
@@ -200,66 +170,19 @@ export function AgentConfigRenderedEditor({
         compact={compact}
         collapsible={compact}
         className={presentation.multiagentOrder}
-        summary={selectedConfigurationSummary(selectedSubagents.length, msg)}
+        summary={
+          subagentSettings(draft).type === 'enabled'
+            ? msg('managedAgents.agents.createDialog.subagentsOn', 'Subagents on')
+            : selectedConfigurationSummary(0, msg)
+        }
         title={msg('managedAgents.agents.createDialog.multiagent', 'Multiagent')}
         description={msg(
           'managedAgents.agents.createDialog.multiagentDescription',
-          'Subagents this agent can spawn and delegate work to.',
+          'Subagents this agent can hand work to.',
         )}
-        learnMore="https://platform.claude.com/docs/en/managed-agents/multi-agent"
+        learnMore="https://platform.claude.com/docs/en/managed-agents/multiagent-orchestration"
       >
-        <SelectedPills
-          items={selectedSubagents.map((reference) => {
-            if (reference.type === 'self') {
-              return { id: 'self', label: msg('managedAgents.agents.createDialog.thisAgent', 'This agent') };
-            }
-            const agent = agents.find((candidate) => candidate.id === reference.id);
-            return { id: reference.id, label: agent?.name || reference.id };
-          })}
-          onRemove={(id) => {
-            if (id === 'self') {
-              const agentsWithoutSelf = selectedSubagents.filter((reference) => reference.type !== 'self');
-              onChange({
-                ...draft,
-                multiagent: agentsWithoutSelf.length ? { type: 'coordinator', agents: agentsWithoutSelf } : null,
-              });
-              return;
-            }
-            const agent = agents.find((candidate) => candidate.id === id);
-            if (agent) {
-              onChange(toggleSubagent(draft, agent));
-            } else {
-              const remaining = selectedSubagents.filter(
-                (reference) => reference.type !== 'agent' || reference.id !== id,
-              );
-              onChange({
-                ...draft,
-                multiagent: remaining.length ? { type: 'coordinator', agents: remaining } : null,
-              });
-            }
-          }}
-        />
-        <CreateDialogPicker
-          label={msg('managedAgents.agents.createDialog.addSubagent', 'Add subagent')}
-          placeholder={msg('managedAgents.agents.createDialog.addSubagent', 'Add subagent')}
-          searchPlaceholder={msg('managedAgents.agents.createDialog.searchAgents', 'Search agents...')}
-          emptyLabel={msg('managedAgents.agents.createDialog.noAgents', 'No agents yet.')}
-          options={agentOptions}
-          selectedIds={selectedSubagentIds}
-          loading={agentsQuery.isLoading}
-          error={agentsQuery.isError}
-          onRetry={() => void agentsQuery.refetch()}
-          searchValue={agentSearch}
-          onSearchChange={setAgentSearch}
-          onToggle={(id) => {
-            const agent = agents.find((candidate) => candidate.id === id);
-            if (agent) {
-              onChange(toggleSubagent(draft, agent));
-            }
-          }}
-          createLabel={msg('managedAgents.agents.createLabel', 'Create agent')}
-          onCreate={() => openInNewTab(agentCreateHref(workspaceId))}
-        />
+        <SubagentsEditor draft={draft} workspaceId={workspaceId} orgUuid={orgUuid} onChange={onChange} />
       </CreateDialogSection>
 
       <Separator className={presentation.separator} />

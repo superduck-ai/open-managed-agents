@@ -1,6 +1,6 @@
 import { nativeOutcomes } from "./session-log.ts";
 import { modelSystemText } from "./backend.ts";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
 import { SessionId, SESSION_FORMAT_VERSION } from "@deepseek-ai/dsh-session";
 import { OmaApi } from "../src/api.ts";
@@ -9,6 +9,7 @@ import { createOmaSession } from "../src/oma-session.ts";
 import { Backend, textEvents, toolEvents, eventually } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
 import { Subagents } from "../src/runtime/subagents.ts";
+import { SessionRuntime } from "../src/runtime/session.ts";
 import { CcrSubagentBridge } from "../src/ccrv2/subagents.ts";
 import type { SubagentEvent, SubagentThread, ToolApproval, ToolExecutionBridge } from "../src/runtime/contracts.ts";
 
@@ -38,6 +39,193 @@ function call(name: string, args: Payload, id: string): Payload[] {
     : event.type === "content_block_delta"
       ? { ...event, delta: { type: "input_json_delta", partial_json: JSON.stringify(args) } } : event);
 }
+
+test("disabled subagents are absent from the model tools and reject direct dispatch", async () => {
+  const b = new Backend();
+  delete b.a.launch.subagents;
+  const f = await fixture(b);
+  await expect(f.session.subagents.send({ name: "forbidden", system_prompt: "Inspect", message: "Work" }, new AbortController().signal)).rejects.toThrow("Subagents are disabled");
+  b.modelScript = [textEvents("done")];
+  await f.session.receive("disabled", { content: "Inspect locally" });
+  const request = b.requests[0]!;
+  const tools = request.tools.map((tool: Payload) => tool.name);
+  for (const name of ["list_agents", "send_to_agent", "archive_agent"]) expect(tools).not.toContain(name);
+  expect(modelSystemText(request)).toContain("Subagents are disabled for this session.");
+  expect(f.session.subagents.threads).toHaveLength(0);
+});
+
+for (const phase of ["create", "open"] as const) {
+  test(`failed child ${phase} terminates the published thread and permits a fresh retry`, async () => {
+    const f = await fixture();
+    const config = f.session.runtime.config;
+    const originalContext = config.threadMcpContext;
+    const originalSetup = config.setupTools;
+    const failure = new Error(`${phase} failed`);
+    if (phase === "create") config.threadMcpContext = async () => { throw failure; };
+    else config.setupTools = async () => { throw failure; };
+    const args = { name: "worker", system_prompt: "Inspect", message: "Inspect files" };
+    await expect(f.session.subagents.send(args, new AbortController().signal)).rejects.toBe(failure);
+    const failed = f.session.subagents.threads[0]!;
+    expect(failed.status).toBe("terminated");
+    expect(f.session.subagents.busy).toBe(false);
+    expect(f.api.modelSessions.has(failed.id)).toBe(false);
+    expect([...f.b.publicLog.values()].filter(event => event.session_thread_id === failed.id).map(event => event.type))
+      .toEqual(["session.thread_created", "session.thread_status_terminated"]);
+    await expect(f.session.subagents.send({ thread_id: failed.id, message: "Retry" }, new AbortController().signal)).rejects.toThrow("running or archived");
+    config.threadMcpContext = originalContext;
+    config.setupTools = originalSetup;
+    f.b.modelScript = [textEvents("retry report")];
+    const result = JSON.parse(await f.session.subagents.send(args, new AbortController().signal));
+    expect(result.thread_id).not.toBe(failed.id);
+    expect(result.report).toBe("retry report");
+    expect(f.session.subagents.threads.filter(thread => thread.status !== "terminated").map(thread => thread.id)).toEqual([result.thread_id]);
+  });
+}
+
+test("failed child cleanup still terminates and unbinds while preserving both errors", async () => {
+  const f = await fixture();
+  const initialization = new Error("child setup failed");
+  const cleanup = new Error("child close failed");
+  f.session.runtime.config.setupTools = async () => { throw initialization; };
+  const close = SessionRuntime.prototype.close;
+  const closing = spyOn(SessionRuntime.prototype, "close").mockImplementation(function(this: SessionRuntime) {
+    if (this.parent) return Promise.reject(cleanup);
+    return close.call(this);
+  });
+  try {
+    const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.errors).toEqual([initialization, cleanup]);
+    const failed = f.session.subagents.threads[0]!;
+    expect(failed.status).toBe("terminated");
+    expect(f.api.modelSessions.has(failed.id)).toBe(false);
+    expect([...f.b.publicLog.values()].some(event => event.type === "session.thread_status_terminated" && event.session_thread_id === failed.id)).toBe(true);
+  } finally { closing.mockRestore(); }
+});
+
+test("parent shutdown retries child runtime cleanup after initialization cleanup fails", async () => {
+  const f = await fixture();
+  const initialization = new Error("child setup failed");
+  const cleanup = new Error("first child close failed");
+  f.session.runtime.config.setupTools = async () => { throw initialization; };
+  const close = SessionRuntime.prototype.close;
+  let attempts = 0;
+  let child: SessionRuntime | undefined;
+  const closing = spyOn(SessionRuntime.prototype, "close").mockImplementation(function(this: SessionRuntime) {
+    if (this.parent) {
+      child = this;
+      attempts++;
+      if (attempts === 1) return Promise.reject(cleanup);
+    }
+    return close.call(this);
+  });
+  try {
+    const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.errors).toEqual([initialization, cleanup]);
+    expect(attempts).toBe(1);
+    expect(f.session.subagents.threads[0]!.status).toBe("terminated");
+    await f.session.close();
+    expect(attempts).toBe(2);
+  } finally {
+    closing.mockRestore();
+    if (child) await close.call(child);
+  }
+});
+
+test("parent shutdown retries thread unbinding after initialization cleanup fails", async () => {
+  const f = await fixture();
+  const initialization = new Error("child context failed");
+  const cleanup = new Error("first unbind failed");
+  const bindThread = f.session.runtime.config.bindThread;
+  let attempts = 0;
+  let unbind: (() => void) | undefined;
+  f.session.runtime.config.bindThread = id => {
+    unbind = bindThread?.(id);
+    return () => {
+      attempts++;
+      if (attempts === 1) throw cleanup;
+      unbind?.();
+    };
+  };
+  f.session.runtime.config.threadMcpContext = async () => { throw initialization; };
+  try {
+    const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.errors).toEqual([initialization, cleanup]);
+    const thread = f.session.subagents.threads[0]!;
+    expect(thread.status).toBe("terminated");
+    expect(f.api.modelSessions.has(thread.id)).toBe(true);
+    expect(attempts).toBe(1);
+    await f.session.close();
+    expect(f.api.modelSessions.has(thread.id)).toBe(false);
+    expect(attempts).toBe(2);
+  } finally { unbind?.(); }
+});
+
+test("failed termination publication keeps the terminal event queued for retry", async () => {
+  const f = await fixture();
+  const initialization = new Error("child context failed");
+  const publication = new Error("terminal publication failed");
+  f.session.runtime.config.threadMcpContext = async () => { throw initialization; };
+  const publish = f.session.backend.events.bind(f.session.backend);
+  f.session.backend.events = async (id, events) => {
+    if (events.some(event => event.type === "session.thread_status_terminated")) throw publication;
+    return publish(id, events);
+  };
+  const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
+  expect(error).toBeInstanceOf(AggregateError);
+  expect(error.errors).toEqual([initialization, publication]);
+  const failed = f.session.subagents.threads[0]!;
+  expect(failed.status).toBe("terminated");
+  expect(f.api.modelSessions.has(failed.id)).toBe(false);
+  expect(f.session.pendingEvents.some(event => event.type === "session.thread_status_terminated" && event.session_thread_id === failed.id)).toBe(true);
+  f.session.backend.events = publish;
+  await f.session.flushEvents();
+  expect([...f.b.publicLog.values()].filter(event => event.type === "session.thread_status_terminated" && event.session_thread_id === failed.id)).toHaveLength(1);
+});
+
+for (const status of ["idle", "terminated"] as const) {
+  test(`restore handles an incomplete initialization header with ${status} authority`, async () => {
+    const f = await fixture();
+    const id = "sthr_failed_initialization";
+    await f.ctx.ccrv2.config.backend.persist(f.session.id, "dsh_log", {
+      version: SESSION_FORMAT_VERSION, id: SessionId(id), createdAt: 0, isSeeded: false,
+      origin: "subagent", parentSession: SessionId(f.session.id), delegationDepth: 1,
+    }, id);
+    expect([...f.b.privateLog.values()].some(payload => payload.data?.id === id)).toBe(true);
+    f.b.publicLog.set(`${id}_created`, { type: "session.thread_created", session_thread_id: id });
+    if (status === "terminated") f.b.publicLog.set(`${id}_terminated`, { type: "session.thread_status_terminated", session_thread_id: id });
+    const storage = new CcrSubagentBridge(f.session);
+    if (status === "idle") {
+      await expect(storage.restoreThreads()).rejects.toThrow("Subagent is missing its native descriptor");
+    } else {
+      await storage.restoreThreads();
+      expect(storage.threads()).toEqual([]);
+    }
+    expect(f.b.requests).toHaveLength(0);
+  });
+}
+
+test("publishes the child snapshot before requesting its scoped tool context", async () => {
+  const f = await fixture();
+  const route = f.b.route.bind(f.b);
+  const contexts: string[] = [];
+  f.b.route = async (request) => {
+    const id = request.headers.get("X-OMA-Session-Thread-ID");
+    if (id && new URL(request.url).pathname === `/v2/sessions/${f.b.a.session_id}`) {
+      contexts.push(id);
+      const created = [...f.b.publicLog.values()].some((event) => event.type === "session.thread_created" && event.session_thread_id === id);
+      if (!created) return Response.json({ error: "Thread snapshot does not exist" }, { status: 500 });
+    }
+    return route(request);
+  };
+  f.b.modelScript = [textEvents("child report")];
+  const result = JSON.parse(await f.session.subagents.send({ name: "python_agent", system_prompt: "Write Python", message: "Return hello world" }, new AbortController().signal));
+  expect(result.report).toBe("child report");
+  expect(contexts).toContain(result.thread_id);
+  expect(f.b.requests).toHaveLength(1);
+});
 
 test("restore ignores an unpublished child header left by interrupted initialization", async () => {
   const f = await fixture();
@@ -129,6 +317,15 @@ test("delegates with isolated history, no nested delegation, shared approvals, a
   expect(f.b.executions).toHaveLength(1);
   expect([...f.b.privateLog.values()].some((payload) => payload.type === "dsh_log" && f.b.privateAgentIds.get(payload.uuid) === thread.id && "seq" in payload.data)).toBe(true);
   expect([...f.b.publicLog.values()].some((payload) => payload.type === "agent.thread_message_received" && payload.from_session_thread_id === thread.id)).toBe(true);
+  const messages = [...f.b.publicLog.values()].filter((event) => event.type === "agent.thread_message_sent" || event.type === "agent.thread_message_received");
+  expect(messages).toHaveLength(2);
+  for (const event of messages) {
+    expect(event.session_thread_id).toBeUndefined();
+    expect(event.agent_name).toBeUndefined();
+  }
+  expect(messages[0]!.to_session_thread_id).toBe(thread.id);
+  expect(messages[1]!.from_session_thread_id).toBe(thread.id);
+
   expect([...f.b.publicLog.values()].find((payload) => payload.type === "agent.message" && payload.session_thread_id === thread.id)?.content[0].text).toBe("child report");
   await f.close();
   cleanups.pop();

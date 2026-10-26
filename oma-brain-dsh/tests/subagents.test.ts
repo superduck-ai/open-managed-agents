@@ -103,6 +103,66 @@ test("failed child cleanup still terminates and unbinds while preserving both er
   } finally { closing.mockRestore(); }
 });
 
+test("parent shutdown retries child runtime cleanup after initialization cleanup fails", async () => {
+  const f = await fixture();
+  const initialization = new Error("child setup failed");
+  const cleanup = new Error("first child close failed");
+  f.session.runtime.config.setupTools = async () => { throw initialization; };
+  const close = SessionRuntime.prototype.close;
+  let attempts = 0;
+  let child: SessionRuntime | undefined;
+  const closing = spyOn(SessionRuntime.prototype, "close").mockImplementation(function(this: SessionRuntime) {
+    if (this.parent) {
+      child = this;
+      attempts++;
+      if (attempts === 1) return Promise.reject(cleanup);
+    }
+    return close.call(this);
+  });
+  try {
+    const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.errors).toEqual([initialization, cleanup]);
+    expect(attempts).toBe(1);
+    expect(f.session.subagents.threads[0]!.status).toBe("terminated");
+    await f.session.close();
+    expect(attempts).toBe(2);
+  } finally {
+    closing.mockRestore();
+    if (child) await close.call(child);
+  }
+});
+
+test("parent shutdown retries thread unbinding after initialization cleanup fails", async () => {
+  const f = await fixture();
+  const initialization = new Error("child context failed");
+  const cleanup = new Error("first unbind failed");
+  const bindThread = f.session.runtime.config.bindThread;
+  let attempts = 0;
+  let unbind: (() => void) | undefined;
+  f.session.runtime.config.bindThread = id => {
+    unbind = bindThread?.(id);
+    return () => {
+      attempts++;
+      if (attempts === 1) throw cleanup;
+      unbind?.();
+    };
+  };
+  f.session.runtime.config.threadMcpContext = async () => { throw initialization; };
+  try {
+    const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.errors).toEqual([initialization, cleanup]);
+    const thread = f.session.subagents.threads[0]!;
+    expect(thread.status).toBe("terminated");
+    expect(f.api.modelSessions.has(thread.id)).toBe(true);
+    expect(attempts).toBe(1);
+    await f.session.close();
+    expect(f.api.modelSessions.has(thread.id)).toBe(false);
+    expect(attempts).toBe(2);
+  } finally { unbind?.(); }
+});
+
 test("failed termination publication keeps the terminal event queued for retry", async () => {
   const f = await fixture();
   const initialization = new Error("child context failed");

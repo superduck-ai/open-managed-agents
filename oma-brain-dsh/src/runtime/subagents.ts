@@ -196,15 +196,13 @@ export class Subagents {
   private async failInitialization(thread: SubagentThread, runtime: SessionRuntime | undefined, cause: unknown): Promise<void> {
     thread.status = "terminated";
     this.lastActivity = Date.now();
-    this.runtimes.delete(thread.id);
     const unbind = this.unbind.get(thread.id);
-    this.unbind.delete(thread.id);
     const failures: unknown[] = [];
     try { await this.bridge.emit({ kind: "terminated", thread }); }
     catch (error) { failures.push(error); }
-    try { await runtime?.close(); }
+    try { await runtime?.close(); this.runtimes.delete(thread.id); }
     catch (error) { failures.push(error); }
-    try { unbind?.(); }
+    try { unbind?.(); this.unbind.delete(thread.id); }
     catch (error) { failures.push(error); }
     if (failures.length) throw new AggregateError([cause, ...failures], "Subagent initialization failed and cleanup was incomplete", { cause });
   }

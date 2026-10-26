@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { resetTestDom } from '../../../test/setup';
-const { cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
-const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
+const { act, cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
+const { focusManager, QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
 const { useState } = await import('react');
 const { SubagentsEditor } = await import('./subagents-editor');
 import type { CreateAgentInput } from '../types';
@@ -68,3 +68,39 @@ test('shows only Subagents, restores its settings after toggling and warns about
   expect(screen.getByRole('combobox', { name: 'Add agent' })).toBeTruthy();
   client.clear();
 });
+
+for (const refetchOnWindowFocus of [false, true]) {
+  test(`candidate focus refresh follows the QueryClient setting ${refetchOnWindowFocus}`, async () => {
+    resetTestDom('https://oma.duck.ai/');
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests++;
+      return Response.json({ data: [] });
+    }) as typeof fetch;
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 0, refetchOnWindowFocus } },
+    });
+    try {
+      render(
+        <QueryClientProvider client={client}>
+          <Fixture />
+        </QueryClientProvider>,
+      );
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Subagents' }));
+      await waitFor(() => {
+        expect(requests).toBe(1);
+        expect(client.getQueryState(['agent-config', 'subagents', 'default', ''])?.fetchStatus).toBe('idle');
+      });
+      await act(async () => {
+        focusManager.setFocused(false);
+        focusManager.setFocused(true);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect(requests).toBe(refetchOnWindowFocus ? 2 : 1);
+    } finally {
+      cleanup();
+      client.clear();
+      focusManager.setFocused(undefined);
+    }
+  });
+}

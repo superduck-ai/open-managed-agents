@@ -7,7 +7,7 @@ OMA 支持父智能体在同一会话中委派任务。
 
 ## DSH 控制台配置
 
-Create Agent 的 Multiagent 区域只开放 Subagents，Workflows、Advisor 暂时隐藏。新配置使用 multiagent_20261001，分别通过 subagents.type、subagents.inline_agents.type 和 subagents.predefined_agents 控制整体委派、临时 Agent 和固定版本的专家名单。首次开启时其他两项显式关闭，允许临时 Agent 且名单为空；关闭临时 Agent 时必须至少提供一个预定义 Agent。已有 coordinator 配置继续兼容。
+Create Agent 的 Multiagent 区域只开放 Subagents，Workflows、Advisor 暂时隐藏。新配置使用 multiagent_20261001，分别通过 subagents.type、subagents.inline_agents.type 和 subagents.predefined_agents 控制整体委派、临时 Agent 和固定版本的专家名单。首次开启时其他两项显式关闭，允许临时 Agent 且名单为空；关闭临时 Agent 时必须至少提供一个预定义 Agent。已有 coordinator 配置继续兼容。编辑器关闭 Subagents 后，若 Workflows 显式关闭且 Advisor 未启用，则保存 `multiagent: null`，恢复为可被其他 Agent 引用的普通 Agent；已有隐藏能力或 Workflows 的默认启用语义必须保留。关闭后重新开启仍恢复本次编辑中保留的委派设置。后端和选择器继续按非空 `multiagent` 判断嵌套配置，不放宽引用校验。
 
 DSH 入口必须保留缺失 subagents 的关闭语义，不能通过空对象回退重新开启。关闭时三个委派工具不注册，模型提示词明确禁止委派，直接调用 send 同样失败；服务端沿用 delegationToolPermission 对关闭状态的拒绝。开启且禁止临时定义时，只允许固定专家或已有线程的后续消息。本次不扩展 Claude Code 路径，不实现 Workflows 或 Advisor 的执行。
 

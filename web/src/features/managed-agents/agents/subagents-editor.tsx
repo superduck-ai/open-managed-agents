@@ -28,7 +28,9 @@ export function SubagentsEditor({
   const settings = subagentSettings(draft);
   const enabled = settings.type === 'enabled';
   const inline = enabled && settings.inline_agents?.type !== 'disabled';
-  const retained = useRef<{ previous: AgentDelegationInput; disabled: AgentDelegationInput } | undefined>(undefined);
+  const retained = useRef<{ previous: AgentDelegationInput; disabled: CreateAgentInput['multiagent'] } | undefined>(
+    undefined,
+  );
   const selected = selectedSubagentReferences(draft);
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
@@ -55,16 +57,16 @@ export function SubagentsEditor({
         onChange={(checked) => {
           if (checked)
             commit(
-              (retained.current?.disabled === settings ? retained.current.previous : undefined) ?? {
+              (retained.current?.disabled === draft.multiagent ? retained.current?.previous : undefined) ?? {
                 type: 'enabled',
                 inline_agents: { type: 'enabled' },
                 predefined_agents: [],
               },
             );
           else {
-            const disabled: AgentDelegationInput = { type: 'disabled' };
-            retained.current = { previous: settings, disabled };
-            commit(disabled);
+            const next = updateSubagents(draft, { type: 'disabled' });
+            retained.current = { previous: settings, disabled: next.multiagent };
+            onChange(next);
           }
         }}
       />

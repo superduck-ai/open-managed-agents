@@ -75,7 +75,10 @@ export function updateSubagents(draft: CreateAgentInput, settings: AgentDelegati
           workflows: { type: 'disabled' as const },
           advisor: { type: 'disabled' as const },
         };
-  return { ...draft, multiagent: { ...config, subagents: settings } };
+  const multiagent = { ...config, subagents: settings };
+  const disabled =
+    settings.type === 'disabled' && config.workflows?.type === 'disabled' && config.advisor?.type !== 'enabled';
+  return { ...draft, multiagent: disabled ? null : multiagent };
 }
 
 export function toggleSubagent(draft: CreateAgentInput, agent: AgentApiResponse): CreateAgentInput {

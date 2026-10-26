@@ -58,6 +58,7 @@ test('shows only Subagents, restores its settings after toggling and warns about
   );
   fireEvent.click(screen.getByRole('checkbox', { name: 'Subagents' }));
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  expect(JSON.parse(screen.getByTestId('draft').textContent ?? '')).toBeNull();
   fireEvent.click(screen.getByRole('checkbox', { name: 'Subagents' }));
   await waitFor(() =>
     expect(screen.getByRole('checkbox', { name: 'Can define its own agents' }).getAttribute('aria-checked')).toBe(

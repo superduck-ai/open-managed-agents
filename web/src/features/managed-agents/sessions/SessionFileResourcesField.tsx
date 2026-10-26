@@ -1,6 +1,7 @@
 import { ChevronDown, Database, FileText, Plus, Trash2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useI18n } from '@/shared/i18n';
+import { cn } from '@/shared/lib/utils';
 import { Button, ButtonLink } from '@/shared/ui/button';
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import {
@@ -32,6 +33,7 @@ export function SessionFileResourcesField({
   resources,
   showAddButton = true,
   showHeading = true,
+  variant = 'cards',
   workspaceId,
   onChange,
   memoryAttaches = [],
@@ -41,6 +43,7 @@ export function SessionFileResourcesField({
   resources: SessionFileResourceFormValue[];
   showAddButton?: boolean;
   showHeading?: boolean;
+  variant?: 'cards' | 'plain';
   workspaceId: string;
   onChange?: (resources: SessionFileResourceFormValue[]) => void;
   memoryAttaches?: MemoryAttachFormValue[];
@@ -87,27 +90,36 @@ export function SessionFileResourcesField({
             const mountPathInvalid =
               hasSessionFileMountPath(resource.mountPath) && !isValidSessionFileMountPath(resource.mountPath);
             return (
-              <Card key={`file-${index}`} size="sm" className="mx-px gap-3 py-3">
-                <CardHeader className="grid-cols-[1fr_auto] items-center px-3">
-                  <CardTitle className="flex items-center gap-2 text-sm">
-                    <FileText className="size-4 text-muted-foreground" aria-hidden />
-                    {msg('managedAgents.sessions.resources.typeFile', 'File')}
-                  </CardTitle>
-                  <CardAction>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={msg('managedAgents.sessions.resources.removeFile', 'Remove file resource {index}', {
-                        index: index + 1,
-                      })}
-                      onClick={() => removeResource(index)}
-                    >
-                      <Trash2 aria-hidden />
-                    </Button>
-                  </CardAction>
-                </CardHeader>
-                <CardContent className="space-y-3 px-3">
+              <Card
+                key={`file-${index}`}
+                size="sm"
+                className={cn(
+                  'mx-px gap-3 py-3',
+                  variant === 'plain' && 'mx-0 overflow-visible rounded-none bg-transparent py-0 ring-0',
+                )}
+              >
+                {variant === 'cards' ? (
+                  <CardHeader className="grid-cols-[1fr_auto] items-center px-3">
+                    <CardTitle className="flex items-center gap-2 text-sm">
+                      <FileText className="size-4 text-muted-foreground" aria-hidden />
+                      {msg('managedAgents.sessions.resources.typeFile', 'File')}
+                    </CardTitle>
+                    <CardAction>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={msg('managedAgents.sessions.resources.removeFile', 'Remove file resource {index}', {
+                          index: index + 1,
+                        })}
+                        onClick={() => removeResource(index)}
+                      >
+                        <Trash2 aria-hidden />
+                      </Button>
+                    </CardAction>
+                  </CardHeader>
+                ) : null}
+                <CardContent className={cn('space-y-3', variant === 'plain' ? 'px-0' : 'px-3')}>
                   <Field>
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-1">

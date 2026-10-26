@@ -1,4 +1,7 @@
+import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
+import { useI18n } from '../../shared/i18n';
 import {
+  AlertCircle,
   Braces,
   Check,
   ChevronDown,
@@ -16,6 +19,7 @@ import {
 import { Dispatch, SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { Button } from '@/shared/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/shared/ui/collapsible';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/shared/ui/command';
 import {
   DropdownMenu,
@@ -58,10 +62,10 @@ import {
 } from './model';
 import { IconButton, ToggleRow } from './components';
 
-const webSearchRestrictionOptions: Array<{ value: WebSearchRestriction; label: string; description: string }> = [
-  { value: 'none', label: 'None', description: 'Search any domain' },
-  { value: 'allowed_domains', label: 'Allow domains', description: 'Only search allowed domains' },
-  { value: 'blocked_domains', label: 'Blocked domains', description: 'Do not search blocked domains' },
+const webSearchRestrictionOptions: Array<{ value: WebSearchRestriction; label: string }> = [
+  { value: 'none', label: 'None' },
+  { value: 'allowed_domains', label: 'Allow domains' },
+  { value: 'blocked_domains', label: 'Blocked domains' },
 ];
 
 const exampleToolMenuItems = [
@@ -91,6 +95,11 @@ export function ModelDrawer({
   onRun: () => void;
   isRunning: boolean;
 }) {
+  const { msg } = useI18n();
+  const effortOptions = thinkingEffortOptions.map((option) => ({
+    ...option,
+    label: msg(`workbench.effort.${option.value}`, option.label),
+  }));
   const thinkingType = thinkingMode(draft.thinking);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState('');
@@ -135,11 +144,11 @@ export function ModelDrawer({
               <Button
                 type="button"
                 role="combobox"
-                variant="ghost"
+                variant="outline"
                 aria-label={draft.model_name}
                 aria-expanded={modelMenuOpen}
                 aria-controls="workbench-model-listbox"
-                className={clsx('workbench-model-select workbench-model-combobox', modelMenuOpen && 'is-open')}
+                className="h-10 w-full min-w-0 justify-between rounded-[10px] px-3 font-normal [&>span]:truncate"
               />
             }
           >
@@ -150,16 +159,19 @@ export function ModelDrawer({
             id="workbench-model-listbox"
             role="listbox"
             align="start"
-            sideOffset={8}
+            sideOffset={6}
             className="w-[var(--anchor-width)] min-w-[var(--anchor-width)] max-w-[min(32rem,calc(100vw-2rem))] gap-0 overflow-hidden p-0"
           >
-            <Command shouldFilter={false} label="Search models…" className="bg-transparent">
+            <Command
+              shouldFilter={false}
+              label={msg('workbench.searchModels', 'Search models…')}
+              className="bg-transparent"
+            >
               <CommandInput
-                aria-label="Search models…"
-                placeholder="Search models…"
+                aria-label={msg('workbench.searchModels', 'Search models…')}
+                placeholder={msg('workbench.searchModels', 'Search models…')}
                 value={modelSearch}
                 onValueChange={setModelSearch}
-                className="h-9"
               />
               <CommandList className="max-h-[284px]">
                 {filteredModels.length ? (
@@ -174,23 +186,23 @@ export function ModelDrawer({
                           aria-selected={selected}
                           value={model.model_name}
                           keywords={[model.display_name ?? '', model.name ?? '', description]}
-                          className="h-auto gap-3 rounded-md px-2.5 py-2"
+                          className="h-auto gap-2"
                           onSelect={() => {
                             setDraft((current) => ({ ...current, model_name: model.model_name }));
                             closeModelMenu();
                           }}
                         >
                           <span className="grid min-w-0 flex-1">
-                            <span className="truncate text-sm font-medium">{model.model_name}</span>
-                            <span className="truncate text-xs text-muted-foreground">{description}</span>
+                            <span className="break-all text-sm font-medium">{model.model_name}</span>
+                            <span className="text-xs text-muted-foreground empty:hidden">{description}</span>
                           </span>
-                          {selected ? <Check className="size-4 text-primary" aria-hidden /> : null}
+                          {selected ? <Check className="size-4 shrink-0 text-foreground" aria-hidden /> : null}
                         </CommandItem>
                       );
                     })}
                   </CommandGroup>
                 ) : (
-                  <CommandEmpty>No models found</CommandEmpty>
+                  <CommandEmpty>{msg('workbench.modelsEmpty', 'No models found')}</CommandEmpty>
                 )}
               </CommandList>
             </Command>
@@ -202,13 +214,16 @@ export function ModelDrawer({
         <section className="workbench-model-section">
           <div className="workbench-model-row">
             <div className="workbench-model-label-with-help">
-              <span>Temperature</span>
+              <span>{msg('workbench.temperature', 'Temperature')}</span>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-xs"
                 className="workbench-model-help"
-                aria-label="Higher generates more creative responses, lower produces more predictable responses"
+                aria-label={msg(
+                  'workbench.temperatureHint',
+                  'Higher generates more creative responses, lower produces more predictable responses',
+                )}
               >
                 <Info className="size-3.5" aria-hidden />
               </Button>
@@ -216,7 +231,7 @@ export function ModelDrawer({
             <span className="workbench-model-static-value">{formatTemperature(currentTemperature)}</span>
           </div>
           <Slider
-            aria-label="Temperature"
+            aria-label={msg('workbench.temperature', 'Temperature')}
             min={0}
             max={1}
             step={0.1}
@@ -232,13 +247,13 @@ export function ModelDrawer({
       <section className="workbench-model-section">
         <div className="workbench-model-row">
           <div className="workbench-model-label-with-help">
-            <span>Max tokens</span>
+            <span>{msg('workbench.maxTokens', 'Max tokens')}</span>
             <Button
               type="button"
               variant="ghost"
               size="icon-xs"
               className="workbench-model-help"
-              aria-label="Maximum length of Claude’s responses"
+              aria-label={msg('workbench.maxTokensHint', 'Maximum length of Claude’s responses')}
             >
               <Info className="size-3.5" aria-hidden />
             </Button>
@@ -260,7 +275,7 @@ export function ModelDrawer({
           />
         </div>
         <Slider
-          aria-label="Max tokens"
+          aria-label={msg('workbench.maxTokens', 'Max tokens')}
           min={1}
           max={WORKBENCH_MAX_TOKENS}
           step={1}
@@ -274,9 +289,9 @@ export function ModelDrawer({
 
       <section className={clsx('workbench-model-section', thinkingType === 'enabled' && 'is-thinking-enabled')}>
         <div className="workbench-model-radio-row">
-          <span className="workbench-model-label">Thinking</span>
+          <span className="workbench-model-label">{msg('workbench.thinking', 'Thinking')}</span>
           <RadioGroup
-            aria-label="Thinking"
+            aria-label={msg('workbench.thinking', 'Thinking')}
             name="workbench-thinking"
             value={thinkingType}
             onValueChange={(value) =>
@@ -291,9 +306,13 @@ export function ModelDrawer({
               const id = `workbench-thinking-${value}`;
               return (
                 <div key={value} className="workbench-model-radio-option">
-                  <RadioGroupItem id={id} aria-label={capitalize(value)} value={value} />
+                  <RadioGroupItem
+                    id={id}
+                    aria-label={msg(`workbench.thinkingMode.${value}`, capitalize(value))}
+                    value={value}
+                  />
                   <Label htmlFor={id} className="workbench-model-radio-label">
-                    {capitalize(value)}
+                    {msg(`workbench.thinkingMode.${value}`, capitalize(value))}
                   </Label>
                 </div>
               );
@@ -304,13 +323,13 @@ export function ModelDrawer({
           <div className="workbench-model-budget-block">
             <div className="workbench-model-row">
               <div className="workbench-model-label-with-help">
-                <span>Budget tokens</span>
+                <span>{msg('workbench.budgetTokens', 'Budget tokens')}</span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon-xs"
                   className="workbench-model-help"
-                  aria-label="Budget tokens"
+                  aria-label={msg('workbench.budgetTokens', 'Budget tokens')}
                 >
                   <Info className="size-3.5" aria-hidden />
                 </Button>
@@ -332,7 +351,7 @@ export function ModelDrawer({
               />
             </div>
             <Slider
-              aria-label="Budget tokens"
+              aria-label={msg('workbench.budgetTokens', 'Budget tokens')}
               min={MIN_THINKING_BUDGET_TOKENS}
               max={MAX_THINKING_BUDGET_TOKENS}
               step={1}
@@ -351,11 +370,11 @@ export function ModelDrawer({
 
       <section className="workbench-model-section">
         <div className="workbench-model-effort-row">
-          <span className="workbench-model-label">Effort</span>
-          <div className="workbench-model-effort-control">
+          <span className="workbench-model-label">{msg('workbench.effort', 'Effort')}</span>
+          <div className="w-28">
             <Select<string>
               value={currentEffort}
-              items={thinkingEffortOptions.map((option) => ({ value: option.value, label: option.label }))}
+              items={effortOptions.map((option) => ({ value: option.value, label: option.label }))}
               onValueChange={(nextValue) => {
                 if (nextValue === null) {
                   return;
@@ -364,27 +383,19 @@ export function ModelDrawer({
               }}
             >
               <SelectTrigger
-                aria-label="Effort"
-                className="workbench-model-select workbench-model-combobox workbench-model-effort-select"
+                aria-label={msg('workbench.effort', 'Effort')}
+                size="sm"
+                className="w-full"
                 onClick={() => setModelMenuOpen(false)}
               >
-                <SelectValue>{thinkingEffortLabel(currentEffort)}</SelectValue>
+                <SelectValue>
+                  {msg(`workbench.effort.${currentEffort}`, thinkingEffortLabel(currentEffort))}
+                </SelectValue>
               </SelectTrigger>
-              <SelectContent
-                id="workbench-effort-listbox"
-                align="end"
-                sideOffset={6}
-                alignItemWithTrigger={false}
-                className="workbench-model-effort-popover"
-              >
-                {thinkingEffortOptions.map((option) => {
+              <SelectContent id="workbench-effort-listbox" align="end">
+                {effortOptions.map((option) => {
                   return (
-                    <SelectItem
-                      key={option.value}
-                      value={option.value}
-                      label={option.label}
-                      className="workbench-effort-option"
-                    >
+                    <SelectItem key={option.value} value={option.value} label={option.label}>
                       <span>{option.label}</span>
                     </SelectItem>
                   );
@@ -401,7 +412,7 @@ export function ModelDrawer({
         target="_blank"
         rel="noreferrer"
       >
-        View all API options
+        {msg('workbench.apiOptions', 'View all API options')}
         <ExternalLink className="size-3" aria-hidden />
       </a>
 
@@ -411,7 +422,7 @@ export function ModelDrawer({
         ) : (
           <Play className="size-4" fill="currentColor" strokeWidth={0} aria-hidden />
         )}
-        <span>Run</span>
+        <span>{msg('workbench.run', 'Run')}</span>
         <span className="text-xs font-normal text-primary-foreground/70">⌘ + ⏎</span>
       </Button>
     </div>
@@ -419,7 +430,8 @@ export function ModelDrawer({
 }
 
 export function modelDescription(model: WorkbenchModel) {
-  return model.display_name ?? model.name ?? model.model_name;
+  const label = model.display_name ?? model.name;
+  return label && label !== model.model_name ? label : '';
 }
 
 export function thinkingEffortLabel(value: string) {
@@ -459,15 +471,13 @@ export function VariablesDrawer({
   isRunning: boolean;
   canRun: boolean;
 }) {
+  const { msg } = useI18n();
   if (!variables.length) {
     return (
       <div className="workbench-variable-empty">
         <Braces className="mb-3 size-7 text-muted-foreground/70" aria-hidden />
-        <h3>No variables</h3>
-        <p>
-          Use variables to test the prompt across different scenarios. You can create a variable inline like this:{' '}
-          {'{{variable_name}}'}.
-        </p>
+        <h3>{msg('workbench.variablesEmpty', 'No variables')}</h3>
+        <p>{msg('workbench.addVariableHint', 'Add {variable} to the prompt.', { variable: '{{variable_name}}' })}</p>
       </div>
     );
   }
@@ -481,7 +491,7 @@ export function VariablesDrawer({
             <Textarea
               aria-label={`{{${name}}}`}
               autoFocus={index === 0}
-              placeholder="Enter an example value…"
+              placeholder={msg('workbench.variableValuePlaceholder', 'Enter an example value…')}
               aria-invalid={!values[name]?.trim()}
               value={values[name] ?? ''}
               onChange={(event) => {
@@ -492,52 +502,67 @@ export function VariablesDrawer({
             />
           </label>
         ))}
-        <section className={clsx('workbench-variable-logic', generationLogicOpen && 'is-open')}>
-          <Button
-            type="button"
-            variant="ghost"
-            className="workbench-variable-logic-toggle"
-            onClick={() => setGenerationLogicOpen((value) => !value)}
+        <Collapsible
+          open={generationLogicOpen}
+          onOpenChange={setGenerationLogicOpen}
+          className={clsx('workbench-variable-logic', generationLogicOpen && 'is-open')}
+        >
+          <CollapsibleTrigger
+            render={<Button type="button" variant="ghost" className="workbench-variable-logic-toggle" />}
           >
-            <span>Variable generation logic</span>
-            <span aria-hidden>↗</span>
-          </Button>
-          {generationLogicOpen ? (
-            <div className="workbench-variable-logic-editor">
-              <div className="workbench-variable-logic-header">
-                <p>Update the logic for your use case and retry generation.</p>
-                <div className="workbench-variable-logic-actions">
-                  <IconButton
-                    label="Regenerate variable generation logic"
-                    compact
-                    disabled={isGeneratingGenerationLogic}
-                    onClick={onGenerateGenerationLogic}
-                  >
-                    {isGeneratingGenerationLogic ? (
-                      <Loader2 className="size-4 animate-spin" aria-hidden />
-                    ) : (
-                      <RefreshCw className="size-4" aria-hidden />
-                    )}
-                  </IconButton>
-                  <IconButton label="Delete variable generation logic" compact onClick={onClearGenerationLogic}>
-                    <Trash2 className="size-4" aria-hidden />
-                  </IconButton>
-                </div>
+            <span>{msg('workbench.generationLogic', 'Variable generation logic')}</span>
+            <ChevronDown
+              className={clsx(
+                'size-4 shrink-0 transition-transform duration-200 ease-out motion-reduce:transition-none',
+                generationLogicOpen && 'rotate-180',
+              )}
+              aria-hidden
+            />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="workbench-variable-logic-editor">
+            <div className="workbench-variable-logic-header">
+              <p>{msg('workbench.generationLogicHint', 'Update the logic for your use case and retry generation.')}</p>
+              <div className="workbench-variable-logic-actions">
+                <IconButton
+                  label={msg('workbench.regenerateLogic', 'Regenerate variable generation logic')}
+                  compact
+                  disabled={isGeneratingGenerationLogic}
+                  onClick={onGenerateGenerationLogic}
+                >
+                  {isGeneratingGenerationLogic ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden />
+                  ) : (
+                    <RefreshCw className="size-4" aria-hidden />
+                  )}
+                </IconButton>
+                <IconButton
+                  label={msg('workbench.deleteLogic', 'Delete variable generation logic')}
+                  compact
+                  onClick={onClearGenerationLogic}
+                >
+                  <Trash2 className="size-4" aria-hidden />
+                </IconButton>
               </div>
-              <Textarea
-                aria-label="Click Generate to populate with some initial logic..."
-                placeholder="Click Generate to populate with some initial logic..."
-                value={generationLogic}
-                onChange={(event) => setGenerationLogic(event.currentTarget.value)}
-                className="min-h-[66px] resize-none bg-secondary"
-              />
             </div>
-          ) : null}
-        </section>
+            <Textarea
+              aria-label={msg(
+                'workbench.generationLogicPlaceholder',
+                'Click Generate to populate with some initial logic...',
+              )}
+              placeholder={msg(
+                'workbench.generationLogicPlaceholder',
+                'Click Generate to populate with some initial logic...',
+              )}
+              value={generationLogic}
+              onChange={(event) => setGenerationLogic(event.currentTarget.value)}
+              className="min-h-[66px] resize-none bg-secondary"
+            />
+          </CollapsibleContent>
+        </Collapsible>
       </div>
       <Button type="button" size="lg" className="mt-auto w-full" disabled={!canRun} onClick={onRun}>
         {isRunning ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Play className="size-4" aria-hidden />}
-        <span>Run</span>
+        <span>{msg('workbench.run', 'Run')}</span>
         <span className="text-xs font-medium text-primary-foreground/70">⌘ + ⏎</span>
       </Button>
     </div>
@@ -575,6 +600,11 @@ export function ToolsDrawer({
   isRunning: boolean;
   canRun: boolean;
 }) {
+  const { msg } = useI18n();
+  const restrictionOptions = webSearchRestrictionOptions.map((option) => ({
+    ...option,
+    label: msg(`workbench.searchRestriction.${option.value}`, option.label),
+  }));
   const [exampleMenuOpen, setExampleMenuOpen] = useState(false);
   const [editingWebSearchIndex, setEditingWebSearchIndex] = useState<number | null>(null);
   const toolsPanelRef = useRef<HTMLDivElement>(null);
@@ -663,7 +693,7 @@ export function ToolsDrawer({
           onClick={() => setToolForm('custom')}
         >
           <Plus className="size-4" aria-hidden />
-          Custom
+          {msg('workbench.custom', 'Custom')}
         </Button>
         {!hasWebSearchTool ? (
           <Button
@@ -674,22 +704,21 @@ export function ToolsDrawer({
             onClick={() => setToolForm('web_search')}
           >
             <Plus className="size-4" aria-hidden />
-            Web search
+            {msg('workbench.webSearch', 'Web search')}
           </Button>
         ) : null}
       </div>
 
       {!tools.length && !toolForm ? (
         <div className="workbench-tools-empty">
-          <h3>No tools defined</h3>
+          <h3>{msg('workbench.toolsEmpty', 'No tools defined')}</h3>
           <p>
-            Tools let you equip Claude with a variety of tasks.{' '}
             <a
               href="https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview"
               target="_blank"
               rel="noreferrer"
             >
-              Learn more
+              {msg('workbench.learnMore', 'Learn more')}
             </a>
           </p>
         </div>
@@ -697,9 +726,9 @@ export function ToolsDrawer({
 
       {toolForm === 'custom' ? (
         <div className="workbench-tool-form-card">
-          <h3>Custom Tool</h3>
+          <h3>{msg('workbench.customTool', 'Custom Tool')}</h3>
           <label className="workbench-tool-field">
-            Name
+            {msg('workbench.toolName', 'Name')}
             <Input
               ref={customToolNameRef}
               value={customTool.name}
@@ -712,25 +741,25 @@ export function ToolsDrawer({
             />
           </label>
           <label className="workbench-tool-field">
-            Description
+            {msg('workbench.toolDescription', 'Description')}
             <Input
               value={customTool.description}
               onChange={(event) => {
                 const value = event.currentTarget.value;
                 setCustomTool((current) => ({ ...current, description: value }));
               }}
-              placeholder="Description of tool"
+              placeholder={msg('workbench.toolDescriptionPlaceholder', 'Description of tool')}
               className="bg-secondary"
             />
           </label>
           <label className="workbench-tool-field">
             <span className="workbench-tool-label-row">
-              <span>Input Schema</span>
+              <span>{msg('workbench.inputSchema', 'Input Schema')}</span>
               <a
                 href="https://json-schema.org/learn/getting-started-step-by-step"
                 target="_blank"
                 rel="noreferrer"
-                aria-label="JSON Schema (opens in new tab)"
+                aria-label={msg('workbench.schemaLink', 'JSON Schema (opens in new tab)')}
               >
                 JSON Schema ↗
               </a>
@@ -748,7 +777,7 @@ export function ToolsDrawer({
                 <DropdownMenuTrigger
                   render={<Button type="button" variant="ghost" size="lg" aria-expanded={exampleMenuOpen} />}
                 >
-                  Example tools
+                  {msg('workbench.exampleTools', 'Example tools')}
                   <ChevronDown className="size-3.5" aria-hidden />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
@@ -776,10 +805,10 @@ export function ToolsDrawer({
             </div>
             <div className="workbench-tool-form-actions">
               <Button type="button" variant="ghost" size="lg" onClick={() => setToolForm(null)}>
-                Cancel
+                {msg('workbench.cancel', 'Cancel')}
               </Button>
               <Button type="button" size="lg" disabled={!customTool.name.trim()} onClick={onAddCustom}>
-                Add tool
+                {msg('workbench.addTool', 'Add tool')}
               </Button>
             </div>
           </div>
@@ -789,16 +818,13 @@ export function ToolsDrawer({
       {toolForm === 'web_search' ? (
         <div className="workbench-tool-form-card">
           <div>
-            <h3>Web search</h3>
-            <p className="workbench-tool-description">
-              Allow Claude to search the web and cite those results in its responses.
-            </p>
+            <h3>{msg('workbench.webSearch', 'Web search')}</h3>
           </div>
           <div className="workbench-tool-field">
-            <span>Search restrictions</span>
+            <span>{msg('workbench.searchRestrictions', 'Search restrictions')}</span>
             <Select<WebSearchRestriction>
               value={webSearchTool.searchRestriction}
-              items={webSearchRestrictionOptions.map((option) => ({ value: option.value, label: option.label }))}
+              items={restrictionOptions.map((option) => ({ value: option.value, label: option.label }))}
               onValueChange={(nextValue) => {
                 if (nextValue === null) {
                   return;
@@ -810,16 +836,21 @@ export function ToolsDrawer({
                 }));
               }}
             >
-              <SelectTrigger aria-label="Search restrictions" className="w-full bg-secondary">
-                <SelectValue>{webSearchRestrictionLabel(webSearchTool.searchRestriction)}</SelectValue>
+              <SelectTrigger
+                aria-label={msg('workbench.searchRestrictions', 'Search restrictions')}
+                className="w-full bg-secondary"
+              >
+                <SelectValue>
+                  {msg(
+                    `workbench.searchRestriction.${webSearchTool.searchRestriction}`,
+                    webSearchRestrictionLabel(webSearchTool.searchRestriction),
+                  )}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent alignItemWithTrigger={false} className="min-w-[240px]">
-                {webSearchRestrictionOptions.map((option) => (
+                {restrictionOptions.map((option) => (
                   <SelectItem key={option.value} value={option.value} label={option.label}>
-                    <span className="block">
-                      <span className="block leading-5">{option.label}</span>
-                      <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">{option.description}</span>
-                    </span>
+                    {option.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -832,18 +863,21 @@ export function ToolsDrawer({
                 const value = event.currentTarget.value;
                 setWebSearchTool((current) => ({ ...current, domains: value }));
               }}
-              placeholder="Enter domains (e.g., example.com, example.com/path, example.com/*)"
+              placeholder={msg(
+                'workbench.domainsPlaceholder',
+                'Enter domains (e.g., example.com, example.com/path, example.com/*)',
+              )}
               className="min-h-[66px] resize-none bg-secondary"
             />
           ) : null}
           <ToggleRow
-            label="Limit the number of times this tool is called"
+            label={msg('workbench.limitToolCalls', 'Limit the number of times this tool is called')}
             checked={webSearchTool.maxUsesEnabled}
             onChange={(checked) => setWebSearchTool((current) => ({ ...current, maxUsesEnabled: checked }))}
           />
           {webSearchTool.maxUsesEnabled ? (
             <Input
-              aria-label="Web search max uses"
+              aria-label={msg('workbench.webSearchMaxUses', 'Web search max uses')}
               type="number"
               min={1}
               value={webSearchTool.maxUses}
@@ -855,17 +889,19 @@ export function ToolsDrawer({
             />
           ) : null}
           <ToggleRow
-            label="Localize results"
+            label={msg('workbench.localizeResults', 'Localize results')}
             checked={webSearchTool.localize}
             onChange={(checked) => setWebSearchTool((current) => ({ ...current, localize: checked }))}
           />
           <div className="workbench-tool-form-footer justify-end">
             <div className="workbench-tool-form-actions">
               <Button type="button" variant="ghost" size="lg" onClick={cancelWebSearchForm}>
-                Cancel
+                {msg('workbench.cancel', 'Cancel')}
               </Button>
               <Button type="button" size="lg" disabled={!canAddWebSearch} onClick={submitWebSearchTool}>
-                {editingWebSearchIndex === null ? 'Add tool' : 'Save tool'}
+                {editingWebSearchIndex === null
+                  ? msg('workbench.addTool', 'Add tool')
+                  : msg('workbench.saveTool', 'Save tool')}
               </Button>
             </div>
           </div>
@@ -876,14 +912,14 @@ export function ToolsDrawer({
         tool.type === 'web_search_v0' ? (
           <div key={tool.id ?? `${tool.name}-${index}`} className="workbench-tool-web-card">
             <div className="workbench-tool-web-header">
-              <h3>Web search</h3>
+              <h3>{msg('workbench.webSearch', 'Web search')}</h3>
               <div className="workbench-tool-card-actions">
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
                   className="workbench-tool-icon-action"
-                  aria-label="Edit Web search"
+                  aria-label={msg('workbench.editWebSearch', 'Edit Web search')}
                   onClick={() => startEditingWebSearchTool(index, tool)}
                 >
                   <PencilLine className="size-4" aria-hidden />
@@ -893,7 +929,7 @@ export function ToolsDrawer({
                   variant="ghost"
                   size="icon"
                   className="workbench-tool-icon-action"
-                  aria-label="Remove Web search"
+                  aria-label={msg('workbench.removeWebSearch', 'Remove Web search')}
                   onClick={() => onRemove(index)}
                 >
                   <Trash2 className="size-4" aria-hidden />
@@ -901,16 +937,21 @@ export function ToolsDrawer({
               </div>
             </div>
             <div className="workbench-tool-web-body">
-              <div className="workbench-tool-web-summary">{webSearchToolSummary(tool)}</div>
+              <div className="workbench-tool-web-summary">{webSearchToolSummary(tool, msg)}</div>
             </div>
           </div>
         ) : (
           <div key={tool.id ?? `${tool.name}-${index}`} className="workbench-tool-row">
             <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-foreground">{tool.name}</div>
-              <div className="mt-1 text-xs text-muted-foreground">Custom tool</div>
+              <div className="truncate text-sm font-semibold text-foreground" title={tool.name}>
+                {tool.name}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">{msg('workbench.customToolType', 'Custom tool')}</div>
             </div>
-            <IconButton label={`Remove ${tool.name}`} onClick={() => onRemove(index)}>
+            <IconButton
+              label={msg('workbench.removeTool', 'Remove {name}', { name: tool.name })}
+              onClick={() => onRemove(index)}
+            >
               <Trash2 className="size-4" aria-hidden />
             </IconButton>
           </div>
@@ -925,7 +966,7 @@ export function ToolsDrawer({
             ) : (
               <Play className="size-4" aria-hidden />
             )}
-            <span>Run</span>
+            <span>{msg('workbench.run', 'Run')}</span>
             <span className="text-xs font-medium text-primary-foreground/70">⌘ + ⏎</span>
           </Button>
         </div>
@@ -935,6 +976,7 @@ export function ToolsDrawer({
 }
 
 export function JsonSchemaEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const { msg } = useI18n();
   const highlightedSchema = useMemo(
     () => hljs.highlight(value, { language: 'json', ignoreIllegals: true }).value,
     [value],
@@ -947,7 +989,7 @@ export function JsonSchemaEditor({ value, onChange }: { value: string; onChange:
         <code className="language-json hljs" dangerouslySetInnerHTML={{ __html: highlightedSchema || ' ' }} />
       </pre>
       <Textarea
-        aria-label="Input Schema"
+        aria-label={msg('workbench.inputSchema', 'Input Schema')}
         spellCheck={false}
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
@@ -1011,6 +1053,7 @@ export function ExamplesDrawer({
   isRunning: boolean;
   canRun: boolean;
 }) {
+  const { msg } = useI18n();
   const canAdd = Boolean(variables.every((name) => values[name]?.trim()) && idealOutput.trim());
   const isEditing = Boolean(editingExampleId);
 
@@ -1018,19 +1061,18 @@ export function ExamplesDrawer({
     return (
       <div className="workbench-examples-panel">
         <div className="workbench-examples-empty">
-          <h3>No examples defined</h3>
+          <h3>{msg('workbench.examplesEmpty', 'No examples defined')}</h3>
           <p>
-            Examples help Claude understand the task better.{' '}
             <a
               href="https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/multishot-prompting"
               target="_blank"
               rel="noreferrer"
             >
-              Learn more
+              {msg('workbench.learnMore', 'Learn more')}
             </a>
           </p>
           <Button type="button" size="lg" className="mt-6" onClick={onOpenNew}>
-            Add example
+            {msg('workbench.addExample', 'Add example')}
           </Button>
         </div>
       </div>
@@ -1040,22 +1082,26 @@ export function ExamplesDrawer({
   return (
     <div className="workbench-examples-panel">
       <div className="workbench-example-scroll subtle-scrollbar">
-        <Button type="button" variant="outline" className="mb-[18px] w-fit" disabled={formOpen} onClick={onOpenNew}>
-          <Plus className="size-4" aria-hidden />
-          Add example
-        </Button>
+        {!formOpen ? (
+          <Button type="button" variant="outline" className="mb-[18px] w-fit" onClick={onOpenNew}>
+            <Plus className="size-4" aria-hidden />
+            {msg('workbench.addExample', 'Add example')}
+          </Button>
+        ) : null}
 
         {formOpen ? (
           <div className="workbench-example-form">
             <div className="workbench-example-form-header">
-              <h3>{isEditing ? 'Edit example' : 'Add example'}</h3>
+              <h3>
+                {isEditing ? msg('workbench.editExample', 'Edit example') : msg('workbench.addExample', 'Add example')}
+              </h3>
               <Button type="button" variant="outline" size="lg" disabled={isGenerating} onClick={onGenerate}>
                 {isGenerating ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden />
                 ) : (
                   <Sparkles className="size-4" aria-hidden />
                 )}
-                Generate example
+                {msg('workbench.generateExample', 'Generate example')}
               </Button>
             </div>
 
@@ -1064,7 +1110,7 @@ export function ExamplesDrawer({
                 <span>{`{{${name}}}`}</span>
                 <Textarea
                   aria-label={`{{${name}}}`}
-                  placeholder="Enter an example value..."
+                  placeholder={msg('workbench.exampleValuePlaceholder', 'Enter an example value...')}
                   value={values[name] ?? ''}
                   onChange={(event) => {
                     const value = event.currentTarget.value;
@@ -1076,10 +1122,10 @@ export function ExamplesDrawer({
             ))}
 
             <label className="workbench-example-field">
-              <span>Ideal output</span>
+              <span>{msg('workbench.idealOutput', 'Ideal output')}</span>
               <Textarea
-                aria-label="Ideal output"
-                placeholder="Enter ideal output..."
+                aria-label={msg('workbench.idealOutput', 'Ideal output')}
+                placeholder={msg('workbench.idealOutputPlaceholder', 'Enter ideal output...')}
                 value={idealOutput}
                 onChange={(event) => setIdealOutput(event.currentTarget.value)}
                 className="min-h-[126px] resize-y bg-secondary"
@@ -1088,10 +1134,10 @@ export function ExamplesDrawer({
 
             {contextOpen ? (
               <label className="workbench-example-field">
-                <span>Additional context</span>
+                <span>{msg('workbench.additionalContext', 'Additional context')}</span>
                 <Textarea
-                  aria-label="Additional context"
-                  placeholder="Add any extra details Claude should consider..."
+                  aria-label={msg('workbench.additionalContext', 'Additional context')}
+                  placeholder={msg('workbench.contextPlaceholder', 'Add any extra details Claude should consider...')}
                   value={additionalContext}
                   onChange={(event) => setAdditionalContext(event.currentTarget.value)}
                   className="min-h-[86px] resize-y bg-secondary"
@@ -1100,16 +1146,18 @@ export function ExamplesDrawer({
             ) : (
               <Button type="button" variant="ghost" className="w-fit" onClick={() => setContextOpen(true)}>
                 <Plus className="size-4" aria-hidden />
-                Add additional context
+                {msg('workbench.addContext', 'Add additional context')}
               </Button>
             )}
 
             <div className="workbench-example-footer">
               <Button type="button" variant="outline" onClick={onCancel}>
-                Cancel
+                {msg('workbench.cancel', 'Cancel')}
               </Button>
               <Button type="button" disabled={!canAdd} onClick={onAdd}>
-                {isEditing ? 'Save changes' : 'Add Example'}
+                {isEditing
+                  ? msg('workbench.saveChanges', 'Save changes')
+                  : msg('workbench.addExampleSubmit', 'Add Example')}
               </Button>
             </div>
           </div>
@@ -1130,10 +1178,16 @@ export function ExamplesDrawer({
                     ))}
                   </div>
                   <div className="workbench-example-card-actions">
-                    <IconButton label={`Edit example ${index + 1}`} onClick={() => onEdit(example)}>
+                    <IconButton
+                      label={msg('workbench.editExampleNumber', 'Edit example {number}', { number: index + 1 })}
+                      onClick={() => onEdit(example)}
+                    >
                       <PencilLine className="size-4" aria-hidden />
                     </IconButton>
-                    <IconButton label={`Delete example ${index + 1}`} onClick={() => onRemove(example.id)}>
+                    <IconButton
+                      label={msg('workbench.deleteExampleNumber', 'Delete example {number}', { number: index + 1 })}
+                      onClick={() => onRemove(example.id)}
+                    >
                       <Trash2 className="size-4" aria-hidden />
                     </IconButton>
                   </div>
@@ -1141,7 +1195,7 @@ export function ExamplesDrawer({
                 <div className="workbench-example-output">{example.idealOutput}</div>
                 {example.additionalContext ? (
                   <div className="workbench-example-context-preview">
-                    <div>Additional context:</div>
+                    <div>{msg('workbench.additionalContextLabel', 'Additional context:')}</div>
                     <p>{example.additionalContext}</p>
                   </div>
                 ) : null}
@@ -1152,7 +1206,7 @@ export function ExamplesDrawer({
       </div>
       <Button type="button" size="lg" className="mt-auto w-full" disabled={!canRun} onClick={onRun}>
         {isRunning ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Play className="size-4" aria-hidden />}
-        <span>Run</span>
+        <span>{msg('workbench.run', 'Run')}</span>
         <span className="text-xs font-medium text-primary-foreground/70">⌘ + ⏎</span>
       </Button>
     </div>
@@ -1182,17 +1236,35 @@ export function HistoryDrawer({
   onDiscard: () => Promise<void>;
   onRestore: (revisionId: string) => Promise<void>;
 }) {
+  const { locale, msg } = useI18n();
+  const [historyLoading, setHistoryLoading] = useState(Boolean(orgUuid && promptId));
+  const [historyError, setHistoryError] = useState(false);
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const [revisions, setRevisions] = useState<WorkbenchRevision[]>([]);
   const [restoringRevisionId, setRestoringRevisionId] = useState<string | null>(null);
   const [discardingDraft, setDiscardingDraft] = useState(false);
   useEffect(() => {
     if (!orgUuid || !promptId) {
+      setHistoryLoading(false);
       return;
     }
+    let active = true;
+    setHistoryLoading(true);
+    setHistoryError(false);
     void listWorkbenchRevisions(orgUuid, promptId, false)
-      .then((items) => setRevisions(items))
-      .catch(() => setRevisions([]));
-  }, [currentRevisionId, orgUuid, promptId]);
+      .then((items) => {
+        if (active) setRevisions(items);
+      })
+      .catch(() => {
+        if (active) setHistoryError(true);
+      })
+      .finally(() => {
+        if (active) setHistoryLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentRevisionId, orgUuid, promptId, refreshVersion]);
 
   const restoreRevisionFromHistory = async (revision: WorkbenchRevision) => {
     if (hasUnsavedChanges || revision.id === currentRevisionId || restoringRevisionId) {
@@ -1216,29 +1288,47 @@ export function HistoryDrawer({
       setDiscardingDraft(false);
     }
   };
-  const draftPreviewText = historyRevisionPreview(currentDraft);
+  const draftPreviewText = historyRevisionPreview(currentDraft, msg);
 
   return (
     <div className="workbench-history-panel">
+      {historyLoading ? (
+        <div role="status" className="px-4 py-3 text-sm text-muted-foreground">
+          {msg('workbench.loadingVersions', 'Loading versions…')}
+        </div>
+      ) : null}
+      {historyError ? (
+        <Alert variant="destructive" className="mx-3 w-auto">
+          <AlertCircle aria-hidden />
+          <AlertTitle>{msg('workbench.historyLoadFailed', 'Version history could not load')}</AlertTitle>
+          <AlertDescription>
+            <Button type="button" variant="outline" size="sm" onClick={() => setRefreshVersion((value) => value + 1)}>
+              {msg('common.retry', 'Retry')}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {hasUnsavedChanges ? (
         <>
           <Button
             type="button"
             variant="ghost"
             className="workbench-history-row is-current is-draft"
-            aria-label="Revision Draft version"
+            aria-label={msg('workbench.draftRevision', 'Revision Draft version')}
             aria-current="true"
           >
             <span className="workbench-history-row-heading">
-              <span className="workbench-history-version">Draft version</span>
+              <span className="workbench-history-version">{msg('workbench.draftVersion', 'Draft version')}</span>
             </span>
-            <span className="workbench-history-row-meta">{formatHistoryTimestamp(currentDraft.created_at)}</span>
+            <span className="workbench-history-row-meta">
+              {formatHistoryTimestamp(currentDraft.created_at, locale)}
+            </span>
             <span className="workbench-history-row-preview">
               <Code2 className="size-3.5" aria-hidden />
               {draftPreviewText.kind === 'variables' ? (
                 <span className="workbench-history-variables">
                   {draftPreviewText.values.map((value) => (
-                    <span key={value}>{`{{${value.toUpperCase()}}}`}</span>
+                    <span key={value} title={`{{${value}}}`}>{`{{${value}}}`}</span>
                   ))}
                 </span>
               ) : (
@@ -1247,7 +1337,7 @@ export function HistoryDrawer({
             </span>
           </Button>
           <p className="workbench-history-draft-note">
-            You are currently editing a draft version.{' '}
+            {msg('workbench.historyDraftNote', 'You are currently editing a draft version.')}{' '}
             <Button
               type="button"
               variant="link"
@@ -1255,9 +1345,9 @@ export function HistoryDrawer({
               disabled={!canSave || isSaving}
               onClick={() => void onSave()}
             >
-              {isSaving ? 'Saving' : 'Save'}
+              {isSaving ? msg('workbench.saving', 'Saving') : msg('workbench.save', 'Save')}
             </Button>{' '}
-            or{' '}
+            {msg('workbench.or', 'or')}{' '}
             <Button
               type="button"
               variant="link"
@@ -1265,22 +1355,24 @@ export function HistoryDrawer({
               disabled={discardingDraft}
               onClick={() => void discardDraftFromHistory()}
             >
-              {discardingDraft ? 'discarding' : 'discard'}
+              {discardingDraft ? msg('workbench.discarding', 'discarding') : msg('workbench.discard', 'discard')}
             </Button>{' '}
-            your changes before viewing or renaming a previous version.
+            {msg('workbench.historyDraftRequirement', 'your changes before viewing or renaming a previous version.')}
           </p>
         </>
       ) : null}
       {revisions.length ? (
         <>
           <h3 className="workbench-history-day">
-            {hasUnsavedChanges ? 'Previously' : historyDayLabel(revisions[0]?.created_at)}
+            {hasUnsavedChanges
+              ? msg('workbench.previously', 'Previously')
+              : historyDayLabel(revisions[0]?.created_at, locale, msg)}
           </h3>
           <div className="workbench-history-list subtle-scrollbar">
             {revisions.map((revision, index) => {
               const current = revision.id === currentRevisionId;
               const versionNumber = revisions.length - index;
-              const previewText = historyRevisionPreview(revision);
+              const previewText = historyRevisionPreview(revision, msg);
               const restoring = restoringRevisionId === revision.id;
               return (
                 <Button
@@ -1288,16 +1380,20 @@ export function HistoryDrawer({
                   type="button"
                   variant="ghost"
                   className={clsx('workbench-history-row', current && 'is-current')}
-                  aria-label={`Revision v${versionNumber}`}
+                  aria-label={msg('workbench.revisionLabel', 'Revision v{version}', { version: versionNumber })}
                   aria-current={current ? 'true' : undefined}
                   disabled={!!restoringRevisionId && !restoring}
                   onClick={() => void restoreRevisionFromHistory(revision)}
                 >
                   <span className="workbench-history-row-heading">
                     <span className="workbench-history-version">v{versionNumber}</span>
-                    <span className="workbench-history-name">{historyRevisionName(revision)}</span>
+                    <span className="workbench-history-name" title={historyRevisionName(revision, msg)}>
+                      {historyRevisionName(revision, msg)}
+                    </span>
                   </span>
-                  <span className="workbench-history-row-meta">{formatHistoryTimestamp(revision.created_at)}</span>
+                  <span className="workbench-history-row-meta">
+                    {formatHistoryTimestamp(revision.created_at, locale)}
+                  </span>
                   <span className="workbench-history-row-preview">
                     {restoring ? (
                       <Loader2 className="size-3.5 animate-spin" aria-hidden />
@@ -1307,7 +1403,7 @@ export function HistoryDrawer({
                     {previewText.kind === 'variables' ? (
                       <span className="workbench-history-variables">
                         {previewText.values.map((value) => (
-                          <span key={value}>{`{{${value.toUpperCase()}}}`}</span>
+                          <span key={value} title={`{{${value}}}`}>{`{{${value}}}`}</span>
                         ))}
                       </span>
                     ) : (
@@ -1319,11 +1415,13 @@ export function HistoryDrawer({
             })}
           </div>
         </>
-      ) : (
+      ) : !historyLoading && !historyError ? (
         <div className="workbench-history-empty">
-          {hasUnsavedChanges ? 'No previous versions' : 'No saved versions'}
+          {hasUnsavedChanges
+            ? msg('workbench.noPreviousVersions', 'No previous versions')
+            : msg('workbench.noSavedVersions', 'No saved versions')}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

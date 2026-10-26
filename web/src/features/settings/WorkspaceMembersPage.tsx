@@ -1,7 +1,7 @@
 import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Info, Plus, UsersRound } from 'lucide-react';
-import { useState } from 'react';
+import { Info, Plus } from 'lucide-react';
+import { useRef, useState } from 'react';
 import type { ApiError } from '../../shared/api/client';
 import { canViewWorkspaceMembers } from '../../shared/permissions/members';
 import { MembersAccessDenied } from './MembersAccessDenied';
@@ -32,7 +32,7 @@ export function WorkspaceMembersPage() {
     return <WorkspaceMembersAdminPage key={`${orgUuid}:${activeWorkspace.id}`} />;
   }
   return (
-    <ConsolePageFrame title={msg('members.title', 'Members')} icon={UsersRound}>
+    <ConsolePageFrame title={msg('members.title', 'Members')}>
       {activeWorkspace.is_default === true ? (
         <Alert>
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -76,6 +76,7 @@ function WorkspaceMembersAdminPage() {
   const [roleFilter, setRoleFilter] = useState('all');
   const [sort, setSort] = useState<MemberSort>({ field: 'name', descending: false });
   const [adding, setAdding] = useState(false);
+  const addMemberTriggerRef = useRef<HTMLButtonElement>(null);
   const [removing, setRemoving] = useState<WorkspaceMember | null>(null);
 
   const directoryKey = ['console', 'workspace-members', orgUuid, workspaceId] as const;
@@ -104,7 +105,7 @@ function WorkspaceMembersAdminPage() {
 
   if ((directory.error as ApiError | null)?.status === 403) {
     return (
-      <ConsolePageFrame title={msg('members.title', 'Members')} icon={UsersRound}>
+      <ConsolePageFrame title={msg('members.title', 'Members')}>
         <WorkspaceMembersAccessDenied />
       </ConsolePageFrame>
     );
@@ -113,7 +114,6 @@ function WorkspaceMembersAdminPage() {
   return (
     <ConsolePageFrame
       title={msg('members.title', 'Members')}
-      icon={UsersRound}
       description={
         directory.data && !directory.data.is_default
           ? msg(
@@ -125,6 +125,8 @@ function WorkspaceMembersAdminPage() {
       actions={
         directory.data?.can_manage_members ? (
           <Button
+            ref={addMemberTriggerRef}
+            disabled={mutation.isPending}
             onClick={() => {
               mutation.reset();
               setAdding(true);
@@ -158,6 +160,7 @@ function WorkspaceMembersAdminPage() {
           orgUuid={orgUuid ?? ''}
           workspaceId={workspaceId}
           workspaceName={activeWorkspace.name}
+          returnFocus={addMemberTriggerRef}
           open
           onClose={() => setAdding(false)}
           pending={mutation.isPending}

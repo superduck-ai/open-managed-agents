@@ -133,7 +133,7 @@ describe('SessionMessageComposer', () => {
     expect(frame?.className).toContain('min-h-14');
     expect(frame?.className).toContain('rounded-[22px]');
     expect(frame?.className).toContain('border-0');
-    expect(frame?.className).toContain('focus-visible]:ring-1');
+    expect(frame?.className).toContain('has-[:focus-visible]:ring-[0.5px]');
 
     fireEvent.change(input, { target: { value: 'Keep this draft' } });
     fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });

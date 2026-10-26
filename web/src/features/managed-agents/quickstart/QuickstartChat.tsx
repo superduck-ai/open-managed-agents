@@ -35,8 +35,8 @@ export function QuickstartChat({
   const { locale } = useI18n();
   const text = quickstartCopy(locale);
   return (
-    <div className="order-first flex h-[380px] min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card min-[860px]:order-last min-[860px]:h-full">
-      <div className="flex shrink-0 flex-wrap items-start justify-between gap-2 border-b border-border px-4 py-3">
+    <div className="order-first flex h-[380px] min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border-[0.5px] border-border bg-card min-[860px]:order-last min-[860px]:h-full">
+      <div className="flex shrink-0 flex-wrap items-start justify-between gap-2 border-b-[0.5px] border-border px-4 py-3">
         <div>
           <h2 className="font-semibold">{text.test}</h2>
           <p className="mt-1 text-xs text-muted-foreground">{text.testHint}</p>
@@ -105,7 +105,7 @@ function QuickstartComposer({ conversation }: { conversation: QuickstartConversa
   const text = quickstartCopy(locale);
   return (
     <form
-      className="shrink-0 space-y-2 border-t border-border p-3"
+      className="shrink-0 space-y-2 border-t-[0.5px] border-border p-3"
       onSubmit={(event) => {
         event.preventDefault();
         void conversation.send();

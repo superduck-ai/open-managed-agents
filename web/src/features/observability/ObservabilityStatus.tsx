@@ -35,20 +35,20 @@ export function ObservabilityStatus({
           className={cn(
             'mb-0',
             compact && 'size-7',
-            !compact && 'size-10 rounded-full border border-border bg-secondary',
+            !compact && 'size-10 rounded-full border-[0.5px] border-border bg-secondary',
             tone === 'error' && 'border-destructive/20 bg-destructive/10 text-destructive',
           )}
         >
           <Icon className={compact ? 'size-3.5' : 'size-5'} aria-hidden />
         </EmptyMedia>
-        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyTitle className={compact ? undefined : 'text-lg font-medium'}>{title}</EmptyTitle>
         {description ? (
           <EmptyDescription className={cn(compact && 'text-xs leading-5')}>{description}</EmptyDescription>
         ) : null}
       </EmptyHeader>
       {onAction && actionLabel ? (
         <EmptyContent>
-          <Button type="button" size="sm" variant="outline" onClick={onAction}>
+          <Button type="button" size="sm" variant="outline" className="text-sm" onClick={onAction}>
             {actionLabel}
           </Button>
         </EmptyContent>

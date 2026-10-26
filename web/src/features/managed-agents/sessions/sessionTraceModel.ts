@@ -2154,28 +2154,32 @@ export function sessionEventLabel(event: QuickstartSessionEvent, family: Session
     return msg ? msg('managedAgents.sessions.trace.result', 'Result') : 'Result';
   }
   if (family === 'user') {
-    return 'User';
+    return msg ? msg('managedAgents.sessions.trace.user', 'User') : 'User';
   }
   if (family === 'agent') {
-    return sessionEventIsThinking(event) ? sessionThinkingLabel(msg) : 'Agent';
+    return sessionEventIsThinking(event)
+      ? sessionThinkingLabel(msg)
+      : msg
+        ? msg('managedAgents.sessions.trace.agent', 'Agent')
+        : 'Agent';
   }
   if (family === 'subagent') {
-    return 'Subagent';
+    return msg ? msg('managedAgents.sessions.trace.subagent', 'Subagent') : 'Subagent';
   }
   if (family === 'env') {
-    return 'Env';
+    return msg ? msg('managedAgents.sessions.trace.environmentShort', 'Env') : 'Env';
   }
   if (family === 'system') {
-    return 'System';
+    return msg ? msg('managedAgents.sessions.trace.system', 'System') : 'System';
   }
   if (family === 'status') {
-    return sessionStatusLabel(sessionEventType(event));
+    return sessionStatusLabel(sessionEventType(event), msg);
   }
   if (family === 'error') {
-    return 'Error';
+    return msg ? msg('managedAgents.sessions.trace.error', 'Error') : 'Error';
   }
   if (family === 'span') {
-    return 'Span';
+    return msg ? msg('managedAgents.sessions.trace.span', 'Span') : 'Span';
   }
   return sessionEventType(event);
 }
@@ -2231,37 +2235,26 @@ export function sessionEventPreview(
   return sessionEventSummary(event);
 }
 
-export function sessionStatusLabel(type: string) {
-  switch (type) {
-    case 'session.status_idle':
-      return 'Idle';
-    case 'session.status_running':
-      return 'Running';
-    case 'session.status_rescheduled':
-      return 'Queued';
-    case 'session.status_terminated':
-      return 'Terminated';
-    case 'session.thread_status_running':
-      return 'Thread running';
-    case 'session.thread_status_idle':
-    case 'session.thread_idled':
-      return 'Thread idle';
-    case 'session.thread_status_rescheduled':
-      return 'Thread queued';
-    case 'session.thread_status_terminated':
-    case 'session.thread_terminated':
-      return 'Thread terminated';
-    case 'session.deleted':
-      return 'Deleted';
-    case 'session.updated':
-      return 'Updated';
-    case 'user.interrupt':
-      return 'Interrupted';
-    case 'user.tool_confirmation':
-      return 'Tool confirmation';
-    default:
-      return type;
-  }
+const sessionStatusLabels: Record<string, [string, string]> = {
+  'session.status_idle': ['managedAgents.sessions.trace.idle', 'Idle'],
+  'session.status_running': ['managedAgents.sessions.trace.running', 'Running'],
+  'session.status_rescheduled': ['managedAgents.sessions.state.queued', 'Queued'],
+  'session.status_terminated': ['managedAgents.sessions.trace.terminated', 'Terminated'],
+  'session.thread_status_running': ['managedAgents.sessions.trace.threadRunning', 'Thread running'],
+  'session.thread_status_idle': ['managedAgents.sessions.trace.threadIdle', 'Thread idle'],
+  'session.thread_idled': ['managedAgents.sessions.trace.threadIdle', 'Thread idle'],
+  'session.thread_status_rescheduled': ['managedAgents.sessions.trace.threadQueued', 'Thread queued'],
+  'session.thread_status_terminated': ['managedAgents.sessions.trace.threadTerminated', 'Thread terminated'],
+  'session.thread_terminated': ['managedAgents.sessions.trace.threadTerminated', 'Thread terminated'],
+  'session.deleted': ['managedAgents.sessions.trace.deleted', 'Deleted'],
+  'session.updated': ['common.updated', 'Updated'],
+  'user.interrupt': ['managedAgents.sessions.state.interrupted', 'Interrupted'],
+  'user.tool_confirmation': ['managedAgents.sessions.trace.toolConfirmation', 'Tool confirmation'],
+};
+
+export function sessionStatusLabel(type: string, msg?: I18nMsg) {
+  const label = sessionStatusLabels[type];
+  return label ? (msg ? msg(label[0], label[1]) : label[1]) : type;
 }
 
 export function sessionStatusDescription(type: string, event?: QuickstartSessionEvent) {

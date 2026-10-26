@@ -1,5 +1,5 @@
 import { Archive, Loader2, Plus, RotateCw } from 'lucide-react';
-import { type FormEvent } from 'react';
+import { type FormEvent, useRef, useState } from 'react';
 
 import { useI18n } from '../../shared/i18n';
 import { cn } from '../../shared/lib/utils';
@@ -19,6 +19,7 @@ import { Button } from '../../shared/ui/button';
 import { CopyButton } from '../../shared/ui/copy-button';
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -74,6 +75,7 @@ export function CreateTunnelDialog({
   displayName,
   busy,
   onOpenChange,
+  onOpenChangeComplete,
   onDisplayNameChange,
   onSubmit,
 }: {
@@ -81,38 +83,48 @@ export function CreateTunnelDialog({
   displayName: string;
   busy: boolean;
   onOpenChange: (open: boolean) => void;
+  onOpenChangeComplete: (open: boolean) => void;
   onDisplayNameChange: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
 }) {
   const { msg } = useI18n();
+  const nameInputRef = useRef<HTMLInputElement>(null);
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen, details) => {
+        if (!nextOpen && busy) {
+          details.cancel();
+          return;
+        }
+        onOpenChange(nextOpen);
+      }}
+      onOpenChangeComplete={onOpenChangeComplete}
+    >
+      <DialogContent closeButtonDisabled={busy} initialFocus={nameInputRef}>
         <form className="grid gap-4" onSubmit={onSubmit}>
           <DialogHeader>
             <DialogTitle>{msg('mcpTunnels.create.title', 'Create MCP tunnel')}</DialogTitle>
             <DialogDescription>
-              {msg(
-                'mcpTunnels.create.description',
-                'The token will be revealed after creation and remains available from the tunnel detail page.',
-              )}
+              {msg('mcpTunnels.create.description', 'The connection token is available on the tunnel detail page.')}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
             <Label htmlFor="tunnel-display-name">{msg('common.name', 'Name')}</Label>
             <Input
+              ref={nameInputRef}
               id="tunnel-display-name"
               value={displayName}
+              disabled={busy}
               maxLength={255}
               placeholder={msg('mcpTunnels.create.namePlaceholder', 'Local tools')}
               onChange={(event) => onDisplayNameChange(event.target.value)}
-              autoFocus
             />
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <DialogClose render={<Button type="button" variant="outline" disabled={busy} />}>
               {msg('common.cancel', 'Cancel')}
-            </Button>
+            </DialogClose>
             <Button type="submit" disabled={busy}>
               {busy ? <Loader2 className="animate-spin" /> : <Plus />}
               {msg('common.create', 'Create')}
@@ -131,11 +143,28 @@ export function ProbeDialog({
   probe: { tunnel: McpTunnel; result: TunnelProbeResult } | null;
   onClose: () => void;
 }) {
-  const { msg } = useI18n();
   if (!probe) return null;
+  return <ProbeResultDialog probe={probe} onClose={onClose} />;
+}
+
+function ProbeResultDialog({
+  probe,
+  onClose,
+}: {
+  probe: { tunnel: McpTunnel; result: TunnelProbeResult };
+  onClose: () => void;
+}) {
+  const { msg } = useI18n();
+  const [open, setOpen] = useState(true);
   const { result, tunnel } = probe;
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog
+      open={open}
+      onOpenChange={setOpen}
+      onOpenChangeComplete={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
+    >
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{msg('mcpTunnels.probe.title', 'MCP connection test passed')}</DialogTitle>
@@ -145,13 +174,18 @@ export function ProbeDialog({
             })}
           </DialogDescription>
         </DialogHeader>
-        <dl className="grid grid-cols-[140px_minmax(0,1fr)] gap-x-4 gap-y-2 rounded-lg border p-4 text-sm">
+        <dl className="grid grid-cols-[140px_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
           <dt className="text-muted-foreground">{msg('mcpTunnels.probe.channel', 'Channel')}</dt>
           <dd>
             <code>{result.channel}</code>
           </dd>
           <dt className="text-muted-foreground">{msg('mcpTunnels.probe.server', 'Server')}</dt>
-          <dd>{[result.server_name, result.server_version].filter(Boolean).join(' · ') || '—'}</dd>
+          <dd className="flex flex-wrap gap-x-2">
+            <span>{result.server_name || '—'}</span>
+            {result.server_version ? (
+              <span className="font-mono text-xs text-muted-foreground">{result.server_version}</span>
+            ) : null}
+          </dd>
           <dt className="text-muted-foreground">{msg('mcpTunnels.probe.protocol', 'Protocol')}</dt>
           <dd>
             <code>{result.protocol_version || '—'}</code>
@@ -176,7 +210,7 @@ export function ProbeDialog({
           )}
         </div>
         <DialogFooter>
-          <Button onClick={onClose}>{msg('common.done', 'Done')}</Button>
+          <Button onClick={() => setOpen(false)}>{msg('common.done', 'Done')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -195,9 +229,20 @@ export function ConfirmTunnelActionDialog({
   onConfirm: () => void;
 }) {
   const { msg } = useI18n();
-  const rotating = action?.type === 'rotate';
+  const [content, setContent] = useState(action);
+  if (action && action !== content) setContent(action);
+  const rotating = content?.type === 'rotate';
   return (
-    <AlertDialog open={Boolean(action)} onOpenChange={(open) => !open && !busy && onClose()}>
+    <AlertDialog
+      open={Boolean(action)}
+      onOpenChange={(open, details) => {
+        if (!open && busy) {
+          details.cancel();
+          return;
+        }
+        if (!open) onClose();
+      }}
+    >
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogMedia>{rotating ? <RotateCw /> : <Archive />}</AlertDialogMedia>
@@ -235,7 +280,7 @@ export function CopyValue({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid gap-2">
       <Label>{label}</Label>
-      <div className="flex min-w-0 items-center gap-2 rounded-lg border bg-muted/40 p-2">
+      <div className="flex min-w-0 items-center gap-2">
         <code className="min-w-0 flex-1 break-all text-xs">{value}</code>
         <CopyButton value={value} label={msg('mcpTunnels.copyValue', 'Copy {label}', { label })} />
       </div>

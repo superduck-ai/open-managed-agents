@@ -1,3 +1,4 @@
+import { useReducedMotion } from '../../../shared/hooks/use-reduced-motion';
 import { Cell, Label, Pie, PieChart } from 'recharts';
 import { ChartContainer, type ChartConfig } from '../../../shared/ui/chart';
 import { useFormatters, useI18n } from '../../../shared/i18n';
@@ -17,6 +18,7 @@ export function DonutPanel({
 }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
+  const reducedMotion = useReducedMotion();
   const items = (data.items ?? []).map((item, index) => ({
     name: item.name || '—',
     label: panelCategoryLabel(item.name, msg),
@@ -37,6 +39,9 @@ export function DonutPanel({
       >
         <PieChart>
           <Pie
+            isAnimationActive={!reducedMotion}
+            animationDuration={200}
+            animationEasing="ease-out"
             data={items}
             dataKey="value"
             nameKey="label"
@@ -55,7 +60,7 @@ export function DonutPanel({
                 }
                 return (
                   <text x={viewBox.cx} y={viewBox.cy} textAnchor="middle" dominantBaseline="middle">
-                    <tspan className="fill-foreground text-xl font-semibold">
+                    <tspan className="fill-foreground text-2xl font-semibold">
                       {formatStatValue(total, unit, formatters)}
                     </tspan>
                   </text>

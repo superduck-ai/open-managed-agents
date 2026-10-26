@@ -52,16 +52,16 @@ function BubbleContent({ className, ...props }: React.ComponentProps<'div'>) {
     <div
       data-slot="bubble-content"
       className={cn(
-        'w-fit max-w-full min-w-0 overflow-hidden rounded-3xl border border-transparent px-3 py-2.5 text-sm leading-relaxed break-words whitespace-pre-wrap',
+        'w-fit max-w-full min-w-0 overflow-hidden rounded-3xl border-[0.5px] border-transparent px-3 py-2.5 text-sm leading-relaxed break-words whitespace-pre-wrap',
         'group-data-[align=end]/bubble:self-end',
         'group-data-[variant=default]/bubble:bg-primary group-data-[variant=default]/bubble:text-primary-foreground',
         'group-data-[variant=secondary]/bubble:bg-secondary group-data-[variant=secondary]/bubble:text-secondary-foreground',
         'group-data-[variant=muted]/bubble:bg-muted group-data-[variant=muted]/bubble:text-foreground',
-        'group-data-[variant=tinted]/bubble:bg-[oklch(from_var(--primary)_0.93_calc(c*0.4)_h)] group-data-[variant=tinted]/bubble:text-foreground dark:group-data-[variant=tinted]/bubble:bg-[oklch(from_var(--primary)_0.3_calc(c*0.4)_h)]',
+        'group-data-[variant=tinted]/bubble:bg-accent group-data-[variant=tinted]/bubble:text-accent-foreground',
         'group-data-[variant=outline]/bubble:border-border group-data-[variant=outline]/bubble:bg-background group-data-[variant=outline]/bubble:text-foreground',
         'group-data-[variant=ghost]/bubble:rounded-none group-data-[variant=ghost]/bubble:border-transparent group-data-[variant=ghost]/bubble:bg-transparent group-data-[variant=ghost]/bubble:px-0 group-data-[variant=ghost]/bubble:py-0 group-data-[variant=ghost]/bubble:text-foreground',
         'group-data-[variant=destructive]/bubble:bg-destructive/10 group-data-[variant=destructive]/bubble:text-destructive dark:group-data-[variant=destructive]/bubble:bg-destructive/20',
-        '[button]:text-left [button,a]:outline-none [button,a]:transition-colors [button,a]:focus-visible:border-ring [button,a]:focus-visible:ring-3 [button,a]:focus-visible:ring-ring/30',
+        '[&_button]:text-left',
         className,
       )}
       {...props}

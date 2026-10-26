@@ -187,8 +187,8 @@ export function EventTypeBadge({
       className={clsx(
         'h-5 max-w-full shrink-0 items-center justify-center overflow-hidden',
         variant === 'pill'
-          ? 'rounded-full px-2 text-[11px] font-medium leading-none'
-          : 'rounded-md px-1.5 text-[10px] font-normal leading-[1.4]',
+          ? 'rounded-full px-2 text-xs font-medium leading-none'
+          : 'rounded-md px-1.5 text-xs font-normal leading-[1.4]',
         config.className,
         className,
       )}
@@ -201,7 +201,7 @@ export function EventTypeBadge({
   }
   return (
     <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex min-w-0">{badge}</span>} />
+      <TooltipTrigger render={<span className="inline-flex min-w-0 max-w-full">{badge}</span>} />
       <TooltipContent>{title}</TooltipContent>
     </Tooltip>
   );
@@ -218,17 +218,17 @@ export function sessionEventBadgeConfig(
   const label = sessionBadgeTypeLabel(type, msg);
   switch (family) {
     case 'user':
-      return { label, className: 'bg-session-speaker-user text-white dark:text-background' };
+      return { label, className: 'bg-session-speaker-user text-primary-foreground' };
     case 'agent':
-      return { label, className: 'bg-session-speaker-agent text-white dark:text-background' };
+      return { label, className: 'bg-session-speaker-agent text-primary-foreground' };
     case 'subagent':
-      return { label, className: 'bg-success text-white dark:text-background' };
+      return { label, className: 'bg-success text-primary-foreground' };
     case 'tool':
       return { label, className: 'bg-accent text-muted-foreground' };
     case 'error':
-      return { label, className: 'bg-destructive text-background' };
+      return { label, className: 'bg-destructive text-destructive-foreground' };
     default:
-      return { label, className: 'bg-transparent text-muted-foreground ring-1 ring-inset ring-border' };
+      return { label, className: 'bg-transparent text-muted-foreground ring-[0.5px] ring-inset ring-border' };
   }
 }
 
@@ -334,56 +334,60 @@ export function EventDetailPanel({
       data-placement={placement}
       data-testid="session-trace-detail"
     >
-      <div className="flex h-8 shrink-0 items-center gap-1.5 border-b border-border/60 px-3 whitespace-nowrap">
-        <EventTypeBadge
-          type={entry.displayEvent.type}
-          label={
-            isDebug
-              ? sessionDebugBadge(entry.type)
-              : entry.kind === 'tool_batch'
-                ? msg('managedAgents.sessions.trace.toolBatch', 'Tools')
-                : undefined
-          }
-          title={isDebug ? entry.type : undefined}
-          className={isDebug ? 'font-mono' : undefined}
-        />
-        <h2
-          className={clsx(
-            'min-w-0 flex-1 truncate text-xs font-medium',
-            entry.isError ? 'text-destructive' : 'text-foreground',
-          )}
-        >
-          {isDebug ? entry.displayEvent.label || title : title}
-        </h2>
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          className="h-6 min-w-0 max-w-28 p-1.5 font-mono text-[11px] font-normal text-muted-foreground hover:bg-muted/60 hover:text-foreground focus-visible:ring-0"
-          aria-label={`Copy ${entry.rawEventId}`}
-          onClick={() => void copyText(entry.rawEventId)}
-        >
-          <span className="truncate">{eventIdLabel}</span>
-        </Button>
-        <span className="text-[11px] text-muted-foreground" aria-hidden>
-          ·
-        </span>
-        <time className="font-mono text-[11px] tabular-nums text-muted-foreground">{entry.relativeTime}</time>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={msg('managedAgents.sessions.trace.closeDetailPanel', 'Close detail panel')}
-          className="text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-          onClick={onClose}
-        >
-          <X className="size-3.5" aria-hidden />
-        </Button>
+      <div className="flex min-h-8 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b-[0.5px] border-border/60 px-3 py-1">
+        <div className="flex min-w-0 flex-[1_1_10rem] items-center gap-1.5">
+          <span className="flex min-w-0 shrink">
+            <EventTypeBadge
+              type={entry.displayEvent.type}
+              label={
+                isDebug
+                  ? sessionDebugBadge(entry.type)
+                  : entry.kind === 'tool_batch'
+                    ? msg('managedAgents.sessions.trace.toolBatch', 'Tools')
+                    : undefined
+              }
+              title={isDebug ? entry.type : undefined}
+              className={isDebug ? 'font-mono' : undefined}
+            />
+          </span>
+          <h2
+            title={isDebug ? entry.displayEvent.label || title : title}
+            className={clsx(
+              'min-w-12 flex-1 truncate text-xs font-medium',
+              entry.isError ? 'text-destructive' : 'text-foreground',
+            )}
+          >
+            {isDebug ? entry.displayEvent.label || title : title}
+          </h2>
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="h-6 min-w-0 max-w-28 p-1.5 font-mono text-xs font-normal text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+            aria-label={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: entry.rawEventId })}
+            onClick={() => void copyText(entry.rawEventId)}
+          >
+            <span className="truncate">{eventIdLabel}</span>
+          </Button>
+          <time className="font-mono text-xs tabular-nums text-muted-foreground">{entry.relativeTime}</time>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={msg('managedAgents.sessions.trace.closeDetailPanel', 'Close detail panel')}
+            className="text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+            onClick={onClose}
+          >
+            <X className="size-3.5" aria-hidden />
+          </Button>
+        </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         <ScrollArea
           data-testid="session-inspector-event-detail-scroll"
-          className="[&_code]:break-words [&_code]:whitespace-pre-wrap [&_pre]:max-h-none [&_pre]:overflow-visible [&_pre]:break-words [&_pre]:whitespace-pre-wrap"
+          className="[&_[data-slot=scroll-area-content]]:!w-full [&_[data-slot=scroll-area-content]]:!min-w-0 [&_[data-slot=scroll-area-content]]:!max-w-full [&_code]:whitespace-pre-wrap [&_code]:[overflow-wrap:anywhere] [&_pre]:max-h-none [&_pre]:overflow-visible [&_pre]:whitespace-pre-wrap [&_pre]:[overflow-wrap:anywhere]"
         >
           <div className="pb-8">
             {isDebug ? (
@@ -538,7 +542,7 @@ export function StatusEventDetail({ entry }: { entry: DisplayEventEntry }) {
 export function ErrorEventDetail({ entry }: { entry: DisplayEventEntry }) {
   return (
     <div className="px-5 py-4">
-      <pre className="whitespace-pre-wrap break-words rounded-md border border-destructive/50 bg-destructive/10 p-3 font-mono text-xs text-destructive">
+      <pre className="whitespace-pre-wrap break-words rounded-md border-[0.5px] border-destructive/50 bg-destructive/10 p-3 font-mono text-xs text-destructive">
         {sessionEventErrorMessage(entry.event)}
       </pre>
     </div>
@@ -718,7 +722,7 @@ export function DebugDeltasDetail({ frames }: { frames: QuickstartSessionEvent[]
 
 function sessionDeltaFramePreview(frame: QuickstartSessionEvent) {
   if (sessionEventType(frame) === 'event_start') {
-    return `start · ${sessionEventType(toRecord(frame.event) ?? {})}`;
+    return sessionEventType(toRecord(frame.event) ?? {});
   }
   const delta = toRecord(frame.delta);
   const content = toRecord(delta?.content);
@@ -835,7 +839,7 @@ export function CallSection({
   const formatters = useFormatters();
   return (
     <section className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <SectionHeader title={title} />
         <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
           <ApprovalChip lifecycle={lifecycle} />
@@ -854,18 +858,18 @@ export function CallSection({
 }
 
 export function SectionDivider() {
-  return <div className="h-px bg-border" aria-hidden />;
+  return <div className="h-[0.5px] bg-border" aria-hidden />;
 }
 
 export function SectionHeader({ title }: { title: string }) {
-  return <h3 className="text-sm font-semibold text-foreground">{title}</h3>;
+  return <h3 className="min-w-0 break-words text-sm font-semibold text-foreground">{title}</h3>;
 }
 
 export function PropertyRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3 text-sm">
       <dt className="text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 break-words text-foreground">{value}</dd>
+      <dd className="min-w-0 text-foreground [overflow-wrap:anywhere]">{value}</dd>
     </div>
   );
 }
@@ -893,7 +897,7 @@ export function TranscriptTypedContent({ entry, value }: { entry: SessionTraceEn
   }
   if (entry.displayKind === 'metric') {
     return (
-      <div className="rounded-md border border-border bg-secondary px-3 py-2 font-mono text-sm leading-6 tabular-nums text-foreground">
+      <div className="rounded-md border-[0.5px] border-border bg-secondary px-3 py-2 font-mono text-sm leading-6 tabular-nums text-foreground">
         {value}
       </div>
     );
@@ -908,10 +912,10 @@ export function ToolUseJsonSection({ title, value }: { title: string; value: unk
   const code = JSON.stringify(value ?? {}, null, 2);
   return (
     <div>
-      <div className="mb-1.5 flex items-baseline justify-between gap-3">
+      <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <span className="text-xs text-muted-foreground">{title}</span>
       </div>
-      <pre className="subtle-scrollbar max-h-80 overflow-auto rounded-md border border-border bg-secondary p-3 font-mono text-xs leading-[18px] text-foreground">
+      <pre className="subtle-scrollbar max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border-[0.5px] border-border bg-secondary p-3 font-mono text-xs leading-[18px] text-foreground">
         <HighlightedCode code={code} language="json" />
       </pre>
     </div>
@@ -925,7 +929,7 @@ export function ToolResultSection({ event, lifecycle }: { event: QuickstartSessi
   const language: HighlightLanguage = sessionTraceTextIsJson(parsed) ? 'json' : 'plaintext';
   return (
     <div>
-      <div className="mb-1.5 flex items-baseline justify-between gap-3">
+      <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <span className="text-xs text-muted-foreground">
           {msg('managedAgents.sessions.trace.toolResult', 'Tool result')}
         </span>
@@ -933,12 +937,12 @@ export function ToolResultSection({ event, lifecycle }: { event: QuickstartSessi
           <SessionExecutionStateBadge state="interrupted" />
         ) : null}
         {typeof event.id === 'string' && event.id ? (
-          <span className="font-mono text-xs text-muted-foreground">{event.id}</span>
+          <span className="min-w-0 break-all font-mono text-xs text-muted-foreground">{event.id}</span>
         ) : null}
       </div>
       <pre
         className={clsx(
-          'subtle-scrollbar max-h-80 overflow-auto rounded-md border p-3 font-mono text-xs leading-[18px]',
+          'subtle-scrollbar max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border-[0.5px] p-3 font-mono text-xs leading-[18px]',
           (lifecycle ? lifecycle === 'failed' : event.is_error === true && !sessionToolResultWasInterrupted(event))
             ? 'border-destructive/50 bg-destructive/10 text-destructive'
             : 'border-border bg-secondary text-foreground',
@@ -1033,7 +1037,7 @@ export function QuickstartSessionComposer({
           onClick={onSubmit}
         >
           {loading ? (
-            <Loader2 className="size-4 animate-spin" aria-hidden />
+            <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden />
           ) : (
             <ArrowUp className="size-4" aria-hidden />
           )}

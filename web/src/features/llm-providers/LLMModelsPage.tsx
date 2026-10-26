@@ -1,5 +1,5 @@
 import type { APIBackend } from './api';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from '@tanstack/react-router';
 import { AlertCircle, Bot, Plus } from 'lucide-react';
@@ -15,6 +15,7 @@ import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
 import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from '../../shared/ui/empty';
 import { Skeleton } from '../../shared/ui/skeleton';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
 import { toast } from '../../shared/ui/sonner';
 import {
   deleteOrganizationLLMProvider,
@@ -58,6 +59,7 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
   const [editing, setEditing] = useState<LLMProvider | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [formError, setFormError] = useState('');
+  const refreshAfterSaveRef = useRef(false);
   const [deleting, setDeleting] = useState<LLMProvider | null>(null);
   const [query, setQuery] = useState('');
   const [selectedProviderId, setSelectedProviderId] = useState(ALL_PROVIDERS_ID);
@@ -157,10 +159,6 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
         ? upsertOrganizationLLMProvider(orgUuid, input, csrfToken)
         : persistLLMProvider(orgUuid, workspaceId, editing, input, csrfToken);
     },
-    onSuccess: async () => {
-      closeForm();
-      await invalidateCatalog();
-    },
   });
 
   const deleteMutation = useMutation({
@@ -198,6 +196,10 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
     setEditing(null);
     setFormError('');
     saveMutation.reset();
+    if (refreshAfterSaveRef.current) {
+      refreshAfterSaveRef.current = false;
+      void invalidateCatalog();
+    }
   };
 
   const openCreate = () => {
@@ -209,8 +211,11 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
   const submitForm = async (input: LLMProviderInput) => {
     try {
       await saveMutation.mutateAsync(input);
+      refreshAfterSaveRef.current = true;
+      return true;
     } catch (error) {
       setFormError(readableError(error, msg));
+      return false;
     }
   };
 
@@ -255,6 +260,7 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
         organizationError={scope === 'workspace' ? organizationQuery.error : null}
         isRefreshing={providersQuery.isFetching || organizationQuery.isFetching || isSyncing}
         isAddingModel={updateModelsMutation.isPending}
+        onRetry={() => void invalidateCatalog()}
         onOpenCreate={openCreate}
         onQueryChange={setQuery}
         onRefresh={() => void (canManage ? refreshCatalog() : invalidateCatalog())}
@@ -310,32 +316,28 @@ function CatalogHeader({
 }) {
   const { msg } = useI18n();
   return (
-    <div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row">
-      <div>
-        <div className="flex items-center gap-2">
-          <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
-            {scope === 'organization'
-              ? msg('nav.llmSettings', 'LLM configuration')
-              : msg('llmModels.title', 'LLM models')}
-          </h1>
-          {modelCount > 0 && !accessDenied ? <Badge variant="secondary">{modelCount}</Badge> : null}
-        </div>
-        <p className="mt-2 max-w-[760px] text-sm leading-5 text-muted-foreground">
-          {scope === 'organization'
-            ? msg(
-                'llmModels.organizationDescription',
-                'Configure the default provider shared by all workspaces. Bare model IDs prefer workspace providers.',
-              )
-            : msg('llmModels.description', 'Manage providers and models for this workspace.')}
-        </p>
-      </div>
-      {canManage && providerCount > 0 && scope === 'workspace' && !accessDenied ? (
-        <Button type="button" size="lg" onClick={onCreate}>
-          <Plus className="size-4" aria-hidden />
-          {msg('llmModels.addProvider', 'Add provider')}
-        </Button>
-      ) : null}
-    </div>
+    <ResourcePageHeader
+      title={
+        scope === 'organization' ? msg('nav.llmSettings', 'LLM configuration') : msg('llmModels.title', 'LLM models')
+      }
+      titleAdornment={modelCount > 0 && !accessDenied ? <Badge variant="secondary">{modelCount}</Badge> : undefined}
+      description={
+        scope === 'organization'
+          ? msg(
+              'llmModels.organizationDescription',
+              'The organization default is shared by all workspaces. Model IDs without a provider prefix prefer workspace providers.',
+            )
+          : undefined
+      }
+      actions={
+        canManage && providerCount > 0 && scope === 'workspace' && !accessDenied ? (
+          <Button type="button" size="lg" onClick={onCreate}>
+            <Plus className="size-4" aria-hidden />
+            {msg('llmModels.addProvider', 'Add provider')}
+          </Button>
+        ) : undefined
+      }
+    />
   );
 }
 
@@ -351,6 +353,7 @@ function CatalogBody({
   providersError,
   isRefreshing,
   isAddingModel,
+  onRetry,
   onOpenCreate,
   onQueryChange,
   onRefresh,
@@ -370,6 +373,7 @@ function CatalogBody({
   providersError: unknown;
   isRefreshing: boolean;
   isAddingModel: boolean;
+  onRetry: () => void;
   onOpenCreate: () => void;
   onQueryChange: (query: string) => void;
   onRefresh: () => void;
@@ -392,9 +396,14 @@ function CatalogBody({
   }
   if (providersError) {
     return (
-      <Alert variant="destructive">
+      <Alert variant="destructive" className="[overflow-wrap:anywhere]">
         <AlertCircle aria-hidden />
-        <AlertDescription>{readableError(providersError, msg)}</AlertDescription>
+        <AlertDescription>
+          <p>{readableError(providersError, msg)}</p>
+          <Button type="button" variant="outline" size="sm" className="mt-2" disabled={isRefreshing} onClick={onRetry}>
+            {msg('common.retry', 'Retry')}
+          </Button>
+        </AlertDescription>
       </Alert>
     );
   }
@@ -415,7 +424,7 @@ function CatalogBody({
         </Alert>
       ) : null}
       {providers.length === 0 ? (
-        <Empty className="min-h-[320px] border border-dashed border-border bg-card">
+        <Empty className="min-h-[320px] border-0">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <Bot aria-hidden />
@@ -463,9 +472,9 @@ function CatalogSkeleton() {
         <Skeleton className="h-14 w-full rounded-xl" />
         <Skeleton className="h-14 w-full rounded-xl" />
       </div>
-      <div className="overflow-hidden rounded-xl ring-1 ring-foreground/10">
-        <div className="border-b border-border p-3">
-          <Skeleton className="h-9 w-full" />
+      <div className="overflow-hidden rounded-xl ring-[0.5px] ring-border">
+        <div className="border-b-[0.5px] border-border p-3">
+          <Skeleton className="h-8 w-full" />
         </div>
         <Skeleton className="h-12 w-full rounded-none" />
         <Skeleton className="h-12 w-full rounded-none" />

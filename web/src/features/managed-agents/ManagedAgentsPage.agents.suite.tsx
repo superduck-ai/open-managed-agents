@@ -94,7 +94,7 @@ export function registerManagedAgentsAgentsTests() {
     render(<ManagedAgentsPage section="agents" />);
 
     expect(screen.getByRole('heading', { name: 'Agents' })).toBeTruthy();
-    expect(screen.getByText('Create and manage autonomous agents.')).toBeTruthy();
+    expect(screen.queryByText('Create and manage autonomous agents.')).toBeNull();
     expect(await screen.findByText('Server agent')).toBeTruthy();
     expect(screen.getAllByText('claude-sonnet-4-6').length).toBeGreaterThan(0);
     expect(screen.queryByText('No agents yet')).toBeNull();
@@ -106,7 +106,7 @@ export function registerManagedAgentsAgentsTests() {
 
     const dialog = screen.getByRole('main', { name: 'Create agent' });
     expandAgentCreateSections(dialog);
-    expect(within(dialog).getByText('Start from a template or describe what you need.')).toBeTruthy();
+    expect(within(dialog).queryByText('Start from a template or describe what you need.')).toBeNull();
     const startingPointTablist = within(dialog).getByRole('tablist', { name: 'Starting point' });
     expect(startingPointTablist).toBeTruthy();
     expect(startingPointTablist.dataset.slot).toBe('tabs-list');
@@ -209,7 +209,7 @@ export function registerManagedAgentsAgentsTests() {
     ];
 
     const openStartingPoint = () => {
-      const trigger = within(dialog).getByRole('button', { name: /^Starting point(?: · .+)?$/i });
+      const trigger = within(dialog).getByRole('button', { name: /^Starting point(?:: .+)?$/i });
       if (trigger.getAttribute('aria-expanded') === 'false') {
         fireEvent.click(trigger);
       }
@@ -227,9 +227,13 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(within(dialog).getByRole('button', { name: /Deep researcher/i }));
     expect(dialog.textContent).toContain('name: Deep researcher');
     expect(
-      within(dialog).getByRole('button', { name: 'Starting point · Deep researcher' }).getAttribute('aria-expanded'),
+      within(dialog).getByRole('button', { name: 'Starting point: Deep researcher' }).getAttribute('aria-expanded'),
     ).toBe('false');
-    expect(within(dialog).getByText(/· Deep researcher/)).toBeTruthy();
+    expect(
+      within(within(dialog).getByRole('button', { name: 'Starting point: Deep researcher' })).getByText(
+        'Deep researcher',
+      ),
+    ).toBeTruthy();
     expect(within(dialog).queryByRole('button', { name: /Structured extractor/i })).toBeNull();
     expect(dialog.getAttribute('role')).not.toBe('dialog');
     expect(dialog.lastElementChild?.className).toContain('max-w-[824px]');
@@ -360,7 +364,7 @@ export function registerManagedAgentsAgentsTests() {
     });
     await waitFor(() => expect(dialog.textContent).toContain('PR digest'));
     expect(
-      within(dialog).getByRole('button', { name: 'Starting point · PR digest' }).getAttribute('aria-expanded'),
+      within(dialog).getByRole('button', { name: 'Starting point: PR digest' }).getAttribute('aria-expanded'),
     ).toBe('false');
     expect(dialog.textContent).toContain('PR digest');
 
@@ -658,7 +662,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(mcpOptions[0].textContent).toContain('Local accounting tools');
     expect(mcpOptions[1].textContent).toContain('GitHub');
     fireEvent.click(mcpOptions[0]);
-    expect(await within(dialog).findByText('Local accounting tools · main')).toBeTruthy();
+    expect(await within(dialog).findByText('Local accounting tools (main)')).toBeTruthy();
     expect((within(dialog).getByRole('combobox', { name: 'Channel' }) as HTMLInputElement).value).toBe('main');
     expect(within(dialog).getByText('MCP URL')).toBeTruthy();
     expect(dialog.textContent).toContain('https://oma.example.com/v1/mcp/tunnel_0123456789abcdef0123456789abcdef');
@@ -675,7 +679,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(probeRequests()[0]?.headers['x-csrf-token']).toBe('csrf_managed_agents_test');
 
     fireEvent.click(
-      within(dialog).getByRole('button', { name: 'Refresh MCP tools for Local accounting tools · main' }),
+      within(dialog).getByRole('button', { name: 'Refresh MCP tools for Local accounting tools (main)' }),
     );
     await waitFor(() => expect(probeRequests()).toHaveLength(2));
 
@@ -685,7 +689,7 @@ export function registerManagedAgentsAgentsTests() {
       'https://oma.example.com/v1/mcp/tunnel_0123456789abcdef0123456789abcdef/secondary',
     );
     fireEvent.click(within(dialog).getByRole('button', { name: 'Apply channel' }));
-    expect(await within(dialog).findByText('Local accounting tools · secondary')).toBeTruthy();
+    expect(await within(dialog).findByText('Local accounting tools (secondary)')).toBeTruthy();
     await waitFor(() => expect(probeRequests()).toHaveLength(3));
     expect(probeRequests()[2]?.body).toEqual({ channel: 'secondary' });
 
@@ -693,7 +697,7 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(screen.getByRole('tab', { name: 'Custom MCP' }));
     fireEvent.click(await screen.findByRole('option', { name: /internal-docs/ }));
     expect(within(dialog).getByText('https://docs.example.com/mcp')).toBeTruthy();
-    expect(within(dialog).getByText('Local accounting tools · secondary')).toBeTruthy();
+    expect(within(dialog).getByText('Local accounting tools (secondary)')).toBeTruthy();
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create agent' }));
     await waitFor(() =>
@@ -757,7 +761,7 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add MCP server' }));
     fireEvent.click(await screen.findByRole('option', { name: /Private reports/ }));
 
-    expect(await within(dialog).findByText('Private reports · reports')).toBeTruthy();
+    expect(await within(dialog).findByText('Private reports (reports)')).toBeTruthy();
     expect((within(dialog).getByRole('combobox', { name: 'Channel' }) as HTMLInputElement).value).toBe('reports');
     expect(dialog.textContent).toContain(`${tunnelURL}/reports`);
     await waitFor(() =>
@@ -830,7 +834,7 @@ export function registerManagedAgentsAgentsTests() {
     );
     fireEvent.change(channelInput, { target: { value: 'future' } });
     fireEvent.click(within(pendingCard).getByRole('button', { name: 'Add MCP server' }));
-    expect(await within(dialog).findByText('Offline private tools · future')).toBeTruthy();
+    expect(await within(dialog).findByText('Offline private tools (future)')).toBeTruthy();
     expect(dialog.textContent).toContain(`${tunnelURL}/future`);
   });
 
@@ -955,7 +959,7 @@ export function registerManagedAgentsAgentsTests() {
     ).toBeNull();
     expect(createDialog.textContent).toContain(`${tunnelURL}/secondary`);
     fireEvent.click(within(firstPendingCard!).getByRole('button', { name: 'Add MCP server' }));
-    expect(within(createDialog).getByText('Local accounting tools · secondary')).toBeTruthy();
+    expect(within(createDialog).getByText('Local accounting tools (secondary)')).toBeTruthy();
 
     fireEvent.click(within(createDialog).getByRole('combobox', { name: 'Add MCP server' }));
     fireEvent.click(await screen.findByRole('option', { name: /Local accounting tools/ }));
@@ -974,8 +978,8 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(await screen.findByRole('option', { name: 'main' }));
     await waitFor(() => expect(document.querySelector(`[id^="agent-tunnel-card-pending-"]`)).toBeNull());
 
-    expect(within(createDialog).getByText('Local accounting tools · secondary')).toBeTruthy();
-    expect(within(createDialog).getByText('Local accounting tools · main')).toBeTruthy();
+    expect(within(createDialog).getByText('Local accounting tools (secondary)')).toBeTruthy();
+    expect(within(createDialog).getByText('Local accounting tools (main)')).toBeTruthy();
     fireEvent.click(within(createDialog).getByRole('button', { name: 'Create agent' }));
     await waitFor(() =>
       expect(api.requests.some((request) => request.url === '/v1/agents?beta=true' && request.method === 'POST')).toBe(
@@ -1158,7 +1162,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(api.requests.some((request) => request.url === '/v1/skills/triage?beta=true')).toBe(true);
     expect(api.requests.some((request) => request.url === '/v1/skills/reporting?beta=true')).toBe(true);
     expect(screen.queryByText('No skills configured.')).toBeNull();
-    const permissionsButton = screen.getByRole('button', { name: /Tool permissions\s+23/ });
+    const permissionsButton = screen.getByRole('button', { name: /Tool permissions\s+9/ });
     expect(permissionsButton).toBeTruthy();
     expect(permissionsButton.querySelector('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
     fireEvent.click(permissionsButton);
@@ -1167,16 +1171,16 @@ export function registerManagedAgentsAgentsTests() {
     expect(screen.getByText('Fetch URL content')).toBeTruthy();
     expect(screen.getByText('web_search')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(false);
-    const versionButton = screen.getByRole('button', { name: 'Version: v2' });
+    const versionButton = screen.getByRole('combobox', { name: 'Version: v2' });
     expect(versionButton.className.includes('bg-secondary')).toBe(false);
 
     fireEvent.click(versionButton);
-    const versionMenu = screen
-      .getByRole('menuitemradio', { name: 'v1' })
-      .closest('[data-slot="dropdown-menu-content"]');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Search options...' }), { target: { value: 'v1' } });
+    expect(screen.queryByRole('option', { name: 'v2' })).toBeNull();
+    const versionMenu = screen.getByRole('option', { name: 'v1' }).closest('[data-slot="select-content"]');
     expect(versionMenu?.className).toContain('bg-popover');
     expect(versionMenu?.className.includes('bg-secondary')).toBe(false);
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'v1' }));
+    fireEvent.click(screen.getByRole('option', { name: 'v1' }));
 
     await waitFor(() => expect(screen.getByText('Old system prompt')).toBeTruthy());
     expect(screen.getByText('No skills configured.')).toBeTruthy();
@@ -1269,7 +1273,7 @@ export function registerManagedAgentsAgentsTests() {
 
     const builtInCard = cards[0];
     expect(within(builtInCard).getByText('Custom')).toBeTruthy();
-    fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+23/ }));
+    fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+9/ }));
     const bashRow = within(builtInCard).getByText('bash').parentElement!;
     expect(within(bashRow).getByText('Always deny')).toBeTruthy();
     expect(within(builtInCard).getAllByText('Always allow').length).toBeGreaterThan(0);
@@ -1665,10 +1669,10 @@ export function registerManagedAgentsAgentsTests() {
     expect(screen.getByRole('button', { name: 'Previous page' }).className.includes('bg-secondary')).toBe(false);
     expect(screen.getByRole('button', { name: 'Next page' }).className.includes('bg-secondary')).toBe(false);
 
-    const sessionVersionButton = screen.getByRole('button', { name: /Version\s+All/ });
+    const sessionVersionButton = screen.getByRole('combobox', { name: /Version\s+All/ });
     expect(sessionVersionButton.className.includes('bg-secondary')).toBe(false);
     fireEvent.click(sessionVersionButton);
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'v2' }));
+    fireEvent.click(screen.getByRole('option', { name: 'v2' }));
 
     await waitFor(() =>
       expect(
@@ -1681,10 +1685,10 @@ export function registerManagedAgentsAgentsTests() {
       ).toBe(true),
     );
 
-    const deploymentButton = screen.getByRole('button', { name: /deployment\s+All/i });
+    const deploymentButton = screen.getByRole('combobox', { name: /deployment\s+All/i });
     expect(deploymentButton.className.includes('bg-secondary')).toBe(false);
     fireEvent.click(deploymentButton);
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Nightly run' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Nightly run' }));
 
     await waitFor(() =>
       expect(
@@ -1697,10 +1701,10 @@ export function registerManagedAgentsAgentsTests() {
       ).toBe(true),
     );
 
-    const statusButton = screen.getByRole('button', { name: /Status\s+All/ });
+    const statusButton = screen.getByRole('combobox', { name: /Status\s+All/ });
     expect(statusButton.className.includes('bg-secondary')).toBe(false);
     fireEvent.click(statusButton);
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Running' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Running' }));
 
     await waitFor(() =>
       expect(
@@ -2007,8 +2011,8 @@ export function registerManagedAgentsAgentsTests() {
     render(<ManagedAgentsPage section="agents" />);
 
     expect(await screen.findByRole('heading', { name: 'Latest config' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Version: v3' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'v1' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Version: v3' }));
+    fireEvent.click(screen.getByRole('option', { name: 'v1' }));
     await waitFor(() => expect(screen.getByText('Historical system prompt')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
 
@@ -2545,8 +2549,8 @@ export function registerManagedAgentsAgentsTests() {
     render(<ManagedAgentsPage section="agents" />);
 
     expect(await screen.findByText('Ancient agent 1')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Created All time' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Last 7 days' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Created All time' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Last 7 days' }));
     expect(await screen.findByText('No matching agents')).toBeTruthy();
 
     fireEvent.change(screen.getByPlaceholderText('Search by name or exact ID'), { target: { value: 'ancient' } });
@@ -2634,26 +2638,22 @@ export function registerManagedAgentsAgentsTests() {
     expect(screen.getByText('Old active agent')).toBeTruthy();
     expect(screen.queryByText('Archived agent')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Status Active' }));
-    const statusMenu = screen
-      .getByRole('menuitemradio', { name: 'Active' })
-      .closest('[data-slot="dropdown-menu-content"]');
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status Active' }));
+    const statusMenu = screen.getByRole('option', { name: 'Active' }).closest('[data-slot="select-content"]');
     expect(statusMenu?.className).toContain('bg-popover');
     expect(statusMenu?.className.includes('bg-secondary')).toBe(false);
-    expect(screen.getByRole('menuitemradio', { name: 'Active' }).getAttribute('aria-checked')).toBe('true');
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'All' }));
+    expect(screen.getByRole('option', { name: 'Active' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(screen.getByRole('option', { name: 'All' }));
 
     expect(await screen.findByText('Archived agent')).toBeTruthy();
     expect(api.requests.some((request) => request.url.includes('include_archived=true'))).toBe(true);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Created All time' }));
-    const createdMenu = screen
-      .getByRole('menuitemradio', { name: 'All time' })
-      .closest('[data-slot="dropdown-menu-content"]');
+    fireEvent.click(screen.getByRole('combobox', { name: 'Created All time' }));
+    const createdMenu = screen.getByRole('option', { name: 'All time' }).closest('[data-slot="select-content"]');
     expect(createdMenu?.className).toContain('bg-popover');
     expect(createdMenu?.className.includes('bg-secondary')).toBe(false);
-    expect(screen.getByRole('menuitemradio', { name: 'All time' }).getAttribute('aria-checked')).toBe('true');
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Last 7 days' }));
+    expect(screen.getByRole('option', { name: 'All time' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(screen.getByRole('option', { name: 'Last 7 days' }));
 
     await waitFor(() => {
       expect(screen.queryByText('Old active agent')).toBeNull();

@@ -19,7 +19,7 @@ import {
   Plus,
   X,
 } from 'lucide-react';
-import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
@@ -97,7 +97,7 @@ import {
   managedEntityDetailHref,
   managedEntityListHref,
 } from '../utils';
-import { MemoryDialog } from './dialogs';
+import { ManagedEntityDialog, MemoryDialog } from './dialogs';
 import { VaultCredentialsPanel } from './vault-credentials-panel';
 import {
   buildMemoryTreeNodes,
@@ -140,6 +140,7 @@ export function ManagedEntityDetailPage({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const editTriggerRef = useRef<HTMLButtonElement>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [confirmAction, setConfirmAction] = useState<'archive' | 'delete' | null>(null);
@@ -228,9 +229,11 @@ export function ManagedEntityDetailPage({
     setMutationError(null);
     const updated = await updateManagedEntity(config.section, entity.id, values, activeWorkspaceId);
     setEntity(updated);
-    setEditing(false);
+    if (config.section !== 'deployments') {
+      setEditing(false);
+      setRefreshKey((value) => value + 1);
+    }
     toast.success(managedToastMessage(config.section, 'updated', msg));
-    setRefreshKey((value) => value + 1);
   };
 
   if (loading) {
@@ -325,11 +328,25 @@ export function ManagedEntityDetailPage({
         />
       ) : null}
 
+      {editing && config.section === 'deployments' ? (
+        <ManagedEntityDialog
+          section="deployments"
+          returnFocus={editTriggerRef}
+          title={entityActionLabel('edit', 'deployments', msg)}
+          entity={entity}
+          workspaceId={activeWorkspaceId}
+          onClose={() => {
+            setEditing(false);
+          }}
+          onSubmit={handleSave}
+        />
+      ) : null}
+
       <ManagedDetailBreadcrumb listHref={listHref} listLabel={listLabel} currentLabel={label} className="mb-5" />
 
       <header className="mb-7 flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="truncate text-[28px] font-semibold leading-tight text-foreground">{label}</h1>
+          <h1 className="truncate text-2xl font-semibold leading-tight text-foreground">{label}</h1>
           <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
             {config.section === 'environments' ? (
               <span className="text-foreground">{msg('managedAgents.environments.cloud', 'Cloud')}</span>
@@ -341,7 +358,7 @@ export function ManagedEntityDetailPage({
               type="button"
               variant="outline"
               size="xs"
-              className="max-w-[260px] font-mono text-[13px] text-foreground"
+              className="max-w-[260px] font-mono text-xs text-foreground"
               onClick={() => void copyText(entity.id)}
             >
               <Copy className="size-3.5" aria-hidden />
@@ -358,7 +375,7 @@ export function ManagedEntityDetailPage({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button type="button" size="lg" disabled={archived} onClick={() => setEditing(true)}>
+          <Button ref={editTriggerRef} type="button" size="lg" disabled={archived} onClick={() => setEditing(true)}>
             {msg('common.edit', 'Edit')}
           </Button>
           <DropdownMenu>
@@ -408,7 +425,7 @@ export function ManagedEntityDetailPage({
 
       {config.section === 'environments' && archived ? <EnvironmentArchivedNotice /> : null}
 
-      {editing ? (
+      {editing && config.section !== 'deployments' ? (
         <ManagedEntityInlineEditor
           section={config.section}
           entity={entity}
@@ -484,6 +501,7 @@ function VaultDetailPage({
     firstCredential?: boolean;
   } | null>(null);
 
+  const credentialTriggerRef = useRef<HTMLButtonElement>(null);
   const archived = Boolean(vault.archived_at);
   const label = entityDisplayName('credential-vaults', vault);
   const createdLabel = vaultDetailDateLabel(vault.created_at, formatters.date);
@@ -571,26 +589,30 @@ function VaultDetailPage({
       <ManagedDetailBreadcrumb listHref={listHref} listLabel={listLabel} currentLabel={label} className="mb-5" />
 
       <header className="mb-7 flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <h1 className="truncate text-[28px] font-semibold leading-tight text-foreground">{label}</h1>
+        <div className="min-w-0 flex-1 basis-64">
+          <div className="flex min-w-0 items-center gap-3">
+            <h1 className="truncate text-2xl font-medium leading-tight text-foreground" title={label}>
+              {label}
+            </h1>
             <StatusPill tone={statusPillTone('credential-vaults', vault)}>
               {archived ? msg('common.archived', 'Archived') : msg('common.active', 'Active')}
             </StatusPill>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-            <span className="rounded-md bg-secondary px-2 py-1 font-mono text-[13px] text-foreground">{vault.id}</span>
+            <span className="rounded-md bg-secondary px-2 py-1 font-mono text-xs text-foreground">{vault.id}</span>
             <span>
               {msg('common.created', 'Created')} {createdLabel}
-              <span className="mx-1.5 text-muted-foreground/70">·</span>
+            </span>
+            <span>
               {msg('managedAgents.common.updated', 'Updated')} {updatedLabel}
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Button
             type="button"
             size="lg"
+            ref={credentialTriggerRef}
             disabled={archived || editing}
             onClick={() => setCredentialDialog({ mode: 'create' })}
           >
@@ -665,6 +687,7 @@ function VaultDetailPage({
           refreshKey={refreshKey}
           onRefresh={onRefresh}
           dialog={credentialDialog}
+          returnFocus={credentialTriggerRef}
           onDialogChange={setCredentialDialog}
         />
       )}
@@ -709,10 +732,10 @@ export function ManagedEntityOverview({
     >
       <Card size="sm" className="gap-0 py-0">
         <CardContent className="px-0">
-          <dl className="grid gap-px bg-border md:grid-cols-2">
+          <dl className="grid gap-[0.5px] bg-border md:grid-cols-2">
             {rows.map((row) => (
               <div key={row.label} className="bg-card px-4 py-3">
-                <dt className="text-xs font-medium uppercase text-muted-foreground/70">{row.label}</dt>
+                <dt className="text-xs font-medium text-muted-foreground">{row.label}</dt>
                 <dd className="mt-1 min-h-5 truncate text-sm text-foreground">{row.value}</dd>
               </div>
             ))}
@@ -938,10 +961,6 @@ export function DeploymentRunsPanel({
   return (
     <DetailTableCard
       title={msg('managedAgents.deployments.runs.title', 'Deployment runs')}
-      description={msg(
-        'managedAgents.deployments.runs.description',
-        'Review manual and scheduled runs for this deployment.',
-      )}
       loading={state.loading}
       error={state.error}
       emptyTitle={msg('managedAgents.deployments.runs.empty', 'No deployment runs yet')}
@@ -952,7 +971,7 @@ export function DeploymentRunsPanel({
         localizedRunTrigger(run, msg),
         run.session_id ? (
           <a
-            className="font-sans text-[13px] text-foreground underline-offset-2 hover:underline"
+            className="font-sans text-sm text-foreground underline-offset-2 hover:underline"
             href={`${managedEntityDetailHref(workspaceId, 'sessions', run.session_id)}?from_deployment=${encodeURIComponent(deployment.id)}&from_run=${encodeURIComponent(run.id)}`}
             target="_blank"
             rel="noreferrer"
@@ -1098,6 +1117,7 @@ export function MemoryStorePanel({
   listHref?: string;
 }) {
   const { msg } = useI18n();
+  const storeLabel = store.name || store.id;
   const formatters = useFormatters();
   const [memories, setMemories] = useState<MemoryBranchState>({ loading: true, error: null, data: [], prefixes: [] });
   const [folderBranches, setFolderBranches] = useState<Record<string, MemoryBranchState>>({});
@@ -1106,6 +1126,7 @@ export function MemoryStorePanel({
   const [selectedMemoryId, setSelectedMemoryId] = useState(() => initialSelectedMemoryId());
   const [viewMode, setViewMode] = useState<MemoryViewMode>('preview');
   const [dialog, setDialog] = useState<{ mode: 'create' | 'edit'; memory?: MemoryApiResponse } | null>(null);
+  const addMemoryTriggerRef = useRef<HTMLButtonElement>(null);
   const [confirmAction, setConfirmAction] = useState<{ action: 'delete'; memory: MemoryApiResponse } | null>(null);
   const [fullMemory, setFullMemory] = useState<{
     loading: boolean;
@@ -1326,7 +1347,7 @@ export function MemoryStorePanel({
   };
 
   const addMemoryButton = (
-    <Button type="button" size="lg" onClick={() => setDialog({ mode: 'create' })}>
+    <Button ref={addMemoryTriggerRef} type="button" size="lg" onClick={() => setDialog({ mode: 'create' })}>
       <Plus className="size-4" aria-hidden />
       {msg('managedAgents.memoryStores.memoryDialog.add', 'Add memory')}
     </Button>
@@ -1337,7 +1358,7 @@ export function MemoryStorePanel({
       type="button"
       variant="outline"
       size="xs"
-      className="max-w-[260px] font-mono text-[13px] text-foreground"
+      className="max-w-[260px] font-mono text-xs text-foreground"
       aria-label={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: store.id })}
       onClick={() => void copyText(store.id)}
     >
@@ -1370,14 +1391,14 @@ export function MemoryStorePanel({
           <ManagedDetailBreadcrumb
             listHref={listHref ?? managedEntityListHref(workspaceId, 'memory-stores')}
             listLabel={msg('managedAgents.memoryStores.title', 'Memory stores')}
-            currentLabel={store.name || store.id}
+            currentLabel={storeLabel}
             className="mb-5"
           />
 
           <header className="mb-4 flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0">
-              <h1 className="truncate text-[28px] font-semibold leading-tight text-foreground">
-                {store.name || store.id}
+            <div className="min-w-0 flex-1 basis-64">
+              <h1 className="truncate text-2xl font-semibold leading-8 text-foreground" title={storeLabel}>
+                {storeLabel}
               </h1>
               <div className="mt-3">
                 <StatusPill tone={statusPillTone('memory-stores', store)}>
@@ -1389,7 +1410,9 @@ export function MemoryStorePanel({
           </header>
 
           {store.description ? (
-            <p className="mb-3 max-w-[760px] text-sm leading-5 text-muted-foreground">{store.description}</p>
+            <p className="mb-3 max-w-[760px] text-sm leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+              {store.description}
+            </p>
           ) : null}
           <div className="mb-6 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
             {storeCopyButton}
@@ -1403,9 +1426,11 @@ export function MemoryStorePanel({
       ) : (
         <section className="mb-7">
           <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1 basis-64">
               {store.description ? (
-                <p className="max-w-[760px] text-sm leading-5 text-muted-foreground">{store.description}</p>
+                <p className="max-w-[760px] text-sm leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+                  {store.description}
+                </p>
               ) : null}
               <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
                 {storeCopyButton}
@@ -1422,293 +1447,303 @@ export function MemoryStorePanel({
       )}
 
       {memories.error ? (
-        <Alert variant="destructive" className="mb-4 max-w-xl">
+        <Alert variant="destructive" className="mb-4 max-w-xl [overflow-wrap:anywhere]">
           <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <AlertDescription>{memories.error}</AlertDescription>
+          <AlertDescription>
+            <p>{memories.error}</p>
+            <Button type="button" variant="outline" size="sm" className="mt-2" onClick={onRefresh}>
+              {msg('common.retry', 'Retry')}
+            </Button>
+          </AlertDescription>
         </Alert>
       ) : null}
 
-      <Card className="overflow-hidden py-0">
-        <CardContent className="grid min-h-[520px] p-0 lg:grid-cols-[280px_minmax(0,1fr)]">
-          <aside className="border-b border-border bg-card-raised lg:border-b-0 lg:border-r">
-            <div className="flex h-12 items-center justify-between gap-3 border-b border-border px-4 text-sm font-semibold text-foreground">
-              <span>{msg('managedAgents.memoryStores.memories', 'Memories')}</span>
-              {folderPaths.length ? (
-                <Button
-                  type="button"
-                  aria-label={
-                    allFoldersExpanded
-                      ? msg('managedAgents.memoryStores.collapseAll', 'Collapse all')
-                      : msg('managedAgents.memoryStores.expandAll', 'Expand all')
-                  }
-                  disabled={treeBusy}
-                  variant="ghost"
-                  size="icon-sm"
-                  className="text-muted-foreground hover:bg-secondary hover:text-foreground disabled:cursor-wait disabled:text-muted-foreground/70"
-                  onClick={() => void toggleAllFolders()}
-                >
-                  {allFoldersExpanded ? (
-                    <ChevronDown className="size-4" aria-hidden />
-                  ) : (
-                    <ChevronRight className="size-4" aria-hidden />
+      {!memories.error ? (
+        <Card className="overflow-hidden py-0">
+          <CardContent className="grid min-h-[520px] grid-cols-[minmax(0,1fr)] p-0 lg:grid-cols-[280px_minmax(0,1fr)]">
+            <aside className="min-w-0 border-b-[0.5px] border-border bg-card-raised lg:border-b-0 lg:border-r-[0.5px]">
+              <div className="flex h-12 items-center justify-between gap-3 border-b-[0.5px] border-border px-4 text-sm font-semibold text-foreground">
+                <span>{msg('managedAgents.memoryStores.memories', 'Memories')}</span>
+                {folderPaths.length ? (
+                  <Button
+                    type="button"
+                    aria-label={
+                      allFoldersExpanded
+                        ? msg('managedAgents.memoryStores.collapseAll', 'Collapse all')
+                        : msg('managedAgents.memoryStores.expandAll', 'Expand all')
+                    }
+                    disabled={treeBusy}
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-muted-foreground hover:bg-secondary hover:text-foreground disabled:cursor-wait disabled:text-muted-foreground/70"
+                    onClick={() => void toggleAllFolders()}
+                  >
+                    {allFoldersExpanded ? (
+                      <ChevronDown className="size-4" aria-hidden />
+                    ) : (
+                      <ChevronRight className="size-4" aria-hidden />
+                    )}
+                  </Button>
+                ) : null}
+              </div>
+              {memories.loading ? (
+                <div className="px-4 py-8 text-sm text-muted-foreground">
+                  {msg('managedAgents.memoryStores.loadingMemories', 'Loading memories...')}
+                </div>
+              ) : treeNodes.length ? (
+                <div className="subtle-scrollbar max-h-[560px] overflow-auto p-2">
+                  {treeNodes.map((node) =>
+                    node.type === 'folder' ? (
+                      <MemoryTreeFolderButton
+                        key={`folder:${node.path}`}
+                        node={node}
+                        onToggle={() => toggleFolder(node.path)}
+                      />
+                    ) : (
+                      <MemoryTreeMemoryButton
+                        key={`memory:${node.memory.id}`}
+                        node={node}
+                        selected={selectedMemory?.id === node.memory.id}
+                        onSelect={() => {
+                          setSelectedMemoryId(node.memory.id);
+                          updateMemoryQueryParam(node.memory.id);
+                        }}
+                      />
+                    ),
                   )}
-                </Button>
-              ) : null}
-            </div>
-            {memories.loading ? (
-              <div className="px-4 py-8 text-sm text-muted-foreground">
-                {msg('managedAgents.memoryStores.loadingMemories', 'Loading memories...')}
-              </div>
-            ) : treeNodes.length ? (
-              <div className="max-h-[560px] overflow-auto p-2">
-                {treeNodes.map((node) =>
-                  node.type === 'folder' ? (
-                    <MemoryTreeFolderButton
-                      key={`folder:${node.path}`}
-                      node={node}
-                      onToggle={() => toggleFolder(node.path)}
-                    />
-                  ) : (
-                    <MemoryTreeMemoryButton
-                      key={`memory:${node.memory.id}`}
-                      node={node}
-                      selected={selectedMemory?.id === node.memory.id}
-                      onSelect={() => {
-                        setSelectedMemoryId(node.memory.id);
-                        updateMemoryQueryParam(node.memory.id);
-                      }}
-                    />
-                  ),
-                )}
-              </div>
-            ) : (
-              <div className="px-4 py-10 text-center text-sm text-muted-foreground">
-                {msg('managedAgents.memoryStores.noMemories', 'No memories yet')}
-              </div>
-            )}
-          </aside>
+                </div>
+              ) : (
+                <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  {msg('managedAgents.memoryStores.noMemories', 'No memories yet')}
+                </div>
+              )}
+            </aside>
 
-          <div className="min-w-0 bg-card">
-            {selectedMemory ? (
-              editingContent !== null ? (
-                <>
-                  <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border px-5 py-4">
-                    <div className="min-w-0">
-                      <h2 className="truncate text-[22px] font-semibold leading-7 text-foreground">
-                        {selectedMemory.path}
-                      </h2>
-                      <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+            <div className="min-w-0 bg-card">
+              {selectedMemory ? (
+                editingContent !== null ? (
+                  <>
+                    <div className="flex flex-wrap items-start justify-between gap-4 border-b-[0.5px] border-border px-5 py-4">
+                      <div className="min-w-0 flex-1 basis-64">
+                        <h2
+                          className="truncate text-lg font-semibold leading-6 text-foreground"
+                          title={selectedMemory.path}
+                        >
+                          {selectedMemory.path}
+                        </h2>
+                        <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="xs"
+                            className="max-w-[240px] font-mono text-xs text-foreground"
+                            aria-label={msg('managedAgents.common.copyIdValue', 'Copy {id}', {
+                              id: selectedMemory.id,
+                            })}
+                            onClick={() => void copyText(selectedMemory.id)}
+                          >
+                            <Copy className="size-3.5" aria-hidden />
+                            <span className="truncate">{compactEntityId(selectedMemory.id)}</span>
+                          </Button>
+                          <span>
+                            {msg('managedAgents.common.updatedAtDate', 'Updated {date}', {
+                              date: relativeTime(
+                                selectedMemory.updated_at || selectedMemory.created_at,
+                                formatters.relativeTime,
+                              ),
+                            })}
+                          </span>
+                          <span>
+                            {formatBytes(selectedMemory.content_size_bytes ?? selectedMemory.content?.length ?? 0)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button type="button" variant="secondary" size="lg" onClick={() => setEditingContent(null)}>
+                          <X className="size-4" aria-hidden />
+                          {msg('common.cancel', 'Cancel')}
+                        </Button>
                         <Button
                           type="button"
-                          variant="outline"
-                          size="xs"
-                          className="max-w-[240px] font-mono text-[13px] text-foreground"
-                          aria-label={msg('managedAgents.common.copyIdValue', 'Copy {id}', {
-                            id: selectedMemory.id,
-                          })}
-                          onClick={() => void copyText(selectedMemory.id)}
+                          disabled={busyId === selectedMemory.id}
+                          size="lg"
+                          onClick={() => void saveInlineEdit()}
                         >
-                          <Copy className="size-3.5" aria-hidden />
-                          <span className="truncate">{compactEntityId(selectedMemory.id)}</span>
+                          {busyId === selectedMemory.id
+                            ? msg('common.saving', 'Saving...')
+                            : msg('common.save', 'Save')}
                         </Button>
-                        <span>
-                          {msg('managedAgents.common.updatedAtDate', 'Updated {date}', {
-                            date: relativeTime(
-                              selectedMemory.updated_at || selectedMemory.created_at,
-                              formatters.relativeTime,
-                            ),
-                          })}
-                        </span>
-                        <span>
-                          {formatBytes(selectedMemory.content_size_bytes ?? selectedMemory.content?.length ?? 0)}
-                        </span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Button type="button" variant="secondary" size="lg" onClick={() => setEditingContent(null)}>
-                        <X className="size-4" aria-hidden />
-                        {msg('common.cancel', 'Cancel')}
-                      </Button>
-                      <Button
-                        type="button"
-                        disabled={busyId === selectedMemory.id}
-                        size="lg"
-                        onClick={() => void saveInlineEdit()}
-                      >
-                        {busyId === selectedMemory.id ? msg('common.saving', 'Saving...') : msg('common.save', 'Save')}
-                      </Button>
-                    </div>
-                  </div>
 
-                  <div className="px-5 py-5">
-                    {fullMemory.error ? (
-                      <Alert variant="destructive" className="mb-4 max-w-xl">
-                        <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                        <AlertDescription>{fullMemory.error}</AlertDescription>
-                      </Alert>
-                    ) : null}
-                    <p className="mb-2 text-xs text-muted-foreground">
+                    <div className="px-5 py-5">
+                      {fullMemory.error ? (
+                        <Alert variant="destructive" className="mb-4 max-w-xl [overflow-wrap:anywhere]">
+                          <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                          <AlertDescription>{fullMemory.error}</AlertDescription>
+                        </Alert>
+                      ) : null}
+                      <Textarea
+                        aria-label={msg('managedAgents.memoryStores.memoryDialog.placeholder', 'Memory content')}
+                        className="min-h-[320px] resize-y px-4 py-3 font-mono text-sm leading-6"
+                        value={editingContent}
+                        onChange={(event) => setEditingContent(event.target.value)}
+                      />
+                      <p className="mt-2 text-right text-xs text-muted-foreground">
+                        {formatKilobytes(editingContent.length)} / 100kB
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <Tabs
+                    value={viewMode}
+                    onValueChange={(nextValue) => setViewMode(nextValue as MemoryViewMode)}
+                    className="gap-0"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-4 border-b-[0.5px] border-border px-5 py-4">
+                      <div className="min-w-0 flex-1 basis-64">
+                        <h2
+                          className="truncate text-lg font-semibold leading-6 text-foreground"
+                          title={selectedMemory.path}
+                        >
+                          {selectedMemory.path}
+                        </h2>
+                        <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="xs"
+                            className="max-w-[240px] font-mono text-xs text-foreground"
+                            aria-label={msg('managedAgents.common.copyIdValue', 'Copy {id}', {
+                              id: selectedMemory.id,
+                            })}
+                            onClick={() => void copyText(selectedMemory.id)}
+                          >
+                            <Copy className="size-3.5" aria-hidden />
+                            <span className="truncate">{compactEntityId(selectedMemory.id)}</span>
+                          </Button>
+                          <span>
+                            {msg('managedAgents.common.updatedAtDate', 'Updated {date}', {
+                              date: relativeTime(
+                                selectedMemory.updated_at || selectedMemory.created_at,
+                                formatters.relativeTime,
+                              ),
+                            })}
+                          </span>
+                          <span>
+                            {formatBytes(selectedMemory.content_size_bytes ?? selectedMemory.content?.length ?? 0)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <TabsList aria-label={msg('managedAgents.memoryStores.viewMode', 'View mode')} className="h-9">
+                          <TabsTrigger value="preview" className="gap-1.5 px-3">
+                            <Eye className="size-4" aria-hidden />
+                            {msg('managedAgents.memoryStores.preview', 'Preview')}
+                          </TabsTrigger>
+                          <TabsTrigger value="source" className="gap-1.5 px-3">
+                            <Code2 className="size-4" aria-hidden />
+                            {msg('managedAgents.memoryStores.source', 'Source')}
+                          </TabsTrigger>
+                        </TabsList>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon-lg"
+                                aria-label={msg('managedAgents.common.moreActions', 'More actions')}
+                                className="text-foreground"
+                              />
+                            }
+                          >
+                            <MoreVertical className="size-4" aria-hidden />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-[164px]">
+                            <DropdownMenuItem
+                              disabled={busyId === selectedMemory.id}
+                              onClick={() => void downloadSelectedMemory()}
+                            >
+                              <Download className="size-4" aria-hidden />
+                              {msg('managedAgents.memoryStores.download', 'Download')}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              variant="destructive"
+                              disabled={busyId === selectedMemory.id}
+                              onClick={() => setConfirmAction({ action: 'delete', memory: selectedMemory })}
+                            >
+                              <X className="size-4" aria-hidden />
+                              {msg('common.delete', 'Delete')}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="lg"
+                          onClick={() => setEditingContent(selectedMemory.content ?? '')}
+                        >
+                          <Pencil className="size-4" aria-hidden />
+                          {msg('common.edit', 'Edit')}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="px-5 py-5">
+                      {fullMemory.error ? (
+                        <Alert variant="destructive" className="mb-4 max-w-xl [overflow-wrap:anywhere]">
+                          <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                          <AlertDescription>{fullMemory.error}</AlertDescription>
+                        </Alert>
+                      ) : null}
+                      {fullMemory.loading ? (
+                        <Card size="sm">
+                          <CardContent className="px-4 py-12 text-center text-sm text-muted-foreground">
+                            {msg('managedAgents.memoryStores.loadingMemory', 'Loading memory...')}
+                          </CardContent>
+                        </Card>
+                      ) : viewMode === 'preview' ? (
+                        <TabsContent value="preview" className="mt-0">
+                          <div className="max-h-[460px] overflow-auto whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
+                            {memoryPreviewContent(selectedMemory, msg)}
+                          </div>
+                        </TabsContent>
+                      ) : (
+                        <TabsContent value="source" className="mt-0">
+                          <pre className="max-h-[460px] overflow-auto whitespace-pre-wrap break-words font-mono text-sm leading-6 text-foreground">
+                            {selectedMemory.content || ''}
+                          </pre>
+                        </TabsContent>
+                      )}
+                    </div>
+                  </Tabs>
+                )
+              ) : (
+                <div className="grid min-h-[520px] place-items-center px-6 text-center text-sm text-muted-foreground">
+                  <div>
+                    <Database className="mx-auto mb-3 size-8 text-muted-foreground/70" aria-hidden />
+                    <div className="font-semibold text-foreground">
+                      {msg('managedAgents.memoryStores.selectMemory', 'Select a memory')}
+                    </div>
+                    <p className="mt-1 max-w-[300px]">
                       {msg(
-                        'managedAgents.memoryStores.editorKeyboardHint',
-                        'Tab inserts indentation. Press Escape then Tab to move focus out of the editor.',
+                        'managedAgents.memoryStores.selectMemoryBody',
+                        'Choose a file from the tree to view its contents.',
                       )}
                     </p>
-                    <Textarea
-                      aria-label={msg('managedAgents.memoryStores.memoryDialog.placeholder', 'Memory content')}
-                      className="min-h-[320px] resize-y px-4 py-3 font-mono leading-6"
-                      value={editingContent}
-                      onChange={(event) => setEditingContent(event.target.value)}
-                    />
-                    <p className="mt-2 text-right text-xs text-muted-foreground">
-                      {formatKilobytes(editingContent.length)} / 100kB
-                    </p>
                   </div>
-                </>
-              ) : (
-                <Tabs
-                  value={viewMode}
-                  onValueChange={(nextValue) => setViewMode(nextValue as MemoryViewMode)}
-                  className="gap-0"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border px-5 py-4">
-                    <div className="min-w-0">
-                      <h2 className="truncate text-[22px] font-semibold leading-7 text-foreground">
-                        {selectedMemory.path}
-                      </h2>
-                      <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="xs"
-                          className="max-w-[240px] font-mono text-[13px] text-foreground"
-                          aria-label={msg('managedAgents.common.copyIdValue', 'Copy {id}', {
-                            id: selectedMemory.id,
-                          })}
-                          onClick={() => void copyText(selectedMemory.id)}
-                        >
-                          <Copy className="size-3.5" aria-hidden />
-                          <span className="truncate">{compactEntityId(selectedMemory.id)}</span>
-                        </Button>
-                        <span>
-                          {msg('managedAgents.common.updatedAtDate', 'Updated {date}', {
-                            date: relativeTime(
-                              selectedMemory.updated_at || selectedMemory.created_at,
-                              formatters.relativeTime,
-                            ),
-                          })}
-                        </span>
-                        <span>
-                          {formatBytes(selectedMemory.content_size_bytes ?? selectedMemory.content?.length ?? 0)}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <TabsList aria-label={msg('managedAgents.memoryStores.viewMode', 'View mode')} className="h-9">
-                        <TabsTrigger value="preview" className="gap-1.5 px-3">
-                          <Eye className="size-4" aria-hidden />
-                          {msg('managedAgents.memoryStores.preview', 'Preview')}
-                        </TabsTrigger>
-                        <TabsTrigger value="source" className="gap-1.5 px-3">
-                          <Code2 className="size-4" aria-hidden />
-                          {msg('managedAgents.memoryStores.source', 'Source')}
-                        </TabsTrigger>
-                      </TabsList>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="icon-lg"
-                              aria-label={msg('managedAgents.common.moreActions', 'More actions')}
-                              className="text-foreground"
-                            />
-                          }
-                        >
-                          <MoreVertical className="size-4" aria-hidden />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-[164px]">
-                          <DropdownMenuItem
-                            disabled={busyId === selectedMemory.id}
-                            onClick={() => void downloadSelectedMemory()}
-                          >
-                            <Download className="size-4" aria-hidden />
-                            {msg('managedAgents.memoryStores.download', 'Download')}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            variant="destructive"
-                            disabled={busyId === selectedMemory.id}
-                            onClick={() => setConfirmAction({ action: 'delete', memory: selectedMemory })}
-                          >
-                            <X className="size-4" aria-hidden />
-                            {msg('common.delete', 'Delete')}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="lg"
-                        onClick={() => setEditingContent(selectedMemory.content ?? '')}
-                      >
-                        <Pencil className="size-4" aria-hidden />
-                        {msg('common.edit', 'Edit')}
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="px-5 py-5">
-                    {fullMemory.error ? (
-                      <Alert variant="destructive" className="mb-4 max-w-xl">
-                        <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                        <AlertDescription>{fullMemory.error}</AlertDescription>
-                      </Alert>
-                    ) : null}
-                    {fullMemory.loading ? (
-                      <Card size="sm">
-                        <CardContent className="px-4 py-12 text-center text-sm text-muted-foreground">
-                          {msg('managedAgents.memoryStores.loadingMemory', 'Loading memory...')}
-                        </CardContent>
-                      </Card>
-                    ) : viewMode === 'preview' ? (
-                      <TabsContent value="preview" className="mt-0">
-                        <div className="max-h-[460px] overflow-auto whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
-                          {memoryPreviewContent(selectedMemory, msg)}
-                        </div>
-                      </TabsContent>
-                    ) : (
-                      <TabsContent value="source" className="mt-0">
-                        <pre className="max-h-[460px] overflow-auto whitespace-pre-wrap break-words font-mono text-sm leading-6 text-foreground">
-                          {selectedMemory.content || ''}
-                        </pre>
-                      </TabsContent>
-                    )}
-                  </div>
-                </Tabs>
-              )
-            ) : (
-              <div className="grid min-h-[520px] place-items-center px-6 text-center text-sm text-muted-foreground">
-                <div>
-                  <Database className="mx-auto mb-3 size-8 text-muted-foreground/70" aria-hidden />
-                  <div className="font-semibold text-foreground">
-                    {msg('managedAgents.memoryStores.selectMemory', 'Select a memory')}
-                  </div>
-                  <p className="mt-1 max-w-[300px]">
-                    {msg(
-                      'managedAgents.memoryStores.selectMemoryBody',
-                      'Choose a file from the tree to view its contents.',
-                    )}
-                  </p>
                 </div>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {dialog ? (
         <MemoryDialog
           memory={dialog.memory}
+          returnFocus={addMemoryTriggerRef}
           onClose={() => setDialog(null)}
           onSubmit={(values) => submit(values, dialog.memory)}
         />
@@ -1729,6 +1764,7 @@ export function MemoryTreeFolderButton({
     <Button
       type="button"
       variant="ghost"
+      title={node.path}
       aria-expanded={node.expanded}
       aria-label={
         node.expanded
@@ -1774,6 +1810,7 @@ export function MemoryTreeMemoryButton({
     <Button
       type="button"
       variant="ghost"
+      title={node.memory.path}
       className={clsx(
         'mb-1 h-auto w-full min-w-0 justify-between gap-3 rounded-md py-2 pr-2 text-left text-sm',
         selected ? 'bg-accent text-foreground hover:bg-accent' : 'text-foreground hover:bg-accent',
@@ -1785,7 +1822,7 @@ export function MemoryTreeMemoryButton({
         <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         <span className="truncate">{node.label}</span>
       </span>
-      <span className="shrink-0 text-xs text-muted-foreground/70">{size}</span>
+      <span className="shrink-0 text-xs text-muted-foreground">{size}</span>
     </Button>
   );
 }

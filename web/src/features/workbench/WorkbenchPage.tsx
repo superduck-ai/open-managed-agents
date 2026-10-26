@@ -1,3 +1,4 @@
+import { DialogClose } from '@/shared/ui/dialog';
 import { useScopeUnsavedChanges } from '../../shared/organizations/unsaved';
 import {
   AlertCircle,
@@ -172,6 +173,7 @@ import {
 } from './dialogs';
 
 export function WorkbenchPage() {
+  const { locale, msg } = useI18n();
   const { account } = useAuth();
   const { orgUuid, activeWorkspaceId } = useWorkspace();
   const workbenchAccess = useMemo(() => workbenchAccessState(account, orgUuid), [account, orgUuid]);
@@ -193,6 +195,14 @@ export function WorkbenchPage() {
   const [promptSearch, setPromptSearch] = useState('');
   const [promptOnlyMine, setPromptOnlyMine] = useState(false);
   const [activeDrawer, setActiveDrawer] = useState<DrawerName | null>(null);
+  const [renderedDrawer, setRenderedDrawer] = useState<DrawerName | null>(null);
+  const resetDrawerFormsOnClose = useRef(false);
+  useEffect(() => {
+    if (activeDrawer) {
+      resetDrawerFormsOnClose.current = false;
+      setRenderedDrawer(activeDrawer);
+    }
+  }, [activeDrawer]);
   const [toolForm, setToolForm] = useState<ToolForm>(null);
   const [responseTab, setResponseTab] = useState<ResponseTab>('preview');
   const [responseText, setResponseText] = useState('');
@@ -208,6 +218,7 @@ export function WorkbenchPage() {
   const [codeLanguage, setCodeLanguage] = useState<CodeLanguage>('python');
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deletePromptTarget, setDeletePromptTarget] = useState<WorkbenchPromptSummary | null>(null);
   const [isDeletingPrompt, setIsDeletingPrompt] = useState(false);
@@ -263,7 +274,10 @@ export function WorkbenchPage() {
   const hasPromptText = hasRunnableMessage(draft);
   const hasVariables = variables.length > 0;
   const canEvaluate = hasVariables && draft.tools.length === 0;
-  const evaluateUnavailableReason = 'Run a prompt with at least one variable and no tools to use ‘Evaluate’.';
+  const evaluateUnavailableReason = msg(
+    'workbench.evaluateUnavailable',
+    'Run a prompt with at least one variable and no tools to use ‘Evaluate’.',
+  );
   const canRun = Boolean(orgUuid && draft.model_name) && hasPromptText && !isLoading;
   const hasMissingVariableValues = variables.some((name) => !variableValues[name]?.trim());
   const canRunWithVariables = canRun && !hasMissingVariableValues;
@@ -306,8 +320,20 @@ export function WorkbenchPage() {
   const saveMeta = saveStatus.startsWith('Saved ')
     ? `Last saved ${saveStatus.slice('Saved '.length)}`
     : saveStatus === 'Saved'
-      ? savedPromptMeta(prompt, draft)
+      ? savedPromptMeta(prompt, draft, locale)
       : saveStatus;
+  const saveMetaLabel =
+    (
+      {
+        'Last saved': msg('workbench.lastSaved', 'Last saved'),
+        Loading: msg('workbench.loading', 'Loading'),
+        Creating: msg('workbench.creating', 'Creating'),
+        Unsaved: msg('workbench.unsaved', 'Unsaved'),
+        Saving: msg('workbench.saving', 'Saving'),
+        'Save failed': msg('workbench.saveFailed', 'Save failed'),
+        'Loading version': msg('workbench.loadingVersion', 'Loading version'),
+      } as Record<string, string>
+    )[saveMeta] ?? saveMeta;
   const showResponseCreatePrompt = useMemo(() => isBlankWorkbenchDraft(draft), [draft]);
 
   const applyPromptState = useCallback(
@@ -338,6 +364,7 @@ export function WorkbenchPage() {
       }
       setSystemOpen(Boolean(nextDraft.system_prompt?.trim()));
       setActiveDrawer(null);
+      setRenderedDrawer(null);
       setToolForm(null);
       setExampleFormOpen(false);
       setExamples(workbenchExamplesFromPromptDetail(detail, nextVariables));
@@ -389,6 +416,7 @@ export function WorkbenchPage() {
   const handlePromptPickerOpenChange = useCallback((open: boolean) => {
     setPromptPickerOpen(open);
     if (open) {
+      setPromptSearch('');
       setPromptMenuOpen(false);
       setActiveDrawer(null);
     }
@@ -407,6 +435,7 @@ export function WorkbenchPage() {
     setActiveMode('prompt');
     setSystemOpen(false);
     setActiveDrawer(null);
+    setRenderedDrawer(null);
     setToolForm(null);
     setExampleFormOpen(false);
     setExamples([]);
@@ -1251,14 +1280,12 @@ export function WorkbenchPage() {
 
   useEffect(() => {
     const handleWorkbenchShortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (event.key === 'Escape') {
-        if (promptMenuOpen || promptPickerOpen || activeDrawer) {
+        if (promptMenuOpen || promptPickerOpen) {
           event.preventDefault();
           setPromptMenuOpen(false);
           setPromptPickerOpen(false);
-          setActiveDrawer(null);
-          setToolForm(null);
-          setExampleFormOpen(false);
         }
         return;
       }
@@ -1959,7 +1986,11 @@ export function WorkbenchPage() {
         if (!generatedInstructions.trim() && !rawOutput.trim()) {
           setPromptGeneratorStep('generate');
         }
-      } else if (!generatedInstructions.trim() && !rawOutput.trim()) {
+      } else if (
+        promptGeneratorControllerRef.current === controller &&
+        !generatedInstructions.trim() &&
+        !rawOutput.trim()
+      ) {
         setPromptGeneratorStep('generate');
       }
     } finally {
@@ -1980,6 +2011,15 @@ export function WorkbenchPage() {
     promptGeneratorWarning,
   ]);
 
+  const clearPromptGeneratorDraft = useCallback(() => {
+    setPromptGeneratorStep('generate');
+    setPromptGeneratorTask('');
+    setPromptGeneratorOutput('');
+    setPromptGeneratorExamplesExpanded(false);
+    setPromptGeneratorError(null);
+    setPromptGeneratorThinkingEnabled(false);
+  }, []);
+
   const resetPromptGenerator = useCallback(() => {
     promptGeneratorControllerRef.current?.abort();
     promptGeneratorControllerRef.current = null;
@@ -1987,12 +2027,6 @@ export function WorkbenchPage() {
     setIsGeneratingPrompt(false);
     setPromptGeneratorConfirmAction(null);
     setPromptGeneratorOpen(false);
-    setPromptGeneratorStep('generate');
-    setPromptGeneratorTask('');
-    setPromptGeneratorOutput('');
-    setPromptGeneratorExamplesExpanded(false);
-    setPromptGeneratorError(null);
-    setPromptGeneratorThinkingEnabled(false);
   }, [clearPromptGeneratorOutputFallback]);
 
   const resetPromptGeneratorOutput = useCallback(() => {
@@ -2120,7 +2154,7 @@ export function WorkbenchPage() {
 
   return (
     <WorkbenchShell>
-      <div className="relative h-full min-h-0 overflow-hidden">
+      <div className="relative h-full min-h-0 overflow-clip">
         <header className="workbench-topbar">
           <div className="workbench-title-stack">
             <div className="workbench-top-actions">
@@ -2131,8 +2165,8 @@ export function WorkbenchPage() {
                       type="button"
                       variant="ghost"
                       data-testid="prompts-list-button"
-                      aria-label="Open prompt list"
-                      title="Open prompt list"
+                      aria-label={msg('workbench.openPromptList', 'Open prompt list')}
+                      title={msg('workbench.openPromptList', 'Open prompt list')}
                       aria-expanded={promptPickerOpen}
                       className={clsx('workbench-mini-button', promptPickerOpen && 'bg-accent')}
                     />
@@ -2162,8 +2196,8 @@ export function WorkbenchPage() {
                 type="button"
                 variant="ghost"
                 data-testid="new-prompt-button"
-                aria-label="New prompt"
-                title="New prompt"
+                aria-label={msg('workbench.newPrompt', 'New prompt')}
+                title={msg('workbench.newPrompt', 'New prompt')}
                 className="workbench-mini-button workbench-new-prompt-button"
                 disabled={isCreatingPrompt}
                 onClick={createNewPrompt}
@@ -2193,7 +2227,7 @@ export function WorkbenchPage() {
                       type="button"
                       variant="ghost"
                       data-testid="prompt-settings-dropdown"
-                      aria-label="Prompt settings"
+                      aria-label={msg('workbench.promptSettings', 'Prompt settings')}
                       aria-expanded={promptMenuOpen}
                       className="workbench-title-button"
                     />
@@ -2209,45 +2243,46 @@ export function WorkbenchPage() {
                       setRenameOpen(true);
                     }}
                   >
-                    Rename prompt
+                    {msg('workbench.renamePrompt', 'Rename prompt')}
                   </DropdownMenuItem>
                   <DropdownMenuItem disabled={!canSaveCurrentRevision} onClick={saveCurrentRevision}>
-                    Save
+                    {msg('workbench.save', 'Save')}
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setActiveDrawer('history')}>Version history</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setActiveDrawer('history')}>
+                    {msg('workbench.versionHistory', 'Version history')}
+                  </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={copyPrompt}>Make a copy</DropdownMenuItem>
+                  <DropdownMenuItem onClick={copyPrompt}>{msg('workbench.makeCopy', 'Make a copy')}</DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => {
                       setShareError(null);
                       setShareOpen(true);
                     }}
                   >
-                    Share
+                    {msg('workbench.share', 'Share')}
                   </DropdownMenuItem>
                   <DropdownMenuItem variant="destructive" onClick={() => requestPromptDelete(null)}>
-                    Delete
+                    {msg('workbench.delete', 'Delete')}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
               <div className="workbench-save-meta">
                 <Lock className="size-3.5" aria-hidden />
-                <span>{saveMeta}</span>
+                <span>
+                  {saveMeta.startsWith('Last saved ')
+                    ? msg('workbench.lastSavedAt', 'Last saved {time}', { time: saveMeta.slice('Last saved '.length) })
+                    : saveMetaLabel}
+                </span>
                 {hasUnsavedChanges || saveStatus === 'Saving' ? (
-                  <>
-                    <span className="workbench-save-separator" aria-hidden>
-                      &middot;
-                    </span>
-                    <Button
-                      type="button"
-                      variant="link"
-                      className="workbench-save-link"
-                      disabled={!canSaveCurrentRevision}
-                      onClick={saveCurrentRevision}
-                    >
-                      Save changes
-                    </Button>
-                  </>
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="workbench-save-link"
+                    disabled={!canSaveCurrentRevision}
+                    onClick={saveCurrentRevision}
+                  >
+                    {msg('workbench.saveChanges', 'Save changes')}
+                  </Button>
                 ) : null}
               </div>
             </div>
@@ -2256,9 +2291,9 @@ export function WorkbenchPage() {
 
         <Tabs value={activeMode} onValueChange={changeMode} className="h-full min-h-0 gap-0">
           <div className="workbench-view-switcher">
-            <TabsList aria-label="Workbench mode" className="rounded-full p-1 shadow-sm">
+            <TabsList aria-label={msg('workbench.mode', 'Workbench mode')} className="rounded-full p-1 shadow-sm">
               <TabsTrigger value="prompt" className="min-w-24 rounded-full px-4 text-sm">
-                Prompt
+                {msg('workbench.prompt', 'Prompt')}
               </TabsTrigger>
               <TabsTrigger
                 value="evaluate"
@@ -2266,7 +2301,7 @@ export function WorkbenchPage() {
                 title={!canEvaluate ? evaluateUnavailableReason : undefined}
                 className="min-w-24 rounded-full px-4 text-sm"
               >
-                Evaluate
+                {msg('workbench.evaluate', 'Evaluate')}
               </TabsTrigger>
             </TabsList>
           </div>
@@ -2274,11 +2309,11 @@ export function WorkbenchPage() {
           <TabsContent value="prompt" className="mt-0 min-h-0">
             <div className="workbench-header-actions workbench-header-actions-prompt">
               <Button type="button" variant="outline" size="lg" className="bg-transparent px-4" onClick={openCodeModal}>
-                Get Code
+                {msg('workbench.getCode', 'Get Code')}
               </Button>
               <Button
                 type="button"
-                aria-label={isRunning ? 'Stop' : 'Run ⌘ + ⏎'}
+                aria-label={isRunning ? msg('workbench.stop', 'Stop') : msg('workbench.runShortcut', 'Run ⌘ + ⏎')}
                 size="lg"
                 className="px-4"
                 disabled={!canRun}
@@ -2289,7 +2324,7 @@ export function WorkbenchPage() {
                 ) : (
                   <Play className="size-4" fill="currentColor" strokeWidth={0} aria-hidden />
                 )}
-                <span>{isRunning ? 'Stop' : 'Run'}</span>
+                <span>{isRunning ? msg('workbench.stop', 'Stop') : msg('workbench.run', 'Run')}</span>
                 {isRunning ? null : <span className="text-xs font-medium text-primary-foreground/70">⌘ + ⏎</span>}
               </Button>
             </div>
@@ -2300,8 +2335,8 @@ export function WorkbenchPage() {
                   <Button
                     type="button"
                     variant="ghost"
-                    aria-label="Model settings"
-                    title="Model settings"
+                    aria-label={msg('workbench.modelSettings', 'Model settings')}
+                    title={msg('workbench.modelSettings', 'Model settings')}
                     className={clsx(
                       'workbench-toolbar-button workbench-toolbar-model-button',
                       activeDrawer === 'model' && 'is-active',
@@ -2314,20 +2349,20 @@ export function WorkbenchPage() {
                   <Button
                     type="button"
                     variant="ghost"
-                    aria-label="Variables"
-                    title="Variables"
+                    aria-label={msg('workbench.variables', 'Variables')}
+                    title={msg('workbench.variables', 'Variables')}
                     className={clsx('workbench-toolbar-button', activeDrawer === 'variables' && 'is-active')}
                     onClick={() => setActiveDrawer('variables')}
                   >
                     <Braces className="size-4" aria-hidden />
-                    <span className="sr-only">Variables</span>
+                    <span className="sr-only">{msg('workbench.variables', 'Variables')}</span>
                     {variables.length ? <span className="workbench-toolbar-count">{variables.length}</span> : null}
                   </Button>
                   <Button
                     type="button"
                     variant="ghost"
-                    aria-label="Tools"
-                    title="Tools"
+                    aria-label={msg('workbench.tools', 'Tools')}
+                    title={msg('workbench.tools', 'Tools')}
                     className={clsx(
                       'workbench-toolbar-button workbench-toolbar-icon-button',
                       activeDrawer === 'tools' && 'is-active',
@@ -2335,7 +2370,7 @@ export function WorkbenchPage() {
                     onClick={() => setActiveDrawer('tools')}
                   >
                     <Wrench className="size-4" aria-hidden />
-                    <span className="sr-only">Tools</span>
+                    <span className="sr-only">{msg('workbench.tools', 'Tools')}</span>
                     {draft.tools.length ? <span className="workbench-toolbar-count">{draft.tools.length}</span> : null}
                   </Button>
                   <Button
@@ -2344,15 +2379,21 @@ export function WorkbenchPage() {
                     className={clsx('workbench-toolbar-button', activeDrawer === 'examples' && 'is-active')}
                     disabled={!hasVariables}
                     aria-label={
-                      hasVariables ? 'Help Claude understand the task better' : 'Requires at least one variable'
+                      hasVariables
+                        ? msg('workbench.examplesHint', 'Help Claude understand the task better')
+                        : msg('workbench.requiresVariable', 'Requires at least one variable')
                     }
-                    title={hasVariables ? 'Help Claude understand the task better' : 'Requires at least one variable'}
+                    title={
+                      hasVariables
+                        ? msg('workbench.examplesHint', 'Help Claude understand the task better')
+                        : msg('workbench.requiresVariable', 'Requires at least one variable')
+                    }
                     onClick={() => {
                       setActiveDrawer('examples');
                       setExampleFormOpen(false);
                     }}
                   >
-                    Examples
+                    {msg('workbench.examples', 'Examples')}
                     {examples.length ? <span className="workbench-toolbar-count">{examples.length}</span> : null}
                   </Button>
                   <span className="workbench-toolbar-spacer" aria-hidden />
@@ -2363,25 +2404,27 @@ export function WorkbenchPage() {
                     disabled={!hasPromptText || isPromptReadOnly}
                     aria-label={
                       hasPromptText
-                        ? 'Use Claude to optimize your prompt'
-                        : 'Add some text to the prompt to use this feature'
+                        ? msg('workbench.improveHint', 'Use Claude to optimize your prompt')
+                        : msg('workbench.requiresText', 'Add some text to the prompt to use this feature')
                     }
                     title={
                       hasPromptText
-                        ? 'Use Claude to optimize your prompt'
-                        : 'Add some text to the prompt to use this feature'
+                        ? msg('workbench.improveHint', 'Use Claude to optimize your prompt')
+                        : msg('workbench.requiresText', 'Add some text to the prompt to use this feature')
                     }
                     onClick={openImprovePrompt}
                   >
                     <WandSparkles className="size-4" aria-hidden />
-                    Improve prompt
+                    {msg('workbench.improvePrompt', 'Improve prompt')}
                   </Button>
                 </div>
 
                 <div className="workbench-editor-stack">
                   <div
                     className={clsx('workbench-system-card', systemOpen && 'is-open')}
-                    aria-label={systemOpen ? undefined : 'Click to open system prompt'}
+                    aria-label={
+                      systemOpen ? undefined : msg('workbench.openSystemPrompt', 'Click to open system prompt')
+                    }
                     tabIndex={systemOpen ? undefined : 0}
                     onClick={systemOpen ? undefined : () => setSystemOpen(true)}
                     onKeyDown={
@@ -2398,7 +2441,9 @@ export function WorkbenchPage() {
                     {systemOpen ? (
                       <>
                         <div className="workbench-system-expanded">
-                          <div className="workbench-system-expanded-title">System Prompt</div>
+                          <div className="workbench-system-expanded-title">
+                            {msg('workbench.systemPrompt', 'System Prompt')}
+                          </div>
                           <SystemPromptEditableInput
                             text={draft.system_prompt}
                             onChange={(nextText) => setDraftField('system_prompt', nextText)}
@@ -2410,7 +2455,7 @@ export function WorkbenchPage() {
                             type="button"
                             variant="ghost"
                             size="icon"
-                            aria-label="System prompt info"
+                            aria-label={msg('workbench.systemPromptInfo', 'System prompt info')}
                             className="workbench-system-icon-button"
                           >
                             <Info className="size-4" aria-hidden />
@@ -2419,7 +2464,7 @@ export function WorkbenchPage() {
                             type="button"
                             variant="ghost"
                             size="icon"
-                            aria-label="Close system prompt"
+                            aria-label={msg('workbench.closeSystemPrompt', 'Close system prompt')}
                             className="workbench-system-icon-button"
                             onClick={() => setSystemOpen(false)}
                           >
@@ -2430,8 +2475,10 @@ export function WorkbenchPage() {
                     ) : (
                       <div className="workbench-system-button">
                         <span className="workbench-system-copy">
-                          <strong>System Prompt</strong>
-                          <span className="workbench-system-meta">Define a role, tone or context (optional)</span>
+                          <strong>{msg('workbench.systemPrompt', 'System Prompt')}</strong>
+                          <span className="workbench-system-meta">
+                            {msg('workbench.systemHint', 'Define a role, tone or context (optional)')}
+                          </span>
                         </span>
                         <span className="workbench-system-icons">
                           <Button
@@ -2495,7 +2542,7 @@ export function WorkbenchPage() {
                       onClick={addPrefillResponse}
                     >
                       <MessageSquareDashed className="size-4" aria-hidden />
-                      Pre-fill response
+                      {msg('workbench.prefillResponse', 'Pre-fill response')}
                     </Button>
                     <Button
                       type="button"
@@ -2505,14 +2552,14 @@ export function WorkbenchPage() {
                       onClick={addMessagePair}
                     >
                       <MessageSquarePlus className="size-4" aria-hidden />
-                      Add message pair
+                      {msg('workbench.addMessagePair', 'Add message pair')}
                     </Button>
                   </div>
                 </div>
               </main>
 
               <aside className="workbench-response-panel">
-                <h2 className="sr-only">Response</h2>
+                <h2 className="sr-only">{msg('workbench.response', 'Response')}</h2>
                 <div className="workbench-response-body subtle-scrollbar">
                   {responseTab === 'preview' ? (
                     <ResponsePreview
@@ -2523,7 +2570,7 @@ export function WorkbenchPage() {
                       onCreatePrompt={createNewPrompt}
                     />
                   ) : (
-                    <pre className="subtle-scrollbar max-h-full overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted p-3 font-mono text-xs leading-5 text-foreground">
+                    <pre className="subtle-scrollbar max-h-full overflow-auto whitespace-pre-wrap break-words rounded-lg border-[0.5px] border-border bg-muted p-3 font-mono text-xs leading-5 text-foreground">
                       {JSON.stringify({ request: lastRunRequest, events: streamEvents }, null, 2)}
                     </pre>
                   )}
@@ -2536,7 +2583,9 @@ export function WorkbenchPage() {
             <div className="workbench-header-actions">
               <Button
                 type="button"
-                aria-label={isRunning ? 'Stop' : 'Run All ⌘ + ⏎'}
+                aria-label={
+                  isRunning ? msg('workbench.stop', 'Stop') : msg('workbench.runAllShortcut', 'Run All ⌘ + ⏎')
+                }
                 size="lg"
                 className="px-4"
                 disabled={!canRunAllEvaluations && !isRunning}
@@ -2547,7 +2596,7 @@ export function WorkbenchPage() {
                 ) : (
                   <Play className="size-4" fill="currentColor" strokeWidth={0} aria-hidden />
                 )}
-                <span>{isRunning ? 'Stop' : 'Run All'}</span>
+                <span>{isRunning ? msg('workbench.stop', 'Stop') : msg('workbench.runAll', 'Run All')}</span>
                 {isRunning ? null : <span className="text-xs font-medium text-primary-foreground/70">⌘ + ⏎</span>}
               </Button>
             </div>
@@ -2579,12 +2628,14 @@ export function WorkbenchPage() {
           </TabsContent>
         </Tabs>
 
-        {activeDrawer ? (
+        {renderedDrawer ? (
           <WorkbenchDrawer
-            title={drawerTitle(activeDrawer)}
-            kind={activeDrawer}
+            key={renderedDrawer}
+            open={activeDrawer !== null}
+            title={drawerTitle(renderedDrawer)}
+            kind={renderedDrawer}
             headerAction={
-              activeDrawer === 'variables' ? (
+              renderedDrawer === 'variables' ? (
                 <Button
                   type="button"
                   variant="ghost"
@@ -2594,16 +2645,26 @@ export function WorkbenchPage() {
                   onClick={generateTestCase}
                 >
                   <Sparkles className="size-4" aria-hidden />
-                  Generate
+                  {msg('workbench.generate', 'Generate')}
                 </Button>
               ) : null
             }
-            onClose={() => setActiveDrawer(null)}
+            onClose={(reason) => {
+              resetDrawerFormsOnClose.current = reason === 'escape';
+              setActiveDrawer(null);
+            }}
+            onClosed={() => {
+              setRenderedDrawer(null);
+              if (resetDrawerFormsOnClose.current) {
+                setToolForm(null);
+                setExampleFormOpen(false);
+              }
+            }}
           >
-            {activeDrawer === 'model' ? (
+            {renderedDrawer === 'model' ? (
               <ModelDrawer draft={draft} models={models} setDraft={setDraft} onRun={runPrompt} isRunning={isRunning} />
             ) : null}
-            {activeDrawer === 'variables' ? (
+            {renderedDrawer === 'variables' ? (
               <VariablesDrawer
                 variables={variables}
                 values={variableValues}
@@ -2623,7 +2684,7 @@ export function WorkbenchPage() {
                 canRun={canRunWithVariables}
               />
             ) : null}
-            {activeDrawer === 'tools' ? (
+            {renderedDrawer === 'tools' ? (
               <ToolsDrawer
                 tools={draft.tools}
                 toolForm={toolForm}
@@ -2641,7 +2702,7 @@ export function WorkbenchPage() {
                 canRun={canRun}
               />
             ) : null}
-            {activeDrawer === 'examples' ? (
+            {renderedDrawer === 'examples' ? (
               <ExamplesDrawer
                 variables={variables}
                 examples={examples}
@@ -2667,8 +2728,9 @@ export function WorkbenchPage() {
                 canRun={canRun}
               />
             ) : null}
-            {activeDrawer === 'history' ? (
+            {renderedDrawer === 'history' ? (
               <HistoryDrawer
+                key={`${orgUuid}:${activePromptIdRef.current}`}
                 promptId={prompt?.id}
                 orgUuid={orgUuid}
                 currentDraft={draft}
@@ -2695,7 +2757,12 @@ export function WorkbenchPage() {
       ) : null}
 
       {renameOpen ? (
-        <Dialog title="Rename your prompt" size="rename" onClose={() => setRenameOpen(false)}>
+        <Dialog
+          title={msg('workbench.renameTitle', 'Rename your prompt')}
+          initialFocus={renameInputRef}
+          size="rename"
+          onClose={() => setRenameOpen(false)}
+        >
           <form
             className="workbench-rename-form"
             onSubmit={(event) => {
@@ -2704,18 +2771,18 @@ export function WorkbenchPage() {
             }}
           >
             <Input
-              aria-label="Name"
+              ref={renameInputRef}
+              aria-label={msg('workbench.promptName', 'Name')}
               value={renameValue}
               onChange={(event) => setRenameValue(event.currentTarget.value)}
               className="bg-secondary"
-              autoFocus
             />
             <div className="workbench-rename-actions">
-              <Button type="button" variant="outline" onClick={() => setRenameOpen(false)}>
-                Cancel
-              </Button>
+              <DialogClose render={<Button type="button" variant="outline" />}>
+                {msg('common.cancel', 'Cancel')}
+              </DialogClose>
               <Button type="submit" disabled={!renameValue.trim()}>
-                Save
+                {msg('workbench.save', 'Save')}
               </Button>
             </div>
           </form>
@@ -2759,39 +2826,38 @@ export function WorkbenchPage() {
         />
       ) : null}
 
-      {promptGeneratorOpen ? (
-        <GeneratePromptDialog
-          step={promptGeneratorStep}
-          task={promptGeneratorTask}
-          setTask={setPromptGeneratorTask}
-          output={promptGeneratorOutput}
-          setOutput={setPromptGeneratorOutput}
-          examplesExpanded={promptGeneratorExamplesExpanded}
-          setExamplesExpanded={setPromptGeneratorExamplesExpanded}
-          thinkingEnabled={promptGeneratorThinkingEnabled}
-          setThinkingEnabled={setPromptGeneratorThinkingEnabled}
-          warning={promptGeneratorWarning}
-          error={promptGeneratorError}
-          isGenerating={isGeneratingPrompt}
-          onGenerate={generatePromptFromTask}
-          onStop={stopPromptGenerator}
-          onEdit={editPromptGeneratorInstructions}
-          onOpen={openGeneratedPromptInWorkbench}
-          onSelectExample={selectPromptGeneratorExample}
-          onBuyCredits={() => {
-            window.location.href = '/settings/billing';
-          }}
-          onClose={closePromptGenerator}
-        />
-      ) : null}
-
-      {promptGeneratorConfirmAction ? (
-        <PromptGeneratorConfirmDialog
-          kind={promptGeneratorConfirmAction}
-          onCancel={() => setPromptGeneratorConfirmAction(null)}
-          onConfirm={confirmPromptGeneratorAction}
-        />
-      ) : null}
+      <GeneratePromptDialog
+        open={promptGeneratorOpen}
+        onExited={() => {
+          if (!promptGeneratorOpen) clearPromptGeneratorDraft();
+        }}
+        step={promptGeneratorStep}
+        task={promptGeneratorTask}
+        setTask={setPromptGeneratorTask}
+        output={promptGeneratorOutput}
+        setOutput={setPromptGeneratorOutput}
+        examplesExpanded={promptGeneratorExamplesExpanded}
+        setExamplesExpanded={setPromptGeneratorExamplesExpanded}
+        thinkingEnabled={promptGeneratorThinkingEnabled}
+        setThinkingEnabled={setPromptGeneratorThinkingEnabled}
+        warning={promptGeneratorWarning}
+        error={promptGeneratorError}
+        isGenerating={isGeneratingPrompt}
+        onGenerate={generatePromptFromTask}
+        onStop={stopPromptGenerator}
+        onEdit={editPromptGeneratorInstructions}
+        onOpen={openGeneratedPromptInWorkbench}
+        onSelectExample={selectPromptGeneratorExample}
+        onBuyCredits={() => {
+          window.location.href = '/settings/billing';
+        }}
+        onClose={closePromptGenerator}
+      />
+      <PromptGeneratorConfirmDialog
+        kind={promptGeneratorConfirmAction}
+        onCancel={() => setPromptGeneratorConfirmAction(null)}
+        onConfirm={confirmPromptGeneratorAction}
+      />
     </WorkbenchShell>
   );
 }

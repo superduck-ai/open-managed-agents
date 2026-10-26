@@ -20,7 +20,7 @@ export function RemoteServerIcon({
   return (
     <span
       className={cn(
-        'grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-secondary text-foreground',
+        'grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg border-[0.5px] border-border bg-secondary text-foreground',
         className,
       )}
     >

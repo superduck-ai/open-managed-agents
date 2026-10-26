@@ -19,7 +19,6 @@ import { useFormatters, useI18n } from '../../shared/i18n';
 import { copyText } from '../../shared/lib/clipboard';
 import { Alert, AlertDescription, AlertTitle } from '../../shared/ui/alert';
 import { Button } from '../../shared/ui/button';
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '../../shared/ui/card';
 import { CopyButton } from '../../shared/ui/copy-button';
 import {
   DropdownMenu,
@@ -31,7 +30,6 @@ import {
 import { Input } from '../../shared/ui/input';
 import { Label } from '../../shared/ui/label';
 import { ResourceListState } from '../../shared/ui/resource-list-state';
-import { Separator } from '../../shared/ui/separator';
 import { toast } from '../../shared/ui/sonner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { useWorkspace } from '../../shared/workspaces/context';
@@ -218,12 +216,13 @@ export function McpTunnelDetailContent({
   }
 
   const tunnel = tunnelQuery.data;
+  const displayName = tunnel.display_name || tunnel.id;
   const yaml = tunnelClientYaml(tunnel, localMcpUrl);
   const archived = Boolean(tunnel.archived_at);
   const channels = tunnel.connection.channels;
 
   return (
-    <section className="mx-auto w-full max-w-6xl space-y-5 text-foreground">
+    <section className="mx-auto w-full max-w-4xl space-y-7 text-foreground">
       <Button
         type="button"
         variant="ghost"
@@ -235,13 +234,17 @@ export function McpTunnelDetailContent({
       </Button>
 
       <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 space-y-2">
+        <div className="min-w-0 flex-1 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="truncate text-[28px] font-semibold leading-tight">{tunnel.display_name || tunnel.id}</h1>
+            <h1
+              className="min-w-0 max-w-full line-clamp-2 text-2xl font-medium leading-8 [overflow-wrap:anywhere]"
+              title={displayName}
+            >
+              {displayName}
+            </h1>
             <TunnelReadinessBadge tunnel={tunnel} />
           </div>
-          <p className="font-mono text-sm text-muted-foreground">{tunnel.id}</p>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {msg('mcpTunnels.detail.createdAt', 'Created {date}', {
               date: formatDate(tunnel.created_at, formatters.date),
             })}
@@ -263,35 +266,21 @@ export function McpTunnelDetailContent({
         </Alert>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{msg('mcpTunnels.detail.overview', 'Overview')}</CardTitle>
-          <CardDescription>
-            {msg(
-              'mcpTunnels.detail.overviewDescription',
-              'Stable identifiers and the main MCP endpoint for this tunnel.',
-            )}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-2">
+      <section className="space-y-5 border-t-[0.5px] border-border pt-7">
+        <h2 className="text-sm font-medium">{msg('mcpTunnels.detail.overview', 'Overview')}</h2>
+        <div className="grid gap-4 md:grid-cols-2">
           <CopyValue label={msg('common.id', 'ID')} value={tunnel.id} />
           <CopyValue label={msg('mcpTunnels.detail.domain', 'Domain')} value={tunnel.domain} />
           <div className="md:col-span-2">
             <CopyValue label={msg('mcpTunnels.secret.canonicalUrl', 'Canonical MCP URL')} value={tunnel.mcp_url} />
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{msg('mcpTunnels.detail.connectorSetup', 'Connector setup')}</CardTitle>
-          <CardDescription>
-            {msg(
-              'mcpTunnels.detail.connectorSetupDescription',
-              'Configure the original tunnel-client to reach a private MCP server.',
-            )}
-          </CardDescription>
-          <CardAction>
+      <section className="space-y-5 border-t-[0.5px] border-border pt-7">
+        <header className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-sm font-medium">{msg('mcpTunnels.detail.connectorSetup', 'Connector setup')}</h2>
+          <div>
             {token ? (
               <Button type="button" variant="outline" size="sm" onClick={() => setRevealedToken(null)}>
                 <EyeOff className="size-4" aria-hidden /> {msg('common.hide', 'Hide')}
@@ -312,12 +301,12 @@ export function McpTunnelDetailContent({
                 {msg('mcpTunnels.action.viewToken', 'View token')}
               </Button>
             )}
-          </CardAction>
-        </CardHeader>
-        <CardContent className="space-y-5">
+          </div>
+        </header>
+        <div className="space-y-5">
           <div className="grid gap-2">
             <Label>{msg('mcpTunnels.secret.token', 'Tunnel token')}</Label>
-            <div className="flex min-w-0 items-center gap-2 rounded-lg border bg-muted/40 p-2">
+            <div className="flex min-w-0 items-center gap-2 rounded-lg border-[0.5px] border-input bg-muted/40 p-2">
               <code className="min-w-0 flex-1 break-all text-xs">{token ?? '••••••••••••••••••••••••'}</code>
               <CopyButton
                 value={token ?? ''}
@@ -351,27 +340,27 @@ export function McpTunnelDetailContent({
               {msg('mcpTunnels.secret.envSuffix', ' to the token shown above before starting tunnel-client.')}
             </p>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{msg('mcpTunnels.detail.connection', 'Connection')}</CardTitle>
-          <CardDescription>
-            {msg(
-              'mcpTunnels.detail.connectionDescription',
-              '{instances} connector instances and {channels} live channels.',
-              {
-                instances: tunnel.connection.instance_count,
-                channels: channels.length,
-              },
-            )}
-          </CardDescription>
-          <CardAction>
-            <TunnelReadinessBadge tunnel={tunnel} />
-          </CardAction>
-        </CardHeader>
-        <CardContent>
+      <section className="space-y-5 border-t-[0.5px] border-border pt-7">
+        <header className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-2">
+            <h2 className="text-sm font-medium">{msg('mcpTunnels.detail.connection', 'Connection')}</h2>
+            <p className="text-sm text-muted-foreground">
+              {msg(
+                'mcpTunnels.detail.connectionDescription',
+                '{instances} connector instances and {channels} live channels.',
+                {
+                  instances: tunnel.connection.instance_count,
+                  channels: channels.length,
+                },
+              )}
+            </p>
+          </div>
+          <TunnelReadinessBadge tunnel={tunnel} />
+        </header>
+        <div className="overflow-x-auto">
           {channels.length ? (
             <Table>
               <TableHeader>
@@ -419,7 +408,7 @@ export function McpTunnelDetailContent({
               </TableBody>
             </Table>
           ) : (
-            <div className="rounded-lg border border-dashed p-8 text-center">
+            <div className="py-6">
               <p className="font-medium">{msg('mcpTunnels.detail.noChannels', 'No live channels')}</p>
               <p className="mt-1 text-sm text-muted-foreground">
                 {msg(
@@ -429,32 +418,31 @@ export function McpTunnelDetailContent({
               </p>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
-      <Card className="ring-destructive/30">
-        <CardHeader>
-          <CardTitle className="text-destructive">{msg('mcpTunnels.detail.dangerZone', 'Danger zone')}</CardTitle>
-          <CardDescription>
+      <section className="flex flex-wrap items-start justify-between gap-4 border-t-[0.5px] border-border pt-7">
+        <div className="space-y-2">
+          <h2 className="text-sm font-medium text-destructive">{msg('mcpTunnels.detail.dangerZone', 'Danger zone')}</h2>
+          <p className="text-sm text-muted-foreground">
             {msg(
               'mcpTunnels.detail.dangerDescription',
               'Archiving is permanent and immediately rejects connector and MCP requests.',
             )}
-          </CardDescription>
-          <CardAction>
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={archived}
-              onClick={() => setPendingAction({ type: 'archive', tunnel })}
-            >
-              <Archive className="size-4" aria-hidden /> {msg('common.archive', 'Archive')}
-            </Button>
-          </CardAction>
-        </CardHeader>
-      </Card>
+          </p>
+        </div>
+        <div>
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={archived}
+            onClick={() => setPendingAction({ type: 'archive', tunnel })}
+          >
+            <Archive className="size-4" aria-hidden /> {msg('common.archive', 'Archive')}
+          </Button>
+        </div>
+      </section>
 
-      <Separator />
       <ProbeDialog probe={probeResult} onClose={() => setProbeResult(null)} />
       <ConfirmTunnelActionDialog
         action={pendingAction}

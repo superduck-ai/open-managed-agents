@@ -42,7 +42,9 @@ async function prompt(options: GenerateOptions, route: AiSdkRoute, attachments?:
     if (message.role === "system") system.push(...message.content.map(textOf));
     else if (message.role === "assistant") messages.push({ role: "assistant", content: assistantParts(message, route, toolNames) });
     else if (message.role === "tool") messages.push({ role: "tool", content: [toolResult(message, toolNames)] });
-    else if (message.role === "user") messages.push({ role: "user", content: await Promise.all(message.content.map(block => userPart(block, attachments, options.signal))) });
+    else if (message.role === "user") {
+      messages.push({ role: "user", content: await Promise.all(message.content.map(block => userPart(block, attachments, options.signal))) });
+    }
     else throw new LlmError(`Unsupported model input role: ${message.role}`, "INVALID_ARGS");
   }
   return system.length ? [{ role: "system", content: system.join("\n\n") }, ...messages] : messages;

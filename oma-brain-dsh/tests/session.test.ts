@@ -137,7 +137,9 @@ describe("original dsh loop over CCRv2", () => {
     await session.receive("image_input", { content });
     const first = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
     expect(first.map((block: Payload) => block.type)).toEqual(["text", "image", "text", "text"]);
-    expect(first[3].text).toStartWith("Time sampled while preparing turn");
+    expect(first[3].text).toStartWith("\n\n<system-reminder>\n");
+    expect(first[3].text).toContain("Time sampled while preparing turn");
+    expect(first[3].text).toEndWith("\n</system-reminder>\n\n");
     expect(first[0]).toEqual(content[0]);
     expect(first[2]).toEqual(content[2]);
     expect(first[1].source.type).toBe("base64");
@@ -159,7 +161,9 @@ describe("original dsh loop over CCRv2", () => {
     const requestContent = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
     expect(requestContent).toHaveLength(content.length + 1);
     expect(requestContent.slice(0, content.length).map((block: Payload) => ({ type: block.type, source: block.source }))).toEqual(content);
-    expect(requestContent.at(-1).text).toStartWith("Time sampled while preparing turn");
+    expect(requestContent[content.length].text).toStartWith("\n\n<system-reminder>\n");
+    expect(requestContent[content.length].text).toContain("Time sampled while preparing turn");
+    expect(requestContent.at(-1).text).toEndWith("\n</system-reminder>\n\n");
     expect(JSON.stringify([...b.privateLog.values()])).not.toContain("base64");
     expect(b.publicLog.get("image_refs_result")?.is_error).toBe(false);
   });

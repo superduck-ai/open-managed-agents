@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -32,6 +33,15 @@ type TemplateBuildConfig struct {
 	Memory       uint32                `yaml:"memory"`
 	Network      TemplateNetworkConfig `yaml:"network"`
 	RegistryAuth RegistryAuthConfig    `yaml:"registry_auth"`
+	MaxResources TemplateResourceLimit `yaml:"max_resources"`
+	ExposedPorts []int                 `yaml:"exposed_ports"`
+	ProbePort    int                   `yaml:"probe_port"`
+}
+
+type TemplateResourceLimit struct {
+	CPU    uint32 `yaml:"cpu"`
+	Memory uint32 `yaml:"memory"`
+	Disk   uint32 `yaml:"disk"`
 }
 
 type TemplateNetworkConfig struct {
@@ -54,6 +64,8 @@ func normalizeEnvironmentPrebuildConfig(prebuild *EnvironmentPrebuildConfig) {
 	image.Flow.PipelineURL = strings.TrimRight(strings.TrimSpace(image.Flow.PipelineURL), "/")
 	image.Flow.Token = strings.TrimSpace(image.Flow.Token)
 	template.DiskSize = strings.TrimSpace(template.DiskSize)
+	slices.Sort(template.ExposedPorts)
+	template.ExposedPorts = slices.Compact(template.ExposedPorts)
 	template.RegistryAuth.Username = strings.TrimSpace(template.RegistryAuth.Username)
 	for _, values := range [][]string{template.Network.DNSServers, template.Network.AllowOutboundCIDRs, template.Network.DenyOutboundCIDRs} {
 		for i := range values {
@@ -75,6 +87,9 @@ func validateEnvironmentPrebuildConfig(prebuild EnvironmentPrebuildConfig, e2b E
 	if err := validateImageBaseImage(prebuild.Image); err != nil {
 		return err
 	}
+	if err := validateTemplatePorts(prebuild.Template); err != nil {
+		return err
+	}
 	auth := prebuild.Template.RegistryAuth
 	if (auth.Username == "") != (auth.Password == "") {
 		return errors.New("environment_prebuilds.template.registry_auth username and password must be configured together")
@@ -93,6 +108,18 @@ func validateEnvironmentPrebuildConfig(prebuild EnvironmentPrebuildConfig, e2b E
 		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Scheme != "https" {
 			return fmt.Errorf("%s must be an HTTPS URL without credentials, query or fragment", endpoint.field)
 		}
+	}
+	return nil
+}
+
+func validateTemplatePorts(template TemplateBuildConfig) error {
+	for _, port := range template.ExposedPorts {
+		if port < 1 || port > 65535 {
+			return fmt.Errorf("environment_prebuilds.template.exposed_ports must contain TCP ports between 1 and 65535, got %d", port)
+		}
+	}
+	if !slices.Contains(template.ExposedPorts, template.ProbePort) {
+		return fmt.Errorf("environment_prebuilds.template.probe_port %d must be listed in exposed_ports", template.ProbePort)
 	}
 	return nil
 }

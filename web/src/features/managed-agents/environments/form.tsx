@@ -13,6 +13,7 @@ import { UnsavedEnvironmentChangesDialog, useUnsavedChangesGuard } from '../reso
 import { EnvironmentGeneral, EnvironmentMetadata, EnvironmentNetworking } from './fields';
 import { EnvironmentPackages } from './packages';
 import { EnvironmentPrebuildStatus } from './prebuild-status';
+import { EnvironmentInitScript, EnvironmentResources, EnvironmentVariables } from './template';
 import { environmentDraftKey, environmentFormBody, environmentFormValues } from './model';
 
 export function EnvironmentForm({
@@ -98,11 +99,14 @@ export function EnvironmentForm({
                   <EnvironmentPrebuildStatus
                     entity={entity}
                     workspaceId={workspaceId}
-                    packages={values.packages}
+                    values={values}
                     readOnly={readOnly}
                   />
                 }
               />
+              <EnvironmentInitScript {...fields} />
+              <EnvironmentResources {...fields} />
+              <EnvironmentVariables {...fields} />
             </>
           ) : null}
           <EnvironmentMetadata {...fields} />

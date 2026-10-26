@@ -62,7 +62,7 @@ export type AgentPageResponse = {
   total_count?: number;
 };
 
-export type AgentDetailTab = 'config' | 'sessions' | 'deployments' | 'observability';
+export type AgentDetailTab = 'config' | 'sessions' | 'deployments' | 'observability' | 'channels';
 
 export type AgentDetailVersionFilter = number | null;
 
@@ -844,4 +844,9 @@ export type EnvironmentEditValues = {
   allowedHostsText: string;
   packages: EnvironmentPackageRow[];
   metadataRows: EnvironmentMetadataRow[];
+  initScript: string;
+  environmentRows: EnvironmentMetadataRow[];
+  resources: EnvironmentResourceValues;
 };
+
+export type EnvironmentResourceValues = { cpu: string; memory: string; disk: string };

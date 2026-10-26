@@ -404,7 +404,18 @@ function ModelRow({ model }: { model: CatalogModel }) {
       className="flex min-h-11 items-center justify-between gap-3 px-4 py-2 hover:bg-accent"
       data-testid="llm-model-row"
     >
-      <p className="min-w-0 flex-1 break-all font-mono text-sm text-foreground">{model.qualifiedId}</p>
+      <div className="min-w-0 flex-1">
+        {model.name ? <p className="break-words text-sm">{model.name}</p> : null}
+        <p
+          className={
+            model.name
+              ? 'break-all font-mono text-xs text-muted-foreground'
+              : 'break-all font-mono text-sm text-foreground'
+          }
+        >
+          {model.qualifiedId}
+        </p>
+      </div>
       <Button
         type="button"
         variant="ghost"

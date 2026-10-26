@@ -6,7 +6,7 @@ LLM 模型页是工作区的模型目录，而不是 Provider 卡片墙。
 
 工作区页面请求 `GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers` 和组织默认 `GET /api/console/organizations/{orgUuid}/llm_provider`。Provider 配置及其 `models` 是目录的唯一数据源，页面不再额外请求 `/v1/models`，避免同一页面出现两份模型集合和无法归属 Provider 的模型。
 
-填写 Provider 的 Base URL 和 API Key 后，可在表单里点「获取可用模型」，请求 `POST .../llm_providers/preview_models`，用上游 `{base_url}/v1/models` 填入模型 ID。获取结果与表单内已有的非空模型 ID 合并、去重，不覆盖手工输入；上游返回空数组时只提示，不清空表单。编辑 Provider 时，读取接口不会返回旧 Key，编辑时可直接使用已保存的凭证获取可用模型。
+填写 Provider 的 Base URL 和 API Key 后，可在表单里点「获取模型列表」，请求 `POST .../llm_providers/preview_models`，用上游 `{base_url}/v1/models` 获取候选模型。确认选择后与表单内已有的非空模型 ID 合并、去重，不覆盖手工输入；上游返回空数组时只提示，不清空表单。编辑 Provider 时，读取接口不会返回旧 Key，编辑时可直接使用已保存的凭证获取可用模型。
 
 保存提交表单中的模型 ID 和逐模型参数；点击页面刷新时才请求 `POST .../llm_providers/{id}/models/sync`，把上游模型合并进该 Provider 的 `models`，随后重拉 Provider 列表。不同 Provider 可以配置同名模型，同步不会跳过其他 Provider 已有的模型。模型 ID 可以为空：Provider 仍保留在轨道和目录中，`/v1/models` 返回空数组，页面显示明确的“尚未配置模型”状态。获取上游列表或刷新失败时，用可关闭、数秒后自动消失的 toast 提示，不挡住目录和表单。
 
@@ -64,13 +64,13 @@ Base URL 仍填写 API 根地址，允许路径前缀，不重复填写 `/v1`。
 
 工作区目录合并展示组织默认模型，复制完整 `organization/{model}` 引用。全部 Provider 分组与单个 Provider 详情都显示组织模型只读提示。组织 Provider 在工作区页不可编辑、删除或追加模型，刷新只同步工作区 Provider；组织配置应在组织页修改。只读成员刷新只重新读取数据。组织读取返回 404 表示尚未配置，不视为失败；其他组织读取失败在已有工作区目录上提示降级，不能隐藏为正常成功。
 
-添加 Provider 默认打开通用配置表单，不包含公司网关快捷预设。
+添加 Provider 使用下文供应商目录和自定义 API 两个入口，不内置公司专用逻辑。
 
 工作区 Provider 表单在提交前拒绝保留 slug `organization`，并显示本地化提示；组织 Provider 表单固定且允许该值。删除组织默认的确认文案在默认消息与中英文翻译中保持同一语义：工作区 Provider 仍可使用，通过组织 Provider 引用的模型将不再可用。
 
 ## 统一模型配置
 
-数据库、Console API 和前端使用同一结构：Provider 上有序的 `models` 数组，每条模型包含 `id`、可选 `context_window`、`max_output_tokens`、`input_modalities`。ID 本身即表示启用，不另外维护模型 ID 列表或参数映射。不单独建 Model 表。
+数据库、Console API 和前端使用同一结构：Provider 上有序的 `models` 数组，每条模型包含 `id`、可选 `name`、`context_window`、`max_output_tokens`、`input_modalities`。ID 本身即表示启用，不另外维护模型 ID 列表或参数映射。不单独建 Model 表。
 
 ```json
 {"models":[{"id":"model-a"},{"id":"model-b","context_window":1000000,"max_output_tokens":128000,"input_modalities":["text","image"]}]}
@@ -90,7 +90,7 @@ Brain 的 `session_context.models` 为派生的模型路由索引，值包含同
 
 ## 获取模型与 Provider 身份
 
-“获取可用模型”始终展示：新凭证使用 `preview_models`，已有凭证使用 `.../models/preview`。后端鉴权、解密，只查询上游；前端按 ID 合并到草稿并保留已有参数，保存才提交，取消放弃。修改地址或协议后须填写对应 Key。页面同步则保留已有模型记录，只追加新 ID。
+“获取模型列表”始终展示：新凭证使用 `preview_models`，已有凭证使用 `.../models/preview`。后端鉴权、解密，只查询上游；前端确认候选选择后按 ID 合并到草稿并保留已有参数，保存才提交，取消放弃。修改地址或协议后须填写对应 Key。页面同步则保留已有模型记录，只追加新 ID。
 
 创建时显示 Provider ID 与显示名称，ID 对应既有 `slug`，显示名称对应 `name`。工作区创建必须填写 ID，不从名称生成；组织默认 ID 固定为 `organization`。编辑时隐藏 ID、保留原值，显示名称可独立修改，服务端继续拒绝变更 slug。既有模型引用不变。
 
@@ -102,3 +102,15 @@ Brain 的 `session_context.models` 为派生的模型路由索引，值包含同
 ## 请求地址预览
 
 Provider 表单在 Base URL 下用简短的“请求地址：”展示当前 URL 与协议路径的组合预览，避免说明句挤压实际路径。Messages 与 Chat Completions 的路径仍分别为 `/v1/messages` 和 `/v1/chat/completions`，预览不改变请求或校验逻辑。窄屏检查短路径保持连续，长 URL 在表单宽度内换行。
+
+## 供应商目录与添加入口
+
+新增连接采用方案 A：`模型供应商` / `自定义模型 API` 两个入口。供应商选择从服务端目录读取，选择后填入 ID、显示名称、地址、协议和默认模型；通常只需填写 API 密钥。自定义设置展开后可调整连接与模型参数。编辑已有连接时直接展示已保存配置。
+
+目录格式为版本 1 的 JSON：`{"version":1,"providers":[{"id":"gateway","name":"Gateway","api_backend":"chat_completions","base_url":"https://gateway.example.com","models":[]}]}`。目录供应商与已保存连接是不同对象；目录更新不修改已有连接。模型 `name` 是可选显示名称，路由、计费、复制和权限仍使用 ID。模型显示名称留空时显示模型 ID；编辑器可删除最后一行得到空列表，不提供模型行上下移动操作。供应商的 `order` 为非负安全整数，数值越小越靠前，未填写为 0，相同值保持文件中的先后顺序。内置供应商使用 10、20、30 等顺序值，公司网关可设为 0 排在最前。
+
+“获取模型列表”仅请求上游列表，随后打开可搜索、多选的候选弹窗。确认后按上游顺序追加缺少的 ID，保留已有同 ID 的名称和参数；取消候选弹窗不修改草稿。空响应不清除模型，也不猜测上下文或图像能力。
+
+供应商目录只读。控制台仅提供目录读取接口，不提供修改供应商默认模型的入口或写入 API。保存只影响当前工作区连接或当前组织默认连接，发现和编辑的模型不会写回部署级供应商 JSON。未配置文件路径时使用内置目录。目录读取要求组织管理员；目录没有凭据，也不应该放组织私有信息。
+
+必填校验逐字段展示：Provider ID、供应商显示名称、API 地址和新增连接的 API 密钥缺失时，为对应输入框设置 `aria-invalid`、红色边框和关联的错误文字，聚焦第一个错误；隐藏字段出错时展开自定义设置。已有连接允许保留原密钥。供应商未选时错误显示在供应商选择器下。服务端错误保留在红色边框提示区。供应商模式下，API 密钥始终展示在折叠区域外。“自定义设置”采用共享 Collapsible：顶部细分隔线、左侧向右箭头（展开后向下），展开内容统一缩进，包含连接参数与模型目录。工作区连接仅作用于当前工作区，组织默认连接仅作用于当前组织。折叠再展开保留草稿，隐藏必填字段校验失败时自动展开并聚焦。自定义 API 和编辑连接保持完整表单。

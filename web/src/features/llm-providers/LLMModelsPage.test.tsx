@@ -164,6 +164,7 @@ describe('LLM models page', () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Model parameters 1' }));
       fireEvent.change(within(dialog).getByLabelText('Context window 1'), { target: { value: '1M' } });
       fireEvent.click(within(dialog).getByRole('button', { name: 'Get available models' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Add selected models' }));
       await waitFor(() =>
         expect(
           within(dialog)
@@ -205,6 +206,7 @@ describe('LLM models page', () => {
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
     const dialog = screen.getByRole('dialog', { name: 'Add provider' });
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Custom model API' }));
     const inputs = within(dialog).getAllByRole('textbox');
     expect(inputs[0]).toBe(within(dialog).getByLabelText('Provider ID'));
     expect(inputs[1]).toBe(within(dialog).getByLabelText('Display name'));
@@ -357,7 +359,7 @@ describe('LLM models page', () => {
       locale: 'zh-CN' as const,
       title: '添加 Provider',
       name: '显示名称',
-      key: 'API Key',
+      key: 'API 密钥',
       save: '保存',
       error: 'Provider ID“organization”保留给组织默认 Provider。',
     },
@@ -369,9 +371,12 @@ describe('LLM models page', () => {
       renderPage(locale);
       fireEvent.click(await screen.findByRole('button', { name: title }));
       const dialog = screen.getByRole('dialog', { name: title });
+      fireEvent.click(
+        within(dialog).getByRole('tab', { name: locale === 'en' ? 'Custom model API' : '自定义模型 API' }),
+      );
       fireEvent.change(within(dialog).getByLabelText('Provider ID'), { target: { value: 'organization' } });
       fireEvent.change(within(dialog).getByLabelText(name), { target: { value: 'Organization' } });
-      fireEvent.change(within(dialog).getByLabelText('Base URL'), {
+      fireEvent.change(within(dialog).getByLabelText(locale === 'en' ? 'Base URL' : 'API 地址'), {
         target: { value: 'https://workspace.example.com' },
       });
       fireEvent.change(within(dialog).getByLabelText(key), { target: { value: 'workspace-key' } });
@@ -439,6 +444,7 @@ describe('LLM models page', () => {
     await screen.findByText('No providers yet');
     fireEvent.click(screen.getByRole('button', { name: 'Add provider' }));
     const dialog = screen.getByRole('dialog', { name: 'Add provider' });
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Custom model API' }));
     const slug = within(dialog).getByLabelText('Provider ID') as HTMLInputElement;
     expect(slug.value).toBe('organization');
     expect(slug.readOnly).toBe(true);
@@ -450,6 +456,7 @@ describe('LLM models page', () => {
     await waitFor(() =>
       expect(api.requests.some((request) => request.url.endsWith('/llm_provider/preview_models'))).toBe(true),
     );
+    fireEvent.click(await screen.findByRole('button', { name: 'Add selected models' }));
     await waitFor(() =>
       expect((within(dialog).getByRole('textbox', { name: 'Model ID 1' }) as HTMLInputElement).value).toBe(
         'shared-model',
@@ -574,6 +581,7 @@ describe('LLM models page', () => {
     await screen.findByText('No providers yet');
     fireEvent.click(screen.getByRole('button', { name: 'Add provider' }));
     const dialog = screen.getByRole('dialog', { name: 'Add provider' });
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Custom model API' }));
     fireEvent.click(within(dialog).getByRole('combobox', { name: 'API backend' }));
     const option = await screen.findByRole('option', { name: 'OpenAI Chat Completions' });
     fireEvent.pointerDown(option);
@@ -589,6 +597,7 @@ describe('LLM models page', () => {
     fireEvent.change(within(dialog).getByLabelText('Base URL'), { target: { value: 'https://chat.example.com' } });
     fireEvent.change(within(dialog).getByLabelText('API key'), { target: { value: 'chat-key' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Get available models' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add selected models' }));
     await waitFor(() =>
       expect((within(dialog).getByRole('textbox', { name: 'Model ID 1' }) as HTMLInputElement).value).toBe(
         'chat-model',
@@ -635,6 +644,7 @@ describe('LLM models page', () => {
     await screen.findByText('No providers yet');
     fireEvent.click(screen.getAllByRole('button', { name: 'Add provider' })[0]);
     const createDialog = screen.getByRole('dialog', { name: 'Add provider' });
+    fireEvent.click(within(createDialog).getByRole('tab', { name: 'Custom model API' }));
     fireEvent.change(within(createDialog).getByLabelText('Provider ID'), { target: { value: 'empty-gateway' } });
     fireEvent.change(within(createDialog).getByLabelText('Display name'), { target: { value: 'Empty Gateway' } });
     fireEvent.change(within(createDialog).getByLabelText('Base URL'), {
@@ -827,6 +837,7 @@ describe('LLM models page', () => {
     expect(await screen.findByText('No providers yet')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: 'Add provider' })[0]);
     const dialog = screen.getByRole('dialog', { name: 'Add provider' });
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Custom model API' }));
     fireEvent.change(within(dialog).getByLabelText('Provider ID'), { target: { value: 'dashscope' } });
     fireEvent.change(within(dialog).getByLabelText('Display name'), { target: { value: 'DashScope' } });
     fireEvent.change(within(dialog).getByLabelText('Base URL'), {
@@ -834,6 +845,7 @@ describe('LLM models page', () => {
     });
     fireEvent.change(within(dialog).getByLabelText('API key'), { target: { value: 'test-secret-1111' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Get available models' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add selected models' }));
 
     expect(await within(dialog).findByDisplayValue('glm-4.7', {}, { timeout: 2000 })).toBeTruthy();
     expect(within(dialog).getByDisplayValue('kimi-k2.5')).toBeTruthy();
@@ -863,6 +875,7 @@ describe('LLM models page', () => {
     expect(await screen.findByText('No providers yet')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Add provider' }));
     const dialog = screen.getByRole('dialog', { name: 'Add provider' });
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Custom model API' }));
     fireEvent.change(within(dialog).getByLabelText('Base URL'), {
       target: { value: 'https://dashscope.example.com/anthropic' },
     });
@@ -871,6 +884,7 @@ describe('LLM models page', () => {
       target: { value: 'manual-model' },
     });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Get available models' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add selected models' }));
 
     expect(await within(dialog).findByDisplayValue('manual-model')).toBeTruthy();
     expect(within(dialog).getByDisplayValue('glm-4.7')).toBeTruthy();
@@ -885,6 +899,7 @@ describe('LLM models page', () => {
     expect(await screen.findByText('No providers yet')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Add provider' }));
     const dialog = screen.getByRole('dialog', { name: 'Add provider' });
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Custom model API' }));
     fireEvent.change(within(dialog).getByLabelText('Base URL'), {
       target: { value: 'https://dashscope.example.com/anthropic' },
     });
@@ -946,6 +961,7 @@ describe('LLM models page', () => {
     expect(await screen.findByText('No providers yet')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: 'Add provider' })[0]);
     const dialog = screen.getByRole('dialog', { name: 'Add provider' });
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Custom model API' }));
     fireEvent.change(within(dialog).getByLabelText('Display name'), { target: { value: 'DashScope CN' } });
     expect((within(dialog).getByLabelText('Provider ID') as HTMLInputElement).value).toBe('');
     fireEvent.change(within(dialog).getByLabelText('Provider ID'), { target: { value: 'Dash/Scope' } });
@@ -977,6 +993,7 @@ describe('LLM models page', () => {
     expect(await screen.findByText('No providers yet')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: 'Add provider' })[0]);
     const dialog = screen.getByRole('dialog', { name: 'Add provider' });
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Custom model API' }));
     fireEvent.change(within(dialog).getByLabelText('Provider ID'), { target: { value: 'dashscope' } });
     fireEvent.change(within(dialog).getByLabelText('Display name'), { target: { value: 'DashScope' } });
     fireEvent.change(within(dialog).getByLabelText('Base URL'), {
@@ -1010,12 +1027,13 @@ describe('LLM models page', () => {
     expect(await screen.findByText('尚未配置 Provider')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: '添加 Provider' })[0]);
     const dialog = screen.getByRole('dialog', { name: '添加 Provider' });
+    fireEvent.click(within(dialog).getByRole('tab', { name: '自定义模型 API' }));
     fireEvent.change(within(dialog).getByLabelText('Provider ID'), { target: { value: 'aliyun' } });
     fireEvent.change(within(dialog).getByLabelText('显示名称'), { target: { value: '阿里云' } });
-    fireEvent.change(within(dialog).getByLabelText('Base URL'), {
+    fireEvent.change(within(dialog).getByLabelText('API 地址'), {
       target: { value: 'https://dashscope.example.com/anthropic' },
     });
-    fireEvent.change(within(dialog).getByLabelText('API Key'), { target: { value: 'test-secret-1111' } });
+    fireEvent.change(within(dialog).getByLabelText('API 密钥'), { target: { value: 'test-secret-1111' } });
     fireEvent.change(within(dialog).getByRole('textbox', { name: '模型 ID 1' }), {
       target: { value: 'glm-4.7' },
     });
@@ -1030,6 +1048,7 @@ describe('LLM models page', () => {
 async function createProvider(name: string, baseUrl: string, apiKey: string, modelIDs: string[]) {
   fireEvent.click(screen.getAllByRole('button', { name: 'Add provider' })[0]);
   const dialog = screen.getByRole('dialog', { name: 'Add provider' });
+  fireEvent.click(within(dialog).getByRole('tab', { name: 'Custom model API' }));
   fireEvent.change(within(dialog).getByLabelText('Provider ID'), { target: { value: name.toLowerCase() } });
   fireEvent.change(within(dialog).getByLabelText('Display name'), { target: { value: name } });
   fireEvent.change(within(dialog).getByLabelText('Base URL'), { target: { value: baseUrl } });
@@ -1217,6 +1236,7 @@ function mockProvidersApi(
     const body = parseBody(init?.body);
     requests.push({ url, method, body });
 
+    if (url.endsWith('/llm_provider_presets') && method === 'GET') return jsonResponse({ providers: [] });
     if (url.endsWith('/llm_provider') && method === 'GET')
       return organization ? jsonResponse(organization) : jsonResponse({}, 404);
     if (url.endsWith('/llm_provider') && method === 'PUT') {

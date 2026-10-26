@@ -1,4 +1,5 @@
 import type { FileMetadataApiResponse, SessionEventListEntry, SessionResourceApiResponse } from '../types';
+import { hasWallClockMs } from './sessionTraceModel';
 
 export type SessionOutputFile = FileMetadataApiResponse & { path?: string };
 
@@ -54,7 +55,7 @@ export function sessionMessageOutputFiles(
     const outputs = files.filter((file) => {
       const created = Date.parse(file.created_at);
       const mentioned = file.path && referencedPaths.includes(sessionOutputPath(file.path));
-      return mentioned || (created >= start && created < next);
+      return mentioned || (hasWallClockMs(start) && created >= start && created < next);
     });
     if (outputs.length) result.set(final.id, outputs);
   });

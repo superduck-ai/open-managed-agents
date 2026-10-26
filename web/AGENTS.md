@@ -55,10 +55,10 @@
 
 ## UI 与设计
 
-- 默认视觉风格采用 shadcn `new-york`：紧凑控件、克制边框、语义化令牌、常规圆角、清晰焦点环，以及完整的明暗主题对齐。
-- 不要再严格遵循 Vercel/Geist 的 `design.md`；现在以 `web/design.md` 和 `web/design.dark.md` 记录 shadcn 令牌方向。
+- 修改视觉、布局、主题令牌、共享控件外观、动效或页面样式前，先阅读 `docs/design/fe/design-system.md`，按其中的共享令牌与组件规则实现；本文件只约定技术栈与实现边界。
+- 默认视觉风格采用 shadcn `new-york`：紧凑控件、克制边框、语义化令牌、常规圆角、清晰焦点环，以及完整的明暗主题对齐；并通过共享语义令牌适配 design-system。
 - 从一开始就构建正常可用的深色与浅色主题。
-- 使用 shadcn 风格的语义令牌，例如 `background`、`foreground`、`card`、`popover`、`primary`、`secondary`、`muted`、`accent`、`destructive`、`border`、`input` 和 `ring`。
+- 使用语义令牌，例如 `background`、`foreground`、`card`、`popover`、`primary`、`secondary`、`muted`、`accent`、`destructive`、`border`、`input` 和 `ring`。
 - 不要新增 `--oma-*` 兼容别名。新的共享 UI 应优先使用 shadcn 令牌类，如 `bg-background`、`text-foreground` 和 `border-border`；迁移时应连同使用这些旧别名的代码一起移除。
 - 不要做营销落地页。登录后的首屏应该是真实控制台。
 - 常见工具按钮优先使用图标。

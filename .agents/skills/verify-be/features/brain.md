@@ -17,7 +17,7 @@ Doctor 检查 Brain binary 的可执行性并记录 SHA-256；沙箱镜像必须
 `brain_fencing` 使用 CCRv2 worker/register 验证跨租户拒绝和领取实例冲突，使用 sandbox/mcp 验证旧 epoch 凭据拒绝。
 `brain_roundtrip` 同时启动两个 dsh 节点，实际消费 JetStream，核对公开 SSE preview、最终消息、
 历史及单次模型请求。固定上游包含 thinking 和文本；SSE 与历史都必须只出现一次
-`span.model_request_start → agent.thinking → agent.message → span.model_request_end`，且对应事件 ID 一致。
+`span.model_request_start → agent.thinking → agent.message → span.model_request_end`，且对应事件 ID 一致；thinking 仅保留状态，不得包含正文。
 `brain_mcp_loop` 让真实原生循环请求 sandbox MCP Write，核对沙箱文件字节及下一次模型请求中的
 工具结果。上游模型请求必须携带 `anthropic-version: 2023-06-01`，并且工具列表严格为
 `Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`web_search`、`web_fetch` 以及 dsh 内置的 `archive_agent`、`list_agents`、`send_to_agent`。
@@ -53,3 +53,13 @@ MCP 请求被拒绝以及 CCRv2 私有 dsh_log 事件保存的原生模型历史
 新会话解析 latest 并读到新版本，形成 `brain_skills_snapshot`；公开删除与 Work 停止、
 run-owned 节点和容器清理形成 `brain_skills_cleanup`。
 上游模型脚本决定工具选择，因此此场景验证目录传递和加载路径，不验证真实模型的 Skill 选择能力。
+
+## 压缩通知与恢复
+
+`chat doctor brain-compaction` / `chat brain-compaction` 使用真实 DSH 可执行文件、公开 API、Runner、PostgreSQL、Redis、JetStream、MinIO 和沙箱 MCP。上游模型仍由 Go HTTP 服务提供固定响应，不验证真实摘要质量。
+
+根会话与预定义子 Agent 分别运行：模型目录固定测试窗口 128000、输出上限 8192，先用长用户输入形成已提交历史，再在下一轮触发原生压力摘要，所有实际模型请求的输出预算必须不超过模型上限。子 Agent 场景的根模型使用大窗口以验证通知隔离；子实例通过真实 Write 写入文件并核对字节。
+
+必需阶段为 `root_compaction_notified`、`root_compaction_recovered`、`child_mcp_verified`、`child_compaction_notified`、`child_compaction_recovered`。通知必须在公开 SSE 和历史中使用相同 ID，携带正的压缩前压力；原生 start/summary/end 必须已进入对应前台或子线程私有日志。随后 SIGKILL Brain，投递待执行消息，等待真实租约失效后启动 replacement，验证 epoch 增长、摘要标记和任务事实仍进入模型、原子线程继续执行，且无额外摘要或重复通知。
+
+此场景不故障注入通知保存/发布失败，不验证崩溃发生在摘要中途、真实模型质量、云端分配或性能。发布失败重试由 Brain 单测覆盖。每次运行保持源码不变并检查进程、容器、volume 和临时配置清理。

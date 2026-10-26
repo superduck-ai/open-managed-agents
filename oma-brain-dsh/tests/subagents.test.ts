@@ -161,12 +161,15 @@ test("predefined specialist uses its own prompt, model and restricted tools", as
   const f = await fixture(b);
   b.modelScript = [call("send_to_agent", { agent_name: "reviewer", message: "Review the code" }, "delegate"), textEvents("review report"), textEvents("done")];
   await f.session.receive("specialist", { content: "Review" });
+  expect(f.session.runtime.config.subagents?.agents).toEqual([{
+    name: "reviewer", description: "Read-only reviewer", systemPrompt: "Review only", model: "review-model", tools: ["Read", "Grep"],
+  }]);
+  expect(f.session.subagents.threads?.[0]?.id).toMatch(/^sthr_/);
   const child = b.requests[1]!;
   expect(child.model).toBe("review-model");
   const created = [...b.publicLog.values()].find((event) => event.type === "session.thread_created");
   expect(created?.agent).toEqual(agentSnapshot);
   expect(f.session.subagents.threads?.[0]?.inline).toBe(false);
-  expect(f.session.subagents.threads?.[0]?.agentSnapshot?.id).toBe("agent_reviewer");
   expect(modelSystemText(child)).toContain("Review only");
   expect(child.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read"]);
   await expect(f.session.subagents.send({ name: "inline", system_prompt: "test", message: "test" }, new AbortController().signal)).rejects.toThrow("Inline agents");

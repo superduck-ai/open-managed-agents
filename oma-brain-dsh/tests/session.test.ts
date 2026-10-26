@@ -469,6 +469,7 @@ describe("original dsh loop over CCRv2", () => {
         expect(finished).toBe(false);
         expect(session.abort.signal.aborted).toBe(false);
         expect(b.processed).toEqual([]);
+        if (stage === "result" || stage === "publication") await eventually(() => b.requests.length === 2);
         expect(b.requests).toHaveLength(stage === "accepted" || stage === "dispatch" ? 1 : 2);
         expect(b.executions).toHaveLength(stage === "accepted" || stage === "dispatch" ? 0 : 1);
         resume.resolve();

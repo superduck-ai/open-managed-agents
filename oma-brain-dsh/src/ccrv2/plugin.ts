@@ -5,8 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CcrReplication } from "./persistence.ts";
 import { CcrSession } from "./session.ts";
-import type { CcrBackend } from "./contracts.ts";
-import type { SessionRuntimeConfig } from "../runtime/contracts.ts";
+import type { CcrBackend, CcrSessionConfig } from "./contracts.ts";
 import type { CcrHeartbeatOptions, CcrHeartbeatHealth, CcrLeaseCheck, CcrLeaseFailure } from "./heartbeat.ts";
 import type { CcrActivityOptions } from "./activity.ts";
 
@@ -33,6 +32,7 @@ export class CcrBridge extends Service {
   static inject = [
     "attachments",
     "llm",
+    "tokenMeter",
     "sessions",
     "sessionPersistence",
     "ccrReplication",
@@ -51,7 +51,7 @@ export class CcrBridge extends Service {
     });
   }
 
-  createSession(config: SessionRuntimeConfig): CcrSession {
+  createSession(config: CcrSessionConfig): CcrSession {
     if (this.sessions.has(config.id))
       throw new Error("CCRv2 session already exists in this bridge");
     const heartbeat = this.config.heartbeat;

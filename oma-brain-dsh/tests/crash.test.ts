@@ -10,6 +10,51 @@ import { createOmaSession } from "../src/oma-session.ts";
 import type { CcrSession } from "../src/ccrv2/index.ts";
 import { Backend, eventually, toolEvents, textEvents } from "./backend.ts";
 
+test("SIGKILL after reply replication recovers the unpublished reply once without another model call", async () => {
+  const backend = new Backend();
+  backend.onModel = async () => new Response(textEvents("reply saved before publication")
+    .map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""),
+    { headers: { "Content-Type": "text/event-stream", "Request-Id": "sevt_reply_request" } });
+  backend.failPublicType = "agent.message";
+  await backend.ready;
+  const child = spawn(process.execPath, ["tests/crash-worker.ts"], {
+    env: { ...process.env, TEST_API_URL: backend.url, TEST_ASSIGNMENT: JSON.stringify(backend.a) },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const exited = once(child, "exit");
+  let ctx: Context | undefined;
+  let resumed: CcrSession | undefined;
+  try {
+    await eventually(() => backend.failedCcrWrites > 0 && [...backend.privateLog.values()]
+      .some(event => event.type === "dsh_log" && event.data.type === "assistant/message"));
+    expect([...backend.publicLog.values()].filter(event => event.type === "agent.message")).toHaveLength(0);
+    expect(backend.processed).toEqual([]);
+    child.kill("SIGKILL");
+    await exited;
+    backend.failPublicType = undefined;
+    backend.a.worker_epoch++;
+    ctx = new Context();
+    const api = new OmaApi(backend.url);
+    await mountOma(ctx, api);
+    resumed = createOmaSession(ctx, api, backend.a);
+    await resumed.open();
+    const replies = [...backend.publicLog.values()].filter(event => event.type === "agent.message");
+    expect(replies).toHaveLength(1);
+    expect(JSON.stringify(replies[0]!.content)).toContain("reply saved before publication");
+    expect(replies[0]!.model_request_start_id).toBeTruthy();
+    await resumed.receive("crash_input", { message: { content: "execute a command" } });
+    expect(backend.requests).toHaveLength(1);
+    expect([...backend.publicLog.values()].filter(event => event.type === "agent.message").map(event => event.uuid)).toEqual([replies[0]!.uuid]);
+  } finally {
+    child.kill("SIGKILL");
+    await exited;
+    backend.failPublicType = undefined;
+    await resumed?.close();
+    await ctx?.fiber.dispose();
+    backend.stop();
+  }
+});
+
 test("SIGKILL during sandbox execution restores logs, never replays and continues on new input", async () => {
   const backend = new Backend();
   backend.modelScript = [toolEvents()];

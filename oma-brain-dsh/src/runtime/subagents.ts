@@ -127,7 +127,7 @@ export class Subagents {
         throw new Error("Predefined agents cannot override name or system prompt");
       if (!definition && (config.inlineAgents === false || !args.name || typeof args.system_prompt !== "string"))
         throw new Error("Inline agents require name and system_prompt and must be enabled");
-      thread = { id: `sthr_${crypto.randomUUID()}`, inline: !definition, agentSnapshot: definition?.agentSnapshot ? structuredClone(definition.agentSnapshot) : undefined,
+      thread = { id: this.bridge.createThreadId?.() ?? crypto.randomUUID(), inline: !definition,
         name: definition?.name ?? args.name,
         systemPrompt: definition?.systemPrompt ?? args.system_prompt,
         model: definition?.model ?? this.parent.config.model,
@@ -163,8 +163,8 @@ export class Subagents {
     let completed = false;
     // Report text is accumulated only from this child's completed assistant messages.
     const previous = child.hooks.onEvent;
-    child.hooks.onEvent = (event) => {
-      previous(event);
+    child.hooks.onEvent = (event, session) => {
+      previous(event, session);
       if (event.type === "assistant/message") {
         const data = event.data as Payload;
         const text = data.message.content.filter((block: Payload) => block.type === "text")
@@ -213,8 +213,8 @@ export class Subagents {
         ...(thread.tools ? { toolFilter: { allow: thread.tools } } : {}),
       }),
       toolPermissions: { ...config.toolPermissions },
-      refreshToolPermissions: config.refreshToolPermissions
-        ? (signal) => config.refreshToolPermissions!(signal, thread.id) : undefined,
+      refreshSessionContext: config.refreshSessionContext
+        ? (signal) => config.refreshSessionContext!(signal, thread.id) : undefined,
       externalMcpConfig: mcp ? mcp.config : config.externalMcpConfig,
       externalMcpFetch: mcp?.fetcher ?? config.externalMcpFetch,
       subagents: undefined, bindThread: undefined, setup: undefined,
@@ -222,8 +222,11 @@ export class Subagents {
         ?? `${config.systemPrompt}\n\nYou are subagent ${thread.name}. Your conversation is isolated. Delegation tools are unavailable. Report your findings to the parent.\nSpecialist instructions:\n${thread.systemPrompt}`,
     }, {
       onExternalMcpAuthenticationFailure: (serverName, phase) => this.parent.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase) ?? Promise.resolve(),
-      onContextCompacted: tokens => this.bridge.onContextCompacted?.(thread.id, tokens) ?? Promise.resolve(),
-      onEvent: (event) => this.bridge.onEvent(thread.id, event),
+      beforeRequest: async () => { await child.flushLog(); await this.bridge.beforeRequest?.(); },
+      onDiagnostic: diagnostic => this.bridge.onDiagnostic?.(thread.id, diagnostic),
+      onOpen: session => this.bridge.onOpen?.(session) ?? Promise.resolve(),
+      afterFlushLog: session => this.bridge.afterFlushLog?.(session) ?? Promise.resolve(),
+      onEvent: (event, session) => this.bridge.onEvent(thread.id, event, session),
       onStream: (frame) => this.bridge.onStream(thread.id, frame),
       stop: () => this.parent.hooks.stop(),
     }, bridge, this.parent);

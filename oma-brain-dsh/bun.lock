@@ -13,6 +13,10 @@
         "@deepseek-ai/dsh-agent-loop": "0.2.1-alpha.2",
         "@deepseek-ai/dsh-attachment": "0.2.1-alpha.2",
         "@deepseek-ai/dsh-attachment-local": "0.2.1-alpha.2",
+        "@deepseek-ai/dsh-compaction": "0.2.1-alpha.2",
+        "@deepseek-ai/dsh-compaction-basic": "0.2.1-alpha.2",
+        "@deepseek-ai/dsh-compaction-image-offload": "0.2.1-alpha.2",
+        "@deepseek-ai/dsh-compaction-tool-result-pruner": "0.2.1-alpha.2",
         "@deepseek-ai/dsh-llm": "0.2.1-alpha.2",
         "@deepseek-ai/dsh-session": "0.2.1-alpha.2",
         "@deepseek-ai/dsh-session-persistence": "0.2.1-alpha.2",
@@ -21,6 +25,7 @@
         "@deepseek-ai/dsh-subagent": "0.2.1-alpha.2",
         "@deepseek-ai/dsh-system-prompt": "0.2.1-alpha.2",
         "@deepseek-ai/dsh-time-context": "0.2.1-alpha.2",
+        "@deepseek-ai/dsh-token-meter": "0.2.1-alpha.2",
         "@deepseek-ai/dsh-tools": "0.2.1-alpha.2",
         "@modelcontextprotocol/client": "2.2.0",
       },
@@ -59,7 +64,11 @@
 
     "@deepseek-ai/dsh-compaction": ["@deepseek-ai/dsh-compaction@0.2.1-alpha.2", "", { "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5-alpha.1", "@deepseek-ai/dsh-brand": "0.2.1-alpha.2", "@deepseek-ai/dsh-commands": "0.2.1-alpha.2", "@deepseek-ai/dsh-llm": "0.2.1-alpha.2", "@deepseek-ai/dsh-session": "0.2.1-alpha.2" } }, "sha512-yK9e9Xjtsh5kYsJQKB01pTEG2e02LB9B9QyfDVBU6P0GQCCxpMQ1hJ0uXASwH1dp395zT6gvvIiRQcyK7pMjRg=="],
 
+    "@deepseek-ai/dsh-compaction-basic": ["@deepseek-ai/dsh-compaction-basic@0.2.1-alpha.2", "", { "dependencies": { "@deepseek-ai/dsh-util-values": "0.2.1-alpha.2", "@deepseek-ai/schemastery": "~3.18.5-alpha.1" }, "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5-alpha.1", "@deepseek-ai/dsh-agent": "0.2.1-alpha.2", "@deepseek-ai/dsh-commands": "0.2.1-alpha.2", "@deepseek-ai/dsh-compaction": "0.2.1-alpha.2", "@deepseek-ai/dsh-compaction-tool-result-pruner": "0.2.1-alpha.2", "@deepseek-ai/dsh-llm": "0.2.1-alpha.2", "@deepseek-ai/dsh-session": "0.2.1-alpha.2", "@deepseek-ai/dsh-token-meter": "0.2.1-alpha.2" }, "optionalPeers": ["@deepseek-ai/dsh-compaction-tool-result-pruner"] }, "sha512-fu1wX3UTLbOrJBOU77blejvjVIvvZcYidabOIWFZ2uqZ3n5XcZy6BbMagfVv1RxOfA+lAhW4UDq4FZExe8778w=="],
+
     "@deepseek-ai/dsh-compaction-image-offload": ["@deepseek-ai/dsh-compaction-image-offload@0.2.1-alpha.2", "", { "dependencies": { "@deepseek-ai/dsh-util-values": "0.2.1-alpha.2" }, "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5-alpha.1", "@deepseek-ai/dsh-agent": "0.2.1-alpha.2", "@deepseek-ai/dsh-compaction": "0.2.1-alpha.2", "@deepseek-ai/dsh-llm": "0.2.1-alpha.2", "@deepseek-ai/dsh-session": "0.2.1-alpha.2" } }, "sha512-D1piUiJPgJ0Zph5uWp/DaDZqHOjtl2ABlcDxQ/edwc6XusPGs5XQzmUxK/t5ahMfhHEghjk7UImc6+rwi7AUHw=="],
+
+    "@deepseek-ai/dsh-compaction-tool-result-pruner": ["@deepseek-ai/dsh-compaction-tool-result-pruner@0.2.1-alpha.2", "", { "dependencies": { "@deepseek-ai/dsh-util-values": "0.2.1-alpha.2", "@deepseek-ai/schemastery": "~3.18.5-alpha.1" }, "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5-alpha.1", "@deepseek-ai/dsh-compaction": "0.2.1-alpha.2", "@deepseek-ai/dsh-llm": "0.2.1-alpha.2", "@deepseek-ai/dsh-session": "0.2.1-alpha.2", "@deepseek-ai/dsh-token-meter": "0.2.1-alpha.2" } }, "sha512-/eKKQCeR1m6K6zcSTK6IY+L+rS/s+JH9p+IiVEuj51cciFGBoWWvEDXCZcsKOd9H88bVfN64mPQ7z6ogXiKsIA=="],
 
     "@deepseek-ai/dsh-fs": ["@deepseek-ai/dsh-fs@0.2.1-alpha.2", "", { "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5-alpha.1", "@deepseek-ai/dsh-brand": "0.2.1-alpha.2", "@deepseek-ai/dsh-llm": "0.2.1-alpha.2", "@deepseek-ai/dsh-sandbox": "0.2.1-alpha.2" } }, "sha512-szwTA36cWXAn/q1XhhFmyactYuGWGedHmfiBAWZPZnMf01TbSRQojpddhWIZBwjq83pf0wefaWVWrTgjTcAK7Q=="],
 
@@ -68,6 +77,8 @@
     "@deepseek-ai/dsh-lazy-require": ["@deepseek-ai/dsh-lazy-require@0.2.1-alpha.2", "", { "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5-alpha.1" } }, "sha512-mb5oHf/PQvnklOMT8NzPkxEurdRnu9uWdHJ3xssu7US5sjF9HZ99FVsx7NQY5nGRG3070F+9+/UKprjNiLs1Fw=="],
 
     "@deepseek-ai/dsh-llm": ["@deepseek-ai/dsh-llm@0.2.1-alpha.2", "", { "dependencies": { "@deepseek-ai/dsh-brand": "0.2.1-alpha.2", "@deepseek-ai/dsh-timeout": "0.2.1-alpha.2", "@deepseek-ai/dsh-typert-protocol": "0.2.1-alpha.2", "@deepseek-ai/dsh-util-crypto": "0.2.1-alpha.2", "@deepseek-ai/dsh-util-values": "0.2.1-alpha.2", "@deepseek-ai/schemastery": "~3.18.5-alpha.1", "zod": "^4.4.3" }, "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5-alpha.1" } }, "sha512-+pUKWsWBZorW3nQLGAC2qEQudFOscKINR0njoPhhFhJsVPuAqLUYF3bf6G4evbMKUF1+Uw901CFHOfwLluljNQ=="],
+
+    "@deepseek-ai/dsh-llm-retry": ["@deepseek-ai/dsh-llm-retry@0.2.1-alpha.2", "", { "dependencies": { "@deepseek-ai/schemastery": "~3.18.5-alpha.1", "zod": "^4.4.3" }, "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5-alpha.1", "@deepseek-ai/dsh-agent": "0.2.1-alpha.2", "@deepseek-ai/dsh-brand": "0.2.1-alpha.2", "@deepseek-ai/dsh-llm": "0.2.1-alpha.2", "@deepseek-ai/dsh-session": "0.2.1-alpha.2", "@deepseek-ai/dsh-session-projection": "0.2.1-alpha.2", "@deepseek-ai/dsh-timeout": "0.2.1-alpha.2" } }, "sha512-P5YY6oMJNV0YzJxrx7TvPKe4oI2ypYz38ectDgAefGH4kiaNSkANWn7J9xr0qhzUTZFHJzHD9ysX9YvEgVdAqg=="],
 
     "@deepseek-ai/dsh-ptc-runtime": ["@deepseek-ai/dsh-ptc-runtime@0.2.1-alpha.2", "", { "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5-alpha.1", "@deepseek-ai/dsh-sandbox": "0.2.1-alpha.2" } }, "sha512-Vd41OzP+KlE4NOi34xcDSbhm/vAMz1Vjy+60jEzX0Vf/pmvg2LNTu7nQPwf81kZOcgtHUOL2ipuRbU6Ciy32yA=="],
 
@@ -104,6 +115,8 @@
     "@deepseek-ai/dsh-time-context": ["@deepseek-ai/dsh-time-context@0.2.1-alpha.2", "", { "dependencies": { "@deepseek-ai/dsh-util-values": "0.2.1-alpha.2", "@deepseek-ai/schemastery": "~3.18.5-alpha.1", "zod": "^4.4.3" }, "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5-alpha.1", "@deepseek-ai/dsh-agent": "0.2.1-alpha.2", "@deepseek-ai/dsh-llm": "0.2.1-alpha.2", "@deepseek-ai/dsh-session": "0.2.1-alpha.2", "@deepseek-ai/dsh-session-projection": "0.2.1-alpha.2" } }, "sha512-97ddm4DddWP9FHlobm9bKD9G3rjJcJ7JYCU4DDn3LN9C8PIWXmqea6/tla93kgIIFrKKDIr4h4ExmNnWBtPkBg=="],
 
     "@deepseek-ai/dsh-timeout": ["@deepseek-ai/dsh-timeout@0.2.1-alpha.2", "", { "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5-alpha.1" } }, "sha512-hgII55C+B2MWnMwP8Nv1BTCh+RbNP14EhzwMfOiwBWK08PdVHi2gdB7ZtbRprps5s2fO2gVXaclgXpnLX05hgw=="],
+
+    "@deepseek-ai/dsh-token-meter": ["@deepseek-ai/dsh-token-meter@0.2.1-alpha.2", "", { "dependencies": { "@deepseek-ai/dsh-util-values": "0.2.1-alpha.2", "@deepseek-ai/schemastery": "~3.18.5-alpha.1", "zod": "^4.4.3" }, "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5-alpha.1", "@deepseek-ai/dsh-compaction": "0.2.1-alpha.2", "@deepseek-ai/dsh-compaction-image-offload": "0.2.1-alpha.2", "@deepseek-ai/dsh-llm": "0.2.1-alpha.2", "@deepseek-ai/dsh-llm-retry": "0.2.1-alpha.2", "@deepseek-ai/dsh-session": "0.2.1-alpha.2", "@deepseek-ai/dsh-session-projection": "0.2.1-alpha.2" } }, "sha512-t05Ra+bnjvvXye6shSslKP/IBs1YpBcicuWMJHXnLv32FJBrQdGEmQA2WsXuE7E0f7TRpYsjoVWU0RGC8fzFRg=="],
 
     "@deepseek-ai/dsh-tools": ["@deepseek-ai/dsh-tools@0.2.1-alpha.2", "", { "dependencies": { "@deepseek-ai/dsh-brand": "0.2.1-alpha.2", "@deepseek-ai/dsh-util-values": "0.2.1-alpha.2", "@deepseek-ai/schemastery": "~3.18.5-alpha.1" }, "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5-alpha.1", "@deepseek-ai/dsh-agent": "0.2.1-alpha.2", "@deepseek-ai/dsh-llm": "0.2.1-alpha.2", "@deepseek-ai/dsh-ptc-runtime": "0.2.1-alpha.2", "@deepseek-ai/dsh-sandbox": "0.2.1-alpha.2", "@deepseek-ai/dsh-sandbox-policy": "0.2.1-alpha.2", "@deepseek-ai/dsh-scope": "0.2.1-alpha.2", "@deepseek-ai/dsh-session": "0.2.1-alpha.2", "@deepseek-ai/dsh-system-prompt": "0.2.1-alpha.2", "@deepseek-ai/dsh-user-approval": "0.2.1-alpha.2", "@deepseek-ai/dsh-working-directory": "0.2.1-alpha.2" } }, "sha512-IbWShKABOi3ezvICVZsrG7w/mdQBmkHn0AGM4CkkYJxK38OIUELGiFa/JE6PEYO71oZQgm40xZM6kknTbss6vg=="],
 

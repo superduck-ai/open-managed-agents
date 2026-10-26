@@ -1,4 +1,5 @@
-import type { SubagentConfig, ToolPermissions } from "./runtime/contracts.ts";
+import type { CcrSubagentConfig } from "./ccrv2/contracts.ts";
+import type { ToolPermissions } from "./runtime/contracts.ts";
 import { sandboxToolDefinitions } from "./sandbox-tools/definitions.ts";
 import { sandboxEndpoint } from "./oma-sandbox/config.ts";
 import { webToolDefinitions } from "./web-tools/definitions.ts";
@@ -25,7 +26,7 @@ export interface Assignment {
     work_dir: string;
     system: string;
     tools: string[];
-    subagents?: SubagentConfig;
+    subagents?: CcrSubagentConfig;
     tool_permissions?: ToolPermissions;
     environment_prompt?: string;
     memory_catalog_prompt?: string;

@@ -299,3 +299,25 @@ test("root model requests expose only the session's enabled sandbox tools", asyn
     } finally { await f.close(); }
   }
 });
+
+test("sandbox Bash projection preserves model and public tool output", async () => {
+  const f = await fixture(["Bash"]);
+  const stdout = "exact stdout\n";
+  const metadata = { stdout, stderr: "", exit_code: 0, status: "completed", timed_out: false,
+    cancelled: false, stdout_truncated: false, stderr_truncated: false };
+  f.b.onTool = async () => ({ structuredContent: metadata, content: [
+    { type: "text", text: stdout }, { type: "text", text: JSON.stringify(metadata) },
+  ] });
+  try {
+    await f.session.open();
+    f.b.modelScript = [toolEvents("printf exact", "projected-bash"), textEvents("done")];
+    await f.session.receive("projection", { content: "Run Bash" });
+    const request = JSON.stringify(f.b.requests[1]!.messages);
+    expect(request).toContain("exact stdout");
+    expect(request).not.toContain("exit_code");
+    const results = [...f.b.publicLog.values()].flatMap(event => event.message?.content ?? [])
+      .filter(block => block.type === "tool_result" && block.tool_use_id === "projected-bash");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.content).toEqual([{ type: "text", text: stdout }]);
+  } finally { await f.close(); }
+});

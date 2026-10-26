@@ -13,7 +13,7 @@ CLI 实现在 `cmd/verify-be`，Skill 中的 shell 入口只负责构建和执�
 不修改生产 API、数据库 schema 或状态机。
 
 除 `chat.public` 和 `chat.upstream-errors` 外，Session/CodeSession 通过现有 liveworker 夹具准备并 activation。
-隔离后端关闭后台 Runner，避免竞争 Worker。上述两个公开场景通过公开 API 创建 Session，
+隔离后端关闭后台 Runner，避免竞争 Worker。固定模型夹具首次准备时要求工作区 provider 目录为空；同一测试进程只有在已记录的本次创建 ID 与目录完全匹配时才可复用。发现其他已有 provider 时立即停止，不因名称相同而复用，也不更新或删除预存配置。夹具只清理本次创建的 provider。该边界使用进程内 HTTP fake 测试，不需要真实 Worker 或外部存储。上述两个公开场景通过公开 API 创建 Session，
 由实际 Runner 驱动本地 Docker Provider 分配沙箱、启动真实文件系统挂载和 environment-manager。
 本版不验证云平台分配 API、自动云端故障检测、浏览器渲染或真实模型决策。
 

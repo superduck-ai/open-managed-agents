@@ -20,18 +20,19 @@ export function omaRoute(api: OmaApi, options: GenerateOptions): AiSdkRoute {
   const sessionId = modelSessionID(options);
   const assignment = api.assignment(api.modelSessions.get(sessionId) ?? sessionId);
   const output = assignment.launch.models?.[options.model]?.max_output_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+  const maxOutputTokensLimit = options.purpose === "compaction" ? output : undefined;
   const backend = modelBackend(assignment, options.model);
   const root = `${api.base.replace(/\/$/, "")}/v1`;
   const agentID = sessionId === assignment.session_id ? undefined : sessionId;
   if (backend === "messages") {
     const fetcher = proxyFetch(api, `${root}/messages`, agentID);
     return { model: createAnthropic({ baseURL: root, authToken: assignment.model_token, fetch: fetcher })(options.model),
-      replayFormat: "oma-messages-v1", signedReasoning: true, maxOutputTokens: output,
+      replayFormat: "oma-messages-v1", signedReasoning: true, maxOutputTokens: output, maxOutputTokensLimit,
       providerOptions: { anthropic: { toolStreaming: false } } };
   }
   const fetcher = proxyFetch(api, `${root}/chat/completions`, agentID, normalizeChatReasoning);
   return { model: createOpenAICompatible({ name: "oma", baseURL: root, apiKey: assignment.model_token, includeUsage: true,
-    fetch: fetcher, transformRequestBody: chatRequestBody })(options.model), maxOutputTokens: output, replayFormat: "oma-chat-completions-v1" };
+    fetch: fetcher, transformRequestBody: chatRequestBody })(options.model), maxOutputTokens: output, maxOutputTokensLimit, replayFormat: "oma-chat-completions-v1" };
 }
 
 function modelBackend(assignment: Assignment, model: string): ModelBackend {

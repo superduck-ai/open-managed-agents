@@ -41,6 +41,14 @@ func TestInvitationMapperBindings(t *testing.T) {
 		}
 		assertMapperTestExecution(t, executor, "InvitationMapper.ListByEmail", yourbatis.StatementSelect, []any{email}, "i.status = 'pending'", "i.expires_at > clock_timestamp()", "ORDER BY i.invited_at DESC, i.uuid DESC")
 	})
+	t.Run("先锁定邀请所属组织", func(t *testing.T) {
+		executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}, rows: [][]driver.Value{{org}}})
+		got, err := NewInvitationMapper(executor).LockOrganizationByIDAndEmail(t.Context(), id, email)
+		if err != nil || got != org {
+			t.Fatalf("组织 = %q，错误 = %v", got, err)
+		}
+		assertMapperTestExecution(t, executor, "InvitationMapper.LockOrganizationByIDAndEmail", yourbatis.StatementSelect, []any{id, email}, "i.organization_uuid = o.uuid", "FOR UPDATE OF o")
+	})
 	t.Run("成员查询", func(t *testing.T) {
 		executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"id", "role"}, rows: [][]driver.Value{{"user_test", "admin"}}})
 		member, found, err := NewInvitationMapper(executor).FindActiveMember(t.Context(), org, email)
@@ -64,4 +72,35 @@ func TestInvitationMapperBindings(t *testing.T) {
 		}
 		assertMapperTestExecution(t, executor, "InvitationMapper.UpdateStatus", yourbatis.StatementUpdate, []any{"declined", org, id}, "organization_uuid = $2 AND external_id = $3", "status = 'pending'", "expires_at > clock_timestamp()")
 	})
+}
+
+func TestInvitationDeliveryMapperBindings(t *testing.T) {
+	snapshot := InvitationDelivery{InvitationUUID: "invite", OrganizationUUID: "org", Recipient: "a@example.com", InvitedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)}
+	for _, finish := range []bool{false, true} {
+		t.Run(map[bool]string{false: "开始发送", true: "回写结果"}[finish], func(t *testing.T) {
+			call := func(m InvitationMapper) error {
+				if finish {
+					return m.FinishDelivery(t.Context(), snapshot, "sent")
+				}
+				_, err := m.StartDelivery(t.Context(), snapshot)
+				return err
+			}
+			failure := errors.New("更新失败")
+			executor := newMapperTestExecutor(t, mapperTestResponse{execErr: failure})
+			if err := call(NewInvitationMapper(executor)); !errors.Is(err, failure) {
+				t.Fatal(err)
+			}
+			executor = newMapperTestExecutor(t, mapperTestResponse{rowsAffected: 1})
+			if err := call(NewInvitationMapper(executor)); err != nil {
+				t.Fatal(err)
+			}
+			name := "StartDelivery"
+			args := []any{snapshot.InvitationUUID, snapshot.OrganizationUUID, snapshot.Recipient, snapshot.InvitedAt, snapshot.ExpiresAt}
+			if finish {
+				name = "FinishDelivery"
+				args = append([]any{"sent"}, args...)
+			}
+			assertMapperTestExecution(t, executor, "InvitationMapper."+name, yourbatis.StatementUpdate, args, "UPDATE organization_invites SET email_delivery_status", "AND status = 'pending' AND deleted_at IS NULL AND expires_at > clock_timestamp()")
+		})
+	}
 }

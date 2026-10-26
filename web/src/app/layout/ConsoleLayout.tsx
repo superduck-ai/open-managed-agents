@@ -2,6 +2,7 @@ import { AppearanceMenuRow } from './AppearanceMenuRow';
 import { BrandLogo } from '@/shared/brand/BrandLogo';
 import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
 import { OrganizationMenu } from '../../features/organizations/OrganizationMenu';
+import { PlatformAdminMenuItem } from '../../features/platform-admin/PlatformAdminMenuItem';
 import { useScopeConfirmation } from '../../features/organizations/useScopeConfirmation';
 import { useOrganizations } from '../../shared/organizations/context';
 import {
@@ -859,6 +860,7 @@ export function AccountMenu({
             </DropdownMenuGroup>
 
             <OrganizationMenu />
+            <PlatformAdminMenuItem onNavigate={handleMenuNavigation} />
 
             <DropdownMenuSeparator />
 

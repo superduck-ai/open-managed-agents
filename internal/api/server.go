@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"github.com/riverqueue/river"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -54,6 +56,7 @@ import (
 )
 
 type Server struct {
+	invitationJobs       *river.Client[*sql.Tx]
 	workspaceAccess      *workspaceaccess.Service
 	cfg                  config.Config
 	db                   *db.DB
@@ -91,6 +94,7 @@ type Server struct {
 // ObjectStore 由应用启动层从共享 storage.Client 派生，绑定默认 bucket，供对象资源与 Filestore 共用。
 // Logger 是进程根 logger；nil 时统一回落到 slog.Default，生产组装应显式传入。
 type ServerDeps struct {
+	InvitationJobs         *river.Client[*sql.Tx]
 	SandboxProvisioner     codesessions.SandboxProvisioner
 	Prebuilds              *environments.Prebuilds
 	SandboxLifecycle       *environments.SandboxLifecycle
@@ -162,6 +166,7 @@ func NewServer(deps ServerDeps) *Server {
 		oauthRefreshLease = lease
 	}
 	s := &Server{
+		invitationJobs:       deps.InvitationJobs,
 		workspaceAccess:      workspaceaccess.New(deps.DB),
 		cfg:                  deps.Config,
 		db:                   deps.DB,
@@ -292,6 +297,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 	mcpCatalogHandler *mcpcatalogs.Handler,
 	mcpServerHandler *mcpservers.Handler,
 ) {
+	s.registerPlatformAdminRoutes(router)
 	router.Group(func(r chi.Router) {
 		r.Use(s.platformIdentityMiddleware)
 		r.Route("/api/invitations", func(r chi.Router) {
@@ -301,8 +307,9 @@ func (s *Server) registerPlatformConsoleRoutes(
 	router.Group(func(r chi.Router) {
 		r.Use(s.optionalPlatformAuthMiddleware)
 		platformapi.RegisterDirectoryRoutes(r)
-		platformapi.RegisterPlatformAccountRoutes(r, s.db)
-		platformapi.RegisterPlatformEmailLoginRoutes(r, s.db, s.platformAuth, s.platformStore)
+		s.registerPlatformAccountRoutes(r)
+		secureCookies := s.cfg.Env == config.EnvironmentProd || strings.HasPrefix(s.cfg.Auth.ConsoleURL, "https://")
+		platformapi.RegisterPlatformEmailLoginRoutes(r, s.db, s.platformAuth, s.platformStore, secureCookies)
 		platformapi.RegisterPlatformBillingRoutes(r)
 	})
 	router.Get("/oauth/vault/success", s.handlePlatformMCPVaultAuthCallback)

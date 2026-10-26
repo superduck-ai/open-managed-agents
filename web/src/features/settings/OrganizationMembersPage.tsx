@@ -33,7 +33,7 @@ import {
   DropdownMenuTrigger,
 } from '../../shared/ui/dropdown-menu';
 import { Label } from '../../shared/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
+import { RoleSelect } from '../../shared/permissions/RoleSelect';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { Textarea } from '../../shared/ui/textarea';
 import { Skeleton } from '../../shared/ui/skeleton';
@@ -44,12 +44,7 @@ import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { notifyInvitationDelivery } from './invitationDelivery';
 import { MembersAccessDenied } from './MembersAccessDenied';
 import { canManageMembers, canViewMembers } from '../../shared/permissions/members';
-import {
-  platformRoleDescription,
-  platformRoleLabel,
-  roleOptions,
-  type PlatformRole,
-} from '../../shared/permissions/roles';
+import { platformRoleLabel, roleOptions, type PlatformRole } from '../../shared/permissions/roles';
 import { MemberDirectoryFilters } from './MemberDirectoryFilters';
 import { OrganizationMemberRemoval } from './OrganizationMemberRemoval';
 import {
@@ -663,57 +658,6 @@ function InviteMembersDialog({
         </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function RoleSelect({
-  ariaLabel,
-  value,
-  disabled,
-  className,
-  contentClassName,
-  onChange,
-}: {
-  ariaLabel: string;
-  value: PlatformRole;
-  disabled?: boolean;
-  className?: string;
-  contentClassName?: string;
-  onChange: (value: PlatformRole) => void;
-}) {
-  const { msg } = useI18n();
-  const options = roleOptions.map((role) => ({
-    value: role.value,
-    label: platformRoleLabel(role.value, msg),
-    description: platformRoleDescription(role.value, msg),
-  }));
-  return (
-    <Select<PlatformRole>
-      value={value}
-      items={options.map((option) => ({ value: option.value, label: option.label }))}
-      disabled={disabled}
-      onValueChange={(nextValue) => {
-        if (nextValue !== null) {
-          onChange(nextValue);
-        }
-      }}
-    >
-      <SelectTrigger aria-label={ariaLabel} className={className}>
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent alignItemWithTrigger={false} className={contentClassName}>
-        {options.map((option) => (
-          <SelectItem key={option.value} value={option.value} label={option.label}>
-            <span className="block">
-              <span className="block leading-5">{option.label}</span>
-              {option.description ? (
-                <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">{option.description}</span>
-              ) : null}
-            </span>
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
   );
 }
 

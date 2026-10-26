@@ -76,6 +76,10 @@ func writeConsoleWorkspaceMemberError(w http.ResponseWriter, err error) {
 	}{Error: code, Message: message})
 }
 
+func platformAccessUnavailable(w http.ResponseWriter) {
+	writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform_access_unavailable", "message": "Could not load platform access."})
+}
+
 func writeUsageQueryError(w http.ResponseWriter, err error) {
 	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_usage_query", "message": err.Error()})
 }

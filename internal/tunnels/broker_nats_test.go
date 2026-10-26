@@ -79,6 +79,9 @@ func testNATSBroker(t *testing.T, cfg config.TunnelConfig) *Broker {
 
 func startTunnelNATS(t *testing.T, opts server.Options) *server.Server {
 	t.Helper()
+	if opts.JetStreamMaxStore == 0 {
+		opts.JetStreamMaxStore = 32 << 30
+	}
 	opts.Host, opts.Port, opts.JetStream, opts.StoreDir, opts.NoLog, opts.NoSigs = "127.0.0.1", -1, true, t.TempDir(), true, true
 	if opts.MaxPayload == 0 {
 		opts.MaxPayload = maxBrokerValueBytes

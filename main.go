@@ -24,9 +24,11 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/invitations"
 	"github.com/superduck-ai/open-managed-agents/internal/listeners"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/natsclient"
+	"github.com/superduck-ai/open-managed-agents/internal/platformadmin"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/pricing"
@@ -195,6 +197,7 @@ func run(logger *slog.Logger) error {
 	}
 	defer stopWebhookWorker()
 	workers := river.NewWorkers()
+	queues := jobQueues(workers, database, cfg, logger, platformAuthProvider.VerifiedLoginEnabled())
 	prebuilds := environments.NewPrebuilds(database, cfg, logger.With("component", "environment_prebuild"))
 	prebuilds.Register(workers)
 	deploymentStore := deployments.NewStore(database, logger.With("component", "deployments")).
@@ -208,13 +211,8 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("create transcript archive service: %w", err)
 	}
 	transcripts.Register(workers)
-	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers,
-		map[string]river.QueueConfig{
-			environments.PrebuildQueue:         {MaxWorkers: 4},
-			deploymentjobs.Queue:               {MaxWorkers: 10},
-			environments.SandboxLifecycleQueue: {MaxWorkers: 4},
-			transcriptretention.Queue:          {MaxWorkers: 2},
-		})
+
+	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers, queues)
 	if err != nil {
 		return fmt.Errorf("create River client: %w", err)
 	}
@@ -240,6 +238,7 @@ func run(logger *slog.Logger) error {
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
+			InvitationJobs:         jobClient,
 			Prebuilds:              prebuilds,
 			SandboxLifecycle:       lifecycle,
 			Config:                 cfg,
@@ -272,6 +271,20 @@ func run(logger *slog.Logger) error {
 	}
 
 	return serveHTTP(ctx, server, logger)
+}
+
+func jobQueues(workers *river.Workers, database *db.DB, cfg config.Config, logger *slog.Logger, invitationsEnabled bool) map[string]river.QueueConfig {
+	queues := map[string]river.QueueConfig{
+		environments.PrebuildQueue:         {MaxWorkers: 4},
+		deploymentjobs.Queue:               {MaxWorkers: 10},
+		environments.SandboxLifecycleQueue: {MaxWorkers: 4},
+		transcriptretention.Queue:          {MaxWorkers: 2},
+	}
+	if invitationsEnabled {
+		queues[platformadmin.DeliveryQueue] = river.QueueConfig{MaxWorkers: 4}
+		platformadmin.RegisterDeliveryWorker(workers, database, invitations.NewMailer(cfg.Auth, database, logger.With("component", "platform_invitation_mail")))
+	}
+	return queues
 }
 
 func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) error {

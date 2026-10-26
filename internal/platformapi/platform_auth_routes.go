@@ -88,13 +88,13 @@ type platformMagicLinkStore interface {
 	ResolvePlatformSessionIdentity(ctx context.Context, input platformsession.CreateInput) (platformsession.Session, error)
 }
 
-func RegisterPlatformEmailLoginRoutes(r chi.Router, store platformMagicLinkStore, authProvider emailLoginService, sessions platformsession.Store) {
+func RegisterPlatformEmailLoginRoutes(r chi.Router, store platformMagicLinkStore, authProvider emailLoginService, sessions platformsession.Store, secureCookies bool) {
 	r.Get("/api/auth/login_methods", handleAuthLoginMethods)
 	r.Post("/api/auth/send_magic_link", handleSendMagicLink(authProvider))
-	r.Post("/api/auth/verify_magic_link", handleVerifyMagicLink(store, authProvider, sessions, false))
+	r.Post("/api/auth/verify_magic_link", handleVerifyMagicLink(store, authProvider, sessions, false, secureCookies))
 	r.Post("/api/auth/logout", handleWebLogout(store, sessions))
 	r.Post("/auth/send_magic_link", handleSendMagicLink(authProvider))
-	r.Post("/auth/verify_magic_link", handleVerifyMagicLink(store, authProvider, sessions, true))
+	r.Post("/auth/verify_magic_link", handleVerifyMagicLink(store, authProvider, sessions, true, secureCookies))
 	r.Post("/auth/logout", handleAndroidLogout(store, sessions))
 }
 
@@ -117,7 +117,7 @@ func handleSendMagicLink(authProvider emailLoginService) http.HandlerFunc {
 	}
 }
 
-func handleVerifyMagicLink(store platformMagicLinkStore, authProvider emailLoginService, sessions platformsession.Store, androidShape bool) http.HandlerFunc {
+func handleVerifyMagicLink(store platformMagicLinkStore, authProvider emailLoginService, sessions platformsession.Store, androidShape, secureCookies bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if store == nil || sessions == nil {
 			internalError(w, "organization store is not configured")
@@ -153,6 +153,9 @@ func handleVerifyMagicLink(store platformMagicLinkStore, authProvider emailLogin
 			internalError(w, "failed to load verified account")
 			return
 		}
+		if verified, ok := authProvider.(interface{ VerifiedLoginEnabled() bool }); ok && verified.VerifiedLoginEnabled() {
+			session.AuthenticationMethod = "email_code_v1"
+		}
 		if err := sessions.Save(r.Context(), sessionKey, session); err != nil {
 			internalError(w, "failed to create session")
 			return
@@ -169,7 +172,7 @@ func handleVerifyMagicLink(store platformMagicLinkStore, authProvider emailLogin
 			return
 		}
 
-		setSessionCookies(w, sessionKey, selectedOrgUUID)
+		setSessionCookies(w, sessionKey, selectedOrgUUID, secureCookies)
 		response := VerifyResponse{
 			Success: true,
 			Created: &created,
@@ -280,10 +283,10 @@ func decodeMagicLinkEmail(encoded string) string {
 	return ""
 }
 
-func setSessionCookies(w http.ResponseWriter, sessionKey string, orgUUID string) {
+func setSessionCookies(w http.ResponseWriter, sessionKey string, orgUUID string, secure bool) {
 	const maxAge = 25920000
-	http.SetCookie(w, &http.Cookie{Name: "lastActiveOrg", Value: orgUUID, Path: "/", MaxAge: maxAge, HttpOnly: false, Secure: false, SameSite: http.SameSiteLaxMode})
-	http.SetCookie(w, &http.Cookie{Name: "sessionKey", Value: sessionKey, Path: "/", MaxAge: maxAge, HttpOnly: true, Secure: false, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: "lastActiveOrg", Value: orgUUID, Path: "/", MaxAge: maxAge, HttpOnly: false, Secure: secure, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: "sessionKey", Value: sessionKey, Path: "/", MaxAge: maxAge, HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})
 }
 
 func clearSessionCookies(w http.ResponseWriter) {

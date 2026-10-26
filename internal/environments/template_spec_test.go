@@ -26,6 +26,10 @@ func TestTemplateConfigRejectsInvalidFields(t *testing.T) {
 		{"environment name", `{"environment":{"1A":"x"}}`, "valid environment variable names"},
 		{"resources unknown", `{"resources":{"gpu":1}}`, "config.resources must be an object"},
 		{"resources negative", `{"resources":{"cpu":-1}}`, "config.resources must be an object"},
+		{"resources zero CPU", `{"resources":{"cpu":0}}`, "config.resources must be an object"},
+		{"resources zero memory", `{"resources":{"memory":0}}`, "config.resources must be an object"},
+		{"resources zero disk", `{"resources":{"disk":0}}`, "config.resources must be an object"},
+		{"resources mixed zero", `{"resources":{"cpu":0,"memory":1024}}`, "config.resources must be an object"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := normalizeConfigForCreate(json.RawMessage(tc.config))
@@ -44,6 +48,20 @@ func TestTemplateConfigRejectsTooManyEnvironmentVariables(t *testing.T) {
 	raw, _ := json.Marshal(map[string]any{"environment": variables})
 	if _, err := normalizeConfigForCreate(raw); err == nil {
 		t.Fatal("too many environment variables accepted")
+	}
+}
+
+func TestTemplateResourcesEmptyObjectAndNullClearOverrides(t *testing.T) {
+	for _, raw := range []string{`{"resources":{}}`, `{"resources":null}`} {
+		current := json.RawMessage(`{"type":"cloud","resources":{"cpu":1000},"environment":{"MODE":"keep"}}`)
+		updated, err := normalizeConfigForUpdate(current, json.RawMessage(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fields, err := decodeTemplateConfigFields(updated)
+		if err != nil || fields.Resources != nil || fields.Environment["MODE"] != "keep" {
+			t.Fatalf("cleared resources = %+v, %v", fields, err)
+		}
 	}
 }
 

@@ -27,10 +27,34 @@ type templateResources struct {
 }
 
 func (r *templateResources) UnmarshalJSON(data []byte) error {
-	type resourceFields templateResources
+	var fields struct {
+		CPU    *uint32 `json:"cpu"`
+		Memory *uint32 `json:"memory"`
+		Disk   *uint32 `json:"disk"`
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	return decoder.Decode((*resourceFields)(r))
+	if err := decoder.Decode(&fields); err != nil {
+		return err
+	}
+	*r = templateResources{}
+	for _, dimension := range []struct {
+		value  *uint32
+		target *uint32
+	}{
+		{fields.CPU, &r.CPU},
+		{fields.Memory, &r.Memory},
+		{fields.Disk, &r.Disk},
+	} {
+		if dimension.value == nil {
+			continue
+		}
+		if *dimension.value == 0 {
+			return errTemplateResourceNotPositive
+		}
+		*dimension.target = *dimension.value
+	}
+	return nil
 }
 
 func (r templateResources) empty() bool {

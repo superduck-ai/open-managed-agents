@@ -85,3 +85,47 @@ Code Session JWT 私钥同时用于 CCRv2 Git 提交签名。要让 GitHub 显�
 <Note>
   仓库中的 `docs/configuration-reference.yaml` 记录全部已接受字段和安全示例值；`config/config.example.yaml` 是日常开发使用的最小示例。
 </Note>
+
+## 模型供应商默认目录
+
+`llm_provider_presets_file` 指定独立 JSON 文件，路径相对于当前 YAML 文件。可将仓库中的 `internal/config/model-provider-presets.json` 复制为部署目录里的 `model-provider-presets.json`，再配置：
+
+```yaml
+llm_provider_presets_file: ./model-provider-presets.json
+```
+
+```json
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "gateway",
+      "name": "Gateway",
+      "api_backend": "chat_completions",
+      "base_url": "https://gateway.example.com",
+      "models": []
+    }
+  ]
+}
+```
+
+可追加公司自己的供应商。供应商可配置 `order`：非负安全整数，越小越靠前，缺省为 0，相同值按文件顺序。内置条目使用 10、20、30 等数值，内部 AI 网关设为 0 即排在最前。协议仅支持 `messages` 和 `chat_completions`；`models` 可为空。每个模型支持 `id`、可选 `name`、`context_window`、`max_output_tokens` 和 `input_modalities`，数组顺序就是默认顺序。不要放 API 密钥或组织私有信息，未知字段会被拒绝。
+
+组织管理员在添加连接时获取模型列表、选入模型并保存，可将列表与顺序写回此文件，重启后继续作为默认模型。已保存连接使用独立的数据库快照，不会被目录变化自动修改。文件和所在目录必须可写（同目录临时文件、`.lock` 文件和原子重命名）；容器须挂载可写持久目录，多实例必须访问同一个支持文件锁和原子重命名的文件系统。显式配置的文件缺失或不合法时启动失败；未配置路径使用内置只读目录。
+
+默认目录是部署级共享数据。启用可写文件意味着部署中的组织管理员可以维护全局默认模型。保存先更新目录，再保存连接；连接保存失败时目录变更仍然保留，界面保留连接草稿供重试。版本冲突不会覆盖其他人的修改。
+
+### 初始化已知供应商
+
+在仓库根目录运行：
+
+```bash
+./scripts/init-model-provider-presets.sh --dry-run
+./scripts/init-model-provider-presets.sh config/model-provider-presets.json
+```
+
+脚本从与服务内置目录相同的 JSON 初始化独立文件，包含 DeepSeek API、Kimi Coding、智谱 GLM Coding Plan、MiniMax 国内/国际、OpenAI 和 Anthropic。模型名、容量和输入类型来自 DeepSeek Harness 的已安装 pi-ai 目录快照；不保存套餐价格、密钥或登录状态。现有目标文件（包括符号链接）保持原样，重复执行不会覆盖后续发现的模型、排序和公司网关。需要补充条目时编辑已有 JSON。
+
+Coding Plan 必须使用对应套餐的密钥，普通 API 密钥与套餐密钥可能不通用。DeepSeek API 不冒充 DeepSeek 账号订阅登录。Kimi 使用 `https://api.kimi.com/coding`，MiniMax 使用国内 `https://api.minimaxi.com/anthropic` 或国际 `https://api.minimax.io/anthropic`。智谱采用官方 `https://open.bigmodel.cn/api/anthropic` 兼容入口；DeepSeek Harness 自身使用的 `/api/coding/paas/v4` OpenAI 入口不直接复制到 OMA，因为 OMA 的请求路径会追加 `/v1`。套餐权益、账号授权、配额和厂商请求兼容行为不属于此初始化脚本。
+
+参考：[Kimi Code 官方文档](https://www.kimi.com/code/docs/)、[智谱 GLM Coding Plan 官方配置](https://docs.bigmodel.cn/cn/coding-plan/tool/claude)、[DeepSeek API 模型目录](https://api-docs.deepseek.com/quick_start/pricing)。模型目录可能随厂商变更，可在控制台获取当前账号可用模型后保存。

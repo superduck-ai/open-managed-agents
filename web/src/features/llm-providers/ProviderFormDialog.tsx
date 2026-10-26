@@ -1,135 +1,28 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type SetStateAction } from 'react';
 import { useI18n } from '../../shared/i18n';
 import { Button } from '../../shared/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
-import { Field, FieldDescription, FieldError, FieldLabel } from '../../shared/ui/field';
-import { Input } from '../../shared/ui/input';
+import { FieldError } from '../../shared/ui/field';
 import { toast } from '../../shared/ui/sonner';
-import type { APIBackend, LLMProvider, LLMProviderInput } from './api';
-import {
-  ProviderModelsEditor,
-  newModelDraft,
-  parseContextWindow,
-  type ProviderModelDraft,
-} from './ProviderModelsEditor';
-import { ProviderBackendField } from './ProviderBackendField';
-import { isValidSlug, readableError } from './catalog';
+import type { APIBackend, LLMProvider, LLMProviderInput, ProviderPresetCatalog, LLMProviderPreset } from './api';
+import { ProviderModelsEditor, newModelDraft, type ProviderModelDraft } from './ProviderModelsEditor';
+import { ProviderConnectionFields, ProviderAPIKeyField } from './ProviderConnectionFields';
+import { readableError } from './catalog';
 
-type ProviderForm = {
-  apiBackend: APIBackend;
-  name: string;
-  slug: string;
-  baseUrl: string;
-  apiKey: string;
-  models: ProviderModelDraft[];
+import { providerForm, providerFormInput, type ProviderForm, type ProviderFieldErrors } from './provider-form';
+import { ProviderPresetPicker } from './ProviderPresetPicker';
+import { ModelDiscoveryDialog } from './ModelDiscoveryDialog';
+import { Tabs, TabsList, TabsTrigger } from '../../shared/ui/tabs';
+import { ProviderAdvancedSettings } from './ProviderAdvancedSettings';
+import { Checkbox } from '../../shared/ui/checkbox';
+
+type ProviderDraft = {
+  form: ProviderForm;
+  presetId: string;
+  revision: string;
+  saveDefaults: boolean;
+  advanced: boolean;
 };
-
-type MessageFormatter = ReturnType<typeof useI18n>['msg'];
-
-function providerForm(provider: LLMProvider | null): ProviderForm {
-  return provider
-    ? {
-        apiBackend: provider.api_backend,
-        name: provider.name,
-        slug: provider.slug,
-        baseUrl: provider.base_url,
-        apiKey: '',
-        models:
-          provider.models.length > 0
-            ? provider.models.map((model) => ({
-                ...newModelDraft(model.id),
-                maxOutputTokens: String(model.max_output_tokens ?? ''),
-                inputModalities: model.input_modalities ?? ['text'],
-                contextWindow: String(model.context_window ?? ''),
-              }))
-            : [newModelDraft()],
-      }
-    : {
-        apiBackend: 'messages',
-        name: '',
-        slug: '',
-        baseUrl: '',
-        apiKey: '',
-        models: [newModelDraft()],
-      };
-}
-
-function hasModelParameters(model: ProviderModelDraft): boolean {
-  return Boolean(
-    model.contextWindow.trim() ||
-    model.maxOutputTokens.trim() ||
-    model.inputModalities.length !== 1 ||
-    model.inputModalities[0] !== 'text',
-  );
-}
-
-function providerFormInput(
-  form: ProviderForm,
-  provider: LLMProvider | null,
-  organization: boolean,
-  msg: MessageFormatter,
-): { input: LLMProviderInput } | { error: string } {
-  if (!form.name.trim() || !form.baseUrl.trim() || (!provider && !form.apiKey.trim())) {
-    return { error: msg('llmModels.required', 'Display name, base URL, and API key are required.') };
-  }
-  const slug = form.slug.trim();
-  if (!slug) return { error: msg('llmModels.providerIdRequired', 'Provider ID is required.') };
-  if (!organization && slug === 'organization') {
-    return {
-      error: msg(
-        'llmModels.errorSlugReserved',
-        'Provider ID "organization" is reserved for the organization default provider.',
-      ),
-    };
-  }
-  if (!isValidSlug(slug)) {
-    return {
-      error: msg(
-        'llmModels.errorSlugInvalid',
-        'Provider ID must contain 1 to 32 lowercase letters, digits, ".", "_" or "-" and start with a letter or digit.',
-      ),
-    };
-  }
-  if (form.models.some((model) => !model.id.trim() && hasModelParameters(model))) {
-    return {
-      error: msg('llmModels.modelIdRequired', 'Model ID is required when model parameters are configured.'),
-    };
-  }
-  if (
-    form.models.some(
-      (model) =>
-        model.id &&
-        [model.contextWindow, model.maxOutputTokens].some(
-          (value) => !Number.isSafeInteger(parseContextWindow(value) ?? 1),
-        ),
-    )
-  ) {
-    return {
-      error: msg(
-        'llmModels.contextWindowInvalid',
-        'Token limits must be positive integers; K and M suffixes are supported.',
-      ),
-    };
-  }
-  const input: LLMProviderInput = {
-    api_backend: form.apiBackend,
-    name: form.name.trim(),
-    slug,
-    base_url: form.baseUrl.trim(),
-    models: form.models
-      .filter((model) => model.id)
-      .map((model) => ({
-        id: model.id,
-        ...(model.contextWindow.trim() ? { context_window: parseContextWindow(model.contextWindow)! } : {}),
-        ...(model.maxOutputTokens.trim() ? { max_output_tokens: parseContextWindow(model.maxOutputTokens)! } : {}),
-        input_modalities: model.inputModalities,
-      })),
-  };
-  if (form.apiKey.trim()) {
-    input.api_key = form.apiKey.trim();
-  }
-  return { input };
-}
 
 export function ProviderFormDialog({
   provider,
@@ -139,7 +32,15 @@ export function ProviderFormDialog({
   onClose,
   onSubmit,
   onDiscoverModels,
+  presetCatalog,
+  presetError,
+  onReloadPresets,
+  onSaveDefaults,
 }: {
+  presetCatalog?: ProviderPresetCatalog;
+  presetError?: string;
+  onReloadPresets?: () => void;
+  onSaveDefaults?: (id: string, revision: string, input: LLMProviderInput) => Promise<ProviderPresetCatalog>;
   provider: LLMProvider | null;
   organization?: boolean;
   error: string;
@@ -155,11 +56,29 @@ export function ProviderFormDialog({
 }) {
   const { msg } = useI18n();
   const [open, setOpen] = useState(true);
+  const [mode, setMode] = useState(onReloadPresets ? 'preset' : 'custom');
+  const [presetId, setPresetId] = useState('');
+  const [defaultsRevision, setDefaultsRevision] = useState('');
+  const [saveDefaults, setSaveDefaults] = useState(false);
+  const [savingDefaults, setSavingDefaults] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
+  const [candidates, setCandidates] = useState<string[] | null>(null);
+  const discoveryVersion = useRef(0);
+  const drafts = useRef<Record<string, ProviderDraft>>({});
+  const busy = isPending || savingDefaults;
+  const presetMode = mode === 'preset' && !provider;
+
   const [form, setForm] = useState<ProviderForm>(() => ({
     ...providerForm(provider),
     ...(organization ? { slug: 'organization' } : {}),
   }));
   const [formError, setFormError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<ProviderFieldErrors>({});
+  const [validationAttempt, setValidationAttempt] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (validationAttempt) formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [validationAttempt]);
   const errorRef = useRef<HTMLDivElement>(null);
   const message = formError || error;
   useEffect(() => {
@@ -168,64 +87,117 @@ export function ProviderFormDialog({
   const [discovering, setDiscovering] = useState(false);
 
   const fetchModels = async () => {
+    const version = ++discoveryVersion.current;
     const baseUrl = form.baseUrl.trim();
     const apiKey = form.apiKey.trim();
+    setFormError('');
     if (!baseUrl || (!apiKey && !provider)) {
-      setFormError(msg('llmModels.fetchModelsNeedCredentials', 'Enter a base URL and API key first.'));
+      setFieldErrors({
+        ...(!baseUrl ? { baseUrl: msg('llmModels.baseUrlRequired', 'API URL is required.') } : {}),
+        ...(!apiKey && !provider ? { apiKey: msg('llmModels.apiKeyRequired', 'API key is required.') } : {}),
+      });
+      if (!baseUrl) setAdvanced(true);
+      setValidationAttempt((value) => value + 1);
       return;
     }
     if (provider && !apiKey && (baseUrl !== provider.base_url || form.apiBackend !== provider.api_backend)) {
-      setFormError(
-        msg(
+      setFieldErrors({
+        apiKey: msg(
           'llmModels.fetchChangedEndpoint',
           'Enter an API key to fetch models after changing the endpoint or protocol.',
         ),
-      );
+      });
+      setValidationAttempt((value) => value + 1);
       return;
     }
     setFormError('');
     setDiscovering(true);
     try {
       const modelIds = await onDiscoverModels(baseUrl, apiKey, form.apiBackend, provider ?? undefined);
+      if (version !== discoveryVersion.current) return;
       if (modelIds.length === 0) {
         toast.info(msg('llmModels.discoverEmpty', 'The provider returned no models. You can add model IDs later.'), {
           id: 'llm-models-discover',
         });
         return;
       }
-      setForm((current) => ({ ...current, models: mergeModels(current.models, modelIds) }));
+      setCandidates(modelIds);
     } catch (error) {
-      toast.error(readableError(error, msg), { id: 'llm-models-discover' });
+      if (version === discoveryVersion.current) toast.error(readableError(error, msg), { id: 'llm-models-discover' });
     } finally {
-      setDiscovering(false);
+      if (version === discoveryVersion.current) setDiscovering(false);
     }
   };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!open || isPending) return;
+    if (!open || busy || discovering) return;
+    if (presetMode && !presetId) {
+      setFieldErrors({ supplier: msg('llmModels.supplierRequired', 'Select a model supplier.') });
+      setValidationAttempt((value) => value + 1);
+      return;
+    }
     const result = providerFormInput(form, provider, organization, msg);
+    if ('errors' in result) {
+      setFieldErrors(result.errors);
+      if (result.errors.name || result.errors.baseUrl || result.errors.slug) setAdvanced(true);
+      setFormError('');
+      setValidationAttempt((value) => value + 1);
+      return;
+    }
+    setFieldErrors({});
+    setFormError('');
     if ('error' in result) {
       setFormError(result.error);
       return;
     }
+    if (saveDefaults && presetId && onSaveDefaults) {
+      setSavingDefaults(true);
+      try {
+        const saved = await onSaveDefaults(presetId, defaultsRevision, result.input);
+        setDefaultsRevision(saved.revision);
+        toast.success(msg('llmModels.defaultsSaved', 'Supplier defaults saved.'));
+      } catch (error) {
+        setFormError(readableError(error, msg));
+        return;
+      } finally {
+        setSavingDefaults(false);
+      }
+    }
     if (await onSubmit(result.input)) setOpen(false);
   };
+
+  const updateConnectionForm = (update: SetStateAction<ProviderForm>) => {
+    const next = typeof update === 'function' ? update(form) : update;
+    if (next.baseUrl !== form.baseUrl || next.apiBackend !== form.apiBackend) setSaveDefaults(false);
+    setFieldErrors((current) => {
+      const remaining = { ...current };
+      for (const key of ['name', 'slug', 'baseUrl', 'apiKey'] as const) {
+        if (form[key] !== next[key]) delete remaining[key];
+      }
+      return remaining;
+    });
+    setForm(next);
+  };
+  const apiKeyField = (
+    <ProviderAPIKeyField form={form} setForm={updateConnectionForm} provider={provider} errors={fieldErrors} />
+  );
 
   return (
     <Dialog
       open={open}
       onOpenChange={(nextOpen, details) => {
-        if (!nextOpen && (details.reason === 'focus-out' || isPending)) {
+        if (!nextOpen && (details.reason === 'focus-out' || busy)) {
           details.cancel();
           return;
         }
+        if (!nextOpen) discoveryVersion.current++;
         setOpen(nextOpen);
       }}
       onOpenChangeComplete={(nextOpen) => !nextOpen && onClose()}
     >
       <DialogContent
-        closeButtonDisabled={isPending}
+        closeButtonDisabled={busy}
         className="grid-rows-[auto_minmax(0,1fr)] max-h-[calc(100dvh-2rem)] gap-0 overflow-hidden p-0 sm:max-w-xl"
       >
         <DialogHeader className="px-4 py-4">
@@ -233,121 +205,103 @@ export function ProviderFormDialog({
             {provider ? msg('llmModels.editProvider', 'Edit provider') : msg('llmModels.addProvider', 'Add provider')}
           </DialogTitle>
         </DialogHeader>
-        <form onSubmit={submit} className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
+        <form ref={formRef} noValidate onSubmit={submit} className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
           <div className="subtle-scrollbar-auto min-h-0 space-y-5 overflow-y-auto px-4 pb-4">
             {message ? (
-              <FieldError ref={errorRef} tabIndex={-1} className="min-w-0 outline-none [overflow-wrap:anywhere]">
+              <FieldError
+                ref={errorRef}
+                tabIndex={-1}
+                className="min-w-0 rounded-md border border-destructive bg-destructive/10 p-3 outline-none [overflow-wrap:anywhere]"
+              >
                 {message}
               </FieldError>
             ) : null}
-            <fieldset disabled={isPending} className="grid min-w-0 gap-5">
-              {!provider ? (
-                <ProviderIdField
-                  slug={form.slug}
-                  readOnly={organization}
-                  onChange={(slug) => setForm((value) => ({ ...value, slug }))}
-                />
+            <fieldset disabled={busy || discovering} className="grid min-w-0 gap-5">
+              <ProviderCreationFields
+                provider={provider}
+                mode={mode}
+                catalog={presetCatalog}
+                error={fieldErrors.supplier || presetError}
+                presetId={presetId}
+                onReload={onReloadPresets}
+                onModeChange={(value) => {
+                  drafts.current[mode] = { form, presetId, revision: defaultsRevision, saveDefaults, advanced };
+                  const next = drafts.current[value];
+                  setMode(value);
+                  setPresetId(next?.presetId ?? '');
+                  setDefaultsRevision(next?.revision ?? '');
+                  setSaveDefaults(next?.saveDefaults ?? false);
+                  setAdvanced(next?.advanced ?? false);
+                  setForm(next?.form ?? { ...providerForm(null), ...(organization ? { slug: 'organization' } : {}) });
+                  setFormError('');
+                  setFieldErrors({});
+                }}
+                onPresetChange={(preset) => {
+                  setPresetId(preset.id);
+                  setDefaultsRevision(presetCatalog?.revision ?? '');
+                  setSaveDefaults(false);
+                  setFormError('');
+                  setFieldErrors({});
+                  setForm({
+                    ...providerForm({ ...preset, slug: organization ? 'organization' : preset.id }),
+                    apiKey: '',
+                  });
+                }}
+              />
+              {mode !== 'preset' || provider || presetId ? (
+                <>
+                  {presetMode ? apiKeyField : null}
+                  <ProviderDefaultsField
+                    visible={presetMode}
+                    catalog={presetCatalog}
+                    presetId={presetId}
+                    form={form}
+                    checked={saveDefaults}
+                    onChange={setSaveDefaults}
+                  />
+                  <ProviderAdvancedSettings enabled={presetMode} open={advanced} onOpenChange={setAdvanced}>
+                    <ProviderConnectionFields
+                      form={form}
+                      errors={fieldErrors}
+                      setForm={updateConnectionForm}
+                      provider={provider}
+                      organization={organization}
+                    />
+                    {!presetMode ? apiKeyField : null}
+                    <ProviderModelsEditor
+                      models={form.models}
+                      discovering={discovering}
+                      onChange={(models) => setForm((value) => ({ ...value, models }))}
+                      onFetch={() => void fetchModels()}
+                    />
+                  </ProviderAdvancedSettings>
+                </>
               ) : null}
-              <Field>
-                <FieldLabel htmlFor="llm-provider-name">{msg('llmModels.name', 'Display name')}</FieldLabel>
-                <Input
-                  id="llm-provider-name"
-                  value={form.name}
-                  onChange={(event) => setForm((value) => ({ ...value, name: event.target.value }))}
-                  placeholder={msg('llmModels.name', 'Display name')}
-                  autoComplete="off"
-                />
-              </Field>
-              <ProviderBackendField
-                value={form.apiBackend}
-                onChange={(apiBackend) => setForm((value) => ({ ...value, apiBackend }))}
-              />
-              <Field>
-                <FieldLabel htmlFor="llm-provider-url">{msg('llmModels.baseUrl', 'Base URL')}</FieldLabel>
-                <Input
-                  id="llm-provider-url"
-                  type="url"
-                  value={form.baseUrl}
-                  onChange={(event) => setForm((value) => ({ ...value, baseUrl: event.target.value }))}
-                  placeholder="https://example.com/anthropic"
-                  autoComplete="url"
-                />
-                <FieldDescription>
-                  {msg('llmModels.baseUrlHint', 'Request URL:')}{' '}
-                  <code className="break-all">
-                    {form.baseUrl.replace(/\/+$/, '')}
-                    {form.apiBackend === 'messages' ? '/v1/messages' : '/v1/chat/completions'}
-                  </code>
-                </FieldDescription>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="llm-provider-key">{msg('llmModels.apiKey', 'API key')}</FieldLabel>
-                <Input
-                  id="llm-provider-key"
-                  type="password"
-                  value={form.apiKey}
-                  onChange={(event) => setForm((value) => ({ ...value, apiKey: event.target.value }))}
-                  placeholder={provider ? msg('llmModels.keepKey', 'Leave blank to keep the current key') : 'sk-...'}
-                  autoComplete="new-password"
-                />
-              </Field>
-              <ProviderModelsEditor
-                models={form.models}
-                discovering={discovering}
-                onChange={(models) => setForm((value) => ({ ...value, models }))}
-                onFetch={() => void fetchModels()}
-              />
             </fieldset>
           </div>
           <div className="px-4 py-4">
             <DialogFooter>
-              <Button type="button" variant="outline" disabled={isPending} onClick={() => setOpen(false)}>
+              <Button type="button" variant="outline" disabled={busy} onClick={() => setOpen(false)}>
                 {msg('common.cancel', 'Cancel')}
               </Button>
-              <Button type="submit" disabled={isPending}>
-                {isPending ? msg('common.saving', 'Saving...') : msg('common.save', 'Save')}
+              <Button type="submit" disabled={busy || discovering}>
+                {busy ? msg('common.saving', 'Saving...') : msg('common.save', 'Save')}
               </Button>
             </DialogFooter>
           </div>
         </form>
       </DialogContent>
+      {candidates ? (
+        <ModelDiscoveryDialog
+          models={candidates}
+          onClose={() => setCandidates(null)}
+          onAccept={(ids) => {
+            setForm((current) => ({ ...current, models: mergeModels(current.models, ids) }));
+            setCandidates(null);
+          }}
+        />
+      ) : null}
     </Dialog>
-  );
-}
-
-function ProviderIdField({
-  slug,
-  readOnly,
-  onChange,
-}: {
-  slug: string;
-  readOnly: boolean;
-  onChange: (slug: string) => void;
-}) {
-  const { msg } = useI18n();
-  return (
-    <Field>
-      <FieldLabel htmlFor="llm-provider-slug">{msg('llmModels.slug', 'Provider ID')}</FieldLabel>
-      <Input
-        id="llm-provider-slug"
-        value={slug}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder="acme-gateway"
-        autoComplete="off"
-        readOnly={readOnly}
-        aria-readonly={readOnly}
-        className="font-mono read-only:bg-muted read-only:text-muted-foreground"
-      />
-      <FieldDescription>
-        {readOnly
-          ? msg('llmModels.slugReadOnlyHint', 'Used in {modelId}. Provider ID cannot be changed.', {
-              modelId: `${slug}/<model-id>`,
-            })
-          : msg('llmModels.slugHint', 'Used in {modelId}. Provider ID cannot be changed after creation.', {
-              modelId: `${slug || 'acme-gateway'}/<model-id>`,
-            })}
-      </FieldDescription>
-    </Field>
   );
 }
 
@@ -355,4 +309,80 @@ function mergeModels(existing: ProviderModelDraft[], discovered: string[]) {
   const models = existing.filter((model) => model.id !== '');
   const known = new Set(models.map((model) => model.id));
   return [...models, ...discovered.filter((id) => !known.has(id)).map((id) => newModelDraft(id))];
+}
+
+function ProviderDefaultsField({
+  visible,
+  catalog,
+  presetId,
+  form,
+  checked,
+  onChange,
+}: {
+  visible: boolean;
+  catalog?: ProviderPresetCatalog;
+  presetId: string;
+  form: ProviderForm;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const { msg } = useI18n();
+  const checkboxId = useId();
+  if (!visible || !catalog?.writable) return null;
+  const preset = catalog.providers.find((item) => item.id === presetId);
+  return (
+    <div className="flex items-start gap-2 text-sm">
+      <Checkbox
+        id={checkboxId}
+        checked={checked}
+        onCheckedChange={onChange}
+        disabled={form.baseUrl !== preset?.base_url || form.apiBackend !== preset?.api_backend}
+      />
+      <label htmlFor={checkboxId}>
+        {msg('llmModels.saveDefaults', 'Save this model list as shared supplier defaults (all organizations).')}
+      </label>
+    </div>
+  );
+}
+
+function ProviderCreationFields({
+  provider,
+  mode,
+  catalog,
+  error,
+  presetId,
+  onReload,
+  onModeChange,
+  onPresetChange,
+}: {
+  provider: LLMProvider | null;
+  mode: string;
+  catalog?: ProviderPresetCatalog;
+  error?: string;
+  presetId: string;
+  onReload?: () => void;
+  onModeChange: (mode: string) => void;
+  onPresetChange: (preset: LLMProviderPreset) => void;
+}) {
+  const { msg } = useI18n();
+  if (provider) return null;
+  return (
+    <>
+      <Tabs value={mode} onValueChange={(value) => onModeChange(String(value))}>
+        <TabsList className="w-full">
+          <TabsTrigger value="preset">{msg('llmModels.supplier', 'Model supplier')}</TabsTrigger>
+          <TabsTrigger value="custom">{msg('llmModels.customApi', 'Custom model API')}</TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {mode === 'preset' ? (
+        <ProviderPresetPicker
+          catalog={catalog}
+          error={error}
+          value={presetId}
+          onReload={onReload}
+          onChange={onPresetChange}
+        />
+      ) : null}
+    </>
+  );
 }

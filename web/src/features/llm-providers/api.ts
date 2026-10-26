@@ -3,6 +3,7 @@ import { consoleApi, type ApiError } from '../../shared/api/client';
 export type APIBackend = 'messages' | 'chat_completions';
 
 export type LLMModel = {
+  name?: string;
   id: string;
   context_window?: number;
   max_output_tokens?: number;
@@ -168,4 +169,42 @@ export function previewSavedProviderModels(
       ? organizationLLMProviderPath(orgUuid)
       : `${providersPath(orgUuid, workspaceId)}/${encodeURIComponent(provider.id)}`;
   return consoleApi<{ models: LLMModel[] }>(`${path}/models/preview`, { method: 'POST', csrfToken });
+}
+
+export type LLMProviderPreset = {
+  order?: number;
+  id: string;
+  name: string;
+  api_backend: APIBackend;
+  base_url: string;
+  models: LLMModel[];
+};
+
+export function listProviderPresets(orgUuid: string) {
+  return consoleApi<ProviderPresetCatalog>(
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/llm_provider_presets`,
+  );
+}
+
+export type ProviderPresetCatalog = {
+  providers: LLMProviderPreset[];
+  revision: string;
+  writable: boolean;
+};
+
+export function saveProviderPresetModels(
+  orgUuid: string,
+  presetId: string,
+  revision: string,
+  models: LLMModel[],
+  csrfToken?: string,
+) {
+  return consoleApi<ProviderPresetCatalog>(
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/llm_provider_presets/${encodeURIComponent(presetId)}/models`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ revision, models }),
+      csrfToken,
+    },
+  );
 }

@@ -245,3 +245,5 @@ just dead-code
 just duplicates
 just complexity
 ```
+
+供应商模板目录由可选的 `llm_provider_presets_file` 独立 JSON 提供，属于部署共享默认值；它不包含凭据，也不会覆盖数据库中的 Provider 实例。未配置时使用内置只读目录。显式配置可写文件后，组织管理员可在新增连接时回写默认模型与顺序，采用文件锁、版本校验和原子替换；具体格式与部署要求见配置文档。

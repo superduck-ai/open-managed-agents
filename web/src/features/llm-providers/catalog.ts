@@ -60,6 +60,19 @@ const PROVIDER_ERROR_MESSAGES: Record<string, { id: string; defaultMessage: stri
     id: 'llmModels.errorOrganizationProviderExists',
     defaultMessage: 'This organization already has a default provider.',
   },
+  llm_provider_presets_conflict: {
+    id: 'llmModels.defaultsConflict',
+    defaultMessage: 'Supplier defaults changed. Refresh and reselect the supplier before saving.',
+  },
+  llm_provider_presets_read_only: {
+    id: 'llmModels.defaultsReadOnly',
+    defaultMessage: 'To save defaults, configure a writable supplier JSON file.',
+  },
+  llm_provider_presets_write_failed: {
+    id: 'llmModels.defaultsWriteFailed',
+    defaultMessage:
+      'Could not write supplier defaults. Check model values and file permissions. Your draft is preserved.',
+  },
   llm_provider_configuration_invalid: {
     id: 'llmModels.errorInvalidConfiguration',
     defaultMessage: 'The provider configuration is invalid.',
@@ -76,6 +89,7 @@ const SLUG_PATTERN = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 
 export type CatalogModel = {
   id: string;
+  name?: string;
   qualifiedId: string;
   providerId: string;
   providerName: string;
@@ -91,7 +105,8 @@ export function isValidSlug(slug: string): boolean {
 
 export function catalogModels(providers: LLMProvider[]): CatalogModel[] {
   return providers.flatMap((provider) =>
-    provider.models.map(({ id: modelId }) => ({
+    provider.models.map(({ id: modelId, name }) => ({
+      ...(name ? { name } : {}),
       id: modelId,
       qualifiedId: qualifiedModelId(provider.slug, modelId),
       providerId: provider.id,
@@ -106,7 +121,10 @@ export function filterCatalogModels(models: CatalogModel[], query: string): Cata
     return models;
   }
   return models.filter(
-    (model) => model.qualifiedId.toLowerCase().includes(needle) || model.providerName.toLowerCase().includes(needle),
+    (model) =>
+      model.qualifiedId.toLowerCase().includes(needle) ||
+      model.providerName.toLowerCase().includes(needle) ||
+      Boolean(model.name?.toLowerCase().includes(needle)),
   );
 }
 

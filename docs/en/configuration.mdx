@@ -85,3 +85,21 @@ The Code Session JWT key also signs CCRv2 Git commits. For GitHub to display `Ve
 <Note>
   `docs/configuration-reference.yaml` contains every accepted field with safe example values. `config/config.example.yaml` is the smaller template for daily development.
 </Note>
+
+## Model supplier defaults
+
+Set `llm_provider_presets_file: ./model-provider-presets.json` in the server YAML. Relative paths resolve against that YAML file. Copy `internal/config/model-provider-presets.json` from the repository as a starting point, then add suppliers as needed.
+
+The JSON schema is `{"version":1,"providers":[{"id":"gateway","name":"Gateway","api_backend":"chat_completions","base_url":"https://gateway.example.com","models":[]}]}`. Supported backends are `messages` and `chat_completions`. Models may be empty and support `id`, optional `name`, `context_window`, `max_output_tokens`, and `input_modalities`. Array order is the default display order. Credentials and unknown fields are rejected.
+
+When adding a connection, organization administrators can discover and select models, reorder them, and save the list back to this file as defaults for subsequent connections and restarts. Saved connections retain independent database snapshots. The file and its directory must be writable for locking, temporary files, and atomic replacement. Container deployments need a persistent writable directory; replicas must share a filesystem supporting file locks and atomic rename. A missing or invalid explicit file fails startup. Omitting the path uses the read-only built-in catalog.
+
+Enabling a writable file permits organization administrators to maintain deployment-wide shared defaults; do not put organization-private data in this catalog. Saving updates the JSON first and the connection second. A failed connection save retains the updated defaults and the connection draft for retry. Revision conflicts do not overwrite another writer's changes.
+
+### Initialize known suppliers
+
+Run `./scripts/init-model-provider-presets.sh --dry-run` to preview, then `./scripts/init-model-provider-presets.sh config/model-provider-presets.json` to initialize a writable catalog. Existing files and symlinks are preserved, including model lists discovered later. The initializer uses the same JSON as the embedded catalog and contains no credentials.
+
+Supplier `order` is a nonnegative safe integer, ascending, defaulting to zero. Equal priorities retain file order. Built-ins use 10, 20, 30 and so on; set an internal gateway to zero to place it first. This orders supplier choices, not individual model rows. Model display names are optional and fall back to IDs.
+
+Presets include DeepSeek API, Kimi Coding, GLM Coding Plan, MiniMax China/international, OpenAI and Anthropic. Model metadata follows the installed DeepSeek Harness/pi-ai catalog snapshot. Kimi, GLM and MiniMax use Anthropic-compatible endpoints; GLM uses `https://open.bigmodel.cn/api/anthropic` because OMA appends `/v1` and cannot directly use Harness's `/api/coding/paas/v4` OpenAI endpoint. Supply the appropriate plan credentials through the Console. The script does not implement subscription login, quota accounting or provider-specific runtime adapters.

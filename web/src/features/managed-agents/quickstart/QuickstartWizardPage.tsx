@@ -24,7 +24,9 @@ export function QuickstartWizardPage({
   const text = quickstartCopy(locale);
   const wizard = useQuickstartWizard(workspaceID, accountID, locale, models);
   return (
-    <section className="quickstart-wizard mx-auto flex h-full min-h-0 w-full min-w-0 max-w-[1600px] flex-1 flex-col overflow-hidden">
+    <section
+      className={`quickstart-wizard mx-auto flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden text-sm ${wizard.progress.step === 0 ? 'max-w-5xl' : 'max-w-[1600px]'}`}
+    >
       <nav aria-label={text.title} className="mx-auto w-full max-w-4xl shrink-0">
         <ol className="grid grid-cols-4">
           {text.steps.map((label, index) => (
@@ -36,17 +38,17 @@ export function QuickstartWizardPage({
               {index < 3 && (
                 <span
                   aria-hidden="true"
-                  className={`absolute top-[calc(var(--quickstart-step-size)/2+0.25rem)] left-1/2 h-px w-full ${index < wizard.reachableStep - 1 ? 'bg-primary/60' : 'bg-muted-foreground/40'}`}
+                  className={`absolute top-[calc(var(--quickstart-step-size)/2+0.25rem)] left-1/2 h-[0.5px] w-full ${index < wizard.reachableStep - 1 ? 'bg-primary/60' : 'bg-muted-foreground/40'}`}
                 />
               )}
               <Button
                 variant="ghost"
-                className={`relative h-auto w-full flex-col gap-[clamp(0.375rem,1dvh,0.75rem)] px-1 py-1 text-center text-xs whitespace-normal hover:bg-transparent disabled:opacity-100 sm:text-sm dark:hover:bg-transparent ${index === wizard.progress.step ? 'text-foreground' : 'text-muted-foreground'}`}
+                className={`relative h-auto w-full flex-col gap-[clamp(0.375rem,1dvh,0.75rem)] px-1 py-1 text-center text-xs whitespace-normal hover:bg-transparent disabled:opacity-100 dark:hover:bg-transparent ${index === wizard.progress.step ? 'text-foreground' : 'text-muted-foreground'}`}
                 disabled={!wizard.canNavigate(index)}
                 onClick={() => wizard.navigate(index)}
               >
                 <span
-                  className={`relative grid size-(--quickstart-step-size) shrink-0 place-items-center rounded-full border ring-4 ring-background ${index === wizard.progress.step ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40 bg-background'}`}
+                  className={`relative grid size-(--quickstart-step-size) shrink-0 place-items-center rounded-full border-[0.5px] ring-4 ring-background ${index === wizard.progress.step ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40 bg-background'}`}
                 >
                   {index !== wizard.progress.step &&
                   index < wizard.reachableStep &&
@@ -84,7 +86,7 @@ export function QuickstartWizardPage({
           </p>
         )}
         {wizard.progress.pending && !wizard.busy && (
-          <div className="mt-6 space-y-3 rounded-lg border border-border p-4">
+          <div className="mt-6 space-y-3 rounded-lg border-[0.5px] border-border p-4">
             <p className="text-sm text-muted-foreground">{text.unknown}</p>
             <Button disabled={wizard.busy} onClick={() => void wizard.recover()}>
               {text.recover}

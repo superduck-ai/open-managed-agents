@@ -268,15 +268,15 @@ function CreateAgentEditorContent({
             aria-label={
               startingPointOpen
                 ? msg('managedAgents.agents.createDialog.startingPoint', 'Starting point')
-                : msg('managedAgents.agents.createDialog.startingPointSummary', 'Starting point · {name}', {
+                : msg('managedAgents.agents.createDialog.startingPointSummary', 'Starting point: {name}', {
                     name: startingPointName,
                   })
             }
-            className="flex h-9 flex-1 items-center gap-2 rounded-lg px-0 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent/40 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+            className="flex h-9 flex-1 items-center gap-2 rounded-lg px-0 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent/40 focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-foreground focus-visible:outline-none"
           >
             <ChevronDown
               className={clsx(
-                'size-4 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none',
+                'size-4 shrink-0 text-muted-foreground transition-transform duration-220 ease-out motion-reduce:transition-none',
                 startingPointOpen ? '' : '-rotate-90',
               )}
               aria-hidden
@@ -284,7 +284,7 @@ function CreateAgentEditorContent({
             <span>{msg('managedAgents.agents.createDialog.startingPoint', 'Starting point')}</span>
             {!startingPointOpen ? (
               <span className="min-w-0 truncate font-normal text-muted-foreground" aria-hidden>
-                · {startingPointName}
+                {startingPointName}
               </span>
             ) : null}
           </CollapsibleTrigger>
@@ -491,20 +491,20 @@ export function CreateAgentTemplateCard({
       type="button"
       variant="ghost"
       className={clsx(
-        'h-auto w-full items-stretch justify-stretch whitespace-normal rounded-xl border-0 bg-transparent p-0 text-left shadow-none hover:bg-transparent',
+        'h-auto min-w-0 w-full items-stretch justify-stretch whitespace-normal rounded-xl border-0 bg-transparent p-0 text-left shadow-none hover:bg-transparent',
       )}
       onClick={onSelect}
     >
       <Card
         className={clsx(
-          'h-full w-full gap-0 rounded-xl py-0 text-left shadow-none transition-[background-color,box-shadow,ring-color]',
+          'h-full min-w-0 w-full gap-0 rounded-xl py-0 text-left shadow-none ring-inset transition-colors duration-150 ease-out motion-reduce:transition-none group-focus-visible/button:ring-foreground',
           hasApps ? 'min-h-[116px]' : 'min-h-[104px]',
-          selected ? 'bg-muted/80 ring-ring/30 shadow-sm' : 'bg-card/70 group-hover/button:bg-muted/60',
+          selected ? 'bg-muted/80 ring-ring/30' : 'bg-card/70 group-hover/button:bg-muted/60',
         )}
       >
         <CardContent className="flex h-full flex-col gap-1 px-3 py-3">
-          <span className="text-[15px] font-medium leading-5 text-foreground">{title}</span>
-          <span className="line-clamp-3 text-[13px] leading-[18px] text-muted-foreground">{body}</span>
+          <span className="text-sm font-medium leading-5 text-foreground">{title}</span>
+          <span className="line-clamp-3 text-sm leading-5 text-muted-foreground">{body}</span>
           <CreateTemplateApps templateId={template.id} />
         </CardContent>
       </Card>
@@ -513,7 +513,7 @@ export function CreateAgentTemplateCard({
 }
 
 function startingPointContainerClass(open: boolean) {
-  return clsx('shrink-0 overflow-hidden', !open && 'border-b border-border');
+  return clsx('shrink-0 overflow-hidden', !open && 'border-b-[0.5px] border-border');
 }
 
 function startingPointRowClass(open: boolean) {
@@ -535,7 +535,7 @@ export function CreateTemplateApps({ templateId }: { templateId: string }) {
           <Badge
             key={app.label}
             variant="secondary"
-            className={clsx('size-5 shrink-0 rounded-full border border-border p-0', app.tone)}
+            className={clsx('size-5 shrink-0 rounded-full border-[0.5px] border-border p-0', app.tone)}
             title={app.label}
           >
             <Icon className="size-3" aria-hidden />

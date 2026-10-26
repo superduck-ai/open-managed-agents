@@ -35,3 +35,20 @@ test('localizes configuration and scheduling and gives Chinese labels unique con
   fireEvent.click(screen.getByRole('button', { name: '编辑 Cron' }));
   expect(screen.getByLabelText('Cron 表达式')).toBeTruthy();
 });
+
+test('searches timezone identifiers and changes only the timezone', async () => {
+  const { DeploymentScheduleFields } = await import('./deployment-schedule-fields');
+  const changes: Array<Record<string, unknown>> = [];
+  render(
+    <I18nProvider initialLocale="en">
+      <DeploymentScheduleFields
+        values={{ ...initialFormValues('deployments'), triggerType: 'schedule', timezone: 'UTC' }}
+        onChange={(patch) => changes.push(patch)}
+      />
+    </I18nProvider>,
+  );
+  fireEvent.click(screen.getByRole('combobox', { name: 'Timezone' }));
+  fireEvent.change(screen.getByPlaceholderText('Search options...'), { target: { value: 'Shanghai' } });
+  fireEvent.click(await screen.findByRole('option', { name: 'Asia/Shanghai' }));
+  expect(changes).toEqual([{ timezone: 'Asia/Shanghai' }]);
+});

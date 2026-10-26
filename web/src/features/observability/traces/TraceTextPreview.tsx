@@ -94,8 +94,8 @@ function TraceIOPanel({ label, value, contentClassName }: { label: string; value
     void copyText(text).then(() => toast.success(msg('common.copied', 'Copied')));
   };
   return (
-    <section className="flex min-w-0 flex-col overflow-hidden rounded-md border border-border">
-      <div className="flex h-7 shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/40 pl-2 pr-1">
+    <section className="flex min-w-0 flex-col overflow-hidden rounded-md border-[0.5px] border-border">
+      <div className="flex h-7 shrink-0 items-center justify-between gap-2 border-b-[0.5px] border-border bg-muted/40 pl-2 pr-1">
         <span className="text-xs font-medium text-muted-foreground">{label}</span>
         {text ? (
           <Button

@@ -80,18 +80,18 @@ export function registerManagedAgentsQuickstartTests() {
     const api = mockAgentsApi([]);
     renderManagedAgentsPage('agents', 'zh-CN');
 
-    expect(screen.getByRole('heading', { name: '智能体' })).toBeTruthy();
-    expect(screen.getByText('创建和管理自主智能体。')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: '智能体' })).toBeTruthy();
+    expect(screen.queryByText('创建和管理自主智能体。')).toBeNull();
     expect(screen.getByRole('button', { name: '创建智能体' })).toBeTruthy();
     expect(screen.getByPlaceholderText('按名称或精确 ID 搜索')).toBeTruthy();
-    expect(screen.getByRole('button', { name: /创建时间\s+全部时间/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /状态\s+活跃/ })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: /创建时间\s+全部时间/ })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: /状态\s+活跃/ })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: /状态\s+活跃/ }));
+    fireEvent.click(screen.getByRole('combobox', { name: /状态\s+活跃/ }));
 
-    expect(screen.getByRole('menuitemradio', { name: '活跃' })).toBeTruthy();
-    expect(screen.getByRole('menuitemradio', { name: '全部' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /状态\s+活跃/, hidden: true }));
+    expect(screen.getByRole('option', { name: '活跃' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: '全部' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('combobox', { name: /状态\s+活跃/, hidden: true }));
     expect(await screen.findByText('暂无 Agent')).toBeTruthy();
     expect(screen.getByRole('button', { name: '创建智能体' })).toBeTruthy();
     expect(api.requests[0]?.headers['x-workspace-id']).toBe('default');
@@ -110,10 +110,12 @@ export function registerManagedAgentsQuickstartTests() {
     fireEvent.click(within(dialog).getByRole('tab', { name: '模板' }));
     fireEvent.click(within(dialog).getByRole('button', { name: /深度调研助手/i }));
 
-    expect(within(dialog).getByRole('button', { name: '起点 · 深度调研助手' }).getAttribute('aria-expanded')).toBe(
+    expect(within(dialog).getByRole('button', { name: '起点：深度调研助手' }).getAttribute('aria-expanded')).toBe(
       'false',
     );
-    expect(within(dialog).getByText(/· 深度调研助手/)).toBeTruthy();
+    expect(
+      within(within(dialog).getByRole('button', { name: '起点：深度调研助手' })).getByText('深度调研助手'),
+    ).toBeTruthy();
   });
 
   test('renders overflow template tags as a visible count badge', () => {

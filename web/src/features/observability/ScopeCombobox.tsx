@@ -37,17 +37,13 @@ export function ScopeCombobox({
   const selected = options.find((option) => option.id === value);
   const triggerLabel = value ? (selected?.label ?? value) : allLabel;
   const triggerTitle = selected?.description ? `${selected.label} (${selected.description})` : triggerLabel;
+  const changeOpen = (next: boolean) => {
+    setOpen(next);
+    if (!next) setSearch('');
+  };
 
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) {
-          setSearch('');
-        }
-      }}
-    >
+    <Popover open={open} onOpenChange={changeOpen}>
       <PopoverTrigger
         render={
           <Button
@@ -58,7 +54,7 @@ export function ScopeCombobox({
             aria-expanded={open}
             aria-label={label}
             title={triggerTitle}
-            className="w-56 justify-between font-normal"
+            className="w-56 justify-between text-sm font-normal"
           />
         }
       >
@@ -71,7 +67,7 @@ export function ScopeCombobox({
               event.preventDefault();
               event.stopPropagation();
               onChange('');
-              setOpen(false);
+              changeOpen(false);
             }}
           >
             <X className="size-3.5" strokeWidth={1.5} aria-hidden />
@@ -85,7 +81,12 @@ export function ScopeCombobox({
         />
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 gap-0 overflow-hidden p-0">
-        <Command loop className="rounded-none bg-transparent">
+        <Command
+          defaultValue={value || ALL_VALUE}
+          label={searchPlaceholder}
+          loop
+          className="rounded-none bg-transparent"
+        >
           <CommandInput placeholder={searchPlaceholder} value={search} onValueChange={setSearch} />
           <CommandList className="subtle-scrollbar max-h-72">
             {loading ? (
@@ -102,7 +103,7 @@ export function ScopeCombobox({
                     keywords={[allLabel]}
                     onSelect={() => {
                       onChange('');
-                      setOpen(false);
+                      changeOpen(false);
                     }}
                   >
                     <Check className={cn('size-3.5', value ? 'opacity-0' : 'opacity-100')} aria-hidden />
@@ -115,7 +116,7 @@ export function ScopeCombobox({
                       selected={value === option.id}
                       onSelect={() => {
                         onChange(option.id);
-                        setOpen(false);
+                        changeOpen(false);
                       }}
                     />
                   ))}

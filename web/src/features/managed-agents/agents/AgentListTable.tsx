@@ -45,11 +45,11 @@ export function AgentListTable({
   const selection = useAgentListSelection(loading ? [] : agents, workspaceId);
   const columns: ColumnDef<AgentApiResponse>[] = [
     { id: 'selection', size: 36 },
-    { id: 'id', header: managedColumnLabel('ID', msg), size: 300 },
+    { id: 'id', header: managedColumnLabel('ID', msg), size: 200 },
     { id: 'name', header: managedColumnLabel('Name', msg) },
-    { id: 'model', header: managedColumnLabel('Model', msg), size: 180 },
-    { id: 'created', header: managedColumnLabel('Created', msg), size: 95 },
-    { id: 'updated', header: managedColumnLabel('Last updated', msg), size: 105 },
+    { id: 'model', header: managedColumnLabel('Model', msg), size: 160 },
+    { id: 'created', header: managedColumnLabel('Created', msg), size: 88 },
+    { id: 'updated', header: managedColumnLabel('Last updated', msg), size: 96 },
     { id: 'actions', size: 136 },
   ];
   const table = useReactTable({
@@ -76,7 +76,7 @@ export function AgentListTable({
           </Button>
         </div>
       ) : null}
-      <Table className={cn(dataTableClassName, 'min-w-[1080px]')}>
+      <Table className={cn(dataTableClassName, 'min-w-[900px]')}>
         <TableHeader>
           <TableRow className={dataTableHeaderRowClassName}>
             <TableHead className="h-10 w-9 px-2">

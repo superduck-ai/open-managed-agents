@@ -1,3 +1,4 @@
+import { I18nProvider, type Locale } from '../../shared/i18n';
 import { afterEach, expect, mock, test } from 'bun:test';
 import { resetTestDom } from '../../test/setup';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -29,7 +30,7 @@ const invitation = {
   expires_at: '2027-01-01',
 };
 
-function mount(path = '/agents/original', status: AuthStatus = 'authenticated') {
+function mount(path = '/agents/original', status: AuthStatus = 'authenticated', locale: Locale = 'zh-CN') {
   resetTestDom('https://oma.duck.ai' + path);
   Object.assign(globalThis, { scrollTo: () => {} });
   const refresh = mock(async () => undefined);
@@ -54,29 +55,33 @@ function mount(path = '/agents/original', status: AuthStatus = 'authenticated') 
   });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
-    <QueryClientProvider client={queryClient}>
-      <AuthContext.Provider
-        value={{
-          status,
-          account:
-            status === 'authenticated' ? { uuid: 'account', email_address: 'test@example.com', memberships: [] } : null,
-          refresh,
-          logout: async () => {},
-        }}
-      >
-        <OrganizationContext.Provider
+    <I18nProvider initialLocale={locale}>
+      <QueryClientProvider client={queryClient}>
+        <AuthContext.Provider
           value={{
-            memberships: [],
-            switching: false,
-            error: new Error('旧组织已失效'),
-            switchOrganization,
-            retry: async () => true,
+            status,
+            account:
+              status === 'authenticated'
+                ? { uuid: 'account', email_address: 'test@example.com', memberships: [] }
+                : null,
+            refresh,
+            logout: async () => {},
           }}
         >
-          <RouterProvider router={router} />
-        </OrganizationContext.Provider>
-      </AuthContext.Provider>
-    </QueryClientProvider>,
+          <OrganizationContext.Provider
+            value={{
+              memberships: [],
+              switching: false,
+              error: new Error('旧组织已失效'),
+              switchOrganization,
+              retry: async () => true,
+            }}
+          >
+            <RouterProvider router={router} />
+          </OrganizationContext.Provider>
+        </AuthContext.Provider>
+      </QueryClientProvider>
+    </I18nProvider>,
   );
   return { router, refresh, switchOrganization, queryClient };
 }
@@ -230,4 +235,34 @@ test('接受后即使仍有其他邀请也返回原组织首页', async () => {
   await screen.findByText('控制台首页');
   expect(pending).toHaveLength(1);
   expect(switchOrganization).not.toHaveBeenCalled();
+});
+
+test('renders invitations, roles and expiration dates in the selected English locale without responding', async () => {
+  const fetchMock = mock(async (_input: RequestInfo | URL, _options?: RequestInit) =>
+    Response.json({ data: [invitation] }),
+  );
+  globalThis.fetch = fetchMock as typeof fetch;
+  mount('/invites', 'authenticated', 'en');
+  expect(await screen.findByRole('heading', { name: 'Accept organization invitations' })).toBeTruthy();
+  expect(await screen.findByText('An administrator invited you to join 受邀组织.')).toBeTruthy();
+  expect(screen.getByText('User')).toBeTruthy();
+  const expiresAt = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(
+    new Date(invitation.expires_at),
+  );
+  expect(screen.getByText(`Expires ${expiresAt}`)).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Accept', exact: true })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Decline', exact: true })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Log out', exact: true })).toBeTruthy();
+  expect(screen.queryByText('用户')).toBeNull();
+  expect(fetchMock.mock.calls.every(([, options]) => !options?.method)).toBe(true);
+});
+
+test('localizes invitation lookup errors without exposing the server message', async () => {
+  globalThis.fetch = mock(async () =>
+    Response.json({ message: 'private server detail' }, { status: 403 }),
+  ) as typeof fetch;
+  mount('/invites', 'authenticated', 'en');
+  expect(await screen.findByText('You do not have permission to respond to this invitation.')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Retry', exact: true })).toBeTruthy();
+  expect(screen.queryByText('private server detail')).toBeNull();
 });

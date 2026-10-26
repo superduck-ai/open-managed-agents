@@ -83,7 +83,7 @@ export function SessionBudgetBanner({
         </ManagedWarningAlert>
       ) : (
         <p className="mx-4 mb-2 text-xs text-muted-foreground @min-[640px]:mx-6 @min-[1024px]:mx-8">
-          {msg('managedAgents.budget.summary', 'Budget {budget} · spent {spent}', {
+          {msg('managedAgents.budget.summary', 'Budget {budget}  spent {spent}', {
             budget: formatters.currency(state.budgetCents / 100),
             spent: formatters.currency(state.spentCents / 100),
           })}
@@ -110,7 +110,7 @@ export function SessionBudgetBanner({
                 inputMode="decimal"
                 value={editValue}
                 aria-invalid={editInvalid || undefined}
-                className="mt-2 h-10 bg-secondary"
+                className="mt-2 h-10"
                 onChange={(event) => setEditValue(event.target.value)}
                 autoFocus
               />

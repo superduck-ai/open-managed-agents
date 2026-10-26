@@ -1,4 +1,3 @@
-import { BarChart3, CircleDollarSign } from 'lucide-react';
 import { useI18n } from '@/shared/i18n';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { AnalyticsPageRoot, FilterBar, FilterControl } from './analytics-chrome';
@@ -20,10 +19,7 @@ function MeteredAnalyticsPage({ cost }: { cost: boolean }) {
   const all = { value: '', label: msg('common.all', 'All') };
   const workspaceOptions = [all, ...workspaces];
   return (
-    <AnalyticsPageRoot
-      title={cost ? msg('analytics.cost.title', 'Cost') : msg('analytics.usage.title', 'Usage')}
-      icon={cost ? CircleDollarSign : BarChart3}
-    >
+    <AnalyticsPageRoot title={cost ? msg('analytics.cost.title', 'Cost') : msg('analytics.usage.title', 'Usage')}>
       <p className="text-sm text-muted-foreground">
         {cost
           ? msg('analytics.real.costDescription', 'Your organization’s usage costs over time. All dates are in UTC.')

@@ -90,7 +90,7 @@ export function AgentConfigRenderedEditor({
   const skillPickerOptions = skillOptions.map((skill) => ({
     id: skill.id,
     label: skill.displayTitle,
-    description: `${skill.id} · ${skill.source}`,
+    description: `${skill.id}  ${skill.source}`,
     disabled: selectedSkills.length >= 20 && !selectedSkills.some((reference) => reference.skill_id === skill.id),
   }));
   const mcpServers = [
@@ -119,14 +119,7 @@ export function AgentConfigRenderedEditor({
 
   return (
     <div className={presentation.container}>
-      <CreateDialogSection
-        compact={compact}
-        title={msg('managedAgents.agents.createDialog.general', 'General')}
-        description={msg(
-          'managedAgents.agents.createDialog.generalDescription',
-          "What this agent is and how it's prompted.",
-        )}
-      >
+      <CreateDialogSection compact={compact} title={msg('managedAgents.agents.createDialog.general', 'General')}>
         <div className={cn('space-y-4', presentation.generalFields)}>
           <label className="grid gap-2 text-sm font-medium">
             <span>{msg('managedAgents.common.name', 'Name')}</span>
@@ -216,7 +209,7 @@ export function AgentConfigRenderedEditor({
           label={msg('managedAgents.agents.createDialog.addSkill', 'Add skill')}
           placeholder={msg('managedAgents.agents.createDialog.addSkill', 'Add skill')}
           searchPlaceholder={msg('managedAgents.agents.createDialog.searchSkills', 'Search skills...')}
-          emptyLabel={msg('managedAgents.agents.createDialog.noSkills', 'No skills yet.')}
+          emptyLabel={msg('managedAgents.agents.createDialog.noSkills', 'No skills found.')}
           options={skillPickerOptions}
           selectedIds={selectedSkills.map((reference) => reference.skill_id)}
           loading={skillsQuery.isLoading}
@@ -284,7 +277,7 @@ function CreateDialogSection({
   children,
 }: {
   title: string;
-  description: string;
+  description?: string;
   learnMore?: string;
   compact?: boolean;
   collapsible?: boolean;
@@ -310,14 +303,14 @@ function CreateDialogSection({
       className={cn(
         'grid gap-5 md:gap-6',
         compact
-          ? 'border-b border-border py-4 md:grid-cols-[244px_minmax(0,1fr)]'
+          ? 'border-b-[0.5px] border-border py-4 md:grid-cols-[244px_minmax(0,1fr)]'
           : 'py-8 md:grid-cols-[220px_minmax(0,1fr)]',
         className,
       )}
     >
       <div>
-        <h3 className={compact ? 'text-sm font-medium' : 'text-base font-semibold'}>{title}</h3>
-        <p className="mt-2 max-w-64 text-sm leading-6 text-muted-foreground">{description}</p>
+        <h3 className={compact ? 'text-sm font-medium' : 'text-sm font-semibold'}>{title}</h3>
+        {description ? <p className="mt-2 max-w-64 text-sm leading-6 text-muted-foreground">{description}</p> : null}
         {learnMore ? (
           <a
             href={learnMore}
@@ -374,7 +367,10 @@ function ModelPicker({
         <ChevronDown className="size-4 text-muted-foreground" aria-hidden />
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[min(520px,calc(100vw-2rem))] gap-0 p-0">
-        <Command>
+        <Command
+          defaultValue={selected ? `${selected.displayName} ${selected.id}` : undefined}
+          label={msg('managedAgents.agents.createDialog.searchModels', 'Search models...')}
+        >
           <CommandInput placeholder={msg('managedAgents.agents.createDialog.searchModels', 'Search models...')} />
           <CommandList>
             <CommandEmpty>{msg('managedAgents.agents.createDialog.noModels', 'No models found.')}</CommandEmpty>
@@ -391,7 +387,9 @@ function ModelPicker({
                   <Check className={cn('size-4', value === option.id ? 'opacity-100' : 'opacity-0')} aria-hidden />
                   <span className="min-w-0">
                     <span className="block truncate">{option.displayName}</span>
-                    <code className="block truncate text-xs text-muted-foreground">{option.id}</code>
+                    {option.displayName !== option.id ? (
+                      <code className="block truncate text-xs text-muted-foreground">{option.id}</code>
+                    ) : null}
                   </span>
                 </CommandItem>
               ))}

@@ -29,6 +29,7 @@ import {
 } from '../../shared/ui/dropdown-menu';
 import { ResourceFilterDropdown, ResourceSearchField } from '../../shared/ui/resource-list-controls';
 import { ResourceListState } from '../../shared/ui/resource-list-state';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
 import { toast } from '../../shared/ui/sonner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { useWorkspace } from '../../shared/workspaces/context';
@@ -99,7 +100,6 @@ export function McpTunnelsContent({
     try {
       const tunnel = await createMcpTunnel(orgUuid, workspaceId, displayName.trim(), csrfToken);
       setCreateOpen(false);
-      setDisplayName('');
       await refreshTunnels();
       toast.success(msg('mcpTunnels.toast.created', 'MCP tunnel created'));
       onNavigate?.(workspaceMcpTunnelDetailPath(workspaceId, tunnel.id), { mcpTunnelCreated: true });
@@ -135,23 +135,15 @@ export function McpTunnelsContent({
 
   return (
     <section className="min-h-[calc(100vh-48px)] text-foreground">
-      <header className="mb-5 flex items-start justify-between gap-6">
-        <div>
-          <h1 className="text-[28px] font-semibold leading-tight text-foreground">
-            {msg('mcpTunnels.title', 'MCP tunnels')}
-          </h1>
-          <p className="mt-2 text-[15px] leading-5 text-muted-foreground">
-            {msg(
-              'mcpTunnels.description',
-              'Connect local MCP servers to managed agent sessions without exposing the local server directly.',
-            )}
-          </p>
-        </div>
-        <Button type="button" className="h-9 shrink-0" onClick={() => setCreateOpen(true)} disabled={!orgUuid}>
-          <Plus className="size-4" aria-hidden />
-          {msg('mcpTunnels.newTunnel', 'New tunnel')}
-        </Button>
-      </header>
+      <ResourcePageHeader
+        title={msg('mcpTunnels.title', 'MCP tunnels')}
+        actions={
+          <Button type="button" size="lg" onClick={() => setCreateOpen(true)} disabled={!orgUuid}>
+            <Plus className="size-4" aria-hidden />
+            {msg('mcpTunnels.newTunnel', 'New tunnel')}
+          </Button>
+        }
+      />
 
       <div className="mb-7 flex flex-wrap items-center gap-2">
         <ResourceSearchField
@@ -241,9 +233,9 @@ export function McpTunnelsContent({
         open={createOpen}
         displayName={displayName}
         busy={busyAction === 'create'}
-        onOpenChange={(open) => {
-          setCreateOpen(open);
-          if (!open) setDisplayName('');
+        onOpenChange={setCreateOpen}
+        onOpenChangeComplete={(open) => {
+          if (!open && !createOpen) setDisplayName('');
         }}
         onDisplayNameChange={setDisplayName}
         onSubmit={handleCreate}

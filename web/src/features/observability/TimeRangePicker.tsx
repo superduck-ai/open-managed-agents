@@ -60,7 +60,7 @@ export function TimeRangePicker({
             variant="outline"
             size="sm"
             aria-label={absolute ? `${timeLabel}, ${presetLabel}, ${absolute}` : `${timeLabel}, ${presetLabel}`}
-            className="max-w-[min(32rem,calc(100vw-5rem))] min-w-0 justify-start gap-2 px-2.5 font-normal transition-[color,background-color,border-color,box-shadow,transform] duration-150 active:scale-[0.96]"
+            className="max-w-[min(32rem,calc(100vw-5rem))] min-w-0 justify-start gap-2 px-2.5 text-sm font-normal"
           />
         }
       >
@@ -68,22 +68,21 @@ export function TimeRangePicker({
         <span className="shrink-0 font-medium">{presetLabel}</span>
         {absolute ? (
           <>
-            <span className="h-3.5 w-px shrink-0 bg-border" aria-hidden />
+            <span className="h-3.5 w-[0.5px] shrink-0 bg-border" aria-hidden />
             <span className="min-w-0 flex-1 truncate font-mono text-xs tabular-nums text-muted-foreground">
               {absolute}
             </span>
           </>
         ) : null}
-        <ChevronDown
-          className={cn(
-            'size-3.5 shrink-0 text-muted-foreground transition-transform duration-150',
-            open && 'rotate-180',
-          )}
-          aria-hidden
-        />
+        <ChevronDown className={cn('size-3.5 shrink-0 text-muted-foreground', open && 'rotate-180')} aria-hidden />
       </PopoverTrigger>
-      <PopoverContent align="end" sideOffset={6} className="w-[min(22rem,calc(100vw-1rem))] gap-0 overflow-hidden p-0">
-        <Collapsible open={customOpen} onOpenChange={setCustomOpen}>
+      <PopoverContent
+        align="end"
+        sideOffset={6}
+        collisionAvoidance={{ side: 'flip', align: 'shift', fallbackAxisSide: 'none' }}
+        className="max-h-(--available-height) w-[min(22rem,calc(100vw-1rem))] gap-0 overflow-hidden p-0"
+      >
+        <Collapsible open={customOpen} onOpenChange={setCustomOpen} className="flex min-h-0 flex-col">
           <PresetList
             active={filters.preset}
             customOpen={customOpen}
@@ -92,7 +91,7 @@ export function TimeRangePicker({
               setOpen(false);
             }}
           />
-          <CollapsibleContent className="h-[var(--collapsible-panel-height)] border-t border-border opacity-100 transition-[height,opacity] duration-200 ease-out data-[ending-style]:h-0 data-[ending-style]:opacity-0 data-[starting-style]:h-0 data-[starting-style]:opacity-0 motion-reduce:transition-none">
+          <CollapsibleContent className="flex min-h-0 flex-col border-t-[0.5px] border-border">
             <CustomRangePanel
               key={`${filters.start}|${filters.end}`}
               filters={filters}
@@ -119,11 +118,11 @@ function PresetList({
 }) {
   const { msg } = useI18n();
   return (
-    <div className="p-3">
+    <div className="shrink-0 p-3">
       <p className="text-xs font-medium text-muted-foreground">
         {msg('observability.filter.quickRanges', 'Quick ranges')}
       </p>
-      <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+      <div className="mt-2 grid grid-cols-2 gap-1.5">
         {TIME_PRESETS.map((item) => {
           const selected = active === item.id;
           return (
@@ -132,7 +131,7 @@ function PresetList({
               type="button"
               variant={selected ? 'secondary' : 'ghost'}
               size="sm"
-              className="min-w-0 justify-between px-2.5 font-normal transition-[color,background-color,transform] duration-150 active:scale-[0.96]"
+              className="min-w-0 justify-between px-2.5 text-sm font-normal"
               aria-pressed={selected}
               onClick={() => onSelect(item.id)}
             >
@@ -149,19 +148,13 @@ function PresetList({
             type="button"
             variant={customOpen || active === 'custom' ? 'secondary' : 'ghost'}
             size="sm"
-            className="w-full justify-start gap-2 px-2.5 font-normal transition-[color,background-color,transform] duration-150 active:scale-[0.96]"
+            className="w-full justify-start gap-2 px-2.5 text-sm font-normal"
           />
         }
       >
         <CalendarIcon className="size-3.5 text-muted-foreground" aria-hidden />
         <span>{msg('observability.filter.custom', 'Custom')}</span>
-        <ChevronDown
-          className={cn(
-            'ml-auto size-3.5 text-muted-foreground transition-transform duration-150',
-            customOpen && 'rotate-180',
-          )}
-          aria-hidden
-        />
+        <ChevronDown className={cn('ml-auto size-3.5 text-muted-foreground', customOpen && 'rotate-180')} aria-hidden />
       </CollapsibleTrigger>
     </div>
   );
@@ -225,10 +218,10 @@ function CustomRangePanel({
   };
 
   return (
-    <div className="flex max-h-[min(28rem,calc(100dvh-10rem))] flex-col">
+    <div className="flex max-h-[min(28rem,calc(100dvh-10rem))] min-h-0 flex-col">
       <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-2.5">
         <p className="text-xs text-muted-foreground">
-          {msg('observability.filter.localTime', 'Shown in local time · {offset}', { offset: utcOffsetLabel() })}
+          {msg('observability.filter.localTime', 'Shown in local time ({offset})', { offset: utcOffsetLabel() })}
         </p>
         <Calendar
           mode="range"
@@ -270,13 +263,8 @@ function CustomRangePanel({
           />
         </div>
       </div>
-      <div className="flex shrink-0 justify-end border-t border-border px-2.5 py-2">
-        <Button
-          type="button"
-          size="sm"
-          className="transition-[background-color,transform] duration-150 active:scale-[0.96]"
-          onClick={apply}
-        >
+      <div className="flex shrink-0 justify-end border-t-[0.5px] border-border px-2.5 py-2">
+        <Button type="button" size="sm" className="text-sm" onClick={apply}>
           {msg('observability.filter.apply', 'Apply')}
         </Button>
       </div>

@@ -1,4 +1,4 @@
-import { ArrowUpRight, Cloud, Globe, LockKeyhole, Monitor, Plus, Trash2 } from 'lucide-react';
+import { Cloud, Globe, LockKeyhole, Monitor, Plus, Trash2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
@@ -24,41 +24,21 @@ export function EnvironmentSection({
   title,
   status,
   description,
-  anchor,
   children,
-  readOnly,
 }: {
   title: string;
   status?: ReactNode;
-  description: string;
-  anchor?: string;
+  description?: string;
   children: ReactNode;
-  readOnly?: boolean;
 }) {
-  const { msg } = useI18n();
   return (
-    <section className="grid gap-5 border-b border-border py-8 first:pt-0 last:border-0 sm:grid-cols-[220px_minmax(0,1fr)] sm:gap-8">
+    <section className="grid gap-5 border-b-[0.5px] border-border py-7 first:pt-0 last:border-0 sm:grid-cols-[220px_minmax(0,1fr)] sm:gap-8">
       <div>
         <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
           <h2 className="text-sm font-semibold">{title}</h2>
           {status}
         </div>
-        <p className="text-sm leading-relaxed text-pretty text-muted-foreground">
-          {description}
-          {anchor !== undefined && !readOnly ? (
-            <>
-              {' '}
-              <a
-                className="whitespace-nowrap text-foreground/75 underline underline-offset-4"
-                href={`${environmentDocs}${anchor}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {msg('common.learnMore', 'Learn more')} <ArrowUpRight className="inline size-3.5" aria-hidden />
-              </a>
-            </>
-          ) : null}
-        </p>
+        {description ? <p className="text-sm leading-5 text-muted-foreground">{description}</p> : null}
       </div>
       <div className="min-w-0">{children}</div>
     </section>
@@ -77,12 +57,7 @@ export function EnvironmentGeneral({
   const selfHosted = msg('managedAgents.environments.selfHosted', 'Self-hosted');
   const HostingIcon = values.hosting === 'cloud' ? Cloud : Monitor;
   return (
-    <EnvironmentSection
-      title={msg('environmentPage.general', 'General')}
-      description={msg('environmentPage.generalDescription', 'What this environment is, and where it runs.')}
-      anchor=""
-      readOnly={readOnly}
-    >
+    <EnvironmentSection title={msg('environmentPage.general', 'General')}>
       <div className="space-y-4">
         <div className="space-y-2">
           <div className="text-sm font-normal">{msg('environmentPage.hosting', 'Hosting')}</div>
@@ -150,12 +125,7 @@ export function EnvironmentNetworking({ values, onChange, readOnly }: Environmen
     },
   ] as const;
   return (
-    <EnvironmentSection
-      title={msg('managedAgents.environments.networking.title', 'Networking')}
-      description={msg('environmentPage.networkingDescription', 'What the container can reach over the network.')}
-      anchor="#networking"
-      readOnly={readOnly}
-    >
+    <EnvironmentSection title={msg('managedAgents.environments.networking.title', 'Networking')}>
       <div className="space-y-3">
         <RadioGroup
           aria-label={msg('environmentPage.networkAccess', 'Network access')}
@@ -181,7 +151,7 @@ export function EnvironmentNetworking({ values, onChange, readOnly }: Environmen
             <RadioGroupItem
               key={value}
               value={value}
-              className="h-7 w-full aspect-auto items-center justify-center gap-2 rounded-md border-transparent bg-transparent text-sm text-muted-foreground after:hidden data-checked:border-border data-checked:bg-background data-checked:text-foreground data-checked:shadow-sm dark:bg-transparent dark:data-checked:bg-background [&>[data-slot=radio-group-indicator]]:hidden"
+              className="h-7 w-full aspect-auto items-center justify-center gap-2 rounded-md border-[0.5px] border-transparent bg-transparent text-sm text-muted-foreground after:hidden data-checked:border-border data-checked:bg-background data-checked:text-foreground data-checked:shadow-none dark:bg-transparent dark:data-checked:bg-background [&>[data-slot=radio-group-indicator]]:hidden"
             >
               <Icon className="size-4" strokeWidth={1.5} aria-hidden />
               {label}
@@ -299,7 +269,7 @@ export function EnvironmentMetadata({ values, onChange, errors, readOnly }: Envi
               {!readOnly ? (
                 <Button
                   variant="ghost"
-                  size="icon"
+                  size="icon-lg"
                   aria-label={msg('environmentPage.removeMetadata', 'Remove {key}', {
                     key: row.key || msg('environmentPage.emptyEntry', 'empty entry'),
                   })}

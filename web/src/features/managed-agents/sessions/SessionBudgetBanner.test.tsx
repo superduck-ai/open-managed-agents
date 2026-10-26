@@ -42,7 +42,7 @@ test('英文预算金额占位符正确插值', () => {
       />
     </I18nProvider>,
   );
-  expect(screen.getByText('Budget $1.00 · spent $0.01')).toBeTruthy();
+  expect(screen.getByText('Budget $1.00 spent $0.01')).toBeTruthy();
 });
 
 function BudgetSyncProbe({ initial, rejected }: { initial: SessionApiResponse; rejected: boolean }) {

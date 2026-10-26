@@ -136,7 +136,7 @@ export function SessionMessageComposer({
                   type="button"
                   variant="ghost"
                   size="icon-xs"
-                  className="size-5 rounded-full text-muted-foreground/70 hover:bg-foreground/5 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/30 dark:hover:bg-foreground/5"
+                  className="size-5 rounded-full text-muted-foreground/70 hover:bg-foreground/5 hover:text-foreground dark:hover:bg-foreground/5"
                   disabled={sending}
                   aria-label={msg('managedAgents.sessions.detail.removeAttachment', 'Remove {filename}', {
                     filename: attachment.file.name,
@@ -151,7 +151,7 @@ export function SessionMessageComposer({
         ) : null}
         <InputGroup
           data-disabled={composerDisabled || sending ? 'true' : undefined}
-          className="min-h-14 items-end gap-0 overflow-hidden rounded-[22px] border-0 bg-muted/55 p-0 shadow-none transition-[box-shadow,background-color] duration-150 hover:bg-muted/70 has-[[data-slot=input-group-control]:focus-visible]:ring-1 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/20 dark:bg-session-surface dark:hover:bg-muted/80"
+          className="min-h-14 items-end gap-0 overflow-hidden rounded-[22px] border-0 bg-muted/55 p-0 shadow-none transition-[box-shadow,background-color] duration-150 ease-out motion-reduce:transition-none hover:bg-muted/70 dark:bg-session-surface dark:hover:bg-muted/80"
         >
           <InputGroupTextarea
             value={draft}
@@ -168,7 +168,7 @@ export function SessionMessageComposer({
                     )
                   : msg('managedAgents.sessions.detail.messagePlaceholder', 'Send a message to this session...')
             }
-            className="subtle-scrollbar-auto field-sizing-content block max-h-40 min-h-[54px] flex-1 resize-none overflow-y-auto border-0 bg-transparent px-4 py-[17px] text-sm leading-5 shadow-none outline-none placeholder:text-muted-foreground/75 focus-visible:ring-0"
+            className="subtle-scrollbar-auto field-sizing-content block max-h-40 min-h-[54px] flex-1 resize-none overflow-y-auto border-0 bg-transparent px-4 py-[17px] text-base leading-5 md:text-sm shadow-none outline-none placeholder:text-muted-foreground focus-visible:ring-0"
             disabled={composerDisabled || sending}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
@@ -191,7 +191,7 @@ export function SessionMessageComposer({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                className="size-7 rounded-full text-muted-foreground hover:bg-foreground/5 focus-visible:ring-1 focus-visible:ring-ring/30 dark:hover:bg-foreground/5"
+                className="size-7 rounded-full text-muted-foreground hover:bg-foreground/5 focus-visible:ring-[0.5px] focus-visible:ring-foreground dark:hover:bg-foreground/5"
                 aria-label={msg('managedAgents.sessions.detail.attachFiles', 'Attach files')}
                 disabled={composerDisabled || sending}
                 onClick={() => uploadInputRef.current?.click()}
@@ -203,7 +203,7 @@ export function SessionMessageComposer({
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  className="size-7 rounded-md text-muted-foreground hover:bg-session-hover hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/35"
+                  className="size-7 rounded-md text-muted-foreground hover:bg-session-hover hover:text-foreground focus-visible:ring-[0.5px] focus-visible:ring-foreground"
                   aria-label={
                     interrupting
                       ? msg('managedAgents.sessions.detail.stopping', 'Stopping session')
@@ -219,7 +219,7 @@ export function SessionMessageComposer({
                 type="submit"
                 variant="default"
                 size="icon-sm"
-                className="size-7 rounded-md shadow-none focus-visible:ring-1 focus-visible:ring-ring/40 disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
+                className="size-7 rounded-md shadow-none focus-visible:ring-[0.5px] focus-visible:ring-foreground disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
                 aria-label={
                   sending
                     ? msg('managedAgents.sessions.detail.sending', 'Sending message')

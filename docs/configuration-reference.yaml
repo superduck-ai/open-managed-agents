@@ -1,3 +1,5 @@
+llm_provider_presets_file: ""
+
 # Open Managed Agents complete process-configuration reference.
 #
 # This file documents every YAML field accepted by internal/config.Config. It is

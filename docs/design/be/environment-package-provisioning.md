@@ -210,6 +210,8 @@ go test ./internal/environments -run TestRegistryProvisioningInstallsFromLocalRe
 
 CubeSandbox HTTP 测试验证模板请求与状态映射，`BuildHTTP` 测试验证服务商状态码被区分为明确拒绝或结果不可知。真实部署还需验证镜像推送、拉取、模板转换及 Session 回连；镜像与模板构建本身无需 Sandbox 回连 OMA，启动 Session 后的注册、心跳、消息与模型代理需要此连通性。
 
+环境变量通过 E2B 创建参数 `envVars` 传入，提供方必须让后续命令进程继承这些变量。验收应在实际 Sandbox command API 和 MCP Bash 中读取非敏感测试变量，并核对平台同名值优先；配置读回、容器配置或直接 `docker exec` 不能替代这条运行链路。本地兼容网关和测试镜像也必须满足该合同；不满足时记录为该运行组合的能力缺口，不据此保证真实云部署已经通过。`init_script` 与 `resources` 的成功路径需要真实镜像构建及模板服务，未配置时的 API 拒绝只验证失败语义。
+
 ### 环境列表筛选与归档详情
 
 `GET /v1/environments` 支持可选 `search`（名称不区分大小写的字面子串或精确 external ID）与 `status=all|active|archived`。搜索输入在 HTTP 边界修剪一次；查询通过绑定参数保持 workspace 范围和原有游标排序，不把 `%` / `_` 解释为通配符。未传状态时保留原有 `include_archived` 语义；`active` 排除归档，`archived` 只返回归档，`all` 仍由 `include_archived` 决定是否包含归档。

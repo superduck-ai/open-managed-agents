@@ -77,3 +77,44 @@ func TestInvitationMailDelivery(t *testing.T) {
 		})
 	}
 }
+
+func TestInvitationMailAllowedEmailDomains(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		domains   []string
+		recipient string
+		want      string
+	}{
+		{"非允许域名", []string{"cvte.com", "gmail.com"}, "user@example.com", "failed"},
+		{"子域名", []string{"cvte.com"}, "user@sub.cvte.com", "failed"},
+		{"伪装后缀", []string{"cvte.com"}, "user@cvte.com.evil.com", "failed"},
+		{"相似域名", []string{"cvte.com"}, "user@evilcvte.com", "failed"},
+		{"公司邮箱", []string{"cvte.com", "gmail.com"}, "user@cvte.com", "sent"},
+		{"个人邮箱", []string{"cvte.com", "gmail.com"}, "user@gmail.com", "sent"},
+		{"域名大小写", []string{"cvte.com"}, "user@CVTE.COM", "sent"},
+		{"显式子域名", []string{"sub.cvte.com"}, "user@sub.cvte.com", "sent"},
+		{"未配置白名单", nil, "user@example.com", "sent"},
+		{"空白名单", []string{}, "user@example.com", "sent"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := &mailFixture{}
+			mailer := NewMailer(config.AuthConfig{AllowedEmailDomains: test.domains}, fixture, nil)
+			mailer.sender = fixture
+			if test.want == "failed" {
+				mailer.db = nil
+			}
+			for range 2 {
+				if got := mailer.Notify(t.Context(), auth.Principal{OrganizationUUID: "org"}, test.recipient, time.Now()); got != test.want {
+					t.Fatalf("投递状态 = %q，期望 %q", got, test.want)
+				}
+			}
+			wantCalls := 0
+			if test.want == "sent" {
+				wantCalls = 2
+			}
+			if fixture.calls != wantCalls {
+				t.Fatalf("发送次数 = %d，期望 %d", fixture.calls, wantCalls)
+			}
+		})
+	}
+}

@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -77,6 +79,7 @@ func TestVerifyMemoryCleanup(t *testing.T) {
 		}
 		f.assertObjectAbsent(t, f.objects.keys[1])
 		f.assertObject(t, f.objects.keys[0], "retained\n")
+		f.proof(t, "discarded_upload_cleanup_recovered")
 	})
 	t.Run("cleanup enqueue failure is not success", func(t *testing.T) {
 		f := newMemoryVerification(t)
@@ -84,30 +87,33 @@ func TestVerifyMemoryCleanup(t *testing.T) {
 		memoryVerifyWrite(t, f.fx, f.path("/notes.md"), "retained\n")
 		restore := f.rejectCleanupQueue(t)
 		f.objects.failDelete.Store(true)
-		memoryVerifyResponse(t, f.fx.createFile(t, f.path("/notes.md"), []byte("retained\n")), 500)
+		memoryVerifyResponse(t, f.fx.createFile(t, f.path("/notes.md/child"), []byte("orphan")), 409)
 		f.objects.failDelete.Store(false)
 		restore()
 		memoryVerifyRead(t, f.fx, f.path("/notes.md"), "retained\n")
+		assertPayloadSQLCount(t, f.app, "select count(*) from jobs where type='object_cleanup'", 0)
+		if len(listMemoryVersions(t, f.app, f.fx.store.ID, "").Data) != 1 {
+			t.Fatal("rejected metadata created a memory version")
+		}
 	})
-	t.Run("identical flush cleanup retries", func(t *testing.T) {
+	t.Run("identical flush retains audited objects", func(t *testing.T) {
 		f := newMemoryVerification(t)
 		f.started = started
 		memoryVerifyWrite(t, f.fx, f.path("/notes.md"), "retained\n")
 		f.objects.failDelete.Store(true)
 		memoryVerifyWrite(t, f.fx, f.path("/notes.md"), "retained\n")
-		assertPayloadSQLCount(t, f.app, "select count(*) from jobs where type='object_cleanup' and status='pending'", 1)
 		f.objects.failDelete.Store(false)
-		worker := cleanup.NewWorker(f.app.db, memoryVerifyClient{f.objects}, time.Second, nil)
-		if err := worker.RunOnce(t.Context(), "verify-memory-flush"); err != nil {
-			t.Fatal(err)
+		assertPayloadSQLCount(t, f.app, "select count(*) from jobs where type='object_cleanup'", 0)
+		versions := listMemoryVersions(t, f.app, f.fx.store.ID, "").Data
+		if len(versions) != 2 || versions[0].ID == versions[1].ID || len(f.objects.keys) != 2 || f.objects.keys[0] == f.objects.keys[1] {
+			t.Fatal("identical writes did not retain two immutable snapshots")
 		}
-		f.assertObjectAbsent(t, f.objects.keys[1])
-		f.assertObject(t, f.objects.keys[0], "retained\n")
-		if len(listMemoryVersions(t, f.app, f.fx.store.ID, "").Data) != 1 {
-			t.Fatal("cleanup changed memory versions")
+		for _, version := range versions {
+			f.assertObject(t, versionObjectKey(t, f, version.ID), "retained\n")
 		}
-		f.proof(t, "discarded_upload_cleanup_recovered")
+		memoryVerifyRead(t, f.fx, f.path("/notes.md"), "retained\n")
 	})
+
 	for _, retry := range []bool{false, true} {
 		name := "direct store deletion"
 		if retry {

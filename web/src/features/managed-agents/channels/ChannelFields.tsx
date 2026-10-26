@@ -31,7 +31,7 @@ export function ChannelOptions({ value, onChange }: { value: ChannelInput; onCha
     ],
   ] as const;
   return (
-    <div className="space-y-4 border-t border-dashed pt-5">
+    <div className="space-y-4 border-t-[0.5px] border-dashed pt-5">
       {options.map(([key, title, hint]) => (
         <div key={key} className="flex items-center justify-between gap-5">
           <Label htmlFor={`channel-${key}`} title={hint}>

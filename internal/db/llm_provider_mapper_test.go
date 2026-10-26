@@ -3,6 +3,7 @@ package db
 import (
 	"testing"
 
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -14,20 +15,22 @@ func TestLLMProviderMapperTenantScope(t *testing.T) {
 	)
 	params := llmProviderWriteParams{
 		OrganizationUUID: organizationUUID,
-		WorkspaceUUID:    workspaceUUID,
+		WorkspaceUUID:    nullableString(workspaceUUID),
 		ExternalID:       externalID,
+		APIBackend:       "chat_completions",
 	}
 	tests := []struct {
 		name     string
 		contract mapperBuilderContract
 	}{
-		{"lock workspace", mapperBuilderContract{
-			statement:         lLMProviderMapperLockWorkspaceStatement,
-			bound:             buildLLMProviderMapperLockWorkspace(yourbatis.DialectPostgres, organizationUUID, workspaceUUID),
-			wantID:            "LLMProviderMapper.LockWorkspace",
-			wantKind:          yourbatis.StatementUpdate,
-			wantArgumentNames: []string{"organizationUUID", "workspaceUUID"},
-			wantSQLFragments:  []string{"pg_advisory_xact_lock", "CAST($1 AS text)", "CAST($2 AS text)"},
+		{"insert", mapperBuilderContract{
+			statement:                  lLMProviderMapperInsertStatement,
+			bound:                      buildLLMProviderMapperInsert(yourbatis.DialectPostgres, params),
+			wantID:                     "LLMProviderMapper.Insert",
+			wantKind:                   yourbatis.StatementInsert,
+			wantArgumentNames:          []string{"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID", "params.Name", "params.Slug", "params.APIBackend", "params.BaseURL", "params.APIKeyLast4", "params.Models", "params.Ciphertext", "params.Nonce", "params.WrappedDEK", "params.FormatVersion", "params.KeyProvider", "params.KeyVersion", "params.CreatedAt", "params.UpdatedAt"},
+			wantSensitiveArgumentNames: []string{"params.Ciphertext", "params.Nonce", "params.WrappedDEK"},
+			wantSQLFragments:           []string{"name, slug, api_backend, base_url", "$5, $6, $7, $8", "RETURNING"},
 		}},
 		{"list", mapperBuilderContract{
 			statement:         lLMProviderMapperListByWorkspaceStatement,
@@ -51,13 +54,35 @@ func TestLLMProviderMapperTenantScope(t *testing.T) {
 			wantID:    "LLMProviderMapper.UpdateByExternalID",
 			wantKind:  yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
-				"params.Name", "params.BaseURL", "params.APIKeyLast4", "params.ModelIDs",
+				"params.Name", "params.APIBackend", "params.BaseURL", "params.APIKeyLast4", "params.Models",
 				"params.Ciphertext", "params.Nonce", "params.WrappedDEK", "params.FormatVersion",
 				"params.KeyProvider", "params.KeyVersion", "params.UpdatedAt", "params.OrganizationUUID",
 				"params.WorkspaceUUID", "params.ExternalID",
 			},
 			wantSensitiveArgumentNames: []string{"params.Ciphertext", "params.Nonce", "params.WrappedDEK"},
-			wantSQLFragments:           []string{"organization_uuid = $12", "workspace_uuid = $13", "external_id = $14"},
+			wantSQLFragments:           []string{"organization_uuid = $13", "workspace_uuid = $14", "external_id = $15"},
+		}},
+		{"find organization default", mapperBuilderContract{
+			statement:         lLMProviderMapperFindOrganizationDefaultStatement,
+			bound:             buildLLMProviderMapperFindOrganizationDefault(yourbatis.DialectPostgres, organizationUUID),
+			wantID:            "LLMProviderMapper.FindOrganizationDefault",
+			wantKind:          yourbatis.StatementSelect,
+			wantArgumentNames: []string{"organizationUUID"},
+			wantSQLFragments:  []string{"organization_uuid = $1", "workspace_uuid IS NULL"},
+		}},
+		{"update organization default", mapperBuilderContract{
+			statement: lLMProviderMapperUpdateOrganizationDefaultStatement,
+			bound:     buildLLMProviderMapperUpdateOrganizationDefault(yourbatis.DialectPostgres, params),
+			wantID:    "LLMProviderMapper.UpdateOrganizationDefault",
+			wantKind:  yourbatis.StatementUpdate,
+			wantArgumentNames: []string{
+				"params.Name", "params.APIBackend", "params.BaseURL", "params.APIKeyLast4", "params.Models",
+				"params.Ciphertext", "params.Nonce", "params.WrappedDEK", "params.FormatVersion",
+				"params.KeyProvider", "params.KeyVersion", "params.UpdatedAt", "params.OrganizationUUID",
+				"params.ExternalID",
+			},
+			wantSensitiveArgumentNames: []string{"params.Ciphertext", "params.Nonce", "params.WrappedDEK"},
+			wantSQLFragments:           []string{"organization_uuid = $13", "workspace_uuid IS NULL", "external_id = $14"},
 		}},
 		{"delete", mapperBuilderContract{
 			statement:         lLMProviderMapperDeleteByExternalIDStatement,
@@ -67,10 +92,57 @@ func TestLLMProviderMapperTenantScope(t *testing.T) {
 			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "externalID"},
 			wantSQLFragments:  []string{"organization_uuid = $1", "workspace_uuid = $2", "external_id = $3"},
 		}},
+		{"delete organization default", mapperBuilderContract{
+			statement:         lLMProviderMapperDeleteOrganizationDefaultStatement,
+			bound:             buildLLMProviderMapperDeleteOrganizationDefault(yourbatis.DialectPostgres, organizationUUID, externalID),
+			wantID:            "LLMProviderMapper.DeleteOrganizationDefault",
+			wantKind:          yourbatis.StatementDelete,
+			wantArgumentNames: []string{"organizationUUID", "externalID"},
+			wantSQLFragments:  []string{"organization_uuid = $1", "workspace_uuid IS NULL", "external_id = $2"},
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			assertMapperBuilderContract(t, test.contract)
 		})
+	}
+}
+
+func TestLLMProviderMapperBackendBinding(t *testing.T) {
+	params := llmProviderWriteParams{APIBackend: "chat_completions"}
+	for _, bound := range []yourbatis.BoundSQL{buildLLMProviderMapperInsert(yourbatis.DialectPostgres, params), buildLLMProviderMapperUpdateByExternalID(yourbatis.DialectPostgres, params), buildLLMProviderMapperUpdateOrganizationDefault(yourbatis.DialectPostgres, params)} {
+		found := false
+		for _, argument := range bound.Args {
+			if argument.Name == "params.APIBackend" {
+				found = true
+				if argument.Value != "chat_completions" || argument.Sensitive {
+					t.Fatalf("backend argument=%+v", argument)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("backend was not bound")
+		}
+	}
+}
+
+func TestLLMProviderEmptyModelsRoundTrip(t *testing.T) {
+	for _, models := range []LLMModels{nil, {}} {
+		params, err := llmProviderParams(LLMProvider{Models: models, SecretEnvelope: &secrets.Envelope{
+			Ciphertext: []byte("x"), Nonce: []byte("x"), WrappedDEK: []byte("x"), FormatVersion: 1, KeyProvider: "local", KeyVersion: 1,
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(params.Models) != "[]" {
+			t.Fatalf("models encoded as %s", params.Models)
+		}
+		provider, err := (llmProviderRow{Models: params.Models}).provider()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if provider.Models == nil || len(provider.Models) != 0 {
+			t.Fatalf("decoded models: %#v", provider.Models)
+		}
 	}
 }

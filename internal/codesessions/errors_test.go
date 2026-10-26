@@ -2,10 +2,14 @@ package codesessions
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 func TestMapCodeSessionLoadError(t *testing.T) {
@@ -32,5 +36,39 @@ func TestMapCodeSessionLoadError(t *testing.T) {
 				t.Fatalf("errors.Is(%v, cause) = false", mapped)
 			}
 		})
+	}
+}
+
+func TestSessionModelBackendsFailure(t *testing.T) {
+	cause := errors.New("private provider failure")
+	mapped := sessionModelBackendsFailure(cause)
+	if !errors.Is(mapped, cause) {
+		t.Fatal("model backend error lost its cause")
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v2/sessions/cse_test", nil)
+	httpapi.NewErrorAdapter(nil).Write(response, request, mapped)
+	if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), "Could not resolve model API backends") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "MCP") || strings.Contains(response.Body.String(), cause.Error()) {
+		t.Fatalf("unexpected error detail: %s", response.Body.String())
+	}
+}
+
+func TestWebToolContextErrors(t *testing.T) {
+	for _, tc := range []struct {
+		cause  error
+		status int
+	}{
+		{errors.New("private database failure"), http.StatusInternalServerError},
+		{db.ErrNotFound, http.StatusForbidden},
+		{webToolDenied(), http.StatusForbidden},
+	} {
+		recorder := httptest.NewRecorder()
+		httpapi.NewErrorAdapter(nil).Write(recorder, httptest.NewRequest(http.MethodGet, "/web/search", nil), webToolContextFailure(tc.cause))
+		if recorder.Code != tc.status || strings.Contains(recorder.Body.String(), "private database failure") {
+			t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
 	}
 }

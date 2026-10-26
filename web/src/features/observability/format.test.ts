@@ -81,12 +81,12 @@ describe('panel named labels', () => {
     );
     expect(parts.base).toBe('claude-haiku-4-5-20251001');
     expect(parts.suffix).toBe('平均');
-    expect(parts.full).toBe('claude-haiku-4-5-20251001 · 平均');
+    expect(parts.full).toBe('claude-haiku-4-5-20251001 (平均)');
     expect(
       panelSeriesLabel('claude-haiku-4-5-20251001 · avg', (id, fallback) =>
         id === 'observability.series.avg' ? '平均' : fallback,
       ),
-    ).toBe('claude-haiku-4-5-20251001 · 平均');
+    ).toBe('claude-haiku-4-5-20251001 (平均)');
   });
 
   test('translates known category names', () => {

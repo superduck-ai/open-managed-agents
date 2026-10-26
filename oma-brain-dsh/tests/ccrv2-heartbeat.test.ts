@@ -1,3 +1,4 @@
+import { logData } from "./persistence-fixtures.ts";
 import { expect, test } from "bun:test";
 import { CcrClient } from "../src/ccrv2/client.ts";
 import {
@@ -95,14 +96,14 @@ test("default jitter spans 18 to 22 seconds and temporary failures keep scheduli
   }, new AbortController().signal, clock);
   try {
     clock.randomValue = 1;
-    for (const [i, status] of Array.from({ length: 4 }, () => [503, 500, 408, 429, 400, 404, 0]).flat().entries()) {
+    for (const [i, status] of Array.from({ length: 4 }, () => [503, 500, 408, 429, 400, 0]).flat().entries()) {
       httpStatus = status;
       expect(clock.fire()).toBe(i === 0 ? 18_000 : 22_000);
       await settle();
       expect(lost).toEqual([]);
       expect(clock.pending.size).toBe(1);
     }
-    expect(calls).toBe(28);
+    expect(calls).toBe(24);
     httpStatus = 410;
     clock.fire();
     await settle();
@@ -135,7 +136,7 @@ test("auth failures share all writes, reset on successful writes and survive oth
   try {
     // Every kind of successful POST/PUT clears the same auth counter.
     for (const write of [
-      () => client.persist("a", "dsh_log", {}),
+      () => client.persist("a", "dsh_log", logData({})),
       () => client.events("a", [{ type: "agent.message" }]),
       () => client.setStatus("a", "idle"),
       () => client.acknowledge("a", "input").catch(() => {}),
@@ -300,7 +301,7 @@ test("epoch and lease rejection on other writes stop the heartbeat without alter
       check: client.bindLease("a"), onLeaseLost: (failure) => { lost.push(failure); },
     }, new AbortController().signal, clock);
     try {
-      await expect(client.persist("a", "dsh_log", {})).rejects.toThrow(String(status));
+      await expect(client.persist("a", "dsh_log", logData({}))).rejects.toThrow(String(status));
       expect(lost).toHaveLength(1);
       expect(lost[0]?.httpStatus).toBe(status);
       expect(clock.pending.size).toBe(0);
@@ -537,6 +538,29 @@ test("configured cadence and jitter remain independent of request duration", asy
     expect(clock.fire()).toBe(1100);
     await settle();
     expect(deadlines).toEqual([200, 200]);
+  } finally {
+    await heartbeat.close();
+  }
+});
+
+test("a heartbeat for an unregistered worker stops the session immediately", async () => {
+  const clock = new ManualClock();
+  const lost: CcrLeaseFailure[] = [];
+  let calls = 0;
+  const client = new CcrClient({
+    credentials: () => ({ token: "token", workerEpoch: 7 }),
+    sessionIds: () => ["a"],
+    request: async () => { calls++; return new Response(null, { status: 404 }); },
+  });
+  const heartbeat = new CcrHeartbeat({
+    check: client.bindLease("a"), onLeaseLost: (failure) => { lost.push(failure); },
+  }, new AbortController().signal, clock);
+  try {
+    clock.fire();
+    await settle();
+    expect(calls).toBe(1);
+    expect(lost).toEqual([{ status: "rejected", httpStatus: 404, reason: "worker_not_registered", workerEpoch: 7, consecutiveFailures: 1 }]);
+    expect(clock.pending.size).toBe(0);
   } finally {
     await heartbeat.close();
   }

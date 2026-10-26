@@ -32,7 +32,10 @@ func (h *Handler) authorizeSession(r *http.Request, sessionID string, access ses
 	if isSessionManagerCredential(principal) {
 		return session, nil
 	}
-	if principal.CredentialType != auth.CredentialTypeEnvironmentKey {
+	if principal.CredentialType == auth.CredentialTypeWorkToken && principal.PublicSessionExternalID != sessionID {
+		return db.Session{}, environmentKeyCannotAccessSession()
+	}
+	if principal.CredentialType != auth.CredentialTypeEnvironmentKey && principal.CredentialType != auth.CredentialTypeWorkToken {
 		return db.Session{}, sessionAuthenticationRequired()
 	}
 	if session.EnvironmentExternalID != principal.EnvironmentExternalID {

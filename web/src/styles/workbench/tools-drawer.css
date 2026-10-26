@@ -16,9 +16,9 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 0.5px solid var(--input);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--popover);
   padding: 0 10px;
   color: var(--foreground);
   font-size: 14px;
@@ -27,14 +27,14 @@
 }
 
 .workbench-tool-choice:hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--accent);
 }
 
 .workbench-tool-choice:disabled {
   cursor: default;
   color: var(--muted-foreground);
   background: transparent;
-  opacity: 0.68;
+  opacity: 1;
 }
 
 .workbench-tools-empty {
@@ -61,7 +61,7 @@
 }
 
 .workbench-tools-empty a {
-  color: #8fb7ff;
+  color: var(--session-link);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -69,9 +69,7 @@
 .workbench-tool-form-card {
   display: grid;
   gap: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 7px;
-  padding: 14px 12px 12px;
+  padding: 0;
 }
 
 .workbench-tool-form-card h3 {
@@ -113,8 +111,8 @@
 }
 
 .workbench-tool-schema:focus-within {
-  border-color: #2d7ff9;
-  box-shadow: 0 0 0 1px #2d7ff9;
+  border-color: var(--foreground);
+  box-shadow: var(--focus-ring);
 }
 
 .workbench-tool-menu-anchor {
@@ -133,10 +131,10 @@
   height: 256px;
   min-height: 256px;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 0.5px solid var(--input);
   border-radius: 8px;
-  background: #353631;
-  color: rgb(238, 231, 221);
+  background: var(--code);
+  color: var(--code-foreground);
   font-family: var(--font-mono);
   font-size: 14px;
   line-height: 20px;
@@ -163,7 +161,7 @@
 .workbench-tool-schema-highlight {
   pointer-events: none;
   overflow: hidden;
-  color: rgb(238, 231, 221);
+  color: var(--code-foreground);
 }
 
 .workbench-tool-schema-highlight code {
@@ -178,12 +176,16 @@
   resize: none;
   overflow: auto;
   color: transparent;
-  caret-color: rgb(238, 231, 221);
+  caret-color: var(--code-foreground);
   outline: none;
 }
 
+.workbench-tool-schema-input:focus-visible {
+  box-shadow: none;
+}
+
 .workbench-tool-schema-input::selection {
-  background: rgba(45, 127, 249, 0.35);
+  background: var(--accent);
   color: transparent;
 }
 
@@ -219,7 +221,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 0.5px solid var(--border);
   border-radius: 7px;
   padding: 12px;
 }
@@ -236,7 +238,7 @@
   width: 100%;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 0.5px solid var(--border);
   border-radius: 7px;
   background: transparent;
 }
@@ -259,6 +261,7 @@
 
 .workbench-tool-card-actions {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 4px;
 }
@@ -270,11 +273,11 @@
   align-items: center;
   justify-content: center;
   border-radius: 7px;
-  color: rgb(195, 194, 183);
+  color: var(--muted-foreground);
 }
 
 .workbench-tool-icon-action:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--accent);
   color: var(--foreground);
 }
 
@@ -284,10 +287,11 @@
 
 .workbench-tool-web-summary {
   display: flex;
+  overflow-wrap: anywhere;
   min-height: 44px;
   align-items: center;
   border-radius: 6px;
-  background: #383835;
+  background: var(--muted);
   padding: 12px;
   color: var(--foreground);
   font-size: 14px;
@@ -300,4 +304,15 @@
   margin-left: -4px;
   margin-top: auto;
   padding-top: 18px;
+}
+
+@media (width < 768px) {
+  .workbench-drawer-panel.is-tools {
+    position: fixed;
+    top: 64px;
+    right: 12px;
+    bottom: 12px;
+    width: calc(100% - 24px);
+    min-width: 0;
+  }
 }

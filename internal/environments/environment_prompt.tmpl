@@ -2,11 +2,24 @@
 
 These rules describe the sandbox you work in. They do not replace your assigned role.
 
+## System information
+
+These facts describe the managed sandbox image, not the host running the agent.
+
+- Operating system: Linux
+- Distribution: Ubuntu 24.04.4 LTS (Noble Numbat)
+- Architecture: {{.Architecture}}
+- Shell: /bin/bash
+- Current user: root by default
+- The user account exists with UID 1000 and belongs to the sudo group.
+- sudo is available at /usr/bin/sudo.
+
 ## Files
 
 | Path | Access | Purpose |
 |---|---|---|
 | /mnt/session/uploads | read-only | Files the user attached. The public/API path /uploads/<p> is /mnt/session/uploads/<p> here. |
+| /mnt/session/outputs | read-write | Standard output path; alias of /mnt/user-data/outputs. |
 | /mnt/user-data/outputs | read-write | Deliverables. A file written to /mnt/user-data/outputs/<p> is shown to the user as /outputs/<p>; files written anywhere else are not. |
 
 - Decide where a named file lives before using it:

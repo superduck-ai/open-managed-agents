@@ -36,6 +36,7 @@ func (o optional[T]) valueOr(fallback T) T {
 
 type yamlConfig struct {
 	ChannelBridge        ChannelBridgeConfig       `yaml:"channel_bridge"`
+	WebTools             WebToolsConfig            `yaml:"web_tools"`
 	EnvironmentPackages  EnvironmentPackageConfig  `yaml:"environment_packages"`
 	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
 	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
@@ -133,6 +134,8 @@ type yamlBootstrapConfig struct {
 	OrganizationName    string                 `yaml:"organization_name"`
 	WorkspaceExternalID string                 `yaml:"workspace_external_id"`
 	UserExternalID      string                 `yaml:"user_external_id"`
+	UserEmail           string                 `yaml:"user_email"`
+	UserName            string                 `yaml:"user_name"`
 	APIKeyExternalID    string                 `yaml:"api_key_external_id"`
 }
 
@@ -151,6 +154,7 @@ func newYAMLConfig() yamlConfig {
 			ConnectTimeout:    defaults.NATS.ConnectTimeout,
 			DrainTimeout:      defaults.NATS.DrainTimeout,
 		},
+		WebTools:             defaults.WebTools,
 		Auth:                 defaults.Auth,
 		Tunnel:               defaults.Tunnel,
 		Storage:              defaults.Storage,
@@ -183,6 +187,8 @@ func newYAMLConfig() yamlConfig {
 			OrganizationName:    defaults.Bootstrap.OrganizationName,
 			WorkspaceExternalID: defaults.Bootstrap.WorkspaceExternalID,
 			UserExternalID:      defaults.Bootstrap.UserExternalID,
+			UserEmail:           defaults.Bootstrap.UserEmail,
+			UserName:            defaults.Bootstrap.UserName,
 			APIKeyExternalID:    defaults.Bootstrap.APIKeyExternalID,
 		},
 	}
@@ -202,6 +208,7 @@ func (input yamlConfig) resolve() Config {
 			ConnectTimeout:    input.NATS.ConnectTimeout,
 			DrainTimeout:      input.NATS.DrainTimeout,
 		},
+		WebTools:             input.WebTools,
 		Auth:                 input.Auth,
 		Tunnel:               input.Tunnel,
 		Storage:              input.Storage,
@@ -234,6 +241,8 @@ func (input yamlConfig) resolve() Config {
 			OrganizationName:    input.Bootstrap.OrganizationName,
 			WorkspaceExternalID: input.Bootstrap.WorkspaceExternalID,
 			UserExternalID:      input.Bootstrap.UserExternalID,
+			UserEmail:           input.Bootstrap.UserEmail,
+			UserName:            input.Bootstrap.UserName,
 			APIKeyExternalID:    input.Bootstrap.APIKeyExternalID,
 		},
 	}

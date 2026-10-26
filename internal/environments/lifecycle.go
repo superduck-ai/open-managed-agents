@@ -22,9 +22,9 @@ const (
 	sandboxSweepID            = "sandbox_lifecycle_sweep"
 	sandboxSweepCron          = "* * * * *"
 	sandboxSweepTimezone      = "UTC"
-	archiveReclaimConcurrency = 4
-	archiveReclaimTimeout     = 30 * time.Second
-	archiveRetryTimeout       = 5 * time.Second
+	removalReclaimConcurrency = 4
+	removalReclaimTimeout     = 30 * time.Second
+	removalRetryTimeout       = 5 * time.Second
 )
 
 type SandboxLifecycle struct {
@@ -33,11 +33,11 @@ type SandboxLifecycle struct {
 	cfg             config.SandboxLifecycleConfig
 	logger          *slog.Logger
 	client          *river.Client[*sql.Tx]
-	archiveReclaims chan struct{}
+	removalReclaims chan struct{}
 }
 
 func NewSandboxLifecycle(database *db.DB, provider *e2bruntime.E2BProvider, cfg config.SandboxLifecycleConfig, logger *slog.Logger) *SandboxLifecycle {
-	return &SandboxLifecycle{database: database, provider: provider, cfg: cfg, logger: logging.LoggerOrDefault(logger), archiveReclaims: make(chan struct{}, archiveReclaimConcurrency)}
+	return &SandboxLifecycle{database: database, provider: provider, cfg: cfg, logger: logging.LoggerOrDefault(logger), removalReclaims: make(chan struct{}, removalReclaimConcurrency)}
 }
 
 type sandboxSweepArgs struct{}
@@ -77,18 +77,18 @@ func (l *SandboxLifecycle) Configure(ctx context.Context, client *river.Client[*
 	return err
 }
 
-func (l *SandboxLifecycle) EnqueueArchivedSession(ctx context.Context, session db.Session) error {
-	targets, err := l.database.ListArchivedSessionSandboxes(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID)
+func (l *SandboxLifecycle) EnqueueRemovedSession(ctx context.Context, session db.Session) error {
+	targets, err := l.database.ListRemovedSessionSandboxes(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID)
 	if err != nil {
 		return err
 	}
 	var failures []error
 	for _, target := range targets {
 		select {
-		case l.archiveReclaims <- struct{}{}:
-			go l.reclaimArchivedSandbox(context.WithoutCancel(ctx), target)
+		case l.removalReclaims <- struct{}{}:
+			go l.reclaimRemovedSandbox(context.WithoutCancel(ctx), target)
 		default:
-			if err := l.enqueueArchiveRetry(ctx, target); err != nil {
+			if err := l.enqueueRemovalRetry(ctx, target); err != nil {
 				failures = append(failures, err)
 			}
 		}
@@ -96,20 +96,20 @@ func (l *SandboxLifecycle) EnqueueArchivedSession(ctx context.Context, session d
 	return errors.Join(failures...)
 }
 
-func (l *SandboxLifecycle) reclaimArchivedSandbox(parent context.Context, target db.SandboxReclaimTarget) {
-	defer func() { <-l.archiveReclaims }()
-	ctx, cancel := context.WithTimeout(parent, archiveReclaimTimeout)
+func (l *SandboxLifecycle) reclaimRemovedSandbox(parent context.Context, target db.SandboxReclaimTarget) {
+	defer func() { <-l.removalReclaims }()
+	ctx, cancel := context.WithTimeout(parent, removalReclaimTimeout)
 	defer cancel()
 	if err := l.Reclaim(ctx, target); err != nil {
-		retryCtx, retryCancel := context.WithTimeout(parent, archiveRetryTimeout)
+		retryCtx, retryCancel := context.WithTimeout(parent, removalRetryTimeout)
 		defer retryCancel()
-		failure := errors.Join(err, l.enqueueArchiveRetry(retryCtx, target))
-		l.logger.WarnContext(retryCtx, "archived sandbox reclamation deferred", "sandbox_id", target.SandboxUUID,
+		failure := errors.Join(err, l.enqueueRemovalRetry(retryCtx, target))
+		l.logger.WarnContext(retryCtx, "removed sandbox reclamation deferred", "sandbox_id", target.SandboxUUID,
 			"organization_id", target.OrganizationUUID, "workspace_id", target.WorkspaceUUID, "error", failure)
 	}
 }
 
-func (l *SandboxLifecycle) enqueueArchiveRetry(ctx context.Context, target db.SandboxReclaimTarget) error {
+func (l *SandboxLifecycle) enqueueRemovalRetry(ctx context.Context, target db.SandboxReclaimTarget) error {
 	if l.client == nil {
 		return errors.New("sandbox lifecycle River client is not configured")
 	}
@@ -117,8 +117,12 @@ func (l *SandboxLifecycle) enqueueArchiveRetry(ctx context.Context, target db.Sa
 }
 
 func enqueueSandboxReclaim(ctx context.Context, client *river.Client[*sql.Tx], target db.SandboxReclaimTarget) error {
-	_, err := client.Insert(ctx, sandboxReclaimArgs{OrganizationUUID: target.OrganizationUUID, WorkspaceUUID: target.WorkspaceUUID, SandboxUUID: target.SandboxUUID}, nil)
+	_, err := client.Insert(ctx, sandboxReclaimArgsForTarget(target), nil)
 	return err
+}
+
+func sandboxReclaimArgsForTarget(target db.SandboxReclaimTarget) sandboxReclaimArgs {
+	return sandboxReclaimArgs{OrganizationUUID: target.OrganizationUUID, WorkspaceUUID: target.WorkspaceUUID, SandboxUUID: target.SandboxUUID}
 }
 
 func (l *SandboxLifecycle) allowsNewClaims() bool {
@@ -173,6 +177,7 @@ func (l *SandboxLifecycle) enqueueReclaims(ctx context.Context, client *river.Cl
 		if err != nil {
 			return err
 		}
+		jobs := make([]river.InsertManyParams, 0, len(targets))
 		for _, target := range targets {
 			if !l.allowsNewClaims() && !target.Reclaiming {
 				if l.cfg.Enabled && l.cfg.DryRun {
@@ -181,7 +186,10 @@ func (l *SandboxLifecycle) enqueueReclaims(ctx context.Context, client *river.Cl
 				}
 				continue
 			}
-			if err := enqueueSandboxReclaim(ctx, client, target); err != nil {
+			jobs = append(jobs, river.InsertManyParams{Args: sandboxReclaimArgsForTarget(target)})
+		}
+		if len(jobs) > 0 {
+			if _, err := client.InsertMany(ctx, jobs); err != nil {
 				return err
 			}
 		}

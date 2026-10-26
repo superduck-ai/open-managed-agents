@@ -1,337 +1,194 @@
 # Open Managed Agents
 
-Open Managed Agents 是一个用 Go 实现的本地优先 Managed Agents API 服务，目标是提供兼容 Anthropic SDK 的 `/v1` API 表面，并配套一个 React 控制台。它把 agents、sessions、environments、files、memory stores、skills、deployments、message batches、vaults 和 webhooks 等资源放在同一个单体服务中，方便本地开发、SDK 兼容性验证和后续产品化迭代。
+[English](./README.md) | 简体中文
 
-## 当前定位
+**在自己的基础设施上运行 Managed Agents，使用兼容 Anthropic SDK 的 API、隔离沙箱和可查看每次会话执行过程的控制台。**
 
-- **API 兼容层**：`/v1/*` 提供面向 Anthropic SDK 的资源接口，使用 `Authorization: Bearer ...` 或 `X-Api-Key` 鉴权，默认开发 API key 为 `sk-ant-local-default`。
-- **控制台后端**：`/api/*`、`/auth/*`、`/web-api/*` 等路由服务于前端控制台，使用 cookie session。
-- **托管 Agent 资源**：支持 agent 定义、session 事件流、deployment 手动运行、environment work、credential vault、memory store、skills 等资源。
-- **本地基础设施**：PostgreSQL 存储元数据，Redis 存储平台会话，NATS JetStream 提供消息队列基础设施，S3 兼容对象存储保存文件、skills 和 batch 结果，默认本地使用 MinIO。
-- **前端控制台**：`web/` 是 Vite + React + TypeScript + Bun 应用，使用 TanStack Router/Query/Table 和 shadcn 风格组件。
+[![Go 1.27.0](https://img.shields.io/badge/Go-1.27.0-00ADD8?logo=go)](./go.mod)
+[![Bun](https://img.shields.io/badge/Runtime-Bun-000000?logo=bun)](./web/package.json)
+[![Anthropic SDK compatible](https://img.shields.io/badge/Anthropic_SDK-compatible-765744)](./docs/en/quickstart.mdx)
+[![Go unit tests](https://github.com/superduck-ai/open-managed-agents/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/superduck-ai/open-managed-agents/actions/workflows/unit-tests.yml)
 
-## 技术栈
+通过 API 定义 Agent、提交任务并订阅执行事件，OMA 负责执行调度、工具审批、文件持久化和会话恢复。你可以用它构建 Agent 应用，在本地运行整套服务，调试从模型调用到沙箱操作的完整链路。
 
-- 后端：Go `1.27.0`、`chi`、`pgx`、`goose`、AWS SDK for Go v2、Redis、NATS、Anthropic Go SDK。
-- 前端：Bun、Vite、React、TypeScript、Tailwind CSS、TanStack Router/Query/Table、Base UI、shadcn/ui 风格组件。
-- 存储与消息：PostgreSQL、Redis、NATS JetStream、S3 兼容对象存储，默认本地使用 MinIO。
-- 沙箱：E2B 相关能力通过 `config/config.yaml` 的 `e2b` 节点启用；没有配置时，多数 API/单元测试仍可在 fake store 或非真实沙箱路径下运行。
+![Managed Agents 控制台快速开始与 Agent 模板选择](./docs/images/console/managed-agents-quickstart.png)
 
-## 目录结构
+_在控制台中选择模板，创建你的第一个 Agent。_
 
-```text
-.
-├── main.go                     # 服务入口：加载配置、连接依赖、启动 worker 和 HTTP server
-├── cmd/migrate                 # 手动运行数据库迁移
-├── internal/api                # HTTP server 组装、中间件、顶层路由挂载
-├── internal/{agents,...}       # 垂直资源 handler/service
-├── internal/db                 # PostgreSQL 数据访问、seed、goose migrations
-├── internal/httpapi            # Console API、兼容错误响应、HTTP 辅助函数
-├── internal/storage            # S3 兼容对象存储边界
-├── config                      # 本地运行配置、示例和忽略提交的私钥
-├── assets/skills               # 内置和示例 skill 包
-├── tests                       # Go API/SDK/E2E 测试
-└── web                         # 前端控制台
+[快速开始](#快速开始) · [连接客户端](#连接客户端) · [架构详解](./OMA-Managed-Agents-Architecture.en.md) · [参与贡献](./CONTRIBUTING.md)
+
+## 核心能力
+
+- 通过 Anthropic SDK 连接自建 `/v1` 接口，管理 Agent、Environment、Session 和事件流。
+- 通过 E2B 兼容接口在隔离沙箱中执行命令和文件操作，本地开发可使用 e2b-local。
+- Brain 与 Sandbox 分离运行，持久化对话与执行状态，支持替换 Worker 后恢复会话。
+- 通过 Filestore 和 FUSE 挂载上传文件、Skills、memory 和产物，按会话控制路径与权限。
+- 通过平台代理管理上游凭证和工具审批，通过出站 Tunnel 连接私网 MCP 服务。
+- 在 React 控制台中查看会话、工具调用、延迟与用量。
+
+## 架构概览
+
+Agent 定义行为与工具，Environment 定义执行条件，Session 承载一次任务，Events 传递输入、进度、审批与结果。
+
+![OMA 架构：平台、Brain、Sandbox、状态存储、安全与文件系统](./docs/images/managed-agents-architecture/overall-architecture.jpg)
+
+平台管理资源、权限和持久状态；Brain 运行 agent loop，编排模型与工具调用；Sandbox 执行命令并提供会话文件系统。外部 MCP 和 Web 工具使用各自的集成路径。会话恢复基于已保存的状态；结果不确定的工具调用需要核对后才能重放。
+
+关于 CCRv2、凭证隔离、FUSE 和 MCP Tunnel 的设计，见英文文章 [OMA: From Running an Agent to Delivering a Reliable Service](./OMA-Managed-Agents-Architecture.en.md)。
+
+## 快速开始
+
+使用 Docker Compose 体验控制台、API 和本地沙箱基础设施，无需编译 Go 或前端代码。
+
+需要 Git、[just](https://github.com/casey/just)、OpenSSL 和 Docker Compose。运行平台为 Linux Docker Engine 20.10+ 或 macOS 上的 OrbStack；沙箱网关需要 host 网络。请保留默认端口 `28080` 和 `38080`。
+
+### 1. 获取源码
+
+```bash
+git clone https://github.com/superduck-ai/open-managed-agents.git
+cd open-managed-agents
 ```
 
-核心依赖方向大致是：`internal/api` 负责服务组装和路由，资源包负责 HTTP handler 与业务编排，`internal/db` 只做持久化边界，不能反向依赖 API 或 handler 包。
-
-## Docker Compose 一键部署
-
-项目支持通过 Docker Compose 启动完整环境（PostgreSQL、Redis、NATS、MinIO、e2b-local 沙箱网关、oma-server 以及前端 Caddy 反代）。首次启动先从无密钥模板创建本地运行配置：
+### 2. 初始化本地配置
 
 ```bash
 just init-compose-config
-# 只编辑 deploy/docker-compose/oma-server.local.yaml 填写真实凭证
+```
+
+该命令创建被 Git 忽略的 `deploy/docker-compose/oma-server.local.yaml` 和代理 CA 私钥，已有文件不会覆盖。默认配置用于本地开发，模型 Provider 凭证在服务启动后通过控制台添加。
+
+### 3. 启动服务
+
+```bash
+docker pull ghcr.io/superduck-ai/managed-agent-sandbox:latest
 docker compose up -d
 ```
 
-初始化命令不会覆盖已经存在的本地配置，并将新文件权限设置为 `0600`。受 Git 跟踪的 `deploy/docker-compose/oma-server.yaml` 只是不含真实密钥的完整模板；Compose 只读挂载已加入 `.gitignore` 的 `deploy/docker-compose/oma-server.local.yaml`。应用不会合并两个 YAML，数据库、Redis、对象存储、E2B 和上游凭证等业务配置都从这份本地完整配置读取。详见 `docs/design/docker-compose-deployment.md`。
-
-默认 Compose 拓扑明确用于本地开发：`env: dev`、自动迁移开启，并省略持久化的 Code Session JWT 私钥。oma-server 每次重启都会生成新的进程级 Ed25519 密钥，重启前签发的 session-ingress JWT 将不再受信任；该行为不适用于需要跨重启维持信任的生产部署。生产环境必须改用 `env: prod`，关闭自动迁移，并通过只读 Secret 挂载稳定的 `code_session.jwt_signing_private_key_file`。
-
-启动后前端访问 `http://localhost:28080`，API 访问 `http://localhost:38080`。
-
-> **平台要求**：仅支持 Linux Docker Engine 20.10+ 或 OrbStack（macOS）。
-
-## 本地依赖
-
-需要先准备：
-
-- Go，与 `go.mod` 中声明的版本保持一致。
-- Bun，用于前端开发、测试和构建。
-- PostgreSQL，默认连接串是 `postgresql://claude:123456@localhost:5432/claude_api?sslmode=disable`。
-- Redis，默认 `redis://localhost:6379`。
-- NATS JetStream 三节点集群，默认本地端口为 `4222` / `4223` / `4224`；`nats.url` 是服务启动必填配置，支持逗号分隔的多个种子节点。
-- MinIO 或其他 S3 兼容存储，默认 `http://localhost:9000`、bucket `claude-files`、账号密码 `minioadmin/minioadmin`。
-
-启动服务前通常应确保 `database.url` 指向的 PostgreSQL 数据库和角色已经可用。首次连接失败时，应用只会尝试使用该 URL 派生的 `postgres`/`template1` 连接以及当前系统用户完成本地初始化，不再接受独立的管理员连接串。
-
-## 配置
-
-复制示例文件后再按需修改：
+首次启动需要下载镜像。检查服务就绪状态和 API 访问：
 
 ```bash
-cp config/config.example.yaml config/config.yaml
+curl --fail http://localhost:38080/readyz
+curl --fail http://localhost:38080/v1/models \
+  -H 'X-Api-Key: sk-ant-local-default'
 ```
 
-应用会从当前目录向上查找 `config/config.yaml`，直到遇到 `go.mod`；也可以用 `CONFIG_FILE=/path/to/config.yaml` 显式指定。配置文件是必需的，未找到时拒绝启动。YAML 采用严格字段校验，写错字段名会拒绝启动；顶层 `env` 只接受 `dev` 或 `prod`。常用本地配置如下：
+打开[控制台](http://localhost:28080)。首次调用模型前，在工作区的 **LLM 模型**页面配置 Provider 与模型 ID。客户端应使用同一工作区的 API key；`sk-ant-local-default` 属于默认 seed 创建的开发工作区。配置 Provider 前，模型列表可能为空。
 
-```yaml
-env: dev
-
-server:
-  addr: 127.0.0.1:38080
-
-database:
-  url: postgresql://claude:123456@localhost:5432/claude_api?sslmode=disable
-
-redis:
-  url: redis://localhost:6379
-
-nats:
-  url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
-
-storage:
-  type: s3
-  s3:
-    endpoint: http://localhost:9000
-    bucket: claude-files
-    region: us-east-1
-    access_key_id: minioadmin
-    secret_access_key: minioadmin
-    force_path_style: true
-
-e2b:
-  api_key: ""
-  api_url: ""
-```
-
-加载优先级为“代码默认值 < `config/config.yaml`”。业务环境变量不会覆盖 YAML；`CONFIG_FILE` 只负责选择配置文件，路径字段中的 `${HOME}` 等变量只用于路径展开。生产环境应把完整 YAML 作为只读 Secret 挂载，并限制文件权限。
-
-从仍使用 `.env` 或业务环境变量的旧版本升级属于 breaking change：升级前必须先生成并验证完整 YAML，当前版本不会回退读取旧变量。字段映射、已移除配置和回滚步骤见 [`docs/design/be/runtime-configuration.md`](docs/design/be/runtime-configuration.md#从-env-迁移)。
-
-### 创建 code session 私钥
-
-先创建一个只有当前用户可访问的目录，再使用仓库脚本生成两份私钥：
+将 `provider-slug/model-id` 替换为 `/v1/models` 返回的模型 ID，即可创建 Agent：
 
 ```bash
-mkdir -p config/secrets
-chmod 700 config/secrets
-
-just generate-code-session-jwt-key \
-  config/secrets/code-session-jwt-ed25519.pem
-
-just generate-upstream-proxy-ca-key \
-  config/secrets/upstream-proxy-ca-key.pem
+curl --fail-with-body http://localhost:38080/v1/agents \
+  -H 'X-Api-Key: sk-ant-local-default' \
+  -H 'anthropic-version: 2023-06-01' \
+  -H 'anthropic-beta: managed-agents-2026-04-01' \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Hello OMA","model":"provider-slug/model-id","system":"You are a helpful assistant.","tools":[{"type":"agent_toolset_20260401"}]}'
 ```
 
-两个脚本都会将文件权限设置为 `0600`，并在目标文件已经存在时拒绝覆盖，避免意外轮换密钥。`config/config.yaml` 和 `config/secrets/` 下的真实私钥均被 Git 忽略。YAML 路径支持 `${HOME}`、`~/`，相对路径以配置文件所在目录为基准：
+成功响应包含 Agent 的 `id` 和 `version`。继续参考[首个会话教程](./docs/en/quickstart.mdx)，创建 Environment、发送任务并订阅响应事件。
 
-```yaml
-code_session:
-  jwt_signing_private_key_file: secrets/code-session-jwt-ed25519.pem
+启动异常时使用 `docker compose ps` 和 `docker compose logs --tail=100 oma-server` 查看状态。运行 `docker compose down` 停止服务，命名数据卷会保留。配置与生产部署要求见 [Compose 部署指南](./docs/design/docker-compose-deployment.md)。
 
-  # 只有启用 CCRv2 HTTPS MITM 时才需要下面两项
-  upstream_proxy_mitm_enabled: true
-  upstream_proxy_ca_key_file: secrets/upstream-proxy-ca-key.pem
-```
+## 连接客户端
 
-`code_session.jwt_signing_private_key_file` 指向 PKCS#8 PEM 格式的 Ed25519 私钥，用于签发 session-ingress JWT。开发和测试环境省略时会在进程内生成临时密钥；生产环境缺失会拒绝启动。
+将 Anthropic SDK 的 Base URL 指向 OMA，并使用工作区 API key。以下示例创建 Agent；任务执行使用 Session 及其 Events API。请安装包含 Managed Agents beta 资源的 SDK 版本。
 
-`code_session.upstream_proxy_ca_key_file` 指向 PKCS#8 PEM 格式的 ECDSA P-256 私钥。只有 `code_session.upstream_proxy_mitm_enabled: true` 时才需要配置；服务启动时使用它在内存中签发根证书，不会在磁盘上生成证书文件。
-
-`config/config.example.yaml` 是正常本地开发使用的最小可运行示例；Batch、Webhook、Environment Runner 等通常无需调整的字段继续使用代码默认值，不放入该文件。全部支持字段及其安全示例值见 `docs/configuration-reference.yaml`。配置加载入口在 `internal/config/config.go`，领域类型位于 `internal/config/types.go`；运行时配置按数据库、存储、Batch、Code Session、Webhook 等职责分组。未显式配置 `database.auto_migrate` 时，开发环境默认开启，生产环境默认关闭。
-
-## 启动后端
-
-推荐使用仓库脚本，它会释放默认端口并以前台方式运行服务：
+先设置工作区中的模型 ID：
 
 ```bash
-./scripts/restart-server.sh
+export OMA_MODEL_ID="provider-slug/model-id"
 ```
 
-需要调试 Managed Agent Sandbox、Filestore FUSE 挂载或 Environment Runner 时，推荐让 Docker Compose 只运行 PostgreSQL、Redis、NATS、MinIO，并从源码在宿主机分别启动 e2b-local、oma-server 和 Vite。完整启动顺序与必要配置见[本地开发模式](docs/design/docker-compose-deployment.md#8-本地开发模式)。
+### Python
 
-脚本要求存在 `config/config.yaml`，并在释放端口前完成检查；缺失时会直接退出。首次运行先执行 `cp config/config.example.yaml config/config.yaml`。
+使用 `pip install anthropic` 安装 SDK，然后运行：
 
-监听地址由 `config/config.yaml` 的 `server.addr` 决定。修改端口后，用 `PORT` 告诉重启脚本释放对应监听端口：
+```python
+import os
+from anthropic import Anthropic
 
-```yaml
-server:
-  addr: 127.0.0.1:18080
+client = Anthropic(
+    base_url="http://localhost:38080",
+    api_key="sk-ant-local-default",
+)
+
+agent = client.beta.agents.create(
+    name="Hello OMA",
+    model=os.environ["OMA_MODEL_ID"],
+    system="You are a helpful assistant.",
+    tools=[{"type": "agent_toolset_20260401"}],
+)
+print(agent.id)
 ```
+
+### TypeScript
+
+使用 `bun add @anthropic-ai/sdk` 安装 SDK，然后通过 Bun 运行：
+
+```typescript
+import Anthropic from "@anthropic-ai/sdk";
+import type { BetaManagedAgentsModel } from "@anthropic-ai/sdk/resources/beta";
+
+const client = new Anthropic({
+  baseURL: "http://localhost:38080",
+  apiKey: "sk-ant-local-default",
+});
+
+const agent = await client.beta.agents.create({
+  name: "Hello OMA",
+  model: process.env.OMA_MODEL_ID as BetaManagedAgentsModel,
+  system: "You are a helpful assistant.",
+  tools: [{ type: "agent_toolset_20260401" }],
+});
+console.log(agent.id);
+```
+
+创建会话、发送输入和消费事件流的完整示例，见 [TypeScript smoke client](./tests/js-test/src/run-agent.ts) 和 [SDK 教程](./docs/en/quickstart.mdx)。
+
+### Brain 运行时
+
+`oma-brain-dsh/` 中的 Brain 运行 DeepSeek Harness，通过 CCRv2 与平台通信。平台管理运行时注册与会话凭证，配置方式见 [Brain 配置说明](./oma-brain-dsh/README.md)。
+
+## 本地开发
+
+修改源码和调试时，准备 Go `1.27.0`、Bun 及[开发指南](./docs/development-guide.md)中的工具。从仓库根目录执行：
 
 ```bash
-PORT=18080 ./scripts/restart-server.sh
+just dev-init
 ```
 
-健康检查：
+首次使用时，在生成的 `~/.oma-dev/model-providers.yaml` 中填写 Provider 凭证，再执行一次 `just dev-init`。该命令会准备依赖、hook、密钥、开发数据和当前 worktree 的隔离基础设施。
+
+从仓库根目录打开 Herdr，在控制分屏中执行以下命令，同时启动后端、Brain 和 Web：
 
 ```bash
-curl http://127.0.0.1:18080/healthz
+just restart
 ```
 
-预期返回：
+单独重启服务可从仓库根目录运行 `just restart-server`、`just restart-brain` 或 `just restart-web`。访问地址、portless 设置与环境管理见[开发指南](./docs/development-guide.md)；手动启动、私钥、迁移与定向测试见[配置与运行指南](./docs/local-development.en.md)。
 
-```json
-{ "status": "ok" }
-```
+## 支持的 API
 
-## 启动前端
+| 资源          | 端点                                        | 用途                   |
+| ------------- | ------------------------------------------- | ---------------------- |
+| Models        | `GET /v1/models`                            | 列出工作区已配置的模型 |
+| Agents        | `/v1/agents`、`POST /v1/agents:search`      | 定义和查找 Agent       |
+| Sessions      | `/v1/sessions`                              | 执行任务与交换事件     |
+| Environments  | `/v1/environments`                          | 配置执行环境           |
+| Deployments   | `/v1/deployments`、`/v1/deployment_runs`    | 管理部署与运行记录     |
+| Files         | `/v1/files`                                 | 上传、下载与管理文件   |
+| Memory        | `/v1/memory_stores`                         | 持久化 Agent memory    |
+| Skills        | `/v1/skills`                                | 管理可复用的 Skills    |
+| Messages      | `POST /v1/messages`、`/v1/messages/batches` | 模型调用与批处理       |
+| Vaults        | `/v1/vaults`                                | 管理凭证资源           |
+| Tunnels       | `/v1/tunnels`                               | 连接私网 MCP 服务      |
+| Webhooks      | `/v1/webhooks`                              | 投递事件通知           |
+| Organizations | `/v1/organizations`                         | 管理组织资源           |
 
-首次进入前端目录安装依赖：
+SDK 请求使用 `X-Api-Key` 或 `Authorization: Bearer ...` 鉴权。Beta header 随资源类型变化，见 [API 参考](./docs/en/api/overview.mdx)和[版本说明](./docs/en/api/versioning-beta.mdx)。控制台路由使用 cookie session。
 
-```bash
-cd web
-bun install
-```
+## 后续计划与参与贡献
 
-从仓库根目录启动 Vite 开发服务器：
+后续计划包括 Agent 评估，以及基于执行轨迹改进提示词、工具和执行流程。背景见[架构文章](./OMA-Managed-Agents-Architecture.en.md#other-capabilities-and-plans)。
 
-```bash
-./scripts/restart-web.sh
-```
-
-默认前端地址为 `http://127.0.0.1:5173`，并把 `/api` 和 `/v1` 代理到 `http://127.0.0.1:38080`。如果后端跑在其他端口：
-
-```bash
-API_PORT=18080 PORT=5173 ./scripts/restart-web.sh
-```
-
-控制台本地登录走 magic link 兼容接口；当前后端会创建/解析平台 session，适合本地开发控制台流程。
-
-## API 快速验证
-
-默认 seed 会创建开发 API key：`sk-ant-local-default`。
-
-列出模型：
-
-```bash
-curl http://127.0.0.1:38080/v1/models \
-  -H 'Authorization: Bearer sk-ant-local-default'
-```
-
-上传文件：
-
-```bash
-curl 'http://127.0.0.1:38080/v1/files?beta=true' \
-  -H 'Authorization: Bearer sk-ant-local-default' \
-  -F 'file=@README.cn.md;type=text/markdown'
-```
-
-使用 Go SDK 运行 files E2E：
-
-```bash
-TEST_API_BASE_URL=http://127.0.0.1:38080 \
-  go test ./tests -run TestGoSDKFilesE2E -count=1 -v
-```
-
-使用 TypeScript SDK smoke command 运行一个 agent session：
-
-```bash
-cd tests/js-test
-bun install
-TEST_API_BASE_URL=http://127.0.0.1:38080 \
-  bun run run-agent --message "Create a Python script that writes hello.txt"
-```
-
-如果要跑真实 E2B 沙箱链路，需要配置 `e2b.api_key`，并确保 `code_session.sandbox_api_base_url` 能从沙箱内部访问到本服务。
-
-## 主要 API 资源
-
-`internal/api/server.go` 中挂载了当前共享 `/v1` 资源：
-
-- `GET /v1/models`
-- `/v1/files`
-- `/v1/agents` 和 `POST /v1/agents:search`
-- `/v1/sessions`
-- `/v1/environments`
-- `/v1/deployments`
-- `/v1/deployment_runs`
-- `/v1/memory_stores`
-- `POST /v1/messages`
-- `/v1/messages/batches`
-- `/v1/skills`
-- `/v1/vaults`
-- `/v1/webhooks`
-- `/v1/organizations`
-
-很多 beta 资源在测试和前端中会附带 `?beta=true`，部分 SDK 资源还会带对应 `anthropic-beta` header；实现时应保持这些兼容语义。
-
-## 数据库与迁移
-
-数据库 schema 通过 `internal/db/migrations` 下的 goose migration 管理。手动迁移：
-
-```bash
-go run ./cmd/migrate up
-```
-
-项目约定不使用 PostgreSQL 外键约束。`DB.Migrate()` 在应用 goose migrations 后会删除当前 schema 中发现的外键约束，并由 `tests/files_api_test.go` 中的守卫测试覆盖。
-
-新增 schema 变更时：
-
-- 在 `internal/db/migrations` 增加新的编号 SQL 文件，例如 `00010_add_xxx.sql`。
-- 不要修改已应用 migration。
-- 不要把新的 schema 变更追加到 `internal/db/schema.go`。
-- 多租户查询和写入必须显式携带 organization/workspace scope。
-
-## 测试
-
-后端常用测试：
-
-```bash
-go test ./... -count=1
-```
-
-使用本地 MinIO 或目标 S3-compatible 服务运行对象存储兼容测试：
-
-```bash
-OMA_S3_INTEGRATION_ENDPOINT=http://127.0.0.1:9000 \
-  go test ./internal/storage -run '^TestS3CompatibleIntegration$' -count=1 -v
-```
-
-测试默认使用 bucket `claude-files`、region `us-east-1` 和本地 MinIO 凭证 `minioadmin/minioadmin`；可通过 `OMA_S3_INTEGRATION_BUCKET`、`OMA_S3_INTEGRATION_REGION`、`OMA_S3_INTEGRATION_ACCESS_KEY_ID`、`OMA_S3_INTEGRATION_SECRET_ACCESS_KEY` 覆盖。它覆盖重复建桶、小对象、已知与未知长度 multipart、下载及删除；测试对象会清理，创建的 bucket 默认保留。需要验证建桶并自动清理时，使用以 `oma-storage-test-` 开头的唯一 bucket，并设置 `OMA_S3_INTEGRATION_DELETE_BUCKET=1`。
-
-前端测试和构建：
-
-```bash
-cd web
-bun test
-bun run build
-```
-
-仓库也提供 `just` 任务：
-
-```bash
-just test
-just web-test
-just web-build
-```
-
-真实 E2E 通常需要先启动本地服务，再指定 base URL：
-
-```bash
-CONFIG_FILE=/path/to/test-config.yaml go run .
-
-TEST_API_BASE_URL=http://127.0.0.1:18080 \
-  go test ./tests -run TestGoSDKFilesE2E -count=1 -v
-```
-
-跑完真实 E2E 后记得停止临时启动的本地服务。
-
-## 开发约定
-
-- HTTP 路由使用 `github.com/go-chi/chi/v5`，新增资源优先用 `chi.Mount`、sub-router 或 route group。
-- `/v1/*` 错误响应应通过 `internal/httpapi.WriteError` 保持 Anthropic 兼容结构。
-- `internal/api` 只做组装、中间件、鉴权入口选择和资源挂载，不放业务规则、SQL 或资源级细节。
-- DB 层返回普通 Go error 或可识别的领域错误，不构造 HTTP 状态码或 API JSON。
-- 文件、skills、memory content、batch result 等对象内容通过 S3 兼容对象存储，元数据在 PostgreSQL。
-- 前端 API 边界要区分 `/api` Console API 和 `/v1` SDK 兼容 API，不要为了控制台便利改变 `/v1` 行为。
-- 修改 `web/` 后，浏览器验证前从仓库根目录运行 `./scripts/restart-web.sh`。
-
-## 参考文档
-
-- 后端权限桥设计：`docs/design/be/managed-agent-claude-code-permission-bridge.md`
-- 权限策略设计：`docs/design/be/permission-policies.md`
-- 前端约定：`web/AGENTS.md`
+欢迎提交问题报告、SDK 兼容性修复、文档改进和运行时集成。开发准备、质量检查与设计约定见 [CONTRIBUTING.md](./CONTRIBUTING.md)，也可以[提交 Issue](https://github.com/superduck-ai/open-managed-agents/issues)。

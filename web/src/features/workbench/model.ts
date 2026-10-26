@@ -1,3 +1,4 @@
+import type { I18nContextValue } from '../../shared/i18n/context';
 import { AuthAccount } from '../../shared/auth/api';
 import { TextStreamSmoother } from '../../shared/api/textSmoother';
 import {
@@ -801,16 +802,28 @@ export function webSearchToolFormFromTool(tool: WorkbenchTool): WebSearchToolFor
   };
 }
 
-export function webSearchToolSummary(tool: WorkbenchTool) {
+export function webSearchToolSummary(tool: WorkbenchTool, msg?: I18nContextValue['msg']) {
   const allowedDomains = stringList(tool.allowed_domains);
   if (allowedDomains.length) {
-    return `${allowedDomains.length === 1 ? 'Allowed domain' : 'Allowed domains'}: ${allowedDomains.join(', ')}`;
+    return (
+      msg?.(
+        'workbench.allowedDomainsSummary',
+        '{count, plural, one{Allowed domain} other{Allowed domains}}: {domains}',
+        { count: allowedDomains.length, domains: allowedDomains.join(', ') },
+      ) ?? `${allowedDomains.length === 1 ? 'Allowed domain' : 'Allowed domains'}: ${allowedDomains.join(', ')}`
+    );
   }
   const blockedDomains = stringList(tool.blocked_domains);
   if (blockedDomains.length) {
-    return `${blockedDomains.length === 1 ? 'Blocked domain' : 'Blocked domains'}: ${blockedDomains.join(', ')}`;
+    return (
+      msg?.(
+        'workbench.blockedDomainsSummary',
+        '{count, plural, one{Blocked domain} other{Blocked domains}}: {domains}',
+        { count: blockedDomains.length, domains: blockedDomains.join(', ') },
+      ) ?? `${blockedDomains.length === 1 ? 'Blocked domain' : 'Blocked domains'}: ${blockedDomains.join(', ')}`
+    );
   }
-  return 'No search restrictions';
+  return msg?.('workbench.noSearchRestrictions', 'No search restrictions') ?? 'No search restrictions';
 }
 
 export function stringList(value: unknown) {
@@ -1251,12 +1264,12 @@ export function shortTime() {
   return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date());
 }
 
-export function savedPromptMeta(prompt: WorkbenchPromptDetail | null, draft: WorkbenchRevision) {
-  const formatted = formatDate(prompt?.updated_at || draft.created_at || prompt?.created_at);
+export function savedPromptMeta(prompt: WorkbenchPromptDetail | null, draft: WorkbenchRevision, locale?: string) {
+  const formatted = formatDate(prompt?.updated_at || draft.created_at || prompt?.created_at, locale);
   return formatted ? `Last saved ${formatted}` : 'Last saved';
 }
 
-export function historyDayLabel(value?: string) {
+export function historyDayLabel(value?: string, locale?: string, msg?: I18nContextValue['msg']) {
   if (!value) {
     return '';
   }
@@ -1270,26 +1283,35 @@ export function historyDayLabel(value?: string) {
     date.getMonth() === today.getMonth() &&
     date.getDate() === today.getDate()
   ) {
-    return 'Today';
+    return msg?.('workbench.today', 'Today') ?? 'Today';
   }
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
+  return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
 }
 
-export function historyRevisionName(revision: WorkbenchRevision) {
-  return stringValue(revision.name) || stringValue(revision.title) || 'Untitled version';
+export function historyRevisionName(revision: WorkbenchRevision, msg?: I18nContextValue['msg']) {
+  return (
+    stringValue(revision.name) ||
+    stringValue(revision.title) ||
+    msg?.('workbench.untitledVersion', 'Untitled version') ||
+    'Untitled version'
+  );
 }
 
 export function historyRevisionPreview(
   revision: WorkbenchRevision,
+  msg?: I18nContextValue['msg'],
 ): { kind: 'variables'; values: string[] } | { kind: 'message'; value: string } {
   const variables = revision.variables?.length ? revision.variables : extractVariables(revision);
   if (variables.length) {
     return { kind: 'variables', values: variables };
   }
-  return { kind: 'message', value: titleMessageContent(revision) || 'Empty prompt' };
+  return {
+    kind: 'message',
+    value: titleMessageContent(revision) || msg?.('workbench.emptyPrompt', 'Empty prompt') || 'Empty prompt',
+  };
 }
 
-export function formatHistoryTimestamp(value?: string) {
+export function formatHistoryTimestamp(value?: string, locale?: string) {
   if (!value) {
     return '';
   }
@@ -1297,7 +1319,7 @@ export function formatHistoryTimestamp(value?: string) {
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(locale, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
@@ -1306,20 +1328,33 @@ export function formatHistoryTimestamp(value?: string) {
   }).format(date);
 }
 
-export function formatPromptSummaryDate(prompt: WorkbenchPromptSummary, account?: AuthAccount | null) {
+export function formatPromptSummaryDate(
+  prompt: WorkbenchPromptSummary,
+  account?: AuthAccount | null,
+  locale?: string,
+  msg?: I18nContextValue['msg'],
+) {
   const value = prompt.created_at || prompt.updated_at;
-  const creatorLabel = isPromptCreator(prompt, account ?? null) ? 'you' : promptCreatorLabel(prompt);
+  const creatorLabel = isPromptCreator(prompt, account ?? null)
+    ? (msg?.('workbench.you', 'you') ?? 'you')
+    : promptCreatorLabel(prompt);
   if (!value) {
-    return `by ${creatorLabel}`;
+    return msg?.('workbench.createdBy', 'by {creator}', { creator: creatorLabel }) ?? `by ${creatorLabel}`;
   }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return `by ${creatorLabel}`;
+    return msg?.('workbench.createdBy', 'by {creator}', { creator: creatorLabel }) ?? `by ${creatorLabel}`;
   }
-  return `${new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(date)} by ${creatorLabel}`;
+  const formattedDate = new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', year: 'numeric' }).format(
+    date,
+  );
+  return (
+    msg?.('workbench.createdAtBy', '{date} by {creator}', { date: formattedDate, creator: creatorLabel }) ??
+    `${formattedDate} by ${creatorLabel}`
+  );
 }
 
-export function formatShareCreatedDate(value?: string) {
+export function formatShareCreatedDate(value: string | undefined, locale: string) {
   if (!value) {
     return '';
   }
@@ -1327,12 +1362,12 @@ export function formatShareCreatedDate(value?: string) {
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
+  return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
 }
 
-export function promptCreatorLabel(prompt: WorkbenchPromptSummary) {
+export function promptCreatorLabel(prompt: WorkbenchPromptSummary, fallbackLabel = 'you') {
   const creator = prompt.creator;
-  return creator?.tagged_id?.trim() || creator?.full_name?.trim() || creator?.email_address?.trim() || 'you';
+  return creator?.tagged_id?.trim() || creator?.full_name?.trim() || creator?.email_address?.trim() || fallbackLabel;
 }
 
 export function isPromptCreator(prompt: WorkbenchPromptSummary, account: AuthAccount | null) {
@@ -1386,7 +1421,19 @@ export type WorkbenchPromptGeneratorWarning = { title: string };
 
 export type WorkbenchAttachmentKind = 'image' | 'pdf';
 
-export const promptGeneratorWarningTitle = 'Get More credits to use the prompt generator';
+export const promptGeneratorWarningTitle = 'Add credits to use the prompt generator.';
+
+const promptGeneratorApiUnavailableTitle = "This organization's API is unavailable.";
+
+export function promptGeneratorWarningLabel(warning: WorkbenchPromptGeneratorWarning, msg: I18nContextValue['msg']) {
+  if (warning.title === promptGeneratorWarningTitle) {
+    return msg('workbench.generatorCreditHint', promptGeneratorWarningTitle);
+  }
+  if (warning.title === promptGeneratorApiUnavailableTitle) {
+    return msg('workbench.generatorApiUnavailableHint', promptGeneratorApiUnavailableTitle);
+  }
+  return warning.title;
+}
 
 export const generatePromptExamples = [
   {
@@ -1437,8 +1484,11 @@ export function workbenchPromptGeneratorWarning(
   orgUuid?: string | null,
   prepaidCreditAmount?: number | null,
 ): WorkbenchPromptGeneratorWarning | null {
-  if (organizationApiDisabledReason(account, orgUuid)) {
-    return { title: promptGeneratorWarningTitle };
+  const disabledReason = organizationApiDisabledReason(account, orgUuid);
+  if (disabledReason) {
+    return {
+      title: disabledReason === 'out_of_credits' ? promptGeneratorWarningTitle : promptGeneratorApiUnavailableTitle,
+    };
   }
   if (prepaidCreditAmount !== null && prepaidCreditAmount !== undefined && prepaidCreditAmount <= 0) {
     return { title: promptGeneratorWarningTitle };
@@ -1496,7 +1546,7 @@ export function readSetting(settings: Record<string, unknown> | undefined, path:
   return value;
 }
 
-export function formatDate(value?: string) {
+export function formatDate(value?: string, locale?: string) {
   if (!value) {
     return '';
   }
@@ -1504,7 +1554,7 @@ export function formatDate(value?: string) {
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(locale, {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',

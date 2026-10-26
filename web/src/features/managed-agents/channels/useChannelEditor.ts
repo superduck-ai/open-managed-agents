@@ -9,6 +9,7 @@ export interface ChannelEditorProps {
   channel: Channel | null;
   onClose: () => void;
   onSaved: () => void;
+  finalFocus: () => HTMLElement | null;
 }
 export function useChannelEditor({ agentId, workspaceId, channel, onClose, onSaved }: ChannelEditorProps) {
   const { msg } = useI18n();

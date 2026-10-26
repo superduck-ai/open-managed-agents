@@ -6,6 +6,14 @@ func unavailable(cause error) error {
 	return apperr.New(apperr.Unavailable, "飞书渠道服务不可用，请检查桥接服务配置", cause)
 }
 
-func rejected(kind apperr.Kind, message string) error {
-	return apperr.New(kind, message, nil)
+func unauthenticated() error {
+	return apperr.New(apperr.Unauthenticated, "请先登录", nil)
+}
+
+func agentNotFound() error {
+	return apperr.New(apperr.NotFound, "Agent 不存在", nil)
+}
+
+func archivedAgent() error {
+	return apperr.New(apperr.Conflict, "已归档 Agent 无法修改渠道", nil)
 }

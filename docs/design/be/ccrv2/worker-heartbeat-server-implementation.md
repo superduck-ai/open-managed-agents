@@ -84,7 +84,7 @@ Content-Type: application/json
 Authorization: Bearer sk-ant-si-<JWT>
 ```
 
-`authorizeSessionIngress` 固定校验 `EdDSA`、`kid`、issuer、audience，并将 JWT `session_id` 绑定到 path 中的 code session。当前不回查数据库 session 状态或 lease；实际是否允许续租由 heartbeat 的 epoch/lease 状态机决定。新 JWT 不设置独立 `exp`。原始 `cse_...` 不再作为普通 ingress token fallback。
+`AuthenticateSessionIngress` 固定校验 `EdDSA`、`kid`、issuer、audience，并将 JWT `session_id` 绑定到 path 中的 code session。token 验证不回查数据库 epoch、session 状态或 lease。资源授权独立校验租户与 active 会话，执行授权和 heartbeat 状态机检查当前 epoch/lease，旧 owner 返回 409。新 JWT 不设置独立 `exp`。原始 `cse_...` 不再作为普通 ingress token fallback。
 
 handler 的调用顺序为：
 
@@ -218,7 +218,7 @@ pause 期间进程不会发送 heartbeat，但数据库 lease 仍按墙钟推进
 
 如果 Provider 明确返回 sandbox not found，服务端原子地把旧 `environment_sandboxes` 记录标为 `failed`，并把同一 Work 重新排为 `queued`。Runner 根据 Work 对应的 organization、workspace、environment 和 public Session 查询 active Code Session：没有 active 记录时执行 create，恰好一条时执行 recover，多于一条则按无效状态失败，从而不使用 metadata 旗标或新增恢复列。恢复会创建新的 Provider Sandbox，但复用原 `cse_*` 及其持久化事件和 transcript。
 
-首次创建 managed-agent Code Session 时直接把现有 `current_worker_epoch` 初始化为 `1`。恢复启动在一条数据库更新中替换 OAuth token hash、递增 `current_worker_epoch` 并清空旧 lease。新 session-ingress JWT 携带该预留 epoch；每次 managed-agent ingress 鉴权都会按租户回查 active Code Session，因此携带旧 epoch 的 JWT 立即失效。environment-manager 使用同一 epoch 作为 `CLAUDE_CODE_WORKER_EPOCH` 和 OTLP header，`/worker/register` 对该 epoch 幂等，不会因为重复注册再次递增。旧版不含 `worker_epoch` 的 JWT 维持兼容鉴权，但凭证轮换后不能越过“正 epoch 且 lease 为空”的注册 fence。Provider 创建、manager 启动或 metadata 发布失败时，若仍能从 Work 推导出唯一 active Code Session，则只清理本次 replacement Sandbox 并延迟重新排队，不终止 durable Code Session。
+首次创建 managed-agent Code Session 时直接把现有 `current_worker_epoch` 初始化为 `1`。恢复启动在一条数据库更新中替换 OAuth token hash、递增 `current_worker_epoch` 并清空旧 lease。新 session-ingress JWT 携带该预留 epoch；token 验证不校验 epoch；每次 managed-agent 执行请求在资源授权阶段按租户回查 active Code Session 与当前 epoch，因此旧 owner 的执行请求返回 409。environment-manager 使用同一 epoch 作为 `CLAUDE_CODE_WORKER_EPOCH` 和 OTLP header，`/worker/register` 对该 epoch 幂等，不会因为重复注册再次递增。旧版不含 `worker_epoch` 的 JWT 维持兼容鉴权，但凭证轮换后不能越过“正 epoch 且 lease 为空”的注册 fence。Provider 创建、manager 启动或 metadata 发布失败时，若仍能从 Work 推导出唯一 active Code Session，则只清理本次 replacement Sandbox 并延迟重新排队，不终止 durable Code Session。
 
 ## 日志
 
@@ -260,7 +260,7 @@ epoch mismatch 和 lease expired 会记录结构化文本日志，字段包括�
 - idle Sandbox 收到可转发用户事件后调用 Provider 恢复，并使用 `e2b.sandbox_timeout` 重置 TTL；Provider 临时失败后下一条事件会重试。
 - Provider Sandbox 已不存在时，旧记录转为 failed、原 Work 重新排队并创建替换 Sandbox；同一 Code Session 以递增 worker epoch 继续运行。
 - replacement 启动失败时原 Code Session 仍为 active、Work 延迟重试，只有失败的 replacement Sandbox 被清理。
-- managed-agent 凭证轮换后携带旧 worker epoch 的 session-ingress JWT 返回 `401`；新 JWT 重复注册都返回预留 worker epoch。
+- managed-agent 凭证轮换后携带旧 worker epoch 的 session-ingress JWT 身份验证成功，执行请求返回 `409`；新 JWT 重复注册都返回预留 worker epoch。
 - 旧 epoch、未来 epoch 和超过 grace 的 heartbeat 不调用 Sandbox 续期。
 - 刚过期但在 `10s` grace 内 heartbeat 返回 `200`。
 - 超过 grace 返回 `410 session_expired`，并断言状态不更新。
@@ -271,7 +271,7 @@ epoch mismatch 和 lease expired 会记录结构化文本日志，字段包括�
 验证命令：
 
 ```bash
-go test ./tests -run 'TestCodeSessionWorker.*Heartbeat|TestCodeSessionWorkerEpochProtection|TestCodeSessionWorkerEpochZeroRejectedAtDBLayer|TestCodeSessionWorkerEpochValidationRejectsInvalidValues' -count=1
+go test -tags=integration ./tests -run 'TestCodeSessionWorker.*Heartbeat|TestCodeSessionWorkerEpochProtection|TestCodeSessionWorkerEpochZeroRejectedAtDBLayer|TestCodeSessionWorkerEpochValidationRejectsInvalidValues' -count=1
 go test ./internal/db ./internal/codesessions -count=1
 ```
 

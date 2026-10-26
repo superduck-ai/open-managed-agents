@@ -9,7 +9,7 @@ import { SyntaxCodeBlock } from '../components/CodeBlocks';
 import { parseTranscriptCode } from './sessionTraceModel';
 
 const TRANSCRIPT_TEXT_LIMIT = 50_000;
-const transcriptHeadingClassName = 'text-[15px] font-semibold leading-5 text-foreground';
+const transcriptHeadingClassName = 'text-sm font-semibold leading-5 text-foreground';
 
 function transcriptHeading(tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') {
   return ({ node: _node, ...props }: ComponentPropsWithoutRef<typeof tag> & { node?: unknown }) =>
@@ -45,12 +45,12 @@ function TranscriptFileLink({ node: _node, href, ...props }: ComponentPropsWitho
 const transcriptMarkdownComponents: Components = {
   a: TranscriptFileLink,
   blockquote: ({ node: _node, ...props }) => (
-    <blockquote {...props} className="border-l-2 border-border pl-3 text-muted-foreground" />
+    <blockquote {...props} className="border-l-[0.5px] border-border pl-3 text-muted-foreground" />
   ),
   code: ({ node: _node, ...props }) => (
     <code
       {...props}
-      className="rounded border border-border bg-secondary px-1 py-0.5 font-mono text-[0.92em] text-foreground"
+      className="rounded border-[0.5px] border-border bg-secondary px-1 py-0.5 font-mono text-xs text-foreground"
     />
   ),
   del: ({ node: _node, ...props }) => <del {...props} className="text-muted-foreground" />,
@@ -60,14 +60,14 @@ const transcriptMarkdownComponents: Components = {
   h4: transcriptHeading('h4'),
   h5: transcriptHeading('h5'),
   h6: transcriptHeading('h6'),
-  hr: ({ node: _node, ...props }) => <hr {...props} className="border-border/70" />,
+  hr: ({ node: _node, ...props }) => <hr {...props} className="border-t-[0.5px] border-border/70" />,
   img: ({ node: _node, src, ...props }) => (
     <img
       {...props}
       src={src || undefined}
       loading="lazy"
       decoding="async"
-      className="max-h-[32rem] max-w-full rounded-lg border border-border object-contain"
+      className="max-h-[32rem] max-w-full rounded-lg border-[0.5px] border-border object-contain"
     />
   ),
   input: ({ node: _node, ...props }) => <input {...props} className="mt-0.5 size-4 accent-primary" />,
@@ -86,13 +86,13 @@ const transcriptMarkdownComponents: Components = {
     return <SyntaxCodeBlock value={String(children.props.children ?? '').replace(/\n$/, '')} language={language} />;
   },
   table: ({ node: _node, ...props }) => (
-    <div className="scrollbar-none overflow-x-auto rounded-md border border-border">
+    <div className="scrollbar-none overflow-x-auto rounded-md border-[0.5px] border-border">
       <table {...props} className="min-w-full border-collapse text-left text-sm" />
     </div>
   ),
-  td: ({ node: _node, ...props }) => <td {...props} className="border-t border-border px-3 py-2 align-top" />,
+  td: ({ node: _node, ...props }) => <td {...props} className="border-t-[0.5px] border-border px-3 py-2 align-top" />,
   th: ({ node: _node, ...props }) => (
-    <th {...props} className="border-b border-border bg-secondary px-3 py-2 font-semibold text-foreground" />
+    <th {...props} className="border-b-[0.5px] border-border bg-secondary px-3 py-2 font-semibold text-foreground" />
   ),
   ul: ({ node: _node, ...props }) => <ul {...props} className="list-disc pl-5" />,
 };

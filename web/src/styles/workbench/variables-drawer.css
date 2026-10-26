@@ -1,5 +1,6 @@
 .workbench-variable-panel {
   display: flex;
+  gap: 8px;
   height: 100%;
   min-height: 100%;
   flex-direction: column;
@@ -29,6 +30,10 @@
   line-height: 20px;
 }
 
+.workbench-variable-field > span {
+  overflow-wrap: anywhere;
+}
+
 .workbench-hidden-file-input {
   position: absolute;
   width: 1px;
@@ -44,29 +49,29 @@
 
 .workbench-variable-logic {
   display: grid;
-  margin: 2px -14px 0;
+  margin: 2px 0 0;
 }
 
 .workbench-variable-logic-toggle {
   display: inline-flex;
-  height: 20px;
+  min-height: 36px;
   align-items: center;
   justify-content: flex-start;
   gap: 4px;
-  padding: 0 16px;
-  color: rgb(184, 183, 171);
+  padding: 8px 0;
+  color: var(--muted-foreground);
   font-size: 14px;
   font-weight: 400;
   line-height: 20px;
   text-align: left;
   transition:
-    color 120ms ease,
-    background 120ms ease;
+    color 250ms ease-out,
+    background 250ms ease-out;
 }
 
 .workbench-variable-logic-toggle:hover {
   color: var(--foreground);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--accent);
 }
 
 .workbench-variable-logic.is-open .workbench-variable-logic-toggle {
@@ -76,7 +81,7 @@
 .workbench-variable-logic-editor {
   display: grid;
   gap: 8px;
-  padding: 0 16px 8px;
+  padding: 0 0 8px;
 }
 
 .workbench-variable-logic-header {
@@ -90,24 +95,21 @@
 
 .workbench-variable-logic-header p {
   margin: 4px 0 0;
-  color: rgb(149, 148, 137);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 400;
   line-height: 16px;
 }
 
 .workbench-variable-logic-actions {
-  position: absolute;
-  top: -12px;
-  right: 0;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: rgb(184, 183, 171);
+  color: var(--muted-foreground);
 }
 
 .workbench-variable-logic-actions button {
-  color: rgb(184, 183, 171);
+  color: var(--muted-foreground);
 }
 
 .workbench-variable-logic-actions button:hover {
@@ -136,4 +138,10 @@
   color: var(--muted-foreground);
   font-size: 14px;
   line-height: 22px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workbench-variable-logic-toggle {
+    transition: none;
+  }
 }

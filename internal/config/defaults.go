@@ -6,6 +6,7 @@ const DefaultE2BTemplate = "managed-agent-sandbox"
 
 func defaultConfig() Config {
 	cfg := Config{
+		CodeSession: CodeSessionConfig{UpstreamProxyMITMEnabled: true},
 		EnvironmentPrebuilds: EnvironmentPrebuildConfig{
 			Timeout: time.Hour,
 			Template: TemplateBuildConfig{
@@ -91,6 +92,8 @@ func defaultConfig() Config {
 			OrganizationName:    "default",
 			WorkspaceExternalID: "workspace_default",
 			UserExternalID:      "user_default",
+			UserEmail:           "admin@example.local",
+			UserName:            "Local Admin",
 			APIKeyExternalID:    "api_key_default",
 		},
 	}

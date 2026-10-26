@@ -2,6 +2,7 @@ import { ChevronRight, Wrench } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
 import type { SessionTraceEntry } from '../types';
+import { sessionExecutionStateLabel } from './sessionExecutionState';
 import { TranscriptContent } from './SessionTranscriptContent';
 import {
   sessionEventErrorMessage,
@@ -16,6 +17,7 @@ export function SessionQuickViewActivity({ entries }: { entries: SessionTraceEnt
   return (
     <ol className="mt-4 space-y-5">
       {entries.map((entry) => {
+        const label = entry.state ? sessionExecutionStateLabel(entry.state, msg) : entry.label;
         const error = entry.isError ? sessionEventErrorMessage(entry.event) : '';
         const content = error && !sessionTraceTextIsJson(error) ? error : entry.displayText || entry.preview;
         return (
@@ -24,7 +26,7 @@ export function SessionQuickViewActivity({ entries }: { entries: SessionTraceEnt
               <Collapsible>
                 <CollapsibleTrigger className="group flex items-center gap-1 text-xs text-muted-foreground">
                   <ChevronRight className="size-3 transition-transform group-aria-expanded:rotate-90" aria-hidden />
-                  {entry.label}
+                  {label}
                 </CollapsibleTrigger>
                 <CollapsibleContent className="mt-2 text-muted-foreground [&_*]:text-muted-foreground">
                   <TranscriptContent value={sessionThinkingText(entry.event) || entry.preview} />
@@ -34,7 +36,7 @@ export function SessionQuickViewActivity({ entries }: { entries: SessionTraceEnt
               <div className="flex items-start gap-2 rounded-md bg-muted/50 px-3 py-2">
                 <Wrench className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
                 <div className="min-w-0">
-                  <p className="font-medium">{entry.label}</p>
+                  <p className="font-medium">{label}</p>
                   <p className="mt-0.5 whitespace-pre-wrap break-all text-xs text-muted-foreground">
                     {sessionToolDisplayText(entry.event)}
                   </p>
@@ -52,7 +54,7 @@ export function SessionQuickViewActivity({ entries }: { entries: SessionTraceEnt
                     ? msg('managedAgents.sessions.trace.user', 'User')
                     : entry.family === 'agent'
                       ? msg('managedAgents.sessions.trace.agent', 'Agent')
-                      : entry.label}
+                      : label}
                 </p>
                 <div className={entry.isError ? 'text-destructive [&_*]:text-destructive' : undefined}>
                   <TranscriptContent value={content} />

@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package liveworker
 
 import (
@@ -495,6 +497,10 @@ func serveRealWorkerFixture(t *testing.T, handler http.Handler) string {
 // providers are never modified; only the row created here is cleaned up.
 func ensureRealWorkerProvider(t *testing.T, e *liveEnv, cfg config.Config) {
 	t.Helper()
+	if os.Getenv("VERIFY_BE_RUN_ID") != "" {
+		ensureIsolatedWorkerProvider(t, e, cfg)
+		return
+	}
 	org, workspace := e.key.OrganizationUUID.String(), e.key.WorkspaceUUID.String()
 	providers, err := e.database.ListLLMProviders(t.Context(), org, workspace)
 	requireOK(t, err)
@@ -504,7 +510,7 @@ func ensureRealWorkerProvider(t *testing.T, e *liveEnv, cfg config.Config) {
 	service, err := secretservice.New(cfg.Vault.MasterKey)
 	requireOK(t, err)
 	now := time.Now().UTC()
-	provider := db.LLMProvider{UUID: uuid.NewString(), ExternalID: "llmprov_probe_" + uuid.NewString(), OrganizationUUID: org, WorkspaceUUID: workspace, Name: "isolated worker model metadata", BaseURL: "http://127.0.0.1:9", APIKeyLast4: "fake", ModelIDs: []string{"claude-opus-4-6", "claude-sonnet-4-6"}, CreatedAt: now, UpdatedAt: now}
+	provider := db.LLMProvider{UUID: uuid.NewString(), ExternalID: "llmprov_probe_" + uuid.NewString(), OrganizationUUID: org, WorkspaceUUID: workspace, Name: "isolated worker model metadata", Slug: llmproviders.DefaultSlug, BaseURL: "http://127.0.0.1:9", APIKeyLast4: "fake", Models: db.LLMModels{{ID: "claude-opus-4-6"}, {ID: "claude-sonnet-4-6"}}, CreatedAt: now, UpdatedAt: now}
 	envelope, err := service.Seal(t.Context(), llmproviders.SecretBinding(provider), []byte("isolated-fake"))
 	requireOK(t, err)
 	provider.SecretEnvelope = &envelope

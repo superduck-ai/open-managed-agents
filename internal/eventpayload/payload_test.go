@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -91,6 +92,45 @@ func TestOpaqueMetadataDoesNotRejectWorkerPayload(t *testing.T) {
 	}
 }
 
+func TestNonStringModelRequestStartIDDoesNotRejectPayload(t *testing.T) {
+	summary, _, err := Summarize([]byte(`{"type":"span.model_request_end","model_request_start_id":123}`), "span.model_request_end")
+	if err != nil || summary.ModelRequestStartID != "" {
+		t.Fatalf("non-string start id must degrade to empty, got %q %v", summary.ModelRequestStartID, err)
+	}
+}
+
+func TestSummaryCarriesBillingMetadata(t *testing.T) {
+	payload := []byte(`{"type":"span.model_request_end","model":"claude","is_error":true,"_model_price":{"rates":{"input":"3","output":"15"}},"billing":{"list_cost":"900","currency":"USD"},"usage":{"input_tokens":10},"model_request_start_id":"sevt_start"}`)
+	summary, _, err := Summarize(payload, "span.model_request_end")
+	if err != nil {
+		t.Fatalf("summarize: %v", err)
+	}
+	if string(summary.Billing) != `{"list_cost":"900","currency":"USD"}` {
+		t.Fatalf("billing not carried: %s", summary.Billing)
+	}
+	if string(summary.Usage) != `{"input_tokens":10}` || summary.ModelRequestStartID != "sevt_start" {
+		t.Fatalf("usage/start link not carried: %s %q", summary.Usage, summary.ModelRequestStartID)
+	}
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back map[string]any
+	if err := json.Unmarshal(encoded, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	billing, ok := back["billing"].(map[string]any)
+	if !ok || billing["list_cost"] != "900" {
+		t.Fatalf("summary json missing billing: %s", encoded)
+	}
+	if back["model"] != "claude" || back["is_error"] != true || back["_model_price"] == nil {
+		t.Fatalf("summary lost ledger metadata: %s", encoded)
+	}
+	if _, has := back["usage"]; !has {
+		t.Fatalf("summary json missing usage: %s", encoded)
+	}
+}
+
 func TestPreparePublicKeepsStatusReasonInline(t *testing.T) {
 	payload := []byte(`{"type":"session.status_idle","stop_reason":{"type":"error","detail":"` + strings.Repeat("x", Threshold) + `"}}`)
 	store := New(nil, nil)
@@ -131,5 +171,52 @@ func TestPreparePublicAcceptsScalarAssistantContent(t *testing.T) {
 	_, _, textKey, err := assistantEchoKey(text, "agent.message")
 	if err != nil || scalarKey == "" || scalarKey != textKey {
 		t.Fatalf("scalar echo key = %q, text echo key = %q, error = %v", scalarKey, textKey, err)
+	}
+}
+
+func TestSmallNULPayloadUsesLosslessBlobBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		payload  []byte
+		external bool
+	}{
+		{"text NUL", []byte(`{"type":"agent.mcp_tool_result","content":[{"type":"text","text":"a\u0000b"}]}`), true},
+		{"nested NUL", []byte(`{"type":"system","data":{"items":["a","\u0000"]}}`), true},
+		{"NUL key", []byte(`{"type":"system","data":{"\u0000":"value"}}`), true},
+		{"NUL beyond preview", []byte(`{"type":"system","text":"` + strings.Repeat("a", PreviewBytes) + `\u0000"}`), true},
+		{"literal escape", []byte(`{"type":"system","text":"a\\u0000b"}`), false},
+		{"Unicode", []byte(`{"type":"system","text":"中🚀"}`), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			summary, _, err := Summarize(tc.payload, "system")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, ref, err := New(nil, nil).prepare(t.Context(), "org", "workspace", tc.payload, summary)
+			if tc.external {
+				if !errors.Is(err, errStorageUnavailable) {
+					t.Fatalf("NUL must require existing lossless blob storage: got %q ref %v err %v", got, ref, err)
+				}
+			} else if err != nil || ref != nil || !bytes.Equal(got, tc.payload) {
+				t.Fatal("normal/literal text changed", err)
+			}
+			digest := sha256.Sum256(tc.payload)
+			restored, err := readBlob(t.Context(), readStore{body: tc.payload, size: int64(len(tc.payload))}, db.EventPayloadBlob{Size: int64(len(tc.payload)), SHA256: hex.EncodeToString(digest[:])})
+			if err != nil || !bytes.Equal(restored, tc.payload) {
+				t.Fatal("original bytes not restored", err)
+			}
+		})
+	}
+}
+
+func TestNULMetadataIsOmittedOnlyFromStorageSummary(t *testing.T) {
+	payload := []byte(`{"type":"system","name":"a\u0000b","tool_use_id":"bad\u0000id","id":"valid_fallback"}`)
+	original := append([]byte(nil), payload...)
+	summary, toolID, err := Summarize(payload, "system")
+	if err != nil || summary.Name != nil || toolID == nil || *toolID != "valid_fallback" {
+		t.Fatalf("invalid JSONB/text summary metadata retained: %+v %v %v", summary, toolID, err)
+	}
+	if strings.IndexByte(summary.Preview, 0) >= 0 || !bytes.Equal(payload, original) {
+		t.Fatal("preview or original payload corrupted")
 	}
 }

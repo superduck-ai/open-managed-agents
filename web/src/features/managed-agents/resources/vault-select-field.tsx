@@ -133,7 +133,10 @@ export function ManagedVaultSelectField({
                   : 'w-[var(--anchor-width)] min-w-[var(--anchor-width)]',
               )}
             >
-              <Command>
+              <Command
+                defaultValue={selectedOptions[0] ? `${selectedOptions[0].label} ${selectedOptions[0].id}` : undefined}
+                label={searchPlaceholder}
+              >
                 <CommandInput placeholder={searchPlaceholder} />
                 <CommandList className="max-h-72">
                   <CommandEmpty>
@@ -163,7 +166,7 @@ export function ManagedVaultSelectField({
                         >
                           <span
                             className={cn(
-                              'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border border-border',
+                              'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border-[0.5px] border-border',
                               selected && 'border-primary bg-primary text-primary-foreground',
                             )}
                             aria-hidden
@@ -222,7 +225,7 @@ export function ManagedVaultSelectField({
           {selectedOptions.map((option) => (
             <span
               key={option.id}
-              className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-secondary py-1 pl-2 text-sm"
+              className="inline-flex max-w-full items-center gap-2 rounded-md border-[0.5px] border-border bg-secondary py-1 pl-2 text-sm"
             >
               <span className="truncate">{option.label}</span>
               <Button

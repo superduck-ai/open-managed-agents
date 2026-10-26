@@ -28,18 +28,20 @@ caddy ──→ oma-server ──→ postgres / redis / nats cluster / minio
                                        └──→ sandbox 容器 (managed-agent-sandbox 镜像)
 ```
 
+MITM 默认开启。`just init-compose-config` 同时准备 `config/secrets/upstream-proxy-ca-key.pem`，已有私钥保持不变；Compose 将该文件只读挂载到 API server。已有本地配置升级时需补充模板中的 CA 路径，或者显式配置 `upstream_proxy_mitm_enabled: false` 保留透传。
+
 ## 2. 镜像策略
 
-| 服务 | 镜像来源 | 说明 |
-|------|----------|------|
-| caddy | `docker.io/library/caddy:alpine` | 官方镜像 |
-| postgres | `docker.io/library/postgres:17` | 官方镜像 |
-| redis | `docker.io/library/redis:8` | 官方镜像 |
-| nats × 3 | `docker.io/library/nats:2.14.6-alpine` | 官方镜像，启用 JetStream 集群 |
-| minio | `docker.io/pgsty/minio:latest` | 社区维护 fork（原版已归档） |
-| oma-server | `Dockerfile`（多阶段构建） | Go 后端 + 前端 bun build |
-| e2b-local | `Dockerfile`（多阶段构建） | Go 后端 + envd 二进制 |
-| openobserve | `public.ecr.aws/zinclabs/openobserve:v0.91.1` | 固定版本的单节点 OTel 存储 |
+| 服务        | 镜像来源                                      | 说明                          |
+| ----------- | --------------------------------------------- | ----------------------------- |
+| caddy       | `docker.io/library/caddy:alpine`              | 官方镜像                      |
+| postgres    | `docker.io/library/postgres:17`               | 官方镜像                      |
+| redis       | `docker.io/library/redis:8`                   | 官方镜像                      |
+| nats × 3    | `docker.io/library/nats:2.14.6-alpine`        | 官方镜像，启用 JetStream 集群 |
+| minio       | `docker.io/pgsty/minio:latest`                | 社区维护 fork（原版已归档）   |
+| oma-server  | `Dockerfile`（多阶段构建）                    | Go 后端 + 前端 bun build      |
+| e2b-local   | `Dockerfile`（多阶段构建）                    | Go 后端 + envd 二进制         |
+| openobserve | `public.ecr.aws/zinclabs/openobserve:v0.91.1` | 固定版本的单节点 OTel 存储    |
 
 所有服务镜像均为公开可拉取，无需本地编译。
 
@@ -95,12 +97,12 @@ oma-server 在 compose 网络中，e2b-local 在 host 网络中。`extra_hosts` 
 
 `host-gateway` 是 Docker 20.10+ 引入的特性，在不同环境下自动解析为正确的宿主 IP：
 
-| Docker 环境 | `host-gateway` 解析到 | 是否支持 |
-|---|---|---|
-| OrbStack（macOS） | `0.250.250.254`（OrbStack 宿主 IP） | ✅ |
-| Docker Desktop for Mac | `192.168.65.254`（VM 网关） | ⚠️ host 网络模式不支持 |
-| Docker Engine for Linux 20.10+ | `172.17.0.1`（docker0 网桥网关） | ✅ |
-| Rootless Docker | 取决于 slirp4netns 配置 | ⚠️ 未测试 |
+| Docker 环境                    | `host-gateway` 解析到               | 是否支持               |
+| ------------------------------ | ----------------------------------- | ---------------------- |
+| OrbStack（macOS）              | `0.250.250.254`（OrbStack 宿主 IP） | ✅                     |
+| Docker Desktop for Mac         | `192.168.65.254`（VM 网关）         | ⚠️ host 网络模式不支持 |
+| Docker Engine for Linux 20.10+ | `172.17.0.1`（docker0 网桥网关）    | ✅                     |
+| Rootless Docker                | 取决于 slirp4netns 配置             | ⚠️ 未测试              |
 
 > **注意**：`extra_hosts` 中的 `host.docker.internal` 会覆盖 Docker Desktop/OrbStack 内置的同名 DNS 记录。在 OrbStack 上实测两者解析到相同 IP（`0.250.250.254`），不影响使用。
 
@@ -108,7 +110,7 @@ oma-server 在 compose 网络中，e2b-local 在 host 网络中。`extra_hosts` 
 
 ### 4.3 envd_binary 占位符替换
 
-e2b-local 配置文件 `deploy/docker-compose/e2b-local.yaml` 使用 `__ENVD_BIN_DIR__` 占位符。启动时通过 `sed` 替换为宿主机真实路径，确保 Docker daemon 能找到 envd 二进制。
+e2b-local 配置文件 `deploy/docker-compose/e2b-local.yaml` 使用 `__ENVD_BIN_DIR__` 占位符。启动时通过 `sed` 替换为宿主机真实路径，确保 Docker daemon 能找到 envd 二进制。模板配置与 §8.2 推荐的本地配置对齐（`enable_fuse: true`、`published_ports`、`traffic.advertised_probe_addr`）；per-worktree 开发环境栈（见 [多 worktree 开发环境](development-worktree-environments.md)）复用同一模板，由 dev-init 渲染端口、sandbox 容器名前缀与 envd 路径。
 
 ### 4.4 前端内建到 oma-server 镜像
 
@@ -168,6 +170,7 @@ PR: https://github.com/superduck-ai/open-managed-agents/pull/6
 ## 6. 前置条件
 
 1. 拉取 sandbox 模板镜像（由 e2b-local 使用）：
+
    ```bash
    docker pull ghcr.io/superduck-ai/managed-agent-sandbox:latest
    ```
@@ -192,14 +195,14 @@ docker compose down -v     # 同时删除数据卷
 
 访问入口：
 
-| 入口 | 地址 |
-|------|------|
-| 控制台前端 | `http://localhost:28080` |
-| oma API | `http://localhost:38080` |
-| e2b-local | `http://localhost:3099` |
-| MinIO Web | `http://localhost:9001` |
-| NATS monitoring | `http://localhost:8222` / `8223` / `8224` |
-| OpenObserve 调试入口 | `http://localhost:5082` |
+| 入口                 | 地址                                      |
+| -------------------- | ----------------------------------------- |
+| 控制台前端           | `http://localhost:28080`                  |
+| oma API              | `http://localhost:38080`                  |
+| e2b-local            | `http://localhost:3099`                   |
+| MinIO Web            | `http://localhost:9001`                   |
+| NATS monitoring      | `http://localhost:8222` / `8223` / `8224` |
+| OpenObserve 调试入口 | `http://localhost:5082`                   |
 
 OpenObserve 数据保存在独立的 `openobservedata` named volume。Compose 设置
 `ZO_COMPACT_DATA_RETENTION_DAYS=61` 和 `ZO_IGNORE_FILE_RETENTION_BY_STREAM=true`，确保 Logs、Metrics 和
@@ -281,12 +284,17 @@ e2b:
   api_url: http://127.0.0.1:3099
   sandbox_url: http://127.0.0.1:3099
   template: ghcr.io/superduck-ai/managed-agent-sandbox:latest
+  local_port_lookup: true
 
 code_session:
   sandbox_api_base_url: http://host.docker.internal:38080
 ```
 
 `sandbox_api_base_url` 是动态 Sandbox 回调宿主机 OMA 的地址，不能写成 `127.0.0.1`；该地址在 Sandbox 内会指向 Sandbox 自身。
+
+Docker runtime 的 `e2b.template` 必须使用 e2b-local 列出的模板 ID，或本机已存在且带 tag/digest 的完整镜像引用。例如本机镜像为 `oma/managed-agent-sandbox:latest` 时，应使用该引用；默认的 `managed-agent-sandbox` 名称不能自动映射到这个镜像。Environment 创建时会固化 `resolved_template`，修改配置后需要新建 Environment，已有 Environment 不会自动切换模板。
+
+宿主机直连 Docker runtime 时设置 `local_port_lookup: true`，使 Sandbox MCP 通过 e2b-local 的端口映射接口解析实际宿主机端口。否则会按云端域名规则生成地址，无法访问本地动态端口。模板配置错误可能直到首次工具调用触发沙箱创建时才暴露，并由 OMA 返回 503；应检查对应 `environment_sandboxes.last_error`，不能仅凭 Worker 的版本协商错误判断 MCP 协议不兼容。
 
 在 OMA 仓库以前台方式启动：
 

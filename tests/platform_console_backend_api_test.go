@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -396,11 +398,9 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 		}
 		var usage map[string]any
 		decodeJSON(t, usageResp.Body, &usage)
-		if usage["granularity"] != "daily" {
-			t.Fatalf("usage = %#v, want daily granularity", usage)
-		}
-		if usages, ok := usage["usages"].(map[string]any); !ok || len(usages) != 0 {
-			t.Fatalf("usage usages = %#v, want empty object", usage["usages"])
+
+		if usage["currency"] != "USD" || usage["summary"] == nil || usage["daily"] == nil {
+			t.Fatalf("用量查询缺少真实聚合字段：%#v", usage)
 		}
 
 		for _, usageCostPath := range []string{
@@ -414,12 +414,11 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 			}
 			var usageCost map[string]any
 			decodeJSON(t, usageCostResp.Body, &usageCost)
-			for _, key := range []string{"costs", "web_search_costs", "code_execution_costs", "session_usage_costs", "claude_code_savings"} {
-				values, ok := usageCost[key].(map[string]any)
-				if !ok || len(values) != 0 {
-					t.Fatalf("usage cost %s = %#v, want empty object", key, usageCost[key])
-				}
+
+			if usageCost["cost_basis"] != "list_price_model_and_search" || usageCost["summary"] == nil {
+				t.Fatalf("成本查询口径错误：%#v", usageCost)
 			}
+
 		}
 
 		apiKeysUsagePath := orgPath + "/workspaces/default/api_keys/usage"

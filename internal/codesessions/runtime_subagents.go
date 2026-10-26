@@ -15,11 +15,12 @@ type RuntimeSubagentConfig struct {
 }
 
 type RuntimeSubagentDefinition struct {
-	Name         string   `json:"name"`
-	Description  string   `json:"description"`
-	SystemPrompt string   `json:"systemPrompt"`
-	Model        string   `json:"model,omitempty"`
-	Tools        []string `json:"tools"`
+	AgentSnapshot json.RawMessage `json:"agentSnapshot,omitempty"`
+	Name          string          `json:"name"`
+	Description   string          `json:"description"`
+	SystemPrompt  string          `json:"systemPrompt"`
+	Model         string          `json:"model,omitempty"`
+	Tools         []string        `json:"tools"`
 }
 
 type runtimeAgentReference struct {
@@ -29,16 +30,18 @@ type runtimeAgentReference struct {
 }
 
 type runtimeAgentSnapshot struct {
-	ID          string                  `json:"id"`
-	Version     int                     `json:"version"`
-	Name        string                  `json:"name"`
-	Description string                  `json:"description"`
-	System      string                  `json:"system"`
-	Model       json.RawMessage         `json:"model"`
-	Tools       []toolPermissionToolset `json:"tools"`
-	Multiagent  *struct {
-		Type   string                  `json:"type"`
-		Agents []runtimeAgentReference `json:"agents"`
+	publicSnapshot json.RawMessage
+	ID             string                  `json:"id"`
+	Version        int                     `json:"version"`
+	Name           string                  `json:"name"`
+	Description    string                  `json:"description"`
+	System         string                  `json:"system"`
+	Model          json.RawMessage         `json:"model"`
+	Tools          []toolPermissionToolset `json:"tools"`
+	Multiagent     *struct {
+		Type      string                  `json:"type"`
+		Agents    []runtimeAgentReference `json:"agents"`
+		Subagents *runtimeDelegation      `json:"subagents"`
 	} `json:"multiagent"`
 }
 
@@ -50,14 +53,36 @@ func resolveRuntimeSubagents(ctx context.Context, store *db.DB, session db.Sessi
 	if err := json.Unmarshal(session.AgentSnapshot, &snapshot); err != nil {
 		return nil, err
 	}
+	snapshot.publicSnapshot = session.AgentSnapshot
 	if snapshot.Multiagent == nil {
 		return nil, nil
 	}
 	roster := snapshot.Multiagent
-	if roster.Type != "coordinator" || len(roster.Agents) < 1 || len(roster.Agents) > 20 {
+	inline := false
+	switch roster.Type {
+	case "coordinator":
+		if len(roster.Agents) < 1 {
+			return nil, errRuntimeSubagentConfig
+		}
+	case "multiagent_20261001":
+		inline = true
+		if roster.Subagents != nil {
+			if roster.Subagents.Type == "disabled" {
+				return nil, nil
+			}
+			if roster.Subagents.Type != "enabled" {
+				return nil, errRuntimeSubagentConfig
+			}
+			inline = roster.Subagents.InlineAgents == nil || roster.Subagents.InlineAgents.Type == "enabled"
+			roster.Agents = roster.Subagents.PredefinedAgents
+		}
+	default:
 		return nil, errRuntimeSubagentConfig
 	}
-	config := &RuntimeSubagentConfig{Agents: make([]RuntimeSubagentDefinition, 0, len(roster.Agents))}
+	if len(roster.Agents) > 20 || (!inline && len(roster.Agents) == 0) {
+		return nil, errRuntimeSubagentConfig
+	}
+	config := &RuntimeSubagentConfig{InlineAgents: inline, Agents: make([]RuntimeSubagentDefinition, 0, len(roster.Agents))}
 	seen := make(map[string]bool, len(roster.Agents))
 	for _, ref := range roster.Agents {
 		child, err := resolveRuntimeAgent(ctx, store, session.WorkspaceUUID, snapshot, ref)
@@ -97,6 +122,7 @@ func resolveRuntimeAgent(ctx context.Context, store *db.DB, workspaceUUID string
 	}
 	var snapshot runtimeAgentSnapshot
 	err = json.Unmarshal(raw, &snapshot)
+	snapshot.publicSnapshot = raw
 	return snapshot, err
 }
 
@@ -119,18 +145,36 @@ func runtimeSubagentDefinition(snapshot runtimeAgentSnapshot) (RuntimeSubagentDe
 			definition.Model = model.ID
 		}
 	}
-	for _, toolset := range snapshot.Tools {
-		if toolset.Type == "agent_toolset_20260401" {
-			definition.Tools = enabledSandboxTools(snapshot.Tools)
-			break
+	definition.Tools = runtimeBuiltinTools(snapshot.Tools)
+	if len(snapshot.publicSnapshot) > 0 {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(snapshot.publicSnapshot, &fields); err != nil {
+			return definition, err
+		}
+		delete(fields, "multiagent")
+		fields["type"] = json.RawMessage(`"agent"`)
+		var err error
+		definition.AgentSnapshot, err = json.Marshal(fields)
+		if err != nil {
+			return definition, err
 		}
 	}
 	return definition, nil
 }
 
+type runtimeDelegation struct {
+	Type         string `json:"type"`
+	InlineAgents *struct {
+		Type string `json:"type"`
+	} `json:"inline_agents"`
+	PredefinedAgents []runtimeAgentReference `json:"predefined_agents"`
+}
+
+var sandboxToolNames = []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob", "web_search", "web_fetch", "ask_user_question"}
+
 func enabledSandboxTools(tools []toolPermissionToolset) []string {
-	enabled := make([]string, 0, 6)
-	for _, name := range []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob"} {
+	enabled := make([]string, 0, len(sandboxToolNames))
+	for _, name := range sandboxToolNames {
 		if resolveAgentToolPermission(tools, managedAgentToolName(name)) != resolvedToolPermissionDeny {
 			enabled = append(enabled, name)
 		}

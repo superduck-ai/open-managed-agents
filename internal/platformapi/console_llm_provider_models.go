@@ -1,7 +1,6 @@
 package platformapi
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"slices"
@@ -16,12 +15,14 @@ import (
 )
 
 type previewLLMProviderModelsRequest struct {
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key"`
+	APIBackend *string `json:"api_backend"`
+	BaseURL    string  `json:"base_url"`
+	APIKey     string  `json:"api_key"`
 }
 
 type previewLLMProviderModelsResponse struct {
-	ModelIDs []string `json:"model_ids"`
+	Models   db.LLMModels `json:"models"`
+	ModelIDs []string     `json:"model_ids"`
 }
 
 func previewConsoleLLMProviderModels(database *db.DB, client *http.Client) http.HandlerFunc {
@@ -29,40 +30,56 @@ func previewConsoleLLMProviderModels(database *db.DB, client *http.Client) http.
 		if _, _, ok := llmProviderScope(w, r, database); !ok {
 			return
 		}
-		body, err := readRequiredJSON[previewLLMProviderModelsRequest](r, true)
-		if err != nil {
-			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "request body must match LLM provider configuration")
-			return
-		}
-		apiKey := strings.TrimSpace(body.APIKey)
-		if apiKey == "" {
-			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeAPIKeyRequired, "api_key is required")
-			return
-		}
-		baseURL, err := llmproviders.ValidateBaseURL(body.BaseURL)
-		if err != nil {
-			code := llmProviderCodeBaseURLInvalid
-			if errors.Is(err, llmproviders.ErrUnsafeBaseURL) {
-				code = llmProviderCodeBaseURLUnsafe
-			}
-			writeLLMProviderError(w, http.StatusBadRequest, code, err.Error())
-			return
-		}
-		modelIDs, err := llmproviders.ListUpstreamModels(r.Context(), client, llmproviders.Upstream{
-			BaseURL: baseURL,
-			APIKey:  apiKey,
-		})
-		if err != nil {
-			writeLLMProviderError(w, http.StatusBadGateway, llmProviderCodeUpstreamUnavailable, "failed to list models from provider")
-			return
-		}
-		writeJSON(w, http.StatusOK, previewLLMProviderModelsResponse{
-			ModelIDs: llmproviders.MergeModelIDs(nil, modelIDs, maxLLMProviderModels),
-		})
+		previewProviderModels(w, r, client)
 	}
 }
 
-func syncConsoleLLMProviderModels(database *db.DB, secretService *secrets.Service, client *http.Client) http.HandlerFunc {
+func previewConsoleOrganizationLLMProviderModels(database *db.DB, client *http.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := llmProviderOrganization(w, r, database); !ok {
+			return
+		}
+		previewProviderModels(w, r, client)
+	}
+}
+
+func previewProviderModels(w http.ResponseWriter, r *http.Request, client *http.Client) {
+	body, err := readRequiredJSON[previewLLMProviderModelsRequest](r, true)
+	if err != nil {
+		writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "request body must match LLM provider configuration")
+		return
+	}
+	if body.APIBackend != nil && !llmproviders.ValidBackend(*body.APIBackend) {
+		writeLLMProviderBackendError(w)
+		return
+	}
+	apiKey := strings.TrimSpace(body.APIKey)
+	if apiKey == "" {
+		writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeAPIKeyRequired, "api_key is required")
+		return
+	}
+	baseURL, err := llmproviders.ValidateBaseURL(body.BaseURL)
+	if err != nil {
+		code := llmProviderCodeBaseURLInvalid
+		if errors.Is(err, llmproviders.ErrUnsafeBaseURL) {
+			code = llmProviderCodeBaseURLUnsafe
+		}
+		writeLLMProviderError(w, http.StatusBadRequest, code, err.Error())
+		return
+	}
+	modelIDs, err := llmproviders.ListUpstreamModels(r.Context(), client, llmproviders.Upstream{
+		APIBackend: llmProviderBackend(body.APIBackend, llmproviders.Messages),
+		BaseURL:    baseURL,
+		APIKey:     apiKey,
+	})
+	if err != nil {
+		writeLLMProviderError(w, http.StatusBadGateway, llmProviderCodeUpstreamUnavailable, "failed to list models from provider")
+		return
+	}
+	writeJSON(w, http.StatusOK, formatPreviewModels(llmproviders.MergeModelIDs(nil, modelIDs, maxLLMProviderModels)))
+}
+
+func syncConsoleLLMProviderModels(database *db.DB, secretService *secrets.Service, client *http.Client, persist bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgUUID, scope, ok := llmProviderScope(w, r, database)
 		if !ok {
@@ -82,77 +99,56 @@ func syncConsoleLLMProviderModels(database *db.DB, secretService *secrets.Servic
 			internalError(w, "failed to load LLM provider")
 			return
 		}
-		if secretService == nil || provider.SecretEnvelope == nil {
-			internalError(w, "LLM provider encryption is unavailable")
-			return
-		}
-		plaintext, err := secretService.Open(r.Context(), llmproviders.SecretBinding(provider), *provider.SecretEnvelope)
-		if err != nil {
-			internalError(w, "failed to decrypt LLM provider API key")
-			return
-		}
-		defer clear(plaintext)
-		liveIDs, err := llmproviders.ListUpstreamModels(r.Context(), client, llmproviders.Upstream{
-			BaseURL: provider.BaseURL,
-			APIKey:  string(plaintext),
-		})
-		if err != nil {
-			writeLLMProviderError(w, http.StatusBadGateway, llmProviderCodeUpstreamUnavailable, "failed to list models from provider")
-			return
-		}
-		incomingIDs, skippedModelIDs, err := excludeConfiguredModels(
-			r.Context(),
-			database,
-			orgUUID,
-			scope.UUID,
-			provider.ExternalID,
-			liveIDs,
-		)
-		if err != nil {
-			internalError(w, "failed to validate LLM provider models")
-			return
-		}
-		modelIDs := llmproviders.MergeModelIDs(provider.ModelIDs, incomingIDs, maxLLMProviderModels)
-		if slices.Equal(provider.ModelIDs, modelIDs) {
-			response := formatLLMProvider(provider)
-			response.SkippedModelIDs = skippedModelIDs
-			writeJSON(w, http.StatusOK, response)
-			return
-		}
-		provider.ModelIDs = modelIDs
-		provider.UpdatedAt = time.Now().UTC()
-		updated, err := database.UpdateLLMProvider(r.Context(), provider)
-		if writeLLMProviderModelConflictError(w, err) {
-			return
-		}
-		if err != nil {
-			internalError(w, "failed to update LLM provider")
-			return
-		}
-		response := formatLLMProvider(updated)
-		response.SkippedModelIDs = skippedModelIDs
-		writeJSON(w, http.StatusOK, response)
+		syncProviderFromUpstream(w, r, database, secretService, client, provider, persist)
 	}
 }
 
-func excludeConfiguredModels(
-	ctx context.Context,
-	database *db.DB,
-	organizationUUID, workspaceUUID, excludedProviderID string,
-	modelIDs []string,
-) ([]string, []string, error) {
-	configured, err := configuredLLMModelIDs(ctx, database, organizationUUID, workspaceUUID, excludedProviderID)
+func syncProviderFromUpstream(w http.ResponseWriter, r *http.Request, database *db.DB, secretService *secrets.Service, client *http.Client, provider db.LLMProvider, persist bool) {
+	if secretService == nil || provider.SecretEnvelope == nil {
+		internalError(w, "LLM provider encryption is unavailable")
+		return
+	}
+	plaintext, err := secretService.Open(r.Context(), llmproviders.SecretBinding(provider), *provider.SecretEnvelope)
 	if err != nil {
-		return nil, nil, err
+		internalError(w, "failed to decrypt LLM provider API key")
+		return
 	}
-	filtered := make([]string, 0, len(modelIDs))
-	skipped := make([]string, 0)
-	for _, modelID := range modelIDs {
-		if _, exists := configured[modelID]; exists {
-			skipped = append(skipped, modelID)
-			continue
-		}
-		filtered = append(filtered, modelID)
+	defer clear(plaintext)
+	liveIDs, err := llmproviders.ListUpstreamModels(r.Context(), client, llmproviders.Upstream{
+		APIBackend: provider.APIBackend,
+		BaseURL:    provider.BaseURL,
+		APIKey:     string(plaintext),
+	})
+	if err != nil {
+		writeLLMProviderError(w, http.StatusBadGateway, llmProviderCodeUpstreamUnavailable, "failed to list models from provider")
+		return
 	}
-	return filtered, skipped, nil
+	if !persist {
+		writeJSON(w, http.StatusOK, formatPreviewModels(llmproviders.MergeModelIDs(nil, liveIDs, maxLLMProviderModels)))
+		return
+	}
+	modelIDs := llmproviders.MergeModelIDs(provider.Models.IDs(), liveIDs, maxLLMProviderModels)
+	if slices.Equal(provider.Models.IDs(), modelIDs) {
+		writeJSON(w, http.StatusOK, formatSyncedLLMProvider(provider))
+		return
+	}
+	provider.Models = provider.Models.WithIDs(modelIDs)
+	provider.UpdatedAt = time.Now().UTC()
+	updated, err := database.UpdateLLMProvider(r.Context(), provider)
+	if err != nil {
+		internalError(w, "failed to update LLM provider")
+		return
+	}
+	writeJSON(w, http.StatusOK, formatSyncedLLMProvider(updated))
+}
+
+func formatSyncedLLMProvider(provider db.LLMProvider) llmProviderResponse {
+	if provider.WorkspaceUUID == "" {
+		return formatOrganizationLLMProvider(provider)
+	}
+	return formatLLMProvider(provider)
+}
+
+func formatPreviewModels(ids []string) previewLLMProviderModelsResponse {
+	return previewLLMProviderModelsResponse{Models: db.LLMModels{}.WithIDs(ids), ModelIDs: ids}
 }

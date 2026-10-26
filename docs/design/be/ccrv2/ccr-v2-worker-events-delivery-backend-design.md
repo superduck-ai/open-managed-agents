@@ -247,6 +247,8 @@ Session 归档、删除或整体 `terminated` 的事务按 Session → Worker �
 
 事件写入路径由状态应用返回“Session 本次进入 terminated”的结果，批次汇总该结果。整批事件及派生事件写完后，仅在批末状态仍为 terminated 时，事务编排显式终止关联 Worker。事务失败返回空结果，不能向上层泄漏未提交的清理 ID。直接设置状态也返回已退休 ID，重复终态不再次推进 epoch。部署创建入口在同一事务内新建 Session，此时尚无关联 Worker，因此不执行 Worker 退休查询。幂等重放和重复终态不再次推进 epoch；仅 Thread 终止不触发，除非派生出整个 Session 的终止转换。
 
+Session 级状态事件仍按批内顺序更新主 Thread。`terminated → running` 批次以 running 结束，保留 Worker 与 epoch；不能因主 Thread 在批次中途变为 terminated 而丢弃后续 Session 级事件。已终止 Thread 的 Thread 级状态事件仍被忽略，归档 Session 的事件写入仍被拒绝。`TestSessionTerminationBatchKeepsActiveWorkers` 同时检查 Session、主 Thread 与 Worker epoch。
+
 ```mermaid
 sequenceDiagram
     participant Client
@@ -314,6 +316,25 @@ Worker 运行状态和公开回合完成分别处理。`PUT worker` 上报 idle 
 执行端将已确认的用户取消上报为非失败 result，产生 end_turn，并保留 user.interrupt。后端不从历史推断取消或改判失败 result。重复 result 复用现有事件 ID 去重，
 旧 worker 继续受 epoch 校验约束，待处理输入继续使用现有队列规则。
 
+普通回合有待处理用户消息时，后端保留连续 running，不提前发布 idle。当前线程在本次 running 或 rescheduled 之后已有处理完成的 user.interrupt，且中断不晚于 result 时，待处理消息不能抑制旧回合的 idle/end_turn。下一条消息随后开始新回合。该判断限定工作区、会话和线程，不使用旧回合、其他范围、未处理或已删除的中断，也不改变 result 的成功或失败类别。
+
+`TestInterruptedTurnIdleBoundaryPostgres` 在隔离 PostgreSQL schema 中验证上述边界及普通排队行为；Mapper 合同单测验证 SQL 的租户条件和参数绑定。
+
 发送端顺序为消息及工具结果、model span end、result、输入 processed ACK。worker idle 可以迟到或
 重投，不影响下一轮的公开状态。具体投影和中断回归见 `tests/session_worker_terminal_test.go` 与
 `tests/session_worker_interrupt_test.go`。
+
+
+### 普通空闲会话的中断接受
+
+普通 idle 主线程没有运行中的 Worker 或待确认工具时，公开 `user.interrupt` 返回 200 并记录已处理的事件，保持会话 idle，不产生模型请求或工具调用。此行为按 INT007 用户裁决与 Qoder 实测对齐，不将其描述为 CMA 对普通 idle Session HTTP 状态的明确规定。
+
+接收事务在 Session/Worker 锁内判断空操作，并通过 `SessionEventChanges.SettledInputEventIDs` 将决定传给公开 API。事件继续参与响应、历史和 SSE；`WorkerInputEvents()` 只从 Worker 投递集合排除这些中断，不修改公开事件集合，也不排除后续用户消息。纯空操作不会重置 Worker 的 idle_since，不恢复沙箱，不将延迟中断投递给后续任务。运行中和等待工具确认的中断仍按原流程投递，归档和已终止等拒绝规则不变。对子线程不根据主线程的 idle 状态推断空操作。
+
+普通单测覆盖空闲接受、原拒绝边界、待处理工具不误判为空操作，以及过滤投递时保留下一条用户消息和原公开证据。真实 INT007 使用两个平台公开 events.send、原始 SSE、完整 history 与 10s 状态观察验证，不以本地单测替代平台结果。
+
+## Tool completion settles its pending permission (2026-10-18)
+
+A public agent.tool_result or agent.mcp_tool_result ends its corresponding invocation, including an approval cancelled by user.interrupt. Under the existing Session then Worker locks, the same Yourbatis transaction removes only the matching permission request and its legacy mirror, resolving the public call ID or provider-derived alias within the owning thread. Other calls, threads and unrelated metadata remain intact. Unknown or already settled results do not write metadata. Failed persistence aborts the batch without changing local worker state.
+
+Subsequent idle events in that transaction use the settled metadata. Once the last pending approval is cancelled, a completed end_turn must not be rewritten to stale requires_action. Remaining pending calls retain their IDs and action details. Regression coverage includes cancellation, matching and foreign-thread references, concurrent pending calls, aliases, duplicate settlement and persistence errors. Real CHAT INT013 validates the public interrupt, cancelled result, final idle and cleanup.

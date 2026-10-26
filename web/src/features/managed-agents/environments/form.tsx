@@ -65,6 +65,7 @@ export function EnvironmentForm({
       const result = entity
         ? await anthropicBetaApi.environments.update<EnvironmentApiResponse>(entity.id, body, workspaceId)
         : await anthropicBetaApi.environments.create<EnvironmentApiResponse>(body, workspaceId);
+      syncedEntity.current = entity;
       const next = environmentFormValues(result);
       setInitial(next);
       setValues(next);
@@ -112,7 +113,7 @@ export function EnvironmentForm({
           </Alert>
         ) : null}
         {!entity ? (
-          <div className="sticky bottom-0 z-10 flex shrink-0 justify-end gap-3 border-t border-border bg-background py-3">
+          <div className="sticky bottom-0 z-10 flex shrink-0 justify-end gap-3 border-t-[0.5px] border-border bg-background py-3">
             <Button type="button" variant="outline" disabled={busy} onClick={guard.requestDiscard}>
               {msg('common.cancel', 'Cancel')}
             </Button>
@@ -124,7 +125,7 @@ export function EnvironmentForm({
           </div>
         ) : null}
         {entity && dirty && !readOnly ? (
-          <div className="fixed bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-border bg-background p-1.5 pl-3 text-sm shadow-lg md:left-[calc(50%+var(--sidebar-width,256px)/2)]">
+          <div className="fixed bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-xl border-[0.5px] border-border bg-background p-1.5 pl-3 text-sm shadow-lg transition-[left] duration-220 ease-out motion-reduce:transition-none md:left-[calc(50%+var(--sidebar-width,256px)/2)]">
             <span>{msg('environmentPage.unsaved', 'Unsaved changes')}</span>
             <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={reset}>
               {msg('common.discard', 'Discard')}

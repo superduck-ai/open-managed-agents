@@ -9,9 +9,11 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/mcpnames"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
@@ -22,6 +24,7 @@ import (
 const (
 	maxMCPProxyURLBytes          = 2048
 	maxMCPDiscoveryResponseBytes = 1 << 20
+	mcpNotForwardedHeader        = tunnels.NotForwardedHeader
 )
 
 // mcpProxyTransportWrapper wraps the MCP upstream RoundTripper for vault
@@ -30,8 +33,9 @@ const (
 type mcpProxyTransportWrapper func(context.Context, SessionCredentialClaims, *url.URL, http.RoundTripper) http.RoundTripper
 
 func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set(mcpNotForwardedHeader, "true")
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	claims, _, ok := h.authenticateRuntimeSession(w, r)
+	claims, _, ok := h.authorizeRuntimeSession(w, r)
 	if !ok {
 		return
 	}
@@ -50,6 +54,7 @@ func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	identity := upstreamProxyIdentity{
 		codeSessionExternalID: claims.SessionID,
+		sessionThreadID:       strings.TrimSpace(r.Header.Get(runtimeThreadHeader)),
 		organizationUUID:      claims.OrganizationUUID,
 		workspaceUUID:         claims.WorkspaceUUID,
 	}
@@ -61,6 +66,7 @@ func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleNamedMCPProxy(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set(mcpNotForwardedHeader, "true")
 	codeSessionID := chi.URLParam(r, "code_session_id")
 	serverName := namedMCPServerName(r)
 	if codeSessionID == "" || !canonicalMCPServerName(serverName) {
@@ -77,6 +83,7 @@ func (h *Handler) handleNamedMCPProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	identity := upstreamProxyIdentity{
 		codeSessionExternalID: claims.SessionID,
+		sessionThreadID:       strings.TrimSpace(r.Header.Get(runtimeThreadHeader)),
 		organizationUUID:      claims.OrganizationUUID,
 		workspaceUUID:         claims.WorkspaceUUID,
 	}
@@ -118,6 +125,7 @@ func (h *Handler) HandleMCPProtectedResource(w http.ResponseWriter, r *http.Requ
 	}
 	identity := upstreamProxyIdentity{
 		codeSessionExternalID: claims.SessionID,
+		sessionThreadID:       strings.TrimSpace(r.Header.Get(runtimeThreadHeader)),
 		organizationUUID:      claims.OrganizationUUID,
 		workspaceUUID:         claims.WorkspaceUUID,
 	}
@@ -163,12 +171,12 @@ func (h *Handler) HandleMCPProtectedResource(w http.ResponseWriter, r *http.Requ
 }
 
 func canonicalMCPServerName(name string) bool {
-	return name != "" && strings.TrimSpace(name) == name
+	return mcpnames.Valid(name)
 }
 
 func namedMCPServerName(r *http.Request) string {
 	if name := chi.URLParam(r, "*"); name != "" {
-		if decoded, err := url.PathUnescape(name); err == nil {
+		if decoded, err := url.PathUnescape(name); r.URL.RawPath != "" && err == nil {
 			return decoded
 		}
 		return name
@@ -206,31 +214,29 @@ func (h *Handler) forwardMCPProxy(
 	request := r.Clone(r.Context())
 	request.Header = headers
 	if serverName == "" {
-		if h.tunnelInvoker != nil && h.tunnelInvoker.ServeTunnel(
-			w,
-			request,
-			claims.OrganizationUUID,
-			claims.WorkspaceUUID,
-			target,
-		) {
+		if h.serveMCPTunnel(w, request, claims, target) {
 			return
 		}
 		h.serveMCPProxy(w, request, target, claims.SessionID, claims)
 		return
 	}
 	responseWriter := newMCPGatewayResponseWriter(w, runtimeMCPMetadataURL(r, claims.SessionID, serverName))
-	if h.tunnelInvoker != nil {
-		if h.tunnelInvoker.ServeTunnel(
-			responseWriter,
-			request,
-			claims.OrganizationUUID,
-			claims.WorkspaceUUID,
-			target,
-		) {
-			return
-		}
+	if h.serveMCPTunnel(responseWriter, request, claims, target) {
+		return
 	}
 	h.writeNamedTunnelNotFound(w, r)
+}
+
+func (h *Handler) serveMCPTunnel(w http.ResponseWriter, r *http.Request, claims SessionCredentialClaims, target *url.URL) bool {
+	if h.tunnelInvoker == nil {
+		return false
+	}
+	w.Header().Del(mcpNotForwardedHeader)
+	if h.tunnelInvoker.ServeTunnel(w, r, claims.OrganizationUUID, claims.WorkspaceUUID, target) {
+		return true
+	}
+	w.Header().Set(mcpNotForwardedHeader, "true")
+	return false
 }
 
 func (h *Handler) writeNamedTunnelNotFound(w http.ResponseWriter, r *http.Request) {
@@ -244,7 +250,7 @@ func (h *Handler) namedTargetIsTunnel(target *url.URL) bool {
 
 func sanitizedMCPProxyHeaders(source http.Header) http.Header {
 	headers := source.Clone()
-	for _, name := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Proxy-Connection"} {
+	for _, name := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Proxy-Connection", runtimeThreadHeader} {
 		headers.Del(name)
 	}
 	return headers
@@ -421,21 +427,33 @@ func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *
 	if h.wrapMCPVaultTransport != nil {
 		transport = h.wrapMCPVaultTransport(r.Context(), claims, target, transport)
 	}
+	var connected atomic.Bool
 	proxy := &httputil.ReverseProxy{
 		Transport:     transport,
 		FlushInterval: -1,
 		Rewrite: func(request *httputil.ProxyRequest) {
 			upstreamURL := *target
+			request.Out = traceConnection(request.Out, &connected)
 			request.Out.URL = &upstreamURL
 			request.Out.Host = target.Host
 		},
 		ModifyResponse: func(response *http.Response) error {
+			response.Header.Del(mcpNotForwardedHeader)
 			if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
 				response.Header.Set("X-Accel-Buffering", "no")
 			}
 			return nil
 		},
 		ErrorHandler: func(writer http.ResponseWriter, request *http.Request, err error) {
+			if !connected.Load() {
+				writer.Header().Set(mcpNotForwardedHeader, "true")
+			}
+			if errors.Is(err, vaults.ErrUpstreamAuthenticationRejected) || errors.Is(err, vaults.ErrMCPOAuthReauthorizationRequired) {
+				h.logger.WarnContext(request.Context(), "MCP upstream authentication rejected", "code_session_id", codeSessionID, "host", target.Hostname())
+				writer.Header().Set("WWW-Authenticate", "Bearer")
+				httpapi.WriteError(writer, request, mcpUpstreamAuthenticationRejected())
+				return
+			}
 			if errors.Is(err, vaults.ErrInjectionRejected) {
 				h.logger.ErrorContext(request.Context(), "inject MCP proxy credentials", "code_session_id", codeSessionID, "host", target.Hostname(), "error", err)
 				httpapi.WriteError(writer, request, httpapi.NewError(http.StatusBadGateway, "api_error", vaults.InjectionPublicMessage(err)))
@@ -447,6 +465,7 @@ func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *
 			httpapi.WriteError(writer, request, httpapi.NewError(http.StatusBadGateway, "api_error", "MCP upstream is unavailable"))
 		},
 	}
+	w.Header().Del(mcpNotForwardedHeader)
 	proxy.ServeHTTP(w, r)
 }
 

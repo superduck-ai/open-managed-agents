@@ -1,6 +1,8 @@
 package config
 
-import "time"
+import (
+	"time"
+)
 
 const (
 	EnvironmentDev                  = "dev"
@@ -16,6 +18,7 @@ type ChannelBridgeConfig struct {
 
 type Config struct {
 	ChannelBridge        ChannelBridgeConfig       `yaml:"channel_bridge"`
+	WebTools             WebToolsConfig            `yaml:"web_tools"`
 	EnvironmentPackages  EnvironmentPackageConfig  `yaml:"environment_packages"`
 	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
 	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
@@ -36,6 +39,15 @@ type Config struct {
 	Webhook              WebhookConfig             `yaml:"webhook"`
 	Vault                VaultConfig               `yaml:"vault"`
 	Bootstrap            BootstrapConfig           `yaml:"bootstrap"`
+}
+
+type WebToolsConfig struct {
+	SearchProvider string                           `yaml:"search_provider"`
+	Providers      map[string]WebToolProviderConfig `yaml:"providers"`
+}
+
+type WebToolProviderConfig struct {
+	APIKey string `yaml:"api_key"`
 }
 
 // VaultConfig configures at-rest encryption for vault credential secrets and
@@ -296,6 +308,8 @@ type BootstrapConfig struct {
 	OrganizationName    string       `yaml:"organization_name"`
 	WorkspaceExternalID string       `yaml:"workspace_external_id"`
 	UserExternalID      string       `yaml:"user_external_id"`
+	UserEmail           string       `yaml:"user_email"`
+	UserName            string       `yaml:"user_name"`
 	APIKeyExternalID    string       `yaml:"api_key_external_id"`
 }
 

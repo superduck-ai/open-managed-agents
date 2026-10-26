@@ -24,7 +24,7 @@ func TestManagedTunnelGatewayCredentials(t *testing.T) {
 	cfg.CodeSession.SandboxAPIBaseURL = "http://gateway.example"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("mcp-gateway-credentials"))
 	t.Cleanup(app.close)
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"gateway-credential-proof","mcp_servers":[{"type":"url","name":"local","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef/sse"},{"type":"url","name":"remote","url":"https://docs.example/sse"}]}`)
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"gateway-credential-proof","tools":[{"type":"mcp_toolset","mcp_server_name":"local"},{"type":"mcp_toolset","mcp_server_name":"remote"}],"mcp_servers":[{"type":"url","name":"local","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef/sse"},{"type":"url","name":"remote","url":"https://docs.example/sse"}]}`)
 	environment := createEnvironment(t, app, `{"name":"gateway-credential-proof"}`)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(environment.ID)+`}`)
 	codeID := launchLocalCodeSession(t, app, session.ID)
@@ -56,7 +56,7 @@ func TestManagedTunnelGatewayCredentials(t *testing.T) {
 		status              int
 	}{
 		{"missing token", codeID, "", http.StatusUnauthorized},
-		{"old epoch", codeID, oldToken, http.StatusUnauthorized},
+		{"old epoch", codeID, oldToken, http.StatusConflict},
 		{"missing epoch", codeID, noEpoch, http.StatusUnauthorized},
 		{"other session", "cse_other", currentToken, http.StatusUnauthorized},
 		{"other organization", codeID, codeSessionIngressTokenWithScope(t, app, codeID, "10000000-0000-4000-8000-000000000001", ""), http.StatusUnauthorized},
@@ -84,7 +84,7 @@ func TestManagedTunnelGatewayCredentials(t *testing.T) {
 			}
 		})
 	}
-	assertMCPRuntimeContext(t, app, codeID, oldToken, http.StatusUnauthorized)
+	assertMCPRuntimeContext(t, app, codeID, oldToken, http.StatusOK)
 	assertMCPRuntimeContext(t, app, codeID, currentToken, http.StatusOK)
 }
 
@@ -129,7 +129,7 @@ func assertMCPRuntimeContext(t *testing.T, app *testApp, codeID, token string, w
 	if local.Type != "http" || local.URL != "http://gateway.example/v2/ccr-sessions/"+codeID+"/mcp/local" || local.Headers["Authorization"] != "Bearer "+token {
 		t.Fatal("session_context did not build the current Tunnel connection")
 	}
-	if remote.Type != "sse" || remote.URL != "https://docs.example/sse" || len(remote.Headers) != 0 {
+	if remote.Type != "http" || remote.URL != "https://docs.example/sse" || len(remote.Headers) != 0 {
 		t.Fatal("session_context changed the ordinary MCP connection")
 	}
 }

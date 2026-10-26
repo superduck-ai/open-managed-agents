@@ -6,14 +6,18 @@ import (
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 // ModelRequest owns one proxy attempt. Each worker retry gets a new span.
 type ModelRequest struct {
+	calculator    *billing.Calculator
 	StartID       string
 	CodeSessionID string
 	ThreadID      string
@@ -24,11 +28,17 @@ type ModelRequest struct {
 
 // ModelRequestUsage is cumulative within one provider response, never a turn total.
 type ModelRequestUsage struct {
-	CacheCreation            *ModelRequestCacheUsage `json:"cache_creation,omitzero"`
-	InputTokens              *int64                  `json:"input_tokens,omitzero"`
-	OutputTokens             *int64                  `json:"output_tokens,omitzero"`
-	CacheCreationInputTokens *int64                  `json:"cache_creation_input_tokens,omitzero"`
-	CacheReadInputTokens     *int64                  `json:"cache_read_input_tokens,omitzero"`
+	ServerToolUse            *ModelRequestServerToolUsage `json:"server_tool_use,omitzero"`
+	CacheCreation            *ModelRequestCacheUsage      `json:"cache_creation,omitzero"`
+	InputTokens              *int64                       `json:"input_tokens,omitzero"`
+	OutputTokens             *int64                       `json:"output_tokens,omitzero"`
+	CacheCreationInputTokens *int64                       `json:"cache_creation_input_tokens,omitzero"`
+	CacheReadInputTokens     *int64                       `json:"cache_read_input_tokens,omitzero"`
+}
+
+type ModelRequestServerToolUsage struct {
+	WebSearchRequests *int64 `json:"web_search_requests,omitzero"`
+	WebFetchRequests  *int64 `json:"web_fetch_requests,omitzero"`
 }
 
 type ModelRequestCacheUsage struct {
@@ -62,28 +72,28 @@ type ModelRequestMessage struct {
 	Content []ModelRequestContent `json:"content,omitempty"`
 }
 
-// ModelRequestContent is a public agent.message content block; Text is absent for redacted blocks.
 type ModelRequestContent struct {
-	Type     string  `json:"type"`
-	Text     *string `json:"text,omitempty"`
-	Thinking *string `json:"thinking,omitempty"`
+	Type string  `json:"type"`
+	Text *string `json:"text,omitempty"`
 }
 
 type modelRequestEvent struct {
-	IsError           *bool              `json:"is_error,omitzero"`
-	ToolUseIDs        []string           `json:"tool_use_ids,omitempty"`
-	ID                string             `json:"id"`
-	Type              string             `json:"type"`
-	OwnerThreadID     string             `json:"_owner_session_thread_id,omitempty"`
-	Model             string             `json:"model"`
-	RequestID         string             `json:"request_id"`
-	CreatedAt         time.Time          `json:"created_at"`
-	ProcessedAt       time.Time          `json:"processed_at"`
-	StartID           string             `json:"model_request_start_id,omitempty"`
-	Usage             *ModelRequestUsage `json:"model_usage,omitzero"`
-	EventIDs          []string           `json:"event_ids,omitempty"`
-	UpstreamRequestID string             `json:"upstream_request_id,omitempty"`
-	Error             *modelRequestError `json:"error,omitzero"`
+	PriceSnapshot     *billing.ModelPrice `json:"_model_price,omitzero"`
+	Billing           map[string]string   `json:"billing,omitempty"`
+	IsError           *bool               `json:"is_error,omitzero"`
+	ToolUseIDs        []string            `json:"tool_use_ids,omitempty"`
+	ID                string              `json:"id"`
+	Type              string              `json:"type"`
+	OwnerThreadID     string              `json:"_owner_session_thread_id,omitempty"`
+	Model             string              `json:"model"`
+	RequestID         string              `json:"request_id"`
+	CreatedAt         time.Time           `json:"created_at"`
+	ProcessedAt       time.Time           `json:"processed_at"`
+	StartID           string              `json:"model_request_start_id,omitempty"`
+	Usage             *ModelRequestUsage  `json:"model_usage,omitzero"`
+	EventIDs          []string            `json:"event_ids,omitempty"`
+	UpstreamRequestID string              `json:"upstream_request_id,omitempty"`
+	Error             *modelRequestError  `json:"error,omitzero"`
 }
 
 type modelRequestError struct {
@@ -106,7 +116,11 @@ func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID,
 	if err != nil {
 		return nil, err
 	}
-	request := &ModelRequest{StartID: startID, CodeSessionID: codeSessionID, ThreadID: threadID, Model: model, codeSession: codeSession}
+	calculator, err := s.billing.Scope(ctx, codeSession.OrganizationUUID, codeSession.WorkspaceUUID, model)
+	if err != nil {
+		return nil, err
+	}
+	request := &ModelRequest{calculator: calculator, StartID: startID, CodeSessionID: codeSessionID, ThreadID: threadID, Model: model, codeSession: codeSession}
 	if agentID != "" {
 		request.toolThreadID = threadID
 	}
@@ -118,12 +132,54 @@ func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID,
 	return request, nil
 }
 
+func (s *Service) StartModelThinking(ctx context.Context, request *ModelRequest, messageID string, index int) error {
+	if usesBrainClaimTransport(request.codeSession) {
+		return nil
+	}
+	message := ModelRequestMessage{ID: maevents.StableAssistantEventID(request.CodeSessionID, messageID, index, "agent.thinking"), Type: "agent.thinking"}
+	preview := map[string]any{"type": "event_start", "event": map[string]string{"type": message.Type, "id": message.ID}}
+	if request.toolThreadID != "" {
+		preview["session_thread_id"] = request.toolThreadID
+	}
+	raw, err := jsonv2.Marshal(preview)
+	if err != nil {
+		return err
+	}
+	s.publishWorkerStreamPayload(ctx, CodeSessionStreamRoute{
+		CodeSessionID: request.CodeSessionID, WorkspaceUUID: request.codeSession.WorkspaceUUID,
+		SessionExternalID: request.codeSession.SessionExternalID,
+	}, request.codeSession.CurrentWorkerEpoch, raw)
+	payload, err := modelMessagePayload(request, message, time.Now().UTC().Truncate(time.Microsecond))
+	if err != nil {
+		return err
+	}
+	return s.sink.PublishCodeSessionEvents(ctx, request.codeSession, []json.RawMessage{payload})
+}
+
+func modelMessagePayload(request *ModelRequest, message ModelRequestMessage, processedAt time.Time) (json.RawMessage, error) {
+	if message.Type == "agent.thinking" {
+		message.Content = nil
+	}
+	return jsonv2.Marshal(struct {
+		ModelRequestMessage
+		OwnerThreadID string    `json:"_owner_session_thread_id"`
+		StartID       string    `json:"model_request_start_id"`
+		ProcessedAt   time.Time `json:"processed_at"`
+	}{ModelRequestMessage: message, OwnerThreadID: request.ThreadID, StartID: request.StartID, ProcessedAt: processedAt})
+}
+
 func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, result ModelRequestResult) error {
+	if usesBrainClaimTransport(request.codeSession) {
+		result.Messages = nil
+		result.EventIDs = nil
+	}
 	event := modelRequestEvent{ID: request.StartID + "_end", Type: "span.model_request_end", StartID: request.StartID,
 		CreatedAt: result.EndedAt, ProcessedAt: result.EndedAt, IsError: new(result.ErrorType != "" && result.ErrorType != "observation_limit"), Usage: &result.Usage, EventIDs: result.EventIDs, ToolUseIDs: result.ToolUseIDs, UpstreamRequestID: result.UpstreamRequestID}
 	if result.ErrorType != "" {
 		event.Error = &modelRequestError{Type: result.ErrorType}
 	}
+	event.Billing = modelRequestBilling(request.calculator, request.Model, result.Usage)
+	event.PriceSnapshot = request.calculator.PriceSnapshot(request.Model)
 	tools, err := s.modelToolUsePayloads(ctx, request, modelRequestPublicTools(result), result.EndedAt)
 	if err != nil {
 		return err
@@ -131,12 +187,7 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 	payloads := make([]json.RawMessage, 0, len(result.Messages)+len(tools)+1)
 	if result.ErrorType == "" {
 		for _, message := range result.Messages {
-			payload, err := jsonv2.Marshal(struct {
-				ModelRequestMessage
-				OwnerThreadID string    `json:"_owner_session_thread_id"`
-				StartID       string    `json:"model_request_start_id"`
-				ProcessedAt   time.Time `json:"processed_at"`
-			}{ModelRequestMessage: message, OwnerThreadID: request.ThreadID, StartID: request.StartID, ProcessedAt: result.EndedAt})
+			payload, err := modelMessagePayload(request, message, result.EndedAt)
 			if err != nil {
 				return err
 			}
@@ -232,4 +283,28 @@ func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.Cod
 		}
 		params.Cursor = &db.SessionEventPageCursor{ExternalID: events[len(events)-1].ExternalID}
 	}
+}
+
+func modelRequestBilling(calculator *billing.Calculator, model string, usage ModelRequestUsage) map[string]string {
+	counters := billing.TokenUsage{}
+	for _, field := range []struct{ target, value *int64 }{
+		{&counters.InputTokens, usage.InputTokens}, {&counters.OutputTokens, usage.OutputTokens},
+		{&counters.CacheReadInputTokens, usage.CacheReadInputTokens}, {&counters.CacheCreationInputTokens, usage.CacheCreationInputTokens},
+	} {
+		if field.value != nil {
+			*field.target = *field.value
+		}
+	}
+	if usage.CacheCreation != nil {
+		counters.CacheWrite5mTokens = billing.UsageCount(usage.CacheCreation.Ephemeral5mInputTokens)
+		counters.CacheWrite1hTokens = billing.UsageCount(usage.CacheCreation.Ephemeral1hInputTokens)
+		if usage.CacheCreationInputTokens == nil {
+			counters.CacheCreationInputTokens = counters.CacheWrite5mTokens + counters.CacheWrite1hTokens
+		}
+	}
+	cents, priced := calculator.BudgetRequestCents(model, counters)
+	if !priced {
+		return nil
+	}
+	return map[string]string{"list_cost": strconv.FormatInt(cents, 10), "currency": "USD"}
 }

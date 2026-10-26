@@ -147,7 +147,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	if err != nil {
 		return invalidRequest(err)
 	}
-	if err := h.validateConfiguredModels(
+	if err := h.normalizeConfiguredModels(
 		r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, body, requestModels,
 	); err != nil {
 		return err
@@ -200,28 +200,37 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	return nil
 }
 
-func (h *Handler) validateConfiguredModels(
+func (h *Handler) normalizeConfiguredModels(
 	ctx context.Context,
 	organizationUUID, workspaceUUID string,
 	body *createRequest,
 	requestModels []string,
 ) error {
-	modelIDs, err := llmproviders.ListModelIDs(ctx, h.db, organizationUUID, workspaceUUID)
+	catalog, err := llmproviders.LoadCatalog(ctx, h.db, organizationUUID, workspaceUUID)
 	if err != nil {
 		return configuredModelError(err)
 	}
-	configured := make(map[string]struct{}, len(modelIDs))
-	for _, modelID := range modelIDs {
-		configured[modelID] = struct{}{}
-	}
+	return normalizeBatchModels(catalog, body, requestModels)
+}
+
+func normalizeBatchModels(catalog llmproviders.Catalog, body *createRequest, requestModels []string) error {
 	for index, modelID := range requestModels {
-		if _, ok := configured[modelID]; !ok {
+		selected, err := catalog.Lookup(modelID)
+		if errors.Is(err, llmproviders.ErrAmbiguousModel) {
+			return invalidRequest(fmt.Errorf("params for custom_id %s: %w", body.Requests[index].CustomID, err))
+		}
+		if err != nil {
 			return invalidRequest(fmt.Errorf(
 				"params for custom_id %s: model %q is not configured for this workspace",
 				body.Requests[index].CustomID,
 				modelID,
 			))
 		}
+		params, err := llmproviders.ReplaceRequestModel(body.Requests[index].Params, selected.QualifiedModelID())
+		if err != nil {
+			return invalidRequest(fmt.Errorf("params for custom_id %s: %w", body.Requests[index].CustomID, err))
+		}
+		body.Requests[index].Params = params
 	}
 	return nil
 }

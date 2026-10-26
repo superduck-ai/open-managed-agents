@@ -1,4 +1,3 @@
-// Package channels 提供工作区和 Agent 范围内的飞书渠道控制面。
 package channels
 
 import (
@@ -12,7 +11,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -29,7 +27,6 @@ type handler struct {
 	client *http.Client
 }
 
-// NewHandler 所有渠道操作先验证 Agent 归属，再将服务端租户范围交给桥接服务。
 func NewHandler(cfg config.ChannelBridgeConfig, store agentStore, logger *slog.Logger) http.Handler {
 	h := &handler{store: store, cfg: cfg, client: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	r := chi.NewRouter()
@@ -48,18 +45,18 @@ func NewHandler(cfg config.ChannelBridgeConfig, store agentStore, logger *slog.L
 func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	p, ok := auth.PrincipalFromContext(r.Context())
 	if !ok || p.WorkspaceUUID == "" || p.OrganizationUUID == "" {
-		return rejected(apperr.Unauthenticated, "请先登录")
+		return unauthenticated()
 	}
 	agentID := chi.URLParam(r, "agent_id")
 	agent, err := h.store.GetAgent(r.Context(), p.WorkspaceUUID, agentID)
 	if errors.Is(err, db.ErrNotFound) {
-		return rejected(apperr.NotFound, "Agent 不存在")
+		return agentNotFound()
 	}
 	if err != nil {
 		return unavailable(err)
 	}
 	if agent.ArchivedAt != nil && r.Method != http.MethodGet {
-		return rejected(apperr.Conflict, "已归档 Agent 无法修改渠道")
+		return archivedAgent()
 	}
 	endpoint, err := url.Parse(h.cfg.URL)
 	if err != nil || endpoint.Host == "" || endpoint.User != nil || h.cfg.Token == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {

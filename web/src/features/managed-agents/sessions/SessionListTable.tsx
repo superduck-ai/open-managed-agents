@@ -71,7 +71,7 @@ function SessionAgentCell({
       <Bot className="size-3.5 shrink-0" aria-hidden />
       <span className="truncate">{name}</span>
       {typeof agent.version === 'number' ? (
-        <span className="shrink-0 text-xs text-muted-foreground/70">v{agent.version}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">v{agent.version}</span>
       ) : null}
     </a>
   );
@@ -197,7 +197,7 @@ export function SessionListTable({
       {
         id: 'id',
         header: msg('common.id', 'ID'),
-        size: 208,
+        size: 152,
         cell: ({ row }) => {
           const href = managedEntityDetailHref(workspaceId, 'sessions', row.original.id);
           return (
@@ -252,14 +252,14 @@ export function SessionListTable({
       {
         id: 'agent',
         header: msg('managedAgents.common.agent', 'Agent'),
-        size: 160,
+        size: 120,
         cell: ({ row }) => (
           <SessionAgentCell session={row.original} workspaceId={workspaceId} agentNames={agentNames} />
         ),
       },
       {
         id: 'cost',
-        size: 100,
+        size: 80,
         header: () => (
           <span className="inline-flex items-center gap-1">
             {managedColumnLabel('Cost', msg)}
@@ -293,13 +293,13 @@ export function SessionListTable({
       {
         id: 'tokens',
         header: managedColumnLabel('Tokens in / out', msg),
-        size: 124,
+        size: 128,
         cell: ({ row }) => <SessionMetricCell session={row.original} field="Tokens in / out" />,
       },
       {
         id: 'created',
         header: msg('common.created', 'Created'),
-        size: 132,
+        size: 124,
         cell: ({ row }) => (
           <span className="text-muted-foreground">
             <SessionMetricCell session={row.original} field="Created" />
@@ -340,7 +340,7 @@ export function SessionListTable({
   };
   return (
     <TooltipProvider>
-      <Table className={cn(dataTableClassName, 'min-w-[1080px]')} data-testid="session-list-table">
+      <Table className={cn(dataTableClassName, 'min-w-[960px]')} data-testid="session-list-table">
         <TableHeader>
           {table.getHeaderGroups().map((group) => (
             <TableRow key={group.id} className={dataTableHeaderRowClassName}>

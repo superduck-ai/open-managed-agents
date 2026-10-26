@@ -1,5 +1,5 @@
 import { useI18n } from '../../../shared/i18n';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { MessageCircle, Plus, RefreshCw } from 'lucide-react';
 import { Button } from '../../../shared/ui/button';
@@ -22,6 +22,9 @@ export function AgentChannels({
   canEdit: boolean;
 }) {
   const { msg } = useI18n();
+  const focusTarget = useRef<HTMLElement | null>(null);
+  const createButton = useRef<HTMLButtonElement | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [editing, setEditing] = useState<Channel | null | undefined>(undefined);
   const [pairing, setPairing] = useState<Channel | null>(null);
   const [deleting, setDeleting] = useState<Channel | null>(null);
@@ -48,7 +51,7 @@ export function AgentChannels({
         remove ? 'DELETE' : 'POST',
         remove ? undefined : { enabled: !channel.enabled },
       );
-      setDeleting(null);
+      setDeleteOpen(false);
       await query.refetch();
     } catch (e) {
       setError(errorMessage(e));
@@ -57,7 +60,17 @@ export function AgentChannels({
     }
   };
   return (
-    <section className="space-y-5 pb-8" aria-label={msg('managedAgents.channels.management', '渠道管理')}>
+    <section
+      className="space-y-5 pb-8"
+      aria-label={msg('managedAgents.channels.management', '渠道管理')}
+      onClickCapture={(event) => {
+        if (editing !== undefined || pairing || deleting) return;
+        if (event.target instanceof Element) {
+          const button = event.target.closest('button');
+          if (button) focusTarget.current = button;
+        }
+      }}
+    >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1.5">
           <p className="text-sm leading-6 text-muted-foreground">
@@ -76,8 +89,8 @@ export function AgentChannels({
           </AlertDescription>
         </Alert>
       )}
-      <div className="overflow-hidden rounded-xl border border-border bg-muted/10">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b-[0.5px] border-border px-5 py-4">
           <div className="flex items-center gap-3">
             <div className="flex size-9 items-center justify-center">
               <img src={feishuLogo} alt="" className="size-8" width={32} height={32} />
@@ -100,6 +113,7 @@ export function AgentChannels({
             </Button>
             <Button
               size="sm"
+              ref={createButton}
               disabled={!canEdit || consoleCount >= 5 || query.isPending || query.isError}
               onClick={() => setEditing(null)}
             >
@@ -112,7 +126,7 @@ export function AgentChannels({
           <p className="p-8 text-center text-sm text-muted-foreground">
             {msg('managedAgents.channels.loading', '正在加载渠道…')}
           </p>
-        ) : channels.length ? (
+        ) : query.isError ? null : channels.length ? (
           <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
             {channels.map((channel) => (
               <ChannelRow
@@ -122,7 +136,10 @@ export function AgentChannels({
                 busy={busy}
                 onEdit={() => setEditing(channel)}
                 onPairing={() => setPairing(channel)}
-                onDelete={() => setDeleting(channel)}
+                onDelete={() => {
+                  setDeleting(channel);
+                  setDeleteOpen(true);
+                }}
                 onToggle={() => void mutate(channel, false)}
               />
             ))}
@@ -136,16 +153,17 @@ export function AgentChannels({
             </p>
           </div>
         )}
-        <div className="flex flex-wrap items-center justify-between gap-2 px-5 pb-4 text-xs text-muted-foreground">
-          <span>{msg('managedAgents.channels.currentAgent', '仅连接当前智能体')}</span>
-          <span className="tabular-nums">
-            {msg('managedAgents.channels.consoleCount', 'Console {count} / 5', { count: consoleCount })}
-            <span className="mx-3 text-border">·</span>
-            {msg('managedAgents.channels.apiCount', 'Created via API {count}', {
-              count: channels.length - consoleCount,
-            })}
-          </span>
-        </div>
+        {query.data && (
+          <div className="flex flex-wrap items-center justify-between gap-4 px-5 pb-4 text-xs text-muted-foreground">
+            <span>{msg('managedAgents.channels.currentAgent', '仅连接当前智能体')}</span>
+            <span className="flex flex-wrap gap-4 tabular-nums">
+              {msg('managedAgents.channels.consoleCount', 'Console {count} / 5', { count: consoleCount })}
+              {msg('managedAgents.channels.apiCount', 'Created via API {count}', {
+                count: channels.length - consoleCount,
+              })}
+            </span>
+          </div>
+        )}
       </div>
       {editing !== undefined && (
         <ChannelDialog
@@ -153,6 +171,7 @@ export function AgentChannels({
           workspaceId={workspaceId}
           channel={editing}
           onClose={() => setEditing(undefined)}
+          finalFocus={() => (focusTarget.current?.isConnected ? focusTarget.current : createButton.current)}
           onSaved={refresh}
         />
       )}
@@ -162,6 +181,7 @@ export function AgentChannels({
           workspaceId={workspaceId}
           channel={pairing}
           canEdit={canEdit}
+          finalFocus={() => (focusTarget.current?.isConnected ? focusTarget.current : createButton.current)}
           onClose={() => {
             setPairing(null);
             refresh();
@@ -169,12 +189,18 @@ export function AgentChannels({
         />
       )}
       <Dialog
-        open={Boolean(deleting)}
+        open={deleteOpen}
         onOpenChange={(open) => {
-          if (!open && !busy) setDeleting(null);
+          if (!busy) setDeleteOpen(open);
+        }}
+        onOpenChangeComplete={(open) => {
+          if (!open) setDeleting(null);
         }}
       >
-        <DialogContent>
+        <DialogContent
+          closeButtonDisabled={busy}
+          finalFocus={() => (focusTarget.current?.isConnected ? focusTarget.current : createButton.current)}
+        >
           <DialogHeader>
             <DialogTitle>{msg('managedAgents.channels.delete', '删除机器人')}</DialogTitle>
             <DialogDescription>
@@ -186,7 +212,7 @@ export function AgentChannels({
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2">
-            <Button variant="outline" disabled={busy} onClick={() => setDeleting(null)}>
+            <Button variant="outline" disabled={busy} onClick={() => setDeleteOpen(false)}>
               {msg('managedAgents.channels.cancel', '取消')}
             </Button>
             <Button

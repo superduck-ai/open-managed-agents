@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package liveworker
 
 import (
@@ -147,7 +149,7 @@ func TestLiveWorkerEvents(t *testing.T) {
 		oldToken := f.token
 		recovered, err := e.service.RecoverManagedAgentCodeSession(t.Context(), codesessions.ManagedAgentRecoverInput{Session: f.session, CodeSessionID: f.code.ExternalID})
 		requireOK(t, err)
-		e.request(t, "POST", f.path("/worker/events/delivery"), oldToken, map[string]any{"worker_epoch": "1", "updates": []map[string]string{{"event_id": event.EventID, "status": "processed"}}}, 401)
+		e.request(t, "POST", f.path("/worker/events/delivery"), oldToken, map[string]any{"worker_epoch": "1", "updates": []map[string]string{{"event_id": event.EventID, "status": "processed"}}}, 409)
 		_, err = e.stream.GetMsg(t.Context(), uint64(event.Sequence))
 		requireOK(t, err)
 		if recovered.WorkerEpoch <= 1 {

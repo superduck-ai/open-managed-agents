@@ -28,11 +28,15 @@ flowchart LR
 
 ### Multiagent 与 Skills
 
-- Multiagent 最多包含 20 个引用（`self` 也计入上限）；Agent 引用不得重复，并以 `{type:"agent", id, version}` 固定引用选择时的当前版本。
-- Rendered 不主动提供 `self`，但能够展示、保留和移除合法 Raw 中的 `{type:"self"}`。
-- Agent 选择器初始加载当前工作区前 20 个候选；输入后以 300ms 防抖按名称调用服务端搜索，符合完整 Agent ID 规则时直接精确读取，不受首屏候选数量限制。
+- Multiagent 的 Rendered 表单仅显示 Subagents；Workflows 和 Advisor 隐藏。本期运行时只验收 DSH 子 Agent 委派，不新增其他模式的执行能力。
+- Subagents 主复选框控制委派能力；开启后显示 `Can define its own agents` 和 `Saved agents it can use`。首次开启允许临时定义 Agent，已保存列表为空；临时 Agent 只用于任务，不创建可复用 Agent 资源。
+- 表单写入 `multiagent.type = multiagent_20261001`，首次配置显式将 workflows、advisor 设为 disabled。已有新版配置中的隐藏字段保持原值，编辑 Subagents 不改写它们。旧 coordinator 配置继续回显，修改子 Agent 设置时转换为新版结构并保留原引用。
+- `subagents.predefined_agents` 最多包含 20 个引用，self 计入上限；Agent 不得重复，选择后保存 `{type:"agent", id, version}` 固定版本。已选项从候选中隐藏，到达上限后隐藏添加入口；标签可移除，并可打开固定版本的详情侧栏。
+- Rendered 不主动提供 self，但能够展示、保留和移除合法 Raw 中的 `{type:"self"}`。候选自身带 Multiagent 时显示不可用于此处的警告，由后端执行最终校验。
+- 关闭后重新开启恢复刚才的设置；Raw、模板整体替换不会恢复之前的临时缓冲。关闭临时定义且已保存列表为空时显示提示，Draft schema 拒绝提交，直至添加 Agent 或恢复临时定义；Raw 可以显示这份待修复草稿。
+- Agent 选择器开启 Subagents 后加载当前工作区前 100 个候选；输入后以 300ms 防抖按名称调用服务端搜索，符合完整 Agent ID 规则时直接精确读取，不受首屏候选数量限制。候选查询沿用全局关闭焦点自动刷新的配置，不因窗口重新获得焦点而刷新。
 - Skills 最多 20 个；新增选择写入 `{type, skill_id, version:"latest"}`，切换其他 Skill 时保留既有条目原始的可选 `version` 字段。
-- 新建 Agent 或 Skill 使用新标签页；原创建页保留 Draft，并在重新获得焦点时刷新候选项。
+- 新建 Skill 使用新标签页；原创建页保留 Draft，并在重新获得焦点时刷新候选项。
 
 ### MCP 与 Tools
 
@@ -53,9 +57,9 @@ flowchart LR
   同一 Tunnel 可以配置多个不同 Channel，同一 Tunnel + Channel 不得重复。
 - 已配置 Tunnel 的 Channel 使用本地编辑缓冲；Apply 或选择有效建议后，原子更新 `mcp_server` 的名称和 URL 以及
   `mcp_toolset.mcp_server_name`，保留权限与顺序，并在已连接时重新发现工具。
-- 内置工具展示当前固定 Claude Code 2.1.120 的 22 项可选工具。列表优先展示原有 7 项：`bash`、`read`、`write`、`edit`、`glob`、`grep`、`web_fetch`，随后展示 `task`、`ask_user_question`、`cron_create`、`cron_delete`、`cron_list`、`enter_plan_mode`、`enter_worktree`、`exit_plan_mode`、`exit_worktree`、`notebook_edit`、`schedule_wakeup`、`skill`、`task_output`、`task_stop`、`todo_write`。除 `ask_user_question` 默认关闭并要求用户主动开启外，其余工具默认 `always_allow`；这样纯 API 调用不会进入无人处理的 HITL 等待。`web_fetch` 映射到 Claude Code 在 Sandbox 内执行的 `WebFetch`，不表示 Messages API 的模型服务端工具；内置 `web_search` 已永久移除，不在 Rendered 或 Raw 合同中；新 MCP 默认 `always_ask`。
+- 内置工具展示当前 9 项可选工具：`bash`、`read`、`write`、`edit`、`glob`、`grep`、`web_fetch`、`web_search`、`ask_user_question`。除 `ask_user_question` 默认关闭并要求用户主动开启外，其余工具默认 `always_allow`；这样纯 API 调用不会进入无人处理的 HITL 等待。Brain 的 `web_search` / `web_fetch` 请求在 oma-server 执行，外部 Claude Code 的 `WebFetch` 仍按客户端工具处理，不表示 Messages API 的模型服务端工具；Rendered 与 Raw 均支持内置 `web_search`；Web 工具域名策略和 Fetch 内容预算保留在配置中；新 MCP 默认 `always_ask`。旧的 `task`、`cron_*`、规划模式、worktree、`notebook_edit`、`schedule_wakeup`、`skill`、`task_output`、`task_stop`、`todo_write` 不再作为内置工具接受。
 - 内置 Toolset 可以整体移除，并可通过“添加内置工具”恢复；恢复操作不会复制已存在的 Toolset。
-- Toolset 级权限写入 `default_config` 并清空逐工具覆盖；内置工具集会额外保留一条与分组权限一致的 `ask_user_question` 显式配置，避免提交规范化把它静默改回 deny。逐工具权限与默认值一致时不保留冗余覆盖，但 `ask_user_question` 即使选 `always_allow` 也保留显式配置。
+- Toolset 级权限写入 `default_config` 并重置逐工具权限；Web 工具的域名策略和内容预算保留；内置工具集会额外保留一条与分组权限一致的 `ask_user_question` 显式配置，避免提交规范化把它静默改回 deny。逐工具权限与默认值一致时不保留冗余覆盖，但 `ask_user_question` 即使选 `always_allow` 也保留显式配置。
 - `always_deny` 规范化为 `enabled:false`；`custom` 只是聚合展示状态，不写入 API。
 - Rendered 不再提供新增 Custom Tool 的入口；Raw、模板或既有 Agent 中合法的 Custom Tool 仍可在 Rendered 中编辑和移除，并在视图往返时保留。
 - Custom Tool 名称必须唯一且符合后端命名规则，描述与 JSON object `input_schema` 必须有效；Schema 输入框保留用户原始文本与光标，仅把合法 JSON 解析结果发布到 Draft。
@@ -71,6 +75,9 @@ flowchart LR
 - 创建入口为 `/workspaces/{workspaceId}/agents/new`，也支持 `/agents/new`；旧的 `?create_agent=1` 入口规范化到工作区创建路径，静态 `new` 路由优先于 Agent 详情路由。列表点击创建、MCP/多智能体选择器中的新建 Agent 链接与直接刷新都进入同一页面。
 - 创建页使用 shadcn Breadcrumb、Collapsible、Tabs、Input Group 和表单控件。顶部面包屑位于控制台内容左侧，主表单居中且最大宽度为 824px；General 区域采用 244px 说明列与自适应字段列，窄屏自动单列。
 - Starting point 去除嵌套卡片外框，描述输入为紧凑文本框，生成按钮独立置于右下。模板网格在手机、平板、桌面分别为一、二、三列。
+- 模板卡片保留现有圆角与选中底色，0.5px轮廓在内侧绘制；键盘焦点沿卡片同一圆角显示，不叠加外侧轮廓或选中投影，避免被折叠容器裁断。起点触发器同样采用0.5px内侧焦点。保留折叠高度过渡及150ms颜色反馈，并适配减少动态效果。
+- 工具卡片在内侧绘制0.5px轮廓，配置分隔线及选择器标记同为0.5px。工具权限按卡片容器宽度布局：至少32rem时采用名称、说明、权限三列，更窄时将说明放在名称下方，权限组保持完整可见；不再用560px最小宽度强迫配置列横向滚动。权限按钮通过aria-pressed表达当前选中值，仍写入原有Draft权限策略。
+- 起点摘要、Agent/Skill候选元数据与Tunnel标题不使用应用生成的中点分隔；用户名称、代码及系统提示中的标点保持原文。模板文字收敛至14px，通过字重和颜色区分标题与正文。
 - 创建页的 Tools、Skills、Multiagent 默认折叠，按 Tools、Skills、Multiagent 顺序展示；折叠时显示配置摘要。Collapsible Content 使用 `keepMounted`，保留工具编辑缓冲和未确认的 Tunnel Channel，折叠不能绕过待确认校验。详情页编辑继续使用原来的展开式布局。
 - Raw/Rendered 仍共用 Draft 与现有 CodeMirror；未支持的模型 effort 字段不因参考截图而加入 API 合同。底部取消与创建按钮在页面滚动时保持可访问，创建失败保留 Draft，并显示完整错误。
 
@@ -81,3 +88,31 @@ flowchart LR
 - MCP 与 toolset 始终成对；Tunnel Channel 的待确认状态不会污染 Draft，Channel 迁移不会丢失权限；权限聚合和 deny 序列化与运行时一致。
 - 模型、候选 Agent、Skills 和 Directory 加载失败都有可重试状态。
 - 页面支持键盘导航、浅深主题和窄屏单列布局。
+
+## 搜索选择器
+
+Agent、技能与MCP搜索共用CreateDialogPickerList。Command的原生label使用当前搜索提示，名称通过aria-labelledby关联输入，不依赖无效的单独输入aria-label覆盖。Agent/技能无结果统一“未找到…”，同时适用于空列表和无匹配查询。保留多选继续打开、取消勾选及Escape返回触发器，MCP添加按其既有场景处理；不改底层菜单语义或请求协议。
+
+MCP弹层受可用高度限制时，Tabs与目录正文必须允许收缩，标签栏不压缩；外层不再滚动，目录搜索框固定，只有选项列表使用共享4px细滚动条。自定义页保留复制配置的告知与管理入口，使用单独的细滚动正文，Command列表不再形成第二处限高滚动。短屏需验证目录末项、自定义管理入口和搜索/关闭仍可达。agent-mcp-picker-height-review-2026-10-26保存4组完整创建实页前后与两张滚动末尾观察，不执行添加或创建。
+
+模型菜单只在显示名称与技术ID不同时增加第二行ID；相同内容只显示一次。搜索仍覆盖名称和ID，模型目录中缺失的当前选中值仍作为可选项保留。选择后关闭菜单并将焦点返回触发器，不增加新的说明或确认步骤。
+
+## 创建页说明层级
+
+创建页不在标题下重复解释“模板或描述”两个已可见入口，也不在“通用”标题下解释定义与提示词字段。字段标签、必要约束、模板区别及功能专属说明继续保留；没有说明的分区不渲染空段落或额外间距。
+
+### 2026-10-26 工具权限语义色恢复
+
+工具权限的选中图标保留明确状态色：允许为Radix Green 11、询问为Amber 11、拒绝为Red 11；未选项仍使用中性色。分组权限标签和菜单图标沿用同一配方，自定义聚合状态保持中性。选中底色、轮廓、圆角、动效及aria-pressed保持现状，不通过整块鲜艳底色表达权限；颜色与勾选/手掌/禁止图标及可访问名称共同表达状态。分组标签在菜单展开时仍保留状态色。
+
+此配方由创建和编辑共用的CreateDialogToolsEditor实现，适用于内置与MCP工具，不修改权限策略、默认值、序列化或提交行为。semantic-colors-review-2026-10-26保留真实创建页前后及实际组件隔离的明暗、桌面/窄屏对照，隔离样本允许/询问/拒绝均有覆盖；没有保存智能体或更改真实权限。
+
+
+### Raw编辑器边界与焦点
+
+CodeMirror禁用自带外侧焦点框，由原有14px圆角外框在编辑区聚焦时以ring语义色呈现四边0.5px边界，不改变内容底色。搜索面板按钮与输入采用4px圆角、0.5px边框及内侧0.5px键盘焦点；它们是独立控件，不与外层强行构成同心轮廓。诊断Tooltip使用8px圆角和0.5px边界，不保留第三方默认的粗红色侧边条。搜索和诊断标签最小12px，普通代码语法配色保持。
+
+
+### 选择器状态一致性补充
+
+模型、子Agent、技能及保险库等选项打开时以当前已选项作为初始键盘高亮；列表项仍保留独立勾选标记。CreateDialogPicker外部受控的服务端搜索与内部搜索遵循相同重置规则：关闭、单选完成和转到创建入口时清空临时查询；多选保持打开与当前查询。服务端分页、精确ID查询和Draft序列化不变。原生Raw搜索通过CodeMirror phrases接入中英标签，搜索复选框使用中性accent，不接管其键盘实现。

@@ -13,9 +13,12 @@ export function assignment(): Assignment {
     mcp_config: { mcpServers: { sandbox: { type: "http", url: "http://sandbox.test/mcp", headers: { Authorization: "Bearer test-mcp" } } } },
     launch: {
       version: 2,
+      subagents: {},
       model: "test-model",
+      models: {"test-model":{id:"test-model",api_backend:"messages"}},
       work_dir: "/workspace",
       system: "You are a test agent.",
+      tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
     },
   };
 }
@@ -104,11 +107,13 @@ export class Backend {
   connections = 0;
   sandboxCount = 0;
   modelScript: Payload[][] = [textEvents("hello")];
-  onModel?: (request: Payload) => Promise<Payload[]>;
+  onModel?: (request: Payload) => Promise<Payload[] | Response>;
   onCancel?: (params: Payload) => Promise<void>;
   onTool?: (params: Payload) => Promise<Payload>;
   onApproval?: (payload: Payload) => Promise<void>;
+  onDelegationApproval?: (payload: Payload) => Promise<void>;
   hangTool = false;
+  rejectTool?: (params: Payload) => boolean;
   failWrites = false;
   failPublicEvents = false;
   failPublicType?: string;
@@ -203,8 +208,11 @@ export class Backend {
       return json({ worker_epoch: String(this.a.worker_epoch) });
     }
     if (path === `/v2/sessions/${this.a.session_id}`) return json({session_context: {
+      runtime_tools: this.a.launch.tools, mcp_config: this.a.external_mcp_config ?? {},
       cwd: this.a.launch.work_dir, model: this.a.launch.model, system_prompt: this.a.launch.system,
-      append_system_prompt: this.a.launch.environment_prompt, memory_catalog_prompt: this.a.launch.memory_catalog_prompt, runtime_skills: this.a.launch.skills, subagents: this.a.launch.subagents, runtime_tools: this.a.launch.tools,
+      append_system_prompt: this.a.launch.environment_prompt, memory_catalog_prompt: this.a.launch.memory_catalog_prompt, runtime_skills: this.a.launch.skills, subagents: this.a.launch.subagents,
+      runtime_tool_permissions: this.a.launch.tool_permissions,
+      models: this.a.launch.models,
     }});
     if (path === "/v1/messages") {
       expect(request.headers.get("Authorization")).toBe(
@@ -215,6 +223,7 @@ export class Backend {
       this.timeline.push({ type: "model.request" });
       const script = this.onModel ? await this.onModel(body) : this.modelScript.shift();
       if (!script) return json({ error: "model script exhausted" }, 500);
+      if (script instanceof Response) return script;
       return new Response(
         script
           .map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`)
@@ -241,12 +250,14 @@ export class Backend {
             serverInfo: { name: "test", version: "1" },
           };
         } else if (body.method === "tools/call") {
+          if (this.rejectTool?.(body.params)) {
+            this.timeline.push({ type: "tool.rejected", ...body.params });
+            return Response.json({ type: "error", error: { type: "invalid_request_error", message: "Sandbox MCP request exceeds 1 MiB" } },
+              { status: 400, headers: { "X-Oma-Sandbox-Not-Forwarded": "true" } });
+          }
           this.executions.push(body.params);
           this.timeline.push({ type: "tool.dispatch", ...body.params });
-          const states = [...this.privateLog.values()].filter(
-            (p) => p.subtype === "dsh_brain_state",
-          );
-          expect(states.at(-1)!.data.phase).toBe("dispatch");
+
           if (this.hangTool) return await new Promise<Response>(() => {});
           result = this.onTool ? await this.onTool(body.params) : { content: [{ type: "text", text: "actual stdout\n" }] };
         } else
@@ -283,6 +294,13 @@ export class Backend {
       if (request.method !== "GET") {
         if (body.worker_epoch !== this.a.worker_epoch) return json({}, 409);
       }
+      if (request.method === "GET" && path.includes("/worker/subagent-threads/")) {
+        const id = decodeURIComponent(path.split("/worker/subagent-threads/")[1]!);
+        const events = [...this.publicLog.values()].filter((event) => event.session_thread_id === id);
+        if (!events.some((event) => event.type === "session.thread_created")) return json({}, 404);
+        const archived = events.some((event) => event.type === "session.thread_status_terminated");
+        return json({id, status: archived ? "terminated" : "idle", archived});
+      }
       if (path.endsWith("/internal-events")) {
         if (request.method === "GET")
           return json({
@@ -294,6 +312,7 @@ export class Backend {
           });
         if (this.failWrites) { this.failedCcrWrites++; return json({}, 503); }
         for (const event of body.events) {
+          expect(event.payload.type).toBe("dsh_log");
           const old = this.privateLog.get(event.payload.uuid);
           if (old) expect(event.payload).toEqual(old);
           this.privateLog.set(event.payload.uuid, event.payload);
@@ -321,8 +340,14 @@ export class Backend {
           this.timeline.push(structuredClone(event.payload));
           if (!event.ephemeral)
             this.publicLog.set(event.payload.uuid, event.payload);
-          if (event.payload.type === "control_request")
-            await this.onApproval?.(event.payload);
+          if (event.payload.type === "control_request") {
+            this.workerMetadata[`managed_agent_tool_permission_request:${event.payload.request_id}`] = {
+              public_event_id: event.payload.request_id, request_id: event.payload.request_id,
+              provider_tool_use_id: event.payload.request.tool_use_id,
+            };
+            const delegation = ["list_agents", "send_to_agent", "archive_agent"].includes(event.payload.request.tool_name);
+            await (delegation && this.onDelegationApproval ? this.onDelegationApproval : this.onApproval)?.(event.payload);
+          }
         }
         return json({});
       }

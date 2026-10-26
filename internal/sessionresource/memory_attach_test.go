@@ -36,7 +36,7 @@ func TestResolveMemoryAttach(t *testing.T) {
 	}{
 		{name: "client identity", request: MemoryAttachRequest{MountPath: json.RawMessage(`null`)}, wantErr: ErrMemoryStoreClientIdentity},
 		{name: "invalid access", request: MemoryAttachRequest{MemoryStoreID: json.RawMessage(`"mem_1"`), Access: json.RawMessage(`"write"`)}, wantErr: ErrMemoryStoreAccess},
-		{name: "instructions too long", request: MemoryAttachRequest{MemoryStoreID: json.RawMessage(`"mem_1"`), Instructions: json.RawMessage(`"` + strings.Repeat("字", 501) + `"`)}, wantErr: ErrMemoryStoreInstructionsTooLong},
+		{name: "instructions too long", request: MemoryAttachRequest{MemoryStoreID: json.RawMessage(`"mem_1"`), Instructions: json.RawMessage(`"` + strings.Repeat("字", MaxMemoryInstructionsRunes+1) + `"`)}, wantErr: ErrMemoryStoreInstructionsTooLong},
 		{name: "missing", request: MemoryAttachRequest{MemoryStoreID: json.RawMessage(`"mem_1"`)}, loadErr: db.ErrNotFound, wantErr: db.ErrNotFound, calls: 1},
 		{name: "archived", request: MemoryAttachRequest{MemoryStoreID: json.RawMessage(`"mem_1"`)}, store: db.MemoryStore{ArchivedAt: &now}, wantErr: db.ErrInvalidState, calls: 1},
 		{name: "default", request: MemoryAttachRequest{MemoryStoreID: json.RawMessage(`"mem_1"`)}, calls: 1},

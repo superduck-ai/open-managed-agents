@@ -46,23 +46,24 @@ func TestManagedAgentRuntimeConfigPreservesExtensionsAndPinsSubagents(t *testing
 }
 
 func TestRuntimeRootToolsRejectsInvalidSnapshot(t *testing.T) {
-	if _, err := runtimeRootTools(json.RawMessage(`{"tools":"invalid"}`)); err == nil {
+	if _, err := runtimeRootToolsets(json.RawMessage(`{"tools":"invalid"}`)); err == nil {
 		t.Fatal("invalid tool snapshot accepted")
 	}
 }
 
 func TestRuntimeRootToolsMatchPermissionEnforcement(t *testing.T) {
-	all := []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob"}
+	all := []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob", "web_search", "web_fetch"}
 	for snapshot, want := range map[string][]string{
 		``:                   all,
 		`{"system":"plain"}`: all,
 		`{"tools":[]}`:       all,
 		`{"tools":[{"type":"agent_toolset_20260401","default_config":{"enabled":false},"configs":[{"name":"read","enabled":true},{"name":"grep","enabled":true}]}]}`:                           {"Read", "Grep"},
-		`{"tools":[{"type":"agent_toolset_20260401","configs":[{"name":"write","enabled":false},{"name":"edit","enabled":false},{"name":"bash","permission_policy":{"type":"always_ask"}}]}]}`: {"Bash", "Read", "Grep", "Glob"},
+		`{"tools":[{"type":"agent_toolset_20260401","configs":[{"name":"write","enabled":false},{"name":"edit","enabled":false},{"name":"bash","permission_policy":{"type":"always_ask"}}]}]}`: {"Bash", "Read", "Grep", "Glob", "web_search", "web_fetch"},
+		`{"tools":[{"type":"agent_toolset_20260401","default_config":{"enabled":false},"configs":[{"name":"web_search","enabled":true},{"name":"web_fetch","enabled":true}]}]}`:                {"web_search", "web_fetch"},
 	} {
-		got, err := runtimeRootTools(json.RawMessage(snapshot))
-		if err != nil || !slices.Equal(got, want) {
-			t.Errorf("runtimeRootTools(%s) = %v, %v; want %v", snapshot, got, err, want)
+		tools, err := runtimeRootToolsets(json.RawMessage(snapshot))
+		if got := enabledSandboxTools(tools); err != nil || !slices.Equal(got, want) {
+			t.Errorf("enabledSandboxTools(%s) = %v, %v; want %v", snapshot, got, err, want)
 		}
 	}
 }
@@ -80,5 +81,27 @@ func TestManagedAgentRuntimeConfigPublishesRootTools(t *testing.T) {
 	}
 	if string(fields["runtime_tools"]) != `["Read"]` {
 		t.Fatalf("runtime_tools = %s", fields["runtime_tools"])
+	}
+	want := `{"ask_user_question":"deny","bash":"deny","edit":"deny","glob":"deny","grep":"deny","read":"allow","web_fetch":"deny","web_search":"deny","write":"deny"}`
+	if string(fields["runtime_tool_permissions"]) != want {
+		t.Fatalf("runtime_tool_permissions = %s", fields["runtime_tool_permissions"])
+	}
+}
+
+func TestRuntimeToolPoliciesMatchPermissionEnforcement(t *testing.T) {
+	snapshot := json.RawMessage(`{"tools":[{"type":"agent_toolset_20260401","configs":[{"name":"write","enabled":false},{"name":"bash","permission_policy":{"type":"always_ask"}}]}]}`)
+	tools, err := runtimeRootToolsets(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := runtimeToolPolicies(tools)
+	for _, name := range sandboxToolNames {
+		permission, _ := resolveToolPermissionFromAgentSnapshot(snapshot, name)
+		if remoteName := managedAgentToolName(name); policies[remoteName] != string(permission) {
+			t.Errorf("%s policy = %q, enforcement = %q", remoteName, policies[remoteName], permission)
+		}
+	}
+	if policies["bash"] != "ask" || policies["write"] != "deny" || policies["read"] != "allow" {
+		t.Fatalf("policies = %v", policies)
 	}
 }

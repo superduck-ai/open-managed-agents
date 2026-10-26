@@ -1,5 +1,5 @@
 # Minimal Open Managed Agents configuration for normal local development.
-# Copy this file to config/config.yaml and protect it because it may contain secrets.
+# Copy this file to .run/config.yaml and protect it because it may contain secrets.
 # See docs/configuration-reference.yaml for every supported optional field.
 
 env: dev
@@ -28,7 +28,6 @@ tunnel:
 # Optional SMTP email verification. When omitted, any non-empty verification
 # code is accepted. Configure all three fields together for real email delivery.
 # auth:
-#   allowed_email_domains: []
 #   smtp:
 #     addr: smtp.example.com:587
 #     username: sender@example.com
@@ -57,6 +56,11 @@ e2b:
 #   brain_sandbox_prewarm: false
 #   git_ssh_to_https_hosts:
 #     - gitlab.xxxxx.cn
+
+code_session:
+  upstream_proxy_disable_ssrf_protection: true
+  upstream_proxy_mitm_enabled: true
+  upstream_proxy_ca_key_file: ./secrets/upstream-proxy-ca-key.pem
 
 vault:
   master_key:

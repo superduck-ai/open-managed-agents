@@ -6,6 +6,10 @@ Workspace MCP Server 是“构建”域中的可复用远程 MCP 配置目录项
 
 Agent 版本仍是运行时配置事实来源：用户选择工作区目录项时，前端复制 `{name,type:"url",url}` 到 Agent 的 `mcp_servers`，并创建同名 `mcp_toolset`。Agent 不保存目录项 ID，因此目录项后续修改或删除不会改变已有 Agent 版本，也不需要在删除时检查 Agent 使用情况。
 
+Agent 创建和更新时，`mcp_servers` 与 `tools` 必须双向匹配：每个已声明 server 都要有同名 `mcp_toolset`，每个 `mcp_toolset.mcp_server_name` 都必须引用已声明 server。此规则来自 CMA `mcp-connector.md` 的 Agent 声明约束，与工作区目录项的独立创建无关。零个引用也必须校验；省略 `tools` 的创建请求、`tools: []`、`tools: null` 以及只有内置工具的配置，都不能与非空 `mcp_servers` 共存，否则返回 HTTP 400 `invalid_request_error`。
+
+更新按请求字段与当前 Agent 合并后的配置校验。保留 servers 时清空 tools，或保留 toolsets 时清空 servers，都应拒绝，且不能写入新版本或改变原配置。同时清空两者时，`[]` 和 `null` 均归一化为空数组并允许更新。普通单测覆盖零引用、部分引用、悬空引用及合并校验；Agent API 回归覆盖创建返回 400、失败更新保持版本和配置不变、同时清空成功。
+
 ```mermaid
 flowchart LR
   Page["构建 / MCP Servers"] -->|CRUD| Resource["Workspace MCP Server"]
@@ -16,6 +20,12 @@ flowchart LR
   Resource -. 不保存 .-> Catalog["MCP tool catalog"]
   Resource -. 不保存 .-> Credential["Credential / OAuth"]
 ```
+
+Agent API 的 `mcp_servers[].name` 和 `mcp_toolset.mcp_server_name` 按 [CMA Create Agent schema](https://platform.claude.com/docs/en/api/beta/agents/create) 接受 1–255 个 Unicode 码点，没有 ASCII pattern。名称与引用保留原值，区分大小写，不做 trim 或 Unicode normalization；引用必须精确匹配。远端工具自身的名称校验不随 server 名称规则放宽。
+
+运行时继续保留旧 ASCII 名称及点号转下划线的工具前缀。其他名称映射为 `mcp_` 加原始 UTF-8 名称 SHA-256 的前 12 字节十六进制值。Go runtime config 与 DSH 使用相同映射，模型工具名为 `mcp__<prefix>__<remote_tool>`；权限和公开事件通过 Agent snapshot 映射回原始 server 名称，远端 `tools/call` 保留原始工具名。运行时拒绝别名碰撞，包括与用户声明的 ASCII 名称碰撞，权限解析遇到歧义同样拒绝。Tunnel Gateway 使用转义后的原始 server 名称，并只解码一次。
+
+普通单测覆盖多字节名称的 255/256 字符边界、精确引用、稳定别名、碰撞拒绝、权限映射、代理路径和 DSH 工具发现及分发。真实 CMA 对比用例需另行执行。
 
 ## Console API
 
@@ -37,7 +47,7 @@ flowchart LR
 }
 ```
 
-成功响应包含 `id`、`name`、`transport_type`、`url` 和时间字段。名称 trim 后必须符合 Agent MCP 名称规则；endpoint 通过统一规范化逻辑处理 scheme、DNS 大小写、默认端口与根路径，并拒绝凭据、fragment、非 HTTP(S) 或超过 2048 字节的值。
+成功响应包含 `id`、`name`、`transport_type`、`url` 和时间字段。工作区目录项名称仍使用其现有 ASCII 校验和 trim 规则，与 Agent API 的 Unicode 名称合同分别校验；endpoint 通过统一规范化逻辑处理 scheme、DNS 大小写、默认端口与根路径，并拒绝凭据、fragment、非 HTTP(S) 或超过 2048 字节的值。
 
 错误响应属于 Console API 合同，使用 `{error,message}`，不复用 `/v1` 的 Anthropic-compatible error envelope。资源包只在最终 Console 边界记录内部错误；endpoint、查询条件和请求体不写入运行日志。
 
@@ -67,9 +77,12 @@ Agent Create/Edit 的“自定义 MCP”页签加载当前未删除的目录项�
 
 前端 Workspace MCP Server DTO 与 Console client 位于共享 API 边界，管理页与 Agent 编辑器分别依赖该边界。请求显式发送当前路由 workspace 的 `X-Workspace-ID`；管理路由在 WorkspaceProvider 与 URL workspace 对齐后才开始查询，避免直接打开其他工作区路由时读取旧上下文。
 
+详情侧栏的标题和关闭入口在成功、加载及失败状态共用。资源数据尚不可用时使用 MCP Servers 分类标题，加载通过 status 播报；失败正文保留重试并允许局部滚动。关闭始终返回当前工作区列表 URL，只有已成功加载的资源才提供编辑和删除菜单。标题栏边界沿用共享 0.5px 配方，明暗主题、侧栏进出和减少动态效果规则继续复用共享组件。
+
 ## 验收
 
 - Console API 覆盖规范化、重复冲突、跨租户 404、直接删除、游标分页和受信组织别名；路由层覆盖缺失、错误及其他会话的 CSRF token 被拒绝，正确 token 可完成创建、更新和删除，GET 无需 token。
 - Mapper 单测覆盖每个方法、动态 SQL 分支、参数顺序、endpoint/search 敏感参数、多行/nullable、`sql.ErrNoRows` 与执行错误；真实 PostgreSQL 测试覆盖 `RETURNING`、工作区隔离和软删除。
 - 管理页覆盖资源列表、居中创建/编辑表单、右侧详情面板、编辑/删除菜单与游标分页。
+- 详情回归覆盖加载时仍可关闭，以及资源不存在后重试、关闭并返回列表；真实界面错误样本覆盖桌面明暗和 390px 浅色。非空详情与真实写入链路另行验收，不能用 404 样本代替。
 - Agent 表单覆盖 Directory 失败时仍可选择工作区 MCP、请求体只复制 `{name,type,url}`，以及历史未入库 MCP 的 Rendered 保存。

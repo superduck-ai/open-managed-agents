@@ -1,19 +1,17 @@
 .session-create-dialog :is([data-slot='input'], [role='combobox']) {
   height: 40px;
-  border: 1px solid var(--input);
+  border: 0.5px solid var(--input);
   border-radius: var(--radius-lg);
   background: var(--popover);
   padding-inline: 12px;
   box-shadow: none;
-  transition:
-    border-color 150ms ease,
-    box-shadow 150ms ease;
+  transition: border-color 250ms ease-out;
 }
 
 .session-create-dialog :is([data-slot='input'], [role='combobox']):focus-visible {
   outline: none;
-  border-color: color-mix(in srgb, var(--ring) 45%, var(--border));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 14%, transparent);
+  border-color: var(--foreground);
+  box-shadow: var(--focus-ring);
 }
 
 .session-create-dialog :is([data-slot='input'], [role='combobox']):disabled {
@@ -23,9 +21,15 @@
 
 .session-create-dialog a[target='_blank'] {
   color: var(--muted-foreground);
-  transition: color 150ms ease;
+  transition: color 250ms ease-out;
 }
 
 .session-create-dialog a[target='_blank']:hover {
   color: var(--foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-create-dialog :is([data-slot='input'], [role='combobox'], a[target='_blank']) {
+    transition: none;
+  }
 }

@@ -17,7 +17,7 @@ func TestMemoryCatalogRejectsInvalidSnapshots(t *testing.T) {
 		{Name: "test", MountPath: "/mnt/memory/a/b", Access: "read_only"},
 		{Name: "test", MountPath: "/mnt/memory/a\\b", Access: "read_only"},
 		{Name: "test", MountPath: "/mnt/memory/a", Access: "rw"},
-		{Name: "test", MountPath: "/mnt/memory/a", Access: "read_only", Instructions: strings.Repeat("中", 501)},
+		{Name: "test", MountPath: "/mnt/memory/a", Access: "read_only", Instructions: strings.Repeat("中", 4097)},
 	} {
 		if _, err := memoryCatalogPrompt([]memoryStoreDefinition{store}); !errors.Is(err, errMemorySnapshotInvalid) {
 			t.Fatalf("accepted invalid store: %+v", store)
@@ -36,7 +36,7 @@ func TestMemoryCatalogRejectsInvalidSnapshots(t *testing.T) {
 func TestMemoryCatalogUsesAuthoritativeConfigurationAndRecovery(t *testing.T) {
 	mounts := []memoryRuntimeMount{{Name: "notes", MountPath: "/mnt/memory/notes", Access: sessionresource.MemoryAccessReadOnly, Description: "team notes", Instructions: "read when needed"}}
 	session := db.Session{AgentSnapshot: json.RawMessage(`{"system":"agent","sandbox_memory_stores":[{"name":"forged"}]}`)}
-	configuration, err := managedAgentSessionConfig(session, managedAgentRuntimeResources{memoryMounts: mounts}, nil)
+	configuration, err := managedAgentSessionConfig(session, managedAgentRuntimeResources{memoryMounts: mounts}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

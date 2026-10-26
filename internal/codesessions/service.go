@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
@@ -34,6 +35,8 @@ type Service struct {
 	workerEvents           workerevents.Broker
 	workerEventAcks        workerevents.AckStore
 	workerEventObjects     storage.ObjectStore
+	billing                *billing.Calculator
+	attachments            SessionAttachmentStore
 }
 
 func (s *Service) PurgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {
@@ -117,6 +120,24 @@ func (s *Service) WithSandboxTimeoutExtender(extender SandboxTimeoutExtender, ti
 	return s
 }
 
+// WithBilling wires the model list-price calculator used to write the
+// billing payload on synthesized span.model_request_end events.
+func (s *Service) WithBilling(calculator *billing.Calculator) *Service {
+	if s == nil {
+		return s
+	}
+	s.billing = calculator
+	return s
+}
+
+// Billing exposes the model list-price calculator for budget validation.
+func (s *Service) Billing() *billing.Calculator {
+	if s == nil {
+		return nil
+	}
+	return s.billing
+}
+
 func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Session, events []db.SessionEvent) error {
 	if s == nil || len(events) == 0 {
 		return nil
@@ -144,6 +165,8 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 			handled, controlErr = s.queueControlResponseForToolConfirmation(ctx, codeSession, event)
 		case "user.custom_tool_result":
 			handled, controlErr = s.queueControlResponseForCustomToolResult(ctx, codeSession, event)
+		case "user.tool_result":
+			handled, controlErr = s.queueControlResponseForSelfHostedToolResult(ctx, codeSession, event)
 		}
 		if controlErr != nil {
 			return controlErr
@@ -152,7 +175,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 			queued = true
 			continue
 		}
-		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event)
+		payload, err := s.publicWorkerPayload(ctx, codeSession, event)
 		if err != nil {
 			return fmt.Errorf("convert public session event %s: %w", event.ExternalID, err)
 		}
@@ -173,6 +196,15 @@ func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession d
 	if s.sandboxTimeoutExtender == nil || usesBrainClaimTransport(codeSession) {
 		return nil
 	}
+
+	external, err := s.selfHostedCodeSession(ctx, codeSession.ExternalID)
+	if err != nil {
+		return err
+	}
+	if external {
+		return nil
+	}
+
 	sandbox, err := s.db.GetResumableEnvironmentSandboxForCodeSession(ctx, codeSession.ExternalID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {

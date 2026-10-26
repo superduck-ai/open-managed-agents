@@ -5,9 +5,60 @@ import { OmaApi } from "../src/api.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import { mountOma } from "../src/plugin.ts";
 import * as OmaSandboxProvider from "../src/oma-sandbox/index.ts";
+import { SandboxMcp, sandboxCallTimeoutMs } from "../src/oma-sandbox/client.ts";
 import * as SandboxTools from "../src/sandbox-tools/index.ts";
 import { sandboxToolDefinitions } from "../src/sandbox-tools/definitions.ts";
 import { assignment, Backend, textEvents, toolEvents } from "./backend.ts";
+import type { Payload } from "../src/json.ts";
+
+test("sandbox call timeout outlasts the requested Bash timeout", () => {
+  const tools = sandboxToolDefinitions();
+  const bash = tools.find((tool) => tool.name === "Bash")!;
+  const read = tools.find((tool) => tool.name === "Read")!;
+  expect(sandboxCallTimeoutMs(bash, { command: "true", timeout: 600 })).toBe(665_000);
+  expect(sandboxCallTimeoutMs(bash, { command: "true", timeout: 3600 })).toBe(665_000);
+  expect(sandboxCallTimeoutMs(bash, { command: "true", timeout: 300 })).toBe(365_000);
+  expect(sandboxCallTimeoutMs(bash, { command: "true" })).toBe(185_000);
+  expect(sandboxCallTimeoutMs(bash, { command: "true", timeout: "900" })).toBe(185_000);
+  expect(sandboxCallTimeoutMs(read, { file_path: "/tmp/a", timeout: 600 })).toBe(185_000);
+});
+
+test("a silent Bash call outlives Bun's default socket idle timeout", async () => {
+  const child = Bun.spawn([process.execPath, "tests/sandbox-idle-worker.ts"], {
+    env: { ...process.env, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "2", TEST_TOOL_DELAY_MS: "9000" },
+    stdout: "pipe", stderr: "pipe",
+  });
+  const [output, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+  expect(code).toBe(0);
+  expect(JSON.parse(output.trim().split("\n").at(-1)!)).toEqual({ ok: true, result: { content: [{ type: "text", text: "finished" }] } });
+}, 30_000);
+
+test("sandbox tool calls disable Bun's socket idle timeout and bound the request by the call timeout", async () => {
+  const idleTimeouts: unknown[] = [];
+  const deadlines: AbortSignal[] = [];
+  const api = new OmaApi("http://oma.test", (async (input: RequestInfo | URL, init?: RequestInit & { timeout?: unknown }) => {
+    const request = new Request(input, init);
+    const body = request.method === "POST" ? await request.json() as Payload : {};
+    if (body.method === "server/discover") return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Method not found" } }, { status: 404 });
+    if (body.method === "initialize") return Response.json({ jsonrpc: "2.0", id: body.id, result: {
+      protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "sandbox", version: "1" },
+    } });
+    if (body.method !== "tools/call") return new Response(null, { status: 202 });
+    idleTimeouts.push(init?.timeout);
+    if (init?.signal) deadlines.push(init.signal);
+    return Response.json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "ok" }] } });
+  }) as typeof fetch);
+  const a = assignment(); api.assignments.set(a.session_id, a);
+  const executor = new SandboxMcp(api, a.session_id);
+  const tools = sandboxToolDefinitions();
+  try {
+    await executor.call(tools.find((tool) => tool.name === "Bash")!, { command: "true", timeout: 600 }, new AbortController().signal);
+    await executor.call(tools.find((tool) => tool.name === "Read")!, { file_path: "/tmp/a" }, new AbortController().signal);
+    expect(idleTimeouts).toEqual([false, false]);
+    expect(deadlines).toHaveLength(2);
+    expect(deadlines.every((signal) => !signal.aborted)).toBe(true);
+  } finally { await executor.close(); }
+});
 
 test("OMA providers isolate roots, initialize lazily and retain separate MCP sessions", async () => {
   const ctx = new Context();
@@ -52,13 +103,13 @@ test("OMA providers isolate roots, initialize lazily and retain separate MCP ses
     const tool = sandboxToolDefinitions().find((tool) => tool.name === "Bash")!;
     const signal = new AbortController().signal;
     for (const executor of [executorA, executorB, executorA]) {
-      await executor.provision(signal);
+      await executor.provision!(signal);
       await executor.call(tool, { command: "pwd" }, signal);
     }
     await providerA.dispose();
     expect(scopeA.get("sandboxExecutor")).toBeUndefined();
     expect(scopeB.get("sandboxExecutor")).toBe(executorB);
-    await executorB.provision(signal);
+    await executorB.provision!(signal);
     await executorB.call(tool, { command: "still available" }, signal);
     for (const value of [a, b]) {
       const calls = requests.filter((entry) => entry.id === value.session_id);
@@ -74,8 +125,9 @@ test("OMA providers isolate roots, initialize lazily and retain separate MCP ses
   }
 });
 
-async function fixture() {
+async function fixture(tools?: string[]) {
   const b = new Backend();
+  if (tools) b.a.launch.tools = tools;
   await b.ready;
   const ctx = new Context();
   const api = new OmaApi(b.url);
@@ -157,11 +209,14 @@ test("root close keeps the provider alive until a child's tool result checkpoint
   try {
     await f.session.open();
     const provider = f.providers()[0]!;
-    const result = f.session.recordResult.bind(f.session);
-    f.session.recordResult = async (...args) => {
-      writing.resolve();
-      await confirmed.promise;
-      return result(...args);
+    const persistence = f.ctx.ccrv2.config.backend;
+    const persist = persistence.persist.bind(persistence);
+    persistence.persist = async (id, ...args) => {
+      if ("type" in args[1] && args[1].type === "tool/result") {
+        writing.resolve();
+        await confirmed.promise;
+      }
+      await persist(id, ...args);
     };
     f.b.modelScript = [toolEvents("child", "draining_call"), textEvents("done")];
     settled = f.session.subagents.send({ name: "child", system_prompt: "Test", message: "Run" },
@@ -217,7 +272,7 @@ test.each(["user.interrupt", "control_request"])("confirmed %s ends as end_turn 
       ? { type, request_id: "interrupt_request", request: { subtype: "interrupt" } }
       : { type });
     await turn;
-    expect(f.session.blocked()).toBe(false);
+    expect(f.session.abort.signal.aborted).toBe(false);
     expect([...f.b.publicLog.values()].some((event) => event.type === "result" && event.is_error === true)).toBe(false);
     expect([...f.b.publicLog.values()].filter((event) => event.type === "result").map((event) => event.is_error)).toEqual([false]);
     expect([...f.b.publicLog.values()].some((event) => event.type === "agent.message")).toBe(false);
@@ -226,4 +281,43 @@ test.each(["user.interrupt", "control_request"])("confirmed %s ends as end_turn 
     expect([...f.b.publicLog.values()].filter((event) => event.type === "result").at(-1)!.is_error).toBe(false);
     expect(f.b.executions).toHaveLength(1);
   } finally { cancelled.resolve({ isError: true, content: [{ type: "text", text: "cancelled" }] }); await f.close(); }
+});
+
+
+test("root model requests expose only the session's enabled sandbox tools", async () => {
+  for (const tools of [[], ["Read"]]) {
+    const f = await fixture(tools);
+    try {
+      await f.session.open();
+      f.b.modelScript = [textEvents("done")];
+      await f.session.receive("allowlist_input", { content: "Inspect available tools" });
+      expect(f.b.requests).toHaveLength(1);
+      expect((f.b.requests[0]!.tools ?? []).map((tool: { name: string }) => tool.name))
+        .toEqual([...tools, "archive_agent", "list_agents", "send_to_agent"].sort());
+      expect(f.b.sandboxCount).toBe(0);
+      expect(f.b.mcpMethods).toEqual([]);
+    } finally { await f.close(); }
+  }
+});
+
+test("sandbox Bash projection preserves model and public tool output", async () => {
+  const f = await fixture(["Bash"]);
+  const stdout = "exact stdout\n";
+  const metadata = { stdout, stderr: "", exit_code: 0, status: "completed", timed_out: false,
+    cancelled: false, stdout_truncated: false, stderr_truncated: false };
+  f.b.onTool = async () => ({ structuredContent: metadata, content: [
+    { type: "text", text: stdout }, { type: "text", text: JSON.stringify(metadata) },
+  ] });
+  try {
+    await f.session.open();
+    f.b.modelScript = [toolEvents("printf exact", "projected-bash"), textEvents("done")];
+    await f.session.receive("projection", { content: "Run Bash" });
+    const request = JSON.stringify(f.b.requests[1]!.messages);
+    expect(request).toContain("exact stdout");
+    expect(request).not.toContain("exit_code");
+    const results = [...f.b.publicLog.values()].flatMap(event => event.message?.content ?? [])
+      .filter(block => block.type === "tool_result" && block.tool_use_id === "projected-bash");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.content).toEqual([{ type: "text", text: stdout }]);
+  } finally { await f.close(); }
 });

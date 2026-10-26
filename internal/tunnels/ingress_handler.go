@@ -139,6 +139,18 @@ func (h *IngressHandler) forwardTunnel(
 	channel string,
 	commandType CommandType,
 ) error {
+	var queued bool
+	return h.dispatchTunnel(w, r, tunnel, channel, commandType, &queued)
+}
+
+func (h *IngressHandler) dispatchTunnel(
+	w http.ResponseWriter,
+	r *http.Request,
+	tunnel db.MCPTunnel,
+	channel string,
+	commandType CommandType,
+	queued *bool,
+) error {
 	if !channelNamePattern.MatchString(channel) {
 		return invalidRequest(errors.New("channel is invalid"))
 	}
@@ -181,6 +193,7 @@ func (h *IngressHandler) forwardTunnel(
 		return ingressQueueError(err)
 	}
 	defer waiter.Close()
+	*queued = true
 	if err := h.broker.Enqueue(r.Context(), tunnel.UUID, tunnel.ExternalID, command); err != nil {
 		return ingressQueueError(err)
 	}
@@ -240,10 +253,12 @@ func (h *IngressHandler) ServeTunnel(
 		return false
 	}
 	if err != nil {
+		w.Header().Set(NotForwardedHeader, "true")
 		h.errorAdapter.Write(w, r, err)
 		return true
 	}
 	if r.Method == http.MethodGet {
+		w.Header().Set(NotForwardedHeader, "true")
 		h.getSSENotSupported(w, r)
 		return true
 	}
@@ -251,10 +266,15 @@ func (h *IngressHandler) ServeTunnel(
 	if r.Method == http.MethodDelete {
 		commandType = CommandTypeSessionTermination
 	} else if r.Method != http.MethodPost {
+		w.Header().Set(NotForwardedHeader, "true")
 		h.errorAdapter.Write(w, r, invalidRequest(errors.New("tunnel ingress only supports GET, POST, and DELETE")))
 		return true
 	}
-	if err := h.forwardTunnel(w, r, tunnel, channel, commandType); err != nil {
+	var queued bool
+	if err := h.dispatchTunnel(w, r, tunnel, channel, commandType, &queued); err != nil {
+		if !queued {
+			w.Header().Set(NotForwardedHeader, "true")
+		}
 		h.errorAdapter.Write(w, r, err)
 	}
 	return true

@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -113,7 +115,7 @@ func TestCustomToolResultIsProcessedOnReceiptAndNotRepublishedOnACK(t *testing.T
 		t.Fatalf("load worker: found=%t, error=%v", found, err)
 	}
 	postCodeSessionWorkerEvents(t, app, codeID, internalPayloadRequest(epoch,
-		`{"type":"control_request","uuid":"custom-tool-request","request_id":"custom-request","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"custom-tool","input":{"questions":[{"header":"Color","question":"Favorite color?","options":[{"label":"Blue"},{"label":"Green"}]}]}}}`))
+		`{"type":"control_request","uuid":"custom-tool-request","request_id":"custom-request","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"custom-tool","input":{"questions":[{"id":"color","header":"Color","question":"Favorite color?","options":[{"label":"Blue"},{"label":"Green"}]}]}}}`))
 	tool := sessionEventObjectByType(t, listSessionEvents(t, app, session.ID, "types[]=agent.custom_tool_use", defaultTestKey), "agent.custom_tool_use")
 	toolID, ok := tool["id"].(string)
 	if !ok || toolID == "" {
@@ -135,7 +137,7 @@ func TestCustomToolResultIsProcessedOnReceiptAndNotRepublishedOnACK(t *testing.T
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("stream: %d", resp.StatusCode)
 	}
-	sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":`+quoteJSON(toolID)+`,"content":[{"type":"text","text":`+quoteJSON(`{"Color":"Blue"}`)+`}]}]}`, defaultTestKey)
+	sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":`+quoteJSON(toolID)+`,"content":[{"type":"text","text":`+quoteJSON(`{"answers":[{"id":"color","selected":["Blue"]}]}`)+`}]}]}`, defaultTestKey)
 	inputID := sessionEventStringField(t, sent.Data[0], "id")
 	processedAt := sessionInputProcessedAt(t, sent.Data[0])
 	if processedAt == "" {

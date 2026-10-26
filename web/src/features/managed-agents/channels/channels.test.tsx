@@ -28,6 +28,8 @@ test('渠道服务失败时显示错误并禁用创建', async () => {
   mount();
   await waitFor(() => expect(screen.getByText('桥接服务不可用')).toBeTruthy());
   expect(screen.getByRole('button', { name: '创建机器人' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.queryByText('还没有连接机器人')).toBeNull();
+  expect(screen.queryByText(/0 \/ 5/)).toBeNull();
 });
 test('保存凭据、模式和话题策略并携带当前工作区及 CSRF', async () => {
   let posted: Record<string, unknown> | undefined;

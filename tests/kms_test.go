@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -29,6 +31,11 @@ func TestConfiguredKMSService(t *testing.T) {
 	if err := yaml.Unmarshal(data, &document); err != nil {
 		t.Fatal(err)
 	}
+	proxyKey, err := writeTestProxyPrivateKey(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	document["code_session"] = map[string]any{"upstream_proxy_mitm_enabled": true, "upstream_proxy_ca_key_file": proxyKey}
 	document["vault"] = map[string]any{"master_key": map[string]any{"provider": "aliyun_kms", "aliyun_kms": map[string]any{"endpoint": fake.URL, "key_id": "acs:kms:cn-hangzhou:123:key/test-key", "access_key_id": "offline-id", "access_key_secret": "offline-secret"}}}
 	data, err = yaml.Marshal(document)
 	if err != nil {

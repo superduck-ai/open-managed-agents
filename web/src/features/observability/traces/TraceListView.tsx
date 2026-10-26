@@ -126,7 +126,7 @@ export function TraceListView({
   const viewingTrend = Boolean(viewedPanelId && TRACE_TREND_PANELS.some((panel) => panel.id === viewedPanelId));
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex min-w-0 flex-col gap-4">
       {showTrends ? (
         <TraceTrendGrid
           orgUuid={orgUuid}
@@ -235,7 +235,7 @@ function TraceListResults({
   const formatters = useFormatters();
   if (pending && items.length === 0) {
     return (
-      <div className="flex flex-col gap-2">
+      <div className="flex min-w-0 flex-col gap-2">
         <Skeleton className="h-8 w-40" />
         <Skeleton className="h-64 w-full" />
       </div>
@@ -243,7 +243,7 @@ function TraceListResults({
   }
   if (!pending && items.length === 0) {
     return (
-      <div className="flex flex-col gap-2">
+      <div className="flex min-w-0 flex-col gap-2">
         {/* 深翻页翻到空页时保留分页控件，让用户能退回上一页而不是卡死。 */}
         {offset > 0 ? (
           <div className="flex justify-end">
@@ -255,12 +255,15 @@ function TraceListResults({
     );
   }
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex min-w-0 flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-foreground">{pending ? '' : foundLabel}</p>
         <TraceListPagination offset={offset} hasMore={hasMore} onOffset={onOffset} />
       </div>
-      <Table className="w-full table-fixed text-left text-xs" aria-label={msg('observability.tab.traces', 'Traces')}>
+      <Table
+        className="w-full min-w-[1080px] table-fixed text-left text-xs"
+        aria-label={msg('observability.tab.traces', 'Traces')}
+      >
         <TableHeader className="bg-muted/50">
           <TableRow className="hover:bg-transparent">
             <TableHead className="h-8 w-36">{msg('observability.column.trace_id', 'Trace')}</TableHead>
@@ -337,7 +340,7 @@ function TraceListRow({
       }}
     >
       <TableCell className="max-w-36">
-        <span className="block truncate font-mono text-[11px] text-primary">{item.trace_id}</span>
+        <span className="block truncate font-mono text-xs text-primary">{item.trace_id}</span>
       </TableCell>
       {showAgentColumn ? (
         <TableCell className="max-w-28">
@@ -346,13 +349,13 @@ function TraceListRow({
       ) : null}
       {showSessionColumn ? (
         <TableCell className="max-w-32">
-          <span className="block truncate font-mono text-[11px]">{item.session_id || '—'}</span>
+          <span className="block truncate font-mono text-xs">{item.session_id || '—'}</span>
         </TableCell>
       ) : null}
       <TracePreviewTableCell value={item.input} />
       <TracePreviewTableCell value={item.output} />
       <TableCell>
-        <span className="block truncate font-mono text-[11px] tabular-nums">{timestamp}</span>
+        <span className="block truncate font-mono text-xs tabular-nums">{timestamp}</span>
       </TableCell>
       <TableCell>
         <span className="block truncate tabular-nums">{duration}</span>
@@ -376,11 +379,11 @@ function TraceStatusBadge({ status }: { status: ObservabilityTraceListItem['stat
       className={
         isError
           ? 'bg-destructive/10 text-destructive dark:bg-destructive/20'
-          : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+          : 'bg-[var(--success-bg)] text-[var(--success)]'
       }
     >
       <span
-        className={isError ? 'size-1.5 rounded-full bg-destructive' : 'size-1.5 rounded-full bg-emerald-500'}
+        className={isError ? 'size-1.5 rounded-full bg-destructive' : 'size-1.5 rounded-full bg-[var(--success)]'}
         aria-hidden
       />
       {isError ? msg('observability.filter.status.error', 'Error') : msg('observability.filter.status.ok', 'OK')}

@@ -190,7 +190,7 @@ func TestRenderMemoryMarkdownMatchesDesignContract(t *testing.T) {
 		}
 	}
 	if !strings.Contains(got, instructions) {
-		t.Fatal("500-rune instructions were truncated")
+		t.Fatal("4096-rune instructions were truncated")
 	}
 	if utf8.RuneCountInString(instructions) != sessionresource.MaxMemoryInstructionsRunes {
 		t.Fatalf("fixture instructions = %d runes", utf8.RuneCountInString(instructions))
@@ -290,7 +290,7 @@ func TestManagedAgentSessionConfigMemoryPrompt(t *testing.T) {
 	session := db.Session{
 		AgentSnapshot: json.RawMessage(`{"model":{"id":"claude-opus-4-8"},"system":"You are a concise coding assistant."}`),
 	}
-	withoutStores, err := managedAgentSessionConfig(session, mustResolveRuntimeResources(t, nil), nil)
+	withoutStores, err := managedAgentSessionConfig(session, mustResolveRuntimeResources(t, nil), nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestManagedAgentSessionConfigMemoryPrompt(t *testing.T) {
 			"用户的饮食与语言偏好",
 			"问饮食或语言先读此目录",
 		),
-	}), nil)
+	}), nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

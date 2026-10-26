@@ -27,6 +27,7 @@ type deploymentMapperRow struct {
 	Resources             []byte     `db:"resources"`
 	ResourceSecrets       []byte     `db:"resource_secrets"`
 	VaultIDs              []byte     `db:"vault_ids"`
+	Budget                []byte     `db:"budget"`
 	Schedule              []byte     `db:"schedule"`
 	LastRunAt             *time.Time `db:"last_run_at"`
 	Status                string     `db:"status"`
@@ -57,6 +58,7 @@ type deploymentWriteParams struct {
 	Resources             []byte
 	ResourceSecrets       []byte
 	VaultIDs              []byte
+	Budget                []byte
 	Schedule              []byte
 	ScheduleChanged       bool
 	LastRunAt             *time.Time

@@ -1,29 +1,24 @@
-import type { Context } from "@deepseek-ai/cordis";
+import { createHash } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
+import { assertPersistenceFormat } from "./recovery.ts";
+import { workerDiagnostic } from "./diagnostics.ts";
+import type { DshLogData } from "./persistence-contracts.ts";
+import { Context, Service } from "@deepseek-ai/cordis";
 import {
-  SessionPersistence,
-  SessionPersistenceRevision,
-  SessionAlreadyExistsError,
-  SessionAlreadyOwnedError,
-  SessionPersistenceNotFoundError,
-  SessionHandleClosedError,
-  SessionReadOnlyError,
   assertContiguous,
   assertVersion,
   assertStoredId,
   materializeCreateHeader,
-  materializeAppendBatch,
   validateStoredEvents,
+  type SessionPersistenceRevision,
   type SessionHandle,
-  type SessionAccess,
-  type SessionPersistenceSnapshot,
-  type SessionPersistenceCreateOptions,
 } from "@deepseek-ai/dsh-session-persistence";
-import {
-  SessionLogOffset,
-  type SessionEvent,
-  type SessionHeader,
-  SessionId,
-} from "@deepseek-ai/dsh-session";
+import { SessionId, SessionLogOffset, type SessionEvent, type SessionHeader, type Session } from "@deepseek-ai/dsh-session";
+import { CcrHttpError } from "./client.ts";
+import { sameJson } from "./json-equality.ts";
 import type { CcrBackend } from "./contracts.ts";
 
 interface Stored {
@@ -32,243 +27,374 @@ interface Stored {
   inherited: number;
 }
 
-class RemoteHandle implements SessionHandle {
-  readonly inheritedEventCount;
-  private closed = false;
-  private chain: Promise<unknown> = Promise.resolve();
-  private buffered: SessionEvent[] = [];
-  private closing?: Promise<void>;
-  constructor(
-    readonly store: CcrPersistence,
-    readonly id: SessionId,
-    readonly access: SessionAccess,
-    readonly record: Stored,
-  ) {
-    this.inheritedEventCount = SessionLogOffset(record.inherited);
-  }
-  get header() {
-    return this.record.header;
-  }
-  check(write = false) {
-    if (this.closed) throw new SessionHandleClosedError(this.id, "access");
-    if (write && this.access !== "write")
-      throw new SessionReadOnlyError(this.id, "write");
-  }
-  enqueue(event: SessionEvent) {
-    this.check(true);
-    this.buffered.push(structuredClone(event));
-  }
-  async read(
-    offset = 0,
-    length = Number.MAX_SAFE_INTEGER,
-    options?: { signal?: AbortSignal },
-  ) {
-    this.check();
-    options?.signal?.throwIfAborted();
-    if (
-      !Number.isSafeInteger(offset) ||
-      offset < 0 ||
-      !Number.isSafeInteger(length) ||
-      length < 0
-    )
-      throw new Error("Invalid log slice");
-    return {
-      eventState: "detached" as const,
-      events: structuredClone(
-        this.record.events.slice(offset, offset + length),
-      ),
-    };
-  }
-  serialize(job: () => Promise<void>) {
-    const result = this.chain.then(job);
-    this.chain = result.catch(() => {});
-    return result;
-  }
-  append(events: readonly SessionEvent[], options?: { signal?: AbortSignal }) {
-    this.check(true);
-    const batch = materializeAppendBatch(events);
-    return this.serialize(async () => {
-      options?.signal?.throwIfAborted();
-      assertContiguous(this.id, batch, this.record.events.length);
-      if (!batch.length) return;
-      await this.store.persist(this.id, {
-        header: this.header,
-        inherited: this.record.inherited,
-        events: batch,
-      });
-      this.record.events.push(...structuredClone(batch));
-    });
-  }
-  flush(options?: { signal?: AbortSignal }) {
-    this.check(true);
-    return this.serialize(async () => {
-      options?.signal?.throwIfAborted();
-      const batch = this.buffered.slice();
-      assertContiguous(this.id, batch, this.record.events.length);
-      await this.store.persist(this.id, {
-        header: this.header,
-        inherited: this.record.inherited,
-        events: batch,
-      });
-      this.record.events.push(...structuredClone(batch));
-      this.buffered.splice(0, batch.length);
-    });
-  }
-  close() {
-    return (this.closing ??= (async () => {
-      try {
-        if (this.access === "write") await this.flush();
-      } finally {
-        this.closed = true;
-        if (this.store.writers.get(this.id) === this)
-          this.store.writers.delete(this.id);
-      }
-    })());
-  }
-  [Symbol.asyncDispose]() {
-    return this.close();
+interface Replication {
+  chain: Promise<void>;
+  timer?: ReturnType<typeof setTimeout>;
+  failures: number;
+  terminal?: Error;
+  paused?: boolean;
+  acquired?: boolean;
+  local?: Stored;
+  live?: Session;
+  revision?: SessionPersistenceRevision;
+  validated?: boolean;
+  confirmed: number;
+  headerConfirmed: boolean;
+  captureError?: Error;
+  flushing?: boolean;
+}
+
+declare module "@deepseek-ai/cordis" {
+  interface Context {
+    ccrReplication: CcrReplication;
   }
 }
 
-export class CcrPersistence extends SessionPersistence {
-  readonly writers = new Map<SessionId, RemoteHandle>();
-  private readonly records = new Map<SessionId, Stored>();
-  readonly backend: CcrBackend;
+export class CcrReplication extends Service {
+  static inject = ["sessionPersistence", "sessions"];
   private readonly parents = new Map<SessionId, SessionId>();
+  private readonly records = new Map<SessionId, Stored | undefined>();
+  private readonly jobs = new Map<SessionId, Replication>();
+  private stopped = false;
+  private readonly forgotten = new Set<SessionId>();
+
+  constructor(ctx: Context, readonly config: { backend: CcrBackend }) {
+    super(ctx, "ccrReplication");
+    ctx.on("session/created", session => {
+      if (this.stopped || this.forgotten.has(session.id)) return;
+      const previous = this.jobs.get(session.id);
+      if (previous?.paused || previous?.terminal || previous?.live === session) return;
+      if (previous?.live) {
+        previous.captureError = new Error("Cannot replace an active transcript session");
+        return;
+      }
+      const owner = this.job(session.id);
+      owner.live = session;
+      owner.local = { header: session.header, inherited: session.inheritedEventCount, events: [...session.snapshotEvents()] };
+    });
+    ctx.on("session/event", (session, event) => {
+      const owner = this.jobs.get(session.id);
+      if (owner?.live === session && owner.local) {
+        if (event.seq === owner.local.events.length) owner.local.events.push(event);
+        else if (!sameJson(owner.local.events[event.seq], event)) owner.captureError = new Error("Conflicting live transcript event");
+      }
+      this.schedule(session.id);
+    });
+    ctx.on("session/disposed", session => {
+      const owner = this.jobs.get(session.id);
+      if (owner?.live === session) {
+        owner.live = undefined;
+        owner.revision = undefined;
+      }
+    });
+    ctx.on("session/flush", session => {
+      if (!this.jobs.get(session.id)?.flushing) this.schedule(session.id);
+    });
+    ctx.effect(() => async () => {
+      this.stopped = true;
+      for (const job of this.jobs.values()) if (job.timer) clearTimeout(job.timer);
+      await Promise.all([...this.jobs.values()].map(job => job.chain));
+    });
+  }
+
   bindThread(id: string, parent: string): void {
     const previous = this.parents.get(SessionId(id));
     if (previous && previous !== parent) throw new Error("Thread belongs to another session");
     this.parents.set(SessionId(id), SessionId(parent));
   }
-  persist(id: SessionId, data: unknown): Promise<void> {
-    const parent = this.parents.get(id);
-    return this.backend.persist(parent ?? id, "dsh_log", data, parent ? id : undefined);
-  }
-  constructor(ctx: Context, config: { backend: CcrBackend }) {
-    super(ctx);
-    this.backend = config.backend;
-    ctx.on("session/event", (session, event) => {
-      this.writers.get(session.id)?.enqueue(event);
-    });
-    ctx.on("session/flush", (session) => this.writers.get(session.id)?.flush());
-    ctx.effect(() => async () => {
-      await this.flush();
-    });
-  }
-  async load(id: SessionId): Promise<Stored | undefined> {
-    if (this.records.has(id)) return this.records.get(id);
-    const parent = this.parents.get(id);
-    // Older versions stored child logs in the foreground stream. Read that
-    // prefix first, then the separately scoped child stream used by CCRv2.
-    const payloads = await this.backend.privateEvents(parent ?? id);
-    if (parent) payloads.push(...await this.backend.privateEvents(parent, { subagents: true }));
-    let record: Stored | undefined;
-    for (const payload of payloads) {
-      if (payload.subtype !== "dsh_log") continue;
-      if (payload.schema_version !== 1)
-        throw new Error("Unsupported dsh log envelope");
-      const data = payload.data;
-      if (data.header?.id !== id) continue;
-      assertStoredId(id, data.header);
-      assertVersion(data.header);
-      record ??= {
-        header: materializeCreateHeader(data.header),
-        inherited: data.inherited,
-        events: [],
-      };
-      if (JSON.stringify(record.header) !== JSON.stringify(data.header))
-        throw new Error("Log header changed");
-      if (!Array.isArray(data.events)) throw new Error("Invalid dsh log batch");
-      const batch = validateStoredEvents(
-        record.header,
-        structuredClone(data.events),
-      );
-      for (const event of batch) {
-        if (event.seq < record.events.length) {
-          if (
-            JSON.stringify(record.events[event.seq]) !== JSON.stringify(event)
-          )
-            throw new Error("Conflicting dsh log event");
-        } else {
-          assertContiguous(id, [event], record.events.length);
-          record.events.push(event);
+
+  async ensure(value: string): Promise<boolean> {
+    const id = SessionId(value);
+    this.forgotten.delete(id);
+    let hydrated = false;
+    await this.serialize(id, async owner => {
+      if (owner.acquired) return;
+      const snapshot = await this.ctx.sessionPersistence.stat(id);
+      if (snapshot?.formatStatus === "migration-required") throw new Error("Local transcript format requires explicit migration");
+      const remote = await this.load(id, owner);
+      this.assertCurrent(id, owner);
+      if (!snapshot) {
+        if (remote) {
+          await this.hydrate(id, remote, owner);
+          hydrated = true;
         }
+      } else {
+        const handle = await this.ctx.sessionPersistence.open(id, "write");
+        try {
+          const local = await this.readLocal(handle);
+          if (remote && !this.isPrefix(local, remote) && !this.isPrefix(remote, local))
+            throw new Error("Local and remote log histories diverged");
+          if (remote && remote.events.length > local.events.length) {
+            await handle.append(remote.events.slice(local.events.length));
+            await handle.flush();
+            for (const event of remote.events.slice(local.events.length)) local.events.push(event);
+            hydrated = true;
+          }
+          owner.local = local;
+        } finally { await handle.close(); }
       }
-    }
-    if (record) this.records.set(id, record);
-    return record;
+      this.assertCurrent(id, owner);
+      owner.confirmed = remote?.events.length ?? 0;
+      owner.headerConfirmed = !!remote;
+      owner.validated = true;
+      owner.acquired = true;
+      this.records.delete(id);
+    });
+    return hydrated;
   }
-  async create(
-    header: SessionHeader,
-    options?: SessionPersistenceCreateOptions,
-  ): Promise<SessionHandle> {
-    options?.signal?.throwIfAborted();
-    assertVersion(header);
-    if (this.writers.has(header.id))
-      throw new SessionAlreadyOwnedError(header.id);
-    if (await this.load(header.id))
-      throw new SessionAlreadyExistsError(header.id);
-    if (header.isSeeded || options?.inheritedEventCount)
-      throw new Error("Forked sessions are not enabled");
-    const record = {
-      header: materializeCreateHeader(header),
-      inherited: 0,
-      events: [],
-    };
-    this.records.set(header.id, record);
-    const handle = new RemoteHandle(this, header.id, "write", record);
-    this.writers.set(header.id, handle);
+
+  private async readLocal(handle: SessionHandle): Promise<Stored> {
+    const events = [...(await handle.read()).events];
+    return { header: handle.header, inherited: handle.inheritedEventCount, events };
+  }
+
+  private isPrefix(prefix: Stored, log: Stored): boolean {
+    return sameJson(prefix.header, log.header) && prefix.inherited === log.inherited
+      && prefix.events.length <= log.events.length
+      && prefix.events.every((event, index) => sameJson(event, log.events[index]));
+  }
+
+  private async hydrate(id: SessionId, record: Stored, owner: Replication): Promise<void> {
+    this.assertCurrent(id, owner);
+    const handle = await this.ctx.sessionPersistence.create(record.header, { inheritedEventCount: SessionLogOffset(record.inherited) });
     try {
+      await handle.append(record.events);
       await handle.flush();
-    } catch (error) {
-      this.writers.delete(header.id);
-      this.records.delete(header.id);
-      throw error;
+      owner.local = { header: handle.header, inherited: record.inherited, events: [...record.events] };
+    } finally { await handle.close(); }
+  }
+
+  private async flushLocal(owner: Replication): Promise<void> {
+    if (!owner.live) return;
+    owner.flushing = true;
+    try { await this.ctx.sessions.flush(owner.live); }
+    finally { owner.flushing = false; }
+  }
+
+  async flush(value: string): Promise<void> {
+    const id = SessionId(value);
+    if (this.stopped) throw new Error("CCRv2 replication is stopped");
+    this.forgotten.delete(id);
+    this.assertCurrent(id, this.job(id));
+    const ids = [id, ...[...this.parents].filter(([, parent]) => parent === id).map(([child]) => child)];
+    const targets = new Map(ids.map(key => [key, this.jobs.get(key)?.live ? this.jobs.get(key)?.local?.events.length : undefined]));
+    for (const key of ids) await this.serialize(key, async owner => {
+      await this.flushLocal(owner);
+      await this.synchronize(key, owner, targets.get(key));
+    });
+  }
+
+  async drain(value: string): Promise<void> {
+    const id = SessionId(value);
+    const jobs = [...this.jobs].filter(([child]) => child === id || this.parents.get(child) === id).map(([, job]) => job);
+    for (const job of jobs) {
+      job.paused = true;
+      if (job.timer) clearTimeout(job.timer);
+      job.timer = undefined;
     }
-    return handle;
+    await Promise.all(jobs.map(job => job.chain));
   }
-  async open(
-    id: SessionId,
-    access: SessionAccess,
-    options?: { signal?: AbortSignal },
-  ): Promise<SessionHandle> {
-    options?.signal?.throwIfAborted();
-    if (access === "write" && this.writers.has(id))
-      throw new SessionAlreadyOwnedError(id);
-    const record = await this.load(id);
-    if (!record) throw new SessionPersistenceNotFoundError(id);
-    const handle = new RemoteHandle(this, id, access, record);
-    if (access === "write") this.writers.set(id, handle);
-    return handle;
-  }
-  async flush() {
-    await Promise.all([...this.writers.values()].map((h) => h.flush()));
-  }
-  async stat(id: SessionId): Promise<SessionPersistenceSnapshot | undefined> {
-    const record = await this.load(id);
-    return record
-      ? {
-          header: structuredClone(record.header),
-          revision: SessionPersistenceRevision(String(record.events.length)),
-          eventCount: record.events.length,
-        }
-      : undefined;
-  }
-  async list(): Promise<SessionPersistenceSnapshot[]> {
-    const results = await Promise.all(
-      [...this.backend.sessionIds()].map((id) => this.stat(id as SessionId)),
-    );
-    return results.filter((r): r is SessionPersistenceSnapshot => !!r);
-  }
-  forget(id: SessionId): void {
-    if (this.writers.has(id))
-      throw new Error("Cannot forget an active session");
-    this.records.delete(id);
+
+  forget(value: string): void {
+    const id = SessionId(value);
+    this.forgetOne(id);
     for (const [child, parent] of this.parents) {
       if (parent !== id) continue;
-      if (this.writers.has(child)) throw new Error("Cannot forget an active thread");
-      this.records.delete(child);
+      this.forgetOne(child);
       this.parents.delete(child);
     }
+  }
+
+  private forgetOne(id: SessionId): void {
+    const job = this.jobs.get(id);
+    if (job?.timer) clearTimeout(job.timer);
+    this.jobs.delete(id);
+    this.records.delete(id);
+    this.forgotten.add(id);
+  }
+
+  private job(id: SessionId): Replication {
+    let job = this.jobs.get(id);
+    if (!job) {
+      const parent = this.parents.get(id);
+      const inherited = parent ? this.jobs.get(parent) : undefined;
+      job = { chain: Promise.resolve(), failures: 0, terminal: inherited?.terminal, paused: inherited?.paused, confirmed: 0, headerConfirmed: false };
+      this.jobs.set(id, job);
+    }
+    return job;
+  }
+
+  private assertCurrent(id: SessionId, job: Replication): void {
+    if (job.terminal) throw job.terminal;
+    if (this.stopped || job.paused || this.jobs.get(id) !== job)
+      throw new Error("CCRv2 replication is stopped");
+  }
+
+  private rejectLease(id: SessionId, owner: Replication, error: Error): void {
+    owner.terminal = error;
+    if (this.jobs.get(id) !== owner) return;
+    const parent = this.parents.get(id) ?? id;
+    this.job(parent).terminal = error;
+    for (const [child, job] of this.jobs) {
+      if (child !== parent && this.parents.get(child) !== parent) continue;
+      job.terminal = error;
+      if (job.timer) clearTimeout(job.timer);
+      job.timer = undefined;
+    }
+  }
+
+  private serialize(id: SessionId, operation: (job: Replication) => Promise<void>, owner = this.job(id)): Promise<void> {
+    const result = owner.chain.then(async () => {
+      this.assertCurrent(id, owner);
+      try {
+        await operation(owner);
+      } catch (error) {
+        if (error instanceof CcrHttpError && ([409, 410].includes(error.status) || error.tokenExpired || error.authExhausted)) {
+          this.rejectLease(id, owner, error);
+        }
+        throw error;
+      }
+    });
+    owner.chain = result.catch(() => {});
+    return result;
+  }
+
+  private schedule(id: SessionId, delay = 0): void {
+    if (this.stopped || this.forgotten.has(id)) return;
+    const job = this.job(id);
+    if (job.timer || job.terminal || job.paused) return;
+    job.timer = setTimeout(() => {
+      job.timer = undefined;
+      void this.serialize(id, async owner => {
+        const through = owner.live ? owner.local?.events.length : undefined;
+        await this.flushLocal(owner);
+        await this.synchronize(id, owner, through);
+      }, job).then(() => {
+        job.failures = 0;
+      }, () => {
+        job.failures++;
+        if (!this.stopped && !job.paused && !job.terminal && this.jobs.get(id) === job) this.schedule(id, Math.min(30_000, 100 * 2 ** Math.min(job.failures - 1, 9)));
+      });
+    }, delay);
+    job.timer.unref();
+  }
+
+  private async localRecord(id: SessionId, owner: Replication): Promise<Stored | undefined> {
+    if (owner.live && owner.local) return owner.local;
+    const snapshot = await this.ctx.sessionPersistence.stat(id);
+    if (!snapshot) return undefined;
+    if (owner.local && owner.revision === snapshot.revision) return owner.local;
+    const handle = await this.ctx.sessionPersistence.open(id, "read");
+    try {
+      const events = (await handle.read(owner.local?.events.length ?? 0)).events;
+      if (owner.local) for (const event of events) owner.local.events.push(event);
+      else owner.local = { header: handle.header, inherited: handle.inheritedEventCount, events: [...events] };
+      owner.revision = snapshot.revision;
+      return owner.local;
+    } finally { await handle.close(); }
+  }
+
+  private async synchronize(id: SessionId, owner: Replication, target?: number): Promise<void> {
+    this.assertCurrent(id, owner);
+    if (owner.captureError) throw owner.captureError;
+    const local = await this.localRecord(id, owner);
+    if (!local) return;
+    const through = target ?? local.events.length;
+    if (!owner.validated) {
+      const remote = await this.load(id, owner);
+      if (remote && !this.isPrefix(remote, local)) throw new Error("Local and remote log histories diverged");
+      owner.confirmed = remote?.events.length ?? 0;
+      owner.headerConfirmed = !!remote;
+      owner.validated = true;
+      this.records.delete(id);
+    }
+    if (local.header.isSeeded || local.inherited) throw new Error("Forked sessions are not enabled");
+    if (!owner.headerConfirmed) {
+      await this.persistRecord(id, local.header, owner);
+      owner.headerConfirmed = true;
+    }
+    const events = local.events.slice(owner.confirmed, through);
+    const results = await Promise.allSettled(events.map(event => this.persistRecord(id, event, owner)));
+    for (const result of results) {
+      if (result.status === "rejected") throw result.reason;
+      owner.confirmed++;
+    }
+  }
+
+  private async persistRecord(id: SessionId, data: DshLogData, owner: Replication): Promise<void> {
+    this.assertCurrent(id, owner);
+    const parent = this.parents.get(id);
+    const message = "seq" in data && data.type === "tool/result" ? data.data.message : undefined;
+    const text = message?.content.filter(block => block.type === "text").map(block => block.text).join("\n");
+    const diagnostic = message && text !== undefined ? {
+      session_ref: createHash("sha256").update(parent ?? id).digest("hex"),
+      session_thread_ref: createHash("sha256").update(id).digest("hex"),
+      call_ref: createHash("sha256").update(message.toolCallId).digest("hex"),
+      text_utf16_units: text.length, has_nul: text.includes(String.fromCharCode(0)),
+    } : undefined;
+    if (diagnostic) workerDiagnostic("info", "ccrv2_tool_result_durability", { ...diagnostic, phase: "start" });
+    try { await this.config.backend.persist(parent ?? id, "dsh_log", data, parent ? id : undefined); }
+    catch (error) {
+      if (error instanceof CcrHttpError && ([409, 410].includes(error.status) || error.tokenExpired || error.authExhausted))
+        this.rejectLease(id, owner, error);
+      throw error;
+    }
+    if (diagnostic) workerDiagnostic("info", "ccrv2_tool_result_durability", { ...diagnostic, phase: "confirmed" });
+  }
+
+  private async validateRemote(record: Stored): Promise<Stored> {
+    const root = await mkdtemp(join(tmpdir(), "oma-brain-remote-validation-"));
+    const ctx = new Context();
+    try {
+      await ctx.plugin(JsonlPersistence, { root, compression: "none" });
+      const handle = await ctx.sessionPersistence.create(record.header);
+      try {
+        await handle.append(record.events);
+        await handle.flush();
+      } finally { await handle.close(); }
+      const reader = await ctx.sessionPersistence.open(record.header.id, "read");
+      try {
+        const { events } = await reader.read();
+        return { header: reader.header, inherited: reader.inheritedEventCount, events: [...events] };
+      } finally { await reader.close(); }
+    } finally {
+      try { await ctx.fiber.dispose(); }
+      finally { await rm(root, { recursive: true, force: true }); }
+    }
+  }
+
+  private async load(id: SessionId, owner: Replication): Promise<Stored | undefined> {
+    if (this.records.has(id)) return this.records.get(id);
+    const parent = this.parents.get(id);
+    const payloads = await this.config.backend.privateEvents(parent ?? id, { agentId: parent ? id : undefined });
+    this.assertCurrent(id, owner);
+    let record: Stored | undefined;
+    for (const payload of payloads) {
+      assertPersistenceFormat(payload, parent ?? id);
+      if (payload.type !== "dsh_log") continue;
+      const data = payload.data;
+      if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid dsh log record");
+      if (!("seq" in data)) {
+        assertStoredId(id, data);
+        assertVersion(data);
+        if (data.isSeeded) throw new Error("Forked sessions are not enabled");
+        const header = materializeCreateHeader(data);
+        if (record && !sameJson(record.header, header)) throw new Error("Log header changed");
+        record ??= { header, inherited: 0, events: [] };
+        continue;
+      }
+      if (!record) throw new Error("Missing dsh log header");
+      const [event] = validateStoredEvents(record.header, [structuredClone(data)]);
+      if (event.seq < record.events.length) {
+        if (!sameJson(record.events[event.seq], event)) throw new Error("Conflicting dsh log event");
+      } else {
+        assertContiguous(id, [event], record.events.length);
+        record.events.push(event);
+      }
+    }
+    if (record) record = await this.validateRemote(record);
+    this.assertCurrent(id, owner);
+    if (this.jobs.get(id) === owner) this.records.set(id, record);
+    return record;
   }
 }

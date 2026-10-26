@@ -176,7 +176,7 @@ func TestMergeRequestUsagePreservesMissingAndExplicitZero(t *testing.T) {
 	}
 }
 
-func TestResponseObservationPreservesThinking(t *testing.T) {
+func TestResponseObservationOmitsThinkingBody(t *testing.T) {
 	for _, streaming := range []bool{false, true} {
 		t.Run(fmt.Sprint(streaming), func(t *testing.T) {
 			body := `{"id":"msg_thinking","type":"message","content":[{"type":"thinking","thinking":"公开思考正文","signature":"secret"},{"type":"redacted_thinking","data":"encrypted"}]}`
@@ -194,14 +194,14 @@ func TestResponseObservationPreservesThinking(t *testing.T) {
 			}
 			observation.finish()
 			messages := observation.result.Messages
-			if observation.result.ErrorType != "" || len(messages) != 2 || len(messages[0].Content) != 1 || messages[0].Content[0].Thinking == nil || *messages[0].Content[0].Thinking != "公开思考正文" || len(messages[1].Content) != 0 {
+			if observation.result.ErrorType != "" || len(messages) != 2 || len(messages[0].Content) != 0 || len(messages[1].Content) != 0 {
 				t.Fatalf("thinking result = %+v", observation.result)
 			}
 		})
 	}
 }
 
-func TestResponseObservationLimitsThinkingContent(t *testing.T) {
+func TestResponseObservationLimitsButDoesNotBufferThinkingContent(t *testing.T) {
 	observation := &responseObservation{streaming: true, request: &codesessions.ModelRequest{CodeSessionID: "cse_test"}}
 	observation.observeFrame([]byte(`{"type":"message_start","message":{"id":"msg_limit"}}`))
 	observation.observeFrame([]byte(`{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}`))
@@ -210,7 +210,30 @@ func TestResponseObservationLimitsThinkingContent(t *testing.T) {
 		observation.observeContentDelta(delta)
 	}
 	observation.finish()
-	if observation.result.ErrorType != "observation_limit" || !observation.malformed || observation.blocks[0].thinkingBuffer.Len() != 4*1024*1024 {
-		t.Fatalf("thinking observation exceeded bound: error=%q bytes=%d", observation.result.ErrorType, observation.blocks[0].thinkingBuffer.Len())
+	if observation.result.ErrorType != "observation_limit" || !observation.malformed || observation.blocks[0].Thinking != "" {
+		t.Fatalf("thinking observation exceeded bound: error=%q bytes=%d", observation.result.ErrorType, len(observation.blocks[0].Thinking))
+	}
+}
+
+func TestResponseObservationPreservesServerToolUsage(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		body := `{"id":"msg_search","type":"message","usage":{"server_tool_use":{"web_search_requests":2,"web_fetch_requests":1}},"content":[{"type":"text","text":"结果"}]}`
+		if streaming {
+			body = "data: {\"type\":\"message_start\",\"message\":" + body + "}\n\n" +
+				`data: {"type":"message_delta","usage":{"output_tokens":3,"server_tool_use":{"web_search_requests":4}}}` + "\n\n" +
+				`data: {"type":"message_delta","usage":{"output_tokens":5}}` + "\n\n" +
+				`data: {"type":"message_stop"}` + "\n\n"
+		}
+		observation := &responseObservation{streaming: streaming, request: &codesessions.ModelRequest{CodeSessionID: "cse_search"}}
+		_, _ = observation.Write([]byte(body))
+		observation.finish()
+		want := int64(2)
+		if streaming {
+			want = 4
+		}
+		usage := observation.result.Usage.ServerToolUse
+		if observation.result.ErrorType != "" || usage == nil || usage.WebSearchRequests == nil || *usage.WebSearchRequests != want || usage.WebFetchRequests == nil || *usage.WebFetchRequests != 1 {
+			t.Fatalf("搜索用量丢失或累计值错误：%+v，streaming=%v", observation.result, streaming)
+		}
 	}
 }

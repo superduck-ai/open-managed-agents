@@ -168,6 +168,7 @@ export type SessionApiResponse = {
   id: string;
   agent: unknown;
   archived_at: string | null;
+  budget?: unknown;
   created_at: string;
   deployment_id?: string | null;
   environment_id: string;
@@ -185,6 +186,7 @@ export type DeploymentApiResponse = {
   id: string;
   agent: unknown;
   archived_at: string | null;
+  budget?: unknown;
   created_at: string;
   description?: string | null;
   environment_id: string;
@@ -583,6 +585,9 @@ export type ManagedEntityFormValues = {
   gitResources: GitRepositoryResourceFormValue[];
   originalResources: SessionResourceApiResponse[];
   resourcesChanged: boolean;
+  /** Budget cap in USD dollars as typed; empty string means no budget. */
+  budgetUsd: string;
+  budgetChanged: boolean;
 };
 
 export type GitRepositoryResourceFormValue = {
@@ -623,10 +628,24 @@ export type SelfAgentReferenceInput = {
   type: 'self';
 };
 
-export type AgentMultiagentInput = {
-  type: 'coordinator';
-  agents: Array<AgentReferenceInput | SelfAgentReferenceInput>;
-};
+export type SubagentReference = AgentReferenceInput | SelfAgentReferenceInput;
+
+export type AgentDelegationInput =
+  | { type: 'disabled' }
+  | {
+      type: 'enabled';
+      inline_agents?: { type: 'enabled' | 'disabled' };
+      predefined_agents?: SubagentReference[];
+    };
+
+export type AgentMultiagentInput =
+  | { type: 'coordinator'; agents: SubagentReference[] }
+  | {
+      type: 'multiagent_20261001';
+      subagents?: AgentDelegationInput;
+      workflows?: AgentDelegationInput;
+      advisor?: { type: 'disabled' } | { type: 'enabled'; model: string };
+    };
 
 export type AgentSkillInput = {
   type: 'anthropic' | 'custom';
@@ -678,6 +697,7 @@ export type MemoryFormValues = {
 };
 
 export type QuickstartQuestion = {
+  id?: string;
   header: string;
   question: string;
   multiSelect: boolean;

@@ -3,13 +3,17 @@
     <sql id="columns">
         uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
         session_external_id, parent_thread_uuid, parent_thread_external_id,
-        agent_snapshot, status, usage, stats, created_at, updated_at, archived_at, deleted_at
+        agent_snapshot, status,
+        usage,
+        stats,
+        oma_session_activity_projection(workspace_uuid,session_uuid,external_id,NOW(),usage,stats) AS activity,
+        stats_initialized, usage_initialized, created_at, updated_at, archived_at, deleted_at
     </sql>
 
     <sql id="insertColumns">
         uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
         session_external_id, parent_thread_uuid, parent_thread_external_id,
-        agent_snapshot, status, usage, stats, created_at, updated_at
+        agent_snapshot, status, usage, stats, stats_initialized, usage_initialized, created_at, updated_at
     </sql>
 
     <sql id="insertValues">
@@ -17,7 +21,19 @@
         #{params.SessionUUID}, #{params.SessionExternalID}, #{params.ParentThreadUUID},
         #{params.ParentThreadExternalID}, CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb),
         #{params.Status}, CAST(#{params.Usage,sensitive=true} AS jsonb),
-        CAST(#{params.Stats,sensitive=true} AS jsonb), #{params.CreatedAt}, #{params.CreatedAt}
+        CAST(#{params.Stats,sensitive=true} AS jsonb),
+        (#{params.StatsInitialized} OR #{params.Status} != 'idle' OR EXISTS (
+            SELECT 1 FROM session_events
+            WHERE workspace_uuid = #{params.WorkspaceUUID} AND session_uuid = #{params.SessionUUID}
+              AND ((event_type IN ('session.thread_status_running', 'session.thread_status_idle', 'session.thread_status_rescheduled', 'session.thread_status_terminated') AND payload-&gt;&gt;'session_thread_id' = #{params.ExternalID})
+                OR (CAST(#{params.ParentThreadUUID} AS uuid) IS NULL AND event_type IN ('session.status_running', 'session.status_idle', 'session.status_rescheduled', 'session.status_terminated')))
+        )),
+        (#{params.UsageInitialized} OR EXISTS (
+            SELECT 1 FROM session_events
+            WHERE workspace_uuid = #{params.WorkspaceUUID} AND session_uuid = #{params.SessionUUID}
+              AND ((event_type = 'session.thread_status_idle' AND payload-&gt;&gt;'session_thread_id' = #{params.ExternalID})
+                OR (CAST(#{params.ParentThreadUUID} AS uuid) IS NULL AND event_type = 'session.status_idle'))
+        )), #{params.CreatedAt}, #{params.CreatedAt}
     </sql>
 
     <insert id="Insert" result="returning" resultType="sessionThreadRow">
@@ -71,6 +87,10 @@
             workspace_uuid = #{params.WorkspaceUUID}
             AND session_external_id = #{params.SessionExternalID}
             AND deleted_at IS NULL
+            <if test="len(params.Statuses) &gt; 0">
+                AND status IN
+                <foreach collection="params.Statuses" item="status" open="(" separator="," close=")">#{status}</foreach>
+            </if>
             <if test="params.Cursor != nil">
                 AND (created_at, uuid) &lt; (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
             </if>
@@ -90,7 +110,7 @@
 
     <update id="SetStatus" result="rows">
         UPDATE session_threads
-        SET status = #{status}, updated_at = NOW()
+        SET status = #{status}, stats_initialized = TRUE, usage_initialized = usage_initialized OR #{status} = 'idle', updated_at = NOW()
         WHERE workspace_uuid = #{workspaceUUID}
         AND session_external_id = #{sessionExternalID}
         AND external_id = #{threadExternalID}
@@ -101,6 +121,7 @@
         UPDATE session_threads
         SET archived_at = COALESCE(archived_at, NOW()),
             status = 'terminated',
+            stats_initialized = TRUE,
             updated_at = NOW()
         WHERE workspace_uuid = #{workspaceUUID}
         AND session_external_id = #{sessionExternalID}

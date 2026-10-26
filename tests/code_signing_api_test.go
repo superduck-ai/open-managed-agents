@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -31,7 +33,7 @@ func TestCodeSessionCommitSigningRequiresCurrentWorkerEpoch(t *testing.T) {
 
 	t.Run("failure stale epoch", func(t *testing.T) {
 		response := requestCommitSignature(t, app, codeSessionID, staleToken, `{"contents":"commit payload"}`)
-		assertError(t, response, http.StatusUnauthorized, "authentication_error")
+		assertError(t, response, http.StatusConflict, "conflict_error")
 	})
 
 	t.Run("success current epoch", func(t *testing.T) {

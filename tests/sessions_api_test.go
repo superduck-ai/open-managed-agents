@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -636,6 +638,8 @@ func TestSessionCanonicalMultiAgentEventsFromCodeSessionIngress(t *testing.T) {
 		`mcp__agent_inferred`,
 		`"type":"agent.message"`,
 		"child stream answer",
+		`"type":"agent.thread_message_sent"`,
+		"deliver to coordinator",
 		`"type":"span.model_request_start"`,
 		`"session_thread_id":"` + childThreadID + `"`,
 	} {
@@ -644,7 +648,7 @@ func TestSessionCanonicalMultiAgentEventsFromCodeSessionIngress(t *testing.T) {
 		}
 	}
 	for _, leaked := range []string{
-		"deliver to coordinator",
+		`"type":"agent.thread_message_received"`,
 		"stream preview only",
 		`"type":"session.thread_status_running"`,
 		`"type":"session.thread_status_idle"`,
@@ -1018,7 +1022,6 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 		`"type":"user.message"`,
 		"private child prompt only in child stream",
 		`"type":"agent.thinking"`,
-		"private child thinking only in child stream",
 		`"type":"agent.message"`,
 		"private child answer only in child stream",
 		`"session_thread_id":"` + child.ID + `"`,
@@ -1027,7 +1030,7 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 			t.Fatalf("child transcript missing %q: %+v", want, childEvents.Data)
 		}
 	}
-	for _, leaked := range []string{`"agentId":"agent-a"`, `"_owner_session_thread_id"`, `"type":"session.thread_status_running"`} {
+	for _, leaked := range []string{`"agentId":"agent-a"`, `"_owner_session_thread_id"`, `"type":"session.thread_status_running"`, "private child thinking only in child stream"} {
 		if eventPageContains(childEvents, leaked) {
 			t.Fatalf("child transcript leaked internal field %q: %+v", leaked, childEvents.Data)
 		}
@@ -2172,8 +2175,7 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 }
 
 func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-ask-user-question-bucket"))
-	defer app.close()
+	app := newPayloadIntegrationApp(t, newFakeStore("sessions-code-worker-ask-user-question-bucket"))
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-ask-user-question-agent","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"ask_user_question","enabled":true,"permission_policy":{"type":"always_ask"}}]}]}`)
 	defer cleanupAgentRows(t, app.pool, agent.ID)
@@ -2185,7 +2187,7 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 	suffix := strings.TrimPrefix(session.ID, "sesn_")
 	toolUseID := "toolu_ask_color_" + suffix
 	requestID := "req_ask_color_" + suffix
-	questionsJSON := `[{"header":"Color","question":"Favorite color?","options":[{"label":"Blue"},{"label":"Green"}]}]`
+	questionsJSON := `[{"id":"color","header":"Color","question":"Favorite color?","options":[{"label":"Blue"},{"label":"Green"}]}]`
 
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{`+
 		`"type":"control_request",`+
@@ -2217,7 +2219,7 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 	resp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{`+
 		`"type":"user.custom_tool_result",`+
 		`"custom_tool_use_id":`+quoteJSON(toolEventID)+`,`+
-		`"content":[{"type":"text","text":`+quoteJSON(`{"Color":"Blue"}`)+`}]`+
+		`"content":[{"type":"text","text":`+quoteJSON(`{"answers":[{"id":"color","selected":["Blue"]}]}`)+`}]`+
 		`}]}`), defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -2245,16 +2247,13 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 		t.Fatalf("confirmation response request_id = %v, want %s; payload=%s", response["request_id"], requestID, payload)
 	}
 	nested := response["response"].(map[string]any)
-	updatedInput, ok := nested["updatedInput"].(map[string]any)
-	if !ok {
-		t.Fatalf("confirmation updatedInput = %#v, want object; payload=%s", nested["updatedInput"], payload)
+	external, ok := nested["externalResult"].(map[string]any)
+	if !ok || external["isError"] != false {
+		t.Fatalf("custom result = %#v; payload=%s", nested, payload)
 	}
-	if _, ok := updatedInput["questions"]; !ok {
-		t.Fatalf("confirmation updatedInput missing questions: %#v", updatedInput)
-	}
-	answers, ok := updatedInput["answers"].(map[string]any)
-	if !ok || answers["Color"] != "Blue" {
-		t.Fatalf("confirmation updatedInput.answers = %#v, want Color=Blue; payload=%s", updatedInput["answers"], payload)
+	content := external["content"].([]any)
+	if len(content) != 1 || content[0].(map[string]any)["text"] != `{"answers":[{"id":"color","selected":["Blue"]}]}` {
+		t.Fatalf("answer content = %#v", content)
 	}
 	inputID := sessionEventStringField(t, submitted.Data[0], "id")
 	if object["id"] != inputID {

@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -20,10 +22,10 @@ func TestDeploymentsMemoryAttachContract(t *testing.T) {
 	t.Run("M1-11 instructions 501 and client mount_path are rejected", func(t *testing.T) {
 		resp := doDeploymentRequest(
 			t, app, http.MethodPost, "/v1/deployments",
-			strings.NewReader(deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"memory_store","memory_store_id":`+quoteJSON(store.ID)+`,"instructions":`+quoteJSON(strings.Repeat("i", 501))+`}]`)),
+			strings.NewReader(deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"memory_store","memory_store_id":`+quoteJSON(store.ID)+`,"instructions":`+quoteJSON(strings.Repeat("i", 4097))+`}]`)),
 			defaultTestKey, true,
 		)
-		assertMemoryAttachError(t, resp, http.StatusBadRequest, "invalid_request_error", "at most 500 characters")
+		assertMemoryAttachError(t, resp, http.StatusBadRequest, "invalid_request_error", "at most 4096 characters")
 
 		resp = doDeploymentRequest(
 			t, app, http.MethodPost, "/v1/deployments",

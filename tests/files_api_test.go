@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -204,10 +206,11 @@ type metadataResponse struct {
 }
 
 type pageResponse struct {
-	Data    []metadataResponse `json:"data"`
-	HasMore bool               `json:"has_more"`
-	FirstID *string            `json:"first_id"`
-	LastID  *string            `json:"last_id"`
+	Data     []metadataResponse `json:"data"`
+	HasMore  bool               `json:"has_more"`
+	FirstID  *string            `json:"first_id"`
+	LastID   *string            `json:"last_id"`
+	NextPage *string            `json:"next_page"`
 }
 
 type platformUploadResponse struct {
@@ -1141,7 +1144,7 @@ func newTestAppWithSecrets(t *testing.T, override *config.Config, store storage.
 		database.Close()
 		t.Fatalf("migrate River: %v", err)
 	}
-	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
+	if err := database.Seed(ctx, cfg.Bootstrap); err != nil {
 		database.Close()
 		t.Fatalf("seed database: %v", err)
 	}
@@ -1276,6 +1279,14 @@ func seedTestLLMProviderForWorkspace(
 	if err != nil {
 		t.Fatalf("generate test LLM provider ID: %v", err)
 	}
+	existing, err := app.db.ListLLMProviders(context.Background(), organizationUUID, workspaceUUID)
+	if err != nil {
+		t.Fatalf("list test LLM providers: %v", err)
+	}
+	slugs := make([]string, 0, len(existing))
+	for _, provider := range existing {
+		slugs = append(slugs, provider.Slug)
+	}
 	now := time.Now().UTC()
 	provider := db.LLMProvider{
 		UUID:             uuid.NewV4().String(),
@@ -1283,9 +1294,10 @@ func seedTestLLMProviderForWorkspace(
 		OrganizationUUID: organizationUUID,
 		WorkspaceUUID:    workspaceUUID,
 		Name:             name,
+		Slug:             llmproviders.NextDefaultSlug(slugs),
 		BaseURL:          baseURL,
 		APIKeyLast4:      apiKey[len(apiKey)-4:],
-		ModelIDs:         append([]string(nil), modelIDs...),
+		Models:           db.LLMModels{}.WithIDs(modelIDs),
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
@@ -1316,6 +1328,16 @@ func clearTestLLMProviders(t *testing.T, app *testApp) {
 		); err != nil {
 			t.Fatalf("delete test LLM provider %s: %v", provider.ExternalID, err)
 		}
+	}
+	organization, err := app.db.GetOrganizationLLMProvider(context.Background(), ids.OrganizationUUID)
+	if errors.Is(err, db.ErrNotFound) {
+		return
+	}
+	if err != nil {
+		t.Fatalf("load organization LLM provider: %v", err)
+	}
+	if err := app.db.DeleteLLMProvider(context.Background(), ids.OrganizationUUID, "", organization.ExternalID); err != nil {
+		t.Fatalf("delete organization LLM provider: %v", err)
 	}
 }
 

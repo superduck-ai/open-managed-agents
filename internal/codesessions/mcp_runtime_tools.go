@@ -36,7 +36,7 @@ func mcpRuntimeToolsets(declarations []mcpToolsetDeclaration) map[string][]mcpRu
 			switch tool.PermissionPolicy.Type {
 			case "always_allow", "allow":
 				config.PermissionPolicy = "always_allow"
-			case "always_ask", "ask":
+			case "always_ask", "ask", "auto":
 				config.PermissionPolicy = "always_ask"
 			}
 			tools = append(tools, config)

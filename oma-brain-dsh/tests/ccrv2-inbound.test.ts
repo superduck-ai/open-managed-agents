@@ -1,3 +1,4 @@
+import { completedInputs } from "./session-log.ts";
 import { expect, spyOn, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
 import { CcrClient, consumeInbound, type CcrHttpRequest } from "../src/ccrv2/index.ts";
@@ -28,7 +29,7 @@ test("registration validates epochs and never retries ambiguous claims", async (
 });
 
 test("SSE rejects cross-session input and permanent HTTP errors without reconnecting", async () => {
-  for (const response of [...[401, 403, 404].map((status) => new Response(null, { status })), new Response(
+  for (const response of [...[401, 403, 404, 409, 410].map((status) => new Response(null, { status })), new Response(
     `event: client_event\ndata: ${JSON.stringify({ session_id: "other", event_id: "id", payload: { type: "user" } })}\n\n`,
     { headers: { "Content-Type": "text/event-stream" } },
   )]) {
@@ -163,7 +164,7 @@ test("SSE skips unsupported and malformed events while retaining their frame cur
 test("SSE retries nonpermanent HTTP responses with Superduck backoff and a ten minute budget", async () => {
   let now = 0;
   const delays: number[] = [];
-  const statuses = [409, 410, 400, 408, 429, 500];
+  const statuses = [400, 408, 429, 500];
   const c = new CcrClient({
     credentials: () => ({ token: "ingress", workerEpoch: 7 }), sessionIds: () => ["session"],
     random: () => 0.5, now: () => now,
@@ -274,40 +275,35 @@ test("delivery processing gates model work without blocking controls", async () 
       subtype: "success", request_id: approvalId,
       response: { behavior: "allow", updatedInput: { command: "approved" } },
     } });
-    await eventually(() => session.state.completed.includes("input") && session.state.outbox.length === 0);
+    await eventually(() => completedInputs(session).includes("input") && session.pendingEvents.length === 0);
     expect(b.executions).toEqual([{ name: "bash", arguments: { command: "approved" } }]);
     b.deliver("interrupt", { type: "interrupt" });
     await eventually(() => cancel!.mock.calls.length > 0);
     release.resolve();
     await eventually(() => ["input", "orphan", "decision", "interrupt"].every((id) => b.processed.includes(id)));
-    expect(deliveries[1]!.body).toMatchObject({ updates: expect.arrayContaining([
-      { event_id: "input", status: "received" },
-      { event_id: "input", status: "processing" },
-    ]) });
+    expect(deliveries.slice(1).flatMap((delivery) => (delivery.body as { updates: unknown[] }).updates))
+      .toEqual(expect.arrayContaining([
+        { event_id: "input", status: "received" },
+        { event_id: "input", status: "processing" },
+      ]));
     for (const inputId of ["orphan", "decision", "interrupt"])
       expect(b.timeline.filter((entry) => entry.type === "input.delivery" && entry.inputId === inputId)
         .map((entry) => entry.status)).toEqual(["received", "processed"]);
     expect(b.timeline.filter((entry) => entry.type === "input.delivery" && entry.inputId === "input")
       .map((entry) => entry.status)).toEqual(["received", "processing", "processed"]);
-    const completed = b.timeline.findIndex((entry) => entry.type === "private.persist"
-      && entry.payload.subtype === "dsh_brain_state" && entry.payload.data.phase === "completed"
-      && entry.payload.data.outbox.length > 0);
+    const completed = b.timeline.findIndex(entry => entry.type === "private.persist" && entry.payload.data?.type === "turn/end");
     const published = b.timeline.findIndex((entry) => entry.type === "result");
-    const cleared = b.timeline.findIndex((entry) => entry.type === "private.persist"
-      && entry.payload.subtype === "dsh_brain_state" && entry.payload.data.phase === "completed"
-      && entry.payload.data.outbox.length === 0);
     const acknowledged = b.timeline.findIndex((entry) => entry.type === "input.ack" && entry.inputId === "input");
     expect(completed).toBeGreaterThan(-1);
     expect(published).toBeGreaterThan(completed);
-    expect(cleared).toBeGreaterThan(published);
-    expect(acknowledged).toBeGreaterThan(cleared);
+    expect(acknowledged).toBeGreaterThan(published);
   } finally {
     release.resolve(); cancel?.mockRestore(); session.stop();
     await stream; await session.close(); await ctx.fiber.dispose(); b.stop();
   }
 });
 
-test("SSE reconnect services approvals during an active turn and preserves journal barriers", async () => {
+test("SSE reconnect services approvals during an active turn and preserves native durability barriers", async () => {
   const b = new Backend(); await b.ready;
   const ctx = new Context();
   const api = new OmaApi(b.url);
@@ -333,7 +329,7 @@ test("SSE reconnect services approvals during an active turn and preserves journ
       subtype: "success", request_id: approval.request_id,
       response: { behavior: "allow", updatedInput: { command: "approved" } },
     } });
-    await eventually(() => session.state.completed.includes("input") && b.processed.includes("input"));
+    await eventually(() => session.receivedInputIds.has("input") && b.processed.includes("input"));
     expect(b.registrations).toBe(1);
     expect(b.executions).toEqual([{ name: "bash", arguments: { command: "approved" } }]);
     expect(b.processed).toContain("decision");
@@ -341,11 +337,11 @@ test("SSE reconnect services approvals during an active turn and preserves journ
     expect(b.timeline.filter((entry) => entry.type === "input.delivery" && entry.inputId === "decision")
       .map((entry) => entry.status)).toEqual(["received", "processed"]);
     const first = (fn: (entry: any) => boolean) => b.timeline.findIndex(fn);
-    expect(first((e) => e.type === "private.persist" && e.payload.data?.phase === "accepted"))
+    expect(first((e) => e.type === "private.persist" && e.payload.data?.type === "user/message"))
       .toBeLessThan(first((e) => e.type === "input.ack"));
-    expect(first((e) => e.type === "private.persist" && e.payload.data?.phase === "approved"))
+    expect(first((e) => e.type === "private.persist" && e.payload.data?.type === "tool/call"))
       .toBeLessThan(first((e) => e.type === "sandbox.prepare"));
-    expect(first((e) => e.type === "private.persist" && e.payload.data?.phase === "dispatch"))
+    expect(first((e) => e.type === "private.persist" && e.payload.data?.type === "tool/call"))
       .toBeLessThan(first((e) => e.type === "tool.dispatch"));
     // The reconnect may already have redelivered this still-processing input.
     await eventually(() => b.processed.filter((id) => id === "input").length === 2);
@@ -386,14 +382,14 @@ test("queued input waits for the current turn while interrupt bypasses a pending
     const cancel = spyOn(session.agent, "cancel");
     b.deliver("cancel-first", { type: "interrupt" });
     await eventually(() => cancel.mock.calls.length > 0);
-    expect(session.state.inputId).toBe("first");
+    expect(session.inputId).toBe("first");
     expect(b.requests).toHaveLength(0);
     expect(b.processed).not.toContain("second");
     release.resolve();
     await eventually(() => b.processed.includes("first") && b.processed.filter((id) => id === "second").length === 2);
     await Promise.all(receive.mock.results.map((result) => result.value));
-    expect(session.state.completed).toContain("first");
-    expect(session.state.completed).toContain("second");
+    expect(session.receivedInputIds.has("first")).toBe(true);
+    expect(completedInputs(session)).toContain("second");
     expect(b.requests).toHaveLength(1);
     expect(b.timeline.filter((entry) => entry.type === "input.delivery" && entry.status === "processing")
       .map((entry) => entry.inputId)).toEqual(["first", "second"]);
@@ -407,7 +403,7 @@ test("queued input waits for the current turn while interrupt bypasses a pending
   }
 });
 
-test("active input reaches the next model step before the current turn answers", async () => {
+test("active input waits for its own turn and duplicate delivery cannot overtake queued input", async () => {
   const b = new Backend(); await b.ready;
   const ctx = new Context();
   const api = new OmaApi(b.url);
@@ -427,7 +423,7 @@ test("active input reaches the next model step before the current turn answers",
   };
   let started = false;
   let stream: Promise<void> | undefined;
-  b.modelScript = [toolEvents(), textEvents("first answer\nsecond answer")];
+  b.modelScript = [toolEvents(), textEvents("first answer"), textEvents("second answer"), textEvents("third answer")];
   b.onTool = async () => {
     started = true;
     await tool.promise;
@@ -445,24 +441,38 @@ test("active input reaches the next model step before the current turn answers",
     b.deliver("first", { type: "user", content: "first user" });
     await eventually(() => started);
     b.deliver("second", { type: "user", content: "second user" });
-    await eventually(() => waiting);
     b.deliver("second", { type: "user", content: "second user" });
     b.deliver("third", { type: "user", content: "third user" });
-    await eventually(() => session.state.turnInputs?.length === 2);
-    tool.resolve();
-    await eventually(() => session.state.phase === "result");
+    await eventually(() => b.timeline.some((entry) => entry.type === "input.delivery"
+      && entry.inputId === "third" && entry.status === "received"));
+    expect(waiting).toBe(false);
+    expect(session.inputId).toBe("first");
     expect(b.requests).toHaveLength(1);
+    tool.resolve();
+    await eventually(() => waiting);
+    expect(b.processed).toContain("first");
     expect(b.processed).not.toContain("second");
-    processing.resolve();
-    await eventually(() => b.processed.includes("third"));
-    const history = JSON.stringify(b.requests[1]!.messages);
-    expect(history).toContain("second user");
-    expect(history.indexOf("third user")).toBeGreaterThan(history.indexOf("second user"));
-    expect(history.split("second user")).toHaveLength(2);
+    expect(completedInputs(session)).toEqual(["first"]);
     expect(b.requests).toHaveLength(2);
+    const firstHistory = JSON.stringify(b.requests[1]!.messages);
+    expect(firstHistory).not.toContain("second user");
+    expect(firstHistory).not.toContain("third user");
+    processing.resolve();
+    await eventually(() => b.processed.includes("third") && !session.busy);
+    const secondHistory = JSON.stringify(b.requests[2]!.messages);
+    expect(secondHistory).toContain("first answer");
+    expect(secondHistory).toContain("second user");
+    expect(secondHistory).not.toContain("third user");
+    const thirdHistory = JSON.stringify(b.requests[3]!.messages);
+    expect(thirdHistory.indexOf("third user")).toBeGreaterThan(thirdHistory.indexOf("second answer"));
+    expect(thirdHistory.split("second user")).toHaveLength(2);
+    expect(b.requests).toHaveLength(4);
     expect(b.executions).toHaveLength(1);
-    expect(session.state.completed).toEqual(["first", "second", "third"]);
-    expect(b.timeline.filter((e) => e.type === "result")).toHaveLength(1);
+    expect(completedInputs(session)).toEqual(["first", "second", "third"]);
+    expect(b.processed.filter((id) => id === "second")).toHaveLength(2);
+    expect(b.timeline.filter((e) => e.type === "result")).toHaveLength(3);
+    expect(b.timeline.filter((e) => e.type === "input.delivery" && e.status === "processing")
+      .map((e) => e.inputId)).toEqual(["first", "second", "third"]);
   } finally {
     tool.resolve(); processing.resolve(); session.stop(); await stream;
     await session.close(); await ctx.fiber.dispose(); b.stop();

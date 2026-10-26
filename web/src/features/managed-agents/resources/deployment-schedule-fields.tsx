@@ -1,15 +1,8 @@
-import { CalendarDays, Clock3, Hand, Info } from 'lucide-react';
+import { CalendarDays, Clock3, Hand } from 'lucide-react';
 import { useEffect, useId, useMemo, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
-import {
-  Combobox,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-} from '../../../shared/ui/combobox';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
 import { Field, FieldDescription, FieldLabel } from '../../../shared/ui/field';
 import { Input } from '../../../shared/ui/input';
 import { DeploymentTimePicker } from './deployment-time-picker';
@@ -43,21 +36,22 @@ function TimezoneField({ value, onChange }: { value: string; onChange: (value: s
   return (
     <Field className="min-w-0 gap-1.5">
       <FieldLabel htmlFor={id}>{msg('managedAgents.deployments.timezone', 'Timezone')}</FieldLabel>
-      <Combobox items={zones} value={value} onValueChange={(zone) => zone && onChange(zone)}>
-        <ComboboxInput id={id} className="h-9 [&_[data-slot=input-group-addon]]:mr-0" />
-        <ComboboxContent>
-          <ComboboxEmpty>
-            {msg('managedAgents.deployments.schedule.noTimezones', 'No matching timezones.')}
-          </ComboboxEmpty>
-          <ComboboxList>
-            {(zone: string) => (
-              <ComboboxItem key={zone} value={zone}>
-                {zone}
-              </ComboboxItem>
-            )}
-          </ComboboxList>
-        </ComboboxContent>
-      </Combobox>
+      <Select
+        value={value}
+        onValueChange={(zone) => zone && onChange(zone)}
+        emptyLabel={msg('managedAgents.deployments.schedule.noTimezones', 'No matching timezones.')}
+      >
+        <SelectTrigger id={id} className="h-10 w-full min-w-0">
+          <SelectValue>{value}</SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {zones.map((zone) => (
+            <SelectItem key={zone} value={zone}>
+              {zone}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       {offset && <FieldDescription className="text-xs">{offset}</FieldDescription>}
     </Field>
   );
@@ -131,15 +125,12 @@ export function DeploymentScheduleFields({
         </TabsTrigger>
       </TabsList>
       <TabsContent value="manual">
-        <div className="flex gap-3 rounded-lg border border-border bg-muted/40 p-4 text-sm leading-6 text-muted-foreground">
-          <Info className="mt-1 size-4 shrink-0" aria-hidden />
-          <p>
-            {msg(
-              'managedAgents.deployments.schedule.manualHelp',
-              'Start a run whenever you need it using Run now on the deployment.',
-            )}
-          </p>
-        </div>
+        <p className="text-sm leading-6 text-muted-foreground">
+          {msg(
+            'managedAgents.deployments.schedule.manualHelp',
+            'Start a run whenever you need it using Run now on the deployment.',
+          )}
+        </p>
       </TabsContent>
       <TabsContent value="schedule" className="space-y-5">
         <div className="grid items-start gap-4 sm:grid-cols-2">
@@ -216,7 +207,7 @@ export function DeploymentScheduleFields({
             <FieldDescription id={`${id}-cron-help`}>
               {msg(
                 'managedAgents.deployments.schedule.cronHelp',
-                'Minute · hour · day of month · month · day of week (0–7, Sunday = 0 or 7).',
+                'Minute, hour, day of month, month, day of week (0–7, Sunday = 0 or 7).',
               )}
             </FieldDescription>
           </Field>
@@ -239,7 +230,7 @@ export function DeploymentScheduleFields({
             {error}
           </p>
         ) : (
-          <div className="rounded-lg border border-border bg-muted/30 p-4" aria-live="polite">
+          <div className="border-t-[0.5px] border-border pt-4" aria-live="polite">
             <p className="mb-3 text-sm font-medium">
               {msg('managedAgents.deployments.schedule.nextRuns', 'Next 5 runs')}
             </p>

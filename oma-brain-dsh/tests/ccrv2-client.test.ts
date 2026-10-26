@@ -1,3 +1,5 @@
+import { SESSION_FORMAT_VERSION, SessionId, SessionSeq } from "@deepseek-ai/dsh-session";
+import { logData } from "./persistence-fixtures.ts";
 import { expect, test } from "bun:test";
 import { CcrClient, CcrHttpError, type CcrHttpRequest } from "../src/ccrv2/index.ts";
 
@@ -10,6 +12,41 @@ function clientWith(request: (request: CcrHttpRequest) => Promise<Response>) {
     random: () => 0,
   });
 }
+
+test("persistence identifies individual events by session and seq and retains transport agent IDs", async () => {
+  const events: { payload: Record<string, unknown>; agent_id?: string }[] = [];
+  const client = clientWith(async (request) => {
+    const body = request.body as { events: typeof events };
+    events.push(...body.events);
+    return new Response(null, { status: 204 });
+  });
+  await client.persist("s", "dsh_log", {
+    version: SESSION_FORMAT_VERSION, id: SessionId("child"), createdAt: 0, isSeeded: false,
+  }, "child");
+  const event = (seq: number, turn = 1) => ({ type: "turn/start" as const, seq: SessionSeq(seq), time: 0, data: { turn } });
+  await client.persist("s", "dsh_log", event(0));
+  await client.persist("s", "dsh_log", event(0, 2));
+  await client.persist("s", "dsh_log", event(1));
+  await client.persist("s", "dsh_log", event(0), "child");
+  await client.persist("other", "dsh_log", event(0));
+  await client.persist("s", "dsh_log", event(2));
+  await client.persist("s", "dsh_log", event(2, 3));
+  await client.persist("s", "dsh_log", event(3));
+  expect(events.map(({ payload }) => payload.uuid)).toEqual([
+    "dsh_log:s:child:header", "dsh_log:s:s:0", "dsh_log:s:s:0", "dsh_log:s:s:1", "dsh_log:s:child:0", "dsh_log:other:other:0",
+    "dsh_log:s:s:2", "dsh_log:s:s:2", "dsh_log:s:s:3",
+  ]);
+  expect(events[4]!.agent_id).toBe("child");
+  for (const { payload } of events) {
+    expect(payload).not.toHaveProperty("schema_version");
+    expect(payload).not.toHaveProperty("subtype");
+    if (payload.type === "dsh_log") {
+      expect(payload.data).not.toHaveProperty("events");
+      expect(payload.data).not.toHaveProperty("event");
+      expect(payload.data).not.toHaveProperty("sessionId");
+    }
+  }
+});
 
 test("lost persistence confirmation retries the same durable envelope with current credentials", async () => {
   const requests: CcrHttpRequest[] = [];
@@ -27,14 +64,12 @@ test("lost persistence confirmation retries the same durable envelope with curre
       return new Response(null, { status: 204 });
     },
   });
-  await client.persist("session/a", "dsh_brain_state", { revision: 1 });
+  await client.persist("session/a", "dsh_log", logData({ revision: 1 }));
   expect(requests).toHaveLength(3);
   const envelope = {
-    type: "system",
-    uuid: "614f1799a27f00337ff2132dd1d42f9b2d87cd2d1192042469f9798010311bab",
-    subtype: "dsh_brain_state",
-    schema_version: 1,
-    data: { revision: 1 },
+    type: "dsh_log",
+    uuid: "dsh_log:session%2Fa:session%2Fa:0",
+    data: logData({ revision: 1 }),
   };
   for (const [index, request] of requests.entries()) {
     expect(request.path).toBe("/v1/code/sessions/session%2Fa/worker/internal-events");
@@ -57,7 +92,7 @@ test("unbound persistence uses a bounded retry budget and refuses stale epochs i
       return new Response(null, { status });
     });
     try {
-      await client.persist("session/a", "dsh_log", {});
+      await client.persist("session/a", "dsh_log", logData({}));
       throw new Error("Persistence should fail");
     } catch (error) {
       expect(error).toBeInstanceOf(CcrHttpError);
@@ -103,11 +138,27 @@ test("subagent history keeps its scope on every page and writes agent_id outside
   expect(await client.privateEvents("session/a", { subagents: true })).toEqual([{ sequence: 1 }, { sequence: 2 }]);
   expect(requests[0]!.path).toEndWith("/internal-events?subagents=true");
   expect(requests[1]!.path).toEndWith("/internal-events?subagents=true&cursor=501");
-  await client.persist("session/a", "dsh_log", { header: { id: "child" } }, "child");
+  await client.persist("session/a", "dsh_log", logData({}), "child");
   const body = requests[2]!.body as { events: { agent_id: string; payload: Record<string, unknown>; is_compaction: boolean }[] };
   expect(body.events[0]!.agent_id).toBe("child");
   expect(body.events[0]!.payload.agent_id).toBeUndefined();
   expect(body.events[0]!.is_compaction).toBe(false);
+});
+
+test("subagent history filters transport agent_id before returning untouched payloads", async () => {
+  const payload = { type: "dsh_log", data: { seq: 0, type: "turn/start", time: 0, data: { turn: 1 } } };
+  const paths: string[] = [];
+  const client = clientWith(async (request) => {
+    paths.push(request.path);
+    return Response.json(paths.length === 1 ? {
+      data: [{ agent_id: "other", payload: { ...payload, uuid: "other" } }, { agent_id: "child", payload }], next_cursor: "next",
+    } : { data: [{ agent_id: "other", payload }, { agent_id: "child", payload }], next_cursor: null });
+  });
+  expect(await client.privateEvents("parent", { agentId: "child" })).toEqual([payload, payload]);
+  expect(paths).toEqual([
+    "/v1/code/sessions/parent/worker/internal-events?subagents=true",
+    "/v1/code/sessions/parent/worker/internal-events?subagents=true&cursor=next",
+  ]);
 });
 
 test("internal event readers preserve envelopes and retry each page independently", async () => {
@@ -200,12 +251,12 @@ test("publication preserves ephemeral flags and delivery ACK accepts ignored upd
     requests.push(request);
     return Response.json({ ok: true, applied, ignored: 1 - applied });
   });
-  const payloads = ["event_start", "event_delta", "event_stop", "agent.message", "control_request", "user"]
+  const payloads = ["event_start", "event_delta", "agent.message", "control_request", "user"]
     .map((type) => ({ type, uuid: `event-${type}` }));
   await client.events("session/a", payloads);
   expect(requests[0]!.path).toEndWith("/worker/events");
   expect(requests[0]!.body).toEqual({
-    events: payloads.map((payload, i) => ({ payload, ephemeral: i < 3 })),
+    events: payloads.map((payload, i) => ({ payload, ephemeral: i < 2 })),
     session_id: "session/a", worker_epoch: 7,
   });
   await client.acknowledge("session/a", "input");
@@ -246,7 +297,7 @@ test("lease checking distinguishes protocol rejection from transient failure wit
   for (const [status, outcome] of [
     [200, "confirmed"], [204, "confirmed"],
     [401, "unavailable"], [403, "unavailable"], [409, "rejected"], [410, "rejected"],
-    [400, "unavailable"], [404, "unavailable"],
+    [400, "unavailable"], [404, "rejected"],
     [408, "unavailable"], [429, "unavailable"], [503, "unavailable"],
   ] as const) {
     let requests = 0;
@@ -270,7 +321,7 @@ test("successful empty write responses are accepted without retry or false lease
       requests++;
       return new Response(null, { status });
     });
-    await client.persist("session/a", "dsh_log", {});
+    await client.persist("session/a", "dsh_log", logData({}));
     await client.events("session/a", [{ type: "agent.message", uuid: "message" }]);
     await client.setStatus("session/a", "idle");
     expect(await client.checkLease("session/a")).toBe("confirmed");
@@ -328,14 +379,14 @@ test("bound heartbeat cancellation reaches the transport without becoming a leas
 test("heartbeat diagnostics retain the bound epoch and classify HTTP and transport failures", async () => {
   for (const [status, reason] of [
     [400, "request_rejected"], [401, "authentication_rejected"], [403, "authentication_rejected"],
-    [404, "request_rejected"], [408, "timeout"], [409, "epoch_mismatch"], [410, "lease_expired"],
+    [404, "worker_not_registered"], [408, "timeout"], [409, "epoch_mismatch"], [410, "lease_expired"],
     [429, "rate_limited"], [500, "server_error"], [503, "server_error"],
   ] as const) {
     let calls = 0;
     const client = clientWith(async () => { calls++; return new Response(null, { status }); });
     const result = await client.bindLease("session/a")(new AbortController().signal, 5000);
     expect(result).toEqual({
-      status: status === 409 || status === 410 ? "rejected" : "unavailable",
+      status: status === 404 || status === 409 || status === 410 ? "rejected" : "unavailable",
       reason, httpStatus: status, workerEpoch: 7,
     });
     expect(calls).toBe(1);
@@ -465,4 +516,21 @@ test("requires_action reports approval metadata and clears it when execution res
   });
   await expect(client.setStatus("session/a", "requires_action")).rejects.toThrow("details");
   expect(requests).toHaveLength(2);
+});
+
+test("tool confirmation lookup matches durable backend requests rather than transient worker status", async () => {
+  const request = { public_event_id: "tool", request_id: "request", provider_tool_use_id: "call" };
+  for (const [metadata, expected] of [
+    [{}, false],
+    [{ pending_action: request }, false],
+    [{ "managed_agent_tool_permission_request:other": request }, false],
+    [{ "managed_agent_tool_permission_request:tool": { ...request, request_id: "other" } }, false],
+    [{ "managed_agent_tool_permission_request:tool": { request_id: "request" } }, false],
+    [{ "managed_agent_tool_permission_request:tool": null }, false],
+    [{ "managed_agent_tool_permission_request:tool": request }, true],
+    [{ managed_agent_tool_permission_request: request }, true],
+  ] as const) {
+    const client = clientWith(async () => Response.json({ worker: { external_metadata: metadata } }));
+    expect(await client.isToolConfirmationPending("session/a", "request")).toBe(expected);
+  }
 });

@@ -19,6 +19,8 @@ function formValues(overrides: Partial<ManagedEntityFormValues> = {}): ManagedEn
     agentId: 'agent_option123456',
     environmentId: 'env_option123456',
     initialMessage: 'Summarize support tickets.',
+    budgetUsd: '',
+    budgetChanged: false,
     triggerType: 'manual',
     cronExpression: '0 9 * * 1',
     timezone: 'UTC',
@@ -42,14 +44,15 @@ function attach(overrides: Partial<MemoryAttachFormValue> = {}): MemoryAttachFor
 }
 
 describe('memory attach packing', () => {
-  test('rejects instructions above 500 Unicode code points', () => {
-    expect(memoryInstructionsCodePointCount('😀'.repeat(500))).toBe(500);
-    expect(memoryInstructionsCodePointCount('😀'.repeat(501))).toBe(501);
-    expect(areMemoryAttachesValid([attach({ instructions: 'a'.repeat(501) })])).toBe(false);
-    expect(areMemoryAttachesValid([attach({ instructions: '😀'.repeat(501) })])).toBe(false);
+  test('rejects instructions above 4096 Unicode code points', () => {
+    expect(memoryInstructionsCodePointCount('😀'.repeat(4096))).toBe(4096);
+    expect(memoryInstructionsCodePointCount('😀'.repeat(4097))).toBe(4097);
+    expect(areMemoryAttachesValid([attach({ instructions: 'a'.repeat(4097) })])).toBe(false);
+    expect(areMemoryAttachesValid([attach({ instructions: '😀'.repeat(4097) })])).toBe(false);
   });
 
-  test('accepts empty instructions and exactly 500 code points', () => {
+  test('accepts empty instructions and exactly 4096 code points', () => {
+    expect(MAX_MEMORY_ATTACH_INSTRUCTIONS).toBe(4096);
     expect(areMemoryAttachesValid([])).toBe(true);
     expect(areMemoryAttachesValid([attach({ instructions: '' })])).toBe(true);
     expect(areMemoryAttachesValid([attach({ instructions: 'a'.repeat(MAX_MEMORY_ATTACH_INSTRUCTIONS) })])).toBe(true);

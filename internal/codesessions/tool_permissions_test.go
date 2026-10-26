@@ -82,10 +82,10 @@ func TestResolveToolPermissionFromAgentSnapshot(t *testing.T) {
 			want:     resolvedToolPermissionAsk,
 		},
 		{
-			name:     "unknown tool defaults to ask",
+			name:     "unknown tool is denied without asking",
 			snapshot: `{"tools":[]}`,
 			toolName: "MysteryTool",
-			want:     resolvedToolPermissionAsk,
+			want:     resolvedToolPermissionDeny,
 		},
 		{
 			name:     "ask user question without config defaults to deny",
@@ -167,18 +167,32 @@ func TestParseClaudeToolIdentity(t *testing.T) {
 	}
 
 	identity = parseClaudeToolIdentity("WebSearch")
-	if identity.Kind != "unknown" || identity.ToolName != "WebSearch" {
-		t.Fatalf("identity = %+v, want unknown so retired WebSearch stays deny-safe", identity)
+	if identity.Kind != "agent_toolset" || identity.ToolName != "web_search" {
+		t.Fatalf("identity = %+v", identity)
 	}
 
 	for claudeName, configName := range map[string]string{
-		"Task": "task", "Agent": "task", "AskUserQuestion": "ask_user_question", "CronCreate": "cron_create",
-		"EnterPlanMode": "enter_plan_mode", "NotebookEdit": "notebook_edit", "ScheduleWakeup": "schedule_wakeup",
-		"Skill": "skill", "TaskOutput": "task_output", "TaskStop": "task_stop", "TodoWrite": "todo_write",
+		"AskUserQuestion": "ask_user_question",
+		"Bash":            "bash",
+		"Edit":            "edit",
+		"Glob":            "glob",
+		"Grep":            "grep",
+		"Read":            "read",
+		"Write":           "write",
 	} {
 		identity = parseClaudeToolIdentity(claudeName)
 		if identity.Kind != "agent_toolset" || identity.ToolName != configName {
 			t.Fatalf("identity for %s = %+v, want config name %s", claudeName, identity, configName)
+		}
+	}
+
+	for _, claudeName := range []string{
+		"Task", "Agent", "CronCreate", "EnterPlanMode", "EnterWorktree", "ExitPlanMode", "ExitWorktree",
+		"NotebookEdit", "ScheduleWakeup", "Skill", "TaskOutput", "TaskStop", "TodoWrite",
+	} {
+		identity = parseClaudeToolIdentity(claudeName)
+		if identity.Kind != "unknown" || identity.ToolName != claudeName {
+			t.Fatalf("identity for retired tool %s = %+v, want unknown", claudeName, identity)
 		}
 	}
 }

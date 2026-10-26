@@ -10,7 +10,7 @@ import { consoleNavigation } from './navigation';
 const testingLibrary = await import('@testing-library/react');
 const { ConsoleShell, SettingsShell } = await import('./ConsoleLayout');
 
-const { act, cleanup, fireEvent, render, screen, waitFor } = testingLibrary;
+const { act, cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
 
 afterEach(() => {
   cleanup();
@@ -28,8 +28,10 @@ describe('ConsoleShell', () => {
       </ConsoleShell>,
       { locale, effectiveRole: 'workspace_user' },
     );
-    expect(screen.getByText(`${label} · ${workspaceName}`)).toBeTruthy();
-    expect(screen.queryByText(`Member · ${workspaceName}`)).toBeNull();
+    const account = screen.getByRole('button', { name: /test/i });
+    expect(within(account).getByText(label)).toBeTruthy();
+    expect(within(account).getByText(workspaceName)).toBeTruthy();
+    expect(account.textContent).not.toContain('·');
   });
 
   test.each(['/settings/workspaces/default/mcp-tunnels', '/settings/workspaces/default/mcp-tunnels/tunnel_test'])(
@@ -201,7 +203,7 @@ describe('ConsoleShell', () => {
     expect(screen.queryByRole('link', { name: 'Batches' })).toBeNull();
   });
 
-  test('hides LLM model configuration from non-administrators', () => {
+  test('用户可见 LLM 模型导航', () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     renderWithWorkspaces(
       <ConsoleShell currentPath="/dashboard" account={testAccount('user')} onLogout={() => undefined}>
@@ -209,7 +211,7 @@ describe('ConsoleShell', () => {
       </ConsoleShell>,
     );
 
-    expect(screen.queryByRole('link', { name: 'LLM models' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'LLM models' })).toBeTruthy();
   });
 
   test('keeps the workspace selector outside the sidebar scroll area', () => {
@@ -515,7 +517,10 @@ describe('ConsoleShell', () => {
     expect(screen.queryByRole('menuitemradio', { name: /Default API plan/i })).toBeNull();
     expect(screen.getByRole('menuitem', { name: 'Organization settings' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'Profile' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: 'Appearance' })).toBeTruthy();
+    expect(screen.getByRole('menuitemradio', { name: 'System' })).toBeTruthy();
+    expect(screen.getByRole('menuitemradio', { name: 'Light' })).toBeTruthy();
+    expect(screen.getByRole('menuitemradio', { name: 'Dark' })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: 'Appearance' })).toBeNull();
     expect(screen.getByRole('menuitem', { name: 'Language' })).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: 'Feedback' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Get help' })).toBeNull();
@@ -676,7 +681,9 @@ describe('ConsoleShell', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /test/i }));
     });
-    expect(screen.getByText('Member · foo')).toBeTruthy();
+    const account = screen.getByRole('button', { name: /test/i });
+    expect(within(account).getByText('Member')).toBeTruthy();
+    expect(within(account).getByText('foo')).toBeTruthy();
   });
 
   test('shows the role for the active organization instead of the first membership', () => {
@@ -700,7 +707,9 @@ describe('ConsoleShell', () => {
       </ConsoleShell>,
     );
 
-    expect(screen.getByText('Admin · Default')).toBeTruthy();
+    const account = screen.getByRole('button', { name: /test/i });
+    expect(within(account).getByText('Admin')).toBeTruthy();
+    expect(within(account).getByText('Default')).toBeTruthy();
   });
 
   test('uses client navigation when selecting a workspace on managed routes', async () => {

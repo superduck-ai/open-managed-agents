@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package liveworker
 
 import (
@@ -29,6 +31,7 @@ import (
 // seed, restart servers, flush Redis, or purge an entire shared stream.
 type liveEnv struct {
 	url         string
+	cookies     []*http.Cookie
 	database    *db.DB
 	service     *codesessions.Service
 	credentials *codesessions.SessionCredentials
@@ -131,12 +134,12 @@ func newLiveEnv(t *testing.T) *liveEnv {
 	return e
 }
 
-func (e *liveEnv) request(t *testing.T, method, path, token string, body any, want int) []byte {
+func (e *liveEnv) request(t *testing.T, method, path, token string, body any, want int, cookies ...*http.Cookie) []byte {
 	t.Helper()
-	return e.requestContext(t.Context(), t, method, path, token, body, want)
+	return e.requestContext(t.Context(), t, method, path, token, body, want, cookies...)
 }
 
-func (e *liveEnv) requestContext(ctx context.Context, t *testing.T, method, path, token string, body any, want int) []byte {
+func (e *liveEnv) requestContext(ctx context.Context, t *testing.T, method, path, token string, body any, want int, cookies ...*http.Cookie) []byte {
 	t.Helper()
 	encoded, err := json.Marshal(body)
 	requireOK(t, err)
@@ -153,6 +156,12 @@ func (e *liveEnv) requestContext(ctx context.Context, t *testing.T, method, path
 	req.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+		if cookie.Name == "sessionKey" {
+			req.Header.Set("X-CSRF-Token", auth.PlatformCSRFToken(cookie.Value))
+		}
 	}
 	response, err := http.DefaultClient.Do(req)
 	requireOK(t, err)

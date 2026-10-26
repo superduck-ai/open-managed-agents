@@ -31,9 +31,9 @@ export function ChannelRow({
   const { msg } = useI18n();
   const online = channel.connected && channel.enabled;
   return (
-    <Card className="gap-0 overflow-hidden rounded-xl border border-border bg-background p-0 shadow-none ring-0 transition-colors hover:border-foreground/20">
+    <Card className="gap-0 overflow-hidden rounded-xl border-[0.5px] border-border bg-background p-0 shadow-none ring-0 transition-colors hover:border-input">
       <div className="flex items-start gap-2.5 p-4 pb-3">
-        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/40 text-muted-foreground">
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border-[0.5px] border-border bg-muted text-muted-foreground">
           <Bot className="size-4" />
         </div>
         <div className="min-w-0 flex-1 space-y-1.5">
@@ -43,7 +43,7 @@ export function ChannelRow({
           <span
             className={
               online
-                ? 'flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400'
+                ? 'flex items-center gap-1.5 text-xs text-success'
                 : 'flex items-center gap-1.5 text-xs text-muted-foreground'
             }
           >
@@ -90,7 +90,7 @@ export function ChannelRow({
           </dd>
         </div>
       </dl>
-      <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-border bg-muted/20 px-4 py-2.5">
+      <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t-[0.5px] border-border px-4 py-2.5">
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
           <Switch
             aria-label={msg('managedAgents.channels.enableBot', 'Enable {name}', { name: channel.name })}

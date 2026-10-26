@@ -13,6 +13,20 @@
 
 Vault CRUD 和 OAuth 注册已经有了；存库侧已切到信封加密。Managed Agent 的普通 MCP 保留 Agent Snapshot 原始 URL，经 `HTTPS_PROXY` CONNECT；当 `upstream_proxy_mitm_enabled` 开启时，OMA 在 MITM 解密后的 HTTP 边界注入凭证。Session MCP HTTP proxy（`/v2/ccr-sessions/{id}/mcp`）按 #235 作为显式兼容入口保留，Runner 不把普通 MCP 自动改写到该接口；只有 canonical Tunnel 条目会投影到独立的 named Runtime Gateway。
 
+## Credential 创建时的显示名
+
+Credential 的 `display_name` 为可选、可空字符串。省略、显式 null 或空字符串都按无显示名创建，提供字符串时保留现有边界修剪与255字符上限。其他JSON类型仍拒绝。此规则只适用于Credential创建，不改变Vault名称或更新接口的校验。
+
+新增goose迁移将Credential名称数据库约束从1..255调整为0..255，不改写现有数据。回滚会重新验证非空约束；存在无名称Credential时，回滚失败并保留数据，不自动补名或删除。
+
+名称缺省不能阻断Credential key唯一性检查。同Vault中创建重复活动 `mcp_server_url` 或 `secret_name` 时返回409，原凭据及其秘密保持不变。依据官方Create Credential的可选display_name字段及Vault凭据唯一性合同。回归覆盖名称省略/null/空/显式字符串、错误类型/长度、缺省名称的重复创建及原秘密未被覆盖。
+
+## Static Bearer 凭据的结构字段更新
+
+`static_bearer` Credential 的 `mcp_server_url` 在创建后固定。更新请求只要携带该字段，就返回400，不会改写公开URL、数据库 credential_key 或加密秘密；同值、空字符串及null也不能通过字段更新改变结构。需要更换URL时归档原Credential并新建。
+
+只更新 token、显示名或 metadata 的合法路径继续可用。拒绝URL更新时，同请求的名称、metadata 和 token 修改也不能部分落库。回归验证公开字段/时间、数据库key和解密后的原secret均保持，另验证只轮换token仍成功。
+
 ## 威胁模型（加密管到哪）
 
 | 场景 | 加密能否挡住 |
@@ -386,7 +400,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 | MITM | **硬前置（仅 env）**：Session 挂载时若有活跃 env 凭证且 `upstream_proxy_mitm_enabled=false` → 失败（`ErrMITMRequiredForEnvCredentials`）。MCP 凭证不要求 MITM 才能挂载 |
 | Placeholder | 创建时随机持久化（`oma_ph_` 前缀）；轮换 `secret_value` 不改 placeholder；缺 placeholder / injection_location 的旧凭证作废（archive 重建，无惰性补齐） |
 | Egress 替换 | header / body 各对原始文本单次扫描；密钥若等于另一凭证 placeholder，不再二次替换 |
-| Injection Location | API + runtime 支持 header 与 body；省略 → header-only；全关 → 400 |
+| Injection Location | API + runtime 支持 header 与 body；创建省略对象时两处均开启；提供对象时未指定的字段为 false；更新按字段合并；全关 → 400 |
 | Networking | 省略 → 400；limited 至少一 host |
 | 平台保留名 | create 400（大小写不敏感）；`secret_name` 须为 POSIX 标识符（`[A-Za-z_][A-Za-z0-9_]*`），两端空白 trim 后持久化；挂载合并时平台键不被覆盖 |
 | Vault Attachment Order | `vault_ids` 先到先得（同 `secret_name`） |
@@ -431,6 +445,7 @@ sequenceDiagram
 
 | 项 | 决定 |
 |---|---|
+| MCP URL 匹配 | scheme/host 不区分大小写、默认端口归一、去除 path 末尾斜杠；escaped path 与 raw query 精确比较。query 不同或只有一端有 query 时不注入，按无匹配匿名连接。此规则仅用于 MCP 专用 transport；通用 MITM 的 path prefix 与 host-covered fail-closed 规则保持。 MCP 主机名将 Unicode U-label 与对应 punycode A-label 归为同一 IDNA 名字；尾点仍单独匹配，不扩展到其他域名、子域名或同 IP 别名。代理授权 URL 仅规范化主机名表示，原始公开 URL、实际目标、端口、path 与 query 保留。 |
 | token endpoint 错误 | 非 2xx 只上报 HTTP status（`token endpoint status N`），不把 IdP `error` 原文带进 error/日志 |
 | `expires_at` | 缺失 → 直接注入；存在且 `now >= expires_at` → refresh → reseal → 注入（**无** near-expiry skew）。refresh 写回：`expires_in > 0` 才更新；否则仅当旧 `expires_at` 仍未过期时保留，否则置空 |
 | 401 | 上游 401 且为 `mcp_oauth` → refresh 一次再试上游；仍失败 → 跳过该凭证继续 walk。`excluded` / `forceRefresh` 按 **plan 凭证 ExternalID**（`planCredID`）记账，不依赖 refresh CAS 返回行是否带齐字段 |
@@ -554,3 +569,56 @@ sequenceDiagram
 - 续期失败、超时和持有者被替换时，持约 context 必须取消；旧持有者释放不能删除替换后的租约。Lua 测试验证 token 校验、TTL 延长与过期租约不可恢复。
 - `TestWorkloadCredentialConcurrentRefresh` 使用本地模拟 ECS metadata 服务验证共享角色凭据在并发获取时只刷新一次。使用 `go test -race ./internal/vaults ./internal/secrets/aliyunkms -count=1` 检查数据竞争。
 - 单测不代表真实 Redis 故障切换、阿里云工作负载身份或云 KMS 验收。进程暂停或网络分区跨越租约 TTL 时，已发送给 IdP 的请求仍不能撤回；沿用换票失败与凭据重新授权的恢复边界。
+
+
+## Vault metadata input contract, 2026-10-17
+
+Vault creation keeps `metadata` as raw JSON at the HTTP boundary to distinguish omission from explicit null. Omission and an empty object normalize to `{}`. Whole null, non-object input and non-string values, including null values, return an invalid-request error before resource IDs or database writes. Valid string maps still use the existing 16/64/512 validation.
+
+Vault updates preserve all existing metadata when metadata is omitted, `{}`, or whole null. Whole-null preservation is the user-approved OMA contract oma_metadata_types_v1 from VAULT-API-011; the current official schema explicitly accepts whole null but does not define its clear-versus-preserve semantics. Per-key null deletion and string upsert continue through the existing patch logic. This Vault-specific wrapper does not change Credential whole-null reset behavior. Failed numeric updates never reach persistence.
+
+Regression: `TestVaultCreateInvalidMetadataRejectedBeforePersistence`, `TestVaultMetadataNoOpPatchPreservesSeedWithoutChangingCredentialReset`, and `TestVaultCreateMetadataOmissionAndStringObjectRemainValid`. The external fresh-source VAULT-API-011 case verifies the complete eight-request matrix, no orphan after rejected create, unchanged public state after rejected update, real cleanup and secret audit. Public source/contract record: oma-verify/docs/vault-api-011-oma-contract.md.
+
+
+## Vault list cursor workspace anchor, 2026-10-17
+
+Vault list cursors remain opaque created_at/UUID positions. ListPage now requires the cursor anchor UUID and timestamp to match a real Vault in the requesting workspace, in the same SQL snapshot as the page selection. A cursor from another workspace or an unknown/mismatched anchor returns an empty terminal page, never a local unfiltered or nonempty page. Workspace isolation still filters every returned row independently. A deleted anchor also produces an empty terminal page; this introduces no TTL and makes no expiry claim. The anchor need not pass the current archived filter, so changing include_archived does not itself erase an existing position.
+
+This implements the user-approved VAULT-API-015 OMA contract: invalid/foreign cursor rejection or strict empty terminal result, without fallback or cross-workspace data. The SQL uses bound UUID/timestamp parameters through the existing Yourbatis VaultMapper; no schema or token-format change. Credential cursor semantics are outside this fix.
+
+Regression: TestVaultCursorCannotSelectAnotherWorkspacePosition uses real PostgreSQL and two authenticated workspaces, obtains actual cursors, checks foreign-cursor empty terminal pages in both directions and normal same-workspace continuation. It failed before the change. TestVaultMapperBuilders checks workspace/UUID/timestamp anchor bindings and the no-cursor/include-archived branch. Existing TestVaultsAPI retains normal pagination coverage. Fresh external015 must pass after the coordinated HTTP restart; local tests alone do not count as platform pass.
+
+
+## MCP URL 的 userinfo 边界
+
+MCP Credential 的 `mcp_server_url` 同时作为公开 `auth` 和匹配键，不能承载用户名/密码形式的 URL userinfo。`static_bearer` 与 `mcp_oauth` 创建在组装公开配置及秘密信封之前拒绝任何 userinfo，返回不包含输入 URL 的字段校验错误，避免 URL 密码被创建响应回显或写入非秘密配置。此检查只用于 MCP Server URL；普通 HTTP/HTTPS、端口、query、fragment 的既有校验保持。
+
+回归覆盖两类凭据的密码、仅用户名、仅密码和空密码 userinfo 拒绝，拒绝无公开/秘密状态且错误不回显输入；合法 HTTP/HTTPS/query/fragment/IPv6 URL保持匹配键原值和token只写。CRED015公开API复测另保留URL策略待确认结果，不将有限观察计兼容通过。
+
+
+### CRED018 refresh 创建校验
+
+管理 API 创建 OAuth refresh 配置时，必须显式提供 token_endpoint_auth 对象。缺失或 null 返回字段校验错误，不再自动补成 none；无客户端认证必须显式写 type=none。Basic/Post 分支的 client_secret 校验保持。此限制只在创建归一化入口执行，共享更新归一化及既有凭据的运行时刷新不变。依据官方 SDK 的 BetaManagedAgentsMCPOAuthRefreshParams 创建结构，回归见 credential_refresh_required_test.go。
+
+
+### CRED019 凭据名称 null 更新合同
+
+2026-10-18 用户确认：更新凭据的 display_name 为 null 时接受请求并保持原名称。patchDisplayName 将省略与显式 null 都映射为当前名称；非空字符串更新及空串/超长/非字符串拒绝保持。此规则只用于凭据名称更新，不改变创建或其他字段的 null 语义。回归覆盖非空旧名称，真实用例同时检查更新响应与后续 GET。
+
+### MCP 鉴权失败后恢复
+
+外部 MCP 首次发现被 401/403 拒绝时，仅影响该服务器；仍保留健康 MCP 与文本交互。发现失败状态必须包含鉴权失败，在下一次受管输入刷新工具上下文时，即使公开 MCP URL、server 名称和代理 header 未变，也重新发现。这允许 Vault 中的凭据轮换在原 Session 下一轮生效，不把空发现结果永久缓存。正常成功发现且配置未变时仍复用缓存，不增加无条件后台重试。实际请求使用当前代理凭据，秘密不进入模型工具配置。
+
+### OAuth access-only 鉴权错误分类
+
+OAuth access token 已过期，或远端401后需要刷新，而凭据没有 refresh token 时，不伪造 token endpoint 请求。注入器保留缺少刷新材料的原因，并标记需要重新授权；MCP 代理对该明确鉴权状态返回401，使 Brain 发布具名鉴权错误并保留交互。普通注入内部故障仍返回502，网络错误不归为鉴权错误。有效且未过期的 access-only 凭据继续直接使用，无刷新和持久化变更。
+
+运行时刷新遇到 token endpoint 永久 4xx 拒绝时归类为需要重新鉴权，通过 MCP 代理返回鉴权错误；408、429 与 5xx 仍按临时或上游故障处理。此分类不伪造远端 MCP 请求或响应，也不修改拒绝后的凭据。
+
+OAuth token endpoint 对成功响应先完整解析 JSON。显式 token_type 仅接受不区分大小写的 Bearer，不支持类型或错误 JSON 类型均拒绝，不能写入凭据或继续注入。字段省略保留现有 Bearer 缺省兼容行为，并与显式 null/空字符串区分。本规则用于共享授权码与刷新解析边界，非成功 HTTP 状态仍按原状态分类，不输出上游 token 或原始错误正文。
+
+expires_in 在 token endpoint 解析边界检查可表示的正秒数范围，超过 time.Duration 最大整秒数或整数字符串溢出时拒绝整次刷新，不能截断、回绕或写入凭据。正常正值保持精确秒数运算；零、负值、非数字字符串沿用现有缺省兼容处理。拒绝不带回上游 token 或原始正文。
+
+失败诊断的脱敏不依赖完整业务 schema。独立流式读取 token 响应的 access_token/refresh_token 字符串，包含重复字段的各次值，再按已有编码变体脱敏。JSON 结构损坏或后接额外 JSON 值时省略正文，不回显部分解析内容；HTTP 状态、内容类型及正文省略标记保留。此处理不将非法响应改成成功。
+
+Archived MCP OAuth credentials are rejected by diagnostics before opening the secret envelope or making downstream requests. The API returns the existing invalid-argument credential-archived error, including after archival purges the envelope.

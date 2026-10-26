@@ -18,6 +18,7 @@ import (
 )
 
 const maxSessionBodySize = 4 << 20
+const maxSessionCreateBodySize = 32 << 20
 
 type Handler struct {
 	secretService   *secrets.Service
@@ -36,7 +37,7 @@ type Handler struct {
 }
 
 type sandboxReclaimer interface {
-	EnqueueArchivedSession(context.Context, db.Session) error
+	EnqueueRemovedSession(context.Context, db.Session) error
 }
 
 type webhookEnqueuer interface {
@@ -52,6 +53,7 @@ type sessionResponse struct {
 	ID                 string            `json:"id"`
 	Agent              json.RawMessage   `json:"agent"`
 	ArchivedAt         *string           `json:"archived_at"`
+	Budget             json.RawMessage   `json:"budget"`
 	CreatedAt          string            `json:"created_at"`
 	DeploymentID       *string           `json:"deployment_id,omitempty"`
 	EnvironmentID      string            `json:"environment_id"`
@@ -79,6 +81,7 @@ type threadResponse struct {
 	Type           string          `json:"type"`
 	UpdatedAt      string          `json:"updated_at"`
 	Usage          json.RawMessage `json:"usage"`
+	WorkflowRunID  *string         `json:"workflow_run_id"`
 }
 
 type deleteResponse struct {
@@ -90,8 +93,14 @@ type sendEventsResponse struct {
 	Data []json.RawMessage `json:"data,omitempty"`
 }
 
+type sessionCreateRequest struct {
+	sessionMutationRequest
+	InitialEvents json.RawMessage `json:"initial_events"`
+}
+
 type sessionMutationRequest struct {
 	Agent         json.RawMessage `json:"agent"`
+	Budget        json.RawMessage `json:"budget"`
 	EnvironmentID json.RawMessage `json:"environment_id"`
 	Metadata      json.RawMessage `json:"metadata"`
 	Resources     json.RawMessage `json:"resources"`

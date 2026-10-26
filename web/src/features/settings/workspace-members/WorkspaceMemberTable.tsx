@@ -1,5 +1,6 @@
 import { ArrowUpDown, MoreVertical, Trash2 } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
+import { cn } from '../../../shared/lib/utils';
 import { Button } from '../../../shared/ui/button';
 import {
   dataTableClassName,
@@ -36,38 +37,49 @@ export function WorkspaceMemberTable({
   onRemove: (member: WorkspaceMember) => void;
 }) {
   const { msg } = useI18n();
+  const showRows = !loading && members.length > 0;
   const columnLabels = {
     name: msg('members.table.name', 'Name'),
     email: msg('members.email', 'Email'),
     workspace_role: msg('members.role', 'Role'),
   } as const;
   return (
-    <Table className={dataTableClassName} aria-label={msg('members.table.workspaceMembers', 'Workspace members')}>
+    <Table
+      className={cn(dataTableClassName, showRows ? 'min-w-[760px]' : 'min-w-full')}
+      aria-label={msg('members.table.workspaceMembers', 'Workspace members')}
+    >
       <colgroup>
         <col className="w-[30%]" />
         <col className="w-[32%]" />
         <col className="w-[26%]" />
         <col className="w-[12%]" />
       </colgroup>
-      <TableHeader>
-        <TableRow className={dataTableHeaderRowClassName}>
-          {(['name', 'email', 'workspace_role'] as const).map((field) => (
-            <TableHead key={field} className={dataTableHeaderCellClassName}>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setSort({ field, descending: sort.field === field && !sort.descending })}
+      {showRows ? (
+        <TableHeader>
+          <TableRow className={dataTableHeaderRowClassName}>
+            {(['name', 'email', 'workspace_role'] as const).map((field) => (
+              <TableHead
+                key={field}
+                className={dataTableHeaderCellClassName}
+                aria-sort={sort.field === field ? (sort.descending ? 'descending' : 'ascending') : 'none'}
               >
-                {columnLabels[field]}
-                <ArrowUpDown className="size-3" aria-hidden />
-              </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="-ml-2.5"
+                  onClick={() => setSort({ field, descending: sort.field === field && !sort.descending })}
+                >
+                  {columnLabels[field]}
+                  <ArrowUpDown className="size-3" aria-hidden />
+                </Button>
+              </TableHead>
+            ))}
+            <TableHead className={dataTableHeaderCellClassName}>
+              <span className="sr-only">{msg('members.table.actions', 'Actions')}</span>
             </TableHead>
-          ))}
-          <TableHead className={dataTableHeaderCellClassName}>
-            <span className="sr-only">{msg('members.table.actions', 'Actions')}</span>
-          </TableHead>
-        </TableRow>
-      </TableHeader>
+          </TableRow>
+        </TableHeader>
+      ) : null}
       <TableBody>
         {loading ? (
           <TableRow>
@@ -89,6 +101,7 @@ export function WorkspaceMemberTable({
               {member.can_edit ? (
                 <MemberRoleSelect
                   value={member.workspace_role}
+                  className="w-full"
                   disabled={pending}
                   label={msg('members.roleFor', `Role for ${member.name || member.email}`, {
                     name: member.name || member.email,
@@ -113,6 +126,7 @@ export function WorkspaceMemberTable({
                       <Button
                         size="icon"
                         variant="ghost"
+                        disabled={pending}
                         aria-label={msg('members.moreActionsFor', `More actions for ${member.name || member.email}`, {
                           name: member.name || member.email,
                         })}

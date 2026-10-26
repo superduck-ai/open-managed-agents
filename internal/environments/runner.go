@@ -32,6 +32,7 @@ var (
 	errRcloneProcessStart      = errors.New("rclone-filestore process start failed")
 	errRcloneReadiness         = errors.New("rclone-filestore readiness check failed")
 	errMemoryRootCreate        = errors.New("local memory mount root create failed")
+	errMemoryRootProtect       = errors.New("memory mount root protection failed")
 	errMemoryMarkdownWrite     = errors.New("memory markdown write failed")
 	errEnvironmentManagerStart = errors.New("environment manager process start failed")
 )
@@ -39,6 +40,7 @@ var (
 // CodeSessionRuntime exposes the managed-agent Code Session operations needed
 // by Runner without coupling it to the concrete service implementation.
 type CodeSessionRuntime interface {
+	SandboxIngressToken(context.Context, db.Session, string, string) (string, error)
 	CreateManagedAgentCodeSession(context.Context, codesessions.ManagedAgentCreateInput) (codesessions.ManagedAgentCreateResult, error)
 	RecoverManagedAgentCodeSession(context.Context, codesessions.ManagedAgentRecoverInput) (codesessions.ManagedAgentCreateResult, error)
 	TerminateManagedAgentCodeSession(context.Context, db.Session, string) error
@@ -83,6 +85,7 @@ type Runner struct {
 type managedAgentLaunchPreparation struct {
 	Session               db.Session
 	SessionConfig         json.RawMessage
+	RuntimeSources        []json.RawMessage
 	WorkDir               string
 	Title                 string
 	RecoveryCodeSessionID string
@@ -201,17 +204,17 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		return false, err
 	}
 
-	// 领取成功后先把 Work 从 queued 推进到 starting，并清除短期 claim。
-	// 从这里开始，即使后续步骤失败，processed 也返回 true，表示本轮消费过一条 Work。
-	if _, err := r.db.AckEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID); err != nil {
-		return true, err
-	}
-
-	// 加载 Work 所属的 Environment，并生成本服务对外使用的 envsbx_ ID。
-	// 此时实际的 E2B Sandbox 尚未创建；失败只需停止 Work，不存在远端资源需要清理。
 	env, err := r.db.GetEnvironmentByUUID(ctx, work.WorkspaceUUID, work.EnvironmentUUID)
 	if err != nil {
-		r.failWorkBeforeSandbox(ctx, *work)
+		return true, err
+	}
+	if selfHostedEnvironment(env) {
+		if r.cfg.EnvironmentRunner.AgentMode != "brain" {
+			return true, errWorkerDispatchUnavailable
+		}
+		return true, r.startExternalWorker(ctx, env, work)
+	}
+	if _, err := r.db.AckEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID); err != nil {
 		return true, err
 	}
 	if r.cfg.EnvironmentRunner.AgentMode == "brain" && cloudEnvironment(env) {
@@ -353,12 +356,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 
 	// Cloud Session 还需创建 Code Session，并在 Sandbox 内启动 Environment Manager。
 	if preparation != nil {
-		var launch managedAgentRuntimeLaunch
-		if existingLaunch != nil {
-			launch = *existingLaunch
-		} else {
-			launch, err = r.createManagedAgentRuntimeLaunch(ctx, env, *work, *preparation)
-		}
+		launch, err := r.prepareSandboxRuntimeLaunch(ctx, env, *work, *preparation, existingLaunch, record.UUID)
 		if err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, fmt.Errorf("create managed-agent runtime launch: %w", err)
@@ -396,7 +394,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 
 func (r *Runner) markSandboxRunningAfterFilesystem(ctx context.Context, record db.EnvironmentSandbox, providerSandboxID string, managed bool) error {
 	if managed && r.cfg.EnvironmentRunner.AgentMode == "brain" {
-		return nil
+		return r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceUUID, record.ExternalID, "creating", &providerSandboxID, nil, nil)
 	}
 	return r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceUUID, record.ExternalID, "running", &providerSandboxID, nil, nil)
 }
@@ -582,7 +580,7 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if r == nil || work == nil {
 		return nil, nil
 	}
-	if !cloudEnvironment(env) {
+	if !cloudEnvironment(env) && !selfHostedEnvironment(env) {
 		return nil, nil
 	}
 	session, found, err := r.db.GetSessionByUUID(ctx, work.WorkspaceUUID, work.SessionUUID)
@@ -632,7 +630,7 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
 		runtimeResources.workerTransport = "claim"
 	}
-	sessionConfig, err := managedAgentSessionConfig(session, runtimeResources, runtimeSkills)
+	sessionConfig, err := managedAgentSessionConfig(session, runtimeResources, runtimeSkills, r.cfg.Env)
 	if err != nil {
 		return nil, err
 	}
@@ -648,6 +646,7 @@ func (r *Runner) prepareManagedAgentLaunch(
 	return &managedAgentLaunchPreparation{
 		Session:               session,
 		SessionConfig:         sessionConfig,
+		RuntimeSources:        runtimeResources.sources,
 		WorkDir:               workDir,
 		Title:                 title,
 		RecoveryCodeSessionID: recoveryCodeSessionID,
@@ -670,6 +669,31 @@ func (r *Runner) prepareEnvCredentialPlaceholders(ctx context.Context, session d
 		return nil, err
 	}
 	return placeholders, nil
+}
+
+func (r *Runner) prepareSandboxRuntimeLaunch(ctx context.Context, env db.Environment, work db.EnvironmentWork, preparation managedAgentLaunchPreparation, existing *managedAgentRuntimeLaunch, sandboxUUID string) (managedAgentRuntimeLaunch, error) {
+	var launch managedAgentRuntimeLaunch
+	if existing == nil {
+		created, err := r.createManagedAgentRuntimeLaunch(ctx, env, work, preparation)
+		if err != nil {
+			return managedAgentRuntimeLaunch{}, err
+		}
+		launch = created
+	} else {
+		launch = *existing
+	}
+	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
+		token, err := r.codeSessions.SandboxIngressToken(ctx, preparation.Session, launch.CodeSessionID, sandboxUUID)
+		if err != nil {
+			return managedAgentRuntimeLaunch{}, err
+		}
+		manager, err := brainSandboxManagerCommand(launch.CodeSessionID, preparation.WorkDir, r.cfg, preparation.EnvPlaceholders, token, preparation.RuntimeSources)
+		if err != nil {
+			return managedAgentRuntimeLaunch{}, err
+		}
+		launch.Manager = manager
+	}
+	return launch, nil
 }
 
 func (r *Runner) createManagedAgentRuntimeLaunch(
@@ -702,7 +726,7 @@ func (r *Runner) createManagedAgentRuntimeLaunch(
 		return managedAgentRuntimeLaunch{}, err
 	}
 	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
-		manager, err := brainSandboxManagerCommand(local.CodeSessionID, preparation.WorkDir, r.cfg)
+		manager, err := brainSandboxManagerCommand(local.CodeSessionID, preparation.WorkDir, r.cfg, preparation.EnvPlaceholders, local.SessionIngressToken, preparation.RuntimeSources)
 		if err != nil {
 			return managedAgentRuntimeLaunch{}, err
 		}
@@ -778,6 +802,9 @@ func (r *Runner) startManagedAgentSessionFilesystem(ctx context.Context, sandbox
 			return r.logManagedAgentRuntimeStageFailure(ctx, "memory_root_mkdir", errMemoryRootCreate, err)
 		}
 	}
+	if err := r.runSandboxCommand(ctx, sandboxID, sessionOutputsAliasCommand(rcloneOutputsDestination, sessionOutputsPath), rcloneCommandGraceTimeout); err != nil {
+		return r.logManagedAgentRuntimeStageFailure(ctx, "outputs_alias", errOutputsAliasCreate, err)
+	}
 	if err := r.startRcloneFilestore(ctx, sandboxID, launch); err != nil {
 		return err
 	}
@@ -786,6 +813,9 @@ func (r *Runner) startManagedAgentSessionFilesystem(ctx context.Context, sandbox
 	}
 	if err := r.provider.WriteFile(ctx, sandboxID, memoryMarkdownSandboxPath, []byte(renderMemoryMarkdown(launch.MemoryMounts))); err != nil {
 		return r.logManagedAgentRuntimeStageFailure(ctx, "memory_markdown_write", errMemoryMarkdownWrite, err)
+	}
+	if err := r.runSandboxCommand(ctx, sandboxID, memoryRootReadonlyCommand(), rcloneCommandGraceTimeout); err != nil {
+		return r.logManagedAgentRuntimeStageFailure(ctx, "memory_root_protect", errMemoryRootProtect, err)
 	}
 	return nil
 }
@@ -1033,4 +1063,11 @@ func patchJSONMetadata(raw json.RawMessage, patch map[string]any) (json.RawMessa
 		metadata[key] = value
 	}
 	return json.Marshal(metadata)
+}
+
+func selfHostedEnvironment(env db.Environment) bool {
+	var configuration struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(env.Config, &configuration) == nil && configuration.Type == "self_hosted"
 }

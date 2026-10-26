@@ -23,6 +23,7 @@ func managedAgentSessionConfig(
 	session db.Session,
 	runtimeResources managedAgentRuntimeResources,
 	runtimeSkills []skillsapi.RuntimeSkill,
+	deploymentEnvironment string,
 ) (json.RawMessage, error) {
 	agentSnapshot := rawJSONObject(session.AgentSnapshot)
 	var mcpSource struct {
@@ -40,7 +41,7 @@ func managedAgentSessionConfig(
 	if err != nil {
 		return nil, err
 	}
-	environmentPrompt, err := managedAgentEnvironmentPrompt(runtimeResources.environmentConfig)
+	environmentPrompt, err := managedAgentEnvironmentPrompt(runtimeResources.environmentConfig, deploymentEnvironment)
 	if err != nil {
 		return nil, err
 	}

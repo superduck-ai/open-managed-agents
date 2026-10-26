@@ -10,8 +10,6 @@ import {
   ComboboxClear,
   ComboboxContent,
   ComboboxEmpty,
-  ComboboxGroup,
-  ComboboxGroupLabel,
   ComboboxInput,
   ComboboxItem,
   ComboboxList,
@@ -19,14 +17,7 @@ import {
   ComboboxValue,
 } from '../../../shared/ui/combobox';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '../../../shared/ui/input-group';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '../../../shared/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../../../shared/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -221,7 +212,7 @@ export function SessionInspector({
         className="min-h-0 min-w-0 flex-1 gap-0"
         onValueChange={(value) => onActiveTabChange(value as SessionInspectorTab)}
       >
-        <div className="flex h-8 flex-none items-center border-b border-border/60 pr-1">
+        <div className="flex h-8 flex-none items-center border-b-[0.5px] border-border/60 pr-1">
           <TabsList
             ref={tabsListRef}
             aria-label={msg('managedAgents.sessions.inspector.label', 'Session inspector')}
@@ -234,7 +225,7 @@ export function SessionInspector({
                 value={tab}
                 nativeButton={false}
                 render={<a href={sessionInspectorTabHref(tab)} />}
-                className="h-7 flex-none rounded-md px-2.5 text-[12px] font-medium text-muted-foreground after:hidden hover:bg-muted/40 hover:text-foreground focus-visible:border-transparent focus-visible:bg-muted/70 focus-visible:ring-0 focus-visible:outline-none data-active:bg-muted/70 data-active:text-foreground data-active:shadow-none group-data-[variant=default]/tabs-list:data-active:shadow-none dark:data-active:border-transparent dark:data-active:bg-muted/70"
+                className="h-7 flex-none rounded-md px-2.5 text-[12px] font-medium text-muted-foreground after:hidden hover:bg-muted/40 hover:text-foreground focus-visible:border-transparent focus-visible:bg-muted/70 focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-foreground focus-visible:outline-none data-active:bg-muted/70 data-active:text-foreground data-active:shadow-none group-data-[variant=default]/tabs-list:data-active:shadow-none dark:data-active:border-transparent dark:data-active:bg-muted/70"
                 onClick={(event) => {
                   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
                     event.preventBaseUIHandler();
@@ -328,7 +319,7 @@ export function SessionInspector({
           />
         </TabsContent>
         <TabsContent value="traces" className="mt-0 min-h-0 min-w-0 overflow-hidden">
-          <ScrollArea>
+          <ScrollArea className="[&_[data-slot=scroll-area-content]]:!w-full [&_[data-slot=scroll-area-content]]:!min-w-0 [&_[data-slot=scroll-area-content]]:!max-w-full">
             <SessionTraceObservability sessionId={session.id} compact />
           </ScrollArea>
         </TabsContent>
@@ -422,10 +413,19 @@ function SessionOverviewPanel({
         '—'
       ),
     ],
-    [msg('managedAgents.sessions.fields.deployment', 'Deployment'), session.deployment_id || '—'],
+    [
+      msg('managedAgents.sessions.fields.deployment', 'Deployment'),
+      session.deployment_id ? (
+        <span className="line-clamp-2 font-mono" title={session.deployment_id}>
+          {session.deployment_id}
+        </span>
+      ) : (
+        '—'
+      ),
+    ],
   ];
   return (
-    <div className="px-5 py-4 text-[13px] leading-5">
+    <div className="px-5 py-4 text-sm leading-5">
       <h2 className="mb-4 text-sm font-semibold">{msg('managedAgents.sessions.inspector.session', 'Session')}</h2>
       <InspectorFacts rows={rows} />
       <Separator className="mt-5 bg-border/60" />
@@ -529,7 +529,10 @@ function SessionCostChart({
       points={points.map((point) => ({
         at: point.at,
         eventId: point.eventId,
-        title: `${formatCost(point.cents)} · ${msg('managedAgents.sessions.inspector.thisStep', 'This step')} ${formatCost(point.stepCents)}`,
+        title: msg('managedAgents.sessions.inspector.costPointSummary', '{total}, this step {step}', {
+          total: formatCost(point.cents),
+          step: formatCost(point.stepCents),
+        }),
         value: point.cents,
       }))}
       selectedEventId={selectedEventId}
@@ -591,7 +594,21 @@ function InspectorStepChart({
   xTicks: number[];
   yTicks: number[];
 }) {
-  const width = 440;
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [width, setWidth] = useState(440);
+  useEffect(() => {
+    const node = svgRef.current;
+    if (!node || typeof ResizeObserver === 'undefined') return;
+    const updateWidth = () => {
+      const measuredWidth = node.getBoundingClientRect().width;
+      if (measuredWidth > 0) setWidth(measuredWidth);
+    };
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const visibleXTicks = width < 360 && xTicks.length > 2 ? [xTicks[0], xTicks[xTicks.length - 1]] : xTicks;
   const chartRight = width - chartRightInset;
   const chartBottom = height - chartBottomInset;
   const pathPoints = baselineAt === undefined ? points : [{ at: baselineAt, value: 0 }, ...points];
@@ -606,11 +623,11 @@ function InspectorStepChart({
   const areaPath = `${path} L ${x(maxTime)} ${chartBottom} L ${x(minTime)} ${chartBottom} Z`;
   const activeEventId = points.some((point) => point.eventId === hoveredEventId) ? hoveredEventId : selectedEventId;
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className={className} role="img" aria-label={ariaLabel}>
+    <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} className={className} role="img" aria-label={ariaLabel}>
       {yTicks.map((value) => (
         <g key={value}>
-          <line x1={chartLeft} x2={chartRight} y1={y(value)} y2={y(value)} stroke="var(--border)" />
-          <text x={chartLeft - 7} y={y(value) + 4} textAnchor="end" fill="var(--muted-foreground)" fontSize="10">
+          <line x1={chartLeft} x2={chartRight} y1={y(value)} y2={y(value)} stroke="var(--border)" strokeWidth="0.5" />
+          <text x={chartLeft - 7} y={y(value) + 4} textAnchor="end" fill="var(--muted-foreground)" fontSize="12">
             {formatY(value)}
           </text>
         </g>
@@ -658,21 +675,21 @@ function InspectorStepChart({
               stroke="var(--card)"
               strokeWidth="1.5"
               className={cn(
-                'pointer-events-none opacity-0 transition-opacity group-hover/chart-point:opacity-100 group-focus/chart-point:opacity-100',
-                active && 'opacity-100',
+                'pointer-events-none opacity-0 transition-opacity duration-150 ease-out motion-reduce:transition-none group-hover/chart-point:opacity-100 group-focus/chart-point:opacity-100',
+                (active || points.length === 1) && 'opacity-100',
               )}
             />
           </g>
         );
       })}
-      {xTicks.map((at, index) => (
+      {visibleXTicks.map((at, index) => (
         <text
           key={`${at}:${index}`}
           x={x(at)}
           y={height - 8}
-          textAnchor={index === 0 ? 'start' : index === xTicks.length - 1 ? 'end' : 'middle'}
+          textAnchor={index === 0 ? 'start' : index === visibleXTicks.length - 1 ? 'end' : 'middle'}
           fill="var(--muted-foreground)"
-          fontSize="10"
+          fontSize="12"
           fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
         >
           {formatX(at)}
@@ -702,7 +719,7 @@ function SessionUsageFacts({ usage }: { usage: InspectorSessionUsage }) {
     usage.activeSeconds === undefined ? '—' : formatSessionDuration(usage.activeSeconds * 1000, formatters, msg),
   ]);
   return (
-    <div className="border-t border-border/60 pt-3">
+    <div className="border-t-[0.5px] border-border/60 pt-3">
       <div className="mb-2 flex items-center justify-between gap-3 text-xs font-medium">
         <span>{msg('analytics.usage.title', 'Usage')}</span>
         <span className="text-muted-foreground">
@@ -771,14 +788,18 @@ function InspectorEventsPanel({
             ref={eventRowsRef}
             className="w-full max-w-full overflow-hidden px-3 pb-1 font-mono text-[12px] leading-[17px]"
           >
-            <div
-              data-testid="session-inspector-events-header"
-              className="sticky top-0 z-10 flex h-6 items-center gap-1.5 border-b border-border/60 bg-card px-1 font-sans font-medium text-muted-foreground"
-            >
-              <span className="min-w-48 flex-none">{msg('managedAgents.sessions.inspector.event', 'Event')}</span>
-              <span className="min-w-0 flex-1">{msg('managedAgents.sessions.inspector.preview', 'Preview')}</span>
-              <span className="w-16 flex-none text-right">{msg('managedAgents.sessions.inspector.time', 'Time')}</span>
-            </div>
+            {visibleRows.length ? (
+              <div
+                data-testid="session-inspector-events-header"
+                className="sticky top-0 z-10 flex h-6 items-center gap-1.5 border-b-[0.5px] border-border/60 bg-card px-1 font-sans font-medium text-muted-foreground"
+              >
+                <span className="min-w-48 flex-none">{msg('managedAgents.sessions.inspector.event', 'Event')}</span>
+                <span className="min-w-0 flex-1">{msg('managedAgents.sessions.inspector.preview', 'Preview')}</span>
+                <span className="w-16 flex-none text-right">
+                  {msg('managedAgents.sessions.inspector.time', 'Time')}
+                </span>
+              </div>
+            ) : null}
             <div role="listbox" aria-label={msg('managedAgents.sessions.detail.eventsTab', 'Events')} className="pt-1">
               {visibleItems.map((item) => {
                 const renderRow = (row: (typeof visibleRows)[number]) => {
@@ -797,7 +818,7 @@ function InspectorEventsPanel({
                       data-backed={backed || undefined}
                       data-hovered={hovered || undefined}
                       className={cn(
-                        'session-inspector-event-row flex h-6 w-full min-w-0 items-center gap-1.5 rounded-sm px-1 text-left outline-none transition-colors hover:bg-accent/50 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset',
+                        'session-inspector-event-row flex h-6 w-full min-w-0 items-center gap-1.5 rounded-sm px-1 text-left outline-none transition-colors duration-150 ease-out motion-reduce:transition-none hover:bg-accent/50 focus-visible:ring-[0.5px] focus-visible:ring-foreground focus-visible:ring-inset',
                         selected && 'bg-accent text-accent-foreground',
                         !selected && hovered && 'bg-accent/50',
                         backed && 'font-semibold text-foreground',
@@ -819,17 +840,19 @@ function InspectorEventsPanel({
                         targetRow?.scrollIntoView?.({ block: 'nearest' });
                       }}
                     >
-                      <span className="min-w-48 flex-none truncate">
+                      <span className="min-w-48 flex-none truncate" title={row.type}>
                         <span className={inspectorEventFamilyTone(inspectorEventFamily(row.type))}>
                           {inspectorEventFamily(row.type)}
                         </span>
                         <span>{inspectorEventSuffix(row.type)}</span>
                       </span>
-                      <span className="min-w-0 flex-1 truncate text-muted-foreground">{row.preview}</span>
+                      <span className="min-w-0 flex-1 truncate text-muted-foreground" title={row.preview}>
+                        {row.preview}
+                      </span>
                       <span className="w-16 flex-none text-right tabular-nums text-muted-foreground">
                         {row.processedAtMs
                           ? formatters.time(row.processedAtMs, { hour12: false, second: '2-digit' })
-                          : 'queued'}
+                          : msg('managedAgents.sessions.state.queued', 'Queued')}
                       </span>
                     </button>
                   );
@@ -932,6 +955,7 @@ function InspectorEventsFilter({
   wireTypes: string[];
 }) {
   const { msg } = useI18n();
+  const transcriptLabel = msg('managedAgents.sessions.inspector.transcriptEvents', 'Transcript events');
   const selectedCount = selectedTypes.length + Number(transcriptOnly);
   const selectedValues = transcriptOnly ? [TRANSCRIPT_FILTER_VALUE, ...selectedTypes] : selectedTypes;
   const items = [TRANSCRIPT_FILTER_VALUE, ...wireTypes];
@@ -940,7 +964,7 @@ function InspectorEventsFilter({
       ? msg('managedAgents.sessions.trace.allEvents', 'All events')
       : selectedCount === 1
         ? transcriptOnly
-          ? msg('managedAgents.sessions.inspector.transcriptEvents', 'Transcript events')
+          ? transcriptLabel
           : selectedTypes[0]
         : msg('managedAgents.common.selectedCount', '{count} selected', { count: selectedCount });
 
@@ -948,6 +972,7 @@ function InspectorEventsFilter({
     <Combobox
       multiple
       items={items}
+      itemToStringLabel={(value) => (value === TRANSCRIPT_FILTER_VALUE ? transcriptLabel : value)}
       value={selectedValues}
       onValueChange={(values) => {
         onTranscriptOnlyChange(values.includes(TRANSCRIPT_FILTER_VALUE));
@@ -977,22 +1002,20 @@ function InspectorEventsFilter({
             className="h-7 shadow-none"
           />
         </div>
-        <ComboboxList className="max-h-64 border-t border-border/60">
-          <ComboboxEmpty>
-            {msg('managedAgents.sessions.inspector.noMatchingEventTypes', 'No matching event types.')}
-          </ComboboxEmpty>
-          <ComboboxItem value={TRANSCRIPT_FILTER_VALUE}>
-            {msg('managedAgents.sessions.inspector.transcriptEvents', 'Transcript events')}
-          </ComboboxItem>
-          <ComboboxGroup className="border-t border-border/60">
-            <ComboboxGroupLabel>{msg('managedAgents.sessions.inspector.eventTypes', 'Event types')}</ComboboxGroupLabel>
-            {wireTypes.map((type) => (
-              <ComboboxItem key={type} value={type}>
-                <span className="truncate font-mono text-[12px]">{type}</span>
-              </ComboboxItem>
-            ))}
-          </ComboboxGroup>
+        <ComboboxList className="max-h-64 border-t-[0.5px] border-border/60 empty:p-0">
+          {(type: string) => (
+            <ComboboxItem key={type} value={type}>
+              {type === TRANSCRIPT_FILTER_VALUE ? (
+                transcriptLabel
+              ) : (
+                <span className="truncate font-mono text-xs">{type}</span>
+              )}
+            </ComboboxItem>
+          )}
         </ComboboxList>
+        <ComboboxEmpty>
+          {msg('managedAgents.sessions.inspector.noMatchingEventTypes', 'No matching event types.')}
+        </ComboboxEmpty>
         <ComboboxClear
           render={
             <Button
@@ -1084,7 +1107,7 @@ function InspectorToolsPanel({
             aria-label={msg('managedAgents.sessions.inspector.filterTools', 'Filter tools')}
             placeholder={msg('managedAgents.sessions.inspector.filterTools', 'Filter tools')}
             value={query}
-            className="text-xs"
+            className="text-base md:text-xs"
             onChange={(event) => setQuery(event.target.value)}
           />
         </InputGroup>
@@ -1120,77 +1143,83 @@ function InspectorToolsPanel({
           </Select>
         ) : null}
       </div>
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="px-4 pb-1 [&_[data-slot=table-container]]:overflow-visible">
-          <Table className="table-fixed text-[11px]">
-            <TableHeader className="sticky top-0 z-10 bg-card">
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="h-6 min-w-24 px-1.5">{msg('common.name', 'Name')}</TableHead>
-                <TableHead className="h-6 w-[88px] px-1.5">
-                  {msg('managedAgents.sessions.inspector.permission', 'Permission')}
-                </TableHead>
-                <TableHead className="h-6 w-14 px-1.5 text-right">
-                  {msg('managedAgents.sessions.inspector.calls', 'Calls')}
-                </TableHead>
-                <TableHead className="h-6 w-[72px] px-1.5 text-right">
-                  {msg('managedAgents.sessions.inspector.failed', 'Failed')}
-                </TableHead>
-                <TableHead className="h-6 w-16 px-1.5 text-right">p50</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {visibleRows.map((row, index) => (
-                <Fragment key={row.key}>
-                  {visibleRows[index - 1]?.group !== row.group ? (
-                    <TableRow className="border-b-0 hover:bg-transparent" data-tool-group={row.kind}>
+      <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-content]]:!w-full [&_[data-slot=scroll-area-content]]:!min-w-0">
+        <div className="px-4 pb-1">
+          {visibleRows.length ? (
+            <Table className="table-fixed text-xs has-[tbody>tr]:min-w-[464px]">
+              <TableHeader className="sticky top-0 z-10 bg-card">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="h-6 min-w-24 px-1.5">{msg('common.name', 'Name')}</TableHead>
+                  <TableHead className="h-6 w-[88px] px-1.5">
+                    {msg('managedAgents.sessions.inspector.permission', 'Permission')}
+                  </TableHead>
+                  <TableHead className="h-6 w-14 px-1.5 text-right">
+                    {msg('managedAgents.sessions.inspector.calls', 'Calls')}
+                  </TableHead>
+                  <TableHead className="h-6 w-[72px] px-1.5 text-right">
+                    {msg('managedAgents.sessions.inspector.failed', 'Failed')}
+                  </TableHead>
+                  <TableHead className="h-6 w-28 px-1.5 text-right">p50</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {visibleRows.map((row, index) => (
+                  <Fragment key={row.key}>
+                    {visibleRows[index - 1]?.group !== row.group ? (
+                      <TableRow className="border-b-0 hover:bg-transparent" data-tool-group={row.kind}>
+                        <TableCell
+                          colSpan={5}
+                          className="h-7 px-1.5 pb-0 pt-2 text-xs font-medium text-muted-foreground"
+                        >
+                          {groupLabel(row)}
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                    <TableRow
+                      tabIndex={0}
+                      data-state={row.key === selectedKey ? 'selected' : undefined}
+                      className={cn(
+                        'cursor-pointer outline-none focus-visible:shadow-[inset_0_0_0_0.5px_var(--foreground)]',
+                        !row.calls.length && 'text-muted-foreground',
+                      )}
+                      onClick={() => setSelectedKey(row.key)}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') return;
+                        event.preventDefault();
+                        setSelectedKey(row.key);
+                      }}
+                    >
+                      <TableCell className="h-6 min-w-0 truncate px-1.5 py-0 font-mono" title={row.name}>
+                        {row.name}
+                      </TableCell>
+                      <TableCell className="h-6 min-w-0 truncate px-1.5 py-0">
+                        <ToolPermission permission={row.permission} />
+                      </TableCell>
+                      <TableCell className="h-6 min-w-0 truncate px-1.5 py-0 text-right font-mono tabular-nums">
+                        {row.calls.length}
+                      </TableCell>
                       <TableCell
-                        colSpan={5}
-                        className="h-7 px-1.5 pb-0 pt-2 text-[10px] font-medium text-muted-foreground"
+                        className={cn(
+                          'h-6 min-w-0 truncate px-1.5 py-0 text-right font-mono tabular-nums',
+                          row.failed > 0 ? 'text-destructive' : row.calls.length > 0 ? 'text-muted-foreground' : '',
+                        )}
                       >
-                        {groupLabel(row)}
+                        {row.calls.length ? row.failed : '—'}
+                      </TableCell>
+                      <TableCell className="h-6 min-w-0 whitespace-normal px-1.5 py-0 text-right font-mono tabular-nums">
+                        {row.p50Ms === undefined ? '—' : formatSessionDuration(row.p50Ms, formatters, msg)}
                       </TableCell>
                     </TableRow>
-                  ) : null}
-                  <TableRow
-                    tabIndex={0}
-                    data-state={row.key === selectedKey ? 'selected' : undefined}
-                    className={cn(
-                      'cursor-pointer outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--ring)]',
-                      !row.calls.length && 'text-muted-foreground',
-                    )}
-                    onClick={() => setSelectedKey(row.key)}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Enter' && event.key !== ' ') return;
-                      event.preventDefault();
-                      setSelectedKey(row.key);
-                    }}
-                  >
-                    <TableCell className="h-6 min-w-0 truncate px-1.5 py-0 font-mono">{row.name}</TableCell>
-                    <TableCell className="h-6 min-w-0 truncate px-1.5 py-0">
-                      <ToolPermission permission={row.permission} />
-                    </TableCell>
-                    <TableCell className="h-6 min-w-0 truncate px-1.5 py-0 text-right font-mono tabular-nums">
-                      {row.calls.length}
-                    </TableCell>
-                    <TableCell
-                      className={cn(
-                        'h-6 min-w-0 truncate px-1.5 py-0 text-right font-mono tabular-nums',
-                        row.failed > 0 ? 'text-destructive' : row.calls.length > 0 ? 'text-muted-foreground' : '',
-                      )}
-                    >
-                      {row.calls.length ? row.failed : '—'}
-                    </TableCell>
-                    <TableCell className="h-6 min-w-0 truncate px-1.5 py-0 text-right font-mono tabular-nums">
-                      {row.p50Ms === undefined ? '—' : formatSessionDuration(row.p50Ms, formatters, msg)}
-                    </TableCell>
-                  </TableRow>
-                </Fragment>
-              ))}
-            </TableBody>
-          </Table>
+                  </Fragment>
+                ))}
+              </TableBody>
+            </Table>
+          ) : null}
           {!visibleRows.length ? (
             <p className="px-3 py-9 text-center text-xs text-muted-foreground">
-              {msg('managedAgents.sessions.inspector.noMatchingTools', 'No matching tools.')}
+              {rows.length
+                ? msg('managedAgents.sessions.inspector.noMatchingTools', 'No matching tools.')
+                : msg('managedAgents.sessions.inspector.noTools', 'No tools')}
             </p>
           ) : null}
         </div>
@@ -1241,9 +1270,13 @@ function InspectorToolsOverview({ totals }: { totals: ReturnType<typeof buildIns
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-card">
       <InspectorDetailHeading
         name={msg('managedAgents.sessions.inspector.overview', 'Overview')}
-        summary={`${totals.tools} tools · ${totals.used} used · ${totals.calls} calls`}
+        summary={msg(
+          'managedAgents.sessions.inspector.toolUsageSummary',
+          '{tools} tools, {used} used, {calls} calls',
+          totals,
+        )}
       />
-      <ScrollArea>
+      <ScrollArea className="[&_[data-slot=scroll-area-content]]:!w-full [&_[data-slot=scroll-area-content]]:!min-w-0">
         <div className="px-4 py-3 text-sm">
           <div className="flex items-center gap-4">
             <ToolOutcomeRing totals={totals} />
@@ -1261,14 +1294,14 @@ function InspectorToolsOverview({ totals }: { totals: ReturnType<typeof buildIns
                   : noneLabel}
               </dd>
               <dt className="flex items-center gap-1.5 text-muted-foreground">
-                <span className="inline-block size-2 rounded-full bg-chart-4" aria-hidden />
+                <span className="inline-block size-2 rounded-full bg-warning" aria-hidden />
                 {msg('managedAgents.sessions.inspector.denied', 'Denied')}
               </dt>
               <dd className="font-mono tabular-nums">
                 {totals.denied > 0 ? formatters.number(totals.denied) : noneLabel}
               </dd>
               <dt className="flex items-center gap-1.5 text-muted-foreground">
-                <span className="inline-block size-2 rounded-full bg-chart-2" aria-hidden />
+                <span className="inline-block size-2 rounded-full bg-success" aria-hidden />
                 {msg('managedAgents.sessions.inspector.completed', 'Completed')}
               </dt>
               <dd className="font-mono tabular-nums">{formatters.number(totals.completed)}</dd>
@@ -1284,7 +1317,10 @@ function InspectorToolsOverview({ totals }: { totals: ReturnType<typeof buildIns
               {totals.inFlight > 0 ? (
                 <>
                   <dt className="flex items-center gap-1.5 text-muted-foreground">
-                    <span className="inline-block size-2 rounded-full border border-foreground/30" aria-hidden />
+                    <span
+                      className="inline-block size-2 rounded-full border-[0.5px] border-foreground/30"
+                      aria-hidden
+                    />
                     {msg('managedAgents.sessions.inspector.inFlight', 'In flight')}
                   </dt>
                   <dd className="font-mono tabular-nums">{formatters.number(totals.inFlight)}</dd>
@@ -1295,13 +1331,15 @@ function InspectorToolsOverview({ totals }: { totals: ReturnType<typeof buildIns
           <Separator className="mt-5" />
           <dl className="grid grid-cols-[1fr_auto] gap-y-2 pt-4">
             <dt className="text-muted-foreground">
-              {msg('managedAgents.sessions.inspector.timeInTools', 'Time in tools · Total')}
+              {msg('managedAgents.sessions.inspector.timeInTools', 'Total time in tools')}
             </dt>
             <dd className="font-mono tabular-nums">{formatSessionDuration(totals.timeInToolsMs, formatters, msg)}</dd>
-            <dt className="text-muted-foreground">{msg('managedAgents.sessions.inspector.executing', 'Executing')}</dt>
+            <dt className="text-muted-foreground">
+              {msg('managedAgents.sessions.inspector.executing', 'Execution time')}
+            </dt>
             <dd className="font-mono tabular-nums">{formatSessionDuration(totals.executingMs, formatters, msg)}</dd>
             <dt className="text-muted-foreground">
-              {msg('managedAgents.sessions.inspector.waiting', 'Waiting on you')}
+              {msg('managedAgents.sessions.inspector.waiting', 'Waiting for approval')}
             </dt>
             <dd className="font-mono tabular-nums">{formatSessionDuration(totals.waitingMs, formatters, msg)}</dd>
           </dl>
@@ -1349,7 +1387,7 @@ function InspectorToolDetail({
           </Button>
         }
       />
-      <ScrollArea>
+      <ScrollArea className="[&_[data-slot=scroll-area-content]]:!w-full [&_[data-slot=scroll-area-content]]:!min-w-0">
         <div className="px-4 py-3 text-sm">
           <InspectorFacts
             rows={[
@@ -1363,8 +1401,13 @@ function InspectorToolDetail({
                 row.kind !== 'unconfigured'
                   ? msg('managedAgents.sessions.inspector.configuredOn', 'Configured on')
                   : msg('managedAgents.sessions.inspector.source', 'Source'),
-                row.configuredOn ||
-                  msg('managedAgents.sessions.inspector.calledNotConfigured', 'Called, not configured'),
+                row.configuredOn ? (
+                  <span className="line-clamp-2" title={row.configuredOn}>
+                    {row.configuredOn}
+                  </span>
+                ) : (
+                  msg('managedAgents.sessions.inspector.calledNotConfigured', 'Called, not configured')
+                ),
               ],
               ['p50', row.p50Ms === undefined ? '—' : formatSessionDuration(row.p50Ms, formatters, msg)],
             ]}
@@ -1372,8 +1415,8 @@ function InspectorToolDetail({
           <Separator className="my-3" />
           <Table
             className={cn(
-              'table-fixed text-[11px]',
-              showWaited && showThread ? 'min-w-[600px]' : showWaited || showThread ? 'min-w-[510px]' : 'min-w-[420px]',
+              'table-fixed text-xs',
+              showWaited && showThread ? 'min-w-[732px]' : showWaited || showThread ? 'min-w-[642px]' : 'min-w-[520px]',
             )}
           >
             <TableHeader>
@@ -1382,12 +1425,12 @@ function InspectorToolDetail({
                   {msg('managedAgents.sessions.inspector.time', 'Time')}
                 </TableHead>
                 <TableHead className="h-6 px-1.5">{msg('managedAgents.sessions.inspector.input', 'Input')}</TableHead>
-                <TableHead className="h-6 w-20 px-1.5">{msg('common.status', 'Status')}</TableHead>
-                <TableHead className="h-6 w-[76px] px-1.5 text-right">
+                <TableHead className="h-6 w-36 px-1.5">{msg('common.status', 'Status')}</TableHead>
+                <TableHead className="h-6 w-28 px-1.5 text-right">
                   {msg('managedAgents.sessions.inspector.duration', 'Duration')}
                 </TableHead>
                 {showWaited ? (
-                  <TableHead className="h-6 w-20 px-1.5 text-right">
+                  <TableHead className="h-6 w-28 px-1.5 text-right">
                     {msg('managedAgents.sessions.inspector.waited', 'Waited')}
                   </TableHead>
                 ) : null}
@@ -1415,7 +1458,7 @@ function InspectorToolDetail({
                     tabIndex={0}
                     data-state={selected ? 'selected' : undefined}
                     className={cn(
-                      'cursor-pointer outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--ring)]',
+                      'cursor-pointer outline-none focus-visible:shadow-[inset_0_0_0_0.5px_var(--foreground)]',
                       hovered && !selected && 'bg-muted/50',
                     )}
                     onClick={() => onSelectEntry(call.rawEventId)}
@@ -1434,11 +1477,11 @@ function InspectorToolDetail({
                     <TableCell className="h-6 truncate px-1.5 py-0 capitalize">
                       <SessionExecutionStateBadge state={call.lifecycle} tool />
                     </TableCell>
-                    <TableCell className="h-6 truncate px-1.5 py-0 text-right font-mono tabular-nums">
+                    <TableCell className="h-6 whitespace-normal px-1.5 py-0 text-right font-mono tabular-nums">
                       {call.executionMs !== undefined ? formatSessionDuration(call.executionMs, formatters, msg) : '—'}
                     </TableCell>
                     {showWaited ? (
-                      <TableCell className="h-6 truncate px-1.5 py-0 text-right font-mono tabular-nums">
+                      <TableCell className="h-6 whitespace-normal px-1.5 py-0 text-right font-mono tabular-nums">
                         {waitedMs === undefined ? '—' : formatSessionDuration(waitedMs, formatters, msg)}
                       </TableCell>
                     ) : null}
@@ -1470,9 +1513,11 @@ function InspectorDetailHeading({
   summary?: ReactNode;
 }) {
   return (
-    <div className="flex h-8 flex-none items-center gap-1 border-b border-border/60 px-3 text-xs">
+    <div className="flex h-8 flex-none items-center gap-1 border-b-[0.5px] border-border/60 px-3 text-xs">
       {lead ? <span className="text-muted-foreground">{lead}</span> : null}
-      <strong className="min-w-0 flex-1 truncate font-medium">{name}</strong>
+      <strong className="min-w-0 flex-1 truncate font-medium" title={typeof name === 'string' ? name : undefined}>
+        {name}
+      </strong>
       {summary ? <span className="truncate text-muted-foreground">{summary}</span> : null}
       {action}
     </div>
@@ -1497,6 +1542,11 @@ function InspectorResourcesPanel({
   const [draftResources, setDraftResources] = useState<SessionFileResourceFormValue[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const resourceTriggerRef = useRef<HTMLButtonElement>(null);
+  const saveErrorRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (saveError) saveErrorRef.current?.focus();
+  }, [saveError]);
   const canSave = draftResources.length === 1 && areSessionFileResourcesValid(draftResources);
   const resources = session.resources.filter((resource) => {
     const file = resource.file_id ? filenamesByFileId[resource.file_id] : undefined;
@@ -1504,6 +1554,7 @@ function InspectorResourcesPanel({
       `${resource.mount_path ?? ''} ${resource.url ?? ''} ${file?.name ?? ''} ${resource.file_id ?? ''} ${resource.name ?? ''} ${resource.memory_store_id ?? ''}`.toLowerCase();
     return value.includes(query.trim().toLowerCase());
   });
+  const tableResources = resources.filter((resource) => resource.type !== 'github_repository');
   return (
     <div className="px-4 pb-3 pt-2 [&_[data-slot=table-container]]:overflow-visible">
       <div className="mb-2 flex items-center justify-between gap-3">
@@ -1516,12 +1567,13 @@ function InspectorResourcesPanel({
             aria-label={msg('managedAgents.sessions.inspector.filterResources', 'Filter resources')}
             placeholder={msg('managedAgents.sessions.inspector.filterResources', 'Filter resources')}
             value={query}
-            className="text-xs"
+            className="text-base md:text-xs"
             onChange={(event) => setQuery(event.target.value)}
           />
         </InputGroup>
         <DropdownMenu>
           <DropdownMenuTrigger
+            ref={resourceTriggerRef}
             render={
               <Button type="button" variant="outline" size="sm">
                 <Plus aria-hidden />
@@ -1550,20 +1602,19 @@ function InspectorResourcesPanel({
         workspaceId={workspaceId}
         archived={Boolean(session.archived_at)}
       />
-      <Table className="table-fixed text-xs">
-        <TableHeader className="sticky top-0 z-10 bg-card">
-          <TableRow className="hover:bg-transparent">
-            <TableHead className="h-6 px-1.5">{msg('managedAgents.sessions.inspector.path', 'Path')}</TableHead>
-            <TableHead className="h-6 w-24 px-1.5 text-right">
-              {msg('managedAgents.sessions.inspector.size', 'Size')}
-            </TableHead>
-            <TableHead className="h-6 w-8 px-1.5" aria-label={msg('common.actions', 'Actions')} />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {resources
-            .filter((resource) => resource.type !== 'github_repository')
-            .map((resource, index) => {
+      {tableResources.length ? (
+        <Table className="table-fixed text-xs">
+          <TableHeader className="sticky top-0 z-10 bg-card">
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="h-6 px-1.5">{msg('managedAgents.sessions.inspector.path', 'Path')}</TableHead>
+              <TableHead className="h-6 w-24 px-1.5 text-right">
+                {msg('managedAgents.sessions.inspector.size', 'Size')}
+              </TableHead>
+              <TableHead className="h-6 w-8 px-1.5" aria-label={msg('common.actions', 'Actions')} />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {tableResources.map((resource, index) => {
               if (resource.type === 'memory_store') {
                 const name = typeof resource.name === 'string' && resource.name ? resource.name : '—';
                 const storeId =
@@ -1610,20 +1661,33 @@ function InspectorResourcesPanel({
                 </TableRow>
               );
             })}
-        </TableBody>
-      </Table>
+          </TableBody>
+        </Table>
+      ) : null}
       {!resources.length ? (
         <p className="px-3 py-9 text-center text-xs text-muted-foreground">
-          {msg('managedAgents.sessions.nested.noResources', 'No resources mounted')}
+          {query.trim() && session.resources.length
+            ? msg('managedAgents.sessions.inspector.noMatchingResources', 'No matching resources')
+            : msg('managedAgents.sessions.nested.noResources', 'No resources mounted')}
         </p>
       ) : null}
-      <Dialog open={dialogOpen} onOpenChange={(open) => !open && !saving && setDialogOpen(false)}>
-        <DialogContent className="flex max-h-[min(720px,calc(100dvh-2rem))] flex-col sm:max-w-lg">
-          <DialogHeader>
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(open, details) => {
+          if (!open && saving) {
+            details.cancel();
+            return;
+          }
+          setDialogOpen(open);
+        }}
+      >
+        <DialogContent
+          finalFocus={resourceTriggerRef}
+          closeButtonDisabled={saving}
+          className="flex max-h-[min(720px,calc(100dvh-2rem))] flex-col overflow-hidden sm:max-w-lg"
+        >
+          <DialogHeader className="shrink-0">
             <DialogTitle>{msg('managedAgents.sessions.resources.add', 'Add resource')}</DialogTitle>
-            <DialogDescription>
-              {msg('managedAgents.sessions.resources.description', 'Mount files into the session uploads directory.')}
-            </DialogDescription>
           </DialogHeader>
           <form
             className="flex min-h-0 flex-col gap-4"
@@ -1638,16 +1702,29 @@ function InspectorResourcesPanel({
                 .finally(() => setSaving(false));
             }}
           >
-            <div className="min-h-0 overflow-y-auto px-px">
-              <SessionFileResourcesField
-                resources={draftResources}
-                showAddButton={false}
-                workspaceId={workspaceId}
-                onChange={setDraftResources}
-              />
+            <div className="subtle-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto px-px">
+              <fieldset disabled={saving} className="min-w-0">
+                <SessionFileResourcesField
+                  resources={draftResources}
+                  showHeading={false}
+                  variant="plain"
+                  showAddButton={false}
+                  workspaceId={workspaceId}
+                  onChange={setDraftResources}
+                />
+              </fieldset>
+              {saveError ? (
+                <p
+                  ref={saveErrorRef}
+                  role="alert"
+                  tabIndex={-1}
+                  className="text-sm text-destructive outline-none [overflow-wrap:anywhere]"
+                >
+                  {saveError}
+                </p>
+              ) : null}
             </div>
-            {saveError ? <p className="text-sm text-destructive">{saveError}</p> : null}
-            <DialogFooter>
+            <DialogFooter className="shrink-0">
               <Button type="button" variant="outline" disabled={saving} onClick={() => setDialogOpen(false)}>
                 {msg('common.cancel', 'Cancel')}
               </Button>
@@ -1687,11 +1764,11 @@ function InspectorThreadsPanel({
   const threadList = (
     <ScrollArea>
       <div className="px-4 pb-1 pt-1 text-sm [&_[data-slot=table-container]]:overflow-visible">
-        <Table className="table-fixed text-[11px]">
+        <Table className="table-fixed text-xs">
           <TableHeader className="sticky top-0 z-10 bg-card">
             <TableRow className="hover:bg-transparent">
               <TableHead className="h-6 px-1.5">{msg('managedAgents.sessions.inspector.thread', 'Thread')}</TableHead>
-              <TableHead className="h-6 w-24 px-1.5">{msg('common.status', 'Status')}</TableHead>
+              <TableHead className="h-6 w-28 px-1.5">{msg('common.status', 'Status')}</TableHead>
               <TableHead className="h-6 w-[72px] px-1.5 text-right">
                 {msg('managedAgents.sessions.inspector.context', 'Context')}
               </TableHead>
@@ -1703,7 +1780,7 @@ function InspectorThreadsPanel({
                 key={row.id}
                 data-state={row.id === selected?.id ? 'selected' : undefined}
                 tabIndex={0}
-                className="cursor-pointer outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--ring)]"
+                className="cursor-pointer outline-none focus-visible:shadow-[inset_0_0_0_0.5px_var(--foreground)]"
                 onClick={() => onSelectLane(row.id)}
                 onKeyDown={(event) => {
                   if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -1711,7 +1788,9 @@ function InspectorThreadsPanel({
                   onSelectLane(row.id);
                 }}
               >
-                <TableCell className="h-6 min-w-0 truncate px-1.5 py-0 font-medium text-primary">{row.label}</TableCell>
+                <TableCell className="h-6 min-w-0 truncate px-1.5 py-0 font-medium text-primary" title={row.label}>
+                  {row.label}
+                </TableCell>
                 <TableCell className="h-6 min-w-0 truncate px-1.5 py-0">
                   <SessionStateBadge status={row.status} />
                 </TableCell>
@@ -1739,19 +1818,19 @@ function InspectorThreadsPanel({
             lead={msg('managedAgents.sessions.inspector.thread', 'Thread')}
             name={selected.label}
           />
-          <ScrollArea>
+          <ScrollArea className="[&_[data-slot=scroll-area-content]]:!w-full [&_[data-slot=scroll-area-content]]:!min-w-0 [&_[data-slot=scroll-area-content]]:!max-w-full">
             <div className="px-4 py-3 text-sm">
               <InspectorFacts
                 rows={[
                   [
                     msg('managedAgents.sessions.detail.agentTab', 'Agent'),
                     selectedAgentId ? (
-                      <span className="inline-flex flex-wrap items-baseline gap-x-1.5">
+                      <span className="inline-flex max-w-full min-w-0 items-baseline gap-x-1.5">
                         <InspectorEntityLink href={agentDetailHref(workspaceId, selectedAgentId)}>
                           {selectedAgent?.name || selectedAgentId}
                         </InspectorEntityLink>
                         {selectedAgent?.version ? (
-                          <span className="text-muted-foreground">v{selectedAgent.version}</span>
+                          <span className="shrink-0 text-muted-foreground">v{selectedAgent.version}</span>
                         ) : null}
                       </span>
                     ) : (
@@ -1760,7 +1839,13 @@ function InspectorThreadsPanel({
                   ],
                   [
                     msg('analytics.table.model', 'Model'),
-                    selectedAgent ? <span className="font-mono">{inspectorAgentModel(selectedAgent)}</span> : '—',
+                    selectedAgent ? (
+                      <span className="line-clamp-2 font-mono" title={inspectorAgentModel(selectedAgent)}>
+                        {inspectorAgentModel(selectedAgent)}
+                      </span>
+                    ) : (
+                      '—'
+                    ),
                   ],
                   [
                     msg('managedAgents.sessions.inspector.effort', 'Effort'),
@@ -1795,7 +1880,7 @@ function InspectorFacts({ rows }: { rows: Array<[string, React.ReactNode]> }) {
       {rows.map(([label, value]) => (
         <div key={label} className="contents">
           <dt className="text-muted-foreground">{label}</dt>
-          <dd className="min-w-0 break-words">{value ?? '—'}</dd>
+          <dd className="min-w-0 [overflow-wrap:anywhere]">{value ?? '—'}</dd>
         </div>
       ))}
     </dl>
@@ -1932,12 +2017,15 @@ function ContextUsageChart({
       points={points.map((point) => ({
         at: point.at,
         eventId: point.eventId,
-        title: `${formatters.time(point.at, {
-          hour: '2-digit',
-          hour12: false,
-          minute: '2-digit',
-          second: '2-digit',
-        })} · ${formatCompactTokenCount(point.tokens, formatters)}`,
+        title: msg('managedAgents.sessions.inspector.contextPointSummary', '{time}, {tokens} tokens', {
+          time: formatters.time(point.at, {
+            hour: '2-digit',
+            hour12: false,
+            minute: '2-digit',
+            second: '2-digit',
+          }),
+          tokens: formatCompactTokenCount(point.tokens, formatters),
+        }),
         value: point.tokens,
       }))}
       xTicks={xTicks}
@@ -2016,7 +2104,8 @@ function InspectorEntityLink({ children, href }: { children: React.ReactNode; hr
   return (
     <a
       href={href}
-      className="inline-block max-w-full truncate rounded-[2px] align-bottom font-medium text-session-link underline decoration-current/45 underline-offset-4 transition-[color,text-decoration-color] hover:decoration-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      title={typeof children === 'string' ? children : undefined}
+      className="inline-block max-w-full min-w-0 truncate rounded-[2px] align-bottom font-medium text-session-link underline decoration-current/45 underline-offset-4 transition-[color,text-decoration-color] duration-150 ease-out motion-reduce:transition-none hover:decoration-current focus-visible:outline-none focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-foreground"
       onClick={(event) => handleInternalLinkClick(event, href)}
     >
       {children}

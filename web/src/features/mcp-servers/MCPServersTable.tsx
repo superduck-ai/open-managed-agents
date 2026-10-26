@@ -19,6 +19,7 @@ import { useI18n } from '../../shared/i18n';
 
 type MCPServersTableProps = {
   servers: WorkspaceMCPServer[];
+  hasSearch: boolean;
   selectedServerId: string | null;
   isLoading: boolean;
   isFetching: boolean;
@@ -32,31 +33,36 @@ type MCPServersTableProps = {
 
 export function MCPServersTable(props: MCPServersTableProps) {
   const { msg } = useI18n();
+  const showColumns = !props.isLoading && !props.error && props.servers.length > 0;
   return (
     <section aria-label={msg('mcpServers.listAria', 'MCP servers list')} className="min-w-0 overflow-x-auto">
-      <Table className={cn(dataTableClassName, 'min-w-[840px]')}>
-        <colgroup>
-          <col className="w-[20%]" />
-          <col className="w-[22%]" />
-          <col className="w-[36%]" />
-          <col className="w-[18%]" />
-          <col className="w-[4%]" />
-        </colgroup>
-        <TableHeader>
-          <TableRow className={dataTableHeaderRowClassName}>
-            <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>{msg('common.id', 'ID')}</TableHead>
-            <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
-              {msg('mcpServers.name', 'Name')}
-            </TableHead>
-            <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
-              {msg('mcpServers.endpoint', 'Endpoint')}
-            </TableHead>
-            <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
-              {msg('mcpServers.updated', 'Updated')}
-            </TableHead>
-            <TableHead className={dataTableHeaderCellClassName} aria-label={msg('common.actions', 'Actions')} />
-          </TableRow>
-        </TableHeader>
+      <Table className={cn(dataTableClassName, showColumns && 'min-w-[840px]')}>
+        {showColumns ? (
+          <>
+            <colgroup>
+              <col className="w-[20%]" />
+              <col className="w-[22%]" />
+              <col className="w-[32%]" />
+              <col className="w-[20%]" />
+              <col className="w-[56px]" />
+            </colgroup>
+            <TableHeader>
+              <TableRow className={dataTableHeaderRowClassName}>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>{msg('common.id', 'ID')}</TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
+                  {msg('mcpServers.name', 'Name')}
+                </TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
+                  {msg('mcpServers.endpoint', 'Endpoint')}
+                </TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
+                  {msg('mcpServers.updated', 'Updated')}
+                </TableHead>
+                <TableHead className={dataTableHeaderCellClassName} aria-label={msg('common.actions', 'Actions')} />
+              </TableRow>
+            </TableHeader>
+          </>
+        ) : null}
         <TableBody>
           <MCPServersTableBody {...props} />
         </TableBody>
@@ -70,6 +76,7 @@ export function MCPServersTable(props: MCPServersTableProps) {
 
 function MCPServersTableBody({
   servers,
+  hasSearch,
   selectedServerId,
   isLoading,
   error,
@@ -95,7 +102,13 @@ function MCPServersTableBody({
     );
   }
   if (servers.length === 0) {
-    return <TableEmptyRow colSpan={5}>{msg('mcpServers.empty', 'No MCP servers match this view.')}</TableEmptyRow>;
+    return (
+      <TableEmptyRow colSpan={5}>
+        {hasSearch
+          ? msg('mcpServers.empty', 'No MCP servers match this view.')
+          : msg('mcpServers.noServers', 'No MCP servers yet.')}
+      </TableEmptyRow>
+    );
   }
   return servers.map((server) => (
     <MCPServerRow
@@ -132,7 +145,7 @@ function MCPServerRow({
           stopPropagation
         />
       </DataTableCell>
-      <DataTableCell className="truncate font-medium" title={server.name}>
+      <DataTableCell className="break-words whitespace-normal font-medium" title={server.name}>
         {server.name}
       </DataTableCell>
       <DataTableCell className="truncate font-mono text-xs text-muted-foreground" title={server.url}>

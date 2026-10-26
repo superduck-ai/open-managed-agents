@@ -156,14 +156,18 @@ func (s *Store) GetSessionEvent(ctx context.Context, workspaceUUID, sessionID, e
 }
 
 func (s *Store) AppendSessionEvents(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, outcomes json.RawMessage) (db.SessionEventChanges, error) {
-	return s.appendPublic(ctx, workspaceUUID, sessionID, events, outcomes, false)
+	return s.appendPublic(ctx, workspaceUUID, sessionID, events, outcomes, false, nil)
 }
 
 func (s *Store) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent) (db.SessionEventChanges, error) {
-	return s.appendPublic(ctx, workspaceUUID, sessionID, events, nil, true)
+	return s.appendPublic(ctx, workspaceUUID, sessionID, events, nil, true, nil)
 }
 
-func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, outcomes json.RawMessage, ifAbsent bool) (db.SessionEventChanges, error) {
+func (s *Store) AppendSessionBudgetReachedEvents(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, transition db.SessionBudgetTransition) (db.SessionEventChanges, error) {
+	return s.appendPublic(ctx, workspaceUUID, sessionID, events, nil, false, &transition)
+}
+
+func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, outcomes json.RawMessage, ifAbsent bool, transition *db.SessionBudgetTransition) (db.SessionEventChanges, error) {
 	session, found, err := s.database.GetSession(ctx, workspaceUUID, sessionID)
 	if err != nil {
 		return db.SessionEventChanges{}, err
@@ -182,7 +186,9 @@ func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID strin
 		return db.SessionEventChanges{}, err
 	}
 	var changes db.SessionEventChanges
-	if ifAbsent {
+	if transition != nil {
+		changes, err = s.database.AppendSessionBudgetReachedEvents(ctx, workspaceUUID, sessionID, prepared, *transition)
+	} else if ifAbsent {
 		changes, err = s.database.AppendSessionEventsIfAbsent(ctx, workspaceUUID, sessionID, prepared)
 	} else {
 		changes, err = s.database.AppendSessionEvents(ctx, workspaceUUID, sessionID, prepared, outcomes)
@@ -211,7 +217,7 @@ func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID strin
 func (s *Store) skipPersistedLargeEvents(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent) ([]db.SessionEvent, error) {
 	missing := make([]db.SessionEvent, 0, len(events))
 	for _, event := range events {
-		if !ExceedsThreshold(len(event.Payload)) {
+		if !needsBlobStorage(event.Payload) {
 			missing = append(missing, event)
 			continue
 		}
@@ -300,7 +306,7 @@ func (s *Store) skipPersistedInternalEvents(ctx context.Context, workspaceUUID s
 				continue
 			}
 			seen[event.IdempotencyKey] = true
-			if ExceedsThreshold(len(event.Payload)) {
+			if needsBlobStorage(event.Payload) {
 				exists, err := s.database.HasCodeSessionInternalEvent(ctx, workspaceUUID, event.IdempotencyKey)
 				if err != nil {
 					return nil, err

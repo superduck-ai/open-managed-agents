@@ -66,7 +66,7 @@ func insertSessionTx(
 		if createErr != nil {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, createErr
 		}
-		if _, createErr = bindSessionFileResourceWithLockedFilesystemTx(
+		if created, createErr = bindSessionFileResourceWithLockedFilesystemTx(
 			ctx,
 			executor,
 			session,
@@ -117,8 +117,9 @@ func sessionWriteParameters(session Session) sessionWriteParams {
 		AgentSnapshot: agentJSONArg(session.AgentSnapshot), DeploymentUUID: session.DeploymentUUID,
 		DeploymentID: session.DeploymentID, Title: session.Title, Metadata: agentJSONArg(session.Metadata),
 		VaultIDs: append(sessionVaultIDs{}, session.VaultIDs...), Status: session.Status,
-		Usage: agentJSONArg(session.Usage),
-		Stats: agentJSONArg(session.Stats), OutcomeEvaluations: agentJSONArg(session.OutcomeEvaluations),
+		Budget: agentJSONArg(session.Budget),
+		Usage:  agentJSONArg(session.Usage),
+		Stats:  agentJSONArg(session.Stats), OutcomeEvaluations: agentJSONArg(session.OutcomeEvaluations),
 		CreatedAt: session.CreatedAt,
 	}
 }
@@ -129,6 +130,7 @@ func sessionThreadWriteParameters(thread SessionThread) sessionThreadWriteParams
 		WorkspaceUUID: thread.WorkspaceUUID, SessionUUID: thread.SessionUUID,
 		SessionExternalID: thread.SessionExternalID, ParentThreadUUID: thread.ParentThreadUUID,
 		ParentThreadExternalID: thread.ParentThreadExternalID, AgentSnapshot: agentJSONArg(thread.AgentSnapshot),
+		StatsInitialized: thread.StatsInitialized, UsageInitialized: thread.UsageInitialized,
 		Status: thread.Status, Usage: agentJSONArg(thread.Usage), Stats: agentJSONArg(thread.Stats),
 		CreatedAt: thread.CreatedAt,
 	}
@@ -221,7 +223,8 @@ func (r sessionRow) session() Session {
 		AgentSnapshot: bytes.Clone(r.AgentSnapshot), DeploymentUUID: r.DeploymentUUID,
 		DeploymentID: r.DeploymentID, Title: r.Title, Metadata: bytes.Clone(r.Metadata),
 		VaultIDs: append([]string{}, r.VaultIDs...), Status: r.Status,
-		Usage: bytes.Clone(r.Usage), Stats: bytes.Clone(r.Stats),
+		Budget: bytes.Clone(r.Budget), BudgetReachedAt: r.BudgetReachedAt, BudgetRemovedAt: r.BudgetRemovedAt,
+		Usage: r.Activity.usage(r.Usage), Stats: r.Activity.stats(r.Stats),
 		OutcomeEvaluations: bytes.Clone(r.OutcomeEvaluations), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
@@ -232,7 +235,8 @@ func (r sessionThreadRow) thread() SessionThread {
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ParentThreadUUID: r.ParentThreadUUID, ParentThreadExternalID: r.ParentThreadExternalID,
-		AgentSnapshot: bytes.Clone(r.AgentSnapshot), Status: r.Status, Usage: bytes.Clone(r.Usage), Stats: bytes.Clone(r.Stats),
+		StatsInitialized: r.StatsInitialized, UsageInitialized: r.UsageInitialized,
+		AgentSnapshot: bytes.Clone(r.AgentSnapshot), Status: r.Status, Usage: r.Activity.usage(r.Usage), Stats: r.Activity.stats(r.Stats),
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
 }

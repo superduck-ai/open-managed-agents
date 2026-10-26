@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package liveworker
 
 import (
@@ -156,8 +158,11 @@ func waitChatIdle(t *testing.T, f *liveSession, answers int) {
 			Status string `json:"status"`
 		}
 		requireOK(t, json.Unmarshal(f.env.request(t, "GET", "/v1/sessions/"+f.session.ExternalID, f.env.apiKey, nil, 200), &state))
+		if count != answers || state.Status != "idle" {
+			return false
+		}
 		queue := f.consumer(t)
-		return count == answers && state.Status == "idle" && queue.NumPending == 0 && queue.NumAckPending == 0
+		return queue.NumPending == 0 && queue.NumAckPending == 0
 	})
 }
 
@@ -319,7 +324,7 @@ func TestChatReliability(t *testing.T) {
 	requireOK(t, err)
 	f.token = recovered.SessionIngressToken
 	f.modelToken = recovered.OAuthAccessToken
-	e.request(t, "POST", f.path("/worker/events/delivery"), oldToken, map[string]any{"worker_epoch": "1", "updates": []any{}}, 401)
+	e.request(t, "POST", f.path("/worker/events/delivery"), oldToken, map[string]any{"worker_epoch": "1", "updates": []any{}}, 409)
 	e.request(t, "POST", f.path("/worker/register"), f.token, map[string]string{"session_id": f.code.ExternalID}, 200)
 	third := submitChat(t, f, "第三条，重启后回复。")
 	events, closeAfterRestart := connectChatStream(t, ctx, f)

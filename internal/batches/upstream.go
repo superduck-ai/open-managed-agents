@@ -61,8 +61,18 @@ func (c *HTTPUpstreamClient) Send(ctx context.Context, batch db.MessageBatch, re
 		req.WorkspaceUUID,
 		modelID,
 	)
+	if errors.Is(err, llmproviders.ErrModelNotConfigured) || errors.Is(err, llmproviders.ErrAmbiguousModel) {
+		return erroredResult("invalid_request_error", err.Error()), nil
+	}
 	if err != nil {
 		return erroredResult("api_error", "workspace LLM provider is unavailable"), nil
+	}
+	if err := upstream.RequireBackend(llmproviders.Messages); err != nil {
+		return erroredResult("invalid_request_error", err.Error()), nil
+	}
+	body, err = llmproviders.ReplaceRequestModel(body, upstream.ModelID)
+	if err != nil {
+		return erroredResult("invalid_request_error", err.Error()), nil
 	}
 	endpoint, err := llmproviders.Endpoint(upstream.BaseURL, "/v1/messages", "")
 	if err != nil {

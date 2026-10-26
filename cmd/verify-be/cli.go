@@ -10,6 +10,7 @@ import (
 )
 
 type cliOptions struct {
+	APIPort     int
 	CloudConfig string
 	Command     string
 	Scenario    string
@@ -53,11 +54,12 @@ func newCLI(options *cliOptions) *cobra.Command {
 		Example: "  just verify-be files doctor\n  just verify-be files lifecycle\n  just verify-be chat roundtrip\n  just verify-be chat performance --timeout 8m",
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
+	root.PersistentFlags().IntVar(&options.APIPort, "api-port", 18080, "本地验收 API 端口")
 	root.PersistentFlags().DurationVar(&options.Timeout, "timeout", 0, "覆盖场景执行期限，例如 5m；不含构建和清理")
 	root.AddCommand(doctorCommand(options, ""))
 	root.AddCommand(&cobra.Command{
 		Use: "test", Short: "在临时 PostgreSQL、Redis、NATS 和 MinIO 中运行全仓 Go 测试",
-		Long: "运行 go test ./... -json -count=1，启用本地 S3 和迁移集成测试。\n默认期限 15m；报告逐项列出失败与跳过。云端与独立 live 场景不算通过。",
+		Long: "运行 go test -tags=integration ./... -json -count=1，启用本地 S3 和迁移集成测试。\n默认期限 15m；报告逐项列出失败与跳过。云端与独立 live 场景不算通过。",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			options.Command, options.Scenario = "run", "test"
@@ -132,8 +134,8 @@ func doctorCommand(options *cliOptions, domain string) *cobra.Command {
 		use += " [场景]"
 	}
 	command := &cobra.Command{
-		Use: use, Short: "检查工具、本地镜像、18080 端口和 Docker 卷空间；不拉取镜像",
-		Long: "检查工具、本地镜像、18080 端口及至少 1 GiB Docker 卷空间。短暂创建并清理探针。\nchat doctor public / chat doctor subagents / chat doctor upstream-errors / files doctor generated / memory doctor mounts 额外验证 Docker 内的 FUSE、SYS_ADMIN 和挂载权限。根 doctor 只检查公共依赖。",
+		Use: use, Short: "检查工具、本地镜像、指定 API 端口（默认 18080）和 Docker 卷空间；不拉取镜像",
+		Long: "检查工具、本地镜像、指定 API 端口（默认 18080）及至少 1 GiB Docker 卷空间。短暂创建并清理探针。\nchat doctor public / chat doctor subagents / chat doctor upstream-errors / files doctor generated / memory doctor mounts 额外验证 Docker 内的 FUSE、SYS_ADMIN 和挂载权限。根 doctor 只检查公共依赖。",
 		Args: func(command *cobra.Command, args []string) error {
 			if domain == "" {
 				return cobra.NoArgs(command, args)
@@ -162,6 +164,9 @@ func doctorCommand(options *cliOptions, domain string) *cobra.Command {
 }
 
 func validateOptions(options cliOptions) error {
+	if options.APIPort < 1 || options.APIPort > 65535 {
+		return errors.New("--api-port must be between 1 and 65535")
+	}
 	if options.Timeout < 0 || (options.Timeout > 0 && options.Timeout < time.Second) {
 		return errors.New("--timeout must be at least 1s")
 	}

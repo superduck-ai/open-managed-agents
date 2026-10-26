@@ -35,6 +35,7 @@ func (o optional[T]) valueOr(fallback T) T {
 }
 
 type yamlConfig struct {
+	ChannelBridge          ChannelBridgeConfig       `yaml:"channel_bridge"`
 	LLMProviderPresetsFile string                    `yaml:"llm_provider_presets_file"`
 	WebTools               WebToolsConfig            `yaml:"web_tools"`
 	EnvironmentPackages    EnvironmentPackageConfig  `yaml:"environment_packages"`
@@ -142,10 +143,11 @@ type yamlBootstrapConfig struct {
 func newYAMLConfig() yamlConfig {
 	defaults := defaultConfig()
 	return yamlConfig{
-		Env:      defaults.Env,
-		Server:   defaults.Server,
-		Database: yamlDatabaseConfig{URL: defaults.Database.URL},
-		Redis:    defaults.Redis,
+		ChannelBridge: defaults.ChannelBridge,
+		Env:           defaults.Env,
+		Server:        defaults.Server,
+		Database:      yamlDatabaseConfig{URL: defaults.Database.URL},
+		Redis:         defaults.Redis,
 		NATS: yamlNATSConfig{
 			WorkerEventStream: defaults.NATS.WorkerEventStream,
 			WebhookStream:     defaults.NATS.WebhookStream,
@@ -195,6 +197,7 @@ func newYAMLConfig() yamlConfig {
 
 func (input yamlConfig) resolve() Config {
 	cfg := Config{
+		ChannelBridge:          input.ChannelBridge,
 		LLMProviderPresetsFile: input.LLMProviderPresetsFile,
 		Env:                    input.Env,
 		Server:                 input.Server,

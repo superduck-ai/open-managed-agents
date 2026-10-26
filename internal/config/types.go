@@ -11,7 +11,13 @@ const (
 	ObservabilityBackendOpenObserve = "openobserve"
 )
 
+type ChannelBridgeConfig struct {
+	URL   string `yaml:"url"`
+	Token string `yaml:"token"`
+}
+
 type Config struct {
+	ChannelBridge          ChannelBridgeConfig       `yaml:"channel_bridge"`
 	LLMProviderPresetsFile string                    `yaml:"llm_provider_presets_file"`
 	WebTools               WebToolsConfig            `yaml:"web_tools"`
 	EnvironmentPackages    EnvironmentPackageConfig  `yaml:"environment_packages"`

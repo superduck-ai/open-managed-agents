@@ -1,4 +1,4 @@
-import { Check, Circle, CircleHelp, LoaderCircle, TriangleAlert } from 'lucide-react';
+import { Check, Circle, CircleHelp, CircleMinus, LoaderCircle, TriangleAlert } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { prebuildIsActive, type PrebuildState, type EnvironmentPrebuild } from './prebuild';
 
@@ -12,12 +12,14 @@ const stateMessages = {
   failed: ['environmentPrebuild.failed', 'Preparation failed'],
   unknown: ['environmentPrebuild.unknown', 'Status unconfirmed'],
   ready: ['environmentPrebuild.ready', 'Preinstalled'],
+  skipped: ['environmentPrebuild.skipped', 'Skipped'],
 } as const;
 
 const stateIcons: Partial<Record<PrebuildState, typeof Check>> = {
   ready: Check,
   failed: TriangleAlert,
   unknown: CircleHelp,
+  skipped: CircleMinus,
 };
 
 export function PrebuildIcon({ state }: { state: PrebuildState }) {

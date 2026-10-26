@@ -844,4 +844,9 @@ export type EnvironmentEditValues = {
   allowedHostsText: string;
   packages: EnvironmentPackageRow[];
   metadataRows: EnvironmentMetadataRow[];
+  initScript: string;
+  environmentRows: EnvironmentMetadataRow[];
+  resources: EnvironmentResourceValues;
 };
+
+export type EnvironmentResourceValues = { cpu: string; memory: string; disk: string };

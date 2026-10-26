@@ -3,7 +3,7 @@ import { LoaderCircle } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
 import { DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../../shared/ui/dialog';
-import { prebuildStepState, type PrebuildStage, type EnvironmentPrebuild } from './prebuild';
+import { prebuildIsActive, prebuildStepState, type PrebuildStage, type EnvironmentPrebuild } from './prebuild';
 import { PrebuildIcon, PrebuildLabel, PrebuildTime, PrebuildDuration, PrebuildStateText } from './prebuild-display';
 import { EnvironmentPrebuildLogs } from './prebuild-logs';
 
@@ -154,15 +154,50 @@ function PrebuildRun({
             {failure}
           </pre>
         ) : (
-          <div className="flex min-h-40 flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
-            {!prebuild.jobId && prebuild.state !== 'idle'
-              ? msg('environmentPrebuild.expired', 'Run details are no longer available.')
-              : stage === 'template' && prebuild.stage === 'template'
-                ? msg('environmentPrebuild.logsUnsupported', 'Logs are unavailable for this stage.')
-                : msg('environmentPrebuild.noLogs', 'No logs yet.')}
+          <div className="flex min-h-40 flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
+            <PrebuildStageNotice prebuild={prebuild} stage={stage} />
           </div>
         )}
       </section>
     </div>
+  );
+}
+
+const templatePhases: Record<string, [string, string]> = {
+  BUILDING_EXT4: ['environmentPrebuild.phase.buildingDisk', 'Building the disk image'],
+  DISTRIBUTING: ['environmentPrebuild.phase.distributing', 'Distributing to compute nodes'],
+  CREATING_TEMPLATE: ['environmentPrebuild.phase.creating', 'Creating the template'],
+};
+
+function PrebuildStageNotice({ prebuild, stage }: { prebuild: EnvironmentPrebuild; stage: PrebuildStage }) {
+  const { msg } = useI18n();
+  if (!prebuild.jobId && prebuild.state !== 'idle') {
+    return <p>{msg('environmentPrebuild.expired', 'Run details are no longer available.')}</p>;
+  }
+  if (stage === 'image' && prebuild.imageSkipped) {
+    return (
+      <p>
+        {msg(
+          'environmentPrebuild.imageSkipped',
+          'Only resources changed, so the base image is used to build the template directly.',
+        )}
+      </p>
+    );
+  }
+  if (stage !== 'template' || prebuild.stage !== 'template') {
+    return <p>{msg('environmentPrebuild.noLogs', 'No logs yet.')}</p>;
+  }
+  const phase = templatePhases[prebuild.message];
+  return (
+    <>
+      {prebuildIsActive(prebuild.state) && prebuild.message ? (
+        <p className="text-foreground">
+          {msg('environmentPrebuild.currentPhase', 'Current phase: {phase}', {
+            phase: phase ? msg(phase[0], phase[1]) : prebuild.message,
+          })}
+        </p>
+      ) : null}
+      <p>{msg('environmentPrebuild.logsUnsupported', 'Logs are unavailable for this stage.')}</p>
+    </>
   );
 }

@@ -2,7 +2,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "./api.ts";
 import { externalMcpFetch } from "./external-mcp/proxy.ts";
 import * as OmaSandboxProvider from "./oma-sandbox/index.ts";
-import { validateAssignment, validateToolPermissions, type Assignment } from "./assignment.ts";
+import { validateAssignment, validateToolPermissions, validateModels, type Assignment } from "./assignment.ts";
 import type { CcrSession } from "./ccrv2/index.ts";
 import { childSystemPrompt, rootSystemPrompt } from "./prompt/assemble.ts";
 import { WebClient } from "./web-tools/client.ts";
@@ -36,6 +36,8 @@ export function createOmaSession(
     refreshToolPermissions: async (signal, threadId) => {
       const response = await api.request(`/v2/sessions/${encodeURIComponent(assignment.session_id)}`,
         assignment.ingress_token, "GET", undefined, threadId ? { "X-OMA-Session-Thread-ID": threadId } : undefined, signal);
+      validateModels(response.session_context?.models);
+      assignment.launch.models = response.session_context?.models;
       const permissions = response.session_context?.runtime_tool_permissions;
       validateToolPermissions(permissions);
       return permissions;
@@ -65,5 +67,7 @@ async function omaToolContext(api: OmaApi, sessionId: string, threadId?: string,
     || !Array.isArray(context.runtime_tools) || context.runtime_tools.some((tool: unknown) => typeof tool !== "string")
     || !context.mcp_config || typeof context.mcp_config !== "object" || Array.isArray(context.mcp_config))
     throw new Error("Invalid current session tool context");
+  validateModels(context.models);
+  api.assignment(sessionId).launch.models = context.models;
   return context;
 }

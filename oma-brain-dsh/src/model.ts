@@ -2,6 +2,7 @@ import type { AttachmentStore } from "@deepseek-ai/dsh-attachment";
 import type { GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { OmaApi } from "./api.ts";
 import type { AiSdkAdapterOptions } from "./llm-ai-sdk/index.ts";
+import { DEFAULT_CONTEXT_WINDOW } from "./model-defaults.ts";
 import { modelSessionID, omaRoute } from "./model-provider.ts";
 import { logSystemPrompt } from "./prompt/debug.ts";
 
@@ -10,9 +11,21 @@ interface PiAiReplay {
   blocks?: { thinkingSignature?: string }[];
 }
 
-export function omaModelOptions(api: OmaApi, attachments?: AttachmentStore): AiSdkAdapterOptions {
+export function omaModelOptions(api: OmaApi, attachments?: AttachmentStore, currentSession?: () => string | undefined): AiSdkAdapterOptions {
   return {
     attachments,
+    modelInfo: (provider, model) => {
+      const id = currentSession?.();
+      const assignment = id === undefined ? undefined : api.assignment(api.modelSessions.get(id) ?? id);
+      const config = assignment?.launch.models?.[model];
+      const window = config?.context_window ?? DEFAULT_CONTEXT_WINDOW;
+      return {
+        provider, id: model, name: model,
+        inputModalities: config?.input_modalities ?? ["text"],
+        ...(config?.max_output_tokens === undefined ? {} : { defaultMaxTokens: config.max_output_tokens }),
+        context: { contextWindow: window },
+      };
+    },
     route: (options) => omaRoute(api, options),
     history: legacyReplay,
     onCallStart: (options) => { api.modelResponses.delete(modelSessionID(options)); },

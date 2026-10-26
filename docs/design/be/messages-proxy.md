@@ -24,7 +24,7 @@ LLM 上游不是进程级 YAML。每个 workspace 可以配置多个 Provider；
 
 创建 Provider 时可传入 `slug`；省略或为空时服务端选择当前 workspace 中第一个未占用的 `default`、`default-2`、`default-3`……。更新请求可以省略 `slug` 或回传相同值，传入不同值返回 `400 llm_provider_slug_immutable`，避免已保存的 Agent 引用失效。格式非法返回 `400 llm_provider_slug_invalid`，重复返回 `409 llm_provider_slug_conflict`。
 
-`llmproviders.Catalog.Lookup` 是唯一解析入口，Messages、Chat Completions、Batches、Workbench、管理后台代理、Agent 与 Session 模型覆盖、Brain `model_backends` 都通过它解析：
+`llmproviders.Catalog.Lookup` 是唯一解析入口，Messages、Chat Completions、Batches、Workbench、管理后台代理、Agent 与 Session 模型覆盖、Brain `models` 都通过它解析：
 
 ```mermaid
 flowchart TD
@@ -43,7 +43,7 @@ flowchart TD
 - 历史裸 ID 长期兼容：外部 SDK 和脚本仍可使用 `kimi-k2.5`，只要它在 workspace 内只属于一个 Provider。被多个 Provider 配置时返回 `400 invalid_request_error`，消息列出可用的完整 ID，引导调用方迁移。Batch 在提交校验时把顶层 `params.model` 规范化为完整 ID 后入队，后续新增同名模型不会改变已接受请求的 Provider 归属；其他参数保留原始 JSON 字节。
 - `GET /v1/models`、Workbench 模型列表和控制台目录只展示完整 ID。
 - Agent 创建/更新与 Session 模型覆盖在写入时把能唯一解析的裸 ID 规范化为完整 ID 后保存，新数据不再出现裸 ID。
-- Brain `model_backends` 以完整 ID 为键；为兼容旧运行时配置，能唯一解析到同一上游 ID 的裸 ID 也作为键保留。
+- Brain `models` 以完整 ID 为键；为兼容旧运行时配置，能唯一解析到同一上游 ID 的裸 ID 也作为键保留。
 
 迁移 `00090_llm_provider_slug.sql` 在同一事务内完成存量兼容：
 

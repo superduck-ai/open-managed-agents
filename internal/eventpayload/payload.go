@@ -37,14 +37,31 @@ type Summary struct {
 	BlobRef *Reference `json:"blob_ref"`
 	Size    int64      `json:"size"`
 	Preview string     `json:"preview"`
+	// Billing / usage counters and the model_request_start_id link are carried
+	// through so budget aggregation over span.model_request_end events keeps
+	// working when the full payload is externalized past the inline threshold.
+	Model               *string         `json:"model,omitempty"`
+	PriceSnapshot       json.RawMessage `json:"_model_price,omitempty"`
+	IsError             json.RawMessage `json:"is_error,omitempty"`
+	Billing             json.RawMessage `json:"billing,omitempty"`
+	Usage               json.RawMessage `json:"usage,omitempty"`
+	ModelUsage          json.RawMessage `json:"model_usage,omitempty"`
+	ModelRequestStartID string          `json:"model_request_start_id,omitempty"`
 }
 
 type payloadMetadata struct {
-	Name            json.RawMessage `json:"name"`
-	ToolUseID       json.RawMessage `json:"tool_use_id"`
-	MCPToolUseID    json.RawMessage `json:"mcp_tool_use_id"`
-	CustomToolUseID json.RawMessage `json:"custom_tool_use_id"`
-	ID              json.RawMessage `json:"id"`
+	Model               json.RawMessage `json:"model"`
+	PriceSnapshot       json.RawMessage `json:"_model_price"`
+	IsError             json.RawMessage `json:"is_error"`
+	Name                json.RawMessage `json:"name"`
+	ToolUseID           json.RawMessage `json:"tool_use_id"`
+	MCPToolUseID        json.RawMessage `json:"mcp_tool_use_id"`
+	CustomToolUseID     json.RawMessage `json:"custom_tool_use_id"`
+	ID                  json.RawMessage `json:"id"`
+	Billing             json.RawMessage `json:"billing"`
+	Usage               json.RawMessage `json:"usage"`
+	ModelUsage          json.RawMessage `json:"model_usage"`
+	ModelRequestStartID json.RawMessage `json:"model_request_start_id"`
 }
 
 // Store holds stable database and object storage dependencies at the service boundary.
@@ -81,7 +98,23 @@ func Summarize(payload []byte, eventType string) (Summary, *string, error) {
 			break
 		}
 	}
-	return Summary{Type: eventType, Name: metadataString(metadata.Name), Size: int64(len(payload)), Preview: Preview(payload)}, toolID, nil
+	modelRequestStartID := ""
+	if value := metadataString(metadata.ModelRequestStartID); value != nil {
+		modelRequestStartID = *value
+	}
+	return Summary{
+		Type:                eventType,
+		Name:                metadataString(metadata.Name),
+		Size:                int64(len(payload)),
+		Preview:             Preview(payload),
+		Model:               metadataString(metadata.Model),
+		PriceSnapshot:       metadata.PriceSnapshot,
+		IsError:             metadata.IsError,
+		Billing:             metadata.Billing,
+		Usage:               metadata.Usage,
+		ModelUsage:          metadata.ModelUsage,
+		ModelRequestStartID: modelRequestStartID,
+	}, toolID, nil
 }
 
 // Metadata is optional; opaque worker JSON may use these names for non-string values.

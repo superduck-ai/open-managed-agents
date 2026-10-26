@@ -328,6 +328,46 @@ describe('managed agents API', () => {
     expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual(['sevt_other']);
   });
 
+  test.each(['', 'sthr_child'])('late previews cannot revive ended model output in scope %s', (threadId) => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    for (const type of ['agent.message', 'agent.thinking']) {
+      const eventId = `sevt_failed_${type}`;
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, {
+        id: `sevt_end_${type}`,
+        type: 'span.model_request_end',
+        event_ids: [eventId],
+        is_error: true,
+        processed_at: '2026-08-26T13:13:01Z',
+      });
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, {
+        type: 'event_start',
+        event: { id: eventId, type },
+      });
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, {
+        type: 'event_delta',
+        event_id: eventId,
+        delta: { type: 'content_delta', index: 0, content: { type: 'text', text: 'late partial' } },
+      });
+      expect(
+        sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [threadId]).some((event) => event.id === eventId),
+      ).toBe(false);
+      expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [threadId])[eventId]).toBeUndefined();
+      const otherScope = threadId ? '' : 'sthr_other';
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, otherScope, {
+        type: 'event_start',
+        event: { id: eventId, type },
+      });
+      expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [otherScope])[eventId]).toBeDefined();
+    }
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, {
+      type: 'event_start',
+      event: { id: 'sevt_next', type: 'agent.message' },
+    });
+    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [threadId]).sevt_next).toBeDefined();
+  });
+
   test('model request end in a child thread does not remove a primary preview', () => {
     const queryClient = new QueryClient();
     const workspaceId = 'workspace_123';

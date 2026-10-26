@@ -92,12 +92,12 @@ func LoadCatalog(ctx context.Context, database *db.DB, organizationUUID, workspa
 func (c Catalog) ModelIDs() []string {
 	models := make([]string, 0)
 	for _, provider := range c.providers {
-		for _, modelID := range provider.ModelIDs {
+		for _, modelID := range provider.Models.IDs() {
 			models = append(models, QualifiedModelID(provider.Slug, modelID))
 		}
 	}
 	if c.organization != nil {
-		for _, modelID := range c.organization.ModelIDs {
+		for _, modelID := range c.organization.Models.IDs() {
 			models = append(models, QualifiedModelID(c.organization.Slug, modelID))
 		}
 	}
@@ -107,23 +107,23 @@ func (c Catalog) ModelIDs() []string {
 func (c Catalog) Lookup(modelID string) (CatalogModel, error) {
 	if slug, upstreamModelID, ok := ParseModelRef(modelID); ok {
 		for _, provider := range c.providers {
-			if provider.Slug == slug && slices.Contains(provider.ModelIDs, upstreamModelID) {
+			if provider.Slug == slug && slices.Contains(provider.Models.IDs(), upstreamModelID) {
 				return CatalogModel{Provider: provider, UpstreamModelID: upstreamModelID}, nil
 			}
 		}
-		if c.organization != nil && c.organization.Slug == slug && slices.Contains(c.organization.ModelIDs, upstreamModelID) {
+		if c.organization != nil && c.organization.Slug == slug && slices.Contains(c.organization.Models.IDs(), upstreamModelID) {
 			return CatalogModel{Provider: *c.organization, UpstreamModelID: upstreamModelID}, nil
 		}
 	}
 	matches := make([]CatalogModel, 0, 1)
 	for _, provider := range c.providers {
-		if slices.Contains(provider.ModelIDs, modelID) {
+		if slices.Contains(provider.Models.IDs(), modelID) {
 			matches = append(matches, CatalogModel{Provider: provider, UpstreamModelID: modelID})
 		}
 	}
 	switch len(matches) {
 	case 0:
-		if c.organization != nil && slices.Contains(c.organization.ModelIDs, modelID) {
+		if c.organization != nil && slices.Contains(c.organization.Models.IDs(), modelID) {
 			return CatalogModel{Provider: *c.organization, UpstreamModelID: modelID}, nil
 		}
 		return CatalogModel{}, ErrModelNotConfigured

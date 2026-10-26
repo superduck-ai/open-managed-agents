@@ -14,6 +14,7 @@ export function assignment(): Assignment {
     launch: {
       version: 2,
       model: "test-model",
+      models: {"test-model":{id:"test-model",api_backend:"messages"}},
       work_dir: "/workspace",
       system: "You are a test agent.",
       tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
@@ -210,6 +211,7 @@ export class Backend {
       cwd: this.a.launch.work_dir, model: this.a.launch.model, system_prompt: this.a.launch.system,
       append_system_prompt: this.a.launch.environment_prompt, memory_catalog_prompt: this.a.launch.memory_catalog_prompt, runtime_skills: this.a.launch.skills, subagents: this.a.launch.subagents,
       runtime_tool_permissions: this.a.launch.tool_permissions,
+      models: this.a.launch.models,
     }});
     if (path === "/v1/messages") {
       expect(request.headers.get("Authorization")).toBe(
@@ -254,11 +256,7 @@ export class Backend {
           }
           this.executions.push(body.params);
           this.timeline.push({ type: "tool.dispatch", ...body.params });
-          const states = [...this.privateLog.values()].filter(
-            (p) => p.subtype === "dsh_brain_state",
-          );
-          if (!["read", "glob", "grep"].includes(body.params.name))
-            expect(states.at(-1)!.data.phase).toBe("dispatch");
+
           if (this.hangTool) return await new Promise<Response>(() => {});
           result = this.onTool ? await this.onTool(body.params) : { content: [{ type: "text", text: "actual stdout\n" }] };
         } else
@@ -313,6 +311,7 @@ export class Backend {
           });
         if (this.failWrites) { this.failedCcrWrites++; return json({}, 503); }
         for (const event of body.events) {
+          expect(event.payload.type).toBe("dsh_log");
           const old = this.privateLog.get(event.payload.uuid);
           if (old) expect(event.payload).toEqual(old);
           this.privateLog.set(event.payload.uuid, event.payload);

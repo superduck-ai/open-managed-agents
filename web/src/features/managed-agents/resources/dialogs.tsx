@@ -1,3 +1,4 @@
+import { budgetErrorMessage } from './budget-errors';
 import { useI18n } from '../../../shared/i18n';
 import { useAuth } from '../../../shared/auth/context';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
@@ -817,7 +818,7 @@ function GenericManagedEntityDialog({
 
             {submitError || referenceError ? (
               <p role="alert" className="mt-4 text-sm text-destructive">
-                {submitError || referenceError}
+                {budgetErrorMessage(submitError, msg) || referenceError}
               </p>
             ) : null}
 
@@ -874,7 +875,7 @@ function GenericManagedEntityDialog({
 
           {submitError || referenceError ? (
             <p role="alert" className="mt-4 text-sm text-destructive">
-              {submitError || referenceError}
+              {budgetErrorMessage(submitError, msg) || referenceError}
             </p>
           ) : null}
 

@@ -1,3 +1,4 @@
+import { snapshotSubagentDescriptor } from "@deepseek-ai/dsh-subagent";
 import type { Context } from "@deepseek-ai/cordis";
 import { object, type Payload } from "../json.ts";
 import { SessionRuntime } from "./session.ts";
@@ -18,6 +19,7 @@ export class Subagents {
   }
 
   async restore(): Promise<void> {
+    await this.bridge.restoreThreads?.();
     for (const thread of this.threads) {
       this.bridge.bindPersistence(thread.id);
       if (thread.status !== "running") continue;
@@ -28,6 +30,7 @@ export class Subagents {
       this.runtimes.set(thread.id, child);
       await child.open();
       await child.flushLog();
+      await this.bridge.emit({ kind: "idle", thread, completed: false });
     }
   }
 
@@ -131,7 +134,6 @@ export class Subagents {
         tools: inheritedTools(definition?.tools, this.parent.config.tools), status: "idle" };
       this.threads.push(thread);
       this.bridge.bindPersistence(thread.id);
-      await this.bridge.emit({ kind: "created", thread });
     }
     if (args.thread_id && thread.status === "idle") await this.bridge.validateThread?.(thread.id, signal);
     if (thread.status !== "idle") throw new Error("Subagent thread is running or archived");
@@ -144,6 +146,7 @@ export class Subagents {
         runtime = await this.createRuntime(thread);
         this.runtimes.set(thread.id, runtime);
         await runtime.open();
+        if (!args.thread_id) await this.bridge.emit({ kind: "created", thread });
       } catch (error) {
         this.runtimes.delete(thread.id);
         this.unbind.get(thread.id)?.();
@@ -180,7 +183,7 @@ export class Subagents {
         afterRun: async (done) => { completed = done; },
       });
       signal.throwIfAborted();
-      if (!completed || this.parent.bridge.blocked()) throw new Error("Subagent turn stopped before completion");
+      if (!completed) throw new Error("Subagent turn stopped before completion");
       await this.bridge.emit({ kind: "report-received", thread, text: report });
       return JSON.stringify({ thread_id: thread.id, agent_name: thread.name, report });
     } finally {
@@ -198,17 +201,17 @@ export class Subagents {
     let child: SessionRuntime;
     const execution = this.bridge.toolExecution(thread.id);
     const bridge: ToolExecutionBridge = {
-      blocked: () => execution.blocked(),
       approve: (request, signal) => execution.approve(request, signal),
-      recordApproved: (call) => execution.recordApproved(call),
-      flushLog: async () => { await child.flushLog(); await execution.flushLog(); },
-      recordDispatch: (callId) => execution.recordDispatch(callId),
-      recordUnknown: (callId) => execution.recordUnknown(callId),
-      recordResult: (outcome) => execution.recordResult(outcome),
-      stop: () => execution.stop(),
+      runTool: (callId, execute, readOnly) => execution.runTool(callId, execute, readOnly),
+      approvalChanged: (name, callId, effective) => execution.approvalChanged(name, callId, effective),
     };
     child = new SessionRuntime(this.parent.ctx, {
       ...config, id: thread.id, model: thread.model, tools: thread.tools,
+      descriptor: snapshotSubagentDescriptor({
+        mode: "continuable", provider: thread.inline ? "oma-inline" : "oma-specialist", label: thread.name,
+        agentProvider: config.provider, agentModel: thread.model, persona: thread.systemPrompt,
+        ...(thread.tools ? { toolFilter: { allow: thread.tools } } : {}),
+      }),
       toolPermissions: { ...config.toolPermissions },
       refreshToolPermissions: config.refreshToolPermissions
         ? (signal) => config.refreshToolPermissions!(signal, thread.id) : undefined,
@@ -219,11 +222,10 @@ export class Subagents {
         ?? `${config.systemPrompt}\n\nYou are subagent ${thread.name}. Your conversation is isolated. Delegation tools are unavailable. Report your findings to the parent.\nSpecialist instructions:\n${thread.systemPrompt}`,
     }, {
       onExternalMcpAuthenticationFailure: (serverName, phase) => this.parent.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase) ?? Promise.resolve(),
-      beforeRequest: async () => { await child.flushLog(); await this.bridge.beforeRequest(); },
       onContextCompacted: tokens => this.bridge.onContextCompacted?.(thread.id, tokens) ?? Promise.resolve(),
       onEvent: (event) => this.bridge.onEvent(thread.id, event),
       onStream: (frame) => this.bridge.onStream(thread.id, frame),
-      stop: () => execution.stop(),
+      stop: () => this.parent.hooks.stop(),
     }, bridge, this.parent);
     return child;
   }

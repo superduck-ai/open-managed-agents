@@ -5,18 +5,23 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
+	"github.com/superduck-ai/open-managed-agents/internal/metering"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 
 	"github.com/go-chi/chi/v5"
 )
 
-func RegisterOrganizationProxyRoutes(r chi.Router, database *db.DB, secretService *secrets.Service) {
-	r.Post("/proxy/v1/messages", handleProxyMessages(database, secretService, llmproviders.NewHTTPClient(0)))
+func RegisterOrganizationProxyRoutes(r chi.Router, database *db.DB, secretService *secrets.Service, calculator *billing.Calculator, logger *slog.Logger) {
+	client := llmproviders.NewHTTPClient(0)
+	client.Transport = &metering.Transport{Base: client.Transport, Store: database, Calculator: calculator, Source: "api", Logger: logger}
+	r.Post("/proxy/v1/messages", handleProxyMessages(database, secretService, client))
 }
 
 func handleProxyMessages(database *db.DB, secretService *secrets.Service, client *http.Client) http.HandlerFunc {
@@ -76,7 +81,7 @@ func handleProxyMessages(database *db.DB, secretService *secrets.Service, client
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "proxy_error", "message": "LLM provider is unavailable"})
 			return
 		}
-		upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, targetURL, bytes.NewReader(body))
+		upstreamReq, err := http.NewRequestWithContext(metering.WithModel(r.Context(), upstream.QualifiedModelID), http.MethodPost, targetURL, bytes.NewReader(body))
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "proxy_error", "message": "failed to build upstream request"})
 			return

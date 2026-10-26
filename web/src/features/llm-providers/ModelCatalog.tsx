@@ -1,5 +1,5 @@
 import { Check, Copy, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { copyText } from '@/shared/lib/clipboard';
 import { cn } from '@/shared/lib/utils';
 import { useI18n } from '../../shared/i18n';
@@ -54,6 +54,7 @@ export function ModelCatalog({
   onAddModel,
 }: ModelCatalogProps) {
   const { msg } = useI18n();
+  const [openProviders, setOpenProviders] = useState<string[]>([]);
   const selected = providers.find((provider) => provider.id === selectedProviderId);
   const visibleModels = modelsForProvider(filterCatalogModels(models, query), selectedProviderId);
   const canEditSelected = canManage && (organizationEditable || selected?.scope !== 'organization');
@@ -92,28 +93,21 @@ export function ModelCatalog({
           </Button>
         </div>
 
-        {selected ? (
-          <ProviderSection
-            organizationEditable={organizationEditable}
-            canManage={canEditSelected}
-            provider={selected}
-            models={visibleModels}
-            emptyMessage={
-              query.trim()
-                ? msg('llmModels.noSearchResults', 'No models match this search.')
-                : msg('llmModels.emptyModels', 'No models configured for this provider.')
-            }
-            onEdit={() => onEditProvider(selected)}
-            onDelete={() => onDeleteProvider(selected)}
-          />
-        ) : (
-          <ProviderModelGroups
-            organizationEditable={organizationEditable}
-            groups={groupCatalogModels(visibleModels, providers, !query.trim())}
-            providers={providers}
-            query={query}
-          />
-        )}
+        <ProviderModelGroups
+          organizationEditable={organizationEditable}
+          groups={groupCatalogModels(
+            visibleModels,
+            selected ? [selected] : providers,
+            Boolean(selected) || !query.trim(),
+          )}
+          providers={providers}
+          query={query}
+          openProviders={openProviders}
+          onOpenChange={setOpenProviders}
+          editableProviderId={canEditSelected ? selected?.id : undefined}
+          onEditProvider={onEditProvider}
+          onDeleteProvider={onDeleteProvider}
+        />
 
         {canEditSelected ? (
           <AddModelHint
@@ -160,7 +154,7 @@ function ProviderRail({
           key={provider.id}
           label={provider.name}
           detail={providerHost(provider.base_url)}
-          count={provider.model_ids.length}
+          count={provider.models.length}
           selected={selectedProviderId === provider.id}
           onClick={() => onSelectProvider(provider.id)}
         />
@@ -202,56 +196,6 @@ function ProviderRailButton({
       </span>
       {detail ? <span className="w-full truncate text-xs font-normal text-muted-foreground">{detail}</span> : null}
     </Button>
-  );
-}
-
-function ProviderSection({
-  canManage,
-  organizationEditable,
-  provider,
-  models,
-  emptyMessage,
-  onEdit,
-  onDelete,
-}: {
-  provider: LLMProvider;
-  organizationEditable: boolean;
-  models: CatalogModel[];
-  emptyMessage: string;
-  canManage: boolean;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  const { msg } = useI18n();
-  return (
-    <section data-testid={`llm-provider-group-${provider.id}`}>
-      <div className="flex items-center gap-3 bg-muted/40 px-4 py-3">
-        <ProviderIdentity provider={provider} modelCount={models.length} organizationReadOnly={!organizationEditable} />
-        {canManage ? (
-          <div className="flex shrink-0 items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={msg('common.edit', 'Edit')}
-              onClick={onEdit}
-            >
-              <Pencil aria-hidden />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={msg('common.delete', 'Delete')}
-              onClick={onDelete}
-            >
-              <Trash2 aria-hidden />
-            </Button>
-          </div>
-        ) : null}
-      </div>
-      <ModelRows models={models} emptyMessage={emptyMessage} />
-    </section>
   );
 }
 
@@ -302,23 +246,33 @@ function ProviderModelGroups({
   groups,
   providers,
   query,
+  openProviders,
+  onOpenChange,
+  editableProviderId,
+  onEditProvider,
+  onDeleteProvider,
 }: {
   organizationEditable: boolean;
   groups: CatalogGroup[];
   providers: LLMProvider[];
   query: string;
+  openProviders: string[];
+  onOpenChange: (ids: string[]) => void;
+  editableProviderId?: string;
+  onEditProvider: (provider: LLMProvider) => void;
+  onDeleteProvider: (provider: LLMProvider) => void;
 }) {
-  const groupValues = useMemo(() => groups.map((group) => group.providerId), [groups]);
+  const groupValues = groups.map((group) => group.providerId);
   const searching = Boolean(query.trim());
-  const [openValues, setOpenValues] = useState<string[] | null>(null);
   if (groups.length === 0) return null;
 
   return (
     <Accordion
       multiple
-      value={searching || openValues === null ? groupValues : openValues}
+      value={searching ? groupValues : openProviders}
       onValueChange={(next) => {
-        if (!searching) setOpenValues(next);
+        if (!searching)
+          onOpenChange([...new Set([...openProviders.filter((id) => !groupValues.includes(id)), ...next])]);
       }}
     >
       {groups.map((group) => {
@@ -330,6 +284,9 @@ function ProviderModelGroups({
             provider={provider}
             query={query}
             organizationEditable={organizationEditable}
+            canManage={provider.id === editableProviderId}
+            onEdit={() => onEditProvider(provider)}
+            onDelete={() => onDeleteProvider(provider)}
           />
         ) : null;
       })}
@@ -342,25 +299,57 @@ function ProviderModelGroup({
   provider,
   query,
   organizationEditable,
+  canManage,
+  onEdit,
+  onDelete,
 }: {
   group: CatalogGroup;
   provider: LLMProvider;
   query: string;
   organizationEditable: boolean;
+  canManage: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
 }) {
   const { msg } = useI18n();
   return (
     <AccordionItem value={group.providerId} data-testid={`llm-provider-group-${group.providerId}`}>
-      <AccordionTrigger
-        aria-label={msg('llmModels.providerGroup', '{provider} models', { provider: group.providerName })}
-        className="min-h-16 gap-3 rounded-none bg-muted/40 px-4 py-3 hover:bg-muted/60 hover:no-underline"
-      >
-        <ProviderIdentity
-          provider={provider}
-          modelCount={group.models.length}
-          organizationReadOnly={!organizationEditable}
-        />
-      </AccordionTrigger>
+      <div className="flex items-center bg-muted/40">
+        <div className="min-w-0 flex-1">
+          <AccordionTrigger
+            aria-label={msg('llmModels.providerGroup', '{provider} models', { provider: group.providerName })}
+            className="min-h-16 gap-3 rounded-none px-4 py-3 hover:bg-muted/60 hover:no-underline"
+          >
+            <ProviderIdentity
+              provider={provider}
+              modelCount={provider.models.length}
+              organizationReadOnly={!organizationEditable}
+            />
+          </AccordionTrigger>
+        </div>
+        {canManage ? (
+          <div className="flex shrink-0 items-center gap-1 pr-3">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={msg('common.edit', 'Edit')}
+              onClick={onEdit}
+            >
+              <Pencil aria-hidden />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={msg('common.delete', 'Delete')}
+              onClick={onDelete}
+            >
+              <Trash2 aria-hidden />
+            </Button>
+          </div>
+        ) : null}
+      </div>
       <AccordionContent className="pb-0">
         <ModelRows
           models={group.models}
@@ -408,7 +397,7 @@ function ModelRow({ model }: { model: CatalogModel }) {
       className="flex min-h-11 items-center justify-between gap-3 px-4 py-2 hover:bg-muted/40 sm:px-6"
       data-testid="llm-model-row"
     >
-      <p className="min-w-0 break-all font-mono text-sm text-foreground">{model.qualifiedId}</p>
+      <p className="min-w-0 flex-1 break-all font-mono text-sm text-foreground">{model.qualifiedId}</p>
       <Button
         type="button"
         variant="ghost"

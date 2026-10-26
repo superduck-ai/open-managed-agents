@@ -132,7 +132,7 @@ export class CcrSubagentBridge implements SubagentBridge {
   onDiagnostic(threadId: string, diagnostic: RuntimeDiagnostic): void { recordRuntimeDiagnostic(threadId, diagnostic); }
   onOpen(session: Session): Promise<void> { return this.session.compaction.restore(session); }
   afterFlushLog(session: Session): Promise<void> { return this.session.compaction.flush(session); }
-  beforeRequest(): Promise<void> { return this.session.publishCompaction(); }
+  beforeRequest(threadId: string): Promise<void> { return this.session.beforeModelRequest(threadId); }
   onEvent(threadId: string, event: SessionEvent, session: Session): void {
     recordRuntimeEvent(session, event);
     this.session.compaction.record(session, event);

@@ -46,7 +46,7 @@ export interface SubagentBridge {
   restoreThreads?(): Promise<void>;
   bindPersistence(threadId: string): void;
   emit(event: SubagentEvent): Promise<void>;
-  beforeRequest?(): Promise<void>;
+  beforeRequest?(threadId: string): Promise<void>;
   onOpen?(session: Session): Promise<void>;
   afterFlushLog?(session: Session): Promise<void>;
   onDiagnostic?(threadId: string, diagnostic: RuntimeDiagnostic): void;

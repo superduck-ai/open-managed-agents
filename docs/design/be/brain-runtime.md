@@ -401,7 +401,7 @@ Pending compaction is cleared only after its callback confirms remote replicatio
 
 Notification IDs are deterministic from session, thread and journal sequence. Restart scans the native journals and reconstructs the latest successful summary or prune notification for each opened session; the backend deduplicates previously published IDs. No BrainState, separate outbox checkpoint or custom native log event is added. A recovered notification omits `pre_compaction_tokens` when the original transient measurement is unavailable. The generic runtime only invokes adapter lifecycle hooks after local journal flush; remote confirmation and notification publication remain in CCRv2.
 
-Every ordinary model step flushes the local JSONL journal. Remote replication remains asynchronous unless a compaction callback, tool dispatch, public output or delivery checkpoint requires confirmation. Explicit replication checkpoints upload individual new native events, and repeated clean checkpoints perform no backend writes. 真实服务定向验收使用 `chat brain-compaction`，覆盖根/子线程通知、日志持久化和跨进程恢复；本次合并仅运行普通单测与静态检查，真实服务场景需另行执行。
+Every ordinary model step flushes the local JSONL journal. Before an ordinary root or child model request with queued public output, CCRv2 confirms the owning journal replication and waits for that output to be accepted by the backend. Requests without pending output retain asynchronous replication. This prevents a following request from overtaking its preceding tool result. The barrier uses the existing serialized publisher without recursively draining child runtimes. A rejected publication prevents the following request. Backend acceptance does not imply durable Core NATS delivery. Remote replication otherwise remains asynchronous unless a compaction callback, tool dispatch, public output or delivery checkpoint requires confirmation. Explicit replication checkpoints upload individual new native events, and repeated clean checkpoints perform no backend writes. 真实服务定向验收使用 `chat brain-compaction`，覆盖根/子线程通知、日志持久化和跨进程恢复；本次合并仅运行普通单测与静态检查，真实服务场景需另行执行。
 
 Regression coverage checks 100 clean flushes after approximately 4 MiB of history produce zero backend writes and a subsequent dirty flush sends only the new event; this is an in-process contract check, not a production latency benchmark.
 
@@ -512,6 +512,10 @@ OMA 侧只提供配置，由 `plugin.ts` 以 `providers: ["oma"]` 加载插件�
 
 错误以 `LlmError` 抛出，由 DSH 运行时转换为终态 finish chunk。HTTP 错误优先读取响应体
 `error.message`，按上下文超限、额度耗尽、429、401/403、5xx 分类；流内错误同样分类。
+对已实际观察的 HTTP 400 `InternalError.Algo.InvalidParameter: Range of input length should be [1, N]`，
+只有原请求包含非空文本输入时才识别为上下文超限，交给既有的一次有界压缩恢复。
+空输入、缺少请求证据、其他参数范围及非 400 响应保持原错误分类，不能把所有参数错误当作可压缩重试。
+该识别补足字符估算低估 Unicode 输入时的恢复路径，不改变 token 估算、压缩阈值或重试上限。
 取消时 adapter 主动取消 SDK stream，从而关闭到 Go 代理的 HTTP 响应体。
 
 replay 继续使用 `oma-messages-v1` 与 `oma-chat-completions-v1`。response 保存模型消息 ID、

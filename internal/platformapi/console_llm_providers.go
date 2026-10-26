@@ -46,7 +46,8 @@ type llmProviderResponse struct {
 	Scope       string       `json:"scope,omitempty"`
 }
 
-func RegisterConsoleLLMProviderRoutes(r chi.Router, database *db.DB, secretService *secrets.Service) {
+func RegisterConsoleLLMProviderRoutes(r chi.Router, database *db.DB, secretService *secrets.Service, presetsFile string) {
+	registerConsoleLLMProviderPresets(r, database, presetsFile)
 	client := llmproviders.NewHTTPClient(15 * time.Second)
 	r.Route("/llm_provider", func(r chi.Router) {
 		r.Get("/", getConsoleOrganizationLLMProvider(database))
@@ -269,7 +270,13 @@ func decodeLLMProviderRequest(w http.ResponseWriter, r *http.Request) (llmProvid
 		writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "use models or model_ids, not both")
 		return llmProviderRequest{}, false
 	}
-	for _, model := range body.Models {
+	for index := range body.Models {
+		model := &body.Models[index]
+		model.Name = strings.TrimSpace(model.Name)
+		if utf8.RuneCountInString(model.Name) > 100 {
+			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "model name must contain at most 100 characters")
+			return llmProviderRequest{}, false
+		}
 		for _, value := range []*int{model.ContextWindow, model.MaxOutputTokens} {
 			if value != nil && (*value <= 0 || *value > 9007199254740991) {
 				writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "model capacities must be positive safe integers")

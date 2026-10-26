@@ -7,7 +7,7 @@ import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
 import ToolRuntime from "@deepseek-ai/dsh-tools";
 import AgentRegistry from "@deepseek-ai/dsh-agent";
 import AgentLoop from "@deepseek-ai/dsh-agent-loop";
-import * as TimeContext from "@deepseek-ai/dsh-time-context";
+import * as TimeContext from "./plugins/time-context.ts";
 import LocalAttachmentStore from "@deepseek-ai/dsh-attachment-local";
 import TokenMeter from "@deepseek-ai/dsh-token-meter";
 import BasicCompaction from "@deepseek-ai/dsh-compaction-basic";

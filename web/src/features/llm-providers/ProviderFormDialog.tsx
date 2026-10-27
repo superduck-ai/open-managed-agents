@@ -171,6 +171,8 @@ export function ProviderFormDialog({
       }
       return remaining;
     });
+    wasSelecting.current = false;
+    setCandidates(null);
     setForm(next);
   };
   const apiKeyField = (
@@ -201,31 +203,10 @@ export function ProviderFormDialog({
       >
         <DialogHeader className="px-4 py-4">
           <DialogTitle>
-            {candidates
-              ? msg('llmModels.chooseModels', 'Select models')
-              : provider
-                ? msg('llmModels.editProvider', 'Edit provider')
-                : msg('llmModels.addProvider', 'Add provider')}
+            {provider ? msg('llmModels.editProvider', 'Edit provider') : msg('llmModels.addProvider', 'Add provider')}
           </DialogTitle>
         </DialogHeader>
-        {candidates ? (
-          <ModelDiscoveryDialog
-            models={candidates}
-            onClose={() => setCandidates(null)}
-            onAccept={(ids) => {
-              setForm((current) => ({ ...current, models: mergeModels(current.models, ids) }));
-              setCandidates(null);
-            }}
-          />
-        ) : null}
-        <form
-          ref={formRef}
-          noValidate
-          onSubmit={submit}
-          hidden={Boolean(candidates)}
-          inert={Boolean(candidates)}
-          className={candidates ? 'hidden' : 'grid min-h-0 grid-rows-[minmax(0,1fr)_auto]'}
-        >
+        <form ref={formRef} noValidate onSubmit={submit} className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
           <div className="subtle-scrollbar-auto min-h-0 space-y-5 overflow-y-auto px-4 pb-4">
             {message ? (
               <FieldError
@@ -245,6 +226,8 @@ export function ProviderFormDialog({
                 presetId={presetId}
                 onReload={onReloadPresets}
                 onModeChange={(value) => {
+                  wasSelecting.current = false;
+                  setCandidates(null);
                   drafts.current[mode] = { form, presetId, advanced };
                   const next = drafts.current[value];
                   setMode(value);
@@ -255,6 +238,8 @@ export function ProviderFormDialog({
                   setFieldErrors({});
                 }}
                 onPresetChange={(preset) => {
+                  wasSelecting.current = false;
+                  setCandidates(null);
                   setPresetId(preset.id);
                   setFormError('');
                   setFieldErrors({});
@@ -276,6 +261,18 @@ export function ProviderFormDialog({
                     />
                     {!presetMode ? apiKeyField : null}
                     <ProviderModelsEditor
+                      selection={
+                        candidates ? (
+                          <ModelDiscoveryDialog
+                            models={candidates}
+                            onClose={() => setCandidates(null)}
+                            onAccept={(ids) => {
+                              setForm((current) => ({ ...current, models: mergeModels(current.models, ids) }));
+                              setCandidates(null);
+                            }}
+                          />
+                        ) : null
+                      }
                       models={form.models}
                       discovering={discovering}
                       onChange={(models) => setForm((value) => ({ ...value, models }))}
@@ -286,12 +283,12 @@ export function ProviderFormDialog({
               ) : null}
             </fieldset>
           </div>
-          <div className="px-4 py-4">
+          <div hidden={Boolean(candidates)} className="px-4 py-4">
             <DialogFooter>
               <Button type="button" variant="outline" disabled={busy} onClick={() => setOpen(false)}>
                 {msg('common.cancel', 'Cancel')}
               </Button>
-              <Button type="submit" disabled={busy || discovering}>
+              <Button type="submit" disabled={busy || discovering || Boolean(candidates)}>
                 {busy ? msg('common.saving', 'Saving...') : msg('common.save', 'Save')}
               </Button>
             </DialogFooter>

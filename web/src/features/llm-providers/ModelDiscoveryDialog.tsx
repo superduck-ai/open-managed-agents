@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useI18n } from '../../shared/i18n';
 import { Button } from '../../shared/ui/button';
 import { Checkbox } from '../../shared/ui/checkbox';
@@ -15,11 +15,15 @@ export function ModelDiscoveryDialog({
   onAccept: (ids: string[]) => void;
 }) {
   const { msg } = useI18n();
+  const titleId = useId();
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(new Set(models));
   const visible = models.filter((id) => id.toLowerCase().includes(query.toLowerCase()));
   return (
-    <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-4 px-4 pb-4">
+    <section aria-labelledby={titleId} className="grid min-h-0 gap-3 border-t-[0.5px] border-border pt-3">
+      <h3 id={titleId} className="text-sm font-medium">
+        {msg('llmModels.chooseModels', 'Select models')}
+      </h3>
       <Input
         autoFocus
         aria-label={msg('llmModels.searchPlaceholder', 'Search models')}
@@ -67,6 +71,6 @@ export function ModelDiscoveryDialog({
           {msg('llmModels.addSelected', 'Add selected models')}
         </Button>
       </DialogFooter>
-    </div>
+    </section>
   );
 }

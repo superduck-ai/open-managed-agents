@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { ChevronDown, Download, Loader2, Plus, X } from 'lucide-react';
 import { useI18n } from '../../shared/i18n';
 import { Button } from '../../shared/ui/button';
@@ -29,11 +30,13 @@ export function parseContextWindow(text: string): number | undefined {
 
 export function ProviderModelsEditor({
   models,
+  selection,
   discovering,
   onChange,
   onFetch,
 }: {
   models: ProviderModelDraft[];
+  selection?: ReactNode;
   discovering: boolean;
   onChange: (models: ProviderModelDraft[]) => void;
   onFetch: () => void;
@@ -51,7 +54,7 @@ export function ProviderModelsEditor({
           size="sm"
           data-model-discovery-trigger
           aria-busy={discovering}
-          disabled={discovering}
+          disabled={discovering || Boolean(selection)}
           onClick={onFetch}
         >
           {discovering ? <Loader2 className="animate-spin" aria-hidden /> : <Download aria-hidden />}
@@ -61,7 +64,8 @@ export function ProviderModelsEditor({
       <FieldDescription>
         {msg('llmModels.modelNameHint', 'Display name is optional. Leave it blank to use the model ID.')}
       </FieldDescription>
-      <>
+      {selection}
+      <div hidden={Boolean(selection)} className={selection ? 'hidden' : 'grid gap-3'}>
         <div className="space-y-4">
           {models.map((model, index) => (
             <Collapsible key={model.key} className="border-t-[0.5px] border-border pt-3 first:border-t-0 first:pt-0">
@@ -170,7 +174,7 @@ export function ProviderModelsEditor({
           <Plus aria-hidden />
           {msg('llmModels.addModel', 'Add model')}
         </Button>
-      </>
+      </div>
     </Field>
   );
 }

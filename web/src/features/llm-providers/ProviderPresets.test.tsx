@@ -52,9 +52,12 @@ test('loads empty supplier models, selects fetched models, saves only the connec
   fireEvent.click(screen.getByRole('button', { name: 'Custom settings' }));
   expect(screen.getByLabelText('API key').getAttribute('placeholder')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Get available models' }));
-  const candidates = await screen.findByRole('dialog', { name: 'Select models' });
+  const candidates = await screen.findByRole('region', { name: 'Select models' });
   expect(screen.getAllByRole('dialog')).toHaveLength(1);
-  expect(screen.getByLabelText('API key').closest('form')?.hidden).toBe(true);
+  expect(screen.getByLabelText('API key').closest('form')?.hidden).toBe(false);
+  expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeTruthy();
+  expect(screen.getByLabelText('Base URL').closest('[hidden]')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Save', exact: true })).toBeNull();
   fireEvent.click(within(candidates).getByRole('button', { name: 'Add selected models' }));
   expect(screen.getByLabelText('Model ID 1')).toHaveProperty('value', 'second');
   fireEvent.change(screen.getByLabelText('Display name 1'), { target: { value: 'Second model' } });
@@ -152,7 +155,7 @@ test('cancels discovery with Escape, restores draft and focus in the provider fo
   fireEvent.click(screen.getByRole('button', { name: 'Custom settings' }));
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'My gateway' } });
   fireEvent.click(screen.getByRole('button', { name: 'Get available models' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Select models' });
+  const dialog = await screen.findByRole('region', { name: 'Select models' });
   fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
   await screen.findByRole('dialog', { name: 'Add provider' });
   expect(screen.getByLabelText('Display name')).toHaveProperty('value', 'My gateway');
@@ -183,4 +186,36 @@ test('custom provider name follows its ID until customized and clearing restores
   fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
   await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
   expect(save.mock.calls[0][0].name).toBe('research');
+});
+
+test('cancels inline selection without changing model drafts or expanded parameters', async () => {
+  renderPreset();
+  await selectGateway();
+  fireEvent.click(screen.getByRole('button', { name: 'Custom settings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add model', exact: true }));
+  fireEvent.change(screen.getByLabelText('Model ID 1'), { target: { value: 'manual-model' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Model parameters 1' }));
+  fireEvent.change(screen.getByLabelText('Context window 1'), { target: { value: '128K' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Get available models' }));
+  const selection = await screen.findByRole('region', { name: 'Select models' });
+  fireEvent.click(within(selection).getByRole('button', { name: 'Cancel', exact: true }));
+  expect(screen.queryByRole('region', { name: 'Select models' })).toBeNull();
+  expect(screen.getByLabelText('Model ID 1')).toHaveProperty('value', 'manual-model');
+  expect(screen.getByLabelText('Context window 1')).toHaveProperty('value', '128K');
+  expect(screen.getByRole('button', { name: 'Model parameters 1' }).getAttribute('aria-expanded')).toBe('true');
+});
+
+test('discards candidates when connection settings change', async () => {
+  renderPreset();
+  await selectGateway();
+  fireEvent.click(screen.getByRole('button', { name: 'Custom settings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Get available models' }));
+  await screen.findByRole('region', { name: 'Select models' });
+  const baseURL = screen.getByLabelText('Base URL');
+  baseURL.focus();
+  fireEvent.change(baseURL, { target: { value: 'https://new.example.test' } });
+  expect(document.activeElement).toBe(baseURL);
+  expect(screen.queryByRole('region', { name: 'Select models' })).toBeNull();
+  expect(screen.getByLabelText('Model ID 1')).toHaveProperty('value', '');
+  expect(screen.getByRole('button', { name: 'Save', exact: true }).disabled).toBe(false);
 });

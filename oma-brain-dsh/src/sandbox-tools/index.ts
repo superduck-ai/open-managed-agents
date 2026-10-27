@@ -11,6 +11,7 @@ export interface Config {
   bridge: ToolExecutionBridge;
   tools?: string[];
   permissions?: ToolPermissions;
+  threadId?: string;
 }
 
 const bindings = {
@@ -34,7 +35,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 }
 
 function registerTools(ctx: Context, config: Config): void {
-  const execution = new ToolExecution(ctx.sandboxExecutor, ctx.toolExecutionBridge, config.permissions);
+  const execution = new ToolExecution(ctx.sandboxExecutor, ctx.toolExecutionBridge, config.permissions, config.threadId);
   ctx.tools.restrict({ allow: [] });
   for (const tool of sandboxToolDefinitions()) {
     if (config.tools && !config.tools.includes(tool.name)) continue;

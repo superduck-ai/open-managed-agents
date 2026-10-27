@@ -20,6 +20,7 @@ export class ToolExecution {
     readonly sandbox: SandboxExecutor,
     readonly bridge: ToolExecutionBridge,
     readonly permissions?: ToolPermissions,
+    readonly threadId?: string,
   ) {}
 
   async execute(tool: RemoteTool, original: Payload, exec: ToolExecutionContext): Promise<string> {
@@ -45,7 +46,7 @@ export class ToolExecution {
     let result: Payload;
     try {
       result = await this.bridge.runTool(exec.callId, async () => decision.externalResult
-        ?? (readOnly ? await this.callWithRetry(tool, effective, exec.signal) : await this.sandbox.call(tool, effective, exec.signal)), readOnly);
+        ?? (readOnly ? await this.callWithRetry(tool, effective, exec.signal) : await this.sandbox.call(tool, effective, exec.signal, this.threadId)), readOnly);
     } catch (error) {
       const userInterrupted = exec.signal.aborted && exec.signal.reason?.kind === "user";
       const shutdownInterrupted = exec.signal.aborted && isShutdownCancel(exec.signal.reason);
@@ -85,10 +86,10 @@ export class ToolExecution {
 
   private async callWithRetry(tool: RemoteTool, args: Payload, signal: AbortSignal): Promise<Payload> {
     try {
-      return await this.sandbox.call(tool, args, signal);
+      return await this.sandbox.call(tool, args, signal, this.threadId);
     } catch (error) {
       if (signal.aborted) throw error;
-      return await this.sandbox.call(tool, args, signal);
+      return await this.sandbox.call(tool, args, signal, this.threadId);
     }
   }
 }

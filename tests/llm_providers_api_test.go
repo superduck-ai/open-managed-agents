@@ -23,7 +23,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestWorkspaceLLMProviderSlugIsUniqueUnderConcurrentCreates(t *testing.T) {
+func TestLLMProviderSlugIsUniqueAcrossScopesUnderConcurrentCreates(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("llm-providers-concurrent-slug-bucket"))
 	defer app.close()
 	clearTestLLMProviders(t, app)
@@ -48,6 +48,9 @@ func TestWorkspaceLLMProviderSlugIsUniqueUnderConcurrentCreates(t *testing.T) {
 			Models:           db.LLMModels{{ID: "shared-model"}},
 			CreatedAt:        now,
 			UpdatedAt:        now,
+		}
+		if index == 0 {
+			provider.WorkspaceUUID = ""
 		}
 		key := []byte(fmt.Sprintf("concurrent-provider-key-%d", index))
 		envelope, err := app.vaultSecrets.Seal(context.Background(), llmproviders.SecretBinding(provider), key)
@@ -822,8 +825,8 @@ func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {
 		t.Fatalf("seal duplicate organization provider: %v", err)
 	}
 	duplicate.SecretEnvelope = &envelope
-	if _, err := app.db.CreateLLMProvider(context.Background(), duplicate); !errors.Is(err, db.ErrOrganizationLLMProviderExists) {
-		t.Fatalf("duplicate organization provider error = %v, want ErrOrganizationLLMProviderExists", err)
+	if _, err := app.db.CreateLLMProvider(context.Background(), duplicate); !errors.Is(err, db.ErrLLMProviderSlugConflict) {
+		t.Fatalf("duplicate organization provider error = %v, want ErrLLMProviderSlugConflict", err)
 	}
 
 	updated := app.platformRequest(t, http.MethodPut, path, strings.NewReader(`{

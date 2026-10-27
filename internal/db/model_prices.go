@@ -57,20 +57,22 @@ func (d *DB) BillingCalculator() *billing.Calculator {
 		if err != nil {
 			return nil, err
 		}
-		organization, err := d.GetOrganizationLLMProvider(ctx, org)
-		if err != nil && !errors.Is(err, ErrNotFound) {
+		organization, err := d.ListLLMProviders(ctx, org, "")
+		if err != nil {
 			return nil, err
 		}
-		if err == nil {
-			providers = append(providers, organization)
-		}
+		providers = append(providers, organization...)
 		models := make(map[string]billing.ModelPrice)
 		aliases := make(map[string]string)
+		workspaceModels := make(map[string]bool)
 		for _, provider := range providers {
 			for _, model := range provider.Models.IDs() {
+				if provider.WorkspaceUUID != "" {
+					workspaceModels[model] = true
+				}
 				qualified := provider.Slug + "/" + model
 				if _, exists := aliases[model]; exists {
-					if provider.WorkspaceUUID == "" {
+					if provider.WorkspaceUUID == "" && workspaceModels[model] {
 						continue
 					}
 					aliases[model] = ""

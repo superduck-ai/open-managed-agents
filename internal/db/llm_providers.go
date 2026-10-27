@@ -11,15 +11,13 @@ import (
 )
 
 var (
-	ErrOrganizationLLMProviderExists = errors.New("organization LLM provider already exists")
-	ErrIncompleteLLMProviderSecret   = errors.New("incomplete LLM provider secret envelope")
-	ErrLLMProviderSlugConflict       = errors.New("LLM provider slug already exists")
+	ErrIncompleteLLMProviderSecret = errors.New("incomplete LLM provider secret envelope")
+	ErrLLMProviderSlugConflict     = errors.New("LLM provider slug already exists")
 )
 
 const (
-	OrganizationLLMProviderSecretWorkspace    = "organization"
-	llmProviderSlugConstraint                 = "llm_providers_organization_workspace_slug_key"
-	llmProvidersOrganizationDefaultConstraint = "llm_providers_organization_default_key"
+	OrganizationLLMProviderSecretWorkspace = "organization"
+	llmProviderSlugConstraint              = "llm_providers_organization_slug_key"
 )
 
 type LLMModel struct {
@@ -83,10 +81,14 @@ func (d *DB) CreateLLMProvider(ctx context.Context, provider LLMProvider) (LLMPr
 }
 
 func (d *DB) ListLLMProviders(ctx context.Context, organizationUUID, workspaceUUID string) ([]LLMProvider, error) {
-	rows, err := NewLLMProviderMapper(d.mapperDB).ListByWorkspace(ctx, organizationUUID, workspaceUUID)
+	rows, err := NewLLMProviderMapper(d.mapperDB).ListByWorkspace(ctx, organizationUUID, nullableString(workspaceUUID))
 	if err != nil {
 		return nil, err
 	}
+	return llmProviderRows(rows)
+}
+
+func llmProviderRows(rows []llmProviderRow) ([]LLMProvider, error) {
 	providers := make([]LLMProvider, 0, len(rows))
 	for _, row := range rows {
 		provider, err := row.provider()
@@ -98,8 +100,16 @@ func (d *DB) ListLLMProviders(ctx context.Context, organizationUUID, workspaceUU
 	return providers, nil
 }
 
+func (d *DB) ListOrganizationLLMProviders(ctx context.Context, organizationUUID string) ([]LLMProvider, error) {
+	rows, err := NewLLMProviderMapper(d.mapperDB).ListByOrganization(ctx, organizationUUID)
+	if err != nil {
+		return nil, err
+	}
+	return llmProviderRows(rows)
+}
+
 func (d *DB) GetLLMProvider(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (LLMProvider, error) {
-	row, err := NewLLMProviderMapper(d.mapperDB).FindByExternalID(ctx, organizationUUID, workspaceUUID, externalID)
+	row, err := NewLLMProviderMapper(d.mapperDB).FindByExternalID(ctx, organizationUUID, nullableString(workspaceUUID), externalID)
 	if err != nil {
 		return LLMProvider{}, mapNoRows(err)
 	}
@@ -224,9 +234,6 @@ func requireLLMProviderEnvelope(envelope *secrets.Envelope) error {
 }
 
 func mapLLMProviderWriteError(err error) error {
-	if isUniqueViolationOnConstraint(err, llmProvidersOrganizationDefaultConstraint) {
-		return ErrOrganizationLLMProviderExists
-	}
 	if isUniqueViolationOnConstraint(err, llmProviderSlugConstraint) {
 		return ErrLLMProviderSlugConflict
 	}

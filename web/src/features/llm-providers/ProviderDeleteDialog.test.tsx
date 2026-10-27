@@ -82,7 +82,7 @@ test('keeps organization warning and error when the owner clears selection durin
   await screen.findByRole('alertdialog');
   rendered.rerender(view(null, ''));
   expect(document.querySelector('[data-slot="alert-dialog-description"]')?.textContent).toContain(
-    'organization default',
+    'this provider for every workspace',
   );
   expect(document.querySelector('[data-slot="field-error"]')?.textContent).toContain('Delete failed');
 });

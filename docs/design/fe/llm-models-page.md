@@ -4,7 +4,7 @@
 
 LLM 模型页是工作区的模型目录，而不是 Provider 卡片墙。
 
-工作区页面请求 `GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers` 和组织默认 `GET /api/console/organizations/{orgUuid}/llm_provider`。Provider 配置及其 `models` 是目录的唯一数据源，页面不再额外请求 `/v1/models`，避免同一页面出现两份模型集合和无法归属 Provider 的模型。
+工作区页面请求 `GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers` 和组织共享 `GET /api/console/organizations/{orgUuid}/llm_providers`。Provider 配置及其 `models` 是目录的唯一数据源，页面不再额外请求 `/v1/models`，避免同一页面出现两份模型集合和无法归属 Provider 的模型。
 
 填写 Provider 的 Base URL 和 API Key 后，可在表单里点「获取模型列表」，请求 `POST .../llm_providers/preview_models`，用上游 `{base_url}/v1/models` 获取候选模型。确认选择后与表单内已有的非空模型 ID 合并、去重，不覆盖手工输入；上游返回空数组时只提示，不清空表单。编辑 Provider 时，读取接口不会返回旧 Key，编辑时可直接使用已保存的凭证获取可用模型。
 
@@ -60,13 +60,17 @@ Base URL 仍填写 API 根地址，允许路径前缀，不重复填写 `/v1`。
 
 ## 组织 LLM 配置
 
-组织设置增加 `/settings/llm` 入口，复用 `LLMModelsPage` 的组织 scope。组织页只请求组织 Provider，不依赖选中的工作区；成员可只读查看，管理员可创建、编辑、删除、预览及同步。组织 Provider 的 slug 固定为 `organization`，仅创建时展示，编辑时隐藏，其他字段沿用通用 Provider 表单。
+组织与工作区均可创建多个 Provider。组织设置 `/settings/llm` 管理组织共享连接，工作区页面管理当前工作区专用连接。组织页不依赖选中的工作区，始终允许有权限的管理员继续添加 Provider；每条连接独立保存密钥、协议、地址和模型目录。
 
-工作区目录合并展示组织默认模型，复制完整 `organization/{model}` 引用。全部 Provider 分组与单个 Provider 详情都显示组织模型只读提示。组织 Provider 在工作区页不可编辑、删除或追加模型，刷新只同步工作区 Provider；组织配置应在组织页修改。只读成员刷新只重新读取数据。组织读取返回 404 表示尚未配置，不视为失败；其他组织读取失败在已有工作区目录上提示降级，不能隐藏为正常成功。
+Provider ID 对应 `slug`，在整个组织内唯一，包含组织连接和该组织下所有工作区连接；不同组织可以重名。显示名称不承担唯一性。创建时可从供应商预设填入 ID，创建前可编辑，创建后不可修改。模型引用统一为 `<provider-id>/<model-id>`，作用范围不再编码在新 Provider ID 中。
 
-添加 Provider 使用下文供应商目录和自定义 API 两个入口，不内置公司专用逻辑。
+工作区目录合并读取组织共享连接与当前工作区连接。组织连接在所有工作区可见，工作区连接仅当前工作区可见。组织连接在工作区内只读，只能到组织设置修改；管理员管理权限与此前一致。跨工作区的更新、删除及模型发现必须按归属校验，知道 Provider ID 不会获得使用权限。密钥明文不返回浏览器。
 
-工作区 Provider 表单在提交前拒绝保留 slug `organization`，并显示本地化提示；组织 Provider 表单固定且允许该值。删除组织默认的确认文案在默认消息与中英文翻译中保持同一语义：工作区 Provider 仍可使用，通过组织 Provider 引用的模型将不再可用。
+组织 CRUD 使用集合 `/api/console/organizations/{orgUuid}/llm_providers` 和 `/{providerId}`；工作区仍使用原有 `/workspaces/{workspaceId}/llm_providers`。模型发现、已保存凭据预览、同步均作用于指定连接。工作区刷新不修改组织连接。组织列表为空返回 `[]`；读取失败显示降级提示，不能隐藏成正常空目录。
+
+已有组织连接保留 ID `organization` 及其模型引用。旧单数 `/llm_provider` API 仅操作这个历史连接，不选择或覆盖新增连接；`organization` 对新集合创建仍为保留 ID。迁移 00105 在组织内确定性重命名历史重复工作区 ID，并同步更新 Agent、版本、多 Agent 配置、Session/线程/部署快照、Code Session 恢复元数据及待处理 Batch 的模型引用；Provider UUID 与密钥绑定不变。组织迁移和回滚要求见后端模型代理设计。新增同名模型后，已有完整引用继续指向原连接。
+
+添加 Provider 继续使用供应商目录和自定义 API 两个入口，不内置公司专用逻辑。删除组织连接的确认说明它会影响所有工作区通过此连接引用的模型，不影响其他组织连接或工作区连接。
 
 ## 统一模型配置
 
@@ -92,7 +96,7 @@ Brain 的 `session_context.models` 为派生的模型路由索引，值包含同
 
 “获取模型列表”始终展示：新凭证使用 `preview_models`，已有凭证使用 `.../models/preview`。后端鉴权、解密，只查询上游；前端确认候选选择后按 ID 合并到草稿并保留已有参数，保存才提交，取消放弃。修改地址或协议后须填写对应 Key。页面同步则保留已有模型记录，只追加新 ID。
 
-创建时显示 Provider ID 与显示名称，ID 对应既有 `slug`，显示名称对应 `name`。工作区创建必须填写 ID，不从名称生成；组织默认 ID 固定为 `organization`。编辑时隐藏 ID、保留原值，显示名称可独立修改，服务端继续拒绝变更 slug。既有模型引用不变。
+创建时显示 Provider ID 与显示名称，ID 对应既有 `slug`，显示名称对应 `name`。工作区创建必须填写 ID，不从名称生成；组织连接同样填写组织内唯一的 ID。编辑时隐藏 ID、保留原值，显示名称可独立修改，服务端继续拒绝变更 slug。既有模型引用不变。
 
 
 ### 编辑弹窗关闭
@@ -101,7 +105,7 @@ Brain 的 `session_context.models` 为派生的模型路由索引，值包含同
 
 ## 请求地址预览
 
-Provider 表单在 Base URL 下用简短的“请求地址：”展示当前 URL 与协议路径的组合预览，避免说明句挤压实际路径。Messages 与 Chat Completions 的路径仍分别为 `/v1/messages` 和 `/v1/chat/completions`，预览不改变请求或校验逻辑。窄屏检查短路径保持连续，长 URL 在表单宽度内换行。
+Provider 表单在 Base URL 下用简短的“请求地址：”展示当前 URL 与协议路径的组合预览，避免说明句挤压实际路径。Messages 与 Chat Completions 的路径仍分别为 `/v1/messages` 和 `/v1/chat/completions`，输入允许基础地址、以 `/v1` 结尾的地址或完整 `/v1/messages`、`/v1/chat/completions` 请求地址；预览、保存和模型发现去除这些标准后缀后再拼接目标路径，保留 `/anthropic` 等供应商前缀。空地址显示缺省符号。后端 URL 校验和 Endpoint 同样归一化，覆盖直接 API 写入及已有完整地址配置。DeepSeek 官方 `https://api.deepseek.com/anthropic` 是有效 Messages 基础地址；模型发现仅对该官方主机的 `/anthropic` 路径使用 `https://api.deepseek.com/models`，其他网关继续在保留前缀的地址下请求 `/v1/models`。窄屏检查短路径保持连续，长 URL 在表单宽度内换行。
 
 ## 供应商目录与添加入口
 
@@ -109,8 +113,15 @@ Provider 表单在 Base URL 下用简短的“请求地址：”展示当前 URL
 
 目录格式为版本 1 的 JSON：`{"version":1,"providers":[{"id":"gateway","name":"Gateway","api_backend":"chat_completions","base_url":"https://gateway.example.com","models":[]}]}`。目录供应商与已保存连接是不同对象；目录更新不修改已有连接。模型 `name` 是可选显示名称，路由、计费、复制和权限仍使用 ID。模型显示名称留空时显示模型 ID；编辑器可删除最后一行得到空列表，不提供模型行上下移动操作。供应商的 `order` 为非负安全整数，数值越小越靠前，未填写为 0，相同值保持文件中的先后顺序。内置供应商使用 10、20、30 等顺序值，公司网关可设为 0 排在最前。
 
-“获取模型列表”仅请求上游列表，随后打开可搜索、多选的候选弹窗。确认后按上游顺序追加缺少的 ID，保留已有同 ID 的名称和参数；取消候选弹窗不修改草稿。空响应不清除模型，也不猜测上下文或图像能力。
+“获取模型列表”仅请求上游列表，随后在当前编辑弹窗内切换为可搜索、多选的模型选择步骤，不叠加第二个弹窗。取消、关闭和 Escape 返回编辑，保留连接草稿并恢复到获取模型按钮的焦点。确认后按上游顺序追加缺少的 ID，保留已有同 ID 的名称和参数；取消候选弹窗不修改草稿。空响应不清除模型，也不猜测上下文或图像能力。
 
 供应商目录只读。控制台仅提供目录读取接口，不提供修改供应商默认模型的入口或写入 API。保存只影响当前工作区连接或当前组织默认连接，发现和编辑的模型不会写回部署级供应商 JSON。未配置文件路径时使用内置目录。目录读取要求组织管理员；目录没有凭据，也不应该放组织私有信息。
 
-必填校验逐字段展示：Provider ID、供应商显示名称、API 地址和新增连接的 API 密钥缺失时，为对应输入框设置 `aria-invalid`、红色边框和关联的错误文字，聚焦第一个错误；隐藏字段出错时展开自定义设置。已有连接允许保留原密钥。供应商未选时错误显示在供应商选择器下。服务端错误保留在红色边框提示区。供应商模式下，API 密钥始终展示在折叠区域外。“自定义设置”采用共享 Collapsible：顶部细分隔线、左侧向右箭头（展开后向下），展开内容统一缩进，包含连接参数与模型目录。工作区连接仅作用于当前工作区，组织默认连接仅作用于当前组织。折叠再展开保留草稿，隐藏必填字段校验失败时自动展开并聚焦。自定义 API 和编辑连接保持完整表单。
+必填校验逐字段展示：Provider ID、API 地址和新增连接的 API 密钥缺失时，为对应输入框设置 `aria-invalid`、红色边框和关联的错误文字，聚焦第一个错误；隐藏字段出错时展开自定义设置。已有连接允许保留原密钥。供应商未选时错误显示在供应商选择器下。服务端错误保留在红色边框提示区。供应商模式下，API 密钥始终展示在折叠区域外。“自定义设置”采用共享 Collapsible：顶部细分隔线、左侧向右箭头（展开后向下），展开内容统一缩进，包含连接参数与模型目录。工作区连接仅作用于当前工作区，组织默认连接仅作用于当前组织。折叠再展开保留草稿，隐藏必填字段校验失败时自动展开并聚焦。自定义 API 和编辑连接保持完整表单。
+
+
+## Provider 表单默认值与文案
+
+供应商未选时仅展示选择器占位，不添加重复操作说明。自定义 API 中，Provider ID 使用 `deepseek` 示例，模型 ID 使用 `kimi-k3` 占位。显示名称可选：创建时尚未自定义的名称随 Provider ID 显示，手动填写后不再随 ID 改变；清空名称恢复使用 ID。编辑已有连接保留其名称，清空后使用该连接 ID。提交与 Console API 在名称为空或仅含空白时均使用最终 Provider ID，API 自动生成 ID 时也使用生成后的值。显示名称长度校验保留。
+
+API 地址下仅保留实际请求地址预览，去除协议路径的说明段落；完整地址归一化和 DeepSeek 模型发现行为保持不变。中英文保持相同信息密度。

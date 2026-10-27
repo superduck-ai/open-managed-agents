@@ -129,7 +129,7 @@ func syncProviderFromUpstream(w http.ResponseWriter, r *http.Request, database *
 	}
 	modelIDs := llmproviders.MergeModelIDs(provider.Models.IDs(), liveIDs, maxLLMProviderModels)
 	if slices.Equal(provider.Models.IDs(), modelIDs) {
-		writeJSON(w, http.StatusOK, formatSyncedLLMProvider(provider))
+		writeJSON(w, http.StatusOK, formatLLMProvider(provider))
 		return
 	}
 	provider.Models = provider.Models.WithIDs(modelIDs)
@@ -139,14 +139,7 @@ func syncProviderFromUpstream(w http.ResponseWriter, r *http.Request, database *
 		internalError(w, "failed to update LLM provider")
 		return
 	}
-	writeJSON(w, http.StatusOK, formatSyncedLLMProvider(updated))
-}
-
-func formatSyncedLLMProvider(provider db.LLMProvider) llmProviderResponse {
-	if provider.WorkspaceUUID == "" {
-		return formatOrganizationLLMProvider(provider)
-	}
-	return formatLLMProvider(provider)
+	writeJSON(w, http.StatusOK, formatLLMProvider(updated))
 }
 
 func formatPreviewModels(ids []string) previewLLMProviderModelsResponse {

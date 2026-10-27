@@ -15,7 +15,7 @@ func TestProviderModelsValidation(t *testing.T) {
 		response := httptest.NewRecorder()
 		body, ok := decodeLLMProviderRequest(response, request)
 		if ok {
-			_, _, _, ok = validateLLMProviderInput(response, body)
+			_, _, _, ok = validateLLMProviderInput(response, body, "my-provider")
 		}
 		if ok || response.Code != http.StatusBadRequest {
 			t.Fatalf("accepted %s", models)
@@ -26,7 +26,7 @@ func TestProviderModelsValidation(t *testing.T) {
 		response := httptest.NewRecorder()
 		body, ok := decodeLLMProviderRequest(response, request)
 		if ok {
-			_, _, _, ok = validateLLMProviderInput(response, body)
+			_, _, _, ok = validateLLMProviderInput(response, body, "my-provider")
 		}
 		if !ok {
 			t.Fatalf("rejected %s: %s", models, response.Body.String())
@@ -46,7 +46,7 @@ func TestProviderEmptyModelsResponse(t *testing.T) {
 		if !ok {
 			t.Fatal(response.Body.String())
 		}
-		_, _, models, ok := validateLLMProviderInput(response, body)
+		_, _, models, ok := validateLLMProviderInput(response, body, "my-provider")
 		if !ok {
 			t.Fatal(response.Body.String())
 		}
@@ -59,6 +59,25 @@ func TestProviderEmptyModelsResponse(t *testing.T) {
 		}
 		if string(encoded.Models) != "[]" {
 			t.Fatalf("models response: %s", encoded.Models)
+		}
+	}
+}
+
+func TestProviderNameRejectsLongValuesAndDefaultsToFinalID(t *testing.T) {
+	response := httptest.NewRecorder()
+	if _, _, _, ok := validateLLMProviderInput(response, llmProviderRequest{Name: strings.Repeat("x", 101), BaseURL: "https://example.test"}, "my-provider"); ok || response.Code != http.StatusBadRequest {
+		t.Fatal("overlong display name was accepted")
+	}
+	for _, test := range []struct{ name, slug, want string }{
+		{"", "my-provider", "my-provider"},
+		{"  ", "default-2", "default-2"},
+		{"", "organization", "organization"},
+		{" Research ", "my-provider", "Research"},
+	} {
+		response := httptest.NewRecorder()
+		name, _, _, ok := validateLLMProviderInput(response, llmProviderRequest{Name: test.name, BaseURL: "https://example.test"}, test.slug)
+		if !ok || name != test.want {
+			t.Fatalf("name %q with ID %q=%q (%v)", test.name, test.slug, name, ok)
 		}
 	}
 }

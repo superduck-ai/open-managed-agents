@@ -18,7 +18,7 @@ export function SessionListEmpty({
 }) {
   const { msg } = useI18n();
   return (
-    <Empty className="min-h-64 rounded-none border-b-[0.5px]">
+    <Empty className="min-h-64 rounded-none">
       <EmptyHeader>
         <EmptyMedia variant="icon">{filtered ? <Search aria-hidden /> : <MessageSquare aria-hidden />}</EmptyMedia>
         <EmptyTitle>

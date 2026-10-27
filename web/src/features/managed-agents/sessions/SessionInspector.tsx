@@ -518,7 +518,7 @@ function SessionCostChart({
       ariaLabel={label}
       baselineAt={baselineAt}
       chartBottomInset={24}
-      chartLeft={52}
+      chartLeft={Math.max(64, ...[0, maxCents].map((cents) => formatCost(cents).length * 8 + 16))}
       chartRightInset={8}
       chartTop={8}
       className="h-[120px] w-full"

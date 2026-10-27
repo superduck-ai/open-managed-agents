@@ -60,10 +60,9 @@ function hasModelParameters(model: ProviderModelDraft): boolean {
 export function providerFormInput(
   form: ProviderForm,
   provider: LLMProvider | null,
-  organization: boolean,
   msg: MessageFormatter,
 ): { input: LLMProviderInput } | { error: string } | { errors: ProviderFieldErrors } {
-  const errors = providerFieldErrors(form, provider, organization, msg);
+  const errors = providerFieldErrors(form, provider, msg);
   if (Object.keys(errors).length) return { errors };
   const slug = form.slug.trim();
   if (form.models.some((model) => !model.id.trim() && hasModelParameters(model))) {
@@ -89,9 +88,9 @@ export function providerFormInput(
   }
   const input: LLMProviderInput = {
     api_backend: form.apiBackend,
-    name: form.name.trim(),
+    name: form.name.trim() || slug,
     slug,
-    base_url: form.baseUrl.trim(),
+    base_url: providerBaseURL(form.baseUrl),
     models: form.models
       .filter((model) => model.id.trim())
       .map((model) => ({
@@ -111,16 +110,14 @@ export function providerFormInput(
 export function providerFieldErrors(
   form: ProviderForm,
   provider: LLMProvider | null,
-  organization: boolean,
   msg: MessageFormatter,
 ): ProviderFieldErrors {
   const errors: ProviderFieldErrors = {};
-  if (!form.name.trim()) errors.name = msg('llmModels.nameRequired', 'Display name is required.');
   if (!form.baseUrl.trim()) errors.baseUrl = msg('llmModels.baseUrlRequired', 'API URL is required.');
   if (!provider && !form.apiKey.trim()) errors.apiKey = msg('llmModels.apiKeyRequired', 'API key is required.');
   const slug = form.slug.trim();
   if (!slug) errors.slug = msg('llmModels.providerIdRequired', 'Provider ID is required.');
-  else if (!organization && slug === 'organization')
+  else if (!provider && slug === 'organization')
     errors.slug = msg(
       'llmModels.errorSlugReserved',
       'Provider ID "organization" is reserved for the organization default provider.',
@@ -131,4 +128,16 @@ export function providerFieldErrors(
       'Provider ID must contain 1 to 32 lowercase letters, digits, ".", "_" or "-" and start with a letter or digit.',
     );
   return errors;
+}
+
+export function providerBaseURL(value: string): string {
+  return value
+    .trim()
+    .replace(/\/+$/, '')
+    .replace(/\/v1(?:\/messages|\/chat\/completions)?$/, '');
+}
+
+export function providerRequestURL(value: string, backend: APIBackend): string {
+  const base = providerBaseURL(value);
+  return base ? `${base}${backend === 'messages' ? '/v1/messages' : '/v1/chat/completions'}` : '';
 }

@@ -49,6 +49,7 @@ export function ProviderModelsEditor({
           type="button"
           variant="ghost"
           size="sm"
+          data-model-discovery-trigger
           aria-busy={discovering}
           disabled={discovering}
           onClick={onFetch}
@@ -69,7 +70,7 @@ export function ProviderModelsEditor({
                   <Input
                     value={model.id}
                     onChange={(event) => patch(index, { id: event.target.value })}
-                    placeholder="kimi-k2.5"
+                    placeholder="kimi-k3"
                     autoComplete="off"
                     aria-label={`${msg('llmModels.modelId', 'Model ID')} ${index + 1}`}
                     className="min-w-0 flex-1"

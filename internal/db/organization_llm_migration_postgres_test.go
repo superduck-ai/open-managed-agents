@@ -49,7 +49,7 @@ func TestOrganizationLLMProviderMigrationFromMain(t *testing.T) {
 	var indexExists bool
 	if err := database.QueryRowContext(ctx, `
 		select exists(select 1 from pg_indexes
-		where schemaname = current_schema() and indexname = 'llm_providers_organization_default_key')
+		where schemaname = current_schema() and indexname = 'llm_providers_organization_slug_key')
 	`).Scan(&indexExists); err != nil {
 		t.Fatal(err)
 	}

@@ -45,6 +45,7 @@ async function selectGateway() {
 
 test('loads empty supplier models, selects fetched models, saves only the connection', async () => {
   const calls = renderPreset();
+  expect(screen.getByRole('combobox', { name: 'Model supplier' }).textContent).toContain('Select a supplier');
   await selectGateway();
   expect(screen.queryByLabelText('Base URL')).toBeNull();
   expect(screen.queryByRole('checkbox', { name: /all organizations/ })).toBeNull();
@@ -52,6 +53,8 @@ test('loads empty supplier models, selects fetched models, saves only the connec
   expect(screen.getByLabelText('API key').getAttribute('placeholder')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Get available models' }));
   const candidates = await screen.findByRole('dialog', { name: 'Select models' });
+  expect(screen.getAllByRole('dialog')).toHaveLength(1);
+  expect(screen.getByLabelText('API key').closest('form')?.hidden).toBe(true);
   fireEvent.click(within(candidates).getByRole('button', { name: 'Add selected models' }));
   expect(screen.getByLabelText('Model ID 1')).toHaveProperty('value', 'second');
   fireEvent.change(screen.getByLabelText('Display name 1'), { target: { value: 'Second model' } });
@@ -98,7 +101,7 @@ test('shows field-specific custom API errors and keeps model display names optio
   renderPreset();
   fireEvent.click(screen.getByRole('tab', { name: 'Custom model API' }));
   fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
-  for (const label of ['Provider ID', 'Display name', 'Base URL', 'API key']) {
+  for (const label of ['Provider ID', 'Base URL', 'API key']) {
     expect(screen.getByLabelText(label).getAttribute('aria-invalid')).toBe('true');
   }
   expect(screen.getByLabelText('Display name 1').getAttribute('aria-invalid')).not.toBe('true');
@@ -141,4 +144,43 @@ test('opens advanced settings and focuses an invalid hidden connection field', a
   expect(screen.getByLabelText('Base URL').getAttribute('aria-invalid')).toBe('true');
   await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Base URL')));
   expect(calls.save).not.toHaveBeenCalled();
+});
+
+test('cancels discovery with Escape, restores draft and focus in the provider form', async () => {
+  renderPreset();
+  await selectGateway();
+  fireEvent.click(screen.getByRole('button', { name: 'Custom settings' }));
+  fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'My gateway' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Get available models' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Select models' });
+  fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+  await screen.findByRole('dialog', { name: 'Add provider' });
+  expect(screen.getByLabelText('Display name')).toHaveProperty('value', 'My gateway');
+  expect(screen.getByLabelText('API key')).toHaveProperty('value', 'test-key');
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Get available models' }));
+});
+
+test('custom provider name follows its ID until customized and clearing restores the default', async () => {
+  const { save } = renderPreset();
+  expect(screen.queryByText(/Choose a supplier to fill in/)).toBeNull();
+  fireEvent.click(screen.getByRole('tab', { name: 'Custom model API', exact: true }));
+  const id = screen.getByLabelText('Provider ID');
+  const name = screen.getByLabelText('Display name');
+  expect(id.getAttribute('placeholder')).toBe('deepseek');
+  expect(screen.getByLabelText('Model ID 1').getAttribute('placeholder')).toBe('kimi-k3');
+  expect(screen.queryByText(/Paste a base URL or a full/)).toBeNull();
+  fireEvent.change(id, { target: { value: 'my-provider' } });
+  expect(name).toHaveProperty('value', 'my-provider');
+  fireEvent.change(id, { target: { value: 'another-provider' } });
+  expect(name).toHaveProperty('value', 'another-provider');
+  fireEvent.change(name, { target: { value: 'Research models' } });
+  fireEvent.change(id, { target: { value: 'research' } });
+  expect(name).toHaveProperty('value', 'Research models');
+  fireEvent.change(name, { target: { value: '' } });
+  expect(name).toHaveProperty('value', 'research');
+  fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://example.test' } });
+  fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'test-key' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0][0].name).toBe('research');
 });

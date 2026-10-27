@@ -391,13 +391,13 @@ describe('LLM models page', () => {
       locale: 'en' as const,
       remove: 'Delete',
       description:
-        'This removes the organization default for every workspace. Workspace providers remain available. Models referenced through this organization provider will stop working.',
+        'This removes this provider for every workspace. Workspace providers remain available. Models referenced through this organization provider will stop working.',
     },
     {
       locale: 'zh-CN' as const,
       remove: '删除',
       description:
-        '这会移除所有工作区共享的组织默认 Provider。工作区 Provider 仍可使用；通过该组织 Provider 引用的模型将不再可用。',
+        '这会从所有工作区移除此组织 Provider。工作区 Provider 仍可使用；通过该组织 Provider 引用的模型将不再可用。',
     },
   ])('explains the organization deletion scope in $locale', async ({ locale, remove, description }) => {
     resetTestDom('https://oma.duck.ai/settings/llm');
@@ -446,15 +446,16 @@ describe('LLM models page', () => {
     const dialog = screen.getByRole('dialog', { name: 'Add provider' });
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Custom model API' }));
     const slug = within(dialog).getByLabelText('Provider ID') as HTMLInputElement;
-    expect(slug.value).toBe('organization');
-    expect(slug.readOnly).toBe(true);
+    expect(slug.value).toBe('');
+    expect(slug.readOnly).toBe(false);
+    fireEvent.change(slug, { target: { value: 'org-gateway' } });
     expect(within(dialog).queryByText('Quick configure AI gateway')).toBeNull();
     fireEvent.change(within(dialog).getByLabelText('Display name'), { target: { value: 'Organization default' } });
     fireEvent.change(within(dialog).getByLabelText('Base URL'), { target: { value: 'https://models.example.com' } });
     fireEvent.change(within(dialog).getByLabelText('API key'), { target: { value: 'organization-key' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Get available models' }));
     await waitFor(() =>
-      expect(api.requests.some((request) => request.url.endsWith('/llm_provider/preview_models'))).toBe(true),
+      expect(api.requests.some((request) => request.url.endsWith('/llm_providers/preview_models'))).toBe(true),
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Add selected models' }));
     await waitFor(() =>
@@ -464,8 +465,10 @@ describe('LLM models page', () => {
     );
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Organization default models' }));
-    expect(await screen.findByText('organization/shared-model')).toBeTruthy();
-    expect(api.requests.find((request) => request.method === 'PUT')?.body?.slug).toBe('organization');
+    expect(await screen.findByText('org-gateway/shared-model')).toBeTruthy();
+    expect(
+      api.requests.find((request) => request.method === 'POST' && request.url.endsWith('/llm_providers'))?.body?.slug,
+    ).toBe('org-gateway');
     expect(api.requests.every((request) => !request.url.includes('/workspaces/'))).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Organization default' }));
     expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
@@ -589,12 +592,14 @@ describe('LLM models page', () => {
     fireEvent.pointerUp(option);
     fireEvent.mouseUp(option);
     fireEvent.click(option);
-    expect(within(dialog).getByText('/v1/chat/completions')).toBeTruthy();
+    expect(within(dialog).getByText('—')).toBeTruthy();
     expect(within(dialog).getByText('Chat Completions is supported in brain mode only.')).toBeTruthy();
     expect(screen.queryByRole('option', { name: 'Responses' })).toBeNull();
     fireEvent.change(within(dialog).getByLabelText('Provider ID'), { target: { value: 'chat-gateway' } });
     fireEvent.change(within(dialog).getByLabelText('Display name'), { target: { value: 'Chat Gateway' } });
-    fireEvent.change(within(dialog).getByLabelText('Base URL'), { target: { value: 'https://chat.example.com' } });
+    fireEvent.change(within(dialog).getByLabelText('Base URL'), {
+      target: { value: 'https://chat.example.com/v1/chat/completions' },
+    });
     fireEvent.change(within(dialog).getByLabelText('API key'), { target: { value: 'chat-key' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Get available models' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Add selected models' }));
@@ -1039,7 +1044,7 @@ describe('LLM models page', () => {
     });
     fireEvent.click(within(dialog).getByRole('button', { name: '保存' }));
 
-    expect(await within(dialog).findByText('该 Provider ID 已存在。')).toBeTruthy();
+    expect(await within(dialog).findByText('该 Provider ID 已在组织中使用。')).toBeTruthy();
     expect(within(dialog).queryByText('wording changed')).toBeNull();
     expect(api.requests.find((request) => request.method === 'POST')?.body?.slug).toBe('aliyun');
   });
@@ -1081,6 +1086,7 @@ for (const role of ['admin', 'user'] as const) {
     globalThis.fetch = mock(async (input, init) => {
       const url = String(input);
       methods.push(init?.method ?? 'GET');
+      if (url.endsWith('/llm_providers') && !url.includes('/workspaces/')) return jsonResponse([]);
       if (url.endsWith('/llm_providers')) {
         catalogAttempts++;
         return catalogAttempts === 1
@@ -1214,6 +1220,7 @@ function mockProvidersApi(
   options: {
     initialProviders?: LLMProvider[];
     organizationProvider?: LLMProvider;
+    organizationProviders?: LLMProvider[];
     previewStatus?: number;
     previewCode?: string;
     previewMessage?: string;
@@ -1227,7 +1234,8 @@ function mockProvidersApi(
   } = {},
 ) {
   let providers: LLMProvider[] = options.initialProviders ?? [];
-  let organization = options.organizationProvider;
+  let organizations =
+    options.organizationProviders ?? (options.organizationProvider ? [options.organizationProvider] : []);
   let nextID = 1;
   const requests: RecordedRequest[] = [];
   globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1237,20 +1245,12 @@ function mockProvidersApi(
     requests.push({ url, method, body });
 
     if (url.endsWith('/llm_provider_presets') && method === 'GET') return jsonResponse({ providers: [] });
-    if (url.endsWith('/llm_provider') && method === 'GET')
-      return organization ? jsonResponse(organization) : jsonResponse({}, 404);
-    if (url.endsWith('/llm_provider') && method === 'PUT') {
-      organization = { ...providerFromBody('provider_organization', body), scope: 'organization' };
-      return jsonResponse(organization);
-    }
-    if (url.endsWith('/llm_provider') && method === 'DELETE') {
-      organization = undefined;
-      return new Response(null, { status: 204 });
-    }
-    if (url.endsWith('/llm_provider/models/sync') && method === 'POST' && organization) {
-      organization = { ...organization, models: mergeTestModels(organization.models, liveModelIds) };
-      return jsonResponse(organization);
-    }
+    const organizationRequest = !url.includes('/workspaces/');
+    const targetProviders = organizationRequest ? organizations : providers;
+    const setProviders = (next: LLMProvider[]) => {
+      if (organizationRequest) organizations = next.map((provider) => ({ ...provider, scope: 'organization' }));
+      else providers = next;
+    };
     if ((url.endsWith('/preview_models') || url.endsWith('/models/preview')) && method === 'POST') {
       if (options.previewStatus && options.previewStatus >= 400) {
         return jsonResponse(providerError(options.previewCode, options.previewMessage), options.previewStatus);
@@ -1259,42 +1259,42 @@ function mockProvidersApi(
     }
     if (url.includes('/models/sync') && method === 'POST') {
       const providerID = url.match(/\/llm_providers\/([^/?]+)\/models\/sync$/)?.[1];
-      const existing = providers.find((provider) => provider.id === providerID);
+      const existing = targetProviders.find((provider) => provider.id === providerID);
       if (!existing) return jsonResponse({ error: { message: 'not found' } }, 404);
       const modelIds = existing.models.map((model) => model.id);
       for (const modelId of liveModelIds) {
         if (!modelIds.includes(modelId)) modelIds.push(modelId);
       }
       const updated = { ...existing, models: mergeTestModels(existing.models, modelIds) };
-      providers = providers.map((provider) => (provider.id === providerID ? updated : provider));
+      setProviders(targetProviders.map((provider) => (provider.id === providerID ? updated : provider)));
       return jsonResponse(updated);
     }
     if (url.endsWith('/llm_providers') && method === 'GET') {
-      return jsonResponse(providers);
+      return jsonResponse(targetProviders);
     }
     if (url.endsWith('/llm_providers') && method === 'POST') {
       if (options.createStatus && options.createStatus >= 400) {
         return jsonResponse(providerError(options.createCode, options.createMessage), options.createStatus);
       }
       const provider = providerFromBody(`provider_${nextID++}`, body);
-      providers = [...providers, provider];
+      setProviders([...targetProviders, provider]);
       return jsonResponse(provider);
     }
 
     const providerID = url.match(/\/llm_providers\/([^/?]+)$/)?.[1];
     if (providerID && method === 'PUT') {
-      const existing = providers.find((provider) => provider.id === providerID);
+      const existing = targetProviders.find((provider) => provider.id === providerID);
       if (!existing) return jsonResponse({ error: { message: 'not found' } }, 404);
       await options.updateGate;
       if (options.updateStatus && options.updateStatus >= 400) {
         return jsonResponse(providerError(options.updateCode, options.updateMessage), options.updateStatus);
       }
       const updated = providerFromBody(providerID, body, existing.api_key_last4);
-      providers = providers.map((provider) => (provider.id === providerID ? updated : provider));
+      setProviders(targetProviders.map((provider) => (provider.id === providerID ? updated : provider)));
       return jsonResponse(updated);
     }
     if (providerID && method === 'DELETE') {
-      providers = providers.filter((provider) => provider.id !== providerID);
+      setProviders(targetProviders.filter((provider) => provider.id !== providerID));
       return new Response(null, { status: 204 });
     }
     return jsonResponse({ error: { message: 'not found' } }, 404);
@@ -1352,4 +1352,81 @@ function organizationProvider(): LLMProvider {
 
 function mergeTestModels(existing: LLMProvider['models'], ids: string[]) {
   return [...existing, ...ids.filter((id) => !existing.some((model) => model.id === id)).map((id) => ({ id }))];
+}
+
+test('organization can add multiple providers and edits and deletes target only the selected connection', async () => {
+  resetTestDom('https://oma.duck.ai/settings/llm');
+  const first = { ...organizationProvider(), id: 'org-kimi', name: 'Kimi', slug: 'kimi' };
+  const second = { ...organizationProvider(), id: 'org-deepseek', name: 'DeepSeek', slug: 'deepseek' };
+  const api = mockProvidersApi([], { organizationProviders: [first, second] });
+  renderPage('en', 'admin', 'organization');
+  await screen.findByRole('button', { name: 'Kimi', exact: true });
+  await createProvider('OpenAI', 'https://api.example.test', 'test-openai-key', ['new-model']);
+  expect(screen.getByRole('button', { name: 'Kimi', exact: true })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'DeepSeek', exact: true })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Add provider', exact: true })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'DeepSeek', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Edit', exact: true }));
+  fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'DeepSeek updated' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
+  await screen.findByRole('button', { name: 'DeepSeek updated', exact: true });
+  expect(api.requests.findLast((request) => request.method === 'PUT')?.url).toEndWith('/llm_providers/org-deepseek');
+  fireEvent.click(screen.getByRole('button', { name: 'Delete', exact: true }));
+  fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Delete', exact: true }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'DeepSeek updated', exact: true })).toBeNull());
+  expect(screen.getByRole('button', { name: 'Kimi', exact: true })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'OpenAI', exact: true })).toBeTruthy();
+  expect(api.requests.findLast((request) => request.method === 'DELETE')?.url).toEndWith('/llm_providers/org-deepseek');
+});
+
+test('workspace combines multiple shared providers with local providers and keeps every shared connection read-only', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
+  const organizations = ['kimi', 'deepseek'].map((slug) => ({
+    ...organizationProvider(),
+    id: `org-${slug}`,
+    name: slug,
+    slug,
+  }));
+  const local = providerFromBody('local-provider', {
+    name: 'Local gateway',
+    slug: 'local',
+    base_url: 'https://local.test',
+    models: [{ id: 'shared-model' }],
+  });
+  mockProvidersApi([], { organizationProviders: organizations, initialProviders: [local] });
+  renderPage();
+  await screen.findByRole('button', { name: 'Local gateway', exact: true });
+  for (const provider of organizations) {
+    fireEvent.click(await screen.findByRole('button', { name: provider.name, exact: true }));
+    expect(screen.queryByRole('button', { name: 'Edit', exact: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete', exact: true })).toBeNull();
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Local gateway', exact: true }));
+  expect(screen.getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
+});
+
+for (const scope of ['organization', 'workspace'] as const) {
+  test(`creates a ${scope} provider without requiring a separate display name`, async () => {
+    resetTestDom(
+      scope === 'organization'
+        ? 'https://oma.duck.ai/settings/llm'
+        : 'https://oma.duck.ai/workspaces/default/llm-models',
+    );
+    const api = mockProvidersApi();
+    renderPage('en', 'admin', scope);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add provider', exact: true }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Custom model API', exact: true }));
+    fireEvent.change(screen.getByLabelText('Provider ID'), { target: { value: 'my-provider' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://example.test' } });
+    fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'test-key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.method === 'POST' && request.body?.name === 'my-provider')).toBe(
+        true,
+      ),
+    );
+    expect(api.requests.find((request) => request.method === 'POST')?.url.includes('/workspaces/')).toBe(
+      scope === 'workspace',
+    );
+  });
 }

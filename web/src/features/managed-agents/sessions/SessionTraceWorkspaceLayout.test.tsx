@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { type ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { resetTestDom } from '../../../test/setup';
 
 const testingLibrary = await import('@testing-library/react');
@@ -43,11 +43,17 @@ describe('SessionTraceWorkspaceLayout', () => {
 
       expect(view.container.querySelector('input[aria-label="Draft"]')).toBe(draft);
       expect(draft.value).toBe('edited draft');
-      expect(document.querySelector('[data-session-trace-primary-viewport]')?.getAttribute('aria-hidden')).toBe('true');
-      expect(document.querySelector('[data-session-trace-primary-viewport]')?.hasAttribute('inert')).toBe(true);
-      expect(document.querySelector('[data-session-trace-inspector-viewport]')?.classList.contains('absolute')).toBe(
+      expect(document.querySelector('[data-session-trace-primary-viewport]')?.getAttribute('aria-hidden')).toBe(null);
+      expect(document.querySelector('[data-session-trace-primary-viewport]')?.hasAttribute('inert')).toBe(false);
+      expect(document.querySelector('[data-session-trace-inspector-viewport]')?.classList.contains('hidden')).toBe(
         true,
       );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Open inspector' }));
+      expect(document.querySelector('[data-session-trace-primary-viewport]')?.hasAttribute('inert')).toBe(true);
+      containerWidth = 850;
+      await act(async () => window.dispatchEvent(new window.Event('resize')));
+      expect(document.querySelector('[data-session-trace-primary-viewport]')?.hasAttribute('inert')).toBe(true);
 
       containerWidth = 1200;
       await act(async () => window.dispatchEvent(new window.Event('resize')));
@@ -56,6 +62,32 @@ describe('SessionTraceWorkspaceLayout', () => {
       expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(draft);
       expect(draft.value).toBe('edited draft');
       expect(document.querySelector('[data-session-trace-primary-viewport]')?.hasAttribute('inert')).toBe(false);
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+    }
+  });
+
+  test('shows the conversation on an initially narrow viewport and permits opening the inspector', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      if (this.getAttribute('data-testid') === 'session-trace-layout-host') return layoutRect(600, 800);
+      return originalRect.call(this);
+    };
+    try {
+      render(<LayoutHarness />);
+      await waitFor(() => {
+        expect(document.querySelector('[data-session-trace-primary-viewport]')?.hasAttribute('inert')).toBe(false);
+        expect(document.querySelector('[data-session-trace-inspector-viewport]')?.classList.contains('hidden')).toBe(
+          true,
+        );
+      });
+      expect(screen.getByTestId('primary-content')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Open inspector' }));
+      expect(document.querySelector('[data-session-trace-primary-viewport]')?.hasAttribute('inert')).toBe(true);
+      expect(document.querySelector('[data-session-trace-inspector-viewport]')?.classList.contains('hidden')).toBe(
+        false,
+      );
     } finally {
       HTMLElement.prototype.getBoundingClientRect = originalRect;
     }
@@ -104,8 +136,10 @@ function LayoutHarness({
   inspectorOpen?: boolean;
   primary?: ReactNode;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
   return (
     <div style={{ width: 1200, height: 800 }}>
+      <button onClick={() => setCollapsed(false)}>Open inspector</button>
       <SessionTraceWorkspaceLayout
         primary={primary}
         inspector={
@@ -114,7 +148,8 @@ function LayoutHarness({
             <button>Inspector action</button>
           </>
         }
-        inspectorOpen={inspectorOpen}
+        inspectorOpen={inspectorOpen && !collapsed}
+        onInspectorCollapse={() => setCollapsed(true)}
         resizeLabel="Resize inspector"
       />
     </div>

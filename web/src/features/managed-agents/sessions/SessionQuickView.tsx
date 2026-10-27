@@ -8,7 +8,7 @@ import { TooltipProvider } from '../../../shared/ui/tooltip';
 import { listSessionEvents, retrieveSessionDetailSession } from '../api';
 import { ManagedErrorAlert } from '../components/common';
 import { ResourceIdButton } from '../components/ResourceIdButton';
-import { entityAgentId, localizedEntityStatusLabel } from '../resources/model';
+import { entityAgentId } from '../resources/model';
 import type { QuickstartSessionEvent, SessionApiResponse } from '../types';
 import {
   agentDetailHref,
@@ -20,6 +20,7 @@ import {
 import { buildSessionTraceEntries } from './sessionTraceModel';
 import { SessionQuickViewActivity } from './SessionQuickViewActivity';
 import { SessionStatusPill } from './sessionTimeline';
+import { buildSessionDetailSummary } from './sessionDetailModel';
 
 export function SessionQuickView({
   session,
@@ -31,6 +32,7 @@ export function SessionQuickView({
   onClose: () => void;
 }) {
   const { msg } = useI18n();
+  const [open, setOpen] = useState(true);
   const [detail, setDetail] = useState(session);
   const [events, setEvents] = useState<QuickstartSessionEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,19 +68,19 @@ export function SessionQuickView({
   const viewOnly = Boolean(detail.archived_at) || ['terminated', 'deleted'].includes(detail.status);
   return (
     <TooltipProvider>
-      <Sheet open onOpenChange={(open) => !open && onClose()}>
+      <Sheet open={open} onOpenChange={setOpen} onOpenChangeComplete={(nextOpen) => !nextOpen && onClose()}>
         <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
           <SheetHeader className="p-5 pr-12">
             <SheetTitle className="break-words">
               {detail.title || msg('managedAgents.sessions.quickView', 'Quick view')}
             </SheetTitle>
-            <SheetDescription>
+            <SheetDescription className="sr-only">
               {msg('managedAgents.sessions.quickViewHint', 'Inspect this session without leaving the list.')}
             </SheetDescription>
             <ResourceIdButton value={detail.id} wrap />
           </SheetHeader>
           <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto p-5">
-            <SessionQuickViewFacts session={detail} workspaceId={workspaceId} />
+            <SessionQuickViewFacts session={detail} events={events} workspaceId={workspaceId} />
             <div className="mt-6 flex items-center justify-between gap-2">
               <h3 className="text-sm font-medium">
                 {msg('managedAgents.sessions.conversationPreview', 'Conversation preview')}
@@ -139,9 +141,18 @@ export function SessionQuickView({
   );
 }
 
-function SessionQuickViewFacts({ session, workspaceId }: { session: SessionApiResponse; workspaceId: string }) {
+function SessionQuickViewFacts({
+  session,
+  events,
+  workspaceId,
+}: {
+  session: SessionApiResponse;
+  events: QuickstartSessionEvent[];
+  workspaceId: string;
+}) {
   const { msg } = useI18n();
   const formatters = useFormatters();
+  const summary = buildSessionDetailSummary(session, events, formatters, msg);
   const agentId = entityAgentId(session);
   const references = [
     { label: msg('managedAgents.sessions.detail.agentTab', 'Agent'), id: agentId, section: 'agents' as const },
@@ -161,13 +172,7 @@ function SessionQuickViewFacts({ session, workspaceId }: { session: SessionApiRe
       <div className="flex flex-wrap items-center justify-between gap-2">
         <dt className="text-muted-foreground">{msg('common.status', 'Status')}</dt>
         <dd>
-          <SessionStatusPill
-            status={
-              session.archived_at
-                ? msg('common.archived', 'Archived')
-                : localizedEntityStatusLabel('sessions', session, msg)
-            }
-          />
+          <SessionStatusPill status={session.archived_at ? msg('common.archived', 'Archived') : summary.statusLabel} />
         </dd>
       </div>
       {references

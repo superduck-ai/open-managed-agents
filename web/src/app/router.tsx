@@ -1,4 +1,9 @@
 import { createRootRoute, createRoute, createRouter, Navigate } from '@tanstack/react-router';
+import { PlatformAdminLayout } from '../features/platform-admin/PlatformAdminLayout';
+import { SuperAdministratorsPage } from '../features/platform-admin/SuperAdministratorsPage';
+import { OrganizationsPage } from '../features/platform-admin/OrganizationsPage';
+import { OrganizationDetailPage } from '../features/platform-admin/OrganizationDetailPage';
+import { organizationSection, type OrganizationSection } from '../features/platform-admin/organizationNavigation';
 import { InvitationEntryGate } from '../features/organizations/InvitationEntryGate';
 import { InvitationsPage } from '../features/organizations/InvitationsPage';
 import { invitationReturnTo } from '../features/organizations/api';
@@ -32,6 +37,29 @@ const invitationsRoute = createRoute({
   component: InvitationsPage,
 });
 
+const platformAdminRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'platform-admin',
+  component: PlatformAdminLayout,
+});
+const platformOrganizationsRoute = createRoute({
+  getParentRoute: () => platformAdminRoute,
+  path: '/',
+  component: OrganizationsPage,
+});
+const platformAdministratorsRoute = createRoute({
+  getParentRoute: () => platformAdminRoute,
+  path: 'administrators',
+  component: SuperAdministratorsPage,
+});
+const platformOrganizationDetailRoute = createRoute({
+  getParentRoute: () => platformAdminRoute,
+  path: 'organizations/$organizationUuid',
+  validateSearch: (search: Record<string, unknown>): { view?: OrganizationSection } => ({
+    view: organizationSection(search.view),
+  }),
+  component: OrganizationDetailPage,
+});
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'login',
@@ -538,6 +566,11 @@ const settingsFallbackRoute = createRoute({
 });
 
 const routeTree = rootRoute.addChildren([
+  platformAdminRoute.addChildren([
+    platformOrganizationsRoute,
+    platformOrganizationDetailRoute,
+    platformAdministratorsRoute,
+  ]),
   loginRoute,
   invitationsRoute,
   protectedRoute.addChildren([

@@ -229,6 +229,8 @@ Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_starte
 单帧、累计文本和非流式 JSON 的观察缓冲上限为 4 MiB，超过上限仍原样转发，但 end 标记
 `observation_limit`（观测超过上限，不代表模型本身失败，`is_error=false`），保留已观察到的 usage。非流式响应已完整观测后客户端才断开，不标记为 `cancelled`。进程被强制杀死的恢复不由请求内 defer 保证。
 
+DSH `worker_transport=claim` 的普通回复与 thinking 仅由 Brain 的 Worker 输出链路发布。上文代理生成回复的规则继续用于 Claude Code；Brain 模型代理只保留 span、usage、工具调用与权限链路，不发布回复及 thinking 预览。Brain 上传预览前串行确认日志检查点，最终回复等待原生 assistant 日志远端确认和此前预览确认，恢复通过同一事件 ID 补发。详见 [Brain 公开回复与 Thinking 状态](../brain-runtime.md#brain-公开回复与-thinking-状态)。
+
 代理最终消息与 end 在同一批次写入；最终消息和预览使用原始 content block index 生成的事件 ID。Worker 的 assistant echo 可能省略 thinking，使文本块索引偏移；它也可能含有代理未发布的 server tool/result 等块。代理消息与 Worker echo 因此按同一 model request、内容块类型与文本摘要，在已有 Session 行锁事务中跨来源去重，先写入的一份保留，另一来源独有的块继续写入。Worker 独有块使用独立于预览索引的 ID，避免索引偏移误撞代理文本 ID。去重元数据仅在存储层使用，历史和 SSE 恢复为原公开 payload。非流式 Worker echo 即使先于代理 end 到达也遵循同一规则；代理失败时仍由 Worker 兜底。
 end 使用 `model_usage` 和 `is_error`，通过 `model_request_start_id` 关联 start。`model_usage` 中未知的 token 字段保持缺失；中英文 OpenAPI 均将这些字段列为可选，避免把未知用量误报为零。
 `event_ids`、`tool_use_ids` 和诊断字段仍是本地扩展，不是 CMA 保证字段。`tool_use_ids` 是 provider 原始工具调用 ID（如 `toolu_...`），不是公开事件 ID，客户端不能用它直接关联 `agent.tool_use` 等公开事件。

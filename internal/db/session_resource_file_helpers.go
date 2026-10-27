@@ -254,7 +254,7 @@ func putFilestoreFileTx(ctx context.Context, tx yourbatis.Executor, filesystem F
 		if existing.Kind != SessionResourceFileKindFile {
 			return FilestoreMutationResult{}, ErrFilestorePathExists
 		}
-		if existing.ReferencesSourceFile() {
+		if !existing.OwnsFile() {
 			return FilestoreMutationResult{}, ErrPreconditionFailed
 		}
 		if !input.OverwriteExisting {

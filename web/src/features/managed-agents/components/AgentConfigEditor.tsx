@@ -3,11 +3,12 @@ import { json as codeMirrorJson } from '@codemirror/lang-json';
 import { yaml as codeMirrorYaml } from '@codemirror/lang-yaml';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { type Diagnostic, linter, lintGutter } from '@codemirror/lint';
-import { type Extension } from '@codemirror/state';
+import { EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { tags as syntaxTags } from '@lezer/highlight';
 import CodeMirror from '@uiw/react-codemirror';
 import { type CSSProperties, useCallback, useMemo } from 'react';
+import { useI18n } from '../../../shared/i18n';
 import { type CodeFormat } from '../types';
 
 export function normalizeAgentConfigEditorText(text: unknown) {
@@ -49,7 +50,7 @@ export const agentConfigEditorTheme = EditorView.theme(
       textAlign: 'right',
     },
     '.cm-activeLine': {
-      backgroundColor: 'color-mix(in srgb, var(--accent) 34%, transparent)',
+      backgroundColor: 'var(--sand-a2)',
     },
     '.cm-activeLineGutter': {
       backgroundColor: 'transparent',
@@ -58,14 +59,9 @@ export const agentConfigEditorTheme = EditorView.theme(
     '.cm-cursor, .cm-dropCursor': {
       borderLeftColor: 'var(--foreground)',
     },
-    // drawSelection is disabled in basicSetup, so CodeMirror neither paints a
-    // .cm-selectionBackground layer nor injects hideNativeSelection (which
-    // would force ::selection to the OS Highlight color while the editor is
-    // focused). Style the native ::selection directly so focused/unfocused
-    // states match and the syntax-highlight foreground stays readable instead
-    // of being inverted by the system selection color.
     '.cm-content ::selection': {
-      backgroundColor: 'color-mix(in srgb, var(--primary) 28%, transparent)',
+      backgroundColor: 'var(--sand-a5)',
+      color: 'var(--foreground)',
     },
     '&.cm-focused': {
       outline: 'none',
@@ -83,7 +79,7 @@ export const agentConfigEditorTheme = EditorView.theme(
       color: 'var(--destructive)',
     },
     '.cm-tooltip': {
-      border: '1px solid var(--border)',
+      border: '0.5px solid var(--border)',
       borderRadius: '8px',
       backgroundColor: 'var(--popover)',
       color: 'var(--foreground)',
@@ -92,11 +88,56 @@ export const agentConfigEditorTheme = EditorView.theme(
     '.cm-tooltip-lint': {
       padding: '6px 8px',
     },
+    '.cm-diagnostic-error': {
+      borderLeft: 'none',
+      color: 'var(--destructive)',
+    },
+    '.cm-diagnosticSource': {
+      color: 'var(--muted-foreground)',
+    },
+    '.cm-panels': {
+      backgroundColor: 'var(--popover)',
+      color: 'var(--foreground)',
+    },
+    '.cm-panels-bottom': {
+      borderTop: '0.5px solid var(--border)',
+    },
+    '.cm-panels-top': {
+      borderBottom: '0.5px solid var(--border)',
+    },
+    '.cm-panel.cm-search label, .cm-textfield, .cm-button, .cm-diagnosticSource': {
+      fontSize: '12px',
+    },
+    '.cm-textfield': {
+      backgroundColor: 'var(--background)',
+      color: 'var(--foreground)',
+      border: '0.5px solid var(--input)',
+      borderRadius: '4px',
+    },
+    '.cm-button': {
+      backgroundImage: 'none',
+      backgroundColor: 'var(--secondary)',
+      color: 'var(--secondary-foreground)',
+      border: '0.5px solid var(--border)',
+      borderRadius: '4px',
+    },
+    '.cm-button:hover, .cm-button:active': {
+      backgroundImage: 'none',
+      backgroundColor: 'var(--muted)',
+    },
+    '.cm-textfield:focus-visible, .cm-button:focus-visible': {
+      outline: '0.5px solid var(--ring)',
+      outlineOffset: '-0.5px',
+    },
+    '.cm-panel.cm-search input[type=checkbox]': {
+      accentColor: 'var(--primary)',
+    },
     '.cm-searchMatch': {
-      backgroundColor: 'color-mix(in srgb, var(--syntax-title) 26%, transparent)',
+      backgroundColor: 'var(--violet-a3)',
+      color: 'var(--foreground)',
     },
     '.cm-searchMatch-selected': {
-      backgroundColor: 'color-mix(in srgb, var(--syntax-title) 42%, transparent)',
+      backgroundColor: 'var(--violet-a5)',
     },
   },
   { dark: true },
@@ -123,12 +164,6 @@ export const agentConfigEditorBasicSetup = {
   highlightActiveLine: true,
   highlightSpecialChars: true,
   history: true,
-  // Disabling drawSelection avoids CodeMirror's hideNativeSelection extension
-  // (Prec.highest), which forces .cm-content :focus::selection to the OS
-  // Highlight color. That overlaid our translucent primary background and the
-  // browser inverted the selected text foreground, producing a jarring color
-  // when selecting with the cursor focused. The native ::selection is styled
-  // in agentConfigEditorTheme above so both states render consistently.
   drawSelection: false,
   dropCursor: true,
   allowMultipleSelections: false,
@@ -165,6 +200,7 @@ export function AgentConfigEditor({
   validate?: (text: string, format: CodeFormat) => string | null;
   minHeight?: string;
 }) {
+  const { msg } = useI18n();
   const label = ariaLabel ?? `Agent config ${format}`;
   const editorStyle = useMemo<CSSProperties>(
     () =>
@@ -178,6 +214,21 @@ export function AgentConfigEditor({
       format === 'YAML' ? codeMirrorYaml() : codeMirrorJson(),
       syntaxHighlighting(agentConfigHighlightStyle),
       agentConfigEditorTheme,
+      EditorState.phrases.of({
+        Find: msg('editor.find', 'Find'),
+        Replace: msg('editor.replace', 'Replace'),
+        next: msg('editor.nextMatch', 'Next'),
+        previous: msg('editor.previousMatch', 'Previous'),
+        all: msg('editor.selectMatches', 'Select all'),
+        'match case': msg('editor.matchCase', 'Match case'),
+        regexp: msg('editor.regexp', 'Regular expression'),
+        'by word': msg('editor.wholeWord', 'Whole word'),
+        replace: msg('editor.replace', 'Replace'),
+        'replace all': msg('editor.replaceAll', 'Replace all'),
+        close: msg('common.close', 'Close'),
+        Diagnostics: msg('editor.diagnostics', 'Diagnostics'),
+        'No diagnostics': msg('editor.noDiagnostics', 'No diagnostics'),
+      }),
       EditorView.lineWrapping,
       EditorView.contentAttributes.of({
         role: 'textbox',
@@ -190,7 +241,7 @@ export function AgentConfigEditor({
       linter((view) => agentConfigEditorDiagnostics(view.state.doc.toString(), format, validate), { delay: 250 }),
       keymap.of([indentWithTab]),
     ],
-    [format, label, showLineNumbers, validate],
+    [format, label, msg, showLineNumbers, validate],
   );
 
   const handleChange = useCallback(

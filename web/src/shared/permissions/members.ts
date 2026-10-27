@@ -44,3 +44,11 @@ function permissionNames(account: AccountWithPermissions) {
   }
   return names;
 }
+
+export function canViewMembers(account: AuthAccount | null | undefined, orgUuid?: string) {
+  return account?.permissions?.includes('members:view') || canManageMembers(account, orgUuid);
+}
+
+export function canViewWorkspaceMembers(account: AuthAccount | null | undefined) {
+  return account?.permissions?.includes('workspace:members:view') || canManageWorkspaceMembers(account);
+}

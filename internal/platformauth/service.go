@@ -33,6 +33,10 @@ type EmailProvider struct {
 	logger            *slog.Logger
 }
 
+func (s *EmailProvider) VerifiedLoginEnabled() bool {
+	return s != nil && !s.acceptAnyCode && s.codes != nil && s.sender != nil && len(s.codeHMACKey) > 0
+}
+
 func New(cfg config.AuthConfig, store Store, redisClient *redis.Client, logger *slog.Logger) *EmailProvider {
 	domains := cfg.AllowedEmailDomains
 	if cfg.SMTP.Addr == "" {

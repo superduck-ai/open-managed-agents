@@ -15,6 +15,7 @@ const (
 	llmProviderCodeNameConflict         = "llm_provider_name_conflict"
 	llmProviderCodeNameInvalid          = "llm_provider_name_invalid"
 	llmProviderCodeNotFound             = "llm_provider_not_found"
+	llmProviderCodeOrganizationExists   = "organization_llm_provider_exists"
 	llmProviderCodeSlugConflict         = "llm_provider_slug_conflict"
 	llmProviderCodeSlugImmutable        = "llm_provider_slug_immutable"
 	llmProviderCodeSlugInvalid          = "llm_provider_slug_invalid"

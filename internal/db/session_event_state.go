@@ -402,7 +402,7 @@ func closeSessionRunningInterval(ctx context.Context, executor yourbatis.Executo
 	if err != nil {
 		return err
 	}
-	row, err = mapper.SetUsage(ctx, session.WorkspaceUUID, session.ExternalID, usage)
+	row, err = mapper.ReplaceUsage(ctx, session.WorkspaceUUID, session.ExternalID, usage)
 	if err != nil {
 		return err
 	}

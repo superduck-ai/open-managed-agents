@@ -20,15 +20,9 @@ export function scopedAccount(
 
 export function scopePermissions(organizationRole?: string, workspaceRole?: string) {
   if (workspaceRole !== 'workspace_user' && workspaceRole !== 'workspace_admin') return [];
-  const permissions = ['workspaces:view'];
+  const permissions = ['workspaces:view', 'members:view', 'workspace:members:view'];
   if (organizationRole === 'admin')
-    permissions.push(
-      'members:view',
-      'members:manage',
-      'organization:manage',
-      'organization:manage_settings',
-      'workspaces:manage',
-    );
+    permissions.push('members:manage', 'organization:manage', 'organization:manage_settings', 'workspaces:manage');
   if (workspaceRole === 'workspace_admin') permissions.push('workspace:members:manage');
   permissions.push('api:view', 'api:manage', 'workspace:api:resource_manage', 'workbench:view');
   if (organizationRole === 'admin')

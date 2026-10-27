@@ -35,27 +35,30 @@ func (o optional[T]) valueOr(fallback T) T {
 }
 
 type yamlConfig struct {
-	EnvironmentPackages  EnvironmentPackageConfig  `yaml:"environment_packages"`
-	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
-	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
-	Env                  string                    `yaml:"env"`
-	Server               ServerConfig              `yaml:"server"`
-	Database             yamlDatabaseConfig        `yaml:"database"`
-	Redis                RedisConfig               `yaml:"redis"`
-	NATS                 yamlNATSConfig            `yaml:"nats"`
-	Auth                 AuthConfig                `yaml:"auth"`
-	Tunnel               TunnelConfig              `yaml:"tunnel"`
-	Storage              StorageConfig             `yaml:"storage"`
-	Batch                BatchConfig               `yaml:"batch"`
-	SandboxLifecycle     SandboxLifecycleConfig    `yaml:"sandbox_lifecycle"`
-	E2B                  E2BConfig                 `yaml:"e2b"`
-	EnvironmentRunner    EnvironmentRunnerConfig   `yaml:"environment_runner"`
-	CodeSession          yamlCodeSessionConfig     `yaml:"code_session"`
-	Observability        ObservabilityConfig       `yaml:"observability"`
-	Webhook              yamlWebhookConfig         `yaml:"webhook"`
-	Vault                VaultConfig               `yaml:"vault"`
-	Bootstrap            yamlBootstrapConfig       `yaml:"bootstrap"`
-	RuntimeCost          RuntimeCostConfig         `yaml:"runtime_cost"`
+	ChannelBridge          ChannelBridgeConfig       `yaml:"channel_bridge"`
+	LLMProviderPresetsFile string                    `yaml:"llm_provider_presets_file"`
+	WebTools               WebToolsConfig            `yaml:"web_tools"`
+	EnvironmentPackages    EnvironmentPackageConfig  `yaml:"environment_packages"`
+	EnvironmentPrebuilds   EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
+	TranscriptArchive      TranscriptArchiveConfig   `yaml:"transcript_archive"`
+	Env                    string                    `yaml:"env"`
+	Server                 ServerConfig              `yaml:"server"`
+	Database               yamlDatabaseConfig        `yaml:"database"`
+	Redis                  RedisConfig               `yaml:"redis"`
+	NATS                   yamlNATSConfig            `yaml:"nats"`
+	Auth                   AuthConfig                `yaml:"auth"`
+	Tunnel                 TunnelConfig              `yaml:"tunnel"`
+	Storage                StorageConfig             `yaml:"storage"`
+	Batch                  BatchConfig               `yaml:"batch"`
+	SandboxLifecycle       SandboxLifecycleConfig    `yaml:"sandbox_lifecycle"`
+	E2B                    E2BConfig                 `yaml:"e2b"`
+	EnvironmentRunner      EnvironmentRunnerConfig   `yaml:"environment_runner"`
+	CodeSession            yamlCodeSessionConfig     `yaml:"code_session"`
+	Observability          ObservabilityConfig       `yaml:"observability"`
+	Webhook                yamlWebhookConfig         `yaml:"webhook"`
+	Vault                  VaultConfig               `yaml:"vault"`
+	Bootstrap              yamlBootstrapConfig       `yaml:"bootstrap"`
+	RuntimeCost            RuntimeCostConfig         `yaml:"runtime_cost"`
 }
 
 // Legacy flat fields exist only at the YAML boundary. All consumers use Local.
@@ -141,10 +144,11 @@ type yamlBootstrapConfig struct {
 func newYAMLConfig() yamlConfig {
 	defaults := defaultConfig()
 	return yamlConfig{
-		Env:      defaults.Env,
-		Server:   defaults.Server,
-		Database: yamlDatabaseConfig{URL: defaults.Database.URL},
-		Redis:    defaults.Redis,
+		ChannelBridge: defaults.ChannelBridge,
+		Env:           defaults.Env,
+		Server:        defaults.Server,
+		Database:      yamlDatabaseConfig{URL: defaults.Database.URL},
+		Redis:         defaults.Redis,
 		NATS: yamlNATSConfig{
 			WorkerEventStream: defaults.NATS.WorkerEventStream,
 			WebhookStream:     defaults.NATS.WebhookStream,
@@ -152,6 +156,7 @@ func newYAMLConfig() yamlConfig {
 			ConnectTimeout:    defaults.NATS.ConnectTimeout,
 			DrainTimeout:      defaults.NATS.DrainTimeout,
 		},
+		WebTools:             defaults.WebTools,
 		Auth:                 defaults.Auth,
 		Tunnel:               defaults.Tunnel,
 		Storage:              defaults.Storage,
@@ -194,10 +199,12 @@ func newYAMLConfig() yamlConfig {
 
 func (input yamlConfig) resolve() Config {
 	cfg := Config{
-		Env:      input.Env,
-		Server:   input.Server,
-		Database: DatabaseConfig{URL: input.Database.URL},
-		Redis:    input.Redis,
+		ChannelBridge:          input.ChannelBridge,
+		LLMProviderPresetsFile: input.LLMProviderPresetsFile,
+		Env:                    input.Env,
+		Server:                 input.Server,
+		Database:               DatabaseConfig{URL: input.Database.URL},
+		Redis:                  input.Redis,
 		NATS: NATSConfig{
 			WorkerEventStream: input.NATS.WorkerEventStream,
 			WebhookStream:     input.NATS.WebhookStream,
@@ -205,6 +212,7 @@ func (input yamlConfig) resolve() Config {
 			ConnectTimeout:    input.NATS.ConnectTimeout,
 			DrainTimeout:      input.NATS.DrainTimeout,
 		},
+		WebTools:             input.WebTools,
 		Auth:                 input.Auth,
 		Tunnel:               input.Tunnel,
 		Storage:              input.Storage,

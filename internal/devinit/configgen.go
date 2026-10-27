@@ -53,6 +53,15 @@ func GenerateConfig(baseConfigPath string, layout Layout, base config.Config, sp
 	e2bURL := "http://127.0.0.1:" + strconv.Itoa(runtime.E2BPort)
 	setMappingValue(root, "e2b", "api_url", e2bURL)
 	setMappingValue(root, "e2b", "sandbox_url", e2bURL)
+	setMappingValue(root, "e2b", "local_service_host", "127.0.0.1")
+	apiKey := base.E2B.APIKey
+	if apiKey == "" {
+		apiKey = "e2b_0000000000000000000000000000000000000000"
+	}
+	setMappingValue(root, "e2b", "api_key", apiKey)
+	setMappingValue(root, "e2b", "template", localSandboxTemplate(base.E2B.Template))
+	setNode(getOrCreateMapping(root, "e2b"), "local_port_lookup", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
+	setMappingValue(root, "code_session", "sandbox_api_base_url", "http://host.docker.internal:"+strconv.Itoa(runtime.APIPort))
 	setMappingValue(root, "tunnel", "public_base_url", "http://"+apiAddr)
 	setMappingValue(root, "auth", "console_url", layout.WebPublicURL)
 
@@ -102,6 +111,7 @@ func defaultWorkspaceState(state State) (WorkspaceState, error) {
 // absolutizeConfigPaths pins every runtime-resolved relative path field from
 // the base config into the generated document as an absolute path.
 func absolutizeConfigPaths(root *yaml.Node, base config.Config) {
+	setPathIfPresent(root, []string{"llm_provider_presets_file"}, base.LLMProviderPresetsFile)
 	setPathIfPresent(root, []string{"code_session", "jwt_signing_private_key_file"}, base.CodeSession.JWTSigningPrivateKeyFile)
 	setPathIfPresent(root, []string{"code_session", "upstream_proxy_ca_key_file"}, base.CodeSession.UpstreamProxyCAKeyFile)
 	setPathIfPresent(root, []string{"code_session", "brain_claim_token_file"}, base.CodeSession.BrainClaimTokenFile)

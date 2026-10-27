@@ -1,5 +1,11 @@
 package models
 
+import (
+	"cmp"
+
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
+)
+
 const unknownModelCreatedAt = "1970-01-01T00:00:00Z"
 
 type modelResponse struct {
@@ -12,13 +18,22 @@ type modelResponse struct {
 	Capabilities   *struct{} `json:"capabilities"`
 }
 
-func modelResponses(modelIDs []string) []modelResponse {
+func modelResponses(catalog llmproviders.Catalog) []modelResponse {
+	modelIDs := catalog.ModelIDs()
 	models := make([]modelResponse, 0, len(modelIDs))
 	for _, modelID := range modelIDs {
+		selected, _ := catalog.Lookup(modelID)
+		name := modelID
+		for _, model := range selected.Provider.Models {
+			if model.ID == selected.UpstreamModelID {
+				name = cmp.Or(model.Name, modelID)
+				break
+			}
+		}
 		models = append(models, modelResponse{
 			Type:        "model",
 			ID:          modelID,
-			DisplayName: modelID,
+			DisplayName: name,
 			CreatedAt:   unknownModelCreatedAt,
 		})
 	}

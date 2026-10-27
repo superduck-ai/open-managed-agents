@@ -1,12 +1,13 @@
+import { seedInterruptedTool } from "./session-log.ts";
 import { expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import { openWorkerSession } from "../src/worker-session.ts";
-import { Backend } from "./backend.ts";
+import { Backend, eventually } from "./backend.ts";
 
-test("production admission consumes and acknowledges a new input on a restored blocked session without replay", async () => {
+test("production admission uses native interrupted-turn recovery before accepting fresh input", async () => {
   const b = new Backend();
   await b.ready;
   const first = new Context();
@@ -14,11 +15,7 @@ test("production admission consumes and acknowledges a new input on a restored b
   await mountOma(first, firstApi);
   const original = createOmaSession(first, firstApi, b.a);
   await original.open();
-  original.state.inputId = "original-uncertain";
-  const call = { callId: "uncertain", readOnly: false, name: "Read", original: { file_path: "/tmp/owned" }, effective: { file_path: "/tmp/owned" } };
-  await original.recordApproved(call);
-  await original.recordDispatch(call.callId);
-  await original.recordUnknown(call.callId);
+  await seedInterruptedTool(original, "original-uncertain");
   await original.close();
   await first.fiber.dispose();
   const ctx = new Context();
@@ -35,13 +32,12 @@ test("production admission consumes and acknowledges a new input on a restored b
     }, async (session) => { await session.close(); }, (stage) => { stages.push(stage); });
     expect(stages).toContain("start_inbound");
     expect(consuming).toBeDefined();
-    await expect(consuming!).rejects.toThrow("reconciliation");
-    expect(b.processed).toContain("followup-while-blocked");
+    await eventually(() => b.processed.includes("followup-while-blocked"));
     expect(b.delivered.has("followup-while-blocked")).toBe(false);
-    expect(b.publicLog.get("followup-while-blocked_failed_result")?.is_error).toBe(true);
-    expect(restored.blocked()).toBe(true);
-    expect(restored.execution(restored.id).callPhases?.uncertain).toBe("blocked");
-    expect(b.requests).toHaveLength(0);
+    expect(b.publicLog.get("followup-while-blocked_result")?.is_error).toBe(false);
+    expect(restored.abort.signal.aborted).toBe(false);
+    expect(b.requests).toHaveLength(1);
+    expect(JSON.stringify(b.requests[0]!.messages)).toContain("Do not retry blindly");
     expect(b.executions).toHaveLength(0);
   } finally {
     restored.stop();

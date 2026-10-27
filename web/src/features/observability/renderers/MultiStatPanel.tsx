@@ -53,7 +53,7 @@ export function MultiStatPanel({
               aria-label={msg('observability.multistat.selector', 'Value')}
             >
               {names.map((key) => (
-                <ToggleGroupItem key={key} value={key} className="h-5 min-h-5 min-w-0 px-1.5 text-[11px]">
+                <ToggleGroupItem key={key} value={key} className="h-5 min-h-5 min-w-0 px-1.5 text-xs">
                   {msg(`observability.multistat.${key}`, key)}
                 </ToggleGroupItem>
               ))}

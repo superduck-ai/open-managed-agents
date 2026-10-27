@@ -33,7 +33,7 @@ just build
 The executable includes Bun and its dependencies. Deploy `dist/oma-brain-dsh`
 without Bun or `node_modules`; on Windows the filename ends in `.exe`. It reads
 `.env` from the working directory at startup, or uses process environment variables.
-Build-time environment values are not embedded. It still needs the OMA backend. Build on the same OS and architecture as the deployment machine.
+Build-time environment values are not embedded. It still needs the OMA backend. Build on the same OS, architecture and Linux libc as the deployment machine.
 
 `just verify` builds the bundled entry and the executable, then runs the test
 suite against them. Its process test copies the executable into a temporary
@@ -43,9 +43,9 @@ modified approval arguments without source files, `node_modules` or Bun on
 
 Without just, use `bun install --frozen-lockfile` followed by
 `bun run build:executable` or `bun run verify:executable`. The build adapter makes
-`dsh-llm`'s version metadata a static import in memory so Bun can bundle it;
-installed dsh files remain unchanged. A changed upstream lookup fails the build
-until the adapter is reviewed.
+`dsh-llm`'s version metadata and native JSONL flock binding visible to Bun in
+memory so both are bundled. Installed dsh files remain unchanged. A changed
+upstream lookup fails the build until the adapter is reviewed.
 
 `bin/oma-brain-dsh` remains a Bun launcher for `dist/main.js`, requiring Bun and
 `node_modules`. The restart command below uses that module build.
@@ -76,7 +76,7 @@ Each session reads `/worker/events/stream` through the CCRv2 plugin. User turns 
 
 History restoration pages through `GET /worker/internal-events`, omitting `cursor` on the first request and following `next_cursor` until it is absent, null or empty. Foreground events use the default scope. Child `dsh_log` writes include the thread id as the outer event's `agent_id`, and reads use `subagents=true` on every page. Child restoration also reads the foreground stream for logs written by older Brain versions, then merges the scoped suffix using the dsh header id and event sequence. Brain state remains in the foreground stream. These logs use `is_compaction: false`; Brain does not generate Superduck transcript compaction markers.
 
-Capacity defaults to eight sessions. Idle runtimes close after sixty seconds, or earlier when another claim needs capacity. The backend makes a session claimable again when its lease expires and the public session is running. Active turns and approval waits are not evicted. Each session's CCRv2 heartbeat defaults to a six-second interval with ±10% jitter and a five-second request deadline, renewing the 20-second Brain worker lease. Temporary failures keep retrying on that cadence. Authentication failures stop the session at ten failed writes without an intervening successful write. Epoch conflicts, expired worker leases and authentication rejection with an expired token stop immediately. SIGINT and SIGTERM stop consumers, cancel work and in-flight heartbeats, drain state and close sessions. If cleanup takes longer than ten seconds, the process forces exit with code 1. Pressing Ctrl+C again during shutdown forces immediate exit with code 130.
+Capacity defaults to eight sessions. Idle runtimes close after sixty seconds, or earlier when another claim needs capacity. The backend makes a session claimable again when its lease expires and the public session is running. Active turns and approval waits are not evicted. Each session's CCRv2 heartbeat defaults to a six-second interval with ±10% jitter and a five-second request deadline, renewing the 20-second Brain worker lease. Temporary failures keep retrying on that cadence. Authentication failures stop the session at ten failed writes without an intervening successful write. Epoch conflicts, expired worker leases and authentication rejection with an expired token stop immediately. SIGINT and SIGTERM first stop claiming and drain side-effecting tool calls: new Bash, Write, Edit and external MCP dispatches fail with `Brain worker is shutting down; the tool was not executed.`, and Read, Glob and Grep remain allowed during drain and do not count as active side-effect dispatches; completed results still await replication confirmation; session cancellation still stops them. Calls already dispatched get up to `OMA_BRAIN_SHUTDOWN_DRAIN_MS` to record their results. Sessions still waiting after that are cancelled with an `oma-worker-shutdown` cause: like a user interrupt, the unfinished call produces a native failed tool result and the turn ends with an error. Up to five seconds are allowed for those turns to settle. Shutdown then stops consumers, cancels remaining work and in-flight heartbeats, drains state and closes sessions. If shutdown takes longer than the drain period plus eight seconds, the process forces exit with code 1. Keep the orchestrator's termination grace period above that limit (28 seconds by default). After a crash or SIGKILL, DSH closes interrupted calls with native recovery errors; their side effects are not replayed. Pressing Ctrl+C again during shutdown forces immediate exit with code 130.
 
 The application reads these optional deployment settings at startup. Unset values use the defaults below; invalid values fail startup before connecting to the backend. Set them in the process environment or `.env` and restart to apply them.
 
@@ -85,11 +85,16 @@ The application reads these optional deployment settings at startup. Unset value
 | `OMA_BRAIN_CLAIM_TOKEN` | required | Shared fleet token matching the backend `code_session.brain_claim_token_file` |
 | `OMA_BRAIN_CLAIM_CONCURRENCY` | `4` | Concurrent claim long polls, from 1 through 32 |
 | `OMA_BRAIN_MAX_SESSIONS` | `8` | Positive session capacity |
+| `DSH_HOME` | Application-local `.dsh/` | Home for local attachments/cache; explicit paths are respected |
+| `OMA_BRAIN_TRANSCRIPT_DIR` | `DSH_HOME/transcripts/` | Native JSONL primary storage root |
+| `OMA_BRAIN_SHUTDOWN_DRAIN_MS` | `20000` | Integer from 0 through 600000; how long shutdown waits for dispatched tool calls before interrupting them |
 | `OMA_CCR_HEARTBEAT_INTERVAL_MS` | `6000` | Positive integer interval in milliseconds |
 | `OMA_CCR_HEARTBEAT_TIMEOUT_MS` | `5000` | Positive integer request deadline in milliseconds |
 | `OMA_CCR_HEARTBEAT_JITTER_FRACTION` | `0.1` | Random variation from 0 through 0.5; `0.1` gives ±10% per beat |
 | `OMA_CCR_HEARTBEAT_MAX_FAILURES` | `0` | Nonnegative integer limit on transient heartbeat failures; `0` keeps retrying |
 | `OMA_CCR_HEARTBEAT_MAX_AUTH_FAILURES` | `10` | Positive integer limit on 401/403 responses across heartbeat and other CCRv2 writes |
+
+Brain receives the unified `models` catalog through `session_context` at registration and refreshes it before requests. Entries include the API backend, context window, output limit and input modalities. Each root session registers its own DSH provider route; children read their selected model entry, and model changes or restarts replace the previous ordinary request budget with the current entry. Per-model capacities take precedence over main's shared defaults of 262144 context tokens and 32768 output tokens. No model-limit environment variables or temporary backend capacity map are used.
 
 Intervals including jitter and request deadlines must fit a 32-bit JavaScript timer. The interval with jitter plus the request deadline must stay below the 20-second worker lease. Existing environment overrides still apply. `409` and `410` stop immediately regardless of either failure limit, as does a heartbeat `404` (`worker_not_registered`), which means the server no longer holds a lease for this worker. For `401`/`403`, an expired JWT also stops immediately; otherwise failures accumulate toward the authentication limit. Successful POST/PUT responses reset that counter, including heartbeats, state updates, publication, persistence and delivery confirmation. GETs and other failed requests do not reset it. Other heartbeat failures, including transport errors, 5xx, 408, 429 and other 4xx, keep scheduling unless a positive transient failure limit is configured.
 
@@ -123,21 +128,21 @@ await session.receive(inputId, payload);
 
 The bridge uses dsh services through Cordis dependency injection and exposes `ctx.ccrv2`. It has no imports from the OMA API, assignment scheduler, claim transport, model adapter or MCP implementation. `CcrBackend` supplies confirmed persistence, publication, delivery acknowledgement and worker status operations.
 
-`SandboxExecutor` and `RemoteTool` live in the neutral `src/runtime/contracts.ts` module. `SessionRuntime` owns agent creation and restoration, system prompts, model-request barriers, turn execution and cancellation. It loads the `SandboxTools` plugin inside each agent scope. `ToolExecution` validates original and approved arguments, orders sandbox readiness and dispatch, converts results and defers model context. The runtime has no CCRv2 imports or wire envelopes. Its awaited `ToolExecutionBridge` contract supplies approval and durability operations; its session hooks let the bridge map native events and bracket each turn with confirmed input and terminal commits.
+`SandboxExecutor` and `RemoteTool` live in the neutral `src/runtime/contracts.ts` module. `SessionRuntime` owns agent creation and restoration, system prompts, request permission refresh, turn execution and cancellation. It loads the `SandboxTools` plugin inside each agent scope. `ToolExecution` validates original and approved arguments, orders sandbox readiness and dispatch, converts results and defers model context. The runtime has no CCRv2 imports or wire envelopes. Its awaited `ToolExecutionBridge` contract supplies approval, changed-argument notices and active-call tracking; its session hooks let the bridge map native events and confirm native records before tools, publication and input ACK.
 
 The root session's `setup(scope)` callback mounts host service plugins before tool registration. `SessionRuntime` gives each root a separate `sandboxExecutor` service scope and explicitly joins that scope for child agents. The callback runs only for the root, including when restoring a session. A provider must supply `ctx.sandboxExecutor`; a missing provider fails agent setup. The neutral interface and Cordis service declaration live in `src/runtime/contracts.ts`.
 
-The `OmaSandboxProvider` entry is `src/oma-sandbox/index.ts`. The OMA host loads it through that setup callback with the root session ID and API transport. It owns one `SandboxMcp` instance, shared by the root and its children. Loading the provider performs no network requests. The first MCP handshake happens only after approved arguments have been persisted. The configured server endpoint waits for sandbox readiness during initialization; the Brain sends no resource-creation request. Closing a protocol session drains child runtimes before disposing the root agent and its provider; failed agent setup rolls back the provider.
+The `OmaSandboxProvider` entry is `src/oma-sandbox/index.ts`. The OMA host loads it through that setup callback with the root session ID and API transport. It owns one `SandboxMcp` instance, shared by the root and its children. Loading the provider performs no network requests. The first MCP handshake happens only after schema validation, approval and the native tool-call checkpoint. The configured server endpoint waits for sandbox readiness during initialization; the Brain sends no resource-creation request. Closing a protocol session drains child runtimes before disposing the root agent and its provider; failed agent setup rolls back the provider.
 
-Model requests use the Vercel AI SDK provider layer only: `@ai-sdk/anthropic` for Anthropic Messages and `@ai-sdk/openai-compatible` for OpenAI Chat Completions, both pinned and called through `doStream`. The protocol translation lives in `src/llm-ai-sdk/`, a DSH plugin (`name`, `inject: ["llm"]`, `apply`) that depends only on `@ai-sdk/*` and `@deepseek-ai/*`: it converts DSH history into the SDK prompt, maps SDK stream parts to DSH chunks, classifies errors and adds DSH attribution headers. OMA loads it with `providers: ["oma"]` and supplies `omaModelOptions` (`src/model.ts`, `src/model-provider.ts`), which selects the backend, binds the root or child session's model token, restricts HTTP requests to the Go proxy, maintains CCRv2 response identity and converts legacy pi-ai replay signatures. The SDK owns SSE parsing, protocol encoding and streamed tool-argument accumulation in linear time. No SDK retries run, ambient provider credentials are unused, and Provider keys remain in Go. Histories keep the `oma-messages-v1` and `oma-chat-completions-v1` replay formats. Messages keeps its 8192 default output cap; Chat sends a cap only when one is requested.
+Model requests use the Vercel AI SDK provider layer only: `@ai-sdk/anthropic` for Anthropic Messages and `@ai-sdk/openai-compatible` for OpenAI Chat Completions, both pinned and called through `doStream`. The protocol translation lives in `src/llm-ai-sdk/`, a DSH plugin (`name`, `inject: ["llm"]`, `apply`) that depends only on `@ai-sdk/*` and `@deepseek-ai/*`: it converts DSH history into the SDK prompt, maps SDK stream parts to DSH chunks, classifies errors and adds DSH attribution headers. OMA loads it with `providers: ["oma"]` and supplies `omaModelOptions` (`src/model.ts`, `src/model-provider.ts`), which selects the backend, binds the root or child session's model token, restricts HTTP requests to the Go proxy, maintains CCRv2 response identity and converts legacy pi-ai replay signatures. The SDK owns SSE parsing, protocol encoding and streamed tool-argument accumulation in linear time. No SDK retries run, ambient provider credentials are unused, and Provider keys remain in Go. Histories keep the `oma-messages-v1` and `oma-chat-completions-v1` replay formats. Both backends default to 32768 output tokens. Per-model `max_output_tokens` overrides this default, and an explicit per-call `maxTokens` takes precedence for ordinary requests. Compaction requests additionally enforce the selected model output limit. Chat also sends the selected `max_completion_tokens` cap when no explicit limit is configured.
 
 The sandbox provider uses the same official `@modelcontextprotocol/client` SDK as `dsh-mcp-client` for initialization, protocol negotiation, request IDs, session headers, JSON/SSE responses, cancellation and stream cleanup. The complete DSH MCP plugin cannot replace this provider directly: it connects and discovers/registers tools on activation, while this host initializes only after tool approval and exposes its fixed sandbox tools through `ToolExecution`. One SDK connection belongs to each root provider, is shared by its children, and closes when that provider is disposed. `src/sse.ts` parses worker SSE streams; the AI SDK providers and MCP SDK own their respective SSE parsing.
 
-The `SandboxTools` entry is `src/sandbox-tools/index.ts`. It injects the existing `sandboxExecutor` and binds a separate execution bridge for each agent. It registers built-in Bash, Read, Write, Edit, Grep and Glob definitions from `definitions.ts`, with a fresh schema copy for every plugin instance. Each definition delegates execution to `ToolExecution`. The plugin preserves the inherited-tool restriction and serial sandbox dispatch, and its registrations are removed when its fiber or agent is disposed. Archiving a child leaves the shared provider available to the root and other children. Updating the sandbox wire contract requires updating the built-in definitions; startup does not call `tools/list`. `tests/sandbox-contract.test.ts` compares these definitions with a real sandbox server's `tools/list` when `OMA_RUST_MCP_URL` is set.
+The `SandboxTools` entry is `src/sandbox-tools/index.ts`. It injects the existing `sandboxExecutor` and binds a separate execution bridge for each agent. It registers built-in Bash, Read, Write, Edit, Grep and Glob definitions from `definitions.ts`, with a fresh schema copy for every plugin instance. Each definition delegates execution to `ToolExecution`. The plugin preserves the inherited-tool restriction and per-thread concurrency policy, and its registrations are removed when its fiber or agent is disposed. Archiving a child leaves the shared provider available to the root and other children. Updating the sandbox wire contract requires updating the built-in definitions; startup does not call `tools/list`. `tests/sandbox-contract.test.ts` compares these definitions with a real sandbox server's `tools/list` when `OMA_RUST_MCP_URL` is set.
 
-`ToolExecution` reads a shared permission table keyed by sandbox MCP tool name. Before every primary or child model request, `SessionRuntime` refreshes that table from the current `session_context`. The Go endpoint computes permissions from the latest public Session Agent snapshot, so idle-session policy updates take effect on the next turn. Refresh or validation failure prevents the model request; a missing table clears previous grants and falls back to CCRv2 approval. The sandbox gateway independently checks the latest snapshot for denied tools. Tools whose policy is `allow` skip the `can_use_tool` request and never report `requires_action`; `ask`, `deny` and tools without a policy keep the CCRv2 approval request. Read, Glob and Grep are marked `readOnly`: they skip the dispatch checkpoint, retry a failed sandbox call once, and on a second failure return a failed tool result to the model instead of recording an unknown outcome. `CcrSession` implements that bridge contract. It translates `can_use_tool` responses into a neutral approval decision, records approved arguments, dispatch and results in the unchanged `dsh_brain_state` format, and manages CCRv2 event mapping and outbox publication. It delegates native execution to `SessionRuntime`. The execution pipeline awaits every checkpoint before advancing; moving these responsibilities does not turn persistence into asynchronous event notifications.
+`ToolExecution` reads a shared permission table keyed by sandbox MCP tool name. Before every primary or child model request, `SessionRuntime` refreshes that table from the current `session_context`. The Go endpoint computes permissions from the latest public Session Agent snapshot, so idle-session policy updates take effect on the next turn. Refresh or validation failure prevents the model request; a missing table clears previous grants and falls back to CCRv2 approval. The sandbox gateway independently checks the latest snapshot for denied tools. Tools whose policy is `allow` skip the `can_use_tool` request and never report `requires_action`; `ask`, `deny` and tools without a policy keep the CCRv2 approval request. Read, Glob and Grep are marked `readOnly`: they retry a failed sandbox call once, and on a second failure return a failed native tool result to the model. A sandbox or external MCP `tools/call` is recorded as a failed result, not an unknown outcome, when the OMA gateway marks the response with `X-Oma-Sandbox-Not-Forwarded` or `X-Oma-Mcp-Not-Forwarded`, or when connecting to the OMA gateway itself fails (`ConnectionRefused`, `ENOTFOUND` and similar). Sandbox MCP calls wait up to 185 seconds; Bash waits for its requested `timeout` (default 120 seconds, counted up to 600) plus a 65-second margin, never less than 185 seconds, so a long command is not reported as an unknown outcome while it is still running. Bun drops a fetch connection after five idle minutes, and a running command usually writes nothing to the response, so each sandbox `tools/call` fetch passes `timeout: false` and is bounded instead by an abort deadline of that wait plus 15 seconds. Bun before 1.4 ignores positive `timeout` values; `false` works on both 1.3 and 1.4. `CcrSession` implements that bridge contract. It translates `can_use_tool` responses into a neutral approval decision, tracks active calls in memory for shutdown, and manages CCRv2 event mapping and publication from an in-memory queue. Changed approval arguments are publicly confirmed before execution. `SessionRuntime` delegates execution and recovery to DSH, confirming native calls before tool bodies and native records before public publication and input ACK.
 
-`CcrClient` in `src/ccrv2/client.ts` implements the HTTP backend contract. It owns worker registration, SSE parsing and reconnection, worker paths, epoch fields, private event pagination, durable envelopes and their content-derived IDs, retries, ephemeral event flags, delivery confirmation, status updates and heartbeat requests. Its config supplies a generic HTTP transport returning raw `Response` objects, current credentials and session IDs. Tokens are resolved again for every retry; each write retains its original worker epoch. Protocol structures in `src/ccrv2/wire.ts` are copied from the local `superduck-code` implementation using `unknown` for opaque fields.
+`CcrClient` in `src/ccrv2/client.ts` implements the HTTP backend contract. It owns worker registration, SSE parsing and reconnection, worker paths, epoch fields, private event pagination, durable envelopes and their session/sequence-derived IDs, retries, ephemeral event flags, delivery confirmation, status updates and heartbeat requests. Its config supplies a generic HTTP transport returning raw `Response` objects, current credentials and session IDs. Tokens are resolved again for every retry; each write retains its original worker epoch. Protocol structures in `src/ccrv2/wire.ts` are copied from the local `superduck-code` implementation using `unknown` for opaque fields.
 
 Worker SSE connections send `Accept: text/event-stream` and retain the highest `id:` sequence from complete frames, parsed with `parseInt` before validating event data, matching Superduck. Reconnects send that sequence as both `from_sequence_num` and `Last-Event-ID`, alongside the original `worker_epoch`. Missing, unparseable or lower sequence IDs do not advance the cursor. The cursor remains in memory for the current worker claim, including across inbound stream replacement. `inboundSequenceNum(id)` exposes it, and `inbound(id, signal, initialSequenceNum)` accepts a cursor when rebuilding a client. A replacement claim starts with a fresh cursor; delivery confirmation continues to use the envelope's `event_id`.
 
@@ -175,7 +180,7 @@ The OMA backend grants Brain claim sessions a 20-second worker lease with a 10-s
 
 The claim transport admits opaque task JSON. The host validates the task envelope and claims its assignment before using CCRv2. Worker event envelopes, control classification, deduplication and SSE recovery belong to `src/ccrv2`. Task validation checks launch metadata and the named `mcpServers.sandbox` Streamable HTTP endpoint. The MCP client uses only that endpoint's headers, without adding host credentials or Brain ownership headers.
 
-`session.stop()` stops its heartbeat timer and aborts in-flight heartbeat and active write requests, retry sleeps and runtime work. Late results from a stopped session are ignored. `session.close()` waits for the runtime and heartbeat to settle, disposes the dsh agent and drains queued bridge saves, status changes and publications before returning. Final persistence flushes retain bounded retries. The host calls `ctx.ccrv2.forget(session.id)` to drop bridge and persistence caches, and removes assignment credentials. A new session with the same id starts with its own failure counter. Unloading the bridge cancels and closes its remaining sessions; lease expiration and subsequent claims stay with oma-server. The durable `dsh_log` and `dsh_brain_state` formats and the execution order described below remain unchanged.
+`session.stop()` stops its heartbeat timer and aborts in-flight heartbeat and active write requests, retry sleeps and runtime work. Late results from a stopped session are ignored. `session.close()` waits for the runtime and heartbeat to settle, disposes the dsh agent and drains queued bridge saves, status changes and publications before returning. Final persistence flushes retain bounded retries. The host calls `ctx.ccrv2.forget(session.id)` to drop bridge and persistence caches, and removes assignment credentials. A new session with the same id starts with its own failure counter. Unloading the bridge cancels and closes its remaining sessions; lease expiration and subsequent claims stay with oma-server. Recovery uses local native logs and their minimal delivery plugin records. Old Brain snapshots are not supported.
 
 ## Backend contract
 
@@ -232,9 +237,9 @@ The host constructs its sandbox endpoint from `OMA_API_URL` and the session ID. 
 
 ## Approval and execution
 
-The six built-in sandbox tools are registered alongside the primary agent's subagent coordination tools. Child agents receive only sandbox tools. No host filesystem or shell tools are loaded. The original model arguments are validated before requesting CCRv2 `can_use_tool` approval. An allow response can include `updatedInput`; those arguments are validated again before sandbox creation. The MCP connection is initialized once per session after the first approved sandbox provisioning, before persisting dispatch. Text-only and denied turns make no MCP requests.
+The six built-in sandbox tools are registered alongside the primary agent's subagent coordination tools. Child agents receive only sandbox tools. No host filesystem or shell tools are loaded. The original model arguments are validated before requesting CCRv2 `can_use_tool` approval. An allow response can include `updatedInput`; those arguments are validated again before sandbox creation. The MCP connection is initialized once per session during the first approved sandbox provisioning, after the native tool-call checkpoint. Text-only and denied turns make no MCP requests.
 
-The dsh `tool/call` event retains the original arguments. The Brain private journal records both the original and approved arguments, followed by the confirmed tool output. Changed arguments are also supplied as model context after the corresponding tool result. No dsh argument-rewrite hook or kernel patch is used. Read, Glob and Grep explicitly declare concurrency safety and can run in parallel within a thread. Bash, Write and Edit remain exclusive within that thread; independent subagent threads can dispatch concurrently. The inspected backend's public `user.tool_confirmation` rejects `updated_input`; parameter replacement is supported at the CCRv2 control-response boundary. Injecting a replacement directly through JetStream completes the Brain turn but leaves the public approval pending. A public approval editor requires backend changes to accept replacement input and settle its approval record.
+The dsh `tool/call` event retains the original arguments. A durable CCRv2 notice records changed approval arguments before execution; the confirmed output is stored in the native DSH log. Changed arguments are also supplied as model context after the corresponding tool result. No dsh argument-rewrite hook or kernel patch is used. Read, Glob and Grep explicitly declare concurrency safety and can run in parallel within a thread. Bash, Write and Edit remain exclusive within that thread; independent subagent threads can dispatch concurrently. The inspected backend's public `user.tool_confirmation` rejects `updated_input`; parameter replacement is supported at the CCRv2 control-response boundary. Injecting a replacement directly through JetStream completes the Brain turn but leaves the public approval pending. A public approval editor requires backend changes to accept replacement input and settle its approval record.
 
 Public messages and tool results are published before the next tool approval or
 model request. The Brain persists their outbox first and waits for text previews
@@ -245,9 +250,7 @@ then `event_delta` with `delta.index: 0` for text only (thinking previews are
 start-only); there is no `event_stop`. Final `agent.thinking` events are progress
 signals without content. Approval argument notices are
 published only when the argument values changed; object key order does not count
-as a change and does not add model context. The private journal records every
-approved call. dsh log flushes with no new events write nothing; only session
-creation writes a header-only batch. Within one Brain process, a redelivered
+as a change and does not add model context. Changed-argument notices are persisted for public delivery. Native dsh log flushes with no new events write nothing; session creation stores the native header. Within one Brain process, a redelivered
 control input that was already handled is acknowledged without repeating its
 effect; handled control IDs are not persisted across restarts.
 
@@ -304,12 +307,10 @@ reports. It depends on the neutral `SubagentBridge` contract in
 `src/runtime/contracts.ts`, with no CCRv2 imports or wire envelopes. The injected
 `CcrSubagentBridge` in `src/ccrv2/subagents.ts` maps runtime facts to thread events,
 binds remote persistence and supplies the existing approval and durability
-operations. Thread metadata
-is stored in the optional `threads` field of `dsh_brain_state`. Child `dsh_log`
-batches are stored under the parent's worker endpoint, distinguished by their
-native header ID. Recovery restores child history lazily on follow-up. It never
-replays an interrupted delegation. An unknown child sandbox outcome blocks the
-whole session for reconciliation, like an unknown primary tool outcome.
+operations. Child composition is stored in dsh's native `subagent/descriptor`
+event. Child headers and individual events use the parent's worker endpoint with
+transport `agent_id`. Recovery uses native descriptors and `agents.resume()`;
+interrupted logs are repaired without replaying the delegation or its tools.
 
 Lifecycle and report events use `session.thread_created`,
 `session.thread_status_running`, `session.thread_status_idle`,
@@ -329,17 +330,9 @@ awaited setup. Read, Glob and Grep can overlap within each thread. Bash, Write
 and Edit wait for preceding calls and finish before subsequent calls start.
 Shared filesystem writes across threads must be coordinated by the agent.
 
-The journal's optional `executions` map records primary and child execution
-states by native session ID. Each thread records `callPhases` for Bash, Write and Edit, approved
-original/effective arguments and confirmed outcomes by call ID. Results may
-arrive out of order without replacing another call's state. Identical tool call
-IDs in separate threads cannot overwrite each other. The legacy top-level phase is an aggregate:
-blocked is sticky, and any unresolved dispatch keeps the aggregate in dispatch
-regardless of another call or child's completion. On recovery, each unfinished
-dispatch becomes blocked and approved but undispatched calls become interrupted;
-confirmed results are retained. Legacy top-level tool maps remain for
-the primary; old version-1 snapshots without `executions` migrate conservatively
-on load. Thread metadata and logs still use the parent's worker endpoint.
+Tool call and result identities belong to each native dsh session. OMA does not
+keep a second per-call execution journal or aggregate blocked phase. Runtime
+activity used for shutdown draining is held only in memory.
 
 Approvals are independently correlated by request ID and thread ID. Worker
 status is running while a child is making progress; when all active children
@@ -349,14 +342,12 @@ is outstanding, even if a sibling is running. Cancelling one thread leaves the
 others' approvals intact. Durable publication and status writes are serialized
 to prevent concurrent outbox removal or stale status overwrites.
 
-Recovery never replays an interrupted turn. Pending approval or pre-dispatch
-work, including in-flight read-only calls, becomes interrupted and permits a
-fresh input. A dispatched Bash, Write or Edit call without a
-confirmed result makes its thread blocked and blocks the entire session for
-operator reconciliation. Confirmed sibling outcomes remain recorded. Native
-logs for interrupted child threads are repaired on recovery without sampling
-the model. Parent shutdown and lease loss cancel and drain child work; active
-children also count toward worker capacity and prevent idle eviction.
+Recovery never replays an interrupted turn. Native dsh repair writes conservative
+error tool results for unfinished calls and closes the interrupted step and turn.
+Unknown outcomes advise checking external state before retrying side effects;
+they do not create an OMA session-wide reconciliation block. Parent shutdown and
+lease loss cancel and drain child work; active children also count toward worker
+capacity and prevent idle eviction.
 
 This repository does not implement Anthropic's REST thread list, event-list,
 archive or SSE endpoints. The gateway and UI must retain and route the tagged
@@ -364,31 +355,87 @@ worker events to expose separate thread views. The tests
 use the real dsh loop with a controlled gateway and model; this change has not
 been verified against a production gateway's thread-event validation.
 
+Explicit `DSH_HOME` settings are respected. Without one, source and module builds use `oma-brain-dsh/.dsh/` relative to the application files, independently of cwd. Standalone executables use `.dsh/` beside the actual binary. Explicit paths are normalized to absolute paths and support `~`; relative overrides resolve against the launch cwd. Conversation logs default to `DSH_HOME/transcripts/`, with `OMA_BRAIN_TRANSCRIPT_DIR` taking precedence. The restart script retains `oma-brain-dsh/.dsh/transcripts/` by default. Existing data is not moved automatically; preserve storage across restarts.
+
+Before claiming tasks, startup probes the home, attachment directory and transcript root by creating, writing, syncing, renaming and removing temporary files. Invalid or unwritable directories fail startup with the setting name, resolved path and I/O code, before any claim or registration request. Probe files are cleaned up and existing directory permissions are retained.
+
 ## Persistence and recovery
 
-`CcrPersistence` implements dsh's SessionPersistence interface. Current-format headers and contiguous log batches are stored as CCRv2 private `system` events with subtype `dsh_log`. Input state, completed input IDs, approved arguments, confirmed tool outputs and the public-event outbox use subtype `dsh_brain_state`. The envelopes have schema version 1. Repeated writes retain the same content-derived UUID, allowing the backend to deduplicate a request whose HTTP confirmation was lost. Restoration compares each batch's header and any repeated event sequence by JSON value, ignoring object key order: the backend returns small payloads from PostgreSQL `jsonb`, which reorders keys, and payloads above 32 KiB byte-for-byte from object storage, so batches of one log can come back with different key orders.
+`JsonlPersistence` directly owns local session loading, appending, flush and locks.
+The independent `CcrReplication` service uploads the local tail asynchronously and
+retries failures. Local reads and writes do not wait for CCRv2. The first open in
+each claim generation reconciles local and remote history under the native write
+lock. Missing files are hydrated, remote-ahead tails are appended before resume,
+and local-ahead tails are retained for upload. Incompatible headers or histories
+that are not prefixes of each other fail resume and preserve the original local
+paths and log bytes. No automatic move or rebuilding is performed.
+Cold validation writes and rereads a temporary
+native JSONL instance before local mutation, including cross-event lifecycle
+checks. Failed remote reads or invalid histories block resume and preserve local
+files.
 
-Execution order is:
+Remote `type: "dsh_log"` records contain unchanged native SessionHeader or single
+SessionEvent values in `data`, without subtype, schema_version or batch wrappers.
+UUIDs use the parent session, native session and seq or header identity. The
+transport retains agent_id. Invalid remote history fails closed and preserves
+local files. Known old envelopes, Brain receipts and standalone delivery snapshots
+require explicit migration.
 
-1. Persist the accepted input before confirming delivery.
-2. Flush the native dsh log and persist the outbox, then publish preceding messages and tool results before model requests and tool approval.
-3. Persist approved arguments, then provision the sandbox.
-4. Flush the log and persist `dispatch` before issuing the remote tool call.
-5. Persist the confirmed output. Flush and publish the resulting dsh events before the next tool approval or model request.
-6. Persist terminal events in the outbox, set the worker idle, publish, then persist the cleared outbox.
+Checkpoint and background replication barriers flush only the target native Session,
+plus its child sessions for a root checkpoint. An unrelated writer failure cannot
+block their replication. The target session must still pass its own local durability
+barrier before any captured events are uploaded. Raw native handle appends are
+already durable and use revision-based reads.
 
-Completed turns resume with their dsh model history. An interrupted turn is closed through dsh's existing log-repair mechanism and is not automatically resumed or replayed. Accepted inputs without a recorded dispatch are marked failed and completed, permitting a later user turn. A recorded dispatch with unknown outcome blocks further user input. The session is not repeatedly reclaimed by that Brain process. Operator reconciliation is required; this version has no reconciliation command and must not be unblocked merely to retry a side-effecting command.
+No delivery journal, durable completed list, publication cursor or separate outbox
+file is maintained. Native Header/Event objects retain the dsh format unchanged;
+no platform-specific log records or OMA interruption source messages are appended.
+Existing external input identity uses the native message `id` through the public
+`freezeMessage` API. Restart recovery indexes the first user-source message in each
+native turn, without treating later approval context as a new input. Accepted
+inputs are not rerun. Invalid inputs and cancellations before native admission rely
+on the server's confirmed delivery status.
+
+Public messages, tool results and turn outcomes are regenerated from native logs
+on resume and republished with stable UUIDs. The backend deduplicates repeated
+publication. Related child logs use their own native identities. In-process output
+queues retain failed batches and consume only the captured prefix on success.
+Transient protocol notifications not derivable from native history are retried in
+memory and have no additional crash-recovery storage. Native `agents.resume()`
+repairs interrupted calls without replaying side effects. Child discovery combines
+local native headers with remote inventory; missing inventory blocks recovery.
+Native Header/Event validation, including ignorable extensions and required event
+types, is delegated to dsh. The bridge does not reject native events by platform
+record names or manually add Header fields; normalization comes from the native
+JSONL reader. Legacy CCRv2 transport envelopes remain
+a separate protocol compatibility boundary.
+
+After initial prefix validation, native Session events feed an incremental cache
+with a confirmed seq cursor. Active checkpoints upload only new events; previews
+do not reopen or scan full JSONL files. Raw handle access uses a revision-based
+suffix-read fallback. The cache is cleared on forget/close.
+
+Model requests use the native dsh flow without a remote replication barrier.
+Tool results trigger background publication as soon as they are recorded, so a completed tool
+does not stay running in the UI while the next model request is in progress.
+Native records replicate asynchronously; tool execution, public publication and input ACK await
+remote confirmation. A crash before confirmation can require repeating a model request. Shutdown waits for results to be confirmed before releasing
+the claim. These checkpoints do not form a cross-system exactly-once transaction.
+A host without the original disk recovers only the remotely confirmed prefix.
+Local logs have no automatic retention cleanup.
+
+Transient model failures retry the failed step inside the same turn. HTTP 408 and 429 remain transient; other 4xx failures are not retried unless classified as a recoverable context-window error. The actual retry wait, including jitter, never exceeds 30 seconds. `RATE_LIMIT`, `SERVER`, `TIMEOUT`, `TRANSPORT` and `EMPTY_RESPONSE` failures wait 1, 2, 4 and 8 seconds with up to 20% jitter, at most four times per step; a valid provider `Retry-After` replaces the exponential delay, capped at thirty seconds. The failed attempt is recorded as a dsh `assistant/attempt`, so its partial output never enters model history. Each retry logs `oma_model_request_retry` with the failure code, HTTP status, attempt and delay. Interrupting the turn cancels the wait. Authentication, quota, invalid-request and context-window failures are not retried by this policy. Model HTTP requests use a 300-second idle timeout that restarts with every response body chunk instead of a total deadline, so long streamed answers are not cut off while a stalled connection still fails and retries.
 
 Model quota failures (`QUOTA` or `ACCOUNT_QUOTA`) publish an explicit balance/quota message and log `ccrv2_turn_failed` with `model_quota_exhausted`. Public errors and diagnostics do not copy upstream response bodies. Error publication follows the existing persistence and delivery acknowledgement order; a later turn can run after the provider balance or credentials are corrected.
 
 The gateway no longer marks the backend session blocked when an MCP request
 fails. CCRv2 checkpoints and heartbeats remain writable, and a replacement Brain
-can claim an expired session and restore its journal. The Brain retains its
+can claim an expired session and resume its native logs. The Brain retains its
 unknown-outcome recovery policy. Backend regression tests cover forwarding
 failures and concurrent requests; the full inflight crash recovery path still
 requires real-backend verification.
 
-Grok checkpoints are refused rather than silently converted. This version starts new dsh sessions and restores its own logs. Background jobs and legacy history migration are outside this implementation. On a confirmed CONTEXT_WINDOW_EXCEEDED model error, the runtime summarizes older large, successful text Read results into first/last excerpts with an explicit omission notice; the latest two results, user inputs and assistant/tool-call identities remain unchanged. DSH surface replacements retain the original append-only log and replay the reduced model history. After durable persistence the owning root or child thread emits agent.thread_context_compacted and retries the failed step once. Replacement results do not publish duplicate public tool_result events. Other failures or histories without eligible Read output remain terminal; this is targeted recovery, not general semantic conversation summarization.
+Grok checkpoints are refused rather than silently converted. This version starts new dsh sessions and restores its own logs. Background jobs and legacy history migration are outside this implementation. The native DSH token meter, basic compaction engine, tool-result pruner and image-offload plugin manage model context. Before each step, the engine checks the window after reserving the effective output budget and 65536-token headroom. It first prunes large tool outputs, then summarizes balanced old conversation spans when pressure remains. Context overflow uses the native bounded recovery path. Summary calls preserve the OMA model route and use `purpose=compaction`; their native 65536-token requested budget is capped by the selected model's `max_output_tokens`, or 32768 when omitted, while smaller explicit budgets are preserved. They do not replace the business response ID. The private journal retains original messages and native compaction events. The CCRv2 adapter owns pressure snapshots, notification coalescing, replay recovery and retry state; runtime forwards native events plus generic open and post-flush lifecycle hooks. After journal persistence the adapter emits `agent.thread_context_compacted` for the owning root or child thread; public tool results are not duplicated. Restarts replay the compressed surface. Native offloaded images become text placeholders; this does not add a remote image-upload backend or quotas for opaque OMA image/document blocks.
 
 ## Verify
 
@@ -459,3 +506,27 @@ text block must parse to the same structured result. Empty stdout may use the
 sandbox's `(no output)` placeholder. Model feedback and public CCRv2 tool results
 share this conversion and omit duplicate execution metadata. Failures,
 inconsistent metadata and other tools retain their diagnostic text.
+
+## Built-in web_search and web_fetch
+
+The Brain exposes `web_search({query})` and `web_fetch({url})` as thin native
+tools. Existing OMA approval, cancellation, journaling and child restrictions
+apply. Agent and Session configuration accepts CMA-style domain restrictions
+and Fetch content budgets. CMA user_location is accepted and preserved as an
+advisory search preference; the current DeepSeek provider ignores it.
+
+Both tools execute on oma-server through session-authenticated
+`POST /v2/ccr-sessions/{id}/web/search` and `/web/fetch`. Search selects its provider using
+`web_tools.search_provider`; set it to `deepseek` and configure
+`web_tools.providers.deepseek.api_key` on the server. Fetch uses direct Go
+HTTP without an external Fetch API. Requests and redirects enforce Environment
+networking, tool domain rules and public-address checks using system DNS.
+Brain receives no provider credentials.
+
+Short results do not allocate a sandbox. Long results use the existing sandbox
+output persistence and Read path, with a bounded preview. Web content remains
+untrusted and responses carry source URLs for citations. There is no extra
+summarization model call. See [the design](../docs/design/be/brain-web-tools.md)
+for supported configuration, limits and acceptance coverage.
+
+Runtime keeps native execution and emits lifecycle/diagnostic facts. CCRv2 owns Worker log fields, backend thread IDs and Agent snapshots, compaction notifications, and gateway rejection decoding. Bash-specific structured stdout projection runs in the OMA sandbox adapter before generic tool execution consumes the result; error diagnostics and public tool text retain their existing behavior.

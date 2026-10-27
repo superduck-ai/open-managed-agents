@@ -20,12 +20,16 @@ afterEach(() => {
   else Reflect.deleteProperty(globalThis, 'scrollTo');
 });
 
-test('legacy Workbench credit destination reaches the preserved billing page and replaces the retired URL', async () => {
-  resetTestDom('https://oma.duck.ai/settings/billing');
+test.each([
+  { path: '/settings/billing', destination: '/billing', heading: 'Billing' },
+  { path: '/settings/llm', destination: '/settings/llm', heading: 'LLM configuration' },
+])('settings route $path reaches $destination', async ({ path, destination, heading }) => {
+  resetTestDom(`https://oma.duck.ai${path}`);
   Object.assign(globalThis, { scrollTo: () => undefined });
-  globalThis.fetch = (async () => Response.json({ data: [] })) as typeof fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) =>
+    String(input).endsWith('/llm_providers') ? Response.json([]) : Response.json({ data: [] })) as typeof fetch;
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const history = createMemoryHistory({ initialEntries: ['/settings/billing'] });
+  const history = createMemoryHistory({ initialEntries: [path] });
   const router = createRouter({ routeTree: appRouter.options.routeTree, history });
   await router.load();
 
@@ -45,6 +49,7 @@ test('legacy Workbench credit destination reaches the preserved billing page and
       >
         <WorkspaceContext.Provider
           value={{
+            orgUuid: 'org_test',
             activeWorkspace: defaultWorkspace,
             activeWorkspaceId: defaultWorkspace.id,
             workspaces: [defaultWorkspace],
@@ -61,8 +66,8 @@ test('legacy Workbench credit destination reaches the preserved billing page and
     </QueryClientProvider>,
   );
 
-  expect(await screen.findByRole('heading', { name: 'Billing' })).toBeTruthy();
-  await waitFor(() => expect(router.state.location.pathname).toBe('/billing'));
+  expect(await screen.findByRole('heading', { name: heading })).toBeTruthy();
+  await waitFor(() => expect(router.state.location.pathname).toBe(destination));
   expect(screen.queryByText('This page has been retired')).toBeNull();
   expect(history.length).toBe(1);
 });

@@ -6,11 +6,14 @@ const DefaultE2BTemplate = "managed-agent-sandbox"
 
 func defaultConfig() Config {
 	cfg := Config{
+		CodeSession: CodeSessionConfig{UpstreamProxyMITMEnabled: true},
 		EnvironmentPrebuilds: EnvironmentPrebuildConfig{
 			Timeout: time.Hour,
 			Template: TemplateBuildConfig{
-				DiskSize: "20G",
-				Network:  TemplateNetworkConfig{AllowInternet: true, InjectEgressCA: true},
+				DiskSize:     "20G",
+				Network:      TemplateNetworkConfig{AllowInternet: true, InjectEgressCA: true},
+				ExposedPorts: []int{3001, 49983},
+				ProbePort:    49983,
 			},
 		},
 		NATS: NATSConfig{

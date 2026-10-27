@@ -125,6 +125,7 @@ batch:
   upstream_timeout: 45s
 code_session:
   jwt_signing_private_key_file: ${CONFIG_TEST_HOME}/jwt.pem
+  upstream_proxy_mitm_enabled: false
 observability:
   content_capture_enabled: false
 webhook:
@@ -482,6 +483,7 @@ func TestLoadYAMLRejectsUnknownField(t *testing.T) {
 		overrides string
 		wantField string
 	}{
+		{name: "provider field", overrides: "web_tools:\n  search_provider: deepseek\n  providers:\n    deepseek:\n      api_key: private-test-key\n      api_kye: typo\n", wantField: "api_kye"},
 		{name: "regular field", overrides: "database:\n  urll: postgresql://typo/database\n", wantField: "urll"},
 		{name: "removed process upstream", overrides: "anthropic_upstream:\n  api_key: leftover\n", wantField: "anthropic_upstream"},
 		{name: "removed SDK fixture configuration", overrides: "sdk_fixtures:\n  api_key: leftover\n", wantField: "sdk_fixtures"},
@@ -563,6 +565,8 @@ func TestLoadYAMLRejectsNullAndNonPositiveValues(t *testing.T) {
 		overrides string
 		wantPath  string
 	}{
+		{name: "provider entry", overrides: "web_tools:\n  providers:\n    deepseek: null\n", wantPath: "web_tools.providers.deepseek"},
+		{name: "provider key", overrides: "web_tools:\n  providers:\n    deepseek:\n      api_key: null\n", wantPath: "web_tools.providers.deepseek.api_key"},
 		{name: "optional boolean", overrides: "database:\n  auto_migrate: null\n", wantPath: "database.auto_migrate"},
 		{name: "optional list", overrides: "bootstrap:\n  seed_api_keys: null\n", wantPath: "bootstrap.seed_api_keys"},
 		{name: "optional list item", overrides: "bootstrap:\n  seed_api_keys:\n    - null\n", wantPath: "bootstrap.seed_api_keys.[0]"},
@@ -937,7 +941,7 @@ func TestLoadCodeSessionUpstreamProxySSRFProtectionOverride(t *testing.T) {
 func TestLoadCodeSessionUpstreamProxyMITMRejectsInvalidCAKey(t *testing.T) {
 	t.Run("MITM enabled without private key", func(t *testing.T) {
 		prepareLoadTest(t)
-		if _, err := loadConfigTestYAML(t, "code_session:\n  upstream_proxy_mitm_enabled: true\n"); err == nil {
+		if _, err := loadConfigTestYAML(t, "code_session:\n  upstream_proxy_ca_key_file: \"\"\n"); err == nil {
 			t.Fatal("Load() error = nil, want missing stable CA private key error")
 		}
 	})
@@ -962,10 +966,21 @@ func TestLoadCodeSessionUpstreamProxyMITMRejectsInvalidCAKey(t *testing.T) {
 }
 
 func TestLoadCodeSessionUpstreamProxyMITMConfiguration(t *testing.T) {
+	t.Run("MITM enabled by default", func(t *testing.T) {
+		prepareLoadTest(t)
+		cfg, err := loadConfigTestYAML(t, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !cfg.CodeSession.UpstreamProxyMITMEnabled {
+			t.Fatal("MITM must be enabled when the setting is omitted")
+		}
+	})
+
 	t.Run("MITM disabled ignores dormant private key path", func(t *testing.T) {
 		prepareLoadTest(t)
 		missingKeyFile := filepath.Join(t.TempDir(), "missing-key.pem")
-		cfg, err := loadConfigTestYAML(t, fmt.Sprintf("code_session:\n  upstream_proxy_ca_key_file: %q\n", missingKeyFile))
+		cfg, err := loadConfigTestYAML(t, fmt.Sprintf("code_session:\n  upstream_proxy_mitm_enabled: false\n  upstream_proxy_ca_key_file: %q\n", missingKeyFile))
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
 		}
@@ -1092,6 +1107,7 @@ func loadConfigTestYAML(t *testing.T, contents string) (Config, error) {
 func writeConfigTestYAML(t *testing.T, path, overrides string) {
 	t.Helper()
 	base := decodeConfigTestYAML(t, requiredConfigTestYAML)
+	base["code_session"] = map[string]any{"upstream_proxy_ca_key_file": writeConfigTestFile(t, filepath.Join(t.TempDir(), "upstream-proxy-ca.pem"))}
 	mergeConfigTestMappings(base, decodeConfigTestYAML(t, overrides))
 	contents, err := yaml.Marshal(base)
 	if err != nil {
@@ -1169,6 +1185,7 @@ func loadValidatedConfigTestFile(t *testing.T, configPath string) Config {
 	if err := resolveConfigPaths(&cfg, filepath.Dir(configPath)); err != nil {
 		t.Fatalf("resolve config paths for %q: %v", configPath, err)
 	}
+	cfg.CodeSession.UpstreamProxyCAKeyFile = writeConfigTestFile(t, filepath.Join(t.TempDir(), "template-ca.pem"))
 	if err := validate(cfg); err != nil {
 		t.Fatalf("validate config %q: %v", configPath, err)
 	}
@@ -1224,4 +1241,15 @@ func TestAllowedEmailDomains(t *testing.T) {
 			t.Fatalf("domains = %v", cfg.Auth.AllowedEmailDomains)
 		}
 	})
+}
+
+func TestLoadWebToolsAPIKey(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, "web_tools:\n  search_provider: deepseek\n  providers:\n    deepseek:\n      api_key: private-test-key\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WebTools.SearchProvider != "deepseek" || cfg.WebTools.Providers["deepseek"].APIKey != "private-test-key" {
+		t.Fatal("API key was not preserved")
+	}
 }

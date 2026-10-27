@@ -18,19 +18,18 @@ x-oma-labels: &oma-labels
 services:
   # Extract envd binaries for the e2b-local runtime (host-path bind mount).
   init-envd:
-    image: ghcr.io/superduck-ai/e2b-local:latest
+    image: ${OMA_E2B_LOCAL_IMAGE:-ghcr.io/superduck-ai/e2b-local:latest}
     user: root
     labels: *oma-labels
     entrypoint: ["sh", "-c"]
     command:
       - |
         set -e
-        if [ ! -f /envd-out/envd-linux-amd64 ]; then
-          cp /app/envd-bin/* /envd-out/
-          echo "envd-bin extracted"
-        else
-          echo "envd-bin already present, skip"
-        fi
+        for binary in /app/envd-bin/*; do
+          if [ ! -f "/envd-out/$$(basename "$$binary")" ]; then
+            cp "$$binary" /envd-out/
+          fi
+        done
     volumes:
       - ${OMA_ENVD_BIN_DIR:?}:/envd-out
     restart: "no"
@@ -162,7 +161,7 @@ services:
   # multiple instances apart on the shared Docker daemon.
   e2b-local:
     labels: *oma-labels
-    image: ghcr.io/superduck-ai/e2b-local:latest
+    image: ${OMA_E2B_LOCAL_IMAGE:-ghcr.io/superduck-ai/e2b-local:latest}
     network_mode: host
     depends_on:
       init-envd:

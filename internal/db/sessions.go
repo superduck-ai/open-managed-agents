@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -35,6 +36,9 @@ type Session struct {
 	Metadata              json.RawMessage
 	VaultIDs              []string
 	Status                string
+	Budget                json.RawMessage
+	BudgetReachedAt       *time.Time
+	BudgetRemovedAt       *time.Time
 	Usage                 json.RawMessage
 	Stats                 json.RawMessage
 	OutcomeEvaluations    json.RawMessage
@@ -75,13 +79,8 @@ const (
 	SessionResourceTypeMemoryStore = sessioncontract.MemoryStoreResourceType
 	// MaxSessionFileResources is the write-time limit for active File resources
 	// attached to one Session.
-	MaxSessionFileResources = sessioncontract.MaxFileResources
-	// MaxSessionMemoryStores is the write-time limit for active Memory Store
-	// resources attached to one Session.
-	MaxSessionMemoryStores = sessioncontract.MaxMemoryStores
-	// MaxSessionOutputFileResources caps the output files ListSessionResources
-	// returns. Output files bypass the write-time limit, so without this cap the
-	// resources array would grow unbounded. files.list(scope_id) stays complete.
+	MaxSessionFileResources       = sessioncontract.MaxFileResources
+	MaxSessionMemoryStores        = sessioncontract.MaxMemoryStores
 	MaxSessionOutputFileResources = sessioncontract.MaxFileResources
 )
 
@@ -93,15 +92,42 @@ type SessionResource struct {
 	SessionUUID       string
 	SessionExternalID string
 	ResourceType      string
-	Payload           json.RawMessage
 	SecretPayload     json.RawMessage
-	// Path 是 Filestore namespace 中的公开路径；FileExternalID 是 Owned File 的
-	// `file_...` ID，只在读取路径同批 JOIN 出 File 行时才有值。
-	Path           string
-	FileExternalID string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	DeletedAt      *time.Time
+	File              *SessionResourceFileReference
+	GitHubRepository  *SessionResourceGitHubRepository
+	MemoryStore       *SessionResourceMemoryStore
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	DeletedAt         *time.Time
+}
+
+type SessionResourceFileReference struct {
+	FileID        string
+	NamespacePath string
+	MountPath     string
+	Ownership     SessionResourceFileOwnership
+}
+
+type SessionResourceGitHubRepository struct {
+	URL       string
+	MountPath string
+	Checkout  *SessionResourceGitHubCheckout
+}
+
+type SessionResourceGitHubCheckout struct {
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
+	SHA  string `json:"sha,omitempty"`
+}
+
+type SessionResourceMemoryStore struct {
+	UUID         string
+	ExternalID   string
+	Access       *string
+	Description  *string
+	Instructions *string
+	MountPath    *string
+	Name         *string
 }
 
 type SessionEvent struct {
@@ -204,10 +230,10 @@ type CreateSessionResourceInput struct {
 }
 
 // SessionFileMount is the already-normalized database binding for one file
-// resource. Path is the full path inside the Session Filestore namespace.
 type SessionFileMount struct {
 	ResourceExternalID string
 	FileExternalID     string
+	MountPath          string
 	Path               string
 }
 
@@ -316,12 +342,15 @@ func (d *DB) GetSessionByUUID(ctx context.Context, workspaceUUID string, session
 func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session) (Session, bool, error) {
 	mapper := NewSessionMapper(d.mapperDB)
 	row, err := mapper.UpdateByExternalID(ctx, sessionUpdateParams{
-		WorkspaceUUID: workspaceUUID,
-		ExternalID:    externalID,
-		AgentSnapshot: agentJSONArg(next.AgentSnapshot),
-		Title:         next.Title,
-		Metadata:      agentJSONArg(next.Metadata),
-		UpdatedAt:     next.UpdatedAt,
+		WorkspaceUUID:   workspaceUUID,
+		ExternalID:      externalID,
+		AgentSnapshot:   agentJSONArg(next.AgentSnapshot),
+		Title:           next.Title,
+		Metadata:        agentJSONArg(next.Metadata),
+		Budget:          agentJSONArg(next.Budget),
+		BudgetReachedAt: next.BudgetReachedAt,
+		BudgetRemovedAt: next.BudgetRemovedAt,
+		UpdatedAt:       next.UpdatedAt,
 	})
 	if !errors.Is(err, sql.ErrNoRows) {
 		return row.session(), err == nil, err
@@ -334,6 +363,11 @@ func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID
 		return Session{}, false, ErrNotFound
 	}
 	return current, false, nil
+}
+
+func (d *DB) SetSessionUsage(ctx context.Context, workspaceUUID, externalID string, usage json.RawMessage) error {
+	_, err := NewSessionMapper(d.mapperDB).SetUsage(ctx, workspaceUUID, externalID, agentJSONArg(usage))
+	return err
 }
 
 func (d *DB) PatchSessionMetadata(ctx context.Context, workspaceUUID string, externalID string, patch json.RawMessage) (Session, error) {
@@ -597,7 +631,7 @@ func (d *DB) CreateSessionResource(
 	ctx context.Context,
 	input CreateSessionResourceInput,
 ) (SessionResource, error) {
-	resource := input.Resource
+	resource := sessionResourceWithFileMount(input.Resource, input.FileMount)
 	var created SessionResource
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
@@ -649,13 +683,12 @@ func (d *DB) ListSessionResources(ctx context.Context, workspaceUUID string, ses
 	return sessionResourcesFromRows(rows), err
 }
 
-func (d *DB) UpdateSessionResource(ctx context.Context, workspaceUUID string, sessionExternalID, resourceExternalID string, payload, secretPayload json.RawMessage) (SessionResource, error) {
+func (d *DB) UpdateSessionGitHubRepositorySecret(ctx context.Context, workspaceUUID string, sessionExternalID, resourceExternalID string, secretPayload json.RawMessage) (SessionResource, error) {
 	mapper := NewSessionResourceMapper(d.mapperDB)
-	row, err := mapper.Update(ctx, sessionResourceUpdateParams{
+	row, err := mapper.UpdateGitHubRepositorySecret(ctx, sessionResourceUpdateParams{
 		WorkspaceUUID:      workspaceUUID,
 		SessionExternalID:  sessionExternalID,
 		ResourceExternalID: resourceExternalID,
-		Payload:            agentJSONArg(payload),
 		SecretPayload:      agentJSONArg(secretPayload),
 	})
 	return row.resource(), mapNoRows(err)
@@ -690,6 +723,19 @@ func (d *DB) AppendSessionEvents(
 	events []SessionEvent,
 	outcomeEvaluations json.RawMessage,
 ) (SessionEventChanges, error) {
+	return d.appendSessionEvents(ctx, workspaceUUID, sessionExternalID, events, outcomeEvaluations, nil)
+}
+
+type SessionBudgetTransition struct {
+	Budget    json.RawMessage
+	ReachedAt time.Time
+}
+
+func (d *DB) AppendSessionBudgetReachedEvents(ctx context.Context, workspaceUUID, sessionID string, events []SessionEvent, transition SessionBudgetTransition) (SessionEventChanges, error) {
+	return d.appendSessionEvents(ctx, workspaceUUID, sessionID, events, nil, &transition)
+}
+
+func (d *DB) appendSessionEvents(ctx context.Context, workspaceUUID, sessionExternalID string, events []SessionEvent, outcomeEvaluations json.RawMessage, transition *SessionBudgetTransition) (SessionEventChanges, error) {
 	var changes SessionEventChanges
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
@@ -699,6 +745,14 @@ func (d *DB) AppendSessionEvents(
 		}
 		if session.ArchivedAt != nil {
 			return ErrInvalidState
+		}
+		if transition != nil {
+			if len(session.Budget) == 0 || session.BudgetReachedAt != nil || !bytes.Equal(session.Budget, transition.Budget) {
+				return nil
+			}
+			if _, txErr := sessionMapper.SetBudgetReached(ctx, workspaceUUID, sessionExternalID, transition.ReachedAt); txErr != nil {
+				return txErr
+			}
 		}
 		result, txErr := insertSessionEventsTx(ctx, executor, session, events, d.RuntimeUSDPerHour())
 		if txErr != nil {

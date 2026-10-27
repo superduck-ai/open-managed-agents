@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
@@ -17,7 +21,7 @@ function completion(index: number, tool: boolean) {
 test("native Brain runs a Chat tool round-trip and restores its protocol history", async () => {
   const backend = new Backend();
   await backend.ready;
-  backend.a.launch.model_backends = { "test-model": "chat_completions" };
+  backend.a.launch.models = { "test-model": { id: "test-model", api_backend: "chat_completions" } };
   const original = backend.route.bind(backend);
   const requests: Payload[] = [];
   backend.route = async (request) => {
@@ -26,11 +30,12 @@ test("native Brain runs a Chat tool round-trip and restores its protocol history
     expect(request.headers.get("Authorization")).toBe(`Bearer ${backend.a.model_token}`);
     return completion(requests.length, requests.length === 1);
   };
+  const localRoot = await mkdtemp(join(tmpdir(), "brain-chat-transcript-"));
   let context = new Context();
   let session: ReturnType<typeof createOmaSession> | undefined;
   try {
     const initialApi = new OmaApi(backend.url);
-    await mountOma(context, initialApi);
+    await mountOma(context, initialApi, {}, localRoot);
     session = createOmaSession(context, initialApi, backend.a);
     await session.open();
     backend.onApproval = async (request) => {
@@ -46,10 +51,25 @@ test("native Brain runs a Chat tool round-trip and restores its protocol history
     await context.fiber.dispose();
     context = new Context();
     const api = new OmaApi(backend.url);
-    await mountOma(context, api);
+    await mountOma(context, api, {}, localRoot);
     session = createOmaSession(context, api, backend.a);
     await session.open();
     await session.receive("chat_restored_turn", { content: "continue" });
+    const replicas = await readdir(localRoot);
+    expect(replicas).toHaveLength(1);
+    {
+      const local = new Context();
+      try {
+        await local.plugin(JsonlPersistence, { root: localRoot, compression: "none" });
+        const snapshots = await local.sessionPersistence.list();
+        expect(snapshots).toHaveLength(1);
+        const log = await local.sessionPersistence.open(snapshots[0]!.header.id, "read");
+        expect((await log.read()).events.some((event) => event.type === "tool/result")).toBe(true);
+        await log.close();
+      } finally {
+        await local.fiber.dispose();
+      }
+    }
     expect(requests).toHaveLength(3);
     expect(backend.executions).toHaveLength(1);
     expect(requests[2]!.messages.filter((message: Payload) => message.role === "tool" && message.tool_call_id === "call_chat_runtime")).toHaveLength(1);
@@ -57,5 +77,6 @@ test("native Brain runs a Chat tool round-trip and restores its protocol history
     await session?.close();
     await context.fiber.dispose();
     backend.stop();
+    await rm(localRoot, { recursive: true, force: true });
   }
 });

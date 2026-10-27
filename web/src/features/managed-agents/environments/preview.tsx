@@ -41,6 +41,7 @@ export function EnvironmentPreview({
   const { msg } = useI18n();
   const query = useEnvironment(workspaceId, id);
   const [view, setView] = useState('rendered');
+  const [open, setOpen] = useState(true);
   const panel = useRef<ResizablePanelHandle>(null);
   const list = useEnvironments(workspaceId, null);
   const navigationIds = ids.length ? ids : (list.data?.data ?? []).map((item) => item.id);
@@ -51,10 +52,13 @@ export function EnvironmentPreview({
   const Icon = objectRecord(entity?.config).type === 'self_hosted' ? Monitor : Cloud;
   return (
     <Sheet
-      open
+      open={open}
       modal={false}
+      onOpenChangeComplete={(open) => {
+        if (!open) onClose();
+      }}
       onOpenChange={(open, details) => {
-        if (!open && details.reason !== 'outside-press') onClose();
+        if (!open && details.reason !== 'outside-press') setOpen(false);
       }}
     >
       <SheetContent
@@ -62,9 +66,9 @@ export function EnvironmentPreview({
         initialFocus={popup}
         showOverlay={false}
         showCloseButton={false}
-        className="environment-preview pointer-events-none inset-y-2 right-2 h-[calc(100dvh-16px)] w-[calc(100vw-16px)] gap-0 border-0 bg-transparent shadow-none ring-0 sm:max-w-[calc(100vw-32px)]"
+        className="environment-preview pointer-events-none inset-y-2 right-2 h-[calc(100dvh-16px)] w-[calc(100%-16px)] gap-0 border-0 bg-transparent shadow-none ring-0 sm:max-w-[calc(100%-32px)]"
       >
-        <ResizablePanelGroup orientation="horizontal" className="pointer-events-none">
+        <ResizablePanelGroup orientation="horizontal" className="pointer-events-none min-h-0">
           <ResizablePanel minSize={0} />
           <ResizableHandle
             aria-label={msg('environmentPage.resizePanel', 'Resize panel')}
@@ -76,16 +80,20 @@ export function EnvironmentPreview({
             defaultSize="560px"
             minSize="320px"
             maxSize="100%"
-            className="pointer-events-auto flex flex-col rounded-xl bg-background shadow-lg ring-1 ring-border"
+            className="pointer-events-auto flex flex-col rounded-xl border-[0.5px] border-border bg-background shadow-[var(--shadow-popover)]"
+            style={{ overflow: 'hidden' }}
           >
-            <div className="flex items-center gap-2 px-4 pt-3 text-xs">
-              <span>{msg('managedAgents.environments.environment', 'Environment')}</span>
+            <div className="flex shrink-0 items-center gap-2 px-4 pt-3 text-xs">
+              <span className="shrink-0 whitespace-nowrap">
+                {msg('managedAgents.environments.environment', 'Environment')}
+              </span>
               <CopyIdCell
+                className="min-w-0 flex-1"
                 value={id}
                 ariaLabel={msg('common.copyValue', 'Copy {value}', { value: id })}
                 textClassName="text-muted-foreground font-normal"
               />
-              <div className="ml-auto flex">
+              <div className="ml-auto flex shrink-0">
                 <Button
                   size="icon-xs"
                   variant="ghost"
@@ -111,7 +119,7 @@ export function EnvironmentPreview({
                 </SheetClose>
               </div>
             </div>
-            <div className="flex items-center gap-2 px-4 py-4">
+            <div className="flex shrink-0 items-center gap-2 px-4 py-4">
               <Icon className="size-5 shrink-0" strokeWidth={1.5} />
               <SheetTitle className="min-w-0 flex-1 truncate text-lg font-semibold">{entity?.name || id}</SheetTitle>
               <ButtonLink
@@ -143,7 +151,7 @@ export function EnvironmentPreview({
                 )
               ) : null}
             </div>
-            <div className="flex justify-end px-4 py-3">
+            <div className="flex shrink-0 justify-end px-4 py-3">
               <ToggleGroup
                 aria-label={msg('environmentPage.view', 'View')}
                 value={[view]}
@@ -173,7 +181,7 @@ function EnvironmentApi({ entity }: { entity: EnvironmentApiResponse }) {
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-        <span className="rounded bg-green-500/10 px-1 py-0.5 text-green-700 dark:text-green-400">GET</span>
+        <span className="rounded bg-[var(--success-bg)] px-1 py-0.5 text-success">GET</span>
         <code>/v1/environments/{'{id}'}</code>
         <a
           href="https://platform.claude.com/docs/en/api/beta/environments/retrieve"
@@ -185,13 +193,13 @@ function EnvironmentApi({ entity }: { entity: EnvironmentApiResponse }) {
           <ArrowUpRight className="size-3" />
         </a>
       </div>
-      <div className="overflow-hidden rounded-xl border border-border bg-muted/40">
-        <div className="flex items-center justify-between border-b border-border px-3 py-2 text-xs text-muted-foreground">
+      <div className="overflow-hidden rounded-xl border-[0.5px] border-border bg-muted/40">
+        <div className="flex items-center justify-between border-b-[0.5px] border-border px-3 py-2 text-xs text-muted-foreground">
           <span className="font-mono">JSON</span>
           <CopyButton value={json} label={msg('environmentPage.copyJson', 'Copy JSON')} />
         </div>
         <pre
-          className="m-0 whitespace-pre-wrap break-words p-4 font-mono text-[13px] leading-relaxed"
+          className="m-0 whitespace-pre-wrap break-words p-4 font-mono text-sm leading-relaxed"
           tabIndex={0}
           aria-label={msg('environmentPage.apiResponse', 'API response')}
         >
@@ -216,7 +224,7 @@ function EnvironmentSummary({ entity }: { entity: EnvironmentApiResponse }) {
     [
       msg('environmentPage.state', 'State'),
       <span className="inline-flex items-center gap-1.5">
-        <span className={`size-1.5 rounded-full ${archived ? 'bg-muted-foreground' : 'bg-green-600'}`} />
+        <span className={`size-1.5 rounded-full ${archived ? 'bg-muted-foreground' : 'bg-[var(--green-9)]'}`} />
         {archived ? msg('common.archived', 'Archived') : msg('common.active', 'Active')}
       </span>,
     ],

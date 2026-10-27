@@ -26,6 +26,78 @@ afterEach(() => {
 });
 
 describe('Organization members settings', () => {
+  test('distinguishes filtered results from an empty directory and restores members when search clears', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    const api = mockMembersApi();
+    render(
+      <OrganizationMembersHarness>
+        <OrganizationMembersPage />
+      </OrganizationMembersHarness>,
+    );
+    await screen.findByText('Ada Lovelace');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search members' }), {
+      target: { value: 'unmatched-person' },
+    });
+    expect(await screen.findByText('No matching members')).toBeTruthy();
+    expect(screen.queryByText('No members yet')).toBeNull();
+    expect(screen.queryByText('Invite people to join this organization.')).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: 'Email' })).toBeNull();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search members' }), { target: { value: '' } });
+    expect(await screen.findByText('Ada Lovelace')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Email' })).toBeTruthy();
+    expect(api.inviteCreates).toHaveLength(0);
+  });
+
+  test('retains invitation input through cancellation and resets it before reopening', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    mockMembersApi();
+    render(
+      <OrganizationMembersHarness>
+        <OrganizationMembersPage />
+      </OrganizationMembersHarness>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Invite' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Invite' });
+    fireEvent.change(within(dialog).getByLabelText('Email addresses'), { target: { value: 'person@example.test' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(document.querySelector<HTMLTextAreaElement>('#invite-emails')?.value).toBe('person@example.test');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Invite' }));
+    expect(within(await screen.findByRole('dialog')).getByLabelText('Email addresses')).toHaveProperty('value', '');
+  });
+
+  test('blocks closing a pending invitation and keeps its input after failure', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    mockMembersApi();
+    const mockedFetch = globalThis.fetch;
+    let finishRequest: (response: Response) => void = () => {};
+    globalThis.fetch = (input, init) =>
+      init?.method === 'POST'
+        ? new Promise<Response>((resolve) => {
+            finishRequest = resolve;
+          })
+        : mockedFetch(input, init);
+    render(
+      <OrganizationMembersHarness>
+        <OrganizationMembersPage />
+      </OrganizationMembersHarness>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Invite' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Invite' });
+    fireEvent.change(within(dialog).getByLabelText('Email addresses'), { target: { value: 'person@example.test' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Invite', exact: true }));
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: 'Close' }).hasAttribute('disabled')).toBe(true),
+    );
+    fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+    expect(screen.getByRole('dialog')).toBe(dialog);
+    finishRequest(Response.json({ error: { message: 'Example invitation failed' } }, { status: 500 }));
+    await within(dialog).findByText('Example invitation failed');
+    expect(within(dialog).getByLabelText('Email addresses')).toHaveProperty('value', 'person@example.test');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
   for (const cachedResource of [null, 'members', 'invites'] as const) {
     test(`does not show an empty directory while offline with ${cachedResource ?? 'no'} cached data and resumes online`, async () => {
       resetTestDom('https://oma.duck.ai/settings/members');
@@ -113,6 +185,24 @@ describe('Organization members settings', () => {
     expect(api.inviteListRequests).toBe(1);
   });
 
+  test('用户只读组织成员且不请求邀请目录', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    const api = mockMembersApi();
+    render(
+      <OrganizationMembersHarness permissions={['members:view']}>
+        <I18nProvider initialLocale="en">
+          <OrganizationMembersPage />
+        </I18nProvider>
+      </OrganizationMembersHarness>,
+    );
+    await screen.findByRole('table');
+    await waitFor(() => expect(api.memberListRequests).toBe(1));
+    expect(api.inviteListRequests).toBe(0);
+    expect(screen.queryByRole('button', { name: 'Invite' })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: /Role for/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /More actions/ })).toBeNull();
+  });
+
   test('shows permission guidance without requesting members for an invited user', async () => {
     resetTestDom('https://oma.duck.ai/settings/members');
     const api = mockMembersApi();
@@ -126,7 +216,9 @@ describe('Organization members settings', () => {
     );
 
     expect(await screen.findByText('无权限访问')).toBeTruthy();
-    expect(screen.getByText('只有组织管理员可以查看和管理组织成员。请联系组织管理员。')).toBeTruthy();
+    expect(
+      screen.getByText('组织成员可以查看成员目录。只有组织管理员可以管理组织成员。请联系组织管理员。'),
+    ).toBeTruthy();
     expect(screen.queryByRole('table')).toBeNull();
     expect(screen.queryByRole('button', { name: '邀请' })).toBeNull();
     expect(screen.queryByRole('button', { name: '重试' })).toBeNull();
@@ -147,6 +239,11 @@ describe('Organization members settings', () => {
       );
 
       expect(await screen.findByText('Access denied')).toBeTruthy();
+      expect(
+        screen.getByText(
+          'Organization members can view this directory. Only organization administrators can manage organization members. Contact your organization administrator.',
+        ),
+      ).toBeTruthy();
       expect(screen.queryByText('Members could not be loaded.')).toBeNull();
       expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Invite' })).toBeNull();
@@ -210,7 +307,7 @@ describe('Organization members settings', () => {
     expect(screen.getByRole('button', { name: 'Invite' })).toBeTruthy();
 
     const table = screen.getByRole('table', { name: 'Members' });
-    expect(within(table).getByRole('columnheader', { name: 'Name' })).toBeTruthy();
+    expect(await within(table).findByRole('columnheader', { name: 'Name' })).toBeTruthy();
     expect(within(table).getByRole('columnheader', { name: 'Email' })).toBeTruthy();
     expect(within(table).getByRole('columnheader', { name: 'Role' })).toBeTruthy();
     expect(await within(table).findByText('Current User')).toBeTruthy();
@@ -299,7 +396,7 @@ describe('Organization members settings', () => {
       </I18nProvider>,
     );
 
-    expect(await screen.findByText('可以访问Default组织的人员。')).toBeTruthy();
+    expect(within(screen.getByTestId('organization-members-page')).getByText('Default')).toBeTruthy();
   });
 
   test('localizes the seeded workspace name when the organization name is missing', async () => {
@@ -314,7 +411,7 @@ describe('Organization members settings', () => {
       </I18nProvider>,
     );
 
-    expect(await screen.findByText('可以访问默认组织的人员。')).toBeTruthy();
+    expect(within(screen.getByTestId('organization-members-page')).getByText('默认')).toBeTruthy();
   });
 
   test('renders the no-organization empty state without legacy surface-card chrome', () => {

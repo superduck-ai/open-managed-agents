@@ -15,12 +15,13 @@ type cubeSandboxTemplateBuilder struct {
 	apiURL string
 	cfg    config.TemplateBuildConfig
 }
+
 type cubeSandboxBuildRef struct {
 	TemplateID string `json:"template_id"`
 	JobID      string `json:"job_id"`
 }
 
-func (c *cubeSandboxTemplateBuilder) Start(ctx context.Context, imageRef string) (buildJobRef, error) {
+func (c *cubeSandboxTemplateBuilder) Start(ctx context.Context, input templateBuildInput) (buildJobRef, error) {
 	payload := struct {
 		Image               string   `json:"image"`
 		RegistryUsername    string   `json:"registryUsername,omitempty"`
@@ -37,11 +38,11 @@ func (c *cubeSandboxTemplateBuilder) Start(ctx context.Context, imageRef string)
 		ProbePort           int      `json:"probePort"`
 		ProbePath           string   `json:"probePath"`
 	}{
-		Image: imageRef, RegistryUsername: c.cfg.RegistryAuth.Username, RegistryPassword: c.cfg.RegistryAuth.Password,
-		WritableLayerSize: c.cfg.DiskSize, CPU: c.cfg.CPU, Memory: c.cfg.Memory,
+		Image: input.ImageRef, RegistryUsername: c.cfg.RegistryAuth.Username, RegistryPassword: c.cfg.RegistryAuth.Password,
+		WritableLayerSize: input.DiskSize, CPU: input.CPU, Memory: input.Memory,
 		DNS: c.cfg.Network.DNSServers, AllowOut: c.cfg.Network.AllowOutboundCIDRs, DenyOut: c.cfg.Network.DenyOutboundCIDRs,
 		AllowInternetAccess: c.cfg.Network.AllowInternet, WithCubeCA: c.cfg.Network.InjectEgressCA,
-		ExposedPorts: []int{49983}, ProbePort: 49983, ProbePath: "/health",
+		ExposedPorts: c.cfg.ExposedPorts, ProbePort: c.cfg.ProbePort, ProbePath: "/health",
 	}
 	var result struct {
 		JobID      string `json:"jobID"`

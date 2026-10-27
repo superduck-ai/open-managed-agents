@@ -10,6 +10,7 @@ import { PRESS_SCALE_CLASS } from '../chrome';
 import { Input } from '../../../shared/ui/input';
 import { Skeleton } from '../../../shared/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
+import { useIsMobile } from '../../../shared/hooks/use-mobile';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { getObservabilityTrace, listObservabilityAgents } from '../api';
 import { formatDurationMs } from '../format';
@@ -40,6 +41,8 @@ export function TraceDetailView({
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const { width: leftWidth, onResizeStart } = useColumnResize();
+  const isMobile = useIsMobile();
+  const displayLeftWidth = isMobile ? 160 : leftWidth;
   const detailQuery = useQuery({
     queryKey: ['observability', 'trace', orgUuid, activeWorkspaceId, traceId, variables],
     queryFn: () => getObservabilityTrace(orgUuid, activeWorkspaceId, traceId, variables),
@@ -125,19 +128,22 @@ export function TraceDetailView({
         aria-label={msg('observability.trace.search', 'Search call tree')}
       />
       <TabsContent value={CALL_TREE_TAB} className="min-h-0">
-        <div className="relative flex h-[calc(100vh-14rem)] min-h-[32rem] overflow-hidden rounded-lg border border-border">
-          <div className="flex min-h-0 min-w-0 flex-col" style={{ width: showTimeline ? '100%' : leftWidth }}>
+        <div className="relative flex h-[calc(100vh-14rem)] min-h-[32rem] overflow-hidden rounded-lg border-[0.5px] border-border">
+          <div
+            className={cn('flex min-h-0 min-w-0 flex-col', isMobile && selected && 'hidden')}
+            style={{ width: showTimeline ? '100%' : displayLeftWidth }}
+          >
             <TraceWaterfall
               spans={spans}
               query={query}
               selectedSpanId={selected?.span_id ?? null}
-              leftWidth={leftWidth}
+              leftWidth={displayLeftWidth}
               showTimeline={showTimeline}
               onSelectSpan={setSelectedSpanId}
             />
           </div>
           {selected ? (
-            <div className="flex min-h-0 min-w-0 flex-1 border-l border-border">
+            <div className="flex min-h-0 min-w-0 flex-1 border-border md:border-l-[0.5px]">
               <SpanDetailPanel
                 span={selected}
                 color={colors.get(spanColorKey(selected)) ?? 'var(--chart-1)'}
@@ -146,10 +152,10 @@ export function TraceDetailView({
               />
             </div>
           ) : null}
-          {selected ? (
+          {selected && !isMobile ? (
             <>
               <div
-                className="absolute top-0 bottom-0 z-20 w-px cursor-col-resize bg-border hover:bg-primary"
+                className="absolute top-0 bottom-0 z-20 w-[0.5px] cursor-col-resize bg-border hover:bg-primary"
                 style={{ left: leftWidth }}
                 onPointerDown={onResizeStart}
               />

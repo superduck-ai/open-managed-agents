@@ -50,7 +50,8 @@ func (e *AmbiguousModelError) Is(target error) bool {
 }
 
 type Catalog struct {
-	providers []db.LLMProvider
+	providers    []db.LLMProvider
+	organization []db.LLMProvider
 }
 
 type CatalogModel struct {
@@ -74,16 +75,26 @@ func LoadCatalog(ctx context.Context, database *db.DB, organizationUUID, workspa
 	if err != nil {
 		return Catalog{}, err
 	}
-	if len(providers) == 0 {
+	organization, err := database.ListLLMProviders(ctx, organizationUUID, "")
+	if err != nil {
+		return Catalog{}, err
+	}
+	catalog := Catalog{providers: providers, organization: organization}
+	if len(providers) == 0 && len(organization) == 0 {
 		return Catalog{}, ErrNotConfigured
 	}
-	return NewCatalog(providers), nil
+	return catalog, nil
 }
 
 func (c Catalog) ModelIDs() []string {
 	models := make([]string, 0)
 	for _, provider := range c.providers {
-		for _, modelID := range provider.ModelIDs {
+		for _, modelID := range provider.Models.IDs() {
+			models = append(models, QualifiedModelID(provider.Slug, modelID))
+		}
+	}
+	for _, provider := range c.organization {
+		for _, modelID := range provider.Models.IDs() {
 			models = append(models, QualifiedModelID(provider.Slug, modelID))
 		}
 	}
@@ -92,29 +103,33 @@ func (c Catalog) ModelIDs() []string {
 
 func (c Catalog) Lookup(modelID string) (CatalogModel, error) {
 	if slug, upstreamModelID, ok := ParseModelRef(modelID); ok {
-		for _, provider := range c.providers {
-			if provider.Slug == slug && slices.Contains(provider.ModelIDs, upstreamModelID) {
-				return CatalogModel{Provider: provider, UpstreamModelID: upstreamModelID}, nil
+		for _, providers := range [][]db.LLMProvider{c.providers, c.organization} {
+			for _, provider := range providers {
+				if provider.Slug == slug && slices.Contains(provider.Models.IDs(), upstreamModelID) {
+					return CatalogModel{Provider: provider, UpstreamModelID: upstreamModelID}, nil
+				}
 			}
 		}
 	}
-	matches := make([]CatalogModel, 0, 1)
-	for _, provider := range c.providers {
-		if slices.Contains(provider.ModelIDs, modelID) {
-			matches = append(matches, CatalogModel{Provider: provider, UpstreamModelID: modelID})
+	for _, providers := range [][]db.LLMProvider{c.providers, c.organization} {
+		matches := []CatalogModel{}
+		for _, provider := range providers {
+			if slices.Contains(provider.Models.IDs(), modelID) {
+				matches = append(matches, CatalogModel{Provider: provider, UpstreamModelID: modelID})
+			}
+		}
+		if len(matches) == 1 {
+			return matches[0], nil
+		}
+		if len(matches) > 1 {
+			candidates := make([]string, 0, len(matches))
+			for _, match := range matches {
+				candidates = append(candidates, match.QualifiedModelID())
+			}
+			return CatalogModel{}, &AmbiguousModelError{ModelID: modelID, Candidates: candidates}
 		}
 	}
-	switch len(matches) {
-	case 0:
-		return CatalogModel{}, ErrModelNotConfigured
-	case 1:
-		return matches[0], nil
-	}
-	candidates := make([]string, 0, len(matches))
-	for _, match := range matches {
-		candidates = append(candidates, match.QualifiedModelID())
-	}
-	return CatalogModel{}, &AmbiguousModelError{ModelID: modelID, Candidates: candidates}
+	return CatalogModel{}, ErrModelNotConfigured
 }
 
 func Resolve(
@@ -173,9 +188,13 @@ func CanonicalModelID(ctx context.Context, database *db.DB, organizationUUID, wo
 }
 
 func SecretBinding(provider db.LLMProvider) secrets.Binding {
+	workspaceUUID := provider.WorkspaceUUID
+	if workspaceUUID == "" {
+		workspaceUUID = db.OrganizationLLMProviderSecretWorkspace
+	}
 	return secrets.Binding{
 		OrganizationUUID:     provider.OrganizationUUID,
-		WorkspaceUUID:        provider.WorkspaceUUID,
+		WorkspaceUUID:        workspaceUUID,
 		VaultExternalID:      secretScope,
 		CredentialExternalID: provider.ExternalID,
 	}
@@ -190,6 +209,13 @@ func ValidateBaseURL(rawURL string) (string, error) {
 		return "", ErrUnsafeBaseURL
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	for _, suffix := range []string{"/v1/messages", "/v1/chat/completions", "/v1"} {
+		if prefix, found := strings.CutSuffix(parsed.Path, suffix); found {
+			parsed.Path = prefix
+			parsed.RawPath = ""
+			break
+		}
+	}
 	return parsed.String(), nil
 }
 

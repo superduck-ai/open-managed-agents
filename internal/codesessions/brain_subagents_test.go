@@ -28,7 +28,7 @@ func TestRuntimeSubagentsRejectInvalidRoster(t *testing.T) {
 func TestRuntimeSubagentsSelfAndDuplicateNames(t *testing.T) {
 	session := db.Session{AgentSnapshot: json.RawMessage(`{"id":"parent","version":4,"name":"self_probe","system":"session override","multiagent":{"type":"coordinator","agents":[{"type":"agent","id":"parent","version":4}]},"tools":[{"type":"agent_toolset_20260401"}]}`)}
 	config, err := resolveRuntimeSubagents(t.Context(), nil, session)
-	if err != nil || len(config.Agents) != 1 || config.Agents[0].SystemPrompt != "session override" || len(config.Agents[0].Tools) != 6 {
+	if err != nil || len(config.Agents) != 1 || config.Agents[0].SystemPrompt != "session override" || len(config.Agents[0].Tools) != 8 {
 		t.Fatalf("self reference not resolved from pinned snapshot: %+v %v", config, err)
 	}
 	var public struct {

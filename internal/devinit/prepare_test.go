@@ -18,7 +18,7 @@ func prepareTestRepo(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(root, "config"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"config.example.yaml", "dev-init.example.yaml", "model-providers.example.yaml"} {
+	for _, name := range []string{"config.example.yaml", "dev-init.example.yaml", "model-providers.example.yaml", "images.example.yaml"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "config", name))
 		if err != nil {
 			t.Fatal(err)
@@ -107,12 +107,15 @@ func TestPrepareLocalCreatesBrainConfigAndStableKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	sharedFiles, err := os.ReadDir(shared)
-	if err != nil || len(sharedFiles) != 1 || sharedFiles[0].Name() != "model-providers.yaml" {
-		t.Fatal("shared directory must only contain model-providers.yaml")
+	if err != nil || len(sharedFiles) != 2 || sharedFiles[0].Name() != "images.yaml" || sharedFiles[1].Name() != "model-providers.yaml" {
+		t.Fatal("shared directory must contain image and model provider configurations")
 	}
-	cfg, err := loadBaseConfig(root)
+	cfg, err := loadBaseConfigWithImages(root, imagesConfig{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !cfg.CodeSession.UpstreamProxyMITMEnabled || cfg.CodeSession.UpstreamProxyCAKeyFile != filepath.Join(root, ".run", "secrets", "upstream-proxy-ca-key.pem") {
+		t.Fatal("fresh config must enable MITM with its generated stable CA key")
 	}
 	if cfg.EnvironmentRunner.AgentMode != "brain" || cfg.Vault.MasterKey.Local.Kek != "" {
 		t.Fatal("fresh config must use Brain and a generated local KEK")
@@ -126,7 +129,7 @@ func TestPrepareLocalCreatesBrainConfigAndStableKeys(t *testing.T) {
 	}
 	snapshot := map[string]string{}
 	for _, path := range []string{
-		baseConfigPath(root), filepath.Join(root, ".run", "dev-init.yaml"), spec.ModelProviders,
+		baseConfigPath(root), filepath.Join(root, ".run", "dev-init.yaml"), spec.ModelProviders, filepath.Join(shared, "images.yaml"),
 		filepath.Join(spec.FixedSecretsDir, "code-session-jwt-ed25519.pem"),
 		filepath.Join(spec.FixedSecretsDir, "upstream-proxy-ca-key.pem"),
 		filepath.Join(spec.FixedSecretsDir, "vault-kek"),
@@ -197,5 +200,31 @@ func TestPrepareLocalSharesProviderInputsAcrossWorktrees(t *testing.T) {
 	data, err := os.ReadFile(providerFile)
 	if err != nil || string(data) != "existing shared provider" {
 		t.Fatal("shared provider file was overwritten")
+	}
+}
+
+func TestPrepareLocalPreservesExplicitMITMDisable(t *testing.T) {
+	root, shared := prepareTestRepo(t), t.TempDir()
+	if err := prepareLocal(root, shared); err != nil {
+		t.Fatal(err)
+	}
+	path := baseConfigPath(root)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := strings.Replace(string(data), "upstream_proxy_mitm_enabled: true", "upstream_proxy_mitm_enabled: false", 1)
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareLocal(root, shared); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadBaseConfigWithImages(root, imagesConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CodeSession.UpstreamProxyMITMEnabled {
+		t.Fatal("existing explicit MITM disable must be preserved")
 	}
 }

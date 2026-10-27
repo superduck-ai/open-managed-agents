@@ -17,16 +17,15 @@ describe('LoginFlow', () => {
     render(<LoginFlow onAuthenticated={() => undefined} />);
 
     expect(screen.getAllByText('Open Managed Agents').length).toBeGreaterThan(0);
-    expect(screen.getByText('Build with Open Managed Agents')).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: 'Sign in' })).toBeTruthy();
+    expect(screen.queryByText('Build with Open Managed Agents')).toBeNull();
     const developerDocs = screen.getByRole('link', { name: /Developer Docs/i });
     expect(developerDocs.getAttribute('data-slot')).toBe('button');
     expect(developerDocs.getAttribute('href')).toBe('https://oma.mintlifysite.com/docs/en/overview');
     expect(screen.getByRole('link', { name: /API Reference/i }).getAttribute('href')).toBe(
       'https://oma.mintlifysite.com/docs/en/api/overview',
     );
-    expect(screen.getByRole('link', { name: /Cookbooks/i }).getAttribute('href')).toBe(
-      'https://oma.mintlifysite.com/docs/en/quickstart',
-    );
+    expect(screen.queryByRole('link', { name: /Cookbooks/i })).toBeNull();
     expect(screen.getByRole('link', { name: /Quickstarts/i }).getAttribute('href')).toBe(
       'https://oma.mintlifysite.com/docs/en/quickstart',
     );
@@ -125,16 +124,14 @@ describe('LoginFlow', () => {
     );
 
     expect(document.documentElement.lang).toBe('zh-CN');
-    expect(screen.getByText('使用 Open Managed Agents 构建')).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: '登录' })).toBeTruthy();
     expect(screen.getByRole('link', { name: '开发者文档' }).getAttribute('href')).toBe(
       'https://oma.mintlifysite.com/docs/zh/overview',
     );
     expect(screen.getByRole('link', { name: 'API 参考' }).getAttribute('href')).toBe(
       'https://oma.mintlifysite.com/docs/zh/api/overview',
     );
-    expect(screen.getByRole('link', { name: 'Cookbooks' }).getAttribute('href')).toBe(
-      'https://oma.mintlifysite.com/docs/zh/quickstart',
-    );
+    expect(screen.queryByRole('link', { name: 'Cookbooks' })).toBeNull();
     expect(screen.getByRole('link', { name: '快速开始' }).getAttribute('href')).toBe(
       'https://oma.mintlifysite.com/docs/zh/quickstart',
     );

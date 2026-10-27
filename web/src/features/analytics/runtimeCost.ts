@@ -50,19 +50,56 @@ export function runtimeCostRange(range: string, now = new Date()) {
   return { startingOn: formatUTCDate(addUTCDays(today, -29)), endingBefore: formatUTCDate(endingBefore) };
 }
 
+export function isRuntimeCostReport(value: unknown): value is RuntimeCostReport {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const report = value as RuntimeCostReport;
+  return typeof report.total === 'string' && Array.isArray(report.daily);
+}
+
+export function sessionRuntimeCostLabel(report: RuntimeCostReport | undefined, fallback: string, unconfigured: string) {
+  if (!report) {
+    return fallback;
+  }
+  if (report.configured === false) {
+    return unconfigured;
+  }
+  if (!Number(report.total)) {
+    return fallback;
+  }
+  return formatDollars(report.total);
+}
+
 export function useRuntimeCost(input: {
   orgUuid: string;
   workspaceId: string;
   model: string;
   groupBy: string;
   range: string;
+  startingOn?: string;
+  endingBefore?: string;
+  enabled?: boolean;
 }) {
   return useQuery({
-    queryKey: ['console', 'runtime-cost', input.orgUuid, input.workspaceId, input.model, input.groupBy, input.range],
-    enabled: Boolean(input.orgUuid),
+    queryKey: [
+      'console',
+      'runtime-cost',
+      input.orgUuid,
+      input.workspaceId,
+      input.model,
+      input.groupBy,
+      input.range,
+      input.startingOn,
+      input.endingBefore,
+    ],
+    enabled: (input.enabled ?? true) && Boolean(input.orgUuid),
     retry: false,
     queryFn: () => {
-      const bounds = runtimeCostRange(input.range);
+      const bounds =
+        input.startingOn && input.endingBefore
+          ? { startingOn: input.startingOn, endingBefore: input.endingBefore }
+          : runtimeCostRange(input.range);
       const params = new URLSearchParams({
         starting_on: bounds.startingOn,
         ending_before: bounds.endingBefore,

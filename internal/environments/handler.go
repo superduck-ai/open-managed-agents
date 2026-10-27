@@ -192,6 +192,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
+	if err := validateTemplateSpecPolicy(configRaw, h.cfg.EnvironmentPrebuilds); err != nil {
+		return invalidRequest(err)
+	}
 	envID, err := ids.New("env_")
 	if err != nil {
 		return internalError("Could not generate environment ID", fmt.Errorf("generate environment ID: %w", err))
@@ -751,6 +754,7 @@ func platformEnvironmentConfigForResponse(raw json.RawMessage) json.RawMessage {
 			"networking":  platformNetworkingForResponse(fields["networking"]),
 			"init_script": rawStringOrEmpty(fields["init_script"]),
 			"environment": platformObjectForResponse(fields["environment"]),
+			"resources":   platformResourcesForResponse(fields["resources"]),
 		})
 		return out
 	default:
@@ -765,6 +769,7 @@ func platformDefaultCloudConfigForResponse() json.RawMessage {
 		"networking":  platformNetworkingForResponse(nil),
 		"init_script": "",
 		"environment": map[string]any{},
+		"resources":   nil,
 	})
 	return out
 }
@@ -784,7 +789,7 @@ func platformNetworkingForResponse(raw json.RawMessage) map[string]any {
 	}
 	networkType := rawStringOrEmpty(fields["type"])
 	if networkType == "" {
-		networkType = "limited"
+		networkType = "unrestricted"
 	}
 	return map[string]any{
 		"type":                   networkType,
@@ -942,6 +947,9 @@ func normalizeConfigForUpdate(current json.RawMessage, raw json.RawMessage) (jso
 		}
 		base["networking"] = networking
 	}
+	if err := normalizeTemplateConfigFields(fields, base); err != nil {
+		return nil, err
+	}
 	return marshalRaw(base)
 }
 
@@ -966,7 +974,11 @@ func normalizeFullConfig(raw json.RawMessage) (json.RawMessage, error) {
 		if err != nil {
 			return nil, err
 		}
-		return marshalRaw(map[string]any{"type": "cloud", "packages": packages, "networking": networking})
+		base := map[string]any{"type": "cloud", "packages": packages, "networking": networking}
+		if err := normalizeTemplateConfigFields(fields, base); err != nil {
+			return nil, err
+		}
+		return marshalRaw(base)
 	default:
 		return nil, errors.New("config.type must be cloud or self_hosted")
 	}

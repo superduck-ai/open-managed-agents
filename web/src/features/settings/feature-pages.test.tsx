@@ -19,7 +19,16 @@ afterEach(() => {
 
 describe('Settings feature pages', () => {
   test('keeps only working organization and personal settings routes', () => {
-    for (const section of ['profile', 'appearance', 'organization', 'members', 'workspaces', 'cost', 'api-keys']) {
+    for (const section of [
+      'profile',
+      'appearance',
+      'organization',
+      'llm',
+      'members',
+      'workspaces',
+      'cost',
+      'api-keys',
+    ]) {
       expect(settingsSectionFromPath(`/settings/${section}`)).toBe(section);
     }
     for (const section of [
@@ -64,12 +73,13 @@ describe('Settings feature pages', () => {
     expect(container.querySelector('.surface-card')).toBeNull();
   });
 
-  test('organization navigation contains the working sections', () => {
+  test('organization navigation includes LLM configuration and cost', () => {
     resetTestDom('https://oma.duck.ai/settings/organization');
     renderSettingsFeature('/settings/organization', <div>Organization form</div>);
     const nav = screen.getByRole('navigation', { name: 'Settings navigation' });
     expect(Array.from(nav.querySelectorAll('a')).map((link) => link.getAttribute('href'))).toEqual([
       '/settings/organization',
+      '/settings/llm',
       '/settings/members',
       '/settings/workspaces',
       '/settings/cost',

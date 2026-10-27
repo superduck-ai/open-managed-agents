@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { Button } from '../../shared/ui/button';
 import { CursorPagination } from '../../shared/ui/resource-table';
 import { useI18n } from '../../shared/i18n';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
 import { ResourceSearchField } from '../../shared/ui/resource-filters';
 import { MCPServerDestructiveDialog, MCPServerEditor, MCPServerPanel } from './MCPServerDialogs';
 import { MCPServersTable } from './MCPServersTable';
@@ -26,22 +27,15 @@ export function MCPServersPage({
 
   return (
     <section className="relative min-h-[calc(100vh-48px)] text-foreground">
-      <header className="mb-5 flex items-start justify-between gap-6">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">MCP Servers</h1>
-          <p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">
-            {msg(
-              'mcpServers.description',
-              'Manage the reusable custom MCP configuration directory for the {workspaceName} workspace.',
-              { workspaceName: workspace.workspaceName },
-            )}
-          </p>
-        </div>
-        <Button type="button" className="h-9 shrink-0" onClick={actions.openCreate}>
-          <Plus className="size-4" aria-hidden />
-          {msg('mcpServers.create', 'Create MCP server')}
-        </Button>
-      </header>
+      <ResourcePageHeader
+        title={msg('nav.mcpServers', 'MCP servers')}
+        actions={
+          <Button type="button" size="lg" onClick={actions.openCreate}>
+            <Plus className="size-4" aria-hidden />
+            {msg('mcpServers.create', 'Create MCP server')}
+          </Button>
+        }
+      />
 
       <div data-testid="mcp-server-filters" className="mb-7 flex flex-wrap items-center gap-2">
         <ResourceSearchField
@@ -57,6 +51,7 @@ export function MCPServersPage({
 
       <MCPServersTable
         servers={servers}
+        hasSearch={Boolean(data.search.trim())}
         selectedServerId={actions.selectedServerId}
         isLoading={!workspace.workspaceReady || data.listQuery.isLoading}
         isFetching={data.listQuery.isFetching}

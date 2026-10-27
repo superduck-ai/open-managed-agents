@@ -291,6 +291,9 @@ func insertSessionEventIfAbsentTx(ctx context.Context, executor yourbatis.Execut
 }
 
 func prepareSessionEventTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent, usdPerHour *big.Rat) (SessionEvent, bool, error) {
+	if event.EventType == "span.model_request_start" && session.BudgetReachedAt != nil {
+		return SessionEvent{}, false, ErrSessionBudgetReached
+	}
 	write, err := shouldWriteSessionStatus(ctx, executor, *session, primary, event)
 	if err != nil || !write {
 		return SessionEvent{}, false, err
@@ -325,6 +328,9 @@ func prepareSessionEventTx(ctx context.Context, executor yourbatis.Executor, ses
 }
 
 func applySessionEventWriteTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent, usdPerHour *big.Rat) (bool, error) {
+	if err := insertSessionUsageRecord(ctx, executor, event); err != nil {
+		return false, err
+	}
 	if err := attachEventPayloadBlob(ctx, executor, session.WorkspaceUUID, event.PayloadBlobUUID); err != nil {
 		return false, err
 	}

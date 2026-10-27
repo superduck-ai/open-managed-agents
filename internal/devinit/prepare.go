@@ -41,7 +41,7 @@ func prepareLocal(repoRoot, sharedDir string) error {
 		return err
 	}
 	if configExists && initExists {
-		return nil
+		return prepareImagesConfig(repoRoot, sharedDir)
 	}
 	if _, bound, err := LoadBinding(envFilePath(repoRoot)); err != nil {
 		return err
@@ -65,6 +65,9 @@ func prepareLocal(repoRoot, sharedDir string) error {
 		if err := prepareLocalSecrets(runDir); err != nil {
 			return err
 		}
+	}
+	if err := prepareImagesConfig(repoRoot, sharedDir); err != nil {
+		return err
 	}
 	sharedProviders := filepath.Join(sharedDir, "model-providers.yaml")
 	if err := prepareYAMLTemplate(repoRoot, "model-providers.example.yaml", sharedProviders, nil); err != nil {
@@ -124,6 +127,7 @@ func prepareYAMLTemplate(repoRoot, name, target string, configure func(*yaml.Nod
 
 func configureLocalRuntime(root *yaml.Node) {
 	setMappingValue(root, "environment_runner", "agent_mode", "brain")
+	setNode(getOrCreateMapping(root, "code_session"), "upstream_proxy_mitm_enabled", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
 	setMappingValue(root, "code_session", "brain_claim_token_file", "./generated/secrets/brain-claim-token")
 	setMappingValue(root, "code_session", "jwt_signing_private_key_file", "./secrets/code-session-jwt-ed25519.pem")
 	setMappingValue(root, "code_session", "upstream_proxy_ca_key_file", "./secrets/upstream-proxy-ca-key.pem")

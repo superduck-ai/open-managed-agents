@@ -10,12 +10,12 @@ const packageIconPaths: Record<string, string> = {
 };
 
 const packageIconColors: Record<string, string> = {
-  pip: '#3776AB',
-  npm: '#CB3837',
-  apt: '#A81D33',
-  cargo: '#CE422B',
-  gem: '#CC342D',
-  go: '#00ADD8',
+  pip: 'var(--blue-11)',
+  npm: 'var(--red-11)',
+  apt: 'var(--pink-11)',
+  cargo: 'var(--tomato-11)',
+  gem: 'var(--red-11)',
+  go: 'var(--cyan-11)',
 };
 
 const pythonLowerPath =
@@ -26,12 +26,12 @@ export function PackageIcon({ manager }: { manager: string }) {
     <svg
       viewBox="0 0 24 24"
       className="size-4 shrink-0"
-      fill={packageIconColors[manager]}
+      fill={packageIconColors[manager] ?? 'currentColor'}
       aria-hidden="true"
       focusable="false"
     >
       <path d={packageIconPaths[manager]} />
-      {manager === 'pip' ? <path d={pythonLowerPath} fill="#FFD43B" /> : null}
+      {manager === 'pip' ? <path d={pythonLowerPath} fill="var(--amber-9)" /> : null}
     </svg>
   );
 }

@@ -416,7 +416,18 @@ func (d *DB) Migrate(ctx context.Context) error {
 	if err := runGooseMigrations(ctx, standardDB); err != nil {
 		return err
 	}
-	return dropForeignKeyConstraints(ctx, standardDB)
+	if err := dropForeignKeyConstraints(ctx, standardDB); err != nil {
+		return err
+	}
+	for {
+		count, err := d.BackfillUsageRecords(ctx, 500)
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return nil
+		}
+	}
 }
 
 func (d *DB) DropForeignKeyConstraints(ctx context.Context) error {

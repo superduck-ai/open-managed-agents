@@ -4,6 +4,7 @@ import { setAnthropicClientForTest } from '@/shared/api/anthropic';
 import { type SessionDetailEventCache } from './types';
 import {
   addSessionFileResource,
+  postSessionToolConfirmation,
   listMemoryStoreOptions,
   listSessionFileOptions,
   listSessionFiles,
@@ -19,11 +20,13 @@ import {
   sessionThreadListSignature,
   syncSessionEventHistory,
 } from './api';
-import { sessionEventUpdateTimestamp } from './sessions/sessionDetailModel';
+import { sessionEventUpdateTimestamp, sessionEventLaneId } from './sessions/sessionDetailModel';
 import {
   buildSessionEventEntries,
   sessionCanonicalDisplayEvent,
   sessionEventTimestamp,
+  sessionSubagentThreadId,
+  sessionSubagentName,
 } from './sessions/sessionTraceModel';
 
 const originalFetch = globalThis.fetch;
@@ -34,6 +37,37 @@ afterEach(() => {
 });
 
 describe('managed agents API', () => {
+  test('sends structured question answers inside the standard custom tool result content', async () => {
+    let sent: Record<string, unknown> = {};
+    globalThis.fetch = (async (_input, init) => {
+      sent = JSON.parse(String(init?.body));
+      return Response.json({ data: [] });
+    }) as typeof fetch;
+    const questionAnswers = [{ id: 'color', selected: ['Blue'], custom: 'Green' }];
+    await postSessionToolConfirmation(
+      'sesn_question',
+      {
+        toolUseId: 'sevt_call',
+        result: 'allow',
+        customTool: true,
+        answers: { answers: questionAnswers },
+        sessionThreadId: 'sthr_child',
+      },
+      'workspace_test',
+    );
+    expect(sent).toEqual({
+      events: [
+        {
+          type: 'user.custom_tool_result',
+          custom_tool_use_id: 'sevt_call',
+          is_error: false,
+          session_thread_id: 'sthr_child',
+          content: [{ type: 'text', text: JSON.stringify({ answers: questionAnswers }) }],
+        },
+      ],
+    });
+  });
+
   test('thread metadata repair changes the refresh signature without creating another lane', () => {
     const thread = {
       id: 'sthr_child',
@@ -294,6 +328,46 @@ describe('managed agents API', () => {
       'sevt_end',
     ]);
     expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual(['sevt_other']);
+  });
+
+  test.each(['', 'sthr_child'])('late previews cannot revive ended model output in scope %s', (threadId) => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    for (const type of ['agent.message', 'agent.thinking']) {
+      const eventId = `sevt_failed_${type}`;
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, {
+        id: `sevt_end_${type}`,
+        type: 'span.model_request_end',
+        event_ids: [eventId],
+        is_error: true,
+        processed_at: '2026-08-26T13:13:01Z',
+      });
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, {
+        type: 'event_start',
+        event: { id: eventId, type },
+      });
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, {
+        type: 'event_delta',
+        event_id: eventId,
+        delta: { type: 'content_delta', index: 0, content: { type: 'text', text: 'late partial' } },
+      });
+      expect(
+        sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [threadId]).some((event) => event.id === eventId),
+      ).toBe(false);
+      expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [threadId])[eventId]).toBeUndefined();
+      const otherScope = threadId ? '' : 'sthr_other';
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, otherScope, {
+        type: 'event_start',
+        event: { id: eventId, type },
+      });
+      expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [otherScope])[eventId]).toBeDefined();
+    }
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, {
+      type: 'event_start',
+      event: { id: 'sevt_next', type: 'agent.message' },
+    });
+    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [threadId]).sevt_next).toBeDefined();
   });
 
   test('model request end in a child thread does not remove a primary preview', () => {
@@ -1119,3 +1193,73 @@ function memoryStore(index: number) {
     updated_at: '2026-08-24T00:00:00Z',
   };
 }
+
+test('keeps both thread message perspectives and separates owner from peer', () => {
+  const queryClient = new QueryClient();
+  const primary = [
+    {
+      id: 'task-primary',
+      uuid: 'task',
+      type: 'agent.thread_message_sent',
+      session_thread_id: 'primary',
+      to_session_thread_id: 'child',
+      to_agent_name: 'worker',
+      agent_name: 'lead',
+      content: [],
+    },
+    {
+      id: 'report-primary',
+      uuid: 'report',
+      type: 'agent.thread_message_received',
+      session_thread_id: 'primary',
+      from_session_thread_id: 'child',
+      from_agent_name: 'worker',
+      agent_name: 'lead',
+      content: [],
+    },
+  ];
+  const child = [
+    {
+      id: 'task-child',
+      uuid: 'task',
+      original_event_id: 'task-primary',
+      type: 'agent.thread_message_received',
+      session_thread_id: 'child',
+      from_session_thread_id: 'primary',
+      from_agent_name: 'lead',
+      agent_name: 'worker',
+      content: [],
+    },
+    {
+      id: 'report-child',
+      uuid: 'report',
+      original_event_id: 'report-primary',
+      type: 'agent.thread_message_sent',
+      session_thread_id: 'child',
+      to_session_thread_id: 'primary',
+      to_agent_name: 'lead',
+      agent_name: 'worker',
+      content: [],
+    },
+  ];
+  for (const [threadId, events] of [
+    ['', primary],
+    ['child', child],
+  ] as const) {
+    queryClient.setQueryData(
+      sessionDetailEventCacheKey('workspace', 'session', threadId),
+      mergeSessionEventCache(undefined, [...events]),
+    );
+  }
+  const events = sessionDetailScopeEvents(queryClient, 'workspace', 'session', ['', 'child']);
+  expect(events.map((event) => event.id)).toEqual(['task-primary', 'report-primary', 'task-child', 'report-child']);
+  expect(events.map((event) => event.session_thread_id)).toEqual(['primary', 'primary', 'child', 'child']);
+  expect(events.map(sessionSubagentThreadId)).toEqual(['child', 'child', 'primary', 'primary']);
+  expect(events.map(sessionSubagentName)).toEqual(['worker', 'worker', 'lead', 'lead']);
+  const lanes = new Map([
+    ['primary', 'main'],
+    ['child', 'child'],
+  ]);
+  expect(events.map((event) => sessionEventLaneId(event, lanes))).toEqual(['main', 'main', 'child', 'child']);
+  queryClient.clear();
+});

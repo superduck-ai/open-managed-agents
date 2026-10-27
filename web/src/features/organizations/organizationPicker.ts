@@ -1,3 +1,4 @@
+import type { I18nContextValue } from '../../shared/i18n/context';
 export const organizationPickerResultLimit = 40;
 export const organizationMenuPreviewLimit = 3;
 
@@ -64,8 +65,21 @@ export function filterOrganizations(
   };
 }
 
-export function organizationPickerRemainder(result: OrganizationPickerResult) {
+export function organizationPickerRemainder(result: OrganizationPickerResult, msg?: I18nContextValue['msg']) {
   if (result.hiddenCount <= 0) return '';
-  if (!result.searching) return `还有 ${result.hiddenCount} 个组织，输入关键词查看。`;
-  return `还有 ${result.hiddenCount} 个匹配，继续输入以缩小范围。`;
+  if (!result.searching)
+    return (
+      msg?.(
+        'organizations.remaining',
+        '{count, plural, one {# more organization.} other {# more organizations.}} Enter a keyword to view them.',
+        { count: result.hiddenCount },
+      ) ?? `还有 ${result.hiddenCount} 个组织，输入关键词查看。`
+    );
+  return (
+    msg?.(
+      'organizations.remainingMatches',
+      '{count, plural, one {# more match.} other {# more matches.}} Keep typing to narrow the results.',
+      { count: result.hiddenCount },
+    ) ?? `还有 ${result.hiddenCount} 个匹配，继续输入以缩小范围。`
+  );
 }

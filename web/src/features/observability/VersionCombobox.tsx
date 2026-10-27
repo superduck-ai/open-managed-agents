@@ -34,6 +34,10 @@ export function VersionCombobox({
   const { msg } = useI18n();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const changeOpen = (next: boolean) => {
+    setOpen(next);
+    if (!next) setSearch('');
+  };
   const selected = new Set(values);
   const triggerLabel = values.length
     ? values
@@ -42,15 +46,7 @@ export function VersionCombobox({
     : allLabel;
 
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) {
-          setSearch('');
-        }
-      }}
-    >
+    <Popover open={open} onOpenChange={changeOpen}>
       <PopoverTrigger
         render={
           <Button
@@ -61,7 +57,7 @@ export function VersionCombobox({
             aria-expanded={open}
             aria-label={label}
             title={triggerLabel}
-            className="w-56 justify-between font-normal"
+            className="w-56 justify-between text-sm font-normal"
           />
         }
       >
@@ -74,7 +70,7 @@ export function VersionCombobox({
               event.preventDefault();
               event.stopPropagation();
               onChange([]);
-              setOpen(false);
+              changeOpen(false);
             }}
           >
             <X className="size-3.5" strokeWidth={1.5} aria-hidden />
@@ -88,7 +84,12 @@ export function VersionCombobox({
         />
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 gap-0 overflow-hidden p-0">
-        <Command loop className="rounded-none bg-transparent">
+        <Command
+          defaultValue={values.length ? String(values[0]) : ALL_VALUE}
+          label={searchPlaceholder}
+          loop
+          className="rounded-none bg-transparent"
+        >
           <CommandInput placeholder={searchPlaceholder} value={search} onValueChange={setSearch} />
           <CommandList className="subtle-scrollbar max-h-72">
             {loading ? (
@@ -105,7 +106,7 @@ export function VersionCombobox({
                     keywords={[allLabel]}
                     onSelect={() => {
                       onChange([]);
-                      setOpen(false);
+                      changeOpen(false);
                     }}
                   >
                     <Check className={cn('size-3.5', values.length ? 'opacity-0' : 'opacity-100')} aria-hidden />

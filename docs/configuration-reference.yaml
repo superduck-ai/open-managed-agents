@@ -1,3 +1,5 @@
+llm_provider_presets_file: ""
+
 # Open Managed Agents complete process-configuration reference.
 #
 # This file documents every YAML field accepted by internal/config.Config. It is
@@ -141,7 +143,7 @@ code_session:
   # Derived default: true for dev and false for prod.
   # Required in prod; also signs CCRv2 Git commits. Dev creates an in-memory key when empty.
   jwt_signing_private_key_file: ""
-  upstream_proxy_mitm_enabled: false
+  upstream_proxy_mitm_enabled: true
   # Required only when upstream_proxy_mitm_enabled is true.
   upstream_proxy_ca_key_file: ""
   # Dangerous local fake-IP/TUN diagnostic switch; keep false in production.
@@ -324,6 +326,17 @@ environment_prebuilds:
     registry_auth:
       username: ""
       password: ""
+    # TCP ports exposed by prebuilt templates. Include envd (49983) and
+    # environment_runner.sandbox_mcp_port so the runner can reach the sandbox.
+    exposed_ports: [3001, 49983]
+    # Template readiness probe port; must be listed in exposed_ports.
+    probe_port: 49983
+    # Upper bounds for Environment config.resources. 0 keeps that resource at the
+    # deployment default above and rejects per-environment overrides.
+    max_resources:
+      cpu: 0 # Millicores, e.g. 8000.
+      memory: 0 # MiB, e.g. 16384.
+      disk: 0 # GiB, e.g. 100.
 
 # Private transcript archives reuse storage.s3.bucket. No fixed object TTL on this prefix.
 transcript_archive:
@@ -343,3 +356,11 @@ transcript_archive:
 # usd_per_hour is USD per sandbox hour. Convert yuan and the exchange rate before writing this value.
 runtime_cost:
   usd_per_hour: "0.01652866"
+
+# 飞书渠道桥接服务；令牌仅用于 OMA 到桥接服务的内部调用。
+channel_bridge:
+  url: ""
+  token: ""
+web_tools:
+  search_provider: ""
+  providers: {}

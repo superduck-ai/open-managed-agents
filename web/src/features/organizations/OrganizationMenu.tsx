@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useI18n } from '../../shared/i18n';
+import { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRightLeft, Mail } from 'lucide-react';
 import { useAuth } from '../../shared/auth/context';
@@ -30,8 +31,10 @@ function pickerItems(organizations: OrganizationContextValue): OrganizationPicke
 }
 
 function ConnectedOrganizationMenu({ organizations }: { organizations: OrganizationContextValue }) {
+  const { msg } = useI18n();
   const { account } = useAuth();
   const [open, setOpen] = useState(false);
+  const invitationDialogRef = useRef<HTMLDivElement>(null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const confirmation = useScopeConfirmation();
   const invitations = useQuery({ queryKey: ['invitations', account?.uuid], queryFn: listInvitations, retry: false });
@@ -62,7 +65,7 @@ function ConnectedOrganizationMenu({ organizations }: { organizations: Organizat
                 {parts.detail ? (
                   <span className="block truncate text-xs text-muted-foreground">{parts.detail}</span>
                 ) : null}
-                <span className="block text-xs text-muted-foreground">{organizationRoleLabel(item.role)}</span>
+                <span className="block text-xs text-muted-foreground">{organizationRoleLabel(item.role, msg)}</span>
               </span>
             </DropdownMenuRadioItem>
           );
@@ -71,7 +74,7 @@ function ConnectedOrganizationMenu({ organizations }: { organizations: Organizat
       {items.length > preview.length ? (
         <DropdownMenuItem closeOnClick={false} disabled={organizations.switching} onClick={() => setSwitcherOpen(true)}>
           <ArrowRightLeft className="size-4" />
-          切换组织
+          {msg('organizations.switch', 'Switch organization')}
         </DropdownMenuItem>
       ) : null}
       <OrganizationSwitcher
@@ -91,13 +94,28 @@ function ConnectedOrganizationMenu({ organizations }: { organizations: Organizat
         }}
       >
         <Mail className="size-4" />
-        组织邀请{invitations.data ? ` (${invitations.data.data.length})` : invitations.isError ? ' · 加载失败' : ''}
+        {invitations.data
+          ? msg('invitations.menu.count', 'Organization invitations ({count, number})', {
+              count: invitations.data.data.length,
+            })
+          : invitations.isError
+            ? msg('invitations.menu.error', 'Organization invitations (could not load)')
+            : msg('invitations.title', 'Organization invitations')}
       </DropdownMenuItem>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent
+          ref={invitationDialogRef}
+          initialFocus={invitationDialogRef}
+          className="grid-rows-[auto_minmax(0,1fr)] max-h-[calc(100dvh-2rem)] overflow-clip sm:max-w-lg"
+        >
           <DialogHeader>
-            <DialogTitle>组织邀请</DialogTitle>
-            <DialogDescription>接受邀请后仍留在当前组织，可随时选择进入新组织。</DialogDescription>
+            <DialogTitle>{msg('invitations.title', 'Organization invitations')}</DialogTitle>
+            <DialogDescription>
+              {msg(
+                'invitations.stayInOrganization',
+                'Accepting an invitation keeps you in the current organization. You can switch organizations later.',
+              )}
+            </DialogDescription>
           </DialogHeader>
           <InvitationList
             invitations={invitations.data?.data}

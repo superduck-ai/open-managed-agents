@@ -138,7 +138,9 @@ func TestSessionCredentialsClaimsAndLifecycle(t *testing.T) {
 func TestAuthenticateSessionIngressUsesSignedIdentityWithoutDatabaseLifecycle(t *testing.T) {
 	now := time.Date(2026, time.July, 16, 12, 0, 0, 0, time.UTC)
 	credentials := newTestSessionCredentials(t, &now)
-	token, err := credentials.Issue(testSessionCredentialIdentity())
+	identity := testSessionCredentialIdentity()
+	identity.WorkerEpoch = 42
+	token, err := credentials.Issue(identity)
 	if err != nil {
 		t.Fatalf("Issue() error = %v", err)
 	}
@@ -146,6 +148,9 @@ func TestAuthenticateSessionIngressUsesSignedIdentityWithoutDatabaseLifecycle(t 
 	claims, err := service.AuthenticateSessionIngress(context.Background(), token, "cse_test")
 	if err != nil {
 		t.Fatalf("AuthenticateSessionIngress() error = %v", err)
+	}
+	if claims.WorkerEpoch != 42 {
+		t.Fatalf("worker_epoch = %d, want 42", claims.WorkerEpoch)
 	}
 	if claims.SessionID != "cse_test" {
 		t.Fatalf("session_id = %q, want cse_test", claims.SessionID)

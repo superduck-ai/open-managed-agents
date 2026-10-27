@@ -10,7 +10,7 @@
         api_backend,
         base_url,
         api_key_last4,
-        model_ids,
+        models,
         ciphertext,
         nonce,
         wrapped_dek,
@@ -24,11 +24,11 @@
     <insert id="Insert" result="returning" resultType="llmProviderRow">
         INSERT INTO llm_providers (
             uuid, external_id, organization_uuid, workspace_uuid, name, slug, api_backend, base_url,
-            api_key_last4, model_ids, ciphertext, nonce, wrapped_dek, format_version,
+            api_key_last4, models, ciphertext, nonce, wrapped_dek, format_version,
             key_provider, key_version, created_at, updated_at
         ) VALUES (
             #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
-            #{params.Name}, #{params.Slug}, #{params.APIBackend}, #{params.BaseURL}, #{params.APIKeyLast4}, CAST(#{params.ModelIDs} AS jsonb),
+            #{params.Name}, #{params.Slug}, #{params.APIBackend}, #{params.BaseURL}, #{params.APIKeyLast4}, CAST(#{params.Models} AS jsonb),
             #{params.Ciphertext,sensitive=true}, #{params.Nonce,sensitive=true},
             #{params.WrappedDEK,sensitive=true}, #{params.FormatVersion}, #{params.KeyProvider},
             #{params.KeyVersion}, #{params.CreatedAt}, #{params.UpdatedAt}
@@ -40,7 +40,7 @@
         SELECT <include refid="columns"/>
         FROM llm_providers
         WHERE organization_uuid = #{organizationUUID}
-        AND workspace_uuid = #{workspaceUUID}
+        AND workspace_uuid IS NOT DISTINCT FROM #{workspaceUUID}
         ORDER BY created_at, uuid
     </select>
 
@@ -48,8 +48,23 @@
         SELECT <include refid="columns"/>
         FROM llm_providers
         WHERE organization_uuid = #{organizationUUID}
-        AND workspace_uuid = #{workspaceUUID}
+        AND workspace_uuid IS NOT DISTINCT FROM #{workspaceUUID}
         AND external_id = #{externalID}
+    </select>
+
+    <select id="ListByOrganization" resultType="llmProviderRow">
+        SELECT <include refid="columns"/>
+        FROM llm_providers
+        WHERE organization_uuid = #{organizationUUID}
+        ORDER BY created_at, uuid
+    </select>
+
+    <select id="FindOrganizationDefault" resultType="llmProviderRow">
+        SELECT <include refid="columns"/>
+        FROM llm_providers
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid IS NULL
+        AND slug = 'organization'
     </select>
 
     <update id="UpdateByExternalID" result="returning" resultType="llmProviderRow">
@@ -58,7 +73,7 @@
             api_backend = #{params.APIBackend},
             base_url = #{params.BaseURL},
             api_key_last4 = #{params.APIKeyLast4},
-            model_ids = CAST(#{params.ModelIDs} AS jsonb),
+            models = CAST(#{params.Models} AS jsonb),
             ciphertext = #{params.Ciphertext,sensitive=true},
             nonce = #{params.Nonce,sensitive=true},
             wrapped_dek = #{params.WrappedDEK,sensitive=true},
@@ -72,10 +87,37 @@
         RETURNING <include refid="columns"/>
     </update>
 
+    <update id="UpdateOrganizationDefault" result="returning" resultType="llmProviderRow">
+        UPDATE llm_providers
+        SET name = #{params.Name},
+            api_backend = #{params.APIBackend},
+            base_url = #{params.BaseURL},
+            api_key_last4 = #{params.APIKeyLast4},
+            models = CAST(#{params.Models} AS jsonb),
+            ciphertext = #{params.Ciphertext,sensitive=true},
+            nonce = #{params.Nonce,sensitive=true},
+            wrapped_dek = #{params.WrappedDEK,sensitive=true},
+            format_version = #{params.FormatVersion},
+            key_provider = #{params.KeyProvider},
+            key_version = #{params.KeyVersion},
+            updated_at = #{params.UpdatedAt}
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid IS NULL
+        AND external_id = #{params.ExternalID}
+        RETURNING <include refid="columns"/>
+    </update>
+
     <delete id="DeleteByExternalID" result="rows">
         DELETE FROM llm_providers
         WHERE organization_uuid = #{organizationUUID}
         AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+    </delete>
+
+    <delete id="DeleteOrganizationDefault" result="rows">
+        DELETE FROM llm_providers
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid IS NULL
         AND external_id = #{externalID}
     </delete>
 </mapper>

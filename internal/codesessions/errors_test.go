@@ -55,3 +55,20 @@ func TestSessionModelBackendsFailure(t *testing.T) {
 		t.Fatalf("unexpected error detail: %s", response.Body.String())
 	}
 }
+
+func TestWebToolContextErrors(t *testing.T) {
+	for _, tc := range []struct {
+		cause  error
+		status int
+	}{
+		{errors.New("private database failure"), http.StatusInternalServerError},
+		{db.ErrNotFound, http.StatusForbidden},
+		{webToolDenied(), http.StatusForbidden},
+	} {
+		recorder := httptest.NewRecorder()
+		httpapi.NewErrorAdapter(nil).Write(recorder, httptest.NewRequest(http.MethodGet, "/web/search", nil), webToolContextFailure(tc.cause))
+		if recorder.Code != tc.status || strings.Contains(recorder.Body.String(), "private database failure") {
+			t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+	}
+}

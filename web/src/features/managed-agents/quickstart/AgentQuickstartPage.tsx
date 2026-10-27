@@ -1,3 +1,6 @@
+import { useState } from 'react';
+import { Tabs, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
+import { BuilderPage } from './builder/BuilderPage';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
@@ -10,11 +13,14 @@ import { listCreateAgentModels } from '../agents/create-dialog-api';
 import { QuickstartWizardPage } from './QuickstartWizardPage';
 
 export function AgentQuickstartPage() {
-  const { activeWorkspaceId } = useWorkspace();
-  const { msg } = useI18n();
+  const { activeWorkspaceId, orgUuid } = useWorkspace();
+  const { msg, locale } = useI18n();
   const { account } = useAuth();
+  const [mode, setMode] = useState(() =>
+    new URLSearchParams(window.location.search).get('mode') === 'api' ? 'api' : 'chat',
+  );
   const models = useQuery({
-    queryKey: ['agent-quickstart', 'models', activeWorkspaceId],
+    queryKey: ['agent-quickstart', 'models', account?.uuid, activeWorkspaceId],
     queryFn: () => listCreateAgentModels(activeWorkspaceId),
     retry: false,
   });
@@ -36,11 +42,37 @@ export function AgentQuickstartPage() {
       </div>
     );
   return (
-    <QuickstartWizardPage
-      key={`${account?.uuid}:${activeWorkspaceId}`}
-      workspaceID={activeWorkspaceId}
-      accountID={account?.uuid ?? ''}
-      models={models.data}
-    />
+    <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
+      <Tabs
+        value={mode}
+        onValueChange={(value) => {
+          setMode(String(value));
+          const url = new URL(window.location.href);
+          url.searchParams.set('mode', String(value));
+          window.history.replaceState(null, '', url);
+        }}
+      >
+        <TabsList variant="line">
+          <TabsTrigger value="chat">{locale === 'zh-CN' ? '对话构建' : 'Build with chat'}</TabsTrigger>
+          <TabsTrigger value="api">{locale === 'zh-CN' ? 'API 构建' : 'Build with API'}</TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {mode === 'chat' ? (
+        <BuilderPage
+          key={`${account?.uuid}:${activeWorkspaceId}`}
+          accountId={account?.uuid ?? ''}
+          workspaceId={activeWorkspaceId}
+          orgUuid={orgUuid ?? ''}
+          models={models.data.map((model) => model.id)}
+        />
+      ) : (
+        <QuickstartWizardPage
+          key={`${account?.uuid}:${activeWorkspaceId}`}
+          workspaceID={activeWorkspaceId}
+          accountID={account?.uuid ?? ''}
+          models={models.data}
+        />
+      )}
+    </div>
   );
 }

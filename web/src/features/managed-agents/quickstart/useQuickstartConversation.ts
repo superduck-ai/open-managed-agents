@@ -19,12 +19,25 @@ import {
   sessionEventType,
 } from '../sessions/sessionTraceModel';
 import { quickstartCopy } from './copy';
-import type { QuickstartWizard } from './useQuickstartWizard';
+import type { SessionApiResponse } from '../types';
+
+export type ConversationProgress = {
+  sessionID: string;
+  sessionBinding: string;
+  unconfirmedMessage: string;
+  pending: unknown;
+};
+export type ConversationHost = {
+  progress: ConversationProgress;
+  busy: boolean;
+  createSession: () => Promise<SessionApiResponse | undefined | null>;
+  patchSession: (patch: Partial<ConversationProgress>) => void;
+};
 
 const noThreads: SessionThreadApiResponse[] = [];
 
 export function useQuickstartConversation(
-  wizard: QuickstartWizard,
+  wizard: ConversationHost,
   workspaceID: string,
   accountID: string,
   binding: string,
@@ -121,17 +134,17 @@ export function useQuickstartConversation(
     Boolean(wizard.progress.pending);
   const unconfirmed = wizard.progress.sessionBinding === binding && Boolean(wizard.progress.unconfirmedMessage);
   const submitMessage = async (id: string, body: string) => {
-    wizard.update((value) => ({ ...value, unconfirmedMessage: body }));
+    wizard.patchSession({ unconfirmedMessage: body });
     try {
       const response = await postQuickstartSessionMessage(id, body, workspaceID);
       if (!mounted.current) return;
       latestData.current.appendPrimaryEvents(response.data ?? []);
-      wizard.update((value) => ({ ...value, unconfirmedMessage: '' }));
+      wizard.patchSession({ unconfirmedMessage: '' });
       setMessage('');
       setSentVersion((value) => value + 1);
     } catch (cause) {
       const status = typeof cause === 'object' && cause && 'status' in cause ? Number(cause.status) : 0;
-      if (status >= 400 && status < 500) wizard.update((value) => ({ ...value, unconfirmedMessage: '' }));
+      if (status >= 400 && status < 500) wizard.patchSession({ unconfirmedMessage: '' });
       throw cause;
     }
   };
@@ -188,11 +201,12 @@ export function useQuickstartConversation(
   };
   const newConversation = () => {
     if (sending || running || action || wizard.busy || wizard.progress.pending || unconfirmed) return;
-    wizard.update((value) => ({ ...value, sessionID: '', sessionBinding: '', unconfirmedMessage: '' }));
+    wizard.patchSession({ sessionID: '', sessionBinding: '', unconfirmedMessage: '' });
     setError(null);
     setMessage(text.suggested);
   };
   return {
+    dismissUnconfirmed: () => wizard.patchSession({ unconfirmedMessage: '' }),
     sessionID,
     session,
     data,

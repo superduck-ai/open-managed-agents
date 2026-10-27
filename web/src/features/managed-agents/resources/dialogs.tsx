@@ -152,6 +152,7 @@ export function CredentialDialog({
   workspaceId,
   orgUuid,
   firstCredential = false,
+  initialMcpServerUrl,
   returnFocus,
   onClose,
   onSubmit,
@@ -162,6 +163,7 @@ export function CredentialDialog({
   workspaceId: string;
   orgUuid?: string;
   firstCredential?: boolean;
+  initialMcpServerUrl?: string;
   returnFocus?: RefObject<HTMLElement | null>;
   onClose: () => void;
   onSubmit: (values: CredentialFormValues) => Promise<void>;
@@ -170,7 +172,10 @@ export function CredentialDialog({
   const { msg } = useI18n();
   const { csrfToken } = useAuth();
   const [open, setOpen] = useState(true);
-  const [values, setValues] = useState<CredentialFormValues>(() => credentialFormValues(credential));
+  const [values, setValues] = useState<CredentialFormValues>(() => ({
+    ...credentialFormValues(credential),
+    ...(!credential && initialMcpServerUrl ? { mcpServerUrl: initialMcpServerUrl } : {}),
+  }));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);

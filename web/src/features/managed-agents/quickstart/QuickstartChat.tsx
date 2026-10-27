@@ -17,7 +17,6 @@ import { SessionDetailDeltaFramesContext } from '../sessions/sessionDetailData';
 import { SessionTranscriptView } from '../sessions/SessionTranscriptView';
 import { SessionRequiresActionCard } from '../sessions/SessionRequiresActionCard';
 import { quickstartCopy } from './copy';
-import type { QuickstartWizard } from './useQuickstartWizard';
 import type { useQuickstartConversation } from './useQuickstartConversation';
 
 type QuickstartConversation = ReturnType<typeof useQuickstartConversation>;
@@ -25,11 +24,9 @@ const noThreadNames = new Map<string, string>();
 
 export function QuickstartChat({
   conversation,
-  wizard,
   workspaceID,
 }: {
   conversation: QuickstartConversation;
-  wizard: QuickstartWizard;
   workspaceID: string;
 }) {
   const { locale } = useI18n();
@@ -77,7 +74,7 @@ export function QuickstartChat({
                     disabled={conversation.sending || conversation.unconfirmed}
                   />
                 )}
-                <QuickstartConversationAlerts conversation={conversation} wizard={wizard} />
+                <QuickstartConversationAlerts conversation={conversation} />
               </MessageScrollerContent>
             </MessageScrollerViewport>
             <MessageScrollerButton
@@ -170,13 +167,7 @@ function QuickstartComposer({ conversation }: { conversation: QuickstartConversa
   );
 }
 
-function QuickstartConversationAlerts({
-  conversation,
-  wizard,
-}: {
-  conversation: QuickstartConversation;
-  wizard: QuickstartWizard;
-}) {
+function QuickstartConversationAlerts({ conversation }: { conversation: QuickstartConversation }) {
   const { locale } = useI18n();
   const text = quickstartCopy(locale);
   return (
@@ -203,7 +194,7 @@ function QuickstartConversationAlerts({
             variant="ghost"
             size="sm"
             disabled={conversation.data.loading || !conversation.data.connected}
-            onClick={() => wizard.update((value) => ({ ...value, unconfirmedMessage: '' }))}
+            onClick={conversation.dismissUnconfirmed}
           >
             {text.reviewed}
           </Button>

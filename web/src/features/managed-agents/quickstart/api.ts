@@ -3,7 +3,7 @@ import { listAgents, listManagedEntities } from '../api';
 import type { AgentApiResponse, EnvironmentApiResponse, PageResponse, SessionApiResponse } from '../types';
 import { environmentFormBody, environmentFormValues } from '../environments/model';
 
-async function allPages<T>(load: (page?: string) => Promise<PageResponse<T>>) {
+export async function allPages<T>(load: (page?: string) => Promise<PageResponse<T>>) {
   const items: T[] = [];
   const cursors = new Set<string>();
   let cursor: string | undefined;

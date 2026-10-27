@@ -1,3 +1,4 @@
+import { installSessionRuntime } from './sessionRuntime.test-utils';
 import { afterEach, expect, test, spyOn } from 'bun:test';
 import {
   fireEvent,
@@ -20,7 +21,7 @@ afterEach(() => {
 });
 
 test('refresh resets progress and the test conversation while keeping saved resources reusable', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   const runtime = installSessionRuntime();
   renderManagedAgentsPage('quickstart');
@@ -52,7 +53,7 @@ test('refresh resets progress and the test conversation while keeping saved reso
 });
 
 test('resource loading errors show the API message', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   mockAgentsApi([]);
   const baseFetch = globalThis.fetch;
   globalThis.fetch = (async (input, init) => {
@@ -65,7 +66,7 @@ test('resource loading errors show the API message', async () => {
 });
 
 test('Session restoration errors show the API message and keep sending disabled', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   mockAgentsApi([]);
   const runtime = installSessionRuntime();
   renderManagedAgentsPage('quickstart');
@@ -90,7 +91,7 @@ test('Session restoration errors show the API message and keep sending disabled'
 });
 
 test('a rejected Agent create keeps the draft and allows an explicit retry', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   mockAgentsApi([]);
   const baseFetch = globalThis.fetch;
   let attempts = 0;
@@ -114,7 +115,7 @@ test('a rejected Agent create keeps the draft and allows an explicit retry', asy
 });
 
 test('a lost Agent response is recovered by its operation ID without a second create', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   const baseFetch = globalThis.fetch;
   globalThis.fetch = (async (input, init) => {
@@ -138,7 +139,7 @@ test('a lost Agent response is recovered by its operation ID without a second cr
 });
 
 test('repeated submits create one Agent and a late response cannot bind it to another workspace', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   const baseFetch = globalThis.fetch;
   let release: (() => void) | undefined;
@@ -165,7 +166,7 @@ test('repeated submits create one Agent and a late response cannot bind it to an
 });
 
 test('Agent candidates include later pages and an unavailable saved model cannot be submitted', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   mockAgentsApi([]);
   const baseFetch = globalThis.fetch;
   globalThis.fetch = (async (input, init) => {
@@ -203,7 +204,7 @@ test('Agent candidates include later pages and an unavailable saved model cannot
 });
 
 test('same-name Agents default to an existing configuration and preserve an explicit new draft', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([
     { id: 'agent_savedfirst', name: 'Hello World Agent', system: 'First saved prompt.' },
     { id: 'agent_savedsecond', name: 'Hello World Agent', system: 'Second saved prompt.' },
@@ -229,7 +230,7 @@ test('same-name Agents default to an existing configuration and preserve an expl
 });
 
 test('an existing Agent with no system prompt can be reused at its saved version', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([{ id: 'agent_empty', name: 'Hello World Agent', system: '', version: 3 }]);
   renderManagedAgentsPage('quickstart');
   await startAgentConfiguration();
@@ -242,7 +243,7 @@ test('an existing Agent with no system prompt can be reused at its saved version
 });
 
 test('refreshing during environment configuration starts over without recreating the saved Agent', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   renderManagedAgentsPage('quickstart');
   await startAgentConfiguration();
@@ -257,7 +258,7 @@ test('refreshing during environment configuration starts over without recreating
 });
 
 test('refresh discards an obsolete Agent binding without silently creating a replacement', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   renderManagedAgentsPage('quickstart');
   await startAgentConfiguration();
@@ -287,7 +288,7 @@ async function startAgentConfiguration() {
 }
 
 test('header navigation preserves available steps after Back and cannot bypass unfinished configuration', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   renderManagedAgentsPage('quickstart');
   await startAgentConfiguration();
@@ -311,7 +312,7 @@ test('header navigation preserves available steps after Back and cannot bypass u
 });
 
 test('Session ID is requested only for follow-up application calls and shared between those calls', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   renderManagedAgentsPage('quickstart');
   await startAgentConfiguration();
@@ -338,7 +339,7 @@ test('Session ID is requested only for follow-up application calls and shared be
 });
 
 test('no Default environment is invented and archived names block new creation', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   const baseFetch = globalThis.fetch;
   globalThis.fetch = (async (input, init) => {
@@ -375,7 +376,7 @@ test('no Default environment is invented and archived names block new creation',
 });
 
 test('all environment pages are scanned before choosing Default or reusing a same-name environment', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   const baseFetch = globalThis.fetch;
   const pages: string[] = [];
@@ -425,7 +426,7 @@ test('all environment pages are scanned before choosing Default or reusing a sam
 });
 
 test('selecting the same scenario or returning home keeps custom drafts and required-field validation', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   renderManagedAgentsPage('quickstart');
   fireEvent.click(await screen.findByRole('radio', { name: /My Agent/ }));
@@ -445,7 +446,7 @@ test('selecting the same scenario or returning home keeps custom drafts and requ
 });
 
 test('API previews use the current origin, safely quote form content and offer manual copy on failure', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   mockAgentsApi([]);
   renderManagedAgentsPage('quickstart');
   await startAgentConfiguration();
@@ -461,7 +462,7 @@ test('API previews use the current origin, safely quote form content and offer m
 });
 
 test('the online test receives real event shapes, completes after idle and reuses its Session on a second turn', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   const runtime = installSessionRuntime();
   renderManagedAgentsPage('quickstart');
@@ -489,94 +490,8 @@ test('the online test receives real event shapes, completes after idle and reuse
   ).toHaveLength(1);
 });
 
-function installSessionRuntime() {
-  const baseFetch = globalThis.fetch;
-  const events: Record<string, unknown>[] = [];
-  const sent: Record<string, unknown>[] = [];
-  let session: Record<string, unknown> | null = null;
-  let stream: ReadableStreamDefaultController<Uint8Array> | null = null;
-  const emit = (event: Record<string, unknown>) => {
-    events.push(event);
-    stream?.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
-  };
-  let sequence = 0;
-  let loseSend = false;
-  let sendResponse: Promise<void> | null = null;
-  const event = (type: string, fields: Record<string, unknown> = {}) => ({
-    id: `sevt_test_${++sequence}`,
-    type,
-    processed_at: new Date(Date.UTC(2026, 9, 8, 12, 0, sequence)).toISOString(),
-    ...fields,
-  });
-  globalThis.fetch = (async (input, init) => {
-    const url = String(input);
-    const method = init?.method ?? 'GET';
-    if (url.includes('/events/stream?'))
-      return new Response(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            stream = controller;
-            controller.enqueue(new TextEncoder().encode(': connected\n\n'));
-            init?.signal?.addEventListener(
-              'abort',
-              () => {
-                controller.close();
-                if (stream === controller) stream = null;
-              },
-              { once: true },
-            );
-          },
-        }),
-        { headers: { 'Content-Type': 'text/event-stream' } },
-      );
-    if (url.includes('/events?') && method === 'GET') return jsonResponse({ data: events, next_page: null });
-    if (url.includes('/events?') && method === 'POST') {
-      const body = JSON.parse(String(init?.body));
-      const inputEvent = body.events[0];
-      sent.push(inputEvent);
-      const accepted = event(inputEvent.type, inputEvent);
-      emit(accepted);
-      if (session) session.status = 'running';
-      if (sendResponse) {
-        await sendResponse;
-        sendResponse = null;
-      }
-      if (loseSend) {
-        loseSend = false;
-        throw new TypeError('Sending response lost');
-      }
-      return jsonResponse({ data: [accepted] });
-    }
-    if (/\/v1\/sessions\/[^/]+\?/.test(url) && session) return jsonResponse(session);
-    const response = await baseFetch(input, init);
-    if (url.startsWith('/v1/sessions?') && method === 'POST') session = await response.clone().json();
-    return response;
-  }) as typeof fetch;
-  return {
-    sent,
-    holdNextSendResponse() {
-      let release!: () => void;
-      sendResponse = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      return release;
-    },
-    loseNextSend() {
-      loseSend = true;
-    },
-    emit(type: string, fields: Record<string, unknown>) {
-      emit(event(type, fields));
-    },
-    reply(text: string) {
-      emit(event('agent.message', { content: [{ type: 'text', text }] }));
-      emit(event('session.status_idle', { stop_reason: { type: 'end_turn' } }));
-      if (session) session.status = 'idle';
-    },
-  };
-}
-
 test('a pending send shows progress without reporting an unconfirmed failure', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   mockAgentsApi([]);
   const runtime = installSessionRuntime();
   renderManagedAgentsPage('quickstart');
@@ -594,7 +509,7 @@ test('a pending send shows progress without reporting an unconfirmed failure', a
 });
 
 test('an unconfirmed send survives refresh and is never resent automatically', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   mockAgentsApi([]);
   const runtime = installSessionRuntime();
   renderManagedAgentsPage('quickstart');
@@ -633,7 +548,7 @@ test.each([
     accepted: { type: 'user.tool_confirmation', tool_use_id: 'sevt_pending_tool', result: 'allow' },
   },
 ])('tools wait for a new status (%j); refresh resets progress', async ({ toolType, decision, accepted }) => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   mockAgentsApi([]);
   const runtime = installSessionRuntime();
   renderManagedAgentsPage('quickstart');
@@ -680,7 +595,7 @@ test.each([
 });
 
 test.each([true, false])('custom tools await an external result (is_error=%s) without approval', async (isError) => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   mockAgentsApi([]);
   const runtime = installSessionRuntime();
   renderManagedAgentsPage('quickstart');
@@ -729,7 +644,7 @@ test.each([true, false])('custom tools await an external result (is_error=%s) wi
 });
 
 test('Thinking followed by idle is not reported as a completed first reply', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   mockAgentsApi([]);
   const runtime = installSessionRuntime();
   renderManagedAgentsPage('quickstart');
@@ -746,7 +661,7 @@ test('Thinking followed by idle is not reported as a completed first reply', asy
 });
 
 test('an interrupted partial reply is stopped rather than reported as completed', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   mockAgentsApi([]);
   const runtime = installSessionRuntime();
   renderManagedAgentsPage('quickstart');
@@ -765,7 +680,7 @@ test('an interrupted partial reply is stopped rather than reported as completed'
 });
 
 test('selecting a quickstart scenario only edits a draft until the user confirms creation', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   renderManagedAgentsPage('quickstart');
 
@@ -778,7 +693,7 @@ test('selecting a quickstart scenario only edits a draft until the user confirms
 });
 
 test('confirming an Agent saves the displayed configuration and advances only after success', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   renderManagedAgentsPage('quickstart');
   fireEvent.click(await screen.findByRole('button', { name: 'Start configuring' }));
@@ -797,7 +712,7 @@ test('confirming an Agent saves the displayed configuration and advances only af
 });
 
 test('the online test creates a Session lazily and connects its event stream before sending', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   const baseFetch = globalThis.fetch;
   const order: string[] = [];
@@ -838,7 +753,7 @@ test('the online test creates a Session lazily and connects its event stream bef
 });
 
 test('a lost Session create response is recovered after refresh without creating or sending again', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   installSessionRuntime();
   const baseFetch = globalThis.fetch;
@@ -876,7 +791,7 @@ test('a lost Session create response is recovered after refresh without creating
 });
 
 test('API key links are available beside requests in steps two through four and open a new tab', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   mockAgentsApi([]);
   renderManagedAgentsPage('quickstart');
   await startAgentConfiguration();
@@ -897,7 +812,7 @@ test('API key links are available beside requests in steps two through four and 
 });
 
 test('an unmatched create can only be abandoned after a successful empty recovery check', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   const baseFetch = globalThis.fetch;
   let failCheck = false;
@@ -939,7 +854,7 @@ test('an unmatched create can only be abandoned after a successful empty recover
 });
 
 test('a completed Session has no recurring retrievals while visible or on an earlier step', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   mockAgentsApi([]);
   const runtime = installSessionRuntime();
   let retrievals = 0;

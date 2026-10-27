@@ -1569,10 +1569,10 @@ export async function quickstartStreamError(response: Response) {
   return new Error(response.statusText || `Request failed with status ${response.status}`);
 }
 
-export function listVaultCredentials(vaultId: string, workspaceId: string) {
+export function listVaultCredentials(vaultId: string, workspaceId: string, page?: string) {
   return anthropicBetaApi.vaults.credentials.list<VaultCredentialApiResponse>(
     vaultId,
-    { limit: 50, include_archived: false },
+    { limit: 50, include_archived: false, ...(page ? { page } : {}) },
     workspaceId,
   ) as Promise<PageResponse<VaultCredentialApiResponse>>;
 }

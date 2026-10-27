@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "../../node_modules/.tmp/quickstart-prototype.tsbuildinfo",
+    "paths": {
+      "@/*": ["../../src/*"]
+    },
+    "types": ["vite/client"]
+  },
+  "include": ["./*.tsx"]
+}

@@ -28,6 +28,7 @@ type scenario struct {
 }
 
 var scenarios = map[string]scenario{
+	"chat.brain-images":      {Package: testPackage, Timeout: 8 * time.Minute, Test: "TestChatBrainImages", Stages: []string{"message_image_seen", "read_image_seen", "native_images_persisted"}, Description: "真实视觉模型、Brain 与 Worker：消息图片识别、Read 读图及远端原生附件持久化"},
 	"chat.skills-loading":    {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatSkillsLoading", Stages: []string{"skill_loading_brain", "skill_loading_sandbox"}, Description: "Brain 与 Claude 的 Skill 目录、审批、正文与引用读取、只读挂载及沙箱复用"},
 	"deployment.lifecycle":   {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyDeploymentLifecycle", Stages: []string{"invalid_runs_leave_no_effects", "manual_run_effects_match", "durable_schedule_executed", "pause_archive_stop_schedule"}, Description: "Deployment 公开创建/运行、持久化调度执行、终态与 Session/Work/事件/挂载副作用一致"},
 	"deployment.retry":       {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyDeploymentRetry", Stages: []string{"failed_attempt_rolled_back", "automatic_retry_matches", "exhausted_job_has_no_effects", "reference_failure_paused"}, Description: "真实 River 自动退避重试、事务回滚、耗尽终态与依赖失败自动暂停"},
@@ -322,6 +323,8 @@ func writeReportCoverage(out *strings.Builder, r report) {
 		out.WriteString("Coverage: real backend HTTP, PostgreSQL and MinIO. See scenario proof stages. generated runs a real Worker with FUSE and a scripted model; other Files scenarios use DB/storage fixtures where documented. recovery injects S3 errors through a local proxy and waits for the actual cleanup loop and backoff. Cloud S3 IAM and network infrastructure are not verified.\n\n")
 	} else if r.Scenario == "chat.shutdown" {
 		out.WriteString("Coverage: actual backend peer processes with disposable PostgreSQL, Redis, NATS and MinIO; ten-second HTTP drain expiry on a partial request, second SIGINT termination, and graceful closure of public/Worker SSE without retiring the Code Session. No model Worker, cloud shutdown, or total background cleanup deadline is verified.\n\n")
+	} else if r.Scenario == "chat.brain-images" {
+		out.WriteString("Coverage: real configured vision model, public Session/messages, production Runner, DSH process, Docker Worker/FUSE/Read, PostgreSQL and MinIO. Random color checks cover message images and a distinct mounted image. No scripted model, provider capacity/billing benchmark, cross-instance recovery or cloud allocation proof.\n\n")
 	} else if usesBrain(r.Scenario) {
 		out.WriteString("Coverage: public API, production Runner, real oma-brain-dsh process, PostgreSQL, Redis, JetStream and sandbox MCP with actual FUSE mounts. skills-loading additionally runs the real Claude Worker. Only the upstream model is scripted. See required proofs for mode-specific allocation and loading behavior. Real-model Skill selection, cloud allocation, network partitions and performance are not verified.\n\n")
 	} else {

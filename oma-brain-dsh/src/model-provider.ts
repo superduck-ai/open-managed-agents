@@ -19,20 +19,21 @@ export function modelSessionID(options: GenerateOptions): string {
 export function omaRoute(api: OmaApi, options: GenerateOptions): AiSdkRoute {
   const sessionId = modelSessionID(options);
   const assignment = api.assignment(api.modelSessions.get(sessionId) ?? sessionId);
+  const imageInput = assignment.launch.models?.[options.model]?.image_input;
   const output = assignment.launch.models?.[options.model]?.max_output_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
   const maxOutputTokensLimit = options.purpose === "compaction" ? output : undefined;
   const backend = modelBackend(assignment, options.model);
   const root = `${api.base.replace(/\/$/, "")}/v1`;
   const agentID = sessionId === assignment.session_id ? undefined : sessionId;
   if (backend === "messages") {
-    const fetcher = proxyFetch(api, `${root}/messages`, agentID);
+    const fetcher = proxyFetch(api, `${root}/messages`, agentID, undefined, options);
     return { model: createAnthropic({ baseURL: root, authToken: assignment.model_token, fetch: fetcher })(options.model),
-      replayFormat: "oma-messages-v1", signedReasoning: true, maxOutputTokens: output, maxOutputTokensLimit,
+      imageInput, replayFormat: "oma-messages-v1", signedReasoning: true, maxOutputTokens: output, maxOutputTokensLimit,
       providerOptions: { anthropic: { toolStreaming: false } } };
   }
-  const fetcher = proxyFetch(api, `${root}/chat/completions`, agentID, normalizeChatReasoning);
+  const fetcher = proxyFetch(api, `${root}/chat/completions`, agentID, normalizeChatReasoning, options);
   return { model: createOpenAICompatible({ name: "oma", baseURL: root, apiKey: assignment.model_token, includeUsage: true,
-    fetch: fetcher, transformRequestBody: chatRequestBody })(options.model), maxOutputTokens: output, maxOutputTokensLimit, replayFormat: "oma-chat-completions-v1" };
+    fetch: fetcher, transformRequestBody: chatRequestBody })(options.model), imageInput, maxOutputTokens: output, maxOutputTokensLimit, toolImagesAsUser: true, replayFormat: "oma-chat-completions-v1" };
 }
 
 function modelBackend(assignment: Assignment, model: string): ModelBackend {
@@ -47,11 +48,16 @@ function chatRequestBody({ max_tokens: maxTokens, ...body }: Record<string, any>
 }
 
 function proxyFetch(api: OmaApi, endpoint: string, agentID: string | undefined,
-  response: (value: Response) => Response = (value) => value): typeof fetch {
+  response: (value: Response) => Response = (value) => value, options?: GenerateOptions): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url !== endpoint || init?.method !== "POST")
       throw new LlmError("Model request must use the OMA proxy endpoint", "INVALID_ARGS");
+    if (typeof init.body === "string" && Buffer.byteLength(init.body) > 32 * 1024 * 1024) {
+      const retainedImages = options?.messages.flatMap(message => message.content).filter(block => block.type === "image" && !block.offloaded).length ?? 0;
+      if (retainedImages > 0) throw new LlmError("Serialized model request exceeds the proxy limit", "IMAGE_OFFLOAD_REQUIRED", { offloadImages: 1 });
+      throw new LlmError("Serialized model request exceeds the proxy limit", "INVALID_ARGS");
+    }
     const headers = new Headers(init.headers);
     headers.delete("x-api-key");
     if (agentID) headers.set("X-Claude-Code-Agent-Id", agentID);

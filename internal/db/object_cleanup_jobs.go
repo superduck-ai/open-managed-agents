@@ -99,7 +99,12 @@ func (d *DB) LeaseObjectCleanupJobs(ctx context.Context, workerID string, limit 
 }
 
 func (d *DB) CompleteObjectCleanupJob(ctx context.Context, jobUUID string) error {
-	return NewObjectCleanupJobMapper(d.mapperDB).CompleteObjectCleanupJob(ctx, jobUUID)
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		if err := NewBrainImageAttachmentMapper(executor).DeleteCompleted(ctx, jobUUID); err != nil {
+			return err
+		}
+		return NewObjectCleanupJobMapper(executor).CompleteObjectCleanupJob(ctx, jobUUID)
+	})
 }
 
 func (d *DB) FailObjectCleanupJob(ctx context.Context, jobUUID string, attempts int, reason string, retryDelay time.Duration, maxAttempts int) error {

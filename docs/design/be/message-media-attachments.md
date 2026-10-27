@@ -59,7 +59,9 @@ Session 凭证调用 `POST /v1/messages` 时，代理复用通用的文件引用
 
 ## Brain 表示
 
-Brain 收到的 `image` 块若带 `file` 或 `url` 来源，映射为 dsh 内容块 `{"type":"oma-image","source":...}`，AI SDK 适配器以 `{"type":"reference","reference":{"anthropic":"file_..."}}` 或 URL 文件部件发出，Anthropic provider 序列化为 `image` 的 `file`/`url` 来源，再由代理展开。`document` 块映射为 `oma-document`，同样保留 `file` 引用。仍携带 base64 的图片沿用本地 dsh attachment 路径。无效块使本轮以错误结束，不停止会话；构建模型请求时的转换错误（例如无法解析的 URL）同样归一为模型错误。
+Brain 收到 `file` 来源图片后，通过当前 worker 凭证读取本 Session 私有附件，解码、归一化并上传远端图片存储，再把原生 `{type: "image", attachment: ImageAttachmentRef}` 写入 DSH 日志。仍携带 base64 的图片经过相同归一化与远端存储。请求使用按模型预算生成的内联变体，不再由代理展开这些图片；跨实例恢复从远端读取。URL 图片与历史 `oma-image` 保留旧引用语义，文档继续映射为 `oma-document`。公开事件、Files 复制与私有消息附件物化保持不变。
+
+源图片缺失、解码或大小拒绝时单张降级为附件不可用文本；网络或远端服务失败不确认输入，允许恢复重投。原生图片支持能力过滤、视觉 token 估算和预算卸载；详细接口、范围和黑盒验收见 [Brain 远端图片附件](brain-image-attachments.md)。
 
 ## 验收覆盖
 
@@ -68,4 +70,4 @@ Brain 收到的 `image` 块若带 `file` 或 `url` 来源，映射为 dsh 内容
 - `internal/filestore`：附件写入、幂等、失败传播、超限拒绝、源文件复制与文件头不匹配拒绝。
 - `internal/messages`：文件引用展开、缺失文件、超限与无文件请求原样转发。
 - `tests/session_message_media_test.go`：真实 PostgreSQL 与对象存储上的入站拒绝（含无效 URL 与类型不符）、引用改写、Files API 隐藏、历史回显、删除源文件后的重放复用，以及代理只展开本会话附件。
-- `oma-brain-dsh`：`oma-image` 的引用映射与 AI SDK 文件部件转换。
+- `oma-brain-dsh`：私有图片的原生引用、远端恢复、缓存授权、模型预算与 summary offload；URL 与历史引用兼容。

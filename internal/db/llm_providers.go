@@ -20,12 +20,22 @@ const (
 	llmProviderSlugConstraint              = "llm_providers_organization_slug_key"
 )
 
+type LLMImageInput struct {
+	MaxImages            int `json:"max_images,omitzero"`
+	MaxRequestImageBytes int `json:"max_request_image_bytes,omitzero"`
+	MaxImageBytes        int `json:"max_image_bytes,omitzero"`
+	MaxLongEdge          int `json:"max_long_edge,omitzero"`
+	MaxPixels            int `json:"max_pixels,omitzero"`
+	TokensPerMegapixel   int `json:"tokens_per_megapixel,omitzero"`
+}
+
 type LLMModel struct {
-	Name            string   `json:"name,omitempty"`
-	ID              string   `json:"id"`
-	ContextWindow   *int     `json:"context_window,omitzero"`
-	MaxOutputTokens *int     `json:"max_output_tokens,omitzero"`
-	InputModalities []string `json:"input_modalities,omitempty"`
+	ImageInput      *LLMImageInput `json:"image_input,omitzero"`
+	Name            string         `json:"name,omitempty"`
+	ID              string         `json:"id"`
+	ContextWindow   *int           `json:"context_window,omitzero"`
+	MaxOutputTokens *int           `json:"max_output_tokens,omitzero"`
+	InputModalities []string       `json:"input_modalities,omitempty"`
 }
 
 type LLMModels []LLMModel

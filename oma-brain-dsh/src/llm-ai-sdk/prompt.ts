@@ -1,7 +1,9 @@
+import type { RequestImageAttachment } from "@deepseek-ai/dsh-attachment";
+import { imageTarget, imagePlaceholder, imagePolicy } from "./images.ts";
 import type { AttachmentStore } from "@deepseek-ai/dsh-attachment";
 import type { JSONSchema7, LanguageModelV4CallOptions, LanguageModelV4Message, LanguageModelV4Prompt } from "@ai-sdk/provider";
 import {
-  LlmError, attributionHeaders, offloadedImageText, type AssistantMessage, type ContentBlock, type GenerateOptions, type ToolResultMessage,
+  LlmError, attributionHeaders, requiredImageOffload, IMAGE_OFFLOAD_REQUIRED_CODE, type AssistantMessage, type ContentBlock, type GenerateOptions, type ToolResultMessage,
 } from "@deepseek-ai/dsh-llm";
 import type { AiSdkRoute } from "./route.ts";
 
@@ -21,8 +23,26 @@ export async function callOptions(options: GenerateOptions, route: AiSdkRoute, a
   const requestedMaxOutputTokens = options.maxTokens ?? route.maxOutputTokens;
   const maxOutputTokens = route.maxOutputTokensLimit === undefined ? requestedMaxOutputTokens
     : Math.min(requestedMaxOutputTokens ?? route.maxOutputTokensLimit, route.maxOutputTokensLimit);
+  const versions = new Map<string, RequestImageAttachment>();
+  const images = options.messages.flatMap(message => message.content).filter((block): block is Extract<ContentBlock, { type: "image" }> => block.type === "image" && !block.offloaded);
+  const policy = imagePolicy(route.imageInput);
+  const countOffload = requiredImageOffload(options.messages, { representation: "base64", maxImages: policy.maxImages }, () => 0);
+  if (countOffload > 0) throw new LlmError("Image count budget exceeded", IMAGE_OFFLOAD_REQUIRED_CODE, { offloadImages: countOffload });
+  for (const image of images) {
+    if (!attachments) throw new LlmError("Image attachment storage is unavailable", "INVALID_ARGS");
+    if (!versions.has(image.attachment.attachmentId)) versions.set(image.attachment.attachmentId,
+      await attachments.readImageRequest(image.attachment, imageTarget(image.attachment, route.imageInput), options.signal));
+  }
+  const content = await prompt(options, route, versions);
+  const requestBytes = Buffer.byteLength(JSON.stringify({ prompt: content, tools: options.tools }, (_key, value) => value instanceof Uint8Array ? Buffer.from(value).toString("base64") : value));
+  const imageBytes = images.reduce((sum, block) => sum + 4 * Math.ceil(versions.get(block.attachment.attachmentId)!.bytes / 3), 0);
+  const available = Math.max(0, 32 * 1024 * 1024 - 128 * 1024 - (requestBytes - imageBytes));
+  const offloadImages = requiredImageOffload(options.messages,
+    { representation: "base64", maxImages: policy.maxImages, maxBytes: Math.min(4 * Math.ceil(policy.maxBytes / 3), available) },
+    block => versions.get(block.attachment.attachmentId)!.bytes);
+  if (offloadImages > 0) throw new LlmError("Image request budget exceeded", IMAGE_OFFLOAD_REQUIRED_CODE, { offloadImages });
   return {
-    prompt: await prompt(options, route, attachments),
+    prompt: content,
     headers: attributionHeaders(),
     ...(options.tools?.length ? { tools: options.tools.map((tool) => ({ type: "function" as const, name: tool.name,
       description: tool.description, inputSchema: tool.parameters as JSONSchema7 })) } : {}),
@@ -34,31 +54,43 @@ export async function callOptions(options: GenerateOptions, route: AiSdkRoute, a
   };
 }
 
-async function prompt(options: GenerateOptions, route: AiSdkRoute, attachments?: AttachmentStore): Promise<LanguageModelV4Prompt> {
+async function prompt(options: GenerateOptions, route: AiSdkRoute, versions: Map<string, RequestImageAttachment>): Promise<LanguageModelV4Prompt> {
   const system = options.system ? [options.system] : [];
   const toolNames = new Map<string, string>();
   const messages: LanguageModelV4Prompt = [];
+  let pendingToolImages: UserPart[] = [];
   for (const message of options.messages) {
+    if (message.role !== "tool" && pendingToolImages.length) {
+      messages.push({ role: "user", content: pendingToolImages });
+      pendingToolImages = [];
+    }
     if (message.role === "system") system.push(...message.content.map(textOf));
     else if (message.role === "assistant") messages.push({ role: "assistant", content: assistantParts(message, route, toolNames) });
-    else if (message.role === "tool") messages.push({ role: "tool", content: [toolResult(message, toolNames)] });
+    else if (message.role === "tool") {
+      const content = await Promise.all(message.content.map(block => userPart(block, versions)));
+      const images = route.toolImagesAsUser ? content.filter(part => part.type === "file") : [];
+      if (images.length) {
+        pendingToolImages.push({ type: "text", text: `Image output for tool call ${message.toolCallId}:` }, ...images);
+        messages.push({ role: "tool", content: [toolResult(message, toolNames, content.filter(part => part.type === "text"))] });
+      } else messages.push({ role: "tool", content: [toolResult(message, toolNames, content)] });
+    }
     else if (message.role === "user") {
-      messages.push({ role: "user", content: await Promise.all(message.content.map(block => userPart(block, attachments, options.signal))) });
+      messages.push({ role: "user", content: await Promise.all(message.content.map(block => userPart(block, versions))) });
     }
     else throw new LlmError(`Unsupported model input role: ${message.role}`, "INVALID_ARGS");
   }
+  if (pendingToolImages.length) messages.push({ role: "user", content: pendingToolImages });
   return system.length ? [{ role: "system", content: system.join("\n\n") }, ...messages] : messages;
 }
 
 type UserPart = Extract<LanguageModelV4Message, { role: "user" }>["content"][number];
 
-async function userPart(block: ContentBlock, attachments?: AttachmentStore, signal?: AbortSignal): Promise<UserPart> {
+async function userPart(block: ContentBlock, versions: Map<string, RequestImageAttachment>): Promise<UserPart> {
   if (block.type === "text") return { type: "text", text: block.text };
   if (block.type === "image") {
-    if (block.offloaded) return { type: "text", text: offloadedImageText(block.attachment) };
-    if (!attachments) throw new LlmError("Image attachment storage is unavailable", "INVALID_ARGS");
-    const image = await attachments.readImage(block.attachment, signal);
-    return { type: "file", mediaType: image.ref.mediaType, data: { type: "data", data: image.data } };
+    if (block.offloaded) return { type: "text", text: imagePlaceholder(block.attachment) };
+    const image = versions.get(block.attachment.attachmentId)!;
+    return { type: "file", mediaType: image.mediaType, data: { type: "data", data: image.data } };
   }
   if (block.type === "oma-image") {
     const { source } = block;
@@ -100,10 +132,11 @@ function reasoningPart(text: string, replay: SignedReasoning, route: AiSdkRoute)
   return { type: "text", text };
 }
 
-function toolResult(message: ToolResultMessage, toolNames: Map<string, string>) {
-  const value = message.content.map(textOf).join("\n");
-  return { type: "tool-result" as const, toolCallId: message.toolCallId, toolName: toolNames.get(message.toolCallId) ?? "",
-    output: message.isError ? { type: "error-text" as const, value } : { type: "text" as const, value } };
+function toolResult(message: ToolResultMessage, toolNames: Map<string, string>, content: UserPart[]): Extract<LanguageModelV4Message, { role: "tool" }>["content"][number] {
+  const value = content.filter(part => part.type === "text").map(part => part.text).join("\n");
+  return { type: "tool-result", toolCallId: message.toolCallId, toolName: toolNames.get(message.toolCallId) ?? "",
+    output: message.isError ? { type: "error-text", value }
+      : content.some(part => part.type === "file") ? { type: "content", value: content } : { type: "text", value } };
 }
 
 function textOf(block: ContentBlock): string {

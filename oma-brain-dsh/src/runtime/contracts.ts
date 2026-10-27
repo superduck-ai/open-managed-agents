@@ -162,3 +162,5 @@ export interface TurnHooks {
   beforeRun(): Promise<void | boolean>;
   afterRun(completed: boolean): Promise<void>;
 }
+
+export class RetryableInputError extends Error {}

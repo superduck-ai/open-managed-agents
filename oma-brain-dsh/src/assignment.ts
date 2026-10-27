@@ -4,7 +4,10 @@ import { sandboxToolDefinitions } from "./sandbox-tools/definitions.ts";
 import { sandboxEndpoint } from "./oma-sandbox/config.ts";
 import { webToolDefinitions } from "./web-tools/definitions.ts";
 
+import type { ImageInput } from "./llm-ai-sdk/images.ts";
+
 export type ModelConfig = {
+  image_input?: ImageInput;
   id: string;
   api_backend: "messages" | "chat_completions";
   context_window?: number;
@@ -106,6 +109,9 @@ export function validateModels(value: unknown): asserts value is Record<string, 
       if (capacity !== undefined && (!Number.isSafeInteger(capacity) || capacity <= 0))
         throw new Error("Invalid model capacity");
     }
+    if (model.image_input !== undefined && (!model.image_input || typeof model.image_input !== "object" || Array.isArray(model.image_input)
+      || Object.values(model.image_input).some(value => !Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > 32 * 1024 * 1024)))
+      throw new Error("Invalid image input limits");
     const inputs = model.input_modalities;
     if (
       inputs !== undefined &&

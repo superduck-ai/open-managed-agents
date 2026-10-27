@@ -89,6 +89,10 @@ export class Backend {
   readonly privateAgentIds = new Map<string, string>();
   readonly publicLog = new Map<string, Payload>();
   readonly requests: Payload[] = [];
+  readonly imageObjects = new Map<string, { data: Uint8Array; mediaType: string }>();
+  readonly messageImages = new Map<string, { data: Uint8Array; mediaType: string }>();
+  imageStatus?: number;
+  imageReads = 0;
   readonly timeline: Payload[] = [];
   readonly executions: Payload[] = [];
   readonly mcpMethods: string[] = [];
@@ -138,7 +142,7 @@ export class Backend {
                   Array.isArray(value) ? value.join(",") : value!,
                 ]),
             ),
-            body: incoming.method === "GET" ? undefined : Buffer.concat(chunks),
+            body: incoming.method === "GET" || incoming.method === "HEAD" ? undefined : Buffer.concat(chunks),
           },
         );
         const response = await this.route(request);
@@ -198,7 +202,29 @@ export class Backend {
   async route(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
-    const body: Payload = request.method === "GET" ? {} : await request.json();
+    if (path.startsWith(`/v1/code/sessions/${this.a.session_id}/worker/image-attachments/`)) {
+      if (request.headers.get("Authorization") !== `Bearer ${this.a.ingress_token}`) return new Response(null, { status: 401 });
+      if (request.headers.get("X-Worker-Epoch") !== String(this.a.worker_epoch)) return new Response(null, { status: 409 });
+      if (this.imageStatus) return new Response(null, { status: this.imageStatus });
+      const digest = path.split("/").at(-1)!;
+      if (request.method === "PUT") {
+        const data = new Uint8Array(await request.arrayBuffer());
+        if (new Bun.CryptoHasher("sha256").update(data).digest("hex") !== digest) return new Response(null, { status: 400 });
+        this.imageObjects.set(digest, { data, mediaType: request.headers.get("content-type")! });
+        return new Response(null, { status: 201 });
+      }
+      if (request.method === "GET") this.imageReads++;
+      const object = this.imageObjects.get(digest);
+      return object ? new Response(request.method === "HEAD" ? null : new Uint8Array(object.data).buffer,
+        { headers: { "content-type": object.mediaType, "content-length": String(object.data.byteLength) } }) : new Response(null, { status: 404 });
+    }
+    if (path.startsWith(`/v1/code/sessions/${this.a.session_id}/worker/message-attachments/`)) {
+      if (this.imageStatus) return new Response(null, { status: this.imageStatus });
+      const id = path.split("/").at(-2)!;
+      const image = this.messageImages.get(id);
+      return image ? new Response(new Uint8Array(image.data).buffer, { headers: { "content-type": image.mediaType } }) : new Response(null, { status: 404 });
+    }
+    const body: Payload = request.method === "GET" || request.method === "HEAD" ? {} : await request.json();
     const json = (data: unknown, status = 200) =>
       Response.json(data, { status });
     if (path === `/v1/code/sessions/${this.a.session_id}/worker/register`) {

@@ -22,6 +22,7 @@ import { CcrCompaction } from "./compaction.ts";
 import { nativeOutput, failedOutput } from "./native-output.ts";
 import { CcrToolResults } from "./tool-results.ts";
 import { CcrAssistantStream } from "./assistant.ts";
+import { withAttachmentSession } from "../attachments/remote.ts";
 import { userInputContent } from "./user-content.ts";
 import { appendedSystemContext } from "./system-context.ts";
 
@@ -506,7 +507,7 @@ export class CcrSession {
       await this.runtime.run(() => {
         const system = appendedSystemContext(payload);
         if (system !== undefined) this.runtime.appendedSystem = system;
-        return userInputContent(payload, this.ctx.attachments);
+        return withAttachmentSession(this.id, () => userInputContent(payload, this.ctx.attachments));
       }, {
         messageId: inputId,
         beforeRun: async () => {

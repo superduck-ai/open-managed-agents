@@ -29,6 +29,13 @@ type doctorResult struct {
 
 func doctor(ctx context.Context, root, worker, selected string, apiPort int) (doctorResult, error) {
 	result := doctorResult{Versions: map[string]string{}, Images: map[string]string{}, APIPort: apiPort}
+	if selected == "chat.brain-images" {
+		model, err := configuredVisionModel()
+		if err != nil {
+			return result, err
+		}
+		result.Versions["vision_model"] = model
+	}
 	if usesBrain(selected) {
 		path := os.Getenv("OMA_BRAIN_BINARY")
 		info, err := os.Stat(path)
@@ -94,8 +101,8 @@ func doctor(ctx context.Context, root, worker, selected string, apiPort int) (do
 		result.PublicSandboxChecked = true
 	}
 	if usesBrain(selected) {
-		if _, err := capture(ctx, root, "docker", "run", "--rm", "--pull=never", "--entrypoint", "sh", result.Images["worker"], "-c", "test -x /usr/local/bin/environment-manager"); err != nil {
-			return result, errors.New("Brain scenario requires /usr/local/bin/environment-manager in the sandbox image")
+		if err := checkBrainWorker(ctx, root, result.Images["worker"]); err != nil {
+			return result, err
 		}
 	}
 	return result, nil
@@ -154,4 +161,12 @@ func doctorProbe(ctx context.Context, root, image string, public bool) (output s
 		return "", fmt.Errorf("doctor probe failed with exit code %s", code)
 	}
 	return output, nil
+}
+
+func checkBrainWorker(ctx context.Context, root, image string) error {
+	help, err := capture(ctx, root, "docker", "run", "--rm", "--pull=never", "--entrypoint", "/usr/local/bin/environment-manager", image, "task-run", "--help")
+	if err != nil || !strings.Contains(help, "--claude-agent-version") || !strings.Contains(help, "--claude-path") {
+		return errors.New("Brain scenario requires environment-manager task-run with --claude-agent-version and --claude-path in the sandbox image")
+	}
+	return nil
 }

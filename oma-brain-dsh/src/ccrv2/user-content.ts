@@ -1,4 +1,5 @@
-import { admitEncodedImages, type AttachmentStore, type EncodedImageAttachment } from "@deepseek-ai/dsh-attachment";
+import RemoteAttachmentStore, { AttachmentTransportError } from "../attachments/remote.ts";
+import { isImageAdmissionError, admitEncodedImages, type AttachmentStore, type EncodedImageAttachment } from "@deepseek-ai/dsh-attachment";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm";
 import { object, type Payload } from "../json.ts";
 
@@ -28,6 +29,31 @@ export async function userInputContent(payload: Payload, attachments: Attachment
   if (!Array.isArray(content) || content.length === 0) throw new Error("User input requires content blocks");
   if (content.every((block) => block?.type === "text" && typeof block.text === "string"))
     return [{ type: "text", text: content.map((block) => block.text).join("\n") }];
+  if (attachments instanceof RemoteAttachmentStore) {
+    const blocks: ContentBlock[] = [];
+    for (const value of content) {
+      const block = object(value);
+      const source = block.type === "image" ? object(block.source) : {};
+      if (block.type !== "image" || source.type === "url") {
+        if (block.type === "text" && typeof block.text === "string") blocks.push({ type: "text", text: block.text });
+        else if (block.type === "document") blocks.push({ type: "oma-document", document: documentContent(block) });
+        else if (block.type === "image" && referencedImage(block)) blocks.push({ type: "oma-image", source: referencedImage(block)! });
+        else throw new Error("Unsupported user content block");
+        continue;
+      }
+      try {
+        const input = source.type === "file" ? await attachments.source(source.file_id)
+          : source.type === "base64" ? { data: new Uint8Array(Buffer.from(source.data, "base64")), mediaType: source.media_type } : undefined;
+        blocks.push(input ? { type: "image", attachment: await attachments.saveImage(input) }
+          : { type: "text", text: "[Image attachment unavailable]" });
+      } catch (error) {
+        if (error instanceof AttachmentTransportError) throw error;
+        if (!isImageAdmissionError(error)) throw error;
+        blocks.push({ type: "text", text: "[Image attachment unavailable]" });
+      }
+    }
+    return blocks;
+  }
   const images: EncodedImageAttachment[] = [];
   const blocks: ContentBlock[] = [];
   for (const value of content) {
@@ -36,7 +62,7 @@ export async function userInputContent(payload: Payload, attachments: Attachment
     if (block.type === "text" && typeof block.text === "string") blocks.push({ type: "text", text: block.text });
     else if (reference) blocks.push({ type: "oma-image", source: reference });
     else if (block.type === "image") {
-      const source = object(block.source);
+      const source = block.type === "image" ? object(block.source) : {};
       if (source.type !== "base64" || typeof source.data !== "string" ||
         !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(source.media_type))
         throw new Error("Image input requires a supported base64 raster source");

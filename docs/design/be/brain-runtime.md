@@ -103,7 +103,7 @@ DSH 开始模型执行前等待首个 `processing` 回执确认；后端通过�
 
 队列非空时，前一轮的普通 `idle/end_turn` 不结束公开会话；最后一条处理完成后才公开 idle。处于 `requires_action` 或 `budget_reached` 暂停时，新消息返回 400，仍需先提交相应工具结果或解除预算暂停。显式中断继续保留 `user.interrupt`，公开 stop reason 为 `end_turn`，不添加取消提示消息。
 
-用户消息可以包含 `image` 和 `document` 块。服务端投递前把内联字节和 Files 引用物化为会话私有文件，Brain 收到的 `image`/`document` 只带 `file_id` 或 `url` 引用：图片映射为 `oma-image`，文档映射为 `oma-document`，经 AI SDK 适配器以文件引用发给 Messages 代理，由代理展开字节；因此 Brain 的 internal-events 不含附件原始内容。仍携带 base64 的图片沿用本地 dsh attachment 路径。详见 [message-media-attachments](message-media-attachments.md)。
+用户消息可以包含 `image` 和 `document` 块。服务端投递前把内联内容和 Files 引用物化为会话私有文件。Brain 将 file_id 图片读取并归一化为远端存储支持的原生 DSH image，AI SDK 适配器按模型图片预算生成内联变体，参与能力投影、计量及 offload；base64 图片走同一路径。URL 与历史 oma-image、oma-document 保持代理展开语义。私有日志只保存引用，本地图片缓存不是恢复依赖。详见 [消息附件](message-media-attachments.md) 与 [远端图片附件](brain-image-attachments.md)。
 
 本地测试覆盖并发提交、批量及大消息、处理时间、暂停拒绝和队列排空，以及工具执行中追加多条输入时的回合隔离、完成顺序、重复投递去重和控制通道独立处理；真实模型的 `session-active-input` 用例需单独运行验证。
 
@@ -405,7 +405,7 @@ Every ordinary model step flushes the local JSONL journal. Before an ordinary ro
 
 Regression coverage checks 100 clean flushes after approximately 4 MiB of history produce zero backend writes and a subsequent dirty flush sends only the new event; this is an in-process contract check, not a production latency benchmark.
 
-Model configuration comes from the unified provider catalog introduced on main. `GET /v2/sessions/{id}` publishes tenant-scoped `session_context.models`, containing each route's `id`, `api_backend`, optional `context_window`, `max_output_tokens` and `input_modalities`. Brain consumes this catalog directly at registration and refresh, with no temporary capacity map or additional database lookup. Qualified IDs and available unambiguous legacy aliases retain the catalog's keys. Provider credentials and upstream URLs remain on the server.
+Model configuration comes from the unified provider catalog introduced on main. `GET /v2/sessions/{id}` publishes tenant-scoped `session_context.models`, containing each route's `id`, `api_backend`, optional `context_window`, `max_output_tokens`, `input_modalities` and `image_input`. Brain consumes this catalog directly at registration and refresh, with no temporary capacity map or additional database lookup. Qualified IDs and available unambiguous legacy aliases retain the catalog's keys. Provider credentials and upstream URLs remain on the server.
 
 The per-request callback is `refreshSessionContext`, shared by root and child requests with the child's thread header when applicable. It reads model configs and runtime tool permissions in one request, validates both before replacing either, then updates the session-owned model metadata and returns the tool permissions for the runtime to apply. Invalid model configs or permissions stop that turn before calling the model; they do not silently retain a stale budget or partially apply the other field. A later turn can retry after the server returns valid context. Missing optional model configs clear the previous metadata, matching registration semantics.
 
@@ -426,7 +426,7 @@ flowchart LR
     Adapter --> Request[Selected model output cap for AI SDK]
 ```
 
-Image-offload recovery follows the native `IMAGE_OFFLOAD_REQUIRED` contract. Previously offloaded native image references serialize as DSH text placeholders without loading bytes. Mounting the plugin does not introduce an OMA image-byte quota, a remote file-upload adapter, or offload semantics for opaque `oma-image`/`oma-document` blocks. A huge uncompressible system prompt, tool schema, document or indivisible message can still exceed the upstream window.
+Image-offload recovery follows the native `IMAGE_OFFLOAD_REQUIRED` contract. OMA's adapter enforces configured image count, request variant bytes and the serialized proxy request limit; native image pricing uses the same target dimensions. Previously offloaded native images serialize as OMA placeholders without reading bytes. The remote AttachmentStore preserves normalized images across Brain instances. Opaque historical/URL `oma-image` and `oma-document` blocks retain their existing behavior and do not participate in offload. A huge uncompressible system prompt, tool schema, document or indivisible message can still exceed the upstream window. See [remote image attachments](brain-image-attachments.md).
 
 Regression coverage uses in-process fake models and persistence. It covers pressure-triggered conversation summaries, summary failure, one bounded overflow retry, root/child Bash-result pruning, journal durability before retry and notification, public result uniqueness, replay and process restart, request-budget parity for both backends, auxiliary-response identity and offloaded-image placeholders. Compaction-budget tests exercise real AI SDK serialization with an in-process upstream that rejects budgets above configured limits, including native summary execution, root/child routes, missing limits, smaller explicit budgets and ordinary-call precedence. They do not establish real-provider summary quality, billing, image-budget behavior or production performance; verify-be remains an explicitly requested acceptance path.
 
@@ -481,8 +481,8 @@ stream part，并精确锁定版本。Brain 不引入 `ai` 核心包，也不使
   reasoning、默认输出上限和 provider options；`AiSdkAdapterOptions` 定义 `route`、`history`
   与 `onCallStart`、`onRequestBody`、`onMessageID` 回调。
 - `prompt.ts`：把 DSH 历史转换为 AI SDK prompt。系统提示合并为首条 system 消息；
-  工具调用参数解析失败时保留 `__unparsedToolInput` 占位对象；工具结果只接受文本，
-  错误结果映射为 `error-text`。需要签名的路由只在同格式 replay 带有 `signature` 或
+  工具调用参数解析失败时保留 `__unparsedToolInput` 占位对象；工具结果支持文本与原生图片，
+  错误结果映射为 `error-text`。Messages 图片保留在 tool_result 内，Chat 图片在连续工具结果后投影为 user 内容。需要签名的路由只在同格式 replay 带有 `signature` 或
   `redactedData` 时回传 thinking，否则降级为文本；其他路由以 reasoning 回传
   （Chat 为 `reasoning_content`）。temperature 与 stop 原样传递，每次调用附带 DSH
   `attributionHeaders()`。
@@ -526,6 +526,8 @@ thinking 签名或 redacted 数据。CCRv2 实时预览、完成消息与历史�
 Worker 单测位于 `oma-brain-dsh/tests/chat-completions.test.ts` 与 `adapters.test.ts`，覆盖异常流、
 HTTP 与流内错误、取消、工具分片、大参数线性耗时、用量尾帧、历史编码、公开身份、
 主子模型 backend 选择和凭据轮换。
+
+`Read(file_path)` 沿用沙箱现有 MCP read 工具。Brain 对图片结果校验、归一化并保存到远端 AttachmentStore 后，才生成包含原生 image 的 tool/result；日志不保存图片字节。文本结果继续保留原有 rawOutput 语义，图片转换失败返回工具错误。完整链路与黑盒验收见 [远端图片附件](brain-image-attachments.md#read-图片工具结果黑盒验收)。
 
 `oma-brain-dsh/tests/chat-runtime.test.ts` 通过原生 Brain 与本地协议 fixture 执行工具审批、工具结果下一轮回传、关闭后历史恢复，确认恢复不会重复执行已完成的工具。该测试不连接真实模型或 Worker 沙箱。
 

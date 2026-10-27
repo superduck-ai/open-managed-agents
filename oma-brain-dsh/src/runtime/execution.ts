@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { createUserMessage } from "@deepseek-ai/dsh-llm";
+import { createUserMessage, type ContentBlock } from "@deepseek-ai/dsh-llm";
 import { validateJsonSchemaValue, type JsonSchemaNode } from "@deepseek-ai/dsh-tools";
 import { object, type Payload } from "../json.ts";
 import { approveToolCall } from "./tool-approvals.ts";
@@ -23,7 +23,9 @@ export class ToolExecution {
     readonly threadId?: string,
   ) {}
 
-  async execute(tool: RemoteTool, original: Payload, exec: ToolExecutionContext): Promise<string> {
+  execute(tool: RemoteTool, original: Payload, exec: ToolExecutionContext): Promise<string>;
+  execute(tool: RemoteTool, original: Payload, exec: ToolExecutionContext, content: (result: Payload) => Promise<ContentBlock[]>): Promise<ContentBlock[]>;
+  async execute(tool: RemoteTool, original: Payload, exec: ToolExecutionContext, content?: (result: Payload) => Promise<ContentBlock[]>): Promise<string | ContentBlock[]> {
     const validate = (args: Payload) => {
       const errors = validateJsonSchemaValue(tool.inputSchema as JsonSchemaNode, args);
       if (errors.length)
@@ -63,12 +65,12 @@ export class ToolExecution {
         throw new Error("Remote tool outcome is unknown. Do not retry blindly; verify external state before repeating operations with side effects.");
       }
     }
-    let text: string;
+    let output: string | ContentBlock[];
     let failed = !!result.isError;
     try {
-      text = toolText(result);
+      output = content && !result.isError ? await content(result) : toolText(result);
     } catch (error) {
-      text = `Sandbox tool returned an unsupported result: ${(error as Error).message}`;
+      output = `Sandbox tool returned an unsupported result: ${(error as Error).message}`;
       failed = true;
     }
     if (changed) {
@@ -80,8 +82,8 @@ export class ToolExecution {
         }],
       }));
     }
-    if (failed) throw new Error(text || "Remote tool failed");
-    return text;
+    if (failed) throw new Error(typeof output === "string" && output || "Remote tool failed");
+    return output;
   }
 
   private async callWithRetry(tool: RemoteTool, args: Payload, signal: AbortSignal): Promise<Payload> {

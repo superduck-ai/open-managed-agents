@@ -1,3 +1,4 @@
+import { withAttachmentSession } from "./attachments/remote.ts";
 import type { AttachmentStore } from "@deepseek-ai/dsh-attachment";
 import type { GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { OmaApi } from "./api.ts";
@@ -14,6 +15,11 @@ interface PiAiReplay {
 export function omaModelOptions(api: OmaApi, attachments?: AttachmentStore, currentSession?: () => string | undefined): AiSdkAdapterOptions {
   return {
     attachments,
+    callScope: (request, action) => withAttachmentSession(modelSessionID(request), action),
+    imageInput: (_provider, model) => {
+      const id = currentSession?.();
+      return id === undefined ? undefined : api.assignment(api.modelSessions.get(id) ?? id).launch.models?.[model]?.image_input;
+    },
     modelInfo: (provider, model) => {
       const id = currentSession?.();
       const assignment = id === undefined ? undefined : api.assignment(api.modelSessions.get(id) ?? id);

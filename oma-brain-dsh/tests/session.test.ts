@@ -75,7 +75,6 @@ describe("original dsh loop over CCRv2", () => {
 
   test("invalid mixed input publishes a failed terminal result without model work and allows the next turn", async () => {
     for (const invalid of [
-      { type: "image", source: { type: "base64", media_type: "image/png", data: "not an image" } },
       { type: "document", source: { type: "text", media_type: "text/plain", data: 42 } },
     ]) {
       const b = backend();
@@ -149,10 +148,12 @@ describe("original dsh loop over CCRv2", () => {
     expect(b.publicLog.get("image_input_result")?.is_error).toBe(false);
   });
 
-  test("image file and url references reach the Messages request without inline bytes", async () => {
+  test("private image references become native images while URL references remain opaque", async () => {
     const b = backend();
     b.modelScript = [textEvents("seen")];
     const { session } = await open(b);
+    b.a.launch.models!["test-model"]!.input_modalities = ["text", "image"];
+    b.messageImages.set("file_attachment", { data: new Uint8Array(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC", "base64")), mediaType: "image/png" });
     const content = [
       { type: "image", source: { type: "file", file_id: "file_attachment" } },
       { type: "image", source: { type: "url", url: "https://example.com/cat.png" } },
@@ -160,7 +161,9 @@ describe("original dsh loop over CCRv2", () => {
     await session.receive("image_refs", { content });
     const requestContent = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
     expect(requestContent).toHaveLength(content.length + 1);
-    expect(requestContent.slice(0, content.length).map((block: Payload) => ({ type: block.type, source: block.source }))).toEqual(content);
+    expect(requestContent[0].type).toBe("image");
+    expect(requestContent[0].source.type).toBe("base64");
+    expect(requestContent[1].source).toEqual(content[1]!.source);
     expect(requestContent[content.length].text).toStartWith("\n\n<system-reminder>\n");
     expect(requestContent[content.length].text).toContain("Time sampled while preparing turn");
     expect(requestContent.at(-1).text).toEndWith("\n</system-reminder>\n\n");

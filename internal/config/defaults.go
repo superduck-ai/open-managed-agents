@@ -6,7 +6,8 @@ const DefaultE2BTemplate = "managed-agent-sandbox"
 
 func defaultConfig() Config {
 	cfg := Config{
-		CodeSession: CodeSessionConfig{UpstreamProxyMITMEnabled: true},
+		BrainImageAttachments: BrainImageAttachmentConfig{MaxObjectBytes: 4 << 20},
+		CodeSession:           CodeSessionConfig{UpstreamProxyMITMEnabled: true},
 		EnvironmentPrebuilds: EnvironmentPrebuildConfig{
 			Timeout: time.Hour,
 			Template: TemplateBuildConfig{

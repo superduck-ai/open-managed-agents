@@ -120,7 +120,7 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 		},
 		{
 			ResourceType:     "github_repository",
-			GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://git.internal:443/group/subgroup/widgets.git", MountPath: "/workspace/widgets", Checkout: json.RawMessage(`{"type":"branch","name":"main"}`)},
+			GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://git.internal:443/group/subgroup/widgets.git", MountPath: "/workspace/widgets", Checkout: &db.SessionResourceGitHubCheckout{Type: "branch", Name: "main"}},
 		},
 		{
 			ResourceType: "memory_store",
@@ -625,9 +625,9 @@ func TestManagedAgentRuntimeGitRef(t *testing.T) {
 func testGitRepository(raw json.RawMessage) *db.SessionResourceGitHubRepository {
 	var repository db.SessionResourceGitHubRepository
 	var fields struct {
-		URL       string          `json:"url"`
-		MountPath string          `json:"mount_path"`
-		Checkout  json.RawMessage `json:"checkout"`
+		URL       string                            `json:"url"`
+		MountPath string                            `json:"mount_path"`
+		Checkout  *db.SessionResourceGitHubCheckout `json:"checkout"`
 	}
 	if json.Unmarshal(raw, &fields) != nil {
 		return &repository

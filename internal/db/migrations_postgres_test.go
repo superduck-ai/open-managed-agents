@@ -206,13 +206,13 @@ func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
 
 	if _, err := standardDB.ExecContext(ctx, `
 		update session_resources
-		set payload = jsonb_set(payload, '{memory_store_id}', '"mem_missing"')
+		set payload = jsonb_set(payload, '{memory_store_id}', '42')
 		where external_id = 'sesrsc_memory_payload'
 	`); err != nil {
 		t.Fatalf("break Memory Store payload reference: %v", err)
 	}
 	if _, err := provider.UpTo(ctx, 106); err == nil {
-		t.Fatal("payload removal migration accepted a missing Memory Store reference")
+		t.Fatal("payload removal migration accepted an invalid Memory Store identity")
 	}
 	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "payload", true)
 	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "memory_store_uuid", false)
@@ -303,6 +303,24 @@ func assertSessionResourceMapperAfterPayloadRemoval(t *testing.T, ctx context.Co
 	mapperDB := yourbatis.NewDB(database, yourbatis.DialectPostgres)
 	err := mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		mapper := NewSessionResourceMapper(executor)
+		repository, err := mapper.FindByExternalID(ctx, "20000000-0000-0000-0000-000000000001", "sesn_file_ownership", "sesrsc_github_payload")
+		if err != nil {
+			return err
+		}
+		checkout := repository.resource().GitHubRepository.Checkout
+		if checkout == nil || checkout.Type != "branch" || checkout.Name != "main" {
+			t.Fatalf("stored checkout = %+v", checkout)
+		}
+		copy := repository.resource()
+		copy.UUID = "50000000-0000-0000-0000-000000000021"
+		copy.ExternalID = "sesrsc_checkout_roundtrip"
+		written, err := mapper.Insert(ctx, sessionResourceWriteParameters(copy))
+		if err != nil {
+			return err
+		}
+		if got := written.resource().GitHubRepository.Checkout; got == nil || *got != *checkout {
+			t.Fatalf("checkout write round trip = %+v", got)
+		}
 		const workspaceUUID = "20000000-0000-0000-0000-000000000001"
 		const sessionID = "sesn_file_ownership"
 		mountPath := "/uploads/runtime.txt"
@@ -508,7 +526,7 @@ const sessionResourcePayloadMigrationFixtureSQL = `
 			'20000000-0000-0000-0000-000000000001',
 			'40000000-0000-0000-0000-000000000001', 'sesn_file_ownership',
 			'github_repository',
-			'{"id":"sesrsc_github_payload","type":"github_repository","url":"https://github.com/example/repository","mount_path":"/workspace/repository","checkout":"main"}',
+			'{"id":"sesrsc_github_payload","type":"github_repository","url":"https://github.com/example/repository","mount_path":"/workspace/repository","checkout":{"type":"branch","name":"main"}}',
 			'{"authorization_token":"secret"}'
 		),
 		(

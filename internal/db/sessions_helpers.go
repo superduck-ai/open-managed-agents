@@ -154,7 +154,7 @@ func sessionResourceWriteParameters(resource SessionResource) sessionResourceWri
 	}
 	if resource.GitHubRepository != nil {
 		params.GitHubURL = &resource.GitHubRepository.URL
-		params.GitHubCheckout = agentJSONArg(resource.GitHubRepository.Checkout)
+		params.GitHubCheckout = sessionGitHubCheckout{Checkout: resource.GitHubRepository.Checkout}
 		params.MountPath = &resource.GitHubRepository.MountPath
 	}
 	if resource.MemoryStore != nil {
@@ -296,7 +296,7 @@ func (r sessionResourceRow) resource() SessionResource {
 		resource.GitHubRepository = &SessionResourceGitHubRepository{
 			URL:       *r.GitHubURL,
 			MountPath: *r.MountPath,
-			Checkout:  bytes.Clone(r.GitHubCheckout),
+			Checkout:  r.GitHubCheckout.Checkout,
 		}
 	}
 	if r.MemoryStoreUUID != nil && r.MemoryStoreID != nil {

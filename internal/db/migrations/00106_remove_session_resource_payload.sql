@@ -5,6 +5,7 @@ alter table session_resources
 	add column github_repository_checkout jsonb,
 	add column mount_path text,
 	add column memory_store_uuid uuid,
+ add column retired_memory_store_id text,
 	add column memory_access text,
 	add column memory_description text,
 	add column memory_instructions text,
@@ -58,12 +59,21 @@ begin
 		where resource.resource_type = 'memory_store'
 			and (
 				jsonb_typeof(resource.payload) is distinct from 'object'
+				or resource.payload->>'id' is distinct from resource.external_id
+				or resource.payload->>'type' is distinct from 'memory_store'
+				or jsonb_typeof(resource.payload->'memory_store_id') is distinct from 'string'
 				or coalesce(resource.payload->>'memory_store_id', '') = ''
+				or exists (
+					select 1 from memory_stores memory_store
+					where memory_store.external_id = resource.payload->>'memory_store_id'
+						and (memory_store.workspace_uuid <> resource.workspace_uuid or memory_store.organization_uuid <> resource.organization_uuid)
+				)
 				or not exists (
-					select 1
-					from memory_stores memory_store
-					where memory_store.workspace_uuid = resource.workspace_uuid
-						and memory_store.external_id = resource.payload->>'memory_store_id'
+					select 1 from sessions session
+					where session.uuid = resource.session_uuid
+						and session.external_id = resource.session_external_id
+						and session.workspace_uuid = resource.workspace_uuid
+						and session.organization_uuid = resource.organization_uuid
 				)
 				or exists (
 					select 1
@@ -87,6 +97,23 @@ begin
 end $$;
 -- +goose StatementEnd
 
+update session_resources resource
+set deleted_at = coalesce(resource.deleted_at, now()), updated_at = now(),
+ retired_memory_store_id = resource.payload->>'memory_store_id'
+where resource.resource_type = 'memory_store'
+ and not exists (
+  select 1 from memory_stores memory_store
+  where memory_store.external_id = resource.payload->>'memory_store_id'
+ );
+
+update session_resources
+set memory_access = payload->>'access',
+ memory_description = payload->>'description',
+ memory_instructions = payload->>'instructions',
+ mount_path = payload->>'mount_path',
+ memory_name = payload->>'name'
+where resource_type = 'memory_store';
+
 update session_resources
 set mount_path = case
 	when file_ownership = 'referenced' then payload->>'mount_path'
@@ -102,12 +129,7 @@ set github_repository_url = payload->>'url',
 where resource_type = 'github_repository';
 
 update session_resources resource
-set memory_store_uuid = memory_store.uuid,
-	memory_access = resource.payload->>'access',
-	memory_description = resource.payload->>'description',
-	memory_instructions = resource.payload->>'instructions',
-	mount_path = resource.payload->>'mount_path',
-	memory_name = resource.payload->>'name'
+set memory_store_uuid = memory_store.uuid
 from memory_stores memory_store
 where resource.resource_type = 'memory_store'
 	and memory_store.workspace_uuid = resource.workspace_uuid
@@ -158,15 +180,21 @@ alter table session_resources
 			resource_type = 'memory_store'
 			and github_repository_url is null
 			and github_repository_checkout is null
-			and memory_store_uuid is not null
+			and (memory_store_uuid is not null or (deleted_at is not null and coalesce(retired_memory_store_id, '') <> ''))
 		)
 	) not valid,
+ add constraint session_resources_retired_memory_check check (
+  retired_memory_store_id is null or (
+   resource_type = 'memory_store' and deleted_at is not null and memory_store_uuid is null
+  )
+ ) not valid,
 	add constraint session_resources_internal_secret_check check (
 		secret_payload is null or resource_type = 'github_repository'
 	) not valid;
 
 alter table session_resources
 	validate constraint session_resources_explicit_config_check,
+ validate constraint session_resources_retired_memory_check,
 	validate constraint session_resources_internal_secret_check;
 
 create index session_resources_public_created_v2_idx
@@ -203,7 +231,6 @@ set payload = jsonb_build_object(
 from files file
 where resource.resource_type = 'file'
 	and resource.file_ownership = 'referenced'
-	and resource.deleted_at is null
 	and file.uuid = resource.file_uuid
 	and file.workspace_uuid = resource.workspace_uuid;
 
@@ -221,23 +248,26 @@ update session_resources resource
 set payload = jsonb_strip_nulls(jsonb_build_object(
 	'id', resource.external_id,
 	'type', 'memory_store',
-	'memory_store_id', memory_store.external_id,
+	'memory_store_id', coalesce(memory_store.external_id, resource.retired_memory_store_id),
 	'access', resource.memory_access,
 	'description', resource.memory_description,
 	'instructions', resource.memory_instructions,
 	'mount_path', resource.mount_path,
 	'name', resource.memory_name
 ))
-from memory_stores memory_store
-where resource.resource_type = 'memory_store'
-	and memory_store.uuid = resource.memory_store_uuid
-	and memory_store.workspace_uuid = resource.workspace_uuid;
+from session_resources original
+left join memory_stores memory_store
+ on memory_store.uuid = original.memory_store_uuid
+ and memory_store.workspace_uuid = original.workspace_uuid
+where resource.uuid = original.uuid
+ and resource.resource_type = 'memory_store';
 
 drop index if exists session_resources_public_created_v2_idx;
 drop index if exists session_resources_memory_store_v3_idx;
 
 alter table session_resources
 	drop constraint if exists session_resources_explicit_config_check,
+ drop constraint if exists session_resources_retired_memory_check,
 	drop constraint if exists session_resources_internal_secret_check;
 
 alter table session_resources
@@ -261,6 +291,7 @@ alter table session_resources
 	drop column github_repository_checkout,
 	drop column mount_path,
 	drop column memory_store_uuid,
+ drop column retired_memory_store_id,
 	drop column memory_access,
 	drop column memory_description,
 	drop column memory_instructions,

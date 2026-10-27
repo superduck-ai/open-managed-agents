@@ -3,9 +3,29 @@
 alter table session_resources
 	add column if not exists file_ownership text;
 
+update files file
+set scope_id = resource.session_external_id
+from session_resources resource
+join sessions session
+ on session.uuid = resource.session_uuid
+ and session.external_id = resource.session_external_id
+ and session.workspace_uuid = resource.workspace_uuid
+ and session.organization_uuid = resource.organization_uuid
+where resource.resource_type = 'file'
+ and resource.payload is null
+ and resource.path is not null
+ and left(resource.path, char_length('/outputs/')) <> '/outputs/'
+ and file.uuid = resource.file_uuid
+ and file.workspace_uuid = resource.workspace_uuid
+ and file.scope_type = 'session'
+ and file.scope_id is null;
+
 -- +goose StatementBegin
 do $$
 begin
+ if exists (select 1 from session_resources where resource_type = 'file' and path is null) then
+  raise exception 'cannot add Session file ownership: a File has no namespace path';
+ end if;
  if exists (
   select 1 from session_resources resource
   where resource.source_file_uuid is not null and (
@@ -98,6 +118,7 @@ begin
 		select 1
 		from session_resources reference
 		where reference.resource_type = 'file'
+			and reference.deleted_at is null
 			and reference.path is not null
 			and reference.payload is not null
 			and exists (

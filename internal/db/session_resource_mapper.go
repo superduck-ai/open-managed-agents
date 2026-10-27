@@ -2,6 +2,9 @@ package db
 
 import (
 	"context"
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -39,29 +42,29 @@ type SessionResourceMapper interface {
 }
 
 type sessionResourceRow struct {
-	UUID               string     `db:"uuid"`
-	ExternalID         string     `db:"external_id"`
-	OrganizationUUID   string     `db:"organization_uuid"`
-	WorkspaceUUID      string     `db:"workspace_uuid"`
-	SessionUUID        string     `db:"session_uuid"`
-	SessionExternalID  string     `db:"session_external_id"`
-	ResourceType       string     `db:"resource_type"`
-	SecretPayload      []byte     `db:"secret_payload"`
-	FileExternalID     *string    `db:"file_external_id"`
-	FilePath           *string    `db:"file_path"`
-	FileOwnership      *string    `db:"file_ownership"`
-	GitHubURL          *string    `db:"github_repository_url"`
-	GitHubCheckout     []byte     `db:"github_repository_checkout"`
-	MountPath          *string    `db:"mount_path"`
-	MemoryStoreUUID    *string    `db:"memory_store_uuid"`
-	MemoryStoreID      *string    `db:"memory_store_external_id"`
-	MemoryAccess       *string    `db:"memory_access"`
-	MemoryDescription  *string    `db:"memory_description"`
-	MemoryInstructions *string    `db:"memory_instructions"`
-	MemoryName         *string    `db:"memory_name"`
-	CreatedAt          time.Time  `db:"created_at"`
-	UpdatedAt          time.Time  `db:"updated_at"`
-	DeletedAt          *time.Time `db:"deleted_at"`
+	UUID               string                `db:"uuid"`
+	ExternalID         string                `db:"external_id"`
+	OrganizationUUID   string                `db:"organization_uuid"`
+	WorkspaceUUID      string                `db:"workspace_uuid"`
+	SessionUUID        string                `db:"session_uuid"`
+	SessionExternalID  string                `db:"session_external_id"`
+	ResourceType       string                `db:"resource_type"`
+	SecretPayload      []byte                `db:"secret_payload"`
+	FileExternalID     *string               `db:"file_external_id"`
+	FilePath           *string               `db:"file_path"`
+	FileOwnership      *string               `db:"file_ownership"`
+	GitHubURL          *string               `db:"github_repository_url"`
+	GitHubCheckout     sessionGitHubCheckout `db:"github_repository_checkout"`
+	MountPath          *string               `db:"mount_path"`
+	MemoryStoreUUID    *string               `db:"memory_store_uuid"`
+	MemoryStoreID      *string               `db:"memory_store_external_id"`
+	MemoryAccess       *string               `db:"memory_access"`
+	MemoryDescription  *string               `db:"memory_description"`
+	MemoryInstructions *string               `db:"memory_instructions"`
+	MemoryName         *string               `db:"memory_name"`
+	CreatedAt          time.Time             `db:"created_at"`
+	UpdatedAt          time.Time             `db:"updated_at"`
+	DeletedAt          *time.Time            `db:"deleted_at"`
 }
 
 type sessionMemoryMountRow struct {
@@ -83,7 +86,7 @@ type sessionResourceWriteParams struct {
 	ResourceType       string
 	SecretPayload      []byte
 	GitHubURL          *string
-	GitHubCheckout     []byte
+	GitHubCheckout     sessionGitHubCheckout
 	MountPath          *string
 	MemoryStoreID      *string
 	MemoryAccess       *string
@@ -203,4 +206,37 @@ type sessionSkillArchiveInsertParams struct {
 	S3Bucket           string
 	S3Key              string
 	Now                time.Time
+}
+
+type sessionGitHubCheckout struct {
+	Checkout *SessionResourceGitHubCheckout
+}
+
+func (c *sessionGitHubCheckout) Scan(source any) error {
+	var raw []byte
+	switch value := source.(type) {
+	case nil:
+		c.Checkout = nil
+		return nil
+	case []byte:
+		raw = value
+	case string:
+		raw = []byte(value)
+	default:
+		return fmt.Errorf("scan Git checkout: unsupported type %T", source)
+	}
+	var checkout *SessionResourceGitHubCheckout
+	if err := json.Unmarshal(raw, &checkout); err != nil {
+		return fmt.Errorf("scan Git checkout: %w", err)
+	}
+	c.Checkout = checkout
+	return nil
+}
+
+func (c sessionGitHubCheckout) Value() (driver.Value, error) {
+	if c.Checkout == nil {
+		return nil, nil
+	}
+	raw, err := json.Marshal(c.Checkout)
+	return string(raw), err
 }

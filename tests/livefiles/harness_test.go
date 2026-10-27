@@ -12,9 +12,12 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -71,7 +74,12 @@ func newFilesEnv(t *testing.T) *filesEnv {
 	if os.Getenv("VERIFY_BE_RUN_ID") == "" {
 		t.Skip("run through verify-be files with isolated dependencies")
 	}
-	if os.Getenv("CONFIG_FILE") == "" || os.Getenv("VERIFY_BE_API_URL") != "http://127.0.0.1:18080" {
+	apiURL, parseErr := url.Parse(os.Getenv("VERIFY_BE_API_URL"))
+	if parseErr != nil {
+		t.Fatal("isolated verification URL required")
+	}
+	port, portErr := strconv.Atoi(apiURL.Port())
+	if os.Getenv("CONFIG_FILE") == "" || apiURL.Scheme != "http" || apiURL.User != nil || apiURL.Path != "" || apiURL.RawQuery != "" || apiURL.Fragment != "" || !net.ParseIP(apiURL.Hostname()).IsLoopback() || portErr != nil || port < 1 || port > 65535 {
 		t.Fatal("isolated verification configuration required")
 	}
 	timeout, err := time.ParseDuration(os.Getenv("VERIFY_BE_TIMEOUT"))

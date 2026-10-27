@@ -241,7 +241,13 @@ Provider Sandbox 创建前的普通启动失败会停止 Environment Work，且�
 - Resource + File 通用投影直接读取 Resource 的 `organization_uuid/workspace_uuid/session_uuid`，不关联 `filestore_filesystems`。普通读写入口先解析一次活动 filesystem，再用其 `(workspace_uuid, session_uuid)` 查询 namespace。
 - schema 不创建 PostgreSQL 外键；workspace/session/file 的引用完整性和 Skill 快照的来源真实性由带租户范围的同事务写入、删除守卫与真实 PostgreSQL 测试维护。
 
-迁移只转换活动旧节点，软删除历史直接丢弃。Input 保留原 `sesrsc_`，把 path 与 Source File UUID 写入 Resource，并删除旧兼容 File 行；旧兼容 `file_` 不再保留，不扣配额、不登记对象清理。Output 保留原 File UUID 与 `file_`，用旧节点补齐真实 File metadata，再创建独立 Resource；其他文件转换为 Owned File + Resource，目录与固定根转换为 Resource。Skill Archive 先由 `00047` 接入统一 Resource，再由 `00048` 创建独立 File 快照、写入 `file_uuid` 并删除 Skill Version UUID；如果目标 `file_uuid` 已存在，`00048` 复用该 File，不重复插入同一 identity。`00105` 在回填前验证活动 File 的租户、payload/path、scope、唯一 owner 和 referenced/owned 不相交不变量，冲突时整体失败；通过后将既有公开 Input 回填为 `referenced`、内部普通 File 回填为 `owned`，Directory 与 Skill Archive 保持 `NULL`。`00106` 再验证 File、GitHub Repository、Memory Store 与秘密字段形状，回填显式配置并删除 `payload`。切换不引入双写、双读、兼容 view、trigger、feature flag 或 reconciliation。
+`00047` 只转换活动旧 namespace 节点，旧表中的软删除历史不迁移。Input 保留原 `sesrsc_`，把 path 与 Source File UUID 写入 Resource，并删除旧兼容 File 行；旧兼容 `file_` 不再保留，不扣配额、不登记对象清理。Output 保留原 File UUID 与 `file_`，用旧节点补齐真实 File metadata，再创建独立 Resource；其他文件转换为 Owned File + Resource，目录与固定根转换为 Resource。Skill Archive 先由 `00047` 接入统一 Resource，再由 `00048` 创建独立 File 快照、写入 `file_uuid` 并删除 Skill Version UUID；如果目标 `file_uuid` 已存在，`00048` 复用该 File，不重复插入同一 identity。`00105` 在回填前验证 namespace File 的租户、payload/path、scope、唯一 owner 和 referenced/owned 不相交不变量，冲突时整体失败；通过后将既有公开 Input 回填为 `referenced`、内部普通 File 回填为 `owned`，Directory 与 Skill Archive 保持 `NULL`。`00106` 再验证 File、GitHub Repository、Memory Store 与秘密字段形状，回填显式配置并删除 `payload`。切换不引入双写、双读、兼容 view、trigger、feature flag 或 reconciliation。
+
+`00105` 对 `00047` 留下的非 outputs Owned File，只在同租户 Session UUID、external ID 与 Resource 归属均吻合且原 scope 为 `session + NULL` 时补齐 scope；软删附件同样转换。非空冲突 scope、缺失 namespace path、多个 owner、跨租户或无法确定 Session 的记录继续阻止升级。`00089` 未拆分的软删 referenced 可以保留旧 File 引用，但活动 referenced 仍不得与任何 owned/Skill Archive 共用 File；不排除软删 owner 的检查，避免掩盖对象清理责任冲突。
+
+`00106` 对 Memory 引用先验证 payload 身份、字段类型和 Session 租户。目标 external ID 在任何租户都不存在时，将悬挂 Resource 软退休，保留配置与 `retired_memory_store_id`，不创建 UUID、不删除 Memory 数据。该外部 ID 只用于退休记录的身份保留及 Down payload 重建；活动引用仍要求真实 Memory UUID。目标存在于其他租户、身份不明或 payload 无效时仍拒绝升级。Down 同时重建活动及软删 referenced payload，并保留退休 Memory 身份，确保 Up/Down/Up 不因历史软删记录失败。
+
+Git checkout 在应用内使用具名的 Type/Name/SHA 结构；JSON 编码与解码只在请求和 Mapper 边界执行，数据库扫描错误直接返回，不把原始 checkout JSON 传入 Session、Deployment 或 Environment 业务逻辑。
 
 迁移 `00019_add_workspace_storage_usage.sql` 新增 `workspace_storage_usage`。它按工作区分别保存 Files API 与 Filestore 的有效字节数，是配额判定的事务型投影，不是最终文件事实来源；迁移会从两类文件记录建立一次基线，后续由资源写事务按增量维护。
 

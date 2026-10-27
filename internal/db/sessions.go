@@ -111,7 +111,13 @@ type SessionResourceFileReference struct {
 type SessionResourceGitHubRepository struct {
 	URL       string
 	MountPath string
-	Checkout  json.RawMessage
+	Checkout  *SessionResourceGitHubCheckout
+}
+
+type SessionResourceGitHubCheckout struct {
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
+	SHA  string `json:"sha,omitempty"`
 }
 
 type SessionResourceMemoryStore struct {

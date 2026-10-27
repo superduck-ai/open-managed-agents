@@ -351,7 +351,7 @@ func sessionResourcesFromDeployment(
 			if parseErr != nil {
 				return nil, parseErr
 			}
-			githubRepository = &db.SessionResourceGitHubRepository{URL: spec.URL, MountPath: spec.MountPath, Checkout: config["checkout"]}
+			githubRepository = &db.SessionResourceGitHubRepository{URL: spec.URL, MountPath: spec.MountPath, Checkout: spec.Checkout}
 		default:
 			return nil, errors.New("stored resource type is invalid")
 		}

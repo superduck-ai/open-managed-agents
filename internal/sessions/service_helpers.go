@@ -229,13 +229,7 @@ func (h *Handler) resourceFromRequest(
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		githubRepository = &db.SessionResourceGitHubRepository{URL: spec.URL, MountPath: spec.MountPath}
-		if spec.Checkout != nil {
-			githubRepository.Checkout, err = json.Marshal(spec.Checkout)
-			if err != nil {
-				return normalizedSessionResource{}, err
-			}
-		}
+		githubRepository = &db.SessionResourceGitHubRepository{URL: spec.URL, MountPath: spec.MountPath, Checkout: spec.Checkout}
 
 		gitSpec = &spec
 	case sessionresource.MemoryStoreType:
@@ -624,8 +618,8 @@ func responseFromResource(resource db.SessionResource) json.RawMessage {
 	case resource.ResourceType == "github_repository" && resource.GitHubRepository != nil:
 		payload["url"] = resource.GitHubRepository.URL
 		payload["mount_path"] = resource.GitHubRepository.MountPath
-		if len(resource.GitHubRepository.Checkout) > 0 {
-			payload["checkout"] = agentsnapshot.RawJSONValue(resource.GitHubRepository.Checkout, nil)
+		if resource.GitHubRepository.Checkout != nil {
+			payload["checkout"] = resource.GitHubRepository.Checkout
 		}
 	case resource.ResourceType == "memory_store" && resource.MemoryStore != nil:
 		payload["memory_store_id"] = resource.MemoryStore.ExternalID

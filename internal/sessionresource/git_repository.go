@@ -21,11 +21,7 @@ const GitRepositoryType = "github_repository"
 
 var gitCommitSHA = regexp.MustCompile(`^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$`)
 
-type GitRepositoryCheckout struct {
-	Type string `json:"type"`
-	Name string `json:"name,omitempty"`
-	SHA  string `json:"sha,omitempty"`
-}
+type GitRepositoryCheckout = db.SessionResourceGitHubCheckout
 
 type GitRepositorySpec struct {
 	URL       string                 `json:"url"`
@@ -162,11 +158,7 @@ func StoredGitRepositorySpec(repository *db.SessionResourceGitHubRepository) (Gi
 	if repository == nil {
 		return GitRepositorySpec{}, errStoredGitResource
 	}
-	checkout, err := parseGitRepositoryCheckout(repository.Checkout)
-	if err != nil {
-		return GitRepositorySpec{}, err
-	}
-	return validateStoredGitRepositorySpec(GitRepositorySpec{URL: repository.URL, MountPath: repository.MountPath, Checkout: checkout})
+	return validateStoredGitRepositorySpec(GitRepositorySpec{URL: repository.URL, MountPath: repository.MountPath, Checkout: repository.Checkout})
 }
 
 func validateStoredGitRepositorySpec(spec GitRepositorySpec) (GitRepositorySpec, error) {

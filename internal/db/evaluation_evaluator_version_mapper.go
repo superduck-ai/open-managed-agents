@@ -19,6 +19,8 @@ type evaluationEvaluatorVersionRow struct {
 	AgentID          string    `db:"agent_id"`
 	PromptTemplate   string    `db:"prompt_template"`
 	VariablesJSON    string    `db:"variables_json"`
+	EnvironmentID    string    `db:"environment_external_id"`
+	ResourcesJSON    string    `db:"resources_json"`
 	CreatedAt        time.Time `db:"created_at"`
 }
 
@@ -34,6 +36,8 @@ type evaluationEvaluatorVersionWriteParams struct {
 	AgentID          string
 	PromptTemplate   string
 	VariablesJSON    string
+	EnvironmentID    string
+	ResourcesJSON    string
 	CreatedAt        time.Time
 }
 

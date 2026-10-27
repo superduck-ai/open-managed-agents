@@ -9,9 +9,9 @@ import {
   createEvaluationDataset,
   deleteEvaluationCase,
   getEvaluationDataset,
+  getEvaluationDatasetPreset,
   importEvaluationCases,
   listAllEvaluationCases,
-  listEvaluationCases,
   listEvaluationDatasetPresetCases,
   listEvaluationDatasetPresets,
   listEvaluationDatasets,
@@ -69,6 +69,16 @@ export function useEvaluationReuseCases(kind: '' | 'dataset' | 'preset', id: str
   });
 }
 
+export function useEvaluationDatasetPreset(presetId: string) {
+  const workspace = useEvaluationWorkspace();
+  const query = useQuery({
+    queryKey: ['evaluation-dataset-preset', workspace.orgUuid, workspace.workspaceId, presetId],
+    enabled: workspace.workspaceReady && presetId.length > 0,
+    queryFn: () => getEvaluationDatasetPreset(workspace.orgUuid ?? '', workspace.workspaceId, presetId),
+  });
+  return { workspace, query };
+}
+
 export function useEvaluationDatasetPresetCases(presetId: string, versionId: string) {
   const workspace = useEvaluationWorkspace();
   return useQuery({
@@ -104,7 +114,10 @@ export function useEvaluationCaseList(datasetId: string) {
   const casesQuery = useQuery({
     queryKey: evaluationCaseKey(workspace.orgUuid, workspace.workspaceId, datasetId),
     enabled: workspace.workspaceReady && datasetId.length > 0,
-    queryFn: () => listEvaluationCases(workspace.orgUuid ?? '', workspace.workspaceId, datasetId),
+    queryFn: async () => ({
+      data: await listAllEvaluationCases(workspace.orgUuid ?? '', workspace.workspaceId, datasetId),
+      next_page: null,
+    }),
   });
   return { workspace, datasetQuery, casesQuery };
 }
@@ -214,12 +227,20 @@ export function evaluationDatasetHref(workspaceId: string, datasetId: string) {
   return `${evaluationsIndexHref(workspaceId)}/datasets/${encodeURIComponent(datasetId)}`;
 }
 
+export function evaluationDatasetPresetHref(workspaceId: string, presetId: string) {
+  return `${evaluationDatasetHref(workspaceId, presetId)}?preset=1`;
+}
+
 export function evaluationEvaluatorsHref(workspaceId: string) {
   return `${evaluationsIndexHref(workspaceId)}/evaluators`;
 }
 
 export function evaluationEvaluatorHref(workspaceId: string, evaluatorId: string) {
   return `${evaluationEvaluatorsHref(workspaceId)}/${encodeURIComponent(evaluatorId)}`;
+}
+
+export function evaluationEvaluatorPresetHref(workspaceId: string, presetId: string) {
+  return `${evaluationEvaluatorHref(workspaceId, presetId)}?preset=1`;
 }
 
 export function evaluationExperimentsHref(workspaceId: string) {

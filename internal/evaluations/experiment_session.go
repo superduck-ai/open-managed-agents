@@ -55,9 +55,6 @@ func (h *Handler) ObserveSessionEvents(ctx context.Context, events []db.SessionE
 			if !finished {
 				continue
 			}
-			if outcome.Status == db.EvaluationExperimentStatusCompleted {
-				h.scoreCompletedItem(ctx, outcome, match)
-			}
 			updated[match.ExperimentExternalID] = outcome
 		}
 		h.settleAgentScore(ctx, outcome)
@@ -80,10 +77,29 @@ func (h *Handler) rollUpExperiment(ctx context.Context, outcome sessionOutcome, 
 		return err
 	}
 	status := experimentStatus(experiment.Items)
-	if status == experiment.Status {
-		return nil
+	if status != experiment.Status {
+		if err := h.store.UpdateEvaluationExperimentStatus(ctx, outcome.OrganizationUUID, outcome.WorkspaceUUID, experimentID, status, time.Now().UTC()); err != nil {
+			return err
+		}
 	}
-	return h.store.UpdateEvaluationExperimentStatus(ctx, outcome.OrganizationUUID, outcome.WorkspaceUUID, experimentID, status, time.Now().UTC())
+	if itemsSettled(experiment.Items) {
+		h.scheduleExperimentScores(ctx, outcome, experiment)
+	}
+	return nil
+}
+
+func itemsSettled(items []db.EvaluationExperimentItem) bool {
+	if len(items) == 0 {
+		return false
+	}
+	for _, item := range items {
+		switch item.Status {
+		case db.EvaluationExperimentStatusCompleted, db.EvaluationExperimentStatusFailed, db.EvaluationExperimentStatusCancelled:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func sessionOutcomes(events []db.SessionEvent) []sessionOutcome {

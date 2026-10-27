@@ -58,7 +58,18 @@ func (m *LLMEvaluatorModel) Score(ctx context.Context, request EvaluatorScoreReq
 	if m == nil || m.database == nil || m.secrets == nil {
 		return EvaluatorScore{}, errEvaluatorModelMissing
 	}
-	upstream, err := llmproviders.Resolve(ctx, m.database, m.secrets, request.OrganizationUUID, request.WorkspaceUUID, request.Model)
+	modelID := strings.TrimSpace(request.Model)
+	if modelID == "" {
+		resolved, ok, resolveErr := firstWorkspaceModel(ctx, m.database, request.OrganizationUUID, request.WorkspaceUUID)
+		if resolveErr != nil {
+			return EvaluatorScore{}, resolveErr
+		}
+		if !ok {
+			return EvaluatorScore{}, errEvaluatorModelMissing
+		}
+		modelID = resolved
+	}
+	upstream, err := llmproviders.Resolve(ctx, m.database, m.secrets, request.OrganizationUUID, request.WorkspaceUUID, modelID)
 	if err != nil {
 		if errors.Is(err, llmproviders.ErrNotConfigured) || errors.Is(err, llmproviders.ErrModelNotConfigured) {
 			return EvaluatorScore{}, errEvaluatorModelMissing
@@ -66,6 +77,21 @@ func (m *LLMEvaluatorModel) Score(ctx context.Context, request EvaluatorScoreReq
 		return EvaluatorScore{}, err
 	}
 	return m.complete(ctx, upstream, request.Prompt)
+}
+
+func firstWorkspaceModel(ctx context.Context, database *db.DB, organizationUUID, workspaceUUID string) (string, bool, error) {
+	catalog, err := llmproviders.LoadCatalog(ctx, database, organizationUUID, workspaceUUID)
+	if err != nil {
+		if errors.Is(err, llmproviders.ErrNotConfigured) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	models := catalog.ModelIDs()
+	if len(models) == 0 {
+		return "", false, nil
+	}
+	return models[0], true, nil
 }
 
 func (m *LLMEvaluatorModel) complete(ctx context.Context, upstream llmproviders.Upstream, prompt string) (EvaluatorScore, error) {

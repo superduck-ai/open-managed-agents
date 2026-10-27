@@ -6,6 +6,7 @@ import {
   createEvaluationEvaluatorFromPreset,
   createEvaluationEvaluatorVersion,
   getEvaluationEvaluator,
+  getEvaluationEvaluatorPreset,
   listEvaluationEvaluatorPresets,
   listEvaluationEvaluators,
   type CreateEvaluationEvaluatorFromPresetInput,
@@ -37,6 +38,16 @@ export function useEvaluationEvaluatorPresetList() {
 export function evaluatorIdFromPath() {
   const match = window.location.pathname.match(/\/evaluations\/evaluators\/([^/]+)$/);
   return match ? decodeURIComponent(match[1]) : '';
+}
+
+export function useEvaluationEvaluatorPreset(presetId: string, enabled: boolean) {
+  const workspace = useEvaluationWorkspace();
+  const query = useQuery({
+    queryKey: ['evaluation-evaluator-preset', workspace.orgUuid, workspace.workspaceId, presetId],
+    enabled: workspace.workspaceReady && enabled && presetId.length > 0,
+    queryFn: () => getEvaluationEvaluatorPreset(workspace.orgUuid ?? '', workspace.workspaceId, presetId),
+  });
+  return { workspace, query };
 }
 
 export function useEvaluationEvaluator(evaluatorId: string) {

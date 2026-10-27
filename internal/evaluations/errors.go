@@ -65,10 +65,12 @@ const (
 	modelForbiddenMessage               = "model must be empty for an agent evaluator"
 	modelTooLongMessage                 = "model must be at most 255 characters"
 	agentIDRequiredMessage              = "agent_id is required"
-	agentIDForbiddenMessage             = "agent_id must be empty for an llm evaluator"
+	agentIDForbiddenMessage             = "agent_id must be empty"
 	agentIDTooLongMessage               = "agent_id must be at most 255 characters"
+	environmentIDTooLongMessage         = "environment_id must be at most 255 characters"
+	llmSessionConfigForbiddenMessage    = "environment_id and resources must be empty for an llm evaluator"
+	evaluatorMountInvalidMessage        = "resources must be file mounts with file_id and a path"
 	promptRequiredMessage               = "prompt_template is required"
-	promptForbiddenMessage              = "prompt_template must be empty for an agent evaluator"
 	promptTooLongMessage                = "prompt_template must be at most 16000 characters"
 	promptVariableMessage               = "prompt_template references a variable that is not selected"
 	variablesInvalidMessage             = "variables must use input, output, checkpoints, agent_trajectory, or invocation_result"
@@ -311,12 +313,20 @@ func agentIDTooLong() error {
 	return apperr.New(apperr.InvalidArgument, agentIDTooLongMessage, nil)
 }
 
-func promptRequired() error {
-	return apperr.New(apperr.InvalidArgument, promptRequiredMessage, nil)
+func environmentIDTooLong() error {
+	return apperr.New(apperr.InvalidArgument, environmentIDTooLongMessage, nil)
 }
 
-func promptForbidden() error {
-	return apperr.New(apperr.InvalidArgument, promptForbiddenMessage, nil)
+func llmSessionConfigForbidden() error {
+	return apperr.New(apperr.InvalidArgument, llmSessionConfigForbiddenMessage, nil)
+}
+
+func evaluatorMountInvalid() error {
+	return apperr.New(apperr.InvalidArgument, evaluatorMountInvalidMessage, nil)
+}
+
+func promptRequired() error {
+	return apperr.New(apperr.InvalidArgument, promptRequiredMessage, nil)
 }
 
 func promptTooLong() error {

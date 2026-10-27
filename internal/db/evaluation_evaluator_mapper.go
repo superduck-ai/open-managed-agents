@@ -39,6 +39,8 @@ type evaluationEvaluatorPageRow struct {
 	AgentID           string     `db:"agent_id"`
 	PromptTemplate    string     `db:"prompt_template"`
 	VariablesJSON     string     `db:"variables_json"`
+	EnvironmentID     string     `db:"environment_external_id"`
+	ResourcesJSON     string     `db:"resources_json"`
 	VersionCreatedAt  time.Time  `db:"version_created_at"`
 }
 

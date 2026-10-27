@@ -17,6 +17,8 @@ type EvaluationEvaluatorVersion struct {
 	EvaluatorType  string
 	Model          string
 	AgentID        string
+	EnvironmentID  string
+	Resources      json.RawMessage
 	PromptTemplate string
 	Variables      []string
 	CreatedAt      time.Time
@@ -80,6 +82,8 @@ func (d *DB) CreateEvaluationEvaluator(ctx context.Context, evaluator Evaluation
 			AgentID:          evaluator.Version.AgentID,
 			PromptTemplate:   evaluator.Version.PromptTemplate,
 			VariablesJSON:    variablesJSON,
+			EnvironmentID:    evaluator.Version.EnvironmentID,
+			ResourcesJSON:    encodeEvaluatorResources(evaluator.Version.Resources),
 			CreatedAt:        evaluator.Version.CreatedAt,
 		})
 		if versionErr != nil {
@@ -129,6 +133,8 @@ func (d *DB) AppendEvaluationEvaluatorVersion(ctx context.Context, organizationU
 			AgentID:          version.AgentID,
 			PromptTemplate:   version.PromptTemplate,
 			VariablesJSON:    variablesJSON,
+			EnvironmentID:    version.EnvironmentID,
+			ResourcesJSON:    encodeEvaluatorResources(version.Resources),
 			CreatedAt:        version.CreatedAt,
 		})
 		if insertErr != nil {
@@ -233,6 +239,8 @@ func (row evaluationEvaluatorPageRow) evaluationEvaluator() (EvaluationEvaluator
 		EvaluatorType:  row.EvaluatorType,
 		Model:          row.Model,
 		AgentID:        row.AgentID,
+		EnvironmentID:  row.EnvironmentID,
+		Resources:      decodeEvaluatorResources(row.ResourcesJSON),
 		PromptTemplate: row.PromptTemplate,
 		Variables:      variables,
 		CreatedAt:      row.VersionCreatedAt,
@@ -253,10 +261,26 @@ func (row evaluationEvaluatorVersionRow) evaluationEvaluatorVersion() (Evaluatio
 		EvaluatorType:  row.EvaluatorType,
 		Model:          row.Model,
 		AgentID:        row.AgentID,
+		EnvironmentID:  row.EnvironmentID,
+		Resources:      decodeEvaluatorResources(row.ResourcesJSON),
 		PromptTemplate: row.PromptTemplate,
 		Variables:      variables,
 		CreatedAt:      row.CreatedAt,
 	}, nil
+}
+
+func encodeEvaluatorResources(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	return string(raw)
+}
+
+func decodeEvaluatorResources(raw string) json.RawMessage {
+	if raw == "" || raw == "null" {
+		return nil
+	}
+	return json.RawMessage(raw)
 }
 
 func encodeEvaluatorVariables(variables []string) (string, error) {

@@ -19,6 +19,7 @@ func (s evaluationCaseSessionStarter) StartCaseSession(ctx context.Context, prin
 		EnvironmentExternalID: input.EnvironmentExternalID,
 		Resources:             input.Resources,
 		Turns:                 input.Turns,
+		Title:                 input.Title,
 		Metadata:              input.Metadata,
 		TimeoutSeconds:        input.TimeoutSeconds,
 		Env:                   input.Env,

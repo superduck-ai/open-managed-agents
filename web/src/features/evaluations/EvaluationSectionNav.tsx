@@ -27,19 +27,24 @@ export function EvaluationSectionNav({ current }: { current: 'datasets' | 'evalu
     },
   ];
   return (
-    <nav className="mb-4 flex gap-4 text-sm">
-      {items.map((item) => (
-        <a
-          key={item.id}
-          href={item.href}
-          aria-current={item.id === current ? 'page' : undefined}
-          className={
-            item.id === current ? 'font-medium text-foreground' : 'text-muted-foreground hover:text-foreground'
-          }
-        >
-          {item.label}
-        </a>
-      ))}
+    <nav className="mb-5 inline-flex rounded-lg bg-muted/80 p-0.5">
+      {items.map((item) => {
+        const selected = item.id === current;
+        return (
+          <a
+            key={item.id}
+            href={item.href}
+            aria-current={selected ? 'page' : undefined}
+            className={
+              selected
+                ? 'rounded-md bg-background px-3 py-1 text-sm font-medium text-foreground'
+                : 'rounded-md px-3 py-1 text-sm text-muted-foreground hover:text-foreground'
+            }
+          >
+            {item.label}
+          </a>
+        );
+      })}
     </nav>
   );
 }

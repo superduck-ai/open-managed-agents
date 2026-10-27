@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -17,6 +18,7 @@ type EvaluationCaseSessionSpec struct {
 	EnvironmentExternalID string
 	Resources             json.RawMessage
 	Turns                 []string
+	Title                 string
 	Metadata              map[string]string
 	TimeoutSeconds        int
 	Env                   json.RawMessage
@@ -67,6 +69,13 @@ func evaluationCaseSessionRequest(spec EvaluationCaseSessionSpec) (sessionCreate
 		EnvironmentID: environment,
 		Metadata:      metadataJSON,
 	}, InitialEvents: initialEvents}
+	if title := strings.TrimSpace(spec.Title); title != "" {
+		encoded, err := json.Marshal(title)
+		if err != nil {
+			return sessionCreateRequest{}, err
+		}
+		request.Title = encoded
+	}
 	if len(spec.Resources) > 0 {
 		request.Resources = spec.Resources
 	}

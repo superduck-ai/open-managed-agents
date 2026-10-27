@@ -2,6 +2,7 @@ package evaluations
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -42,6 +43,25 @@ func TestSessionEndTurnCompletesExperiment(t *testing.T) {
 	}})
 	if store.experiment.Status != db.EvaluationExperimentStatusCompleted || store.experiment.Items[0].Status != db.EvaluationExperimentStatusCompleted {
 		t.Fatalf("second terminal status=%s item=%s", store.experiment.Status, store.experiment.Items[0].Status)
+	}
+}
+
+func TestGetExperimentRepairsStaleRunningStatus(t *testing.T) {
+	store := readyExperimentStore()
+	handler := NewHandler(store, nil).WithSessionStarter(&evaluationSessionStarterStub{sessionID: "sesn_case"})
+	created := serveEvaluation(evaluationRouterWith(handler), http.MethodPost, evaluationExperimentPath(""), experimentCreateBody(), "")
+	if created.Code != http.StatusOK {
+		t.Fatal(created.Body.String())
+	}
+	store.experiment.Items[0].Status = db.EvaluationExperimentStatusCompleted
+	store.experiment.Status = db.EvaluationExperimentStatusRunning
+	loaded := serveEvaluation(evaluationRouterWith(handler), http.MethodGet, evaluationExperimentPath("/"+store.experiment.ExternalID), "", "")
+	var body experimentResponse
+	if err := json.Unmarshal(loaded.Body.Bytes(), &body); err != nil || loaded.Code != http.StatusOK {
+		t.Fatalf("get = %d %s", loaded.Code, loaded.Body.String())
+	}
+	if body.Status != db.EvaluationExperimentStatusCompleted || store.experiment.Status != db.EvaluationExperimentStatusCompleted || store.lastStatus != db.EvaluationExperimentStatusCompleted {
+		t.Fatalf("body=%s stored=%s written=%s", body.Status, store.experiment.Status, store.lastStatus)
 	}
 }
 

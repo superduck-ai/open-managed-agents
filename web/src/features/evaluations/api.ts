@@ -61,6 +61,8 @@ export type EvaluationEvaluatorVersion = {
   evaluator_type: EvaluationEvaluatorType;
   model?: string;
   agent_id?: string;
+  environment_id?: string;
+  resources?: Array<{ file_id: string; path: string }>;
   prompt_template?: string;
   variables: string[];
   agent_contract?: EvaluationEvaluatorContract;
@@ -124,7 +126,6 @@ export type CreateEvaluationEvaluatorFromPresetInput = {
   name: string;
   desc?: string;
   source_version_id: string;
-  agent_id: string;
 };
 
 export type CreateEvaluationEvaluatorInput = {
@@ -133,6 +134,8 @@ export type CreateEvaluationEvaluatorInput = {
   evaluator_type: EvaluationEvaluatorType;
   model?: string;
   agent_id?: string;
+  environment_id?: string;
+  resources?: Array<{ file_id: string; path: string }>;
   prompt_template?: string;
   variables: string[];
 };
@@ -156,6 +159,8 @@ export type UpdateEvaluationCaseInput = {
 export type CreateEvaluationEvaluatorVersionInput = {
   model?: string;
   agent_id?: string;
+  environment_id?: string;
+  resources?: Array<{ file_id: string; path: string }>;
   prompt_template?: string;
   variables?: string[];
 };
@@ -206,6 +211,7 @@ export type EvaluationExperimentScore = {
   status: 'completed' | 'failed';
   score?: number;
   explanation?: string;
+  details?: unknown;
   error?: string;
 };
 
@@ -290,6 +296,13 @@ export function listEvaluationDatasetPresets(orgUuid: string, workspaceId: strin
   });
 }
 
+export function getEvaluationDatasetPreset(orgUuid: string, workspaceId: string, presetId: string) {
+  return consoleApi<EvaluationDatasetPreset>(
+    `${datasetPresetCollectionPath(orgUuid, workspaceId)}/${encodeURIComponent(presetId)}`,
+    { headers: workspaceHeaders(workspaceId) },
+  );
+}
+
 export function listEvaluationDatasetPresetCases(
   orgUuid: string,
   workspaceId: string,
@@ -299,6 +312,13 @@ export function listEvaluationDatasetPresetCases(
   const path = `${datasetPresetCollectionPath(orgUuid, workspaceId)}/${encodeURIComponent(presetId)}/cases`;
   const query = versionId ? `?version_id=${encodeURIComponent(versionId)}` : '';
   return consoleApi<EvaluationCasePage>(`${path}${query}`, { headers: workspaceHeaders(workspaceId) });
+}
+
+export function getEvaluationEvaluatorPreset(orgUuid: string, workspaceId: string, presetId: string) {
+  return consoleApi<EvaluationEvaluatorPreset>(
+    `${evaluatorPresetCollectionPath(orgUuid, workspaceId)}/${encodeURIComponent(presetId)}`,
+    { headers: workspaceHeaders(workspaceId) },
+  );
 }
 
 export function listEvaluationEvaluatorPresets(orgUuid: string, workspaceId: string) {

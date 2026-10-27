@@ -167,4 +167,36 @@
         AND workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}
     </update>
+
+    <update id="ReconcileSettledStatus" result="rows">
+        UPDATE evaluation_experiments AS experiment
+        SET status = CASE
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM evaluation_experiment_items AS item
+                    WHERE item.experiment_uuid = experiment.uuid
+                    AND item.status = 'failed'
+                ) THEN 'failed'
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM evaluation_experiment_items AS item
+                    WHERE item.experiment_uuid = experiment.uuid
+                    AND item.status = 'cancelled'
+                ) THEN 'cancelled'
+                ELSE 'completed'
+            END,
+            updated_at = #{updatedAt}
+        WHERE experiment.status IN ('pending', 'running')
+        AND EXISTS (
+            SELECT 1
+            FROM evaluation_experiment_items AS item
+            WHERE item.experiment_uuid = experiment.uuid
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM evaluation_experiment_items AS item
+            WHERE item.experiment_uuid = experiment.uuid
+            AND item.status NOT IN ('completed', 'failed', 'cancelled')
+        )
+    </update>
 </mapper>

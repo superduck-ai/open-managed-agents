@@ -45,13 +45,14 @@ func TestEvaluationAgentScoreSandboxStartsScoringSession(t *testing.T) {
 	sessionID, err := sandbox.Start(context.Background(), evaluationsapi.AgentScoreInput{
 		OrganizationUUID: "org", WorkspaceUUID: "ws", UserUUID: "user",
 		AgentExternalID: "agent_score", AgentVersion: 7, EnvironmentExternalID: "env_test",
-		ResultJSON: []byte(`{"output":"hi"}`), Turns: []string{"grade"}, Metadata: metadata,
+		ResultJSON: []byte(`{"output":"hi"}`), Turns: []string{"grade"}, Title: "评分 · 账单摘要", Metadata: metadata,
 		TimeoutSeconds: 60, Env: []byte(`{"TRACE":"1"}`),
+		Resources: json.RawMessage(`[{"type":"file","file_id":"file_a","mount_path":"/data/a.txt"}]`),
 	})
 	if err != nil || sessionID != "sesn_score" {
 		t.Fatalf("start = (%s, %v)", sessionID, err)
 	}
-	if creator.spec.AgentExternalID != "agent_score" || creator.spec.AgentVersion != 7 || creator.spec.EnvironmentExternalID != "env_test" || len(creator.spec.Resources) != 0 || creator.spec.TimeoutSeconds != 60 || string(creator.spec.Env) != `{"TRACE":"1"}` {
+	if creator.spec.AgentExternalID != "agent_score" || creator.spec.AgentVersion != 7 || creator.spec.Title != "评分 · 账单摘要" || creator.spec.EnvironmentExternalID != "env_test" || string(creator.spec.Resources) != `[{"type":"file","file_id":"file_a","mount_path":"/data/a.txt"}]` || creator.spec.TimeoutSeconds != 60 || string(creator.spec.Env) != `{"TRACE":"1"}` {
 		t.Fatalf("spec = %#v", creator.spec)
 	}
 	if creator.principal.UserUUID != "user" || string(files.written) != `{"output":"hi"}` || files.pathHint != evaluationsapi.AgentScoreResultPath {

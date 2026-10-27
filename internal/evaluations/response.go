@@ -56,15 +56,22 @@ type casePageResponse struct {
 	NextPage *string        `json:"next_page"`
 }
 
+type evaluatorMountResponse struct {
+	FileID string `json:"file_id"`
+	Path   string `json:"path"`
+}
+
 type evaluatorVersionResponse struct {
-	ID             string                 `json:"id"`
-	Version        int                    `json:"version"`
-	EvaluatorType  string                 `json:"evaluator_type"`
-	Model          string                 `json:"model,omitempty"`
-	AgentID        string                 `json:"agent_id,omitempty"`
-	PromptTemplate string                 `json:"prompt_template,omitempty"`
-	Variables      []string               `json:"variables"`
-	AgentContract  *agentContractResponse `json:"agent_contract,omitempty"`
+	ID             string                   `json:"id"`
+	Version        int                      `json:"version"`
+	EvaluatorType  string                   `json:"evaluator_type"`
+	Model          string                   `json:"model,omitempty"`
+	AgentID        string                   `json:"agent_id,omitempty"`
+	EnvironmentID  string                   `json:"environment_id,omitempty"`
+	Resources      []evaluatorMountResponse `json:"resources,omitempty"`
+	PromptTemplate string                   `json:"prompt_template,omitempty"`
+	Variables      []string                 `json:"variables"`
+	AgentContract  *agentContractResponse   `json:"agent_contract,omitempty"`
 }
 
 type agentContractResponse struct {
@@ -133,6 +140,27 @@ func datasetPage(datasets []db.EvaluationDataset, hasMore bool) datasetPageRespo
 	return datasetPageResponse{Data: data, NextPage: nextPage}
 }
 
+func evaluatorMountResponses(raw json.RawMessage) []evaluatorMountResponse {
+	if len(raw) == 0 {
+		return nil
+	}
+	var stored []storedEvaluatorMount
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return nil
+	}
+	mounts := make([]evaluatorMountResponse, 0, len(stored))
+	for _, mount := range stored {
+		if mount.FileID == "" && mount.MountPath == "" {
+			continue
+		}
+		mounts = append(mounts, evaluatorMountResponse{FileID: mount.FileID, Path: mount.MountPath})
+	}
+	if len(mounts) == 0 {
+		return nil
+	}
+	return mounts
+}
+
 func evaluatorResponseFrom(evaluator db.EvaluationEvaluator) evaluatorResponse {
 	status := "available"
 	if evaluator.ArchivedAt != nil {
@@ -148,6 +176,8 @@ func evaluatorResponseFrom(evaluator db.EvaluationEvaluator) evaluatorResponse {
 		EvaluatorType:  evaluator.Version.EvaluatorType,
 		Model:          evaluator.Version.Model,
 		AgentID:        evaluator.Version.AgentID,
+		EnvironmentID:  evaluator.Version.EnvironmentID,
+		Resources:      evaluatorMountResponses(evaluator.Version.Resources),
 		PromptTemplate: evaluator.Version.PromptTemplate,
 		Variables:      variables,
 	}

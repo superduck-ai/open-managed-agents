@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -82,8 +83,31 @@ func (h *Handler) getExperiment(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapStoreError(err, experimentNotFoundMessage, loadExperimentFailedMessage)
 	}
+	h.syncExperimentStatus(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, &experiment)
 	httpapi.WriteJSON(w, http.StatusOK, experimentResponseFrom(experiment, true))
 	return nil
+}
+
+func (h *Handler) syncExperimentStatus(ctx context.Context, organizationUUID, workspaceUUID string, experiment *db.EvaluationExperiment) {
+	if len(experiment.Items) == 0 {
+		return
+	}
+	status := experimentStatus(experiment.Items)
+	if status == experiment.Status {
+		return
+	}
+	updatedAt := time.Now().UTC()
+	if err := h.store.UpdateEvaluationExperimentStatus(ctx, organizationUUID, workspaceUUID, experiment.ExternalID, status, updatedAt); err != nil {
+		h.logger.WarnContext(ctx, "sync evaluation experiment status",
+			"organization_id", organizationUUID,
+			"workspace_id", workspaceUUID,
+			"experiment_id", experiment.ExternalID,
+			"error", err,
+		)
+		return
+	}
+	experiment.Status = status
+	experiment.UpdatedAt = updatedAt
 }
 
 func (h *Handler) startExperiment(w http.ResponseWriter, r *http.Request) error {
@@ -226,9 +250,9 @@ func (h *Handler) loadEvaluators(ctx context.Context, principal auth.Principal, 
 	evaluators := make([]db.EvaluationEvaluator, 0, len(evaluatorIDs))
 	seen := make(map[string]struct{}, len(evaluatorIDs))
 	for _, evaluatorID := range evaluatorIDs {
-		evaluator, err := h.store.GetEvaluationEvaluator(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, evaluatorID)
+		evaluator, err := h.loadExperimentEvaluator(ctx, principal, evaluatorID, failed)
 		if err != nil {
-			return nil, mapStoreError(err, evaluatorNotFoundMessage, failed)
+			return nil, err
 		}
 		if _, ok := seen[evaluator.UUID]; ok {
 			return nil, evaluatorIDsDuplicate()
@@ -237,6 +261,21 @@ func (h *Handler) loadEvaluators(ctx context.Context, principal auth.Principal, 
 		evaluators = append(evaluators, evaluator)
 	}
 	return evaluators, nil
+}
+
+func (h *Handler) loadExperimentEvaluator(ctx context.Context, principal auth.Principal, evaluatorID, failed string) (db.EvaluationEvaluator, error) {
+	evaluator, err := h.store.GetEvaluationEvaluator(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, evaluatorID)
+	if err == nil {
+		return evaluator, nil
+	}
+	if !errors.Is(err, db.ErrNotFound) {
+		return db.EvaluationEvaluator{}, mapStoreError(err, evaluatorNotFoundMessage, failed)
+	}
+	preset, presetErr := presetEvaluatorByID(evaluatorID)
+	if presetErr != nil || preset.Archived {
+		return db.EvaluationEvaluator{}, mapStoreError(err, evaluatorNotFoundMessage, failed)
+	}
+	return preset.asRecord(), nil
 }
 
 func (h *Handler) newExperiment(ctx context.Context, principal auth.Principal, draft experimentDraft, resolved resolvedExperiment) (db.EvaluationExperimentCreate, error) {
@@ -315,7 +354,7 @@ func (h *Handler) newExperimentBindings(ctx context.Context, principal auth.Prin
 }
 
 func (h *Handler) frozenScorerVersion(ctx context.Context, workspaceUUID string, evaluator db.EvaluationEvaluator) (int, error) {
-	if evaluator.Version.EvaluatorType != evaluatorTypeAgent {
+	if evaluator.Version.EvaluatorType != evaluatorTypeAgent || evaluator.Version.AgentID == "" {
 		return 0, nil
 	}
 	agent, err := h.loadAgent(ctx, workspaceUUID, evaluator.Version.AgentID, 0)
@@ -354,7 +393,7 @@ func newExperimentItems(principal auth.Principal, experimentUUID string, cases [
 }
 
 func (h *Handler) startPendingItems(ctx context.Context, principal auth.Principal, experiment db.EvaluationExperiment) (db.EvaluationExperiment, error) {
-	turns, err := h.caseTurns(ctx, principal, experiment)
+	cases, err := h.caseMaterials(ctx, principal, experiment)
 	if err != nil {
 		return db.EvaluationExperiment{}, err
 	}
@@ -364,7 +403,7 @@ func (h *Handler) startPendingItems(ctx context.Context, principal auth.Principa
 		if item.Status != db.EvaluationExperimentStatusPending {
 			continue
 		}
-		if err := h.startItem(ctx, principal, &experiment, item, turns[item.CaseExternalID]); err != nil {
+		if err := h.startItem(ctx, principal, &experiment, item, cases[item.CaseExternalID]); err != nil {
 			return db.EvaluationExperiment{}, err
 		}
 		changed = true
@@ -375,26 +414,31 @@ func (h *Handler) startPendingItems(ctx context.Context, principal auth.Principa
 	return h.finishExperimentStart(ctx, principal, experiment)
 }
 
-func (h *Handler) caseTurns(ctx context.Context, principal auth.Principal, experiment db.EvaluationExperiment) (map[string][]string, error) {
+type evaluationCaseMaterial struct {
+	Name  string
+	Turns []string
+}
+
+func (h *Handler) caseMaterials(ctx context.Context, principal auth.Principal, experiment db.EvaluationExperiment) (map[string]evaluationCaseMaterial, error) {
 	cases, err := h.store.ListEvaluationCasesByVersion(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, experiment.VersionUUID)
 	if err != nil {
 		return nil, mapStoreError(err, datasetVersionNotFoundMessage, startExperimentFailedMessage)
 	}
-	turns := make(map[string][]string, len(cases))
+	materials := make(map[string]evaluationCaseMaterial, len(cases))
 	for _, item := range cases {
-		turns[item.ExternalID] = item.Turns
+		materials[item.ExternalID] = evaluationCaseMaterial{Name: item.Name, Turns: item.Turns}
 	}
-	return turns, nil
+	return materials, nil
 }
 
-func (h *Handler) startItem(ctx context.Context, principal auth.Principal, experiment *db.EvaluationExperiment, item *db.EvaluationExperimentItem, turns []string) error {
+func (h *Handler) startItem(ctx context.Context, principal auth.Principal, experiment *db.EvaluationExperiment, item *db.EvaluationExperimentItem, material evaluationCaseMaterial) error {
 	update := db.EvaluationExperimentItemSession{
 		OrganizationUUID: principal.OrganizationUUID,
 		WorkspaceUUID:    principal.WorkspaceUUID,
 		ExternalID:       item.ExternalID,
 		UpdatedAt:        time.Now().UTC(),
 	}
-	sessionID, startErr := h.starter.StartCaseSession(ctx, principal, caseSessionInput(*experiment, *item, turns))
+	sessionID, startErr := h.starter.StartCaseSession(ctx, principal, caseSessionInput(*experiment, *item, material))
 	if startErr != nil {
 		h.logger.WarnContext(ctx, "evaluation case session failed",
 			"organization_id", principal.OrganizationUUID,
@@ -433,13 +477,47 @@ func (h *Handler) finishExperimentStart(ctx context.Context, principal auth.Prin
 	return reloaded, nil
 }
 
-func caseSessionInput(experiment db.EvaluationExperiment, item db.EvaluationExperimentItem, turns []string) CaseSessionInput {
+const (
+	caseSessionTitlePrefix  = "评测 · "
+	scoreSessionTitlePrefix = "评分 · "
+)
+
+func evaluationSessionTitle(prefix, name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return strings.TrimSuffix(prefix, " · ")
+	}
+	return prefix + name
+}
+
+func (h *Handler) evaluationCaseName(ctx context.Context, outcome sessionOutcome, experiment db.EvaluationExperiment, caseID string) string {
+	cases, err := h.store.ListEvaluationCasesByVersion(ctx, outcome.OrganizationUUID, outcome.WorkspaceUUID, experiment.VersionUUID)
+	if err != nil {
+		h.logger.WarnContext(ctx, "load evaluation case name",
+			"organization_id", outcome.OrganizationUUID,
+			"workspace_id", outcome.WorkspaceUUID,
+			"experiment_id", experiment.ExternalID,
+			"case_id", caseID,
+			"error", err,
+		)
+		return ""
+	}
+	for _, item := range cases {
+		if item.ExternalID == caseID {
+			return item.Name
+		}
+	}
+	return ""
+}
+
+func caseSessionInput(experiment db.EvaluationExperiment, item db.EvaluationExperimentItem, material evaluationCaseMaterial) CaseSessionInput {
 	return CaseSessionInput{
 		AgentExternalID:       experiment.AgentExternalID,
 		AgentVersion:          experiment.AgentVersion,
 		EnvironmentExternalID: experiment.EnvironmentExternalID,
 		Resources:             experiment.Resources,
-		Turns:                 turns,
+		Turns:                 material.Turns,
+		Title:                 evaluationSessionTitle(caseSessionTitlePrefix, material.Name),
 		Metadata: map[string]string{
 			"experiment_id": experiment.ExternalID,
 			"case_id":       item.CaseExternalID,

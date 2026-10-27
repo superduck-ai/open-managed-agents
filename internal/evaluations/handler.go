@@ -41,11 +41,14 @@ type Store interface {
 	ListEvaluationExperimentsPage(context.Context, db.ListEvaluationExperimentsPageParams) ([]db.EvaluationExperiment, bool, error)
 	ListCompletedEvaluationExperiments(context.Context, string, string, string, string) ([]db.EvaluationExperiment, error)
 	UpdateEvaluationExperimentStatus(context.Context, string, string, string, string, time.Time) error
+	ReconcileSettledEvaluationExperiments(context.Context, time.Time) error
 	SetEvaluationExperimentItemSession(context.Context, db.EvaluationExperimentItemSession) error
 	ListRunningEvaluationExperimentItemsBySession(context.Context, string, string, string) ([]db.EvaluationExperimentSessionMatch, error)
 	FinishRunningEvaluationExperimentItem(context.Context, string, string, string, string, string, time.Time) (bool, error)
 	GetEvaluationEvaluatorVersion(context.Context, string, string, string) (db.EvaluationEvaluatorVersion, error)
 	CreateEvaluationExperimentScore(context.Context, db.EvaluationExperimentScore) (db.EvaluationExperimentScore, error)
+	ListEvaluationItemsMissingScores(context.Context, int) ([]db.EvaluationScoreWork, error)
+	FindEvaluationAgentScoreSession(context.Context, string, string, string, string, string) (bool, error)
 	ListSessionEventsPage(context.Context, db.ListSessionEventsPageParams) ([]db.SessionEvent, bool, error)
 	GetSession(context.Context, string, string) (db.Session, bool, error)
 	ListSessionResources(context.Context, string, string) ([]db.SessionResource, error)
@@ -57,6 +60,7 @@ type CaseSessionInput struct {
 	EnvironmentExternalID string
 	Resources             json.RawMessage
 	Turns                 []string
+	Title                 string
 	Metadata              map[string]string
 	TimeoutSeconds        int
 	Env                   json.RawMessage
@@ -67,12 +71,13 @@ type CaseSessionStarter interface {
 }
 
 type Handler struct {
-	store   Store
-	logger  *slog.Logger
-	starter CaseSessionStarter
-	model   EvaluatorModel
-	sandbox AgentScoreSandbox
-	files   CaseFileCopier
+	store     Store
+	logger    *slog.Logger
+	starter   CaseSessionStarter
+	model     EvaluatorModel
+	sandbox   AgentScoreSandbox
+	files     CaseFileCopier
+	scoreJobs ScoreEnqueuer
 }
 
 func NewHandler(store Store, logger *slog.Logger) *Handler {
@@ -96,6 +101,11 @@ func (h *Handler) WithAgentScoreSandbox(sandbox AgentScoreSandbox) *Handler {
 
 func (h *Handler) WithCaseFileCopier(copier CaseFileCopier) *Handler {
 	h.files = copier
+	return h
+}
+
+func (h *Handler) WithScoreJobs(jobs ScoreEnqueuer) *Handler {
+	h.scoreJobs = jobs
 	return h
 }
 

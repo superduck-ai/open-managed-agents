@@ -237,6 +237,11 @@ func (d *DB) ListCompletedEvaluationExperiments(ctx context.Context, organizatio
 	return experiments, nil
 }
 
+func (d *DB) ReconcileSettledEvaluationExperiments(ctx context.Context, updatedAt time.Time) error {
+	_, err := NewEvaluationExperimentMapper(d.mapperDB).ReconcileSettledStatus(ctx, updatedAt)
+	return err
+}
+
 func (d *DB) UpdateEvaluationExperimentStatus(ctx context.Context, organizationUUID, workspaceUUID, externalID, status string, updatedAt time.Time) error {
 	rows, err := NewEvaluationExperimentMapper(d.mapperDB).UpdateStatus(ctx, evaluationExperimentStatusParams{
 		OrganizationUUID: organizationUUID,

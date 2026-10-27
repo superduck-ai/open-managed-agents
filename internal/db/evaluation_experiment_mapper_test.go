@@ -78,6 +78,13 @@ func TestEvaluationExperimentMapperBuilderContracts(t *testing.T) {
 			},
 			wantSQLFragments: []string{"SET status = $1", "external_id = $5"},
 		}},
+		{"reconcile settled status", mapperBuilderContract{
+			statement: evaluationExperimentMapperReconcileSettledStatusStatement,
+			bound:     buildEvaluationExperimentMapperReconcileSettledStatus(yourbatis.DialectPostgres, now),
+			wantID:    "EvaluationExperimentMapper.ReconcileSettledStatus", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{"updatedAt"},
+			wantSQLFragments:  []string{"experiment.status IN ('pending', 'running')", "item.status NOT IN ('completed', 'failed', 'cancelled')", "THEN 'failed'", "ELSE 'completed'"},
+		}},
 		{"running items by session", mapperBuilderContract{
 			statement: evaluationExperimentItemMapperListRunningBySessionStatement,
 			bound:     buildEvaluationExperimentItemMapperListRunningBySession(yourbatis.DialectPostgres, params.OrganizationUUID, params.WorkspaceUUID, "sesn_case"),

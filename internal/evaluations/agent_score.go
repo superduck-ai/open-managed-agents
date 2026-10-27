@@ -33,8 +33,10 @@ type AgentScoreInput struct {
 	AgentExternalID       string
 	AgentVersion          int
 	EnvironmentExternalID string
+	Resources             json.RawMessage
 	ResultJSON            []byte
 	Turns                 []string
+	Title                 string
 	Metadata              map[string]string
 	TimeoutSeconds        int
 	Env                   json.RawMessage
@@ -82,6 +84,20 @@ func (h *Handler) scoreAgent(ctx context.Context, outcome sessionOutcome, experi
 		h.recordScore(ctx, outcome, experiment, item, binding, version, nil, "", nil, agentScoringUnavailableMessage)
 		return
 	}
+	started, startedErr := h.store.FindEvaluationAgentScoreSession(ctx, outcome.OrganizationUUID, outcome.WorkspaceUUID, experiment.ExternalID, item.ExternalID, binding.VersionExternalID)
+	if startedErr != nil {
+		h.logger.WarnContext(ctx, "find evaluation agent score session",
+			"organization_id", outcome.OrganizationUUID,
+			"workspace_id", outcome.WorkspaceUUID,
+			"experiment_id", experiment.ExternalID,
+			"evaluator_version_id", version.ExternalID,
+			"error", startedErr,
+		)
+		return
+	}
+	if started {
+		return
+	}
 	agent, err := h.scoringAgent(ctx, outcome.WorkspaceUUID, version.AgentID, binding.AgentVersion)
 	if err != nil {
 		message := evaluatorScoreFailedMessage
@@ -110,9 +126,11 @@ func (h *Handler) scoreAgent(ctx context.Context, outcome sessionOutcome, experi
 		UserUUID:              experiment.CreatedByUserUUID,
 		AgentExternalID:       version.AgentID,
 		AgentVersion:          agent.CurrentVersion,
-		EnvironmentExternalID: experiment.EnvironmentExternalID,
+		EnvironmentExternalID: evaluatorScoreEnvironment(version, experiment),
+		Resources:             version.Resources,
 		ResultJSON:            result,
 		Turns:                 agentScoreTurns(version, values, result),
+		Title:                 evaluationSessionTitle(scoreSessionTitlePrefix, h.evaluationCaseName(ctx, outcome, experiment, item.CaseExternalID)),
 		Metadata:              agentScoreMetadata(experiment.ExternalID, item.ExternalID, binding.VersionExternalID),
 		TimeoutSeconds:        experiment.TimeoutSeconds,
 		Env:                   experiment.Env,
@@ -129,6 +147,13 @@ func (h *Handler) scoreAgent(ctx context.Context, outcome sessionOutcome, experi
 	}
 }
 
+func evaluatorScoreEnvironment(version db.EvaluationEvaluatorVersion, experiment db.EvaluationExperiment) string {
+	if version.EnvironmentID != "" {
+		return version.EnvironmentID
+	}
+	return experiment.EnvironmentExternalID
+}
+
 func (h *Handler) scoringAgent(ctx context.Context, workspaceUUID, agentID string, frozenVersion int) (db.Agent, error) {
 	if frozenVersion > 0 {
 		return h.store.GetAgentVersion(ctx, workspaceUUID, agentID, frozenVersion)
@@ -137,6 +162,10 @@ func (h *Handler) scoringAgent(ctx context.Context, workspaceUUID, agentID strin
 }
 
 func (h *Handler) settleAgentScore(ctx context.Context, outcome sessionOutcome) {
+	h.settleAgentScoreAttempt(ctx, outcome, 0)
+}
+
+func (h *Handler) settleAgentScoreAttempt(ctx context.Context, outcome sessionOutcome, attempt int) {
 	if h.sandbox == nil {
 		return
 	}
@@ -157,7 +186,16 @@ func (h *Handler) settleAgentScore(ctx context.Context, outcome sessionOutcome) 
 	if !ok {
 		return
 	}
-	h.applyAgentScore(ctx, outcome, target)
+	h.applyAgentScore(ctx, outcome, target, attempt)
+}
+
+func (h *Handler) readDeferredScoreFile(ctx context.Context, args scoreFileArgs) {
+	h.settleAgentScoreAttempt(ctx, sessionOutcome{
+		OrganizationUUID:  args.OrganizationUUID,
+		WorkspaceUUID:     args.WorkspaceUUID,
+		SessionExternalID: args.SessionID,
+		Status:            db.EvaluationExperimentStatusCompleted,
+	}, args.Attempt)
 }
 
 func (h *Handler) agentScoreTarget(ctx context.Context, outcome sessionOutcome, claim AgentScoreClaim) (agentScoreTarget, bool) {
@@ -195,7 +233,7 @@ func (h *Handler) agentScoreTarget(ctx context.Context, outcome sessionOutcome, 
 	return agentScoreTarget{experiment: experiment, item: item, binding: binding, version: version, versionErr: err}, true
 }
 
-func (h *Handler) applyAgentScore(ctx context.Context, outcome sessionOutcome, target agentScoreTarget) {
+func (h *Handler) applyAgentScore(ctx context.Context, outcome sessionOutcome, target agentScoreTarget, attempt int) {
 	if target.versionErr != nil {
 		h.recordScore(ctx, outcome, target.experiment, target.item, target.binding, target.version, nil, "", nil, evaluatorVersionNotFoundMessage)
 		return
@@ -210,6 +248,9 @@ func (h *Handler) applyAgentScore(ctx context.Context, outcome sessionOutcome, t
 	}
 	raw, err := h.sandbox.ReadScore(ctx, outcome.OrganizationUUID, outcome.WorkspaceUUID, outcome.SessionExternalID)
 	if err != nil {
+		if errors.Is(err, ErrAgentScoreFileMissing) && h.deferMissingScoreFile(ctx, outcome, attempt) {
+			return
+		}
 		h.logger.WarnContext(ctx, "read evaluation agent score",
 			"organization_id", outcome.OrganizationUUID,
 			"workspace_id", outcome.WorkspaceUUID,
@@ -226,6 +267,33 @@ func (h *Handler) applyAgentScore(ctx context.Context, outcome sessionOutcome, t
 		return
 	}
 	h.recordScore(ctx, outcome, target.experiment, target.item, target.binding, target.version, &scored.Score, scored.Explanation, scored.Details, "")
+}
+
+func (h *Handler) deferMissingScoreFile(ctx context.Context, outcome sessionOutcome, attempt int) bool {
+	if h.scoreJobs == nil || attempt+1 >= scoreFileReadAttempts {
+		return false
+	}
+	next := attempt + 1
+	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), scoreEnqueueTimeout)
+	err := h.scoreJobs.EnqueueScoreFile(enqueueCtx, outcome.OrganizationUUID, outcome.WorkspaceUUID, outcome.SessionExternalID, next)
+	cancel()
+	if err != nil {
+		h.logger.WarnContext(ctx, "enqueue evaluation score file reread",
+			"organization_id", outcome.OrganizationUUID,
+			"workspace_id", outcome.WorkspaceUUID,
+			"session_id", outcome.SessionExternalID,
+			"attempt", next,
+			"error", err,
+		)
+		return false
+	}
+	h.logger.InfoContext(ctx, "defer evaluation agent score file",
+		"organization_id", outcome.OrganizationUUID,
+		"workspace_id", outcome.WorkspaceUUID,
+		"session_id", outcome.SessionExternalID,
+		"attempt", next,
+	)
+	return true
 }
 
 func agentScoreResultJSON(sessionID string, values scoreValues) ([]byte, error) {

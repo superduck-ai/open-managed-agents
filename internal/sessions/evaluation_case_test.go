@@ -13,6 +13,7 @@ func TestEvaluationCaseSessionRequestBuildsManagedSession(t *testing.T) {
 		EnvironmentExternalID: "env_test",
 		Resources:             json.RawMessage(`[{"type":"file","file_id":"file_test"}]`),
 		Turns:                 []string{"hello", "again"},
+		Title:                 "账单摘要",
 		Metadata:              map[string]string{"experiment_id": "evalexp_test", "case_id": "evalcase_test"},
 	})
 	if err != nil {
@@ -34,6 +35,9 @@ func TestEvaluationCaseSessionRequestBuildsManagedSession(t *testing.T) {
 	var metadata map[string]string
 	if err := json.Unmarshal(request.Metadata, &metadata); err != nil || metadata["experiment_id"] != "evalexp_test" || metadata["case_id"] != "evalcase_test" {
 		t.Fatalf("metadata = %s err=%v", request.Metadata, err)
+	}
+	if string(request.Title) != `"账单摘要"` {
+		t.Fatalf("title = %s", request.Title)
 	}
 }
 

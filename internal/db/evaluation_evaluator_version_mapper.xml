@@ -12,6 +12,8 @@
         agent_id,
         prompt_template,
         CAST(variables AS text) AS variables_json,
+        environment_external_id,
+        COALESCE(CAST(resources AS text), '') AS resources_json,
         created_at
     </sql>
 
@@ -28,6 +30,8 @@
             agent_id,
             prompt_template,
             variables,
+            environment_external_id,
+            resources,
             created_at
         ) VALUES (
             #{params.UUID},
@@ -41,6 +45,8 @@
             #{params.AgentID},
             #{params.PromptTemplate},
             CAST(#{params.VariablesJSON} AS jsonb),
+            #{params.EnvironmentID},
+            CAST(NULLIF(#{params.ResourcesJSON}, '') AS jsonb),
             #{params.CreatedAt}
         )
         RETURNING

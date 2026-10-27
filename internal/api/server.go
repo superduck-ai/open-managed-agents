@@ -115,6 +115,7 @@ type ServerDeps struct {
 	TunnelBroker           *tunnelsapi.Broker
 	TunnelPresence         *tunnelsapi.ConnectorPresence
 	WorkerEventAcks        workerevents.AckStore
+	EvaluationScores       *evaluationsapi.ScoreJobs
 }
 
 // NewServer 用显式依赖组装 HTTP API Server。
@@ -197,6 +198,10 @@ func NewServer(deps ServerDeps) *Server {
 	evaluationHandler.WithAgentScoreSandbox(newEvaluationAgentScoreSandbox(s.sessions, deps.DB, filestoreService, componentLogger("evaluations")))
 	if copier := evaluationsapi.NewWorkspaceFileCopier(deps.DB, deps.ObjectStore, deps.Config.Storage.MaxFileBytes, deps.Config.Storage.WorkspaceLimitBytes); copier != nil {
 		evaluationHandler.WithCaseFileCopier(copier)
+	}
+	if deps.EvaluationScores != nil {
+		evaluationHandler.WithScoreJobs(deps.EvaluationScores)
+		deps.EvaluationScores.Bind(evaluationHandler)
 	}
 	s.sessions.WithSessionEventObserver(evaluationHandler)
 	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)

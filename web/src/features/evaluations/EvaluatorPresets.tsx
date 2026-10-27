@@ -8,24 +8,44 @@ import { Label } from '../../shared/ui/label';
 import { TableEmptyRow, TableErrorRow, TableLoadingRow } from '../../shared/ui/resource-table';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { evaluationErrorMessage, type EvaluationEvaluatorPreset } from './api';
+import { CopyIdButton } from './CopyIdButton';
+import { evaluationEvaluatorPresetHref, useEvaluationWorkspace } from './useEvaluationDatasets';
 import { useCreateEvaluationEvaluatorFromPreset, useEvaluationEvaluatorPresetList } from './useEvaluationEvaluators';
 
-export function EvaluatorPresets({ onCreated }: { onCreated: () => void }) {
+export function EvaluatorPresets({ search = '', onCreated }: { search?: string; onCreated: () => void }) {
   const { msg } = useI18n();
   const { query } = useEvaluationEvaluatorPresetList();
   const [preset, setPreset] = useState<EvaluationEvaluatorPreset | null>(null);
-  const presets = query.data?.data ?? [];
+  const presets = (query.data?.data ?? []).filter((item) =>
+    matchesPresetQuery(search, [item.version.id, item.name, item.desc]),
+  );
 
   return (
     <>
-      <Table>
+      <Table className="table-fixed">
         <TableHeader>
           <TableRow>
-            <TableHead>{msg('evaluations.name', 'Name')}</TableHead>
-            <TableHead>{msg('evaluations.evaluatorType', 'Type')}</TableHead>
-            <TableHead>{msg('evaluations.status', 'Status')}</TableHead>
-            <TableHead>{msg('evaluations.descriptionField', 'Description')}</TableHead>
-            <TableHead />
+            <TableHead className="w-[14%] text-xs font-normal text-muted-foreground">
+              {msg('evaluations.id', 'ID')}
+            </TableHead>
+            <TableHead className="w-[16%] text-xs font-normal text-muted-foreground">
+              {msg('evaluations.name', 'Name')}
+            </TableHead>
+            <TableHead className="text-xs font-normal text-muted-foreground">
+              {msg('evaluations.descriptionField', 'Description')}
+            </TableHead>
+            <TableHead className="w-24 text-xs font-normal text-muted-foreground">
+              {msg('evaluations.evaluatorType', 'Type')}
+            </TableHead>
+            <TableHead className="w-[22%] text-xs font-normal text-muted-foreground">
+              {msg('evaluations.insertVariables', 'Insert variables')}
+            </TableHead>
+            <TableHead className="w-28 text-xs font-normal text-muted-foreground">
+              {msg('evaluations.createdAt', 'Created')}
+            </TableHead>
+            <TableHead className="w-36 text-right text-xs font-normal text-muted-foreground">
+              {msg('evaluations.actions', 'Action')}
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -64,13 +84,14 @@ function EvaluatorPresetRows({
   onCreate: (preset: EvaluationEvaluatorPreset) => void;
 }) {
   const { msg } = useI18n();
+  const workspace = useEvaluationWorkspace();
   if (isLoading) {
-    return <TableLoadingRow colSpan={5} label={msg('common.loading', 'Loading...')} />;
+    return <TableLoadingRow colSpan={7} label={msg('common.loading', 'Loading...')} />;
   }
   if (errorMessage) {
     return (
       <TableErrorRow
-        colSpan={5}
+        colSpan={7}
         title={msg('evaluations.presetsLoadFailed', 'Could not load presets')}
         message={errorMessage}
         retryLabel={msg('common.retry', 'Retry')}
@@ -79,23 +100,35 @@ function EvaluatorPresetRows({
     );
   }
   if (presets.length === 0) {
-    return <TableEmptyRow colSpan={5}>{msg('evaluations.presetsEmpty', 'No presets.')}</TableEmptyRow>;
+    return <TableEmptyRow colSpan={7}>{msg('evaluations.presetsEmpty', 'No presets.')}</TableEmptyRow>;
   }
   return presets.map((preset) => (
     <TableRow key={preset.id}>
-      <TableCell className="font-medium">{preset.name}</TableCell>
-      <TableCell>{preset.version.evaluator_type}</TableCell>
       <TableCell>
-        {preset.status === 'archived'
-          ? msg('evaluations.archived', 'Archived')
-          : msg('evaluations.available', 'Available')}
+        <CopyIdButton id={preset.version.id} />
       </TableCell>
-      <TableCell className="text-muted-foreground">{preset.desc}</TableCell>
+      <TableCell className="font-medium">
+        <a
+          className="block truncate hover:underline"
+          href={evaluationEvaluatorPresetHref(workspace.workspaceId, preset.id)}
+        >
+          {preset.name}
+        </a>
+      </TableCell>
+      <TableCell className="text-muted-foreground">
+        <span className="block truncate">{preset.desc}</span>
+      </TableCell>
+      <TableCell>{presetTypeLabel(preset.version.evaluator_type, msg)}</TableCell>
       <TableCell>
+        <PresetVariables names={preset.version.variables} />
+      </TableCell>
+      <TableCell className="text-muted-foreground">{presetDate(preset.created_at)}</TableCell>
+      <TableCell className="text-right">
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           size="sm"
+          className="h-8 px-2 font-normal text-muted-foreground"
           disabled={preset.status === 'archived'}
           aria-label={`${msg('evaluations.createFromPreset', 'Create from preset')} ${preset.name}`}
           onClick={() => onCreate(preset)}
@@ -105,6 +138,44 @@ function EvaluatorPresetRows({
       </TableCell>
     </TableRow>
   ));
+}
+
+function PresetVariables({ names }: { names: string[] }) {
+  if (names.length === 0) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return (
+    <span className="flex flex-wrap gap-1">
+      {names.map((name) => (
+        <span key={name} className="rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground">
+          {name}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function presetTypeLabel(type: string, msg: ReturnType<typeof useI18n>['msg']) {
+  if (type === 'llm') {
+    return msg('evaluations.evaluatorLLM', 'LLM');
+  }
+  return msg('evaluations.evaluatorAgent', 'Agent');
+}
+
+function presetDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function matchesPresetQuery(query: string, parts: string[]) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) {
+    return true;
+  }
+  return parts.some((part) => part.toLowerCase().includes(needle));
 }
 
 function CreateFromEvaluatorPresetDialog({
@@ -120,12 +191,11 @@ function CreateFromEvaluatorPresetDialog({
   const create = useCreateEvaluationEvaluatorFromPreset();
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
-  const [agentId, setAgentId] = useState('');
 
   function submit(event: FormEvent) {
     event.preventDefault();
     create.mutate(
-      { name, desc, source_version_id: preset.version.id, agent_id: agentId },
+      { name, desc, source_version_id: preset.version.id },
       {
         onSuccess: () => {
           onClose();
@@ -149,15 +219,8 @@ function CreateFromEvaluatorPresetDialog({
           <Input id="preset-evaluator-name" value={name} onChange={(event) => setName(event.target.value)} required />
           <Label htmlFor="preset-evaluator-description">{msg('evaluations.descriptionField', 'Description')}</Label>
           <Input id="preset-evaluator-description" value={desc} onChange={(event) => setDesc(event.target.value)} />
-          <Label htmlFor="preset-evaluator-agent">{msg('evaluations.agentId', 'Agent')}</Label>
-          <Input
-            id="preset-evaluator-agent"
-            value={agentId}
-            onChange={(event) => setAgentId(event.target.value)}
-            required
-          />
           <p className="text-sm text-muted-foreground">
-            {msg('evaluations.presetAgentHint', 'The preset rubric is copied. Enter the Agent that will run it.')}
+            {msg('evaluations.presetAgentHint', 'The preset rubric is copied.')}
           </p>
           {create.error ? <p className="text-sm text-destructive">{evaluationErrorMessage(create.error)}</p> : null}
           <DialogFooter>

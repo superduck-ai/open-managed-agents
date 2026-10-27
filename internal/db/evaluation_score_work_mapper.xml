@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EvaluationScoreWorkMapper">
+    <select id="ListItemsMissingScores" resultType="evaluationScoreWorkRow">
+        SELECT
+            item.organization_uuid,
+            item.workspace_uuid,
+            experiment.external_id AS experiment_external_id,
+            item.external_id,
+            item.session_external_id
+        FROM evaluation_experiment_items AS item
+        JOIN evaluation_experiments AS experiment
+            ON experiment.uuid = item.experiment_uuid
+            AND experiment.organization_uuid = item.organization_uuid
+            AND experiment.workspace_uuid = item.workspace_uuid
+        WHERE item.status = 'completed'
+        AND item.session_external_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1
+            FROM evaluation_experiment_items AS sibling
+            WHERE sibling.experiment_uuid = item.experiment_uuid
+            AND sibling.organization_uuid = item.organization_uuid
+            AND sibling.workspace_uuid = item.workspace_uuid
+            AND sibling.status IN ('pending', 'running')
+        )
+        AND (
+            SELECT count(*)
+            FROM evaluation_experiment_scores AS score
+            WHERE score.item_uuid = item.uuid
+        ) &lt; (
+            SELECT count(*)
+            FROM evaluation_experiment_evaluators AS binding
+            WHERE binding.experiment_uuid = item.experiment_uuid
+        )
+        ORDER BY item.updated_at ASC, item.uuid ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="FindAgentScoreSession" resultType="evaluationAgentScoreSessionRow">
+        SELECT external_id
+        FROM sessions
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND deleted_at IS NULL
+        AND metadata-&gt;&gt;'evaluation_role' = 'agent_score'
+        AND metadata-&gt;&gt;'experiment_id' = #{experimentID}
+        AND metadata-&gt;&gt;'item_id' = #{itemID}
+        AND metadata-&gt;&gt;'evaluator_version_id' = #{versionID}
+        LIMIT 1
+    </select>
+</mapper>

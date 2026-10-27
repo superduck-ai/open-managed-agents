@@ -1,10 +1,11 @@
 import { useQueryClient } from '@tanstack/react-query';
+import { CircleHelp, XIcon } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 
 import { useAuth } from '../../shared/auth/context';
 import { useI18n, useLocale } from '../../shared/i18n';
 import { Button } from '../../shared/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
+import { Dialog, DialogClose, DialogContent, DialogFooter, DialogTitle } from '../../shared/ui/dialog';
 import { Input } from '../../shared/ui/input';
 import { Label } from '../../shared/ui/label';
 import { Tabs, TabsList, TabsTrigger } from '../../shared/ui/tabs';
@@ -119,48 +120,78 @@ export function CreateDatasetDialog({ open, onOpenChange }: { open: boolean; onO
   return (
     <>
       <Dialog open={open} onOpenChange={close}>
-        <DialogContent className="sm:max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>{msg('evaluations.createTitle', 'New dataset')}</DialogTitle>
-          </DialogHeader>
-          <form className="grid gap-3" onSubmit={(event) => void submit(event)}>
-            <div className="flex items-center justify-between gap-3">
-              <Label htmlFor="evaluation-dataset-name">{msg('evaluations.name', 'Name')}</Label>
-              <span className="text-xs text-muted-foreground">
-                {msg('evaluations.nameCount', '{count}/50', { count: name.length })}
-              </span>
+        <DialogContent className="gap-5 p-6 sm:max-w-4xl" showCloseButton={false}>
+          <div className="flex items-center justify-between gap-3">
+            <DialogTitle className="text-base font-semibold">
+              {msg('evaluations.createTitle', 'New dataset')}
+            </DialogTitle>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
+                onClick={() => setHelpOpen(true)}
+              >
+                <CircleHelp className="size-4" aria-hidden />
+                {msg('evaluations.createHelp', 'How to create a dataset')}
+              </Button>
+              <DialogClose render={<Button type="button" variant="ghost" size="icon-sm" />}>
+                <XIcon />
+                <span className="sr-only">Close</span>
+              </DialogClose>
             </div>
-            <Input
-              id="evaluation-dataset-name"
-              value={name}
-              maxLength={maxNameLength}
-              onChange={(event) => setName(event.target.value)}
-              required
-            />
-            <Label htmlFor="evaluation-dataset-description">{msg('evaluations.descriptionField', 'Description')}</Label>
-            <Textarea
-              id="evaluation-dataset-description"
-              value={desc}
-              placeholder={msg('evaluations.descPlaceholder', 'What this dataset evaluates')}
-              onChange={(event) => setDesc(event.target.value)}
-            />
-            <Tabs
-              value={source}
-              onValueChange={(value) => {
-                if (value === 'upload' || value === 'reuse') {
-                  setSource(value);
-                }
-              }}
-            >
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger type="button" value="upload">
-                  {msg('evaluations.createUpload', 'Upload data')}
-                </TabsTrigger>
-                <TabsTrigger type="button" value="reuse">
-                  {msg('evaluations.createReuse', 'Reuse existing')}
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
+          </div>
+          <form className="grid gap-5" onSubmit={(event) => void submit(event)}>
+            <div className="grid gap-2">
+              <div className="flex items-center gap-0.5">
+                <RequiredMark />
+                <Label htmlFor="evaluation-dataset-name">{msg('evaluations.datasetName', 'Name')}</Label>
+              </div>
+              <Input
+                id="evaluation-dataset-name"
+                value={name}
+                maxLength={maxNameLength}
+                placeholder={msg('evaluations.datasetNamePlaceholder', 'e.g. Customer answer accuracy')}
+                onChange={(event) => setName(event.target.value)}
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                {msg('evaluations.nameCount', '{count}/50', { count: name.length })}
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="evaluation-dataset-description">
+                {msg('evaluations.descriptionField', 'Description')}
+              </Label>
+              <Textarea
+                id="evaluation-dataset-description"
+                value={desc}
+                className="min-h-24"
+                placeholder={msg('evaluations.descPlaceholder', 'What this dataset evaluates')}
+                onChange={(event) => setDesc(event.target.value)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <p className="text-sm font-medium">{msg('evaluations.datasetSource', 'Dataset source')}</p>
+              <Tabs
+                value={source}
+                onValueChange={(value) => {
+                  if (value === 'upload' || value === 'reuse') {
+                    setSource(value);
+                  }
+                }}
+              >
+                <TabsList>
+                  <TabsTrigger type="button" value="upload" className="px-3">
+                    {msg('evaluations.createUpload', 'Upload data')}
+                  </TabsTrigger>
+                  <TabsTrigger type="button" value="reuse" className="px-3">
+                    {msg('evaluations.createReuse', 'Reuse existing')}
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
             {source === 'upload' ? (
               <DatasetUploadDropzone
                 file={file}
@@ -169,7 +200,6 @@ export function CreateDatasetDialog({ open, onOpenChange }: { open: boolean; onO
                   setFile(next);
                   setTooLarge(Boolean(next && next.size > maxImportBytes));
                 }}
-                onHelp={() => setHelpOpen(true)}
                 onTemplate={() => downloadDatasetTemplate(locale)}
               />
             ) : (
@@ -180,6 +210,9 @@ export function CreateDatasetDialog({ open, onOpenChange }: { open: boolean; onO
               <p className="text-sm text-destructive">{evaluationErrorMessage(create.error)}</p>
             ) : null}
             <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => close(false)}>
+                {msg('common.cancel', 'Cancel')}
+              </Button>
               <Button type="submit" disabled={create.isPending || (source === 'upload' && !file) || waitingForCases}>
                 {msg('evaluations.create', 'Create dataset')}
               </Button>
@@ -189,5 +222,13 @@ export function CreateDatasetDialog({ open, onOpenChange }: { open: boolean; onO
       </Dialog>
       <DatasetFormatHelp open={helpOpen} onOpenChange={setHelpOpen} />
     </>
+  );
+}
+
+function RequiredMark() {
+  return (
+    <span className="text-destructive" aria-hidden>
+      *
+    </span>
   );
 }

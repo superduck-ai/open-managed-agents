@@ -32,6 +32,8 @@
         v.agent_id,
         v.prompt_template,
         CAST(v.variables AS text) AS variables_json,
+        v.environment_external_id,
+        COALESCE(CAST(v.resources AS text), '') AS resources_json,
         v.created_at AS version_created_at
     </sql>
 

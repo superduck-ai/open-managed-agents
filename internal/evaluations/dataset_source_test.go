@@ -49,23 +49,19 @@ func TestCreateDatasetCopiesSelectedCases(t *testing.T) {
 	}
 
 	preset := serveEvaluation(router, http.MethodPost, evaluationDatasetPath(""), `{"name":"preset subset","source_version_id":"edv_oma_demo_03_v2","case_ids":["evalcase_oma_demo_03_v2_02"]}`, "")
-	if preset.Code != http.StatusOK || store.createDatasetCalls != 2 || len(store.createdWrites) != 1 || !strings.Contains(store.createdWrites[0].Turns[0], "case 2") {
-		t.Fatalf("preset subset = %d calls=%d writes=%#v body=%s", preset.Code, store.createDatasetCalls, store.createdWrites, preset.Body.String())
+	if preset.Code != http.StatusNotFound || !strings.Contains(preset.Body.String(), presetDatasetNotFoundMessage) || store.createDatasetCalls != 1 {
+		t.Fatalf("preset subset = %d calls=%d %s", preset.Code, store.createDatasetCalls, preset.Body.String())
 	}
-	unknownPresetCase := serveEvaluation(router, http.MethodPost, evaluationDatasetPath(""), `{"name":"bad case","source_version_id":"edv_oma_demo_03_v2","case_ids":["evalcase_missing"]}`, "")
-	if unknownPresetCase.Code != http.StatusBadRequest || !strings.Contains(unknownPresetCase.Body.String(), caseIDsUnknownMessage) || store.createDatasetCalls != 2 {
-		t.Fatalf("unknown preset case = %d calls=%d %s", unknownPresetCase.Code, store.createDatasetCalls, unknownPresetCase.Body.String())
-	}
-	both := serveEvaluation(router, http.MethodPost, evaluationDatasetPath(""), `{"name":"both","source_version_id":"edv_oma_demo_03_v2","source_dataset_id":"evalds_source","case_ids":["evalcase_a"]}`, "")
-	if both.Code != http.StatusBadRequest || !strings.Contains(both.Body.String(), datasetSourceConflictMessage) || store.createDatasetCalls != 2 {
+	both := serveEvaluation(router, http.MethodPost, evaluationDatasetPath(""), `{"name":"both","source_version_id":"edv_missing","source_dataset_id":"evalds_source","case_ids":["evalcase_a"]}`, "")
+	if both.Code != http.StatusBadRequest || !strings.Contains(both.Body.String(), datasetSourceConflictMessage) || store.createDatasetCalls != 1 {
 		t.Fatalf("both sources = %d calls=%d %s", both.Code, store.createDatasetCalls, both.Body.String())
 	}
 	orphan := serveEvaluation(router, http.MethodPost, evaluationDatasetPath(""), `{"name":"orphan","case_ids":["evalcase_a"]}`, "")
-	if orphan.Code != http.StatusBadRequest || !strings.Contains(orphan.Body.String(), caseIDsRequireSourceMessage) || store.createDatasetCalls != 2 {
+	if orphan.Code != http.StatusBadRequest || !strings.Contains(orphan.Body.String(), caseIDsRequireSourceMessage) || store.createDatasetCalls != 1 {
 		t.Fatalf("orphan = %d calls=%d %s", orphan.Code, store.createDatasetCalls, orphan.Body.String())
 	}
 	duplicate := serveEvaluation(router, http.MethodPost, evaluationDatasetPath(""), `{"name":"duplicate","source_dataset_id":"evalds_source","case_ids":["evalcase_a","evalcase_a"]}`, "")
-	if duplicate.Code != http.StatusBadRequest || !strings.Contains(duplicate.Body.String(), caseIDsInvalidMessage) || store.createDatasetCalls != 2 {
+	if duplicate.Code != http.StatusBadRequest || !strings.Contains(duplicate.Body.String(), caseIDsInvalidMessage) || store.createDatasetCalls != 1 {
 		t.Fatalf("duplicate = %d calls=%d %s", duplicate.Code, store.createDatasetCalls, duplicate.Body.String())
 	}
 }

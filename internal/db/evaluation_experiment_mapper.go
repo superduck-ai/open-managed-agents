@@ -86,4 +86,5 @@ type EvaluationExperimentMapper interface {
 	ListPage(ctx context.Context, params evaluationExperimentPageParams) ([]evaluationExperimentRow, error)
 	ListMatching(ctx context.Context, params evaluationExperimentCompareParams) ([]evaluationExperimentRow, error)
 	UpdateStatus(ctx context.Context, params evaluationExperimentStatusParams) (int64, error)
+	ReconcileSettledStatus(ctx context.Context, updatedAt time.Time) (int64, error)
 }

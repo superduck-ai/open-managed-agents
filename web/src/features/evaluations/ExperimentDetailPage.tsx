@@ -1,112 +1,78 @@
-import { useI18n } from '../../shared/i18n';
 import { Button } from '../../shared/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
+import { useI18n } from '../../shared/i18n';
 import { evaluationErrorMessage } from './api';
+import { CopyIdButton } from './CopyIdButton';
 import { EvaluationSectionNav } from './EvaluationSectionNav';
+import { EvaluationStatusBadge } from './EvaluationStatusBadge';
+import { useNamedRecords } from './EvaluationPickers';
+import { ExperimentDetailBody } from './ExperimentDetailBody';
+import { caseRecords, datasetRecord, experimentNames, nameMap } from './experimentSummary';
+import { evaluationExperimentsHref, useEvaluationCaseList } from './useEvaluationDatasets';
+import { useEvaluationEvaluatorList } from './useEvaluationEvaluators';
 import { useEvaluationExperiment, useStartEvaluationExperiment } from './useEvaluationExperiments';
+
+const agentsPath = '/v1/agents?beta=true&limit=50';
 
 export function ExperimentDetailPage() {
   const { msg } = useI18n();
   const { workspace, experimentId, query } = useEvaluationExperiment();
   const start = useStartEvaluationExperiment(experimentId);
   const experiment = query.data;
+  const datasetId = experiment?.dataset_id ?? '';
+  const { datasetQuery, casesQuery } = useEvaluationCaseList(datasetId);
+  const evaluators = useEvaluationEvaluatorList();
+  const agents = useNamedRecords(agentsPath);
+  const names = experiment
+    ? experimentNames({
+        experiment,
+        dataset: datasetRecord(datasetQuery.data),
+        evaluators: nameMap(evaluators.query.data),
+        cases: caseRecords(casesQuery.data),
+        agents: agents.data ?? [],
+      })
+    : undefined;
 
   return (
     <section className="relative min-h-[calc(100vh-48px)] text-foreground">
       <EvaluationSectionNav current="experiments" />
-      <header className="mb-5 flex items-start justify-between gap-6">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{experiment?.name ?? experimentId}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{experiment?.status}</p>
-        </div>
-        <Button
-          type="button"
-          className="h-9"
-          disabled={!experimentId || start.isPending}
-          onClick={() => start.mutate()}
+      <header className="mb-4">
+        <a
+          className="text-sm text-muted-foreground hover:text-foreground"
+          href={evaluationExperimentsHref(workspace.workspaceId)}
         >
-          {msg('evaluations.start', 'Start')}
-        </Button>
+          {msg('evaluations.experiments', 'Experiments')}
+        </a>
+        <div className="mt-2 flex items-start justify-between gap-6">
+          <h1 className="text-2xl font-semibold tracking-tight">{experiment?.name ?? experimentId}</h1>
+          {experiment?.status === 'pending' ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-8"
+              disabled={!experimentId || start.isPending}
+              onClick={() => start.mutate()}
+            >
+              {msg('evaluations.start', 'Start')}
+            </Button>
+          ) : null}
+        </div>
+        {experiment ? (
+          <div className="mt-2 flex items-center gap-2">
+            <EvaluationStatusBadge status={experiment.status} />
+            <CopyIdButton id={experiment.id} className="w-auto" />
+          </div>
+        ) : null}
       </header>
-      {query.error ? <p className="text-sm text-destructive">{evaluationErrorMessage(query.error)}</p> : null}
-      {experiment ? (
-        <div className="mb-6 grid gap-1 text-sm">
-          <span>
-            {msg('evaluations.agentId', 'Agent')}: {experiment.agent_id} v{experiment.agent_version}
-          </span>
-          <span>
-            {msg('evaluations.environmentId', 'Environment')}: {experiment.environment_id}
-          </span>
-          <span>
-            {msg('evaluations.datasetVersion', 'Dataset version')}: {experiment.version_id}
-          </span>
-          <span>
-            {msg('evaluations.timeoutSeconds', 'Timeout (seconds)')}: {experiment.timeout_seconds}
-          </span>
-          {experiment.env ? (
-            <pre className="whitespace-pre-wrap text-muted-foreground">{JSON.stringify(experiment.env, null, 2)}</pre>
-          ) : null}
-          {experiment.resources ? (
-            <pre className="whitespace-pre-wrap text-muted-foreground">
-              {JSON.stringify(experiment.resources, null, 2)}
-            </pre>
-          ) : null}
-        </div>
+      {query.error ? <p className="mb-4 text-sm text-destructive">{evaluationErrorMessage(query.error)}</p> : null}
+      {start.error ? <p className="mb-4 text-sm text-destructive">{evaluationErrorMessage(start.error)}</p> : null}
+      {experiment && names ? (
+        <ExperimentDetailBody
+          experiment={experiment}
+          names={names}
+          cases={caseRecords(casesQuery.data)}
+          workspaceId={workspace.workspaceId}
+        />
       ) : null}
-      {(experiment?.scores?.length ?? 0) > 0 ? (
-        <div className="mb-6">
-          <h2 className="mb-2 text-sm font-medium">{msg('evaluations.scores', 'Scores')}</h2>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{msg('evaluations.evaluators', 'Evaluators')}</TableHead>
-                <TableHead>{msg('evaluations.cases', 'Cases')}</TableHead>
-                <TableHead>{msg('evaluations.score', 'Score')}</TableHead>
-                <TableHead>{msg('evaluations.explanation', 'Explanation')}</TableHead>
-                <TableHead>{msg('evaluations.status', 'Status')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {experiment?.scores?.map((score) => (
-                <TableRow key={score.id}>
-                  <TableCell>{score.evaluator_id}</TableCell>
-                  <TableCell>{score.item_id}</TableCell>
-                  <TableCell>{score.score ?? ''}</TableCell>
-                  <TableCell>{score.explanation || score.error}</TableCell>
-                  <TableCell>{score.status}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      ) : null}
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>{msg('evaluations.cases', 'Cases')}</TableHead>
-            <TableHead>{msg('evaluations.status', 'Status')}</TableHead>
-            <TableHead>{msg('evaluations.session', 'Session')}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {(experiment?.items ?? []).map((item) => (
-            <TableRow key={item.id}>
-              <TableCell>{item.case_id}</TableCell>
-              <TableCell>{item.error || item.status}</TableCell>
-              <TableCell>
-                {item.session_id ? (
-                  <a
-                    className="hover:underline"
-                    href={`/workspaces/${encodeURIComponent(workspace.workspaceId)}/sessions/${encodeURIComponent(item.session_id)}`}
-                  >
-                    {item.session_id}
-                  </a>
-                ) : null}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
     </section>
   );
 }

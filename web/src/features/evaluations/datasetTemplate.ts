@@ -58,9 +58,9 @@ export function downloadDatasetTemplate(locale: string) {
   URL.revokeObjectURL(url);
 }
 
-export const datasetZipTree = `dataset.zip
+export const datasetZipTree = `my-dataset/
 ├── cases.jsonl
 ├── input_files/
-│   └── notes.txt
+│   └── ...
 └── reference_files/
-    └── answer.txt`;
+    └── ...`;

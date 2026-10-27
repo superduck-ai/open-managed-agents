@@ -22,6 +22,15 @@ export function useEvaluationExperimentList() {
   return { workspace, query };
 }
 
+export function useEvaluationExperimentBaseline(experimentId: string, enabled: boolean) {
+  const workspace = useEvaluationWorkspace();
+  return useQuery({
+    queryKey: evaluationExperimentDetailKey(workspace.orgUuid, workspace.workspaceId, experimentId),
+    enabled: enabled && workspace.workspaceReady && experimentId.length > 0,
+    queryFn: () => getEvaluationExperiment(workspace.orgUuid ?? '', workspace.workspaceId, experimentId),
+  });
+}
+
 export function useEvaluationExperiment() {
   const workspace = useEvaluationWorkspace();
   const experimentId = experimentIdFromPath();
@@ -29,6 +38,7 @@ export function useEvaluationExperiment() {
     queryKey: evaluationExperimentDetailKey(workspace.orgUuid, workspace.workspaceId, experimentId),
     enabled: workspace.workspaceReady && experimentId.length > 0,
     queryFn: () => getEvaluationExperiment(workspace.orgUuid ?? '', workspace.workspaceId, experimentId),
+    refetchInterval: (query) => evaluationExperimentRefreshInterval(query.state.data),
   });
   return { workspace, experimentId, query };
 }
@@ -78,4 +88,20 @@ function evaluationExperimentKey(orgUuid: string | undefined, workspaceId: strin
 
 function evaluationExperimentDetailKey(orgUuid: string | undefined, workspaceId: string, experimentId: string) {
   return ['evaluation-experiment', orgUuid, workspaceId, experimentId];
+}
+
+function evaluationExperimentRefreshInterval(experiment: { status: string; item_count: number; evaluator_count: number; items?: unknown[]; evaluators?: unknown[]; scores?: unknown[] } | undefined) {
+  if (!experiment) {
+    return false;
+  }
+  if (experiment.status === 'pending' || experiment.status === 'running') {
+    return 2000;
+  }
+  const items = Math.max(experiment.items?.length ?? 0, experiment.item_count);
+  const evaluators = Math.max(experiment.evaluators?.length ?? 0, experiment.evaluator_count);
+  const expected = items > 0 && evaluators > 0 ? items * evaluators : 0;
+  if (expected > (experiment.scores?.length ?? 0)) {
+    return 2000;
+  }
+  return false;
 }

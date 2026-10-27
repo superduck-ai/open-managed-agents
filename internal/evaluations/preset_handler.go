@@ -114,18 +114,16 @@ func (h *Handler) createEvaluatorFromPreset(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(body.AgentID) != "" {
+		return agentIDForbidden()
+	}
 	preset, err := presetEvaluatorVersion(strings.TrimSpace(body.SourceVersionID))
 	if err != nil {
 		return presetLookupError(err, presetEvaluatorNotFoundMessage)
 	}
-	agentID, err := normalizePresetAgentID(body.AgentID)
-	if err != nil {
-		return err
-	}
 	evaluator, err := newCustomEvaluator(principal, name, description, db.EvaluationEvaluatorVersion{
 		EvaluatorType:  preset.EvaluatorType,
 		Model:          preset.Model,
-		AgentID:        agentID,
 		PromptTemplate: preset.PromptTemplate,
 		Variables:      append([]string(nil), preset.Variables...),
 	})
@@ -142,6 +140,9 @@ func (h *Handler) createEvaluatorFromPreset(w http.ResponseWriter, r *http.Reque
 
 func evaluatorPresetConflict(body createEvaluatorRequest) bool {
 	if strings.TrimSpace(body.EvaluatorType) != "" || strings.TrimSpace(body.Model) != "" || strings.TrimSpace(body.PromptTemplate) != "" {
+		return true
+	}
+	if strings.TrimSpace(body.EnvironmentID) != "" || evaluatorResourcesPresent(body.Resources) {
 		return true
 	}
 	return len(body.Variables) > 0
@@ -239,7 +240,10 @@ func (evaluator presetEvaluator) asRecord() db.EvaluationEvaluator {
 	if evaluator.Archived {
 		archivedAt = &presetPublishedAt
 	}
+	evaluatorUUID := presetStableUUID("evaluator", evaluator.ID)
+	versionUUID := presetStableUUID("version", evaluator.VersionID)
 	return db.EvaluationEvaluator{
+		UUID:        evaluatorUUID,
 		ExternalID:  evaluator.ID,
 		Name:        evaluator.Name,
 		Description: evaluator.Description,
@@ -247,6 +251,8 @@ func (evaluator presetEvaluator) asRecord() db.EvaluationEvaluator {
 		UpdatedAt:   presetPublishedAt,
 		ArchivedAt:  archivedAt,
 		Version: db.EvaluationEvaluatorVersion{
+			UUID:           versionUUID,
+			EvaluatorUUID:  evaluatorUUID,
 			ExternalID:     evaluator.VersionID,
 			Version:        1,
 			EvaluatorType:  evaluator.EvaluatorType,
@@ -257,6 +263,10 @@ func (evaluator presetEvaluator) asRecord() db.EvaluationEvaluator {
 			CreatedAt:      presetPublishedAt,
 		},
 	}
+}
+
+func presetStableUUID(kind, id string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("oma-evaluation-preset:"+kind+":"+id)).String()
 }
 
 func presetStatus(archived bool) string {

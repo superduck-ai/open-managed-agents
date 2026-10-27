@@ -77,7 +77,7 @@ func TestEvaluationEvaluatorMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{
 				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 				"params.EvaluatorUUID", "params.Version", "params.EvaluatorType", "params.Model", "params.AgentID",
-				"params.PromptTemplate", "params.VariablesJSON", "params.CreatedAt",
+				"params.PromptTemplate", "params.VariablesJSON", "params.EnvironmentID", "params.ResourcesJSON", "params.CreatedAt",
 			},
 			wantSQLFragments: []string{"INSERT INTO evaluation_evaluator_versions", "CAST(", "AS jsonb)", "RETURNING"},
 		}},
@@ -183,7 +183,7 @@ func evaluationEvaluatorInsertColumns() []string {
 func evaluationEvaluatorPageColumns() []string {
 	return append(evaluationEvaluatorInsertColumns(),
 		"version_uuid", "version_external_id", "version_number", "evaluator_type", "model", "agent_id",
-		"prompt_template", "variables_json", "version_created_at",
+		"prompt_template", "variables_json", "environment_external_id", "resources_json", "version_created_at",
 	)
 }
 
@@ -194,14 +194,15 @@ func evaluationEvaluatorPageRowValues() []driver.Value {
 		"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002",
 		"score", "nightly", "00000000-0000-4000-8000-000000000004", now, now, nil,
 		"00000000-0000-4000-8000-000000000011", "eev_test", int64(1), "llm", "claude", "",
-		"Score {{input}}", `["input"]`, now,
+		"Score {{input}}", `["input"]`, "", "", now,
 	}
 }
 
 func evaluationEvaluatorVersionColumns() []string {
 	return []string{
 		"uuid", "external_id", "organization_uuid", "workspace_uuid", "evaluator_uuid", "version",
-		"evaluator_type", "model", "agent_id", "prompt_template", "variables_json", "created_at",
+		"evaluator_type", "model", "agent_id", "prompt_template", "variables_json",
+		"environment_external_id", "resources_json", "created_at",
 	}
 }
 
@@ -210,6 +211,6 @@ func evaluationEvaluatorVersionRowValues(variables string) []driver.Value {
 	return []driver.Value{
 		"00000000-0000-4000-8000-000000000011", "eev_test",
 		"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002",
-		"00000000-0000-4000-8000-000000000010", int64(1), "agent", "", "agent_score", "", variables, now,
+		"00000000-0000-4000-8000-000000000010", int64(1), "agent", "", "agent_score", "", variables, "", "", now,
 	}
 }

@@ -1,3 +1,4 @@
+import { Upload } from 'lucide-react';
 import { useState } from 'react';
 
 import { useI18n } from '../../shared/i18n';
@@ -7,19 +8,36 @@ export function DatasetUploadDropzone({
   file,
   tooLarge,
   onFile,
-  onHelp,
   onTemplate,
 }: {
   file: File | null;
   tooLarge: boolean;
   onFile: (file: File | null) => void;
-  onHelp: () => void;
   onTemplate: () => void;
 }) {
   const { msg } = useI18n();
   const [dragging, setDragging] = useState(false);
+  const title = msg('evaluations.dropzone', 'Drag or choose a dataset file');
   return (
     <div className="grid gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-0.5">
+          <span className="text-destructive" aria-hidden>
+            *
+          </span>
+          <span className="text-sm font-medium">{msg('evaluations.uploadFile', 'Upload file')}</span>
+        </div>
+        <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" onClick={onTemplate}>
+          <Upload className="size-4" aria-hidden />
+          {msg('evaluations.downloadTemplate', 'Download template')}
+        </Button>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        {msg(
+          'evaluations.templateHelper',
+          'The ZIP template is a complete example: cases.jsonl plus sample input_files/ and reference_files/.',
+        )}
+      </p>
       <label
         htmlFor="evaluation-dataset-file"
         onDragEnter={(event) => {
@@ -36,16 +54,24 @@ export function DatasetUploadDropzone({
           setDragging(false);
           onFile(event.dataTransfer.files?.[0] ?? null);
         }}
-        className={`flex min-h-28 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed px-4 py-6 text-center text-sm ${dragging ? 'border-primary bg-muted/50' : 'border-input'}`}
+        className={`flex min-h-44 cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border border-dashed px-6 py-8 text-center ${dragging ? 'border-primary bg-muted/40' : 'border-input'}`}
       >
-        <span className="font-medium">{msg('evaluations.dropzone', 'Drag or choose a dataset file')}</span>
-        <span className="text-muted-foreground">{file?.name ?? msg('evaluations.dropzoneHint', dropzoneHint)}</span>
+        <span className="flex size-9 items-center justify-center rounded-lg border bg-background shadow-xs">
+          <Upload className="size-4 text-muted-foreground" aria-hidden />
+        </span>
+        <span className="grid gap-1">
+          <span className="text-sm font-medium">{file?.name ?? title}</span>
+          <span className="max-w-md text-sm text-muted-foreground">
+            {msg('evaluations.dropzoneHint', dropzoneHint)}
+          </span>
+        </span>
       </label>
       <input
         id="evaluation-dataset-file"
         className="sr-only"
         type="file"
         accept=".jsonl,.zip,application/jsonl,application/zip"
+        aria-label={title}
         onChange={(event) => onFile(event.target.files?.[0] ?? null)}
       />
       {tooLarge ? (
@@ -53,19 +79,8 @@ export function DatasetUploadDropzone({
           {msg('evaluations.importFileTooLarge', 'File must be 100MB or smaller.')}
         </p>
       ) : null}
-      <p className="text-sm text-muted-foreground">{msg('evaluations.templateHelper', templateHelper)}</p>
-      <div className="flex flex-wrap gap-3">
-        <Button type="button" variant="link" className="h-auto px-0" onClick={onTemplate}>
-          {msg('evaluations.downloadTemplate', 'Download template')}
-        </Button>
-        <Button type="button" variant="link" className="h-auto px-0" onClick={onHelp}>
-          {msg('evaluations.createHelp', 'How to create a dataset')}
-        </Button>
-      </div>
     </div>
   );
 }
 
 const dropzoneHint = 'JSONL or ZIP, up to 100MB and 1000 cases. Put attachments in a ZIP.';
-const templateHelper =
-  'The ZIP template is a complete example: cases.jsonl plus sample input_files/ and reference_files/.';

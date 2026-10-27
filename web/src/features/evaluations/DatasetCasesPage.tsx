@@ -1,14 +1,33 @@
-import { useState, type FormEvent } from 'react';
+import { ChevronDown, Search } from 'lucide-react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 
 import { useI18n } from '../../shared/i18n';
 import { Button } from '../../shared/ui/button';
+import { CaseListPager, casePageSlice } from './CaseListPager';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../../shared/ui/dropdown-menu';
 import { Input } from '../../shared/ui/input';
 import { Label } from '../../shared/ui/label';
 import { TableEmptyRow, TableErrorRow, TableLoadingRow } from '../../shared/ui/resource-table';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { Textarea } from '../../shared/ui/textarea';
-import { evaluationErrorMessage, type EvaluationCase, type EvaluationCaseFromSessionsResult } from './api';
-import { CaseDrawer } from './CaseDrawer';
+import {
+  evaluationErrorMessage,
+  type EvaluationCase,
+  type EvaluationCaseFromSessionsResult,
+  type EvaluationDataset,
+} from './api';
+import { CaseDetailSheet } from './CaseDrawer';
+import { PresetDatasetPage } from './PresetDatasetPage';
+import { CopyIdButton } from './CopyIdButton';
+import { DatasetVersionEditor } from './DatasetVersionEditor';
+import { EvaluationSectionNav } from './EvaluationSectionNav';
+import { EvaluationStatusBadge } from './EvaluationStatusBadge';
 import { parseCheckpointsField, parseSessionIDs } from './sessionCase';
 import { CheckpointsField, IncludeOutputFilesField, SessionCaseFields } from './SessionCaseFields';
 import {
@@ -21,72 +40,152 @@ import {
   useImportEvaluationCases,
 } from './useEvaluationDatasets';
 
+type CaseAction = 'add' | 'jsonl' | 'session' | 'sessions';
+
 export function DatasetCasesPage() {
+  if (new URLSearchParams(window.location.search).get('preset') === '1') {
+    return <PresetDatasetPage />;
+  }
+  return <CustomDatasetCasesPage />;
+}
+
+function CustomDatasetCasesPage() {
   const { msg } = useI18n();
   const datasetId = datasetIdFromPath();
   const { workspace, datasetQuery, casesQuery } = useEvaluationCaseList(datasetId);
-  const cases = casesQuery.data?.data ?? [];
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const cases = (casesQuery.data?.data ?? []).filter((item) =>
+    matchesCaseQuery(search, [item.name, item.desc, ...item.turns]),
+  );
+  const visible = casePageSlice(cases, page);
   const version = datasetQuery.data?.version;
   const [openCase, setOpenCase] = useState<EvaluationCase | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [action, setAction] = useState<CaseAction | null>(null);
+  const dataset = datasetQuery.data;
 
   return (
     <section className="relative min-h-[calc(100vh-48px)] text-foreground">
-      <header className="mb-5">
+      <EvaluationSectionNav current="datasets" />
+      <header className="mb-3">
         <a
-          className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+          className="text-sm text-muted-foreground hover:text-foreground"
           href={evaluationsIndexHref(workspace.workspaceId)}
         >
           {msg('evaluations.title', 'Datasets')}
         </a>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-          {datasetQuery.data?.name ?? msg('evaluations.cases', 'Cases')}
+          {dataset?.name ?? msg('evaluations.cases', 'Cases')}
         </h1>
-        {version ? (
-          <p className="mt-1 text-sm text-muted-foreground">
-            {msg('evaluations.version', 'Version {version}', { version: version.version })}
-          </p>
-        ) : null}
-        {datasetQuery.data?.desc ? (
-          <p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">{datasetQuery.data.desc}</p>
-        ) : null}
       </header>
-      <div className="mb-8 grid gap-6 lg:grid-cols-2">
-        <AddCaseForm datasetId={datasetId} />
-        <ImportCasesForm datasetId={datasetId} />
-        <ImportSessionCaseForm datasetId={datasetId} />
-        <ImportSessionsForm datasetId={datasetId} />
-      </div>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>{msg('evaluations.position', 'Position')}</TableHead>
-            <TableHead>{msg('evaluations.name', 'Name')}</TableHead>
-            <TableHead>{msg('evaluations.turns', 'Turns')}</TableHead>
-            <TableHead>{msg('evaluations.descriptionField', 'Description')}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <CaseRows
-            cases={cases}
-            isLoading={!workspace.workspaceReady || casesQuery.isLoading}
-            errorMessage={casesQuery.error ? evaluationErrorMessage(casesQuery.error) : ''}
-            onRetry={() => void casesQuery.refetch()}
-            onOpen={setOpenCase}
+      <DatasetIdentity dataset={dataset} />
+      <div className="flex flex-col gap-8">
+        <DatasetFacts dataset={dataset} loadedCount={casesQuery.data?.data.length} />
+        <VersionSection dataset={dataset} version={version} onEdit={() => setEditing(true)} />
+        <section id="evaluation-cases" className="rounded-lg border">
+          <div className="flex items-center justify-between gap-3 px-4 pt-4">
+            <h2 className="text-sm font-medium">{msg('evaluations.caseList', 'Cases')}</h2>
+            <AddCaseMenu onAction={setAction} />
+          </div>
+          <CurrentVersion dataset={dataset} version={version?.version} />
+          <div className="px-4">
+            <div className="relative mb-3 max-w-sm">
+              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setPage(0);
+                }}
+                placeholder={msg('evaluations.searchDatasetCases', 'Search cases')}
+                aria-label={msg('evaluations.searchDatasetCases', 'Search cases')}
+                className="h-9 bg-background pl-8"
+              />
+            </div>
+          </div>
+          <div className="max-h-80 overflow-auto">
+          <Table className="table-fixed [&_td]:px-4 [&_td]:py-3 [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-muted [&_th]:h-9 [&_th]:px-4">
+            <TableHeader>
+              <TableRow className="bg-muted hover:bg-muted">
+                <TableHead className="w-40 text-xs font-normal text-muted-foreground">
+                  {msg('evaluations.caseTitle', 'Name')}
+                </TableHead>
+                <TableHead className="text-xs font-normal text-muted-foreground">
+                  {msg('evaluations.caseInput', 'Input')}
+                </TableHead>
+                <TableHead className="w-24 text-xs font-normal text-muted-foreground">
+                  {msg('evaluations.caseMode', 'Mode')}
+                </TableHead>
+                <TableHead className="w-24 text-right text-xs font-normal text-muted-foreground">
+                  {msg('evaluations.actions', 'Action')}
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <CaseRows
+                cases={visible.items}
+                isLoading={!workspace.workspaceReady || casesQuery.isLoading}
+                errorMessage={casesQuery.error ? evaluationErrorMessage(casesQuery.error) : ''}
+                onRetry={() => void casesQuery.refetch()}
+                onOpen={setOpenCase}
+              />
+            </TableBody>
+          </Table>
+          </div>
+          <CaseListPager
+            total={cases.length}
+            page={visible.page}
+            pageCount={visible.pageCount}
+            onPage={setPage}
           />
-        </TableBody>
-      </Table>
-      <CaseDrawer
+        </section>
+      </div>
+      <CaseDialog
+        open={action === 'add'}
+        title={msg('evaluations.addCase', 'Add case')}
+        onClose={() => setAction(null)}
+      >
+        <AddCaseForm datasetId={datasetId} />
+      </CaseDialog>
+      <CaseDialog
+        open={action === 'jsonl'}
+        title={msg('evaluations.importJsonl', 'Import JSONL')}
+        onClose={() => setAction(null)}
+      >
+        <ImportCasesForm datasetId={datasetId} />
+      </CaseDialog>
+      <CaseDialog
+        open={action === 'session'}
+        title={msg('evaluations.importFromSession', 'Import from session')}
+        onClose={() => setAction(null)}
+      >
+        <ImportSessionCaseForm datasetId={datasetId} />
+      </CaseDialog>
+      <CaseDialog
+        open={action === 'sessions'}
+        title={msg('evaluations.importSessions', 'Import sessions')}
+        onClose={() => setAction(null)}
+      >
+        <ImportSessionsForm datasetId={datasetId} />
+      </CaseDialog>
+      <CaseDetailSheet
         item={openCase}
         workspaceId={workspace.workspaceId}
-        datasetId={datasetId}
         open={openCase !== null}
         onOpenChange={(open) => {
           if (!open) {
             setOpenCase(null);
           }
         }}
-        onSaved={setOpenCase}
-        onDeleted={() => setOpenCase(null)}
+      />
+      <DatasetVersionEditor
+        open={editing}
+        version={version?.version ?? 1}
+        cases={casesQuery.data?.data ?? []}
+        datasetId={datasetId}
+        onOpenChange={setEditing}
+        onAdd={() => setAction('add')}
       />
     </section>
   );
@@ -125,16 +224,258 @@ function CaseRows({
   }
   return cases.map((item) => (
     <TableRow key={item.id}>
-      <TableCell>{item.position}</TableCell>
-      <TableCell>
-        <button type="button" className="font-medium underline-offset-4 hover:underline" onClick={() => onOpen(item)}>
+      <TableCell className="w-40 font-medium">
+        <button type="button" className="block w-full truncate text-left" onClick={() => onOpen(item)}>
           {item.name}
         </button>
       </TableCell>
-      <TableCell className="whitespace-pre-wrap">{item.turns.join('\n')}</TableCell>
-      <TableCell>{item.desc}</TableCell>
+      <TableCell className="text-muted-foreground">
+        <span className="block truncate">{item.turns[0] ?? ''}</span>
+      </TableCell>
+      <TableCell className="text-muted-foreground">
+        {item.turns.length > 1
+          ? msg('evaluations.multiTurn', 'Multi-turn')
+          : msg('evaluations.singleTurn', 'Single turn')}
+      </TableCell>
+      <TableCell className="text-right">
+        <button
+          type="button"
+          className="text-sm text-muted-foreground hover:text-foreground"
+          aria-label={`${msg('evaluations.viewCase', 'View')} ${item.name}`}
+          onClick={() => onOpen(item)}
+        >
+          {msg('evaluations.viewCase', 'View')}
+        </button>
+      </TableCell>
     </TableRow>
   ));
+}
+
+function CaseDialog({
+  open,
+  title,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  if (!open) {
+    return null;
+  }
+  return (
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) {
+          onClose();
+        }
+      }}
+    >
+      <DialogContent className="max-h-[min(640px,80vh)] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        {children}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DatasetIdentity({ dataset }: { dataset: EvaluationDataset | undefined }) {
+  const { msg } = useI18n();
+  if (!dataset) {
+    return null;
+  }
+  return (
+    <div className="mb-4 flex items-center gap-2">
+      <span className="inline-flex h-5 shrink-0 items-center rounded-md border border-[var(--success)]/30 bg-[var(--success-bg)] px-1.5 text-xs font-medium text-[var(--success)]">
+        {msg('evaluations.customBadge', 'Custom')}
+      </span>
+      <CopyIdButton id={dataset.id} className="w-auto" />
+    </div>
+  );
+}
+
+function DatasetFacts({
+  dataset,
+  loadedCount,
+}: {
+  dataset: EvaluationDataset | undefined;
+  loadedCount: number | undefined;
+}) {
+  const { msg } = useI18n();
+  return (
+    <section className="rounded-lg border px-5 py-5">
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-baseline gap-x-8 gap-y-4 text-sm">
+        <dt className="text-muted-foreground">{msg('evaluations.descriptionField', 'Description')}</dt>
+        <dd className="min-w-0 truncate">{dataset?.desc || '—'}</dd>
+        <dt className="text-muted-foreground">{msg('evaluations.caseCount', 'Cases')}</dt>
+        <dd>{factCaseCount(dataset, loadedCount)}</dd>
+        <dt className="text-muted-foreground">{msg('evaluations.createdAt', 'Created')}</dt>
+        <dd>{dateLabel(dataset?.created_at ?? '')}</dd>
+      </dl>
+    </section>
+  );
+}
+
+function factCaseCount(dataset: EvaluationDataset | undefined, loadedCount: number | undefined) {
+  if (dataset) {
+    return dataset.version.case_count;
+  }
+  return loadedCount ?? 0;
+}
+
+function VersionSection({
+  dataset,
+  version,
+  onEdit,
+}: {
+  dataset: EvaluationDataset | undefined;
+  version: EvaluationDataset['version'] | undefined;
+  onEdit: () => void;
+}) {
+  const { msg } = useI18n();
+  return (
+    <section className="rounded-lg border">
+      <h2 className="px-4 pt-4 pb-3 text-sm font-medium">{msg('evaluations.versionList', 'Versions')}</h2>
+      <Table className="table-fixed [&_td]:px-4 [&_th]:h-9 [&_th]:px-4">
+        <TableHeader>
+          <TableRow className="bg-muted hover:bg-muted">
+            <TableHead className="w-16 text-xs font-normal text-muted-foreground">
+              {msg('evaluations.versionColumn', 'Version')}
+            </TableHead>
+            <TableHead className="text-xs font-normal text-muted-foreground">{msg('evaluations.id', 'ID')}</TableHead>
+            <TableHead className="w-28 text-xs font-normal text-muted-foreground">
+              {msg('evaluations.status', 'Status')}
+            </TableHead>
+            <TableHead className="w-24 text-xs font-normal text-muted-foreground">
+              {msg('evaluations.caseCount', 'Cases')}
+            </TableHead>
+            <TableHead className="w-32 text-xs font-normal text-muted-foreground">
+              {msg('evaluations.publishedAt', 'Published')}
+            </TableHead>
+            <TableHead className="w-28 text-right text-xs font-normal text-muted-foreground">
+              {msg('evaluations.actions', 'Action')}
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {version ? (
+            <VersionRow dataset={dataset} version={version} onEdit={onEdit} />
+          ) : (
+            <TableEmptyRow colSpan={6}>{msg('common.loading', 'Loading...')}</TableEmptyRow>
+          )}
+        </TableBody>
+      </Table>
+    </section>
+  );
+}
+
+function VersionRow({
+  dataset,
+  version,
+  onEdit,
+}: {
+  dataset: { status?: string; created_at?: string } | undefined;
+  version: { id: string; version: number; case_count: number };
+  onEdit: () => void;
+}) {
+  const { msg } = useI18n();
+  return (
+    <TableRow>
+      <TableCell>v{version.version}</TableCell>
+      <TableCell>
+        <CopyIdButton id={version.id} className="max-w-48" />
+      </TableCell>
+      <TableCell>
+        <EvaluationStatusBadge status={dataset?.status ?? 'available'} />
+      </TableCell>
+      <TableCell>{version.case_count}</TableCell>
+      <TableCell className="text-muted-foreground">{dateLabel(dataset?.created_at ?? '')}</TableCell>
+      <TableCell className="text-right">
+        <a className="text-sm text-muted-foreground hover:text-foreground" href="#evaluation-cases">
+          {msg('evaluations.viewCase', 'View')}
+        </a>
+        <button
+          type="button"
+          className="ml-3 text-sm text-muted-foreground hover:text-foreground"
+          aria-label={msg('evaluations.editVersionAction', 'Edit version {version}', {
+            version: version.version,
+          })}
+          onClick={onEdit}
+        >
+          {msg('evaluations.edit', 'Edit')}
+        </button>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function CurrentVersion({ dataset, version }: { dataset: EvaluationDataset | undefined; version: number | undefined }) {
+  const { msg } = useI18n();
+  return (
+    <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+      <p className="text-sm">
+        <span className="text-muted-foreground">{msg('evaluations.currentVersion', 'Current version')}: </span>
+        {versionLabel(version)}
+      </p>
+      {dataset ? <EvaluationStatusBadge status={dataset.status} /> : null}
+    </div>
+  );
+}
+
+function versionLabel(version: number | undefined) {
+  if (!version) {
+    return '';
+  }
+  return `v${version}`;
+}
+
+function AddCaseMenu({ onAction }: { onAction: (action: CaseAction) => void }) {
+  const { msg } = useI18n();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button type="button" variant="outline" className="h-8">
+            {msg('evaluations.addCase', 'Add case')}
+            <ChevronDown className="size-4" aria-hidden />
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuItem onClick={() => onAction('add')}>{msg('evaluations.addCase', 'Add case')}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onAction('jsonl')}>
+          {msg('evaluations.importJsonl', 'Import JSONL')}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onAction('session')}>
+          {msg('evaluations.importFromSession', 'Import from session')}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onAction('sessions')}>
+          {msg('evaluations.importSessions', 'Import sessions')}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function dateLabel(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function matchesCaseQuery(query: string, parts: string[]) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) {
+    return true;
+  }
+  return parts.some((part) => part.toLowerCase().includes(needle));
 }
 
 function AddCaseForm({ datasetId }: { datasetId: string }) {
@@ -177,7 +518,6 @@ function AddCaseForm({ datasetId }: { datasetId: string }) {
 
   return (
     <form className="grid gap-3" onSubmit={submit}>
-      <h2 className="text-sm font-medium">{msg('evaluations.addCase', 'Add case')}</h2>
       <Label htmlFor="evaluation-case-name">{msg('evaluations.name', 'Name')}</Label>
       <Input id="evaluation-case-name" value={name} onChange={(event) => setName(event.target.value)} required />
       <Label htmlFor="evaluation-case-turns">{msg('evaluations.turns', 'Turns')}</Label>
@@ -236,8 +576,7 @@ function ImportSessionCaseForm({ datasetId }: { datasetId: string }) {
   }
 
   return (
-    <form className="grid gap-3 lg:col-span-2" onSubmit={submit}>
-      <h2 className="text-sm font-medium">{msg('evaluations.importFromSession', 'Import from session')}</h2>
+    <form className="grid gap-3" onSubmit={submit}>
       <p className="text-sm text-muted-foreground">
         {msg(
           'evaluations.addSessionToDatasetHint',
@@ -307,8 +646,7 @@ function ImportSessionsForm({ datasetId }: { datasetId: string }) {
   }
 
   return (
-    <form className="grid gap-3 lg:col-span-2" onSubmit={submit}>
-      <h2 className="text-sm font-medium">{msg('evaluations.importSessions', 'Import sessions')}</h2>
+    <form className="grid gap-3" onSubmit={submit}>
       <p className="text-sm text-muted-foreground">
         {msg('evaluations.sessionIdsHint', 'One session id per line, or separated by commas. At most 50.')}
       </p>
@@ -382,7 +720,6 @@ function ImportCasesForm({ datasetId }: { datasetId: string }) {
 
   return (
     <form className="grid gap-3" onSubmit={submit}>
-      <h2 className="text-sm font-medium">{msg('evaluations.importJsonl', 'Import JSONL')}</h2>
       <Label htmlFor="evaluation-case-file">{msg('evaluations.importFile', 'JSONL or ZIP file')}</Label>
       <Input
         id="evaluation-case-file"

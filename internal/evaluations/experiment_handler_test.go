@@ -67,7 +67,7 @@ func TestCreateExperimentFreezesBindingsAndStartsSessions(t *testing.T) {
 	if len(created.Items) != 1 || created.Items[0].Status != db.EvaluationExperimentStatusPending || created.Items[0].CaseExternalID != "evalcase_test" || !strings.HasPrefix(created.Items[0].ExternalID, "evalitem_") {
 		t.Fatalf("items = %#v", created.Items)
 	}
-	if starter.calls != 1 || starter.last.AgentVersion != 4 || starter.last.Turns[0] != "hello" || starter.last.Metadata["case_id"] != "evalcase_test" || string(starter.last.Resources) != `[{"type":"file"}]` || starter.last.TimeoutSeconds != 60 || string(starter.last.Env) != `{"TRACE":"1"}` {
+	if starter.calls != 1 || starter.last.AgentVersion != 4 || starter.last.Title != "评测 · 账单摘要" || starter.last.Turns[0] != "hello" || starter.last.Metadata["case_id"] != "evalcase_test" || string(starter.last.Resources) != `[{"type":"file"}]` || starter.last.TimeoutSeconds != 60 || string(starter.last.Env) != `{"TRACE":"1"}` {
 		t.Fatalf("starter = %#v", starter)
 	}
 	if store.lastStatus != db.EvaluationExperimentStatusRunning || len(store.itemSessionUpdates) != 1 || store.itemSessionUpdates[0].SessionExternalID != "sesn_case" {
@@ -84,6 +84,14 @@ func TestCreateExperimentOmitsEnvAndStillStartsSession(t *testing.T) {
 	response := serveEvaluation(evaluationRouterWith(NewHandler(store, nil).WithSessionStarter(starter)), http.MethodPost, evaluationExperimentPath(""), `{"name":"nightly","dataset_version_id":"edv_test","agent_id":"agent_pinned","agent_version":4,"environment_id":"env_test","timeout_seconds":60,"evaluator_ids":["evalev_b"]}`, "")
 	if response.Code != http.StatusOK || starter.calls != 1 || starter.last.TimeoutSeconds != 60 || len(starter.last.Env) != 0 || starter.last.AgentVersion != 4 {
 		t.Fatalf("start = %d starter=%#v body=%s", response.Code, starter, response.Body.String())
+	}
+}
+
+func TestCreateExperimentRejectsRemovedPresetEvaluator(t *testing.T) {
+	store := readyExperimentStore()
+	response := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationExperimentPath(""), `{"name":"nightly","dataset_version_id":"edv_test","agent_id":"agent_pinned","agent_version":4,"environment_id":"env_test","timeout_seconds":60,"evaluator_ids":["evalev_oma_latency"]}`, "")
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), evaluatorNotFoundMessage) || store.createExperimentCalls != 0 {
+		t.Fatalf("preset bind = %d calls=%d body=%s", response.Code, store.createExperimentCalls, response.Body.String())
 	}
 }
 
@@ -211,7 +219,7 @@ func readyExperimentStore() *evaluationStoreStub {
 			DatasetUUID: "00000000-0000-4000-8000-000000000003", DatasetExternalID: "evalds_test", Version: 1,
 		},
 		versionCases: []db.EvaluationCase{{
-			UUID: "00000000-0000-4000-8000-000000000009", ExternalID: "evalcase_test", Position: 1, Turns: []string{"hello"},
+			UUID: "00000000-0000-4000-8000-000000000009", ExternalID: "evalcase_test", Position: 1, Name: "账单摘要", Turns: []string{"hello"},
 		}},
 		agentVersion: db.Agent{ExternalID: "agent_pinned", CurrentVersion: 4},
 		environment:  db.Environment{ExternalID: "env_test"},

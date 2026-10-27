@@ -88,6 +88,7 @@ func TestAgentScoreSandboxContract(t *testing.T) {
 		"name":"score sandbox judge `+suffix+`",
 		"evaluator_type":"agent",
 		"agent_id":`+quoteJSON(agent.ID)+`,
+		"prompt_template":"Score {{output}}",
 		"variables":["output"]
 	}`, &evaluator)
 

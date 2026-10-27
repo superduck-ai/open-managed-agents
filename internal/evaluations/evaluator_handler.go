@@ -1,6 +1,7 @@
 package evaluations
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -27,6 +28,9 @@ func (h *Handler) createEvaluator(w http.ResponseWriter, r *http.Request) error 
 	}
 	evaluator, err := newEvaluator(principal, *body)
 	if err != nil {
+		return err
+	}
+	if err := h.validateEvaluatorBinding(r.Context(), principal.WorkspaceUUID, evaluator.Version, createEvaluatorFailedMessage); err != nil {
 		return err
 	}
 	created, err := h.store.CreateEvaluationEvaluator(r.Context(), evaluator)
@@ -76,6 +80,9 @@ func (h *Handler) createEvaluatorVersion(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		return err
 	}
+	if err := h.validateEvaluatorBinding(r.Context(), principal.WorkspaceUUID, next, createEvaluatorVersionFailedMessage); err != nil {
+		return err
+	}
 	versionID, err := ids.New("eev_")
 	if err != nil {
 		return mapStoreError(err, evaluatorNotFoundMessage, createEvaluatorVersionFailedMessage)
@@ -113,7 +120,36 @@ func newEvaluator(principal auth.Principal, body createEvaluatorRequest) (db.Eva
 		EvaluatorType:  normalized.EvaluatorType,
 		Model:          normalized.Model,
 		AgentID:        normalized.AgentID,
+		EnvironmentID:  normalized.EnvironmentID,
+		Resources:      normalized.Resources,
 		PromptTemplate: normalized.PromptTemplate,
 		Variables:      normalized.Variables,
 	})
+}
+
+func (h *Handler) validateEvaluatorBinding(ctx context.Context, workspaceUUID string, version db.EvaluationEvaluatorVersion, failed string) error {
+	if version.EvaluatorType != evaluatorTypeAgent || version.AgentID == "" {
+		return nil
+	}
+	agent, err := h.store.GetAgent(ctx, workspaceUUID, version.AgentID)
+	if err != nil {
+		return mapStoreError(err, agentNotFoundMessage, failed)
+	}
+	if agent.ArchivedAt != nil {
+		return agentArchived()
+	}
+	if agent.CurrentVersion < 1 {
+		return agentVersionInvalid()
+	}
+	if version.EnvironmentID == "" {
+		return nil
+	}
+	environment, err := h.store.GetEnvironment(ctx, workspaceUUID, version.EnvironmentID)
+	if err != nil {
+		return mapStoreError(err, environmentNotFoundMessage, failed)
+	}
+	if environment.ArchivedAt != nil {
+		return environmentArchived()
+	}
+	return nil
 }

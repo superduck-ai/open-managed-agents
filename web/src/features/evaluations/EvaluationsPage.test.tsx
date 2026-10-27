@@ -87,7 +87,7 @@ test('explains dataset files and checkpoints in the create dialog', async () => 
   resetTestDom('https://oma.duck.ai/workspaces/default/evaluations');
   globalThis.fetch = mock(async () => Response.json({ data: [], next_page: null }));
   renderPage(<EvaluationsPage />);
-  fireEvent.click(screen.getByRole('button', { name: 'Create dataset' }));
+  fireEvent.click(screen.getAllByRole('button', { name: 'Create dataset' })[0]);
   expect(screen.getByRole('tab', { name: 'Upload data' })).toBeTruthy();
   expect(screen.getByRole('tab', { name: 'Reuse existing' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Download template' })).toBeTruthy();
@@ -173,7 +173,7 @@ test('lists cases and imports JSONL', async () => {
     if (url.endsWith('/cases:import')) {
       return Response.json({ data: [], next_page: null });
     }
-    if (url.endsWith('/cases')) {
+    if (isCaseList(url)) {
       return Response.json({
         data: [
           {
@@ -200,13 +200,14 @@ test('lists cases and imports JSONL', async () => {
 
   renderPage(<DatasetCasesPage />);
   expect(await screen.findByText('hello')).toBeTruthy();
-  expect(screen.getAllByText(/acceptance checklist for evaluators/).length).toBeGreaterThan(0);
-  fireEvent.click(screen.getByRole('button', { name: 'greeting' }));
+  expect(screen.getByText('Single turn')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'View greeting' }));
   expect(await screen.findByText('Input files')).toBeTruthy();
-  expect(screen.getByText('Saving updates this case on the current dataset version.')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-  expect(screen.getByText('Version 1')).toBeTruthy();
+  expect(screen.getAllByText('v1').length).toBeGreaterThan(0);
   expect(screen.getByText('nightly')).toBeTruthy();
+  await openCaseAction('Import JSONL');
+  expect(screen.getAllByText(/acceptance checklist for evaluators/).length).toBeGreaterThan(0);
   fireEvent.change(screen.getByLabelText('One JSON object per line, with name and turns.'), {
     target: { value: '{"name":"second","turns":["hi"]}\n' },
   });
@@ -218,6 +219,49 @@ test('lists cases and imports JSONL', async () => {
   expect(imported?.contentType).toContain('application/x-ndjson');
   expect(imported?.body).toBe('{"name":"second","turns":["hi"]}\n');
   expect(imported?.url).toContain('/evaluation-datasets/evalds_test/cases:import');
+});
+
+test('pages a long dataset case list', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/datasets/evalds_test');
+  globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (isCaseList(url)) {
+      const page = new URL(url, 'https://oma.duck.ai').searchParams.get('page');
+      const start = page === 'more' ? 20 : 0;
+      const count = page === 'more' ? 1 : 20;
+      return Response.json({
+        data: Array.from({ length: count }, (_, offset) => {
+          const index = start + offset;
+          return {
+            id: `evalcase_${index}`,
+            type: 'evaluation_case',
+            dataset_id: 'evalds_test',
+            version_id: 'edv_test',
+            position: index + 1,
+            name: `case ${index}`,
+            desc: '',
+            turns: [`turn ${index}`],
+            checkpoints: null,
+            input_files: null,
+            reference_files: null,
+            created_at: '2026-10-22T00:00:00Z',
+            updated_at: '2026-10-22T00:00:00Z',
+          };
+        }),
+        next_page: page === 'more' ? null : 'more',
+      });
+    }
+    return Response.json(dataset({ version: { id: 'edv_test', version: 1, case_count: 21 } }));
+  });
+
+  renderPage(<DatasetCasesPage />);
+  expect(await screen.findByText('turn 0')).toBeTruthy();
+  expect(screen.getByText('21 cases')).toBeTruthy();
+  expect(screen.queryByText('turn 20')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Page 2' }));
+  expect(await screen.findByText('turn 20')).toBeTruthy();
+  expect(screen.queryByText('turn 0')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Page 2' }).getAttribute('aria-current')).toBe('page');
 });
 
 test('edits and deletes a dataset case', async () => {
@@ -233,7 +277,7 @@ test('edits and deletes a dataset case', async () => {
       body: typeof init?.body === 'string' ? init.body : '',
       csrf: headers.get('X-CSRF-Token') ?? '',
     });
-    if (url.endsWith('/cases')) {
+    if (isCaseList(url)) {
       return Response.json({
         data: [
           {
@@ -276,10 +320,10 @@ test('edits and deletes a dataset case', async () => {
   });
 
   renderPage(<DatasetCasesPage />);
-  fireEvent.click(await screen.findByRole('button', { name: 'greeting' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit version 1' }));
   const drawer = await screen.findByRole('dialog');
   fireEvent.change(within(drawer).getByLabelText('Name'), { target: { value: 'edited' } });
-  fireEvent.change(within(drawer).getByLabelText('Turns'), { target: { value: 'hello again' } });
+  fireEvent.change(within(drawer).getByLabelText('Turn 1'), { target: { value: 'hello again' } });
   fireEvent.click(within(drawer).getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(requests.some((request) => request.method === 'PATCH')).toBe(true));
   const saved = requests.find((request) => request.method === 'PATCH');
@@ -330,13 +374,14 @@ test('imports a dataset case from a session id', async () => {
         updated_at: '2026-10-22T00:00:00Z',
       });
     }
-    if (url.endsWith('/cases')) {
+    if (isCaseList(url)) {
       return Response.json({ data: [], next_page: null });
     }
     return Response.json(dataset());
   });
 
   renderPage(<DatasetCasesPage />);
+  await openCaseAction('Import from session');
   fireEvent.change(await screen.findByLabelText('Session'), { target: { value: 'sesn_case' } });
   const checkpoints = document.getElementById('import-session-case-checkpoints');
   if (!checkpoints) {
@@ -352,7 +397,7 @@ test('imports a dataset case from a session id', async () => {
   ).toBeTruthy();
   expect(requests.some((request) => request.method === 'POST')).toBe(false);
   fireEvent.change(checkpoints, { target: { value: '期望的结果是不会报错，正常结束' } });
-  fireEvent.change(screen.getAllByLabelText('Name')[1], { target: { value: 'checkout' } });
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'checkout' } });
   fireEvent.click(screen.getByRole('button', { name: 'Import from session' }));
   await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
   const created = requests.find((request) => request.method === 'POST');
@@ -380,20 +425,21 @@ test('imports several sessions and shows per-id failures', async () => {
         failed: [{ session_id: 'sesn_missing', error: 'Session not found' }],
       });
     }
-    if (url.endsWith('/cases')) {
+    if (isCaseList(url)) {
       return Response.json({ data: [], next_page: null });
     }
     return Response.json(dataset());
   });
 
   renderPage(<DatasetCasesPage />);
+  await openCaseAction('Import sessions');
   fireEvent.change(await screen.findByLabelText('Session ids'), {
     target: { value: 'sesn_ok, sesn_missing\nsesn_ok' },
   });
   fireEvent.change(screen.getByLabelText('Name prefix'), { target: { value: 'bad-' } });
-  const outputFiles = document.querySelectorAll('input[type="checkbox"]')[1] as HTMLInputElement;
+  const outputFiles = document.querySelector('input[type="checkbox"]') as HTMLInputElement;
   fireEvent.click(outputFiles);
-  await waitFor(() => expect(screen.getAllByRole('checkbox')[1].getAttribute('aria-checked')).toBe('true'));
+  await waitFor(() => expect(screen.getAllByRole('checkbox')[0].getAttribute('aria-checked')).toBe('true'));
   fireEvent.click(screen.getByRole('button', { name: 'Import sessions' }));
   await waitFor(() => expect(requests.some((request) => request.url.includes('/cases:from-sessions'))).toBe(true));
   const created = requests.find((request) => request.url.includes('/cases:from-sessions'));
@@ -463,6 +509,17 @@ test('adds a session to a custom evaluation dataset', async () => {
   });
 });
 
+const evaluatorPromptStarter = [
+  '## Scoring',
+  '1. Accuracy: Does the answer solve the question?',
+  '2. Completeness: Are the key points covered?',
+  '3. Clarity: Is the answer structured and easy to understand?',
+  '',
+  '## Requirements',
+  '- Judge the Agent answer against each checkpoint.',
+  '- Give a score and a short reason across these dimensions.',
+].join('\n');
+
 test('lists evaluators and creates an llm evaluator', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/evaluators');
   const requests: Array<{ url: string; method: string; body: string; csrf: string }> = [];
@@ -479,6 +536,23 @@ test('lists evaluators and creates an llm evaluator', async () => {
     if (method === 'POST') {
       return Response.json(evaluator());
     }
+    if (url.includes('/llm_providers')) {
+      return Response.json([
+        {
+          id: 'prov_test',
+          type: 'llm_provider',
+          name: 'Anthropic',
+          slug: 'anthropic',
+          api_backend: 'messages',
+          base_url: 'https://api.example',
+          has_api_key: true,
+          api_key_last4: '1234',
+          model_ids: ['claude'],
+          created_at: '2026-10-22T00:00:00Z',
+          updated_at: '2026-10-22T00:00:00Z',
+        },
+      ]);
+    }
     return Response.json({ data: [evaluator()], next_page: null });
   });
 
@@ -491,7 +565,8 @@ test('lists evaluators and creates an llm evaluator', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Create evaluator' }));
   const dialog = screen.getByRole('dialog');
   fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'judge' } });
-  fireEvent.change(within(dialog).getByLabelText('Model'), { target: { value: 'claude' } });
+  fireEvent.click(await screen.findByRole('combobox', { name: 'Model' }));
+  fireEvent.click(await screen.findByRole('option', { name: 'anthropic/claude' }));
   fireEvent.click(within(dialog).getByRole('button', { name: 'input' }));
   fireEvent.click(within(dialog).getByRole('button', { name: 'Create evaluator' }));
 
@@ -503,8 +578,8 @@ test('lists evaluators and creates an llm evaluator', async () => {
     name: 'judge',
     desc: '',
     evaluator_type: 'llm',
-    model: 'claude',
-    prompt_template: '{{input}}',
+    model: 'anthropic/claude',
+    prompt_template: `${evaluatorPromptStarter} {{input}}`,
     variables: ['input'],
   });
 });
@@ -525,6 +600,47 @@ test('lists experiments and creates one', async () => {
     if (method === 'POST') {
       return Response.json(experiment());
     }
+    if (url.includes('/v1/agents')) {
+      return Response.json({ data: [{ id: 'agent_test', name: 'agent' }] });
+    }
+    if (url.includes('/v1/environments')) {
+      return Response.json({ data: [{ id: 'env_test', name: 'env' }] });
+    }
+    if (url.includes('/evaluation-datasets')) {
+      return Response.json({ data: [dataset()], next_page: null });
+    }
+    if (url.includes('/evaluation-evaluator-presets')) {
+      return Response.json({
+        data: [
+          {
+            id: 'evalev_oma_latency',
+            type: 'evaluation_evaluator_preset',
+            name: 'Latency',
+            desc: '',
+            status: 'available',
+            version: {
+              id: 'eev_oma_latency_v1',
+              version: 1,
+              evaluator_type: 'agent',
+              prompt_template: 'score',
+              variables: ['input'],
+            },
+            created_at: '2026-10-22T00:00:00Z',
+            updated_at: '2026-10-22T00:00:00Z',
+          },
+        ],
+        next_page: null,
+      });
+    }
+    if (url.includes('/evaluation-evaluators')) {
+      return Response.json({
+        data: [
+          { ...evaluator(), id: 'evalev_a', name: 'Alpha' },
+          { ...evaluator(), id: 'evalev_b', name: 'Beta' },
+        ],
+        next_page: null,
+      });
+    }
     return Response.json({ data: [experiment()], next_page: null });
   });
 
@@ -537,20 +653,29 @@ test('lists experiments and creates one', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/experiments/new');
   renderPage(<ExperimentNewPage />);
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'nightly' } });
+  expect(await screen.findByRole('option', { name: 'billing v1' })).toBeTruthy();
+  expect(screen.getByRole('option', { name: 'agent' })).toBeTruthy();
+  expect(screen.getByRole('option', { name: 'env' })).toBeTruthy();
   fireEvent.change(screen.getByLabelText('Dataset version'), { target: { value: 'edv_test' } });
   fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'agent_test' } });
   fireEvent.change(screen.getByLabelText('Environment'), { target: { value: 'env_test' } });
   fireEvent.change(screen.getByLabelText('Timeout (seconds)'), { target: { value: '60' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add environment variable' }));
   fireEvent.change(screen.getByLabelText('Environment variables'), { target: { value: 'TRACE=1' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add resource' }));
   fireEvent.change(screen.getByLabelText('Resources'), {
     target: { value: '[{"type":"file","file_id":"file_a"}]' },
   });
-  fireEvent.change(screen.getByLabelText('Evaluators'), { target: { value: 'evalev_a, evalev_b' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Select evaluators' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Alpha' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Beta' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Latency' }));
   fireEvent.click(screen.getByRole('button', { name: 'New experiment' }));
   await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
   const created = requests.find((request) => request.method === 'POST');
   expect(created?.url).toContain('/evaluation-experiments');
   expect(created?.csrf).toBe('csrf_test');
+  expect(window.location.pathname).toBe('/workspaces/default/evaluations/experiments/evalexp_test');
   expect(JSON.parse(created?.body ?? '{}')).toEqual({
     name: 'nightly',
     desc: '',
@@ -560,7 +685,7 @@ test('lists experiments and creates one', async () => {
     timeout_seconds: 60,
     env: { TRACE: '1' },
     resources: [{ type: 'file', file_id: 'file_a' }],
-    evaluator_ids: ['evalev_a', 'evalev_b'],
+    evaluator_ids: ['evalev_a', 'evalev_b', 'evalev_oma_latency'],
   });
 });
 
@@ -610,6 +735,7 @@ test('saves an llm evaluator prompt as a new version', async () => {
     return Response.json(evaluator());
   });
   renderPage(<EvaluatorDetailPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
   expect(await screen.findByLabelText('Prompt')).toBeTruthy();
   expect(
     screen.getByText('Saving creates a new version. Experiments already created keep the previous version.'),
@@ -646,8 +772,151 @@ test('shows scores on an experiment', async () => {
     }),
   );
   renderPage(<ExperimentDetailPage />);
-  expect(await screen.findByRole('cell', { name: 'contract path' })).toBeTruthy();
-  expect(screen.getByRole('cell', { name: '0.91' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'nightly' })).toBeTruthy();
+  expect(screen.getAllByText('1 / 1 (1 ok)').length).toBe(2);
+  expect(screen.getByRole('tab', { name: 'Overview' })).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Report' })).toBeTruthy();
+  expect(screen.getAllByText('0.91').length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole('tab', { name: 'Configuration' }));
+  expect(screen.getByText('env_test')).toBeTruthy();
+  expect(screen.getByText('60')).toBeTruthy();
+  fireEvent.click(screen.getByRole('tab', { name: 'Case results' }));
+  expect(screen.getAllByRole('cell', { name: '0.91' }).length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole('button', { name: 'View evalitem_test' }));
+  expect(await screen.findByText('contract path')).toBeTruthy();
+});
+
+test('opens a case result with the case, the session trace, and the score', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/experiments/evalexp_test');
+  globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes('/events')) {
+      return Response.json({
+        data: [
+          { id: 'evt_user', type: 'user.message', content: '写一封拒绝合作的邮件。' },
+          { id: 'evt_agent', type: 'agent.message', content: '您好，无法继续合作。' },
+        ],
+        next_page: null,
+      });
+    }
+    if (url.includes('/sessions/sesn_case')) {
+      return Response.json({
+        id: 'sesn_case',
+        type: 'session',
+        status: 'idle',
+        created_at: '2026-10-27T11:29:22.000Z',
+        updated_at: '2026-10-27T11:29:32.150Z',
+        usage: { input_tokens: 12, output_tokens: 40 },
+      });
+    }
+    if (isCaseList(url)) {
+      return Response.json({
+        data: [
+          {
+            ...evaluationCase('evalcase_test', '礼貌拒信', '写一封拒绝合作的邮件。'),
+            desc: '办公写作',
+            checkpoints: ['明确拒绝', '语气礼貌'],
+          },
+        ],
+        next_page: null,
+      });
+    }
+    return Response.json({
+      ...experiment(),
+      items: [
+        {
+          id: 'evalitem_test',
+          case_id: 'evalcase_test',
+          position: 1,
+          session_id: 'sesn_case',
+          status: 'completed',
+        },
+      ],
+      scores: [
+        {
+          id: 'evalscore_test',
+          item_id: 'evalitem_test',
+          evaluator_id: 'evalev_test',
+          version_id: 'eev_test',
+          status: 'completed',
+          score: 1,
+          explanation: '任务规模较小，未调用工具。',
+          details: { findings: 'first_response' },
+        },
+      ],
+    });
+  });
+
+  renderPage(<ExperimentDetailPage />);
+  fireEvent.click(await screen.findByRole('tab', { name: 'Case results' }));
+  fireEvent.click(screen.getByRole('button', { name: 'View evalcase_test' }));
+  const drawer = await screen.findByRole('dialog');
+  expect(await within(drawer).findByText('Duration 10.15s')).toBeTruthy();
+  expect(within(drawer).getByRole('heading', { name: 'Agent result' })).toBeTruthy();
+  expect(within(drawer).getByText('礼貌拒信')).toBeTruthy();
+  expect(within(drawer).getByText('办公写作')).toBeTruthy();
+  expect(within(drawer).getByText('Turn 1')).toBeTruthy();
+  expect(within(drawer).getAllByText('写一封拒绝合作的邮件。').length).toBeGreaterThan(0);
+  expect(within(drawer).getByText('明确拒绝')).toBeTruthy();
+  expect(within(drawer).getAllByText('您好，无法继续合作。').length).toBe(2);
+  expect(within(drawer).getByText('12 / 40')).toBeTruthy();
+  expect(within(drawer).getByText('user')).toBeTruthy();
+  expect(within(drawer).getByText('agent')).toBeTruthy();
+  expect(within(drawer).getByText('Score 100.0')).toBeTruthy();
+  expect(within(drawer).getByText('任务规模较小，未调用工具。')).toBeTruthy();
+  expect(within(drawer).getByText('{"findings":"first_response"}')).toBeTruthy();
+});
+
+test('shows the analysis report in prose', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/experiments/evalexp_test');
+  globalThis.fetch = mock(async () =>
+    Response.json({
+      ...experiment(),
+      items: [
+        {
+          id: 'evalitem_test',
+          case_id: 'evalcase_test',
+          position: 1,
+          session_id: 'sesn_case',
+          status: 'completed',
+        },
+      ],
+      scores: [
+        {
+          id: 'evalscore_test',
+          item_id: 'evalitem_test',
+          evaluator_id: 'evalev_test',
+          version_id: 'eev_test',
+          status: 'completed',
+          score: 1,
+          explanation: '共 1 轮，最慢 4 秒。',
+          details: {
+            rounds: [
+              {
+                index: 1,
+                model: 'default-2/deepseek-v4.1-flash',
+                input_tokens: 258,
+                output_tokens: 311,
+                duration_seconds: 4,
+              },
+            ],
+            slowest_seconds: 4,
+          },
+        },
+      ],
+    }),
+  );
+  renderPage(<ExperimentDetailPage />);
+  fireEvent.click(await screen.findByRole('tab', { name: 'Report' }));
+  expect(screen.getByRole('heading', { name: 'Main issues' })).toBeTruthy();
+  expect(screen.getByText('No failed scores, and none below a full mark.')).toBeTruthy();
+  expect(screen.getByText('共 1 轮，最慢 4 秒。')).toBeTruthy();
+  expect(
+    screen.getByText('Round 1, default-2/deepseek-v4.1-flash, 4s, input 258, output 311'),
+  ).toBeTruthy();
+  expect(screen.getByText('Average 100%')).toBeTruthy();
+  expect(screen.queryByText(/input_tokens/)).toBeNull();
+  expect(screen.queryByText(/slowest_seconds/)).toBeNull();
 });
 
 test('reuses a published dataset preset', async () => {
@@ -707,20 +976,58 @@ test('reuses a published dataset preset', async () => {
   renderPage(<EvaluationsPage />);
   fireEvent.click(await screen.findByRole('tab', { name: 'Presets' }));
   expect(await screen.findByText('OMA demo dataset 03')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'Reuse OMA demo dataset 03' }));
-  expect(await screen.findByText('OMA demo case 1 on dataset 3 version 2. Reply with the word ready.')).toBeTruthy();
-  const dialog = screen.getByRole('dialog');
-  fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'copied' } });
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Reuse' }));
-  await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
-  const created = requests.find((request) => request.method === 'POST');
-  expect(created?.url).toContain('/evaluation-datasets');
-  expect(JSON.parse(created?.body ?? '{}')).toEqual({
-    name: 'copied',
-    desc: '',
-    source_version_id: 'edv_oma_demo_03_v2',
+  const detail = screen.getByRole('link', { name: 'View OMA demo dataset 03' });
+  expect(detail.getAttribute('href')).toBe('/workspaces/default/evaluations/datasets/evalds_oma_demo_03?preset=1');
+});
+
+test('shows a preset dataset on the detail page', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/datasets/evalds_oma_demo_03?preset=1');
+  globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes('/cases')) {
+      return Response.json({
+        data: [
+          {
+            id: 'evalcase_oma_demo_03_v2_01',
+            type: 'evaluation_case',
+            dataset_id: 'evalds_oma_demo_03',
+            version_id: 'edv_oma_demo_03_v2',
+            position: 1,
+            name: 'OMA demo case 01',
+            desc: '',
+            turns: ['OMA demo case 1 on dataset 3 version 2. Reply with the word ready.'],
+            checkpoints: null,
+            input_files: null,
+            reference_files: null,
+            created_at: '2026-10-22T00:00:00Z',
+            updated_at: '2026-10-22T00:00:00Z',
+          },
+        ],
+        next_page: null,
+      });
+    }
+    return Response.json({
+      id: 'evalds_oma_demo_03',
+      type: 'evaluation_dataset_preset',
+      name: 'OMA demo dataset 03',
+      desc: 'OMA demo preset. Not a QCA dataset.',
+      status: 'available',
+      versions: [
+        { id: 'edv_oma_demo_03_v1', version: 1, case_count: 1 },
+        { id: 'edv_oma_demo_03_v2', version: 2, case_count: 2 },
+      ],
+      published_at: '2026-10-22T00:00:00Z',
+    });
   });
-  expect(requests.some((request) => request.url.includes('version_id=edv_oma_demo_03_v2'))).toBe(true);
+
+  renderPage(<DatasetCasesPage />);
+  expect(await screen.findByRole('heading', { name: 'OMA demo dataset 03' })).toBeTruthy();
+  expect(
+    await screen.findByText('OMA demo case 1 on dataset 3 version 2. Reply with the word ready.'),
+  ).toBeTruthy();
+  expect(screen.getByText('Built-in')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Add case' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Edit version 2' })).toBeNull();
 });
 
 test('creates an evaluator from a published preset', async () => {
@@ -771,7 +1078,6 @@ test('creates an evaluator from a published preset', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Create from preset 时延效率' }));
   const dialog = screen.getByRole('dialog');
   fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'copied judge' } });
-  fireEvent.change(within(dialog).getByLabelText('Agent'), { target: { value: 'agent_score' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Create from preset' }));
   await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
   const created = requests.find((request) => request.method === 'POST');
@@ -781,23 +1087,23 @@ test('creates an evaluator from a published preset', async () => {
     name: 'copied judge',
     desc: '',
     source_version_id: 'eev_oma_latency_v1',
-    agent_id: 'agent_score',
   });
 });
 
 test('compare shows per-evaluator scores for completed experiments', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/experiments/compare');
+  const evaluators = [
+    { id: 'evalev_a', version_id: 'eev_a', position: 1 },
+    { id: 'evalev_b', version_id: 'eev_b', position: 2 },
+    { id: 'evalev_c', version_id: 'eev_c', position: 3 },
+  ];
   globalThis.fetch = mock(async () =>
     Response.json({
       data: [
         {
           ...experiment(),
           status: 'completed',
-          evaluators: [
-            { id: 'evalev_a', version_id: 'eev_a', position: 1 },
-            { id: 'evalev_b', version_id: 'eev_b', position: 2 },
-            { id: 'evalev_c', version_id: 'eev_c', position: 3 },
-          ],
+          evaluators,
           scores: [
             {
               id: 'evalscore_a1',
@@ -825,29 +1131,40 @@ test('compare shows per-evaluator scores for completed experiments', async () =>
             },
           ],
         },
+        {
+          ...experiment(),
+          id: 'evalexp_other',
+          name: 'other',
+          agent_id: 'agent_other',
+          status: 'completed',
+          evaluators,
+          scores: [],
+        },
       ],
       next_page: null,
     }),
   );
   renderPage(<ExperimentComparePage />);
-  fireEvent.change(screen.getByLabelText('Dataset version'), { target: { value: 'edv_test' } });
-  fireEvent.change(screen.getByLabelText('Evaluators'), { target: { value: 'evalev_a, evalev_b, evalev_c' } });
+  expect(await screen.findByRole('option', { name: 'nightly' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Choose experiments to compare' })).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Baseline'), { target: { value: 'evalexp_test' } });
+  expect(await screen.findByText('Fixed for this comparison')).toBeTruthy();
+  const picker = screen.getByLabelText('Choose experiments to compare');
+  expect(await within(picker).findByRole('option', { name: 'other' })).toBeTruthy();
+  fireEvent.change(picker, { target: { value: 'evalexp_other' } });
   fireEvent.click(screen.getByRole('button', { name: 'Compare' }));
   expect(await screen.findByRole('columnheader', { name: 'evalev_a' })).toBeTruthy();
   expect(screen.getByRole('columnheader', { name: 'evalev_b' })).toBeTruthy();
   expect(screen.getByRole('columnheader', { name: 'evalev_c' })).toBeTruthy();
   expect(screen.getByRole('cell', { name: '0.5, 1' })).toBeTruthy();
   expect(screen.getByRole('cell', { name: 'Could not parse evaluator score' })).toBeTruthy();
-  expect(screen.getByRole('cell', { name: 'Missing' })).toBeTruthy();
+  expect(screen.getAllByRole('cell', { name: 'Missing' }).length).toBeGreaterThan(0);
 });
 
 test('compare shows an empty state when no experiments are completed', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/evaluations/experiments/compare');
   globalThis.fetch = mock(async () => Response.json({ data: [], next_page: null }));
   renderPage(<ExperimentComparePage />);
-  fireEvent.change(screen.getByLabelText('Dataset version'), { target: { value: 'edv_test' } });
-  fireEvent.change(screen.getByLabelText('Evaluators'), { target: { value: 'evalev_a' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Compare' }));
   expect(await screen.findByText('No completed experiments.')).toBeTruthy();
 });
 
@@ -908,6 +1225,15 @@ function evaluationCase(id: string, name: string, turn: string) {
     created_at: '2026-10-22T00:00:00Z',
     updated_at: '2026-10-22T00:00:00Z',
   };
+}
+
+async function openCaseAction(name: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Add case' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name }));
+}
+
+function isCaseList(url: string) {
+  return (url.split('?')[0] ?? url).endsWith('/cases');
 }
 
 function dataset(overrides: Record<string, unknown> = {}) {

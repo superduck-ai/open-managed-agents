@@ -7,7 +7,7 @@ export type ReuseOption = {
   kind: ReuseKind;
   id: string;
   name: string;
-  versions: Array<{ id: string; version: number }>;
+  versions: Array<{ id: string; version: number; caseCount: number }>;
 };
 
 export function reuseOptions(datasets: EvaluationDataset[], presets: EvaluationDatasetPreset[]): ReuseOption[] {
@@ -18,7 +18,7 @@ export function reuseOptions(datasets: EvaluationDataset[], presets: EvaluationD
       kind: 'dataset' as const,
       id: dataset.id,
       name: dataset.name,
-      versions: [{ id: dataset.version.id, version: dataset.version.version }],
+      versions: [{ id: dataset.version.id, version: dataset.version.version, caseCount: dataset.version.case_count }],
     }));
   const published = presets
     .filter((preset) => preset.status === 'available' && Array.isArray(preset.versions) && preset.versions.length > 0)
@@ -27,7 +27,11 @@ export function reuseOptions(datasets: EvaluationDataset[], presets: EvaluationD
       kind: 'preset' as const,
       id: preset.id,
       name: preset.name,
-      versions: preset.versions.map((version) => ({ id: version.id, version: version.version })),
+      versions: preset.versions.map((version) => ({
+        id: version.id,
+        version: version.version,
+        caseCount: version.case_count,
+      })),
     }));
   return [...custom, ...published];
 }
@@ -46,6 +50,10 @@ export function setCaseSelected(ids: string[], id: string, selected: boolean) {
     return ids.includes(id) ? ids : [...ids, id];
   }
   return ids.filter((item) => item !== id);
+}
+
+export function setCasesSelected(ids: string[], targets: string[], selected: boolean) {
+  return targets.reduce((current, id) => setCaseSelected(current, id, selected), ids);
 }
 
 export function datasetCreateInput(

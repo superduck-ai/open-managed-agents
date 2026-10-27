@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ const (
 	maxScoreExplanationRunes        = 4000
 	maxScoreErrorRunes              = 1024
 	maxScoreVariableRunes           = 8000
+	maxTrajectoryDetailRunes        = 500
 	maxScoreEventPages              = 5
 	scoreEventPageSize              = 100
 )
@@ -35,6 +37,89 @@ type scoreValues struct {
 	ReferenceFiles   json.RawMessage
 	AgentTrajectory  string
 	InvocationResult string
+}
+
+func (h *Handler) scheduleExperimentScores(ctx context.Context, outcome sessionOutcome, experiment db.EvaluationExperiment) {
+	for _, item := range experiment.Items {
+		if item.Status != db.EvaluationExperimentStatusCompleted || item.SessionExternalID == "" {
+			continue
+		}
+		h.scheduleCompletedItemScore(ctx, sessionOutcome{
+			OrganizationUUID:  outcome.OrganizationUUID,
+			WorkspaceUUID:     outcome.WorkspaceUUID,
+			SessionExternalID: item.SessionExternalID,
+			Status:            db.EvaluationExperimentStatusCompleted,
+		}, db.EvaluationExperimentSessionMatch{Item: item, ExperimentExternalID: experiment.ExternalID})
+	}
+}
+
+func (h *Handler) scheduleCompletedItemScore(ctx context.Context, outcome sessionOutcome, match db.EvaluationExperimentSessionMatch) {
+	if h.scoreJobs == nil {
+		h.scoreCompletedItem(ctx, outcome, match)
+		return
+	}
+	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), scoreEnqueueTimeout)
+	err := h.scoreJobs.EnqueueItem(enqueueCtx, outcome.OrganizationUUID, outcome.WorkspaceUUID, match.ExperimentExternalID, match.Item.ExternalID, outcome.SessionExternalID)
+	cancel()
+	if err != nil {
+		h.logger.WarnContext(ctx, "enqueue evaluation score",
+			"organization_id", outcome.OrganizationUUID,
+			"workspace_id", outcome.WorkspaceUUID,
+			"experiment_id", match.ExperimentExternalID,
+			"item_id", match.Item.ExternalID,
+			"error", err,
+		)
+	}
+}
+
+func (h *Handler) scoreQueuedItem(ctx context.Context, args scoreItemArgs) error {
+	experiment, err := h.store.GetEvaluationExperiment(ctx, args.OrganizationUUID, args.WorkspaceUUID, args.ExperimentID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if !itemsSettled(experiment.Items) {
+		return nil
+	}
+	item, ok := experimentItemByID(experiment, args.ItemID)
+	if !ok || item.Status != db.EvaluationExperimentStatusCompleted {
+		return nil
+	}
+	sessionID := item.SessionExternalID
+	if sessionID == "" {
+		sessionID = args.SessionID
+	}
+	h.scoreCompletedItem(ctx, sessionOutcome{
+		OrganizationUUID:  args.OrganizationUUID,
+		WorkspaceUUID:     args.WorkspaceUUID,
+		SessionExternalID: sessionID,
+		Status:            db.EvaluationExperimentStatusCompleted,
+	}, db.EvaluationExperimentSessionMatch{Item: item, ExperimentExternalID: experiment.ExternalID})
+	return nil
+}
+
+func (h *Handler) rescueUnscoredItems(ctx context.Context) error {
+	if h.scoreJobs == nil {
+		return nil
+	}
+	if err := h.store.ReconcileSettledEvaluationExperiments(ctx, time.Now().UTC()); err != nil {
+		return err
+	}
+	items, err := h.store.ListEvaluationItemsMissingScores(ctx, scoreRescueLimit)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.SessionExternalID == "" {
+			continue
+		}
+		if err := h.scoreJobs.EnqueueItem(ctx, item.OrganizationUUID, item.WorkspaceUUID, item.ExperimentExternalID, item.ItemExternalID, item.SessionExternalID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (h *Handler) scoreCompletedItem(ctx context.Context, outcome sessionOutcome, match db.EvaluationExperimentSessionMatch) {
@@ -65,12 +150,15 @@ func (h *Handler) scoreCompletedItem(ctx context.Context, outcome sessionOutcome
 }
 
 func (h *Handler) scoreBinding(ctx context.Context, outcome sessionOutcome, experiment db.EvaluationExperiment, item db.EvaluationExperimentItem, binding db.EvaluationExperimentBinding, values scoreValues) {
-	version, err := h.store.GetEvaluationEvaluatorVersion(ctx, outcome.OrganizationUUID, outcome.WorkspaceUUID, binding.VersionExternalID)
+	if itemBindingScored(experiment, item.ExternalID, binding.VersionExternalID) {
+		return
+	}
+	version, err := h.evaluatorVersionForScore(ctx, outcome, binding.VersionExternalID)
 	if err != nil {
 		h.recordScore(ctx, outcome, experiment, item, binding, version, nil, "", nil, evaluatorVersionNotFoundMessage)
 		return
 	}
-	if version.EvaluatorType == evaluatorTypeAgent {
+	if version.EvaluatorType == evaluatorTypeAgent && strings.TrimSpace(version.AgentID) != "" {
 		h.scoreAgent(ctx, outcome, experiment, item, binding, version, values)
 		return
 	}
@@ -78,12 +166,14 @@ func (h *Handler) scoreBinding(ctx context.Context, outcome sessionOutcome, expe
 		h.recordScore(ctx, outcome, experiment, item, binding, version, nil, "", nil, evaluatorModelMissingMessage)
 		return
 	}
-	scored, scoreErr := h.model.Score(ctx, EvaluatorScoreRequest{
+	scoreCtx, cancel := context.WithTimeout(ctx, evaluatorScoreTimeout)
+	scored, scoreErr := h.model.Score(scoreCtx, EvaluatorScoreRequest{
 		OrganizationUUID: outcome.OrganizationUUID,
 		WorkspaceUUID:    outcome.WorkspaceUUID,
 		Model:            version.Model,
 		Prompt:           renderEvaluatorPrompt(version.PromptTemplate, version.Variables, values),
 	})
+	cancel()
 	if scoreErr != nil {
 		h.logger.WarnContext(ctx, "score evaluation item",
 			"organization_id", outcome.OrganizationUUID,
@@ -98,7 +188,33 @@ func (h *Handler) scoreBinding(ctx context.Context, outcome sessionOutcome, expe
 	h.recordScore(ctx, outcome, experiment, item, binding, version, &scored.Score, scored.Explanation, scored.Details, "")
 }
 
+func (h *Handler) evaluatorVersionForScore(ctx context.Context, outcome sessionOutcome, versionID string) (db.EvaluationEvaluatorVersion, error) {
+	version, err := h.store.GetEvaluationEvaluatorVersion(ctx, outcome.OrganizationUUID, outcome.WorkspaceUUID, versionID)
+	if err == nil {
+		return version, nil
+	}
+	if !errors.Is(err, db.ErrNotFound) {
+		return db.EvaluationEvaluatorVersion{}, err
+	}
+	preset, presetErr := presetEvaluatorVersion(versionID)
+	if presetErr != nil || preset.Archived {
+		return db.EvaluationEvaluatorVersion{}, err
+	}
+	return preset.asRecord().Version, nil
+}
+
+func itemBindingScored(experiment db.EvaluationExperiment, itemID, versionID string) bool {
+	for _, score := range experiment.Scores {
+		if score.ItemExternalID == itemID && score.VersionExternalID == versionID {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Handler) recordScore(ctx context.Context, outcome sessionOutcome, experiment db.EvaluationExperiment, item db.EvaluationExperimentItem, binding db.EvaluationExperimentBinding, version db.EvaluationEvaluatorVersion, score *float64, explanation string, details json.RawMessage, errorMessage string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), scoreWriteTimeout)
+	defer cancel()
 	externalID, err := ids.New("evalscore_")
 	if err != nil {
 		h.logger.WarnContext(ctx, "create evaluation score id",
@@ -225,21 +341,17 @@ func scoreValuesFrom(item db.EvaluationCase, events []db.SessionEvent) scoreValu
 		switch event.EventType {
 		case "user.message":
 			appendScoreLine(&input, text)
-			appendScoreLine(&trajectory, event.EventType+": "+text)
 		case "agent.message":
 			appendScoreLine(&output, text)
-			appendScoreLine(&trajectory, event.EventType+": "+text)
 		case "agent.tool_result":
 			toolResult = text
 			sawToolResult = true
-			appendScoreLine(&trajectory, event.EventType+": "+text)
-		case "agent.tool_use", "agent.mcp_tool_use", "agent.custom_tool_use":
-			appendScoreLine(&trajectory, event.EventType+": "+text)
 		case "session.status_idle":
 			if reason := stopReasonType(event.Payload); reason != "" {
 				stopReason = reason
 			}
 		}
+		appendScoreLine(&trajectory, trajectoryLine(event))
 	}
 	if input.Len() == 0 {
 		values.Input = truncateRunes(strings.Join(item.Turns, "\n"), maxScoreVariableRunes)
@@ -276,6 +388,124 @@ func scoreVariable(name string, values scoreValues) string {
 		return values.AgentTrajectory
 	case "invocation_result":
 		return values.InvocationResult
+	default:
+		return ""
+	}
+}
+
+func trajectoryLine(event db.SessionEvent) string {
+	if event.EventType == "" {
+		return ""
+	}
+	var line strings.Builder
+	if stamp := scoreEventTime(event); stamp != "" {
+		line.WriteString(stamp)
+		line.WriteByte(' ')
+	}
+	line.WriteString(event.EventType)
+	if detail := trajectoryDetail(event); detail != "" {
+		line.WriteString(": ")
+		line.WriteString(detail)
+	}
+	return line.String()
+}
+
+func scoreEventTime(event db.SessionEvent) string {
+	stamp := event.CreatedAt
+	if stamp.IsZero() {
+		stamp = event.ProcessedAt
+	}
+	if stamp.IsZero() {
+		return ""
+	}
+	return stamp.UTC().Format(time.RFC3339)
+}
+
+func trajectoryDetail(event db.SessionEvent) string {
+	switch event.EventType {
+	case "span.model_request_start", "span.model_request_end":
+		return modelRequestDetail(event.Payload)
+	case "session.usage":
+		return usageDetail(event.Payload)
+	case "session.status_idle", "session.thread_status_idle", "session.status_terminated":
+		if reason := stopReasonType(event.Payload); reason != "" {
+			return "stop_reason=" + reason
+		}
+		return ""
+	default:
+		return truncateRunes(messageText(event.Payload), maxTrajectoryDetailRunes)
+	}
+}
+
+func modelRequestDetail(payload json.RawMessage) string {
+	var body struct {
+		Model string `json:"model"`
+		Usage struct {
+			InputTokens  *int64 `json:"input_tokens"`
+			OutputTokens *int64 `json:"output_tokens"`
+		} `json:"model_usage"`
+		Error struct {
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	if len(payload) == 0 || json.Unmarshal(payload, &body) != nil {
+		return ""
+	}
+	parts := make([]string, 0, 4)
+	if model := strings.TrimSpace(body.Model); model != "" {
+		parts = append(parts, "model="+model)
+	}
+	if body.Usage.InputTokens != nil {
+		parts = append(parts, "input_tokens="+strconv.FormatInt(*body.Usage.InputTokens, 10))
+	}
+	if body.Usage.OutputTokens != nil {
+		parts = append(parts, "output_tokens="+strconv.FormatInt(*body.Usage.OutputTokens, 10))
+	}
+	if reason := strings.TrimSpace(body.Error.Type); reason != "" {
+		parts = append(parts, "error="+reason)
+	}
+	return strings.Join(parts, " ")
+}
+
+func usageDetail(payload json.RawMessage) string {
+	var body struct {
+		Usage struct {
+			InputTokens   any `json:"input_tokens"`
+			OutputTokens  any `json:"output_tokens"`
+			ActiveSeconds any `json:"active_seconds"`
+			ListCost      struct {
+				Amount any `json:"amount"`
+			} `json:"list_cost"`
+		} `json:"usage"`
+	}
+	if len(payload) == 0 || json.Unmarshal(payload, &body) != nil {
+		return ""
+	}
+	parts := make([]string, 0, 4)
+	if value := metricString(body.Usage.InputTokens); value != "" {
+		parts = append(parts, "input_tokens="+value)
+	}
+	if value := metricString(body.Usage.OutputTokens); value != "" {
+		parts = append(parts, "output_tokens="+value)
+	}
+	if value := metricString(body.Usage.ListCost.Amount); value != "" {
+		parts = append(parts, "list_cost="+value)
+	}
+	if value := metricString(body.Usage.ActiveSeconds); value != "" {
+		parts = append(parts, "active_seconds="+value)
+	}
+	return strings.Join(parts, " ")
+}
+
+func metricString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case float64:
+		if typed == float64(int64(typed)) {
+			return strconv.FormatInt(int64(typed), 10)
+		}
+		return strconv.FormatFloat(typed, 'f', -1, 64)
 	default:
 		return ""
 	}

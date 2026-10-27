@@ -68,8 +68,9 @@ func TestEvaluationEvaluatorRoutesRejectInvalidInputBeforeStore(t *testing.T) {
 		{name: "llm without variables", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":"score","evaluator_type":"llm","model":"m","prompt_template":"score","variables":[]}`, want: variablesRequiredMessage},
 		{name: "unknown variable", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":"score","evaluator_type":"llm","model":"m","prompt_template":"{{ideal}}","variables":["ideal"]}`, want: variablesInvalidMessage},
 		{name: "unselected placeholder", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":"score","evaluator_type":"llm","model":"m","prompt_template":"{{output}}","variables":["input"]}`, want: promptVariableMessage},
-		{name: "agent without id", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":"score","evaluator_type":"agent","variables":[]}`, want: agentIDRequiredMessage},
-		{name: "agent with prompt", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":"score","evaluator_type":"agent","agent_id":"agent_score","prompt_template":"{{input}}","variables":["input"]}`, want: promptForbiddenMessage},
+		{name: "agent without prompt", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":"score","evaluator_type":"agent","agent_id":"agent_score","variables":["input"]}`, want: promptRequiredMessage},
+		{name: "agent without id", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":"score","evaluator_type":"agent","prompt_template":"{{input}}","variables":["input"]}`, want: agentIDRequiredMessage},
+		{name: "agent bad mount", method: http.MethodPost, path: evaluationEvaluatorPath(""), body: `{"name":"score","evaluator_type":"agent","agent_id":"agent_score","prompt_template":"{{input}}","variables":["input"],"resources":[{"file_id":"file_a","path":"relative"}]}`, want: evaluatorMountInvalidMessage},
 		{name: "other workspace", method: http.MethodGet, path: "/api/console/organizations/org_test/workspaces/other/evaluation-evaluators/evalev_test", want: evaluatorNotFoundMessage},
 	}
 	for _, test := range tests {
@@ -110,13 +111,19 @@ func TestCreateAndListEvaluationEvaluators(t *testing.T) {
 		t.Fatalf("llm response = %s", llmResponse.Body.String())
 	}
 
-	agentBody := `{"name":"judge","evaluator_type":"agent","agent_id":" agent_score ","variables":["invocation_result"]}`
+	missingAgent := serveEvaluation(router, http.MethodPost, evaluationEvaluatorPath(""), `{"name":"judge","evaluator_type":"agent","agent_id":"agent_missing","prompt_template":"Score {{input}}","variables":["input"]}`, "")
+	if missingAgent.Code != http.StatusNotFound || !strings.Contains(missingAgent.Body.String(), agentNotFoundMessage) || store.createEvaluatorCalls != 1 {
+		t.Fatalf("missing agent = %d calls=%d %s", missingAgent.Code, store.createEvaluatorCalls, missingAgent.Body.String())
+	}
+	store.agent = db.Agent{ExternalID: "agent_score", CurrentVersion: 3}
+	store.environment = db.Environment{ExternalID: "env_score"}
+	agentBody := `{"name":"judge","evaluator_type":"agent","agent_id":"agent_score","environment_id":"env_score","resources":[{"file_id":"file_a","path":"/data/a.txt"}],"prompt_template":"Score {{input}}","variables":["input"]}`
 	agentResponse := serveEvaluation(router, http.MethodPost, evaluationEvaluatorPath(""), agentBody, "")
 	created = store.createdEvaluator
-	if agentResponse.Code != http.StatusOK || created.Version.EvaluatorType != "agent" || created.Version.AgentID != "agent_score" || created.Version.Model != "" || created.Version.PromptTemplate != "" {
+	if agentResponse.Code != http.StatusOK || created.Version.EvaluatorType != "agent" || created.Version.AgentID != "agent_score" || created.Version.EnvironmentID != "env_score" || created.Version.Model != "" || created.Version.PromptTemplate != "Score {{input}}" || !strings.Contains(string(created.Version.Resources), `"mount_path":"/data/a.txt"`) {
 		t.Fatalf("agent create = %d %#v body=%s", agentResponse.Code, created, agentResponse.Body.String())
 	}
-	if !strings.Contains(agentResponse.Body.String(), `"result_path":"/data/session/result.json"`) || !strings.Contains(agentResponse.Body.String(), `"score_path":"/output/score.json"`) || !strings.Contains(agentResponse.Body.String(), `"score_fields":["score","explanation","details"]`) {
+	if !strings.Contains(agentResponse.Body.String(), `"result_path":"/data/session/result.json"`) || !strings.Contains(agentResponse.Body.String(), `"score_path":"/output/score.json"`) || !strings.Contains(agentResponse.Body.String(), `"score_fields":["score","explanation","details"]`) || !strings.Contains(agentResponse.Body.String(), `"environment_id":"env_score"`) || !strings.Contains(agentResponse.Body.String(), `"path":"/data/a.txt"`) {
 		t.Fatalf("agent response = %s", agentResponse.Body.String())
 	}
 
@@ -243,24 +250,28 @@ func TestUpdateAndDeleteEvaluationCase(t *testing.T) {
 }
 
 func TestCreateEvaluationEvaluatorVersion(t *testing.T) {
-	store := &evaluationStoreStub{evaluators: []db.EvaluationEvaluator{{
-		ExternalID: "evalev_test", Name: "judge",
-		Version: db.EvaluationEvaluatorVersion{Version: 1, EvaluatorType: "llm", Model: "claude", PromptTemplate: "Score {{input}}", Variables: []string{"input"}},
-	}, {
-		ExternalID: "evalev_agent", Name: "rubric",
-		Version: db.EvaluationEvaluatorVersion{Version: 1, EvaluatorType: "agent", AgentID: "agent_old", PromptTemplate: "Read the result.", Variables: []string{"invocation_result"}},
-	}}}
+	store := &evaluationStoreStub{
+		agent:       db.Agent{ExternalID: "agent_new", CurrentVersion: 2},
+		environment: db.Environment{ExternalID: "env_score"},
+		evaluators: []db.EvaluationEvaluator{{
+			ExternalID: "evalev_test", Name: "judge",
+			Version: db.EvaluationEvaluatorVersion{Version: 1, EvaluatorType: "llm", Model: "claude", PromptTemplate: "Score {{input}}", Variables: []string{"input"}},
+		}, {
+			ExternalID: "evalev_agent", Name: "rubric",
+			Version: db.EvaluationEvaluatorVersion{Version: 1, EvaluatorType: "agent", AgentID: "agent_old", PromptTemplate: "Read the result.", Variables: []string{"invocation_result"}},
+		}},
+	}
 	llm := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationEvaluatorPath("/evalev_test/versions"), `{"model":"claude","prompt_template":"Score {{input}} again","variables":["input"]}`, "")
 	if llm.Code != http.StatusOK || store.appendedVersion == nil || store.appendedVersion.PromptTemplate != "Score {{input}} again" || store.appendedVersion.EvaluatorType != "llm" || !strings.Contains(llm.Body.String(), `"version":2`) {
 		t.Fatalf("llm version = %d version=%#v body=%s", llm.Code, store.appendedVersion, llm.Body.String())
 	}
-	agent := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationEvaluatorPath("/evalev_agent/versions"), `{"agent_id":"agent_new"}`, "")
-	if agent.Code != http.StatusOK || store.appendedVersion.AgentID != "agent_new" || store.appendedVersion.PromptTemplate != "Read the result." || !strings.Contains(agent.Body.String(), `"version":2`) {
+	agent := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationEvaluatorPath("/evalev_agent/versions"), `{"agent_id":"agent_new","environment_id":"env_score","resources":[{"file_id":"file_a","path":"/data/a.txt"}],"prompt_template":"Score {{invocation_result}}","variables":["invocation_result"]}`, "")
+	if agent.Code != http.StatusOK || store.appendedVersion.AgentID != "agent_new" || store.appendedVersion.EnvironmentID != "env_score" || !strings.Contains(string(store.appendedVersion.Resources), `"mount_path":"/data/a.txt"`) || store.appendedVersion.PromptTemplate != "Score {{invocation_result}}" || !strings.Contains(agent.Body.String(), `"version":2`) {
 		t.Fatalf("agent version = %d version=%#v body=%s", agent.Code, store.appendedVersion, agent.Body.String())
 	}
-	rejected := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationEvaluatorPath("/evalev_agent/versions"), `{"agent_id":"agent_new","prompt_template":"invented"}`, "")
-	if rejected.Code != http.StatusBadRequest || !strings.Contains(rejected.Body.String(), promptForbiddenMessage) {
-		t.Fatalf("agent prompt = %d %s", rejected.Code, rejected.Body.String())
+	rejected := serveEvaluation(evaluationRouter(store), http.MethodPost, evaluationEvaluatorPath("/evalev_agent/versions"), `{"prompt_template":"Score {{invocation_result}}","variables":["invocation_result"]}`, "")
+	if rejected.Code != http.StatusBadRequest || !strings.Contains(rejected.Body.String(), agentIDRequiredMessage) {
+		t.Fatalf("agent id = %d %s", rejected.Code, rejected.Body.String())
 	}
 }
 
@@ -398,11 +409,13 @@ type evaluationStoreStub struct {
 	lastCompareKey        string
 	updateStatusCalls     int
 	lastStatus            string
+	reconcileCalls        int
 	itemSessionUpdates    []db.EvaluationExperimentItemSession
 	evaluatorVersions     []db.EvaluationEvaluatorVersion
 	sessionEvents         []db.SessionEvent
 	sessions              []db.Session
 	resources             []db.SessionResource
+	missingScores         []db.EvaluationScoreWork
 	getSessionCalls       int
 	listResourceCalls     int
 	getVersionCalls       int
@@ -616,6 +629,11 @@ func (s *evaluationStoreStub) ListCompletedEvaluationExperiments(_ context.Conte
 	return append([]db.EvaluationExperiment(nil), s.completedExperiments...), nil
 }
 
+func (s *evaluationStoreStub) ReconcileSettledEvaluationExperiments(context.Context, time.Time) error {
+	s.reconcileCalls++
+	return nil
+}
+
 func (s *evaluationStoreStub) UpdateEvaluationExperimentStatus(_ context.Context, _, _, externalID, status string, updatedAt time.Time) error {
 	s.updateStatusCalls++
 	s.lastStatus = status
@@ -646,6 +664,14 @@ func (s *evaluationStoreStub) GetEvaluationEvaluatorVersion(_ context.Context, _
 		}
 	}
 	return db.EvaluationEvaluatorVersion{}, db.ErrNotFound
+}
+
+func (s *evaluationStoreStub) ListEvaluationItemsMissingScores(context.Context, int) ([]db.EvaluationScoreWork, error) {
+	return s.missingScores, nil
+}
+
+func (s *evaluationStoreStub) FindEvaluationAgentScoreSession(context.Context, string, string, string, string, string) (bool, error) {
+	return false, nil
 }
 
 func (s *evaluationStoreStub) CreateEvaluationExperimentScore(_ context.Context, score db.EvaluationExperimentScore) (db.EvaluationExperimentScore, error) {

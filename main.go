@@ -22,6 +22,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/deployments"
 	"github.com/superduck-ai/open-managed-agents/internal/diagnostics"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
+	"github.com/superduck-ai/open-managed-agents/internal/evaluations"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/listeners"
@@ -208,12 +209,15 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("create transcript archive service: %w", err)
 	}
 	transcripts.Register(workers)
+	evaluationScores := evaluations.NewScoreJobs()
+	evaluationScores.Register(workers)
 	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers,
 		map[string]river.QueueConfig{
 			environments.PrebuildQueue:         {MaxWorkers: 4},
 			deploymentjobs.Queue:               {MaxWorkers: 10},
 			environments.SandboxLifecycleQueue: {MaxWorkers: 4},
 			transcriptretention.Queue:          {MaxWorkers: 2},
+			evaluations.ScoreQueue:             {MaxWorkers: 2},
 		})
 	if err != nil {
 		return fmt.Errorf("create River client: %w", err)
@@ -226,6 +230,9 @@ func run(logger *slog.Logger) error {
 	}
 	deploymentStore.Configure(jobClient)
 	prebuilds.Configure(jobClient)
+	if err := evaluationScores.Configure(ctx, jobClient); err != nil {
+		return fmt.Errorf("configure evaluation scoring: %w", err)
+	}
 	if err := jobClient.Start(ctx); err != nil {
 		return fmt.Errorf("start deployment scheduler: %w", err)
 	}
@@ -237,34 +244,39 @@ func run(logger *slog.Logger) error {
 		}
 	}()
 
+	apiServer := api.NewServer(api.ServerDeps{
+		Prebuilds:              prebuilds,
+		SandboxLifecycle:       lifecycle,
+		Config:                 cfg,
+		DB:                     database,
+		Deployments:            deploymentStore,
+		WebhookEnqueuer:        webhookEnqueuer,
+		ObjectStore:            objectStore,
+		Logger:                 logger,
+		PlatformStore:          platformSessions,
+		PlatformAuth:           platformAuthProvider,
+		CodeSessionCredentials: codeRuntime.credentials,
+		BrainClaims:            codeRuntime.claims,
+		WebTools:               codeRuntime.web,
+		SandboxTimeoutExtender: sandboxProvider,
+		SandboxProvisioner:     environmentRunner,
+		FilestoreCredentials:   filestoreCredentials,
+		FilestoreService:       filestoreService,
+		VaultSecrets:           vaultSecrets,
+		Redis:                  redisClient,
+		SessionEventBus:        sessionEventBus,
+		WorkerEventBroker:      workerEventBroker,
+		TunnelBroker:           tunnelBroker,
+		TunnelPresence:         tunnels.NewConnectorPresence(redisClient, cfg.Tunnel.PresenceTTL),
+		WorkerEventAcks:        workerEventAcks,
+		EvaluationScores:       evaluationScores,
+	})
+	if err := evaluationScores.Kick(ctx); err != nil {
+		return fmt.Errorf("kick evaluation scoring: %w", err)
+	}
 	server := &http.Server{
-		Addr: cfg.Server.Addr,
-		Handler: api.NewServer(api.ServerDeps{
-			Prebuilds:              prebuilds,
-			SandboxLifecycle:       lifecycle,
-			Config:                 cfg,
-			DB:                     database,
-			Deployments:            deploymentStore,
-			WebhookEnqueuer:        webhookEnqueuer,
-			ObjectStore:            objectStore,
-			Logger:                 logger,
-			PlatformStore:          platformSessions,
-			PlatformAuth:           platformAuthProvider,
-			CodeSessionCredentials: codeRuntime.credentials,
-			BrainClaims:            codeRuntime.claims,
-			WebTools:               codeRuntime.web,
-			SandboxTimeoutExtender: sandboxProvider,
-			SandboxProvisioner:     environmentRunner,
-			FilestoreCredentials:   filestoreCredentials,
-			FilestoreService:       filestoreService,
-			VaultSecrets:           vaultSecrets,
-			Redis:                  redisClient,
-			SessionEventBus:        sessionEventBus,
-			WorkerEventBroker:      workerEventBroker,
-			TunnelBroker:           tunnelBroker,
-			TunnelPresence:         tunnels.NewConnectorPresence(redisClient, cfg.Tunnel.PresenceTTL),
-			WorkerEventAcks:        workerEventAcks,
-		}),
+		Addr:              cfg.Server.Addr,
+		Handler:           apiServer,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,
 		WriteTimeout:      10 * time.Minute,

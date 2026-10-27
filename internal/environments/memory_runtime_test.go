@@ -17,8 +17,8 @@ func TestManagedAgentRuntimeResourcesCollectMemoryMountsWithoutSources(t *testin
 	t.Parallel()
 	resources := []db.SessionResource{
 		{
-			ResourceType: "github_repository",
-			Payload:      json.RawMessage(`{"type":"github_repository","url":"https://github.com/acme/widgets","mount_path":"/workspace/widgets"}`),
+			ResourceType:     "github_repository",
+			GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/acme/widgets", MountPath: "/workspace/widgets"},
 		},
 		memoryStoreSessionResource(
 			"user-preferences",
@@ -78,7 +78,7 @@ func TestManagedAgentRuntimeResourcesReportUnparseableMemorySnapshots(t *testing
 			resolved, err := resolveManagedAgentRuntimeResources([]db.SessionResource{{
 				ResourceType: sessionresource.MemoryStoreType,
 				ExternalID:   "sesrsc_broken",
-				Payload:      json.RawMessage(testCase.payload),
+				MemoryStore:  testMemoryStore(json.RawMessage(testCase.payload)),
 			}})
 			if len(resolved.memoryMounts) != 0 {
 				t.Fatalf("memory mounts = %#v, want none", resolved.memoryMounts)
@@ -352,7 +352,7 @@ func memoryStoreSessionResource(name, slug string, access sessionresource.Memory
 	}
 	return db.SessionResource{
 		ResourceType: sessionresource.MemoryStoreType,
-		Payload:      payload,
+		MemoryStore:  testMemoryStore(payload),
 	}
 }
 
@@ -371,4 +371,12 @@ func assertSessionConfigPromptExcludesMemory(t *testing.T, raw json.RawMessage, 
 		(storeName != "" && strings.Contains(prompt, storeName)) {
 		t.Fatalf("append_system_prompt leaked memory policy: %q", prompt)
 	}
+}
+
+func testMemoryStore(raw json.RawMessage) *db.SessionResourceMemoryStore {
+	var snapshot memorySnapshotPayload
+	if json.Unmarshal(raw, &snapshot) != nil {
+		return nil
+	}
+	return &db.SessionResourceMemoryStore{Name: new(snapshot.Name), Description: new(snapshot.Description), Instructions: new(snapshot.Instructions), Access: new(snapshot.Access), MountPath: new(snapshot.MountPath)}
 }

@@ -38,6 +38,7 @@ type mapperBuilderContract struct {
 	wantArgumentNames          []string
 	wantSensitiveArgumentNames []string
 	wantSQLFragments           []string
+	wantSQLAbsent              []string
 }
 
 type mapperExecutionErrorContract struct {
@@ -84,6 +85,11 @@ func assertMapperBuilderContract(t *testing.T, contract mapperBuilderContract) {
 	for _, fragment := range contract.wantSQLFragments {
 		if !containsMapperSQL(contract.bound.SQL, fragment) {
 			t.Fatalf("mapper SQL = %q, want fragment %q", contract.bound.SQL, fragment)
+		}
+	}
+	for _, fragment := range contract.wantSQLAbsent {
+		if containsMapperSQL(contract.bound.SQL, fragment) {
+			t.Fatalf("mapper SQL = %q, unwanted fragment %q", contract.bound.SQL, fragment)
 		}
 	}
 }

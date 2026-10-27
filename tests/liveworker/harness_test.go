@@ -23,6 +23,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
@@ -109,6 +110,7 @@ func newLiveEnv(t *testing.T) *liveEnv {
 	e.credentials, err = codesessions.NewSessionCredentials(cfg)
 	requireOK(t, err)
 	e.service = codesessions.NewServiceWithCredentials(e.database, e.credentials, nil).WithWorkerEventBroker(e.broker).WithWorkerEventState(e.acks, e.objects)
+	e.service.WithSessionAttachments(filestore.NewService(cfg, e.database, e.database, e.objects))
 	if os.Getenv("LIVE_WORKER_REAL_CLAUDE") == "1" {
 		ensureRealWorkerProvider(t, e, cfg)
 	}

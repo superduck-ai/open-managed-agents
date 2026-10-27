@@ -299,7 +299,7 @@ func TestSessionsMemoryAttachContract(t *testing.T) {
 			switch envelope.Type {
 			case "file":
 				sawFile = true
-				assertFileResourcePayload(t, raw, file.ID, "/uploads/workspace/regression.txt")
+				assertFileResourcePayload(t, raw, file.ID, "/mnt/session/uploads/workspace/regression.txt")
 				assertRawNotContains(t, raw, `"memory_store_id"`)
 			case "github_repository":
 				sawGithub = true
@@ -433,10 +433,12 @@ func persistedMemoryPayload(t *testing.T, app *testApp, sessionID string) map[st
 		if resource.ResourceType != "memory_store" {
 			continue
 		}
-		var payload map[string]any
-		if err := json.Unmarshal(resource.Payload, &payload); err != nil {
-			t.Fatalf("decode stored payload: %v", err)
+		store := resource.MemoryStore
+		if store == nil {
+			t.Fatal("missing memory store")
 		}
+		payload := map[string]any{"memory_store_id": store.ExternalID, "access": *store.Access, "instructions": *store.Instructions, "name": *store.Name, "description": *store.Description, "mount_path": *store.MountPath}
+
 		return payload
 	}
 	t.Fatalf("session %s has no memory_store resource: %+v", sessionID, resources)
@@ -540,19 +542,15 @@ func assertPersistedMemoryStoreCount(t *testing.T, app *testApp, sessionID strin
 			continue
 		}
 		count++
-		var payload struct {
-			MemoryStoreID string `json:"memory_store_id"`
+		store := resource.MemoryStore
+		if store == nil || store.ExternalID == "" {
+			t.Fatalf("persisted memory store missing id: %+v", resource)
 		}
-		if err := json.Unmarshal(resource.Payload, &payload); err != nil {
-			t.Fatalf("decode persisted memory store: %v", err)
+
+		if _, exists := seen[store.ExternalID]; exists {
+			t.Fatalf("persisted duplicate memory_store_id %q", store.ExternalID)
 		}
-		if payload.MemoryStoreID == "" {
-			t.Fatalf("persisted memory store missing id: %s", resource.Payload)
-		}
-		if _, exists := seen[payload.MemoryStoreID]; exists {
-			t.Fatalf("persisted duplicate memory_store_id %q", payload.MemoryStoreID)
-		}
-		seen[payload.MemoryStoreID] = struct{}{}
+		seen[store.ExternalID] = struct{}{}
 	}
 	if count != want {
 		t.Fatalf("persisted memory stores = %d, want %d", count, want)
@@ -572,17 +570,14 @@ func testMemoryStoreResourceInput(t *testing.T, session db.Session, storeID, res
 	t.Helper()
 	now := time.Now().UTC()
 	slug := sessionresource.SlugifyMemoryName("atomic", storeID)
-	payload, err := json.Marshal(sessionresource.SnapshotMemoryStore(
+	snapshot := sessionresource.SnapshotMemoryStore(
 		storeID,
 		sessionresource.MemoryAccessReadWrite,
 		"",
 		"atomic",
 		"",
 		slug,
-	).Payload(resourceID))
-	if err != nil {
-		t.Fatalf("marshal memory store payload: %v", err)
-	}
+	)
 	return db.CreateSessionResourceInput{
 		Resource: db.SessionResource{
 			UUID:              uuid.NewV4().String(),
@@ -591,10 +586,10 @@ func testMemoryStoreResourceInput(t *testing.T, session db.Session, storeID, res
 			WorkspaceUUID:     session.WorkspaceUUID,
 			SessionExternalID: session.ExternalID,
 			ResourceType:      db.SessionResourceTypeMemoryStore,
-			Payload:           payload,
-			SecretPayload:     json.RawMessage(`{}`),
-			CreatedAt:         now,
-			UpdatedAt:         now,
+			MemoryStore:       &db.SessionResourceMemoryStore{ExternalID: snapshot.MemoryStoreID, Access: new(string(snapshot.Access)), Instructions: new(snapshot.Instructions), Name: new(snapshot.Name), Description: new(snapshot.Description), MountPath: new(snapshot.MountPath)},
+
+			CreatedAt: now,
+			UpdatedAt: now,
 		},
 	}
 }

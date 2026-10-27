@@ -132,7 +132,7 @@ stateDiagram-v2
 | `PUT /worker/image-attachments/{sha256}` | 上传归一化字节。`Content-Type` 为声明 MIME。服务端流式计算摘要与长度，与路径、上限和嗅探 MIME 比对后置为 `attached`。已存在返回 200，新建返回 201，响应体为元数据。 |
 | `HEAD /worker/image-attachments/{sha256}` | 确认当前 Session 可访问，返回 `Content-Type`、`Content-Length`。供缓存命中授权与 PUT 前去重。 |
 | `GET /worker/image-attachments/{sha256}` | 流式返回字节，带 `Content-Length` 与 `ETag: "sha256:<hex>"`。 |
-| `GET /worker/message-attachments/{file_id}/content` | 只读返回消息附件源字节，解析规则与 Messages 代理一致：同 workspace 可见 Files，或本 Session 拥有的 `/uploads/message_attachments/` 私有文件。 |
+| `GET /worker/message-attachments/{file_id}/content` | 只读返回消息附件源字节。只解析本 Session 拥有的 `/uploads/message_attachments/` 私有文件；workspace 的 Files 记录一律返回 404，不沿用 Messages 代理先查 Files 的回退规则。 |
 
 鉴权与范围：
 
@@ -202,7 +202,7 @@ sequenceDiagram
     CS->>B: user.message（image.source = file_id）
     B->>API: GET message-attachments/{file_id}/content
     API-->>B: 源字节
-    B->>RS: saveImages（解码、归一化）
+    B->>RS: saveImage 逐张（解码、归一化）
     RS->>API: HEAD / PUT image-attachments/{sha256}
     API-->>RS: attached
     RS-->>B: ImageAttachmentRef
@@ -210,10 +210,37 @@ sequenceDiagram
 ```
 
 - 转换在 `userInputContent` 中完成，写入 dsh 日志之前。日志与 internal-events 只含引用，不含字节，保持 [message-media-attachments](message-media-attachments.md) 的约定。
-- 仍携带 base64 的图片走同一 `saveImages` 路径，不再落到 Brain 本地持久存储。
+- 仍携带 base64 的图片走同一 `saveImage` 路径，不再落到 Brain 本地持久存储。
 - URL 图片继续映射为 `oma-image`，不在 Brain 侧下载（避免 SSRF），作为已知限制不参与预算。
 
-入站限额：`AttachmentStore.saveImages` 按批校验 `maxImagesPerMessage` 与 `maxMessageImageBytes`，任一失败会拒绝整条消息，而服务端此时已接受并持久化该消息。因此：
+#### 外部传入的 `file_id` 图片
+
+客户端以 `{"type":"image","source":{"type":"file","file_id":"file_..."}}` 引用 Files 时，服务端处理保持不变：
+
+1. 入站校验 `file_id` 在同一 workspace 的 Files 中存在且 MIME 受支持，否则返回 400；公开事件、SSE 与 webhook 原样回显用户提交的 Files ID。
+2. 投递前 `codesessions` 将 Files 对象复制为会话私有附件，并把块改写为该私有副本的 `file_id`。源文件缺失、类型不支持、文件头不符或超过 `storage.max_file_bytes` 时整块降级为“附件不可用”文本。激活重放与 Deployment `initial_events` 使用同一入口。
+
+因此 Brain 收到的 `file_id` 始终是本 Session 私有副本，从不是用户的原始 Files ID，源读取接口据此只解析私有附件，Session 凭证不能借此读取 workspace 中任意 Files。之后按上图入库：
+
+| 情况 | 处理 |
+| --- | --- |
+| 正常 | 转为原生 `image`，参与能力过滤、计量与 offload；请求变体以 base64 内联发送，代理不再展开该图片 |
+| 同一 Files 图片出现在多条消息 | 每条消息各有私有副本，归一化后摘要相同，远端在本 Session 内只存一份 |
+| 投递重放，或 PUT 后写日志前崩溃 | 同一副本得到同一摘要，PUT 幂等，重新入库 |
+| 源读取返回 404 | 单张降级为“附件不可用”文本 |
+| 通过服务端文件头检查，但解码失败或像素、尺寸超过 DSH 上限 | 单张降级为“附件不可用”文本 |
+| 网络错误、503、epoch 冲突 | 向上抛出，由现有投递重试处理，不降级 |
+| 当前模型只接受文本 | 照常入库，请求时由 DSH 投影为文本占位；切换到视觉模型后可直接使用 |
+| 同一消息中的 `document` 块 | 不变，仍为 `oma-document`，由代理展开 |
+| Claude Code worker 模式 | 不变，仍由代理展开 `file_id` |
+
+#### 入站延迟
+
+源读取与 sharp 归一化发生在本轮开始前的关键路径上，大图会增加首轮延迟。归一化并发由 `RemoteAttachmentStore` 的进程级上限控制，默认沿用 DSH 的 `DEFAULT_IMAGE_COMPRESSION_CONCURRENCY`（2），最大不超过 `MAX_IMAGE_COMPRESSION_CONCURRENCY`（8），并跨 Session 共享。每张图记录源读取、归一化与上传的耗时和字节数，以及降级次数与原因，作为结构化日志字段与指标；不记录图片内容或凭证。
+
+#### 入站限额
+
+`AttachmentStore.saveImages` 按批校验 `maxImagesPerMessage` 与 `maxMessageImageBytes`，任一失败会拒绝整条消息，而服务端此时已接受并持久化该消息。因此：
 
 - `imageLimits` 不得比服务端入站校验更严格（服务端 4 MiB 事件体、`storage.max_file_bytes` 与四种 MIME），由配置统一下发。
 - Brain 逐张调用 `saveImage`，不使用整批 `saveImages`。单张解码或归一化失败（像素超限、格式损坏）替换为与服务端降级一致的“附件不可用”文本块；源文件 404 同样降级。
@@ -305,7 +332,7 @@ flowchart TD
 - 其他 Session 或 workspace 的同一哈希返回 404。
 - 上传中断后 pending 行重试完成；对象缺失或损坏时 GET 失败。
 - Session 删除与 pending 超时触发清理，删除全部版本，任务失败重试。
-- `message-attachments` 源读取只能读到本 Session 附件。
+- `message-attachments` 源读取只能读到本 Session 私有附件，同 workspace 的 Files ID 与其他 Session 的附件均返回 404。
 
 Brain 单测（进程内 fake API 与模型）：
 

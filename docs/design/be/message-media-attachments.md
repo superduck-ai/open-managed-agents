@@ -61,6 +61,8 @@ Session 凭证调用 `POST /v1/messages` 时，代理复用通用的文件引用
 
 Brain 收到的 `image` 块若带 `file` 或 `url` 来源，映射为 dsh 内容块 `{"type":"oma-image","source":...}`，AI SDK 适配器以 `{"type":"reference","reference":{"anthropic":"file_..."}}` 或 URL 文件部件发出，Anthropic provider 序列化为 `image` 的 `file`/`url` 来源，再由代理展开。`document` 块映射为 `oma-document`，同样保留 `file` 引用。仍携带 base64 的图片沿用本地 dsh attachment 路径。无效块使本轮以错误结束，不停止会话；构建模型请求时的转换错误（例如无法解析的 URL）同样归一为模型错误。
 
+`oma-image` 不参与 DSH 图片计量与 offload；改为原生图片并接入远端附件存储的提案见 [brain-image-attachments](brain-image-attachments.md)。
+
 ## 验收覆盖
 
 - `internal/messagemedia`：来源与 URL 校验、文件头匹配、候选类型、路径与引用。

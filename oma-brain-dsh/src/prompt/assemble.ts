@@ -31,7 +31,8 @@ function instructionsPrompt(heading: string, text: string): string {
 }
 
 function skillsPrompt(skills: Launch["skills"]): string {
-  if (!skills?.length) return "";
+  if (!skills) return "";
+  if (skills.length === 0) return "# Skills\n\nAvailable skills: []";
   return [
     "# Skills",
     "Skills are instruction folders for specific kinds of work. When a task matches one, Read its SKILL.md before starting and follow it. Several skills can apply to one task.",
